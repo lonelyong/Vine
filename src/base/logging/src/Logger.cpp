@@ -1,5 +1,7 @@
 ﻿#include <vine/logging/Logger.hpp>
 
+#include <atomic>
+#include <cstdio>
 #include <memory>
 #include <utility>
 
@@ -98,13 +100,38 @@ bool Logger::isEnabled(LogLevel level) const
     return d->logger && d->logger->should_log(toSpdlogLevel(level));
 }
 
-void Logger::log(LogLevel level, std::string message, const std::source_location& loc)
+void Logger::log(LogLevel level, std::string message, const std::source_location& loc) noexcept
 {
     if (!d->logger || !d->logger->should_log(toSpdlogLevel(level))) {
         return;
     }
 
-    d->logger->log(spdlog::source_loc{loc.file_name(), static_cast<int>(loc.line()), loc.function_name()}, toSpdlogLevel(level), message);
+    // spdlog routes std::exception sink failures through its error handler, but it
+    // rethrows anything that is not a std::exception. Swallow both, together with
+    // whatever formatting throws: logging is a diagnostic and must never decide
+    // what the caller does next.
+    try {
+        d->logger->log(spdlog::source_loc{loc.file_name(), static_cast<int>(loc.line()), loc.function_name()}, toSpdlogLevel(level), message);
+    }
+    catch (...) {
+        reportLoggingFailure();
+    }
+}
+
+void reportLoggingFailure() noexcept
+{
+    static std::atomic<bool> reported{ false };
+    if (reported.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+
+    // fputs does not throw, and stderr is used instead of the logging machinery
+    // because the logger is what failed here.
+    try {
+        std::fputs("[vine::logging] a logging operation failed; further logging failures are dropped\n", stderr);
+    }
+    catch (...) {
+    }
 }
 
 V_LOGGING_NS_END

@@ -33,7 +33,9 @@ struct LogConfig {
  * @brief Reconfigures the process-wide default logger.
  *
  * Rebuilds the logger from config, adding a colored console sink when sinks
- * is empty so the default logger always has at least one sink.
+ * is empty so the default logger always has at least one sink. This is the one
+ * logging entry point that may throw (the sinks are created here); once it
+ * returned, logging never throws again.
  *
  * @param config Logger configuration; defaults to console + Info level.
  */
@@ -42,9 +44,14 @@ V_LOGGING_API void initDefault(LogConfig config = {});
 /**
  * @brief Returns the process-wide default logger.
  *
+ * Never throws. The logger is built on first use (so a logger used by another
+ * translation unit's static initializer cannot run before this one); when even
+ * that fails the silent logger is returned instead, after reporting the failure
+ * once on stderr.
+ *
  * @return The default logger.
  */
-V_LOGGING_API Logger& defaultLogger();
+V_LOGGING_API Logger& defaultLogger() noexcept;
 
 /**
  * @brief Flushes the default logger.
@@ -63,6 +70,10 @@ V_LOGGING_NS_END
  *
  * Levels: V_LOGT(trace) V_LOGD(debug) V_LOGI(info)
  *         V_LOGW(warn)  V_LOGE(error) V_LOGC(critical)
+ *
+ * They never throw: formatting and sink failures are reported once on stderr and
+ * dropped, so macro logging is safe inside catch blocks, noexcept functions and
+ * detached coroutines.
  */
 #define V_LOGT(...) ::vine::logging::defaultLogger().trace(::std::source_location::current(), __VA_ARGS__)
 #define V_LOGD(...) ::vine::logging::defaultLogger().debug(::std::source_location::current(), __VA_ARGS__)

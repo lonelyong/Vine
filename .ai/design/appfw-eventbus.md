@@ -12,7 +12,10 @@
 2. **取消语义一致**：`unsubscribe()` / 句柄析构 / `shutdown()` / bus 析构 = 取消所有"尚未开始调用"
    的 handler（Current 与 Main 一致）；已开始的调用跑完，且任何 API 都不阻塞等待在飞投递。
 3. **不泄漏事件**：`shutdown()` 与 bus 析构立即释放排队投递持有的事件，不等事件循环。
-4. **异常不外逃**：handler 异常、日志异常、投递入队失败都不得穿出 `publish()`/队列回调/Qt 事件循环。
+4. **异常不外逃**：handler 异常与投递入队失败都不得穿出 `publish()`/队列回调/Qt 事件循环。
+   日志异常不再需要在这里预算——“日志发射路径永不抛”是 Logging 模块的契约（`Logger` 的级别函数、
+   `log()`、`defaultLogger()` 均 `noexcept`，失败一次性报告到 stderr），所以 `reportHandlerError`
+   里的日志调用不再包 try/catch。
 5. **锁内不跑用户代码**：handler 调用、handler 闭包析构、事件析构都在所有锁之外执行。
 
 ## 结构

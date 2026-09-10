@@ -107,17 +107,15 @@ void reportHandlerError(const std::shared_ptr<const EventBusErrorHandler>& handl
                         const std::exception*                         error,
                         std::exception_ptr                            error_ptr) noexcept
 {
-    try {
-        if (error != nullptr) {
-            V_LOGE("EventBus: subscriber '{}' threw: {}", state->id(), error->what());
-        }
-        else {
-            V_LOGE("EventBus: subscriber '{}' threw a non-standard exception", state->id());
-        }
+    // Logging cannot throw (see Logger: every level function is noexcept and reports
+    // a failure on stderr instead), so it needs no guard of its own here.
+    if (error != nullptr) {
+        V_LOGE("EventBus: subscriber '{}' threw: {}", state->id(), error->what());
     }
-    catch (...) {
-        // Logging must never break a delivery nor escape into the event loop.
+    else {
+        V_LOGE("EventBus: subscriber '{}' threw a non-standard exception", state->id());
     }
+
     if (handler == nullptr) {
         return;
     }

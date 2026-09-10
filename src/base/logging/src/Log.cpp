@@ -4,9 +4,21 @@
 
 V_LOGGING_NS_BEGIN
 
-Logger& defaultLogger()
+Logger& defaultLogger() noexcept
 {
-    static Logger s_logger("vine");
+    // Built on first use, so another translation unit's static initializer can
+    // safely log. A logger that cannot even be built (no memory, an unusable
+    // console) falls back to the silent logger: this path is noexcept, and the
+    // failure is reported once instead of propagating.
+    static Logger s_logger = []() noexcept {
+        try {
+            return Logger("vine");
+        }
+        catch (...) {
+            reportLoggingFailure();
+            return Logger{};
+        }
+    }();
     return s_logger;
 }
 

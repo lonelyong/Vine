@@ -38,10 +38,14 @@
 
 ## 最佳实践整理（第三轮）
 
-1. **日志永不改变行为**：三个级别共用一个 `logNoThrow`（`logInfoNoThrow`/`logWarnNoThrow`/`logErrorNoThrow` 是薄封装），
-   调用点传 `std::string_view`（`toUtf8View`，零分配），消息拼装在 noexcept 边界**内部**完成。
-   原因：这些调用位于 catch 块、detached 协程（抛出即 `std::terminate`）和命令执行途中，
-   之前的 `toUtf8(x) + ": " + e.what()` 会在调用方侧分配，一旦失败就会穿出 noexcept 边界。
+1. **日志不改变行为，且不靠本地封装保证**：调用点直接写裸 `V_LOGI/W/E`，参数一律传
+   `std::string_view`（`toUtf8View`，调用侧零分配）；“日志失败不会影响命令”由 **Logging 模块的契约**
+   承担——`Logger` 的级别函数/`log()`/`defaultLogger()` 全部 `noexcept`，失败经
+   `reportLoggingFailure()` 一次性报告到 stderr（见 `logging-module` 内存笔记）。
+   因此本模块早期的 `logNoThrow`/`logInfoNoThrow`/`logWarnNoThrow`/`logErrorNoThrow` 封装族与
+   `LogSeverity` 已删除（当初加它们是因为当时日志会抛：`vformat` 的 `bad_alloc`、
+   `defaultLogger()` 首次构造、spdlog 对非 `std::exception` 的 sink 异常会重抛）。
+   约定：**noexcept 路径上不要在建参数时做分配/拼接**（这正是仍保留 `toUtf8View` 的原因）。
 2. **异常消息有兜底**：`messageFromException()`（noexcept，失败返空串）+ `failureFromException()`
    在空 `what()` 时填充 `command threw an exception`，UI 不再可能拿到空失败消息。
 3. **`snapshot_handler` 纳入锁保护**（修复上一轮遗漏的数据竞争）：锁内取副本、锁外调用（用户代码）。

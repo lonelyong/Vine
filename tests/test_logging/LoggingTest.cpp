@@ -312,4 +312,40 @@ TEST(LogTest, InitWithFileSinkWritesToFile)
     std::filesystem::remove(path);
 }
 
+// 日志路径的异常安全契约：宏、级别函数、log() 与 defaultLogger() 都不抛。
+// 这几个 static_assert 让契约在编译期守住：一旦有人把 noexcept 去掉，这里先编译失败。
+static_assert(noexcept(defaultLogger()));
+static_assert(noexcept(std::declval<Logger&>().log(LogLevel::Info, std::string{})));
+static_assert(noexcept(std::declval<Logger&>().info("{}", 1)));
+static_assert(noexcept(std::declval<Logger&>().error(std::source_location::current(), "{}", 1)));
+static_assert(noexcept(V_LOGE("{}", 1)));
+
+// sink 抛出非 std::exception 时 spdlog 会重新抛出（它只对 std::exception 走错误处理器）。
+// 这种情况必须被日志层吞掉：否则在 catch 块/析构路径上调日志就会 terminate。
+TEST(LoggerTest, SinkThrowingNonStandardExceptionDoesNotPropagate)
+{
+    Logger logger("throwing",
+                  LogLevel::Info,
+                  { LogSink::function([](LogLevel, const std::string&) { throw 42; }) },
+                  "%v");
+
+    EXPECT_NO_THROW(logger.info("a sink that throws an int"));
+    EXPECT_NO_THROW(logger.log(LogLevel::Error, "a sink that throws an int"));
+    EXPECT_NO_THROW(logger.warn("a sink that throws an int"));
+}
+
+// 格式化失败（参数与格式串不匹配）也不得抛。
+TEST(LoggerTest, FormatMismatchDoesNotPropagate)
+{
+    std::string seen;
+    Logger      logger("mismatch",
+                       LogLevel::Info,
+                       { LogSink::function([&seen](LogLevel, const std::string& line) { seen = line; }) },
+                       "%v");
+
+    EXPECT_NO_THROW(logger.info("{} {}", 1));   // 少一个参数 ⇒ std::format_error
+    logger.info("ok {}", 7);
+    EXPECT_EQ(seen, "ok 7");
+}
+
 } // namespace

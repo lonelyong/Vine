@@ -80,94 +80,16 @@ constexpr bool hasFlag(CommandFlags value, CommandFlags bit) noexcept
     return (static_cast<std::uint32_t>(value) & static_cast<std::uint32_t>(bit)) != 0;
 }
 
-/// Views a String's UTF-8 bytes without allocating, for the noexcept log paths.
+/// Views a String's UTF-8 bytes without allocating.
+///
+/// Several log calls sit inside catch blocks and inside detached coroutines, where
+/// an allocation or a logger failure would turn a handled error into a
+/// std::terminate(). Logging guarantees the second half (see Logger: no level
+/// function, log() or defaultLogger() call throws); passing a view instead of a
+/// std::string keeps this side allocation-free as well.
 std::string_view toUtf8View(const String& s) noexcept
 {
     return { reinterpret_cast<const char*>(s.data()), s.size() };
-}
-
-/// Severity of a logNoThrow() message; the level macros cannot be selected dynamically.
-enum class LogSeverity { Info, Warning, Error };
-
-/**
- * @brief Logs one message, swallowing every logging failure.
- *
- * Logging must never decide what happens next: these calls run inside catch
- * blocks, inside detached coroutines (where a throw reaches DetachedTask and
- * terminates the process) and in the middle of a command, where a formatting
- * failure would otherwise turn a finished command into a failed one. The message
- * is assembled inside the guarded call, so nothing on the caller's side (argument
- * conversion included) can throw either.
- *
- * @param severity Level to report at.
- * @param context  Short description of what happened.
- * @param detail   Optional first detail, appended after a colon.
- * @param suffix   Optional second detail, appended after another colon.
- */
-void logNoThrow(LogSeverity severity, const char* context, std::string_view detail = {}, std::string_view suffix = {}) noexcept
-{
-    try {
-        std::string message{ context };
-        if (!detail.empty()) {
-            message += ": ";
-            message += detail;
-        }
-        if (!suffix.empty()) {
-            message += ": ";
-            message += suffix;
-        }
-
-        switch (severity) {
-        case LogSeverity::Info:
-            V_LOGI("{}", message);
-            break;
-        case LogSeverity::Warning:
-            V_LOGW("{}", message);
-            break;
-        case LogSeverity::Error:
-            V_LOGE("{}", message);
-            break;
-        }
-    }
-    catch (...) {
-        // A logger that cannot log is not allowed to become the caller's problem.
-    }
-}
-
-/**
- * @brief logNoThrow() at info level.
- *
- * @param context Short description of what happened.
- * @param detail  Optional first detail, appended after a colon.
- * @param suffix  Optional second detail, appended after another colon.
- */
-void logInfoNoThrow(const char* context, std::string_view detail = {}, std::string_view suffix = {}) noexcept
-{
-    logNoThrow(LogSeverity::Info, context, detail, suffix);
-}
-
-/**
- * @brief logNoThrow() at warning level.
- *
- * @param context Short description of what happened.
- * @param detail  Optional first detail, appended after a colon.
- * @param suffix  Optional second detail, appended after another colon.
- */
-void logWarnNoThrow(const char* context, std::string_view detail = {}, std::string_view suffix = {}) noexcept
-{
-    logNoThrow(LogSeverity::Warning, context, detail, suffix);
-}
-
-/**
- * @brief logNoThrow() at error level.
- *
- * @param context Short description of what happened.
- * @param detail  Optional first detail, appended after a colon.
- * @param suffix  Optional second detail, appended after another colon.
- */
-void logErrorNoThrow(const char* context, std::string_view detail = {}, std::string_view suffix = {}) noexcept
-{
-    logNoThrow(LogSeverity::Error, context, detail, suffix);
 }
 
 /// Builds the failure message of an exception; empty when even that cannot be built.
@@ -484,7 +406,7 @@ vine::async::Task<bool> CommandManager::Impl::takeOverForeground(const Command& 
 
     previous->stop_source.request_stop();
     if (!co_await waitDrained(*previous)) {
-        logErrorNoThrow("Exclusive command rejected: the running chain did not stop within the drain bound", toUtf8View(command.name()));
+        V_LOGE("Exclusive command rejected: the running chain did not stop within the drain bound: {}", toUtf8View(command.name()));
         co_return false;
     }
     co_return true;
@@ -518,13 +440,13 @@ bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, bool nested
 void CommandManager::Impl::report(CommandManager& owner, Command& command, const CommandResult& result)
 {
     if (result.succeeded()) {
-        logInfoNoThrow("Command succeeded", toUtf8View(command.name()));
+        V_LOGI("Command succeeded: {}", toUtf8View(command.name()));
     }
     else if (result.status() == CommandStatus::Cancelled) {
-        logWarnNoThrow("Command cancelled", toUtf8View(command.name()));
+        V_LOGW("Command cancelled: {}", toUtf8View(command.name()));
     }
     else {
-        logErrorNoThrow("Command failed", toUtf8View(command.name()), toUtf8View(result.message()));
+        V_LOGE("Command failed: {}: {}", toUtf8View(command.name()), toUtf8View(result.message()));
     }
 
     try {
@@ -532,10 +454,10 @@ void CommandManager::Impl::report(CommandManager& owner, Command& command, const
         owner.executed.trigger(owner, args);
     }
     catch (const std::exception& e) {
-        logErrorNoThrow("Executed event handler threw", e.what());
+        V_LOGE("Executed event handler threw: {}", e.what());
     }
     catch (...) {
-        logErrorNoThrow("Executed event handler threw");
+        V_LOGE("Executed event handler threw");
     }
 
     // Record the execution by value: the command instance is owned by the caller
@@ -555,10 +477,10 @@ void CommandManager::Impl::report(CommandManager& owner, Command& command, const
         history.push_back(entry);
     }
     catch (const std::exception& e) {
-        logErrorNoThrow("Failed to record the execution history", e.what());
+        V_LOGE("Failed to record the execution history: {}", e.what());
     }
     catch (...) {
-        logErrorNoThrow("Failed to record the execution history");
+        V_LOGE("Failed to record the execution history");
     }
 }
 
@@ -621,7 +543,7 @@ class CommandManager::Context : public CommandExecutionContext {
         // Bound the nesting so a command that calls itself can only exhaust the
         // chain's budget, not the process's coroutine frames.
         if (chain_->stackSize() >= CommandManager::maxChainDepth()) {
-            logErrorNoThrow("Command nesting is too deep; refusing child command", toUtf8View(name));
+            V_LOGE("Command nesting is too deep; refusing child command: {}", toUtf8View(name));
             co_return CommandResult(CommandStatus::Failed, String(u8"Command nesting is too deep"));
         }
 
@@ -632,11 +554,11 @@ class CommandManager::Context : public CommandExecutionContext {
             command = mgr_->createCommandByName(name);
         }
         catch (const std::exception& e) {
-            logErrorNoThrow("Child command factory threw", toUtf8View(name), e.what());
+            V_LOGE("Child command factory threw: {}: {}", toUtf8View(name), e.what());
             co_return failureFromException(e);
         }
         catch (...) {
-            logErrorNoThrow("Child command factory threw", toUtf8View(name));
+            V_LOGE("Child command factory threw: {}", toUtf8View(name));
             co_return CommandResult(CommandStatus::Failed, String(u8"command factory threw"));
         }
 
@@ -686,11 +608,11 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* co
         co_return CommandResult(CommandStatus::Cancelled, String(u8"命令已取消"));
     }
     catch (const std::exception& e) {
-        logErrorNoThrow("Command execution failed", e.what());
+        V_LOGE("Command execution failed: {}", e.what());
         co_return failureFromException(e);
     }
     catch (...) {
-        logErrorNoThrow("Command execution failed with a non-standard exception");
+        V_LOGE("Command execution failed with a non-standard exception");
         co_return CommandResult(CommandStatus::Failed, String(u8"command execution failed"));
     }
 }
@@ -728,7 +650,7 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
     if (!d->admit(flags, exclusive, nested, chain)) {
         // Visible for the callers that cannot read the result: a detached command
         // that is refused would otherwise fail silently.
-        logWarnNoThrow("Command refused by the serialization gate", toUtf8View(command->name()));
+        V_LOGW("Command refused by the serialization gate: {}", toUtf8View(command->name()));
         co_return CommandResult(CommandStatus::Failed, String(u8"Another operation is in progress"));
     }
 
@@ -771,7 +693,7 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
 
     chain->enter(command);
 
-    logInfoNoThrow("Executing command", toUtf8View(command->name()));
+    V_LOGI("Executing command: {}", toUtf8View(command->name()));
 
     // Leaves the chain's stack when the command completes, keeping the manager
     // usable. The chain outlives this frame — the shared_ptr parameter is
@@ -804,11 +726,11 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
             snapshot_handler();
         }
         catch (const std::exception& e) {
-            logErrorNoThrow("Snapshot handler failed; command not executed", e.what());
+            V_LOGE("Snapshot handler failed; command not executed: {}", e.what());
             co_return failureFromException(e);
         }
         catch (...) {
-            logErrorNoThrow("Snapshot handler failed; command not executed");
+            V_LOGE("Snapshot handler failed; command not executed");
             co_return CommandResult(CommandStatus::Failed, String(u8"snapshot handler failed"));
         }
     }
@@ -821,10 +743,10 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
         executing.trigger(*this, args);
     }
     catch (const std::exception& e) {
-        logErrorNoThrow("Executing event handler threw", e.what());
+        V_LOGE("Executing event handler threw: {}", e.what());
     }
     catch (...) {
-        logErrorNoThrow("Executing event handler threw");
+        V_LOGE("Executing event handler threw");
     }
 
     CommandResult result;
@@ -847,11 +769,11 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
         // Anything else is reported as a Failed outcome instead of propagating:
         // commands are started from UI event handlers and from detached tasks
         // where an escaping exception terminates the process.
-        logErrorNoThrow("Command threw an exception", toUtf8View(command->name()), e.what());
+        V_LOGE("Command threw an exception: {}: {}", toUtf8View(command->name()), e.what());
         result = failureFromException(e);
     }
     catch (...) {
-        logErrorNoThrow("Command threw a non-standard exception", toUtf8View(command->name()));
+        V_LOGE("Command threw a non-standard exception: {}", toUtf8View(command->name()));
         result = CommandResult(CommandStatus::Failed, String(u8"command threw an exception"));
     }
 
@@ -873,11 +795,11 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsync(const Strin
         co_return CommandResult(CommandStatus::Cancelled, String(u8"命令已取消"));
     }
     catch (const std::exception& e) {
-        logErrorNoThrow("Command execution failed", e.what());
+        V_LOGE("Command execution failed: {}", e.what());
         co_return failureFromException(e);
     }
     catch (...) {
-        logErrorNoThrow("Command execution failed with a non-standard exception");
+        V_LOGE("Command execution failed with a non-standard exception");
         co_return CommandResult(CommandStatus::Failed, String(u8"command execution failed"));
     }
 }
@@ -893,10 +815,10 @@ void CommandManager::executeDetached(const String& name)
             (void)co_await std::move(task);
         }
         catch (const std::exception& e) {
-            logErrorNoThrow("Detached command failed", e.what());
+            V_LOGE("Detached command failed: {}", e.what());
         }
         catch (...) {
-            logErrorNoThrow("Detached command failed with a non-standard exception");
+            V_LOGE("Detached command failed with a non-standard exception");
         }
     }(executeCommandAsync(name));
 }
@@ -979,7 +901,7 @@ void CommandManager::clearHistory()
 bool CommandManager::registerCommand(TypeId command_class, String name, std::function<Command*()> factory)
 {
     if (name.empty() || !factory) {
-        logWarnNoThrow("Ignoring command registration with an empty name or an empty factory");
+        V_LOGW("Ignoring command registration with an empty name or an empty factory");
         return false;
     }
 
@@ -1007,14 +929,14 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
             description = probe->description();
         }
         else {
-            logWarnNoThrow("Command factory returned no instance; listing metadata stays empty", toUtf8View(name));
+            V_LOGW("Command factory returned no instance; listing metadata stays empty: {}", toUtf8View(name));
         }
     }
     catch (const std::exception& e) {
-        logWarnNoThrow("Command factory threw during the metadata probe", toUtf8View(name), e.what());
+        V_LOGW("Command factory threw during the metadata probe: {}: {}", toUtf8View(name), e.what());
     }
     catch (...) {
-        logWarnNoThrow("Command factory threw during the metadata probe", toUtf8View(name));
+        V_LOGW("Command factory threw during the metadata probe: {}", toUtf8View(name));
     }
 
     std::lock_guard<std::mutex> lock(d->registry_mutex);
@@ -1065,7 +987,7 @@ bool CommandManager::registerAlias(const String& alias, const String& target)
     std::lock_guard<std::mutex> lock(d->registry_mutex);
     const bool                  inserted = d->aliases.emplace(alias, target).second;
     if (!inserted) {
-        logWarnNoThrow("Alias already registered, ignoring target", toUtf8View(alias), toUtf8View(target));
+        V_LOGW("Alias already registered, ignoring target: {} -> {}", toUtf8View(alias), toUtf8View(target));
     }
     return inserted;
 }
