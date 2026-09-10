@@ -249,7 +249,7 @@ void InputBox::confirm()
     for (const auto& entry : data->rows) {
         QString error;
         if (!readField(*entry.field, entry.editor, error)) {
-            MessageBox::warning(impl<QDialog>(), String(), Convert::fromQString(error));
+            MessageBox::warning(this, String(), Convert::fromQString(error));
             return;
         }
     }

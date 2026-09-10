@@ -40,8 +40,7 @@ QColor toQColor(const Color& c)
 /**
  * @brief Single-line input routing Up/Down/Tab/Esc to the panel.
  */
-class InputLine : public QLineEdit
-{
+class InputLine : public QLineEdit {
   public:
     using QLineEdit::QLineEdit;
 
@@ -53,34 +52,28 @@ class InputLine : public QLineEdit
   protected:
     void keyPressEvent(QKeyEvent* e) override
     {
-        switch (e->key())
-        {
+        switch (e->key()) {
         case Qt::Key_Escape:
-            if (onEscape)
-            {
+            if (onEscape) {
                 onEscape();
             }
             return;
         case Qt::Key_Up:
-            if (onHistoryUp)
-            {
+            if (onHistoryUp) {
                 onHistoryUp();
             }
             return;
         case Qt::Key_Down:
-            if (onHistoryDown)
-            {
+            if (onHistoryDown) {
                 onHistoryDown();
             }
             return;
         case Qt::Key_Tab:
-            if (onTab)
-            {
+            if (onTab) {
                 onTab();
             }
             return;
-        default:
-            break;
+        default: break;
         }
         QLineEdit::keyPressEvent(e);
     }
@@ -97,32 +90,26 @@ namespace
  * A Qt::Tool window (unlike Qt::Popup) does not grab the mouse, so outside
  * clicks are detected with an application-wide event filter instead.
  */
-class SuggestCloseFilter : public QObject
-{
+class SuggestCloseFilter : public QObject {
   public:
     QListWidget* popup = nullptr;
 
   protected:
     bool eventFilter(QObject* watched, QEvent* e) override
     {
-        if (popup == nullptr || !popup->isVisible())
-        {
+        if (popup == nullptr || !popup->isVisible()) {
             return QObject::eventFilter(watched, e);
         }
 
-        if (e->type() == QEvent::MouseButtonPress)
-        {
+        if (e->type() == QEvent::MouseButtonPress) {
             auto* me = static_cast<QMouseEvent*>(e);
-            if (!popup->geometry().contains(me->globalPosition().toPoint()))
-            {
+            if (!popup->geometry().contains(me->globalPosition().toPoint())) {
                 popup->hide();
             }
         }
-        else if (e->type() == QEvent::KeyPress)
-        {
+        else if (e->type() == QEvent::KeyPress) {
             auto* ke = static_cast<QKeyEvent*>(e);
-            if (ke->key() == Qt::Key_Escape)
-            {
+            if (ke->key() == Qt::Key_Escape) {
                 // Consume the first Escape: it only closes the popup.
                 popup->hide();
                 return true;
@@ -136,8 +123,7 @@ class SuggestCloseFilter : public QObject
 
 V_OBJECT_META_IMPL(ConsolePanel, Control)
 
-struct ConsolePanel::Impl : public UIElementData
-{
+struct ConsolePanel::Impl : public UIElementData {
     /// Owning panel, used by the input handlers to trigger signals.
     ConsolePanel*   panel  = nullptr;
     QPlainTextEdit* output = nullptr;
@@ -208,10 +194,9 @@ ConsolePanel::ConsolePanel(QWidget* parent)
     data->suggest->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     data->suggest->hide();
 
-    data->suggest_filter = std::make_unique<SuggestCloseFilter>();
+    data->suggest_filter        = std::make_unique<SuggestCloseFilter>();
     data->suggest_filter->popup = data->suggest.get();
-    if (auto* app = QCoreApplication::instance())
-    {
+    if (auto* app = QCoreApplication::instance()) {
         app->installEventFilter(data->suggest_filter.get());
     }
 
@@ -298,18 +283,12 @@ void ConsolePanel::applyAppTheme()
 
 QColor ConsolePanel::Impl::colorFor(ConsoleMessageType type) const
 {
-    switch (type)
-    {
-    case ConsoleMessageType::Command:
-        return toQColor(theme.command);
-    case ConsoleMessageType::Prompt:
-        return toQColor(theme.prompt);
-    case ConsoleMessageType::Warning:
-        return toQColor(theme.warning);
-    case ConsoleMessageType::Error:
-        return toQColor(theme.error);
-    default:
-        return toQColor(theme.normal);
+    switch (type) {
+    case ConsoleMessageType::Command: return toQColor(theme.command);
+    case ConsoleMessageType::Prompt: return toQColor(theme.prompt);
+    case ConsoleMessageType::Warning: return toQColor(theme.warning);
+    case ConsoleMessageType::Error: return toQColor(theme.error);
+    default: return toQColor(theme.normal);
     }
 }
 
@@ -317,8 +296,7 @@ void ConsolePanel::Impl::appendFormatted(ConsoleMessageType type, const String& 
 {
     QTextCharFormat fmt;
     fmt.setForeground(colorFor(type));
-    if (type == ConsoleMessageType::Command || type == ConsoleMessageType::Prompt)
-    {
+    if (type == ConsoleMessageType::Command || type == ConsoleMessageType::Prompt) {
         fmt.setFontWeight(QFont::Bold);
     }
 
@@ -332,43 +310,36 @@ void ConsolePanel::Impl::appendFormatted(ConsoleMessageType type, const String& 
 void ConsolePanel::Impl::onTextChanged()
 {
     const String current = Convert::fromQString(input->text());
-    if (current.empty())
-    {
+    if (current.empty()) {
         // An empty prompt hides the popup; otherwise clearing the input after
         // running a command would match every command and re-show the popup.
         matches.clear();
         suggest->hide();
         return;
     }
-    matches       = completer.complete(current);
+    matches = completer.complete(current);
     updateSuggest();
 }
 
 void ConsolePanel::Impl::updateSuggest()
 {
-    if (matches.empty())
-    {
+    if (matches.empty()) {
         suggest->hide();
         return;
     }
 
     suggest->clear();
-    for (const auto& entry : matches)
-    {
+    for (const auto& entry : matches) {
         // VS Code-style "source: name", e.g. "app_shell: show_plugins".
         QString text = Convert::toQString(entry.name);
-        if (!entry.source.empty())
-        {
+        if (!entry.source.empty()) {
             text = Convert::toQString(entry.source) + QStringLiteral(": ") + text;
         }
-        if (!entry.aliases.empty())
-        {
+        if (!entry.aliases.empty()) {
             QString aliases;
             bool    first = true;
-            for (const auto& alias : entry.aliases)
-            {
-                if (!first)
-                {
+            for (const auto& alias : entry.aliases) {
+                if (!first) {
                     aliases += QStringLiteral(", ");
                 }
                 aliases += Convert::toQString(alias);
@@ -376,8 +347,7 @@ void ConsolePanel::Impl::updateSuggest()
             }
             text += QStringLiteral(" (") + aliases + QStringLiteral(")");
         }
-        if (!entry.description.empty())
-        {
+        if (!entry.description.empty()) {
             text += QStringLiteral("  ") + Convert::toQString(entry.description);
         }
         suggest->addItem(text);
@@ -388,8 +358,7 @@ void ConsolePanel::Impl::updateSuggest()
     const int height = static_cast<int>(matches.size()) * 22 + 4;
     suggest->setFixedHeight(std::min(height, 220));
 
-    if (!suggest->isVisible())
-    {
+    if (!suggest->isVisible()) {
         suggest->show();
         suggest->raise();
     }
@@ -397,11 +366,9 @@ void ConsolePanel::Impl::updateSuggest()
     // Position the popup right below the input line; flip it above when it
     // would run off the bottom of the screen, and clamp it to the screen.
     QPoint pos = input->mapToGlobal(QPoint(0, input->height() + 2));
-    if (QScreen* scr = input->window() ? input->window()->screen() : nullptr)
-    {
+    if (QScreen* scr = input->window() ? input->window()->screen() : nullptr) {
         const QRect avail = scr->availableGeometry();
-        if (pos.y() + suggest->height() > avail.bottom())
-        {
+        if (pos.y() + suggest->height() > avail.bottom()) {
             pos.setY(input->mapToGlobal(QPoint(0, 0)).y() - suggest->height() - 2);
         }
         pos.setX(std::clamp(pos.x(), avail.left(), avail.right() - suggest->width()));
@@ -414,8 +381,7 @@ void ConsolePanel::Impl::updateSuggest()
 
 void ConsolePanel::Impl::onEscape()
 {
-    if (suggest->isVisible())
-    {
+    if (suggest->isVisible()) {
         suggest->hide();
         return;
     }
@@ -425,34 +391,26 @@ void ConsolePanel::Impl::onEscape()
 void ConsolePanel::Impl::onReturnPressed()
 {
     String text = Convert::fromQString(input->text());
-    if (suggest->isVisible() && suggest->currentRow() >= 0
-        && suggest->currentRow() < static_cast<int>(matches.size()))
-    {
+    if (suggest->isVisible() && suggest->currentRow() >= 0 && suggest->currentRow() < static_cast<int>(matches.size())) {
         // Keep the typed text when it is already a complete command or alias;
         // otherwise run the highlighted suggestion's canonical name.
         bool exact = false;
-        for (const auto& m : matches)
-        {
-            if (m.name == text)
-            {
+        for (const auto& m : matches) {
+            if (m.name == text) {
                 exact = true;
                 break;
             }
-            for (const auto& a : m.aliases)
-            {
-                if (a == text)
-                {
+            for (const auto& a : m.aliases) {
+                if (a == text) {
                     exact = true;
                     break;
                 }
             }
-            if (exact)
-            {
+            if (exact) {
                 break;
             }
         }
-        if (!exact)
-        {
+        if (!exact) {
             text = matches[suggest->currentRow()].name;
         }
     }
@@ -464,26 +422,23 @@ void ConsolePanel::Impl::onReturnPressed()
 
 void ConsolePanel::Impl::onHistoryUp()
 {
-    if (suggest->isVisible())
-    {
+    if (suggest->isVisible()) {
         const int row = suggest->currentRow();
         suggest->setCurrentRow(row > 0 ? row - 1 : 0);
         return;
     }
     const String current = Convert::fromQString(input->text());
     const String cmd     = history.previous(current);
-    if (!cmd.empty())
-    {
+    if (!cmd.empty()) {
         input->setText(Convert::toQString(cmd));
     }
 }
 
 void ConsolePanel::Impl::onHistoryDown()
 {
-    if (suggest->isVisible())
-    {
-        const int row    = suggest->currentRow();
-        const int last   = suggest->count() - 1;
+    if (suggest->isVisible()) {
+        const int row  = suggest->currentRow();
+        const int last = suggest->count() - 1;
         suggest->setCurrentRow(row >= 0 && row < last ? row + 1 : row);
         return;
     }
@@ -493,13 +448,11 @@ void ConsolePanel::Impl::onHistoryDown()
 
 void ConsolePanel::Impl::onTab()
 {
-    if (matches.empty())
-    {
+    if (matches.empty()) {
         return;
     }
     const int row = suggest->currentRow() >= 0 ? suggest->currentRow() : 0;
-    if (row >= 0 && row < static_cast<int>(matches.size()))
-    {
+    if (row >= 0 && row < static_cast<int>(matches.size())) {
         input->setText(Convert::toQString(matches[row].name));
         input->setCursorPosition(input->text().size());
     }

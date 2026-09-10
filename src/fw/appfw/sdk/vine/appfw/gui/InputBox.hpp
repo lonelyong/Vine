@@ -46,17 +46,18 @@ class V_APPFW_API InputBox : public Window {
     /// The kind of editor used for a field.
     enum class Kind
     {
-        String, ///< Single-line text editor (QLineEdit).
-        Int,    ///< Integer spin box (QSpinBox).
-        Double, ///< Double spin box (QDoubleSpinBox).
-        Index   ///< Drop-down list (QComboBox).
+        String, // Single-line text editor (QLineEdit).
+        Int,    // Integer spin box (QSpinBox).
+        Double, // Double spin box (QDoubleSpinBox).
+        Index   // Drop-down list (QComboBox).
     };
 
     /// Common base of every concrete field definition.
     struct Field {
-        Kind   kind;     ///< Editor kind; matches the concrete derived type.
-        String label;    ///< Row label shown left of the editor.
-        bool   required; ///< Rejects an empty text or a missing selection.
+        Kind   kind;               // Editor kind; matches the concrete derived type.
+        String label;              // Row label shown left of the editor.
+        String validation_message; // Validation error message shown when the field is rejected.
+        bool   required;           // Rejects an empty text or a missing selection.
 
       protected:
         Field(Kind kind, String label, bool required);
@@ -77,10 +78,10 @@ class V_APPFW_API InputBox : public Window {
          * @param max_len   Maximum accepted length.
          */
         StringField(String label, String def_value = {}, bool required = true, int min_len = 1, int max_len = 100);
-        String                def_value; ///< Initial text of the editor.
-        int                   min_len;   ///< Minimum accepted length (non-empty input only).
-        int                   max_len;   ///< Maximum accepted length.
-        std::optional<String> value;     ///< Entered text; set when accepted.
+        String                def_value; // Initial text of the editor.
+        int                   min_len;   // Minimum accepted length (non-empty input only).
+        int                   max_len;   // Maximum accepted length.
+        std::optional<String> value;     // Entered text; set when accepted.
     };
 
     /**
@@ -103,11 +104,11 @@ class V_APPFW_API InputBox : public Window {
                  int    min_val   = std::numeric_limits<int>::min(),
                  int    max_val   = std::numeric_limits<int>::max(),
                  int    step      = 0);
-        int                def_value; ///< Initial value of the editor.
-        int                min_val;   ///< Lower range bound (inclusive).
-        int                max_val;   ///< Upper range bound (inclusive).
-        int                step;      ///< Arrow step; 0 uses one tenth of the range.
-        std::optional<int> value;     ///< Entered value; set when accepted.
+        int                def_value; // Initial value of the editor.
+        int                min_val;   // Lower range bound (inclusive).
+        int                max_val;   // Upper range bound (inclusive).
+        int                step;      // Arrow step; 0 uses one tenth of the range.
+        std::optional<int> value;     // Entered value; set when accepted.
     };
 
     /**
@@ -132,12 +133,12 @@ class V_APPFW_API InputBox : public Window {
                     double max_val   = 1e6,
                     int    decimals  = 2,
                     double step      = 0.0);
-        double                def_value; ///< Initial value of the editor.
-        double                min_val;   ///< Lower range bound (inclusive).
-        double                max_val;   ///< Upper range bound (inclusive).
-        int                   decimals;  ///< Number of decimals displayed.
-        double                step;      ///< Arrow step; 0 uses one tenth of the range.
-        std::optional<double> value;     ///< Entered value; set when accepted.
+        double                def_value; // Initial value of the editor.
+        double                min_val;   // Lower range bound (inclusive).
+        double                max_val;   // Upper range bound (inclusive).
+        int                   decimals;  // Number of decimals displayed.
+        double                step;      // Arrow step; 0 uses one tenth of the range.
+        std::optional<double> value;     // Entered value; set when accepted.
     };
 
     /**
@@ -154,9 +155,9 @@ class V_APPFW_API InputBox : public Window {
          * @param items     Choices shown in the combo box.
          */
         IndexField(String label, int def_value = 0, bool required = true, std::vector<String> items = {});
-        int                 def_value; ///< Initial selection; -1 selects nothing.
-        std::vector<String> items;     ///< Choices shown in the combo box.
-        std::optional<int>  value;     ///< Selected index; set when accepted.
+        int                 def_value; // Initial selection; -1 selects nothing.
+        std::vector<String> items;     // Choices shown in the combo box.
+        std::optional<int>  value;     // Selected index; set when accepted.
     };
 
   public:

@@ -21,7 +21,7 @@ class V_APPFW_API Window : public Control {
 
   public:
     explicit Window(QWidget* native, bool owns = true);
-    virtual ~Window();
+    ~Window() override;
 
   public:
     /// Window title.
@@ -29,6 +29,7 @@ class V_APPFW_API Window : public Control {
     String windowTitle() const;
     /// Window modality (setWindowModality).
     void setModal(bool on);
+    /// Whether the window is modal (windowModality).
     bool modal() const;
     /// Shows the window (non-modal).
     void show();

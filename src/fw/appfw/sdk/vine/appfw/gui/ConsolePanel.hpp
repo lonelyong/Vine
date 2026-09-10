@@ -32,8 +32,7 @@ struct ConsoleCommandEntry {
  * offers up/down history and Tab completion, and reports Enter/Escape through
  * signals. It knows nothing about commands or business logic.
  */
-class V_APPFW_API ConsolePanel : public Control
-{
+class V_APPFW_API ConsolePanel : public Control {
     V_OBJECT_META_DECL
 
   public:

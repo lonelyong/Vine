@@ -27,10 +27,7 @@ class V_APPFW_API UIElement : public Object {
     String       name() const;
     virtual void setName(const String& name);
 
-  public:
-    const Event<UIElement, PropertyChangedEventArgs<String>> name_changed;
 
-    // protected:
     virtual UIObject* impl() const;
 
     template <typename TImpl>
@@ -40,6 +37,9 @@ class V_APPFW_API UIElement : public Object {
     }
 
     void setOwnsImpl(bool owns);
+
+  public:
+    const Event<UIElement, PropertyChangedEventArgs<String>> name_changed;
 
   protected:
     UIElementData* const d;

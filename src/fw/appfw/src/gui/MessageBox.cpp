@@ -21,14 +21,14 @@ namespace
  * @param icon Framework icon to map.
  * @return The equivalent Qt message box icon.
  */
-QMessageBox::Icon toQtIcon(MessageBox::Icon icon)
+QMessageBox::Icon toQtIcon(MessageBoxIcon icon)
 {
     switch (icon) {
-    case MessageBox::Icon::Information: return QMessageBox::Information;
-    case MessageBox::Icon::Warning: return QMessageBox::Warning;
-    case MessageBox::Icon::Critical: return QMessageBox::Critical;
-    case MessageBox::Icon::Question: return QMessageBox::Question;
-    case MessageBox::Icon::None: break;
+    case MessageBoxIcon::Information: return QMessageBox::Information;
+    case MessageBoxIcon::Warning: return QMessageBox::Warning;
+    case MessageBoxIcon::Critical: return QMessageBox::Critical;
+    case MessageBoxIcon::Question: return QMessageBox::Question;
+    case MessageBoxIcon::None: break;
     }
     return QMessageBox::NoIcon;
 }
@@ -39,19 +39,22 @@ QMessageBox::Icon toQtIcon(MessageBox::Icon icon)
  * @param buttons Framework button preset to map.
  * @return The equivalent Qt standard buttons.
  */
-QMessageBox::StandardButtons toQtButtons(MessageBox::Button buttons)
+QMessageBox::StandardButtons toQtButtons(MessageBoxButton buttons)
 {
-    switch (buttons) {
-    case MessageBox::Button::Ok: return QMessageBox::Ok;
-    case MessageBox::Button::Cancel: return QMessageBox::Cancel;
-    case MessageBox::Button::OkCancel: return QMessageBox::Ok | QMessageBox::Cancel;
-    case MessageBox::Button::Yes: return QMessageBox::Yes;
-    case MessageBox::Button::No: return QMessageBox::No;
-    case MessageBox::Button::YesNo: return QMessageBox::Yes | QMessageBox::No;
-    case MessageBox::Button::YesNoCancel:
-        return QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel;
+    QMessageBox::StandardButtons qbuttons = QMessageBox::NoButton;
+    if (!!(buttons & MessageBoxButton::Ok)) {
+        qbuttons |= QMessageBox::Ok;
     }
-    return QMessageBox::NoButton;
+    if (!!(buttons & MessageBoxButton::Cancel)) {
+        qbuttons |= QMessageBox::Cancel;
+    }
+    if (!!(buttons & MessageBoxButton::Yes)) {
+        qbuttons |= QMessageBox::Yes;
+    }
+    if (!!(buttons & MessageBoxButton::No)) {
+        qbuttons |= QMessageBox::No;
+    }
+    return qbuttons;
 }
 
 /**
@@ -62,13 +65,13 @@ QMessageBox::StandardButtons toQtButtons(MessageBox::Button buttons)
  * @param button Framework button to map.
  * @return The equivalent Qt standard button, or NoButton for combinations.
  */
-QMessageBox::StandardButton toQtDefaultButton(MessageBox::Button button)
+QMessageBox::StandardButton toQtDefaultButton(MessageBoxButton button)
 {
     switch (button) {
-    case MessageBox::Button::Ok: return QMessageBox::Ok;
-    case MessageBox::Button::Cancel: return QMessageBox::Cancel;
-    case MessageBox::Button::Yes: return QMessageBox::Yes;
-    case MessageBox::Button::No: return QMessageBox::No;
+    case MessageBoxButton::Ok: return QMessageBox::Ok;
+    case MessageBoxButton::Cancel: return QMessageBox::Cancel;
+    case MessageBoxButton::Yes: return QMessageBox::Yes;
+    case MessageBoxButton::No: return QMessageBox::No;
     default: break;
     }
     return QMessageBox::NoButton;
@@ -83,16 +86,16 @@ QMessageBox::StandardButton toQtDefaultButton(MessageBox::Button button)
  * @param qbutton Qt standard button that was clicked.
  * @return The equivalent framework button.
  */
-MessageBox::Button toVineButton(QMessageBox::StandardButton qbutton)
+MessageBoxButton toVineButton(QMessageBox::StandardButton qbutton)
 {
     switch (qbutton) {
-    case QMessageBox::Ok: return MessageBox::Button::Ok;
-    case QMessageBox::Cancel: return MessageBox::Button::Cancel;
-    case QMessageBox::Yes: return MessageBox::Button::Yes;
-    case QMessageBox::No: return MessageBox::Button::No;
+    case QMessageBox::Ok: return MessageBoxButton::Ok;
+    case QMessageBox::Cancel: return MessageBoxButton::Cancel;
+    case QMessageBox::Yes: return MessageBoxButton::Yes;
+    case QMessageBox::No: return MessageBoxButton::No;
     default: break;
     }
-    return MessageBox::Button::Cancel;
+    return MessageBoxButton::Cancel;
 }
 
 /**
@@ -106,17 +109,21 @@ MessageBox::Button toVineButton(QMessageBox::StandardButton qbutton)
  * @return The value produced by the function; Cancel when no application
  * exists.
  */
-MessageBox::Button runOnGuiThread(const std::function<MessageBox::Button()>& fn)
+MessageBoxButton runOnGuiThread(const std::function<MessageBoxButton()>& fn)
 {
     QCoreApplication* app = QCoreApplication::instance();
     if (!app) {
-        return MessageBox::Button::Cancel;
+        return MessageBoxButton::Cancel;
     }
+
     if (QThread::currentThread() == app->thread()) {
         return fn();
     }
-    MessageBox::Button result = MessageBox::Button::Cancel;
-    QMetaObject::invokeMethod(app, [&result, &fn] { result = fn(); }, Qt::BlockingQueuedConnection);
+
+    MessageBoxButton result = MessageBoxButton::Cancel;
+
+    QMetaObject::invokeMethod(app, [&result, &fn]() { result = fn(); }, Qt::BlockingQueuedConnection);
+
     return result;
 }
 
@@ -132,12 +139,11 @@ MessageBox::Button runOnGuiThread(const std::function<MessageBox::Button()>& fn)
  * @param has_default   Whether an explicit default button was requested.
  * @return The button the user clicked.
  */
-MessageBox::Button runBox(QWidget* parent, const String& title, const String& text,
-                          MessageBox::Icon icon, MessageBox::Button buttons,
-                          MessageBox::Button default_button, bool has_default)
+MessageBoxButton
+runBox(Window* owner, const String& title, const String& text, MessageBoxIcon icon, MessageBoxButton buttons, MessageBoxButton default_button, bool has_default)
 {
-    return runOnGuiThread([parent, title, text, icon, buttons, default_button, has_default] {
-        MessageBox box(parent);
+    return runOnGuiThread([=]() -> MessageBoxButton {
+        MessageBox box(owner);
         box.setWindowTitle(title);
         box.setText(text);
         box.setIcon(icon);
@@ -154,15 +160,15 @@ MessageBox::Button runBox(QWidget* parent, const String& title, const String& te
 V_OBJECT_META_IMPL(MessageBox, Window)
 
 struct MessageBox::Impl : public UIElementData {
-    String text;
-    Icon   icon            = Icon::None;
-    Button buttons         = Button::Ok;
-    bool   has_default_btn = false;
-    Button default_button  = Button::No;
+    String           text;
+    MessageBoxIcon   icon            = MessageBoxIcon::None;
+    MessageBoxButton buttons         = MessageBoxButton::Ok;
+    bool             has_default_btn = false;
+    MessageBoxButton default_button  = MessageBoxButton::No;
 };
 
-MessageBox::MessageBox(QWidget* parent)
-  : Window(new Impl(), new QMessageBox(parent))
+MessageBox::MessageBox(Window* owner)
+  : Window(new Impl(), new QMessageBox(owner ? owner->impl<QWidget>() : nullptr))
 {
     apply();
 }
@@ -183,31 +189,31 @@ String MessageBox::text() const
     return dptr()->text;
 }
 
-void MessageBox::setIcon(Icon icon)
+void MessageBox::setIcon(MessageBoxIcon icon)
 {
     dptr()->icon = icon;
     apply();
 }
 
-MessageBox::Icon MessageBox::icon() const
+MessageBoxIcon MessageBox::icon() const
 {
     return dptr()->icon;
 }
 
-void MessageBox::setButtons(Button buttons)
+void MessageBox::setButtons(MessageBoxButton buttons)
 {
     dptr()->buttons = buttons;
     apply();
 }
 
-MessageBox::Button MessageBox::buttons() const
+MessageBoxButton MessageBox::buttons() const
 {
     return dptr()->buttons;
 }
 
-void MessageBox::setDefaultButton(Button button)
+void MessageBox::setDefaultButton(MessageBoxButton button)
 {
-    auto* data      = dptr();
+    auto* data            = dptr();
     data->has_default_btn = true;
     data->default_button  = button;
     apply();
@@ -218,7 +224,7 @@ bool MessageBox::hasDefaultButton() const
     return dptr()->has_default_btn;
 }
 
-MessageBox::Button MessageBox::exec()
+MessageBoxButton MessageBox::exec()
 {
     apply();
     auto* native = impl<QMessageBox>();
@@ -227,40 +233,32 @@ MessageBox::Button MessageBox::exec()
 
 void MessageBox::apply()
 {
-    auto*  data   = dptr();
-    auto*  native = impl<QMessageBox>();
+    auto* data   = dptr();
+    auto* native = impl<QMessageBox>();
     native->setText(Convert::toQString(data->text));
     native->setIcon(toQtIcon(data->icon));
     native->setStandardButtons(toQtButtons(data->buttons));
     native->setDefaultButton(data->has_default_btn ? toQtDefaultButton(data->default_button) : QMessageBox::NoButton);
 }
 
-MessageBox::Button MessageBox::information(QWidget* parent, const String& title, const String& text,
-                                           Button buttons)
+MessageBoxButton MessageBox::information(Window* owner, const String& title, const String& text, MessageBoxButton buttons)
 {
-    return runBox(parent, title.empty() ? String(u8"提示") : title, text,
-                  Icon::Information, buttons, Button::No, false);
+    return runBox(owner, title.empty() ? String(u8"提示") : title, text, MessageBoxIcon::Information, buttons, MessageBoxButton::No, false);
 }
 
-MessageBox::Button MessageBox::warning(QWidget* parent, const String& title, const String& text,
-                                       Button buttons)
+MessageBoxButton MessageBox::warning(Window* owner, const String& title, const String& text, MessageBoxButton buttons)
 {
-    return runBox(parent, title.empty() ? String(u8"警告") : title, text,
-                  Icon::Warning, buttons, Button::No, false);
+    return runBox(owner, title.empty() ? String(u8"警告") : title, text, MessageBoxIcon::Warning, buttons, MessageBoxButton::No, false);
 }
 
-MessageBox::Button MessageBox::critical(QWidget* parent, const String& title, const String& text,
-                                        Button buttons)
+MessageBoxButton MessageBox::critical(Window* owner, const String& title, const String& text, MessageBoxButton buttons)
 {
-    return runBox(parent, title.empty() ? String(u8"错误") : title, text,
-                  Icon::Critical, buttons, Button::No, false);
+    return runBox(owner, title.empty() ? String(u8"错误") : title, text, MessageBoxIcon::Critical, buttons, MessageBoxButton::No, false);
 }
 
-MessageBox::Button MessageBox::question(QWidget* parent, const String& title, const String& text,
-                                        Button buttons, Button default_button)
+MessageBoxButton MessageBox::question(Window* owner, const String& title, const String& text, MessageBoxButton buttons, MessageBoxButton default_button)
 {
-    return runBox(parent, title.empty() ? String(u8"请确认") : title, text,
-                  Icon::Question, buttons, default_button, true);
+    return runBox(owner, title.empty() ? String(u8"请确认") : title, text, MessageBoxIcon::Question, buttons, default_button, true);
 }
 
 inline auto MessageBox::dptr() -> Impl*

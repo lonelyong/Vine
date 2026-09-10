@@ -27,7 +27,7 @@ class V_APPFW_API Control : public UIElement {
 
   public:
     explicit Control(QWidget* native, bool owns = true);
-    virtual ~Control();
+    ~Control() override;
 
   public:
     /// Whether the control is enabled.
