@@ -18,10 +18,11 @@ class EventBus;
  * Declared per subscription; different subscribers of the same event may use
  * different modes. Aligned with greenrobot ThreadMode / Qt ConnectionType.
  */
-enum class SubscriptionThreadMode {
-    Current,  ///< Call synchronously on the publishing thread (POSTING / DirectConnection).
-    Main,     ///< Post to the main-thread queue (MAIN / QueuedConnection).
-    Auto,     ///< Current when publishing on the main thread, else Main (AutoConnection).
+enum class SubscriptionThreadMode
+{
+    Current, ///< Call synchronously on the publishing thread (POSTING / DirectConnection).
+    Main,    ///< Post to the main-thread queue (MAIN / QueuedConnection).
+    Auto,    ///< Current when publishing on the main thread, else Main (AutoConnection).
 };
 
 /**
@@ -38,7 +39,7 @@ class Subscription {
     /// Unsubscribes from the bus if the token is active.
     ~Subscription();
 
-    Subscription(const Subscription&) = delete;
+    Subscription(const Subscription&)            = delete;
     Subscription& operator=(const Subscription&) = delete;
 
     /// Moves ownership; the moved-from token becomes inactive.
@@ -108,8 +109,7 @@ class V_APPFW_API EventBus {
      * @return An RAII token; the subscription ends when it is destroyed.
      */
     template <ObjectBased TEvent>
-    Subscription subscribe(std::function<void(const TEvent&)> handler,
-                           SubscriptionThreadMode mode = SubscriptionThreadMode::Current);
+    Subscription subscribe(std::function<void(const TEvent&)> handler, SubscriptionThreadMode mode = SubscriptionThreadMode::Current);
 
     /**
      * @brief Publishes an event to all matching subscribers.
@@ -124,9 +124,7 @@ class V_APPFW_API EventBus {
 
   private:
     /// Type-erased registration used by subscribe<TEvent>.
-    Subscription subscribeErased(vine::TypeId type,
-                                 std::function<void(const std::shared_ptr<const Object>&)> handler,
-                                 SubscriptionThreadMode mode);
+    Subscription subscribeErased(vine::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode);
 
     struct Impl;
     std::unique_ptr<Impl> d;
@@ -173,9 +171,7 @@ inline Subscription::Subscription(std::function<void()> unsubscribe)
 template <ObjectBased TEvent>
 Subscription EventBus::subscribe(std::function<void(const TEvent&)> handler, SubscriptionThreadMode mode)
 {
-    auto erased = [h = std::move(handler)](const std::shared_ptr<const Object>& event) {
-        h(obj_cast<TEvent>(*event));
-    };
+    auto erased = [h = std::move(handler)](const std::shared_ptr<const Object>& event) { h(obj_cast<TEvent>(*event)); };
     return subscribeErased(TEvent::desc(), std::move(erased), mode);
 }
 

@@ -2,12 +2,12 @@
 
 #include <vine/Exception.hpp>
 
-#include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
 #include <vine/appfw/EventBus.hpp>
+#include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/ServiceManager.hpp>
 
 #include <vine/appfw/MainThreadDispatcher.hpp>
