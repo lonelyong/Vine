@@ -19,6 +19,11 @@ V_APPFW_NS_BEGIN
  * Stores metadata only, not values (values live in ConfigManager); the tree
  * structure is the display order and it also provides whole-tree queries.
  * Qt-free.
+ *
+ * @note Lifetime: the query functions return pointers into the tree, which stay
+ * valid until their node is removed (removeCategory/removeGroup/removeItem/clear).
+ * @note Threading: the registry is not synchronized. Register during startup and
+ * plugin loading, before worker threads read the tree.
  */
 class V_APPFW_API ConfigRegistry {
   public:
@@ -72,7 +77,8 @@ class V_APPFW_API ConfigRegistry {
      * @param cat Standard category.
      * @param grp Standard group.
      * @param item Item descriptor; its key must already be namespaced.
-     * @param owner Plugin name owning the item; empty records no owner.
+     * @param owner Plugin name owning the item; empty records no owner and
+     * drops an owner recorded for the same key earlier.
      * @return true if added, false if the key already exists.
      */
     bool addItem(StandardCategory cat, StandardGroup grp, const ConfigItem& item, String owner = {});
@@ -81,7 +87,7 @@ class V_APPFW_API ConfigRegistry {
      * @brief Returns all items owned by the given plugin.
      *
      * @param plugin_name Plugin name.
-     * @return The plugin's registered items (registration order).
+     * @return The plugin's registered items, ordered by key.
      */
     std::vector<const ConfigItem*> itemsForPlugin(const String& plugin_name) const;
 
@@ -135,6 +141,16 @@ class V_APPFW_API ConfigRegistry {
      * @return true if removed, false if not found.
      */
     bool removeItem(const String& key);
+
+  private:
+    /**
+     * @brief Drops owner records whose item is no longer in the tree.
+     *
+     * The tree can be edited through any of its nodes (ConfigCategory::removeGroup,
+     * ConfigGroup::removeItem, ...), so the owner map is treated as a cache that is
+     * also validated whenever it is read.
+     */
+    void pruneOwners();
 
   private:
     struct Impl;

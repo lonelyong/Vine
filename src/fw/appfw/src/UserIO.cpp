@@ -7,6 +7,12 @@ V_OBJECT_META_IMPL(UserIO, Object);
 UserIO::UserIO()
 {}
 
+void UserIO::cancelPendingInput()
+{
+    // Nothing to do by default: only an implementation that parks the read on
+    // something it can signal (an event a UI thread sets) can unblock it.
+}
+
 void UserIO::setCommandManager(CommandManager* manager)
 {
     command_manager_ = manager;

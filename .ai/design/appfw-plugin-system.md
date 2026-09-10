@@ -103,7 +103,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 <用户数据>/<organization>/<application>/
 ├── config/<application>.json      Application::defaultConfigFile()
 ├── logs/...                       宿主自己放日志（main.cpp 用 <data>/logs/vine.log）
-├── plugins/<插件名>/              插件自己的文件，PluginLoadContext::dataDirectory()
+├── plugins/<插件名>/              插件自己的文件，PluginLoadContext::ensureDataDirectory()
 └── installed.d/<id>.plugin        插件注册文件
 ```
 
@@ -146,8 +146,10 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 
 ## 插件自己的数据目录（每插件一目录）
 
-`PluginLoadContext::dataDirectory()` → `<数据>/plugins/<PluginInfo::name>`，
-`Application::pluginDataDirectory()` 是该根（`<数据>/plugins`）。约定：
+`PluginLoadContext::ensureDataDirectory()` → `<数据>/plugins/<PluginInfo::name>`，
+`Application::pluginDataDirectory()` 是该根（`<数据>/plugins`）。命名用 `ensure*` 而不是
+`dataDirectory()`：只有它会**创建**目录（原 `dataDirectory()` 名字读起来像纯访问器，
+与 `Application::dataDirectory()` 语义冲突），惰性创建本身不变。约定：
 
 - **惰性创建**：只有插件真的调它才建目录（`load()` 不预先建）✓ 没这个需求的插件一个
   字节都不落盘 ✓。
@@ -202,6 +204,8 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 - 每插件一个**库子目录**（带私有依赖用）。install RPATH 已经是 `$ORIGIN;$ORIGIN/../lib`，
   届时把 `pluginLibrariesIn()` 扩一层并保留平铺兼容即可。
 - 安装时复制插件文件到应用自己的目录（现在是"就地注册路径"，路径失效会在下次启动记 warning）。
+- 被 ABI 拒绝的库**不进发现列表**（它连元数据都不能安全读，没有名字可列），只能靠日志定位。
+  若以后想让它也出现在插件管理器里，需要一个允许"无名条目"的列表形态。
 
 ## 插件元数据与图标（2026-09-10 新增）
 
@@ -245,7 +249,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 3. 动作行：`禁用/启用`、`卸载插件（作用域）`——**不能生效的一律隐藏而不是置灰**；
 4. **`QTabWidget` 三个标签页**，取代原先堆叠的 `描述`/`信息`/`命令`/`配置` 四个 `QGroupBox`：
    - `信息`：`QFormLayout`，**描述是第一行**（原 `描述` 组并入此处），随后标识 / 版本 / 来源
-     （含可卸载与否）/ 依赖 / UUID / 库路径（等宽字体、可选中、带 tooltip）/ 邮箱 / 仓库；
+     （含可卸载与否）/ 依赖 / UUID / 库路径 / **构建框架**（插件编译时的框架版本，tooltip 给出主机版本）/ 邮箱 / 仓库；
      表单后 `addStretch()`，行不会被拉散。
    - `命令`、`配置`：各一个撑满整页的 `QTableWidget`（`setMinimumHeight(120)`，否则在滚动区里
      会缩到只剩表头）；tab 页留 6px 内边距，表格本身 **`NoFrame` + 背景透明**。
@@ -314,14 +318,216 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 | `GfxBackendVsgPlugin.hpp` | "Removes the backend registration on unload" | 实现是空操作：`RenderBackendRegistry` 无注销 API、不持有工厂、库常驻 |
 | `plugin_export.hpp`（更早一轮） | 暗示 `preLoad()` 注册命令 | 实际由 `vinePluginRegisterCommands` 注册（`preLoad()` 基类为空） |
 
+## 命令注册队列属于模块（第八轮修正，2026-09-11）
+
+`V_DECLARE_COMMAND` 在插件库**被 dlopen 时**排队注册器（`inline static AutoRegistrar`），
+`vinePluginRegisterCommands()` 在宿主加载该插件时把队列刷进 `CommandManager`。前提是
+"每个模块各有一份队列"——但旧实现用的是头文件里的 **inline 函数 + 函数局部 static**，
+这在 ELF 上**全进程只有一份**：
+
+- 编译器给函数局部 static 的是 **GNU unique** 绑定（`nm` 里的 `u`），动态链接器会让
+  *所有* 已加载模块看到同一个对象；inline 函数本身是 `W`（弱、可抢占）符号，第一个加载的
+  模块胜出。
+- 最小复现（两个 .so 各自 `inline` 取队列，宿主 dlopen 两个）：地址相同、两个模块的
+  `push` 进了同一个容器（各自 `size()` 都读到 2）。同一份代码加 `visibility("hidden")`
+  后变成各模块私有的 `t`/`b` 局部符号，地址不同、各自 `size()==1`。
+
+后果（两條都是用户可见的）：
+
+1. **被禁用/被宿主跳过/依赖未满足的插件，其命令照样被注册**：它们在"发现"阶段就被 dlopen
+   （取元数据），注册器已入队；同批第一个被加载的插件一 flush，就把这些命令一并注册了。
+   `setSkipList()` 和禁用对"命令"这条轴完全失效，命令还能被执行。
+2. **归属错乱**：`RegistrationOwnerScope` 把这些命令算到“当前加载的那一个插件”头上，
+   `commandInfosForPlugin()` 与插件对话框“命令”页张冠李戴。
+   实测：`test_plugin` 被禁用且未实例化时，它的 5 个命令全部出现在 `app_shell` 名下。
+
+修法：队列成为模块自己的东西，而且是**代码层面**的，不依赖任何构建选项。
+
+- `command_export.hpp` 声明 `detail::moduleCommandQueue()`（非 inline，带 `V_MODULE_LOCAL`）；
+  `V_DEFINE_MODULE_COMMAND_QUEUE()`（由 `V_DECLARE_PLUGIN()` 展开）用**限定名**定义它，
+  因此不论宏在 `vine::appfw` 里还是全局作用域展开都对；
+- `V_MODULE_LOCAL` = `__attribute__((visibility("hidden")))`（MSVC 下为空：Windows 上
+  非 dllexport 的符号本来就是 DLL 私有的）。hidden 正是关键：不导出就不会被合并/抢占；
+- flush 改成 `flushQueuedCommands(moduleCommandQueue(), manager)`：容器由调用方（插件自己的
+  入口点）显式取出，刷新逻辑只依赖参数，因此也没有可被其它库抢占的中间函数；
+- 先 `move` 出批次再逐个执行：注册器里可能再加载插件，那些新入队的命令不能被本次一起刷掉。
+
+`vinePluginRegisterCommands(void(CommandManager*))` 的**签名不变**（宿主的 `dlsym` 代码
+不用动），但宏体变了 ⇒ **插件必须重编**（与之前加 uuid/icon 字段同一约定；旧 `.so` 会把
+命令注册进它自己那份旧队列，宿主看不见）。
+
+## 第八轮审查（2026-09-11）
+
+已修：
+
+| 编号 | 缺陷 | 修复与证据 |
+|------|------|-----------|
+| P1 | 命令注册队列实际全进程一份（见上一节）→ 禁用/跳过插件的命令照常注册，且被算到别的插件名下 | 队列改为模块私有（hidden 可见性 + 限定名定义）。证据：`nm -C` 插件 `.so` 现在是 `t`/`b` 且无动态符号（修前是 `u` + `W`）；`PluginLifecycleTest.DisabledPluginIsListedWithMetadataButNotLoaded` 修前单跑即失败，修后过；新增 owner 断言（`app_shell` 名下不得出现 `test_*`） |
+| P2 | `load()` 对**跳过列表里的名字**直接早退：既不解析也不发现，与“跳过不是看不见”的契约矛盾（`loadAll()` 路径是对的） | 删掉早退分支，改成先解析/发现/查询，再按 跳过 ⇒ 策略 ⇒ 用户偏好 拒绝并分类记日志 |
+| P3 | 管理员策略（注册文件 `enabled = false`）在 `load()` 上不生效：`policy_disabled` 只在 `loadAll()` 扫描时填，新进程里先 `load()` 会绕过策略 | 新增 `isPolicyDisabled(name, library)` 私有查询：缓存未命中时读注册文件，按名字或“库文件/所在目录”匹配。用例：`HandWrittenRegistrationCanDisableForAllUsers` 里加“未跑过 loadAll 时 `load()` 也必须拒绝” |
+| P4 | `installPlugin()` 把调用方给的路径**原样**落盘，相对路径会在下次启动按另一个 CWD 解析 | 落盘前做 `absolute().lexically_normal()`（有意不解析符号链接：记的是用户指的位置）。用例：`InstallWritesRegistrationFile` 加相对路径注册 ⇒ 文件里必须是绝对路径 |
+| P6 | `uninstallPlugin(..., AllUsers)` 的注释说“可能合法地落到 per-user 文件”，实现只查系统目录 | 按实现改写注释 |
+
+仅记录、未改：
+
+| 编号 | 观察 | 为什么不改 |
+|------|------|-----------|
+| P5 | 没有插件 ABI 版本闸：旧 `.so` 的 `PluginInfo` 会被错位读 | 超出本轮范围，属于接口设计；已把方案写进“还没有做的”（加 `api_version` + 查询后校验） |
+| P7 | `load()` 里“复用已加载实例”的分支在启用检查**之前** | 有意为之：已经加载的插件继续跑到进程结束是“禁用要重启生效”的语义；策略/偏好只约束下一次加载 |
+
+ASan 门（插件套件）：`VINE_ASAN_FILTER='PluginLifecycleTest.*' scripts/asan_check.sh`。
+本轮它先报了一个 **heap-use-after-free**，查下去是**新加的测试代码**把 `findPluginEntry()`
+的返回值指向了临时 `vector<PluginEntry>`（已修：先把 `pluginEntries()` 的返回值绑到局部变量）。
+修后 19/19 在 ASan 下干净。
+
+## 命名与简化（2026-09-11）
+
+命名：按仓库约定（Qt 风格访问器、布尔 getter 用 `is`/`has`、内部字段 snake_case）核对一遍，
+改了这几处：
+
+| 旧名 | 新名 | 理由 |
+|------|------|------|
+| `PluginLoadContext::configs()` | `configRegistry()` | 仓库里同一个东西到处叫 `Application::configRegistry()`/`PluginManager::pluginRegistries` 风格；`configs()` 是全仓唯一一个复数名字的访问器 |
+| `PluginLoadContext::dataDirectory()` | `ensureDataDirectory()` | 它会**创建**目录；与纯访问器 `Application::dataDirectory()` 同名不同义，`ensure` 把副作用写进名字 |
+| `detail::moduleCommands()` | `detail::moduleCommandQueue()` | 与创建它的宏 `V_DEFINE_MODULE_COMMAND_QUEUE` 对齐 |
+| `PluginManager::load(const String& str)` / `resolvePluginPath(const String& str)` | `const String& name_or_path` | 参数名的含义就是“插件名或库路径”（头文件注释也是这么写的） |
+| `Impl::entries` | `Impl::discovered` | 它是**发现**列表（不是所有都被加载），文档里一直叫 discovery list |
+| `Impl::disabled` | `Impl::disabled_fallback` | 只在没有 ConfigManager 时才用；与 CommandManager 那边同名同义 |
+| `Source::policy_enabled` | `Source::registration_enabled` | 它存的就是注册文件的 `enabled` 字段，旧名读起来像另一种策略 |
+| `resolveEnabled(...)` 的 `built_in/skipped/policy_disabled/disabled` | `is_built_in/is_skipped/policy_disables/user_disabled` | 布尔参数带 `is_`、两个“disabled”分开叫（策略 vs 用户偏好） |
+| `QueriedLibrary::valid()` | `isValid()` | 布尔 getter 前缀约定 |
+
+简化：`load()` 与 `loadAll()` 原本各写一遍“加载库 + 解析 `vinePluginQuery` + 取元数据”
+和一遍三分类的拒绝日志，现在共用两个东西：
+
+- `queryLibrary(path)` → `QueriedLibrary{lib, info}`：全仓唯一一处知道“什么样的库算 Vine 插件”，
+  `installPlugin()` 与两条加载路径都走它；
+- `logRefusal(name, policy_disables)`：`load()`/`loadAll()` 的“被跳过 / 被策略禁用 / 被用户禁用”
+  三分类日志合到一处（同一原因同一条措辞）；
+- `disabledNames(fallback)`：`pluginEntries()` 与 `isPluginEnabled()` 不再各写一遍
+  “有 ConfigManager 读配置、否则用进程内列表”。
+
+未改（有意）：`Application::dataDirectory()` 之类纯访问器保持原名；`PluginManager` 的
+`d` 作为 PImpl 成员名符合仓库约定（只要没有尾下划线）；`unloadAll()` 里用
+`PluginEntry` 占位去调 `unloadOrder()` 看着略笨，但那是公开可测的 API 形状，不值得为
+省两行而分叉出第二套卸载排序实现。
+
+## 插件 ABI 握手（2026-09-11，修 P5）
+
+**问题**：宿主按*自己*的 `PluginInfo` 布局去读插件 `.so` 里的静态结构。插件如果是用另一版
+SDK 编的，字段就错位——`String` 在错误的偏移上是一对（长度、指针）垃圾，静态读不出错，
+后果晚到：UI 里显示乱码、或者干脆崩在别处。原来只有一条口头约定“改字段就得重编所有插件”。
+
+**做法**：不把版本放进 `PluginInfo`（读它正是那个不安全动作），而是加一个**签名永远稳定**的
+握手入口，让宿主在“信不信这个布局”之前先问一句：
+
+```cpp
+extern "C" const vine::appfw::PluginAbi* vinePluginAbi();      // V_DECLARE_PLUGIN 自动生成
+
+struct PluginAbi {
+    std::uint32_t abi_version;      // 必须排第一个：对不上之前只读它
+    const char*   framework_version; // 编译时的框架版本（V_APPFW_VERSION），纯诊断
+};
+
+#define V_APPFW_PLUGIN_ABI_VERSION 1u   // Plugin.hpp，命名空间块之外
+```
+
+规则（都写在 `Plugin.hpp` 里）：
+
+- `abi_version` **永远第一个成员**，且宿主在它匹配之前不许读别的成员（两条 `static_assert`
+  钉住：标准布局 + 偏移 0）；
+- 成员只能**往后加**，不重排不删除，而且不能用布局会变的 SDK 类型（只能整数/`const char*`）；
+- `V_APPFW_PLUGIN_ABI_VERSION`（现为 `1u`）在任何插件可见面变化时 +1：`PluginAbi`、`PluginInfo`、
+  `Plugin`/`PluginLoadContext`、入口签名、命令注册 ABI。
+
+**这个常量为什么定在 `Plugin.hpp`**（而不是别处）：
+
+- **性质不同**：`V_APPFW_VERSION` 是框架级发布版本（整个 appfw 一个，构建注入），放
+  `appfw_global.hpp` 是对的；ABI 号是**一个子契约**的版本，只描述插件可见面。今天插件 ABI 恰好是唯一
+  的跨模块契约，但那是巧合——将来再出现第二个契约（比如 GUI 插件的 ABI），每个契约的版本号应当跟着
+  它自己走，而不是在全局头里堆积；
+- **bump 触发点在同一文件**：最常见的触发是 `PluginInfo` 布局变化，而 `PluginInfo`/`PluginAbi` 都在
+  `Plugin.hpp`——写在一起，“改了这里要 +1”一眼可见（`PluginInfo` 的注释里也点了这一句）。放全局头就
+  得跨文件想起来；
+- **不能放 `plugin_export.hpp`**：那里的头文件契约写着“只给插件作者用，appfw 自己不许包含”，而宿主
+  必须能读这个宏；
+- **两个号没有必须一致的约束**（实现变了可以不发版，布局变了可以只 +ABI），并列放一起反而暗示有关；
+- 宏**写在 `V_APPFW_NS_BEGIN` 之外**：宏没有作用域，写在命名空间块里容易被读成有作用域
+  （与 `V_MODULE_LOCAL` 同样处理）；
+- 名字里带 `PLUGIN` 是有意的：它只管插件 ABI，**不等于“宿主自己的 ABI”**（宿主侧二进制是普通的
+  全量重编规则），也不是发布版本（`V_APPFW_VERSION`，只做诊断）。
+
+`queryLibrary()` 的顺序是：加载库 → 解析并调用 `vinePluginAbi()` → 校验 → 才解析
+`vinePluginQuery()` 并按当前布局读 `PluginInfo` → 才允许 `vinePluginCreate()`。三种结果：
+
+| 情况 | 行为 |
+|------|------|
+| 不是 Vine 插件（没有 `vinePluginQuery`） | 静静地跳过（和以前一样） |
+| 有 `vinePluginQuery` 但没有握手（比这套 SDK 更旧的库） | **拒绝** + 警告：“built against a framework older than this one. Rebuild…” |
+| 握手在但 ABI 号不同（更旧或更新的 SDK） | **拒绝** + 警告，并给出两边的 ABI 号与框架版本，还标明 who is newer |
+| 握手匹配 | 正常发现/加载；插件报的框架版本进 `PluginEntry::framework_version`，插件对话框“信息”页多一行`构建框架`（tooltip 写本程序内置版本），并进日志 |
+
+其它后果：
+
+- **拒绝的库不实例化**：顺序上 `vinePluginCreate()` 在握手之后，也就是不会用错布局去构造
+  `Plugin` 子类（那才是真正会崩的地方）。`installPlugin()` 也不注册它（否则以后每次启动多一条警告）。
+- **版本从构建来**：`src/fw/appfw/CMakeLists.txt` 把 `V_APPFW_VERSION="${PROJECT_VERSION}"`（现为
+  `1.0.0`）作为 **PUBLIC** 编译定义给所有链接 `vi::Appfw` 的目标——应用、插件、测试都是同一个值，
+  所以插件报的就是它编译时的框架版本；用外部安装的 SDK 编且没拿到定义时退化为 `"unknown"`
+  （只影响诊断文本，兼容性由 `V_APPFW_PLUGIN_ABI_VERSION` 决定）。
+- **只盖插件**：宿主自己的二进制（应用、库、测试）之间仍是普通的“全量重编”规则。
+  本轮就真实撞到过这一点：只重建了库和插件、没重建 `test_vsg`，那个旧二进制用的还是旧的
+  `PluginEntry` 布局，直接段错误；重编即好。这正是握手要给插件防掉的那类失效，只是插件这边
+  现在会被一句话拦住，而不是崩在别处。
+
+用例（夹具由 CMake 建，路径注入 `test_gui`）：
+
+- `PluginLifecycleTest.PluginsWithoutCompatibleAbiAreRefused`：两个夹具库分别模拟“没有握手”
+  与“ABI 号 999（框架 99.0.0）”，都必须被 `load()` 拒绝、不得 `isLoaded`、不进入
+  `pluginEntries()`，并且 `installPlugin()` 也拒绝。
+- `PluginLifecycleTest.PluginEntryReportsTheFrameworkItWasBuiltWith`：真插件报回的版本与
+  编译期 `V_APPFW_VERSION` 相等——证明整条链路（`V_DECLARE_PLUGIN` → `PluginAbi` →
+  `queryLibrary()` → `PluginEntry` → 对话框）没有丢值。
+
+## 依赖不满足时到底会发生什么（2026-09-11 核查并修正）
+
+「某个插件被禁用 / 被宿主跳过 / 根本没装」时，依赖它的插件会不会加载，取决于走哪条路径
+（每条都有用例或探针证据）：
+
+| 路径 | 行为 |
+| --- | --- |
+| `loadAll()`（启动路径） | **依赖不满足的那一簇不加载，其余照常加载**，`loadAll()` 返回 false。直接依赖：`DisabledDependencyBlocksDependents`；无关插件不受影响：`UnresolvablePluginsAreSkippedWhileTheRestLoads` |
+| `loadAll()` 的**传递**依赖（A ← B ← C） | 同上：整条链被剪掉（`DisabledDependencyBlocksDependentsTransitively`） |
+| `loadAll()` 的**声明成环** | 环那一簇被剪掉、其余照常加载，并在报告里点名（`DeclaredDependencyCycleIsPrunedNotFatal`） |
+| `load()`（显式加载，如对话框试用） | **照常加载**，只记一条警告 `declares dependency 'app_shell', which is not loaded`：它有意不解析依赖（见头文件对 `load()` 的说明） |
+| 运行时的 `setPluginEnabled(false)` | **不影响已加载的插件**：偏好只作用于下一次 `loadAll()`，已加载的依赖方跑到进程结束 |
+
+实现是一处**可加载闭包**的不动点计算（`loadAll()` step 3）：一个候选只有在它的依赖都已加载或已在集合里时才加入集合，因此一次性得到三样东西：
+
+1. **加载顺序**：加入顺序天然是依赖序，原来那段 Kahn 拓扑排序连同它的环检测一起删掉了；
+2. **完整报告**：集合之外的每个插件都带着自己的原因出现，而且链条可读——
+   ```
+   Plugin dependency resolution: 2 plugin(s) will not be loaded (the rest still loads):
+     Plugin 'test_plugin':
+       - disabled dependency: app_shell
+     Plugin 'chain_plugin':
+       - dependency not loadable: test_plugin
+   ```
+   四类原因分开：`missing dependency`（装）、`disabled dependency`（启用）、`skipped by the host`（别跳过它）、`dependency not loadable`（看它自己那行）；环那簇额外加一句 `These plugins depend on each other in a cycle.`
+3. **剪枝而非整批放弃**：一个第三方插件的坏依赖不再让应用连自带 `app_shell` 都没有。代价是语义从「全有或全无」改成「剪掉不可加载的那一簇」，`loadAll()` 仍返回 false 让宿主自己决定怎么报（`main.cpp` 已经会打印一行）。
+
+为什么**只在这一层**改成剪枝：依赖不可满足是集合的静态属性，可以精确到具体插件及其下游；而**实例化失败或生命周期抛异常仍然回滚整批**（原有语义不变，也仍有用例）——一个跑起来才失败的插件可能已经留下了全局状态，把它当成“可隔离”反而危险。
+
+## 测试映射
+
 ## 测试映射
 
 | 用例 | 固定的事实 |
 | --- | --- |
 | `PluginLifecycleTest.DisabledDependencyBlocksDependents` | 依赖被禁用 ⇒ 整体失败、两者都不加载、`disabled dependency` 分类 |
 | `PluginLifecycleTest.SkippedDependencyBlocksDependents` | 依赖被宿主跳过 ⇒ 整体失败、两者都不加载、`skipped by the host` 分类 |
-| `PluginLifecycleTest.SkippedPluginStaysVisibleAndIsNeverInstantiated` | 跳过 ⇒ 不实例化，但元数据/库路径/`skipped` 标记可见（跳过优先于用户偏好）；`removeFromSkipList()` 后无需重启即可加载 |
-| `PluginLifecycleTest.DisabledPluginIsListedWithMetadataButNotLoaded` | 禁用 ⇒ 不加载/不注册命令（`test_hello` 不在注册表），但元数据与库路径可见；启用后加载 |
+| `PluginLifecycleTest.SkippedPluginStaysVisibleAndIsNeverInstantiated` | 跳过 ⇒ 不实例化，但元数据/库路径/`skipped` 标记可见（跳过优先于用户偏好）；显式 `load()`（带名字）同样先发现再拒绝；`removeFromSkipList()` 后无需重启即可加载 |
+| `PluginLifecycleTest.DisabledPluginIsListedWithMetadataButNotLoaded` | 禁用 ⇒ 不加载/不注册命令（`test_hello` 不在注册表），但元数据与库路径可见；命令**不得**算到另一个插件名下（owner 断言）；启用后加载且命令归属自己 |
 | `PluginLifecycleTest.DisableIsPersistedInConfig` | 写进 `plugins.disabled`、重复禁用不重复、JSON 里可见、启用后清除 |
 | `PluginLifecycleTest.ConfigFileIsOptIn` | `setConfigFile` 路径语义：不存在不算错、空路径 = 不持久化 |
 | `PluginLifecycleTest.DefaultDataDirectoryLayout` | `<data>/<org>/<app>/config/<app>.json` 布局 + builder 默认启用 + 不落盘 |
@@ -330,11 +536,16 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 | `PluginLifecycleTest.ManagerDialogShowsMetadataAndIcons` | email/repo/icon 经 `V_DECLARE_PLUGIN` → `PluginInfo` → UI 全程贯通；未声明 icon 用内置默认 SVG（每行图标非空）；筛选框只留匹配行 |
 | `PluginLifecycleTest.UnloadOrderIsReverseDependencyOrder` | 真实集合：每个已加载插件恰好一次且依赖方在前；合成集合：结论与传入顺序无关、三层链、未加载项不参与、成环不死循环 |
 | `PluginLifecycleTest.PluginDataDirectoryIsPerPlugin` | 插件数据目录 = `<data>/plugins/<插件名>`（首次调用才创建、两插件不互相覆盖、无宿主/无名返回空） |
-| `PluginLifecycleTest.InstallWritesRegistrationFile` | 安装 = 写 installed.d/<id>.plugin；路径不存在/空/BuiltIn 被拒；重复安装幂等；卸载 = 删文件 |
+| `PluginLifecycleTest.InstallWritesRegistrationFile` | 安装 = 写 installed.d/<id>.plugin；路径不存在/空/BuiltIn 被拒；重复安装幂等；相对路径也被落盘为**绝对路径**；卸载 = 删文件 |
 | `PluginLifecycleTest.SystemRegistrationDirectoriesAreListed` | 系统注册目录与用户目录布局一致且互不相同（只读检查） |
-| `PluginLifecycleTest.HandWrittenRegistrationCanDisableForAllUsers` | 手写注册文件被读到；`enabled = false` 是策略，用户启用无效 |
+| `PluginLifecycleTest.HandWrittenRegistrationCanDisableForAllUsers` | 手写注册文件被读到；`enabled = false` 是策略，用户启用无效；**没跑过 `loadAll()` 时显式 `load()` 也必须被策略拒绝** |
 | `VsgBackendPluginTest.BuiltInPluginsCannotBeDisabledOrUninstalled` | 程序自带插件 scope = BuiltIn、不可禁用、不可卸载、不能以 BuiltIn 作用域注册 |
 | `PluginLifecycleTest.InstalledLocationIsDiscoveredAndDeduplicated` | 只靠注册位置也能发现；两处提供同一插件只出现一次 |
+| `PluginLifecycleTest.DisabledDependencyBlocksDependentsTransitively` | A←B←C 链：链头被禁用 ⇒ 整条链都不加载（夹具 `chain_plugin` 依赖 `test_plugin`） |
+| `PluginLifecycleTest.UnresolvablePluginsAreSkippedWhileTheRestLoads` | 只剪掉不可加载的那一簇：禁用链中段时 `app_shell` 照常加载，`chain_plugin` 不加载，`loadAll()` 报 false |
+| `PluginLifecycleTest.DeclaredDependencyCycleIsPrunedNotFatal` | 声明成环 ⇒ 环那一簇不加载、无关插件照常加载（夹具 `loop_a`/`loop_b`） |
+| `PluginLifecycleTest.PluginsWithoutCompatibleAbiAreRefused` | 没有 ABI 握手 / ABI 号对不上的库必须被拒绝、不实例化、不进发现列表，安装也拒绝（夹具库由 CMake 建） |
+| `PluginLifecycleTest.PluginEntryReportsTheFrameworkItWasBuiltWith` | 插件报回的构建框架版本等于 `V_APPFW_VERSION`（V_DECLARE_PLUGIN → PluginAbi → PluginEntry 全程贯通） |
 | `VsgBackendPluginTest.ConfigFileRoundTripPersistsDisabledPlugins` | `run()`/`shutdown()` 真把配置写盘并能读回（重启生效的完整链路） |
 
 用例间有顺序依赖（`test_gui` 里禁用必须发生在"该插件从未被加载"之前；一旦某个插件库

@@ -162,16 +162,30 @@ class V_APPFW_API CommandManager
      * Fired once per run, nested children included. A command refused by the
      * serialization gate, or stopped by a failing snapshot handler, never gets
      * that far, so neither this event nor the executed one is fired for it.
+     *
+     * The notification is synchronous and runs on the thread that started the
+     * command. Handlers may call back into the manager (a nested execution, a
+     * registration, adding or removing another handler) - nothing is locked while
+     * they run. The event itself is not thread-safe though, so a handler must be
+     * added or removed while no command can finish on another thread: subscribe
+     * during startup, not from a task that races another command's completion.
      */
     Event<CommandManager, CommandExecutingEventArgs> executing;
 
     /**
      * @brief Fired when a command finishes executing, carrying its result.
      *
-     * Fired for every run that started, cancelled and failed ones included. The
-     * notification is synchronous and runs on the thread the command ended on
-     * (the initiating thread when the command never suspended), so a handler must
-     * not assume the application thread.
+     * Fired for every run that started, cancelled and failed ones included, so a
+     * handler pairing this event with executing sees a matching pair for every
+     * run: a nested child cancelled while it was awaited is reported here as
+     * well, with a CommandStatus::Cancelled result, before the cancellation is
+     * propagated to its parent. The notification is synchronous and runs on the
+     * thread the command ended on (the initiating thread when the command never
+     * suspended), so a handler must not assume the application thread.
+     *
+     * Like executing, handlers may call back into the manager, and the handler list
+     * is not thread-safe across threads: subscribe during startup rather than while
+     * a command may finish elsewhere.
      */
     Event<CommandManager, CommandExecutedEventArgs> executed;
 
@@ -243,7 +257,8 @@ class V_APPFW_API CommandManager
      * @brief Executes a registered command by name asynchronously.
      *
      * Same as executeCommandAsync(Command*) with the instance created through
-     * the registered factory.
+     * the registered factory. The returned task owns a copy of the name, so it stays
+     * valid until it is awaited even when the argument was a temporary.
      *
      * @param name Registered command name.
      * @return A lazy task yielding the execution outcome; Failed when not
@@ -262,6 +277,12 @@ class V_APPFW_API CommandManager
      * through Application::userIO() as well as logged; a throwing command must not
      * terminate the process. Commands entered in the console go through
      * executeCommandAsync() instead and report themselves, so this never doubles up.
+     *
+     * The command may finish on any thread (a command that awaited a timer or an
+     * asynchronous read resumes on the thread that completed it), so the message
+     * is handed to Application::mainThreadDispatcher() and reaches userIO() on the
+     * application thread; a UserIO that talks to the GUI never gets called from a
+     * worker thread.
      *
      * @param name Registered command name.
      */
@@ -321,8 +342,43 @@ class V_APPFW_API CommandManager
      * with executeDetached(). Use it for "stop everything" paths such as
      * application shutdown. Like every other request here it is cooperative:
      * a command that ignores its token keeps running.
+     *
+     * This is the stop-everything request, so it also aborts an Exclusive command
+     * that is still waiting for the running chains to unwind: that wait gives up
+     * right away and the command is cancelled instead of holding the caller for the
+     * rest of the drain bound.
      */
     void cancelAll();
+
+    /**
+     * @brief Cancels every live command chain and waits for them to finish.
+     *
+     * This is the "we are going down" entry point: it requests cancellation like
+     * cancelAll() and then blocks the calling thread until no chain has a live run
+     * left, bounded by the timeout. The wait is cooperative (the chains unwind on
+     * whatever thread they run on), so it must not be called from a thread whose
+     * event loop is required to resume them.
+     *
+     * A bounded wait is the only guarantee the manager can give: a command that
+     * ignores its cancellation token keeps running, and this then returns false
+     * while its chain is still alive. Callers that own the manager (Application
+     * shutdown) use the result to log that the teardown could not drain cleanly:
+     * destroying the manager while a chain is still live leaves that command's
+     * frame referencing the manager.
+     *
+     * Two callers it cannot help, both of which end up with false after burning the
+     * whole bound: a command that calls this from inside its own execution (the chain
+     * it runs on is part of the drain and only finishes after it returns - a command
+     * that wants to stop the application should request Application::quit() and let
+     * the host run the teardown), and a chain waiting for user input, which the
+     * manager cannot unblock (the host cancels the read first:
+     * UserIO::cancelPendingInput()).
+     *
+     * @param timeout Upper bound for the wait; must not be negative.
+     * @return true when every chain finished within the bound, false when at least
+     *         one chain is still running.
+     */
+    bool cancelAllAndWait(std::chrono::milliseconds timeout = exclusiveDrainTimeout());
 
     /**
      * @brief Returns the number of executions recorded in the history.
@@ -416,7 +472,11 @@ class V_APPFW_API CommandManager
      * comes back already disabled. Without a host config manager the preference
      * only lives for this process.
      *
-     * @param name    Command name.
+     * An alias is resolved to the command it points at (like the execution entry
+     * points do), so disabling an alias disables the command it runs, and the
+     * preference is stored under the canonical name.
+     *
+     * @param name    Command or alias name.
      * @param enabled true to enable the command, false to disable it.
      * @return true when the preference was recorded, false when the name is empty.
      *         A name that is not registered right now still records the preference;
@@ -566,12 +626,37 @@ class V_APPFW_API CommandManager
 
     struct Impl;
 
+    /// Whether an execution starts a chain of its own or joins its parent's.
+    enum class ChainScope
+    {
+        /// Fresh chain: becomes the foreground chain and is subject to the gate.
+        TopLevel,
+
+        /// The parent's chain, reached through CommandExecutionContext::executeChild().
+        Nested,
+    };
+
     /// Shared execution path.
     ///
-    /// When nested is false a fresh chain is created and becomes the foreground
-    /// chain; when nested is true the command joins the chain passed by the
-    /// context, which also skips the serialization gate.
-    vine::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, bool nested);
+    /// A top-level scope creates a fresh chain, which becomes the foreground chain and
+    /// faces the serialization gate; a nested scope joins the chain the context passes
+    /// in, which also skips the gate.
+    vine::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope);
+
+    /// Runs a registered command by name on a task that owns its own copy of the name.
+    ///
+    /// A coroutine parameter is copied into the frame when the coroutine is called, so
+    /// this is what makes the lazy task of executeCommandAsync(const String&) safe to
+    /// await after the caller's argument is gone.
+    ///
+    /// @param name Command or alias name, owned by the returned task.
+    /// @return A lazy task yielding the execution outcome.
+    vine::async::Task<CommandResult> executeNamedCommand(String name);
+
+    /// Returns a strong reference to the foreground chain, or an empty pointer when
+    /// nothing ran yet. Taken under the manager mutex and handed out by value, so the
+    /// caller works on it without holding the lock.
+    std::shared_ptr<Chain> foregroundChain() const;
 
     /// Creates a fresh registered command instance by name (or alias), or
     /// nullptr when the name is not registered or is disabled. Propagates whatever

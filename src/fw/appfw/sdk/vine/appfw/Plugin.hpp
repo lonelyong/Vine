@@ -1,11 +1,28 @@
 ﻿#pragma once
 #include "appfw_global.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <type_traits>
 #include <vector>
 
 #include <vine/Object.hpp>
 #include <vine/Uuid.hpp>
 
+/**
+ * @brief ABI revision of the plugin-facing SDK.
+ *
+ * Bump it whenever anything a plugin compiles against changes incompatibly:
+ * PluginAbi and this header, PluginInfo, Plugin, PluginLoadContext, the entry-point
+ * signatures in plugin_export.hpp, or the command-registration ABI. The host refuses
+ * a plugin whose library reports another revision (see PluginAbi), so a bump means
+ * "the plugins must be rebuilt" - which is what such a change requires anyway.
+ *
+ * The name says *plugin* ABI on purpose: it is not the release version (that is
+ * V_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
+ * the host's own binaries, which are built and rebuilt together with the framework.
+ */
+#define V_APPFW_PLUGIN_ABI_VERSION 1u
 
 V_APPFW_NS_BEGIN
 
@@ -14,7 +31,38 @@ class ConfigItem;
 struct CommandInfo;
 
 /**
+ * @brief ABI handshake a plugin library answers before the host reads its metadata.
+ *
+ * The host has to know *how* a plugin was built before it interprets anything the
+ * plugin declares. PluginInfo is a struct whose layout follows this SDK, so reading
+ * it from a library built against another SDK silently misinterprets its fields - a
+ * String read at the wrong offset is a length and a pointer of garbage, and the
+ * failure surfaces later as a crash or as nonsense in the UI.
+ *
+ * This struct is the small, deliberately stable prefix that is read first. Rules:
+ *
+ * - abi_version stays the first member, and the host reads no other member until it
+ *   matches its own V_APPFW_PLUGIN_ABI_VERSION (the static_asserts below keep it first);
+ * - members may only be appended, never reordered or removed, and they must not use
+ *   SDK types whose own layout can change (plain integers and const char* only);
+ * - V_APPFW_PLUGIN_ABI_VERSION is bumped by any change to that surface (its own
+ *   documentation lists what counts), which is what turns "silently misread
+ *   metadata" into one clear refusal.
+ */
+struct V_APPFW_API PluginAbi {
+    std::uint32_t abi_version{ 0 };      ///< V_APPFW_PLUGIN_ABI_VERSION the library was compiled with.
+    const char*   framework_version{};   ///< V_APPFW_VERSION it was built against; never null, UTF-8.
+};
+
+static_assert(std::is_standard_layout_v<PluginAbi>, "PluginAbi is read across a module boundary and must stay standard layout");
+static_assert(offsetof(PluginAbi, abi_version) == 0, "abi_version must stay the first member: the host reads it before the layout is trusted");
+
+/**
  * @brief Static metadata declared by a plugin.
+ *
+ * The layout is part of the plugin ABI: a field added or reordered here is a change
+ * every plugin must be rebuilt for, so V_APPFW_PLUGIN_ABI_VERSION is bumped together
+ * with it.
  */
 struct V_APPFW_API PluginInfo {
     ///

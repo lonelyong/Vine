@@ -38,6 +38,7 @@ struct V_APPFW_API PluginEntry {
     PluginInfo            info;                             ///< Metadata declared by the plugin.
     std::filesystem::path path;                             ///< Library file the plugin was found in.
     PluginScope           scope{ PluginScope::BuiltIn };    ///< Location class the plugin was found in.
+    String                framework_version;                ///< Framework version the library was built with (PluginAbi); may be empty.
     bool                  enabled{ true };                  ///< Effective preference; disabled plugins are not loaded.
     bool                  loaded{ false };                  ///< Whether an instance exists right now.
     bool                  skipped{ false };                 ///< Refused by the host skip list (setSkipList()); implies !enabled.
@@ -190,6 +191,20 @@ class V_APPFW_API PluginManager {
      */
     static const String& disabledConfigKey();
 
+    /**
+     * @brief Reports whether a plugin's declared ABI revision fits this host.
+     *
+     * This is the rule the manager applies before it reads anything else a plugin
+     * declares (see PluginAbi): a library built against a different SDK reports a
+     * different revision and is refused, because reading its PluginInfo with this
+     * SDK's layout would misinterpret it. Exposed so that the rule has exactly one
+     * implementation and a host can check a library before handing it to load().
+     *
+     * @param abi Build description reported by the library's vinePluginAbi().
+     * @return true when the manager may read the plugin's metadata.
+     */
+    [[nodiscard]] static bool isPluginAbiCompatible(const PluginAbi& abi) noexcept;
+
 
   public:
     /**
@@ -209,10 +224,10 @@ class V_APPFW_API PluginManager {
      * and its position in the load list carries no dependency meaning. Unloading
      * does not rely on that position (see unloadOrder()).
      *
-     * @param str Plugin name or library path.
+     * @param name_or_path Plugin name or library path.
      * @return The loaded plugin, or nullptr on failure.
      */
-    [[nodiscard]] Plugin* load(const String& str);
+    [[nodiscard]] Plugin* load(const String& name_or_path);
 
     /**
      * @brief Loads every plugin library found in the configured locations.
@@ -233,18 +248,29 @@ class V_APPFW_API PluginManager {
      *
      * Plugins disabled through setPluginEnabled() and plugins skipped through
      * setSkipList() are discovered and reported by pluginEntries(), but no
-     * instance is created and no lifecycle phase runs. They are also not
-     * satisfiable dependencies: a plugin that depends on a disabled or skipped
-     * plugin is reported as unresolved and not loaded.
+     * instance is created and no lifecycle phase runs.
      *
-     * The load is atomic as seen from the manager: when a plugin cannot be
-     * instantiated, or when one throws out of preLoad()/load()/postLoad(), the
-     * instances created by this call are unloaded again (best effort, newest
-     * first) and none of them is kept. A nested call from a plugin lifecycle
-     * callback is refused and logged.
+     * Dependencies are resolved as a closure: a plugin joins the batch only once
+     * every dependency of it is already loaded or already in the batch. A plugin
+     * whose dependencies cannot be satisfied - one is missing, disabled, skipped, or
+     * blocked itself - is therefore left out together with everything that depends on
+     * it, while the remaining plugins still load: one broken third-party plugin must
+     * not cost the application its shell. Every plugin left out is reported with its
+     * own reason, so the log tells "install it", "enable it" and "stop skipping it"
+     * apart, and a declared cycle is called out as such. The return value reports that
+     * something was left out.
      *
-     * @return false if the plugin set has an unsatisfied dependency or a dependency
-     *         cycle, if a plugin cannot be instantiated, or if one threw.
+     * The load is atomic as seen from the manager: when a plugin cannot be instantiated,
+     * or throws out of preLoad()/load()/postLoad(), the instances created by this call
+     * are unloaded again (best effort, newest first) and none of them is kept. It stays
+     * atomic there because a plugin that failed at run time may already have left state
+     * behind, while an unsatisfiable dependency is a static property of the set that can
+     * be isolated to the plugin and its dependents. A nested call from a plugin
+     * lifecycle callback is refused and logged.
+     *
+     * @return false if plugins were left out because their dependencies cannot be
+     *         satisfied (including a dependency cycle), or if a plugin failed to
+     *         instantiate or threw out of its lifecycle.
      */
     [[nodiscard]] bool loadAll();
 
@@ -478,6 +504,19 @@ class V_APPFW_API PluginManager {
     [[nodiscard]] std::vector<PluginRegistration> pluginRegistrations() const;
 
   private:
+    /// Reports whether a registration disables a plugin for every user.
+    ///
+    /// The scan in loadAll() records the policy of every plugin it discovers; this
+    /// lookup falls back to reading the registration files when the fast path has
+    /// nothing, so the policy holds even in a process that never ran loadAll() - an
+    /// explicit load() must not resurrect a plugin an administrator disabled.
+    ///
+    /// @param name    Plugin name.
+    /// @param library Library the plugin is loaded from, or an empty path when only
+    ///                the name is known.
+    /// @return true when a registration disables the plugin for all users.
+    [[nodiscard]] bool isPolicyDisabled(const String& name, const std::filesystem::path& library) const;
+
     struct Impl;
     std::unique_ptr<Impl> d;
 };

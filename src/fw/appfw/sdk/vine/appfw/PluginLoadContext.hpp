@@ -22,7 +22,7 @@ class EventBus;
 /**
  * @brief Plugin load context: passed to Plugin::load(), exposing host capabilities.
  *
- * Inside load(), the plugin obtains the config registry via configs(), the
+ * Inside load(), the plugin obtains the config registry via configRegistry(), the
  * command manager via commandManager(), or the host Application via
  * application(). More specific accessors can be added later.
  */
@@ -47,7 +47,7 @@ class V_APPFW_API PluginLoadContext {
     /**
      * @brief Config registry: plugins register config items (ConfigItem) here.
      */
-    raw_ptr<ConfigRegistry> configs() const;
+    raw_ptr<ConfigRegistry> configRegistry() const;
 
     /**
      * @brief Command manager: plugins register their commands here during load().
@@ -85,10 +85,14 @@ class V_APPFW_API PluginLoadContext {
      * A plugin that needs the path outside a lifecycle call recomputes it as
      * Application::pluginDataDirectory()/<PluginInfo::name>.
      *
+     * Named "ensure" rather than "dataDirectory" on purpose: unlike
+     * Application::dataDirectory(), this one creates the directory, and the name
+     * says so.
+     *
      * @return The plugin data directory, or an empty path when no Application is
      *         set or the directory cannot be created.
      */
-    std::filesystem::path dataDirectory();
+    std::filesystem::path ensureDataDirectory();
 
     /**
      * @brief Registers a config item under a standard category/group, owned by

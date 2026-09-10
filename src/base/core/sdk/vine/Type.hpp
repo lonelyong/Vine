@@ -2,10 +2,17 @@
 #include "core_global.hpp"
 
 #include <span>
+#include <typeinfo>
 #include <vector>
 
 #include "String.hpp"
 
+// V_DECLARE_INTERFACE evaluates typeid() in the interface body, so std::type_info
+// must already be complete: gcc 15/16 crashes with "internal compiler error: in
+// typeid_ok_p" on the next typeid() it parses (e.g. the one inside libstdc++'s
+// make_exception_ptr) when a typeid() was evaluated against the incomplete
+// type_info declared below. Always include <typeinfo> first - the declaration
+// below only exists for toolchains whose std::type_info needs an alias.
 #if defined(_MSC_VER)
 class type_info;
 

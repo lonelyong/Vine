@@ -40,17 +40,28 @@ enum class CommandFlags : std::uint32_t
     Undoable = 1 << 0,
 
     /**
-     * @brief Takes over the foreground, cancelling the running command chain.
+     * @brief Takes over the foreground, cancelling the running command chains.
      *
-     * A top-level Exclusive command requests cancellation of the foreground
-     * chain and waits, bounded by CommandManager::exclusiveDrainTimeout(), for it
-     * to unwind. Only a chain that actually unwound is taken over: a command that
-     * ignores its token makes the takeover impossible, and the request is then
-     * refused with a Failed result instead of running two chains at once. The
-     * cancelled chain kept its own call stack and cancellation source throughout,
-     * so it always unwinds cleanly. An Exclusive command also bypasses the
-     * serialization gate that rejects other top-level commands while a LongRunning
-     * operation is busy.
+     * A top-level Exclusive command requests cancellation of every live command
+     * chain — the foreground chain and any chain a detached command still owns —
+     * and waits, bounded by CommandManager::exclusiveDrainTimeout(), for all of
+     * them to unwind. Only when nothing is left running is the command started:
+     * a command that ignores its token makes the takeover impossible, and the
+     * request is then refused with a Failed result instead of running next to it,
+     * because two chains running at once would break the exclusivity the caller
+     * asked for. The cancelled chains kept their own call stacks and cancellation
+     * sources throughout, so they always unwind cleanly. An Exclusive command also
+     * bypasses the serialization gate that rejects other top-level commands while
+     * a LongRunning operation is busy.
+     *
+     * The takeover itself is cancellable: CommandManager::cancelAll() (the
+     * stop-everything request, used by application shutdown) ends the wait and the
+     * command is reported as CommandStatus::Cancelled without ever running.
+     *
+     * Two Exclusive commands never overlap either: a second one submitted while the
+     * first is still running takes it over (the first is cancelled and awaited,
+     * exactly like any other predecessor), and one submitted at the same time -
+     * before either had a chain to take over from - is refused by the gate.
      */
     Exclusive = 1 << 1,
 

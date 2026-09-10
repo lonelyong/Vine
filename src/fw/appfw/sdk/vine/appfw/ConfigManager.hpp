@@ -11,6 +11,10 @@ V_APPFW_NS_BEGIN
 
 /**
  * @brief Config change event arguments: carry the key (dotted path) that changed.
+ *
+ * @note An empty key means "the whole configuration changed": clear() and a
+ * loadJson()/load() that actually replaced something report a change that is
+ * not attributable to a single key that way.
  */
 class V_APPFW_API ConfigChangedEventArgs : public EventArgs {
     V_OBJECT_META_DECL
@@ -33,11 +37,18 @@ class V_APPFW_API ConfigChangedEventArgs : public EventArgs {
  * @note Typed accessors keep the get/set prefix (getString/getInt/setString/...):
  * the bare type names (int/bool/double) are keywords and cannot be method names,
  * and the getter/setter pair shares the key parameter.
+ * @note Getters fall back to their default when the key is absent *or* holds
+ * another type, so a getter never throws.
  * @note Keys support dotted hierarchies, e.g. u8"window.x" denotes x under
  * window; toJson()/loadJson() generate/read nested JSON objects by hierarchy.
+ * @note Values are stored as String/bool/int/double and their arrays; toJson()
+ * writes the typed-marker format and loadJson() reads it back without loss for
+ * every value the API can express.
  * @note All accessors are thread-safe: an internal shared mutex allows
  * concurrent readers while writers hold it exclusively; the changed event is
  * fired after releasing it, so handlers may safely call back into the manager.
+ * Subscribing to and unsubscribing from changed are *not* thread-safe (the
+ * signal has no lock), so wire up handlers before worker threads run.
  */
 class V_APPFW_API ConfigManager {
   public:
@@ -45,7 +56,8 @@ class V_APPFW_API ConfigManager {
     virtual ~ConfigManager();
 
   public:
-    /// Config change event: triggered by set*/remove/clear, carrying the key.
+    /// Config change event: fired only by a set*/remove/clear/loadJson that
+    /// actually changed a value, carrying the key (empty: whole configuration).
     Event<ConfigManager, ConfigChangedEventArgs> changed;
 
   public:
@@ -85,11 +97,17 @@ class V_APPFW_API ConfigManager {
   public:
     /// Exports to a JSON string (typed-marker format, lossless round-trip).
     String toJson() const;
-    /// Loads from a JSON string (replaces existing config). Returns success.
+    /// Replaces the whole configuration from a JSON string; fires changed with
+    /// an empty key when the values differ. Returns false when the text is not
+    /// a JSON object; entries of another shape are ignored and logged.
     bool loadJson(const String& json);
     /// Saves to a file (UTF-8 JSON).
+    ///
+    /// The write goes to a temporary file next to path that is renamed over it,
+    /// so a failure never leaves a truncated file behind; the parent directory
+    /// must exist. Returns true only when the data reached the file.
     bool save(const String& path) const;
-    /// Loads from a file.
+    /// Loads from a file (as loadJson()).
     bool load(const String& path);
 
   private:

@@ -57,12 +57,17 @@ class V_APPFW_API Application : public Object {
      *
      * Runs the shutdown sequence shared by every run() implementation, while the
      * application is still fully alive:
-     * 1. unloads the plugins in reverse dependency order (PluginManager::unloadAll()),
-     * 2. drains and stops the event bus (EventBus::shutdownGracefully()),
-     * 3. persists the configuration when a config file is set (setConfigFile()).
+     * 1. cancels a pending user-input read (UserIO::cancelPendingInput()) and then
+     *    cancels every command chain and waits, bounded, for them to finish
+     *    (CommandManager::cancelAllAndWait()) - a command frame holds the manager,
+     *    the user IO and plugin services, so it must not outlive them, and a command
+     *    parked on user input can only be woken by the first of the two,
+     * 2. unloads the plugins in reverse dependency order (PluginManager::unloadAll()),
+     * 3. drains and stops the event bus (EventBus::shutdownGracefully()),
+     * 4. persists the configuration when a config file is set (setConfigFile()).
      *
-     * Calling it twice is harmless: the plugin list is empty and the bus is
-     * already stopped, so only the config save repeats.
+     * Calling it twice is harmless: the chains are already gone, the plugin list is
+     * empty and the bus is already stopped, so only the config save repeats.
      */
     void shutdown();
 
@@ -213,7 +218,7 @@ class V_APPFW_API Application : public Object {
      * @brief Returns the root of the plugin-owned data files.
      *
      * <data directory>/plugins. Each plugin owns the subdirectory named after its
-     * PluginInfo::name (see PluginLoadContext::dataDirectory()); the name is the
+     * PluginInfo::name (see PluginLoadContext::ensureDataDirectory()); the name is the
      * plugin identity, so the directory follows a plugin that is installed
      * elsewhere later.
      *

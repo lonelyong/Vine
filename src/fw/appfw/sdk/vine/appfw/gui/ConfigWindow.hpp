@@ -18,6 +18,14 @@ V_APPFWGUI_NS_BEGIN
  * Edits write back to ConfigManager immediately (its changed event fires);
  * refresh() reloads values from storage and reset() restores defaults.
  * Inherits Window; show() non-modally or exec() modally.
+ *
+ * @note The window snapshots the registry item tree when it is built: a plugin
+ * that registers items afterwards changes nothing in an existing window, so
+ * build a new one to show them. Editors keep following their own key, so such a
+ * registration cannot shift a value into the wrong row.
+ * @note A read-only item is shown disabled; a Choice item whose stored value
+ * matches none of its choices is shown with no selection rather than with the
+ * first choice.
  */
 class V_APPFW_API ConfigWindow : public Window {
     V_OBJECT_META_DECL
@@ -35,7 +43,9 @@ class V_APPFW_API ConfigWindow : public Window {
 
   public:
     /**
-     * @brief Reloads all editor values from ConfigManager.
+     * @brief Reloads all editor values from ConfigManager, each one from the key
+     * it was built for; items removed from the registry in the meantime are left
+     * untouched.
      */
     void refresh();
     /**

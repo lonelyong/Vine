@@ -19,9 +19,22 @@
 
 extern "C" {
     /**
+     * @brief ABI handshake: the first entry point the host calls on a plugin.
+     *
+     * Reports what the library was compiled with (see PluginAbi). The host calls
+     * this before reading anything else the plugin declares, and refuses the library
+     * when the revision differs or when the entry point is missing entirely - which
+     * is what a library built before this handshake existed looks like.
+     *
+     * @return The library's build description; never null.
+     */
+    V_PLUGIN_EXPORT const vine::appfw::PluginAbi* vinePluginAbi();
+
+    /**
      * @brief Plugin query entry point; returns the plugin metadata.
      *
-     * No side effects; doubles as the "is this a Vine plugin" detection.
+     * No side effects; doubles as the "is this a Vine plugin" detection. The host
+     * only calls it after vinePluginAbi() reported a compatible revision.
      *
      * @return The plugin metadata, or nullptr.
      */
@@ -39,8 +52,12 @@ extern "C" {
     /**
      * @brief Registers the plugin's commands (V_DECLARE_COMMAND) with the host.
      *
-     * Runs inside the plugin module so its per-module command queue is flushed
-     * into the given CommandManager. Called by the PluginManager on load.
+     * Runs inside the plugin module and flushes that module's own command queue
+     * (see V_DEFINE_MODULE_COMMAND_QUEUE()), so exactly the commands this plugin
+     * declared are registered. Called by the PluginManager while it loads the
+     * plugin; a plugin that is only discovered - disabled, skipped or otherwise not
+     * loaded - never reaches this entry point, and its commands stay in its own
+     * queue instead of being registered by another plugin.
      *
      * @param manager Command manager to register into.
      */
@@ -49,6 +66,16 @@ extern "C" {
 
 /**
  * @brief Defines a plugin's entry points in a plugin DLL.
+ *
+ * Must be used exactly once per plugin library: besides the four entry points it
+ * defines that library's command queue (V_DEFINE_MODULE_COMMAND_QUEUE()), which is
+ * what keeps the commands of one plugin from being flushed by another.
+ *
+ * The entry points are the ABI handshake (vinePluginAbi, reporting this SDK's
+ * V_APPFW_PLUGIN_ABI_VERSION and V_APPFW_VERSION), the metadata query, the create
+ * entry and the command registration. Adding the handshake changed no macro
+ * argument, but a library built before it is refused by a current host, so plugins
+ * must be rebuilt.
  *
  * Usage (PluginDependencies is a braced list, empty when the plugin has no
  * dependencies):
@@ -70,6 +97,12 @@ extern "C" {
  * @param PluginDependencies Braced list of plugin names this plugin requires.
  */
 #define V_DECLARE_PLUGIN(PluginClass, PluginUuid, PluginName, PluginDisplayName, PluginVersion, PluginDescription, PluginVendor, PluginEmail, PluginRepo, PluginIcon, PluginDependencies) \
+    V_DEFINE_MODULE_COMMAND_QUEUE()                                                                                  \
+    extern "C" V_PLUGIN_EXPORT const vine::appfw::PluginAbi* vinePluginAbi()                                        \
+    {                                                                                                                \
+        static const vine::appfw::PluginAbi s_abi{ V_APPFW_PLUGIN_ABI_VERSION, V_APPFW_VERSION };                     \
+        return &s_abi;                                                                                               \
+    }                                                                                                                \
     extern "C" V_PLUGIN_EXPORT const vine::appfw::PluginInfo* vinePluginQuery()                                      \
     {                                                                                                                \
         static const vine::appfw::PluginInfo s_info{ vine::Uuid::parse(PluginUuid), PluginName, PluginDisplayName, PluginVersion, \
@@ -87,5 +120,5 @@ extern "C" {
     }                                                                                                                \
     extern "C" V_PLUGIN_EXPORT void vinePluginRegisterCommands(vine::appfw::CommandManager* manager)                \
     {                                                                                                                \
-        vine::appfw::detail::registerModuleCommands(manager);                                                        \
+        vine::appfw::detail::flushQueuedCommands(vine::appfw::detail::moduleCommandQueue(), manager);                 \
     }

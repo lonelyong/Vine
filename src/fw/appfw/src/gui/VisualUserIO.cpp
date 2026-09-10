@@ -2,6 +2,7 @@
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
+#include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
@@ -81,6 +82,17 @@ void VisualUserIO::clear()
     if (console_)
     {
         console_->clear();
+    }
+}
+
+void VisualUserIO::cancelPendingInput()
+{
+    // Same path as Escape: the awaiting read resumes with std::nullopt, so a command
+    // parked on user input unwinds instead of holding the shutdown drain for its
+    // whole bound.
+    if (pending_ != PendingRead::None)
+    {
+        cancelInteraction();
     }
 }
 
@@ -201,15 +213,37 @@ void VisualUserIO::onLineEntered(const String& text)
     if (commandManager())
     {
         // 异步启动命令；失败信息在命令完成后回写。
+        // 命令可能在任意线程上结束（await 了定时器/异步读取），因此回写必须
+        // 编组到应用线程：控制台面板是 QWidget，只有应用线程可以碰。
         [](VisualUserIO* self, vine::async::Task<CommandResult> task) -> vine::async::DetachedTask {
             const auto result = co_await std::move(task);
-            if (!result.succeeded() && self->console_)
+            if (result.succeeded())
             {
-                const auto& message = result.message();
-                self->console_->append(ConsoleMessageType::Error, message.empty() ? String(u8"命令执行失败") : message);
+                co_return;
             }
+
+            const auto& message = result.message();
+            self->appendOnApplicationThread(message.empty() ? String(u8"命令执行失败") : message);
         }(this, commandManager()->executeCommandAsync(text));
     }
+}
+
+void VisualUserIO::appendOnApplicationThread(const String& message)
+{
+    if (!console_)
+    {
+        return;
+    }
+
+    auto* dispatcher = Application::current() ? Application::current()->mainThreadDispatcher() : nullptr;
+    if (dispatcher == nullptr || dispatcher->isMainThread() || !dispatcher->hasEventLoop())
+    {
+        console_->append(ConsoleMessageType::Error, message);
+        return;
+    }
+
+    auto* panel = console_;
+    static_cast<void>(dispatcher->postToMain([panel, message] { panel->append(ConsoleMessageType::Error, message); }));
 }
 
 void VisualUserIO::onEscape()

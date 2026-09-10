@@ -82,18 +82,34 @@ if [ -z "$CXX_BIN" ]; then
 fi
 if [ -z "$CC_BIN" ] && [ -n "$CXX_BIN" ]; then
     case "$CXX_BIN" in
-        *clang*) CC_BIN="$(printf '%s' "$CXX_BIN" | sed -e 's/++//')" ;;  # clang++-22 -> clang-22
-        *g++*)   CC_BIN="$(printf '%s' "$CXX_BIN" | sed -e 's/^g++/gcc/')" ;;  # g++-13 -> gcc-13
+        # clang++-22 -> clang-22, /usr/bin/clang++ -> /usr/bin/clang
+        *clang*) CC_BIN="$(printf '%s' "$CXX_BIN" | sed -E 's|(^|/)clang\+\+|\1clang|')" ;;
+        # g++-13 -> gcc-13, /usr/bin/g++ -> /usr/bin/gcc
+        *g++*)   CC_BIN="$(printf '%s' "$CXX_BIN" | sed -E 's|(^|/)g\+\+|\1gcc|')" ;;
     esac
     if [ -n "$CC_BIN" ] && ! command -v "$CC_BIN" >/dev/null 2>&1; then
-        CC_BIN="$CXX_BIN"  # no matching C driver: CMake tolerates the same binary
+        CC_BIN=""
     fi
+fi
+if [ -z "$CC_BIN" ]; then
+    # No C driver next to the C++ one: pick one from PATH. Pointing
+    # CMAKE_C_COMPILER at a C++ compiler is not tolerated (CMake >= 4 fails the
+    # compiler test with "The CMAKE_C_COMPILER is set to a C++ compiler").
+    for c in gcc cc clang; do
+        if command -v "$c" >/dev/null 2>&1; then
+            CC_BIN="$c"
+            break
+        fi
+    done
 fi
 if [ -z "$CXX_BIN" ] || ! command -v "$CXX_BIN" >/dev/null 2>&1; then
     echo "[error] no compiler with AddressSanitizer found; set CC/CXX explicitly" >&2
     exit 1
 fi
-[ -n "$CC_BIN" ] || CC_BIN="$CXX_BIN"
+if [ -z "$CC_BIN" ]; then
+    echo "[error] no C compiler found next to $CXX_BIN; set CC explicitly" >&2
+    exit 1
+fi
 
 SAN_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g"
 SAN_LINK_FLAGS="-fsanitize=address"

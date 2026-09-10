@@ -8,6 +8,12 @@ set(CMAKE_AUTOUIC ON)
 
 v_add_library(APPFW_TARGET_NAME Appfw)
 
+# The version a plugin reports as "built against" (PluginAbi::framework_version).
+# PUBLIC: the application, the plugins and the tests all link this target and
+# therefore compile the same value, which is the point - a plugin reports the
+# framework version it was built with, not the one it is loaded into.
+target_compile_definitions(${APPFW_TARGET_NAME} PUBLIC V_APPFW_VERSION="${PROJECT_VERSION}")
+
 set_target_properties(${APPFW_TARGET_NAME} PROPERTIES
     AUTOMOC ON
     AUTOUIC ON

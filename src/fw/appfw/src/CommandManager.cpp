@@ -1,6 +1,8 @@
 ﻿#include <vine/appfw/CommandManager.hpp>
 
 #include <algorithm>
+#include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -9,7 +11,6 @@
 #include <mutex>
 #include <optional>
 #include <stop_token>
-#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -17,14 +18,14 @@
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/Command.hpp>
 #include <vine/appfw/ConfigManager.hpp>
+#include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/UserIO.hpp>
 
-#include <vine/async/AsyncEvent.hpp>
 #include <vine/async/Cancellation.hpp>
 #include <vine/async/DetachedTask.hpp>
+#include <vine/async/Sleep.hpp>
 #include <vine/async/SyncWait.hpp>
 #include <vine/async/Task.hpp>
-#include <vine/async/WithTimeout.hpp>
 
 #include <vine/logging/Log.hpp>
 
@@ -115,25 +116,165 @@ String refusalMessage(const String& name, bool disabled)
     return String(u8"命令“") + name + String(u8"”未注册。");
 }
 
-/// Builds the failure message of an exception; empty when even that cannot be built.
-String messageFromException(const std::exception& e) noexcept
+/// The Cancelled result reported for a cancellation.
+CommandResult cancelledResult()
 {
-    try {
-        return String(reinterpret_cast<const char8_t*>(e.what()));
-    }
-    catch (...) {
-        return {};
-    }
+    return CommandResult(CommandStatus::Cancelled, String(u8"命令已取消"));
+}
+
+/// The Failed result carrying a message.
+CommandResult failedResult(String message)
+{
+    return CommandResult(CommandStatus::Failed, std::move(message));
 }
 
 /// Builds the Failed result reported when a command throws.
-CommandResult failureFromException(const std::exception& e)
+///
+/// The what() text is copied inside a try: building the result must not throw out of
+/// a catch block, and an exception without a description still leaves a message the
+/// UI can show.
+CommandResult failedResultFromException(const std::exception& e)
 {
-    String message = messageFromException(e);
-    if (message.empty()) {
-        message = String(u8"command threw an exception");
+    try {
+        String message(reinterpret_cast<const char8_t*>(e.what()));
+        if (!message.empty()) {
+            return failedResult(std::move(message));
+        }
     }
-    return CommandResult(CommandStatus::Failed, std::move(message));
+    catch (...) {
+    }
+    return failedResult(String(u8"command threw an exception"));
+}
+
+/// Runs a top-level execution path and turns everything it throws into a result.
+///
+/// Callers are UI event handlers and detached tasks, where an escaping exception
+/// would end the process instead of reaching anybody who could handle it, so this is
+/// the single place where that policy lives. The body is awaited here, which means the
+/// closure is copied into this coroutine's frame (the safe form of a coroutine
+/// lambda: see the caveat in async_global.hpp).
+///
+/// @param body Coroutine producing the outcome; called once, immediately.
+/// @return The outcome, or the Failed/Cancelled result of whatever it threw.
+template <typename Body>
+vine::async::Task<CommandResult> runGuarded(Body body)
+{
+    try {
+        co_return co_await body();
+    }
+    catch (const vine::async::TaskCancelledException&) {
+        co_return cancelledResult();
+    }
+    catch (const std::exception& e) {
+        V_LOGE("Command execution failed: {}", e.what());
+        co_return failedResultFromException(e);
+    }
+    catch (...) {
+        V_LOGE("Command execution failed with a non-standard exception");
+        co_return failedResult(String(u8"command execution failed"));
+    }
+}
+
+/// Interval between two liveness checks while waiting for chains to unwind.
+///
+/// The wait polls instead of parking on an event: a bounded wait that abandons a
+/// queued waiter would destroy a coroutine frame while the completing thread may
+/// be resuming it, which the async module's lifetime contract forbids (see
+/// async_global.hpp). Sleep slices keep the wait cooperative and cheap - only an
+/// Exclusive takeover and shutdown ever run it.
+constexpr auto kDrainPollInterval = std::chrono::milliseconds{ 5 };
+
+/// Fires one CommandManager event, logging whatever a handler throws.
+///
+/// Event handlers are user code, and nothing above a command (a UI handler, a
+/// detached task) is required to catch: a throwing listener must not be able to
+/// abort the command or tear down the process.
+///
+/// @param event Event to fire (executing or executed).
+/// @param owner Manager firing it.
+/// @param args  Notification arguments.
+template <typename EventType, typename ArgsType>
+void fireEvent(EventType& event, CommandManager& owner, ArgsType& args)
+{
+    try {
+        event.trigger(owner, args);
+    }
+    catch (const std::exception& e) {
+        V_LOGE("Command event handler threw: {}", e.what());
+    }
+    catch (...) {
+        V_LOGE("Command event handler threw");
+    }
+}
+
+/// Logs a finished execution at the level matching its outcome.
+void logOutcome(const Command& command, const CommandResult& result)
+{
+    if (result.succeeded()) {
+        V_LOGI("Command succeeded: {}", toUtf8View(command.name()));
+    }
+    else if (result.status() == CommandStatus::Cancelled) {
+        V_LOGW("Command cancelled: {}", toUtf8View(command.name()));
+    }
+    else {
+        V_LOGE("Command failed: {}: {}", toUtf8View(command.name()), toUtf8View(result.message()));
+    }
+}
+
+/// Adds or removes a name from a disabled list.
+///
+/// @param list     Disabled names to update.
+/// @param name     Name to add or remove.
+/// @param disabled true to disable the name, false to enable it.
+/// @return true when the list changed and therefore has to be persisted.
+bool updateDisabledList(std::vector<String>& list, const String& name, bool disabled)
+{
+    const auto it = std::ranges::find(list, name);
+    if (disabled == (it != list.end())) {
+        return false;  // Already in the requested state.
+    }
+
+    if (disabled) {
+        list.push_back(name);
+    }
+    else {
+        list.erase(it);
+    }
+    return true;
+}
+
+/// Hands a user-visible message to the thread that owns the UI.
+///
+/// A command that awaited a timer or an asynchronous read finishes on the thread
+/// that completed it, so a report must never reach userIO() directly: the GUI
+/// UserIO appends to a QWidget, which only the application thread may touch. This
+/// mirrors what ConsoleLogRouter does with log records. The message is delivered
+/// inline when the caller already runs on the application thread, or when there is
+/// no event loop to marshal onto, so console ordering is unchanged on the common
+/// path.
+///
+/// @param app     Application owning the UserIO; must outlive the call.
+/// @param message Message to show; an empty message is ignored.
+void reportToUser(Application& app, const String& message)
+{
+    if (message.empty()) {
+        return;
+    }
+
+    UserIO* io = app.userIO();
+    if (io == nullptr) {
+        return;
+    }
+
+    MainThreadDispatcher* dispatcher = app.mainThreadDispatcher();
+    if (dispatcher == nullptr || dispatcher->isMainThread() || !dispatcher->hasEventLoop()) {
+        io->putString(message);
+        return;
+    }
+
+    // Dropped when the event loop stops before it gets to the task, which is the
+    // right outcome during a shutdown: nobody is left to read the message.
+    static_cast<void>(dispatcher->postToMain([io, message] { io->putString(message); }));
 }
 
 } // namespace
@@ -155,7 +296,7 @@ struct CommandManager::Chain {
     /// Unregisters a command that finished from the chain's stack.
     void leaveStack(Command* command);
 
-    /// Unregisters a finished run, signalling drained when it was the last one.
+    /// Unregisters a finished run; the chain is thus done once none is left.
     void leaveChain();
 
     /// Returns the number of commands of this chain that have not finished yet.
@@ -174,14 +315,12 @@ struct CommandManager::Chain {
     ///
     /// Never smaller than commands.size(): the stack entry is popped first and
     /// the run is accounted for only after the frame's progress host is gone, so
-    /// that a drain signal is never sent while part of the frame is still alive.
+    /// zero here means the whole frame has been torn down and an Exclusive command
+    /// waiting for the chain to unwind never observes a half-dead chain.
     int runs{ 0 };
 
     /// Cancellation source of the whole chain; stopped, never replaced.
     std::stop_source stop_source;
-
-    /// Set once when the last run of this chain finishes.
-    vine::async::AsyncEvent drained;
 
     /// Guards commands and runs.
     mutable std::mutex mutex;
@@ -204,19 +343,13 @@ void CommandManager::Chain::leaveStack(Command* command)
 
 void CommandManager::Chain::leaveChain()
 {
-    bool is_drained = false;
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        is_drained = (--runs == 0);
-    }
-
-    if (is_drained) {
-        // Resumed outside the lock: an Exclusive command waiting for this chain
-        // continues here, and must never run under our mutex. The caller makes
-        // sure this happens only after the frame's stack entry and progress host
-        // are gone, so the resuming command sees a settled state.
-        drained.set();
-    }
+    // No callback, no resume: whoever waits for this chain polls liveRuns(). The
+    // caller guarantees this is the last step of the frame (stack entry and
+    // progress host are already gone), so a reader that sees zero sees a settled
+    // chain.
+    std::lock_guard<std::mutex> lock(mutex);
+    assert(runs > 0);
+    --runs;
 }
 
 int CommandManager::Chain::liveRuns() const
@@ -307,10 +440,9 @@ struct CommandManager::Impl {
      * The caller must not hold registry_mutex: the process-local fallback takes it.
      *
      * @param name     Command name.
-     * @param disabled_preference true to add the name to the disabled list, false to
-     *                 remove it.
+     * @param disabled true to add the name to the disabled list, false to remove it.
      */
-    void setDisabledPreference(const String& name, bool disabled_preference);
+    void setDisabledPreference(const String& name, bool disabled);
 
     /**
      * @brief Adds a chain to the live registry that cancelAll() walks.
@@ -329,30 +461,75 @@ struct CommandManager::Impl {
      */
     void pruneChains();
 
-    /// Awaits a single signal of an AsyncEvent.
-    static vine::async::Task<void> waitSignal(vine::async::AsyncEvent& event);
+    /// How a bounded drain wait ended.
+    enum class DrainOutcome
+    {
+        Drained,   ///< Every chain finished within the bound.
+        TimedOut,  ///< The bound elapsed with a chain still running.
+        Cancelled  ///< A "stop everything" request invalidated the wait.
+    };
+
+    /// How a takeover ended.
+    enum class TakeOverOutcome
+    {
+        TakenOver,      ///< Nothing is left running, the new command may start.
+        StillStopping,  ///< A predecessor outlived the bound; refuse the command.
+        Cancelled       ///< cancelAll() arrived while waiting; refuse the command.
+    };
+
+    /// Awaits, bounded, until every given chain has no live run left.
+    ///
+    /// The wait is cooperative: the caller's coroutine suspends between polls
+    /// instead of blocking its thread, so the chains keep the ability to unwind.
+    /// It polls rather than waiting on a notification because the bound must not
+    /// destroy a parked waiter (see kDrainPollInterval).
+    ///
+    /// @param chains   Chains to wait for; consumable, keeps them alive meanwhile.
+    /// @param timeout  Upper bound for the wait.
+    /// @param generation Cancellation generation the caller observed before
+    ///                 starting to wait; passing it makes the wait stop early with
+    ///                 DrainOutcome::Cancelled once cancelAll() bumps it. A caller
+    ///                 that is itself cancelling (cancelAllAndWait) leaves it empty.
+    /// @return Why the wait ended.
+    vine::async::Task<DrainOutcome> waitChainsDrained(std::vector<std::shared_ptr<Chain>> chains,
+                                                     std::chrono::milliseconds                timeout,
+                                                     std::optional<std::uint64_t>              generation = std::nullopt);
+
+    /// Returns a strong reference to every chain that has not ended yet.
+    ///
+    /// Must not be called with mutex held. Entries whose chain already ended are
+    /// dropped first, so the result is bounded by the number of live chains.
+    ///
+    /// @return Snapshot of the live chains.
+    std::vector<std::shared_ptr<Chain>> collectLiveChains();
+
+    /// Requests cancellation of every live chain.
+    ///
+    /// This is the "stop everything" primitive: it bumps cancel_generation first (a
+    /// takeover waiting for chains to unwind belongs to the set of things that
+    /// stops) and then requests a stop on every live chain.
+    ///
+    /// @return The chains that were live when the request was made.
+    std::vector<std::shared_ptr<Chain>> cancelLiveChains();
 
     /**
-     * @brief Waits until the chain has no live run left, bounded.
+     * @brief Asks every live chain to stop and waits for them to unwind.
      *
-     * @param chain Chain to wait for; must outlive the wait.
-     * @return true when the chain drained, false when the bound elapsed first.
-     */
-    static vine::async::Task<bool> waitDrained(Chain& chain);
-
-    /**
-     * @brief Asks the foreground chain to stop and waits for it to unwind.
+     * Taking over the foreground chain alone is not enough for the exclusivity an
+     * Exclusive command asks for: a detached command keeps its own chain, so
+     * cancelling only the foreground would let the new command run next to it.
+     * Either every chain unwinds within the bound, or the takeover is refused
+     * instead of silently overlapping.
      *
-     * The wait is cooperative and bounded by exclusiveDrainTimeout(); a command
-     * that ignores its token makes the takeover impossible, and running the new
-     * command next to it would break the exclusivity the caller asked for, so it
-     * is refused instead of silently overlapping.
+     * A takeover in progress is itself cancellable: cancelAll() bumps the
+     * cancellation generation, which ends the wait right away. Without that, "stop
+     * everything" (application shutdown) would still sit out the whole bound before
+     * the waiting command gave up.
      *
      * @param command Command whose rights are being claimed; only used for logging.
-     * @return true when nothing is in the way, or when it stopped in time; false
-     *         when the foreground chain did not stop within the bound.
+     * @return How the takeover ended.
      */
-    vine::async::Task<bool> takeOverForeground(const Command& command);
+    vine::async::Task<TakeOverOutcome> takeOverForeground(const Command& command);
 
     /**
      * @brief Decides whether a command may run and gives it a chain.
@@ -360,18 +537,19 @@ struct CommandManager::Impl {
      * Evaluation of the serialization gate, becoming the foreground chain and
      * taking the gate flag happen in one critical section, so two top-level
      * commands racing on different threads cannot both pass a check whose effect
-     * they only apply later. The progress host is created by the caller after this
-     * returns: building it here would nest the manager's lock with the progress
-     * registry's lock, and the host has to outlive the critical section anyway.
+     * they only apply later. The ambient progress host is sampled before that
+     * section (its accessor locks the progress registry, which must not be nested
+     * with this manager's mutex); the progress host itself is created by the caller
+     * after this returns, and has to outlive the critical section anyway.
      *
      * @param flags     Flags of the command being admitted.
      * @param exclusive Whether the command takes the foreground over the gate.
-     * @param nested    Whether the command joins its parent's chain instead.
+     * @param scope     Whether the command starts a chain or joins its parent's.
      * @param chain     Chain of a nested command, or an empty pointer for a
      *                  top-level one; replaced with the chain to run on.
      * @return true when the command may run, false when the gate refuses it.
      */
-    bool admit(CommandFlags flags, bool exclusive, bool nested, std::shared_ptr<Chain>& chain);
+    bool admit(CommandFlags flags, bool exclusive, ChainScope scope, std::shared_ptr<Chain>& chain);
 
     /**
      * @brief Reports a finished execution: outcome log, executed event, history.
@@ -386,6 +564,9 @@ struct CommandManager::Impl {
      */
     void report(CommandManager& owner, Command& command, const CommandResult& result);
 
+    /// Appends the execution to the bounded history; best effort.
+    void recordHistory(const Command& command, const CommandResult& result);
+
     /// Application that owns this manager (non-owning).
     Application* app;
 
@@ -398,6 +579,24 @@ struct CommandManager::Impl {
     /// True while an admitted top-level LongRunning command has not drained.
     bool foreground_busy{ false };
 
+    /// True while an admitted top-level Exclusive command has not drained.
+    ///
+    /// An Exclusive command is let past the busy gate on purpose - taking over the
+    /// running work is what it is for - so this flag is what keeps the second one out
+    /// when two of them are submitted at the same time and neither had anything to
+    /// take over from. Two Exclusive commands running together is exactly the state
+    /// "exclusive" forbids.
+    bool exclusive_busy{ false };
+
+    /// Bumped by every "stop everything" request (cancelAll() and cancelAllAndWait()),
+    /// so a takeover that is waiting for chains to unwind can notice that the whole
+    /// application changed its mind and stop waiting.
+    ///
+    /// Atomic because the waiters poll it without taking mutex, and it never has to
+    /// be consistent with the chain snapshot: a generation change always means
+    /// "abandon the wait", an extra or missing bump only costs one poll interval.
+    std::atomic<std::uint64_t> cancel_generation{ 0 };
+
     /// Execution history: executions that ran (by value, oldest first).
     std::deque<CommandHistoryEntry> history;
 
@@ -405,7 +604,7 @@ struct CommandManager::Impl {
     std::map<String, RegisteredCommand> registry;
 
     /// Disabled commands; the fallback used when the host has no config manager.
-    std::vector<String> disabled;
+    std::vector<String> disabled_fallback;
 
     /// Owner tag applied to commands registered while it is non-empty.
     String registration_owner;
@@ -420,8 +619,10 @@ struct CommandManager::Impl {
     /// i.e. everything a running command reads or writes through this manager.
     /// Critical sections here are short: no user code (factory, command, event
     /// handler) runs while it is held. It is also never held together with
-    /// Chain::mutex: the few sites that need both (ChainGuard, cancelAll) take them
-    /// one after the other, releasing the first before taking the second.
+    /// Chain::mutex, and never with the progress registry lock behind
+    /// ProgressHost::current() (admit samples it before entering, and the progress
+    /// host is built after leaving): the few sites that need both take them one
+    /// after the other, releasing the first before taking the second.
     mutable std::mutex mutex;
 
     /// Guards registry, registration_owner and aliases.
@@ -441,54 +642,102 @@ void CommandManager::Impl::pruneChains()
     std::erase_if(live_chains, [](const std::weak_ptr<Chain>& chain) { return chain.expired(); });
 }
 
-vine::async::Task<void> CommandManager::Impl::waitSignal(vine::async::AsyncEvent& event)
+std::vector<std::shared_ptr<CommandManager::Chain>> CommandManager::Impl::collectLiveChains()
 {
-    co_await event;
+    std::vector<std::shared_ptr<Chain>> chains;
+    std::lock_guard<std::mutex>         lock(mutex);
+    pruneChains();
+    chains.reserve(live_chains.size());
+    for (const auto& weak : live_chains) {
+        if (auto chain = weak.lock()) {
+            chains.push_back(std::move(chain));
+        }
+    }
+    return chains;
 }
 
-vine::async::Task<bool> CommandManager::Impl::waitDrained(Chain& chain)
+std::vector<std::shared_ptr<CommandManager::Chain>> CommandManager::Impl::cancelLiveChains()
 {
-    if (chain.liveRuns() == 0) {
-        co_return true;
+    // Bumped before the snapshot: a takeover that is waiting for chains to unwind
+    // belongs to the set of things "stop everything" stops, and it notices through
+    // the generation.
+    cancel_generation.fetch_add(1, std::memory_order_relaxed);
+
+    std::vector<std::shared_ptr<Chain>> chains = collectLiveChains();
+    for (const auto& chain : chains) {
+        chain->stop_source.request_stop();
+    }
+    return chains;
+}
+
+vine::async::Task<CommandManager::Impl::DrainOutcome> CommandManager::Impl::waitChainsDrained(
+    std::vector<std::shared_ptr<Chain>> chains,
+    std::chrono::milliseconds           timeout,
+    std::optional<std::uint64_t>        generation)
+{
+    if (chains.empty()) {
+        co_return DrainOutcome::Drained;
     }
 
-    // Cooperative: this coroutine suspends instead of blocking its thread, so
-    // the cancelled chain keeps the ability to unwind. The event is
-    // level-triggered, so a drain happening between the check above and the
-    // await below is not lost. The bound keeps a command that ignores its
-    // cancellation token from holding the caller forever.
-    try {
-        co_await vine::async::withTimeout(waitSignal(chain.drained), CommandManager::exclusiveDrainTimeout());
-        co_return true;
-    }
-    catch (const vine::async::TimeoutException&) {
-        co_return false;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    for (;;) {
+        const bool drained = std::ranges::none_of(chains, [](const std::shared_ptr<Chain>& chain) {
+            return chain->liveRuns() > 0;
+        });
+        if (drained) {
+            co_return DrainOutcome::Drained;
+        }
+        // Checked after the liveness check: a chain that finished while the
+        // stop-everything request came in is a success, not an abort.
+        if (generation.has_value() && cancel_generation.load(std::memory_order_relaxed) != *generation) {
+            co_return DrainOutcome::Cancelled;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            co_return DrainOutcome::TimedOut;
+        }
+        co_await vine::async::sleepFor(kDrainPollInterval);
     }
 }
 
-vine::async::Task<bool> CommandManager::Impl::takeOverForeground(const Command& command)
+vine::async::Task<CommandManager::Impl::TakeOverOutcome> CommandManager::Impl::takeOverForeground(const Command& command)
 {
-    std::shared_ptr<Chain> previous;
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        previous = foreground;
+    std::vector<std::shared_ptr<Chain>> chains = collectLiveChains();
+
+    // Every live chain is cancelled, not just the foreground one: a chain that a
+    // detached command owns is invisible to the foreground but would still run
+    // next to the new command, which is exactly what Exclusive forbids.
+    bool any_live = false;
+    for (const auto& chain : chains) {
+        if (chain->liveRuns() > 0) {
+            any_live = true;
+        }
+        chain->stop_source.request_stop();
     }
 
-    if (!previous || previous->liveRuns() == 0) {
-        co_return true;
+    if (!any_live) {
+        co_return TakeOverOutcome::TakenOver;
     }
 
-    previous->stop_source.request_stop();
-    if (!co_await waitDrained(*previous)) {
-        V_LOGE("Exclusive command rejected: the running chain did not stop within the drain bound: {}", toUtf8View(command.name()));
-        co_return false;
+    // Sampled after the stop request, so a cancelAll() that arrives from here on is
+    // observed as a new generation and aborts the wait.
+    const std::uint64_t generation = cancel_generation.load(std::memory_order_relaxed);
+    switch (co_await waitChainsDrained(std::move(chains), CommandManager::exclusiveDrainTimeout(), generation)) {
+    case DrainOutcome::Drained:
+        co_return TakeOverOutcome::TakenOver;
+    case DrainOutcome::Cancelled:
+        V_LOGW("Exclusive command cancelled while waiting for the running chain: {}", toUtf8View(command.name()));
+        co_return TakeOverOutcome::Cancelled;
+    case DrainOutcome::TimedOut:
+        break;
     }
-    co_return true;
+
+    V_LOGE("Exclusive command rejected: a running chain did not stop within the drain bound: {}", toUtf8View(command.name()));
+    co_return TakeOverOutcome::StillStopping;
 }
 
-bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, bool nested, std::shared_ptr<Chain>& chain)
+bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, ChainScope scope, std::shared_ptr<Chain>& chain)
 {
-    if (nested) {
+    if (scope == ChainScope::Nested) {
         if (!chain) {
             // A nested command always arrives with its parent's chain; keep a
             // private one instead of dereferencing nothing.
@@ -497,8 +746,23 @@ bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, bool nested
         return true;
     }
 
+    // Sampled before the critical section: ProgressHost::current() locks the
+    // progress registry, which is a module-global lock, and taking it while this
+    // manager's mutex is held would nest the two (the manager never calls out
+    // under its own lock). The ambient host only complements the gate flag; the
+    // gate decision itself is still one atomic step with the flag update below.
+    const bool ambient_host_busy = vine::progress::ProgressHost::current() != nullptr;
+
     std::lock_guard<std::mutex> lock(mutex);
-    if (!exclusive && (foreground_busy || vine::progress::ProgressHost::current() != nullptr)) {
+    if (exclusive) {
+        // One Exclusive command at a time; see exclusive_busy. A command that took
+        // over another Exclusive one is fine: that one drained before this check.
+        if (exclusive_busy) {
+            return false;
+        }
+        exclusive_busy = true;
+    }
+    else if (foreground_busy || ambient_host_busy) {
         return false;
     }
 
@@ -513,37 +777,24 @@ bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, bool nested
 
 void CommandManager::Impl::report(CommandManager& owner, Command& command, const CommandResult& result)
 {
-    if (result.succeeded()) {
-        V_LOGI("Command succeeded: {}", toUtf8View(command.name()));
-    }
-    else if (result.status() == CommandStatus::Cancelled) {
-        V_LOGW("Command cancelled: {}", toUtf8View(command.name()));
-    }
-    else {
-        V_LOGE("Command failed: {}: {}", toUtf8View(command.name()), toUtf8View(result.message()));
-    }
+    logOutcome(command, result);
 
-    try {
-        CommandExecutedEventArgs args(&command, result);
-        owner.executed.trigger(owner, args);
-    }
-    catch (const std::exception& e) {
-        V_LOGE("Executed event handler threw: {}", e.what());
-    }
-    catch (...) {
-        V_LOGE("Executed event handler threw");
-    }
+    CommandExecutedEventArgs args(&command, result);
+    fireEvent(owner.executed, owner, args);
 
-    // Record the execution by value: the command instance is owned by the caller
-    // and is destroyed as soon as the execution finishes, so keeping a pointer to
-    // it would leave the history dangling. The history is bounded so a
-    // long-running application cannot grow it without limit.
-    //
-    // The snapshot is built before the lock is taken: name() and getType() are
-    // command code, and no user callback runs while this manager's lock is held.
-    // A record that cannot be built or appended is only logged, never reported.
+    recordHistory(command, result);
+}
+
+void CommandManager::Impl::recordHistory(const Command& command, const CommandResult& result)
+{
+    // The execution is recorded by value: the command instance is owned by the caller
+    // and is destroyed as soon as the execution finishes, so keeping a pointer to it
+    // would leave the history dangling. The snapshot is built before the lock is
+    // taken - name() and getType() are command code, and no user callback runs while
+    // this manager's lock is held - and a record that cannot be built or appended is
+    // only logged, never reported.
     try {
-        const CommandHistoryEntry entry{ command.name(), command.getType(), result };
+        const CommandHistoryEntry      entry{ command.name(), command.getType(), result };
         std::lock_guard<std::mutex> lock(mutex);
         if (history.size() >= CommandManager::maxHistoryEntries()) {
             history.pop_front();
@@ -598,13 +849,13 @@ std::vector<String> CommandManager::Impl::disabledList() const
     }
 
     std::lock_guard<std::mutex> lock(registry_mutex);
-    return disabled;
+    return disabled_fallback;
 }
 
 bool CommandManager::Impl::isDisabled(const String& name) const
 {
     const std::vector<String> list = disabledList();
-    return std::find(list.begin(), list.end(), name) != list.end();
+    return std::ranges::find(list, name) != list.end();
 }
 
 bool CommandManager::Impl::isDisabledRegistration(const String& name) const
@@ -614,37 +865,19 @@ bool CommandManager::Impl::isDisabledRegistration(const String& name) const
     return it != registry.end() && !it->second.enabled;
 }
 
-void CommandManager::Impl::setDisabledPreference(const String& name, bool disabled_preference)
+void CommandManager::Impl::setDisabledPreference(const String& name, bool disabled)
 {
     if (ConfigManager* cfg = configManager(); cfg != nullptr) {
         std::vector<String> list = cfg->getStringArray(CommandManager::disabledConfigKey());
-        const auto          it   = std::find(list.begin(), list.end(), name);
-        if (!disabled_preference) {
-            if (it == list.end()) {
-                return;
-            }
-            list.erase(it);
+        if (updateDisabledList(list, name, disabled)) {
+            cfg->setStringArray(CommandManager::disabledConfigKey(), list);
         }
-        else {
-            if (it != list.end()) {
-                return;
-            }
-            list.push_back(name);
-        }
-        cfg->setStringArray(CommandManager::disabledConfigKey(), list);
         return;
     }
 
+    // No host configuration: keep the preference for this process only.
     std::lock_guard<std::mutex> lock(registry_mutex);
-    const auto                  it = std::find(disabled.begin(), disabled.end(), name);
-    if (!disabled_preference) {
-        if (it != disabled.end()) {
-            disabled.erase(it);
-        }
-    }
-    else if (it == disabled.end()) {
-        disabled.push_back(name);
-    }
+    updateDisabledList(disabled_fallback, name, disabled);
 }
 
 /**
@@ -652,15 +885,14 @@ void CommandManager::Impl::setDisabledPreference(const String& name, bool disabl
  */
 class CommandManager::Context : public CommandExecutionContext {
   public:
-    Context(CommandManager* mgr, Application* app, std::shared_ptr<Chain> chain)
-      : mgr_(mgr)
-      , app_(app)
+    Context(CommandManager* manager, std::shared_ptr<Chain> chain)
+      : manager_(manager)
       , chain_(std::move(chain))
     {}
 
     Application* application() const override
     {
-        return app_;
+        return manager_->application();
     }
 
     std::stop_token stopToken() const override
@@ -679,7 +911,7 @@ class CommandManager::Context : public CommandExecutionContext {
         // chain's budget, not the process's coroutine frames.
         if (chain_->stackSize() >= CommandManager::maxChainDepth()) {
             V_LOGE("Command nesting is too deep; refusing child command: {}", toUtf8View(name));
-            co_return CommandResult(CommandStatus::Failed, String(u8"Command nesting is too deep"));
+            co_return failedResult(String(u8"Command nesting is too deep"));
         }
 
         // The factory is user code: a child that cannot even be built must come
@@ -687,26 +919,25 @@ class CommandManager::Context : public CommandExecutionContext {
         bool                     disabled = false;
         std::unique_ptr<Command> command;
         try {
-            command = mgr_->createCommandByName(name, &disabled);
+            command = manager_->createCommandByName(name, &disabled);
         }
         catch (const std::exception& e) {
             V_LOGE("Child command factory threw: {}: {}", toUtf8View(name), e.what());
-            co_return failureFromException(e);
+            co_return failedResultFromException(e);
         }
         catch (...) {
             V_LOGE("Child command factory threw: {}", toUtf8View(name));
-            co_return CommandResult(CommandStatus::Failed, String(u8"command factory threw"));
+            co_return failedResult(String(u8"command factory threw"));
         }
 
         if (!command) {
-            co_return CommandResult(CommandStatus::Failed, refusalMessage(name, disabled));
+            co_return failedResult(refusalMessage(name, disabled));
         }
-        co_return co_await mgr_->executeCommandAsyncImpl(command.get(), chain_, /*nested=*/true);
+        co_return co_await manager_->executeCommandAsyncImpl(command.get(), chain_, ChainScope::Nested);
     }
 
   private:
-    CommandManager*        mgr_;
-    Application*           app_;
+    CommandManager*        manager_;
     std::shared_ptr<Chain> chain_;
 };
 
@@ -714,7 +945,32 @@ CommandManager::CommandManager(Application* app)
   : d(new Impl(app))
 {}
 
-CommandManager::~CommandManager() = default;
+CommandManager::~CommandManager()
+{
+    // Nothing is cancelled or awaited here on purpose: blocking a destructor on
+    // coroutines unwinding would deadlock whenever a command needs the thread being
+    // torn down to make progress. The host establishes that precondition with
+    // cancelAllAndWait() (Application::shutdown() does); violating it is reported
+    // rather than passed over silently, because the live frames still point at this
+    // manager (ChainGuard::impl) and at the chains (Context::manager_) and would resume
+    // into freed memory.
+    std::vector<std::weak_ptr<Chain>> live;
+    {
+        std::lock_guard<std::mutex> lock(d->mutex);
+        live = d->live_chains;
+    }
+
+    // Checked outside the manager mutex: liveRuns() takes the chain's own mutex, and
+    // the two are never held together.
+    const bool still_running = std::ranges::any_of(live, [](const std::weak_ptr<Chain>& weak) {
+        const std::shared_ptr<Chain> chain = weak.lock();
+        return chain != nullptr && chain->liveRuns() > 0;
+    });
+
+    if (still_running) {
+        V_LOGW("CommandManager destroyed while command chains are still running");
+    }
+}
 
 raw_ptr<Application> CommandManager::application() const noexcept
 {
@@ -733,34 +989,43 @@ CommandResult CommandManager::executeCommand(const String& name)
 
 vine::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* command)
 {
-    // A caller-supplied instance runs under its own name, so it must not become a
-    // back door around a disabled registration. An instance whose name is not
-    // registered (a private command built on the spot) is the caller's business and
-    // runs as before.
-    const String command_name = command != nullptr ? command->name() : String{};
-    if (command != nullptr && d->isDisabledRegistration(command_name)) {
-        V_LOGI("Command '{}' is disabled; refusing the caller-supplied instance", toUtf8View(command_name));
-        co_return CommandResult(CommandStatus::Failed, refusalMessage(command_name, /*disabled=*/true));
-    }
+    // The disabled-instance check is inside the funnel on purpose: it calls
+    // command->name() (user code) and copies the name (allocates).
+    return runGuarded([this, command]() -> vine::async::Task<CommandResult> {
+        // A caller-supplied instance runs under its own name, so it must not become
+        // a back door around a disabled registration. An instance whose name is not
+        // registered (a private command built on the spot) is the caller's business
+        // and runs as before.
+        const String command_name = command != nullptr ? command->name() : String{};
+        if (command != nullptr && d->isDisabledRegistration(command_name)) {
+            V_LOGI("Command '{}' is disabled; refusing the caller-supplied instance", toUtf8View(command_name));
+            co_return failedResult(refusalMessage(command_name, /*disabled=*/true));
+        }
 
-    // Choke point for exceptions: whatever escapes the execution path (a throwing
-    // factory, an allocation failure) becomes a Failed result here. Callers are
-    // event handlers and detached tasks, where an escaping exception would end
-    // the process instead of reaching anybody who could handle it.
-    try {
-        co_return co_await executeCommandAsyncImpl(command, /*chain=*/{}, /*nested=*/false);
-    }
-    catch (const vine::async::TaskCancelledException&) {
-        co_return CommandResult(CommandStatus::Cancelled, String(u8"命令已取消"));
-    }
-    catch (const std::exception& e) {
-        V_LOGE("Command execution failed: {}", e.what());
-        co_return failureFromException(e);
-    }
-    catch (...) {
-        V_LOGE("Command execution failed with a non-standard exception");
-        co_return CommandResult(CommandStatus::Failed, String(u8"command execution failed"));
-    }
+        co_return co_await executeCommandAsyncImpl(command, /*chain=*/{}, ChainScope::TopLevel);
+    });
+}
+
+vine::async::Task<CommandResult> CommandManager::executeCommandAsync(const String& name)
+{
+    // The copy happens here, while the caller's argument is still alive: the task is
+    // lazy, so a coroutine that held a reference to name would read a destroyed
+    // temporary when the caller awaits it later.
+    return executeNamedCommand(String(name));
+}
+
+vine::async::Task<CommandResult> CommandManager::executeNamedCommand(String name)
+{
+    return runGuarded([this, name = std::move(name)]() -> vine::async::Task<CommandResult> {
+        bool                     disabled = false;
+        std::unique_ptr<Command> command  = createCommandByName(name, &disabled);
+        if (!command) {
+            // A command the user disabled is a different situation from a name that
+            // was never registered: it can be re-enabled in the command manager.
+            co_return failedResult(refusalMessage(name, disabled));
+        }
+        co_return co_await executeCommandAsyncImpl(command.get(), /*chain=*/{}, ChainScope::TopLevel);
+    });
 }
 
 std::unique_ptr<Command> CommandManager::createCommandByName(const String& name, bool* disabled)
@@ -786,29 +1051,39 @@ std::unique_ptr<Command> CommandManager::createCommandByName(const String& name,
     return std::unique_ptr<Command>(factory());
 }
 
-vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, bool nested)
+vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope)
 {
     if (!command) {
-        co_return CommandResult(CommandStatus::Failed, String(u8"Command is null"));
+        co_return failedResult(String(u8"Command is null"));
     }
 
     const CommandFlags flags     = command->flags();
     const bool         exclusive = hasFlag(flags, CommandFlags::Exclusive);
+    const bool         top_level = scope == ChainScope::TopLevel;
 
-    if (exclusive && !nested && !co_await d->takeOverForeground(*command)) {
-        co_return CommandResult(CommandStatus::Failed, String(u8"Another operation is still stopping"));
+    if (exclusive && top_level) {
+        switch (co_await d->takeOverForeground(*command)) {
+        case Impl::TakeOverOutcome::TakenOver:
+            break;
+        case Impl::TakeOverOutcome::StillStopping:
+            co_return failedResult(String(u8"Another operation is still stopping"));
+        case Impl::TakeOverOutcome::Cancelled:
+            co_return cancelledResult();
+        }
     }
 
-    if (!d->admit(flags, exclusive, nested, chain)) {
+    if (!d->admit(flags, exclusive, scope, chain)) {
         // Visible for the callers that cannot read the result: a detached command
         // that is refused would otherwise fail silently.
         V_LOGW("Command refused by the serialization gate: {}", toUtf8View(command->name()));
-        co_return CommandResult(CommandStatus::Failed, String(u8"Another operation is in progress"));
+        co_return failedResult(String(u8"Another operation is in progress"));
     }
 
     // Whether this run took the serialization gate (a top-level LongRunning
-    // command); the guard below releases it when the run ends.
-    const bool holds_gate = !nested && hasFlag(flags, CommandFlags::LongRunning);
+    // command) or the exclusive occupancy (a top-level Exclusive command); the guard
+    // below releases whichever it is when the run ends.
+    const bool holds_gate      = top_level && hasFlag(flags, CommandFlags::LongRunning);
+    const bool holds_exclusive = top_level && exclusive;
 
     // Declared before the progress host and the stack guard below, so it is
     // destroyed after both: the chain is reported drained only once this
@@ -820,16 +1095,22 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
         Impl*  impl;
         Chain* chain;
         bool   holds_gate;
+        bool   holds_exclusive;
 
         ~ChainGuard()
         {
-            if (holds_gate) {
+            if (holds_gate || holds_exclusive) {
                 std::lock_guard<std::mutex> lock(impl->mutex);
-                impl->foreground_busy = false;
+                if (holds_gate) {
+                    impl->foreground_busy = false;
+                }
+                if (holds_exclusive) {
+                    impl->exclusive_busy = false;
+                }
             }
             chain->leaveChain();
         }
-    } chain_guard{ d.get(), chain.get(), holds_gate };
+    } chain_guard{ d.get(), chain.get(), holds_gate, holds_exclusive };
 
     // Every LongRunning command — top-level or nested — owns its own progress
     // host, pushed onto the foreground stack so a nested child takes over the
@@ -860,7 +1141,7 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
         }
     } guard{ chain.get(), command };
 
-    Context context(this, d->app, chain);
+    Context context(this, chain);
 
     // Undoable commands notify the document to snapshot its state first. The
     // handler is taken under the lock and called outside it: it is user code from
@@ -879,27 +1160,16 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
         }
         catch (const std::exception& e) {
             V_LOGE("Snapshot handler failed; command not executed: {}", e.what());
-            co_return failureFromException(e);
+            co_return failedResultFromException(e);
         }
         catch (...) {
             V_LOGE("Snapshot handler failed; command not executed");
-            co_return CommandResult(CommandStatus::Failed, String(u8"snapshot handler failed"));
+            co_return failedResult(String(u8"snapshot handler failed"));
         }
     }
 
-    // Event handlers are user code, and nothing above a command (a UI handler, a
-    // detached task) is required to catch: a throwing listener must not be able
-    // to abort the command or tear down the process.
-    try {
-        CommandExecutingEventArgs args(command);
-        executing.trigger(*this, args);
-    }
-    catch (const std::exception& e) {
-        V_LOGE("Executing event handler threw: {}", e.what());
-    }
-    catch (...) {
-        V_LOGE("Executing event handler threw");
-    }
+    CommandExecutingEventArgs args(command);
+    fireEvent(executing, *this, args);
 
     CommandResult result;
     try {
@@ -913,50 +1183,29 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
         // that wants to handle a cancelled child catches the exception in its
         // own execute().
         if (chain->stackSize() > 1) {
+            // It ran (the executing event was fired), so it owes its own executed
+            // event and history entry before the exception travels to the parent:
+            // a consumer pairing the two events must see a pair for every run.
+            d->report(*this, *command, cancelledResult());
             throw;
         }
-        result = CommandResult(CommandStatus::Cancelled, String(u8"命令已取消"));
+        result = cancelledResult();
     }
     catch (const std::exception& e) {
         // Anything else is reported as a Failed outcome instead of propagating:
         // commands are started from UI event handlers and from detached tasks
         // where an escaping exception terminates the process.
         V_LOGE("Command threw an exception: {}: {}", toUtf8View(command->name()), e.what());
-        result = failureFromException(e);
+        result = failedResultFromException(e);
     }
     catch (...) {
         V_LOGE("Command threw a non-standard exception: {}", toUtf8View(command->name()));
-        result = CommandResult(CommandStatus::Failed, String(u8"command threw an exception"));
+        result = failedResult(String(u8"command threw an exception"));
     }
 
     d->report(*this, *command, result);
 
     co_return result;
-}
-
-vine::async::Task<CommandResult> CommandManager::executeCommandAsync(const String& name)
-{
-    try {
-        bool                     disabled = false;
-        std::unique_ptr<Command> command  = createCommandByName(name, &disabled);
-        if (!command) {
-            // A command the user disabled is a different situation from a name that
-            // was never registered: it can be re-enabled in the command manager.
-            co_return CommandResult(CommandStatus::Failed, refusalMessage(name, disabled));
-        }
-        co_return co_await executeCommandAsyncImpl(command.get(), /*chain=*/{}, /*nested=*/false);
-    }
-    catch (const vine::async::TaskCancelledException&) {
-        co_return CommandResult(CommandStatus::Cancelled, String(u8"命令已取消"));
-    }
-    catch (const std::exception& e) {
-        V_LOGE("Command execution failed: {}", e.what());
-        co_return failureFromException(e);
-    }
-    catch (...) {
-        V_LOGE("Command execution failed with a non-standard exception");
-        co_return CommandResult(CommandStatus::Failed, String(u8"command execution failed"));
-    }
 }
 
 void CommandManager::executeDetached(const String& name)
@@ -971,81 +1220,86 @@ void CommandManager::executeDetached(const String& name)
     // invisible. Commands entered in the console are started through
     // executeCommandAsync() and report themselves, so they are not reported twice.
     Application* owner = d->app;
-    [](Application* app, vine::async::Task<CommandResult> task) -> vine::async::DetachedTask {
-        CommandResult result{ CommandStatus::Failed };
-        try {
-            result = co_await std::move(task);
-        }
-        catch (const std::exception& e) {
-            V_LOGE("Detached command failed: {}", e.what());
-            co_return;
-        }
-        catch (...) {
-            V_LOGE("Detached command failed with a non-standard exception");
-            co_return;
-        }
+    try {
+        // Starting the task can fail too (copying the name, allocating the coroutine
+        // frame), and that happens before the wrapper exists, so it needs this catch
+        // as well: a fire-and-forget entry point must not throw at its caller.
+        [](Application* app, vine::async::Task<CommandResult> task) -> vine::async::DetachedTask {
+            CommandResult result{ CommandStatus::Failed };
+            try {
+                result = co_await std::move(task);
+            }
+            catch (const std::exception& e) {
+                V_LOGE("Detached command failed: {}", e.what());
+                co_return;
+            }
+            catch (...) {
+                V_LOGE("Detached command failed with a non-standard exception");
+                co_return;
+            }
 
-        if (result.succeeded() || app == nullptr) {
-            co_return;
-        }
-        if (UserIO* io = app->userIO(); io != nullptr) {
-            io->putString(result.message().empty() ? String(u8"命令执行失败") : result.message());
-        }
-    }(owner, executeCommandAsync(name));
+            if (result.succeeded() || app == nullptr) {
+                co_return;
+            }
+            // The command most likely ran to its end on another thread (a timer or an
+            // asynchronous read completes it), so this must not touch userIO() directly:
+            // the GUI one writes to a QWidget.
+            reportToUser(*app, result.message().empty() ? String(u8"命令执行失败") : result.message());
+        }(owner, executeCommandAsync(name));
+    }
+    catch (const std::exception& e) {
+        V_LOGE("Detached command could not be started: {}", e.what());
+    }
+    catch (...) {
+        V_LOGE("Detached command could not be started");
+    }
+}
+
+std::shared_ptr<CommandManager::Chain> CommandManager::foregroundChain() const
+{
+    std::lock_guard<std::mutex> lock(d->mutex);
+    return d->foreground;
 }
 
 raw_ptr<Command> CommandManager::currentCommand() const
 {
-    std::shared_ptr<Chain> foreground;
-    {
-        std::lock_guard<std::mutex> lock(d->mutex);
-        foreground = d->foreground;
-    }
-    return foreground ? foreground->innermost() : nullptr;
+    const std::shared_ptr<Chain> chain = foregroundChain();
+    return chain ? chain->innermost() : nullptr;
 }
 
 int CommandManager::runningCount() const
 {
-    std::shared_ptr<Chain> foreground;
-    {
-        std::lock_guard<std::mutex> lock(d->mutex);
-        foreground = d->foreground;
-    }
-    return foreground ? foreground->stackSize() : 0;
+    const std::shared_ptr<Chain> chain = foregroundChain();
+    return chain ? chain->stackSize() : 0;
 }
 
 void CommandManager::cancelCurrent()
 {
-    std::shared_ptr<Chain> foreground;
-    {
-        std::lock_guard<std::mutex> lock(d->mutex);
-        foreground = d->foreground;
-    }
-    if (foreground) {
-        foreground->stop_source.request_stop();
+    if (const std::shared_ptr<Chain> chain = foregroundChain(); chain) {
+        chain->stop_source.request_stop();
     }
 }
 
 void CommandManager::cancelAll()
 {
-    // Copy the chains out under the lock and stop them outside it: a chain that
-    // finishes concurrently resets its weak reference, and stop_source is safe
-    // to use from any thread anyway.
-    std::vector<std::shared_ptr<Chain>> chains;
-    {
-        std::lock_guard<std::mutex> lock(d->mutex);
-        d->pruneChains();
-        chains.reserve(d->live_chains.size());
-        for (const auto& weak : d->live_chains) {
-            if (auto chain = weak.lock()) {
-                chains.push_back(std::move(chain));
-            }
-        }
+    // The snapshot is only a by-product here: cancelLiveChains() already stopped
+    // every chain it returns.
+    static_cast<void>(d->cancelLiveChains());
+}
+
+bool CommandManager::cancelAllAndWait(std::chrono::milliseconds timeout)
+{
+    std::vector<std::shared_ptr<Chain>> chains = d->cancelLiveChains();
+    if (chains.empty()) {
+        return true;
     }
 
-    for (const auto& chain : chains) {
-        chain->stop_source.request_stop();
-    }
+    // Bounded and cooperative, driven on the calling thread: this is the shutdown
+    // path, where "everything stopped" is a precondition for destroying the manager
+    // (a live frame still points at it) but a hostile command must not hang the
+    // teardown forever. The wait watches no generation here - this call is the one
+    // that bumps it.
+    return vine::async::syncWait(d->waitChainsDrained(std::move(chains), timeout)) == Impl::DrainOutcome::Drained;
 }
 
 int CommandManager::historyCount() const
@@ -1179,14 +1433,23 @@ bool CommandManager::setCommandEnabled(const String& name, bool enabled)
         return false;
     }
 
+    // The flag and the preference belong to the command the name runs, not to the
+    // alias the caller typed: every execution path resolves aliases, so a
+    // preference recorded under the alias would be silently ineffective.
+    String canonical;
+    {
+        std::lock_guard<std::mutex> lock(d->registry_mutex);
+        canonical = d->resolveName(name);
+    }
+
     // Written first: the preference has to survive a command that is not registered
     // right now, which is the normal case for a plugin that is not loaded yet.
-    d->setDisabledPreference(name, !enabled);
+    d->setDisabledPreference(canonical, !enabled);
 
     bool applied = false;
     {
         std::lock_guard<std::mutex> lock(d->registry_mutex);
-        const auto                  it = d->registry.find(name);
+        const auto                  it = d->registry.find(canonical);
         if (it != d->registry.end()) {
             it->second.enabled = enabled;
             applied            = true;
@@ -1194,10 +1457,10 @@ bool CommandManager::setCommandEnabled(const String& name, bool enabled)
     }
 
     if (applied) {
-        V_LOGI("Command '{}' is now {}", toUtf8View(name), enabled ? "enabled" : "disabled");
+        V_LOGI("Command '{}' is now {}", toUtf8View(canonical), enabled ? "enabled" : "disabled");
     }
     else {
-        V_LOGI("Command '{}' is not registered; the preference applies when it registers again: {}", toUtf8View(name),
+        V_LOGI("Command '{}' is not registered; the preference applies when it registers again: {}", toUtf8View(canonical),
                enabled ? "enabled" : "disabled");
     }
     return true;

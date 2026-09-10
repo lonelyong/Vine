@@ -650,7 +650,7 @@ TEST(EventBusTest, PublishRacingShutdownIsSafe)
     EXPECT_FALSE(bus.subscribe<PingEvent>([](const PingEvent&) {}).isActive());
 }
 
-TEST(EventBusTest, GracefulShutdownDoesNotCountAnotherBussCallAsItsOwn)
+TEST(EventBusTest, GracefulShutdownDoesNotCountAnotherBusCallAsItsOwn)
 {
     // Bus A：另一个线程正卡在 A 的 handler 里 → A 有在飞调用。
     vine::appfw::EventBus bus_a;
@@ -841,4 +841,98 @@ TEST(EventBusTest, ErrorHandlerReportsSubscriptionTag)
     bus.publish(std::make_shared<BaseEvent>());
     ASSERT_EQ(errors.size(), 3u);
     EXPECT_TRUE(errors[2].tag.empty());
+}
+
+// 空事件是 no-op：publish(nullptr) 不得派发、不得排队、不得抛。
+TEST(EventBusTest, PublishNullEventIsIgnored)
+{
+    vine::appfw::EventBus bus(mainDispatcher());
+
+    int  current_runs = 0;
+    auto current      = bus.subscribe<PingEvent>([&current_runs](const PingEvent&) { ++current_runs; });
+    auto main_mode    = bus.subscribe<PingEvent>([](const PingEvent&) {}, vine::appfw::SubscriptionThreadMode::Main);
+
+    EXPECT_NO_THROW(bus.publish(nullptr));
+    EXPECT_EQ(current_runs, 0);
+    EXPECT_EQ(bus.pendingDeliveryCount(), 0u);
+
+    // 正常事件照旧派发/排队，说明空事件只是被忽略而不是把总线弄坏。
+    bus.publish(std::make_shared<PingEvent>());
+    EXPECT_EQ(current_runs, 1);
+    EXPECT_EQ(bus.pendingDeliveryCount(), 1u);
+
+    QCoreApplication::processEvents();
+    EXPECT_EQ(bus.pendingDeliveryCount(), 0u);
+}
+
+// 关停结果是"共享的"，但它必须如实：一次已经丢弃了排队投递的普通 shutdown()
+// 之后，shutdownGracefully() 不能宣称"所有投递都跑完了"（否则调用方会据此
+// 认为关停是干净的，甚至在仍有 admitted 调用时就开始销毁外围对象）。
+TEST(EventBusTest, GracefulResultAfterPlainShutdownDoesNotClaimDrainedWork)
+{
+    vine::appfw::EventBus bus(mainDispatcher());
+
+    auto sub = bus.subscribe<PingEvent>([](const PingEvent&) {}, vine::appfw::SubscriptionThreadMode::Main);
+    ASSERT_TRUE(sub.isActive());
+
+    // 排一条 Main 投递，然后用非优雅关停把它丢掉（不 drain）。
+    bus.publish(std::make_shared<PingEvent>());
+    ASSERT_EQ(bus.pendingDeliveryCount(), 1u);
+    bus.shutdown();
+    EXPECT_TRUE(bus.isShutDown());
+    EXPECT_EQ(bus.pendingDeliveryCount(), 0u);
+
+    // 之后（或并发）的优雅关停调用只能报"有工作被丢弃"。
+    EXPECT_FALSE(bus.shutdownGracefully(std::chrono::milliseconds(50)));
+}
+
+namespace
+{
+/// 析构时再次发起关停：挂在订阅闭包上，闭包随关停回收被销毁。
+class ShutdownOnDestroy {
+  public:
+    explicit ShutdownOnDestroy(vine::appfw::EventBus* bus)
+      : bus_(bus)
+    {}
+
+    ~ShutdownOnDestroy() { bus_->shutdown(); }
+
+  private:
+    vine::appfw::EventBus* bus_;
+};
+} // namespace
+
+// 停止线程上的重入关停不得等自己：订阅闭包（捕获的对象）在 cancelSubscriptions()
+// 里被销毁，若它的析构又调用 shutdown()，那就是"正在停止的这条线程"再请求停止——
+// 等下去只有死锁一条路。工作线程 + 有界等待的写法：回归时用例失败而不是挂住套件。
+TEST(EventBusTest, ReentrantShutdownFromReleasedHandlerDoesNotWaitForItself)
+{
+    std::atomic<bool> finished{ false };
+
+    std::thread worker([&finished] {
+        {
+            vine::appfw::EventBus bus;
+            {
+                auto guard = std::make_shared<ShutdownOnDestroy>(&bus);
+                auto sub   = bus.subscribe<PingEvent>([guard](const PingEvent&) {});
+                ASSERT_TRUE(sub.isActive());
+            }
+            // 本地句柄全部销毁，但订阅仍由总线持有：闭包要等到关停回收时才析构。
+            bus.shutdown();  // 回收订阅 → 守卫析构 → 重入 shutdown()
+        }
+        finished.store(true);
+    });
+
+    for (int i = 0; i < 300 && !finished.load(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(finished.load()) << "重入的 shutdown() 在停止线程上等待了自己";
+
+    if (finished.load()) {
+        worker.join();
+    }
+    else {
+        // 回归时线程仍卡在死锁里：detach 让用例以断言失败收场，而不是拖住整个套件。
+        worker.detach();
+    }
 }

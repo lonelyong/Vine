@@ -168,6 +168,23 @@ int Application::run()
 
 void Application::shutdown()
 {
+    // Commands go first: their frames hold the manager, the user IO and plugin
+    // services, and a command that is still suspended when the manager is
+    // destroyed would resume into freed memory. The wait is bounded, so a command
+    // that ignores its cancellation token cannot hang the teardown; it only makes
+    // the teardown unclean, which is what the warning reports.
+    if (auto* commands = dptr()->command_manager.get(); commands != nullptr) {
+        // A command waiting for user input holds no cancellation token: the read
+        // owns it. Nobody is going to answer at this point, so unblock it first,
+        // otherwise the drain would sit out its whole bound and fail.
+        if (auto* io = dptr()->user_io.get(); io != nullptr) {
+            io->cancelPendingInput();
+        }
+        if (!commands->cancelAllAndWait()) {
+            V_LOGW("Application shutdown: command chains did not stop within the drain bound");
+        }
+    }
+
     // The main loop has stopped but the application is still fully alive:
     // plugins are unloaded first so they can still publish on a working bus and
     // reach the managers they registered into.
@@ -179,8 +196,12 @@ void Application::shutdown()
 
     // Deliver the events that were published just before the exit (bounded by
     // the timeout), then stop the bus before the subscribers (windows, plugins)
-    // start to be torn down.
-    eventBus()->shutdownGracefully(EventBus::gracefulShutdownTimeout());
+    // start to be torn down. A false result is not fatal - the bus is stopped
+    // either way - but it means some parked delivery never arrived, which is
+    // exactly what a subscriber would otherwise never learn.
+    if (!eventBus()->shutdownGracefully(EventBus::gracefulShutdownTimeout())) {
+        V_LOGW("Application shutdown: pending events were dropped instead of delivered");
+    }
 
     // Persist last: plugin unload and the final events may still change values.
     if (!dptr()->config_file.empty()) {

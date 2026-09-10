@@ -26,6 +26,7 @@ class VisualUserIO : public UserIO {
   public:
     virtual void putString(const String& str) override;
     virtual void clear() override;
+    virtual void cancelPendingInput() override;
 
     virtual vine::async::Task<std::optional<String>>        getStringAsync(const String& prompt = {}) override;
     virtual vine::async::Task<std::optional<int8_t>>        getIntAsync(const String& prompt = {}) override;
@@ -53,6 +54,17 @@ class VisualUserIO : public UserIO {
     void parseAndComplete(const String& text);
     void repromptError(const String& message);
     void refreshCompletion();
+
+    /**
+     * @brief Appends an error message to the console on the application thread.
+     *
+     * The command completion callback runs on the thread that finished the
+     * command, which is not necessarily the application thread; the console panel
+     * is a QWidget and may only be touched there.
+     *
+     * @param message Message to show.
+     */
+    void appendOnApplicationThread(const String& message);
 
   private:
     vine::async::AsyncEvent done_;

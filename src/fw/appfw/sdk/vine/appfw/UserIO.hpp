@@ -71,6 +71,25 @@ class V_APPFW_API UserIO : public Object {
     virtual void setCommandManager(CommandManager* manager);
 
     /**
+     * @brief Cancels the read that is currently waiting for user input, if any.
+     *
+     * A command awaiting one of the getXxxAsync() reads stays parked until the user
+     * answers; cancelling the command chain cannot reach it, because the read owns no
+     * cancellation token. Hosts that are going down therefore have to unblock the
+     * interaction explicitly (Application::shutdown() does, right before it drains
+     * the command chains), and the pending read completes with std::nullopt.
+     *
+     * The base implementation does nothing: implementations whose read blocks the
+     * calling thread (a blocking console read, for instance) cannot be unblocked
+     * from the outside and must not pretend otherwise.
+     *
+     * @note Declared after every other virtual on purpose: an implementation compiled
+     *       against an older header keeps the index of the slots it already used, so
+     *       adding this entry only affects the new slot.
+     */
+    virtual void cancelPendingInput();
+
+    /**
      * @brief Returns the bound command manager.
      *
      * @return The command manager, or nullptr if unbound.

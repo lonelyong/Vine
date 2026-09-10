@@ -43,7 +43,7 @@ enum class ConfigItemType
  * description are shown by the panel; type selects the editor; defaultValue,
  * range, step and choices constrain editing. The display placement (category and
  * group) is decided by the ConfigGroup tree, not stored here. Plugins register
- * items through PluginLoadContext::configs() or directly with ConfigRegistry.
+ * items through PluginLoadContext::configRegistry() or directly with ConfigRegistry.
  *
  * @note Fluent builders return the object itself, e.g.
  * item.range(8, 72).defaultValue(14)
@@ -147,7 +147,9 @@ class V_APPFW_API ConfigItem {
     /**
      * @brief Step (Int/Double).
      *
-     * @note Returns 1.0 when no range is configured.
+     * @note Returns 1.0 when no step has been set, whether or not a range is
+     * configured; an editor started from that step moves by 1.0 across the whole
+     * range, so set a step for ranges wider than a few hundred units.
      */
     double step() const;
 
@@ -196,11 +198,15 @@ class V_APPFW_API ConfigItem {
     /**
      * @brief Sets an int range.
      *
+     * @note Resets the step to its default 1.0, so call step() last.
+     *
      * @throws std::invalid_argument if the item type is not Int/Double.
      */
     ConfigItem& range(int min, int max);
     /**
      * @brief Sets a double range.
+     *
+     * @note Resets the step to its default 1.0, so call step() last.
      *
      * @throws std::invalid_argument if the item type is not Int/Double.
      */

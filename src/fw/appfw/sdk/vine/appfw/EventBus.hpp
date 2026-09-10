@@ -38,7 +38,7 @@ enum class SubscriptionThreadMode
  */
 struct EventBusError {
     const vine::Type*      event_type    = nullptr;                          ///< Runtime type of the event being delivered.
-    std::size_t            subscriber_id = 0;                                ///< Id of the subscription that threw.
+    std::size_t            subscriber_id = 0;                                ///< Id of the subscription that threw; unique per event type.
     String                 tag;                                              ///< Label the subscriber passed to subscribe(), empty when it passed none.
     std::exception_ptr     error;                                            ///< Rethrowable exception; null for non-standard ones.
     SubscriptionThreadMode mode          = SubscriptionThreadMode::Current;  ///< Thread mode of that subscription.
@@ -201,7 +201,11 @@ class V_APPFW_API EventBus {
      * @param tag Free-form label reported with a failure through
      *            EventBusError::tag, e.g. the module or window that subscribes.
      *            Copied into the subscription; may be empty.
-     * @return A handle that cancels the subscription when it is destroyed.
+     * @return A handle that cancels the subscription when it is destroyed; an
+     *         inert one when the bus is already stopping.
+     * @throws std::bad_alloc if the handle cannot be allocated; the registration
+     *         is then cancelled as well, so no subscription is left behind that
+     *         nobody could unsubscribe.
      */
     template <TypeDescribed TEvent>
     Subscription subscribe(std::function<void(const TEvent&)> handler,
@@ -212,10 +216,13 @@ class V_APPFW_API EventBus {
      * @brief Publishes an event to all matching subscribers.
      *
      * Dispatches by the runtime class of the posted event, so a Derived event
-     * also reaches subscribers of its base types. No matching subscribers is a
-     * no-op.
+     * also reaches subscribers of its base types. No matching subscribers, a null
+     * value, or a bus that has started stopping all make this a no-op.
      *
-     * @param event Event to broadcast; kept alive for the whole delivery.
+     * @param event Event to broadcast; kept alive for the whole delivery, or an
+     *              empty pointer to publish nothing.
+     * @throws std::bad_alloc if the delivery plan cannot be built; nothing is
+     *         delivered in that case.
      */
     void publish(const std::shared_ptr<const Object>& event);
 
@@ -258,9 +265,12 @@ class V_APPFW_API EventBus {
      * Completion: when it returns, the bus is permanently stopped and - if the
      * result is true - every admitted call has left, so the bus may be destroyed.
      * Concurrent callers wait for the same completion and all report the same
-     * result. A false result means the drain could not finish before the deadline
-     * (or the caller is not the application thread); the bus is stopped either way
-     * and the remaining subscriptions and deliveries are cancelled.
+     * result. A false result means the drain could not finish before the deadline,
+     * the caller is not the application thread, or another thread stopped the bus
+     * with shutdown()/~EventBus() and so cancelled the remaining work: that stop
+     * never drained, and reporting true for it would claim work ran that never
+     * did. The bus is stopped either way, and the remaining subscriptions and
+     * deliveries are cancelled.
      *
      * @param timeout Upper bound for the whole wait; 0 means do not wait.
      * @return true if every admitted call finished and every parked delivery ran
@@ -269,9 +279,10 @@ class V_APPFW_API EventBus {
     bool shutdownGracefully(std::chrono::milliseconds timeout = gracefulShutdownTimeout());
 
     /**
-     * @brief Reports whether shutdown() has already been called.
+     * @brief Reports whether the bus has started stopping.
      *
-     * @return true once the bus has been stopped.
+     * @return true from the moment the stop begins, i.e. already while a graceful
+     *         stop is still draining: admission is refused from that point on.
      */
     bool isShutDown() const noexcept;
 

@@ -240,6 +240,7 @@ struct PluginManagerDialog::Impl : public UIElementData {
     QLabel*                     dep_label      = nullptr;
     QLabel*                     uuid_label     = nullptr;
     QLabel*                     path_label     = nullptr;
+    QLabel*                     built_label    = nullptr;
     QLabel*                     email_label    = nullptr;
     QLabel*                     repo_label     = nullptr;
     QLabel*                     message_label  = nullptr;
@@ -477,6 +478,7 @@ PluginManagerDialog::PluginManagerDialog(vine::appfw::PluginManager* manager)
     data->dep_label     = make_value();
     data->uuid_label    = make_value();
     data->path_label    = make_value();
+    data->built_label   = make_value();
     data->email_label   = make_value();
     data->repo_label    = make_value();
 
@@ -493,6 +495,7 @@ PluginManagerDialog::PluginManagerDialog(vine::appfw::PluginManager* manager)
     form->addRow(QStringLiteral("依赖"), data->dep_label);
     form->addRow(QStringLiteral("UUID"), data->uuid_label);
     form->addRow(QStringLiteral("库路径"), data->path_label);
+    form->addRow(QStringLiteral("构建框架"), data->built_label);
     form->addRow(QStringLiteral("邮箱"), data->email_label);
     form->addRow(QStringLiteral("仓库"), data->repo_label);
 
@@ -924,6 +927,10 @@ void PluginManagerDialog::showDetail(const vine::String& name)
     data->path_label->setText(entry != nullptr && !entry->path.empty() ? QString::fromUtf8(entry->path.u8string().c_str())
                                                                       : QStringLiteral("—"));
     data->path_label->setToolTip(data->path_label->text());
+    // The version the library was built with (PluginAbi): a plugin compiled against
+    // another framework build is usually the first thing to check when it misbehaves.
+    data->built_label->setText(entry != nullptr ? value(entry->framework_version) : QStringLiteral("—"));
+    data->built_label->setToolTip(QStringLiteral("本程序内置的框架版本：%1").arg(QStringLiteral(V_APPFW_VERSION)));
     data->email_label->setText(entry != nullptr && !entry->info.email.empty()
                                    ? QStringLiteral("<a href=\"mailto:%1\">%1</a>")
                                          .arg(Convert::toQString(entry->info.email).toHtmlEscaped())

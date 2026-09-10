@@ -40,7 +40,7 @@ raw_ptr<Application> PluginLoadContext::application() const
     return d->app;
 }
 
-raw_ptr<ConfigRegistry> PluginLoadContext::configs() const
+raw_ptr<ConfigRegistry> PluginLoadContext::configRegistry() const
 {
     return d->app ? d->app->configRegistry() : nullptr;
 }
@@ -60,7 +60,7 @@ const String& PluginLoadContext::pluginName() const
     return d->plugin_name;
 }
 
-std::filesystem::path PluginLoadContext::dataDirectory()
+std::filesystem::path PluginLoadContext::ensureDataDirectory()
 {
     if (d->app == nullptr || d->plugin_name.empty()) {
         return {};
@@ -83,13 +83,13 @@ std::filesystem::path PluginLoadContext::dataDirectory()
 
 bool PluginLoadContext::registerConfigItem(StandardCategory cat, StandardGroup grp, const ConfigItem& item)
 {
-    auto* reg = configs();
+    auto* reg = configRegistry();
     return reg ? reg->addItem(cat, grp, item, d->plugin_name) : false;
 }
 
 std::vector<const ConfigItem*> PluginLoadContext::registeredConfigs() const
 {
-    auto* reg = configs();
+    auto* reg = configRegistry();
     return reg ? reg->itemsForPlugin(d->plugin_name) : std::vector<const ConfigItem*>{};
 }
 

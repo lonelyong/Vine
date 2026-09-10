@@ -19,6 +19,10 @@ class ConfigRegistry;
  * Created and owned by ConfigCategory::addGroup(); may carry label, description
  * and order metadata and host items (ConfigItem). Qt-free, non-copyable
  * (owned by the category).
+ *
+ * @note Lifetime: the returned pointers stay valid until their node is removed
+ * (removeItem(), or removeGroup()/removeCategory()/clear() above it).
+ * @note Threading: not synchronized; register before worker threads read the tree.
  */
 class V_APPFW_API ConfigGroup {
   public:

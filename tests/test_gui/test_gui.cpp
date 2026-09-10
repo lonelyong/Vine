@@ -17,7 +17,9 @@
 #include <QColor>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDialog>
 #include <QDoubleSpinBox>
+#include <QFile>
 #include <QIcon>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -45,6 +47,10 @@
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/PluginManager.hpp>
+#include <vine/appfw/UserIO.hpp>
+#include <vine/appfw/MainThreadDispatcher.hpp>
+#include <vine/appfw/gui/ConfigWindow.hpp>
+#include <vine/appfw/gui/ConsolePanel.hpp>
 #include <vine/appfw/gui/GuiAppBuilder.hpp>
 #include <vine/appfw/gui/PluginManagerDialog.hpp>
 #include <vine/appfw/gui/Control.hpp>
@@ -77,6 +83,7 @@
 #include <thread>
 
 #include <QListWidget>
+#include <QPlainTextEdit>
 #include <QPushButton>
 
 namespace guifw = vine::appfw::gui;
@@ -848,6 +855,332 @@ TEST_F(GuiTest, ConfigManager_Basic)
 
 // ============================ 可显示配置 ============================
 
+// 保存必须报告真实结果：写失败不能返回 true，失败也不能破坏磁盘上已有的配置。
+TEST_F(GuiTest, ConfigManager_SaveReportsFailureAndKeepsTheOldFile)
+{
+    using vine::appfw::ConfigManager;
+
+    auto* cfg = new ConfigManager();
+    cfg->setString(u8"name", u8"Vine");
+    cfg->setInt(u8"max", 100);
+
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "vine_config_save_test";
+    std::error_code             ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    const std::filesystem::path file = dir / "config.json";
+    const vine::String          file_path(file.u8string());
+
+    // 成功路径：返回 true、内容可读回、原子写不留临时文件
+    ASSERT_TRUE(cfg->save(file_path));
+    EXPECT_TRUE(std::filesystem::exists(file));
+    size_t entries = 0;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        (void)e;
+        ++entries;
+    }
+    EXPECT_EQ(entries, 1u);
+
+    auto* loaded = new ConfigManager();
+    ASSERT_TRUE(loaded->load(file_path));
+    EXPECT_TRUE(loaded->getString(u8"name") == u8"Vine");
+    EXPECT_EQ(loaded->getInt(u8"max"), 100);
+    delete loaded;
+
+    // 父目录不存在 / 目标是目录：报失败，而不是无声成功
+    EXPECT_FALSE(cfg->save(vine::String((dir / "missing" / "config.json").u8string())));
+    EXPECT_FALSE(cfg->save(vine::String(dir.u8string())));
+
+    // 目录不可写：报失败，且磁盘上的旧配置原样保留
+    std::filesystem::permissions(dir, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove, ec);
+    QFile      probe(QString::fromStdString((dir / "probe.tmp").string()));
+    const bool can_write = probe.open(QIODevice::WriteOnly);
+    if (can_write) {
+        probe.close();
+        probe.remove();
+    }
+    if (!can_write) { // 特权进程无视权限位，那就没有可断言的了
+        cfg->setInt(u8"max", 999);
+        EXPECT_FALSE(cfg->save(file_path));
+        auto* kept = new ConfigManager();
+        ASSERT_TRUE(kept->load(file_path));
+        EXPECT_EQ(kept->getInt(u8"max"), 100) << "保存失败时磁盘上的旧配置不能被破坏";
+        delete kept;
+    }
+    std::filesystem::permissions(dir, std::filesystem::perms::owner_write, std::filesystem::perm_options::add, ec);
+
+    std::filesystem::remove_all(dir, ec);
+    delete cfg;
+}
+
+// 变更事件只在值真的改变时发出；loadJson 的整体替换同样要通知（空 key）。
+TEST_F(GuiTest, ConfigManager_NotifiesOnlyOnRealChanges)
+{
+    using vine::appfw::ConfigChangedEventArgs;
+    using vine::appfw::ConfigManager;
+
+    auto*     cfg = new ConfigManager();
+    int       events    = 0;
+    bool      saw_empty = false;
+    vine::String last_key;
+    cfg->changed.addHandler([&](ConfigManager&, ConfigChangedEventArgs& e) {
+        ++events;
+        last_key  = e.key();
+        saw_empty = e.key().empty();
+    });
+
+    // 同值写入 = 无变化 = 无事件：处理函数里回写同值不会自激
+    cfg->setInt(u8"max", 100);
+    EXPECT_EQ(events, 1);
+    cfg->setInt(u8"max", 100);
+    EXPECT_EQ(events, 1);
+    cfg->setInt(u8"max", 101);
+    EXPECT_EQ(events, 2);
+    EXPECT_TRUE(last_key == u8"max");
+
+    cfg->setIntArray(u8"nums", { 1, 2 });
+    EXPECT_EQ(events, 3);
+    cfg->setIntArray(u8"nums", { 1, 2 });
+    EXPECT_EQ(events, 3);
+    cfg->setString(u8"name", u8"Vine");
+    cfg->setString(u8"name", u8"Vine");
+    EXPECT_EQ(events, 4);
+
+    // 删除不存在的键不算变化
+    cfg->remove(u8"missing");
+    EXPECT_EQ(events, 4);
+    cfg->remove(u8"max");
+    EXPECT_EQ(events, 5);
+
+    // loadJson：内容变了 → 一次事件（空 key = 整个配置变了）；内容相同 → 无事件
+    auto*     other       = new ConfigManager();
+    other->setInt(u8"a", 1);
+    const int before_load = events;
+    ASSERT_TRUE(cfg->loadJson(other->toJson()));
+    EXPECT_EQ(events, before_load + 1);
+    EXPECT_TRUE(saw_empty);
+    const int before_same = events;
+    ASSERT_TRUE(cfg->loadJson(other->toJson()));
+    EXPECT_EQ(events, before_same);
+
+    // clear：有值才通知，且用空 key 表示整体变化
+    saw_empty = false;
+    const int before_clear = events;
+    cfg->clear();
+    EXPECT_EQ(events, before_clear + 1);
+    EXPECT_TRUE(saw_empty);
+    const int before_empty_clear = events;
+    cfg->clear();
+    EXPECT_EQ(events, before_empty_clear);
+
+    delete other;
+    delete cfg;
+}
+
+// JSON 往返：每种类型都无损读回；超范围整数被夹取而不是被静默改写。
+TEST_F(GuiTest, ConfigManager_JsonRoundTripKeepsTypes)
+{
+    using vine::appfw::ConfigManager;
+
+    auto* a = new ConfigManager();
+    a->setString(u8"name", u8"Vine");
+    a->setBool(u8"flag", true);
+    a->setInt(u8"max", 2147483647);
+    a->setDouble(u8"ratio", 1.5);
+    a->setIntArray(u8"nums", { 1, -2, 3 });
+    a->setStringArray(u8"names", { u8"a", u8"b" });
+
+    auto* b = new ConfigManager();
+    ASSERT_TRUE(b->loadJson(a->toJson()));
+    EXPECT_TRUE(b->getString(u8"name") == u8"Vine");
+    EXPECT_TRUE(b->getBool(u8"flag"));
+    EXPECT_EQ(b->getInt(u8"max"), 2147483647);
+    EXPECT_DOUBLE_EQ(b->getDouble(u8"ratio"), 1.5);
+    const auto nums = b->getIntArray(u8"nums");
+    ASSERT_EQ(nums.size(), 3u);
+    EXPECT_EQ(nums[1], -2);
+    EXPECT_EQ(b->getStringArray(u8"names").size(), 2u);
+
+    // 旧格式（整数写成 double）仍读得回来
+    ASSERT_TRUE(b->loadJson(u8R"({"legacy":{"type":"int","value":100.0}})"));
+    EXPECT_EQ(b->getInt(u8"legacy"), 100);
+
+    // 超出 int 范围：夹取（并记日志），而不是静默改成一个别的值
+    ASSERT_TRUE(b->loadJson(u8R"({"big":{"type":"int","value":9999999999}})"));
+    EXPECT_EQ(b->getInt(u8"big"), 2147483647);
+
+    delete a;
+    delete b;
+}
+
+// 不符合格式的条目被挑出来忽略，其余照常生效；文本不是 JSON 才算失败。
+TEST_F(GuiTest, ConfigManager_BadEntriesAreIgnoredNotFatal)
+{
+    using vine::appfw::ConfigManager;
+
+    auto* cfg = new ConfigManager();
+    ASSERT_TRUE(cfg->loadJson(u8R"({
+        "plain": 42,
+        "text": "hello",
+        "unknown": { "type": "text", "value": "x" },
+        "good": { "type": "int", "value": 7 }
+    })"));
+    EXPECT_EQ(cfg->getInt(u8"good"), 7);
+    EXPECT_FALSE(cfg->contains(u8"plain"));
+    EXPECT_FALSE(cfg->contains(u8"text"));
+    EXPECT_FALSE(cfg->contains(u8"unknown"));
+
+    EXPECT_FALSE(cfg->loadJson(u8"not json"));
+    delete cfg;
+}
+
+// 所有权跟着树走：项被删掉（无论走哪条删除路径）之后，它的 owner 不能残留，
+// 否则别的插件卸载时会连它一起删。
+TEST_F(GuiTest, ConfigRegistry_OwnershipDoesNotOutliveTheItem)
+{
+    using vine::appfw::ConfigItem;
+    using vine::appfw::ConfigItemType;
+    using vine::appfw::ConfigRegistry;
+    using vine::appfw::StandardCategory;
+    using vine::appfw::StandardGroup;
+
+    ConfigRegistry reg;
+    ASSERT_TRUE(reg.addItem(StandardCategory::General, StandardGroup::Behavior, ConfigItem(u8"p.first", u8"1", ConfigItemType::Int), u8"plugin_a"));
+    ASSERT_TRUE(reg.addItem(StandardCategory::General, StandardGroup::Behavior, ConfigItem(u8"p.second", u8"2", ConfigItemType::Int), u8"plugin_a"));
+    EXPECT_EQ(reg.itemsForPlugin(u8"plugin_a").size(), 2u);
+
+    // 删单项：所有权同步消失
+    EXPECT_TRUE(reg.removeItem(u8"p.first"));
+    EXPECT_EQ(reg.itemsForPlugin(u8"plugin_a").size(), 1u);
+
+    // 删分类：其下所有项的所有权一起消失
+    EXPECT_TRUE(reg.removeCategory(u8"general"));
+    EXPECT_TRUE(reg.itemsForPlugin(u8"plugin_a").empty());
+
+    // 同一个 key 重新注册且不再声明 owner：旧的 owner 不能残留
+    ASSERT_TRUE(reg.addItem(StandardCategory::General, StandardGroup::Behavior, ConfigItem(u8"p.second", u8"2", ConfigItemType::Int)));
+    EXPECT_TRUE(reg.itemsForPlugin(u8"plugin_a").empty());
+    EXPECT_NE(reg.item(u8"p.second"), nullptr);
+}
+
+// 编辑器按自己的 key 取值：运行期注册的新项（哪怕是排在前面的新分组）不能把值
+// 塞进别的编辑器。
+TEST(ConfigWindowTest, RefreshKeepsEachValueWithItsKey)
+{
+    using vine::appfw::ConfigItem;
+    using vine::appfw::ConfigItemType;
+    using vine::appfw::ConfigManager;
+    using vine::appfw::ConfigRegistry;
+    using vine::appfw::gui::ConfigWindow;
+
+    ConfigRegistry reg;
+    auto*          cat = reg.addCategory(u8"C1");
+    auto*          g   = cat->addGroup(u8"G");
+    ASSERT_TRUE(g->addItem(ConfigItem(u8"a", u8"A", ConfigItemType::String)));
+
+    auto* cfg = new ConfigManager();
+    cfg->setString(u8"a", u8"AAA");
+
+    auto* win  = new ConfigWindow(&reg, cfg);
+    auto* root = win->impl<QDialog>();
+    ASSERT_NE(root, nullptr);
+    auto editors = root->findChildren<QLineEdit*>();
+    ASSERT_EQ(editors.size(), 1);
+    EXPECT_EQ(editors.value(0)->text(), QStringLiteral("AAA"));
+
+    // 运行期注册：新分组的 order=-1，排到已有分组之前，遍历顺序被改变
+    auto* g0 = cat->getOrAddGroup(u8"G0");
+    g0->order(-1);
+    ASSERT_TRUE(g0->addItem(ConfigItem(u8"z", u8"Z", ConfigItemType::String)));
+    cfg->setString(u8"z", u8"ZZZ");
+
+    win->refresh();
+    EXPECT_EQ(editors.value(0)->text(), QStringLiteral("AAA")) << "每个编辑器只能显示自己 key 的值";
+    EXPECT_EQ(root->findChildren<QLineEdit*>().size(), 1) << "窗口构建后注册的项不会凭空多出编辑器";
+
+    delete win;
+    delete cfg;
+}
+
+// Choice 编辑器：显示存储值（键没写过时显示 item 默认值）；不在选项里就显示为
+// 未选中，而不是谎报第一个选项。
+TEST(ConfigWindowTest, ChoiceWithoutMatchShowsNoSelection)
+{
+    using vine::appfw::ConfigItem;
+    using vine::appfw::ConfigItemType;
+    using vine::appfw::ConfigManager;
+    using vine::appfw::ConfigRegistry;
+    using vine::appfw::gui::ConfigWindow;
+
+    ConfigRegistry reg;
+    auto*          cat = reg.addCategory(u8"C1");
+    auto*          g   = cat->addGroup(u8"G");
+    ConfigItem     theme(u8"theme", u8"主题", ConfigItemType::Choice);
+    theme.choices({ { 1, u8"深色" }, { 2, u8"浅色" } });
+    theme.defaultValue(2);
+    ASSERT_TRUE(g->addItem(theme));
+
+    auto* cfg   = new ConfigManager();
+    auto* win   = new ConfigWindow(&reg, cfg);
+    auto* combo = win->impl<QDialog>()->findChildren<QComboBox*>().value(0);
+    ASSERT_NE(combo, nullptr);
+
+    // 键从未写过：显示 item 默认值对应的选项（reset() 会恢复的那个）
+    EXPECT_EQ(combo->currentIndex(), 1);
+
+    cfg->setInt(u8"theme", 1);
+    win->refresh();
+    EXPECT_EQ(combo->currentIndex(), 0);
+
+    // 存储值不在选项里：未选中
+    cfg->setInt(u8"theme", 9);
+    win->refresh();
+    EXPECT_EQ(combo->currentIndex(), -1);
+
+    delete win;
+    delete cfg;
+}
+
+// 没有声明 range 的数值项：编辑器不能把它要显示的值夹到某个任意区间里。
+TEST(ConfigWindowTest, UnboundedNumbersAreNotClamped)
+{
+    using vine::appfw::ConfigItem;
+    using vine::appfw::ConfigItemType;
+    using vine::appfw::ConfigManager;
+    using vine::appfw::ConfigRegistry;
+    using vine::appfw::gui::ConfigWindow;
+
+    ConfigRegistry reg;
+    auto*          cat = reg.addCategory(u8"C1");
+    auto*          g   = cat->addGroup(u8"G");
+    ASSERT_TRUE(g->addItem(ConfigItem(u8"offset", u8"偏移", ConfigItemType::Int)));
+    ASSERT_TRUE(g->addItem(ConfigItem(u8"bounded", u8"上限", ConfigItemType::Int).range(0, 10)));
+    ASSERT_TRUE(g->addItem(ConfigItem(u8"scale", u8"比例", ConfigItemType::Double)));
+
+    auto* cfg = new ConfigManager();
+    cfg->setInt(u8"offset", -7);
+    cfg->setInt(u8"bounded", 5);
+    cfg->setDouble(u8"scale", -2.5);
+
+    auto* win   = new ConfigWindow(&reg, cfg);
+    auto* root  = win->impl<QDialog>();
+    auto  spins = root->findChildren<QSpinBox*>();
+    auto  dbls  = root->findChildren<QDoubleSpinBox*>();
+    ASSERT_EQ(spins.size(), 2);
+    ASSERT_EQ(dbls.size(), 1);
+
+    // 没有声明 range 的项：不夹取
+    EXPECT_EQ(spins.value(0)->value(), -7) << "没有声明 range 时不能把负数夹成 0";
+    EXPECT_DOUBLE_EQ(dbls.value(0)->value(), -2.5);
+
+    // 声明了 range 的项：仍按 range 约束
+    EXPECT_EQ(spins.value(1)->maximum(), 10);
+    EXPECT_EQ(spins.value(1)->value(), 5);
+
+    delete win;
+    delete cfg;
+}
+
 TEST_F(GuiTest, ConfigItem_Descriptor)
 {
     using vine::appfw::ConfigItem;
@@ -1099,18 +1432,18 @@ TEST_F(GuiTest, PluginLoadContext_Configs)
 
     vine::appfw::PluginLoadContext ctx(app);
     EXPECT_EQ(ctx.application(), app);
-    ASSERT_NE(ctx.configs(), nullptr);
-    EXPECT_EQ(ctx.configs(), app->configRegistry());
+    ASSERT_NE(ctx.configRegistry(), nullptr);
+    EXPECT_EQ(ctx.configRegistry(), app->configRegistry());
     EXPECT_NE(ctx.eventBus(), nullptr);
     EXPECT_EQ(ctx.eventBus(), app->eventBus());
 
     // Registering through the context targets the same registry as Application
-    auto* pluginCat = ctx.configs()->addCategory(u8"插件");
+    auto* pluginCat = ctx.configRegistry()->addCategory(u8"插件");
     ASSERT_NE(pluginCat, nullptr);
     pluginCat->addGroup(u8"常规")->addItem(vine::appfw::ConfigItem(u8"plugin.opt", u8"插件选项", vine::appfw::ConfigItemType::Bool));
     EXPECT_NE(app->configRegistry()->item(u8"plugin.opt"), nullptr);
-    EXPECT_TRUE(ctx.configs()->removeItem(u8"plugin.opt"));
-    EXPECT_TRUE(ctx.configs()->removeCategory(u8"插件"));
+    EXPECT_TRUE(ctx.configRegistry()->removeItem(u8"plugin.opt"));
+    EXPECT_TRUE(ctx.configRegistry()->removeCategory(u8"插件"));
 }
 
 TEST_F(GuiTest, CommandManager_RegistrationOwner)
@@ -1825,6 +2158,27 @@ class ExclusiveProbeCommand : public vine::appfw::Command {
 };
 
 V_OBJECT_META_IMPL(ExclusiveProbeCommand, vine::appfw::Command)
+
+// 父命令：通过 context->executeChild() 嵌套一个可取消子命令，自身不捕获子命令的
+// 取消异常（子命令的取消默认向上抛）。用来验证“子命令被取消时也要上报自己结束”。
+class NestingCancellableParentCommand : public vine::appfw::Command {
+    V_OBJECT_META_DECL;
+
+  public:
+    vine::String name() const override { return u8"nestingParent"; }
+    vine::String group() const override { return u8"Test"; }
+    vine::String description() const override { return u8"nests a cancellable child"; }
+    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+
+    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    {
+        co_return co_await context->executeChild(s_child_name);
+    }
+
+    inline static vine::String s_child_name{ u8"nestingChild" };
+};
+
+V_OBJECT_META_IMPL(NestingCancellableParentCommand, vine::appfw::Command)
 
 // 历史记录的是执行结果快照，不是命令对象：命令实例在协程返回时即被销毁，
 // 旧实现保存原始指针后 historyAt() 返回悬垂指针（ASan 下即 UAF）。
@@ -2551,6 +2905,252 @@ TEST_F(GuiTest, CommandManager_CancelAllReachesBackgroundChains)
     cm->unregisterCommand(name_b);
 }
 
+// 被取消的嵌套子命令也要上报自己结束：executing 已经发出，executed 与历史不能缺席
+// （旧实现直接 throw 上抛，子命令既没有 executed 事件也没有历史记录）。
+TEST_F(GuiTest, CommandManager_NestedCancelledChildIsReported)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto parent = vine::String(u8"nestingParent");
+    const auto child  = vine::String(u8"nestingChild");
+    cm->unregisterCommand(parent);
+    cm->unregisterCommand(child);
+    ASSERT_TRUE(cm->registerCommand<NestingCancellableParentCommand>(parent));
+    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), child, [child] {
+        return new CancellableSleepCommand(child, std::chrono::milliseconds(5000));
+    }));
+    cm->clearHistory();
+
+    std::atomic<int> child_executing{ 0 };
+    std::atomic<int> child_executed{ 0 };
+
+    const auto executing_id = cm->executing.addHandler(
+        [&](vine::appfw::CommandManager&, vine::appfw::CommandExecutingEventArgs& args) {
+            const auto* c = args.command();
+            if (c != nullptr && c->name() == child) {
+                ++child_executing;
+            }
+        });
+    const auto executed_id = cm->executed.addHandler(
+        [&](vine::appfw::CommandManager&, vine::appfw::CommandExecutedEventArgs& args) {
+            const auto* c = args.command();
+            if (c != nullptr && c->name() == child) {
+                ++child_executed;
+            }
+        });
+
+    auto                       task = cm->executeCommandAsync(parent);
+    vine::appfw::CommandResult result;
+    std::thread                runner([&] { result = vine::async::syncWait(std::move(task)); });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (cm->runningCount() < 2 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_EQ(cm->runningCount(), 2) << "父命令与嵌套子命令应在同一条链上";
+
+    cm->cancelCurrent();
+    runner.join();
+
+    cm->executing.removeHandler(executing_id);
+    cm->executed.removeHandler(executed_id);
+
+    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(child_executing.load(), 1);
+    EXPECT_EQ(child_executed.load(), 1) << "被取消的嵌套子命令必须发出 executed 事件";
+
+    ASSERT_EQ(cm->historyCount(), 2) << "父子命令都应进历史";
+    ASSERT_TRUE(cm->historyAt(0).has_value());
+    EXPECT_EQ(cm->historyAt(0)->name, child);
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Cancelled);
+    ASSERT_TRUE(cm->historyAt(1).has_value());
+    EXPECT_EQ(cm->historyAt(1)->name, parent);
+    EXPECT_EQ(cm->historyAt(1)->result.status(), vine::appfw::CommandStatus::Cancelled);
+
+    cm->clearHistory();
+    cm->unregisterCommand(parent);
+    cm->unregisterCommand(child);
+}
+
+// 排他命令必须停掉每一条活链，而不只是前台链：旧实现只取消前台链，若后台链
+// 已被别的顶层命令顶出前台，排他命令就会与它并发执行。
+TEST_F(GuiTest, CommandManager_ExclusiveStopsEveryLiveChain)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto victim = vine::String(u8"backgroundVictim");
+    const auto quick  = vine::String(u8"quickForeground");
+    const auto taker  = vine::String(u8"takeover");
+    cm->unregisterCommand(victim);
+    cm->unregisterCommand(quick);
+    cm->unregisterCommand(taker);
+    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), victim, [victim] {
+        return new CancellableSleepCommand(victim, std::chrono::milliseconds(3000));
+    }));
+    ASSERT_TRUE(cm->registerCommand<DummyCommand>(quick));
+    ASSERT_TRUE(cm->registerCommand<ExclusiveTakeOverCommand>(taker));
+    ExclusiveTakeOverCommand::s_ran = false;
+    cm->clearHistory();
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+
+    // 后台链先跑起来（她是前台），由工作线程驱动。
+    auto                       task = cm->executeCommandAsync(victim);
+    vine::appfw::CommandResult victim_result;
+    std::atomic<bool>          victim_done{ false };
+    std::thread                runner([&] {
+        victim_result = vine::async::syncWait(std::move(task));
+        victim_done.store(true);
+    });
+
+    while ((cm->currentCommand() == nullptr || cm->currentCommand()->name() != victim)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_NE(cm->currentCommand(), nullptr);
+    ASSERT_EQ(cm->currentCommand()->name(), victim);
+
+    // 一条普通顶层命令把受害者顶出前台（她不是 LongRunning，门是开的）。
+    ASSERT_EQ(cm->executeCommand(quick).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->currentCommand(), nullptr) << "前台已换成刚结束的 quick 链";
+
+    // 排他命令：接管时必须连后台链一起收掉，并在放行前等到她真的结束。
+    const auto takeover = cm->executeCommand(taker);
+    EXPECT_EQ(takeover.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_TRUE(ExclusiveTakeOverCommand::s_ran);
+    EXPECT_TRUE(victim_done.load()) << "排他命令运行时后台链必须已经收尾，不能并发";
+
+    while (!victim_done.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    runner.join();
+    EXPECT_EQ(victim_result.status(), vine::appfw::CommandStatus::Cancelled);
+
+    cm->clearHistory();
+    cm->unregisterCommand(victim);
+    cm->unregisterCommand(quick);
+    cm->unregisterCommand(taker);
+}
+
+// 取消别名要落到命令本身上：执行路径都会解析别名，偏好只记在别名上就会静默失效。
+TEST_F(GuiTest, CommandManager_DisablingAnAliasDisablesTheCommand)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name  = vine::String(u8"aliasDisableTarget");
+    const auto alias = vine::String(u8"aliasDisableBridge");
+    cm->unregisterCommand(name);
+    cm->unregisterAlias(alias);
+    ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
+    ASSERT_TRUE(cm->registerAlias(alias, name));
+
+    EXPECT_TRUE(cm->setCommandEnabled(alias, false));
+    EXPECT_FALSE(cm->isCommandEnabled(alias));
+    EXPECT_FALSE(cm->isCommandEnabled(name));
+    EXPECT_EQ(cm->executeCommand(alias).status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(cm->executeCommand(name).status(), vine::appfw::CommandStatus::Failed);
+
+    // 启用同样按别名落到命令上。
+    EXPECT_TRUE(cm->setCommandEnabled(alias, true));
+    EXPECT_TRUE(cm->isCommandEnabled(name));
+    EXPECT_EQ(cm->executeCommand(alias).status(), vine::appfw::CommandStatus::Success);
+
+    cm->unregisterAlias(alias);
+    cm->unregisterCommand(name);
+}
+
+// 关停入口：取消全部活链并等到它们真的收尾（管理器被销毁前必须满足的前提）。
+TEST_F(GuiTest, CommandManager_CancelAllAndWaitDrainsChains)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    // 空闲时立即成功。
+    EXPECT_TRUE(cm->cancelAllAndWait());
+
+    const auto name = vine::String(u8"drainTarget");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), name, [name] {
+        return new CancellableSleepCommand(name, std::chrono::milliseconds(3000));
+    }));
+    cm->clearHistory();
+
+    cm->executeDetached(name);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (cm->runningCount() == 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_EQ(cm->runningCount(), 1);
+
+    // 取消并等待：返回即意味着链已经收尾（历史已落定、无前台残留）。
+    EXPECT_TRUE(cm->cancelAllAndWait());
+    EXPECT_EQ(cm->runningCount(), 0);
+    EXPECT_EQ(cm->currentCommand(), nullptr);
+    ASSERT_EQ(cm->historyCount(), 1);
+    ASSERT_TRUE(cm->historyAt(0).has_value());
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Cancelled);
+
+    // 空闲时再调用一次：幂等，立即成功。
+    EXPECT_TRUE(cm->cancelAllAndWait());
+
+    cm->clearHistory();
+    cm->unregisterCommand(name);
+}
+
+// detached 的失败回写必须落在应用线程上：命令可能在定时器线程上结束，而 GUI 的
+// UserIO 会写 QWidget，只有应用线程可以碰（旧实现直接调用 putString）。
+TEST_F(GuiTest, CommandManager_DetachedFailureIsReportedOnTheApplicationThread)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vine::String(u8"detachedThrow");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<ThrowingCommand>(name));
+    cm->clearHistory();
+
+    guifw::ConsolePanel panel;
+    app->setConsolePanel(&panel);
+    QWidget* root = panel.impl<QWidget>();
+    ASSERT_NE(root, nullptr);
+    auto* output = root->findChild<QPlainTextEdit*>();
+    ASSERT_NE(output, nullptr);
+
+    // 命令在定时器线程上抛异常 ⇒ 失败上报只能编组回应用线程。
+    cm->executeDetached(name);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (cm->historyCount() < 1 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_EQ(cm->historyCount(), 1);
+    ASSERT_TRUE(cm->historyAt(0).has_value());
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Failed);
+
+    // 命令已经记录完失败，但消息还没写进面板：它被投递到应用线程，等事件循环取。
+    EXPECT_FALSE(output->toPlainText().contains(u8"boom"))
+        << "失败消息不得从工作线程直接写进控制台面板";
+    ASSERT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+    EXPECT_TRUE(output->toPlainText().contains(u8"boom")) << "消息应已投递到应用线程";
+
+    app->setConsolePanel(nullptr);
+    cm->clearHistory();
+    cm->unregisterCommand(name);
+}
+
 // 串联门：门的检查与占用在同一临界区内完成 ⇒ 并发提交两个顶层 LongRunning 命令
 // 恰有一个被接受（旧实现检查与占用分离，两者都可能通过）。
 TEST_F(GuiTest, CommandManager_GateAdmitsAtMostOneTopLevelLongRunningCommand)
@@ -2979,11 +3579,27 @@ TEST(PluginLifecycleTest, DisabledPluginIsListedWithMetadataButNotLoaded)
     // 未加载 = 生命周期没跑 = 没有注册任何命令。
     EXPECT_FALSE(cm->isRegistered(u8"test_hello"));
 
+    // 也不能被算到别的插件头上：命令队列属于模块，命令的 owner 必须是注册它的
+    // 那个插件。修复前这里会把 test_plugin 的命令全部算给 app_shell。
+    const auto shell_commands = pm->commandInfosForPlugin(u8"app_shell");
+    EXPECT_TRUE(std::none_of(shell_commands.begin(), shell_commands.end(), [](const vine::appfw::CommandInfo& info) {
+        return info.name.rfind(u8"test_", 0) == 0;
+    })) << "app_shell 名下不得出现 test_plugin 的命令";
+    EXPECT_TRUE(pm->commandInfosForPlugin(u8"test_plugin").empty()) << "未加载的插件名下不得有任何命令";
+
     // 启用后重新加载等价于 "重启后" 的状态：命令才出现在注册表里。
     EXPECT_TRUE(pm->setPluginEnabled(u8"test_plugin", true));
     ASSERT_TRUE(pm->loadAll());
     EXPECT_TRUE(pm->isLoaded(u8"test_plugin"));
     EXPECT_TRUE(cm->isRegistered(u8"test_hello"));
+
+    const auto own_commands = pm->commandInfosForPlugin(u8"test_plugin");
+    EXPECT_TRUE(std::any_of(own_commands.begin(), own_commands.end(), [](const vine::appfw::CommandInfo& info) {
+        return info.name == u8"test_hello";
+    })) << "加载后命令应归属于声明它的插件";
+    for (const auto& info : own_commands) {
+        EXPECT_TRUE(info.owner == u8"test_plugin");
+    }
 }
 
 // 宿主跳过列表（setSkipList）：进程内的硬开关，优先于一切其它输入（包括用户
@@ -3026,6 +3642,20 @@ TEST(PluginLifecycleTest, SkippedPluginStaysVisibleAndIsNeverInstantiated)
     EXPECT_FALSE(skipped->path.empty());
     EXPECT_TRUE(skipped->info.version == u8"1.0.0");
     EXPECT_FALSE(pm->libraryPath(u8"test_plugin").empty());
+
+    // 显式 load() 也不得实例化被跳过的插件：名字即使能解析到库，也要先发现再拒绝
+    // （跳过不是 "看不见"，而是 "列出来但永不运行"）。
+    {
+        BuiltInPluginDirectoryScope built_in(sandbox.directory());
+        EXPECT_EQ(pm->load(u8"test_plugin"), nullptr) << "被跳过的插件即使给出名字也不得加载";
+        EXPECT_FALSE(pm->isLoaded(u8"test_plugin"));
+        const auto  refreshed = pm->pluginEntries();
+        const auto* after     = findPluginEntry(refreshed, u8"test_plugin");
+        ASSERT_NE(after, nullptr);
+        EXPECT_TRUE(after->skipped);
+        EXPECT_FALSE(after->loaded);
+        EXPECT_FALSE(after->path.empty()) << "显式 load() 也必须先发现，元数据才可见";
+    }
 
     // 启用偏好照常写入配置，但跳过列表继续生效（同管理员策略的处理方式）。
     EXPECT_TRUE(pm->setPluginEnabled(u8"test_plugin", true));
@@ -3431,19 +4061,19 @@ TEST(PluginLifecycleTest, PluginDataDirectoryIsPerPlugin)
     EXPECT_EQ(root.filename().string(), "plugins");
 
     vine::appfw::PluginLoadContext ctx(app, u8"my_plugin");
-    const auto                    dir = ctx.dataDirectory();
+    const auto                    dir = ctx.ensureDataDirectory();
     EXPECT_EQ(dir, root / "my_plugin");
     EXPECT_TRUE(std::filesystem::is_directory(dir)) << "首次调用即创建";
 
     // 另一个插件拿到另一个目录，互不干扰。
     vine::appfw::PluginLoadContext other(app, u8"other_plugin");
-    EXPECT_EQ(other.dataDirectory(), root / "other_plugin");
+    EXPECT_EQ(other.ensureDataDirectory(), root / "other_plugin");
 
     // 没有 Application / 没有插件名的上下文返回空路径，不崩。
     vine::appfw::PluginLoadContext headless(nullptr, u8"my_plugin");
-    EXPECT_TRUE(headless.dataDirectory().empty());
+    EXPECT_TRUE(headless.ensureDataDirectory().empty());
     vine::appfw::PluginLoadContext unnamed(app, {});
-    EXPECT_TRUE(unnamed.dataDirectory().empty());
+    EXPECT_TRUE(unnamed.ensureDataDirectory().empty());
 
     // 清理本用例写下的目录（Qt 测试模式已把用户数据目录重定向到临时区）。
     std::error_code ec;
@@ -3491,6 +4121,24 @@ TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
     // 重复安装同一位置：写同一个文件，仍然只有一条注册。
     EXPECT_TRUE(pm->installPlugin(vine::String(user_dir.u8string()), vine::appfw::PluginScope::User) == id);
     EXPECT_EQ(pm->pluginRegistrations().size(), 1u);
+
+    // 相对路径必须落盘成绝对路径：注册文件是下次启动读的，那时的工作目录未必定是同一个。
+    const auto relative_dir = std::filesystem::temp_directory_path() / "vine_relative_plugins_test";
+    std::filesystem::remove_all(relative_dir, ec);
+    ASSERT_TRUE(std::filesystem::create_directories(relative_dir, ec));
+    const auto previous_directory = std::filesystem::current_path();
+    std::filesystem::current_path(std::filesystem::temp_directory_path(), ec);
+    const auto relative_id = pm->installPlugin(u8"vine_relative_plugins_test", vine::appfw::PluginScope::User);
+    std::filesystem::current_path(previous_directory, ec);
+    ASSERT_FALSE(relative_id.empty()) << "相对路径也应能注册";
+    const auto relative_entries = pm->pluginRegistrations();
+    const auto* relative_entry   = findRegistration(relative_entries, relative_id);
+    ASSERT_NE(relative_entry, nullptr);
+    const std::filesystem::path stored(std::u8string_view(relative_entry->path.data(), relative_entry->path.size()));
+    EXPECT_TRUE(stored.is_absolute()) << "注册文件里必须是绝对路径";
+    EXPECT_EQ(stored, std::filesystem::weakly_canonical(relative_dir, ec));
+    EXPECT_TRUE(pm->uninstallPlugin(relative_id, vine::appfw::PluginScope::User));
+    std::filesystem::remove_all(relative_dir, ec);
 
     // 拒绝的输入：空路径、不存在的路径、BuiltIn 作用域。
     EXPECT_TRUE(pm->installPlugin({}, vine::appfw::PluginScope::User).empty());
@@ -3569,6 +4217,11 @@ TEST(PluginLifecycleTest, HandWrittenRegistrationCanDisableForAllUsers)
     EXPECT_TRUE(manual->name == u8"test_plugin");
     EXPECT_NE(std::string(reinterpret_cast<const char*>(manual->path.data()), manual->path.size()).find("test_plugind"),
               std::string::npos);
+
+    // 策略必须在没有跑过 loadAll() 的进程里也生效：一次显式 load()（对话框的试用加载）
+    // 不得把管理员对所有用户禁用的插件重新拉起来。
+    EXPECT_EQ(pm->load(vine::String(copy.u8string())), nullptr) << "策略禁用的插件不得被显式加载";
+    EXPECT_FALSE(pm->isLoaded(u8"test_plugin"));
 
     ASSERT_TRUE(pm->loadAll());
 
@@ -3758,6 +4411,224 @@ TEST(PluginLifecycleTest, InstallRejectsUnusableRegistrationId)
     std::filesystem::remove_all(bad, ec);
 }
 
+// ABI 握手（PluginAbi）：宿主在读取插件声明的任何东西之前，先问它是用什么 SDK 编的。
+// 两个夹具库分别模拟"比握手更旧"（没有入口点）与"比本宿主更新"（ABI 号对不上）的插件，
+// 两者都必须被拒绝，而不是按当前布局去读它们的 PluginInfo —— 那正是会静默读到垃圾、
+// 然后在别处崩掉的那条路径。夹具路径由 CMake 注入（tests/test_gui/CMakeLists.txt）。
+TEST(PluginLifecycleTest, PluginsWithoutCompatibleAbiAreRefused)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    const std::filesystem::path legacy(VINE_LEGACY_ABI_PLUGIN);
+    const std::filesystem::path future(VINE_FUTURE_ABI_PLUGIN);
+    ASSERT_TRUE(std::filesystem::exists(legacy)) << legacy;
+    ASSERT_TRUE(std::filesystem::exists(future)) << future;
+
+    EXPECT_EQ(pm->load(vine::String(legacy.u8string())), nullptr) << "没有 ABI 握手的库必须被拒绝";
+    EXPECT_EQ(pm->load(vine::String(future.u8string())), nullptr) << "ABI 号对不上的库必须被拒绝";
+    EXPECT_FALSE(pm->isLoaded(u8"legacy_plugin"));
+    EXPECT_FALSE(pm->isLoaded(u8"future_plugin"));
+
+    // 被拒绝的库连"发现"都不做：宿主读不到可以信任的元数据，也就不该把它列进列表
+    // （列表里的每一条都保证是能安全读取的）。日志里给出两边的 ABI 与框架版本，够定位。
+    const auto entries = pm->pluginEntries();
+    EXPECT_EQ(findPluginEntry(entries, u8"legacy_plugin"), nullptr);
+    EXPECT_EQ(findPluginEntry(entries, u8"future_plugin"), nullptr);
+
+    // 安装同样被拒：注册一个用不了的库，只会在以后每次启动多一条警告。
+    EXPECT_TRUE(pm->installPlugin(vine::String(legacy.u8string())).empty());
+}
+
+// 握手带回来的"构建时框架版本"要一路走到 PluginEntry，插件管理器对话框的"信息"页才有
+// 东西可显示。这里与编译期宏比较，能证明整条链路（V_DECLARE_PLUGIN → PluginAbi →
+// queryLibrary → PluginEntry）没有丢值，而不只是"编译得过"。
+TEST(PluginLifecycleTest, PluginEntryReportsTheFrameworkItWasBuiltWith)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell" });
+    ASSERT_FALSE(sandbox.registration().empty());
+    ASSERT_TRUE(pm->loadAll());
+
+    const auto  entries = pm->pluginEntries();
+    const auto* shell   = findPluginEntry(entries, u8"app_shell");
+    ASSERT_NE(shell, nullptr);
+    // V_APPFW_VERSION 是构建注入的窄字符串字面量（CMake 的 PROJECT_VERSION），
+    // String 存 UTF-8 字节，所以按字节比较。
+    const vine::String expected(std::u8string_view(reinterpret_cast<const char8_t*>(V_APPFW_VERSION)));
+    EXPECT_TRUE(shell->framework_version == expected)
+        << "插件报告的应当是它编译时的框架版本（" V_APPFW_VERSION "）";
+}
+
+// 依赖被禁用时，依赖它的插件也不会加载——直接依赖那层已由
+// DisabledDependencyBlocksDependents 钉住，这里补上“传递”一层（chain_plugin →
+// test_plugin → app_shell），以及与之相反的另一面：显式 load() 有意不解析依赖，
+// 被依赖方缺位时只记一条警告就照常加载（见头文件对 load() 的说明）。
+TEST(PluginLifecycleTest, DisabledDependencyBlocksDependentsTransitively)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    // 库路径要在沙箱**之前**取：沙箱会把内置目录换成空目录。
+    const auto built_in_test = findPluginLibrary("test_plugin");
+    ASSERT_FALSE(built_in_test.empty());
+
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+
+    // 第三个夹具（依赖 test_plugin）摆进沙箱目录，它才在扫描范围内。
+    std::error_code             ec;
+    const std::filesystem::path chain_lib(VINE_CHAIN_PLUGIN);
+    std::filesystem::copy_file(chain_lib, sandbox.directory() / chain_lib.filename(),
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    ASSERT_TRUE(std::filesystem::exists(sandbox.directory() / chain_lib.filename()));
+
+    ASSERT_TRUE(pm->setPluginEnabled(u8"app_shell", false));
+    EXPECT_FALSE(pm->loadAll()) << "有未满足依赖时 loadAll() 必须报失败";
+    EXPECT_FALSE(pm->isLoaded(u8"app_shell"));
+    EXPECT_FALSE(pm->isLoaded(u8"test_plugin"));
+    EXPECT_FALSE(pm->isLoaded(u8"chain_plugin")) << "传递依赖同样不得加载";
+
+    // 三者都被发现并列入（“不加载”不等于“看不见”）；链尾的 enabled 仍为 true：
+    // 它自己没被禁用，只是依赖不可用。
+    const auto  entries = pm->pluginEntries();
+    const auto* shell   = findPluginEntry(entries, u8"app_shell");
+    const auto* test    = findPluginEntry(entries, u8"test_plugin");
+    const auto* chain   = findPluginEntry(entries, u8"chain_plugin");
+    ASSERT_NE(shell, nullptr);
+    ASSERT_NE(test, nullptr);
+    ASSERT_NE(chain, nullptr);
+    EXPECT_FALSE(shell->enabled);
+    EXPECT_TRUE(test->enabled);
+    EXPECT_TRUE(chain->enabled);
+    EXPECT_FALSE(chain->loaded);
+    EXPECT_EQ(chain->info.dependencies.size(), 1u);
+
+    // 显式 load() 不解析依赖：照常加载，只在日志里提醒依赖没在跑。
+    const auto test_lib = sandbox.directory() / built_in_test.filename();
+    ASSERT_TRUE(std::filesystem::exists(test_lib));
+    EXPECT_NE(pm->load(vine::String(test_lib.u8string())), nullptr) << "显式 load() 不解析依赖";
+    EXPECT_TRUE(pm->isLoaded(u8"test_plugin"));
+
+    // 把偏好恢复成原样，不给后面的用例留状态。
+    EXPECT_TRUE(pm->setPluginEnabled(u8"app_shell", true));
+}
+
+// 依赖不可满足只剪掉受影响的那些插件，其余照常加载：一个第三方插件的坏依赖不该
+// 让应用连自带的外壳都没有（loadAll() 仍返回 false，宿主据此记录/告警）。
+TEST(PluginLifecycleTest, UnresolvablePluginsAreSkippedWhileTheRestLoads)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+
+    std::error_code             ec;
+    const std::filesystem::path chain_lib(VINE_CHAIN_PLUGIN);
+    std::filesystem::copy_file(chain_lib, sandbox.directory() / chain_lib.filename(),
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    ASSERT_TRUE(std::filesystem::exists(sandbox.directory() / chain_lib.filename()));
+
+    // 禁用的是链中段：app_shell 不受影响，只有依赖它的那一截被剪掉。
+    ASSERT_TRUE(pm->setPluginEnabled(u8"test_plugin", false));
+    EXPECT_FALSE(pm->loadAll()) << "有插件被剪掉时仍要报 false";
+    EXPECT_TRUE(pm->isLoaded(u8"app_shell")) << "与不可加载的那一簇无关的插件必须照常加载";
+    EXPECT_FALSE(pm->isLoaded(u8"test_plugin"));
+    EXPECT_FALSE(pm->isLoaded(u8"chain_plugin")) << "依赖不可加载的插件被一并剪掉";
+
+    const auto  entries = pm->pluginEntries();
+    const auto* chain   = findPluginEntry(entries, u8"chain_plugin");
+    ASSERT_NE(chain, nullptr);
+    EXPECT_TRUE(chain->enabled) << "它自己没被禁用，只是依赖不可用";
+    EXPECT_FALSE(chain->loaded);
+
+    EXPECT_TRUE(pm->setPluginEnabled(u8"test_plugin", true));
+}
+
+// 声明成环（只有手写插件造得出来）：环那一簇被剪掉、无关插件照常加载，
+// loadAll() 报 false。修复前这种情况是整批放弃（自带外壳也不加载）。
+TEST(PluginLifecycleTest, DeclaredDependencyCycleIsPrunedNotFatal)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell" });
+    ASSERT_FALSE(sandbox.registration().empty());
+
+    std::error_code ec;
+    for (const char* fixture : { VINE_LOOP_A_PLUGIN, VINE_LOOP_B_PLUGIN }) {
+        const std::filesystem::path library(fixture);
+        std::filesystem::copy_file(library, sandbox.directory() / library.filename(),
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        ASSERT_TRUE(std::filesystem::exists(sandbox.directory() / library.filename()));
+    }
+
+    EXPECT_FALSE(pm->loadAll()) << "环里的插件被剪掉，仍要报 false";
+    EXPECT_TRUE(pm->isLoaded(u8"app_shell")) << "无关插件不受影响";
+    EXPECT_FALSE(pm->isLoaded(u8"loop_a"));
+    EXPECT_FALSE(pm->isLoaded(u8"loop_b"));
+}
+
+// unloadOrder() 是公开的纯函数：声明成环的输入也必须终止（顺序无解时退回发现
+// 顺序），并且只排已加载的插件。
+TEST(PluginLifecycleTest, UnloadOrderTerminatesOnACycle)
+{
+    using vine::appfw::PluginEntry;
+    using vine::appfw::PluginManager;
+
+    auto entry = [](const char8_t* name, std::initializer_list<const char8_t*> dependencies, bool loaded = true) {
+        PluginEntry e;
+        e.info.name = name;
+        for (const auto* dependency : dependencies) {
+            e.info.dependencies.push_back(dependency);
+        }
+        e.loaded = loaded;
+        return e;
+    };
+
+    // 依赖链：被依赖者最后卸载
+    const std::vector<PluginEntry> chain{ entry(u8"base", {}), entry(u8"mid", { u8"base" }), entry(u8"top", { u8"mid" }) };
+    const auto                     chain_order = PluginManager::unloadOrder(chain);
+    ASSERT_EQ(chain_order.size(), 3u);
+    EXPECT_TRUE(chain_order[0] == u8"top");
+    EXPECT_TRUE(chain_order[1] == u8"mid");
+    EXPECT_TRUE(chain_order[2] == u8"base");
+
+    // 环 + 无关项：不挂死，且每个已加载的插件都被排进去
+    const std::vector<PluginEntry> cyclic{ entry(u8"a", { u8"b" }), entry(u8"b", { u8"a" }), entry(u8"c", {}), entry(u8"off", {}, false) };
+    const auto                     cyclic_order = PluginManager::unloadOrder(cyclic);
+    ASSERT_EQ(cyclic_order.size(), 3u);
+    EXPECT_TRUE(cyclic_order[0] == u8"c") << "无依赖的插件先卸载";
+    EXPECT_TRUE(std::find(cyclic_order.begin(), cyclic_order.end(), vine::String(u8"a")) != cyclic_order.end());
+    EXPECT_TRUE(std::find(cyclic_order.begin(), cyclic_order.end(), vine::String(u8"b")) != cyclic_order.end());
+}
+
 namespace
 {
 
@@ -3779,3 +4650,433 @@ class PluginLifecycleEnv : public ::testing::Environment {
 } // namespace
 
 ::testing::Environment* const g_plugin_env = ::testing::AddGlobalTestEnvironment(new PluginLifecycleEnv());
+
+// ════════════════════════════════════════════════════════════════════════════
+// 第五轮审计：等用户输入的命令与"排空"的边界
+// ════════════════════════════════════════════════════════════════════════════
+namespace
+{
+
+// 停在等待用户输入上的命令：直到交互被取消才会返回。
+class InteractiveWaitCommand : public vine::appfw::Command {
+    V_OBJECT_META_DECL;
+
+  public:
+    vine::String name() const override { return u8"interactiveWait"; }
+    vine::String group() const override { return u8"Test"; }
+    vine::String description() const override { return u8"waits for user input"; }
+    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+
+    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    {
+        auto* app = context ? context->application() : nullptr;
+        auto* io  = app ? app->userIO() : nullptr;
+        if (io == nullptr) {
+            co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Failed);
+        }
+
+        s_parked.store(true);
+        const auto input = co_await io->getStringAsync(u8"输入点什么> ");
+        s_parked.store(false);
+        co_return vine::appfw::CommandResult(
+            input.has_value() ? vine::appfw::CommandStatus::Success : vine::appfw::CommandStatus::Cancelled);
+    }
+
+    inline static std::atomic<bool> s_parked{ false };
+};
+
+V_OBJECT_META_IMPL(InteractiveWaitCommand, vine::appfw::Command)
+
+// 在命令内部调用"取消并排空"。
+class DrainFromInsideCommand : public vine::appfw::Command {
+    V_OBJECT_META_DECL;
+
+  public:
+    vine::String name() const override { return u8"drainFromInside"; }
+    vine::String group() const override { return u8"Test"; }
+    vine::String description() const override { return u8"drains from inside itself"; }
+    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+
+    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    {
+        auto* app = context ? context->application() : nullptr;
+        auto* cm  = app ? app->commandManager() : nullptr;
+        s_drained = cm != nullptr && cm->cancelAllAndWait(std::chrono::milliseconds(50));
+        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+    }
+
+    inline static bool s_drained{ true };
+};
+
+V_OBJECT_META_IMPL(DrainFromInsideCommand, vine::appfw::Command)
+
+// 不配合取消、时长可调的睡眠命令：用来把"排他命令正在等待旧链"这个窗口撑开。
+class UncooperativeSleepForCommand : public vine::appfw::Command {
+    V_OBJECT_META_DECL;
+
+  public:
+    explicit UncooperativeSleepForCommand(vine::String name, std::chrono::milliseconds duration)
+      : name_(std::move(name))
+      , duration_(duration)
+    {}
+
+    vine::String name() const override { return name_; }
+    vine::String group() const override { return u8"Test"; }
+    vine::String description() const override { return u8"ignores cancellation"; }
+    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+
+    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    {
+        s_running.store(true);
+        co_await vine::async::sleepFor(duration_);
+        s_running.store(false);
+        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+    }
+
+    inline static std::atomic<bool> s_running{ false };
+
+  private:
+    vine::String              name_;
+    std::chrono::milliseconds duration_;
+};
+
+V_OBJECT_META_IMPL(UncooperativeSleepForCommand, vine::appfw::Command)
+
+} // namespace
+
+// 等用户输入的链自己排不掉：读操作没有取消令牌，管理器无从唤醒它（旧实现里
+// Application::shutdown() 只能白等满上界，然后带着活链销毁管理器）。
+// 宿主必须先取消这次交互（UserIO::cancelPendingInput()）再排空。
+TEST_F(GuiTest, CommandManager_PendingUserInputBlocksDrainUntilCancelled)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+    auto* io = app->userIO();
+    ASSERT_NE(io, nullptr);
+
+    const auto name = vine::String(u8"interactiveWait");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<InteractiveWaitCommand>(name));
+    cm->clearHistory();
+    InteractiveWaitCommand::s_parked = false;
+
+    cm->executeDetached(name);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!InteractiveWaitCommand::s_parked.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(InteractiveWaitCommand::s_parked.load());
+
+    // 只取消链不够：命令停在读上，取消令牌传不进这次读。
+    EXPECT_FALSE(cm->cancelAllAndWait(std::chrono::milliseconds(100)));
+    EXPECT_TRUE(InteractiveWaitCommand::s_parked.load());
+
+    // 取消挂起的交互后，命令以 Cancelled 收尾，排空成功。
+    io->cancelPendingInput();
+    EXPECT_TRUE(cm->cancelAllAndWait(std::chrono::seconds(5)));
+    EXPECT_FALSE(InteractiveWaitCommand::s_parked.load());
+    EXPECT_EQ(cm->runningCount(), 0);
+    ASSERT_EQ(cm->historyCount(), 1);
+    ASSERT_TRUE(cm->historyAt(0).has_value());
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Cancelled);
+
+    // 没有挂起交互时再取消一次是安全的（幂等）。
+    io->cancelPendingInput();
+
+    cm->clearHistory();
+    cm->unregisterCommand(name);
+}
+
+// 命令不能在自己身上"取消并排空"：它自己所在的链正是要排空的对象，只有它返回
+// 之后那条链才会结束。文档里给出了正确做法（Application::quit() + 宿主收尾），
+// 这里把"必定失败"这个事实钉住，避免被误当成可用路径。
+TEST_F(GuiTest, CommandManager_CancelAllAndWaitFromInsideCommandCannotSucceed)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vine::String(u8"drainFromInside");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<DrainFromInsideCommand>(name));
+    cm->clearHistory();
+    DrainFromInsideCommand::s_drained = true;
+
+    const auto result = cm->executeCommand(name);
+    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_FALSE(DrainFromInsideCommand::s_drained) << "命令无法排空自己所在的链";
+    EXPECT_EQ(cm->runningCount(), 0) << "命令返回后链仍然正常收尾";
+
+    cm->clearHistory();
+    cm->unregisterCommand(name);
+}
+
+// 等待接管的排他命令本身也必须能被"停一切"打断：旧实现里 cancelAll() 够不到它
+// （它还没建链、不在活跃链注册表里），只能等满 2s 的排空上界才失败。
+TEST_F(GuiTest, CommandManager_CancelAllAbortsWaitingTakeOver)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto victim = vine::String(u8"uncooperativeTimed");
+    const auto taker  = vine::String(u8"takeover");
+    cm->unregisterCommand(victim);
+    cm->unregisterCommand(taker);
+    ASSERT_TRUE(cm->registerCommand(UncooperativeSleepForCommand::desc(), victim, [victim] {
+        return new UncooperativeSleepForCommand(victim, std::chrono::milliseconds(800));
+    }));
+    ASSERT_TRUE(cm->registerCommand<ExclusiveTakeOverCommand>(taker));
+    ExclusiveTakeOverCommand::s_ran            = false;
+    UncooperativeSleepForCommand::s_running    = false;
+    cm->clearHistory();
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+
+    // 旧链在跑，且它无视取消 ⇒ 排他命令会停在"等待旧链收尾"上（上界 2s）。
+    auto                       victim_task = cm->executeCommandAsync(victim);
+    vine::appfw::CommandResult victim_result;
+    std::thread victim_runner([&] { victim_result = vine::async::syncWait(std::move(victim_task)); });
+    while (!UncooperativeSleepForCommand::s_running.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(UncooperativeSleepForCommand::s_running.load());
+
+    auto                       taker_task = cm->executeCommandAsync(taker);
+    vine::appfw::CommandResult taker_result;
+    std::thread taker_runner([&] { taker_result = vine::async::syncWait(std::move(taker_task)); });
+
+    // 让排他命令确实进入等待：它自己不执行，没有别的可观察点。
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    const auto start = std::chrono::steady_clock::now();
+    cm->cancelAll();
+    taker_runner.join();
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+
+    // 被打断：立刻以 Cancelled 结束（而不是等满 2s 后 Failed），命令体从未执行。
+    EXPECT_EQ(taker_result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_FALSE(ExclusiveTakeOverCommand::s_ran);
+    EXPECT_LT(elapsed, 1000) << "cancelAll() 应立即结束等待中的接管";
+
+    while (UncooperativeSleepForCommand::s_running.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    victim_runner.join();
+    EXPECT_EQ(victim_result.status(), vine::appfw::CommandStatus::Success) << "不配合取消的旧链自己跑完";
+
+    cm->clearHistory();
+    cm->unregisterCommand(victim);
+    cm->unregisterCommand(taker);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 第六轮审计：重入 + 多线程
+// ════════════════════════════════════════════════════════════════════════════
+namespace
+{
+
+// 带名字的极简命令：实例由探针工厂返回。
+class ReentrancyProbeCommand : public vine::appfw::Command {
+    V_OBJECT_META_DECL;
+
+  public:
+    explicit ReentrancyProbeCommand(vine::String name)
+      : name_(std::move(name))
+    {}
+
+    vine::String name() const override { return name_; }
+    vine::String group() const override { return u8"Test"; }
+    vine::String description() const override { return u8"reentrancy probe"; }
+    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    {
+        s_runs.fetch_add(1);
+        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+    }
+
+    inline static std::atomic<int> s_runs{ 0 };
+
+  private:
+    vine::String name_;
+};
+
+V_OBJECT_META_IMPL(ReentrancyProbeCommand, vine::appfw::Command)
+
+// 慢排他命令：记录自身并发数。
+class SlowExclusiveProbeCommand : public vine::appfw::Command {
+    V_OBJECT_META_DECL;
+
+  public:
+    vine::String name() const override { return u8"exclusiveSlow"; }
+    vine::String group() const override { return u8"Test"; }
+    vine::String description() const override { return u8"slow exclusive"; }
+    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::Exclusive; }
+
+    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    {
+        const int now  = s_in_flight.fetch_add(1) + 1;
+        int       prev = s_max.load();
+        while (prev < now && !s_max.compare_exchange_weak(prev, now)) {
+        }
+        co_await vine::async::sleepFor(std::chrono::milliseconds(200));
+        s_in_flight.fetch_sub(1);
+        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+    }
+
+    inline static std::atomic<int> s_in_flight{ 0 };
+    inline static std::atomic<int> s_max{ 0 };
+};
+
+V_OBJECT_META_IMPL(SlowExclusiveProbeCommand, vine::appfw::Command)
+
+} // namespace
+
+// 重入 1：工厂在注册过程中重入管理器的注册表（注册别的名字、列举、注销自己）。
+// 工厂是在 registry_mutex 之外调用的，所以这些都不得死锁。
+TEST_F(GuiTest, CommandManager_ReentrantFactoryIsSafe)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name  = vine::String(u8"reentrantFactory");
+    const auto other = vine::String(u8"reentrantFactoryOther");
+    cm->unregisterCommand(name);
+    cm->unregisterCommand(other);
+    ReentrancyProbeCommand::s_runs = 0;
+
+    bool inside_registered_other = false;
+    bool inside_infos_ok         = false;
+    bool inside_unregistered_self = false;
+
+    const bool registered = cm->registerCommand(ReentrancyProbeCommand::desc(), name, [&]() -> vine::appfw::Command* {
+        inside_registered_other = cm->registerCommand(ReentrancyProbeCommand::desc(), other, [other] {
+            return new ReentrancyProbeCommand(other);
+        });
+        inside_infos_ok          = !cm->commandInfos().empty();
+        inside_unregistered_self = cm->unregisterCommand(name);
+        return new ReentrancyProbeCommand(name);
+    });
+
+    EXPECT_TRUE(registered);
+    EXPECT_TRUE(inside_registered_other);
+    EXPECT_TRUE(inside_infos_ok);
+    EXPECT_FALSE(inside_unregistered_self) << "探测时它还没注册成功";
+    EXPECT_TRUE(cm->isRegistered(name));
+    EXPECT_EQ(cm->executeCommand(name).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(ReentrancyProbeCommand::s_runs.load(), 1);
+
+    cm->unregisterCommand(name);
+    cm->unregisterCommand(other);
+}
+
+// 重入 2：executed 处理函数里再跑一条命令、注销刚跑完的命令、增删处理函数。
+// 事件是在所有锁之外同步触发的，Signal 又是"先取快照再查找"，因此这些都安全。
+TEST_F(GuiTest, CommandManager_ReentrantEventHandlerIsSafe)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto first  = vine::String(u8"reentrantFirst");
+    const auto second = vine::String(u8"reentrantSecond");
+    cm->unregisterCommand(first);
+    cm->unregisterCommand(second);
+    ASSERT_TRUE(cm->registerCommand(ReentrancyProbeCommand::desc(), first, [first] {
+        return new ReentrancyProbeCommand(first);
+    }));
+    ASSERT_TRUE(cm->registerCommand(ReentrancyProbeCommand::desc(), second, [second] {
+        return new ReentrancyProbeCommand(second);
+    }));
+    cm->clearHistory();
+    ReentrancyProbeCommand::s_runs = 0;
+
+    std::atomic<int> notifications{ 0 };
+    std::atomic<int> nested_status{ -1 };
+
+    // 处理函数在通知里增删处理函数：本轮新增的不应被调用，注销的也不应。
+    std::atomic<int>             late_handler_calls{ 0 };
+    decltype(cm->executed)::HandlerId late_handler_id{};
+    const auto                   id = cm->executed.addHandler(
+        [&](vine::appfw::CommandManager& manager, vine::appfw::CommandExecutedEventArgs& args) {
+            const auto* c = args.command();
+            if (c == nullptr || c->name() != first) {
+                return;
+            }
+            notifications.fetch_add(1);
+            // 重入：通知里再跑一条命令（同步入口，当前线程就是主线程）。
+            nested_status.store(static_cast<int>(manager.executeCommand(second).status()));
+            // 重入：注销刚跑完的命令（实例与注册项是两回事，不应影响本次上报）。
+            static_cast<void>(manager.unregisterCommand(first));
+            // 重入：本轮新增的处理函数不应在本次通知里被调用。
+            late_handler_id = manager.executed.addHandler(
+                [&late_handler_calls](vine::appfw::CommandManager&, vine::appfw::CommandExecutedEventArgs&) {
+                    late_handler_calls.fetch_add(1);
+                });
+        });
+
+    const auto result = cm->executeCommand(first);
+    cm->executed.removeHandler(id);
+
+    // 触发期间新增的处理函数：本次不生效，但从下一条命令开始生效。
+    const auto after = cm->executeCommand(second);
+
+    // 它捕获的是本用例栈上的对象：用例结束前必须注销，否则会挂到下一条命令上。
+    cm->executed.removeHandler(late_handler_id);
+
+    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(after.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(notifications.load(), 1);
+    EXPECT_EQ(nested_status.load(), static_cast<int>(vine::appfw::CommandStatus::Success));
+    EXPECT_EQ(ReentrancyProbeCommand::s_runs.load(), 3);
+    EXPECT_EQ(cm->historyCount(), 3);
+    EXPECT_FALSE(cm->isRegistered(first)) << "处理函数把命令注销了";
+    EXPECT_EQ(late_handler_calls.load(), 1) << "后加的处理函数只对之后的命令生效";
+
+    cm->clearHistory();
+    cm->unregisterCommand(second);
+}
+
+// 多线程：两个排他命令从不同线程同时提交时，也必须是串行的——排他意味着接管
+// 前台，两个同时跑就不叫排他了（旧实现里两者都绕过串联门 ⇒ 峰值为 2）。
+TEST_F(GuiTest, CommandManager_ExclusiveCommandsAreSerialized)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vine::String(u8"exclusiveSlow");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<SlowExclusiveProbeCommand>(name));
+    cm->clearHistory();
+    SlowExclusiveProbeCommand::s_in_flight = 0;
+    SlowExclusiveProbeCommand::s_max       = 0;
+
+    vine::appfw::CommandResult result_a;
+    vine::appfw::CommandResult result_b;
+    std::thread                runner_a([&] { result_a = cm->executeCommand(name); });
+    std::thread                runner_b([&] { result_b = cm->executeCommand(name); });
+    runner_a.join();
+    runner_b.join();
+
+    EXPECT_EQ(SlowExclusiveProbeCommand::s_max.load(), 1) << "两个排他命令不得并发执行";
+
+    // 两种正确结局：后到者接管（前者已收尾 ⇒ 串行成功），或在前者建链前抢先落败
+    // 被串行门拒绝。至少有一个真的执行了。
+    const bool a_ok = result_a.status() == vine::appfw::CommandStatus::Success;
+    const bool b_ok = result_b.status() == vine::appfw::CommandStatus::Success;
+    EXPECT_TRUE(a_ok || b_ok) << "至少有一个排他命令应该执行";
+    EXPECT_EQ(cm->runningCount(), 0);
+
+    cm->clearHistory();
+    cm->unregisterCommand(name);
+}

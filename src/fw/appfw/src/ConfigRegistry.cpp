@@ -9,7 +9,7 @@ V_APPFW_NS_BEGIN
 
 struct ConfigRegistry::Impl {
     std::vector<std::unique_ptr<ConfigCategory>> categories;
-    std::map<String, String>                     owners_; // item key -> owning plugin name
+    std::map<String, String>                     owners; // item key -> owning plugin name
 };
 
 ConfigRegistry::ConfigRegistry()
@@ -60,15 +60,30 @@ bool ConfigRegistry::addItem(StandardCategory cat, StandardGroup grp, const Conf
     ConfigGroup* g = standardGroup(cat, grp);
     if (!g || !g->addItem(item))
         return false;
-    if (!owner.empty())
-        d->owners_[item.key()] = std::move(owner);
+    // The owner map mirrors the tree, but only this call can record an owner:
+    // registering a key without one must not leave the previous owner behind,
+    // or an unrelated plugin would appear to own it.
+    if (owner.empty())
+        d->owners.erase(item.key());
+    else
+        d->owners[item.key()] = std::move(owner);
     return true;
+}
+
+void ConfigRegistry::pruneOwners()
+{
+    for (auto it = d->owners.begin(); it != d->owners.end();) {
+        if (item(it->first) != nullptr)
+            ++it;
+        else
+            it = d->owners.erase(it);
+    }
 }
 
 std::vector<const ConfigItem*> ConfigRegistry::itemsForPlugin(const String& plugin_name) const
 {
     std::vector<const ConfigItem*> out;
-    for (const auto& [key, owner] : d->owners_) {
+    for (const auto& [key, owner] : d->owners) {
         if (owner == plugin_name) {
             if (const ConfigItem* it = item(key))
                 out.push_back(it);
@@ -80,7 +95,7 @@ std::vector<const ConfigItem*> ConfigRegistry::itemsForPlugin(const String& plug
 bool ConfigRegistry::removeItemsForPlugin(const String& plugin_name)
 {
     std::vector<String> keys;
-    for (const auto& [key, owner] : d->owners_) {
+    for (const auto& [key, owner] : d->owners) {
         if (owner == plugin_name)
             keys.push_back(key);
     }
@@ -89,8 +104,8 @@ bool ConfigRegistry::removeItemsForPlugin(const String& plugin_name)
     for (const auto& key : keys) {
         if (removeItem(key))
             removed = true;
-        d->owners_.erase(key);
     }
+    pruneOwners();
     return removed;
 }
 
@@ -99,6 +114,7 @@ bool ConfigRegistry::removeCategory(const String& name)
     for (auto it = d->categories.begin(); it != d->categories.end(); ++it) {
         if ((*it)->name() == name) {
             d->categories.erase(it);
+            pruneOwners();
             return true;
         }
     }
@@ -108,6 +124,7 @@ bool ConfigRegistry::removeCategory(const String& name)
 void ConfigRegistry::clear()
 {
     d->categories.clear();
+    d->owners.clear();
 }
 
 std::vector<ConfigCategory*> ConfigRegistry::categories() const
@@ -152,8 +169,12 @@ bool ConfigRegistry::removeItem(const String& key)
 {
     for (const auto& c : d->categories) {
         for (ConfigGroup* g : c->groups()) {
-            if (g->item(key) != nullptr)
-                return g->removeItem(key);
+            if (g->item(key) != nullptr) {
+                const bool removed = g->removeItem(key);
+                if (removed)
+                    d->owners.erase(key);
+                return removed;
+            }
         }
     }
     return false;
