@@ -53,22 +53,28 @@ extern "C" {
  * Usage (PluginDependencies is a braced list, empty when the plugin has no
  * dependencies):
  * @code
- * V_DECLARE_PLUGIN(MyPlugin, u8"myPlugin", u8"My Plugin", u8"1.0.0", u8"Demo plugin", u8"Vine", { u8"base_plugin" })
+ * V_DECLARE_PLUGIN(MyPlugin, u8"myPlugin", u8"My Plugin", u8"1.0.0", u8"Demo plugin", u8"Vine",
+ *                  u8"dev@example.com", u8"https://example.com/myplugin", u8"<svg .../>", { u8"base_plugin" })
  * @endcode
  *
  * @param PluginClass The plugin class (default-constructible, derives Plugin).
+ * @param PluginUuid Stable plugin identity (see vine::Uuid::parse).
  * @param PluginName Unique plugin name (identifier).
  * @param PluginDisplayName Human-friendly name shown in the UI; may equal PluginName.
  * @param PluginVersion Plugin version.
  * @param PluginDescription Plugin description.
  * @param PluginVendor Plugin vendor/author.
+ * @param PluginEmail Vendor contact address shown in the plugin manager; may be empty.
+ * @param PluginRepo Repository or issue tracker URL shown in the plugin manager; may be empty.
+ * @param PluginIcon Inline SVG source used as the plugin icon; empty uses the host's default icon.
  * @param PluginDependencies Braced list of plugin names this plugin requires.
  */
-#define V_DECLARE_PLUGIN(PluginClass, PluginName, PluginDisplayName, PluginVersion, PluginDescription, PluginVendor, PluginDependencies) \
+#define V_DECLARE_PLUGIN(PluginClass, PluginUuid, PluginName, PluginDisplayName, PluginVersion, PluginDescription, PluginVendor, PluginEmail, PluginRepo, PluginIcon, PluginDependencies) \
     extern "C" V_PLUGIN_EXPORT const vine::appfw::PluginInfo* vinePluginQuery()                                      \
     {                                                                                                                \
-        static const vine::appfw::PluginInfo s_info{ PluginName, PluginDisplayName, PluginVersion, PluginDescription, \
-                                                     PluginVendor, PluginDependencies };                              \
+        static const vine::appfw::PluginInfo s_info{ vine::Uuid::parse(PluginUuid), PluginName, PluginDisplayName, PluginVersion, \
+                                                     PluginDescription, PluginVendor, PluginEmail, PluginRepo, PluginIcon,     \
+                                                     PluginDependencies };                                           \
         return &s_info;                                                                                              \
     }                                                                                                                \
     extern "C" V_PLUGIN_EXPORT vine::appfw::Plugin* vinePluginCreate()                                               \

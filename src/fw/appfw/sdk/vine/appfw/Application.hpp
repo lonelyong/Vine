@@ -2,9 +2,12 @@
 
 #include "appfw_global.hpp"
 
+#include <filesystem>
 #include <memory>
+#include <vector>
 
 #include <vine/Object.hpp>
+#include <vine/String.hpp>
 #include <vine/raw_ptr.hpp>
 
 V_APPFW_NS_BEGIN
@@ -48,6 +51,20 @@ class V_APPFW_API Application : public Object {
      * @brief Creates and stores the application's UserIO.
      */
     void setupUserIO();
+
+    /**
+     * @brief Tears the application down after the main loop has stopped.
+     *
+     * Runs the shutdown sequence shared by every run() implementation, while the
+     * application is still fully alive:
+     * 1. unloads the plugins in reverse dependency order (PluginManager::unloadAll()),
+     * 2. drains and stops the event bus (EventBus::shutdownGracefully()),
+     * 3. persists the configuration when a config file is set (setConfigFile()).
+     *
+     * Calling it twice is harmless: the plugin list is empty and the bus is
+     * already stopped, so only the config save repeats.
+     */
+    void shutdown();
 
   public:
     ~Application() override;
@@ -128,6 +145,110 @@ class V_APPFW_API Application : public Object {
      * @return The config registry.
      */
     raw_ptr<ConfigRegistry> configRegistry() const;
+
+    /**
+     * @brief Enables configuration persistence on the given JSON file.
+     *
+     * Loads the file immediately when it exists (a missing file is not an error,
+     * the defaults apply), and saves the configuration to it during shutdown().
+     * Passing an empty path disables persistence again.
+     *
+     * The path belongs to the application, not to the framework: appfw does not
+     * decide where a host stores its settings, it only offers a layout through
+     * defaultConfigFile(), which the application builders apply by default.
+     *
+     * @param file_path JSON file used to persist ConfigManager values.
+     * @return true if the file was loaded or does not exist, false on a read error.
+     */
+    bool setConfigFile(std::filesystem::path file_path);
+
+    /**
+     * @brief Returns the file used to persist the configuration.
+     *
+     * @return The config file path, or an empty path when persistence is disabled.
+     */
+    const std::filesystem::path& configFile() const;
+
+    /**
+     * @brief Returns the organization name assumed when the host sets none.
+     *
+     * The Application constructor applies it as the process organization name
+     * (QCoreApplication::organizationName) when that is still empty, so the
+     * per-user paths below are always well formed. A host that needs its own
+     * identity sets AppConfig::organization, which the builders apply on top.
+     *
+     * @return The default organization name.
+     */
+    static const String& defaultOrganizationName();
+
+    /**
+     * @brief Returns this application's data directory.
+     *
+     * <user data>/appdata/<organization>/<application name>, for example
+     * ~/.local/share/appdata/Vine/Vine on Linux and
+     * C:/Users/<user>/AppData/Roaming/appdata/Vine/Vine on Windows.
+     *
+     * The framework reserves two subdirectories: config/ for the persisted
+     * configuration (defaultConfigFile()) and logs/ for log files. The directory
+     * is only computed, never created here.
+     *
+     * @return The data directory.
+     */
+    std::filesystem::path dataDirectory() const;
+
+    /**
+     * @brief Returns the configuration file inside dataDirectory().
+     *
+     * <data directory>/config/<application name>.json. It is loaded and saved
+     * when persistence is enabled: the application builders enable it unless
+     * AppConfig::persist_config is false (tests), and an explicit
+     * AppConfig::config_file or setConfigFile() takes precedence.
+     *
+     * @return The default config file path.
+     */
+    std::filesystem::path defaultConfigFile() const;
+
+    /**
+     * @brief Returns the root of the plugin-owned data files.
+     *
+     * <data directory>/plugins. Each plugin owns the subdirectory named after its
+     * PluginInfo::name (see PluginLoadContext::dataDirectory()); the name is the
+     * plugin identity, so the directory follows a plugin that is installed
+     * elsewhere later.
+     *
+     * This is for files only. A plugin's configuration values stay in the host
+     * ConfigManager, registered through PluginLoadContext::registerConfigItem().
+     * The directory is only computed, never created here.
+     *
+     * @return The plugin data root.
+     */
+    std::filesystem::path pluginDataDirectory() const;
+
+    /**
+     * @brief Returns the per-user plugin registration directory (installed.d).
+     *
+     * <data directory>/installed.d: the directory PluginManager::installPlugin()
+     * writes a PluginScope::User registration into. One file per registration,
+     * named <id>.plugin, so installing or removing one plugin never rewrites
+     * another.
+     *
+     * @return The registration directory (not created by this call).
+     */
+    std::filesystem::path pluginRegistrationDirectory() const;
+
+    /**
+     * @brief Returns the system-wide plugin registration directories (installed.d).
+     *
+     * The per-machine data roots (Windows ``%ProgramData%``, Linux
+     * ``/usr/local/share`` and ``/usr/share``, macOS ``/Library/Application
+     * Support``), each with the same appdata/<organization>/<application>/
+     * installed.d layout as the per-user directory. They hold the registrations
+     * installed for every user, in preference order; writing there needs
+     * administrator rights, so they are read here.
+     *
+     * @return The system registration directories, possibly empty.
+     */
+    std::vector<std::filesystem::path> allUsersPluginRegistrationDirectories() const;
 
     /**
      * @brief Returns the application's event bus.

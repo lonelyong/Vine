@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <filesystem>
 #include <memory>
 
 #include <vine/appfw/CommandManager.hpp>
@@ -31,6 +32,9 @@ struct ApplicationData {
 
     int    argc = 0;
     char** argv = nullptr;
+
+    /// JSON file used to persist the ConfigManager; empty disables persistence.
+    std::filesystem::path config_file;
 
     virtual ~ApplicationData();
 };

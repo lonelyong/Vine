@@ -9,8 +9,6 @@
 #    pragma comment(lib, "dbghelp.lib")
 #endif
 
-#include <QStandardPaths>
-
 #include <vine/logging/Log.hpp>
 #include <vine/logging/LogSink.hpp>
 
@@ -183,24 +181,23 @@ int main(int argc, char** argv)
     installCrashLogger();
 
     // 通过 builder 构建并初始化 GUI 应用（内部会创建并显示主窗口）。
+    // main 只声明应用身份（应用名/可选组织名），数据与配置目录由框架默认推导：
+    // <用户数据>/appdata/<org>/<app>/{config,logs}，见 Application::dataDirectory()。
     fw::AppConfig config;
     config.name = "Vine";
-    // config.plugin_dir 留空以使用默认插件搜索目录。
+    // config.organization 留空以使用框架默认组织名。
+    // config.built_in_plugin_dir 留空以使用默认的自带插件目录。
 
     auto app = guifw::createGuiApplication(config, argc, argv);
 
-    // 日志同时输出到控制台和用户数据目录下按日期滚动的文件。
-    // AppDataLocation 已包含应用名，形如 <user-data>/Vine，因此日志文件
-    // 落在 <user-data>/Vine/logs/vine_2026-08-30.log（每日一文件）。
-    const auto log_base = std::filesystem::path(
-        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation).toStdU16String())
-        / "logs" / "vine.log";
-
+    // 日志同时输出到控制台和数据目录下按日期滚动的文件。
+    // main 只提供数据目录：日志落在 <data>/appdata/Vine/Vine/logs/vine.log
+    // （每日一文件）；配置文件由 builder 落在同级的 config/Vine.json。
     ::vine::logging::initDefault(::vine::logging::LogConfig{
         .level = ::vine::logging::LogLevel::Info,
         .sinks = {
             ::vine::logging::LogSink::console(),
-            ::vine::logging::LogSink::dailyFile(log_base),
+            ::vine::logging::LogSink::dailyFile(app->dataDirectory() / "logs" / "vine.log"),
         },
     });
 

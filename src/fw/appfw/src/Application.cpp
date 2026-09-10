@@ -1,6 +1,12 @@
-﻿#include <atomic>
+﻿#include <algorithm>
+#include <atomic>
+#include <filesystem>
+#include <system_error>
+#include <utility>
 
 #include <QCoreApplication>
+#include <QStandardPaths>
+#include <QStringList>
 
 #include <vine/Exception.hpp>
 
@@ -11,6 +17,7 @@
 #include <vine/appfw/EventBus.hpp>
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/ServiceManager.hpp>
+#include <vine/logging/Log.hpp>
 
 #include <vine/appfw/MainThreadDispatcher.hpp>
 
@@ -22,6 +29,65 @@
 V_APPFW_NS_BEGIN
 
 static std::atomic<Application*> s_current_app{ nullptr };
+
+namespace
+{
+
+/// Organization assumed when the host does not set one.
+constexpr char8_t s_default_organization[] = u8"Vine";
+
+/// Folder under the user data location that holds per-application data.
+constexpr const char* s_app_data_folder = "appdata";
+
+/// Folder inside the data directory that holds the persisted configuration.
+constexpr const char* s_config_folder = "config";
+
+/// Folder inside the data directory that holds plugin-owned data files.
+constexpr const char* s_plugins_folder = "plugins";
+
+/// Folder inside the data directory that holds installed-plugin registrations.
+constexpr const char* s_registration_folder = "installed.d";
+
+/// File name used when the process has no application name at all.
+constexpr const char* s_fallback_app_name = "application";
+
+/// Converts a vine::String (UTF-8) to a QString.
+QString toQString(const String& text)
+{
+    return QString::fromUtf8(reinterpret_cast<const char*>(text.data()), static_cast<int>(text.size()));
+}
+
+/// Converts a QString to a filesystem path.
+std::filesystem::path toPath(const QString& text)
+{
+    return std::filesystem::path(text.toStdU16String());
+}
+
+/// Root that holds the appdata folder: the user's generic data location.
+std::filesystem::path userDataRoot()
+{
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (root.isEmpty()) {
+        // No user data location (headless/service accounts): keep the layout
+        // valid instead of producing a relative path from an empty root.
+        return std::filesystem::temp_directory_path();
+    }
+    return toPath(root);
+}
+
+/**
+ * @brief Returns the process application name, or a fallback when unset.
+ *
+ * Qt defaults the application name to the executable name, so the fallback only
+ * applies to a process that cleared it again.
+ */
+QString applicationNameOrFallback()
+{
+    const QString name = QCoreApplication::applicationName();
+    return name.isEmpty() ? QString::fromUtf8(s_fallback_app_name) : name;
+}
+
+} // namespace
 
 V_OBJECT_META_IMPL(Application, Object)
 
@@ -49,6 +115,13 @@ Application::Application(ApplicationData* data, int argc, char** argv)
     }
 
     s_current_app.store(this, std::memory_order_release);
+
+    // The framework assumes an organization so that the per-user data and config
+    // paths (QStandardPaths) are well formed even when the host only names the
+    // application. A host identity set before this constructor is kept.
+    if (QCoreApplication::organizationName().isEmpty()) {
+        QCoreApplication::setOrganizationName(toQString(Application::defaultOrganizationName()));
+    }
 
     dptr()->plugin_manager  = std::make_unique<PluginManager>();
     dptr()->service_manager = std::make_unique<ServiceManager>();
@@ -92,11 +165,123 @@ UserIO* Application::createUserIO()
 int Application::run()
 {
     const int code = dptr()->app->exec();
-    // The main loop has stopped: deliver the events that were published just
-    // before the exit (bounded by the timeout), then stop the bus before the
-    // subscribers (windows, plugins) start to be torn down.
-    eventBus()->shutdownGracefully(EventBus::gracefulShutdownTimeout());
+    shutdown();
     return code;
+}
+
+void Application::shutdown()
+{
+    // The main loop has stopped but the application is still fully alive:
+    // plugins are unloaded first so they can still publish on a working bus and
+    // reach the managers they registered into.
+    if (auto* plugins = dptr()->plugin_manager.get(); plugins != nullptr) {
+        // Ignored on purpose: a shutdown cannot act on a plugin that threw, and
+        // PluginManager::unloadAll() has already logged it.
+        static_cast<void>(plugins->unloadAll());
+    }
+
+    // Deliver the events that were published just before the exit (bounded by
+    // the timeout), then stop the bus before the subscribers (windows, plugins)
+    // start to be torn down.
+    eventBus()->shutdownGracefully(EventBus::gracefulShutdownTimeout());
+
+    // Persist last: plugin unload and the final events may still change values.
+    if (!dptr()->config_file.empty()) {
+        const String path(dptr()->config_file.u8string());
+        std::error_code ec;
+        std::filesystem::create_directories(dptr()->config_file.parent_path(), ec);
+        if (!dptr()->config_manager->save(path)) {
+            V_LOGW("Failed to save the configuration to '{}'", dptr()->config_file.string());
+        }
+    }
+}
+
+bool Application::setConfigFile(std::filesystem::path file_path)
+{
+    dptr()->config_file = std::move(file_path);
+    if (dptr()->config_file.empty()) {
+        return true;
+    }
+
+    std::error_code ec;
+    if (!std::filesystem::exists(dptr()->config_file, ec)) {
+        return true; // First run: the defaults apply and are saved on shutdown.
+    }
+    if (!dptr()->config_manager->load(String(dptr()->config_file.u8string()))) {
+        V_LOGW("Failed to load the configuration from '{}'; using the defaults", dptr()->config_file.string());
+        return false;
+    }
+    return true;
+}
+
+const std::filesystem::path& Application::configFile() const
+{
+    return dptr()->config_file;
+}
+
+const String& Application::defaultOrganizationName()
+{
+    static const String s_name(s_default_organization);
+    return s_name;
+}
+
+std::filesystem::path Application::dataDirectory() const
+{
+    std::filesystem::path dir = userDataRoot() / s_app_data_folder;
+
+    const QString organization = QCoreApplication::organizationName();
+    if (!organization.isEmpty()) {
+        dir /= toPath(organization);
+    }
+    dir /= toPath(applicationNameOrFallback());
+    return dir;
+}
+
+std::filesystem::path Application::defaultConfigFile() const
+{
+    std::filesystem::path file = dataDirectory() / s_config_folder;
+    file /= toPath(applicationNameOrFallback() + QStringLiteral(".json"));
+    return file;
+}
+
+std::filesystem::path Application::pluginDataDirectory() const
+{
+    return dataDirectory() / s_plugins_folder;
+}
+
+std::filesystem::path Application::pluginRegistrationDirectory() const
+{
+    return dataDirectory() / s_registration_folder;
+}
+
+std::vector<std::filesystem::path> Application::allUsersPluginRegistrationDirectories() const
+{
+    std::vector<std::filesystem::path> directories;
+
+    // standardLocations() lists the per-user location first and the per-machine
+    // ones after it; those are the ones a registration for every user goes into.
+    const QStringList locations = QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation);
+    for (int i = 1; i < locations.size(); ++i) {
+        const std::filesystem::path root = toPath(locations.at(i));
+        if (root.empty()) {
+            continue;
+        }
+
+        // Same layout as dataDirectory(), but below the system root: the
+        // organization/application part always comes from the process identity.
+        std::filesystem::path dir = root / s_app_data_folder;
+        const QString         organization = QCoreApplication::organizationName();
+        if (!organization.isEmpty()) {
+            dir /= toPath(organization);
+        }
+        dir /= toPath(applicationNameOrFallback());
+        dir /= s_registration_folder;
+
+        if (std::find(directories.begin(), directories.end(), dir) == directories.end()) {
+            directories.push_back(dir);
+        }
+    }
+    return directories;
 }
 
 void Application::exit(int code)

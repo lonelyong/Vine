@@ -39,7 +39,7 @@ function(v_add_plugin target_name_var short_name)
     endif()
 
     # No lib prefix, grouped under vine/plugins in the solution.
-    # Mirror PluginManager::defaultPluginDirectory() so plugins are found when
+    # Mirror PluginManager::defaultBuiltInPluginDirectory() so plugins are found when
     # the app runs from the build tree: Windows/macOS use <exe>/plugins/vine,
     # Linux uses <exe>/../plugins/vine (sibling of bin/, matching install).
     if(WIN32 OR APPLE)
@@ -70,7 +70,7 @@ function(v_add_plugin target_name_var short_name)
     endif()
 
     # Runtime resolves plugins at <exe>/plugins/vine on Windows and
-    # <prefix>/plugins/vine on Linux (PluginManager::defaultPluginDirectory).
+    # <prefix>/plugins/vine on Linux (PluginManager::defaultBuiltInPluginDirectory).
     # Match that layout so installed plugins are found next to the installed app:
     # Windows installs the plugin DLL under bin/ (RUNTIME), while Linux/macOS
     # install the shared object directly under the prefix (LIBRARY). CMake still

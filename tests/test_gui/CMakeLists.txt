@@ -17,3 +17,8 @@ target_link_libraries(${TEST_NAME}
     Qt6::Core Qt6::Gui Qt6::Widgets)
 
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+
+# 这个用例会创建真实的 QWidget：在 ctest 下强制用 offscreen 平台，
+# 否则 WSLg / 远程桌面里会弹出一堆窗口（被中断时会留下卡死的窗口）。
+# 手跑时仍可自己指定：QT_QPA_PLATFORM=offscreen ./bin/test_gui
+set_tests_properties(${TEST_NAME} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

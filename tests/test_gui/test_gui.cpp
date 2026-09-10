@@ -26,6 +26,7 @@
 #include <QLineEdit>
 #include <QPixmap>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QTabWidget>
 #include <QToolBar>
 #include <QToolButton>
@@ -41,8 +42,11 @@
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
 #include <vine/appfw/ConfigStandard.hpp>
+#include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
-
+#include <vine/appfw/PluginManager.hpp>
+#include <vine/appfw/gui/GuiAppBuilder.hpp>
+#include <vine/appfw/gui/PluginManagerDialog.hpp>
 #include <vine/appfw/gui/Control.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
@@ -66,10 +70,13 @@
 #include <any>
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <thread>
 
+#include <QListWidget>
 #include <QPushButton>
 
 namespace guifw = vine::appfw::gui;
@@ -83,11 +90,23 @@ class GuiEnv : public ::testing::Environment {
     void SetUp() override
     {
         guifw::GuiApplication::desc();
+
+        // 用户数据/配置位置重定向到 Qt 测试目录：测试既不读也不写开发机上的
+        // 真实配置（<user data>/appdata/<org>/<app>/... 的默认布局仍然成立）。
+        QStandardPaths::setTestModeEnabled(true);
+
         static char  arg0[] = "test_gui";
         static char* argv[] = { arg0, nullptr };
-        int          argc   = 1;
-        app                 = std::make_unique<guifw::GuiApplication>(argc, argv);
-        app->init(); // 创建 QApplication
+
+        // 与真实应用一样走 builder：它会应用应用身份并启用默认配置文件。
+        vine::appfw::AppConfig config;
+        config.name = "test_gui";
+        app         = guifw::createGuiApplication(config, 1, argv);
+
+        // 从干净状态开始：上一次运行（或中途失败）可能留下插件注册文件。
+        // Qt 测试模式已经把数据目录重定向到临时区，删掉它是安全的。
+        std::error_code ec;
+        std::filesystem::remove_all(app->dataDirectory(), ec);
     }
 
     void TearDown() override
@@ -2601,3 +2620,1077 @@ TEST_F(GuiTest, CommandManager_NestedSyncExecuteCommandDoesNotDeadlock)
 
     cm->unregisterCommand(child_name);
 }
+
+// ============================ 插件生命周期 ============================
+//
+// PluginManager 从默认插件目录（<build>/plugins/vine）发现插件。测试环境里
+// 一定存在 app_shell 与依赖它的 test_plugin（见 test_plugin/TestPlugin.cpp 的
+// V_DECLARE_PLUGIN 依赖声明）。这些用例依赖该目录，缺失时直接跳过。
+//
+// 用例之间共享进程内的插件状态，必须按声明顺序执行：先验证"依赖被禁用则
+// 依赖者不加载"，再验证"被禁用的插件仍可见但不加载"，最后验证卸载。
+
+namespace
+{
+
+/// 在插件状态列表里按名字查找，未找到返回 nullptr。
+const vine::appfw::PluginEntry* findPluginEntry(const std::vector<vine::appfw::PluginEntry>& entries,
+                                                const vine::String&                        name)
+{
+    for (const auto& entry : entries) {
+        if (entry.info.name == name) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+/// 把 vine::String 转成 std::string，用于在 JSON 文本里查找子串。
+std::string toUtf8(const vine::String& text)
+{
+    return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+}
+
+/// 在注册列表里按 id 查找，未找到返回 nullptr。
+const vine::appfw::PluginRegistration* findRegistration(const std::vector<vine::appfw::PluginRegistration>& registrations,
+                                                        const vine::String& id)
+{
+    for (const auto& registration : registrations) {
+        if (registration.id == id) {
+            return &registration;
+        }
+    }
+    return nullptr;
+}
+
+/// 找到一个插件库文件（用于"安装到别处"的测试），找不到返回空路径。
+std::filesystem::path findPluginLibrary(const char* stem)
+{
+    std::error_code ec;
+    const auto      dir = vine::appfw::PluginManager::builtInPluginDirectory();
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (entry.is_regular_file() && entry.path().stem().string().rfind(stem, 0) == 0) {
+            return entry.path();
+        }
+    }
+    return {};
+}
+
+/// 临时改 PluginManager::builtInPluginDirectory()，离开作用域自动还原（断言失败也不漏还原）。
+class BuiltInPluginDirectoryScope {
+  public:
+    explicit BuiltInPluginDirectoryScope(const std::filesystem::path& dir)
+      : saved_(vine::appfw::PluginManager::builtInPluginDirectory())
+    {
+        vine::appfw::PluginManager::setBuiltInPluginDirectory(dir);
+    }
+
+    ~BuiltInPluginDirectoryScope() { vine::appfw::PluginManager::setBuiltInPluginDirectory(saved_); }
+
+    BuiltInPluginDirectoryScope(const BuiltInPluginDirectoryScope&)            = delete;
+    BuiltInPluginDirectoryScope& operator=(const BuiltInPluginDirectoryScope&) = delete;
+
+  private:
+    std::filesystem::path saved_;
+};
+
+/// 把插件库拷到程序目录之外、注册为"当前用户安装"，并把程序目录临时换成空目录。
+///
+/// 用来自出一个真实的用户安装场景：沙箱里的插件都是 PluginScope::User，因此可以
+/// 禁用/卸载；析构时卸载并反注册、删目录、还原程序目录（断言失败也不漏）。
+class UserPluginSandbox {
+  public:
+    UserPluginSandbox(vine::appfw::PluginManager* manager, const std::vector<const char*>& stems)
+      : manager_(manager)
+    {
+        // Copy the libraries while the application directory is still the real
+        // one: findPluginLibrary() looks in PluginManager::builtInPluginDirectory().
+        std::error_code ec;
+        std::filesystem::remove_all(directory(), ec);
+        std::filesystem::create_directories(directory(), ec);
+
+        for (const char* stem : stems) {
+            const auto library = findPluginLibrary(stem);
+            if (library.empty()) {
+                continue;
+            }
+            std::filesystem::copy_file(library, directory() / library.filename(),
+                                       std::filesystem::copy_options::overwrite_existing, ec);
+        }
+
+        if (manager_ != nullptr) {
+            registration_ = manager_->installPlugin(vine::String(directory().u8string()), vine::appfw::PluginScope::User);
+        }
+
+        // Only now hide the application directory, so the sandbox plugins are the
+        // only ones a scan can find.
+        directory_scope_ = std::make_unique<BuiltInPluginDirectoryScope>(emptyDirectory());
+    }
+
+    ~UserPluginSandbox()
+    {
+        std::error_code ec;
+        if (manager_ != nullptr) {
+            // Ignored on purpose: the sandbox only wants the instances gone and
+            // has already reported failures through the test that ran.
+            static_cast<void>(manager_->unloadAll());
+            if (!registration_.empty()) {
+                // Ignored on purpose: the sandbox is gone either way and the next
+                // test installs its own registration.
+                static_cast<void>(manager_->uninstallPlugin(registration_, vine::appfw::PluginScope::User));
+            }
+        }
+        std::filesystem::remove_all(directory(), ec);
+        std::filesystem::remove_all(emptyDirectory(), ec);
+    }
+
+    UserPluginSandbox(const UserPluginSandbox&)            = delete;
+    UserPluginSandbox& operator=(const UserPluginSandbox&) = delete;
+
+    const std::filesystem::path& directory() const { return directory_; }
+    const vine::String&          registration() const { return registration_; }
+
+  private:
+    static std::filesystem::path emptyDirectory()
+    {
+        return std::filesystem::temp_directory_path() / "vine_sandbox_empty_plugin_dir";
+    }
+
+    vine::appfw::PluginManager*           manager_;
+    std::unique_ptr<BuiltInPluginDirectoryScope> directory_scope_;
+    std::filesystem::path       directory_{ std::filesystem::temp_directory_path() / "vine_test_plugins" };
+    vine::String                registration_;
+};
+
+/// 进程内的宿主跳过列表作用域：构造时替换，析构时恢复，避免用例之间互相影响。
+/// 注意 skipList() 返回的是内部列表的视图，必须先拷贝再 setSkipList()。
+class SkipListScope {
+  public:
+    explicit SkipListScope(std::vector<vine::String> names)
+      : saved_(vine::appfw::PluginManager::skipList())
+    {
+        vine::appfw::PluginManager::setSkipList(names);
+    }
+
+    ~SkipListScope() { vine::appfw::PluginManager::setSkipList(saved_); }
+
+    SkipListScope(const SkipListScope&)            = delete;
+    SkipListScope& operator=(const SkipListScope&) = delete;
+
+  private:
+    std::vector<vine::String> saved_;
+};
+
+
+constexpr char8_t s_shell_plugin[]     = u8"app_shell";   // 被依赖的插件
+constexpr char8_t s_dependent_plugin[] = u8"test_plugin"; // 依赖 app_shell 的插件
+
+/// 插件测试需要真实插件库（Debug 构建的文件名带 d 后缀，如 app_shelld.so）；
+/// 没有构建插件时跳过，而不是失败或空跑。
+bool builtInPluginDirectoryReady()
+{
+    std::error_code ec;
+    const auto      dir = vine::appfw::PluginManager::builtInPluginDirectory();
+    if (!std::filesystem::is_directory(dir, ec)) {
+        return false;
+    }
+
+    const auto hasLibrary = [&dir, &ec](const char* stem) {
+        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            if (entry.path().stem().string().rfind(stem, 0) == 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    return hasLibrary("app_shell") && hasLibrary("test_plugin");
+}
+
+} // namespace
+
+// test_plugin 依赖 app_shell：被依赖方被禁用时，依赖它的插件不得加载（否则会
+// 带着缺失依赖跑起来），并把它作为 "disabled dependency" 而不是 "missing" 报告。
+//
+// 程序自带的插件不可禁用，所以这里用真实场景：两个插件都从程序目录之外注册
+// （User 作用域），程序目录临时换成空目录。
+TEST(PluginLifecycleTest, DisabledDependencyBlocksDependents)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty()) << "沙箱插件的注册应成功";
+    EXPECT_EQ(pm->count(), 0u) << "沙箱不加载任何东西";
+
+    EXPECT_TRUE(pm->setPluginEnabled(u8"app_shell", false));
+    EXPECT_FALSE(pm->isPluginEnabled(u8"app_shell"));
+    EXPECT_TRUE(pm->isPluginEnabled(u8"test_plugin"));
+
+    EXPECT_FALSE(pm->loadAll()) << "依赖被禁用时必须整体报错";
+    EXPECT_FALSE(pm->isLoaded(u8"app_shell"));
+    EXPECT_FALSE(pm->isLoaded(u8"test_plugin"));
+    EXPECT_EQ(pm->count(), 0u);
+
+    const auto  entries = pm->pluginEntries();
+    const auto* shell   = findPluginEntry(entries, u8"app_shell");
+    ASSERT_NE(shell, nullptr) << "被禁用的插件仍必须被发现并列出";
+    EXPECT_EQ(shell->scope, vine::appfw::PluginScope::User);
+    EXPECT_FALSE(shell->enabled);
+    EXPECT_FALSE(shell->loaded);
+    EXPECT_FALSE(shell->path.empty());
+    EXPECT_TRUE(shell->info.version == u8"1.0.0");
+
+    const auto* dependent = findPluginEntry(entries, u8"test_plugin");
+    ASSERT_NE(dependent, nullptr);
+    EXPECT_TRUE(dependent->enabled);
+    EXPECT_FALSE(dependent->loaded);
+    EXPECT_EQ(dependent->info.dependencies.size(), 1u);
+
+    // 恢复被依赖方：状态交给下一个用例（沙箱析构时才卸载）。
+    EXPECT_TRUE(pm->setPluginEnabled(u8"app_shell", true));
+    EXPECT_TRUE(pm->isPluginEnabled(u8"app_shell"));
+}
+
+// 禁用的插件：不执行 load（不创建实例、不跑生命周期、不注册命令），但元数据
+// 仍然被发现并列出，供插件信息页/管理器显示。
+TEST(PluginLifecycleTest, DisabledPluginIsListedWithMetadataButNotLoaded)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    auto* cm = app->commandManager();
+    ASSERT_NE(pm, nullptr);
+    ASSERT_NE(cm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+
+    EXPECT_TRUE(pm->setPluginEnabled(u8"test_plugin", false));
+    ASSERT_TRUE(pm->loadAll());
+    EXPECT_TRUE(pm->isLoaded(u8"app_shell"));    // 其它插件不受影响
+    EXPECT_FALSE(pm->isLoaded(u8"test_plugin")); // 被禁用的不加载
+    EXPECT_FALSE(pm->isPluginEnabled(u8"test_plugin"));
+
+    const auto  entries   = pm->pluginEntries();
+    const auto* dependent = findPluginEntry(entries, u8"test_plugin");
+    ASSERT_NE(dependent, nullptr) << "被禁用的插件仍必须被发现并列出";
+    EXPECT_FALSE(dependent->enabled);
+    EXPECT_FALSE(dependent->loaded);
+    EXPECT_TRUE(dependent->info.display_name == u8"测试插件");
+    EXPECT_TRUE(dependent->info.version == u8"1.0.0");
+    EXPECT_FALSE(dependent->info.description.empty());
+    EXPECT_FALSE(dependent->info.vendor.empty());
+    EXPECT_FALSE(dependent->info.uuid.isNull()) << "插件身份由 V_DECLARE_PLUGIN 硬编码";
+    EXPECT_FALSE(dependent->path.empty());
+    EXPECT_FALSE(pm->libraryPath(u8"test_plugin").empty());
+
+    // 未加载 = 生命周期没跑 = 没有注册任何命令。
+    EXPECT_FALSE(cm->isRegistered(u8"test_hello"));
+
+    // 启用后重新加载等价于 "重启后" 的状态：命令才出现在注册表里。
+    EXPECT_TRUE(pm->setPluginEnabled(u8"test_plugin", true));
+    ASSERT_TRUE(pm->loadAll());
+    EXPECT_TRUE(pm->isLoaded(u8"test_plugin"));
+    EXPECT_TRUE(cm->isRegistered(u8"test_hello"));
+}
+
+// 宿主跳过列表（setSkipList）：进程内的硬开关，优先于一切其它输入（包括用户
+// 偏好）。被跳过的插件仍然被发现并列出（PluginEntry::skipped），只是不加载；
+// 不持久化，所以移出列表后下一次 loadAll() 就能加载，不需要重启。
+TEST(PluginLifecycleTest, SkippedPluginStaysVisibleAndIsNeverInstantiated)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+
+    SkipListScope skip({ u8"test_plugin" });
+
+    EXPECT_TRUE(pm->isSkipped(u8"test_plugin"));
+    EXPECT_FALSE(pm->isPluginEnabled(u8"test_plugin")) << "跳过列表优先于用户偏好";
+    EXPECT_TRUE(pm->isPluginEnabled(u8"app_shell"));
+
+    ASSERT_TRUE(pm->loadAll());
+    EXPECT_TRUE(pm->isLoaded(u8"app_shell"));    // 未被跳过的插件不受影响
+    EXPECT_FALSE(pm->isLoaded(u8"test_plugin")); // 被跳过的插件不实例化
+    // 不能用命令注册表判断：插件库只能在一个进程里实例化一次，命令一旦注册
+    // 就不会撤销（宿主也不回收），所以已跑过的插件会留下痕迹。
+    EXPECT_EQ(pm->plugin(u8"test_plugin"), nullptr);
+
+    // 跳过不是 "看不见"：元数据、路径、跳过标记都还在，便于排查。
+    const auto  entries = pm->pluginEntries();
+    const auto* skipped = findPluginEntry(entries, u8"test_plugin");
+    ASSERT_NE(skipped, nullptr) << "被跳过的插件仍必须被发现并列出";
+    EXPECT_TRUE(skipped->skipped);
+    EXPECT_FALSE(skipped->enabled) << "跳过的插件不会加载，所以启用状态为 false";
+    EXPECT_FALSE(skipped->loaded);
+    EXPECT_FALSE(skipped->path.empty());
+    EXPECT_TRUE(skipped->info.version == u8"1.0.0");
+    EXPECT_FALSE(pm->libraryPath(u8"test_plugin").empty());
+
+    // 启用偏好照常写入配置，但跳过列表继续生效（同管理员策略的处理方式）。
+    EXPECT_TRUE(pm->setPluginEnabled(u8"test_plugin", true));
+    EXPECT_FALSE(pm->isPluginEnabled(u8"test_plugin"));
+
+    // 移出跳过列表不需要重启：下一次 loadAll() 就能加载。
+    vine::appfw::PluginManager::removeFromSkipList(u8"test_plugin");
+    EXPECT_FALSE(pm->isSkipped(u8"test_plugin"));
+    EXPECT_TRUE(pm->isPluginEnabled(u8"test_plugin"));
+    ASSERT_TRUE(pm->loadAll());
+    EXPECT_TRUE(pm->isLoaded(u8"test_plugin"));
+}
+
+// 依赖被宿主跳过的插件：与 "依赖被禁用" 同样处理——整体报错且不加载，
+// 被跳过的一方仍在发现列表里（可被 UI 解释为什么没运行）。
+TEST(PluginLifecycleTest, SkippedDependencyBlocksDependents)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+
+    SkipListScope skip({ u8"app_shell" });
+
+    EXPECT_FALSE(pm->isPluginEnabled(u8"app_shell"));
+    EXPECT_FALSE(pm->loadAll()) << "依赖被宿主跳过时必须整体报错";
+    EXPECT_FALSE(pm->isLoaded(u8"app_shell"));
+    EXPECT_FALSE(pm->isLoaded(u8"test_plugin"));
+    EXPECT_EQ(pm->count(), 0u);
+
+    const auto  entries = pm->pluginEntries();
+    const auto* shell   = findPluginEntry(entries, u8"app_shell");
+    ASSERT_NE(shell, nullptr) << "被跳过的插件仍必须被发现并列出";
+    EXPECT_TRUE(shell->skipped);
+    EXPECT_FALSE(shell->enabled);
+    EXPECT_FALSE(shell->loaded);
+
+    const auto* dependent = findPluginEntry(entries, u8"test_plugin");
+    ASSERT_NE(dependent, nullptr);
+    EXPECT_FALSE(dependent->skipped) << "依赖方自己没有被跳过";
+    EXPECT_TRUE(dependent->enabled);
+    EXPECT_FALSE(dependent->loaded);
+}
+// 禁用状态持久化在配置里（键 plugins.disabled，字符串数组），随 vine.json
+// 一起重启后生效；重复禁用不产生重复项。
+TEST(PluginLifecycleTest, DisableIsPersistedInConfig)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm  = app->pluginManager();
+    auto* cfg = app->configManager();
+    ASSERT_NE(pm, nullptr);
+    ASSERT_NE(cfg, nullptr);
+
+    const vine::String name(u8"no_such_plugin");
+    const auto&        key = vine::appfw::PluginManager::disabledConfigKey();
+    cfg->remove(key);
+
+    EXPECT_TRUE(pm->setPluginEnabled(name, false));
+    EXPECT_FALSE(pm->isPluginEnabled(name));
+    auto disabled = cfg->getStringArray(key);
+    ASSERT_EQ(disabled.size(), 1u);
+    EXPECT_TRUE(disabled[0] == name);
+
+    EXPECT_TRUE(pm->setPluginEnabled(name, false)); // 重复禁用
+    EXPECT_EQ(cfg->getStringArray(key).size(), 1u);
+
+    // 值确实写进了可持久化的 JSON（shutdown() 时写回配置文件）。
+    EXPECT_NE(toUtf8(cfg->toJson()).find("no_such_plugin"), std::string::npos);
+
+    EXPECT_TRUE(pm->setPluginEnabled(name, true));
+    EXPECT_TRUE(pm->isPluginEnabled(name));
+    EXPECT_TRUE(cfg->getStringArray(key).empty());
+
+    cfg->remove(key); // 清理：不留空数组
+}
+
+// 目录布局：builder 默认把配置打开在 <用户数据>/appdata/<org>/<app>/config/
+// <app>.json（日志同级在 logs/）；Application 构造时保证 org 非空。
+TEST(PluginLifecycleTest, DefaultDataDirectoryLayout)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+
+    const QString organization = QCoreApplication::organizationName();
+    ASSERT_FALSE(organization.isEmpty()) << "Application 构造时应给出默认组织名";
+
+    const auto dir = app->dataDirectory();
+    EXPECT_TRUE(dir.is_absolute());
+    EXPECT_EQ(dir.parent_path().parent_path().filename().string(), "appdata");
+    EXPECT_EQ(dir.parent_path().filename(), std::filesystem::path(organization.toStdU16String()));
+    EXPECT_EQ(dir.filename(), std::filesystem::path(QCoreApplication::applicationName().toStdU16String()));
+
+    const auto file = app->defaultConfigFile();
+    EXPECT_EQ(file.parent_path(), dir / "config");
+    EXPECT_EQ(file.stem(), dir.filename()); // <app>.json
+    EXPECT_EQ(file.extension().string(), ".json");
+
+    // builder 默认启用默认配置文件；本进程从未 run()，所以它不会落盘。
+    EXPECT_EQ(app->configFile(), file);
+    EXPECT_FALSE(std::filesystem::exists(file));
+}
+
+// 配置持久化的入口：路径属于宿主（appfw 不决定配置放在哪），空路径 = 不持久化。
+TEST(PluginLifecycleTest, ConfigFileIsOptIn)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+
+    const auto path = std::filesystem::temp_directory_path() / "vine_test_config_never_created.json";
+    std::filesystem::remove(path);
+
+    EXPECT_TRUE(app->setConfigFile(path)) << "文件不存在不是错误：首次运行用默认值";
+    EXPECT_EQ(app->configFile(), path);
+
+    // 还原：测试进程不写配置文件。
+    EXPECT_TRUE(app->setConfigFile({}));
+    EXPECT_TRUE(app->configFile().empty());
+    EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+// 插件管理器对话框：列表来自"发现"而不是"加载"，因此被禁用的插件也在列表里
+// （灰显 + 状态提示），详情页仍能显示它的元数据。
+// 插件管理器对话框：列表来自 "发现" 而不是 "加载"，因此被禁用的插件也在列表里
+// （灰显 + 状态提示），详情页仍能显示它的元数据、来源与可操作性。
+TEST(PluginLifecycleTest, ManagerDialogListsDisabledPlugins)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    // 用户安装的插件可以被禁用（程序自带的不能，所以用沙箱的 User 作用域插件）。
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+    ASSERT_TRUE(pm->loadAll());
+    EXPECT_TRUE(pm->setPluginEnabled(u8"app_shell", false));
+
+    // 打开对话框（按本文件的约定，包装对象不释放）。
+    auto* dialog = new guifw::PluginManagerDialog(pm);
+    ASSERT_NE(dialog, nullptr);
+    ASSERT_NO_FATAL_FAILURE(dialog->refresh());
+
+    // 被禁用的插件仍在发现列表里，且状态是 "已加载 + 已禁用"（本次继续运行）。
+    const auto  entries = pm->pluginEntries();
+    const auto* shell   = findPluginEntry(entries, u8"app_shell");
+    ASSERT_NE(shell, nullptr);
+    EXPECT_EQ(shell->scope, vine::appfw::PluginScope::User);
+    EXPECT_FALSE(shell->enabled);
+    EXPECT_TRUE(shell->loaded) << "禁用不改变本次运行状态：已加载的插件运行到退出";
+    EXPECT_TRUE(shell->info.version == u8"1.0.0");
+
+    // 详情页对 "未发现的名字" 与 "未加载的插件" 都不能崩。
+    ASSERT_NO_FATAL_FAILURE(dialog->refresh());
+
+    // 恢复偏好：它写在共享的测试配置里，否则后面的用例会看到一个被禁用的 app_shell
+    // （而且依赖它的 test_plugin 会因 "disabled dependency" 而整体加载失败）。
+    EXPECT_TRUE(pm->setPluginEnabled(u8"app_shell", true));
+}
+
+// 禁用/启用按钮只在偏好真能生效时才出现：程序自带的插件、以及被宿主跳过的插件都
+// 不显示按钮（而不是显示一个点了没用的灰按钮）。
+TEST(PluginLifecycleTest, ManagerDialogHidesToggleWhenItCannotTakeEffect)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+
+    SkipListScope skip({ u8"test_plugin" });
+    ASSERT_TRUE(pm->loadAll());
+
+    auto* dialog = new guifw::PluginManagerDialog(pm);
+    ASSERT_NE(dialog, nullptr);
+    ASSERT_NO_FATAL_FAILURE(dialog->refresh());
+
+    auto* root = dialog->impl<QWidget>();
+    ASSERT_NE(root, nullptr);
+    auto* list = root->findChild<QListWidget*>();
+    ASSERT_NE(list, nullptr) << "插件列表";
+
+    // 按钮按文本定位：它是唯一的 "禁用/启用插件（重启后生效）" 按钮。
+    QPushButton* toggle = nullptr;
+    for (QPushButton* button : root->findChildren<QPushButton*>()) {
+        const QString text = button->text();
+        if (text.startsWith(QStringLiteral("禁用插件")) || text.startsWith(QStringLiteral("启用插件"))) {
+            toggle = button;
+            break;
+        }
+    }
+    ASSERT_NE(toggle, nullptr) << "找不到禁用/启用按钮";
+
+    const auto selectPlugin = [&](const QString& name) {
+        for (int row = 0; row < list->count(); ++row) {
+            if (list->item(row)->data(Qt::UserRole).toString() == name) {
+                list->setCurrentRow(row);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // 用户作用域的普通插件：按钮出现且可用。
+    ASSERT_TRUE(selectPlugin(QStringLiteral("app_shell")));
+    EXPECT_FALSE(toggle->isHidden());
+    EXPECT_TRUE(toggle->isEnabled());
+
+    // 被宿主跳过：动作无法生效 ⇒ 按钮重新隐藏（而不是变成灰按钮）。
+    ASSERT_TRUE(selectPlugin(QStringLiteral("test_plugin")));
+    EXPECT_TRUE(toggle->isHidden()) << "不能生效的动作不该显示成灰按钮";
+}
+
+// 插件信息与图标：PluginInfo 的 email/repo/icon 要一路送到 UI；声明了图标的插件用
+// 自己那张，没声明的用宿主内置的默认图标（内联 SVG，无需外部资源文件）；
+// 筛选框只保留匹配的行。
+TEST(PluginLifecycleTest, ManagerDialogShowsMetadataAndIcons)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+    ASSERT_TRUE(pm->loadAll());
+
+    const auto  entries = pm->pluginEntries();
+    const auto* shell   = findPluginEntry(entries, u8"app_shell");
+    const auto* test    = findPluginEntry(entries, u8"test_plugin");
+    ASSERT_NE(shell, nullptr);
+    ASSERT_NE(test, nullptr);
+
+    // 声明了的字段原样带出来（宏参数顺序 = PluginInfo 字段顺序）。
+    EXPECT_TRUE(test->info.email == u8"dev@vine.example");
+    EXPECT_TRUE(test->info.repo == u8"https://github.com/vine/test_plugin");
+    EXPECT_TRUE(test->info.icon.empty()) << "测试插件不声明图标，走默认图标分支";
+    EXPECT_FALSE(shell->info.repo.empty());
+    EXPECT_FALSE(shell->info.icon.empty()) << "应用外壳声明了自己的内联 SVG 图标";
+
+    auto* dialog = new guifw::PluginManagerDialog(pm);
+    ASSERT_NE(dialog, nullptr);
+    ASSERT_NO_FATAL_FAILURE(dialog->refresh());
+
+    auto* root = dialog->impl<QWidget>();
+    ASSERT_NE(root, nullptr);
+    auto* list = root->findChild<QListWidget*>();
+    ASSERT_NE(list, nullptr);
+    ASSERT_GT(list->count(), 0);
+
+    // 每行都有图标：SVG 由 QSvgRenderer 直接解析，不需要图片格式插件或资源文件。
+    for (int row = 0; row < list->count(); ++row) {
+        auto* item = list->item(row);
+        ASSERT_NE(item, nullptr);
+        EXPECT_FALSE(item->icon().isNull()) << "列表行缺少图标";
+        EXPECT_FALSE(item->toolTip().isEmpty()) << "列表行缺少提示";
+    }
+
+    // 筛选：只剩匹配的行（名称/显示名/厂商/描述）。
+    auto* filter = root->findChild<QLineEdit*>();
+    ASSERT_NE(filter, nullptr);
+    filter->setText(QStringLiteral("test_plugin"));
+
+    int visible = 0;
+    for (int row = 0; row < list->count(); ++row) {
+        auto* item = list->item(row);
+        if (item->isHidden()) {
+            continue;
+        }
+        ++visible;
+        EXPECT_TRUE(item->data(Qt::UserRole).toString() == QStringLiteral("test_plugin"));
+    }
+    EXPECT_EQ(visible, 1) << "筛选后应只剩 test_plugin";
+
+    filter->clear();
+    ASSERT_NO_FATAL_FAILURE(dialog->refresh());
+}
+// 卸载顺序：按插件声明的依赖计算（依赖方先于被依赖方），与"加载列表里的位置"
+// 无关——显式 load() 会把插件直接追加到末尾，可能排在它的依赖之前。
+TEST(PluginLifecycleTest, UnloadOrderIsReverseDependencyOrder)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    // 真实集合：每个已加载插件恰好出现一次，且依赖方排在被依赖方之前。
+    const auto entries = pm->pluginEntries();
+    const auto order   = vine::appfw::PluginManager::unloadOrder(entries);
+
+    std::size_t loaded = 0;
+    for (const auto& entry : entries) {
+        if (entry.loaded) {
+            ++loaded;
+        }
+    }
+    ASSERT_EQ(order.size(), loaded);
+
+    const auto index_of = [&order](const vine::String& name) {
+        const auto it = std::find(order.begin(), order.end(), name);
+        return it == order.end() ? order.size() : static_cast<std::size_t>(it - order.begin());
+    };
+    for (const auto& entry : entries) {
+        if (!entry.loaded) {
+            continue;
+        }
+        for (const auto& dep : entry.info.dependencies) {
+            if (std::find(order.begin(), order.end(), dep) != order.end()) {
+                EXPECT_LT(index_of(entry.info.name), index_of(dep))
+                    << "依赖方必须先卸载：" << toUtf8(entry.info.name);
+            }
+        }
+    }
+
+    // 合成集合：结论只由依赖声明决定，与传入顺序无关。
+    const auto make_entry = [](const char8_t* name, std::vector<vine::String> deps, bool loaded_flag = true) {
+        vine::appfw::PluginEntry entry;
+        entry.info.name         = name;
+        entry.info.dependencies = std::move(deps);
+        entry.enabled           = true;
+        entry.loaded            = loaded_flag;
+        return entry;
+    };
+
+    // child 依赖 parent，但 child 排在前面（显式 load() 的典型结果）。
+    const std::vector<vine::appfw::PluginEntry> dependent_first = {
+        make_entry(u8"child", { u8"parent" }),
+        make_entry(u8"parent", {}),
+    };
+    EXPECT_EQ(vine::appfw::PluginManager::unloadOrder(dependent_first),
+              (std::vector<vine::String>{ u8"child", u8"parent" }));
+
+    // 正常加载顺序也必须得到同样的结果（"列表倒序"在这里会给出错误答案）。
+    const std::vector<vine::appfw::PluginEntry> dependency_first = {
+        make_entry(u8"parent", {}),
+        make_entry(u8"child", { u8"parent" }),
+    };
+    EXPECT_EQ(vine::appfw::PluginManager::unloadOrder(dependency_first),
+              (std::vector<vine::String>{ u8"child", u8"parent" }));
+
+    // 三层链 + 未加载项参与排序（未加载不算数）+ 已不在集合里的依赖不阻塞。
+    const std::vector<vine::appfw::PluginEntry> chain = {
+        make_entry(u8"grandchild", { u8"child" }),
+        make_entry(u8"child", { u8"parent", u8"missing" }),
+        make_entry(u8"parent", {}),
+        make_entry(u8"not_loaded", { u8"grandchild" }, false),
+    };
+    EXPECT_EQ(vine::appfw::PluginManager::unloadOrder(chain),
+              (std::vector<vine::String>{ u8"grandchild", u8"child", u8"parent" }));
+
+    // 声明成环（只有显式 load() 能造出来）：不能死循环，回退为传入顺序。
+    const std::vector<vine::appfw::PluginEntry> cycle = {
+        make_entry(u8"a", { u8"b" }),
+        make_entry(u8"b", { u8"a" }),
+    };
+    const auto cycle_order = vine::appfw::PluginManager::unloadOrder(cycle);
+    ASSERT_EQ(cycle_order.size(), 2u);
+    EXPECT_NE(std::find(cycle_order.begin(), cycle_order.end(), u8"a"), cycle_order.end());
+    EXPECT_NE(std::find(cycle_order.begin(), cycle_order.end(), u8"b"), cycle_order.end());
+}
+
+// 每个插件一个独立的数据目录：<数据>/appdata/<org>/<app>/plugins/<插件名>，
+// 首次调用才创建，键是插件名（插件被搬走/换位置也还是同一个目录）。
+TEST(PluginLifecycleTest, PluginDataDirectoryIsPerPlugin)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+
+    const auto root = app->pluginDataDirectory();
+    EXPECT_EQ(root.parent_path(), app->dataDirectory());
+    EXPECT_EQ(root.filename().string(), "plugins");
+
+    vine::appfw::PluginLoadContext ctx(app, u8"my_plugin");
+    const auto                    dir = ctx.dataDirectory();
+    EXPECT_EQ(dir, root / "my_plugin");
+    EXPECT_TRUE(std::filesystem::is_directory(dir)) << "首次调用即创建";
+
+    // 另一个插件拿到另一个目录，互不干扰。
+    vine::appfw::PluginLoadContext other(app, u8"other_plugin");
+    EXPECT_EQ(other.dataDirectory(), root / "other_plugin");
+
+    // 没有 Application / 没有插件名的上下文返回空路径，不崩。
+    vine::appfw::PluginLoadContext headless(nullptr, u8"my_plugin");
+    EXPECT_TRUE(headless.dataDirectory().empty());
+    vine::appfw::PluginLoadContext unnamed(app, {});
+    EXPECT_TRUE(unnamed.dataDirectory().empty());
+
+    // 清理本用例写下的目录（Qt 测试模式已把用户数据目录重定向到临时区）。
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+// 安装 = 在 installed.d 里写一个注册文件：位置可以是程序目录之外的库文件或目录，
+// 没有 ConfigManager 之外的读-改-写，重复安装写同一个文件（幂等），卸载就是删文件。
+TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    std::error_code ec;
+    const auto      user_dir = std::filesystem::temp_directory_path() / "vine_user_plugins_test";
+    std::filesystem::remove_all(user_dir, ec);
+    ASSERT_TRUE(std::filesystem::create_directories(user_dir, ec));
+
+    // 注册目录属于应用的数据目录，路径与配置/日志同级。
+    const auto registry = app->pluginRegistrationDirectory();
+    EXPECT_EQ(registry.parent_path(), app->dataDirectory());
+    EXPECT_EQ(registry.filename().string(), "installed.d");
+
+    const auto id = pm->installPlugin(vine::String(user_dir.u8string()), vine::appfw::PluginScope::User);
+    ASSERT_FALSE(id.empty()) << "注册成功应返回 id";
+    EXPECT_TRUE(std::filesystem::is_directory(registry)) << "注册目录按需创建";
+
+    auto registrations = pm->pluginRegistrations();
+    ASSERT_EQ(registrations.size(), 1u);
+    EXPECT_TRUE(registrations[0].id == id);
+    EXPECT_TRUE(registrations[0].path == vine::String(user_dir.u8string()));
+    EXPECT_EQ(registrations[0].scope, vine::appfw::PluginScope::User);
+    EXPECT_TRUE(registrations[0].enabled);
+    const std::string file_text(reinterpret_cast<const char*>(registrations[0].file.data()), registrations[0].file.size());
+    EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(std::u8string(file_text.begin(), file_text.end()))));
+    EXPECT_NE(std::string(reinterpret_cast<const char*>(registrations[0].file.data()), registrations[0].file.size()).find("installed.d"),
+              std::string::npos);
+
+    // 重复安装同一位置：写同一个文件，仍然只有一条注册。
+    EXPECT_TRUE(pm->installPlugin(vine::String(user_dir.u8string()), vine::appfw::PluginScope::User) == id);
+    EXPECT_EQ(pm->pluginRegistrations().size(), 1u);
+
+    // 拒绝的输入：空路径、不存在的路径、BuiltIn 作用域。
+    EXPECT_TRUE(pm->installPlugin({}, vine::appfw::PluginScope::User).empty());
+    EXPECT_TRUE(pm->installPlugin(u8"/no/such/plugin/location.so", vine::appfw::PluginScope::User).empty());
+    EXPECT_TRUE(pm->installPlugin(vine::String(user_dir.u8string()), vine::appfw::PluginScope::BuiltIn).empty());
+    EXPECT_EQ(pm->pluginRegistrations().size(), 1u);
+
+    EXPECT_TRUE(pm->uninstallPlugin(id, vine::appfw::PluginScope::User));
+    EXPECT_TRUE(pm->pluginRegistrations().empty());
+    EXPECT_FALSE(pm->uninstallPlugin(id, vine::appfw::PluginScope::User)) << "已删除的注册再删应返回 false";
+
+    std::filesystem::remove_all(user_dir, ec);
+}
+
+// 系统级注册目录只读地参与合并：每个系统数据根下同一套 appdata/<org>/<app>/installed.d
+// 布局，且不与用户目录重复。
+TEST(PluginLifecycleTest, SystemRegistrationDirectoriesAreListed)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+
+    const auto user_registry = app->pluginRegistrationDirectory();
+    for (const auto& directory : app->allUsersPluginRegistrationDirectories()) {
+        EXPECT_NE(directory, user_registry) << "系统目录不能就是用户目录";
+        EXPECT_EQ(directory.filename().string(), "installed.d");
+        EXPECT_EQ(directory.parent_path().filename(), app->dataDirectory().filename());
+        EXPECT_EQ(directory.parent_path().parent_path().filename(), app->dataDirectory().parent_path().filename());
+    }
+}
+
+// 手写注册文件（安装器/脚本的路径）：key=value，path 必需，enabled = false 是
+// "对所有用户禁用"的管理员策略，优先级高于用户自己的启用。
+TEST(PluginLifecycleTest, HandWrittenRegistrationCanDisableForAllUsers)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    const auto source = findPluginLibrary("test_plugin");
+    if (source.empty()) {
+        GTEST_SKIP() << "test_plugin library not built";
+    }
+
+    // 同一个插件库在一个进程里只能被加载一次（vine 类型注册是进程级且不可撤销），
+    // 所以这里复用沙箱目录里那一份拷贝，而不是再拷一份。
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+
+    const auto copy = sandbox.directory() / source.filename();
+    ASSERT_TRUE(std::filesystem::exists(copy));
+
+    std::error_code ec;
+    const auto      registry = app->pluginRegistrationDirectory();
+    std::filesystem::create_directories(registry, ec);
+    ASSERT_TRUE(std::filesystem::is_directory(registry));
+
+    const auto file = registry / "manual.plugin";
+    {
+        std::ofstream stream(file);
+        ASSERT_TRUE(static_cast<bool>(stream));
+        stream << "# hand written\n";
+        stream << "path = " << copy.string() << "\n";
+        stream << "name = test_plugin\n";
+        stream << "enabled = false\n";
+    }
+
+    const auto  registrations = pm->pluginRegistrations();
+    const auto* manual        = findRegistration(registrations, u8"manual");
+    ASSERT_NE(manual, nullptr) << "手写的注册文件必须被读到";
+    EXPECT_FALSE(manual->enabled);
+    EXPECT_TRUE(manual->name == u8"test_plugin");
+    EXPECT_NE(std::string(reinterpret_cast<const char*>(manual->path.data()), manual->path.size()).find("test_plugind"),
+              std::string::npos);
+
+    ASSERT_TRUE(pm->loadAll());
+
+    const auto  entries = pm->pluginEntries();
+    const auto* entry   = findPluginEntry(entries, u8"test_plugin");
+    ASSERT_NE(entry, nullptr) << "被策略禁用的插件仍要能被发现（列表里可见）";
+    EXPECT_EQ(entry->scope, vine::appfw::PluginScope::User);
+    EXPECT_FALSE(entry->enabled) << "注册文件里的 enabled = false 是策略";
+    EXPECT_FALSE(entry->loaded);
+
+    // 用户可以存下"启用"偏好，但策略仍然赢。
+    EXPECT_TRUE(pm->setPluginEnabled(u8"test_plugin", true));
+    EXPECT_FALSE(pm->isPluginEnabled(u8"test_plugin")) << "管理员策略不能被用户开关冲掉";
+
+    std::filesystem::remove(file, ec);
+}
+
+// 已注册的位置会参与发现，并且同一插件被多处提供时只出现一次（按插件名去重，
+// 只实例化先找到的那一份）。
+TEST(PluginLifecycleTest, InstalledLocationIsDiscoveredAndDeduplicated)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    const auto source = findPluginLibrary("test_plugin");
+    if (source.empty()) {
+        GTEST_SKIP() << "test_plugin library not built";
+    }
+
+    // 源 1：沙箱目录（同时把程序目录换成空目录，避免加载程序自带的同名插件）。
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+    const auto first_copy = sandbox.directory() / source.filename();
+    ASSERT_TRUE(std::filesystem::exists(first_copy));
+
+    // 源 2：另一个目录里的同一插件。它只会被发现，不会被实例化。
+    std::error_code ec;
+    const auto      second_dir = std::filesystem::temp_directory_path() / "vine_test_plugins_second";
+    std::filesystem::remove_all(second_dir, ec);
+    ASSERT_TRUE(std::filesystem::create_directories(second_dir, ec));
+    ASSERT_TRUE(std::filesystem::copy_file(source, second_dir / source.filename(),
+                                           std::filesystem::copy_options::overwrite_existing, ec));
+    const auto second_id = pm->installPlugin(vine::String(second_dir.u8string()), vine::appfw::PluginScope::User);
+    ASSERT_FALSE(second_id.empty());
+
+    // 只观察发现与去重，不加载：一个插件库在一个进程里只能创建一次实例（vine
+    // 类型注册是进程级且不可撤销），前面的用例已经把这份拷贝创建过了，所以这里的
+    // loadAll() 成功与否不是本用例的断言对象。
+    static_cast<void>(pm->loadAll());
+
+    const auto  entries = pm->pluginEntries();
+    const auto  count   = std::count_if(entries.begin(), entries.end(), [](const vine::appfw::PluginEntry& e) {
+        return e.info.name == u8"test_plugin";
+    });
+    EXPECT_EQ(count, 1) << "同一插件被多处提供时只能出现一次";
+
+    const auto* entry = findPluginEntry(entries, u8"test_plugin");
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->scope, vine::appfw::PluginScope::User);
+    // 注册按文件名的顺序读取，所以先发现哪一个位置由注册文件名决定；关键是只有一份
+    // 被发现，另一份不会产生第二条记录。
+    EXPECT_TRUE(entry->path == first_copy || entry->path == second_dir / source.filename());
+
+    EXPECT_TRUE(pm->uninstallPlugin(second_id, vine::appfw::PluginScope::User));
+    std::filesystem::remove_all(second_dir, ec);
+}
+// 关闭时的反初始化：unload() 按依赖反序调用（依赖方先于被依赖方），
+// 卸载后仍保留元数据（插件信息可见），并且可以重复调用。
+TEST(PluginLifecycleTest, UnloadAllKeepsMetadataAndIsIdempotent)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    // 本套件里的插件都从沙箱（用户注册）加载，前面的用例结束时沙箱析构会卸载它们；
+    // 这里验证"卸载后仍保留元数据"与幂等，两支都成立。
+    const auto loaded_names = pm->names();
+
+    EXPECT_TRUE(pm->unloadAll());
+    EXPECT_EQ(pm->count(), 0u);
+    EXPECT_TRUE(pm->names().empty());
+    EXPECT_TRUE(pm->unloadAll()) << "再次卸载是幂等的";
+
+    const auto entries = pm->pluginEntries();
+    EXPECT_FALSE(entries.empty()) << "卸载后仍保留元数据（插件列表可见）";
+    for (const auto& entry : entries) {
+        EXPECT_FALSE(entry.loaded);
+        EXPECT_FALSE(entry.path.empty());
+        EXPECT_FALSE(entry.info.uuid.isNull());
+    }
+    for (const auto& name : loaded_names) {
+        EXPECT_EQ(pm->plugin(name), nullptr) << "卸载后不应还能拿到实例";
+    }
+}
+
+// 加载失败必须是原子的：插件在 load() 里抛异常时，本次 loadAll() 已经创建的实例
+// 要逆序卸载掉，管理器不留下任何自己不知道的实例——否则重试会在同一个半初始化的
+// 实例上重跑生命周期（插件库一个进程只能创建一个实例）。
+// test_plugin 的测试钩子（plugins.test_plugin.fail_load）把它的 load() 变成抛异常。
+TEST(PluginLifecycleTest, LoadAllRollsBackWhenPluginThrows)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm  = app->pluginManager();
+    auto* cfg = app->configManager();
+    ASSERT_NE(pm, nullptr);
+    ASSERT_NE(cfg, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell", "test_plugin" });
+    ASSERT_FALSE(sandbox.registration().empty());
+
+    // 顺序无关：前面的用例可能在共享配置里留下禁用偏好，而本用例只想验证"抛异常
+    // 会回滚"，所以先把两个插件显式启用。
+    EXPECT_TRUE(pm->setPluginEnabled(u8"app_shell", true));
+    EXPECT_TRUE(pm->setPluginEnabled(u8"test_plugin", true));
+
+    const vine::String key(u8"plugins.test_plugin.fail_load");
+    cfg->setBool(key, true);
+
+    // 失败原因不作断言：在单独运行时是测试钩子把 test_plugin 的 load() 变成抛异常，
+    // 在完整套件里也可能是"一个插件库一个进程只能实例化一次"导致的重复注册失败
+    // （前面的用例已经从另一份拷贝创建过同一个插件）。两种情况走的是同一条回滚路径，
+    // 所以这里只断言"报失败 + 不留下任何本次创建的实例"。
+    EXPECT_FALSE(pm->loadAll()) << "插件抛异常时 loadAll() 必须报告失败";
+    EXPECT_EQ(pm->count(), 0u) << "本次创建的实例必须全部回滚";
+    EXPECT_EQ(pm->plugin(u8"app_shell"), nullptr) << "已创建的先序插件也要卸载";
+    EXPECT_EQ(pm->plugin(u8"test_plugin"), nullptr);
+
+    // 发现与加载分离：失败后元数据与路径仍可查询。
+    const auto  entries = pm->pluginEntries();
+    ASSERT_NE(findPluginEntry(entries, u8"test_plugin"), nullptr);
+    EXPECT_FALSE(pm->libraryPath(u8"test_plugin").empty());
+
+    cfg->remove(key);
+}
+
+// 注册 id 会变成 installed.d/<id>.plugin 的文件名，所以不能带路径分隔符或 "："，
+// 也不能为空：否则可能写到注册目录之外，或者写出一个永远不会被扫描的文件。
+TEST(PluginLifecycleTest, InstallRejectsUnusableRegistrationId)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    UserPluginSandbox sandbox(pm, { "app_shell" });
+    ASSERT_FALSE(sandbox.registration().empty());
+    const auto baseline = pm->pluginRegistrations().size();
+
+    std::error_code ec;
+
+    // 以分隔符结尾的目录：取目录名作为 id，而不是因为 filename() 为空
+    // （directory / ""）就拼出一个注册目录之外的文件。
+    const std::filesystem::path trailing = std::filesystem::temp_directory_path() / "vine_plugins_trailing";
+    std::filesystem::create_directories(trailing, ec);
+    const vine::String id = pm->installPlugin(vine::String((trailing / "").u8string()), vine::appfw::PluginScope::User);
+    EXPECT_TRUE(id == u8"vine_plugins_trailing") << "应当取目录名，而不是写出畸形文件名";
+    if (!id.empty()) {
+        EXPECT_TRUE(pm->uninstallPlugin(id, vine::appfw::PluginScope::User));
+    }
+    std::filesystem::remove_all(trailing, ec);
+    EXPECT_EQ(pm->pluginRegistrations().size(), baseline) << "临时注册应当被清掉";
+
+    // 名字含 ':'（Windows 上是盘符/数据流分隔符）：拒绝，且不留文件。
+    const std::filesystem::path bad = std::filesystem::temp_directory_path() / "vine_bad:name";
+    std::filesystem::create_directories(bad, ec);
+    EXPECT_TRUE(pm->installPlugin(vine::String(bad.u8string()), vine::appfw::PluginScope::User).empty())
+        << "含 ':' 的名字必须被拒绝";
+    EXPECT_FALSE(pm->uninstallPlugin(vine::String(u8"bad/name"), vine::appfw::PluginScope::User))
+        << "带分隔符的 id 也必须被拒绝";
+    EXPECT_EQ(pm->pluginRegistrations().size(), baseline) << "被拒绝的注册不应留下文件";
+    std::filesystem::remove_all(bad, ec);
+}
+
+namespace
+{
+
+// 卸载必须发生在 GuiApplication 销毁之前（此时总线、管理器与窗口都还活着，
+// 插件的 unload() 才能安全收尾）。环境按注册顺序反向拆卸，本环境在
+// g_gui_env 之后注册，因此先于它被调用。
+class PluginLifecycleEnv : public ::testing::Environment {
+  public:
+    void TearDown() override
+    {
+        if (auto* app = GuiEnv::app.get(); app != nullptr) {
+            // Ignored on purpose: the test process is going down and a plugin that
+            // threw while unloading has already been logged.
+            static_cast<void>(app->pluginManager()->unloadAll());
+        }
+    }
+};
+
+} // namespace
+
+::testing::Environment* const g_plugin_env = ::testing::AddGlobalTestEnvironment(new PluginLifecycleEnv());

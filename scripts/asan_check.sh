@@ -115,8 +115,17 @@ else
 fi
 
 # ---- Build ------------------------------------------------------------------
-echo "[info] building target $TARGET (-j$JOBS)"
-cmake --build "$BUILD" --target "$TARGET" -j "$JOBS" || exit 1
+# The plugin libraries are loaded by test_gui/test_vsg from this build dir, so they
+# are built here as well: a stale .so is read with the current PluginInfo layout,
+# which shows up as an ASan global-buffer-overflow inside the plugin's own static
+# metadata and looks like a bug in the host.
+PLUGIN_TARGETS="app_shell test_plugin"
+if [ "$TARGET" = "test_vsg" ]; then
+    PLUGIN_TARGETS="$PLUGIN_TARGETS gfx_backend_vsg"
+fi
+
+echo "[info] building targets: $TARGET $PLUGIN_TARGETS (-j$JOBS)"
+cmake --build "$BUILD" --target "$TARGET" $PLUGIN_TARGETS -j "$JOBS" || exit 1
 
 BIN="$BUILD/bin/$TARGET"
 if [ ! -x "$BIN" ]; then

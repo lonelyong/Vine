@@ -263,9 +263,10 @@ int GuiApplication::run()
 {
     const auto* d    = static_cast<GuiApplicationData*>(dptr());
     const int   code = d->app->exec();
-    // See Application::run(): the loop has stopped, so the bus delivers what is
-    // still parked (bounded) and then stops, before the UI is torn down.
-    eventBus()->shutdownGracefully(EventBus::gracefulShutdownTimeout());
+    // Same shutdown sequence as Application::run(): plugins unload, the bus
+    // delivers what is still parked (bounded) and stops, and the configuration
+    // is persisted - all before the UI is torn down.
+    shutdown();
     return code;
 }
 

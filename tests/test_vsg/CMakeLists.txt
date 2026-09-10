@@ -43,3 +43,7 @@ target_include_directories(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/include
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src)
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+
+# 同上：渲染后端插件会建窗口/交换链，ctest 下一律走 offscreen，
+# 避免在 WSLg / 远程桌面里弹窗口被中断后卡死。
+set_tests_properties(${TEST_NAME} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

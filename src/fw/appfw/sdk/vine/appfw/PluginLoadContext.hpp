@@ -2,6 +2,7 @@
 
 #include "appfw_global.hpp"
 
+#include <filesystem>
 #include <memory>
 #include <vector>
 
@@ -68,6 +69,26 @@ class V_APPFW_API PluginLoadContext {
      * @return The plugin name.
      */
     const String& pluginName() const;
+
+    /**
+     * @brief Returns this plugin's data directory, creating it on first use.
+     *
+     * <Application::pluginDataDirectory()>/<plugin name>, i.e.
+     * <user data>/appdata/<organization>/<application>/plugins/<plugin name>.
+     * Plugin-owned files (caches, downloaded content, per-plugin logs, layout
+     * state) belong here; the plugin's configuration values stay in the host
+     * ConfigManager through registerConfigItem().
+     *
+     * The directory is keyed by the plugin name, so it follows the plugin
+     * wherever its library is installed from, and it is intentionally not removed
+     * when the plugin is unloaded or disabled: user data outlives a plugin build.
+     * A plugin that needs the path outside a lifecycle call recomputes it as
+     * Application::pluginDataDirectory()/<PluginInfo::name>.
+     *
+     * @return The plugin data directory, or an empty path when no Application is
+     *         set or the directory cannot be created.
+     */
+    std::filesystem::path dataDirectory();
 
     /**
      * @brief Registers a config item under a standard category/group, owned by

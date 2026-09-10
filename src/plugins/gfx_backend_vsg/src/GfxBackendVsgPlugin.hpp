@@ -28,7 +28,13 @@ class V_VSG_API GfxBackendVsgPlugin : public vine::appfw::Plugin {
     /** @brief Registers the VSG backend factory into the registry. */
     void load(vine::appfw::PluginLoadContext* context) override;
 
-    /** @brief Removes the backend registration on unload. */
+    /**
+     * @brief Unregisters nothing: the VSG backend stays registered.
+     *
+     * RenderBackendRegistry has no unregister API and does not own the factory,
+     * and the plugin library stays mapped for the process lifetime, so there is
+     * nothing to tear down here.
+     */
     void unload(vine::appfw::PluginLoadContext* context) override;
 };
 
