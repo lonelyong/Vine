@@ -1,5 +1,9 @@
 ﻿#pragma once
 
+#include <atomic>
+
+#include <vine/Events.hpp>
+#include <vine/Signal.hpp>
 #include <vine/async/AsyncEvent.hpp>
 #include <vine/appfw/UserIO.hpp>
 
@@ -29,7 +33,7 @@ class VisualUserIO : public UserIO {
     virtual void cancelPendingInput() override;
 
     virtual vine::async::Task<std::optional<String>>        getStringAsync(const String& prompt = {}) override;
-    virtual vine::async::Task<std::optional<int8_t>>        getIntAsync(const String& prompt = {}) override;
+    virtual vine::async::Task<std::optional<int>>           getIntAsync(const String& prompt = {}) override;
     virtual vine::async::Task<std::optional<double>>        getDoubleAsync(const String& prompt = {}) override;
     virtual vine::async::Task<std::optional<math::Point3d>> getPoint3dAsync(const String& prompt = {}) override;
 
@@ -43,8 +47,24 @@ class VisualUserIO : public UserIO {
         Point
     };
 
+    /// Releases the interaction slot when the read ends - however it ends,
+    /// including a coroutine frame that is destroyed before it ever resumed.
+    struct ReadScope {
+        VisualUserIO* self;
+        ~ReadScope() { self->endRead(); }
+    };
+
+    /// Claims the single interaction slot and shows the prompt; false when another
+    /// read is already waiting.
+    bool beginRead(PendingRead kind, const String& prompt);
+    /// Releases the interaction slot.
+    void endRead() noexcept;
+    /// Waits for the user to answer the prompt; true when a value arrived, false
+    /// when the interaction was cancelled.
+    vine::async::Task<bool> waitForInput(PendingRead kind, const String& prompt);
+
     void completeString(const String& value);
-    void completeInt(int8_t value);
+    void completeInt(int value);
     void completeDouble(double value);
     void completePoint(const math::Point3d& value);
     void cancelInteraction();
@@ -68,16 +88,26 @@ class VisualUserIO : public UserIO {
 
   private:
     vine::async::AsyncEvent done_;
-    bool                 cancelled_{ false };
+    std::atomic<bool>    cancelled_{ false };
+
+    /// The interaction slot: only one read may wait for the user at a time, because
+    /// the console shows a single prompt and two waiting reads would share done_
+    /// and each other's result fields. Claimed and released with compare/exchange,
+    /// so a second read can never slip in.
+    std::atomic<PendingRead> pending_{ PendingRead::None };
 
     String        stringResult_;
-    int8_t        intResult_{ 0 };
+    int           intResult_{ 0 };
     double        doubleResult_{ 0.0 };
     math::Point3d pointResult_;
 
-    ConsolePanel*                     console_{ nullptr };
-    PendingRead                       pending_{ PendingRead::None };
-    String                            currentPrompt_;
+    ConsolePanel* console_{ nullptr };
+    /// Handlers registered on the bound console, so a rebind can drop them again.
+    vine::Signal<const String&>::HandlerId line_handler_{ 0 };
+    vine::Signal<>::HandlerId              escape_handler_{ 0 };
+    /// Handler registered on the command manager's commandsChanged().
+    vine::Signal<vine::appfw::CommandManager&, vine::EventArgs&>::HandlerId commands_handler_{ 0 };
+    String                                                                 currentPrompt_;
 };
 
 V_APPFWGUI_NS_END

@@ -14,15 +14,17 @@
  *
  * Bump it whenever anything a plugin compiles against changes incompatibly:
  * PluginAbi and this header, PluginInfo, Plugin, PluginLoadContext, the entry-point
- * signatures in plugin_export.hpp, or the command-registration ABI. The host refuses
- * a plugin whose library reports another revision (see PluginAbi), so a bump means
- * "the plugins must be rebuilt" - which is what such a change requires anyway.
+ * signatures in plugin_export.hpp, the command-registration ABI, or the signature of
+ * a virtual in an exported SDK class (2u: UserIO::getIntAsync now yields an int
+ * instead of an int8_t). The host refuses a plugin whose library reports another
+ * revision (see PluginAbi), so a bump means "the plugins must be rebuilt" - which
+ * is what such a change requires anyway.
  *
  * The name says *plugin* ABI on purpose: it is not the release version (that is
  * V_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
  * the host's own binaries, which are built and rebuilt together with the framework.
  */
-#define V_APPFW_PLUGIN_ABI_VERSION 1u
+#define V_APPFW_PLUGIN_ABI_VERSION 2u
 
 V_APPFW_NS_BEGIN
 

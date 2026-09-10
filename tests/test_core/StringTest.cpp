@@ -132,6 +132,12 @@ TEST(String, NumericConversions)
     EXPECT_EQ(vine::String(u8"abc").toInt(&ok), 0);
     EXPECT_FALSE(ok);
 
+    // 超出 int 范围是失败，而不是回绕成另一个值。
+    EXPECT_EQ(vine::String(u8"99999999999").toInt(&ok), 0);
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(vine::String(u8"2147483647").toInt(&ok), 2147483647);
+    EXPECT_TRUE(ok);
+
     const double v = vine::String(u8"3.125").toDouble(&ok);
     EXPECT_TRUE(ok);
     EXPECT_DOUBLE_EQ(v, 3.125);

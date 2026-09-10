@@ -207,6 +207,16 @@ void fireEvent(EventType& event, CommandManager& owner, ArgsType& args)
     }
 }
 
+/// Fires commandsChanged(), which every registry and alias mutation reports.
+///
+/// Call it with no lock held: a handler is user code and may call back into the
+/// manager (that is exactly what a completion refresh does).
+void fireCommandsChanged(CommandManager& manager)
+{
+    EventArgs args;
+    fireEvent(manager.commandsChanged, manager, args);
+}
+
 /// Logs a finished execution at the level matching its outcome.
 void logOutcome(const Command& command, const CommandResult& result)
 {
@@ -1368,10 +1378,16 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
     // disabled when its plugin registers it again at the next start.
     const bool enabled = !d->isDisabled(name);
 
-    std::lock_guard<std::mutex> lock(d->registry_mutex);
-    RegisteredCommand           entry{ command_class, std::move(factory), d->registration_owner, std::move(group), std::move(description) };
-    entry.enabled = enabled;
-    return d->registry.emplace(std::move(name), std::move(entry)).second;
+    {
+        std::lock_guard<std::mutex> lock(d->registry_mutex);
+        RegisteredCommand           entry{ command_class, std::move(factory), d->registration_owner, std::move(group), std::move(description) };
+        entry.enabled = enabled;
+        if (!d->registry.emplace(std::move(name), std::move(entry)).second) {
+            return false;
+        }
+    }
+    fireCommandsChanged(*this);
+    return true;
 }
 
 void CommandManager::setRegistrationOwner(String owner)
@@ -1388,22 +1404,33 @@ String CommandManager::registrationOwner() const
 
 bool CommandManager::unregisterCommand(const String& name)
 {
-    std::lock_guard<std::mutex> lock(d->registry_mutex);
-    return d->registry.erase(name) > 0;
+    {
+        std::lock_guard<std::mutex> lock(d->registry_mutex);
+        if (d->registry.erase(name) == 0) {
+            return false;
+        }
+    }
+    fireCommandsChanged(*this);
+    return true;
 }
 
 bool CommandManager::unregisterCommand(TypeId command_class)
 {
-    std::lock_guard<std::mutex> lock(d->registry_mutex);
     bool removed = false;
-    for (auto it = d->registry.begin(); it != d->registry.end();) {
-        if (it->second.class_type == command_class) {
-            it      = d->registry.erase(it);
-            removed = true;
+    {
+        std::lock_guard<std::mutex> lock(d->registry_mutex);
+        for (auto it = d->registry.begin(); it != d->registry.end();) {
+            if (it->second.class_type == command_class) {
+                it      = d->registry.erase(it);
+                removed = true;
+            }
+            else {
+                ++it;
+            }
         }
-        else {
-            ++it;
-        }
+    }
+    if (removed) {
+        fireCommandsChanged(*this);
     }
     return removed;
 }
@@ -1447,13 +1474,18 @@ bool CommandManager::setCommandEnabled(const String& name, bool enabled)
     d->setDisabledPreference(canonical, !enabled);
 
     bool applied = false;
+    bool changed = false;
     {
         std::lock_guard<std::mutex> lock(d->registry_mutex);
         const auto                  it = d->registry.find(canonical);
         if (it != d->registry.end()) {
+            changed            = it->second.enabled != enabled;
             it->second.enabled = enabled;
             applied            = true;
         }
+    }
+    if (changed) {
+        fireCommandsChanged(*this);
     }
 
     if (applied) {
@@ -1472,18 +1504,27 @@ bool CommandManager::registerAlias(const String& alias, const String& target)
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(d->registry_mutex);
-    const bool                  inserted = d->aliases.emplace(alias, target).second;
-    if (!inserted) {
-        V_LOGW("Alias already registered, ignoring target: {} -> {}", toUtf8View(alias), toUtf8View(target));
+    {
+        std::lock_guard<std::mutex> lock(d->registry_mutex);
+        if (!d->aliases.emplace(alias, target).second) {
+            V_LOGW("Alias already registered, ignoring target: {} -> {}", toUtf8View(alias), toUtf8View(target));
+            return false;
+        }
     }
-    return inserted;
+    fireCommandsChanged(*this);
+    return true;
 }
 
 bool CommandManager::unregisterAlias(const String& alias)
 {
-    std::lock_guard<std::mutex> lock(d->registry_mutex);
-    return d->aliases.erase(alias) > 0;
+    {
+        std::lock_guard<std::mutex> lock(d->registry_mutex);
+        if (d->aliases.erase(alias) == 0) {
+            return false;
+        }
+    }
+    fireCommandsChanged(*this);
+    return true;
 }
 
 bool CommandManager::isRegistered(const String& name) const

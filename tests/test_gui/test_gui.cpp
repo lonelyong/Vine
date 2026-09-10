@@ -4687,6 +4687,35 @@ class InteractiveWaitCommand : public vine::appfw::Command {
 
 V_OBJECT_META_IMPL(InteractiveWaitCommand, vine::appfw::Command)
 
+// 读一个整数并记录结果：用于验证 getIntAsync 的值、范围检查与控制台重新提示。
+class IntReadCommand : public vine::appfw::Command {
+    V_OBJECT_META_DECL;
+
+  public:
+    vine::String name() const override { return u8"intRead"; }
+    vine::String group() const override { return u8"Test"; }
+    vine::String description() const override { return u8"reads one integer"; }
+    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+
+    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    {
+        auto* app = context ? context->application() : nullptr;
+        auto* io  = app ? app->userIO() : nullptr;
+        if (io == nullptr) {
+            co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Failed);
+        }
+
+        const auto value = co_await io->getIntAsync(u8"n> ");
+        s_value          = value;
+        co_return vine::appfw::CommandResult(value.has_value() ? vine::appfw::CommandStatus::Success
+                                                              : vine::appfw::CommandStatus::Cancelled);
+    }
+
+    inline static std::optional<int> s_value;
+};
+
+V_OBJECT_META_IMPL(IntReadCommand, vine::appfw::Command)
+
 // 在命令内部调用"取消并排空"。
 class DrainFromInsideCommand : public vine::appfw::Command {
     V_OBJECT_META_DECL;
@@ -4787,6 +4816,218 @@ TEST_F(GuiTest, CommandManager_PendingUserInputBlocksDrainUntilCancelled)
 
     cm->clearHistory();
     cm->unregisterCommand(name);
+}
+
+// 命令的输出来自它恢复时所在的线程（定时器线程、IO 线程）：从工作线程调用
+// putString() 也必须落到应用线程上（面板是 QWidget）。旧实现直接写面板。
+TEST(UserIOTest, OutputFromAWorkerThreadIsMarshalledToTheApplicationThread)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* io = app->userIO();
+    ASSERT_NE(io, nullptr);
+
+    guifw::ConsolePanel panel;
+    app->setConsolePanel(&panel);
+    auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
+    ASSERT_NE(output, nullptr);
+
+    std::thread writer([io] { io->putString(vine::String(u8"from worker")); });
+    writer.join();
+
+    EXPECT_FALSE(output->toPlainText().contains(u8"from worker")) << "工作线程不得直接写控制台面板";
+    ASSERT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+    EXPECT_TRUE(output->toPlainText().contains(u8"from worker")) << "输出应已投递到应用线程";
+
+    app->setConsolePanel(nullptr);
+}
+
+// 同一时刻只允许一个交互等待：第二个读立即以 nullopt 收尾，而不是和第一个共享
+// 同一个完成事件与结果字段（旧实现里两次读会互相覆盖）。
+TEST(UserIOTest, SecondReadIsRefusedWhileOneIsPending)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    auto* io = app->userIO();
+    ASSERT_NE(cm, nullptr);
+    ASSERT_NE(io, nullptr);
+
+    const auto name = vine::String(u8"intRead");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<IntReadCommand>(name));
+    cm->clearHistory();
+    IntReadCommand::s_value.reset();
+
+    guifw::ConsolePanel panel;
+    app->setConsolePanel(&panel);
+    auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
+    ASSERT_NE(output, nullptr);
+
+    cm->executeDetached(name);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!output->toPlainText().contains(u8"n> ")) {
+        ASSERT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+        ASSERT_LT(std::chrono::steady_clock::now(), deadline) << "第一个读没有显示提示";
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    // 第二个读必须立刻收尾，并且不能把第一个读叫醒（否则它会拿到别的结果）。
+    const auto refused = vine::async::syncWait(io->getDoubleAsync(u8"second> "));
+    EXPECT_FALSE(refused.has_value()) << "一个交互挂起时，第二个读必须被拒绝";
+    EXPECT_EQ(cm->historyCount(), 0) << "第一个读仍应在等待";
+
+    // 收尾：取消挂起的交互，命令以 Cancelled 结束。
+    io->cancelPendingInput();
+    while (cm->historyCount() < 1 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_EQ(cm->historyCount(), 1);
+    EXPECT_FALSE(IntReadCommand::s_value.has_value());
+
+    app->setConsolePanel(nullptr);
+    cm->clearHistory();
+    cm->unregisterCommand(name);
+}
+
+// 整数读：能装进 int 的值必须原样返回（旧的 int8_t 会把 1000 变成 -24），装不下的
+// 要求重新输入而不是静默回绕。
+TEST(UserIOTest, IntReadKeepsItsValueAndRepromptsOnOverflow)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vine::String(u8"intRead");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<IntReadCommand>(name));
+
+    guifw::ConsolePanel panel;
+    app->setConsolePanel(&panel);
+    auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
+    ASSERT_NE(output, nullptr);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto wait_for = [&](const char8_t* needle) {
+        while (!output->toPlainText().contains(needle)) {
+            EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+            EXPECT_LT(std::chrono::steady_clock::now(), deadline) << "等待控制台输出超时";
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
+    // 1000 超出 int8_t，但对 int 完全合法：必须原样返回。
+    cm->clearHistory();
+    IntReadCommand::s_value.reset();
+    cm->executeDetached(name);
+    wait_for(u8"n> ");
+    panel.lineEntered.trigger(vine::String(u8"1000"));
+    while (cm->historyCount() < 1 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_EQ(cm->historyCount(), 1);
+    ASSERT_TRUE(IntReadCommand::s_value.has_value());
+    EXPECT_EQ(*IntReadCommand::s_value, 1000);
+
+    // 超出 int 范围：重新提示，读继续等待，随后的合法输入生效。
+    cm->clearHistory();
+    IntReadCommand::s_value.reset();
+    cm->executeDetached(name);
+    wait_for(u8"n> ");
+    panel.lineEntered.trigger(vine::String(u8"99999999999"));
+    EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+    EXPECT_TRUE(output->toPlainText().contains(u8"请输入整数")) << "超出 int 的文本要重新提示";
+    EXPECT_EQ(cm->historyCount(), 0) << "重新提示后读仍在等待";
+
+    panel.lineEntered.trigger(vine::String(u8"42"));
+    while (cm->historyCount() < 1 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_EQ(cm->historyCount(), 1);
+    ASSERT_TRUE(IntReadCommand::s_value.has_value());
+    EXPECT_EQ(*IntReadCommand::s_value, 42);
+
+    app->setConsolePanel(nullptr);
+    cm->clearHistory();
+    cm->unregisterCommand(name);
+}
+
+// 重复绑定同一个面板不能重复挂 handler：否则一行输入会被执行两次。
+TEST(UserIOTest, RebindingTheConsoleDoesNotRunALineTwice)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm  = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    guifw::ConsolePanel panel;
+    app->setConsolePanel(&panel);
+    app->setConsolePanel(&panel); // 二次绑定：旧实现会在这里再挂一份 handler
+
+    const auto name = vine::String(u8"rebindProbe");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<ThrowingCommand>(name));
+    cm->clearHistory();
+
+    panel.lineEntered.trigger(name);
+
+    // 每条执行的命令都会记一条历史，因此历史条数就是执行次数。
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (cm->historyCount() < 1 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_EQ(cm->historyCount(), 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_EQ(cm->historyCount(), 1) << "同一行只能执行一次";
+
+    app->setConsolePanel(nullptr);
+    cm->clearHistory();
+    cm->unregisterCommand(name);
+}
+
+// 命令集合变化要能通知出去：缓存的列表（控制台补全）靠它刷新。旧的
+// register/unregister 不发任何事件，绑定控制台之后注册的命令永远进不了补全。
+TEST(UserIOTest, CommandsChangedReportsRegistryAndAliasEdits)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm  = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    int        changes = 0;
+    const auto handler = cm->commandsChanged.addHandler(
+        [&changes](vine::appfw::CommandManager&, vine::EventArgs&) { ++changes; });
+
+    const auto name = vine::String(u8"changedProbe");
+    EXPECT_FALSE(cm->unregisterCommand(name)) << "未注册的名字取消失败";
+    EXPECT_EQ(changes, 0) << "集合没变就不通知";
+
+    ASSERT_TRUE(cm->registerCommand<IntReadCommand>(name));
+    EXPECT_EQ(changes, 1);
+
+    cm->setCommandEnabled(name, false);
+    EXPECT_EQ(changes, 2) << "禁用会从补全列表里拿掉一项";
+    cm->setCommandEnabled(name, false);
+    EXPECT_EQ(changes, 2) << "没有实际变化就不重复通知";
+
+    const auto alias = vine::String(u8"changedProbeAlias");
+    EXPECT_FALSE(cm->unregisterAlias(alias));
+    EXPECT_EQ(changes, 2);
+    ASSERT_TRUE(cm->registerAlias(alias, name));
+    EXPECT_EQ(changes, 3);
+    ASSERT_TRUE(cm->unregisterAlias(alias));
+    EXPECT_EQ(changes, 4);
+
+    EXPECT_TRUE(cm->unregisterCommand(name));
+    EXPECT_EQ(changes, 5);
+
+    EXPECT_TRUE(cm->setCommandEnabled(name, true)) << "未注册的命令只是记住偏好";
+    EXPECT_EQ(changes, 5) << "注册表没变就不通知";
+
+    cm->commandsChanged.removeHandler(handler);
+    cm->clearHistory();
 }
 
 // 命令不能在自己身上"取消并排空"：它自己所在的链正是要排空的对象，只有它返回

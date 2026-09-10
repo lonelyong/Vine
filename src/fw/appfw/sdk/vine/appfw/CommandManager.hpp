@@ -189,6 +189,18 @@ class V_APPFW_API CommandManager
      */
     Event<CommandManager, CommandExecutedEventArgs> executed;
 
+    /**
+     * @brief Fired when the listed set of commands changes.
+     *
+     * Registration, unregistration, a change of the enabled flag and an alias
+     * change all alter what commandInfos() reports, so a listing cached elsewhere
+     * - the console completion popup, for instance - is stale from that moment on
+     * and has to refresh itself. Fired outside every lock, from the thread that
+     * made the change, which is not necessarily the application thread; a handler
+     * that touches a widget must marshal itself.
+     */
+    Event<CommandManager, EventArgs> commandsChanged;
+
   public:
     /**
      * @brief Returns the application this manager belongs to.

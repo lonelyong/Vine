@@ -1,8 +1,11 @@
 ﻿#pragma once
 #include "core_global.hpp"
 
+#include <cerrno>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <initializer_list>
 #include <span>
 #include <string>
@@ -1437,21 +1440,30 @@ class V_CORE_API String final {
     /** Convert string to integer
      *  @return The integer value
      *  @param ok Optional pointer to bool, set to true if conversion succeeded, false otherwise
+     *  @param base Numeric base of the text, 10 by default
      *  @note If the string cannot be converted to a valid integer, returns 0 and sets ok to false.
      *        The conversion stops at the first non-digit character (after optional leading whitespace).
+     *        A value outside the range of int is a failure too: the result is not wrapped.
      *  @example String("123").toInt() returns 123
      *           String("45ab").toInt() returns 45 (stops at 'a')
      *           String("abc").toInt(&ok) returns 0, ok = false
+     *           String("99999999999").toInt(&ok) returns 0, ok = false
      */
     int toInt(bool* ok = nullptr, int base = 10) const
     {
         auto  str    = reinterpret_cast<const char*>(stdstr_.c_str());
         char* endptr = nullptr;
-        auto  result = std::strtol(str, &endptr, base);
+
+        // strtol saturates at LONG_MIN/LONG_MAX and reports that through errno, so the
+        // range check has to be explicit: casting the saturated value would wrap it.
+        errno            = 0;
+        const long value = std::strtol(str, &endptr, base);
+        const bool parsed =
+            endptr != str && errno != ERANGE && value >= static_cast<long>(INT_MIN) && value <= static_cast<long>(INT_MAX);
         if (ok) {
-            *ok = (endptr != str); // Conversion succeeded if endptr moved past the start
+            *ok = parsed;
         }
-        return static_cast<int>(result);
+        return parsed ? static_cast<int>(value) : 0;
     }
 
     /** Convert string to double

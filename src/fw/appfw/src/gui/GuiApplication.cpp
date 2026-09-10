@@ -313,7 +313,9 @@ raw_ptr<MainWindow> GuiApplication::mainWindow() const
 
 void GuiApplication::setConsolePanel(ConsolePanel* console)
 {
-    auto* io = static_cast<VisualUserIO*>(dptr()->user_io.get());
+    // obj_cast, not static_cast: a subclass may override createUserIO() with another
+    // implementation, and statically downcasting that would be undefined behaviour.
+    auto* io = obj_cast<VisualUserIO>(dptr()->user_io.get());
     if (io != nullptr) {
         io->setConsolePanel(console);
     }
