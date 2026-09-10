@@ -36,9 +36,6 @@ namespace
 /// Organization assumed when the host does not set one.
 constexpr char8_t s_default_organization[] = u8"Vine";
 
-/// Folder under the user data location that holds per-application data.
-constexpr const char* s_app_data_folder = "appdata";
-
 /// Folder inside the data directory that holds the persisted configuration.
 constexpr const char* s_config_folder = "config";
 
@@ -63,7 +60,7 @@ std::filesystem::path toPath(const QString& text)
     return std::filesystem::path(text.toStdU16String());
 }
 
-/// Root that holds the appdata folder: the user's generic data location.
+/// Root that holds the per-user data directories.
 std::filesystem::path userDataRoot()
 {
     const QString root = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
@@ -227,7 +224,7 @@ const String& Application::defaultOrganizationName()
 
 std::filesystem::path Application::dataDirectory() const
 {
-    std::filesystem::path dir = userDataRoot() / s_app_data_folder;
+    std::filesystem::path dir = userDataRoot();
 
     const QString organization = QCoreApplication::organizationName();
     if (!organization.isEmpty()) {
@@ -269,7 +266,7 @@ std::vector<std::filesystem::path> Application::allUsersPluginRegistrationDirect
 
         // Same layout as dataDirectory(), but below the system root: the
         // organization/application part always comes from the process identity.
-        std::filesystem::path dir = root / s_app_data_folder;
+        std::filesystem::path dir = root;
         const QString         organization = QCoreApplication::organizationName();
         if (!organization.isEmpty()) {
             dir /= toPath(organization);

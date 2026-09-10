@@ -39,6 +39,12 @@ vine::async::Task<CommandResult> ListCommandsCommand::execute(CommandExecutionCo
                 line += String(u8"  ") + info.description;
             }
 
+            // Disabled commands stay registered and listed; the marker explains why
+            // they cannot be started.
+            if (!info.enabled) {
+                line += String(u8"  [已禁用]");
+            }
+
             io->putString(line);
         }
     }

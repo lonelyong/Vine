@@ -139,6 +139,57 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   各自建立新链并写 `d->foreground`；`nested=true` 的分支使用 `Context` 传入的父链。
 - 每个 `LongRunning` 命令（无论嵌套与否）仍各自持有 `ProgressHost`，绑定**本链**的 `stop_source`。
 
+## 命令管理器对话框（`gui::CommandManagerDialog`）
+
+- 文件：`src/fw/appfw/src/gui/CommandManagerDialog.cpp`（窗口标题「命令管理器」），由 app_shell 的
+  `show_commands` 命令打开。
+- 布局：筛选框（带清除按钮）→ 命令表（名称 / **状态** / 别名 / 来源插件 / 分组 / 描述）→ 底部一行
+  「左侧反馈文字 + `刷新` / `禁用命令`(选中禁用项时变 `启用命令`) / `关闭`」，与插件管理器对话框同形。
+- 表格视觉与插件管理器**共用** `src/fw/appfw/src/gui/TableStyle.hpp` 的 `detail::blendIntoSurface()`
+  （透明表体、表头取 `palette(window)`、去掉自身边框与行号列、显式补 `gridline-color` 与
+  `::item:selected`），它是这两个对话框唯一的表格样式来源，别再各写一份 QSS。
+- 被禁用的行**灰显斜体**（不隐藏、不删除），`状态` 列写 `已禁用`；切换按钮在未选中行时**置灰**
+  而不是隐藏（选中行变化频繁，隐藏会闪）。按钮文案随选中行的状态在 `禁用命令` / `启用命令` 之间切。
+- 对话框**不再提供"卸载命令"**：禁用是标记而非移除，语义更清楚也不会丢元数据/别名。
+
+## 命令禁用（2026-09-10，用户拍板的设计）
+
+**禁用是注册表里的一个标记，不是移除**：命令留在 registry 里（连同元数据、别名、owner），只是
+不能执行，随时可以再启用。相比"卸载"，插件下次启动重新注册时不会被"复活"，也不丢展示信息。
+
+- 数据结构：`RegisteredCommand::enabled`（默认 true）；`CommandInfo::enabled` 供列举方使用。
+- 公开 API（新增，不影响既有调用）：
+  - `setCommandEnabled(name, enabled)`：先写偏好、再翻标记；名字未注册时**只记偏好**（等它注册时生效）。
+  - `isCommandEnabled(name)`：仅"已注册且启用"为 true。
+  - `disabledCommands()` / `static disabledConfigKey()`（`commands.disabled` 字符串数组，
+    与 `PluginManager::disabledConfigKey()` = `plugins.disabled` 对称）。
+  - ⚠️ `isRegistered()` 语义收紧为"**能执行**"：禁用的命令返回 false（禁用项仍在 `names()` /
+    `commandInfos()` 里，需要"存在性"请查这两者）。
+- **两个入口都要把关**：
+  - 按名字：`createCommandByName()`（顶层 `executeCommand(name)` 与 `context->executeChild(name)`
+    都走它）返回 nullptr，并通过 out 参数 `disabled` 区分"禁用"与"未注册"。
+  - 按实例：`executeCommand(Command*)` / `executeCommandAsync(Command*)` 本来完全绕过注册表，
+    禁用形同虚设；现在先查 `Impl::isDisabledRegistration(command->name())`——**只有"注册了且被禁用"**
+    才拒绝（实例名未注册的临时命令照旧能跑，否则一堆本地命令会被误伤）。
+- **持久化路径**：`registerCommand()` 里读偏好（`Impl::isDisabled()`）决定新注册项的 `enabled`。
+  插件每次启动都会重注册自己的命令，于是"上次禁用的"自动带着标记回来——不需要额外的
+  "启动后统一应用禁用列表"步骤。没有宿主的 ConfigManager 时退化成 `Impl::disabled` 进程内列表。
+- 消费方也要认这个标记：控制台补全（`VisualUserIO::refreshCompletion`）**跳过**禁用命令（补全一个
+  跑不了的命令只会导致执行失败）；`list_commands` 在行尾加 `[已禁用]`。
+- 测试：`GuiTest.CommandManager_DisableIsAFlagAndIsPersisted`（禁用后仍列举、`isRegistered` 为假、
+  别名同样不可执行、执行消息为「命令“x”已被禁用；可在「命令管理器」中启用。」、偏好已记录、
+  **注销后重新注册仍是禁用**、启用后立刻恢复执行且偏好被清掉）与
+  `GuiTest.CommandManager_DisableBlocksCallerSuppliedInstance`
+  （按实例的入口同样被拦；实例名未注册时不受影响）。
+- **拒绝时的消息是给用户看的**（`refusalMessage()`）：带命令名 + 可执行下一步，"未注册"也在
+  这里一起中文化（原来是 `Command not registered`，没有任何测试依赖它）。`Command is null`
+  这类编程错误保持英文。
+- ⚠️ **触发方式决定提示能不能被看到**：控制台输入走 `executeCommandAsync()`，由
+  `VisualUserIO::onLineEntered` 把失败消息回写控制台；而 Ribbon 按钮/动作走
+  `executeDetached()`（没人等结果）——禁用后点按钮原本**完全静默**。现在
+  `executeDetached()` 也会把失败消息写进 `UserIO`（同控制台同一条消息），两条路都有提示
+  且不会重复（控制台不走 executeDetached）。
+
 ## 关键机制
 
 - **Exclusive 接管**：顶层 Exclusive 命令先对 `foreground` 链 `request_stop()`，再

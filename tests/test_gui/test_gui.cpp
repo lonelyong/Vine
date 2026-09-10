@@ -92,7 +92,7 @@ class GuiEnv : public ::testing::Environment {
         guifw::GuiApplication::desc();
 
         // 用户数据/配置位置重定向到 Qt 测试目录：测试既不读也不写开发机上的
-        // 真实配置（<user data>/appdata/<org>/<app>/... 的默认布局仍然成立）。
+        // 真实配置（<user data>/<org>/<app>/... 的默认布局仍然成立）。
         QStandardPaths::setTestModeEnabled(true);
 
         static char  arg0[] = "test_gui";
@@ -2067,6 +2067,84 @@ TEST_F(GuiTest, CommandManager_RegisterValidatesAndCachesMetadata)
     EXPECT_FALSE(cm->isRegistered(name));
 }
 
+// 禁用是注册表里的一个标记，不是移除：命令仍在列表里、别名仍指向它，只是不能执行；
+// 重新启用后立刻恢复。偏好同时写进配置，插件下次启动重新注册时会带着标记回来。
+TEST_F(GuiTest, CommandManager_DisableIsAFlagAndIsPersisted)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vine::String(u8"disableProbe");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->setCommandEnabled(name, true)) << "先清掉可能残留的偏好";
+    ASSERT_TRUE(cm->registerCommand(DummyCommand::desc(), name, [] { return new DummyCommand; }));
+    ASSERT_TRUE(cm->registerAlias(vine::String(u8"disableProbeAlias"), name));
+
+    // 禁用：仍是注册项、仍在列表里（enabled=false），但不可执行。
+    ASSERT_TRUE(cm->setCommandEnabled(name, false));
+    EXPECT_FALSE(cm->isCommandEnabled(name));
+    EXPECT_FALSE(cm->isRegistered(name)) << "禁用的命令不能执行";
+    EXPECT_FALSE(cm->isRegistered(vine::String(u8"disableProbeAlias"))) << "别名解析到禁用的命令，同样不可执行";
+
+    const auto infos = cm->commandInfos();
+    const auto it    = std::find_if(infos.begin(), infos.end(),
+                                    [&name](const vine::appfw::CommandInfo& info) { return info.name == name; });
+    ASSERT_NE(it, infos.end()) << "禁用不把命令从列表里移除";
+    EXPECT_FALSE(it->enabled);
+
+    const auto blocked = cm->executeCommand(name);
+    EXPECT_EQ(blocked.status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(blocked.message(), vine::String(u8"命令“disableProbe”已被禁用；可在「命令管理器」中启用。"))
+        << "禁用与'未注册'要能区分，而且这句是要直接给用户看的";
+
+    const auto disabled = cm->disabledCommands();
+    EXPECT_NE(std::find(disabled.begin(), disabled.end(), name), disabled.end()) << "偏好应被记录";
+
+    // 重启模拟：注销后重新注册（插件每次启动都会重新注册），标记仍在。
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand(DummyCommand::desc(), name, [] { return new DummyCommand; }));
+    EXPECT_FALSE(cm->isCommandEnabled(name)) << "重新注册的命令应带着禁用偏好回来";
+
+    // 启用后立刻恢复执行，并从偏好里移除。
+    ASSERT_TRUE(cm->setCommandEnabled(name, true));
+    EXPECT_TRUE(cm->isRegistered(name));
+    EXPECT_EQ(cm->executeCommand(name).status(), vine::appfw::CommandStatus::Success);
+    const auto after = cm->disabledCommands();
+    EXPECT_EQ(std::find(after.begin(), after.end(), name), after.end());
+
+    cm->unregisterAlias(vine::String(u8"disableProbeAlias"));
+    cm->unregisterCommand(name);
+}
+
+// 调用方自己 new 的实例也必须挡住：实例按自己的 name() 运行，否则禁用就有一个后门。
+TEST_F(GuiTest, CommandManager_DisableBlocksCallerSuppliedInstance)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    // DummyCommand::name() 就是 u8"dummy"：注册名与实例名一致才谈得上拦它。
+    const auto name = vine::String(u8"dummy");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->setCommandEnabled(name, true));
+    ASSERT_TRUE(cm->registerCommand(DummyCommand::desc(), name, [] { return new DummyCommand; }));
+
+    EXPECT_EQ(cm->executeCommand(new DummyCommand).status(), vine::appfw::CommandStatus::Success);
+
+    ASSERT_TRUE(cm->setCommandEnabled(name, false));
+    const auto blocked = cm->executeCommand(new DummyCommand);
+    EXPECT_EQ(blocked.status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(blocked.message(), vine::String(u8"命令“dummy”已被禁用；可在「命令管理器」中启用。"));
+
+    // 未注册的名字不受影响：临时造的命令照旧执行。
+    ASSERT_TRUE(cm->setCommandEnabled(name, true));
+    cm->unregisterCommand(name);
+    EXPECT_EQ(cm->executeCommand(new DummyCommand).status(), vine::appfw::CommandStatus::Success);
+}
+
 // 工厂返回空指针不应让列举崩溃（旧实现在 commandInfos() 里直接解引用）。
 TEST_F(GuiTest, CommandManager_NullFactoryIsTolerated)
 {
@@ -3032,8 +3110,8 @@ TEST(PluginLifecycleTest, DisableIsPersistedInConfig)
     cfg->remove(key); // 清理：不留空数组
 }
 
-// 目录布局：builder 默认把配置打开在 <用户数据>/appdata/<org>/<app>/config/
-// <app>.json（日志同级在 logs/）；Application 构造时保证 org 非空。
+// 目录布局：builder 默认把配置打开在 <用户数据>/<org>/<app>/config/<app>.json
+// （日志同级在 logs/）；Application 构造时保证 org 非空。
 TEST(PluginLifecycleTest, DefaultDataDirectoryLayout)
 {
     auto* app = GuiEnv::app.get();
@@ -3044,7 +3122,6 @@ TEST(PluginLifecycleTest, DefaultDataDirectoryLayout)
 
     const auto dir = app->dataDirectory();
     EXPECT_TRUE(dir.is_absolute());
-    EXPECT_EQ(dir.parent_path().parent_path().filename().string(), "appdata");
     EXPECT_EQ(dir.parent_path().filename(), std::filesystem::path(organization.toStdU16String()));
     EXPECT_EQ(dir.filename(), std::filesystem::path(QCoreApplication::applicationName().toStdU16String()));
 
@@ -3334,7 +3411,7 @@ TEST(PluginLifecycleTest, UnloadOrderIsReverseDependencyOrder)
     EXPECT_NE(std::find(cycle_order.begin(), cycle_order.end(), u8"b"), cycle_order.end());
 }
 
-// 每个插件一个独立的数据目录：<数据>/appdata/<org>/<app>/plugins/<插件名>，
+// 每个插件一个独立的数据目录：<数据>/<org>/<app>/plugins/<插件名>，
 // 首次调用才创建，键是插件名（插件被搬走/换位置也还是同一个目录）。
 TEST(PluginLifecycleTest, PluginDataDirectoryIsPerPlugin)
 {
@@ -3420,7 +3497,7 @@ TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
     std::filesystem::remove_all(user_dir, ec);
 }
 
-// 系统级注册目录只读地参与合并：每个系统数据根下同一套 appdata/<org>/<app>/installed.d
+// 系统级注册目录只读地参与合并：每个系统数据根下同一套 <org>/<app>/installed.d
 // 布局，且不与用户目录重复。
 TEST(PluginLifecycleTest, SystemRegistrationDirectoriesAreListed)
 {

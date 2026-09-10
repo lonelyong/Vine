@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <QStandardPaths>
+
 #include <vine/appfw/AppBuilder.hpp>
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/PluginManager.hpp>
@@ -32,6 +34,13 @@ namespace
  */
 std::unique_ptr<vine::appfw::Application> bootApplication()
 {
+    // Nothing this suite writes may reach the user's real data directory: the
+    // registration round trip installs a plugin, and installPlugin() writes into
+    // <data>/installed.d. Test mode resolves QStandardPaths to a per-user test root
+    // (the same trick test_gui uses), and has to be set before the application is
+    // built, because the paths are read while it is constructed.
+    QStandardPaths::setTestModeEnabled(true);
+
     static char arg0[] = "test_vsg";
     static char* argv[] = { arg0, nullptr };
 

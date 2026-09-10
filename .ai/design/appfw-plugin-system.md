@@ -100,14 +100,18 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 目录布局（`Application` 提供，宿主不传路径）：
 
 ```
-<用户数据>/appdata/<organization>/<application>/
+<用户数据>/<organization>/<application>/
 ├── config/<application>.json      Application::defaultConfigFile()
 ├── logs/...                       宿主自己放日志（main.cpp 用 <data>/logs/vine.log）
-└── plugins/<插件名>/              插件自己的文件，PluginLoadContext::dataDirectory()
+├── plugins/<插件名>/              插件自己的文件，PluginLoadContext::dataDirectory()
+└── installed.d/<id>.plugin        插件注册文件
 ```
 
 - `<用户数据>` = `QStandardPaths::GenericDataLocation`（Linux `~/.local/share`，Windows
-  `%APPDATA%`），取不到时退回临时目录。
+  `%LOCALAPPDATA%`），取不到时退回临时目录。
+- ⚠️ **没有中间的 `appdata` 一级**（2026-09-10 用户要求去掉）：Windows 下原来会得到
+  `C:/Users/<user>/AppData/Local/appdata/Vine/Vine`，父目录本身就带 `AppData`，再套一层
+  `appdata` 是冗余的。现在就是 `<用户数据>/<org>/<app>`，与 Qt 的 `AppDataLocation` 同构。
 - **org 由 `Application` 构造时默认设置**（`Application::defaultOrganizationName()` =
   `Vine`）：宿主不设也能得到合法路径；宿主自定义则用 `AppConfig::organization`
   （builder 后设，覆盖默认）。Application 只在当前 org 为空时才设，不覆盖宿主已设的值。
@@ -156,8 +160,8 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 | 来源 | 位置 | 谁能动它 |
 | --- | --- | --- |
 | `BuiltIn` | `PluginManager::builtInPluginDirectory()`（`<exe>/plugins/<app>`） | **程序**：随包发布、用 `setSkipList()` 关掉或不构建；**用户不能禁用/卸载** |
-| `User` | `<用户数据>/appdata/<org>/<app>/installed.d/` | 当前用户：可安装/卸载/禁用 |
-| `AllUsers` | `<系统数据根>/appdata/<org>/<app>/installed.d/` | 管理员安装，所有用户可见；用 `enabled = false` 做机器级禁用策略 |
+| `User` | `<用户数据>/<org>/<app>/installed.d/` | 当前用户：可安装/卸载/禁用 |
+| `AllUsers` | `<系统数据根>/<org>/<app>/installed.d/` | 管理员安装，所有用户可见；用 `enabled = false` 做机器级禁用策略 |
 
 - **程序自带插件不可禁用/卸载**：`setPluginEnabled()` 对它返回 false（并记 warning），
   `uninstallPlugin()` 找不到注册自然失败；对话框对 BuiltIn 隐藏这两个动作。理由：那是程序的
@@ -196,7 +200,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 | 字段 | 用途 | 空值语义 |
 | --- | --- | --- |
 | `email` | 厂商联系方式；详情页渲染成 `mailto:` 链接 | 不显示该行 |
-| `repo` | 仓库/问题跟踪地址；详情页是可点击链接，并有"打开仓库"按钮 | 不显示该行与按钮 |
+| `repo` | 仓库/问题跟踪地址；详情页 `信息` 页是一行可点开的链接 | 不显示该行 |
 | `icon` | **内联 SVG 源码**（不是路径、不是 QIcon） | 用宿主内置的默认图标 |
 
 为什么用字符串而不是 QIcon/文件路径：
@@ -219,22 +223,50 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 `(Class, Uuid, Name, DisplayName, Version, Description, Vendor, Email, Repo, Icon, Dependencies)`
 —— **参数个数变了，所有插件必须重编**（和之前加 uuid 一样；旧 `.so` 会让宿主按新布局读旧结构）。
 
-## 插件管理器对话框（2026-09-10 重做布局）
+## 插件管理器对话框（2026-09-10 重做布局；同日改为 Tab 页）
 
 左栏：筛选框 → 插件列表（图标 + 显示名 + 版本 + 状态后缀，不可用的行灰显）→ `加载插件…` 与
 `安装插件`（下拉：仅当前用户 / 所有用户）。右栏：占位页或详情页（**放在 QScrollArea 里**，
-小窗口不会把四组信息压扁）。详情页自上而下：
+小窗口不会把内容压扁）。详情页自上而下：
 
 1. 头部：56px 图标 + 显示名（加粗放大）+ `标识 · 版本` + `厂商 · 邮箱链接` + **状态徽章**；
 2. 状态说明（带边框的整句解释：为什么没在跑 / 正在跑）；
-3. 动作行：`禁用/启用`、`卸载插件（作用域）`、`打开仓库`——**不能生效的一律隐藏而不是置灰**；
-4. `描述` 组；
-5. `信息` 组（QFormLayout）：标识 / 版本 / 来源（含可卸载与否）/ 依赖 / UUID / 库路径（等宽字体、
-   可选中、带 tooltip）/ 邮箱 / 仓库；
-6. `命令`、`配置` 两个表格组（各 `setMinimumHeight(120)`，否则在滚动区里会缩到只剩表头）。
+3. 动作行：`禁用/启用`、`卸载插件（作用域）`——**不能生效的一律隐藏而不是置灰**；
+4. **`QTabWidget` 三个标签页**，取代原先堆叠的 `描述`/`信息`/`命令`/`配置` 四个 `QGroupBox`：
+   - `信息`：`QFormLayout`，**描述是第一行**（原 `描述` 组并入此处），随后标识 / 版本 / 来源
+     （含可卸载与否）/ 依赖 / UUID / 库路径（等宽字体、可选中、带 tooltip）/ 邮箱 / 仓库；
+     表单后 `addStretch()`，行不会被拉散。
+   - `命令`、`配置`：各一个撑满整页的 `QTableWidget`（`setMinimumHeight(120)`，否则在滚动区里
+     会缩到只剩表头）；tab 页留 6px 内边距，表格本身 **`NoFrame` + 背景透明**。
+
+⚠️ **表格如何融进 tab 页**（2026-09-10，用户反复要求"不要线条 / 表头与 tab 背景一致 / 表格透明"，
+`blendIntoPage()` 一处收口）：
+
+- `tabs->setStyleSheet("QTabWidget::pane { background: palette(window); border: 1px solid
+  palette(mid); }")`：**主动给 pane 上色**。不这样做时 Qt 样式画的 pane 是它自己的灰
+  （Fusion 下实测 `#FBFBFB`），而 `palette(window)` 是 `#F5F5F5`，表头怎么调都对不上。
+  改由我们自己指定后，pane 与表头同源，天然一致。
+- 表头 `QHeaderView::section`：背景 `palette(window)`（= pane 色）、无边框、仅一条
+  `border-bottom: 1px solid palette(mid)`、`padding: 4px`（**必须显式给 padding**，QSS 一接管
+  section 就不再套用样式默认内边距，文字会贴边）。
+- 表格 `background-color: transparent`：整块表体透出 pane 底色，只留网格线（用户要求）。
+- ⚠️ **设了 QSS 之后网格线会消失**（Qt 行为），必须显式补 `gridline-color: palette(mid)` 才回来；
+  同理选中行也要显式写 `QTableWidget::item:selected { background-color: palette(highlight);
+  color: palette(highlighted-text); }`，否则选中高亮不显示。
+- `setFrameShape(QFrame::NoFrame)`：pane 已经画了边框，表格再画一层就成了"双线夹一条缝"。
+- `verticalHeader()->setVisible(false)`：行号列对只读列表是噪音，还自带两条竖线。
+- 全部颜色走 `palette(...)`（QSS 运行时求值），跟随浅/深主题；这点与徽章写死颜色**相反**
+  （徽章那条是特例，见文末）。
+- 验证手段：临时 test 里 `root->grab().save(png)`（offscreen 平台可离屏渲染），再用
+  `System.Drawing` 逐像素扫颜色变化，确认 pane/表头同色、只剩一条边框线、网格与选中高亮都在。
+  ⚠️ 扫图**记得 `$bmp.Dispose()`**：GDI+ 会锁住 PNG，导致下一次 `save()` 失败。
 
 底部：左侧一行反馈文字（加载/安装/卸载/启禁的结果），右侧 `刷新` `关闭`。
 右键菜单与按钮同规则（不能生效的项用 `setVisible(false)` 隐藏），另加"复制库路径"。
+
+⚠️ **`打开仓库` 按钮已删除**（用户要求）：仓库地址只作为 `信息` 页的一行，靠
+`repoLabel->setOpenExternalLinks(true)` 保证仍可点开浏览器（删按钮不该丢掉这个能力），
+`QDesktopServices`/`QUrl` 的 include 随之删掉。
 
 徽章配色写死（浅色主题下的绿/橙/紫/灰）：`palette()` 角色在样式表里不可靠，
 而徽章必须在深色主题下也能读作一个状态。
@@ -281,7 +313,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 | `PluginLifecycleTest.DisabledPluginIsListedWithMetadataButNotLoaded` | 禁用 ⇒ 不加载/不注册命令（`test_hello` 不在注册表），但元数据与库路径可见；启用后加载 |
 | `PluginLifecycleTest.DisableIsPersistedInConfig` | 写进 `plugins.disabled`、重复禁用不重复、JSON 里可见、启用后清除 |
 | `PluginLifecycleTest.ConfigFileIsOptIn` | `setConfigFile` 路径语义：不存在不算错、空路径 = 不持久化 |
-| `PluginLifecycleTest.DefaultDataDirectoryLayout` | `<data>/appdata/<org>/<app>/config/<app>.json` 布局 + builder 默认启用 + 不落盘 |
+| `PluginLifecycleTest.DefaultDataDirectoryLayout` | `<data>/<org>/<app>/config/<app>.json` 布局 + builder 默认启用 + 不落盘 |
 | `PluginLifecycleTest.ManagerDialogListsDisabledPlugins` | 对话框列表来自发现（禁用项在列，状态为"已加载 + 已禁用"），详情/刷新不崩 |
 | `PluginLifecycleTest.ManagerDialogHidesToggleWhenItCannotTakeEffect` | 禁用/启用按钮只在能生效时**显示**：被宿主跳过 ⇒ 隐藏（不是灰按钮）；普通 User 插件 ⇒ 显示且可用 |
 | `PluginLifecycleTest.ManagerDialogShowsMetadataAndIcons` | email/repo/icon 经 `V_DECLARE_PLUGIN` → `PluginInfo` → UI 全程贯通；未声明 icon 用内置默认 SVG（每行图标非空）；筛选框只留匹配行 |

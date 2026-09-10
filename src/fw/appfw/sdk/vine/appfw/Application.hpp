@@ -184,12 +184,13 @@ class V_APPFW_API Application : public Object {
     /**
      * @brief Returns this application's data directory.
      *
-     * <user data>/appdata/<organization>/<application name>, for example
-     * ~/.local/share/appdata/Vine/Vine on Linux and
-     * C:/Users/<user>/AppData/Roaming/appdata/Vine/Vine on Windows.
+     * <user data>/<organization>/<application name>, the same organization-and
+     * application split Qt uses, for example ~/.local/share/Vine/Vine on Linux and
+     * C:/Users/<user>/AppData/Local/Vine/Vine on Windows.
      *
-     * The framework reserves two subdirectories: config/ for the persisted
-     * configuration (defaultConfigFile()) and logs/ for log files. The directory
+     * The framework reserves three subdirectories: config/ for the persisted
+     * configuration (defaultConfigFile()), logs/ for log files, plugins/ for
+     * plugin-owned files and installed.d/ for plugin registrations. The directory
      * is only computed, never created here.
      *
      * @return The data directory.
@@ -241,8 +242,8 @@ class V_APPFW_API Application : public Object {
      *
      * The per-machine data roots (Windows ``%ProgramData%``, Linux
      * ``/usr/local/share`` and ``/usr/share``, macOS ``/Library/Application
-     * Support``), each with the same appdata/<organization>/<application>/
-     * installed.d layout as the per-user directory. They hold the registrations
+     * Support``), each with the same <organization>/<application>/installed.d
+     * layout as the per-user directory. They hold the registrations
      * installed for every user, in preference order; writing there needs
      * administrator rights, so they are read here.
      *

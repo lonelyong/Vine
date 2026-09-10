@@ -32,7 +32,13 @@ target_compile_definitions(${TEST_NAME} PRIVATE V_VSG_LIB)
 # device-free bridge sources (SceneBridge + its material manager) are compiled
 # into the test alongside its public headers.
 find_package(vsg CONFIG QUIET)
-target_link_libraries(${TEST_NAME} vi::Appfw vi::Graphics)
+# The plugin-load test boots an Application, whose data directory comes from
+# QStandardPaths. Qt test mode keeps it under a per-user test root instead of the
+# real <org>/<app> data directory; without it the suite's installPlugin() calls
+# write registration files into the user's real data directory.
+find_package(Qt6 CONFIG REQUIRED COMPONENTS Core)
+
+target_link_libraries(${TEST_NAME} vi::Appfw vi::Graphics Qt6::Core)
 if(vsg_FOUND)
 	target_link_libraries(${TEST_NAME} vsg::vsg)
 endif()

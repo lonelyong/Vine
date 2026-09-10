@@ -82,6 +82,10 @@ struct CommandInfo {
 
     /// Name of the plugin that registered this command; empty for host commands.
     String owner;
+
+    /// false while the user disabled the command: it stays registered and listed,
+    /// but it cannot be executed until it is enabled again.
+    bool enabled = true;
 };
 
 /**
@@ -202,7 +206,8 @@ class V_APPFW_API CommandManager
      * before executing.
      *
      * @param command Command to execute; must not be null.
-     * @return The execution outcome.
+     * @return The execution outcome; Failed when the command's name is registered
+     *         and disabled, so this entry point cannot bypass setCommandEnabled().
      */
     CommandResult executeCommand(Command* command);
 
@@ -228,7 +233,9 @@ class V_APPFW_API CommandManager
      * goes through CommandExecutionContext::executeChild() instead.
      *
      * @param command Command to execute; must not be null.
-     * @return A task yielding the execution outcome.
+     * @return A task yielding the execution outcome; Failed when the command's name
+     *         is registered and disabled, so this entry point cannot bypass
+     *         setCommandEnabled().
      */
     vine::async::Task<CommandResult> executeCommandAsync(Command* command);
 
@@ -249,9 +256,12 @@ class V_APPFW_API CommandManager
      *
      * Fire-and-forget: a top-level entry point, so the command gets its own chain
      * and is subject to the serialization gate. A command that runs delivers its
-     * outcome through the executed event; one that is refused by the gate, or that
-     * throws, is only logged — there is no caller left to report to, and a
-     * throwing command must not terminate the process.
+     * outcome through the executed event. This entry point exists for UI triggers
+     * (ribbon buttons and actions), which nobody waits for, so a refusal - a name
+     * that is not registered, or one the user disabled - and a failure are reported
+     * through Application::userIO() as well as logged; a throwing command must not
+     * terminate the process. Commands entered in the console go through
+     * executeCommandAsync() instead and report themselves, so this never doubles up.
      *
      * @param name Registered command name.
      */
@@ -396,6 +406,52 @@ class V_APPFW_API CommandManager
     bool unregisterCommand(TypeId command_class);
 
     /**
+     * @brief Disables or enables a command without unregistering it.
+     *
+     * Disabling is a flag, not a removal: the command stays registered and listed
+     * (CommandInfo::enabled reports the state), it only stops being executable, and
+     * enabling it restores execution right away.
+     * The choice is also written to the host configuration (disabledConfigKey()), so
+     * a command registered again later - plugins register theirs on every load -
+     * comes back already disabled. Without a host config manager the preference
+     * only lives for this process.
+     *
+     * @param name    Command name.
+     * @param enabled true to enable the command, false to disable it.
+     * @return true when the preference was recorded, false when the name is empty.
+     *         A name that is not registered right now still records the preference;
+     *         it is applied when the command registers again.
+     */
+    bool setCommandEnabled(const String& name, bool enabled);
+
+    /**
+     * @brief Returns whether a command is registered and enabled.
+     *
+     * @param name Command or alias name.
+     * @return true only for a name that resolves to a registered, enabled command.
+     */
+    bool isCommandEnabled(const String& name) const;
+
+    /**
+     * @brief Returns the command names the user disabled.
+     *
+     * This is the persisted preference, so it may also contain names that are not
+     * registered right now.
+     *
+     * @return Disabled command names, in the order they were disabled.
+     */
+    std::vector<String> disabledCommands() const;
+
+    /**
+     * @brief Returns the configuration key holding the disabled command names.
+     *
+     * The value is a string array, mirroring PluginManager::disabledConfigKey().
+     *
+     * @return Key to use with the host ConfigManager.
+     */
+    static const String& disabledConfigKey();
+
+    /**
      * @brief Registers an alias that resolves to an existing command name.
      *
      * Executing the alias by name runs the target command. The target does
@@ -420,11 +476,12 @@ class V_APPFW_API CommandManager
     /**
      * @brief Returns whether a name can be executed.
      *
-     * True for a registered command name and for an alias that resolves (possibly
-     * through other aliases) to one.
+     * True for a registered, enabled command name and for an alias that resolves
+     * (possibly through other aliases) to one. A disabled command is still listed by
+     * names() and commandInfos(), but it cannot be executed.
      *
      * @param name Command or alias name.
-     * @return true if executing the name runs a registered command.
+     * @return true if executing the name runs a registered, enabled command.
      */
     bool isRegistered(const String& name) const;
 
@@ -517,9 +574,14 @@ class V_APPFW_API CommandManager
     vine::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, bool nested);
 
     /// Creates a fresh registered command instance by name (or alias), or
-    /// nullptr when the name is not registered. Propagates whatever the factory
-    /// throws; callers on the noexcept paths convert that to a Failed result.
-    [[nodiscard]] std::unique_ptr<Command> createCommandByName(const String& name);
+    /// nullptr when the name is not registered or is disabled. Propagates whatever
+    /// the factory throws; callers on the noexcept paths convert that to a Failed
+    /// result.
+    ///
+    /// @param name     Command or alias name.
+    /// @param disabled When not null, receives whether the name was refused for
+    ///                 being disabled rather than for being unknown.
+    [[nodiscard]] std::unique_ptr<Command> createCommandByName(const String& name, bool* disabled = nullptr);
 
     std::unique_ptr<Impl> d;
 };

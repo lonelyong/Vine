@@ -16,6 +16,8 @@
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/Command.hpp>
+#include <vine/appfw/ConfigManager.hpp>
+#include <vine/appfw/UserIO.hpp>
 
 #include <vine/async/AsyncEvent.hpp>
 #include <vine/async/Cancellation.hpp>
@@ -72,6 +74,10 @@ struct RegisteredCommand {
     String                    owner;
     String                    group;
     String                    description;
+
+    /// false while the user disabled the command: registered and listed, but not
+    /// executable until it is enabled again.
+    bool enabled{ true };
 };
 
 /// Returns whether a command flag set contains the given bit.
@@ -90,6 +96,23 @@ constexpr bool hasFlag(CommandFlags value, CommandFlags bit) noexcept
 std::string_view toUtf8View(const String& s) noexcept
 {
     return { reinterpret_cast<const char*>(s.data()), s.size() };
+}
+
+/// Builds the failure message of a command that cannot be started by name.
+///
+/// The console prints this text verbatim, so it names the command and says what the
+/// user can do about it instead of being a developer-facing code.
+///
+/// @param name     Command (or alias) name that was refused.
+/// @param disabled true when the command is registered but disabled, false when the
+///                 name is not registered at all.
+/// @return The message to put in the Failed result.
+String refusalMessage(const String& name, bool disabled)
+{
+    if (disabled) {
+        return String(u8"命令“") + name + String(u8"”已被禁用；可在「命令管理器」中启用。");
+    }
+    return String(u8"命令“") + name + String(u8"”未注册。");
 }
 
 /// Builds the failure message of an exception; empty when even that cannot be built.
@@ -242,6 +265,54 @@ struct CommandManager::Impl {
     String resolveName(const String& name) const;
 
     /**
+     * @brief Returns the host config manager, or nullptr when there is none.
+     *
+     * @return The config manager of the owning application, or nullptr.
+     */
+    ConfigManager* configManager() const;
+
+    /**
+     * @brief Returns the effective disabled-command preference.
+     *
+     * Prefers the host configuration and falls back to the process-local list when
+     * the application has no config manager.
+     *
+     * @return Disabled command names.
+     */
+    std::vector<String> disabledList() const;
+
+    /**
+     * @brief Returns whether the preference marks a command name as disabled.
+     *
+     * @param name Command name.
+     * @return true when the name is in the disabled list.
+     */
+    bool isDisabled(const String& name) const;
+
+    /**
+     * @brief Returns whether a name is registered and currently disabled.
+     *
+     * Unlike isCommandEnabled(), which also reports 'not registered', this one tells
+     * the two apart, which is what the caller-supplied-instance entry point needs: an
+     * unregistered name must keep running.
+     *
+     * @param name Command or alias name.
+     * @return true only for a registered command that is disabled.
+     */
+    bool isDisabledRegistration(const String& name) const;
+
+    /**
+     * @brief Records the disabled-command preference.
+     *
+     * The caller must not hold registry_mutex: the process-local fallback takes it.
+     *
+     * @param name     Command name.
+     * @param disabled_preference true to add the name to the disabled list, false to
+     *                 remove it.
+     */
+    void setDisabledPreference(const String& name, bool disabled_preference);
+
+    /**
      * @brief Adds a chain to the live registry that cancelAll() walks.
      *
      * The caller must hold mutex. Entries whose chain already ended are dropped
@@ -332,6 +403,9 @@ struct CommandManager::Impl {
 
     /// Registered commands by name (factory + meta class + cached metadata).
     std::map<String, RegisteredCommand> registry;
+
+    /// Disabled commands; the fallback used when the host has no config manager.
+    std::vector<String> disabled;
 
     /// Owner tag applied to commands registered while it is non-empty.
     String registration_owner;
@@ -512,6 +586,67 @@ String CommandManager::Impl::resolveName(const String& name) const
     }
 }
 
+ConfigManager* CommandManager::Impl::configManager() const
+{
+    return app != nullptr ? app->configManager() : nullptr;
+}
+
+std::vector<String> CommandManager::Impl::disabledList() const
+{
+    if (ConfigManager* cfg = configManager(); cfg != nullptr) {
+        return cfg->getStringArray(CommandManager::disabledConfigKey());
+    }
+
+    std::lock_guard<std::mutex> lock(registry_mutex);
+    return disabled;
+}
+
+bool CommandManager::Impl::isDisabled(const String& name) const
+{
+    const std::vector<String> list = disabledList();
+    return std::find(list.begin(), list.end(), name) != list.end();
+}
+
+bool CommandManager::Impl::isDisabledRegistration(const String& name) const
+{
+    std::lock_guard<std::mutex> lock(registry_mutex);
+    const auto                  it = registry.find(resolveName(name));
+    return it != registry.end() && !it->second.enabled;
+}
+
+void CommandManager::Impl::setDisabledPreference(const String& name, bool disabled_preference)
+{
+    if (ConfigManager* cfg = configManager(); cfg != nullptr) {
+        std::vector<String> list = cfg->getStringArray(CommandManager::disabledConfigKey());
+        const auto          it   = std::find(list.begin(), list.end(), name);
+        if (!disabled_preference) {
+            if (it == list.end()) {
+                return;
+            }
+            list.erase(it);
+        }
+        else {
+            if (it != list.end()) {
+                return;
+            }
+            list.push_back(name);
+        }
+        cfg->setStringArray(CommandManager::disabledConfigKey(), list);
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(registry_mutex);
+    const auto                  it = std::find(disabled.begin(), disabled.end(), name);
+    if (!disabled_preference) {
+        if (it != disabled.end()) {
+            disabled.erase(it);
+        }
+    }
+    else if (it == disabled.end()) {
+        disabled.push_back(name);
+    }
+}
+
 /**
  * @brief Private implementation of CommandExecutionContext.
  */
@@ -549,9 +684,10 @@ class CommandManager::Context : public CommandExecutionContext {
 
         // The factory is user code: a child that cannot even be built must come
         // back as a Failed outcome, not as an exception in the parent's frame.
+        bool                     disabled = false;
         std::unique_ptr<Command> command;
         try {
-            command = mgr_->createCommandByName(name);
+            command = mgr_->createCommandByName(name, &disabled);
         }
         catch (const std::exception& e) {
             V_LOGE("Child command factory threw: {}: {}", toUtf8View(name), e.what());
@@ -563,7 +699,7 @@ class CommandManager::Context : public CommandExecutionContext {
         }
 
         if (!command) {
-            co_return CommandResult(CommandStatus::Failed, String(u8"Command not registered"));
+            co_return CommandResult(CommandStatus::Failed, refusalMessage(name, disabled));
         }
         co_return co_await mgr_->executeCommandAsyncImpl(command.get(), chain_, /*nested=*/true);
     }
@@ -597,6 +733,16 @@ CommandResult CommandManager::executeCommand(const String& name)
 
 vine::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* command)
 {
+    // A caller-supplied instance runs under its own name, so it must not become a
+    // back door around a disabled registration. An instance whose name is not
+    // registered (a private command built on the spot) is the caller's business and
+    // runs as before.
+    const String command_name = command != nullptr ? command->name() : String{};
+    if (command != nullptr && d->isDisabledRegistration(command_name)) {
+        V_LOGI("Command '{}' is disabled; refusing the caller-supplied instance", toUtf8View(command_name));
+        co_return CommandResult(CommandStatus::Failed, refusalMessage(command_name, /*disabled=*/true));
+    }
+
     // Choke point for exceptions: whatever escapes the execution path (a throwing
     // factory, an allocation failure) becomes a Failed result here. Callers are
     // event handlers and detached tasks, where an escaping exception would end
@@ -617,13 +763,19 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* co
     }
 }
 
-std::unique_ptr<Command> CommandManager::createCommandByName(const String& name)
+std::unique_ptr<Command> CommandManager::createCommandByName(const String& name, bool* disabled)
 {
     std::function<Command*()> factory;
     {
         std::lock_guard<std::mutex> lock(d->registry_mutex);
-        const auto it = d->registry.find(d->resolveName(name));
+        const auto                  it = d->registry.find(d->resolveName(name));
         if (it == d->registry.end() || !it->second.factory) {
+            return nullptr;
+        }
+        if (!it->second.enabled) {
+            if (disabled != nullptr) {
+                *disabled = true;
+            }
             return nullptr;
         }
         factory = it->second.factory;
@@ -785,9 +937,12 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
 vine::async::Task<CommandResult> CommandManager::executeCommandAsync(const String& name)
 {
     try {
-        std::unique_ptr<Command> command = createCommandByName(name);
+        bool                     disabled = false;
+        std::unique_ptr<Command> command  = createCommandByName(name, &disabled);
         if (!command) {
-            co_return CommandResult(CommandStatus::Failed, String(u8"Command not registered"));
+            // A command the user disabled is a different situation from a name that
+            // was never registered: it can be re-enabled in the command manager.
+            co_return CommandResult(CommandStatus::Failed, refusalMessage(name, disabled));
         }
         co_return co_await executeCommandAsyncImpl(command.get(), /*chain=*/{}, /*nested=*/false);
     }
@@ -810,17 +965,33 @@ void CommandManager::executeDetached(const String& name)
     // on an uncaught exception, and this wrapper has no caller to report to.
     // Anything thrown before the execution path takes over (a throwing factory,
     // for instance) is swallowed here with a log.
-    [](vine::async::Task<CommandResult> task) -> vine::async::DetachedTask {
+    //
+    // The trigger is a UI element (a ribbon button or action) and nobody waits for
+    // the outcome, so a refusal or a failure has to be reported here or it would be
+    // invisible. Commands entered in the console are started through
+    // executeCommandAsync() and report themselves, so they are not reported twice.
+    Application* owner = d->app;
+    [](Application* app, vine::async::Task<CommandResult> task) -> vine::async::DetachedTask {
+        CommandResult result{ CommandStatus::Failed };
         try {
-            (void)co_await std::move(task);
+            result = co_await std::move(task);
         }
         catch (const std::exception& e) {
             V_LOGE("Detached command failed: {}", e.what());
+            co_return;
         }
         catch (...) {
             V_LOGE("Detached command failed with a non-standard exception");
+            co_return;
         }
-    }(executeCommandAsync(name));
+
+        if (result.succeeded() || app == nullptr) {
+            co_return;
+        }
+        if (UserIO* io = app->userIO(); io != nullptr) {
+            io->putString(result.message().empty() ? String(u8"命令执行失败") : result.message());
+        }
+    }(owner, executeCommandAsync(name));
 }
 
 raw_ptr<Command> CommandManager::currentCommand() const
@@ -939,8 +1110,13 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
         V_LOGW("Command factory threw during the metadata probe: {}", toUtf8View(name));
     }
 
+    // Applied here, outside every lock: a command the user disabled comes back
+    // disabled when its plugin registers it again at the next start.
+    const bool enabled = !d->isDisabled(name);
+
     std::lock_guard<std::mutex> lock(d->registry_mutex);
     RegisteredCommand           entry{ command_class, std::move(factory), d->registration_owner, std::move(group), std::move(description) };
+    entry.enabled = enabled;
     return d->registry.emplace(std::move(name), std::move(entry)).second;
 }
 
@@ -978,6 +1154,55 @@ bool CommandManager::unregisterCommand(TypeId command_class)
     return removed;
 }
 
+const String& CommandManager::disabledConfigKey()
+{
+    static const String s_key{ u8"commands.disabled" };
+    return s_key;
+}
+
+std::vector<String> CommandManager::disabledCommands() const
+{
+    return d->disabledList();
+}
+
+bool CommandManager::isCommandEnabled(const String& name) const
+{
+    std::lock_guard<std::mutex> lock(d->registry_mutex);
+    const auto it = d->registry.find(d->resolveName(name));
+    return it != d->registry.end() && it->second.enabled;
+}
+
+bool CommandManager::setCommandEnabled(const String& name, bool enabled)
+{
+    if (name.empty()) {
+        V_LOGW("Cannot enable or disable a command without a name");
+        return false;
+    }
+
+    // Written first: the preference has to survive a command that is not registered
+    // right now, which is the normal case for a plugin that is not loaded yet.
+    d->setDisabledPreference(name, !enabled);
+
+    bool applied = false;
+    {
+        std::lock_guard<std::mutex> lock(d->registry_mutex);
+        const auto                  it = d->registry.find(name);
+        if (it != d->registry.end()) {
+            it->second.enabled = enabled;
+            applied            = true;
+        }
+    }
+
+    if (applied) {
+        V_LOGI("Command '{}' is now {}", toUtf8View(name), enabled ? "enabled" : "disabled");
+    }
+    else {
+        V_LOGI("Command '{}' is not registered; the preference applies when it registers again: {}", toUtf8View(name),
+               enabled ? "enabled" : "disabled");
+    }
+    return true;
+}
+
 bool CommandManager::registerAlias(const String& alias, const String& target)
 {
     if (alias.empty() || target.empty()) {
@@ -1001,7 +1226,8 @@ bool CommandManager::unregisterAlias(const String& alias)
 bool CommandManager::isRegistered(const String& name) const
 {
     std::lock_guard<std::mutex> lock(d->registry_mutex);
-    return d->registry.find(d->resolveName(name)) != d->registry.end();
+    const auto it = d->registry.find(d->resolveName(name));
+    return it != d->registry.end() && it->second.enabled;
 }
 
 std::vector<String> CommandManager::names() const
@@ -1041,6 +1267,7 @@ std::vector<CommandInfo> CommandManager::commandInfos() const
         info.group       = entry.second.group;
         info.description = entry.second.description;
         info.owner       = entry.second.owner;
+        info.enabled     = entry.second.enabled;
         index_by_name.emplace(info.name, result.size());
         result.push_back(std::move(info));
     }

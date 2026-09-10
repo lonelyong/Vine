@@ -64,7 +64,7 @@ using EventBusErrorHandler = std::function<void(const EventBusError&)>;
  * Move-only; copy is disabled to prevent double cancellation, and a moved-from
  * handle is inactive and a no-op.
  */
-class Subscription {
+class V_APPFW_API Subscription {
   public:
     Subscription() noexcept = default;
 

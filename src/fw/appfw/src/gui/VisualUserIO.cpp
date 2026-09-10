@@ -46,6 +46,13 @@ void VisualUserIO::refreshCompletion()
     std::vector<ConsoleCommandEntry> entries;
     for (const auto& info : commandManager()->commandInfos())
     {
+        // A disabled command cannot run, so offering it for completion would only
+        // lead to a failed execution.
+        if (!info.enabled)
+        {
+            continue;
+        }
+
         // The popup prefix is the plugin's human-friendly display name.
         String source = info.owner;
         if (pm != nullptr && !info.owner.empty())

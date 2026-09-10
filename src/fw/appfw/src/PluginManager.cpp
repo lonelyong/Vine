@@ -388,7 +388,10 @@ bool isBuiltInPath(const std::filesystem::path& path)
         return false;
     }
     const auto relative = file.lexically_relative(dir);
-    return !relative.empty() && relative.native().rfind("..", 0) != 0;
+    if (relative.empty()) {
+        return false;
+    }
+    return *relative.begin() != std::filesystem::path("..");
 }
 
 /**

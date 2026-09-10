@@ -5,12 +5,10 @@
 #include <QBrush>
 #include <QClipboard>
 #include <QColor>
-#include <QDesktopServices>
 #include <QDialog>
 #include <QFileDialog>
 #include <QFont>
 #include <QFormLayout>
-#include <QGroupBox>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHash>
@@ -26,9 +24,9 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QSvgRenderer>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QToolButton>
-#include <QUrl>
 #include <QVBoxLayout>
 
 #include <vine/appfw/CommandManager.hpp>
@@ -37,6 +35,7 @@
 #include <vine/appfw/gui/UIElementData.hpp>
 
 #include "Convert.hpp"
+#include "TableStyle.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
@@ -222,35 +221,34 @@ QString badgeStyle(const vine::appfw::PluginEntry* entry)
 V_OBJECT_META_IMPL(PluginManagerDialog, Window)
 
 struct PluginManagerDialog::Impl : public UIElementData {
-    vine::appfw::PluginManager* manager       = nullptr;
-    QLineEdit*                  filter        = nullptr;
-    QListWidget*                list          = nullptr;
-    QPushButton*                loadBtn       = nullptr;
-    QToolButton*                installBtn    = nullptr;
-    QStackedWidget*             stack         = nullptr;
-    QLabel*                     iconLabel     = nullptr;
-    QLabel*                     titleLabel    = nullptr;
-    QLabel*                     subtitleLabel = nullptr;
-    QLabel*                     metaLabel     = nullptr;
-    QLabel*                     statusBadge   = nullptr;
-    QLabel*                     statusLabel   = nullptr;
-    QLabel*                     descLabel     = nullptr;
-    QLabel*                     idLabel       = nullptr;
-    QLabel*                     versionLabel  = nullptr;
-    QLabel*                     scopeLabel    = nullptr;
-    QLabel*                     depLabel      = nullptr;
-    QLabel*                     uuidLabel     = nullptr;
-    QLabel*                     pathLabel     = nullptr;
-    QLabel*                     emailLabel    = nullptr;
-    QLabel*                     repoLabel     = nullptr;
-    QLabel*                     messageLabel  = nullptr;
-    QTableWidget*               cmdTable      = nullptr;
-    QTableWidget*               cfgTable      = nullptr;
-    QPushButton*                toggleBtn     = nullptr;
-    QPushButton*                uninstallBtn  = nullptr;
-    QPushButton*                repoBtn       = nullptr;
+    vine::appfw::PluginManager* manager        = nullptr;
+    QLineEdit*                  filter         = nullptr;
+    QListWidget*                list           = nullptr;
+    QPushButton*                load_btn       = nullptr;
+    QToolButton*                install_btn    = nullptr;
+    QStackedWidget*             stack          = nullptr;
+    QLabel*                     icon_label     = nullptr;
+    QLabel*                     title_label    = nullptr;
+    QLabel*                     subtitle_label = nullptr;
+    QLabel*                     meta_label     = nullptr;
+    QLabel*                     status_badge   = nullptr;
+    QLabel*                     status_label   = nullptr;
+    QLabel*                     desc_label     = nullptr;
+    QLabel*                     id_label       = nullptr;
+    QLabel*                     version_label  = nullptr;
+    QLabel*                     scope_label    = nullptr;
+    QLabel*                     dep_label      = nullptr;
+    QLabel*                     uuid_label     = nullptr;
+    QLabel*                     path_label     = nullptr;
+    QLabel*                     email_label    = nullptr;
+    QLabel*                     repo_label     = nullptr;
+    QLabel*                     message_label  = nullptr;
+    QTableWidget*               cmd_table      = nullptr;
+    QTableWidget*               cfg_table      = nullptr;
+    QPushButton*                toggle_btn     = nullptr;
+    QPushButton*                uninstall_btn  = nullptr;
 
-    /// Repository URL of the selected plugin; the "open repository" button uses it.
+    /// Repository URL of the selected plugin; the info tab links to it.
     QString current_repo;
 
     /// Rendered icons, keyed by "<size>|<svg source>": the list is rebuilt on every
@@ -299,42 +297,42 @@ PluginManagerDialog::PluginManagerDialog(vine::appfw::PluginManager* manager)
     outer->addWidget(splitter, 1);
 
     // ---- Left: filter + plugin list + the two "bring a plugin in" actions ----
-    auto* left    = new QWidget(splitter);
-    auto* leftLay = new QVBoxLayout(left);
-    leftLay->setContentsMargins(0, 0, 0, 0);
-    leftLay->setSpacing(6);
+    auto* left     = new QWidget(splitter);
+    auto* left_lay = new QVBoxLayout(left);
+    left_lay->setContentsMargins(0, 0, 0, 0);
+    left_lay->setSpacing(6);
 
     data->filter = new QLineEdit(left);
     data->filter->setPlaceholderText(QStringLiteral("筛选（名称 / 显示名 / 厂商 / 描述）"));
     data->filter->setClearButtonEnabled(true);
-    leftLay->addWidget(data->filter);
+    left_lay->addWidget(data->filter);
 
     data->list = new QListWidget(left);
     data->list->setSelectionMode(QAbstractItemView::SingleSelection);
     data->list->setContextMenuPolicy(Qt::CustomContextMenu);
     data->list->setIconSize(QSize(20, 20));
     data->list->setUniformItemSizes(true);
-    leftLay->addWidget(data->list, 1);
+    left_lay->addWidget(data->list, 1);
 
-    data->loadBtn    = new QPushButton(QStringLiteral("加载插件…"), left);
-    data->loadBtn->setToolTip(QStringLiteral("立即加载并运行，不写注册表（重启后不保留）。"));
+    data->load_btn = new QPushButton(QStringLiteral("加载插件…"), left);
+    data->load_btn->setToolTip(QStringLiteral("立即加载并运行，不写注册表（重启后不保留）。"));
 
-    data->installBtn = new QToolButton(left);
-    data->installBtn->setText(QStringLiteral("安装插件"));
-    data->installBtn->setPopupMode(QToolButton::InstantPopup);
-    data->installBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    data->installBtn->setToolTip(QStringLiteral("注册一个插件位置（库文件或目录，可在程序目录之外）；重启后加载。"));
-    auto*    installMenu     = new QMenu(data->installBtn);
-    QAction* installForUser  = installMenu->addAction(QStringLiteral("仅当前用户…"));
-    QAction* installForUsers = installMenu->addAction(QStringLiteral("所有用户…"));
-    data->installBtn->setMenu(installMenu);
+    data->install_btn = new QToolButton(left);
+    data->install_btn->setText(QStringLiteral("安装插件"));
+    data->install_btn->setPopupMode(QToolButton::InstantPopup);
+    data->install_btn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    data->install_btn->setToolTip(QStringLiteral("注册一个插件位置（库文件或目录，可在程序目录之外）；重启后加载。"));
+    auto*    install_menu      = new QMenu(data->install_btn);
+    QAction* install_for_user  = install_menu->addAction(QStringLiteral("仅当前用户…"));
+    QAction* install_for_users = install_menu->addAction(QStringLiteral("所有用户…"));
+    data->install_btn->setMenu(install_menu);
 
-    auto* listActions = new QHBoxLayout();
-    listActions->setSpacing(6);
-    listActions->addWidget(data->loadBtn);
-    listActions->addWidget(data->installBtn);
-    listActions->addStretch();
-    leftLay->addLayout(listActions);
+    auto* list_actions = new QHBoxLayout();
+    list_actions->setSpacing(6);
+    list_actions->addWidget(data->load_btn);
+    list_actions->addWidget(data->install_btn);
+    list_actions->addStretch();
+    left_lay->addLayout(list_actions);
 
     splitter->addWidget(left);
 
@@ -342,224 +340,229 @@ PluginManagerDialog::PluginManagerDialog(vine::appfw::PluginManager* manager)
     data->stack = new QStackedWidget(splitter);
 
     // Placeholder: what the dialog is for, so an empty right pane is not a blank.
-    auto* placeholder    = new QWidget(data->stack);
-    auto* placeholderLay = new QVBoxLayout(placeholder);
-    placeholderLay->addStretch();
+    auto* placeholder     = new QWidget(data->stack);
+    auto* placeholder_lay = new QVBoxLayout(placeholder);
+    placeholder_lay->addStretch();
 
-    auto* placeholderIcon = new QLabel(placeholder);
-    placeholderIcon->setPixmap(renderSvgIcon(QString::fromUtf8(s_default_plugin_icon_svg), 64));
-    placeholderIcon->setAlignment(Qt::AlignCenter);
+    auto* placeholder_icon = new QLabel(placeholder);
+    placeholder_icon->setPixmap(renderSvgIcon(QString::fromUtf8(s_default_plugin_icon_svg), 64));
+    placeholder_icon->setAlignment(Qt::AlignCenter);
 
-    auto* placeholderText = new QLabel(QStringLiteral("选择一个插件查看详情"), placeholder);
-    placeholderText->setAlignment(Qt::AlignCenter);
-    QFont placeholderFont = placeholderText->font();
-    placeholderFont.setPointSizeF(placeholderFont.pointSizeF() + 1.0);
-    placeholderText->setFont(placeholderFont);
+    auto* placeholder_text = new QLabel(QStringLiteral("选择一个插件查看详情"), placeholder);
+    placeholder_text->setAlignment(Qt::AlignCenter);
+    QFont placeholder_font = placeholder_text->font();
+    placeholder_font.setPointSizeF(placeholder_font.pointSizeF() + 1.0);
+    placeholder_text->setFont(placeholder_font);
 
-    auto* placeholderHint = new QLabel(QStringLiteral("详情页显示来源、依赖、命令与配置，并给出可执行的操作。"), placeholder);
-    placeholderHint->setAlignment(Qt::AlignCenter);
-    placeholderHint->setStyleSheet(QStringLiteral("color: gray;"));
+    auto* placeholder_hint = new QLabel(QStringLiteral("详情页显示来源、依赖、命令与配置，并给出可执行的操作。"), placeholder);
+    placeholder_hint->setAlignment(Qt::AlignCenter);
+    placeholder_hint->setStyleSheet(QStringLiteral("color: gray;"));
 
-    placeholderLay->addWidget(placeholderIcon);
-    placeholderLay->addSpacing(6);
-    placeholderLay->addWidget(placeholderText);
-    placeholderLay->addWidget(placeholderHint);
-    placeholderLay->addStretch();
+    placeholder_lay->addWidget(placeholder_icon);
+    placeholder_lay->addSpacing(6);
+    placeholder_lay->addWidget(placeholder_text);
+    placeholder_lay->addWidget(placeholder_hint);
+    placeholder_lay->addStretch();
     data->stack->addWidget(placeholder);
 
-    // The detail page scrolls: a header, four groups and two tables must not be
-    // squashed by a small window (and the tables keep their own scrollbars).
-    auto* detailScroll = new QScrollArea(data->stack);
-    detailScroll->setWidgetResizable(true);
-    detailScroll->setFrameShape(QFrame::NoFrame);
+    // The detail page scrolls: the header and the tab pages must not be squashed
+    // by a small window (and the tables keep their own scrollbars).
+    auto* detail_scroll = new QScrollArea(data->stack);
+    detail_scroll->setWidgetResizable(true);
+    detail_scroll->setFrameShape(QFrame::NoFrame);
 
-    auto* detail    = new QWidget(detailScroll);
-    auto* detailLay = new QVBoxLayout(detail);
-    detailLay->setContentsMargins(12, 4, 8, 4);
-    detailLay->setSpacing(10);
-    detailScroll->setWidget(detail);
-    data->stack->addWidget(detailScroll);
+    auto* detail     = new QWidget(detail_scroll);
+    auto* detail_lay = new QVBoxLayout(detail);
+    detail_lay->setContentsMargins(12, 4, 8, 4);
+    detail_lay->setSpacing(10);
+    detail_scroll->setWidget(detail);
+    data->stack->addWidget(detail_scroll);
 
     // Header: icon, display name, identity line, vendor contact and state badge.
-    auto* header    = new QWidget(detail);
-    auto* headerLay = new QHBoxLayout(header);
-    headerLay->setContentsMargins(0, 0, 0, 0);
-    headerLay->setSpacing(12);
+    auto* header     = new QWidget(detail);
+    auto* header_lay = new QHBoxLayout(header);
+    header_lay->setContentsMargins(0, 0, 0, 0);
+    header_lay->setSpacing(12);
 
-    data->iconLabel = new QLabel(header);
-    data->iconLabel->setFixedSize(56, 56);
-    data->iconLabel->setAlignment(Qt::AlignCenter);
-    headerLay->addWidget(data->iconLabel, 0, Qt::AlignTop);
+    data->icon_label = new QLabel(header);
+    data->icon_label->setFixedSize(56, 56);
+    data->icon_label->setAlignment(Qt::AlignCenter);
+    header_lay->addWidget(data->icon_label, 0, Qt::AlignTop);
 
-    auto* titleCol = new QVBoxLayout();
-    titleCol->setSpacing(2);
+    auto* title_col = new QVBoxLayout();
+    title_col->setSpacing(2);
 
-    data->titleLabel = new QLabel(header);
-    QFont titleFont  = data->titleLabel->font();
-    titleFont.setPointSizeF(titleFont.pointSizeF() + 3.0);
-    titleFont.setBold(true);
-    data->titleLabel->setFont(titleFont);
-    data->titleLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    data->titleLabel->setWordWrap(true);
+    data->title_label = new QLabel(header);
+    QFont title_font  = data->title_label->font();
+    title_font.setPointSizeF(title_font.pointSizeF() + 3.0);
+    title_font.setBold(true);
+    data->title_label->setFont(title_font);
+    data->title_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    data->title_label->setWordWrap(true);
 
-    data->subtitleLabel = new QLabel(header);
-    data->subtitleLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    data->subtitleLabel->setStyleSheet(QStringLiteral("color: gray;"));
+    data->subtitle_label = new QLabel(header);
+    data->subtitle_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    data->subtitle_label->setStyleSheet(QStringLiteral("color: gray;"));
 
-    data->metaLabel = new QLabel(header);
-    data->metaLabel->setTextFormat(Qt::RichText);
-    data->metaLabel->setOpenExternalLinks(true);
-    data->metaLabel->setWordWrap(true);
+    data->meta_label = new QLabel(header);
+    data->meta_label->setTextFormat(Qt::RichText);
+    data->meta_label->setOpenExternalLinks(true);
+    data->meta_label->setWordWrap(true);
 
-    titleCol->addWidget(data->titleLabel);
-    titleCol->addWidget(data->subtitleLabel);
-    titleCol->addWidget(data->metaLabel);
-    titleCol->addStretch();
-    headerLay->addLayout(titleCol, 1);
+    title_col->addWidget(data->title_label);
+    title_col->addWidget(data->subtitle_label);
+    title_col->addWidget(data->meta_label);
+    title_col->addStretch();
+    header_lay->addLayout(title_col, 1);
 
-    data->statusBadge = new QLabel(header);
-    data->statusBadge->setAlignment(Qt::AlignCenter);
-    headerLay->addWidget(data->statusBadge, 0, Qt::AlignTop);
-    detailLay->addWidget(header);
+    data->status_badge = new QLabel(header);
+    data->status_badge->setAlignment(Qt::AlignCenter);
+    header_lay->addWidget(data->status_badge, 0, Qt::AlignTop);
+    detail_lay->addWidget(header);
 
     // The badge is the glance; this line is the reason (and what to do about it).
-    data->statusLabel = new QLabel(detail);
-    data->statusLabel->setWordWrap(true);
-    data->statusLabel->setFrameShape(QFrame::StyledPanel);
-    data->statusLabel->setMargin(6);
-    data->statusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    detailLay->addWidget(data->statusLabel);
+    data->status_label = new QLabel(detail);
+    data->status_label->setWordWrap(true);
+    data->status_label->setFrameShape(QFrame::StyledPanel);
+    data->status_label->setMargin(6);
+    data->status_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    detail_lay->addWidget(data->status_label);
 
     // Actions: showDetail() shows only the ones that can take effect.
-    data->toggleBtn    = new QPushButton(QStringLiteral("禁用插件"), detail);
-    data->uninstallBtn = new QPushButton(QStringLiteral("卸载插件"), detail);
-    data->repoBtn      = new QPushButton(QStringLiteral("打开仓库"), detail);
-    data->toggleBtn->setToolTip(QStringLiteral("只写偏好，不动本次运行；下次启动生效。"));
-    data->uninstallBtn->setToolTip(QStringLiteral("移除注册文件，重启后不再加载。"));
-    data->repoBtn->setToolTip(QStringLiteral("在浏览器中打开插件的仓库或问题跟踪地址。"));
+    data->toggle_btn    = new QPushButton(QStringLiteral("禁用插件"), detail);
+    data->uninstall_btn = new QPushButton(QStringLiteral("卸载插件"), detail);
+    data->toggle_btn->setToolTip(QStringLiteral("只写偏好，不动本次运行；下次启动生效。"));
+    data->uninstall_btn->setToolTip(QStringLiteral("移除注册文件，重启后不再加载。"));
 
-    auto* actionRow = new QHBoxLayout();
-    actionRow->setSpacing(6);
-    actionRow->addWidget(data->toggleBtn);
-    actionRow->addWidget(data->uninstallBtn);
-    actionRow->addWidget(data->repoBtn);
-    actionRow->addStretch();
-    detailLay->addLayout(actionRow);
-    data->toggleBtn->setVisible(false);
-    data->uninstallBtn->setVisible(false);
-    data->repoBtn->setVisible(false);
+    auto* action_row = new QHBoxLayout();
+    action_row->setSpacing(6);
+    action_row->addWidget(data->toggle_btn);
+    action_row->addWidget(data->uninstall_btn);
+    action_row->addStretch();
+    detail_lay->addLayout(action_row);
+    data->toggle_btn->setVisible(false);
+    data->uninstall_btn->setVisible(false);
 
-    // Description.
-    auto* descBox = new QGroupBox(QStringLiteral("描述"), detail);
-    auto* descLay = new QVBoxLayout(descBox);
-    descLay->setContentsMargins(8, 6, 8, 6);
-    data->descLabel = new QLabel(descBox);
-    data->descLabel->setWordWrap(true);
-    data->descLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    descLay->addWidget(data->descLabel);
-    detailLay->addWidget(descBox);
+    // The details are tabs: one facet at a time stays readable, and the tables
+    // get the full height instead of a quarter of it. The pane background is set
+    // here, rather than left to the style, so that it and the table headers are
+    // the same colour by construction (the style shades the native pane
+    // differently from any palette role).
+    auto* tabs = new QTabWidget(detail);
+    tabs->setStyleSheet(QStringLiteral("QTabWidget::pane { background: palette(window);"
+                                       " border: 1px solid palette(mid); }"));
 
-    // Metadata: identity, origin, what it needs, where it lives, who wrote it.
-    auto* infoBox = new QGroupBox(QStringLiteral("信息"), detail);
-    auto* form    = new QFormLayout(infoBox);
-    form->setContentsMargins(8, 6, 8, 6);
+    // Info tab: the description, then identity, origin, needs, location, author.
+    auto* info_page = new QWidget(tabs);
+    auto* info_lay  = new QVBoxLayout(info_page);
+    info_lay->setContentsMargins(10, 10, 10, 10);
+
+    auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
     form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
-    const auto makeValue = [infoBox] {
-        auto* label = new QLabel(infoBox);
+    const auto make_value = [info_page] {
+        auto* label = new QLabel(info_page);
         label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::LinksAccessibleByMouse);
         label->setWordWrap(true);
         return label;
     };
 
-    data->idLabel      = makeValue();
-    data->versionLabel = makeValue();
-    data->scopeLabel   = makeValue();
-    data->depLabel     = makeValue();
-    data->uuidLabel    = makeValue();
-    data->pathLabel    = makeValue();
-    data->emailLabel   = makeValue();
-    data->repoLabel    = makeValue();
+    // The description leads the tab: it answers "what is this plugin" before the
+    // identifiers do, which is why it is no longer a group of its own.
+    data->desc_label    = make_value();
+    data->id_label      = make_value();
+    data->version_label = make_value();
+    data->scope_label   = make_value();
+    data->dep_label     = make_value();
+    data->uuid_label    = make_value();
+    data->path_label    = make_value();
+    data->email_label   = make_value();
+    data->repo_label    = make_value();
 
     // Identifiers and paths read better in a monospaced font.
-    QFont mono = data->uuidLabel->font();
+    QFont mono = data->uuid_label->font();
     mono.setFamilies({ QStringLiteral("monospace"), QStringLiteral("Consolas"), QStringLiteral("DejaVu Sans Mono") });
-    data->uuidLabel->setFont(mono);
-    data->pathLabel->setFont(mono);
+    data->uuid_label->setFont(mono);
+    data->path_label->setFont(mono);
 
-    form->addRow(QStringLiteral("标识"), data->idLabel);
-    form->addRow(QStringLiteral("版本"), data->versionLabel);
-    form->addRow(QStringLiteral("来源"), data->scopeLabel);
-    form->addRow(QStringLiteral("依赖"), data->depLabel);
-    form->addRow(QStringLiteral("UUID"), data->uuidLabel);
-    form->addRow(QStringLiteral("库路径"), data->pathLabel);
-    form->addRow(QStringLiteral("邮箱"), data->emailLabel);
-    form->addRow(QStringLiteral("仓库"), data->repoLabel);
-    detailLay->addWidget(infoBox);
+    form->addRow(QStringLiteral("描述"), data->desc_label);
+    form->addRow(QStringLiteral("标识"), data->id_label);
+    form->addRow(QStringLiteral("版本"), data->version_label);
+    form->addRow(QStringLiteral("来源"), data->scope_label);
+    form->addRow(QStringLiteral("依赖"), data->dep_label);
+    form->addRow(QStringLiteral("UUID"), data->uuid_label);
+    form->addRow(QStringLiteral("库路径"), data->path_label);
+    form->addRow(QStringLiteral("邮箱"), data->email_label);
+    form->addRow(QStringLiteral("仓库"), data->repo_label);
 
-    // Commands reported by the plugin.
-    data->cmdTable = new QTableWidget(0, 3, detail);
-    data->cmdTable->setHorizontalHeaderLabels({ QStringLiteral("命令"), QStringLiteral("分组"), QStringLiteral("描述") });
-    data->cmdTable->horizontalHeader()->setStretchLastSection(true);
-    data->cmdTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    data->cmdTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    data->cmdTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    data->cmdTable->setMinimumHeight(120);
-    auto* cmdBox = new QGroupBox(QStringLiteral("命令"), detail);
-    auto* cmdLay = new QVBoxLayout(cmdBox);
-    cmdLay->setContentsMargins(8, 6, 8, 6);
-    cmdLay->addWidget(data->cmdTable);
-    detailLay->addWidget(cmdBox, 1);
+    // The row carries the URL, so a click opens the browser just like the former
+    // "open repository" button did.
+    data->repo_label->setOpenExternalLinks(true);
+    info_lay->addLayout(form);
+    info_lay->addStretch();
+    tabs->addTab(info_page, QStringLiteral("信息"));
 
-    // Config items reported by the plugin.
-    data->cfgTable = new QTableWidget(0, 3, detail);
-    data->cfgTable->setHorizontalHeaderLabels({ QStringLiteral("键"), QStringLiteral("标签"), QStringLiteral("描述") });
-    data->cfgTable->horizontalHeader()->setStretchLastSection(true);
-    data->cfgTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    data->cfgTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    data->cfgTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    data->cfgTable->setMinimumHeight(120);
-    auto* cfgBox = new QGroupBox(QStringLiteral("配置"), detail);
-    auto* cfgLay = new QVBoxLayout(cfgBox);
-    cfgLay->setContentsMargins(8, 6, 8, 6);
-    cfgLay->addWidget(data->cfgTable);
-    detailLay->addWidget(cfgBox, 1);
+    // Commands tab: what the plugin adds to the command registry.
+    auto* cmd_page = new QWidget(tabs);
+    auto* cmd_lay  = new QVBoxLayout(cmd_page);
+    cmd_lay->setContentsMargins(6, 6, 6, 6);
+    data->cmd_table = new QTableWidget(0, 3, cmd_page);
+    data->cmd_table->setHorizontalHeaderLabels({ QStringLiteral("命令"), QStringLiteral("分组"), QStringLiteral("描述") });
+    data->cmd_table->horizontalHeader()->setStretchLastSection(true);
+    data->cmd_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    data->cmd_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    data->cmd_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    data->cmd_table->setMinimumHeight(120);
+    detail::blendIntoSurface(data->cmd_table);
+    cmd_lay->addWidget(data->cmd_table, 1);
+    tabs->addTab(cmd_page, QStringLiteral("命令"));
+
+    // Config tab: the items the plugin registered with the host.
+    auto* cfg_page = new QWidget(tabs);
+    auto* cfg_lay  = new QVBoxLayout(cfg_page);
+    cfg_lay->setContentsMargins(6, 6, 6, 6);
+    data->cfg_table = new QTableWidget(0, 3, cfg_page);
+    data->cfg_table->setHorizontalHeaderLabels({ QStringLiteral("键"), QStringLiteral("标签"), QStringLiteral("描述") });
+    data->cfg_table->horizontalHeader()->setStretchLastSection(true);
+    data->cfg_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    data->cfg_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    data->cfg_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    data->cfg_table->setMinimumHeight(120);
+    detail::blendIntoSurface(data->cfg_table);
+    cfg_lay->addWidget(data->cfg_table, 1);
+    tabs->addTab(cfg_page, QStringLiteral("配置"));
+
+    detail_lay->addWidget(tabs, 1);
 
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
     splitter->setSizes({ 300, 620 });
 
     // ---- Bottom: feedback on the left, dialog commands on the right ----
-    auto* bottomLay = new QHBoxLayout();
-    bottomLay->setSpacing(8);
+    auto* bottom_lay = new QHBoxLayout();
+    bottom_lay->setSpacing(8);
 
-    data->messageLabel = new QLabel(root);
-    data->messageLabel->setWordWrap(true);
-    data->messageLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    bottomLay->addWidget(data->messageLabel, 1);
+    data->message_label = new QLabel(root);
+    data->message_label->setWordWrap(true);
+    data->message_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    bottom_lay->addWidget(data->message_label, 1);
 
-    auto* refreshBtn = new QPushButton(QStringLiteral("刷新"), root);
-    auto* closeBtn   = new QPushButton(QStringLiteral("关闭"), root);
-    refreshBtn->setToolTip(QStringLiteral("重新扫描自带插件目录与已注册的位置。"));
-    bottomLay->addWidget(refreshBtn);
-    bottomLay->addWidget(closeBtn);
-    outer->addLayout(bottomLay);
+    auto* refresh_btn = new QPushButton(QStringLiteral("刷新"), root);
+    auto* close_btn   = new QPushButton(QStringLiteral("关闭"), root);
+    refresh_btn->setToolTip(QStringLiteral("重新扫描自带插件目录与已注册的位置。"));
+    bottom_lay->addWidget(refresh_btn);
+    bottom_lay->addWidget(close_btn);
+    outer->addLayout(bottom_lay);
 
     QObject::connect(data->filter, &QLineEdit::textChanged, root, [this] { refresh(); });
-    QObject::connect(data->loadBtn, &QPushButton::clicked, root, [this] { loadPlugin(); });
-    QObject::connect(installForUser, &QAction::triggered, root, [this] { installPlugin(vine::appfw::PluginScope::User); });
-    QObject::connect(installForUsers, &QAction::triggered, root, [this] { installPlugin(vine::appfw::PluginScope::AllUsers); });
-    QObject::connect(data->toggleBtn, &QPushButton::clicked, root, [this] { togglePluginEnabled(); });
-    QObject::connect(data->uninstallBtn, &QPushButton::clicked, root, [this] { uninstallSelectedPlugin(); });
-    QObject::connect(data->repoBtn, &QPushButton::clicked, root, [this] {
-        auto* data = dptr();
-        if (!data->current_repo.isEmpty()) {
-            QDesktopServices::openUrl(QUrl(data->current_repo));
-        }
-    });
-    QObject::connect(refreshBtn, &QPushButton::clicked, root, [this] { refresh(); });
-    QObject::connect(closeBtn, &QPushButton::clicked, root, [root] { root->close(); });
+    QObject::connect(data->load_btn, &QPushButton::clicked, root, [this] { loadPlugin(); });
+    QObject::connect(install_for_user, &QAction::triggered, root, [this] { installPlugin(vine::appfw::PluginScope::User); });
+    QObject::connect(install_for_users, &QAction::triggered, root, [this] { installPlugin(vine::appfw::PluginScope::AllUsers); });
+    QObject::connect(data->toggle_btn, &QPushButton::clicked, root, [this] { togglePluginEnabled(); });
+    QObject::connect(data->uninstall_btn, &QPushButton::clicked, root, [this] { uninstallSelectedPlugin(); });
+    QObject::connect(refresh_btn, &QPushButton::clicked, root, [this] { refresh(); });
+    QObject::connect(close_btn, &QPushButton::clicked, root, [root] { root->close(); });
 
     QObject::connect(data->list, &QListWidget::currentItemChanged, root, [this](QListWidgetItem* item, QListWidgetItem*) {
         showDetail(item ? Convert::fromQString(item->data(Qt::UserRole).toString()) : vine::String{});
@@ -584,44 +587,44 @@ PluginManagerDialog::PluginManagerDialog(vine::appfw::PluginManager* manager)
         const auto* registration = entry != nullptr ? findRegistration(registrations, entry->path) : nullptr;
 
         QMenu menu(data->list);
-        QAction* viewAction     = menu.addAction(QStringLiteral("查看详情"));
-        viewAction->setEnabled(entry != nullptr);
-        QAction* toggleAction   = menu.addAction(entry != nullptr && entry->enabled ? QStringLiteral("禁用插件（重启后生效）")
-                                                                                 : QStringLiteral("启用插件（重启后生效）"));
-        toggleAction->setVisible(toggleable);
-        QAction* uninstallAction = menu.addAction(QStringLiteral("卸载插件（移除注册，重启生效）"));
-        uninstallAction->setVisible(registration != nullptr);
-        QAction* copyPathAction  = menu.addAction(QStringLiteral("复制库路径"));
-        copyPathAction->setVisible(entry != nullptr && !entry->path.empty());
+        QAction* view_action      = menu.addAction(QStringLiteral("查看详情"));
+        view_action->setEnabled(entry != nullptr);
+        QAction* toggle_action    = menu.addAction(entry != nullptr && entry->enabled ? QStringLiteral("禁用插件（重启后生效）")
+                                                                                   : QStringLiteral("启用插件（重启后生效）"));
+        toggle_action->setVisible(toggleable);
+        QAction* uninstall_action = menu.addAction(QStringLiteral("卸载插件（移除注册，重启生效）"));
+        uninstall_action->setVisible(registration != nullptr);
+        QAction* copy_path_action = menu.addAction(QStringLiteral("复制库路径"));
+        copy_path_action->setVisible(entry != nullptr && !entry->path.empty());
         menu.addSeparator();
-        QAction* loadAction            = menu.addAction(QStringLiteral("加载插件…"));
-        QAction* installAction         = menu.addAction(QStringLiteral("安装插件（仅当前用户）…"));
-        QAction* installAllUsersAction = menu.addAction(QStringLiteral("安装插件（所有用户）…"));
-        QAction* refreshAction         = menu.addAction(QStringLiteral("刷新"));
-        QAction* chosen                = menu.exec(data->list->viewport()->mapToGlobal(pos));
+        QAction* load_action              = menu.addAction(QStringLiteral("加载插件…"));
+        QAction* install_action           = menu.addAction(QStringLiteral("安装插件（仅当前用户）…"));
+        QAction* install_all_users_action = menu.addAction(QStringLiteral("安装插件（所有用户）…"));
+        QAction* refresh_action           = menu.addAction(QStringLiteral("刷新"));
+        QAction* chosen                   = menu.exec(data->list->viewport()->mapToGlobal(pos));
 
-        if (chosen == viewAction) {
+        if (chosen == view_action) {
             if (item) {
                 data->list->setCurrentItem(item);
             }
             showDetail(selected);
-        } else if (chosen == toggleAction) {
+        } else if (chosen == toggle_action) {
             if (item) {
                 data->list->setCurrentItem(item);
             }
             togglePluginEnabled();
-        } else if (chosen == uninstallAction) {
+        } else if (chosen == uninstall_action) {
             uninstallSelectedPlugin();
-        } else if (chosen == copyPathAction && entry != nullptr) {
+        } else if (chosen == copy_path_action && entry != nullptr) {
             QGuiApplication::clipboard()->setText(QString::fromUtf8(entry->path.u8string().c_str()));
-            data->messageLabel->setText(QStringLiteral("已复制库路径。"));
-        } else if (chosen == loadAction) {
+            data->message_label->setText(QStringLiteral("已复制库路径。"));
+        } else if (chosen == load_action) {
             loadPlugin();
-        } else if (chosen == installAction) {
+        } else if (chosen == install_action) {
             installPlugin(vine::appfw::PluginScope::User);
-        } else if (chosen == installAllUsersAction) {
+        } else if (chosen == install_all_users_action) {
             installPlugin(vine::appfw::PluginScope::AllUsers);
-        } else if (chosen == refreshAction) {
+        } else if (chosen == refresh_action) {
             refresh();
         }
     });
@@ -649,10 +652,10 @@ void PluginManagerDialog::loadPlugin()
     // Report the outcome: the list only shows the state, and a plugin can be
     // refused (disabled, skipped, not a Vine plugin).
     if (data->manager->load(Convert::fromQString(file)) != nullptr) {
-        data->messageLabel->setText(QStringLiteral("已加载并运行。"));
+        data->message_label->setText(QStringLiteral("已加载并运行。"));
     }
     else {
-        data->messageLabel->setText(QStringLiteral("加载失败：不是有效的 Vine 插件，或它已被禁用/被程序跳过（详见日志）。"));
+        data->message_label->setText(QStringLiteral("加载失败：不是有效的 Vine 插件，或它已被禁用/被程序跳过（详见日志）。"));
     }
     refresh();
 }
@@ -668,7 +671,7 @@ void PluginManagerDialog::refresh()
     data->list->blockSignals(true);
     data->list->clear();
 
-    int selectRow = -1;
+    int select_row = -1;
     if (data->manager) {
         // Discovery, not loading: plugins that are disabled, skipped by the host or
         // failed to load are listed as well, with their metadata, so they can be
@@ -711,7 +714,7 @@ void PluginManagerDialog::refresh()
 
             item->setHidden(!matches);
             if (matches && plugin_name == prev) {
-                selectRow = data->list->count() - 1;
+                select_row = data->list->count() - 1;
             }
         }
     }
@@ -719,17 +722,17 @@ void PluginManagerDialog::refresh()
 
     // Keep the selection on a row the filter still shows; otherwise take the first
     // visible one, so a filtered list never leaves the detail page on a stale plugin.
-    if (selectRow < 0) {
+    if (select_row < 0) {
         for (int row = 0; row < data->list->count(); ++row) {
             if (!data->list->item(row)->isHidden()) {
-                selectRow = row;
+                select_row = row;
                 break;
             }
         }
     }
 
-    if (selectRow >= 0) {
-        data->list->setCurrentRow(selectRow);
+    if (select_row >= 0) {
+        data->list->setCurrentRow(select_row);
     }
     else {
         showDetail({});
@@ -755,15 +758,15 @@ void PluginManagerDialog::installPlugin(vine::appfw::PluginScope scope)
     const String path = Convert::fromQString(file);
     const String id   = data->manager->installPlugin(path, scope);
     if (!id.empty()) {
-        data->messageLabel->setText(QStringLiteral("已注册（") + scopeLabel(scope) + QStringLiteral("）：") + file
-                                    + QStringLiteral("，重启后加载。"));
+        data->message_label->setText(QStringLiteral("已注册（") + scopeLabel(scope) + QStringLiteral("）：") + file
+                                     + QStringLiteral("，重启后加载。"));
     }
     else if (scope == vine::appfw::PluginScope::AllUsers) {
-        data->messageLabel->setText(QStringLiteral("为所有用户注册失败（需要管理员权限，或文件不存在）：") + file
-                                    + QStringLiteral("；可改用“仅当前用户”安装。"));
+        data->message_label->setText(QStringLiteral("为所有用户注册失败（需要管理员权限，或文件不存在）：") + file
+                                     + QStringLiteral("；可改用“仅当前用户”安装。"));
     }
     else {
-        data->messageLabel->setText(QStringLiteral("注册失败（文件不存在或无法写入注册目录）：") + file);
+        data->message_label->setText(QStringLiteral("注册失败（文件不存在或无法写入注册目录）：") + file);
     }
     refresh();
 }
@@ -788,16 +791,16 @@ void PluginManagerDialog::uninstallSelectedPlugin()
     const auto  registrations = data->manager->pluginRegistrations();
     const auto* registration  = findRegistration(registrations, entry->path);
     if (registration == nullptr) {
-        data->messageLabel->setText(QStringLiteral("该插件由程序自带，不能卸载。"));
+        data->message_label->setText(QStringLiteral("该插件由程序自带，不能卸载。"));
         return;
     }
 
     // Removing the registration takes effect at the next start; a running plugin
     // keeps running until then (see PluginManager::uninstallPlugin).
     const bool removed = data->manager->uninstallPlugin(registration->id, registration->scope);
-    data->messageLabel->setText(removed ? QStringLiteral("已移除注册（") + scopeLabel(registration->scope)
-                                              + QStringLiteral("）：重启后不再加载。")
-                                       : QStringLiteral("移除注册失败：注册文件不存在或不可写。"));
+    data->message_label->setText(removed ? QStringLiteral("已移除注册（") + scopeLabel(registration->scope)
+                                               + QStringLiteral("）：重启后不再加载。")
+                                        : QStringLiteral("移除注册失败：注册文件不存在或不可写。"));
     refresh();
 }
 
@@ -819,11 +822,11 @@ void PluginManagerDialog::togglePluginEnabled()
     // running state is untouched and the change applies at the next start. An
     // application-provided plugin is refused (see PluginManager::setPluginEnabled).
     if (data->manager->setPluginEnabled(name, !entry->enabled)) {
-        data->messageLabel->setText(entry->enabled ? QStringLiteral("已禁用，重启后生效。")
-                                                   : QStringLiteral("已启用，重启后生效。"));
+        data->message_label->setText(entry->enabled ? QStringLiteral("已禁用，重启后生效。")
+                                                    : QStringLiteral("已启用，重启后生效。"));
     }
     else {
-        data->messageLabel->setText(QStringLiteral("程序自带的插件不能禁用；它由程序决定是否随包发布。"));
+        data->message_label->setText(QStringLiteral("程序自带的插件不能禁用；它由程序决定是否随包发布。"));
     }
     refresh();
     showDetail(name);
@@ -834,9 +837,8 @@ void PluginManagerDialog::showDetail(const vine::String& name)
     auto* data = dptr();
     if (name.empty() || !data->manager) {
         data->stack->setCurrentIndex(0);
-        data->toggleBtn->setVisible(false);
-        data->uninstallBtn->setVisible(false);
-        data->repoBtn->setVisible(false);
+        data->toggle_btn->setVisible(false);
+        data->uninstall_btn->setVisible(false);
         data->current_repo.clear();
         return;
     }
@@ -855,18 +857,18 @@ void PluginManagerDialog::showDetail(const vine::String& name)
                                 : id;
 
     // ---- Header: icon, title, identity, vendor contact, state badge ----
-    data->iconLabel->setPixmap(data->iconFor(entry != nullptr ? entry->info.icon : vine::String{}, 56));
-    data->titleLabel->setText(display);
+    data->icon_label->setPixmap(data->iconFor(entry != nullptr ? entry->info.icon : vine::String{}, 56));
+    data->title_label->setText(display);
 
     QString subtitle = id;
     if (entry != nullptr && !entry->info.version.empty()) {
         subtitle += QStringLiteral("  ·  v") + Convert::toQString(entry->info.version);
     }
-    data->subtitleLabel->setText(subtitle);
+    data->subtitle_label->setText(subtitle);
 
     // Vendor and mail address as one clickable line; both are optional.
     QString meta;
-    const auto appendMeta = [&meta](const QString& text) {
+    const auto append_meta = [&meta](const QString& text) {
         if (text.isEmpty()) {
             return;
         }
@@ -876,84 +878,81 @@ void PluginManagerDialog::showDetail(const vine::String& name)
         meta += text;
     };
     if (entry != nullptr) {
-        appendMeta(Convert::toQString(entry->info.vendor));
+        append_meta(Convert::toQString(entry->info.vendor));
         if (!entry->info.email.empty()) {
             const QString mail = Convert::toQString(entry->info.email).toHtmlEscaped();
-            appendMeta(QStringLiteral("<a href=\"mailto:%1\">%1</a>").arg(mail));
+            append_meta(QStringLiteral("<a href=\"mailto:%1\">%1</a>").arg(mail));
         }
     }
-    data->metaLabel->setText(meta);
-    data->metaLabel->setVisible(!meta.isEmpty());
+    data->meta_label->setText(meta);
+    data->meta_label->setVisible(!meta.isEmpty());
 
-    data->statusBadge->setText(stateLabel(entry));
-    data->statusBadge->setStyleSheet(badgeStyle(entry));
-    data->statusLabel->setText(stateExplanation(entry));
+    data->status_badge->setText(stateLabel(entry));
+    data->status_badge->setStyleSheet(badgeStyle(entry));
+    data->status_label->setText(stateExplanation(entry));
 
     // ---- Actions: only what can take effect is shown ----
     const bool toggleable = entry != nullptr && entry->scope != vine::appfw::PluginScope::BuiltIn && !entry->skipped;
-    data->toggleBtn->setVisible(toggleable);
+    data->toggle_btn->setVisible(toggleable);
     if (toggleable) {
-        data->toggleBtn->setText(entry->enabled ? QStringLiteral("禁用插件（重启后生效）")
-                                                : QStringLiteral("启用插件（重启后生效）"));
+        data->toggle_btn->setText(entry->enabled ? QStringLiteral("禁用插件（重启后生效）")
+                                                 : QStringLiteral("启用插件（重启后生效）"));
     }
 
-    data->uninstallBtn->setVisible(registration != nullptr);
+    data->uninstall_btn->setVisible(registration != nullptr);
     if (registration != nullptr) {
-        data->uninstallBtn->setText(QStringLiteral("卸载插件（") + scopeLabel(registration->scope) + QStringLiteral("）"));
+        data->uninstall_btn->setText(QStringLiteral("卸载插件（") + scopeLabel(registration->scope) + QStringLiteral("）"));
     }
 
     data->current_repo = entry != nullptr && !entry->info.repo.empty() ? Convert::toQString(entry->info.repo) : QString();
-    data->repoBtn->setVisible(!data->current_repo.isEmpty());
 
-    // ---- Description ----
-    data->descLabel->setText(entry != nullptr && !entry->info.description.empty()
-                                 ? Convert::toQString(entry->info.description)
-                                 : QStringLiteral("—"));
-
-    // ---- Metadata ----
+    // ---- Info tab: the description leads, then the metadata ----
+    data->desc_label->setText(entry != nullptr && !entry->info.description.empty()
+                                  ? Convert::toQString(entry->info.description)
+                                  : QStringLiteral("—"));
     const auto value = [](const vine::String& text) { return text.empty() ? QStringLiteral("—") : Convert::toQString(text); };
 
-    data->idLabel->setText(display == id ? id : display + QStringLiteral("（") + id + QStringLiteral("）"));
-    data->versionLabel->setText(entry != nullptr ? value(entry->info.version) : QStringLiteral("—"));
-    data->scopeLabel->setText(entry != nullptr ? scopeLabel(entry->scope)
-                                                      + (registration != nullptr ? QStringLiteral("  ·  可卸载")
-                                                                                 : QStringLiteral("  ·  不可禁用或卸载"))
-                                               : QStringLiteral("—"));
-    data->depLabel->setText(entry != nullptr ? joinStrings(entry->info.dependencies) : QStringLiteral("—"));
-    data->uuidLabel->setText(entry != nullptr && !entry->info.uuid.isNull() ? Convert::toQString(entry->info.uuid.toString())
-                                                                           : QStringLiteral("—"));
-    data->pathLabel->setText(entry != nullptr && !entry->path.empty() ? QString::fromUtf8(entry->path.u8string().c_str())
-                                                                     : QStringLiteral("—"));
-    data->pathLabel->setToolTip(data->pathLabel->text());
-    data->emailLabel->setText(entry != nullptr && !entry->info.email.empty()
-                                  ? QStringLiteral("<a href=\"mailto:%1\">%1</a>")
-                                        .arg(Convert::toQString(entry->info.email).toHtmlEscaped())
+    data->id_label->setText(display == id ? id : display + QStringLiteral("（") + id + QStringLiteral("）"));
+    data->version_label->setText(entry != nullptr ? value(entry->info.version) : QStringLiteral("—"));
+    data->scope_label->setText(entry != nullptr ? scopeLabel(entry->scope)
+                                                       + (registration != nullptr ? QStringLiteral("  ·  可卸载")
+                                                                                  : QStringLiteral("  ·  不可禁用或卸载"))
+                                                : QStringLiteral("—"));
+    data->dep_label->setText(entry != nullptr ? joinStrings(entry->info.dependencies) : QStringLiteral("—"));
+    data->uuid_label->setText(entry != nullptr && !entry->info.uuid.isNull() ? Convert::toQString(entry->info.uuid.toString())
+                                                                            : QStringLiteral("—"));
+    data->path_label->setText(entry != nullptr && !entry->path.empty() ? QString::fromUtf8(entry->path.u8string().c_str())
+                                                                      : QStringLiteral("—"));
+    data->path_label->setToolTip(data->path_label->text());
+    data->email_label->setText(entry != nullptr && !entry->info.email.empty()
+                                   ? QStringLiteral("<a href=\"mailto:%1\">%1</a>")
+                                         .arg(Convert::toQString(entry->info.email).toHtmlEscaped())
+                                   : QStringLiteral("—"));
+    data->repo_label->setText(!data->current_repo.isEmpty()
+                                  ? QStringLiteral("<a href=\"%1\">%2</a>").arg(data->current_repo, data->current_repo.toHtmlEscaped())
                                   : QStringLiteral("—"));
-    data->repoLabel->setText(!data->current_repo.isEmpty()
-                                 ? QStringLiteral("<a href=\"%1\">%2</a>").arg(data->current_repo, data->current_repo.toHtmlEscaped())
-                                 : QStringLiteral("—"));
 
     // Commands reported by the plugin.
-    data->cmdTable->setRowCount(0);
+    data->cmd_table->setRowCount(0);
     for (const auto& ci : data->manager->commandInfosForPlugin(name)) {
-        const int row = data->cmdTable->rowCount();
-        data->cmdTable->insertRow(row);
-        data->cmdTable->setItem(row, 0, new QTableWidgetItem(Convert::toQString(ci.name)));
-        data->cmdTable->setItem(row, 1, new QTableWidgetItem(Convert::toQString(ci.group)));
-        data->cmdTable->setItem(row, 2, new QTableWidgetItem(Convert::toQString(ci.description)));
+        const int row = data->cmd_table->rowCount();
+        data->cmd_table->insertRow(row);
+        data->cmd_table->setItem(row, 0, new QTableWidgetItem(Convert::toQString(ci.name)));
+        data->cmd_table->setItem(row, 1, new QTableWidgetItem(Convert::toQString(ci.group)));
+        data->cmd_table->setItem(row, 2, new QTableWidgetItem(Convert::toQString(ci.description)));
     }
 
     // Config items reported by the plugin.
-    data->cfgTable->setRowCount(0);
+    data->cfg_table->setRowCount(0);
     for (const auto* item : data->manager->configItemsForPlugin(name)) {
         if (item == nullptr) {
             continue;
         }
-        const int row = data->cfgTable->rowCount();
-        data->cfgTable->insertRow(row);
-        data->cfgTable->setItem(row, 0, new QTableWidgetItem(Convert::toQString(item->key())));
-        data->cfgTable->setItem(row, 1, new QTableWidgetItem(Convert::toQString(item->label())));
-        data->cfgTable->setItem(row, 2, new QTableWidgetItem(Convert::toQString(item->description())));
+        const int row = data->cfg_table->rowCount();
+        data->cfg_table->insertRow(row);
+        data->cfg_table->setItem(row, 0, new QTableWidgetItem(Convert::toQString(item->key())));
+        data->cfg_table->setItem(row, 1, new QTableWidgetItem(Convert::toQString(item->label())));
+        data->cfg_table->setItem(row, 2, new QTableWidgetItem(Convert::toQString(item->description())));
     }
 
     data->stack->setCurrentIndex(1);

@@ -74,7 +74,7 @@ class V_APPFW_API PluginLoadContext {
      * @brief Returns this plugin's data directory, creating it on first use.
      *
      * <Application::pluginDataDirectory()>/<plugin name>, i.e.
-     * <user data>/appdata/<organization>/<application>/plugins/<plugin name>.
+     * <user data>/<organization>/<application>/plugins/<plugin name>.
      * Plugin-owned files (caches, downloaded content, per-plugin logs, layout
      * state) belong here; the plugin's configuration values stay in the host
      * ConfigManager through registerConfigItem().
