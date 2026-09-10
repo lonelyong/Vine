@@ -108,7 +108,18 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 ```
 
 - `<用户数据>` = `QStandardPaths::GenericDataLocation`（Linux `~/.local/share`，Windows
-  `%LOCALAPPDATA%`），取不到时退回临时目录。
+  `%LOCALAPPDATA%`），取不到时退回临时目录。**平台差异全部由 Qt 处理，代码里不出现
+  任何平台路径**（`userDataRoot()` 是一处收口），因此三平台同一套布局：
+
+  | 平台 | 用户数据目录 | 系统数据根（AllUsers） |
+  | --- | --- | --- |
+  | Windows | `C:/Users/<user>/AppData/Local` | `C:/ProgramData` |
+  | Linux | `$XDG_DATA_HOME`（默认 `~/.local/share`） | `/usr/local/share`、`/usr/share` |
+  | macOS | `~/Library/Application Support` | `/Library/Application Support` |
+
+  Linux 上完整路径即 `~/.local/share/Vine/Vine/{config,logs,plugins,installed.d}`；
+  `$XDG_DATA_HOME` 有值时跟随它（Qt 行为）。系统根取自 `standardLocations()` 的第 2 项
+  起（第 1 项是用户目录），列表顺序即优先级顺序。
 - ⚠️ **没有中间的 `appdata` 一级**（2026-09-10 用户要求去掉）：Windows 下原来会得到
   `C:/Users/<user>/AppData/Local/appdata/Vine/Vine`，父目录本身就带 `AppData`，再套一层
   `appdata` 是冗余的。现在就是 `<用户数据>/<org>/<app>`，与 Qt 的 `AppDataLocation` 同构。

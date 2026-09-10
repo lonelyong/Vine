@@ -3125,6 +3125,14 @@ TEST(PluginLifecycleTest, DefaultDataDirectoryLayout)
     EXPECT_EQ(dir.parent_path().filename(), std::filesystem::path(organization.toStdU16String()));
     EXPECT_EQ(dir.filename(), std::filesystem::path(QCoreApplication::applicationName().toStdU16String()));
 
+    // 根目录必须来自平台标准位置，不能硬编码某个系统的路径：
+    // Linux $XDG_DATA_HOME（默认 ~/.local/share）、Windows %LOCALAPPDATA%、
+    // macOS ~/Library/Application Support。本进程开着 Qt 测试模式，两边取同一个值。
+    const auto root = std::filesystem::path(
+        QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation).toStdU16String());
+    ASSERT_FALSE(root.empty());
+    EXPECT_EQ(dir.parent_path().parent_path(), root);
+
     const auto file = app->defaultConfigFile();
     EXPECT_EQ(file.parent_path(), dir / "config");
     EXPECT_EQ(file.stem(), dir.filename()); // <app>.json
