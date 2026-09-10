@@ -46,7 +46,16 @@ class V_APPFW_API DockPanelManager final {
     /** Add and dock a DockPanel at the given area (area is always required). */
     void addDockPanel(DockPanel* panel, DockAreas area);
 
-    /** Remove and delete a DockPanel from the managed list */
+    /**
+     * @brief Removes a dock panel and deletes its wrapper.
+     *
+     * The pane is closed first, so DockPanel::onClosing() may veto: when it does,
+     * nothing is removed and the panel stays valid. Otherwise the library takes over
+     * the container (and the content inside it), the wrapper is deleted, and every
+     * pointer returned earlier by panels()/findById()/findByTitle() is invalid.
+     *
+     * @param panel Panel to remove; nullptr is ignored.
+     */
     void removeDockPanel(DockPanel* panel);
 
     /** Find a DockPanel by its unique id */

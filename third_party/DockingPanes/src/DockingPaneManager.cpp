@@ -5,6 +5,7 @@
 #include "DockingPaneClient.h"
 #include "DockingPaneContainer.h"
 #include "DockingPaneFlyoutWidget.h"
+#include "DockingPaneGeometry.h"
 #include "DockingPaneSplitterContainer.h"
 #include "DockingPaneTabbedContainer.h"
 #include "DockingTargetWidget.h"
@@ -701,6 +702,12 @@ DockingPaneBase* DockingPaneManager::dockPane(DockingPaneBase* paneToDock, DockP
 {
     Q_D(DockingPaneManager);
 
+    // The pane is docked again, so the floating size floor no longer applies: a docked
+    // pane has to be able to follow its splitter.
+    if (auto* dockedContainer = qobject_cast<DockingPaneContainer*>(paneToDock)) {
+        DockingPaneGeometry::clearFloatingMinimum(dockedContainer);
+    }
+
     DockingPaneSplitterContainer*                   parentSplitter;
     DockingPaneSplitterContainer::SplitterDirection direction;
 
@@ -1292,13 +1299,28 @@ void DockingPaneManager::floatingPaneEndMove(DockingPaneBase* pane, QPoint curso
 
             break;
         }
-        default: throw std::runtime_error("Unknown docking positin.");
+        default:
+        {
+            // Defensive: an unknown sticker must not take the application down - a
+            // throw here would leave the mouse release handler through the Qt event
+            // loop and call std::terminate.
+            qWarning() << "DockingPaneManager: unknown docking target, dropping the pane in place";
+            break;
+        }
         }
 
-        DockingPaneBase* dockedPane = dockPane(pane, static_cast<DockPosition>(d->m_targetPosition), d->m_targetPane);
+        if (d->m_targetPosition >= 0) {
+            DockingPaneBase* dockedPane = dockPane(pane, static_cast<DockPosition>(d->m_targetPosition), d->m_targetPane);
 
-        dockedPane->activateWindow();
-        dockedPane->setFocus();
+            // activateWindow() is pointless on a child widget (a docked pane is one);
+            // the focus is what matters after docking.
+            dockedPane->setFocus();
+        }
+    }
+    else if (auto* floatingContainer = qobject_cast<DockingPaneContainer*>(pane)) {
+        // Released over free desktop: keep the title bar reachable, otherwise a fast
+        // drag can park the pane outside the screen where it cannot be grabbed again.
+        DockingPaneGeometry::keepTitleBarReachable(floatingContainer, floatingContainer->titleHeight());
     }
 
     d->m_targetPosition = -1;

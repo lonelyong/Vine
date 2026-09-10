@@ -9,7 +9,8 @@ set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 # 注意：不直接链接 tp::SARibbon —— 它同时被 viAppfwd.dll 静态链接，再链一份
 # 会与 DLL 内副本形成两份静态元对象，导致跨 DLL 边界的 qobject_cast 失败。
 # 这里只加头文件路径供 static_cast（impl<T>）使用，不用 qobject_cast 断言。
-target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/SARibbon)
+target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/SARibbon
+                                             ${CMAKE_SOURCE_DIR}/third_party/DockingPanes/inc)
 
 target_link_libraries(${TEST_NAME}
     vi::Appfw

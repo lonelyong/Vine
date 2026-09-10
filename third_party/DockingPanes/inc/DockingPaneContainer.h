@@ -90,9 +90,21 @@ class DockingPaneContainer : public DockingPaneBase {
      * @brief Turns the pane into a floating window, offset by pos from its current position.
      *
      * Removes the pane from the docking tree via closePane() first, then floats it at the recorded global position.
+     * @note The argument is a displacement, not a target: pass QPoint(0, 0) to keep the
+     *       pane where it is.
      * @note Requires a valid dockingManager() and mainWindow() (otherwise it becomes a parentless top-level window).
      */
-    void floatPane(QPoint pos);
+    void floatPane(QPoint offset);
+
+    /**
+     * @brief Height of the pane's title bar.
+     *
+     * Font dependent, so callers that need to place a floating pane relative to the
+     * cursor use this instead of a constant.
+     *
+     * @return The title bar height in pixels, or 0 before the title bar exists.
+     */
+    int titleHeight() const;
 
     /**
      * @brief Opens the auto-hide flyout.

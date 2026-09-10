@@ -29,6 +29,7 @@
 
 #include "DockingPaneContainer.h"
 #include "DockingPaneFlyoutWidget.h"
+#include "DockingPaneGeometry.h"
 #include "DockingPaneGlow.h"
 #include "DockingPaneManager.h"
 #include "DockingPaneTheme.h"
@@ -127,25 +128,35 @@ void DockingPaneContainer::floatPane(QRect)
 
     setState(DockingPaneBase::Floating);
 
+    // A floating pane is resized by the user, so it needs a floor: without one it can
+    // be dragged down to a few pixels and cannot be grabbed again. Dropped again when
+    // the pane docks back (DockingPaneManager::dockPane), so docked layouts are not
+    // constrained by it.
+    DockingPaneGeometry::applyFloatingMinimum(this);
+
     if (m_floatingGlow) {
         delete m_floatingGlow;
     }
 
     m_floatingGlow = new DockingPaneGlow(this, dockingManager()->mainWindow());
+
+    DockingPaneGeometry::keepTitleBarReachable(this, titleHeight());
 }
 
-void DockingPaneContainer::floatPane(QPoint pos)
+void DockingPaneContainer::floatPane(QPoint offset)
 {
     QRect paneRect;
 
     paneRect.setTopLeft(mapToGlobal(QPoint(0, 0)));
-    paneRect.setBottomRight(mapToGlobal(QPoint(width(), height())));
+    paneRect.setBottomRight(mapToGlobal(QPoint(width() - 1, height() - 1)));
 
     m_dockingManager->closePane(this);
 
     setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
 
-    paneRect.translate(pos);
+    // The argument is an offset from the position the pane had while docked, not a
+    // target position: the pane keeps following the drag that detached it.
+    paneRect.translate(offset);
 
     this->move(paneRect.topLeft());
 
@@ -155,6 +166,11 @@ void DockingPaneContainer::floatPane(QPoint pos)
 
     this->show();
     this->activateWindow();
+}
+
+int DockingPaneContainer::titleHeight() const
+{
+    return m_titleWidget != nullptr ? m_titleWidget->height() : 0;
 }
 
 DockingPaneFlyoutWidget* DockingPaneContainer::openFlyout(bool hasFocus, QWidget* parent, FlyoutPosition pos, DockingPaneContainer* pane)

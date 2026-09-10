@@ -260,7 +260,10 @@ QStyleOptionButton* DockAutoHideButton::getStyleOption() const
 
 void DockAutoHideButton::onTimerElapsed()
 {
-    if (this->rect().contains(mapFromGlobal(QCursor::pos()))) {
+    // underMouse() instead of rect().contains(mapFromGlobal(QCursor::pos())): the
+    // global cursor position is unreliable on Wayland (returns (0,0)), while Qt
+    // answers this one from the platform's own enter/leave tracking.
+    if (this->underMouse()) {
         auto* timer = qobject_cast<QTimer*>(this->sender());
 
         timer->stop();

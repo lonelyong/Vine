@@ -12,6 +12,8 @@
 
 #include <gtest/gtest.h>
 
+#include <QAbstractButton>
+#include <QApplication>
 #include <QByteArray>
 #include <QCheckBox>
 #include <QColor>
@@ -27,6 +29,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPixmap>
+#include <QScreen>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -56,6 +59,8 @@
 #include <vine/appfw/gui/Control.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
+
+#include <DockingPaneGeometry.h>
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RibbonAction.hpp>
@@ -1645,6 +1650,292 @@ TEST_F(GuiTest, DockPanel_PinUnpin)
     p->unpin();
     QCoreApplication::processEvents();
     EXPECT_FALSE(p->isPinned());
+}
+
+TEST_F(GuiTest, DockPanel_FloatRoundTripKeepsArea)
+{
+    // 四个区域各往返一次：浮动时记住“当前”所在区域，停靠回来必须回到同一侧。
+    struct Case
+    {
+        guifw::DockPanel* panel;
+        guifw::DockAreas  area;
+    };
+
+    const Case cases[] = { { panelLeft, guifw::DockAreas::Left },
+                           { panelRight, guifw::DockAreas::Right },
+                           { panelTop, guifw::DockAreas::Top },
+                           { panelBottom2, guifw::DockAreas::Bottom } };
+
+    for (const auto& c : cases) {
+        ASSERT_EQ(c.panel->dockArea(), c.area);
+
+        c.panel->setFloating(true);
+        QCoreApplication::processEvents();
+        EXPECT_TRUE(c.panel->isFloating());
+        EXPECT_EQ(c.panel->dockArea(), guifw::DockAreas::None);
+
+        // 浮窗不能小到抓不住：库侧给浮动面板加了下限尺寸。
+        auto* w = c.panel->impl<QWidget>();
+        ASSERT_NE(w, nullptr);
+        EXPECT_GE(w->minimumWidth(), DockingPaneGeometry::minimumWidth);
+        EXPECT_GE(w->minimumHeight(), DockingPaneGeometry::minimumHeight);
+
+        c.panel->setFloating(false);
+        QCoreApplication::processEvents();
+        EXPECT_FALSE(c.panel->isFloating());
+        EXPECT_EQ(c.panel->dockArea(), c.area);
+
+        // 停靠回去后释放下限，否则分割条压不小它。
+        EXPECT_EQ(w->minimumWidth(), 0);
+        EXPECT_EQ(w->minimumHeight(), 0);
+    }
+}
+
+TEST_F(GuiTest, DockPanel_TabDetachCollapsesGroup)
+{
+    // panelBottom 与 panelBottom2 共用底部区域，属于同一个 tab 组。
+    ASSERT_TRUE(panelBottom->isTabbed());
+    ASSERT_TRUE(panelBottom2->isTabbed());
+
+    // “把一个 tab 拖出去变成浮窗”（这里走等价的公共 API）：组里只剩一个面板，
+    // 组必须折叠回普通停靠面板，否则会留下一个只剩标题的空 tab 条。
+    panelBottom2->setFloating(true);
+    QCoreApplication::processEvents();
+
+    EXPECT_TRUE(panelBottom2->isFloating());
+    EXPECT_EQ(panelBottom2->dockArea(), guifw::DockAreas::None);
+
+    EXPECT_FALSE(panelBottom->isFloating());
+    EXPECT_FALSE(panelBottom->isCollapsed());
+    EXPECT_EQ(panelBottom->dockArea(), guifw::DockAreas::Bottom);
+
+    // 拖出去的面板还能停靠回底部。
+    panelBottom2->setFloating(false);
+    QCoreApplication::processEvents();
+    EXPECT_FALSE(panelBottom2->isFloating());
+    EXPECT_EQ(panelBottom2->dockArea(), guifw::DockAreas::Bottom);
+}
+
+TEST_F(GuiTest, DockPanelManager_RemoveDockPanel)
+{
+    auto* mgr = wnd->dockPanelManager();
+    ASSERT_EQ(mgr->count(), 5);
+    // 关掉一个可关闭面板：包装对象与容器一起销毁，管理器里不留残余。
+    mgr->removeDockPanel(panelBottom);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(mgr->count(), 4);
+    EXPECT_EQ(mgr->findById(u8"dock_output"), nullptr);
+    EXPECT_EQ(mgr->findByTitle(u8"Output"), nullptr);
+
+    // 同组的另一个面板仍然可用（关闭回调 / userData 没有悬空）。
+    EXPECT_FALSE(panelBottom2->isFloating());
+    EXPECT_EQ(panelBottom2->dockArea(), guifw::DockAreas::Bottom);
+
+    auto* survivor = panelBottom2->impl<QWidget>();
+    ASSERT_NE(survivor, nullptr);
+    EXPECT_FALSE(panelBottom2->isCollapsed());
+    EXPECT_TRUE(survivor->isVisible()) << "关掉同组的一个 tab 后，剩下的面板不能变成不可见";
+
+    // 其余面板依旧可以正常浮动/停靠。
+    panelRight->setFloating(true);
+    QCoreApplication::processEvents();
+    EXPECT_TRUE(panelRight->isFloating());
+
+    panelRight->setFloating(false);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(panelRight->dockArea(), guifw::DockAreas::Right);
+}
+
+TEST_F(GuiTest, DockPanel_PinnedFlyoutIsAnchoredToDockArea)
+{
+    struct Case
+    {
+        guifw::DockPanel* panel;
+        const char*       side;
+    };
+
+    const Case cases[] = { { panelLeft, "left" },
+                           { panelRight, "right" },
+                           { panelTop, "top" } };
+
+    // 底部两个面板同属一个 tab 组，直接 pin 组内面板不生效：先把同组的面板移出。
+    panelBottom2->setFloating(true);
+    QCoreApplication::processEvents();
+    ASSERT_FALSE(panelBottom->isTabbed());
+
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.side);
+
+        // 给面板一个最小尺寸很大的内容：内容比飞窗本身还“大”时（例如 flyoutSize
+        // 过期或为空，飞窗只能拿到最小 50px），贴边的几何仍然必须成立。
+        auto* content_widget = new QPlainTextEdit();
+        content_widget->setMinimumSize(420, 260);
+        c.panel->setContent(new guifw::Control(content_widget));
+        QCoreApplication::processEvents();
+
+        c.panel->pin();
+        QCoreApplication::processEvents();
+        ASSERT_TRUE(c.panel->isPinned());
+
+        // 自动隐藏按钮出现在对应的边上。
+        QAbstractButton* button = nullptr;
+        for (QWidget* w : wnd->impl<QWidget>()->findChildren<QWidget*>()) {
+            if (QString::fromLatin1(w->metaObject()->className()) == QLatin1String("DockAutoHideButton") && w->isVisible()) {
+                button = qobject_cast<QAbstractButton*>(w);
+                break;
+            }
+        }
+        ASSERT_NE(button, nullptr) << "折叠后应出现自动隐藏按钮";
+
+        // click() 是 QAbstractButton 的公共 API，等价于用户点一下按钮。
+        // 这里不再泵事件：飞窗是同步创建的，而空闲事件会让失焦回调立刻把它回收
+        // （offscreen 平台下没有真实焦点）。
+        button->click();
+
+        QWidget* flyout = nullptr;
+        for (QWidget* w : QApplication::topLevelWidgets()) {
+            if (QString::fromLatin1(w->metaObject()->className()) == QLatin1String("DockingPaneFlyoutWidget") && w->isVisible()) {
+                flyout = w;
+                break;
+            }
+        }
+        ASSERT_NE(flyout, nullptr) << "点击按钮应弹出飞窗";
+
+        // 飞窗挂在停靠区上：Left/Top 贴近边、Right/Bottom 贴远边，四周内缩 5px，
+        // 远边再留 9px 给自动隐藏条（库的原有几何规则）。
+        QWidget* host = flyout->parentWidget();
+        ASSERT_NE(host, nullptr);
+
+        const QRect host_rect(host->mapToGlobal(QPoint(0, 0)), host->size());
+        const QRect flyout_rect(flyout->pos(), flyout->size());
+        const QString side = QString::fromLatin1(c.side);
+
+        if (side == QLatin1String("left")) {
+            EXPECT_EQ(flyout_rect.left(), host_rect.left() + 5);
+            EXPECT_EQ(flyout_rect.top(), host_rect.top() + 5);
+            EXPECT_EQ(flyout_rect.bottom(), host_rect.bottom() - 5);
+        }
+        else if (side == QLatin1String("right")) {
+            EXPECT_EQ(flyout_rect.right(), host_rect.right() - 5);
+            EXPECT_EQ(flyout_rect.top(), host_rect.top() + 5);
+            EXPECT_EQ(flyout_rect.bottom(), host_rect.bottom() - 5);
+        }
+        else if (side == QLatin1String("top")) {
+            EXPECT_EQ(flyout_rect.top(), host_rect.top() + 5);
+            EXPECT_EQ(flyout_rect.left(), host_rect.left() + 5);
+            EXPECT_EQ(flyout_rect.right(), host_rect.right() - 5);
+        }
+        else {
+            EXPECT_EQ(flyout_rect.bottom(), host_rect.bottom() - 5);
+            EXPECT_EQ(flyout_rect.left(), host_rect.left() + 5);
+            EXPECT_EQ(flyout_rect.right(), host_rect.right() - 5);
+        }
+
+        c.panel->unpin();
+        QCoreApplication::processEvents();
+        EXPECT_FALSE(c.panel->isPinned());
+    }
+
+    // 底部：单独 pin 底边面板，飞窗应贴住停靠区的下沿。
+    auto* bottom_content = new QPlainTextEdit();
+    bottom_content->setMinimumSize(420, 260);
+    panelBottom->setContent(new guifw::Control(bottom_content));
+    QCoreApplication::processEvents();
+
+    panelBottom->pin();
+    QCoreApplication::processEvents();
+    ASSERT_TRUE(panelBottom->isPinned());
+
+    QAbstractButton* bottom_button = nullptr;
+    for (QWidget* w : wnd->impl<QWidget>()->findChildren<QWidget*>()) {
+        if (QString::fromLatin1(w->metaObject()->className()) == QLatin1String("DockAutoHideButton") && w->isVisible()) {
+            bottom_button = qobject_cast<QAbstractButton*>(w);
+            break;
+        }
+    }
+    ASSERT_NE(bottom_button, nullptr);
+
+    bottom_button->click();
+
+    QWidget* bottom_flyout = nullptr;
+    for (QWidget* w : QApplication::topLevelWidgets()) {
+        if (QString::fromLatin1(w->metaObject()->className()) == QLatin1String("DockingPaneFlyoutWidget") && w->isVisible()) {
+            bottom_flyout = w;
+            break;
+        }
+    }
+    ASSERT_NE(bottom_flyout, nullptr);
+
+    QWidget* bottom_host = bottom_flyout->parentWidget();
+    ASSERT_NE(bottom_host, nullptr);
+
+    const QRect bottom_host_rect(bottom_host->mapToGlobal(QPoint(0, 0)), bottom_host->size());
+    const QRect bottom_flyout_rect(bottom_flyout->pos(), bottom_flyout->size());
+
+    EXPECT_EQ(bottom_flyout_rect.bottom(), bottom_host_rect.bottom() - 5);
+    EXPECT_EQ(bottom_flyout_rect.left(), bottom_host_rect.left() + 5);
+    EXPECT_EQ(bottom_flyout_rect.right(), bottom_host_rect.right() - 5);
+
+    panelBottom->unpin();
+    QCoreApplication::processEvents();
+    EXPECT_FALSE(panelBottom->isPinned());
+}
+
+// ============================ 浮窗几何 ============================
+TEST(DockGeometryTest, FloatingMinimum)
+{
+    QWidget pane;
+    EXPECT_EQ(pane.minimumWidth(), 0);
+
+    DockingPaneGeometry::applyFloatingMinimum(&pane);
+    EXPECT_EQ(pane.minimumWidth(), DockingPaneGeometry::minimumWidth);
+    EXPECT_EQ(pane.minimumHeight(), DockingPaneGeometry::minimumHeight);
+
+    // 调用方已经要求了更大的下限，不能被改小。
+    pane.setMinimumSize(DockingPaneGeometry::minimumWidth * 3, DockingPaneGeometry::minimumHeight * 3);
+    DockingPaneGeometry::applyFloatingMinimum(&pane);
+    EXPECT_EQ(pane.minimumWidth(), DockingPaneGeometry::minimumWidth * 3);
+    EXPECT_EQ(pane.minimumHeight(), DockingPaneGeometry::minimumHeight * 3);
+
+    DockingPaneGeometry::clearFloatingMinimum(&pane);
+    EXPECT_EQ(pane.minimumWidth(), 0);
+    EXPECT_EQ(pane.minimumHeight(), 0);
+}
+
+TEST(DockGeometryTest, TitleBarStaysReachable)
+{
+    QScreen* screen = QGuiApplication::primaryScreen();
+    ASSERT_NE(screen, nullptr);
+
+    QWidget pane;
+    pane.resize(200, 150);
+    pane.show();
+    QCoreApplication::processEvents();
+
+    const QRect available   = screen->availableGeometry();
+    const int   titleHeight = 24;
+
+    // 标题栏矩形（位置会变，每次判前重算）。
+    const auto titleBarRect = [&pane, titleHeight]() {
+        return QRect(pane.pos(), QSize(pane.width(), titleHeight));
+    };
+
+    // 完全拖到屏幕外的右下角：拉回来，标题栏必须留在可用区域内。
+    pane.move(available.right() + 400, available.bottom() + 400);
+    if (available.contains(pane.pos())) {
+        GTEST_SKIP() << "窗口管理器不允许把窗口移出屏幕";
+    }
+    EXPECT_TRUE(DockingPaneGeometry::keepTitleBarReachable(&pane, titleHeight));
+    EXPECT_TRUE(available.intersects(titleBarRect()));
+
+    // 已经在屏幕内：不动。
+    pane.move(available.left() + 10, available.top() + 10);
+    EXPECT_FALSE(DockingPaneGeometry::keepTitleBarReachable(&pane, titleHeight));
+
+    // 只露出一点点：也拉回来。
+    pane.move(available.right() - 1, available.top() + 10);
+    EXPECT_TRUE(DockingPaneGeometry::keepTitleBarReachable(&pane, titleHeight));
+    EXPECT_TRUE(available.intersects(titleBarRect()));
 }
 
 // ============================ 进度与串联 ============================

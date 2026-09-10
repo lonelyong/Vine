@@ -52,14 +52,22 @@ void DockPanelManager::setWindow(UIElement* wnd)
     // main window was never registered on the DockingPaneManager.
     if (!wnd || !d->dockingMgr)
         return;
-    d->dockingMgr->setMainWindow(static_cast<QWidget*>(wnd->impl()));
+
+    // qobject_cast, not static_cast: a UIElement whose impl is not a QWidget must
+    // not be reinterpreted as one.
+    if (auto* widget = qobject_cast<QWidget*>(wnd->impl())) {
+        d->dockingMgr->setMainWindow(widget);
+    }
 }
 
 void DockPanelManager::setCentralWidget(UIElement* widget)
 {
     if (!d->dockingMgr || !widget)
         return;
-    d->dockingMgr->setClientWidget(static_cast<QWidget*>(widget->impl()));
+
+    if (auto* impl = qobject_cast<QWidget*>(widget->impl())) {
+        d->dockingMgr->setClientWidget(impl);
+    }
 }
 
 raw_ptr<UIElement> DockPanelManager::root() const
@@ -200,18 +208,24 @@ void DockPanelManager::removeDockPanel(DockPanel* panel)
             d->dockingMgr->closePane(dpc);
 
             // If the close actually went through, the pane is now hidden and
-            // no longer referenced by any tabbed container. Drop it from the
-            // manager's bookkeeping: the wrapper below owns the container and
-            // deletes it, so leaving it in the list would make panels()/
-            // count()/findById() iterate a dangling pointer.
+            // no longer referenced by any tabbed container, so the library may
+            // dispose of it: deletePane() schedules that. Ownership has to move with
+            // it - the wrapper must stop deleting the same container, otherwise
+            // UIElement::~UIElement() and the queued delete both free it.
             //
-            // If the close was vetoed (onClosing() returned false), the pane
-            // is still alive and visible — keep the wrapper (and the pane)
-            // untouched so nothing dangles.
-            if (dpc->state() == DockingPaneBase::Hidden)
-                d->dockingMgr->deletePane(dpc);
-            else
+            // If the close was vetoed (onClosing() returned false), the pane is
+            // still alive and visible: keep the wrapper (and the pane) untouched so
+            // nothing dangles.
+            if (dpc->state() != DockingPaneBase::Hidden)
                 return;
+
+            // The pane's close callback dereferences userData() as a DockPanel, and
+            // closing a tab or a flyout runs it again: it must not outlive the
+            // wrapper.
+            dpc->setUserData(nullptr);
+            panel->setOwnsImpl(false);
+
+            d->dockingMgr->deletePane(dpc);
         }
     }
     delete panel;

@@ -554,8 +554,6 @@ void DockingPaneTabbedContainer::mouseMoveEvent(QMouseEvent* e)
     if (!m_draggedPane) {
         if (!tabRect.contains(e->pos())) {
 
-            const QPoint deltaPos = mapFromGlobal(m_originalClickPos);
-
             const QPoint pos = mapToGlobal(this->rect().topLeft());
 
             const int currentIndex = m_stackedWidget->currentIndex();
@@ -574,25 +572,52 @@ void DockingPaneTabbedContainer::mouseMoveEvent(QMouseEvent* e)
 
             update();
 
-            setName(m_paneList.at(m_stackedWidget->currentIndex())->name());
+            // The dragged tab may have been the only one: there is then no remaining tab
+            // to take the name from, and the group disappears with this drag.
+            if (!m_paneList.isEmpty()) {
+                const int nextIndex = qBound(0, m_stackedWidget->currentIndex(), m_paneList.count() - 1);
+
+                setName(m_paneList.at(nextIndex)->name());
+            }
 
             m_draggedPane->resize(this->size());
 
             m_draggedPane->move(pos);
-            m_draggedPane->floatPane(QPoint(-deltaPos.x(), -10));
+            m_draggedPane->floatPane(QPoint(0, 0));
 
-            // Reposition the floating pane under the mouse cursor.
-            // floatPane(QPoint) internally calls mapToGlobal(0,0)→translate,
-            // which places the panel at 'pos' offset by -deltaPos.  For the
-            // second (and subsequent) tabs this offset is different because
-            // deltaPos contains the tab-label's local X.  We correct that
-            // here by moving the panel so its title bar sits at the cursor.
+            // Put the floating pane under the cursor: the point grabbed in the tab
+            // strip maps to the middle of the pane's title bar. The title height is
+            // font dependent, so it is measured instead of assumed.
             const QPoint grabGlobal = mapToGlobal(e->pos());
-            m_draggedPane->move(grabGlobal - QPoint(0, 10));
+            m_draggedPane->move(grabGlobal - QPoint(0, qMax(1, m_draggedPane->titleHeight() / 2)));
 
             m_initialPos = grabGlobal;
 
             dockingManager()->floatingPaneStartMove(m_draggedPane, m_initialPos);
+
+            // Hand the drag over to the pane's own title bar. Dragging the tab out
+            // collapses the group it came from, and that container - the object that
+            // grabbed the mouse for this drag - is deleted together with the group. The
+            // title grabs the mouse for the rest of the drag, so the release, and with
+            // it the drop onto a docking target, still arrives.
+            m_draggedPane->continueDrag(grabGlobal);
+
+            m_draggedPane         = nullptr;
+            m_fromMousePressEvent = false;
+
+            // Dragging the only tab out leaves the group empty: drop it, otherwise an
+            // empty tabbed container stays in the layout (and in the pane list) forever.
+            if (m_paneList.isEmpty()) {
+                hide();
+
+                dockingManager()->deletePane(this);
+            }
+
+            // The title now owns the grab; only give it up if the handover did not
+            // happen, so the drag is never left without a grabber.
+            if (QWidget::mouseGrabber() == this) {
+                releaseMouse();
+            }
         }
         else {
             QRect buttonRect;

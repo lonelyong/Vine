@@ -25,6 +25,73 @@ struct DPC : DockingPaneContainer {
 
 using itype = DockingPaneContainer;
 
+namespace
+{
+
+/// Key under which a pane remembers the area it should dock back to.
+constexpr const char* s_area_property = "_vine_dockarea";
+
+/// Maps a dock area to the position DockingPanes expects.
+///
+/// @param area     Remembered area.
+/// @param fallback Position to use when the area is not one of the four sides.
+/// @return The matching dock position.
+DockingPaneManager::DockPosition dockPositionFor(DockAreas area, DockingPaneManager::DockPosition fallback)
+{
+    switch (area) {
+    case DockAreas::Top: return DockingPaneManager::dockTop;
+    case DockAreas::Bottom: return DockingPaneManager::dockBottom;
+    case DockAreas::Left: return DockingPaneManager::dockLeft;
+    case DockAreas::Right: return DockingPaneManager::dockRight;
+    default: return fallback;
+    }
+}
+
+/// Reads the area a pane remembers as its dock home.
+///
+/// @param container Pane container to query.
+/// @return The remembered area, or DockAreas::None when none was recorded.
+DockAreas rememberedDockArea(DockingPaneContainer* container)
+{
+    const QVariant area = container->property(s_area_property);
+    if (!area.isValid()) {
+        return DockAreas::None;
+    }
+    return static_cast<DockAreas>(area.toInt());
+}
+
+/// Records where the pane currently sits, so docking it back later returns it there.
+///
+/// The library never refreshes the remembered area, and a pane can be moved to
+/// another side by dragging it, so this has to run while the pane is still docked:
+/// at that moment dockPositionOf() is the only truth, and after detaching it is gone.
+///
+/// @param container Pane container to update.
+void rememberDockArea(DockingPaneContainer* container)
+{
+    if (container == nullptr) {
+        return;
+    }
+
+    auto* mgr = container->dockingManager();
+    if (mgr == nullptr) {
+        return;
+    }
+
+    DockAreas area = DockAreas::None;
+    switch (mgr->dockPositionOf(container)) {
+    case DockingPaneManager::dockLeft: area = DockAreas::Left; break;
+    case DockingPaneManager::dockRight: area = DockAreas::Right; break;
+    case DockingPaneManager::dockTop: area = DockAreas::Top; break;
+    case DockingPaneManager::dockBottom: area = DockAreas::Bottom; break;
+    default: return; // not docked (floating/hidden): keep what is already recorded
+    }
+
+    container->setProperty(s_area_property, static_cast<int>(area));
+}
+
+} // namespace
+
 struct DockPanel::Impl : public UIElementData {
     DockFeatures features = DockFeatures::None;
     String       title;
@@ -102,7 +169,9 @@ void DockPanel::setContent(UIElement* c)
     if (!p)
         return;
 
-    auto* newWidget = c ? static_cast<QWidget*>(c->impl()) : nullptr;
+    // qobject_cast, not static_cast: a UIElement whose impl is not a QWidget must
+    // not be reinterpreted as one.
+    auto* newWidget = c ? qobject_cast<QWidget*>(c->impl()) : nullptr;
 
     // The docking library requires a non-null widget in the pane layout;
     // passing nullptr to setClientWidget() would assert/crash. Treat
@@ -110,6 +179,8 @@ void DockPanel::setContent(UIElement* c)
     if (!newWidget)
         return;
 
+    // The pane owns what it shows: the previous client is dropped here, so a caller
+    // that handed a UIElement over must not keep owning its impl (see the header).
     auto* oldClient = p->clientWidget();
     p->setClientWidget(newWidget);
     if (oldClient && oldClient != newWidget)
@@ -209,6 +280,10 @@ void DockPanel::setFloating(bool floating)
 
     if (floating) {
         if (c->state() != DockingPaneBase::Floating) {
+            // Remember where the pane sits now: a user may have dragged it to
+            // another side, and docking back must return it to that side.
+            rememberDockArea(c);
+
             // Really float: detach from the dock tree (which frees the space
             // for the remaining panes) and keep the current position.
             // floatPane(QPoint) records the global position before detaching
@@ -223,17 +298,7 @@ void DockPanel::setFloating(bool floating)
             return;
 
         // Dock back to the frame, using the remembered dock area.
-        DockingPaneManager::DockPosition pos = DockingPaneManager::dockRight;
-
-        const QVariant areaVar = c->property("_vine_dockarea");
-        if (areaVar.isValid()) {
-            switch (static_cast<DockAreas>(areaVar.toInt())) {
-            case DockAreas::Top: pos = DockingPaneManager::dockTop; break;
-            case DockAreas::Bottom: pos = DockingPaneManager::dockBottom; break;
-            case DockAreas::Left: pos = DockingPaneManager::dockLeft; break;
-            default: pos = DockingPaneManager::dockRight; break;
-            }
-        }
+        auto pos = dockPositionFor(rememberedDockArea(c), DockingPaneManager::dockRight);
 
         mgr->dockPane(c, pos, nullptr);
     }
@@ -246,6 +311,10 @@ void DockPanel::pin()
         return;
 
     if (c->state() != DockingPaneBase::Pinned) {
+        // Keep the area for later (dockArea() answers from it while the pane is
+        // pinned, because a pinned pane is no longer in the dock tree).
+        rememberDockArea(c);
+
         // Real auto-hide: pull the pane out of the dock tree and create the
         // strip button (same path as the title-bar pin button).
         if (auto* mgr = c->dockingManager())
@@ -273,6 +342,9 @@ void DockPanel::collapse()
 
     if (c->state() == DockingPaneBase::Docked || c->state() == DockingPaneBase::Tabbed) {
         if (auto* mgr = c->dockingManager()) {
+            // Remember where it was, so restore() brings it back to that side.
+            rememberDockArea(c);
+
             mgr->closePane(c);
             // closePane() detaches a docked pane but only hides floating
             // panes; make sure a collapsed pane is invisible until restore().
@@ -296,17 +368,7 @@ void DockPanel::restore()
 
     // Dock back to the remembered area instead of floating the pane at an
     // arbitrary position (the library's showPane(Hidden) would float it).
-    DockingPaneManager::DockPosition pos = DockingPaneManager::dockLeft;
-
-    const QVariant areaVar = c->property("_vine_dockarea");
-    if (areaVar.isValid()) {
-        switch (static_cast<DockAreas>(areaVar.toInt())) {
-        case DockAreas::Right: pos = DockingPaneManager::dockRight; break;
-        case DockAreas::Top: pos = DockingPaneManager::dockTop; break;
-        case DockAreas::Bottom: pos = DockingPaneManager::dockBottom; break;
-        default: pos = DockingPaneManager::dockLeft; break;
-        }
-    }
+    auto pos = dockPositionFor(rememberedDockArea(c), DockingPaneManager::dockLeft);
 
     mgr->dockPane(c, pos, nullptr);
     c->show();
