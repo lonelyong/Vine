@@ -261,8 +261,12 @@ void GuiApplication::init()
 
 int GuiApplication::run()
 {
-    const auto* d = static_cast<GuiApplicationData*>(dptr());
-    return d->app->exec();
+    const auto* d    = static_cast<GuiApplicationData*>(dptr());
+    const int   code = d->app->exec();
+    // See Application::run(): the loop has stopped, so the bus delivers what is
+    // still parked (bounded) and then stops, before the UI is torn down.
+    eventBus()->shutdownGracefully(EventBus::gracefulShutdownTimeout());
+    return code;
 }
 
 void GuiApplication::setTheme(Theme theme)

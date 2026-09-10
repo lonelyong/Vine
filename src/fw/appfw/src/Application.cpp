@@ -1,4 +1,6 @@
-﻿#include <QCoreApplication>
+﻿#include <atomic>
+
+#include <QCoreApplication>
 
 #include <vine/Exception.hpp>
 
@@ -19,7 +21,7 @@
 
 V_APPFW_NS_BEGIN
 
-static Application* s_current_app = nullptr;
+static std::atomic<Application*> s_current_app{ nullptr };
 
 V_OBJECT_META_IMPL(Application, Object)
 
@@ -42,11 +44,11 @@ Application::Application(int argc, char** argv)
 Application::Application(ApplicationData* data, int argc, char** argv)
   : d(data)
 {
-    if (s_current_app) {
+    if (s_current_app.load(std::memory_order_acquire) != nullptr) {
         throw Exception(-1);
     }
 
-    s_current_app = this;
+    s_current_app.store(this, std::memory_order_release);
 
     dptr()->plugin_manager  = std::make_unique<PluginManager>();
     dptr()->service_manager = std::make_unique<ServiceManager>();
@@ -54,14 +56,16 @@ Application::Application(ApplicationData* data, int argc, char** argv)
     dptr()->config_manager  = std::make_unique<ConfigManager>();
     dptr()->config_registry = std::make_unique<ConfigRegistry>();
     dptr()->main_dispatcher = std::make_unique<MainThreadDispatcher>();
-    dptr()->event_bus       = std::make_unique<EventBus>();
+    // The marshaller is injected and outlives the bus (ApplicationData declares it
+    // before the bus, so it is destroyed after it).
+    dptr()->event_bus = std::make_unique<EventBus>(dptr()->main_dispatcher.get());
     dptr()->argc            = argc;
     dptr()->argv            = argv;
 }
 
 Application::~Application()
 {
-    s_current_app = nullptr;
+    s_current_app.store(nullptr, std::memory_order_release);
 }
 
 void Application::init()
@@ -87,7 +91,12 @@ UserIO* Application::createUserIO()
 
 int Application::run()
 {
-    return dptr()->app->exec();
+    const int code = dptr()->app->exec();
+    // The main loop has stopped: deliver the events that were published just
+    // before the exit (bounded by the timeout), then stop the bus before the
+    // subscribers (windows, plugins) start to be torn down.
+    eventBus()->shutdownGracefully(EventBus::gracefulShutdownTimeout());
+    return code;
 }
 
 void Application::exit(int code)
@@ -144,7 +153,7 @@ raw_ptr<UserIO> Application::userIO() const
 
 raw_ptr<Application> Application::current()
 {
-    return s_current_app;
+    return s_current_app.load(std::memory_order_acquire);
 }
 
 int Application::argc() const

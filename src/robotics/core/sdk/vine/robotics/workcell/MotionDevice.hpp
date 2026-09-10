@@ -174,7 +174,7 @@ class V_ROBOTICS_CORE_API MotionDevice : public Device
      * @param data The definition data.
      * @return The motion definition data.
      */
-    static std::unique_ptr<MotionDeviceData> AsMotionData(std::unique_ptr<DeviceData> data);
+    static std::unique_ptr<MotionDeviceData> asMotionData(std::unique_ptr<DeviceData> data);
 
     /**
      * @brief Builds the base device and derives the motion-specific data.

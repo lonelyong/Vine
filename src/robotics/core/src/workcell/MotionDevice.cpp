@@ -17,7 +17,7 @@ std::unique_ptr<DeviceData> MotionDeviceData::clone() const
     return out;
 }
 
-std::unique_ptr<MotionDeviceData> MotionDevice::AsMotionData(std::unique_ptr<DeviceData> data)
+std::unique_ptr<MotionDeviceData> MotionDevice::asMotionData(std::unique_ptr<DeviceData> data)
 {
     // 定义数据向下转型为 MotionDeviceData; 若为普通 DeviceData 则包装补全
     auto* const raw = data.release();
@@ -36,7 +36,7 @@ std::unique_ptr<MotionDeviceData> MotionDevice::AsMotionData(std::unique_ptr<Dev
 
 void MotionDevice::init(std::unique_ptr<DeviceData> data)
 {
-    initMotion(AsMotionData(std::move(data)));
+    initMotion(asMotionData(std::move(data)));
 }
 
 void MotionDevice::initMotion(std::unique_ptr<MotionDeviceData> data)

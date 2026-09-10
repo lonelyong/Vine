@@ -18,8 +18,11 @@ using CommandRegistrar = std::function<bool(CommandManager*)>;
  *
  * Defined inline in a header, so every module that includes it gets its own
  * copy of the queue: each plugin DLL accumulates only the commands declared by
- * that plugin. Registration happens when the plugin calls
- * registerModuleCommands(); Plugin::preLoad() does this by default.
+ * that plugin. The queue is flushed when the module's registration entry runs:
+ * the PluginManager resolves the plugin DLL's vinePluginRegisterCommands (exported
+ * by V_DECLARE_PLUGIN) and calls it while loading the plugin, so registration
+ * happens during plugin loading - never during module (DLL) load, and never from
+ * Plugin::preLoad(), which is empty by design.
  *
  * @return The module-local queue of pending command registrars.
  */
@@ -54,10 +57,10 @@ V_APPFW_NS_END
  * @brief Declares a command inside its class body.
  *
  * Overrides the virtual name() with a compile-time constant and queues the
- * command with this module's registration queue. The command is registered
- * with the CommandManager when Plugin::preLoad() runs (its default
- * implementation calls detail::registerModuleCommands()), so registration
- * happens during plugin loading - never during module (DLL) load. Because the
+ * command with this module's registration queue. The command is registered with
+ * the CommandManager while the plugin is loaded: the PluginManager calls the
+ * plugin's exported vinePluginRegisterCommands entry (see plugin_export.hpp),
+ * which flushes this queue - never during module (DLL) load. Because the
  * registrar is an inline static member, a command declared in a header is
  * queued exactly once per module.
  *

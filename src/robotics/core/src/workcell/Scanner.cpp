@@ -60,7 +60,7 @@ std::unique_ptr<DeviceData> ScannerData::clone() const
     return out;
 }
 
-std::unique_ptr<ScannerData> Scanner::AsScannerData(std::unique_ptr<DeviceData> data)
+std::unique_ptr<ScannerData> Scanner::asScannerData(std::unique_ptr<DeviceData> data)
 {
     // 定义数据向下转型为 ScannerData; 若为普通 DeviceData 则包装补全
     auto* const raw = data.release();
@@ -79,7 +79,7 @@ std::unique_ptr<ScannerData> Scanner::AsScannerData(std::unique_ptr<DeviceData> 
 
 void Scanner::init(std::unique_ptr<DeviceData> data)
 {
-    initScanner(AsScannerData(std::move(data)));
+    initScanner(asScannerData(std::move(data)));
 }
 
 void Scanner::initScanner(std::unique_ptr<ScannerData> data)

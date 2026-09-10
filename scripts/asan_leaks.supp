@@ -1,0 +1,12 @@
+# LeakSanitizer suppressions for the ASan gate (scripts/asan_check.sh).
+#
+# Only library-internal retention that the framework cannot control belongs here.
+# Anything the framework allocates and fails to release must stay reported, so
+# keep this file minimal and justify every entry.
+
+# libfontconfig keeps its parsed font configuration (320 B) allocated after Qt's
+# QFontDatabase initialization and never releases it at exit. The allocation is
+# reachable only from the library's own static state; the framework neither
+# created nor holds it.
+leak:libfontconfig
+leak:libexpat

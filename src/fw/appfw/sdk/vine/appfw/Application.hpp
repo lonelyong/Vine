@@ -68,10 +68,12 @@ class V_APPFW_API Application : public Object {
     virtual int run();
 
     /**
-     * @brief Exits the application's main loop with the given exit code.
+     * @brief Requests that the application's main loop stops with the given code.
      *
-     * This method terminates the application's main loop and causes the run()
-     * method to return with the provided exit code.
+     * The loop stops once the event being processed finishes; run() then returns
+     * the provided code and stops the event bus at that point, so no delivery
+     * happens from inside this method. Calling it while no loop is running does
+     * nothing.
      *
      * @param code The exit code to return from run().
      */

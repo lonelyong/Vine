@@ -122,12 +122,14 @@ void installConsoleLogSink(gui::ConsolePanel* panel, PluginLoadContext* context)
                 const auto type = toConsoleType(level);
                 if (auto* app = Application::current(); app != nullptr && app->mainThreadDispatcher() != nullptr) {
                     auto* dispatcher = app->mainThreadDispatcher();
-                    if (dispatcher->isMainThread()) {
-                        // Main-thread record: append synchronously so it stays in
-                        // order relative to command output (e.g. "Executing ..."
-                        // appears before the command prints its result).
+                    if (dispatcher->isMainThread() || !dispatcher->hasEventLoop()) {
+                        // Main-thread record, or no event loop to marshal onto:
+                        // append synchronously so it stays in order relative to
+                        // command output (e.g. "Executing ..." appears before the
+                        // command prints its result).
                         panel->append(type, text);
-                    } else {
+                    }
+                    else {
                         dispatcher->postToMain(
                             [panel, type, text = std::move(text)]() mutable { panel->append(type, text); });
                     }

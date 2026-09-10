@@ -213,7 +213,9 @@ void VisualUserIO::onEscape()
     }
     else if (commandManager() && commandManager()->runningCount() > 0)
     {
-        // Cancel the async command currently running.
+        // Cancel the foreground command chain (the one the console just showed as
+        // running). Chains pushed out of the foreground are only reachable through
+        // cancelAll().
         commandManager()->cancelCurrent();
     }
     else if (console_)

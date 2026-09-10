@@ -223,7 +223,7 @@ class V_ROBOTICS_CORE_API Scanner : public Device
      * @param data The definition data.
      * @return The scanner definition data.
      */
-    static std::unique_ptr<ScannerData> AsScannerData(std::unique_ptr<DeviceData> data);
+    static std::unique_ptr<ScannerData> asScannerData(std::unique_ptr<DeviceData> data);
 
     /**
      * @brief Builds the base device and rebuilds camera/projector views and

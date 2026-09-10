@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "core_global.hpp"
 
+#include <span>
 #include <vector>
 
 #include "String.hpp"
@@ -136,6 +137,17 @@ class V_CORE_API Type final {
     bool isInterface() const noexcept
     {
         return kind_ == TypeKind::Interface;
+    }
+
+    /**
+     * @brief Returns the interfaces declared directly by this type.
+     *
+     * @return The directly declared interfaces in declaration order; interfaces
+     *         extended by one of them are not included.
+     */
+    std::span<const Type* const> interfaces() const noexcept
+    {
+        return interfaces_;
     }
 
     /**

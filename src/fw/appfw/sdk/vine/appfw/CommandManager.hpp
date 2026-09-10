@@ -2,10 +2,13 @@
 
 #include "appfw_global.hpp"
 
+#include <chrono>
+#include <cstddef>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <type_traits>
 #include <utility>
-#include <memory>
 #include <vector>
 
 #include <vine/Events.hpp>
@@ -38,7 +41,10 @@ class V_APPFW_API CommandExecutingEventArgs : public EventArgs {
 /**
  * @brief Event arguments fired when a command finishes executing.
  *
- * Carries the command that ran and its execution result.
+ * Carries the command that ran and its execution result. The notification is
+ * synchronous, so Handlers may inspect the command while they run; the
+ * originating command is destroyed as soon as the outer execution returns, so
+ * a handler must not retain the pointer.
  */
 class V_APPFW_API CommandExecutedEventArgs : public EventArgs {
     V_OBJECT_META_DECL
@@ -47,7 +53,7 @@ class V_APPFW_API CommandExecutedEventArgs : public EventArgs {
     explicit CommandExecutedEventArgs(Command* command, const CommandResult& result);
 
   public:
-    /// The command that finished executing.
+    /// The command that finished executing; valid only during the notification.
     raw_ptr<Command> command() const;
 
     /// The execution result.
@@ -79,27 +85,90 @@ struct CommandInfo {
 };
 
 /**
+ * @brief One past execution, as recorded by the execution history.
+ *
+ * The history stores what ran by value, never a pointer: a command instance is
+ * destroyed as soon as its execution returns, so a retained pointer would
+ * dangle. Metadata of the command type itself is available through
+ * CommandInfo / commandInfos().
+ */
+struct CommandHistoryEntry {
+    /// Name reported by the command that ran.
+    String name;
+
+    /// Meta class of the command that ran.
+    TypeId command_class = nullptr;
+
+    /// Outcome of the execution.
+    CommandResult result{ CommandStatus::Success };
+};
+
+/**
  * @brief Single entry point for running and managing Commands.
  *
- * The CommandManager owns the command execution call stack, routes nested
- * command execution, enforces exclusive rules, records the execution history
- * of the commands that ran, and registers commands so they can be started by
- * name. Undo/Redo is snapshot-based and owned by the document layer; the
- * manager only notifies the document to snapshot its state before an Undoable
- * command runs. Commands must not invoke other commands directly; they run
- * children through this manager.
+ * The CommandManager owns the command execution chains (each chain carries its
+ * own call stack and cancellation source), routes nested command execution,
+ * enforces exclusive rules, records the execution history of the commands that
+ * ran, and registers commands so they can be started by name.
+ * Undo/Redo is snapshot-based and owned by the document layer; the manager only
+ * notifies the document to snapshot its state before an Undoable command runs.
+ * Commands must not start other commands as top-level entries; they run children
+ * through CommandExecutionContext::executeChild().
  */
 class V_APPFW_API CommandManager
 {
+  public:
+    /**
+     * @brief Returns the bounded wait for a taken-over chain to unwind before an Exclusive command starts.
+     *
+     * This is the bound of the drain wait: an Exclusive command whose
+     * predecessor does not stop within it is rejected instead of being run next
+     * to it.
+     *
+     * @return The drain bound.
+     */
+    static constexpr std::chrono::milliseconds exclusiveDrainTimeout() noexcept { return std::chrono::milliseconds{ 2000 }; }
+
+    /**
+     * @brief Returns the upper bound of the execution history.
+     *
+     * The oldest entry is dropped once the history holds this many executions.
+     *
+     * @return The history capacity.
+     */
+    static constexpr std::size_t maxHistoryEntries() noexcept { return 1024; }
+
+    /**
+     * @brief Returns the upper bound of the nesting depth of one chain.
+     *
+     * CommandExecutionContext::executeChild() refuses to nest deeper.
+     *
+     * @return The maximum number of commands of a chain.
+     */
+    static constexpr int maxChainDepth() noexcept { return 64; }
+
   public:
     explicit CommandManager(Application* app);
     ~CommandManager();
 
   public:
-    /// Fired when a command begins executing (before its business logic runs).
+    /**
+     * @brief Fired when a command begins executing (before its business logic runs).
+     *
+     * Fired once per run, nested children included. A command refused by the
+     * serialization gate, or stopped by a failing snapshot handler, never gets
+     * that far, so neither this event nor the executed one is fired for it.
+     */
     Event<CommandManager, CommandExecutingEventArgs> executing;
 
-    /// Fired when a command finishes executing, carrying its result.
+    /**
+     * @brief Fired when a command finishes executing, carrying its result.
+     *
+     * Fired for every run that started, cancelled and failed ones included. The
+     * notification is synchronous and runs on the thread the command ended on
+     * (the initiating thread when the command never suspended), so a handler must
+     * not assume the application thread.
+     */
     Event<CommandManager, CommandExecutedEventArgs> executed;
 
   public:
@@ -108,14 +177,29 @@ class V_APPFW_API CommandManager
      *
      * @return The hosting Application.
      */
-    raw_ptr<Application> application() const;
+    raw_ptr<Application> application() const noexcept;
 
     /**
-     * @brief Executes a command.
+     * @brief Executes a command, blocking until it finishes.
      *
-     * May be called from within a command to run a nested child command.
-     * Exclusive commands first cancel the running command chain. Undoable
-     * commands notify the document snapshot handler before executing.
+     * Top-level entry point: the command runs on a chain of its own, which
+     * becomes the foreground chain, so it is subject to the serialization gate
+     * and owns the foreground while it runs. To run a child as part of the
+     * current execution use CommandExecutionContext::executeChild(): that is
+     * what shares the chain, the cancellation source and the nesting bound, and
+     * what bypasses the gate. Calling this from inside a command starts an
+     * independent top-level chain instead.
+     *
+     * Blocks the calling thread for the whole execution (see syncWait, which also
+     * documents when that deadlocks); inside a coroutine prefer co_awaiting
+     * executeCommandAsync(), which never blocks the thread the command runs on.
+     *
+     * Exclusive commands first cancel the running command chain; when that
+     * chain refuses to unwind within exclusiveDrainTimeout() the takeover is
+     * rejected with a CommandStatus::Failed result instead of running next to
+     * it, because two chains running at once would break the exclusivity the
+     * caller asked for. Undoable commands notify the document snapshot handler
+     * before executing.
      *
      * @param command Command to execute; must not be null.
      * @return The execution outcome.
@@ -123,9 +207,11 @@ class V_APPFW_API CommandManager
     CommandResult executeCommand(Command* command);
 
     /**
-     * @brief Starts a registered command by name.
+     * @brief Starts a registered command by name, blocking until it finishes.
      *
-     * Creates a fresh instance through the registered factory and executes it.
+     * Creates a fresh instance through the registered factory and runs it as a
+     * top-level command, exactly like executeCommand(Command*): own chain,
+     * subject to the serialization gate, caller blocked.
      *
      * @param name Registered command name.
      * @return The execution outcome; Failed when the name is not registered.
@@ -135,8 +221,11 @@ class V_APPFW_API CommandManager
     /**
      * @brief Executes a command asynchronously.
      *
-     * The returned task is lazy and may suspend; await it from a coroutine
-     * context. The command leaves the execution stack when the task completes.
+     * The returned task is lazy: the command starts when the task is awaited (or
+     * driven by syncWait), and abandoning the task means it never runs. It is a
+     * top-level entry point, so the command gets a chain of its own, becomes the
+     * foreground chain and is subject to the serialization gate; a nested child
+     * goes through CommandExecutionContext::executeChild() instead.
      *
      * @param command Command to execute; must not be null.
      * @return A task yielding the execution outcome.
@@ -146,65 +235,106 @@ class V_APPFW_API CommandManager
     /**
      * @brief Executes a registered command by name asynchronously.
      *
+     * Same as executeCommandAsync(Command*) with the instance created through
+     * the registered factory.
+     *
      * @param name Registered command name.
-     * @return A task yielding the execution outcome; Failed when not registered.
+     * @return A lazy task yielding the execution outcome; Failed when not
+     *         registered.
      */
     vine::async::Task<CommandResult> executeCommandAsync(const String& name);
 
     /**
      * @brief Executes a registered command by name in the background.
      *
-     * Fire-and-forget: the command runs to completion and its outcome is
-     * delivered through the executed event. Use from UI event handlers.
+     * Fire-and-forget: a top-level entry point, so the command gets its own chain
+     * and is subject to the serialization gate. A command that runs delivers its
+     * outcome through the executed event; one that is refused by the gate, or that
+     * throws, is only logged — there is no caller left to report to, and a
+     * throwing command must not terminate the process.
      *
      * @param name Registered command name.
      */
     void executeDetached(const String& name);
 
     /**
-     * @brief Returns the command at the top of the execution stack.
+     * @brief Returns the command at the top of the foreground execution chain.
      *
-     * @return The running command, or nullptr when idle.
+     * The foreground chain is the one started by the most recent top-level
+     * execution; commands started in the background with executeDetached()
+     * replace it in the same way. Commands that run concurrently each own a
+     * chain, so this reports the chain the user is currently interacting with.
+     * The returned pointer is only valid while the command runs.
+     *
+     * A command that awaits a top-level entry of its own (any entry point except
+     * CommandExecutionContext::executeChild()) hands the foreground over to that
+     * chain, which is not given back when it ends: this can therefore report
+     * nothing while commands are still running.
+     *
+     * @return The innermost running command of the foreground chain, or nullptr
+     *         when nothing is running.
      */
     raw_ptr<Command> currentCommand() const;
 
     /**
-     * @brief Returns the number of commands on the execution stack.
+     * @brief Returns the number of nested commands running in the foreground chain.
      *
-     * @return Stack depth.
+     * Nested children started through CommandExecutionContext::executeChild()
+     * count as well; independent chains do not.
+     *
+     * @return Foreground chain depth.
      */
     int runningCount() const;
 
     /**
-     * @brief Requests cancellation of the currently running command chain.
+     * @brief Requests cancellation of the foreground command chain.
      *
-     * Cooperative: the running command observes the request through
-     * CommandExecutionContext::stopToken()/isCancelled(). Cancellable async
-     * operations throw TaskCancelledException. A nested command rethrows the
-     * exception so cancellation propagates upward by default; the outermost
-     * command reports it as a CommandStatus::Cancelled result. A command that
-     * wants to react differently to a cancelled child catches the exception in
-     * its own execute(). No-op when no command is running.
+     * Cancels the chain currentCommand() reports members of: the running command
+     * and its nested children. Commands on other chains are unaffected — a chain
+     * that executeDetached() started and a later top-level execution pushed out of
+     * the foreground, for instance. Cooperative: the running command observes the
+     * request through CommandExecutionContext::stopToken()/isCancelled().
+     * Cancellable async operations throw TaskCancelledException. A nested command
+     * rethrows the exception so cancellation propagates upward by default; the
+     * outermost command reports it as a CommandStatus::Cancelled result. A command
+     * that wants to react differently to a cancelled child catches the exception in
+     * its own execute(). No-op when the foreground chain has already ended, even
+     * when other chains are still running: use cancelAll() for those.
      */
     void cancelCurrent();
 
     /**
-     * @brief Returns the number of commands recorded in the execution history.
+     * @brief Requests cancellation of every live command chain.
+     *
+     * Unlike cancelCurrent(), this also reaches chains that were pushed out of
+     * the foreground by a later top-level execution — typically commands started
+     * with executeDetached(). Use it for "stop everything" paths such as
+     * application shutdown. Like every other request here it is cooperative:
+     * a command that ignores its token keeps running.
+     */
+    void cancelAll();
+
+    /**
+     * @brief Returns the number of executions recorded in the history.
+     *
+     * The history retains at most maxHistoryEntries() executions; the oldest
+     * entries are dropped once the bound is reached.
      *
      * @return History size.
      */
     int historyCount() const;
 
     /**
-     * @brief Returns the command recorded at the given history index.
+     * @brief Returns the execution recorded at the given history index.
      *
-     * Index 0 is the oldest recorded execution. The history holds non-owning
-     * pointers; the caller must keep the commands alive to inspect them.
+     * Index 0 is the oldest execution still retained. The entry is a value
+     * snapshot (name, meta class and result), safe to keep after the manager or
+     * the command is gone.
      *
      * @param index History index.
-     * @return The recorded command, or nullptr when out of range.
+     * @return The recorded execution, or std::nullopt when out of range.
      */
-    Command* historyAt(int index) const;
+    std::optional<CommandHistoryEntry> historyAt(int index) const;
 
     /**
      * @brief Clears the execution history.
@@ -214,10 +344,18 @@ class V_APPFW_API CommandManager
     /**
      * @brief Registers a command so it can be started by name.
      *
+     * The factory is invoked once here to cache the listing metadata reported
+     * by commandInfos(); a factory that returns nullptr or throws only logs a
+     * warning: the command stays registered with empty metadata, so a plugin
+     * whose services are not ready yet can still register. Failures raised by
+     * the factory never propagate; an allocation failure while inserting the
+     * entry still can.
+     *
      * @param command_class Meta class of the command.
-     * @param name Unique name used to start the command.
-     * @param factory Factory creating a new command instance.
-     * @return true if registered, false if the name is already taken.
+     * @param name Unique name used to start the command; must not be empty.
+     * @param factory Factory creating a new command instance; must not be empty.
+     * @return true if registered, false when the name is empty, the factory is
+     *         empty or the name is already taken.
      */
     bool registerCommand(TypeId command_class, String name, std::function<Command*()> factory);
 
@@ -225,16 +363,19 @@ class V_APPFW_API CommandManager
      * @brief Registers a default-constructible command type by name.
      *
      * The command type must have a no-arg constructor and Object meta
-     * (V_OBJECT_META_IMPL).
+     * (V_OBJECT_META_IMPL); both are checked at compile time.
      *
      * @tparam T Command type.
      * @param name Unique name used to start the command.
-     * @return true if registered, false if the name is already taken.
+     * @return true if registered, false when the name is empty or already taken
+     *         (the factory lambda is never empty here).
      */
     template <typename T>
     bool registerCommand(String name)
     {
-        static_assert(std::is_base_of<Command, T>::value, "T must derive from Command");
+        static_assert(std::is_base_of_v<Command, T>, "T must derive from Command");
+        static_assert(std::is_default_constructible_v<T>,
+                      "registerCommand<T> builds instances through the default constructor; use the factory overload otherwise");
         return registerCommand(T::desc(), std::move(name), [] { return new T; });
     }
 
@@ -258,7 +399,9 @@ class V_APPFW_API CommandManager
      * @brief Registers an alias that resolves to an existing command name.
      *
      * Executing the alias by name runs the target command. The target does
-     * not need to be registered when the alias is added.
+     * not need to be registered when the alias is added, and it may itself be
+     * an alias: names are resolved to the registered command in one pass at use
+     * time, and a cycle (a → b → a) simply resolves to nothing.
      *
      * @param alias Alias name.
      * @param target Canonical command name the alias resolves to.
@@ -275,10 +418,13 @@ class V_APPFW_API CommandManager
     bool unregisterAlias(const String& alias);
 
     /**
-     * @brief Returns whether a command with the given name is registered.
+     * @brief Returns whether a name can be executed.
      *
-     * @param name Command name.
-     * @return true if registered.
+     * True for a registered command name and for an alias that resolves (possibly
+     * through other aliases) to one.
+     *
+     * @param name Command or alias name.
+     * @return true if executing the name runs a registered command.
      */
     bool isRegistered(const String& name) const;
 
@@ -292,15 +438,20 @@ class V_APPFW_API CommandManager
     /**
      * @brief Returns the registered aliases as (alias, target) pairs.
      *
-     * @return Alias entries; each pair maps an alias name to its target command.
+     * These are the raw registrations, so a target may itself be an alias;
+     * commandInfos() reports every alias under the command it finally resolves to.
+     *
+     * @return Alias entries; each pair maps an alias name to the name it points at.
      */
     std::vector<std::pair<String, String>> aliases() const;
 
     /**
      * @brief Returns metadata of all registered commands, sorted by name.
      *
-     * Each entry carries the canonical name, its description and the aliases
-     * resolving to it.
+     * Each entry carries the canonical name, its group, its description, the
+     * plugin that registered it and the aliases resolving (through any other
+     * aliases) to it. The metadata was cached at registration, so listing does
+     * not instantiate commands.
      *
      * @return Command metadata ordered by command name.
      */
@@ -330,16 +481,21 @@ class V_APPFW_API CommandManager
     /**
      * @brief Returns the current registration owner tag.
      *
-     * @return The owner set by setRegistrationOwner().
+     * @return A copy of the owner set by setRegistrationOwner(); returning by
+     *         value keeps the read safe against a concurrent plugin unload.
      */
-    const String& registrationOwner() const;
+    String registrationOwner() const;
 
     /**
      * @brief Sets the handler invoked before an Undoable command executes.
      *
-     * The document registers this handler to snapshot its state so the
-     * command can be undone later. Undo/Redo themselves are owned by the
-     * document layer, not by the CommandManager.
+     * The document registers this handler to snapshot its state so the command can
+     * be undone later. Undo/Redo themselves are owned by the document layer, not by
+     * the CommandManager. A handler that throws stops the command: it does not run,
+     * no executed event is fired for it and nothing is recorded in the history
+     * (running it without a snapshot would make the later undo restore a state the
+     * document never had). The handler is called outside every lock and may be
+     * replaced at any time, including while commands are running.
      *
      * @param handler Snapshot callback; empty disables the notification.
      */
@@ -348,17 +504,23 @@ class V_APPFW_API CommandManager
   private:
     class Context;
 
-    /// Shared execution path; nested=true skips the serialization gate.
-    vine::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, bool nested);
-
-    /// Creates a fresh registered command instance by name (or alias), or
-    /// nullptr when the name is not registered.
-    std::unique_ptr<Command> createCommandByName(const String& name);
-
-    /// Starts a registered child command by name as part of the current chain.
-    vine::async::Task<CommandResult> executeChild(const String& name);
+    /// One command chain: its running commands and the source that cancels them.
+    struct Chain;
 
     struct Impl;
+
+    /// Shared execution path.
+    ///
+    /// When nested is false a fresh chain is created and becomes the foreground
+    /// chain; when nested is true the command joins the chain passed by the
+    /// context, which also skips the serialization gate.
+    vine::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, bool nested);
+
+    /// Creates a fresh registered command instance by name (or alias), or
+    /// nullptr when the name is not registered. Propagates whatever the factory
+    /// throws; callers on the noexcept paths convert that to a Failed result.
+    [[nodiscard]] std::unique_ptr<Command> createCommandByName(const String& name);
+
     std::unique_ptr<Impl> d;
 };
 
