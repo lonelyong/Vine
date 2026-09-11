@@ -1542,15 +1542,14 @@ bool runDepthOrderPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
  * target and reports, per attachment, the centre pixel and the coverage, so the
  * answer is visible rather than assumed.
  *
- * What it measured the first time it ran, on both lavapipe and the code path
- * as written: attachment 0 carries the pass' clear colour and the geometry,
- * while every extra attachment is TRANSPARENT BLACK everywhere, geometry
- * included. That is deliberate (VsgRendererTargets clears attachment 0 to the
- * engine's clear() colour and the rest to zero: "empty regions stay black until
- * a fragment writes them"), and it is invisible to a consumer that samples the
- * extra attachments — so it is measured here rather than assumed. The one half
- * that is unambiguous is asserted (the geometry must reach attachment 0); the
- * extra attachments are reported for the consumer to judge.
+ * What it measured the first time it ran: attachment 0 carries the pass' clear
+ * colour and the geometry, while every extra attachment is TRANSPARENT BLACK
+ * everywhere, geometry included. That is the CONTRACT, not an accident
+ * (RenderBackend::clear documents it, and the deferred-lighting consumer relies
+ * on a stored view position of ~0 meaning "background"): the assertions here
+ * pin both halves — the geometry reaches attachment 0, and an extra attachment
+ * an uncovered pixel would land in reads transparent black rather than the pass'
+ * clear colour.
  *
  * @param renderer Renderer under test.
  * @param camera   Camera the quad is drawn through.
@@ -1583,9 +1582,11 @@ bool runMrtProbe(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int 
             continue;
         }
         std::fprintf(stderr,
-                     "[selftest] MRT attachment %d: centre=(%d,%d,%d) covered=%zu/%zu (clear is (10,20,30))\n",
+                     "[selftest] MRT attachment %d: centre=(%d,%d,%d) covered=%zu/%zu [%s]\n",
                      attachment, image.at(64, 36, 0), image.at(64, 36, 1), image.at(64, 36, 2),
-                     image.differingFrom(10, 20, 30), image.pixels.size() / 4u);
+                     image.differingFrom(10, 20, 30), image.pixels.size() / 4u,
+                     attachment == 0 ? "takes the pass clear colour (10,20,30)"
+                                     : "transparent black by contract, clear colour ignored");
         // The unambiguous half: the geometry must be visible in attachment 0
         // (the primary output every consumer samples).
         if (attachment == 0 && image.at(64, 36, 0) <= image.at(64, 36, 2) + 20) {
@@ -1593,6 +1594,18 @@ bool runMrtProbe(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int 
                          "[selftest] FAIL: MRT attachment 0 centre is (%d,%d,%d); the quad was drawn there"
                          " in red\n",
                          image.at(64, 36, 0), image.at(64, 36, 1), image.at(64, 36, 2));
+            ok = false;
+        }
+        // And the contract for the extra attachments: a pixel no geometry
+        // covers must read TRANSPARENT BLACK, not the pass' clear colour — this
+        // is what a deferred consumer keys "background" off (see
+        // RenderBackend::clear and RenderPipelineBuilder's lighting program).
+        if (attachment > 0 && (image.at(4, 4, 0) != 0 || image.at(4, 4, 1) != 0 || image.at(4, 4, 2) != 0 ||
+                               image.at(4, 4, 3) != 0)) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: MRT attachment %d corner is (%d,%d,%d,%d); an extra attachment must"
+                         " read transparent black where nothing was drawn\n",
+                         attachment, image.at(4, 4, 0), image.at(4, 4, 1), image.at(4, 4, 2), image.at(4, 4, 3));
             ok = false;
         }
     }

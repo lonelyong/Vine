@@ -496,6 +496,16 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * that depth-test against existing content) should render into an
      * off-screen target and composite it into the window.
      *
+     * MULTI-ATTACHMENT (MRT) TARGETS: the clear color applies to the FIRST
+     * colour attachment; every further attachment is left TRANSPARENT BLACK
+     * (0,0,0,0) until a fragment writes it. That is deliberate, not an
+     * oversight: it lets a consumer tell "nothing was drawn here" from the
+     * stored data itself — the deferred-lighting program treats a stored view
+     * position of ~0 as background — so the rule must not be changed to a
+     * uniform clear without auditing those consumers. A backend that cannot
+     * honour it must say so on its diagnostics channel rather than silently
+     * clearing differently.
+     *
      * @param backgroundColor Clear color.
      * @param clearDepth      Whether to also clear the depth buffer. Ignored
      *                        for the window target (always cleared).
