@@ -288,6 +288,77 @@ struct VsgRenderer::Impl {
      * way the window does.
      */
     struct Target {
+        /** @brief The parts of a RenderTarget's description that shape this
+         * target's off-screen attachments and render pass.
+         *
+         * buildOffscreenTarget bakes all of them into the images, render pass
+         * and framebuffer it creates, and a host may change any of them between
+         * frames (attachColor / attachDepth / setDepthPromotion) — so a change
+         * must rebuild. Comparing one key instead of listing the properties at
+         * the rebuild predicate is what keeps a newly supported property from
+         * being silently ignored: before this, an attachment added or a depth
+         * promotion turned on after the first frame kept the old framebuffer
+         * for the life of the target (readColorBuffer then reported the new
+         * attachment as "out of range", and the promotion never happened).
+         *
+         * Size is tracked by the width / height fields below instead of here:
+         * the borrow validation reads the built size, and releaseRenderTarget()
+         * forces a rebuild by clearing them.
+         */
+        struct BuildKey {
+            int                                                    color_count = 0;
+            std::vector<vine::graphics::RenderTarget::ColorFormat> color_formats;
+            bool                                                   has_depth = false;
+            vine::graphics::RenderTarget::DepthFormat              depth_format{};
+            bool                                                   depth_promotion = false;
+
+            /** @brief Builds the key of @p target as it reads right now.
+             *
+             * @param target Render target to describe.
+             * @return The key of the target's current attachment / pass shape.
+             */
+            [[nodiscard]] static BuildKey of(const vine::graphics::RenderTarget& target)
+            {
+                BuildKey key;
+                key.color_count = target.colorCount();
+                key.color_formats.reserve(key.color_count > 0 ? static_cast<std::size_t>(key.color_count) : 0u);
+                for (int i = 0; i < key.color_count; ++i) {
+                    key.color_formats.push_back(target.colorFormat(i));
+                }
+                key.has_depth       = target.hasDepth();
+                key.depth_format    = target.depthFormat();
+                key.depth_promotion = target.depthPromotion();
+                return key;
+            }
+
+            /** @brief Returns whether this key still describes @p target.
+             *
+             * The rebuild predicate runs for every pass into this target on
+             * every frame, so it compares against the target instead of
+             * building a key to compare with: the unchanged case allocates
+             * nothing and returns on the first difference.
+             *
+             * @param target Render target to compare against.
+             * @return true when every property this key watches still matches.
+             */
+            [[nodiscard]] bool matches(const vine::graphics::RenderTarget& target) const
+            {
+                if (color_count != target.colorCount() || has_depth != target.hasDepth() ||
+                    depth_promotion != target.depthPromotion()) {
+                    return false;
+                }
+                if (has_depth && depth_format != target.depthFormat()) {
+                    return false;
+                }
+                for (int i = 0; i < color_count; ++i) {
+                    if (color_formats[static_cast<std::size_t>(i)] != target.colorFormat(i)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        };
+
         /** @brief Returns whether this target's off-screen pass LOADs depth.
          *
          * A render pass bakes ONE depth load-op, so a target either clears its
@@ -339,6 +410,10 @@ struct VsgRenderer::Impl {
         ::vsg::ref_ptr<::vsg::ShaderSet> depth_off_shader_set;
         int width  = 0; // off-screen logical size
         int height = 0;
+        // The attachment / pass shape these attachments were built from (see
+        // BuildKey): a change means the images / render pass / framebuffer no
+        // longer match the target's description and must be rebuilt.
+        BuildKey build_key;
         // Engine clear() request for this target, persisted so an off-screen
         // graph (re)built later reapplies the last requested clear values
         // instead of a hard-coded default. clear_depth also selects the depth

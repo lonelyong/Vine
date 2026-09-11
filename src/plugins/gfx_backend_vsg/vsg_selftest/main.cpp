@@ -914,6 +914,299 @@ bool runDepthShareOrderPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
 }
 
 /**
+ * @brief Returns how many packed RGBA8 pixels differ from (@p r, @p g, @p b).
+ *
+ * @param pixels Packed RGBA8 pixel bytes.
+ * @param r      Red channel value to compare against.
+ * @param g      Green channel value to compare against.
+ * @param b      Blue channel value to compare against.
+ * @return The number of pixels whose colour is not the given one.
+ */
+std::size_t countDifferingFrom(const std::vector<std::uint8_t>& pixels, int r, int g, int b)
+{
+    std::size_t count = 0;
+    for (std::size_t i = 0; i + 2u < pixels.size(); i += 4u) {
+        if (pixels[i] != static_cast<std::uint8_t>(r) || pixels[i + 1u] != static_cast<std::uint8_t>(g) ||
+            pixels[i + 2u] != static_cast<std::uint8_t>(b)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+/**
+ * @brief Asserts that changing a target's DESCRIPTION after it was built takes
+ * effect, instead of being ignored for the rest of that target's life.
+ *
+ * buildOffscreenTarget bakes the colour attachment count / formats, the depth
+ * format and the depth-promotion flag into the images, render pass and
+ * framebuffer it creates. A host calls attachColor / attachDepth /
+ * setDepthPromotion between frames, but the rebuild predicate compared size and
+ * depth policy only, so the rest was silently ignored:
+ *  - a colour attachment added later never existed — readColorBuffer() reported
+ *    it as "out of range", i.e. the backend's honest-sounding diagnostic was
+ *    really it admitting it dropped the request;
+ *  - a depth promotion turned on later never happened, so the borrow validation
+ *    (which reads the flag the build baked) still called that depth borrowable
+ *    and let a borrower attach an image the source's pass no longer leaves in
+ *    the depth-attachment layout.
+ * Both episodes below are rewritten to a passing state only by the rebuild, and
+ * the build count pins that the rebuild happens exactly once (a wrong key
+ * comparison would rebuild every frame).
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quads are drawn through.
+ * @param frames   Frames to drive per episode (at least four).
+ * @return true when both description changes took effect after one rebuild.
+ */
+bool runTargetDescriptionChangePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok = true;
+    const vine::Color clear(10, 20, 30, 255);
+    auto              material = MaterialPtr(new Material());
+    material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f)); // blue (blueDominant)
+    RenderCommand near_command(makeVisibleQuad(0.4f, 1.0f), material, Mat4d());
+    RenderCommand far_command(makeVisibleQuad(0.4f, -1.0f), material, Mat4d());
+
+    std::vector<vine::graphics::RenderDiagnostic> received;
+    renderer.setDiagnosticSink([&received](const vine::graphics::RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+
+    // ---- Episode 1: a second colour attachment appears mid-run -------------
+    {
+        auto target = RenderTargetPtr(new RenderTarget());
+        target->setName(u8"desc-mrt");
+        target->setSize(256, 144);
+        target->attachColor(RenderTarget::ColorFormat::RGBA8);
+        target->attachDepth(RenderTarget::DepthFormat::D32);
+
+        auto pass = RenderPassPtr(new RenderPass());
+
+        const std::size_t builds_before = renderer.offscreenBuildCount();
+        bool              attachment_1_was_there = true; // the control: it must NOT be, yet
+        bool              attachment_1_is_there  = false;
+        bool              attachment_1_is_empty  = false;
+        std::size_t       rebuilds_after_change  = 0;
+        std::size_t       builds_at_change       = 0;
+
+        for (int i = 0; i < frames; ++i) {
+            if (i == 1) {
+                // The description change: a second colour attachment. Nothing
+                // in the pass protocol changed, so only the built target
+                // noticing its own shape can pick this up.
+                target->attachColor(RenderTarget::ColorFormat::RGBA8);
+                builds_at_change = renderer.offscreenBuildCount();
+            }
+            renderer.beginFrame();
+            renderer.beginPass(pass.get());
+            renderer.setPassOrder(0);
+            renderer.setRenderTarget(target.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(clear, true);
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
+            renderer.endPass();
+            renderer.endFrame();
+            renderer.swapBuffers();
+
+            PixelImage image;
+            std::vector<std::uint8_t> second;
+            if (i == 0) {
+                // Control: with one attachment built, attachment 1 does not
+                // exist yet (this is the state the bug left the target in
+                // forever).
+                attachment_1_was_there = renderer.readColorBuffer(target.get(), 1, second);
+            }
+            if (i >= 1) {
+                if (renderer.readColorBuffer(target.get(), 1, second)) {
+                    attachment_1_is_there = true;
+                    attachment_1_is_empty =
+                        second.size() == static_cast<std::size_t>(target->width()) *
+                                             static_cast<std::size_t>(target->height()) * 4u &&
+                        countDifferingFrom(second, 0, 0, 0) == 0u &&
+                        (second.size() < 4u || second[3] == 0u); // packed RGBA8: transparent
+                }
+                // The rebuild must happen ONCE (on the frame the description
+                // changed), not on every frame.
+                rebuilds_after_change = renderer.offscreenBuildCount() - builds_at_change;
+            }
+            if (i == 0 && !readTarget(renderer, target.get(), image)) {
+                std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused attachment 0 of the MRT target\n");
+                ok = false;
+                break;
+            }
+        }
+
+        if (attachment_1_was_there) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: attachment 1 of a target built with ONE colour attachment was readable"
+                         " before the host attached it\n");
+            ok = false;
+        }
+        if (!attachment_1_is_there || !attachment_1_is_empty) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: a colour attachment attached after the first frame %s; the target kept"
+                         " the framebuffer it was built with (attachment 1 must exist and hold the contract's"
+                         " transparent black, since no pipeline writes it)\n",
+                         attachment_1_is_there ? "read back as non-transparent" : "never existed");
+            ok = false;
+        }
+        if (rebuilds_after_change != 1u) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: adding a colour attachment rebuilt the target %zu time(s), expected"
+                         " exactly 1 (the description key must change once, not per frame)\n",
+                         rebuilds_after_change);
+            ok = false;
+        }
+        if (renderer.offscreenBuildCount() - builds_before < 1u) {
+            std::fprintf(stderr, "[selftest] FAIL: the MRT target was never built\n");
+            ok = false;
+        }
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+    }
+
+    // ---- Episode 2: the depth source turns promotion ON mid-run ------------
+    {
+        auto source = RenderTargetPtr(new RenderTarget());
+        source->setName(u8"desc-src");
+        source->setSize(256, 144);
+        source->attachColor(RenderTarget::ColorFormat::RGBA8);
+        source->attachDepth(RenderTarget::DepthFormat::D32);
+        source->setDepthPromotion(false); // borrowable: not a sampled depth
+
+        auto borrower = RenderTargetPtr(new RenderTarget());
+        borrower->setName(u8"desc-dst");
+        borrower->setSize(256, 144);
+        borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
+        borrower->shareDepth(source);
+
+        auto source_pass   = RenderPassPtr(new RenderPass());
+        auto borrower_pass = RenderPassPtr(new RenderPass());
+
+        const std::size_t reports_before = received.size();
+        bool              borrowed_rejected_far = false; // control: the borrow must hide the far quad
+        bool              fell_back_drew_far    = false;
+        std::size_t       rebuilds_on_change    = 0;
+        std::size_t       rebuilds_after_change = 0;
+        std::size_t       builds_at_change      = 0;
+
+        for (int i = 0; i < frames; ++i) {
+            if (i == 2) {
+                // The description change: the source's depth becomes a sampled
+                // texture, which makes it unborrowable — but only a rebuild can
+                // notice, and only a rebuild of the BORROWER can refuse it.
+                source->setDepthPromotion(true);
+                builds_at_change = renderer.offscreenBuildCount();
+            }
+            renderer.beginFrame();
+
+            renderer.beginPass(source_pass.get());
+            renderer.setPassOrder(0);
+            renderer.setRenderTarget(source.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(clear, true);
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
+            renderer.endPass();
+
+            renderer.beginPass(borrower_pass.get());
+            renderer.setPassOrder(1);
+            renderer.setRenderTarget(borrower.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(clear, true);
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
+            renderer.endPass();
+
+            renderer.endFrame();
+            renderer.swapBuffers();
+
+            PixelImage image;
+            if (!readTarget(renderer, borrower.get(), image)) {
+                std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the promotion borrower\n");
+                ok = false;
+                break;
+            }
+            const bool far_drawn = image.blueDominant() != 0u;
+            if (i < 2) {
+                borrowed_rejected_far = borrowed_rejected_far || !far_drawn;
+            }
+            if (i >= 2) {
+                fell_back_drew_far = fell_back_drew_far || far_drawn;
+                rebuilds_after_change = renderer.offscreenBuildCount() - builds_at_change;
+                if (i == 2) {
+                    rebuilds_on_change = rebuilds_after_change;
+                }
+            }
+        }
+
+        // While the source's depth was borrowable, the borrower tested it: its
+        // far quad is BEHIND the source's near depth, so nothing may be drawn.
+        if (!borrowed_rejected_far) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the borrower drew its far quad while it was borrowing the source's near"
+                         " depth, so the borrow was never in effect — the promotion episode below would prove"
+                         " nothing\n");
+            ok = false;
+        }
+        // After the promotion the source's depth is a sampled texture and can no
+        // longer be attached: the borrower must fall back to its OWN depth (which
+        // its pass clears), so its far quad is drawn again.
+        if (!fell_back_drew_far) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: after the source's depth was promoted to a sampled texture the borrower"
+                         " kept borrowing it (its far quad is still hidden), so the promotion never reached the"
+                         " build — a sampled depth cannot be a framebuffer attachment\n");
+            ok = false;
+        }
+        const bool reported_promoted = [&received, reports_before] {
+            for (std::size_t i = reports_before; i < received.size(); ++i) {
+                if (received[i].message.find(u8"promoted its depth") != vine::String::npos) {
+                    return true;
+                }
+            }
+            return false;
+        }();
+        if (!reported_promoted) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the refused borrow of the promoted source was not reported (%zu"
+                         " diagnostic(s) since the episode started)\n",
+                         received.size() - reports_before);
+            ok = false;
+        }
+        // The change frame rebuilds TWO targets: the source (the promotion is
+        // baked into its render pass and final layout) and the borrower (it must
+        // re-run the borrow validation against the new flag), and nothing after
+        // it — a key comparison that never settles would rebuild every frame.
+        if (rebuilds_on_change != 2u || rebuilds_after_change != rebuilds_on_change) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: turning the source's depth promotion on rebuilt %zu time(s) on the"
+                         " change frame (%zu in total afterwards), expected 2 (the source for the promotion + the"
+                         " borrower to refuse the borrow) and no growth after\n",
+                         rebuilds_on_change, rebuilds_after_change);
+            ok = false;
+        }
+        renderer.releasePass(borrower_pass.get());
+        renderer.releasePass(source_pass.get());
+        renderer.releaseRenderTarget(borrower.get());
+        renderer.releaseRenderTarget(source.get());
+    }
+
+    renderer.setDiagnosticSink({});
+
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] target description: a colour attachment added and a depth promotion turned on after"
+                     " the first frame both took effect, each with the rebuild confined to its change frame;"
+                     " attachment 1 read back transparent black and the promoted source's borrow was refused"
+                     " (1 report)\n");
+    }
+    return ok;
+}
+
+/**
  * @brief Asserts what DepthMode::TestOnly really does (both shipped transparent
  * passes use it, and nothing asserted it).
  *
@@ -2892,6 +3185,7 @@ int main()
     contract_ok = runDepthBorrowValidationPhase(*renderer, camera, 3) && contract_ok;
     contract_ok = runDepthTestOnlyPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runDepthShareOrderPhase(*renderer, camera, 6) && contract_ok;
+    contract_ok = runTargetDescriptionChangePhase(*renderer, camera, 4) && contract_ok;
     // Diagnostics: what the MRT path receives per attachment (attachment 0 is
     // asserted), and which input a "nothing was drawn" result is attributable
     // to.

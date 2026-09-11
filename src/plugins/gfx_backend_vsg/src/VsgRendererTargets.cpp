@@ -102,6 +102,7 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         t.depth_off_shader_set = {};
         t.width                = 0;
         t.height               = 0;
+        t.build_key            = {};
     }
 
     const uint32_t w = static_cast<uint32_t>(target->width());
@@ -417,6 +418,9 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         impl->command_graph->children.push_back(t.graph);
         reconcileOffscreenOrder();
     }
+    // Record the shape these attachments and this pass were built from, so
+    // render() rebuilds when the host changes any of it (see Target::BuildKey).
+    t.build_key = Impl::Target::BuildKey::of(*target);
     std::fprintf(stderr, "[VsgRenderer] EXPERIMENTAL off-screen target '%s' %ux%u attached\n",
                  target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str(), w, h);
     ++impl->offscreen_build_count;

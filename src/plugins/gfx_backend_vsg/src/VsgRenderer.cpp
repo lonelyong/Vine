@@ -494,9 +494,11 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     if (target_key != nullptr &&
         (target.graph == nullptr || target.width != target_key->width() ||
          target.height != target_key->height() || target.depth_load != want_load_depth || borrow_pending ||
-         borrow_stale)) {
+         borrow_stale || !target.build_key.matches(*target_key))) {
         // First render into this off-screen target, or it was resized, or its
-        // depth-clear policy changed: build (or rebuild) its attachments +
+        // depth-clear policy changed, or its attachment / pass shape did
+        // (colour attachments, depth format, depth promotion — see
+        // Target::BuildKey): build (or rebuild) its attachments +
         // render graph. Any content slots compiled against an older graph are
         // dropped by buildOffscreenTarget.
         buildOffscreenTarget(target_key);

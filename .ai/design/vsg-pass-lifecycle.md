@@ -1205,3 +1205,55 @@ harness 追加 `depth share order:` ≥1 行证据要求（这次编辑一开始
 PASS`（0 VUID，含新证据行）；app 冒烟（`dist` 换新插件）：exit 124、设备行在手、
 **全程只有 1 条预热借用警告**（`composite` 借 `gbuffer`，随后静默成功）、离屏
 目标只构建 3 次（无重建循环），无 `unresolved` 警告。
+
+## 26. 目标描述在构建后改变必须重建：构建指纹（D39，2026-09-11）
+
+`buildOffscreenTarget` 把目标的**描述**烧进它创建的东西：附件数量/格式 → 图像 +
+render pass + framebuffer；深度格式 → 深度图 + render pass；深度提升标志 →
+render pass 的 finalLayout + `depth_sampleable`。而 `render()` 的重建谓词只逐项列了
+**尺寸 / 深度策略 / 借用待办 / 借用过期**，于是**没被列到的属性一律静默失效**：
+
+* **中途 `attachColor()`**：帧缓冲仍是旧的附件数 → 新附件**永远不存在**；
+  `readColorBuffer(t, 1)` 报 "attachment 1 is out of range" —— 这句听着像"不支持"的
+  诊断，实际是后端在承认自己把请求丢了。
+* **中途 `setDepthPromotion(true)`**：**一次重建都不会发生**（反证实测：变更帧重建
+  0 次），于是 (a) 深度**从未**被提升成可采样；(b) 更要命的是 §23 的借用校验读的是
+  **构建时烧下的** `depth_sampleable`，所以它继续认为这个深度"可借" → 借用方**继续
+  把一个源 pass 已按采样布局收尾的深度当附件挂上** —— 正是 §23 花力气拦下的那种错
+  误用法，从后门静默回来了。
+
+**修法**：`Target::BuildKey`（颜色附件数 + 各附件格式 + 是否有深度 + 深度格式 +
+提升标志）在构建末尾记录、在重建的重置块里清空，重建谓词比较整把钥匙而不是逐项列举
+—— 以后再加"烧进构建"的属性时，漏掉列举也不会静默失效。尺寸与深度策略仍是**单独
+的项**：`width`/`height` 是借用校验要读的"已建尺寸"，且 `releaseRenderTarget` 靠清
+零它逼出重建；`depth_load` 来自引擎**本帧**的 pass 请求，不是目标描述。
+
+**判据**（selftest `runTargetDescriptionChangePhase`，两段）：
+
+1. **中途加颜色附件**：第 1 帧前 `readColorBuffer(t, 1)` 必须失败（对照组：那一刻
+   确实只有 1 个附件）→ 第 2 帧 `attachColor()` → 之后附件 1 必须**读得回来**、且是
+   契约的**透明黑**（没有管线写它：MRT 契约 D31）；重建次数**恰好 1 次**。
+2. **中途打开深度提升**（源 `setDepthPromotion(false)` → 借用生效，借用方远面必须被
+   源的近深度拒绝 = 对照组）→ 第 3 帧 `setDepthPromotion(true)` → 源重建（提升 +
+   finalLayout）**且借用方重建**（重跑校验 → 拒绝 + 报一次 + 回落自有深度）→ 之后
+   借用方的远面**必须又能画出来**（它现在用自己的、每帧清的深度）；变更帧重建**恰好
+   2 次**（源 + 借用方），此后不再增长。
+
+**判据力（反证）**：把构建指纹项从谓词里停掉 → 4 条断言同时报红，且证据精确：
+`never existed`（附件）、`kept borrowing it`（提升没进构建）、`not reported`
+（0 条诊断）、`0 time(s)`（变更帧重建 0 次 = 提升完全不可见）。
+
+证据行：
+
+```
+[selftest] target description: a colour attachment added and a depth promotion
+turned on after the first frame both took effect, each with the rebuild confined
+to its change frame; attachment 1 read back transparent black and the promoted
+source's borrow was refused (1 report)
+```
+
+harness 追加 `target description:` ≥1 行证据要求。
+
+**验收**：test_vsg 71、test_graphics 157 全绿；`gfx_lavapipe_check.sh` → `RESULT:
+PASS`（0 VUID，含新证据行）；app 冒烟：exit 124、离屏只构建 3 次（无重建循环）、
+1 条预热借用警告、0 VUID。

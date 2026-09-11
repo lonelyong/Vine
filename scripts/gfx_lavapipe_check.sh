@@ -175,6 +175,7 @@ else
     grep "^\[selftest\] depth borrow:" "$log" | sed 's/^/    /' || true
     grep "^\[selftest\] depth testonly:" "$log" | sed 's/^/    /' || true
     grep "^\[selftest\] depth share order:" "$log" | sed 's/^/    /' || true
+    grep "^\[selftest\] target description:" "$log" | sed 's/^/    /' || true
     grep "^\[selftest\] MRT " "$log" | sed 's/^/    /' || true
     # Each assertion group must report itself: a stage whose assertions were
     # removed (or silently stopped running) must not read as a pass.
@@ -194,6 +195,7 @@ else
     require_evidence "^\[selftest\] depth borrow:" 1 "depth-borrow validation assertion"
     require_evidence "^\[selftest\] depth testonly:" 1 "TestOnly depth assertion"
     require_evidence "^\[selftest\] depth share order:" 1 "depth-share ordering assertion"
+    require_evidence "^\[selftest\] target description:" 1 "target description rebuild assertion"
     require_evidence "^\[selftest\] MRT " 2 "MRT report"
     # The self-test is expected to finish (0); a timeout (124) is also OK.
     if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
