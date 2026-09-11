@@ -1,5 +1,7 @@
 ﻿# Graphics 模块核心
 
+> 2026-09-11 **深度借用的两个隐性缺陷（D38，设计 §25）**：借来的深度是直接烧进帧缓冲的，所以源一重建（**同尺寸**！混合深度策略收敛、尺寸变化都会）就换掉它的深度图像，而借用方只在**自己**重建时才重新校验 → 帧缓冲继续测**没人再写的旧图**（深度静默冻结）。修法：`Target::depth_source_view` 记住烧进帧缓冲的那张源视图，`render()` 比较"源当前的 `depth_view` != 记录值"即重建（重跑 §23 借用校验，带墓碑守卫防诊断/重建循环）。**另一半**：`reconcileOffscreenOrder` 的依赖边只来自采样（PiP / 全屏 program），深度借用**不是边**，所以源重建后被追加到末尾 → 借用方记录在源**之前** → 整帧用上一帧的深度（静默 1 帧滞后）；现在 `depth_source` 也是一条边。判据：selftest `runDepthShareOrderPhase`（借用方用 `TestOnly` 只测不写，否则写入会污染共享图），源第 2 帧混合重建、第 3 帧画更近的面 → 从第 3 帧起必须帧帧被拒（实测 `AAA---`）；反证：停 `borrow_stale` → `AAAAAA` 报红，停依赖边**在当前实现下不可观测**（借用方的重建会重新追加到末尾，等价修好顺序）→ 该边作为不变量保留并记录在案。
+
 > 2026-09-11 **`DepthMode::TestOnly` 的语义断言（设计 §24）**：两条内置半透明 pass（forward /
 > deferred 的 `forward_transparent`）都用 TestOnly，但以前**只驱动、从没量过**。新阶段
 > `runDepthTestOnlyPixelPhase`：不透明 pass 先写近面深度；半透明 pass（不 clear、TestOnly）按序

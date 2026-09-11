@@ -319,8 +319,14 @@ struct VsgRenderer::Impl {
         // Depth sharing (see RenderTarget::shareDepth): the target whose depth
         // this framebuffer borrows (null = owns its depth) plus the command
         // barrier that makes that depth visible between the two render graphs.
-        vine::graphics::RenderTarget* depth_source = nullptr;
-        ::vsg::ref_ptr<::vsg::Node>   depth_share_barrier;
+        vine::graphics::RenderTarget*    depth_source = nullptr;
+        // The source's depth VIEW this framebuffer was baked with. A source
+        // that is rebuilt (size or depth-policy change) replaces its depth
+        // image, and the baked framebuffer would go on testing the replaced
+        // image — which nobody writes any more — so render() rebuilds this
+        // target as soon as the two differ and runs the borrow validation again.
+        ::vsg::ref_ptr<::vsg::ImageView> depth_source_view;
+        ::vsg::ref_ptr<::vsg::Node>      depth_share_barrier;
         // Set when the borrowed source above was RELEASED while still borrowed:
         // its VkImage is gone, so the borrow cannot be honoured and this target
         // builds with its own depth instead (a later shareDepth() with a live

@@ -92,6 +92,7 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         t.depth_ready          = false;
         t.framebuffer          = {};
         t.depth_source         = nullptr;
+        t.depth_source_view    = {};
         t.depth_share_barrier  = {};
         t.depth_sampleable     = false;
         t.depth_borrow_pending_reported = false;
@@ -242,6 +243,10 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         // this framebuffer.
         const auto src_it = impl->targets.find(depth_src);
         attachments.push_back(src_it->second.depth_view);
+        // Remember WHICH source image this framebuffer borrowed: the source
+        // replacing it (a rebuild) invalidates this framebuffer, and render()
+        // detects that by comparing the two.
+        t.depth_source_view = src_it->second.depth_view;
     }
 
     // The depth policy of this target's pass follows its persisted clearDepth
@@ -490,6 +495,19 @@ void VsgRenderer::reconcileOffscreenOrder()
             consumers[source].push_back(t);
             ++indegree[t];
         };
+        // A DEPTH BORROW is a dependency too, and not a sampling one: the
+        // borrower's pass LOADs (tests against) the depth the source's pass
+        // writes this frame. Without an edge here the order came from the build
+        // order alone, so a borrower whose graph happened to be created before
+        // the source's (a consumer pass ordered before its producer, or a source
+        // that was rebuilt later in the frame) was RECORDED FIRST and tested
+        // against the previous frame's depth — a silent one-frame lag, which no
+        // validation layer reports (the layouts match; only the write→read
+        // dependency is wrong). The barrier inserted below then also sits after
+        // the source, i.e. between the two, as it must.
+        if (target.depth_source != nullptr) {
+            add_source(target.depth_source);
+        }
         // A slot's sampled target is a slot attribute (its key is the owning
         // pass), so the dependency edges come from the attribute. A retired
         // (detached) slot is not recorded, so it contributes no edge.

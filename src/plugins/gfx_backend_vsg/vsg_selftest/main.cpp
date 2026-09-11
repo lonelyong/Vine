@@ -718,6 +718,202 @@ bool runInFlightChurnPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
 }
 
 /**
+ * @brief Asserts that a borrowed depth is THIS frame's source depth, not the
+ * previous frame's.
+ *
+ * The depth borrow is a real dependency between two off-screen graphs: the
+ * borrower's pass LOADs what the source's pass writes this frame, so the source
+ * must be RECORDED first. That order used to come from the build order alone (a
+ * sampling edge existed for PiP / fullscreen programs, but not for a borrow), so
+ * a borrower whose graph was created before the source's — a consumer pass
+ * ordered before its producer, which is exactly what a warm-up can produce — ran
+ * first and tested against the PREVIOUS frame's depth. No validation layer sees
+ * it (the layouts match; only the write→read dependency is wrong): the picture
+ * just lags one frame.
+ *
+ * The same rebuild ALSO replaces the source's depth image, which is the second
+ * half of the contract: the borrower's framebuffer was baked with the old image,
+ * so it must re-run the borrow validation instead of testing an image nobody
+ * writes any more (which silently freezes the borrowed depth and keeps the old
+ * image alive).
+ *
+ * Both halves need a SAME-SIZE source rebuild to be reachable, and the mixed
+ * depth policy provides one: a target whose passes disagree about clearing depth
+ * switches to depth-LOAD on the frame the second pass appears, which rebuilds
+ * it. The schedule below therefore is:
+ *   frames 0..1  source clears its depth and draws a far quad (depth ~0.0166)
+ *   frame 2      a second, depth-preserving source pass appears: the source
+ *                becomes mixed, rebuilds, and gets a NEW depth image
+ *   frame 3..    the source also draws a near quad (depth ~0.0249)
+ * The borrower draws only a probe at z = 0 (~0.02), i.e. between the two, with
+ * DepthMode::TestOnly so it never writes the shared depth itself: it must be
+ * ACCEPTED while the source's depth is the far quad and REJECTED from frame 3 on
+ * (the near quad is in front of it). A stale image keeps it accepted forever; a
+ * wrong record order delays the rejection by exactly one frame.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera both quads are drawn through.
+ * @param frames   Frames to drive (at least five, so the schedule completes).
+ * @return true when the borrower followed the source's own frame and image.
+ */
+bool runDepthShareOrderPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok = true;
+    const vine::Color clear(10, 20, 30, 255);
+    auto              source_material = MaterialPtr(new Material());
+    source_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    auto borrower_material = MaterialPtr(new Material());
+    borrower_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f)); // blue
+    // The source's two quads: the far one (z = -1 -> 3.0 units -> ~0.0166) and
+    // the near one (z = 1 -> 4.0 units -> ~0.0249) added from frame 3 on.
+    RenderCommand far_command(makeVisibleQuad(0.4f, -1.0f), source_material, Mat4d());
+    RenderCommand near_command(makeVisibleQuad(0.4f, 1.0f), source_material, Mat4d());
+    // The probe sits between them: z = 0 is 5 units away (~0.02).
+    RenderCommand probe_command(makeVisibleQuad(0.4f, 0.0f), borrower_material, Mat4d());
+
+    auto source = RenderTargetPtr(new RenderTarget());
+    source->setName(u8"order-src");
+    source->setSize(256, 144);
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    source->attachDepth(RenderTarget::DepthFormat::D32);
+    source->setDepthPromotion(false);
+
+    auto borrower = RenderTargetPtr(new RenderTarget());
+    borrower->setName(u8"order-dst");
+    borrower->setSize(256, 144);
+    borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
+    borrower->shareDepth(source);
+
+    // The borrower's pass is announced FIRST (order 0 < 1) on purpose: its graph
+    // is therefore created before the source's, which is the order that used to
+    // leak into the record order. The source still becomes available inside the
+    // first frame, so the borrow is honoured from the second frame on.
+    auto borrower_pass = RenderPassPtr(new RenderPass());
+    auto source_pass   = RenderPassPtr(new RenderPass());
+    auto source_load_pass = RenderPassPtr(new RenderPass());
+
+    std::vector<bool> accepted;
+    for (int i = 0; i < frames; ++i) {
+        // The second, depth-preserving source pass appears on frame 2: the
+        // source's passes now disagree (mixed), so the source rebuilds with a new
+        // depth image from that frame on — the same-size rebuild both halves of
+        // the contract are about.
+        const bool mixed = i >= 2;
+        // The near quad joins on frame 3: from then on the source's depth is in
+        // front of the borrower's probe, so the probe must be rejected.
+        const bool near_quad = i >= 3;
+
+        renderer.beginFrame();
+
+        renderer.beginPass(borrower_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(borrower.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::TestOnly); // never writes the shared depth
+        renderer.clear(clear, false);                               // keeps the borrowed depth
+        renderer.setLights({});
+        renderer.render(std::vector<RenderCommand>{ probe_command }, camera.get());
+        renderer.endPass();
+
+        renderer.beginPass(source_pass.get());
+        renderer.setPassOrder(1);
+        renderer.setRenderTarget(source.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        renderer.clear(clear, true); // its own depth: cleared while the target is not mixed
+        renderer.setLights({});
+        if (near_quad) {
+            renderer.render(std::vector<RenderCommand>{ far_command, near_command }, camera.get());
+        }
+        else {
+            renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
+        }
+        renderer.endPass();
+
+        if (mixed) {
+            renderer.beginPass(source_load_pass.get());
+            renderer.setPassOrder(2);
+            renderer.setRenderTarget(source.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(clear, false); // the policy flip that rebuilds the source
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{}, camera.get());
+            renderer.endPass();
+        }
+
+        renderer.endFrame();
+        renderer.swapBuffers();
+
+        PixelImage image;
+        if (!readTarget(renderer, borrower.get(), image)) {
+            std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the depth-order borrower\n");
+            ok = false;
+            break;
+        }
+        accepted.push_back(image.blueDominant() != 0u);
+    }
+
+    if (ok) {
+        std::string pattern;
+        for (const bool a : accepted) {
+            pattern += a ? 'A' : '-';
+        }
+        // Frame 0 cannot be judged: the source's graph is created within it, so
+        // the borrow may not be in effect yet (see the borrow-validation phase).
+        // Frame 2 is the control: the borrow IS in effect there, so the probe
+        // passes the source's far depth and must be drawn — without this the
+        // "rejected" frames below would prove nothing.
+        if (accepted.size() < 4u || !accepted[2]) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the depth-order borrower's probe (%s over %zu frames) was not drawn while"
+                         " the source's far depth was in front of it, so the borrow is not in effect and the"
+                         " rejection below would be meaningless\n",
+                         pattern.c_str(), accepted.size());
+            ok = false;
+        }
+        // Frames 3.. : the source's near quad is nearer than the probe, so the
+        // probe must be rejected in EVERY one of them. Two defects show up here
+        // and the shape of the pattern tells them apart: a probe that is drawn on
+        // frame 3 only (and rejected afterwards) tested the PREVIOUS frame's
+        // depth, i.e. the borrower's render graph was RECORDED before the
+        // source's; a probe that is drawn from frame 3 on without end is still
+        // testing the depth IMAGE the source replaced when it rebuilt.
+        std::size_t drawn_from_join = 0;
+        std::size_t first_drawn     = accepted.size();
+        for (std::size_t i = 3; i < accepted.size(); ++i) {
+            if (accepted[i]) {
+                ++drawn_from_join;
+                first_drawn = std::min(first_drawn, i);
+            }
+        }
+        if (drawn_from_join != 0u) {
+            const bool one_frame_only = drawn_from_join == 1u && first_drawn == 3u;
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the depth-order borrower's probe is still drawn on %zu of the frames from"
+                         " frame 3 on (%s over %zu frames, first at frame %zu) although the source's near quad (z = 1)"
+                         " is in front of it — the borrower %s\n",
+                         drawn_from_join, pattern.c_str(), accepted.size(), first_drawn,
+                         one_frame_only
+                             ? "tested the PREVIOUS frame's depth, i.e. its render graph was RECORDED after the source's"
+                             : "is testing the depth image the source REPLACED when it rebuilt (the borrow was baked"
+                               " against the old image and never revisited)");
+            ok = false;
+        }
+        if (ok) {
+            std::fprintf(stderr,
+                         "[selftest] depth share order: borrower followed the source's own frame and image (%s over"
+                         " %zu frames; A = probe drawn)\n",
+                         pattern.c_str(), accepted.size());
+        }
+    }
+
+    renderer.releasePass(borrower_pass.get());
+    renderer.releasePass(source_pass.get());
+    renderer.releasePass(source_load_pass.get());
+    renderer.releaseRenderTarget(borrower.get());
+    renderer.releaseRenderTarget(source.get());
+    return ok;
+}
+
+/**
  * @brief Asserts what DepthMode::TestOnly really does (both shipped transparent
  * passes use it, and nothing asserted it).
  *
@@ -2695,6 +2891,7 @@ int main()
     contract_ok = runMixedDepthPolicyPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runDepthBorrowValidationPhase(*renderer, camera, 3) && contract_ok;
     contract_ok = runDepthTestOnlyPixelPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runDepthShareOrderPhase(*renderer, camera, 6) && contract_ok;
     // Diagnostics: what the MRT path receives per attachment (attachment 0 is
     // asserted), and which input a "nothing was drawn" result is attributable
     // to.

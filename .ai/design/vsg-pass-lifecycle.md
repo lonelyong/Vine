@@ -1124,3 +1124,84 @@ pass' 0.0249 (tested, not written)
 harness 追加 `depth testonly:` ≥1 行证据要求。
 
 **验收**：test_vsg 71、test_graphics 157 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID）。
+
+## 25. 深度借用的两个隐性缺陷：源重建后帧缓冲"冻结" + 依赖图缺边（D38，2026-09-11）
+
+**背景**：`RenderTarget::shareDepth(src)` 让本目标的帧缓冲**直接用**源的深度图像
+当深度附件（延迟渲染里 composite 复用 gbuffer 的深度：不透明几何写、前向内容测
+试）。§23 只保证了**构建那一刻**的可用性（源有没有深度图 / 同尺寸 / 未被提升成
+可采样）。这一节补齐"之后"。
+
+### 25.1 缺陷 A：借用方只在自己重建时重新校验，看不见"源重建"
+
+`buildOffscreenTarget` 把源的 `depth_view` 烧进帧缓冲附件。源的**同尺寸重建**在
+真实 app 里是常规事件：
+
+* 混合深度策略收敛（§22：第二次 `clear()` 请求与第一次不同 → `depth_policy_mixed`
+  → `wantsDepthLoad()` 翻面 → 目标重建）；
+* 尺寸变化（`Pipeline::resize`）；
+* 其它触发重建的改动。
+
+重建会**换掉源的深度图像**。`render()` 的重建谓词只看借用方自己的尺寸与
+`depth_load`（外加 §23 的 `borrow_pending`：借**从未成功**才重试），所以借用方不
+重建、帧缓冲继续指旧图 —— 旧图**没人再写**，借来的深度**静默冻结**（画面里"遮挡
+关系停在那一刻"），旧图还被帧缓冲握着，白白留着显存。无 VUID、无诊断。
+
+### 25.2 缺陷 B：`reconcileOffscreenOrder` 的依赖边不含"深度借用"
+
+`reconcileOffscreenOrder()` 用稳定 Kahn 拓扑排序把离屏 graph 排成"消费者在生产者
+之后"，但**边只来自采样属性**（PiP 的 `screen_slots`、全屏 program 的
+`program_slots` 的 `source_target`）。深度借用**不是采样**，没有边，于是顺序完全
+来自"`buildOffscreenTarget` 末尾把 graph 追加到 `command_graph->children` 末尾"这
+个副作用。源在借用方之后重建 → 源被追加到末尾 → 借用方的 render graph 排在**源
+之前** → 整帧用上一帧的深度（1 帧滞后，静默；布局相同，无 VUID）。
+
+两个缺陷同源（"源被重建"），且都只在**同尺寸重建**下才可达：不同尺寸会被 §23 的
+校验拦下（回落 + 报告）。
+
+### 25.3 修法
+
+1. `Target::depth_source_view`：记住**烧进帧缓冲的那张源视图**。
+2. `render()` 增加 `borrow_stale`：`depth_source != nullptr`、未被墓碑
+   （`unusable_depth_source`，防诊断/重建循环）且源的当前 `depth_view` ≠ 记录值时
+   重建 → 重跑 §23 的校验：要么重新烧上新图，要么按持久故障回落 + 报告。
+3. `reconcileOffscreenOrder()` 把 `target.depth_source` 也作为一条依赖边
+   `add_source()`，源必然排在借用方之前，barrier 插在两者之间。
+
+### 25.4 判据（selftest `runDepthShareOrderPhase`）
+
+借用方用 `DepthMode::TestOnly`（**只测不写**，否则它自己的深度写会污染共享图像、
+让下一次比较相等而被 `GREATER` 拒掉）；场景安排使"源被同尺寸重建"可控：
+
+| 帧 | 源 | 借用方 |
+|---|---|---|
+| 0–1 | 清深度 + 画远面（z=-1 → 0.0166） | 探针 z=0（0.02），在远面**之前** → 应画上 |
+| 2 | 第二个 pass 出现（`clearDepth=false`）→ **混合** → **同尺寸重建**（换深度图） | 仍是旧图 → 探针画上（对照组） |
+| 3– | 再画近面（z=1 → 0.0249），在探针之前 | 探针必须**帧帧被拒** |
+
+实测模式 `AAA---`（A = 探针被画）：第 2 帧是"借用确实生效"的对照组（否则后面
+的"被拒"什么也证明不了），第 3 帧起帧帧被拒。
+
+**反证（判据力）**：
+
+* 停掉 `borrow_stale` → `AAAAAA`，第 3 帧起一直画上（旧图冻结）→ 断言红
+  （诊断文案按模式区分"只差 1 帧 = 记录顺序"与"一直不拒 = 旧图"）。
+* 停掉 25.3 的依赖边 → **仍绿**：借用方的 `borrow_stale` 重建会把它的 graph 重新
+  追加到末尾，等价地修好了当帧顺序。该边在当前实现下**不可单独观测**，作为"顺序
+  函数必须知道这条依赖"的不变量保留（记录在案，避免后人误以为它是死代码）。
+
+证据行：
+
+```
+[selftest] depth share order: borrower followed the source's own frame and image
+(AAA--- over 6 frames; A = probe drawn)
+```
+
+harness 追加 `depth share order:` ≥1 行证据要求（这次编辑一开始把两行 shell 粘
+成一行导致该 grep 与 `require_evidence` 都没执行、闸门仍绿 —— 已修正；教训：改
+闸门脚本后必须 `bash -n` + 确认证据行真的打印出来，而不是只看 `RESULT: PASS`）。
+
+**验收**：test_vsg 71、test_graphics 157 全绿；`gfx_lavapipe_check.sh` → `RESULT:
+PASS`（0 VUID，含新证据行）；app 冒烟（`dist` 换新插件）：exit 124、设备行在手、
+**全程只有 1 条预热借用警告**（`composite` 借 `gbuffer`，随后静默成功）、离屏
+目标只构建 3 次（无重建循环），无 `unresolved` 警告。

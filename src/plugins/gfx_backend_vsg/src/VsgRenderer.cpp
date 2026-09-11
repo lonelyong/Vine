@@ -478,9 +478,23 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
         const auto src_it   = impl->targets.find(wanted_source);
         borrow_pending = src_it != impl->targets.end() && src_it->second.depth_view != nullptr;
     }
+    // A borrow that WAS honoured holds on to the source's depth IMAGE (its
+    // framebuffer attachment is that view). A source that is rebuilt — a size
+    // change, or the depth-policy change that this same predicate watches for
+    // its own targets — replaces its depth image, and the borrower's framebuffer
+    // would keep testing the replaced one, which nobody writes any more: the
+    // borrowed depth silently freezes (and the old image stays alive). Compare
+    // the source's current image with the one this target was baked with and
+    // rebuild, which re-runs the borrow validation against the new image.
+    bool borrow_stale = false;
+    if (target.depth_source != nullptr && target.unusable_depth_source != target.depth_source) {
+        const auto src_it = impl->targets.find(target.depth_source);
+        borrow_stale = src_it == impl->targets.end() || src_it->second.depth_view != target.depth_source_view;
+    }
     if (target_key != nullptr &&
         (target.graph == nullptr || target.width != target_key->width() ||
-         target.height != target_key->height() || target.depth_load != want_load_depth || borrow_pending)) {
+         target.height != target_key->height() || target.depth_load != want_load_depth || borrow_pending ||
+         borrow_stale)) {
         // First render into this off-screen target, or it was resized, or its
         // depth-clear policy changed: build (or rebuild) its attachments +
         // render graph. Any content slots compiled against an older graph are
