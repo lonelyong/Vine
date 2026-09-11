@@ -30,11 +30,14 @@ V_VSG_NS_BEGIN
  * the vertex-binding start index and the prototype array state. Later geometry
  * of the same variant reuse these instead of running another configurator, and
  * only attach their own vertex/index data.
+ *
+ * The program and the material this template belongs to are NOT stored here:
+ * the cache entry owns both and exposes them as its keys (see
+ * OwnedPairCacheEntry and variant_cache_), so the identity this payload is
+ * compared against cannot be recycled from under it.
  */
 struct SceneBridge::VariantEntry {
-    const vine::graphics::ShaderProgram* program = nullptr;
-    vine::graphics::Material*            material = nullptr;
-    vine::graphics::ResolvedRenderState  state;
+    vine::graphics::ResolvedRenderState state;
     std::uint64_t layout = 0; // custom-channel hash (see hashStateVariant)
     ::vsg::StateCommands state_commands;
     ::vsg::ref_ptr<::vsg::ArrayState> prototype_array_state;

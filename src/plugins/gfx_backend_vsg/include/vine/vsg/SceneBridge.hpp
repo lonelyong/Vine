@@ -20,11 +20,13 @@
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/StateNode.hpp>
+#include <vine/vsg/OwnedCache.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 
 namespace vine::graphics
 {
 class Geometry;
+class Material;
 class Scene;
 class Node;
 class ShaderProgram;
@@ -347,6 +349,22 @@ class V_VSG_API SceneBridge {
      */
     ::vsg::ref_ptr<::vsg::ShaderSet> baseShaderSet();
 
+    /** @brief Drops retained cache entries nothing but their own cache holds.
+     *
+     * Every retained cache here owns the object it keys on (see OwnedCache.hpp),
+     * so an entry the app has let go of is released instead of pinning that
+     * program's SPIR-V, its assembled ShaderSet and the cached bind commands for
+     * the rest of the session. Because several caches may share one program
+     * (the stage cache, the per-layout ShaderSet cache and a variant template),
+     * "abandoned" is only observed once the OTHER caches have let go as well —
+     * this sweep releases the tail of that chain, and the FIFO caps bound what
+     * the chain can hold in the meantime. The per-geometry cache has its own
+     * sweep inline (it also applies the reuse window), so it is not part of this.
+     *
+     * @return Number of erased entries.
+     */
+    std::size_t releaseAbandonedCaches();
+
     ::vsg::ref_ptr<::vsg::ShaderSet> shader_set_;
     // Pass-level depth policy applied to commands that did not author depth
     // (see setContentDepthMode); part of the retained state identity, so
@@ -373,51 +391,63 @@ class V_VSG_API SceneBridge {
     VsgMaterialManager default_manager_;
     // Retained per-geometry nodes, keyed by geometry pointer for O(1) lookup.
     //
-    // Each Item OWNS the geometry it is keyed by, and that ownership is what
-    // makes the pointer key valid: a raw key would outlive the geometry (the
-    // map cannot observe destruction) and a later geometry allocated at the
-    // same address would be served the dead entry's retained node — drawing
-    // the old mesh, or being skipped by a stale rejection record. Holding the
-    // reference keeps the address unique; the sweep drops the entry as soon as
-    // the app itself no longer holds the geometry (useCount() == 1, i.e. only
-    // the cache references it), so an abandoned geometry is still released
-    // promptly instead of being pinned for the reuse window.
-    std::unordered_map<const vine::graphics::Geometry*, std::unique_ptr<Item>> cache_;
+    // The entry OWNS the geometry it is keyed by (OwnedCacheEntry), and that
+    // ownership is what makes the pointer key valid: a raw key would outlive
+    // the geometry (the map cannot observe destruction) and a later geometry
+    // allocated at the same address would be served the dead entry's retained
+    // node — drawing the old mesh, or being skipped by a stale rejection
+    // record. Holding the reference keeps the address unique, and the sweep
+    // drops the entry as soon as the app itself no longer holds the geometry
+    // (abandoned()), so an abandoned geometry is released promptly instead of
+    // being pinned. The reuse window below is this cache's own policy (a culled
+    // object must stay cheap to bring back), so unlike the program caches this
+    // one is deliberately NOT capacity-trimmed.
+    using GeometryCacheEntry =
+        OwnedCacheEntry<vine::graphics::Geometry, std::unique_ptr<Item>>;
+    std::unordered_map<const vine::graphics::Geometry*, GeometryCacheEntry> cache_;
     // Cached run-time compiled ShaderSet per (user program, vertex layout) (L1):
     // every geometry bound to the same program with the SAME set of forwarded
     // custom channels shares one glslang compile + ShaderSet instead of
     // recompiling per geometry; a different custom-channel layout (or program)
-    // is its own entry. Keyed by a content hash; the entry stores the full
-    // (program, layout, program revision) key for collision-safe equality and
-    // so editing a retained program's GLSL (ShaderProgram::revision) rebuilds
-    // the compiled set instead of serving the stale one (D10).
+    // is its own entry. Keyed by a content hash; the entry OWNS the program, so
+    // the full (program, layout, program revision) identity it carries is
+    // collision-safe and so editing a retained program's GLSL
+    // (ShaderProgram::revision) rebuilds the compiled set instead of serving the
+    // stale one (D10). Capacity is bounded by a FIFO trim, and an entry whose
+    // program the app released is dropped by the per-frame sweep (see
+    // releaseAbandonedCaches).
     struct ProgramEntry
     {
-        const vine::graphics::ShaderProgram* program = nullptr;
         std::uint64_t layout = 0;      // hash over the custom channels
         std::uint64_t revision = ~std::uint64_t{0};
         ::vsg::ref_ptr<::vsg::ShaderSet> shader_set;
     };
-    std::unordered_map<std::uint64_t, std::unique_ptr<ProgramEntry>>
-        program_shader_sets_;
+    using ProgramShaderSetEntry =
+        OwnedCacheEntry<vine::graphics::ShaderProgram, ProgramEntry>;
+    std::unordered_map<std::uint64_t, ProgramShaderSetEntry> program_shader_sets_;
+    InsertionClock program_shader_sets_clock_;
     // Compiled SPIR-V stages per (user program, content revision) (L1a): the
     // glslang pass runs ONCE per program content; every vertex layout of that
     // program then shares these stages and only the ShaderSet assembly differs
     // (L1b, program_shader_sets_). Editing a program bumps its revision and
     // forces a fresh compile (D10).
     //
-    // Like cache_, each entry OWNS the program it is keyed by: the raw key
-    // would otherwise outlive a destroyed program, and a new program allocated
-    // at the same address with the same revision would be served the dead
-    // program's SPIR-V (wrong shader, silently).
+    // Like cache_, each entry OWNS the program it is keyed by (OwnedCacheEntry):
+    // a raw key would otherwise outlive a destroyed program, and a new program
+    // allocated at the same address with the same revision would be served the
+    // dead program's SPIR-V (wrong shader, silently). One entry per (program,
+    // content revision); capacity is bounded by a FIFO trim and an entry whose
+    // program the app released is dropped by the per-frame sweep.
     struct StageEntry
     {
-        vine::intrusive_ptr<const vine::graphics::ShaderProgram> program;
         std::uint64_t revision = ~std::uint64_t{0};
         ::vsg::ShaderStages stages;
     };
-    std::unordered_map<const vine::graphics::ShaderProgram*, StageEntry>
+    using ProgramStagesEntry =
+        OwnedCacheEntry<vine::graphics::ShaderProgram, StageEntry>;
+    std::unordered_map<const vine::graphics::ShaderProgram*, ProgramStagesEntry>
         program_stages_;
+    InsertionClock program_stages_clock_;
     // Pipeline-template cache (L2), keyed by a content hash of the (program,
     // material, resolved-state) variant; the full key lives in VariantEntry
     // for collision-safe equality. The first geometry of a variant builds its
@@ -426,7 +456,18 @@ class V_VSG_API SceneBridge {
     // their own vertex data, keeping pipeline setup cost proportional to the
     // state-variant count rather than the geometry count.
     struct VariantEntry;
-    std::unordered_map<std::uint64_t, std::unique_ptr<VariantEntry>> variant_cache_;
+    // The entry owns BOTH key objects (see OwnedPairCacheEntry): its equality
+    // check compares the program and material addresses, so neither may be
+    // replaceable at the same address while the template is cached — a recycled
+    // address would make the check report a hit for a different variant and
+    // serve the dead one's pipeline and descriptor bind. Capacity is bounded by
+    // a FIFO trim and an entry whose program AND material the app released is
+    // dropped by the per-frame sweep.
+    using VariantCacheEntry =
+        OwnedPairCacheEntry<vine::graphics::ShaderProgram, vine::graphics::Material,
+                            std::unique_ptr<VariantEntry>>;
+    std::unordered_map<std::uint64_t, VariantCacheEntry> variant_cache_;
+    InsertionClock variant_cache_clock_;
 
     // Nodes dropped on a live path, held for kRetireRingDepth frame advances.
     // One slot more than the viewer's command-buffer slot count, so the slot

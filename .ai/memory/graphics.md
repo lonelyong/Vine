@@ -1,5 +1,17 @@
 ﻿# Graphics 模块核心
 
+> 2026-09-11 **缓存收口：一套骨架、四种缓存（设计 §20，D16 / D34）**：`SceneBridge` 的四个
+> 缓存不再各写一套语义 —— 几何缓存（自持 + 600 帧窗，**无容量上限**）、`program_stages_`
+> （64 FIFO）、`program_shader_sets_`（64 FIFO）、`variant_cache_`（256 FIFO，**两个键都自持**）
+> 都走 `OwnedCache.hpp`（`OwnedCacheEntry` / 新增 `OwnedPairCacheEntry` + `keyReleased()` 唯一
+> 定义处）；"超限整表清空"删除（D16），改为插入时 FIFO 修剪 + 每帧 `releaseAbandonedCaches()`。
+> **D34（身份靠地址但不持地址）已修**：`Item::material/program` 改为自持；两个哈希键缓存自持
+> 键对象（variant 同时持 program + material）。**注意**：多缓存共享同一对象时 `abandoned()`
+> 只在其它缓存也放手后才成立（`eraseAbandoned` 回收的是链尾，链长由 FIFO 上限界定）。
+> `OwnedCache.hpp` 已从 `src/` 挪到插件 `include/vine/vsg/`（成员类型要出现在 `SceneBridge.hpp`
+> 里）。新增 `SceneBridgeCacheOwnershipTest`（4 个测试，含"模板在阶段条目被逐出后仍持 program"
+> 这个判别性用例）。
+
 > 2026-09-11 **SceneBridge 拆分（设计 §19）**：1571 行 → 四单元：`SceneBridge.cpp` 512（会话态 +
 > `syncRenderCommands` + 保留态 `Item`）、`SceneBridgeGeometry.cpp` 473（`buildGeometryData` +
 > 顶点打包 helper）、`SceneBridgePipeline.cpp` 620（`getProgramShaderSet` / `buildStateGroup` +

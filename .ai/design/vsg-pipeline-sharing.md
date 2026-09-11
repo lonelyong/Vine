@@ -112,8 +112,12 @@
   与 `clearStages/replaceStages/setStage`（SDK）；后端 L1（ProgramEntry 存 revision）、Item
   （`program_revision`）与 L2 变体哈希都纳入 program revision → 同一对象改 GLSL 次帧重建新管线。
   回归测试 `EditingProgramSourceRebuildsVariant`（改源→created=1、数据节点复用、变体 1→2）。
-- D16（shared/变体只增不减）：已**缓解** —— `clearCache()`（teardown/resize/release）清三类缓存，
-  且 `variant_cache_`(L2) 上限 256、`program_shader_sets_`(L1) 上限 64，超限即清（只失快路径）。
+- D16（shared/变体只增不减）：**已修（2026-09-11，vsg-pass-lifecycle §20）** —— 三个 program
+  缓存迁到缓存骨架：容量用同一套 FIFO `trimToCapacity`（`program_stages_` 64 /
+  `program_shader_sets_` 64 / `variant_cache_` 256），插入时修剪，条目自持键对象，每帧
+  `releaseAbandonedCaches()` 回收链尾；“超限即整表清空”已删（它会把当前场景正在绘制的程序
+  一并丢掉）。`clearCache()`（teardown/resize/release）仍清空。<br>注意：`shared_objects_`
+  （vsg 内容去重表）仍是“只增 + 槽释放时清空”，没有容量上界。
 - D13（`updateMaterial` 换对象使 DS 失效）：**已修** —— 改就地刷新同一 Phong 对象 + `dirty()`。
 - D19（每帧 O(materials) 就地改写）：2026-09-08 起**按去重材质 + 比较后写**（O(distinct
   materials)），与共享 DS 兼容（值写同一 UBO）。

@@ -2,12 +2,32 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include <utility>
 
 #include <vine/intrusive_ptr.hpp>
-#include <vine/vsg/vsg_global.hpp>
+
+#include "vsg_global.hpp"
 
 V_VSG_NS_BEGIN
+
+/**
+ * @brief Returns whether a cache-owned key object has no owner left but the cache.
+ *
+ * A null object counts as released: there is nothing to keep alive, which is
+ * how a default resource (a null program or material) behaves. This is the
+ * single definition of "the app has let go of it", shared by every entry kind
+ * so a cache can never disagree with another about what "abandoned" means.
+ *
+ * @tparam Object Key object type (held by const reference).
+ * @param object  Object the cache owns an entry for.
+ * @return true when the app released @p object (or it is null).
+ */
+template <class Object>
+bool keyReleased(const vine::intrusive_ptr<const Object>& object) noexcept
+{
+    return object == nullptr || object->useCount() <= 1u;
+}
 
 /**
  * @brief A retained-cache entry that OWNS the object its cache is keyed by.
@@ -24,6 +44,12 @@ V_VSG_NS_BEGIN
  * ABANDONED (the cache is the only owner left, i.e. the app has released the
  * object): nothing can look such an entry up again, so it may be released
  * immediately by eraseAbandoned() instead of being pinned for a reuse window.
+ *
+ * Note that "the only owner left" is judged per cache entry: when SEVERAL
+ * caches own the same object (a program is owned by its stage cache, its
+ * ShaderSet cache and a pipeline template), each entry sees the others' shares
+ * and reports abandoned only after the others have let go — the capacity trims
+ * are what bound that chain, and eraseAbandoned() releases its tail.
  *
  * @tparam Object  Object the cache is keyed by (held by const reference).
  * @tparam Payload Retained state for that object (e.g. a vsg resource).
@@ -56,10 +82,7 @@ class OwnedCacheEntry
      *
      * @return true when nothing but this cache still references the object.
      */
-    bool abandoned() const noexcept
-    {
-        return object_ != nullptr && object_->useCount() <= 1u;
-    }
+    bool abandoned() const noexcept { return object_ != nullptr && keyReleased(object_); }
 
     /** @brief Gets the insertion sequence (FIFO order for capacity trims). */
     std::uint64_t sequence() const noexcept { return sequence_; }
@@ -72,6 +95,79 @@ class OwnedCacheEntry
 
   private:
     vine::intrusive_ptr<const Object> object_;
+    Payload                           payload_;
+    std::uint64_t                     sequence_ = 0;
+};
+
+/**
+ * @brief A retained-cache entry that OWNS the TWO objects its cache keys on.
+ *
+ * The same bargain as OwnedCacheEntry, for a cache whose identity is a PAIR:
+ * the L2 pipeline-template cache keys on (user program, material) and compares
+ * those addresses to decide whether a cached template may be reused. Both
+ * addresses therefore have to stay unique for as long as the entry exists — if
+ * an entry only held them as raw pointers, a program or material destroyed
+ * elsewhere could be replaced at the same address and the entry's equality
+ * check would then report a hit for a DIFFERENT variant, serving its retained
+ * pipeline and descriptor bind (the same defect class as D13, on the variant
+ * cache).
+ *
+ * The entry is ABANDONED once the app has released EVERY object it owns: only
+ * then can no later lookup match it. An object that is null is not owned (the
+ * built-in path has no user program), and an entry that owns nothing at all
+ * never expires — it is the default entry.
+ *
+ * @tparam First   Primary key object (e.g. the user shader program).
+ * @tparam Second  Secondary key object (e.g. the bound material).
+ * @tparam Payload Retained state for that pair (e.g. reusable bind commands).
+ */
+template <class First, class Second, class Payload>
+class OwnedPairCacheEntry
+{
+  public:
+    /** @brief Constructs an entry that owns both key objects.
+     *
+     * @param first    Primary key object (may be null: built-in path).
+     * @param second   Secondary key object (may be null: no material).
+     * @param payload  Retained state built for the pair.
+     * @param sequence Insertion sequence, for FIFO trims.
+     */
+    OwnedPairCacheEntry(vine::intrusive_ptr<const First> first, vine::intrusive_ptr<const Second> second,
+                        Payload payload, std::uint64_t sequence)
+      : first_(std::move(first))
+      , second_(std::move(second))
+      , payload_(std::move(payload))
+      , sequence_(sequence)
+    {
+    }
+
+    /** @brief Gets the primary key object (null for the built-in path). */
+    const First* firstKey() const noexcept { return first_.get(); }
+
+    /** @brief Gets the secondary key object (null when no material is bound). */
+    const Second* secondKey() const noexcept { return second_.get(); }
+
+    /** @brief Returns whether the app released every object this entry owns.
+     *
+     * @return true when nothing but this cache still references any of them.
+     */
+    bool abandoned() const noexcept
+    {
+        return (first_ != nullptr || second_ != nullptr) && keyReleased(first_) && keyReleased(second_);
+    }
+
+    /** @brief Gets the insertion sequence (FIFO order for capacity trims). */
+    std::uint64_t sequence() const noexcept { return sequence_; }
+
+    /** @brief Gets the retained state. */
+    Payload& payload() noexcept { return payload_; }
+
+    /** @brief Gets the retained state. */
+    const Payload& payload() const noexcept { return payload_; }
+
+  private:
+    vine::intrusive_ptr<const First>  first_;
+    vine::intrusive_ptr<const Second> second_;
     Payload                           payload_;
     std::uint64_t                     sequence_ = 0;
 };
@@ -131,8 +227,13 @@ std::size_t trimToCapacity(Map& cache, std::size_t max_entries)
     while (remaining > 0u) {
         auto oldest = cache.end();
         for (auto it = cache.begin(); it != cache.end(); ++it) {
-            if (it->first == nullptr) {
-                continue; // the default entry stays
+            // A pointer-keyed cache may hold a null-keyed default entry that
+            // every caller falls back to; it is never evicted. A cache keyed by
+            // a content hash has no such entry, so the rule does not apply.
+            if constexpr (std::is_pointer_v<typename Map::key_type>) {
+                if (it->first == nullptr) {
+                    continue; // the default entry stays
+                }
             }
             if (oldest == cache.end() || it->second.sequence() < oldest->second.sequence()) {
                 oldest = it;

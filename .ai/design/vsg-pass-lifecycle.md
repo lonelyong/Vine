@@ -869,3 +869,63 @@ include / 命名空间 / 新内部头前言；**没有一行代码被改写或�
 **仍未做**：`syncRenderCommands` 256 行仍是单函数最长（内部可按"缓存决策 / 节点替换"再切）；
 D16（变体缓存超限整表清空）、D27（跨 pass 命令缓存）、D28（`VkPipelineCache` 被 vsg 传
 `VK_NULL_HANDLE` 挡住）与真机 GPU 冒烟仍待在册事项里。
+
+## 20. 缓存收口：一套骨架、四种缓存（D16 / D34，2026-09-11）
+
+**出发点**：§12 给材质缓存定了骨架（`OwnedCache.hpp`：条目自持键对象 + `abandoned()` +
+FIFO `trimToCapacity`），但 `SceneBridge` 的四个缓存各自一套：几何缓存手写自持与手写放弃
+判据；`program_stages_` 手写自持但**只增不减**；`program_shader_sets_` 与 `variant_cache_`
+用裸键且**超限整表清空**。三种"放弃 / 修剪"语义并存，谁属于哪种只能读代码。
+
+**骨架的两条规则**（现在只有一个定义）：
+
+1. **自持**：条目按被服务对象的地址定键，就必须持有它 —— 否则对象销毁后同地址新对象会通过
+   相等性检查（D13 的原始形态）。`abandoned()` = "除本缓存外无人引用"（`keyReleased()` 是
+   唯一的定义处）。持有**一对键**的条目（`OwnedPairCacheEntry`，program + material）要求两个
+   键都被释放才算放弃；一个键都不持有的条目永不放弃（默认资源）。
+2. **FIFO 修剪**：`trimToCapacity(map, n)` 逐最旧插入序（`InsertionClock`），跳过 null 键
+   默认条目；`eraseAbandoned(map)` 回收"app 已放手"的条目。**两半都要**：自持解决地址复用，
+   回收解决自持变泄漏。
+
+**四种缓存的最终形态**：
+
+| 缓存 | 键 | 自持 | 容量 | 放弃 |
+| --- | --- | --- | --- | --- |
+| `cache_`（几何 → 保留节点） | 几何地址 | 是 | **无上限**（600 帧复用窗是它的策略，不是容量） | `abandoned()` → 立即逐出，否则等窗 |
+| `program_stages_`（program → SPIR-V） | program 地址 | 是 | 64（FIFO） | `eraseAbandoned` |
+| `program_shader_sets_`（(program, layout) → ShaderSet） | 内容哈希 | 是 | 64（FIFO） | `eraseAbandoned` |
+| `variant_cache_`（(program, material, state, layout) → 可复用绑定命令） | 内容哈希 | **两个键都持** | 256（FIFO） | `eraseAbandoned`（两个键都放手） |
+
+**修掉的两个真缺陷**：
+
+- **D34（身份靠地址、但不持地址）**：`Item::material` / `Item::program` 是裸指针，
+  `program_shader_sets_` / `variant_cache_` 的条目也只存裸键。对象被 app 释放并销毁后，同地址
+  新对象（同 revision、同变量身份）会**通过相等性检查** → 复用死对象的管线、descriptor、材质
+  颜色，静默错色 / 错 shader。修法：`Item` 自持它比较的 program 与 material；两个哈希键缓存
+  分别用 `OwnedCacheEntry` / `OwnedPairCacheEntry` 自持键对象。
+- **D16（超限整表清空）**：`program_shader_sets_.size() > 64` 就把两个 program 缓存清空 ——
+  连当前场景正在绘制的程序一起丢，随后逐个重编译。改为与几何 / 材质同一套 FIFO：最旧的先走，
+  最新（正在画）的留下。
+
+**"放弃"在多缓存共享一个对象时的含义**（写进骨架文档，勿再误读）：一个 program 可能被阶段
+缓存、ShaderSet 缓存与某个变体模板同时持有，每个条目看到的 `useCount()` 都包含别人的份额，
+所以 `abandoned()` 只有在**其它缓存也放手**之后才成立 —— `eraseAbandoned()` 回收的是这条链的
+**尾部**，链能有多长由 FIFO 上限决定（不会无限增长，但不是"app 一放手就立刻回收"）。几何缓存
+不受此影响（几何只有这一个缓存持它，判据与 §8.1 一致）。
+
+**落地细节**：`OwnedCache.hpp` 从 `src/` 挪到插件的 `include/vine/vsg/`（`cache_` 等成员类型
+要出现在 `SceneBridge.hpp` 里；该 include 目录只在构建树内可见，不进 SDK）；四个缓存类型起名
+（`GeometryCacheEntry` / `ProgramStagesEntry` / `ProgramShaderSetEntry` / `VariantCacheEntry`）；
+插入改 `insert_or_assign`（新条目不再可默认构造）；`trimToCapacity` 跳过 null 键默认条目的逻辑
+用 `if constexpr (std::is_pointer_v<key_type>)` 收窄（哈希键缓存没有这种条目）；每帧
+`releaseAbandonedCaches()` 在 `syncRenderCommands` 尾部（几何缓存的回收仍在它的缺席循环里，
+因为它还要算复用窗）。
+
+**验收**：新增 `tests/test_vsg/SceneBridgeCacheOwnershipTest.cpp` 四个测试 —— 桥持有它比较的
+program / material（地址不被复用）；FIFO 替掉整表清空（70 个程序后复用最新 10 个**不重编译**、
+最旧的必然重编）；**变体模板在 program 的阶段 / ShaderSet 条目已被 FIFO 逐出后仍持有该
+program**（旧实现在这里会释放 → 地址可被复用）。test_vsg 71（67 + 4）、test_graphics 151、
+`gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID，六组证据齐全）。
+
+**仍未做**：`shared_objects_`（vsg 内容去重表）仍是"只增 + 槽释放时清空"，没有容量上界；
+D27（跨 pass 命令缓存）、D28（`VkPipelineCache`）与真机 GPU 冒烟仍待在册。

@@ -106,11 +106,6 @@ VsgMaterialManager& SceneBridge::materialManager()
 
 /** @brief Retained vsg node for one drawn geometry. */
 struct SceneBridge::Item {
-    // The geometry this item was built for. Held, not merely keyed: the map key
-    // is the geometry's address, and an entry that does not own what it keys on
-    // can outlive it and then be served to a DIFFERENT geometry allocated at
-    // the recycled address (see the cache_ comment in the header).
-    vine::graphics::GeometryPtr geometry;
     // Rejection record: true when this geometry's data could not be built at
     // @ref rejected_revision (malformed attributes / out-of-range indices).
     // Kept so the diagnostic prints once per revision instead of every frame,
@@ -119,12 +114,17 @@ struct SceneBridge::Item {
     bool rejected = false;
     std::uint64_t rejected_revision = 0;
     // Last translated identity, used to detect geometry/material/state changes.
-    vine::graphics::Material* material = nullptr;
+    // The material and the program are HELD, not merely compared: the address is
+    // the identity here, so a released material or program could be replaced at
+    // the same address and the comparisons below would then report "nothing
+    // changed" while the retained pipeline / descriptor still belongs to the
+    // dead one (wrong colours / wrong shader, silently). The cached variants own
+    // their keys for the same reason (see OwnedPairCacheEntry).
+    vine::intrusive_ptr<vine::graphics::Material> material;
+    vine::intrusive_ptr<const vine::graphics::ShaderProgram> program;
     std::uint64_t revision = ~std::uint64_t{0};
     // Last resolved render state the retained pipeline was built with.
     vine::graphics::ResolvedRenderState render_state;
-    // Last user program the retained pipeline was built with (null = built-in).
-    vine::graphics::ShaderProgram* program = nullptr;
     // Content revision of @ref program the retained pipeline was built with
     // (D10: editing a retained program's GLSL must invalidate it).
     std::uint64_t program_revision = ~std::uint64_t{0};
@@ -242,7 +242,7 @@ void SceneBridge::invalidateState()
     // still be referenced by a submitted command buffer (the caller normally
     // waits first, but parking it here keeps the bridge correct on its own).
     for (auto& entry : cache_) {
-        Item* item = entry.second.get();
+        Item* item = entry.second.payload().get();
         if (item == nullptr) {
             continue;
         }
@@ -282,13 +282,17 @@ bool SceneBridge::syncRenderCommands(
         auto it = cache_.find(geometry);
         if (it == cache_.end()) {
             auto entry = std::make_unique<Item>();
-            entry->geometry = cmd.geometry;
             item = entry.get();
-            cache_.emplace(geometry, std::move(entry));
+            // The lookup key is the geometry as given, while the ENTRY holds the
+            // owning reference that keeps that address unique (OwnedCacheEntry).
+            it = cache_.emplace(
+                     geometry,
+                     GeometryCacheEntry(vine::intrusive_ptr<const vine::graphics::Geometry>(geometry),
+                                        std::move(entry), 0u))
+                     .first;
             changed = true;
-        } else {
-            item = it->second.get();
         }
+        item = it->second.payload().get();
         if (item->rejected) {
             if (item->rejected_revision == geometry->revision()) {
                 continue;
@@ -322,17 +326,17 @@ bool SceneBridge::syncRenderCommands(
         const bool data_dirty =
             !had_node || item->revision != geometry->revision() ||
             item->topology != state.topology ||
-            (has_loc2 && (item->program == nullptr) != (cmd.program.get() == nullptr));
-        const bool state_dirty = !had_node || item->material != cmd.material.get() ||
+            (has_loc2 && (item->program.get() == nullptr) != (cmd.program.get() == nullptr));
+        const bool state_dirty = !had_node || item->material.get() != cmd.material.get() ||
                                  item->render_state != state ||
-                                 item->program != cmd.program.get() ||
+                                 item->program.get() != cmd.program.get() ||
                                  item->program_revision != program_rev;
         if (data_dirty || state_dirty) {
             item->revision         = geometry->revision();
             item->topology         = state.topology;
-            item->material         = cmd.material.get();
+            item->material         = cmd.material;
             item->render_state     = state;
-            item->program          = cmd.program.get();
+            item->program          = cmd.program;
             item->program_revision = program_rev;
             changed                = true;
         }
@@ -350,7 +354,7 @@ bool SceneBridge::syncRenderCommands(
             // replaced node is parked (its buffers may still be in flight).
             item->extra_channels.clear();
             retireNode(std::move(item->data_node));
-            item->data_node = buildGeometryData(geometry, item->program == nullptr,
+            item->data_node = buildGeometryData(geometry, item->program.get() == nullptr,
                                                 state.topology, item->colors,
                                                 item->extra_channels);
             if (item->data_node == nullptr) {
@@ -375,8 +379,8 @@ bool SceneBridge::syncRenderCommands(
             // The replaced wrapper (and the pipeline it holds) may still be
             // referenced by an in-flight command buffer: park it.
             retireNode(std::move(item->state_node));
-            item->state_node = buildStateGroup(item->data_node, item->material,
-                                               item->render_state, item->program,
+            item->state_node = buildStateGroup(item->data_node, item->material.get(),
+                                               item->render_state, item->program.get(),
                                                item->extra_channels);
             if (item->state_node == nullptr) {
                 cache_.erase(it);
@@ -441,7 +445,7 @@ bool SceneBridge::syncRenderCommands(
     // removed from the scene — evicts the retained node.
     constexpr std::uint32_t kAbsentEvictFrames = 600;
     for (auto it = cache_.begin(); it != cache_.end();) {
-        Item* item = it->second.get();
+        Item* item = it->second.payload().get();
         if (seen.count(it->first) != 0) {
             item->absent_frames = 0;
             ++it;
@@ -455,8 +459,7 @@ bool SceneBridge::syncRenderCommands(
         // valid. Once the app itself stops referencing it, nothing can ever
         // look the entry up again, so release it — and the geometry with it —
         // right away instead of pinning both for the whole reuse window.
-        const bool abandoned = item->geometry != nullptr && item->geometry->useCount() <= 1u;
-        if (abandoned || ++item->absent_frames > kAbsentEvictFrames) {
+        if (it->second.abandoned() || ++item->absent_frames > kAbsentEvictFrames) {
             // The retained subtree may still be referenced by an in-flight
             // command buffer, so park it instead of destroying it here.
             retireNode(std::move(item->transform));
@@ -505,7 +508,24 @@ bool SceneBridge::syncRenderCommands(
         }
     }
 
+    // Only here (once per pass and frame) is it affordable to look at every
+    // retained cache entry. An entry the app has let go of can never be looked
+    // up again, so it goes now instead of pinning its compiled stages, assembled
+    // ShaderSet and cached bind commands; entries the sibling caches still hold
+    // are released once those let go too (see releaseAbandonedCaches).
+    releaseAbandonedCaches();
+
     return changed;
+}
+
+std::size_t SceneBridge::releaseAbandonedCaches()
+{
+    // Capacity trims happen on insert (the FIFO half of the bargain), which is
+    // what bounds the chain of caches sharing one program; this is the prompt
+    // half, shared by every program-keyed cache through OwnedCache.hpp so the
+    // three of them cannot drift apart.
+    return eraseAbandoned(program_stages_) + eraseAbandoned(program_shader_sets_) +
+           eraseAbandoned(variant_cache_);
 }
 
 

@@ -7,7 +7,7 @@
 
 #include <vine/graphics/Material.hpp>
 
-#include "OwnedCache.hpp"
+#include <vine/vsg/OwnedCache.hpp>
 
 V_VSG_NS_BEGIN
 

@@ -321,6 +321,11 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
     if (program == nullptr) {
         return ::vsg::ref_ptr<::vsg::ShaderSet>();
     }
+    // Both program caches are bounded by the same number: one entry per
+    // (program, layout) set and one per (program, content revision) stage list,
+    // so a scene that keeps both under this bound never re-compiles for the same
+    // program twice (D16).
+    constexpr std::size_t kMaxProgramCacheEntries = 64;
     // The vertex layout (which custom channels the geometry carries) is part
     // of the cache key: geometry bound to the same program but with different
     // channel sets needs different ShaderSets (different bindings).
@@ -338,10 +343,9 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
 
     const auto program_rev = program->revision();
     const auto it          = program_shader_sets_.find(key);
-    if (it != program_shader_sets_.end() && it->second != nullptr &&
-        it->second->program == program && it->second->layout == layout &&
-        it->second->revision == program_rev) {
-        return it->second->shader_set;
+    if (it != program_shader_sets_.end() && it->second.key() == program &&
+        it->second.payload().layout == layout && it->second.payload().revision == program_rev) {
+        return it->second.payload().shader_set;
     }
     // L1a: compile the program's stages ONCE per (program, content revision);
     // every vertex layout of the same program then shares these stages and
@@ -350,7 +354,7 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
     // glslang pass every frame (the assembled set falls back to the built-in);
     // editing the program bumps its revision and forces a recompile (D10).
     auto sit = program_stages_.find(program);
-    if (sit == program_stages_.end() || sit->second.revision != program_rev) {
+    if (sit == program_stages_.end() || sit->second.payload().revision != program_rev) {
         ::vsg::ShaderStages stages = compileProgramStages(program);
         ++program_stage_compiles_;
         // A failed compile used to be silently cached as "no stages" and then
@@ -363,14 +367,16 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
                                     u8"shader compiler); the built-in shader is used",
                                     program->name().stdstr().c_str()));
         }
-        // The entry owns the program: the key is its address, and an entry that
-        // did not hold it could outlive a destroyed program and then serve its
-        // SPIR-V to a new program allocated at the same address (see the
-        // StageEntry comment in the header).
-        program_stages_[program] = StageEntry{
-            vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program), program_rev,
-            std::move(stages)
-        };
+        // The entry owns the program (see OwnedCacheEntry): the key is its
+        // address, and an entry that did not hold it could outlive a destroyed
+        // program and then serve its SPIR-V to a new program allocated at the
+        // same address.
+        program_stages_.insert_or_assign(
+            program,
+            ProgramStagesEntry(vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program),
+                               StageEntry{ program_rev, std::move(stages) },
+                               program_stages_clock_.tick()));
+        trimToCapacity(program_stages_, kMaxProgramCacheEntries);
         sit = program_stages_.find(program);
     }
     const auto base_states = baseShaderSet()->defaultGraphicsPipelineStates;
@@ -382,32 +388,33 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
     // L1b: assemble the per-layout ShaderSet from the cached stages. A failed
     // assembly is cached too (null) so later geometry of this layout does not
     // rebuild it every frame.
-    auto shaderSet = assembleProgramShaderSet(sit->second.stages, base_states, extra);
+    auto shaderSet = assembleProgramShaderSet(sit->second.payload().stages, base_states, extra);
     // A failed assembly (no stages, or vsg refused the hand-built set) is
     // reported for the same reason as a failed compile: the program silently
     // stops applying (D9). One report per (program, layout, revision).
-    if (shaderSet == nullptr && !sit->second.stages.empty()) {
+    if (shaderSet == nullptr && !sit->second.payload().stages.empty()) {
         report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ShaderFallback,
                formatDiagnostic(u8"program '%s' could not be assembled with %zu custom "
                                 u8"channel(s); the built-in shader is used",
                                 program->name().stdstr().c_str(), extra.size()));
     }
-    auto entry          = std::make_unique<ProgramEntry>();
-    entry->program      = program;
-    entry->layout       = layout;
-    entry->revision     = program_rev;
-    entry->shader_set   = shaderSet;
-    program_shader_sets_[key] = std::move(entry);
-    // D16: bound slot-lifetime growth. Dropping the set cache only loses the
-    // fast path (a layout re-assembles from the cached stages on its next
-    // use); it never breaks correctness — retained geometry keeps its
-    // already-built pipelines. Bound the stage cache with it (recompiled on
-    // demand once their ShaderSets are all gone).
-    constexpr std::size_t kMaxProgramCacheEntries = 64;
-    if (program_shader_sets_.size() > kMaxProgramCacheEntries) {
-        program_shader_sets_.clear();
-        program_stages_.clear();
-    }
+    ProgramEntry entry;
+    entry.layout     = layout;
+    entry.revision   = program_rev;
+    entry.shader_set = shaderSet;
+    // insert_or_assign: a hash collision with a different identity replaces the
+    // entry — the displaced layout re-assembles on its next use (still correct,
+    // just uncached).
+    program_shader_sets_.insert_or_assign(
+        key, ProgramShaderSetEntry(vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program),
+                                   std::move(entry), program_shader_sets_clock_.tick()));
+    // D16, FIFO half: bound slot-lifetime growth. A trim only loses the fast
+    // path (a layout re-assembles from the cached stages on its next use) and
+    // never breaks correctness — retained geometry keeps its already-built
+    // pipelines. This replaced a blot "clear the whole table at 64", which also
+    // threw away every other program's compiled stages at once; the prompt half
+    // (an entry whose program the app released) is releaseAbandonedCaches().
+    trimToCapacity(program_shader_sets_, kMaxProgramCacheEntries);
     return shaderSet;
 }
 
@@ -452,19 +459,19 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
     // vertex-layout) variant built earlier contributes its reusable bind
     // commands (the shared pipeline bind + the per-material descriptor bind).
     // Reuse skips the configurator entirely.
-    const auto hash_key = hashStateVariant(program, material, state, layout);
+    const auto hash_key   = hashStateVariant(program, material, state, layout);
     const auto variant_it = variant_cache_.find(hash_key);
-    if (variant_it != variant_cache_.end() && variant_it->second != nullptr &&
-        variant_it->second->program == program &&
-        variant_it->second->material == material &&
-        variant_it->second->state == state &&
-        variant_it->second->layout == layout) {
+    if (variant_it != variant_cache_.end() && variant_it->second.payload() != nullptr &&
+        variant_it->second.firstKey() == program &&
+        variant_it->second.secondKey() == material &&
+        variant_it->second.payload()->state == state &&
+        variant_it->second.payload()->layout == layout) {
         ++variant_reuses_;
         auto stateGroup = ::vsg::StateGroup::create();
-        for (const auto& sc : variant_it->second->state_commands) {
+        for (const auto& sc : variant_it->second.payload()->state_commands) {
             stateGroup->stateCommands.push_back(sc);
         }
-        stateGroup->prototypeArrayState = variant_it->second->prototype_array_state;
+        stateGroup->prototypeArrayState = variant_it->second.payload()->prototype_array_state;
         return stateGroup;
     }
 
@@ -597,21 +604,29 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
     // correct, just uncached).
     {
         auto entry = std::make_unique<VariantEntry>();
-        entry->program               = program;
-        entry->material              = material;
         entry->state                 = state;
         entry->layout                = layout;
         entry->state_commands        = stateGroup->stateCommands;
         entry->prototype_array_state = stateGroup->prototypeArrayState;
         entry->base_binding          = config->baseAttributeBinding;
-        variant_cache_[hash_key]     = std::move(entry);
-        // D16: bound slot-lifetime growth. Dropping the template cache only
-        // loses the fast path (variants rebuild on next use); retained state
-        // nodes keep their built pipelines, so correctness is unaffected.
+        // The entry owns BOTH key objects (see OwnedPairCacheEntry): a released
+        // program or material must not be replaceable at the same address while
+        // the template is cached, or the equality check above would report a hit
+        // for a different variant and serve the dead one's pipeline / descriptor.
+        variant_cache_.insert_or_assign(
+            hash_key,
+            VariantCacheEntry(vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program),
+                              vine::intrusive_ptr<const vine::graphics::Material>(material),
+                              std::move(entry), variant_cache_clock_.tick()));
+        // D16, FIFO half: bound slot-lifetime growth with the same rule the
+        // geometry and material caches use — the newest entries are the ones a
+        // live scene draws, so a steady workload never evicts what it is about
+        // to ask for again. This replaced a blot "clear the whole table at 256",
+        // which dropped every cached variant at once; the prompt half (an entry
+        // whose program AND material the app released) is
+        // releaseAbandonedCaches().
         constexpr std::size_t kMaxVariantCacheEntries = 256;
-        if (variant_cache_.size() > kMaxVariantCacheEntries) {
-            variant_cache_.clear();
-        }
+        trimToCapacity(variant_cache_, kMaxVariantCacheEntries);
     }
 
     return stateGroup;

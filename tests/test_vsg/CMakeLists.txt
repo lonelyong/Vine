@@ -4,6 +4,7 @@ set(SRC_FILE_LIST
 	RenderStateMapperTest.cpp
 	GlslCompileTest.cpp
 	SceneBridgePipelineSharingTest.cpp
+	SceneBridgeCacheOwnershipTest.cpp
 	GeometrySafetyTest.cpp
 	CustomAttributeTest.cpp
 	PassProtocolTest.cpp

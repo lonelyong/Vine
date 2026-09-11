@@ -421,11 +421,12 @@ sequenceDiagram
 | D13 | `VsgMaterialManager::cache` **无逐出**、且按裸指针索引不自持（同地址新材质复用旧 Phong 值/descriptor）。**已修（2026-09-11，设计 §12）**：条目自持 `Material`（地址不可复用）+ `releaseAbandoned()`（app 放弃即立即回收，渲染器每帧调）+ `kMaxEntries` FIFO 上限 + null 键默认条目不动 | `VsgMaterialManager` | 🟢 |
 | D14 | 裸指针缓存键 + 600 帧滞留窗：Geometry/Material 删除后、逐出前有悬垂窗口（安全依赖场景树保活）。**Geometry 部分已修（2026-09-11，设计 §8.1）**：`Item` 自持所索引的几何 → 不再有悬垂窗口；**Material 部分仍见 D13** | `SceneBridge::cache_` | 🟡 |
 | D15 | `SceneBridge::cache_` 删除几何 600 帧后才释放（延迟释放）。**已改（2026-09-11，§8.1）**：仅剩缓存持有时（`useCount()==1`，app 已放弃）**立即驱逐**；仍被引用（隐藏/剔除/临时离场）才走 600 帧复用窗 | `syncRenderCommands` | 🟢 |
-| D16 | 共享/变体缓存只增不减（随"历史见过的不同变体数"增长）；2026-09-08 起 `clearCache()`（槽 teardown/resize/release）同时清 `shared_objects_`/`program_shader_sets_`/`variant_cache_`，**槽内活跃期间仍不修剪** | `SceneBridge` | 🟢 |
+| D16 | 共享/变体缓存只增不减（随"历史见过的不同变体数"增长）；2026-09-08 起 `clearCache()`（槽 teardown/resize/release）同时清 `shared_objects_`/`program_shader_sets_`/`variant_cache_`，**槽内活跃期间仍不修剪**。**已修（2026-09-11，设计 §20）**：三个 program 缓存迁到既有缓存骨架（`OwnedCache.hpp`）——容量用同一套 FIFO `trimToCapacity`（64 / 64 / 256），插入时修剪；"超限整表清空"删除（它会把当前场景正在绘制的程序一并丢掉）；每帧 `releaseAbandonedCaches()` 回收链条尾部的条目 | `SceneBridge` | 🟢 |
 | D17 | shutdown 顺序错 → 撞 `VSG_MAX_DEVICES==1`；`releaseWindow()` 漏调会 Destroy Qt 宿主窗口 | `VsgRenderer::shutdown` | 🟡 |
 | D18 | resize / release / 离屏 resize 走 `deviceWaitIdle` 全停（简单但会整帧卡顿） | `VsgRenderer` | 🟢 |
 | D29 | pass 协议隐式：7 个 `pending_*` 字段 + 三个读取入口，"调用含义"依赖调用顺序（本会话 6 个缺陷的来源）。**已修（2026-09-11，设计 §11）**：收敛为单一 `PassRequest` + 显式作用域（作用域属性 vs 每次绘制属性），违反协议（嵌套 beginPass / 不配对 endPass）经诊断通道上报（`PassProtocolViolation`） | `VsgRenderer` | 🟢 |
 | D19 | 每帧 O(materials) 就地改写 + `updateMaterial` 双路径并存。**已修（2026-09-11，设计 §12）**：比较/写入移入缓存（`Entry` 记上次参数），`SceneBridge` 只调 `updateMaterial()` —— 单一路径，且该接口首次有真实调用点 | `syncRenderCommands` 尾部 / `VsgMaterialManager` | 🟢 |
+| D34 | **身份靠地址、但不持地址**：`Item::material` / `Item::program` 是裸指针，`program_shader_sets_` / `variant_cache_` 的哈希键条目也只存裸键。对象被 app 释放后销毁，同地址新对象（同 revision / 同变量身份）会**通过相等性检查** → 复用死对象的管线、descriptor、Phong 值（静默错色/错 shader）。**已修（2026-09-11，设计 §20）**：`Item` 自持它比较的 program/material；两个哈希键缓存分别用 `OwnedCacheEntry` / `OwnedPairCacheEntry` 自持键对象（variant 同时持 program 与 material）→ 地址在条目存活期内不可能被复用 | `SceneBridge::Item` / `program_shader_sets_` / `variant_cache_` | 🟢 |
 
 ### 13.5 构建 / 环境 / 验证层
 
