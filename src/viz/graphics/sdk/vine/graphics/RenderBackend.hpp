@@ -91,6 +91,19 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * (render / drawScreenTexture / drawScreenProgram); endPass() follows
      * once the pass ran.
      *
+     * WHAT THE SCOPE MEANS. The scope makes the pass explicit, so "which call
+     * means what" no longer depends on the call order:
+     *   * scope attributes — setRenderTarget, setPassOrder, setDepthMode and
+     *     the clear() marker — describe the pass, so every draw call of the
+     *     scope sees them (a pass that draws twice keeps its stacking order,
+     *     depth policy and target for both) and they are dropped at endPass()
+     *     instead of leaking into the next pass;
+     *   * per-draw-call attributes — setViewport and setLights — are consumed
+     *     by the draw call that follows them.
+     * A backend that also accepts the direct-drive style (no scope at all, as
+     * the device self-test uses) keeps the queued request until the caller
+     * overwrites it.
+     *
      * The pass is the pass's identity to the backend: a backend that retains
      * per-pass GPU state (a content view, a compiled pipeline, a sampling
      * slot) keys that state by this object, so two passes never alias each
@@ -118,8 +131,31 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * drew nothing) is discarded here, so it can never leak into the next
      * pass. A backend must not retain any per-pass state beyond this call
      * except the GPU resources it owns for the pass itself.
+     *
+     * Call it exactly once per beginPass(): a nested beginPass() or an endPass()
+     * with no open scope means the protocol is out of step, so the state the
+     * caller expected to apply did not — a backend should report that on its
+     * diagnostics channel (DiagnosticCategory::PassProtocolViolation) rather
+     * than silently drawing something else.
      */
     virtual void endPass() {}
+
+    /** @brief Reports whether a beginPass() scope is currently open.
+     *
+     * The engine drives one pass at a time, so the per-pass calls (see
+     * beginPass) belong to the scope between beginPass() and endPass(). A
+     * backend that accepts the direct-drive style (queued state and a draw call
+     * without any scope, which the device self-test uses) treats an open scope
+     * as "this request belongs to that pass" and no scope as "the request is
+     * the caller's to manage". Exposed so a host or test can assert the
+     * protocol state instead of inferring it.
+     *
+     * @return true while a beginPass() scope is open.
+     */
+    virtual bool isPassScopeOpen() const
+    {
+        return false;
+    }
 
     /** @brief Draws a full-screen textured pass sampling a target's colour
      * attachment.

@@ -439,3 +439,56 @@ using DiagnosticSink = std::function<void(const RenderDiagnostic&)>;
 
 **仍未做**：`gfx_backend_vsg.md` 里的 `fprintf` 信息性追踪（"target attached"、"released GPU
 resources" 等）仍是 stderr —— 它们是**追踪**不是失败，收敛到日志系统需要同时改 harness 的 stderr 断言。
+
+## 11. pass 协议的显式化（2026-09-11 落地）
+
+**问题**：一个 pass 的状态原本散在 7 个 `pending_*` 字段里（`pending_presenting` /
+`pending_depth_mode` / `pending_viewport` / `pending_lights` / `pending_pass_order` /
+`active_target` / `pending_compile_views`），由 `beginPass` 与 `endPass` 各调一次
+`resetPerPassState()` 保持同步，并被 **三个不同入口**（`render()` 与两个 `drawScreen*()`）读取。
+后果是"这次调用是什么意思"取决于调用顺序 —— 本会话修掉的 6 个缺陷（槽残留、幽灵绘制、depth 冻结、
+同键别名、pending 泄漏、presenting 首次冻结）全部出自这里；而且新加一个字段很容易忘记在 reset 里清。
+
+**改法：请求即状态**
+
+```cpp
+struct PassRequest {                     // 一个 pass 的完整请求
+    const RenderPass* pass;              // 身份（beginPass 宣布）
+    RenderTarget*     target;            // setRenderTarget（nullptr = 窗口）
+    int               order;             // setPassOrder（叠放位置）
+    DepthMode         depth_mode;        // setDepthMode（显式，与 clear 无关）
+    bool              presenting;        // clear() 标记：本 pass 填满 target
+    std::optional<Viewport> viewport;    // setViewport —— 每次绘制消费
+    std::vector<const Light*> lights;    // setLights   —— 每次绘制消费
+    std::size_t draws;                   // 本请求服务过的绘制次数（诊断）
+};
+PassRequest request;   // 进行中的请求：打开中的 pass 作用域，或直连驱动者的队列
+bool pass_open;        // beginPass 打开、endPass 关闭
+```
+
+- **作用域属性 vs 每次绘制属性**（这是本次唯一的语义收紧）：
+  `target / order / depth_mode / presenting` 描述的是**这个 pass**，因此该作用域内每次绘制都能看到
+  它们（一个 pass 画两次时两次都用同样的叠放位置 / 深度策略 / 目标），并在 `endPass()` 被丢弃；
+  `viewport / lights` 是**每次绘制**的，由紧随其后的绘制调用 `takeViewport()/takeLights()` 消费。
+  旧行为是"全部被第一次 render 消费"（同一个 pass 内第二次 render 会拿到 order=0 / 默认深度 / 窗口目标）
+  —— 那是隐式协议的产物，不是设计意图。
+- **重置只有一次赋值**：`resetPassRequest()` 就是 `request = PassRequest{};`，
+  新字段不可能被忘记清理（`beginPass` 与 `endPass` 都调它）。
+- **违反协议会被上报**（新 `DiagnosticCategory::PassProtocolViolation`，Warning）：
+  - `beginPass()` 时已有打开的作用域（嵌套）→ 旧作用域的请求被丢弃，这可能让调用方以为生效的
+    target/order/depth 实际没生效；
+  - `endPass()` 时没有打开的作用域（不配对）→ 本次宣布的请求早已被丢弃。
+- **零成本契约逃生口**：直连驱动（设备自检、legacy 键路径）从不调用 beginPass/endPass，此时
+  `request` 就是普通请求队列：不丢、等下一次 set* 覆盖，行为与之前一致（`isPassScopeOpen()` 返回 false
+  可供宿主/测试断言协议状态，SDK 契约里新增该查询的默认实现）。
+- SDK 契约（`RenderBackend::beginPass/endPass/isPassScopeOpen` 文档）已把"作用域包含什么、哪些是
+  作用域属性、哪些是每次绘制属性、违反如何上报"写清楚。
+
+**验证**
+
+- `tests/test_vsg/PassProtocolTest.cpp`（新，3 例，**无需设备**：`VsgRenderer` 构造不建窗口/设备，
+  作用域调用只碰请求结构；测试目标因此把 `VsgRenderer.cpp`/`CameraBridge.cpp` 一并编入）：
+  不配对 endPass 上报一次且后续合法序列不再报；嵌套 beginPass 上报且新 pass 干净（外层请求被丢弃）；
+  合法序列（引擎协议 + 直连驱动）**零诊断**；`isPassScopeOpen()` 在作用域开/关时正确。
+- 既有 151（test_graphics）+ 61（test_vsg）全绿；lavapipe 门禁 RESULT: PASS（含 pass 协议 phase、
+  共享深度、在飞 churn、诊断 phase），说明作用域语义对引擎与自检两条驱动路径都成立。

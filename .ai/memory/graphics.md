@@ -1,5 +1,14 @@
 # Graphics 模块核心
 
+> 2026-09-11 **pass 协议显式化**：7 个 `pending_*` 字段收敛为单一 `PassRequest`（`VsgRenderer::Impl`）
+> + 显式作用域（`pass_open`）；**作用域属性**（pass/target/order/depth_mode/presenting）在作用域内
+> 每次绘制都有效、`endPass()` 丢弃；**每次绘制属性**（viewport/lights）由紧随的绘制调用消费；
+> `resetPassRequest()` 只有一句 `request = PassRequest{}`（新字段不会漏清）。违反协议（嵌套
+> `beginPass` / 不配对 `endPass`）上报为 `DiagnosticCategory::PassProtocolViolation`（Warning）；
+> 直连驱动（无作用域，自检/legacy 键）行为不变，`isPassScopeOpen()` 可断言状态。
+> 改这条协议前先读设计文档 §11；测试见 `tests/test_vsg/PassProtocolTest.cpp`（**无需设备**：
+> 测试目标已编入 `VsgRenderer.cpp`/`CameraBridge.cpp`）。
+
 > 2026-09-11 **后端诊断通道（失败不再静默）**：新增 `vine/graphics/RenderDiagnostic.hpp`
 > （`DiagnosticSeverity` / `DiagnosticCategory`（枚举、按后果分类）/ `RenderDiagnostic` /
 > `DiagnosticSink`）+ `RenderBackend::setDiagnosticSink/diagnosticSink/diagnosticCount(category)`

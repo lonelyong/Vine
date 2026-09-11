@@ -6,6 +6,7 @@ set(SRC_FILE_LIST
 	SceneBridgePipelineSharingTest.cpp
 	GeometrySafetyTest.cpp
 	CustomAttributeTest.cpp
+	PassProtocolTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
@@ -44,7 +45,13 @@ if(vsg_FOUND)
 endif()
 target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridge.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgMaterialManager.cpp)
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgMaterialManager.cpp
+	# The pass protocol (the beginPass/endPass scope) lives in VsgRenderer, and
+	# its validation must be testable WITHOUT a device: constructing the renderer
+	# creates no window/viewer, and the scope calls only touch the retained
+	# request. CameraBridge comes with it (content slots create one).
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/CameraBridge.cpp)
 target_include_directories(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/include
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src)

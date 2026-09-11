@@ -99,6 +99,15 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void endPass() override;
 
+    /** @brief Reports whether a beginPass() scope is open.
+     *
+     * True between beginPass() and endPass(); the direct-drive style (queued
+     * state without a scope) reports false.
+     *
+     * @return true while a pass scope is open.
+     */
+    bool isPassScopeOpen() const override;
+
     /** @brief Releases every GPU resource this backend retains for a pass.
      *
      * Detaches and drops the pass' content view (window or off-screen), its
@@ -456,7 +465,12 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * pass' pending state) and when it closes (so state queued by a pass that
      * drew nothing cannot leak into the next pass).
      */
-    void resetPerPassState();
+    /** @brief Drops the per-pass request (scope attributes included).
+     *
+     * Called by endPass(): nothing a pass announced may outlive its scope, so
+     * the next pass (or a direct driver) starts from an empty request.
+     */
+    void resetPassRequest();
 
     /** @brief Builds (on first use) the retained vsg view for a content slot.
      *
@@ -533,7 +547,11 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * @return The queued rectangle, or std::nullopt when the pass queued none
      *         (it then draws the full target).
      */
-    [[nodiscard]] std::optional<vine::graphics::Viewport> takePendingViewport();
+    /** @brief Takes the sub-viewport queued for the next draw call.
+     *
+     * @return The queued viewport, or empty when the caller announced none.
+     */
+    [[nodiscard]] std::optional<vine::graphics::Viewport> takeRequestViewport();
 
     /** @brief Moves a slot View into its target graph's children at the
      * position matching its explicit stacking order.
