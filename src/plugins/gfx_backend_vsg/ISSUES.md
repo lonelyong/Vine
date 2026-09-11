@@ -8,14 +8,14 @@
 > | 问题 | 现状 | 位置 |
 > |---|---|---|
 > | 一 索引未校验 | **已修**：越界索引拒绝建节点并在 CPU 侧防御（`unpackXyz` / `makeIndexedNormals` 越界跳过）；索引保真不再按三角形截断，count == 源索引数 | `SceneBridge::buildGeometryData` |
-> | 二 分量步长错误 | **已修**：`unpackXyz` 以 `components` 为 stride，仅接受 3/4 分量并取 xyz，不可整除/非 3-4 分量则拒绝并诊断 | `SceneBridge.cpp` |
+> | 二 分量步长错误 | **已修（后端 + CPU 侧消费方）**：`unpackXyz` 以 `components` 为 stride，仅接受 3/4 分量并取 xyz，不可整除/非 3-4 分量则拒绝并诊断；**同一契约的 CPU 消费方也已修**：新增 `AttributeBuffer::stride()/vertexCount()/xyz(i)`，`Geometry::localBounds/positionCount/normalCount` 与 `RayIntersection` 的网格解析全部改用它（此前假设每顶点 3 float，vec4 位置会算错 AABB → 错剔除/错 fitToScreen，拾取失效） | `SceneBridge.cpp`、`Geometry.hpp/.cpp`、`RayIntersection.cpp` |
 > | 三 自定义属性被丢弃 | **已修**：loc>=3 全量转发（`vine_Attribute{L}` + components→VkFormat + 按布局缓存 ShaderSet）；loc2 在 custom 程序路径按 authored 颜色绑定 | `SceneBridge.cpp`、`tests/test_vsg/CustomAttributeTest.cpp` |
 > | 四 clear 未遵守 clearDepth/离屏语义 | **已修 + 语义收窄**：离屏 target 持久化 clear 色/深度策略（含 depth-LOAD pass）；window 由 vsg 拥有交换链 pass，深度恒清，已在 `RenderBackend::clear` / `RenderPass::setShouldClearDepth` / `VsgRenderer::clear` 三处文档化收窄 | `VsgRenderer::clear/buildOffscreenTarget` |
 > | 五 插件/Registry 生命周期导致退出崩溃 | **已修**：插件库进程期存活（`DynamicLibraryLoader` 不再 dlclose）；测试退出码 0 | `fw/.../DynamicLibraryLoader.hpp` |
 >
-> 当前权威契约见 `.ai/design/vsg-pass-lifecycle.md`（pass 生命周期）、
+> 当前权威契约见 `.ai/design/vsg-pass-lifecycle.md`（pass 生命周期 + 遍历热路径/stride 修复）、
 > `.ai/design/vsg-custom-attributes.md`（自定义通道）、
-> `RenderBackend.hpp`（各接口文档）。验证：`test_graphics` 135 / `test_vsg` 53 /
+> `RenderBackend.hpp`（各接口文档）。验证：`test_graphics` 148 / `test_vsg` 53 /
 > `scripts/gfx_lavapipe_check.sh` RESULT: PASS。
 
 ## 背景

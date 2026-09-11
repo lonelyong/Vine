@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
@@ -118,24 +122,71 @@ NodePtr findNodeRecursive(const Node* node, const String& name)
 }
 
 /**
+ * @brief Per-traversal cache of the world-space bounds of the visited nodes.
+ *
+ * Group::boundingBox() unions its children's boxes, and Geometry::boundingBox()
+ * places the data box in world space. Asking every visited node for its bound
+ * therefore re-walks the whole subtree below every container — quadratic in the
+ * node count for deep / broad assemblies — while the culling decision only
+ * needs each node's box once. This cache makes one collection pass visit every
+ * subtree exactly once.
+ *
+ * The traversal is a tree (Group::addChild re-parents a node, so a node has one
+ * parent), which is what makes a node-keyed cache valid: within one pass a node
+ * has exactly one world matrix.
+ */
+class BoundsCache {
+  public:
+    /** @brief Returns the world-space bound of @p node (computed once). */
+    const Aabbd& worldBound(const Node* node, const Mat4d& world)
+    {
+        const auto cached = bounds_.find(node);
+        if (cached != bounds_.end()) {
+            return cached->second;
+        }
+        Aabbd box = Aabbd::empty();
+        if (const auto* group = dynamic_cast<const Group*>(node)) {
+            // Containers derive their extent from their children, the same
+            // union Group::boundingBox() performs.
+            for (const auto& child : group->childrenRef()) {
+                box.expandBy(worldBound(child.get(), world * child->localTransformMatrix()));
+            }
+        }
+        else {
+            // Leaves answer for themselves (a custom leaf keeps working).
+            box = node->boundingBox();
+        }
+        return bounds_.emplace(node, box).first->second;
+    }
+
+  private:
+    std::unordered_map<const Node*, Aabbd> bounds_;
+};
+
+/**
  * @brief Recursively collects render commands from a node subtree.
  *
  * Container nodes (Group and its subclasses) are descended into; a leaf
- * Geometry emits one render command baked with its world matrix (the product
- * of enclosing MatrixTransforms). Nodes fully outside the frustum (and their
- * subtrees) are culled.
+ * Geometry emits one render command baked with its world matrix. Nodes fully
+ * outside the frustum (and their subtrees) are culled. The world matrix is
+ * accumulated top-down (one product per node) and each node's world bound is
+ * computed at most once per pass (see BoundsCache), so the cost is linear in
+ * the node count instead of quadratic.
  *
  * @param node    Root node to traverse.
+ * @param world   World matrix of @p node (accumulated by the caller).
  * @param frustum View frustum for culling.
+ * @param opacity Accumulated opacity of the ancestors.
+ * @param bounds  Per-pass bound cache.
  * @param out     Output command list.
  */
-void collectNodeCommands(const Node* node, const Frustum& frustum, float opacity,
-                         std::vector<RenderCommand>& out)
+void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& frustum,
+                         float opacity, BoundsCache& bounds, std::vector<RenderCommand>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
     }
-    if (frustum.isOutside(node->boundingBox())) {
+    if (frustum.isOutside(bounds.worldBound(node, world))) {
         return;
     }
     // Opacity multiplies down the hierarchy: scene x ancestors x node. A leaf
@@ -148,7 +199,7 @@ void collectNodeCommands(const Node* node, const Frustum& frustum, float opacity
         const float effective = std::clamp(node_opacity, 0.0f, 1.0f);
         auto& cmd = out.emplace_back(
             intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)),
-            intrusive_ptr<Material>(material), node->worldMatrix());
+            intrusive_ptr<Material>(material), world);
         cmd.opacity = effective;
         cmd.isTransparent = effective < 1.0f - 1e-6f;
         // Render state folds along the node path: every StateNode from the
@@ -164,8 +215,9 @@ void collectNodeCommands(const Node* node, const Frustum& frustum, float opacity
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
-        for (const auto& child : group->children()) {
-            collectNodeCommands(child.get(), frustum, node_opacity, out);
+        for (const auto& child : group->childrenRef()) {
+            collectNodeCommands(child.get(), world * child->localTransformMatrix(),
+                                frustum, node_opacity, bounds, out);
         }
     }
 }
@@ -280,23 +332,42 @@ std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> ca
     }
     const Mat4d view_proj = camera->projectionMatrix() * camera->viewMatrix();
     const Frustum frustum = Frustum::fromViewProjection(view_proj);
-    collectNodeCommands(root_.get(), frustum, opacity_, commands);
+    BoundsCache bounds;
+    collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, opacity_, bounds, commands);
     // Sort: opaque front-to-back (near first), transparent back-to-front
     // (far first) after the opaque batch. Transparent objects need painter's
     // order for correct alpha blending.
+    //
+    // The sort key is computed once per command instead of inside the
+    // comparator: a comparator runs O(n log n) times, and the original form
+    // therefore re-did two matrix-vector products per comparison. Squared
+    // distance orders identically to distance (sqrt is monotonic on [0, inf))
+    // and skips the roots. Sorting pointers keeps std::stable_sort's stable
+    // semantics over the collection order, so ties still favour the earlier
+    // command.
     const Vec3d eye = camera->eye();
-    std::stable_sort(commands.begin(), commands.end(),
-                     [&eye](const RenderCommand& lhs, const RenderCommand& rhs) {
-                         if (lhs.isTransparent != rhs.isTransparent) {
-                             return !lhs.isTransparent;
+    std::vector<std::pair<double, RenderCommand*>> keyed;
+    keyed.reserve(commands.size());
+    for (RenderCommand& cmd : commands) {
+        const auto origin = cmd.modelMatrix * vine::math::Point3d(0.0, 0.0, 0.0);
+        keyed.emplace_back((origin.asVector() - eye).length2(), &cmd);
+    }
+    std::stable_sort(keyed.begin(), keyed.end(),
+                     [](const std::pair<double, RenderCommand*>& lhs,
+                        const std::pair<double, RenderCommand*>& rhs) {
+                         if (lhs.second->isTransparent != rhs.second->isTransparent) {
+                             return !lhs.second->isTransparent;
                          }
-                         const auto lhs_pos = lhs.modelMatrix * vine::math::Point3d(0.0, 0.0, 0.0);
-                         const auto rhs_pos = rhs.modelMatrix * vine::math::Point3d(0.0, 0.0, 0.0);
-                         const double lhs_dist = (lhs_pos.asVector() - eye).length();
-                         const double rhs_dist = (rhs_pos.asVector() - eye).length();
-                         return lhs.isTransparent ? lhs_dist > rhs_dist : lhs_dist < rhs_dist;
+                         return lhs.second->isTransparent ? lhs.first > rhs.first
+                                                          : lhs.first < rhs.first;
                      });
-    return commands;
+    std::vector<RenderCommand> ordered;
+    ordered.reserve(keyed.size());
+    for (auto& [distance, cmd] : keyed) {
+        (void)distance;
+        ordered.push_back(std::move(*cmd));
+    }
+    return ordered;
 }
 
 V_GRAPHICS_NS_END

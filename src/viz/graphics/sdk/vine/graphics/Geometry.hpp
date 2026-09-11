@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -32,6 +33,11 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  * and backends can cache/upload GPU buffers keyed by buffer identity.
  * Convention: location 0 holds positions; location 1 may hold normals. Use
  * Geometry::addBuffer() to attach channels.
+ *
+ * The component count IS the stride of the packed data: every consumer must
+ * step by it (use vertexCount() / xyz() / stride() rather than assuming three
+ * floats per vertex), so a vec4 position channel keeps its xyz and skips the
+ * trailing w.
  */
 struct V_GRAPHICS_API AttributeBuffer
 {
@@ -40,6 +46,45 @@ struct V_GRAPHICS_API AttributeBuffer
 
     /** @brief Returns whether no float data is attached. */
     bool empty() const { return data == nullptr || data->empty(); }
+
+    /** @brief Returns the stride (scalar floats per vertex).
+     *
+     * Zero means the buffer carries no usable layout, which every accessor
+     * treats as empty.
+     *
+     * @return Components per vertex as declared by the buffer.
+     */
+    std::uint32_t stride() const { return components; }
+
+    /** @brief Returns the number of complete vertices in the packed data.
+     *
+     * The vertex count is `data->size() / components`; a trailing partial
+     * vertex is not counted. A zero stride yields 0.
+     *
+     * @return Number of vertices that can be read with a full stride.
+     */
+    std::size_t vertexCount() const
+    {
+        if (data == nullptr || components == 0u) {
+            return 0u;
+        }
+        return data->size() / components;
+    }
+
+    /** @brief Reads the xyz of a vertex, skipping any trailing component.
+     *
+     * Requires a 3- or 4-component channel (the documented minimum for
+     * positions / normals) and @p vertex < vertexCount(); both are the
+     * caller's contract, matching the backend's attribute handling.
+     *
+     * @param vertex Vertex index in [0, vertexCount()).
+     * @return The vertex's x, y and z scalars.
+     */
+    std::array<float, 3> xyz(std::size_t vertex) const
+    {
+        const std::size_t base = vertex * components;
+        return { (*data)[base], (*data)[base + 1u], (*data)[base + 2u] };
+    }
 };
 
 /**

@@ -1,5 +1,20 @@
 # Graphics 模块核心
 
+> 2026-09-11 **遍历热路径 + 顶点属性 stride**：`Scene::collectRenderCommands` 每 pass 每帧全树走，
+> 原实现有四处算法级重复：(1) `Node::worldMatrix()` 递归 O(depth²)；(2) 遍历中每节点再调一次
+> `worldMatrix()`（O(n·depth)）；(3) 每节点调 `boundingBox()`，容器又要 union 子树（O(n·depth)）；
+> (4) 排序比较器内做两次 `modelMatrix * Point3d` + 开方（O(n log n) 次矩阵乘）。
+> 现已改为：`worldMatrix()` 单次折叠 O(depth)（`localTransformMatrix()` 提为 public 供自顶向下累积）、
+> 遍历把父矩阵当参数下传、`BoundsCache` 每趟每节点 bbox 只算一次（叶子调虚函数，容器 union 子节点
+> —— 场景图是树所以成立）、排序前算一次平方距离并排指针（保持 stable 语义）。另加
+> `Group::childrenRef()`（热路径 5 处不再拷贝 NodePtr 向量）。实测同一 debug 构建：3 层/1080 命令
+> 23.9→7.3 ms，5 层/9720 命令 375.7→83.9 ms（3.3~4.5x）。
+> **stride 缺陷（正确性）**：`AttributeBuffer::components` 就是 stride，但 `Geometry::localBounds/
+> positionCount/normalCount` 与 `RayIntersection::meshOfGeometry` 都按每顶点 3 float 读 → vec4 位置通道
+> 的 AABB 错误（错剔除 / 错 fitToScreen）、计数错误、拾取失效；新增 `stride()/vertexCount()/xyz(i)`
+> 并全部改用它。回归测试：GraphicsTest 新增 12 个（含 `CountingGeometry/CountingGroup` 证明每叶子
+> bbox 只问一次），共 148 个。详见 `.ai/design/vsg-pass-lifecycle.md` §6.1。
+
 > 2026-09-11 **pass 生命周期（架构级）**：新增 `RenderBackend::beginPass(pass)/endPass()/releasePass(pass)`
 > （默认空实现，向后兼容）；**后端保留状态的槽身份从 `(camera, order)` 改为 pass 指针**
 > （`VsgRenderer::SlotKey`；直接驱动后端、不调 beginPass 的调用方仍走历史键）。引擎在每个 enabled pass

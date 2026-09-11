@@ -44,6 +44,11 @@ std::vector<NodePtr> Group::children() const
     return children_;
 }
 
+const std::vector<NodePtr>& Group::childrenRef() const noexcept
+{
+    return children_;
+}
+
 Aabbd Group::boundingBox() const
 {
     Aabbd box = Aabbd::empty();

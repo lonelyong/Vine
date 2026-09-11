@@ -78,15 +78,19 @@ class V_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      * node). For a leaf Geometry this places its local vertex data in world
      * space; for a MatrixTransform it also includes its own matrix.
      *
+     * This walks the ancestor chain, so a traversal should prefer
+     * accumulating from the root with localTransformMatrix() (one product per
+     * node) over calling this once per node (one product per ancestor).
+     *
      * @return World-space transform.
      */
     Mat4d worldMatrix() const;
 
-  protected:
     /** @brief Gets this node's own local matrix contribution.
      *
-     * Identity for every node that is not a MatrixTransform; used internally
-     * by worldMatrix() so transforms stay exclusive to MatrixTransform.
+     * Identity for every node that is not a MatrixTransform. Public so a
+     * traversal can accumulate world matrices top-down:
+     * `child_world = parent_world * child.localTransformMatrix()`.
      *
      * @return This node's local matrix (identity unless a MatrixTransform).
      */

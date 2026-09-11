@@ -140,7 +140,7 @@ bool Geometry::hasPositions() const
 std::size_t Geometry::positionCount() const
 {
     const AttributeBuffer* positions = buffer(0);
-    return (positions != nullptr && !positions->empty()) ? (positions->data->size() / 3u) : 0u;
+    return positions != nullptr ? positions->vertexCount() : 0u;
 }
 
 void Geometry::setNormals(const vine::geometry::Vec3fArray& normals)
@@ -156,7 +156,7 @@ bool Geometry::hasNormals() const
 std::size_t Geometry::normalCount() const
 {
     const AttributeBuffer* normals = buffer(1);
-    return (normals != nullptr && !normals->empty()) ? (normals->data->size() / 3u) : 0u;
+    return normals != nullptr ? normals->vertexCount() : 0u;
 }
 
 void Geometry::setIndices(std::shared_ptr<vine::geometry::UInt32Array> indices)
@@ -195,19 +195,27 @@ namespace
 /**
  * @brief Computes the local-space AABB of the location-0 position buffer.
  *
+ * The buffer's declared components are its stride, so a vec4 position channel
+ * contributes its xyz and skips the trailing w (mirroring the backend, which
+ * unpacks locations the same way). A channel that cannot carry xyz (< 3
+ * components) bounds nothing — previously the loop assumed three floats per
+ * vertex, which mis-read vec4 data and produced a WRONG bound (and therefore
+ * wrong frustum culling) for such geometry.
+ *
  * @param geometry Geometry to bound.
- * @return Local-space AABB (empty when no valid positions are present).
+ * @return Local-space AABB (empty when no usable positions are present).
  */
 Aabbd localBounds(const Geometry* geometry)
 {
     const AttributeBuffer* positions = geometry->buffer(0);
-    if (positions == nullptr || positions->empty() || positions->components < 3) {
+    if (positions == nullptr || positions->empty() || positions->components < 3u) {
         return Aabbd::empty();
     }
     Aabbd box = Aabbd::empty();
-    const auto& data = *positions->data;
-    for (std::size_t i = 0; i + 2 < data.size(); i += 3) {
-        box.expandBy(Vec3d(data[i], data[i + 1], data[i + 2]));
+    const std::size_t count = positions->vertexCount();
+    for (std::size_t v = 0; v < count; ++v) {
+        const std::array<float, 3> p = positions->xyz(v);
+        box.expandBy(Vec3d(p[0], p[1], p[2]));
     }
     return box;
 }

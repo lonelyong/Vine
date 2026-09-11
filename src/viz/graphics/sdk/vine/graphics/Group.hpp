@@ -44,12 +44,29 @@ class V_GRAPHICS_API Group : public Node {
      */
     void removeChild(raw_ptr<Node> child);
 
-    /** @brief Gets all child nodes. */
+    /** @brief Gets all child nodes.
+     *
+     * Returns a copy: use childrenRef() on hot paths (per-frame traversal,
+     * picking) to avoid copying the list and bumping every child's reference
+     * count.
+     */
     std::vector<NodePtr> children() const;
+
+    /** @brief Borrows the child list without copying it.
+     *
+     * The reference is valid until the group's children change, so it must not
+     * be held across an addChild() / removeChild().
+     *
+     * @return The children, in insertion order.
+     */
+    const std::vector<NodePtr>& childrenRef() const noexcept;
 
     /** @brief Computes the world-space bounding box of this subtree.
      *
      * Union of the children's world-space boxes (empty when childless).
+     * Containers derive their bound from their children, so a subclass that
+     * wants a different extent must contribute it through a leaf instead of
+     * overriding this (the per-frame bounds pass unions children directly).
      *
      * @return World-space AABB of this subtree.
      */

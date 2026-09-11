@@ -3378,3 +3378,456 @@ TEST(GeometryTest, OpenAttributeBufferList)
     EXPECT_EQ(geom.bufferLocations(), (std::vector<std::uint32_t>{ 2 }));
 }
 
+
+// ============ Attribute stride (components) ============
+
+namespace
+{
+
+/**
+ * @brief Builds a vec4 position channel (xyz + w) for a triangle.
+ *
+ * @param points Triangle vertices; each is padded to four components with w=1.
+ * @return Position buffer with components = 4.
+ */
+AttributeBuffer makeVec4Positions(const std::vector<vine::math::Vec3f>& points)
+{
+    AttributeBuffer buffer;
+    buffer.components = 4;
+    buffer.data = std::make_shared<std::vector<float>>();
+    buffer.data->reserve(points.size() * 4u);
+    for (const auto& p : points) {
+        buffer.data->push_back(p.x);
+        buffer.data->push_back(p.y);
+        buffer.data->push_back(p.z);
+        buffer.data->push_back(1.0f);
+    }
+    return buffer;
+}
+
+}  // namespace
+
+TEST(GeometryTest, AttributeBufferStrideAccessors)
+{
+    AttributeBuffer buffer;
+    EXPECT_EQ(buffer.stride(), 0u);
+    EXPECT_EQ(buffer.vertexCount(), 0u);   // no data, no layout
+
+    buffer.components = 4;
+    EXPECT_EQ(buffer.vertexCount(), 0u);   // layout but still no data
+
+    // Two complete vec4 vertices plus a trailing partial vertex: the partial
+    // one is not a vertex.
+    buffer.data = std::make_shared<std::vector<float>>(
+        std::vector<float>{ 1.0f, 2.0f, 3.0f, 1.0f, 4.0f, 5.0f, 6.0f, 1.0f, 7.0f, 8.0f, 9.0f });
+    EXPECT_EQ(buffer.stride(), 4u);
+    EXPECT_EQ(buffer.vertexCount(), 2u);
+
+    const std::array<float, 3> first = buffer.xyz(0);
+    EXPECT_FLOAT_EQ(first[0], 1.0f);
+    EXPECT_FLOAT_EQ(first[1], 2.0f);
+    EXPECT_FLOAT_EQ(first[2], 3.0f);
+    const std::array<float, 3> second = buffer.xyz(1);
+    EXPECT_FLOAT_EQ(second[0], 4.0f);
+    EXPECT_FLOAT_EQ(second[1], 5.0f);
+    EXPECT_FLOAT_EQ(second[2], 6.0f);
+
+    // A zero stride carries no usable layout.
+    buffer.components = 0;
+    EXPECT_EQ(buffer.vertexCount(), 0u);
+}
+
+TEST(GeometryTest, Vec4PositionsUseComponentsAsStride)
+{
+    Geometry geom;
+    // A triangle offset away from the origin, stored as vec4. A stride-blind
+    // reader would treat the w = 1 values as vertex data: it would read 4
+    // "vertices" out of 12 floats and fold w = 1 into the bounds.
+    geom.addBuffer(0, makeVec4Positions({ vine::math::Vec3f(1.0f, 2.0f, 0.5f),
+                                          vine::math::Vec3f(3.0f, 2.0f, 0.5f),
+                                          vine::math::Vec3f(1.0f, 5.0f, 0.5f) }));
+
+    EXPECT_EQ(geom.positionCount(), 3u);
+    EXPECT_EQ(geom.vertexCount(), 3u);
+
+    const Aabbd box = geom.boundingBox();
+    ASSERT_TRUE(box.isValid());
+    EXPECT_NEAR(box.min().x, 1.0, 1e-9);
+    EXPECT_NEAR(box.max().x, 3.0, 1e-9);
+    EXPECT_NEAR(box.min().y, 2.0, 1e-9);
+    EXPECT_NEAR(box.max().y, 5.0, 1e-9);
+    EXPECT_NEAR(box.min().z, 0.5, 1e-9);
+    EXPECT_NEAR(box.max().z, 0.5, 1e-9);
+}
+
+TEST(GeometryTest, Vec4NormalsCountedByStride)
+{
+    Geometry geom;
+    geom.addBuffer(0, makeVec4Positions({ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
+                                          vine::math::Vec3f(1.0f, 0.0f, 0.0f),
+                                          vine::math::Vec3f(0.0f, 1.0f, 0.0f) }));
+    geom.addBuffer(1, makeVec4Positions({ vine::math::Vec3f(0.0f, 0.0f, 1.0f),
+                                          vine::math::Vec3f(0.0f, 0.0f, 1.0f) }));
+    EXPECT_EQ(geom.positionCount(), 3u);
+    EXPECT_EQ(geom.normalCount(), 2u);
+}
+
+TEST(GeometryTest, ZeroStrideBufferBoundsNothing)
+{
+    Geometry geom;
+    AttributeBuffer broken;
+    broken.components = 0;   // layout is required for any vertex count
+    broken.data = std::make_shared<std::vector<float>>(
+        std::vector<float>{ 1.0f, 2.0f, 3.0f });
+    geom.addBuffer(0, broken);
+
+    ASSERT_NE(geom.buffer(0), nullptr);
+    EXPECT_EQ(geom.buffer(0)->vertexCount(), 0u);
+    EXPECT_EQ(geom.positionCount(), 0u);
+    // No usable positions -> empty bound, so nothing is culled out by accident
+    // and nothing is drawn from a phantom vertex.
+    EXPECT_TRUE(geom.boundingBox().isEmpty());
+}
+
+TEST(GeometryTest, SubThreeComponentChannelBoundsNothing)
+{
+    Geometry geom;
+    AttributeBuffer flat;
+    flat.components = 2;   // cannot carry xyz
+    flat.data = std::make_shared<std::vector<float>>(
+        std::vector<float>{ 1.0f, 2.0f, 3.0f, 4.0f });
+    geom.addBuffer(0, flat);
+
+    EXPECT_EQ(geom.positionCount(), 2u);   // two 2-component vertices
+    EXPECT_TRUE(geom.boundingBox().isEmpty());
+}
+
+TEST(RayIntersectionTest, PicksVec4PositionGeometry)
+{
+    // Regression: picking assumed three floats per vertex, so vec4 positions
+    // were read as a corrupted triangle soup and the ray missed (or hit the
+    // wrong place).
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root = intrusive_ptr<Group>(new Group());
+    auto geom = intrusive_ptr<Geometry>(new Geometry());
+    geom->setName(u8"vec4-tri");
+    geom->addBuffer(0, makeVec4Positions({ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
+                                           vine::math::Vec3f(1.0f, 0.0f, 0.0f),
+                                           vine::math::Vec3f(0.0f, 1.0f, 0.0f) }));
+    root->addChild(geom);
+    scene->setRoot(root);
+
+    Ray ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    RayIntersectionResult hit = RayIntersection::intersectScene(ray, scene.get());
+    EXPECT_TRUE(hit.hit);
+    EXPECT_EQ(hit.geometry.get(), geom.get());
+    EXPECT_NEAR(hit.distance, 1.0, 1e-6);
+    EXPECT_NEAR(hit.point.x, 0.25, 1e-6);
+    EXPECT_NEAR(hit.point.y, 0.25, 1e-6);
+
+    // A ray outside the (correctly read) triangle still misses.
+    Ray off_ray(Vec3d(5.0, 5.0, 1.0), Vec3d(0, 0, -1));
+    EXPECT_FALSE(RayIntersection::intersectScene(off_ray, scene.get()).hit);
+}
+
+TEST(SceneTest, CollectCommandsKeepsVec4PositionGeometryInView)
+{
+    // The culling consequence of the stride fix: a vec4-position triangle
+    // inside the frustum must be collected, which requires its bound to be
+    // derived with the correct stride.
+    Scene scene;
+    auto root = setIdentityRoot(scene);
+    auto node = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    node->setMatrix(vine::math::translate(Vec3d(0.0, 0.0, -3.0)));
+    auto geom = intrusive_ptr<Geometry>(new Geometry());
+    geom->setName(u8"vec4-tri");
+    geom->addBuffer(0, makeVec4Positions({ vine::math::Vec3f(-0.5f, -0.5f, 0.0f),
+                                           vine::math::Vec3f(0.5f, -0.5f, 0.0f),
+                                           vine::math::Vec3f(0.0f, 0.5f, 0.0f) }));
+    node->addChild(geom);
+    root->addChild(node);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].geometry->name(), u8"vec4-tri");
+
+    // The same geometry pushed far outside the view is still culled, so the
+    // fix did not disable culling for this data layout.
+    node->setMatrix(vine::math::translate(Vec3d(400.0, 0.0, -3.0)));
+    EXPECT_TRUE(scene.collectRenderCommands(&cam).empty());
+}
+
+// ============ Traversal: world accumulation, bounds, child access ============
+
+TEST(NodeTest, ChildrenRefMirrorsChildrenInOrder)
+{
+    auto group = intrusive_ptr<Group>(new Group());
+    auto first = intrusive_ptr<Node>(new Node());
+    auto second = intrusive_ptr<Node>(new Node());
+    first->setName(u8"first");
+    second->setName(u8"second");
+    group->addChild(second);
+    group->addChild(first);
+
+    const std::vector<NodePtr>& borrowed = group->childrenRef();
+    ASSERT_EQ(borrowed.size(), 2u);
+    EXPECT_EQ(borrowed[0].get(), second.get());   // insertion order
+    EXPECT_EQ(borrowed[1].get(), first.get());
+
+    // The copy-returning accessor stays in sync (same order, same nodes).
+    const std::vector<NodePtr> copied = group->children();
+    ASSERT_EQ(copied.size(), borrowed.size());
+    for (std::size_t i = 0; i < borrowed.size(); ++i) {
+        EXPECT_EQ(copied[i].get(), borrowed[i].get());
+    }
+
+    group->removeChild(second.get());
+    EXPECT_EQ(group->childrenRef().size(), 1u);
+    EXPECT_EQ(group->childrenRef()[0].get(), first.get());
+
+    auto empty = intrusive_ptr<Group>(new Group());
+    EXPECT_TRUE(empty->childrenRef().empty());
+}
+
+TEST(NodeTest, DeepHierarchyWorldMatrixFoldsWholeChain)
+{
+    // A 12-level chain of transforms: worldMatrix() must fold every level, in
+    // root-to-leaf order, and match the reference product accumulated
+    // top-down. The previous recursive form produced the same matrix but
+    // recomputed the ancestor chain at each level (O(depth^2)); this pins the
+    // semantics of the iterative form.
+    auto root = intrusive_ptr<Group>(new Group());
+    intrusive_ptr<Group> parent = root;
+    Mat4d reference;   // identity
+    std::vector<Mat4d> expected_world;
+    std::vector<intrusive_ptr<MatrixTransform>> levels;
+
+    for (int level = 0; level < 12; ++level) {
+        auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+        const Mat4d local = vine::math::translate(Vec3d(0.1, 0.1, -0.2)) *
+                            vine::math::rotate(Vec3d(0.0, 1.0, 0.0), 0.3);
+        transform->setMatrix(local);
+        parent->addChild(transform);
+        reference = reference * local;
+        expected_world.push_back(reference);
+        parent = transform;
+        levels.push_back(transform);
+    }
+
+    auto leaf = intrusive_ptr<Geometry>(new Geometry());
+    leaf->setShape(makeUnitTriangle());
+    parent->addChild(leaf);
+
+    const auto close = [](const Mat4d& lhs, const Mat4d& rhs) {
+        for (std::size_t row = 0; row < 4u; ++row) {
+            for (std::size_t col = 0; col < 4u; ++col) {
+                if (std::abs(lhs.element(row, col) - rhs.element(row, col)) > 1e-9) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+
+    for (std::size_t i = 0; i < levels.size(); ++i) {
+        EXPECT_TRUE(close(levels[i]->worldMatrix(), expected_world[i])) << "level " << i;
+    }
+    EXPECT_TRUE(close(leaf->worldMatrix(), expected_world.back()));
+
+    // The collection pass bakes the same accumulated matrix into the command,
+    // so the traversal's top-down accumulation matches worldMatrix().
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    scene->setRoot(root);
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene->collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_TRUE(close(commands[0].modelMatrix, leaf->worldMatrix()));
+}
+
+TEST(SceneTest, CollectCommandsAccumulatesWorldMatrixAcrossNesting)
+{
+    // Layout: root -> T1(+100 x, out of view) -> Group -> T2(-100 x, -3 z)
+    // -> geometry. Each node's world matrix must be the product down the
+    // chain: the group's bound is the geometry's world-space bound (not the
+    // group's own translation), so the subtree is NOT culled, and the baked
+    // matrix returns to the origin.
+    Scene scene;
+    auto root = setIdentityRoot(scene);
+    auto outer = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    outer->setMatrix(vine::math::translate(Vec3d(100.0, 0.0, 0.0)));
+    auto middle = intrusive_ptr<Group>(new Group());
+    auto inner = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    inner->setMatrix(vine::math::translate(Vec3d(-100.0, 0.0, -3.0)));
+    auto geom = intrusive_ptr<Geometry>(new Geometry());
+    geom->setName(u8"nested");
+    geom->setShape(makeUnitTriangle());
+    root->addChild(outer);
+    outer->addChild(middle);
+    middle->addChild(inner);
+    inner->addChild(geom);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].geometry->name(), u8"nested");
+    EXPECT_NEAR(commands[0].modelMatrix.element(0, 3), 0.0, 1e-9);
+    EXPECT_NEAR(commands[0].modelMatrix.element(2, 3), -3.0, 1e-9);
+
+    // Moving the geometry genuinely out of view still culls it, i.e. the
+    // container bound is being derived from the children rather than ignored.
+    inner->setMatrix(vine::math::translate(Vec3d(-100.0, 0.0, 500.0)));
+    EXPECT_TRUE(scene.collectRenderCommands(&cam).empty());
+}
+
+TEST(SceneTest, CollectCommandsCullsContainersByUnionOfChildren)
+{
+    // Two children of one group: one in view, one far away. The group's bound
+    // covers both, so the group is not culled, but only the visible child
+    // survives its own leaf test.
+    Scene scene;
+    auto root = setIdentityRoot(scene);
+    auto group = intrusive_ptr<Group>(new Group());
+    auto near_node = makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr, u8"near");
+    auto far_node = makeTriangleNode(Vec3d(500.0, 0.0, -3.0), nullptr, u8"far");
+    group->addChild(near_node);
+    group->addChild(far_node);
+    root->addChild(group);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].geometry->name(), u8"near");
+}
+
+TEST(SceneTest, CollectCommandsPreservesCollectionOrderForEqualDepth)
+{
+    // The distance-sort key must keep std::stable_sort's tie-breaking: equal
+    // distances stay in collection order (insertion order here), which user
+    // code relies on for deterministic frames.
+    Scene scene;
+    auto root = setIdentityRoot(scene);
+    auto first = makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr, u8"first");
+    auto second = makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr, u8"second");
+    auto third = makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr, u8"third");
+    root->addChild(first);
+    root->addChild(second);
+    root->addChild(third);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 3u);
+    EXPECT_EQ(commands[0].geometry->name(), u8"first");
+    EXPECT_EQ(commands[1].geometry->name(), u8"second");
+    EXPECT_EQ(commands[2].geometry->name(), u8"third");
+
+    // Transparent siblings keep collection order too when equidistant.
+    first->setOpacity(0.5f);
+    second->setOpacity(0.5f);
+    const auto transparent = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(transparent.size(), 3u);
+    EXPECT_EQ(transparent[0].geometry->name(), u8"third");   // opaque batch
+    EXPECT_FALSE(transparent[0].isTransparent);
+    EXPECT_EQ(transparent[1].geometry->name(), u8"first");
+    EXPECT_EQ(transparent[2].geometry->name(), u8"second");
+}
+
+namespace
+{
+
+/**
+ * @brief Geometry that counts how often its bound is requested.
+ */
+class CountingGeometry : public Geometry
+{
+  public:
+    mutable int bound_calls = 0;
+
+    /**
+     * @brief Counts the request, then defers to the real bound.
+     *
+     * @return World-space AABB of this geometry.
+     */
+    Aabbd boundingBox() const override
+    {
+        ++bound_calls;
+        return Geometry::boundingBox();
+    }
+};
+
+/**
+ * @brief Group that counts how often its bound is requested.
+ */
+class CountingGroup : public Group
+{
+  public:
+    mutable int bound_calls = 0;
+
+    /**
+     * @brief Counts the request, then defers to the real bound.
+     *
+     * @return World-space AABB of this subtree.
+     */
+    Aabbd boundingBox() const override
+    {
+        ++bound_calls;
+        return Group::boundingBox();
+    }
+};
+
+}  // namespace
+
+TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
+{
+    // The pass culls with each node's world bound. Asking a container for its
+    // bound re-walks its whole subtree (Group::boundingBox unions the
+    // children), so doing that per visited node made collection quadratic in
+    // the node count. The pass must therefore ask every leaf once — no matter
+    // how deep it sits — and never ask a container.
+    Scene scene;
+    auto root = setIdentityRoot(scene);
+    auto deep = root;
+    intrusive_ptr<CountingGroup> counted_container;
+    intrusive_ptr<MatrixTransform> first_transform;
+    for (int level = 0; level < 8; ++level) {
+        auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+        transform->setMatrix(vine::math::translate(Vec3d(0.0, 0.0, -0.1)));
+        deep->addChild(transform);
+        deep = transform;
+        if (level == 0) {
+            first_transform = transform;
+        }
+        if (level == 4) {
+            counted_container = intrusive_ptr<CountingGroup>(new CountingGroup());
+            deep->addChild(counted_container);
+            deep = counted_container;
+        }
+    }
+    auto leaf = intrusive_ptr<CountingGeometry>(new CountingGeometry());
+    leaf->setShape(makeUnitTriangle());
+    deep->addChild(leaf);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(leaf->bound_calls, 1);
+    EXPECT_EQ(counted_container->bound_calls, 0);
+
+    // A second pass asks again (the cache lives for one collection only, so a
+    // moved node is never culled with a stale bound).
+    EXPECT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(leaf->bound_calls, 2);
+    EXPECT_EQ(counted_container->bound_calls, 0);
+
+    // Culled leaves are still bounded exactly once (the bound is what decides).
+    leaf->setName(u8"culled");
+    first_transform->setMatrix(vine::math::translate(Vec3d(4000.0, 0.0, 0.0)));
+    EXPECT_TRUE(scene.collectRenderCommands(&cam).empty());
+    EXPECT_EQ(leaf->bound_calls, 3);
+}

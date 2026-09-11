@@ -204,10 +204,13 @@ GeometryMesh meshOfGeometry(const Geometry* geometry)
         if (const auto* position_attr = geometry->buffer(0);
             position_attr != nullptr && !position_attr->empty() &&
             position_attr->components >= 3u) {
-            const auto& data = *position_attr->data;
-            mesh.positions.reserve(data.size() / 3u);
-            for (std::size_t i = 0; i + 2 < data.size(); i += 3) {
-                mesh.positions.emplace_back(data[i], data[i + 1], data[i + 2]);
+            // The declared components are the stride: a vec4 position channel
+            // keeps its xyz and skips w, exactly as the backend uploads it.
+            const std::size_t count = position_attr->vertexCount();
+            mesh.positions.reserve(count);
+            for (std::size_t v = 0; v < count; ++v) {
+                const std::array<float, 3> p = position_attr->xyz(v);
+                mesh.positions.emplace_back(p[0], p[1], p[2]);
             }
         }
         if (geometry->hasIndices()) {
@@ -347,7 +350,7 @@ void intersectNode(const Ray& ray, const Node* node, RayIntersectionResult& best
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
-        for (const auto& child : group->children()) {
+        for (const auto& child : group->childrenRef()) {
             intersectNode(ray, child.get(), best);
         }
     }
@@ -376,7 +379,7 @@ void collectNodeNearest(const Ray& ray, const Node* node,
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
-        for (const auto& child : group->children()) {
+        for (const auto& child : group->childrenRef()) {
             collectNodeNearest(ray, child.get(), out);
         }
     }
@@ -411,7 +414,7 @@ void collectNodeHits(const Ray& ray, const Node* node,
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
-        for (const auto& child : group->children()) {
+        for (const auto& child : group->childrenRef()) {
             collectNodeHits(ray, child.get(), out);
         }
     }

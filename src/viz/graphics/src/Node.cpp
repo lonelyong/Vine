@@ -56,12 +56,18 @@ Mat4d Node::worldMatrix() const
     // Non-transform nodes contribute the identity, so only enclosing
     // MatrixTransforms (and this node itself when it is one) affect the
     // result.
-    const Mat4d local = localTransformMatrix();
-    const Node* p = parent_;
-    if (p == nullptr) {
-        return local;
+    //
+    // Walked bottom-up with a left-multiply per level: the previous recursive
+    // form recomputed the whole ancestor chain at every level, i.e. O(depth^2)
+    // matrix products for a chain of depth d, on a call every leaf makes once
+    // per pass. This is O(depth) and produces the identical matrix.
+    Mat4d       world = localTransformMatrix();
+    const Node* p     = parent_;
+    while (p != nullptr) {
+        world = p->localTransformMatrix() * world;
+        p     = p->parent_;
     }
-    return p->worldMatrix() * local;
+    return world;
 }
 
 Mat4d Node::localTransformMatrix() const

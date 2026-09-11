@@ -102,7 +102,11 @@ RenderBackend::releasePass(pass)    // 释放该 pass 的全部保留状态（�
 - 命名：`owner/scope/index` 槽身份、`retire`/`detach`/`retarget` 动词、`begin/end` 作用域成对；
 - C++：`const` 正确性（相机链全 const，去掉 `const_cast`）、`std::optional` 代替 flag+哨兵、
   `std::array` + `static_assert` 钉住 shader ABI、`[[nodiscard]]`/`noexcept`、
-  小 concept 头（`DepthMode.hpp`，include-what-you-use）、请求结构体代替 12 参数长表。
+  小 concept 头（`DepthMode.hpp`，include-what-you-use）、请求结构体代替 12 参数长表；
+- **顶点属性按 `components` 解算**：`AttributeBuffer` 的 components 就是 stride，新增
+  `stride()`/`vertexCount()`/`xyz(i)`，`Geometry::localBounds/positionCount/normalCount` 与
+  `RayIntersection` 的网格解析全部改用它（此前假设每顶点 3 个 float，vec4 位置通道会算错 AABB
+  → 错误剔除 / 错误 `fitToScreen`，且拾取直接失效）。
 
 未做（需单独排期，均已在下方说明理由）：
 
@@ -110,11 +114,42 @@ RenderBackend::releasePass(pass)    // 释放该 pass 的全部保留状态（�
   `VK_NULL_HANDLE`，Vine 无法从外部注入；需等 vsg 支持或自行接管管线创建。
 - **帧在飞（frames-in-flight）资源回收队列**：当前销毁路径用 `vkDeviceWaitIdle`（已保证正确与
   validation 干净），但代价是整帧停等。业界做法是 N 帧在飞 + per-frame fence / 延迟删除队列。
-- **命令列表缓存**：`Scene::collectRenderCommands` 每个 pass 每帧全树遍历 + 每节点 bbox 计算，
-  多 pass 场景是 O(passes x nodes)；业界会缓存一次遍历结果供多 pass 复用。
-- **剔除的包围盒缓存**：`boundingBox()` 每帧每节点重算（含分配），大装配是热点。
+- **命令列表缓存（跨 pass 复用）**：`Scene::collectRenderCommands` 每个 pass 每帧全树遍历，
+  多 pass 场景仍是 O(passes x nodes)；业界会缓存一次遍历结果供多 pass 复用。
+  （单次遍历内部的 O(depth^2)/O(n·depth) 与重复 bbox 已在本轮修掉，见下）
 - **后端诊断走日志系统**：`gfx_backend_vsg` 仍用 `fprintf(stderr, ...)`（历史约定 + lavapipe 脚本
   依赖 stderr 文本），而 `app_shell` 等插件已改用 `vine/logging`。收敛需同时改 harness 断言。
+
+### 6.1 本轮已做的遍历/几何性能修复（含实测）
+
+围绕 `Scene::collectRenderCommands` 这条每 pass 每帧的热路径，修掉四处“算法层面”的重复计算
+（非微优化，全部语义不变、有回归测试钉住）：
+
+- **`Node::worldMatrix()` O(depth^2) → O(depth)**：原实现 `return p->worldMatrix() * local;`
+  对每一层重算整条祖先链；改为自底向上单次左乘折叠。
+- **遍历改为自顶向下累积世界矩阵**：`collectNodeCommands` 现在把父矩阵作为参数往下传
+  （每节点 1 次矩阵乘），不再每节点调用一次 `worldMatrix()`（每节点 O(depth)）。
+  为此 `Node::localTransformMatrix()` 从 protected 提为 public（自定义遍历同样需要它）。
+- **包围盒每趟只算一次**（`BoundsCache`）：原实现每个容器都调 `Group::boundingBox()`，
+  而它又要 union 子树 → 深度/宽度大时是 O(n·depth)。现在一趟遍历中：叶子调用一次虚函数
+  `boundingBox()`，容器直接 union 子节点结果。
+  前提是场景图是树（`Group::addChild` 会重新挂父节点），现有 `Geometry`/`Group` 之外的
+  自定义 Node 只要按“叶子自己回答、容器 union 子节点”的约定实现即可（`Group.hpp` 已注明）。
+- **排序键预计算**：原 `std::stable_sort` 比较器内每次做两次 `modelMatrix * Point3d` 再开方，
+  O(n log n) 次矩阵乘；改为排序前算一次平方距离（与开方排序等价）并排指针，保持稳定排序语义。
+- **`Group::childrenRef()`**：热路径（遍历 2 处 + 拾取 3 处）不再拷贝 `std::vector<NodePtr>`
+  （省一次分配 + 每个子节点一次引用计数增减），`children()` 保留给需要副本的调用方。
+
+实测（同一台机器、同一 debug 构建 `libviGraphicsd.so`、同一顶点数场景，200 次取平均）：
+
+| 场景规模 | 修复前 | 修复后 | 加速 |
+| --- | --- | --- | --- |
+| 1,080 命令 / 3 层嵌套 | 23.9 ms/次 | 7.3 ms/次 | 3.3x |
+| 9,720 命令 / 5 层嵌套 | 375.7 ms/次 | 83.9 ms/次 | 4.5x |
+
+注：库为 `-O0` debug 构建，绝对值无参考意义，只看同一构建下的相对比例；命令发射本身
+（含状态折叠、shader program 解析、`RenderCommand` 构造）在 -O0 下仍是主要成本，
+在 Release 下会被内联摊销。
 
 ## 7. 公共 API 命名提案（未实施，属破坏性变更）
 
