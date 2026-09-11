@@ -1104,48 +1104,21 @@ bool SceneBridge::syncRenderCommands(
         }
     }
 
-    // Refresh bound material values in place so property edits show up live
-    // (the descriptor already points at these cached Phong values). Each
-    // distinct material is visited once per frame and its UBO is rewritten
-    // only when the Vine material's parameters actually changed, so a steady
-    // state costs O(distinct materials) compares instead of O(commands)
-    // unconditional writes (D19).
+    // Refresh bound material values so property edits show up live (the
+    // descriptor already points at these cached Phong values). Each distinct
+    // material is visited once per frame; the MANAGER owns the compare-and-write
+    // decision, so a steady frame writes and transfers nothing while an edit
+    // lands immediately (VsgMaterialManager::updateMaterial is the single
+    // refresh path — before, this loop duplicated it, D19).
     if (!commands.empty()) {
         auto& manager = materialManager();
-        const auto same4 = [](const ::vsg::vec4& a, const ::vsg::vec4& b) {
-            return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
-        };
         std::unordered_set<const vine::graphics::Material*> refreshed;
         refreshed.reserve(commands.size());
         for (const auto& cmd : commands) {
             if (cmd.material == nullptr || !refreshed.insert(cmd.material.get()).second) {
                 continue;
             }
-            auto  value = manager.getOrCreate(cmd.material.get());
-            auto& m     = value->value();
-            const auto diffuse  = cmd.material->diffuse();
-            const auto specular = cmd.material->specular();
-            const auto ambient  = cmd.material->ambient();
-            // Opacity is carried by the per-vertex alpha, not the shared
-            // material, so per-geometry opacity stays independent (the diffuse
-            // alpha is pinned to 1 here).
-            const ::vsg::vec4 want_ambient(ambient.r, ambient.g, ambient.b, ambient.a);
-            const ::vsg::vec4 want_diffuse(diffuse.r, diffuse.g, diffuse.b, 1.0f);
-            const ::vsg::vec4 want_specular(specular.r, specular.g, specular.b, specular.a);
-            const float       want_shininess = cmd.material->shininess();
-            if (same4(m.ambient, want_ambient) && same4(m.diffuse, want_diffuse) &&
-                same4(m.specular, want_specular) && m.shininess == want_shininess) {
-                continue;
-            }
-            m.ambient   = want_ambient;
-            m.diffuse   = want_diffuse;
-            m.specular  = want_specular;
-            m.shininess = want_shininess;
-            // The material uniform is DYNAMIC (see VsgMaterialManager): mark it
-            // dirty so the per-frame TransferTask re-copies it; materials that
-            // did not change are never dirtied, so steady state transfers
-            // nothing.
-            value->dirty();
+            manager.updateMaterial(cmd.material.get());
         }
     }
 

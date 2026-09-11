@@ -418,14 +418,14 @@ sequenceDiagram
 
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|
-| D13 | `VsgMaterialManager::cache` **无逐出**：`releaseMaterial/updateMaterial` 接口存在但**全仓零调用点** → 每个出现过的 `Material*` 的 PhongMaterialValue 留到 shutdown（最像内存泄漏的留存）。**另：按原始指针索引且不自持 —— 材质销毁后同地址新材质会复用旧 `PhongMaterialValue`/descriptor（颜色/高光错误）**（与设计 §8.1 同源；方案/验收见 **§9.1**） | `VsgMaterialManager` | 🔴 |
+| D13 | `VsgMaterialManager::cache` **无逐出**、且按裸指针索引不自持（同地址新材质复用旧 Phong 值/descriptor）。**已修（2026-09-11，设计 §12）**：条目自持 `Material`（地址不可复用）+ `releaseAbandoned()`（app 放弃即立即回收，渲染器每帧调）+ `kMaxEntries` FIFO 上限 + null 键默认条目不动 | `VsgMaterialManager` | 🟢 |
 | D14 | 裸指针缓存键 + 600 帧滞留窗：Geometry/Material 删除后、逐出前有悬垂窗口（安全依赖场景树保活）。**Geometry 部分已修（2026-09-11，设计 §8.1）**：`Item` 自持所索引的几何 → 不再有悬垂窗口；**Material 部分仍见 D13** | `SceneBridge::cache_` | 🟡 |
 | D15 | `SceneBridge::cache_` 删除几何 600 帧后才释放（延迟释放）。**已改（2026-09-11，§8.1）**：仅剩缓存持有时（`useCount()==1`，app 已放弃）**立即驱逐**；仍被引用（隐藏/剔除/临时离场）才走 600 帧复用窗 | `syncRenderCommands` | 🟢 |
 | D16 | 共享/变体缓存只增不减（随"历史见过的不同变体数"增长）；2026-09-08 起 `clearCache()`（槽 teardown/resize/release）同时清 `shared_objects_`/`program_shader_sets_`/`variant_cache_`，**槽内活跃期间仍不修剪** | `SceneBridge` | 🟢 |
 | D17 | shutdown 顺序错 → 撞 `VSG_MAX_DEVICES==1`；`releaseWindow()` 漏调会 Destroy Qt 宿主窗口 | `VsgRenderer::shutdown` | 🟡 |
 | D18 | resize / release / 离屏 resize 走 `deviceWaitIdle` 全停（简单但会整帧卡顿） | `VsgRenderer` | 🟢 |
 | D29 | pass 协议隐式：7 个 `pending_*` 字段 + 三个读取入口，"调用含义"依赖调用顺序（本会话 6 个缺陷的来源）。**已修（2026-09-11，设计 §11）**：收敛为单一 `PassRequest` + 显式作用域（作用域属性 vs 每次绘制属性），违反协议（嵌套 beginPass / 不配对 endPass）经诊断通道上报（`PassProtocolViolation`） | `VsgRenderer` | 🟢 |
-| D19 | 每帧 O(materials) 就地改写 + `updateMaterial` 双路径并存 | `syncRenderCommands` 尾部 | 🟢 |
+| D19 | 每帧 O(materials) 就地改写 + `updateMaterial` 双路径并存。**已修（2026-09-11，设计 §12）**：比较/写入移入缓存（`Entry` 记上次参数），`SceneBridge` 只调 `updateMaterial()` —— 单一路径，且该接口首次有真实调用点 | `syncRenderCommands` 尾部 / `VsgMaterialManager` | 🟢 |
 
 ### 13.5 构建 / 环境 / 验证层
 
@@ -449,8 +449,7 @@ sequenceDiagram
 1. **D10**：给 `ShaderProgram` 加 revision/变更通知，纳入 `Item` 重建键 → "改 shader 不生效"。
 2. **D9**：program 编译失败向前端/日志报错，去掉纯静默回退。
 3. **D3**：`SceneBridge` 尊重用户 loc6 顶点色（色 × opacity 合成）。
-4. **D13**：引擎在材质解绑/销毁时调 `releaseMaterial()`（或加容量上限逐出）；同时按
-   §8.1 的做法让条目自持材质，否则同地址新材质会复用旧 Phong 值/descriptor。
+4. ~~**D13**~~：已修（设计 §12）—— 条目自持材质 + `releaseAbandoned()` 每帧回收 + FIFO 容量上限。
 5. **D1**：读端按 `components` 跳步，兑现数据模型承诺。
 
 

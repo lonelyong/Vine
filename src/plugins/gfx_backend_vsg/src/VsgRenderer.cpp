@@ -3391,6 +3391,12 @@ void VsgRenderer::submitFrame()
             slot_entry.second.bridge.advanceRetireRing();
         }
     }
+
+    // Same point in the frame: release the material resources of materials the
+    // app has dropped. Their entries own the Material (that is what keeps the
+    // pointer key valid), so this is what stops a live scene's material churn
+    // from pinning every material it has ever seen (D13).
+    persistent->materialManager.releaseAbandoned();
 }
 
 void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)

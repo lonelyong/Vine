@@ -29,6 +29,17 @@ V_VSG_NS_BEGIN
  */
 class V_VSG_API VsgMaterialManager : public vine::graphics::MaterialManager {
   public:
+    /** @brief Upper bound on the number of cached material resources.
+     *
+     * The engine emits no material-lifecycle event, so a host that never calls
+     * releaseMaterial() would otherwise grow this cache for the whole session
+     * (D13). Past this bound the OLDEST entries are evicted: the newest are the
+     * ones a live scene is using, and an evicted material simply rebuilds its
+     * Phong value (and re-binds its descriptor) on its next draw.
+     */
+    static constexpr std::size_t kMaxEntries = 256;
+
+  public:
     VsgMaterialManager();
     ~VsgMaterialManager() override;
 
@@ -52,7 +63,31 @@ class V_VSG_API VsgMaterialManager : public vine::graphics::MaterialManager {
     ::vsg::ref_ptr<::vsg::PhongMaterialValue> find(vine::raw_ptr<vine::graphics::Material> material) const;
 
   public:
-    /** @brief Rebuilds the cached resource for a material. */
+    /** @brief Releases the backend resources of every material the app has dropped.
+     *
+     * An entry OWNS the Material it is keyed by (that is what makes the pointer
+     * key safe: the cache cannot observe destruction, so a recycled address
+     * would otherwise be served the dead entry's Phong value and descriptor —
+     * D13). Once the app itself no longer references a material, nothing can
+     * look its entry up again, so this releases it — and the material with it —
+     * immediately instead of letting it sit until the session ends.
+     *
+     * The renderer calls this once per submitted frame. Materials the app still
+     * holds are kept (their entries may be reused by a hidden or culled object).
+     *
+     * @return Number of released entries.
+     */
+    std::size_t releaseAbandoned();
+
+  public:
+    /** @brief Rebuilds the cached resource for a material.
+     *
+     * This is the single refresh path: it re-reads the material's parameters and
+     * writes them into the cached Phong value in place (descriptor sets already
+     * point at it) only when they actually changed, so a steady scene transfers
+     * nothing and a property edit shows up live. Callers that used to compare
+     * and write the value themselves (SceneBridge) now just call this.
+     */
     void updateMaterial(vine::raw_ptr<vine::graphics::Material> material) override;
 
     /** @brief Releases the cached resource for a material. */

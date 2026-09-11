@@ -260,7 +260,10 @@ descriptor set 可能仍被**已提交但未完成**的命令缓冲引用：view
 本节只做**设计登记**（问题、根因、方案、验收、风险、依赖），实施排期与优先级在各条目末尾。
 三项都属于“非正确性阻塞”但会被真实场景触发的缺口，登记目的是让后续切片有明确的入口与验收口径。
 
-### 9.1 材质缓存的逐出与身份（D13，§8.1 同源）
+### 9.1 材质缓存的逐出与身份（D13，§8.1 同源）——**已实施（2026-09-11）**
+
+> 实施记录见 §12；本节保留设计原文（方案 A 已落地：条目自持 + 放弃即释放 + 容量上限，
+> 且 `updateMaterial` 成为唯一就地刷新路径，D19 一并收掉）。
 
 **现状（代码事实）**
 - `VsgMaterialManager::cache`：`std::map<Material*, ref_ptr<PhongMaterialValue>>`，只在
@@ -492,3 +495,51 @@ bool pass_open;        // beginPass 打开、endPass 关闭
   合法序列（引擎协议 + 直连驱动）**零诊断**；`isPassScopeOpen()` 在作用域开/关时正确。
 - 既有 151（test_graphics）+ 61（test_vsg）全绿；lavapipe 门禁 RESULT: PASS（含 pass 协议 phase、
   共享深度、在飞 churn、诊断 phase），说明作用域语义对引擎与自检两条驱动路径都成立。
+
+## 12. 统一后端缓存骨架 + 材质缓存重做（D13 / D19，2026-09-11 落地）
+
+**骨架**（`src/plugins/gfx_backend_vsg/src/OwnedCache.hpp`，120 行、无框架味）：
+
+```cpp
+template <class Object, class Payload> class OwnedCacheEntry;   // 自持键对象 + 序号 + 载荷
+template <class Map> std::size_t eraseAbandoned(Map&);          // 唯一持有者只剩缓存 -> 立即回收
+template <class Map> std::size_t trimToCapacity(Map&, std::size_t); // FIFO 逐出最旧（永不动 null 键）
+class InsertionClock;                                            // 每缓存一个单调序号
+```
+
+把本轮 §8.1 在几何缓存上手工实现的“**条目自持键对象 + `useCount()==1` 即回收**”规则抽成可复用、
+只写一次的不变量，并把两半分开说明：自持解决“地址被复用”，回收解决“自持变泄漏”；而“仍被
+app 持有但不绘制”的对象如何处置留给各自策略（几何用 600 帧复用窗，材质不需要窗口——见下）。
+
+**D13 材质缓存（红项）**：`VsgMaterialManager::cache` 改为
+`unordered_map<Material*, OwnedCacheEntry<Material, Entry>>`：
+
+- 条目自持 `Material` → 指针键在其存活期内不可能被复用（同地址新材质永远拿到自己的条目，
+  不会再被喂旧 `PhongMaterialValue` + descriptor）；
+- 新增 `releaseAbandoned()`：app 释放后（`useCount()==1`）**立即**回收条目与材质，由
+  `VsgRenderer::submitFrame()` 每提交帧调用一次 —— 这就是 D13 “只增不减/最像泄漏”的解法；
+  仍被 app 持有的（隐藏/剔除对象）保留条目，避免无谓重建 descriptor；
+- `kMaxEntries = 256` 兜底 + **FIFO 逐出最旧**（活跃场景用的是新条目，稳态不会逐出刚要用到的），
+  null 键的默认材质条目永不被逐出；
+- `releaseMaterial()` / `clear()` 语义不变（仍是调用方的显式工具）。
+
+**D19 单一刷新路径**：`SceneBridge` 里那段“比较参数 → 写入 → dirty”循环删掉，改为逐材质调
+`materialManager.updateMaterial(m)`；**比较与写入的知识移进持有该值的缓存**（`Entry` 记住上次
+写入的 `PhongParameters`，相等即不写、不 dirty、不传输）。于是 `updateMaterial` 第一次有了真实
+调用点（此前全仓零调用），且稳态零传输的性质由测试钉住。
+
+**测试**（`tests/test_vsg/MaterialManagerTest.cpp`，6 例）：
+- 放弃材质在下一次 sweep 被释放（`TrackedMaterial` 活体计数归零），**仍被持有的材质幸存**；
+- **地址唯一性**：条目自持 ⇒ 存活条目的地址不可能被回收 ⇒ 新材质不会继承死条目的值（D13 的
+  别名性质做成确定性断言）；
+- 容量上限：插入 `kMaxEntries + 8` 后 ≤ `kMaxEntries`，最新保留、最旧逐出、默认条目不动；
+- `updateMaterial` 只在**变化时**重写（用 `vsg::Data::differentModifiedCount` 断言稳态不 dirty，
+  改属性后同一对象跟随之并再次归于安静）；
+- 显式 `releaseMaterial()` / `clear()` 语义不变。
+
+验证：test_vsg 61 → **67** 全绿，test_graphics 151 全绿；lavapipe 门禁 RESULT: PASS（真实 app
+的材质路径 —— HUD / deferred lighting / 每帧就地刷新 —— 全过）；dist 部署冒烟健康。
+
+**仍未做**：D16 的变体/ShaderSet 缓存仍是“超限即整表清空”（正确：只丢模板，已建管线仍被保留
+状态组持有），可后续换成同一骨架的 FIFO 逐出；§8.1 的几何缓存可迁到同一骨架（当前是手工实现
+且行为正确，迁移只减 bespoke 代码、不修缺陷）。

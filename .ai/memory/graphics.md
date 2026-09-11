@@ -1,5 +1,15 @@
 # Graphics 模块核心
 
+> 2026-09-11 **后端缓存骨架 + 材质缓存修复（D13/D19）**：新增
+> `src/plugins/gfx_backend_vsg/src/OwnedCache.hpp` —— 保留型缓存统一"条目自持键对象
+> （地址不可能在存活期内被复用）+ `eraseAbandoned()`（`useCount()<=1` ⇒ 除缓存无人能再查到
+> ⇒ 立即回收）+ `trimToCapacity()`（FIFO，永不动 null 键默认条目）"两半不变量。
+> `VsgMaterialManager` 切到该骨架：条目自持 `Material`（修掉同地址复用旧 Phong 值/descriptor）、
+> `releaseAbandoned()` 由 `VsgRenderer::submitFrame()` 每提交帧调、`kMaxEntries = 256` FIFO 兜底；
+> 刷新路径收敛为 `updateMaterial()` 唯一入口（`Entry` 记上次 `PhongParameters`，相等即不写/不 dirty/
+> 不传输 —— 此前该接口全仓零调用点，SceneBridge 自己又写了一遍 = D19）。设计 §12、register D13/D19、
+> 测试 `tests/test_vsg/MaterialManagerTest.cpp`（6 例，含"地址唯一性"确定性断言）。
+
 > 2026-09-11 **pass 协议显式化**：7 个 `pending_*` 字段收敛为单一 `PassRequest`（`VsgRenderer::Impl`）
 > + 显式作用域（`pass_open`）；**作用域属性**（pass/target/order/depth_mode/presenting）在作用域内
 > 每次绘制都有效、`endPass()` 丢弃；**每次绘制属性**（viewport/lights）由紧随的绘制调用消费；
