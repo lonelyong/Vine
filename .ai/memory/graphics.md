@@ -1,5 +1,14 @@
 # Graphics 模块核心
 
+> 2026-09-11 **反 Z 陷阱（归因实验结论，设计 §16）**：本后端 reverse-Z（近→NDC 1、远→0、
+> 深度清 0、`COMPARE_OP_GREATER`）。**用户程序自己写 `gl_Position` 时若写 `z = 0`（非反 Z
+> 直觉的"近平面"）实际落在远平面，与清屏深度相等 → 严格 greater 拒绝全部片元 → 绘制对象
+> 完全消失，零 VUID、零诊断**。selftest 的变体探针（同四边形单变量）常驻打印
+> `covered=0`（z=0）vs `covered=5916`（z=0.5）；`runPixelReadbackPhase` 用 z=0.5 的用户
+> 程序断言该路径确实光栅化（`covered ≥ 1000`、中心 == (255,51,51)）。顺带补口：
+> `assignArray` 未命中且着色器声明过该绑定时上报；`bindGraphicsPipeline == nullptr` 不再
+> 静默记录。
+
 > 2026-09-11 **像素回读 + 像素断言（D20 正面修补）**：`VsgRenderer::readColorBuffer` 落地
 > （离屏 RGBA8：blit 到线性宿主可见图 + 按 rowPitch 收成紧凑 RGBA8；float 附件诚实返回 false
 > + ContentSkipped；同步语义先 `deviceWaitIdle`，源图 SHADER_READ_ONLY↔TRANSFER_SRC 双向屏障）。

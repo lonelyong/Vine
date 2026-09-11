@@ -432,6 +432,7 @@ sequenceDiagram
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|
 | D20 | 验证原先只有“无 VUID”，**没有任何像素断言**。**已补（2026-09-11，设计 §15）**：`VsgRenderer::readColorBuffer` 落地（RGBA8，离屏，blit 到线性图 + 映射回读；float 附件诚实报不支持），selftest 新增像素阶段（中心像素=被光照的红四边形、角像素=清屏色、float 附件返回 false），harness 把 `[selftest] FAIL` 当硬失败并打印实际使用的设备。**仍需**：真机 GPU 冒烟（本机只有 llvmpipe/lavapipe，无 GPU 驱动） | 验证 | 🟡 |
+| D30 | **静态：用户程序把顶点写到裁剪空间 z = 0 时该绘制对象完全不可见且零诊断** —— 后端是反 Z（近 1 远 0、清 0、`COMPARE_OP_GREATER`），z = 0 即远平面，与清屏深度相等，严格 greater 测试拒绝全部片元。非反 Z 直觉（z = 0 = 近平面）在此正好相反。**已缓解（2026-09-11，设计 §16）**：契约补上深度约定；像素阶段用 z = 0.5 的用户程序断言该路径确实光栅化；变体探针常驻（`covered=0` vs `covered=5916`）；`assignArray` 返回 false 且着色器声明过该绑定时上报，管线构建失败不再静默 | `SceneBridge` 程序路径 | 🟢 |
 | D21 | 离屏 multipass 未在最新 showcase 下复验；`VINE_VSG_OWN_WINDOW` 独立窗口 vs Qt 子窗口 compositing 主路径仍"待定" | `VsgRenderer` | 🟡 |
 | D22 | 运行期新增几何触发**全图 compile()**（非增量；启动预编译已规避，运行期历史不可靠） | `VsgRenderer::render` | 🟡 |
 | D23 | 无关基线噪声：`test_vsg` ctest SegFault（进程退出预存问题，直跑 10/10）、`test_cppstd/runtime/system` 失败；清 `_deps` 重建需联网（FETCHCONTENT） | 测试/构建 | 🟢 |

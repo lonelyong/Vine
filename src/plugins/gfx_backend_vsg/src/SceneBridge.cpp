@@ -439,6 +439,18 @@ VkShaderStageFlagBits stageFlag(vine::graphics::ShaderStageType type)
  * shader set so the pipeline keeps the baked viewport / multisampling; the
  * per-geometry render state is applied afterwards by the caller.
  *
+ * DEPTH CONVENTION — read this before writing a program that sets its own
+ * gl_Position. This backend renders REVERSE-Z: the near plane maps to NDC depth
+ * 1, the far plane to 0, the depth buffer is cleared to 0 and the compare op is
+ * VK_COMPARE_OP_GREATER (see RenderStateMapper::mapCompareOp). A program must
+ * therefore map near to 1 and far to 0. A program that writes z = 0 — the
+ * instinct from a non-reverse-Z renderer, where 0 is the near plane — puts its
+ * geometry exactly on the FAR plane, where the cleared depth already sits, and
+ * the strict "greater" test then rejects every fragment: the drawable vanishes
+ * with no validation error and no diagnostic. `vsg_backend_selftest`'s variant
+ * probe draws the same quad once at z = 0 and once at z = 0.5 and prints
+ * "covered=0" against "covered=5916" pixels as the standing evidence.
+ *
  * @param stages         Compiled SPIR-V stages (non-empty).
  * @param base_states    Default pipeline states to inherit (viewport etc.).
  * @param extra_channels Custom channels (location, components) whose bindings
@@ -1418,26 +1430,43 @@ bool SceneBridge::syncRenderCommands(
         auto  material_value   = material_manager.getOrCreate(material);
         const auto arrays      = boundArraysOf(data);
         ::vsg::DataList scratch;
-        if (arrays.size() > 0u) {
-            config->assignArray(scratch, "vsg_Vertex", VK_VERTEX_INPUT_RATE_VERTEX, arrays[0]);
-        }
-        if (arrays.size() > 1u) {
-            config->assignArray(scratch, "vsg_Normal", VK_VERTEX_INPUT_RATE_VERTEX, arrays[1]);
-        }
-        if (arrays.size() > 2u) {
-            config->assignArray(scratch, "vsg_Color", VK_VERTEX_INPUT_RATE_VERTEX, arrays[2]);
-        }
+        // vsg matches an array against the ShaderSet's declared binding by NAME
+        // and element type, and returns false when nothing matches. A miss is
+        // not cosmetic: the shader then reads an attribute the pipeline never
+        // enables, so the drawable degenerates (in practice: nothing is drawn)
+        // while validation stays clean. Report it here — this is the point
+        // where "the user program does not appear" used to become invisible.
+        const auto declares_binding = [&shaderSet](const std::string& name) {
+            for (const auto& binding : shaderSet->attributeBindings) {
+                if (binding.name == name) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        const auto assign_array = [&](const std::string& name, std::size_t index) {
+            if (index >= arrays.size() || arrays[index] == nullptr) {
+                return;
+            }
+            if (!config->assignArray(scratch, name, VK_VERTEX_INPUT_RATE_VERTEX, arrays[index]) &&
+                declares_binding(name)) {
+                report(vine::graphics::DiagnosticSeverity::Warning,
+                       vine::graphics::DiagnosticCategory::ContentSkipped,
+                       formatDiagnostic(u8"vertex binding '%s' (array %zu, %s) was not matched by the "
+                                        u8"pipeline; the shader reads an attribute the pipeline does not "
+                                        u8"enable, so this drawable cannot render correctly",
+                                        name.c_str(), index, arrays[index]->className()));
+            }
+        };
+        assign_array("vsg_Vertex", 0u);
+        assign_array("vsg_Normal", 1u);
+        assign_array("vsg_Color", 2u);
         // Custom channels: bind each forwarded array under its stable
         // vine_Attribute{location} name. Only a ShaderSet that declares the
         // name consumes it (the built-in set does not declare any, so extra
         // arrays are simply unused vertex buffers for the built-in path).
         for (std::size_t i = 0; i < extra_channels.size(); ++i) {
-            const std::size_t binding_index = 3u + i;
-            if (arrays.size() <= binding_index) {
-                break;
-            }
-            config->assignArray(scratch, customAttributeName(extra_channels[i].location),
-                                VK_VERTEX_INPUT_RATE_VERTEX, arrays[binding_index]);
+            assign_array(customAttributeName(extra_channels[i].location), 3u + i);
         }
         config->assignDescriptor("material", material_value);
     }
@@ -1499,7 +1528,17 @@ bool SceneBridge::syncRenderCommands(
     const auto local_bind = config->bindGraphicsPipeline;
     auto stateGroup       = ::vsg::StateGroup::create();
     config->copyTo(stateGroup, shared_objects_);
-    if (shared_objects_ != nullptr && config->bindGraphicsPipeline == local_bind) {
+    if (config->bindGraphicsPipeline == nullptr) {
+        // No pipeline means nothing can be drawn for this variant. It used to
+        // be returned as a (useless) state group and recorded as a drawable,
+        // so the geometry silently never appeared; report it instead.
+        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::CompileFailed,
+               formatDiagnostic(u8"no graphics pipeline could be built for %s geometry with %zu vertex "
+                                u8"binding(s); the drawable is dropped this frame",
+                                program != nullptr ? u8"user-program" : u8"built-in",
+                                extra_channels.size()));
+    }
+    else if (shared_objects_ != nullptr && config->bindGraphicsPipeline == local_bind) {
         ++pipeline_variants_;
     }
 

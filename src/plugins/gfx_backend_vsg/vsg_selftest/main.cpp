@@ -143,6 +143,55 @@ GeometryPtr makeVisibleQuad()
     return geom;
 }
 
+/**
+ * @brief Builds a quad whose normals / colour channel are independently present.
+ *
+ * The content-variant probe changes one thing at a time, so the shape is built
+ * to order: positions are always the same quad (x,y in [-half, half], z = 0),
+ * the +z normal per vertex is optional, and the colour at location 3 (which the
+ * custom attribute program reads) is optional too.
+ *
+ * @param half         Half extent of the quad on x and y.
+ * @param with_normals When true every vertex carries the +z surface normal.
+ * @param with_channel When true every vertex carries @p r / @p g / @p b at
+ *                     location 3.
+ * @param r            Red channel of the location-3 colour.
+ * @param g            Green channel of the location-3 colour.
+ * @param b            Blue channel of the location-3 colour.
+ * @return The quad geometry (two triangles).
+ */
+GeometryPtr makeProbeQuad(float half, bool with_normals, bool with_channel, float r, float g, float b)
+{
+    auto geom = GeometryPtr(new Geometry());
+    vine::geometry::Vec3fArray positions;
+    const float corners[6][2] = { { -half, -half }, { half, -half }, { half, half },
+                                 { -half, -half }, { half, half },  { -half, half } };
+    for (const auto& corner : corners) {
+        positions.emplace_back(corner[0], corner[1], 0.0f);
+    }
+    geom->setPositions(positions);
+    if (with_normals) {
+        vine::geometry::Vec3fArray normals;
+        for (int i = 0; i < 6; ++i) {
+            normals.emplace_back(0.0f, 0.0f, 1.0f);
+        }
+        geom->setNormals(normals);
+    }
+    if (with_channel) {
+        std::vector<float> colours;
+        for (int i = 0; i < 6; ++i) {
+            colours.push_back(r);
+            colours.push_back(g);
+            colours.push_back(b);
+        }
+        vine::graphics::AttributeBuffer channel;
+        channel.components = 3;
+        channel.data       = std::make_shared<std::vector<float>>(colours);
+        geom->addBuffer(3u, channel);
+    }
+    return geom;
+}
+
 /** @brief Builds a custom program that reads vine_Attribute3 (loc3) as colour. */
 ShaderProgramPtr makeAttributeProgram()
 {
@@ -161,6 +210,33 @@ ShaderProgramPtr makeAttributeProgram()
                 u8"layout(location = 0) in vec3 vColor;\n"
                 u8"layout(location = 0) out vec4 outColor;\n"
                 u8"void main() { outColor = vec4(vColor, 1.0); }\n";
+    program->addStage(fs);
+    return program;
+}
+
+/**
+ * @brief Builds a constant-colour program whose clip position is mid-depth.
+ *
+ * The other user programs write z = 0 in clip space (the near plane). This one
+ * writes z = 0.5, which isolates whether a drawable is lost because of where
+ * the user program put it in depth rather than because of the program itself.
+ *
+ * @return The program (red, mid-depth).
+ */
+ShaderProgramPtr makeMidDepthProgram()
+{
+    auto program = ShaderProgramPtr(new ShaderProgram());
+    vine::graphics::ShaderStage vs;
+    vs.type   = vine::graphics::ShaderStageType::Vertex;
+    vs.source = u8"#version 450\n"
+                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
+                u8"void main() { gl_Position = vec4(vsg_Vertex.xy, 0.5, 1.0); }\n";
+    program->addStage(vs);
+    vine::graphics::ShaderStage fs;
+    fs.type   = vine::graphics::ShaderStageType::Fragment;
+    fs.source = u8"#version 450\n"
+                u8"layout(location = 0) out vec4 outColor;\n"
+                u8"void main() { outColor = vec4(1.0, 0.2, 0.2, 1.0); }\n";
     program->addStage(fs);
     return program;
 }
@@ -769,6 +845,69 @@ bool runPixelReadbackPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
                      channel_at(4, 4, 0), channel_at(4, 4, 1), channel_at(4, 4, 2), frames);
     }
 
+    // The user-program path must rasterise too, and this is where its depth
+    // convention is pinned: the program writes clip z = 0.5 (mid-depth) rather
+    // than 0, because the backend is reverse-Z and z = 0 is the FAR plane —
+    // exactly where the cleared depth already is, so a strict GREATER test
+    // rejects every fragment of it. Same quad, same target, one variable: the
+    // program.
+    std::vector<vine::graphics::RenderDiagnostic> program_received;
+    renderer.setDiagnosticSink([&program_received](const vine::graphics::RenderDiagnostic& diagnostic) {
+        program_received.push_back(diagnostic);
+    });
+    auto program_target = RenderTargetPtr(new RenderTarget());
+    program_target->setSize(256, 144);
+    program_target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    program_target->attachDepth(RenderTarget::DepthFormat::D24);
+    auto          program_pass = RenderPassPtr(new RenderPass());
+    RenderCommand program_command(quad, material, Mat4d());
+    program_command.program = makeMidDepthProgram();
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(program_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(program_target.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        renderer.clear(clear_color, true);
+        renderer.setLights({});
+        renderer.render(std::vector<RenderCommand>{ program_command }, camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    std::vector<std::uint8_t> program_pixels;
+    if (!renderer.readColorBuffer(program_target.get(), 0, program_pixels) ||
+        program_pixels.size() != expected) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the user-program target\n");
+        ok = false;
+    }
+    else {
+        std::size_t program_covered = 0;
+        for (std::size_t i = 0; i < program_pixels.size(); i += 4u) {
+            if (program_pixels[i] != 10u || program_pixels[i + 1] != 20u || program_pixels[i + 2] != 30u) {
+                ++program_covered;
+            }
+        }
+        const std::size_t centre_index = (72u * 256u + 128u) * 4u;
+        const int         pr           = program_pixels[centre_index];
+        const int         pg           = program_pixels[centre_index + 1u];
+        const int         pb           = program_pixels[centre_index + 2u];
+        // The program writes vec4(1.0, 0.2, 0.2, 1.0) = (255, 51, 51).
+        if (program_covered < 1000u || std::abs(pr - 255) > 2 || std::abs(pg - 51) > 2 || std::abs(pb - 51) > 2) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: a user-program drawable covered %zu pixel(s), centre=(%d,%d,%d);"
+                         " expected the program's colour (255,51,51) over the quad\n",
+                         program_covered, pr, pg, pb);
+            ok = false;
+        }
+        else if (ok) {
+            std::fprintf(stderr,
+                         "[selftest] pixels: user program covered=%zu/%zu centre=(%d,%d,%d), diagnostics=%zu\n",
+                         program_covered, program_pixels.size() / 4u, pr, pg, pb, program_received.size());
+        }
+    }
+    renderer.setDiagnosticSink({});
+
     // A float attachment cannot be packed as RGBA8: the contract says report it
     // as unsupported instead of returning something plausible-but-wrong.
     auto float_target = RenderTargetPtr(new RenderTarget());
@@ -797,6 +936,119 @@ bool runPixelReadbackPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
         std::fprintf(stderr, "[selftest] pixels: RGBA16F attachment honestly reported unsupported\n");
     }
     renderer.setDiagnosticSink({});
+    return ok;
+}
+
+/**
+ * @brief Attributes "nothing was drawn" to one variable at a time.
+ *
+ * A pixel assertion can say that nothing reached the target; it cannot say why.
+ * This probe renders the SAME quad shape once per variant, changing a single
+ * input each time — the program, the presence of surface normals, the presence
+ * of the location-3 colour channel the custom program reads — and prints the
+ * centre pixel plus every diagnostic the backend reported for that variant.
+ *
+ * It is a diagnostic, not an assertion: it exists to attribute a silent drop to
+ * a specific input (and to keep that attribution available the next time
+ * something stops drawing). Each variant gets a fresh target and a fresh pass,
+ * so a variant that draws nothing shows its own clear colour rather than the
+ * previous variant's picture.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quads are drawn through.
+ * @param frames   Frames to drive per variant before reading back.
+ * @return true when the probe itself ran (readbacks succeeded).
+ */
+bool runContentVariantProbe(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    struct Variant
+    {
+        const char* name;
+        int         program_kind;   // 0 = built-in Phong, 1 = loc3 attribute, 2 = constant colour
+        bool        normals;
+        bool        channel;
+    };
+    const Variant variants[] = {
+        { "built-in Phong + normals", 0, true, false },
+        { "built-in Phong + loc3 channel", 0, true, true },
+        { "custom constant-colour program + normals", 2, true, false },
+        { "custom constant-colour program + loc3 channel", 2, true, true },
+        { "custom loc3-attribute program + normals + loc3 channel", 1, true, true },
+        { "custom mid-depth (z=0.5) constant-colour program", 3, true, false },
+    };
+
+    bool ok = true;
+    for (const auto& variant : variants) {
+        std::vector<vine::graphics::RenderDiagnostic> received;
+        renderer.setDiagnosticSink([&received](const vine::graphics::RenderDiagnostic& diagnostic) {
+            received.push_back(diagnostic);
+        });
+
+        auto target = RenderTargetPtr(new RenderTarget());
+        target->setSize(256, 144);
+        target->attachColor(RenderTarget::ColorFormat::RGBA8);
+        target->attachDepth(RenderTarget::DepthFormat::D24);
+
+        auto          geometry = makeProbeQuad(0.4f, variant.normals, variant.channel, 0.9f, 0.15f, 0.05f);
+        auto          material = MaterialPtr(new Material());
+        material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));
+        RenderCommand command(geometry, material, Mat4d());
+        if (variant.program_kind == 1) {
+            command.program = makeAttributeProgram();   // reads loc3
+        }
+        else if (variant.program_kind == 2) {
+            command.program = makeUserProgram();        // constant red, no custom input
+        }
+        else if (variant.program_kind == 3) {
+            command.program = makeMidDepthProgram();    // constant red, z = 0.5
+        }
+
+        auto pass = RenderPassPtr(new RenderPass());
+        for (int i = 0; i < frames; ++i) {
+            renderer.beginFrame();
+            renderer.beginPass(pass.get());
+            renderer.setPassOrder(0);
+            renderer.setRenderTarget(target.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(vine::Color(10, 20, 30, 255), true);
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+            renderer.endPass();
+            renderer.endFrame();
+            renderer.swapBuffers();
+        }
+
+        std::vector<std::uint8_t> pixels;
+        if (!renderer.readColorBuffer(target.get(), 0, pixels) || pixels.size() < 256u * 144u * 4u) {
+            std::fprintf(stderr, "[selftest] variant '%s': readback failed\n", variant.name);
+            ok = false;
+            renderer.setDiagnosticSink({});
+            continue;
+        }
+        const auto at = [&pixels](int x, int y, int channel_index) {
+            return static_cast<int>(
+                pixels[(static_cast<std::size_t>(y) * 256u + static_cast<std::size_t>(x)) * 4u +
+                       static_cast<std::size_t>(channel_index)]);
+        };
+        // Coverage separates "nothing was rasterised" from "it was rasterised
+        // somewhere other than where the assertion looks": a count of pixels
+        // that differ from the clear colour answers which of the two it is,
+        // without guessing at layouts / bindings / depth state.
+        std::size_t covered = 0;
+        for (std::size_t i = 0; i < pixels.size(); i += 4u) {
+            if (pixels[i] != 10u || pixels[i + 1] != 20u || pixels[i + 2] != 30u) {
+                ++covered;
+            }
+        }
+        std::fprintf(stderr,
+                     "[selftest] variant '%s': centre=(%d,%d,%d) corner=(%d,%d,%d) covered=%zu/%zu diagnostics=%zu\n",
+                     variant.name, at(128, 72, 0), at(128, 72, 1), at(128, 72, 2),
+                     at(4, 4, 0), at(4, 4, 1), at(4, 4, 2), covered, pixels.size() / 4u, received.size());
+        for (const auto& diagnostic : received) {
+            std::fprintf(stderr, "[selftest]   variant reported: %s\n", diagnostic.message.stdstr().c_str());
+        }
+        renderer.setDiagnosticSink({});
+    }
     return ok;
 }
 
@@ -1044,6 +1296,8 @@ int main()
     contract_ok = runInFlightChurnPhase(*renderer, camera, 8) && contract_ok;
     contract_ok = runDiagnosticsPhase(*renderer, camera, 6) && contract_ok;
     contract_ok = runPixelReadbackPhase(*renderer, camera, 4) && contract_ok;
+    // Diagnostic: attribute a "nothing was drawn" result to one input.
+    runContentVariantProbe(*renderer, camera, 3);
     if (!contract_ok) {
         std::fprintf(stderr,
                      "[selftest] FAILED — a pass-lifecycle / depth-sharing / pixel-readback invariant was violated\n");
