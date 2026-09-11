@@ -373,6 +373,39 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         // No attachments: the target failed to build, or has not rendered yet.
         return {};
     }
+
+    // The common case: this pass already has its objects, so only what the pass
+    // RE-REQUESTED this frame is touched. Doing this before the device lookup and
+    // the attachment-format vector keeps a steady frame at two map lookups per
+    // pass — no device round-trip, no allocation.
+    if (const auto built = t.passes.find(key); built != t.passes.end()) {
+        // A pass that changed its explicit pipeline order moves its graph to the
+        // matching record position (see reconcileOffscreenOrder).
+        if (built->second.order != impl->request.order) {
+            built->second.order = impl->request.order;
+            reconcileOffscreenOrder();
+        }
+        // A pass re-requesting a clear updates ITS OWN graph — never its
+        // siblings': a pass clears to its own request (§28), so one pass' clear
+        // must not become another pass' background colour.
+        //
+        // Only the clear VALUE is updated here, never the graph's render pass: a
+        // pipeline is compiled against the render pass current when its view was
+        // compiled, so swapping in a render pass with a different load-op would
+        // leave that pipeline incompatible with the pass it is recorded in
+        // (VUID-vkCmdDraw-renderPass-02684). A pass' colour load-op is therefore
+        // fixed when its graph is created — from the same request that created
+        // it, so it cannot drift.
+        if (impl->request.presenting && built->second.clear_color != impl->request.clear_color &&
+            built->second.graph != nullptr && !built->second.graph->clearValues.empty()) {
+            built->second.clear_color                 = impl->request.clear_color;
+            built->second.graph->clearValues[0].color = VkClearColorValue{
+                { impl->request.clear_color.r, impl->request.clear_color.g, impl->request.clear_color.b,
+                  impl->request.clear_color.a }
+            };
+        }
+        return built->second.graph;
+    }
     auto device = impl->window->getOrCreateDevice();
     if (device == nullptr) {
         return {};
@@ -423,38 +456,6 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
                           ::vsg::Framebuffer::create(render_pass, attachments, static_cast<uint32_t>(t.width),
                                                      static_cast<uint32_t>(t.height), 1) };
     };
-
-    // The pass already has its objects: reuse them, updating whatever the pass
-    // re-requested this frame (its record position and its own clear colour).
-    if (const auto built = t.passes.find(key); built != t.passes.end()) {
-        // A pass that changed its explicit pipeline order moves its graph to the
-        // matching record position (see reconcileOffscreenOrder).
-        if (built->second.order != impl->request.order) {
-            built->second.order = impl->request.order;
-            reconcileOffscreenOrder();
-        }
-        // A pass re-requesting a clear updates ITS OWN graph — never its
-        // siblings': a pass clears to its own request (§28), so one pass' clear
-        // must not become another pass' background colour.
-        //
-        // Only the clear VALUE is updated here, never the graph's render pass: a
-        // pipeline is compiled against the render pass current when its view was
-        // compiled, so swapping in a render pass with a different load-op would
-        // leave that pipeline incompatible with the pass it is recorded in
-        // (VUID-vkCmdDraw-renderPass-02684). A pass' colour load-op is therefore
-        // fixed when its graph is created — from the same request that created
-        // it, so it cannot drift.
-        const ::vsg::vec4 wanted_color =
-            t.clear_seen ? t.clear_color : ::vsg::vec4{ 0.2f, 0.2f, 0.2f, 1.0f };
-        if (built->second.clear_color != wanted_color && built->second.graph != nullptr &&
-            !built->second.graph->clearValues.empty()) {
-            built->second.clear_color                 = wanted_color;
-            built->second.graph->clearValues[0].color = VkClearColorValue{
-                { wanted_color.r, wanted_color.g, wanted_color.b, wanted_color.a }
-            };
-        }
-        return built->second.graph;
-    }
 
     // This pass' OWN clear request (the open pass scope) decides its load-ops —
     // nothing else. A pass that never asked for a clear must LOAD what an
