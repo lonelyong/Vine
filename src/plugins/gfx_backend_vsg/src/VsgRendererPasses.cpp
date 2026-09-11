@@ -113,19 +113,34 @@ void VsgRenderer::erasePassSlotsFromTarget(vine::graphics::RenderTarget* target,
         auto& queue = impl->pending_compile_views;
         queue.erase(std::remove(queue.begin(), queue.end(), view), queue.end());
     };
+    // The graph this pass' views were attached to: the window's shared
+    // swapchain graph (target == nullptr), or this pass' own off-screen graph.
+    const auto slot_graph = [&t, target, &key]() -> ::vsg::ref_ptr<::vsg::RenderGraph> {
+        if (target == nullptr) {
+            return t.graph;
+        }
+        const auto pass = t.passes.find(key);
+        return pass == t.passes.end() ? ::vsg::ref_ptr<::vsg::RenderGraph>() : pass->second.graph;
+    };
 
     if (const auto it = t.content_slots.find(key); it != t.content_slots.end()) {
-        removeGraphChild(t.graph.get(), it->second.view);
+        if (auto graph = slot_graph(); graph != nullptr) {
+            removeGraphChild(graph.get(), it->second.view);
+        }
         forget_view(it->second.view);
         it->second.bridge.clearCache();
         t.content_slots.erase(it);
     }
     if (const auto it = t.screen_slots.find(key); it != t.screen_slots.end()) {
-        removeGraphChild(t.graph.get(), it->second.view);
+        if (auto graph = slot_graph(); graph != nullptr) {
+            removeGraphChild(graph.get(), it->second.view);
+        }
         t.screen_slots.erase(it);
     }
     if (const auto it = t.program_slots.find(key); it != t.program_slots.end()) {
-        removeGraphChild(t.graph.get(), it->second.view);
+        if (auto graph = slot_graph(); graph != nullptr) {
+            removeGraphChild(graph.get(), it->second.view);
+        }
         t.program_slots.erase(it);
     }
 }
@@ -184,27 +199,44 @@ void VsgRenderer::retireInactivePassSlots()
     // pass re-attaches instead of re-uploading its mesh and recompiling.
     waitForIdle(impl->viewer.get());
 
+    // A view lives in its pass' own graph (an off-screen target has one per
+    // pass; the window has the one swapchain graph).
+    const auto pass_graph_of = [](vine::graphics::RenderTarget* owner_key, Impl::Target& owner,
+                                  const SlotKey& key) -> ::vsg::ref_ptr<::vsg::RenderGraph> {
+        if (owner_key == nullptr) {
+            return owner.graph;
+        }
+        const auto pass = owner.passes.find(key);
+        return pass == owner.passes.end() ? ::vsg::ref_ptr<::vsg::RenderGraph>() : pass->second.graph;
+    };
+
     for (auto& entry : impl->targets) {
         auto& t = entry.second;
         for (auto& kv : t.content_slots) {
             if (!needs_retire(kv.first, kv.second.detached)) {
                 continue;
             }
-            removeGraphChild(t.graph.get(), kv.second.view);
+            if (auto graph = pass_graph_of(entry.first, t, kv.first); graph != nullptr) {
+                removeGraphChild(graph.get(), kv.second.view);
+            }
             kv.second.detached = true;
         }
         for (auto& kv : t.screen_slots) {
             if (!needs_retire(kv.first, kv.second.detached)) {
                 continue;
             }
-            removeGraphChild(t.graph.get(), kv.second.view);
+            if (auto graph = pass_graph_of(entry.first, t, kv.first); graph != nullptr) {
+                removeGraphChild(graph.get(), kv.second.view);
+            }
             kv.second.detached = true;
         }
         for (auto& kv : t.program_slots) {
             if (!needs_retire(kv.first, kv.second.detached)) {
                 continue;
             }
-            removeGraphChild(t.graph.get(), kv.second.view);
+            if (auto graph = pass_graph_of(entry.first, t, kv.first); graph != nullptr) {
+                removeGraphChild(graph.get(), kv.second.view);
+            }
             kv.second.detached = true;
         }
     }
@@ -241,10 +273,14 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
     if (content.ready) {
         return;
     }
-    if (t.graph == nullptr) {
-        // No graph yet (e.g. an off-screen target that failed to build): drop
-        // the half-made slot. Reported because the pass then draws nothing,
-        // and the host may have no other way to learn the target is unusable.
+    // The graph this pass records into: the window session's single swapchain
+    // graph, or an off-screen graph created for THIS pass from its own clear
+    // request (see passGraph). A pass that cannot get one — an off-screen
+    // target that failed to build — drops the half-made slot, reported because
+    // the pass then draws nothing and the host may have no other way to learn
+    // the target is unusable.
+    const auto graph = passGraph(target, key);
+    if (graph == nullptr) {
         reportFailure(vine::graphics::DiagnosticSeverity::Error,
                       vine::graphics::DiagnosticCategory::TargetBuildFailed,
                       u8"no render graph for the pass' target: the pass draws nothing");
@@ -319,11 +355,6 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
 
     content.view = ::vsg::View::create(content.vsg_camera);
     content.view->addChild(content.light_group);
-    // Per-slot depth clear (see ContentSlot::clears_depth): empty until the
-    // target turns out to LOAD depth while this pass asked for a clear. Recorded
-    // before the content root so it precedes this pass' draws.
-    content.depth_clear_group = ::vsg::Group::create();
-    content.view->addChild(content.depth_clear_group);
     content.view->addChild(content.root);
 
     // Position the slot's View in the target's render graph by its explicit
@@ -340,7 +371,7 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
     // create a higher-order (on-top) slot before a lower-order (main) slot has
     // run, but the main slot is inserted ahead of it by its smaller order when
     // it is finally created.
-    placeViewByOrder(target, content.view, content.order);
+    placeViewByOrder(graph, target, content.view, content.order);
     content.ready = true;
     if (impl->viewer != nullptr) {
         impl->viewer->compile();
@@ -368,12 +399,16 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
         return; // slot could not be built (e.g. camera bridge failed)
     }
     auto& content = it->second;
+    // The graph this pass records into (see passGraph): the window's swapchain
+    // graph, or this pass' own off-screen graph — created on the slot's first
+    // render and reused every frame after.
+    const auto graph = passGraph(request.target, key);
 
     if (content.detached) {
         // The pass executes again after having been retired: re-attach its
         // retained view (its data and pipelines were kept, so no upload /
         // recompile is needed).
-        placeViewByOrder(request.target, content.view, content.order);
+        placeViewByOrder(graph, request.target, content.view, content.order);
         content.detached = false;
     }
 
@@ -396,7 +431,7 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
     }
     if (content.order != request.order) {
         content.order = request.order;
-        placeViewByOrder(request.target, content.view, request.order);
+        placeViewByOrder(graph, request.target, content.view, request.order);
     }
     if (content.presenting != request.presenting) {
         content.presenting       = request.presenting;
@@ -417,23 +452,6 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
     // the window target, the off-screen target's logical size otherwise.
     const int surf_w = (request.target == nullptr) ? static_cast<int>(impl->window->extent2D().width) : t.width;
     const int surf_h = (request.target == nullptr) ? static_cast<int>(impl->window->extent2D().height) : t.height;
-
-    // A pass that asked for a depth clear normally gets it from the render pass.
-    // It cannot when that pass LOADs depth because ANOTHER pass of this target
-    // asked to preserve it (a mixed target, see Target::wantsDepthLoad): the
-    // render pass bakes one depth load-op, so this pass clears the depth itself,
-    // before its own draws. Re-evaluated every frame because the target's policy
-    // (and this pass' own request) may change.
-    const bool want_depth_clear = request.target != nullptr && t.depth_source == nullptr && t.depth_load &&
-                                  request.presenting && request.clear_depth;
-    if (content.clears_depth != want_depth_clear) {
-        content.clears_depth = want_depth_clear;
-        content.depth_clear_group->children.clear();
-        if (want_depth_clear) {
-            content.depth_clear_group->addChild(makeDepthClearCommand(
-                VkExtent2D{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) }, t.depth_clear_value));
-        }
-    }
 
     // Keep the slot's vsg camera viewport in step with its role each frame:
     // presenting (full-target) content always fills the whole target; other

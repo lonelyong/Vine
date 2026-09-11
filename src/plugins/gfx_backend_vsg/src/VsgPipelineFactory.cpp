@@ -398,23 +398,6 @@ PassRenderPassPlan planPassRenderPass(bool color_clear,
     return plan;
 }
 
-::vsg::ref_ptr<::vsg::Node> makeDepthClearCommand(const VkExtent2D& extent, float depth_clear_value)
-{
-    VkClearAttachment attachment       = {};
-    attachment.aspectMask              = VK_IMAGE_ASPECT_DEPTH_BIT;
-    attachment.colorAttachment         = 0; // ignored for a depth aspect
-    attachment.clearValue.depthStencil = VkClearDepthStencilValue{ depth_clear_value, 0 };
-
-    VkClearRect rect    = {};
-    rect.rect.offset    = { 0, 0 };
-    rect.rect.extent    = extent;
-    rect.baseArrayLayer = 0;
-    rect.layerCount     = 1;
-
-    return ::vsg::ClearAttachments::create(::vsg::ClearAttachments::Attachments{ attachment },
-                                           ::vsg::ClearAttachments::Rects{ rect });
-}
-
 const std::string& fullscreenVertexSource()
 {
     static const std::string source = R"(#version 450

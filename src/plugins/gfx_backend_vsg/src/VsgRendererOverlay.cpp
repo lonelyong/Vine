@@ -325,9 +325,9 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
                           u8"drawScreenTexture: destination target has no usable colour attachment: the pass draws nothing");
             return;
         }
-        if (dest_entry.graph == nullptr || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
+        if (!dest_entry.attachments_built || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
             buildOffscreenTarget(dest);
-            if (dest_entry.graph == nullptr) {
+            if (!dest_entry.attachments_built) {
                 return;
             }
         }
@@ -350,6 +350,10 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
                             ? SlotKey::ownerPass(impl->request.pass)
                             : SlotKey::sampledTarget(source, static_cast<int>(attachment_index));
 
+    // The graph this pass records into: the window session's shared swapchain
+    // graph, or this pass' own off-screen graph (§28).
+    const auto dest_graph = passGraph(dest, key);
+
     // Drop a stale slot when the sampled source / attachment changed, or the
     // sampled target OR the destination was resized (the sampled colour view /
     // the baked viewport was rebuilt).
@@ -360,7 +364,9 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
              old->second.attachment != static_cast<int>(attachment_index) ||
              old->second.source_w != src.width || old->second.source_h != src.height ||
              old->second.dest_w != surf_w || old->second.dest_h != surf_h)) {
-            removeGraphChild(dest_entry.graph.get(), old->second.view);
+            if (dest_graph != nullptr) {
+                removeGraphChild(dest_graph.get(), old->second.view);
+            }
             dest_entry.screen_slots.erase(old);
         }
     }
@@ -430,7 +436,7 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
             return;
         }
         bool overlay_compile_failed = false;
-        auto view = makeCompiledOverlayView(*impl->viewer, dest_entry.graph.get(), content,
+        auto view = makeCompiledOverlayView(*impl->viewer, dest_graph.get(), content,
                                             rect_x, rect_y, rect_w, rect_h,
                                             /*front*/ false, "screen pass",
                                             &overlay_compile_failed);
@@ -449,7 +455,7 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
         // Position the view by its explicit order; the compile above already
         // ran against this target's render pass, so only the record order
         // changes.
-        placeViewByOrder(dest, view, slot.order);
+        placeViewByOrder(dest_graph, dest, view, slot.order);
         std::fprintf(stderr, "[VsgRenderer] EXPERIMENTAL screen PiP %dx%d (att %zu) -> %s %d,%d %dx%d attached\n", src.width, src.height, attachment_index, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
         if (dest != nullptr) {
             // A new sampling edge appeared under an off-screen destination:
@@ -464,7 +470,7 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
         // Re-attach a slot retired while its pass was inactive (see
         // retireInactivePassSlots): its node and pipeline were kept, only the
         // view was detached from the graph.
-        placeViewByOrder(dest, slot.view, slot.order);
+        placeViewByOrder(dest_graph, dest, slot.view, slot.order);
         slot.detached = false;
     }
 
@@ -514,9 +520,9 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
                           u8"drawScreenProgram: destination target has no usable colour attachment: the pass draws nothing");
             return;
         }
-        if (dest_entry.graph == nullptr || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
+        if (!dest_entry.attachments_built || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
             buildOffscreenTarget(dest);
-            if (dest_entry.graph == nullptr) {
+            if (!dest_entry.attachments_built) {
                 return;
             }
         }
@@ -535,6 +541,9 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
     const SlotKey slot_key = (impl->request.pass != nullptr)
                                  ? SlotKey::ownerPass(impl->request.pass)
                                  : SlotKey::sampledTarget(source);
+    // The graph this pass records into: the window session's shared swapchain
+    // graph, or this pass' own off-screen graph (§28).
+    const auto dest_graph = passGraph(dest, slot_key);
     auto& slot = dest_entry.program_slots[slot_key];
 
     // Destination rectangle: the pass' sub-viewport, else the full surface
@@ -576,7 +585,9 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
                        slot.dest_w != surf_w || slot.dest_h != surf_h ||
                        slot.program.get() != program || slot.program_revision != program_revision;
     if (stale) {
-        removeGraphChild(dest_entry.graph.get(), slot.view);
+        if (dest_graph != nullptr) {
+            removeGraphChild(dest_graph.get(), slot.view);
+        }
         slot = Impl::ProgramSlot{};
         // Capture the pass's explicit order (announced by the engine before
         // this pass) so the fullscreen view stacks at its pipeline position
@@ -613,7 +624,7 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         // pass (inserted provisionally at the front so the compile sees it),
         // then move it to its explicit-order position below.
         bool overlay_compile_failed = false;
-        auto view = makeCompiledOverlayView(*impl->viewer, dest_entry.graph.get(), node,
+        auto view = makeCompiledOverlayView(*impl->viewer, dest_graph.get(), node,
                                             rect_x, rect_y, rect_w, rect_h,
                                             /*front*/ true, "fullscreen program",
                                             &overlay_compile_failed);
@@ -630,7 +641,7 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         slot.view          = view;
         slot.ready         = true;
         ++impl->program_slot_build_count;
-        placeViewByOrder(dest, view, slot.order);
+        placeViewByOrder(dest_graph, dest, view, slot.order);
         std::fprintf(stderr, "[VsgRenderer] EXPERIMENTAL deferred fullscreen program %dx%d -> %s %d,%d %dx%d attached\n", src.width, src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
         if (dest != nullptr) {
             // New sampling edges (this program samples every colour attachment
@@ -657,7 +668,7 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
     if (slot.ready && slot.detached) {
         // Re-attach a slot retired while its pass was inactive (see
         // retireInactivePassSlots): its node and pipeline were kept.
-        placeViewByOrder(dest, slot.view, slot.order);
+        placeViewByOrder(dest_graph, dest, slot.view, slot.order);
         slot.detached = false;
     }
 

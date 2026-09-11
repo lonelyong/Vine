@@ -1323,29 +1323,33 @@ O(1)，而不是每帧 O(表)。
 > 当前全绿基线的前提下一次完成，**已回滚到上一版绿色快照**（工作区与 `test_vsg` 89 / gate PASS
 > 完全一致）。下一步应作为**单独一次专注改动**执行，回滚点见 `/tmp/vsg_backup/`（临时）。
 >
-> **第 3 步第二次尝试记录（2026-09-11，同样回滚）**：整份改动（7 个文件）一次写完，零警告
-> 构建，单测 89 + 157 全绿，设备门禁 **9 个相位过 8 个** —— 含本步的两条目标判据：
-> `mixed depth` 由 2 次构建降到 **1 次**（§28-7 达成）、`depth testonly` 转绿。唯一阻塞是
-> 共享深度借用相位的 **7 × `VUID-vkCmdDraw-None-09600`**（`expects …
-> DEPTH_STENCIL_ATTACHMENT_OPTIMAL--instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED`，
-> 即某次绘制读了本帧从未定义过的深度图）。第二次尝试换来的两条结论**务必先读，能省一整轮**：
-> 1. **每个目标的 pass graph 必须按各 pass 的 `setPassOrder` 顺序记录。** 视图散到各自的
->    render pass 之后，“在同一个 render pass 内按 order 排序视图”（`placeViewByOrder` 原先的
->    职责）必须上移为“在命令图里按 order 排列 pass graph”。若顺序取自
->    `std::map<SlotKey, PassObjects>` 的迭代序（即指针序），目标的第二个 pass 会记录在第一个
->    之前，它的颜色清屏直接抹掉第一个 pass 的绘制 —— 症状是混合相位阶段 2 报“远平面四边形
->    仍不可见”、TestOnly 相位报出**不透明**的中心色。做法：`PassObjects` 增 `order`（在
->    `passGraph` 里取 `request.order`），变化时重新 `reconcileOffscreenOrder()`，并按它
->    `stable_sort`（用当前子序做稳定种子，order 相同者保持相对位置）。
-> 2. **`Target::depth_sampleable` 必须在附件构建期就记下**
->    （`has_depth && depth_src == nullptr && target->depthPromotion()`），不能等某个 pass
->    创建时才记：借用该深度的消费者在**同一帧**就要校验，那时源的任何 pass 都还不存在。
+> **第 3 步完成（2026-09-11）**：落地为“每 pass 一张 render pass + framebuffer + RenderGraph，
+> 图像按目标共享”。全部相位通过、零警告、`test_vsg` 89 / `test_graphics` 157、门禁
+> `RESULT: PASS`（0 VUID）；`mixed depth` 相位报告 **1** 次目标构建（§28-7 判据达成），
+> `ClearAttachments` 回退与 `makeDepthClearCommand` 一并删除。
 >
-> 另：`incrementalCompileViews()` 必须用 **pass 自己的 framebuffer** 建编译上下文
-> （`owner->passes.find(slot_key)`）；搜索循环结束后结构化绑定已出作用域，需另存 `SlotKey`。
-> **首要怀疑点（下次先改这一行再跑门禁）**：借用者若在源的**第一张 pass graph 存在之前**建图，
-> `reconcileOffscreenOrder` 里 `index_of.find(source) == end()` ⇒ **借用边被静默丢弃**，
-> 于是借用者的 LOAD pass 去读一张从未被定义的深度图。
+> 三次踩坑的结论（按代价排序）：
+> 1. **seed 交换必须在 `recordAndSubmit()` 之后。** `PassObjects::seeded` 的意思是“本帧仍
+>    录制 CLEAR（seed）变体”。若在录制前就换成稳态 LOAD 变体，pass 的第一帧就会用
+>    `initialLayout = DEPTH_STENCIL_ATTACHMENT_OPTIMAL` 去 LOAD 一张仍是 `UNDEFINED` 的深度图
+>    ⇒ `VUID-vkCmdDraw-None-09600`（层报“expects … ATTACHMENT--instead, current layout is
+>    VK_IMAGE_LAYOUT_UNDEFINED”，并按 DEPTH / STENCIL 两个 aspect 各报一条）。**这一条就是此前
+>    两次尝试全部 14 条 VUID 的唯一根因**，与借用顺序无关。
+> 2. **每个目标的 pass graph 必须按各 pass 的 `setPassOrder` 记录。** 视图散到各自的 render
+>    pass 后，“在同一 render pass 内按 order 排序视图”（`placeViewByOrder` 原先的职责）必须
+>    上移为“在命令图里按 order 排列 pass graph”。若取 `std::map<SlotKey, PassObjects>` 的迭代序
+>    （即指针序），目标的第二个 pass 会记录在第一个之前，它的颜色清屏直接抹掉第一个 pass 的
+>    绘制 —— 症状是混合相位阶段 2 报“远平面四边形仍不可见”、TestOnly 相位报出不透明的中心色。
+>    做法：`PassObjects::order`（`passGraph` 里取 `request.order`），变化时重新 reconcile，
+>    并按它 `stable_sort`（用当前子序做稳定种子）。
+> 3. **`Target::depth_sampleable` 必须在附件构建期就记下**
+>    （`has_depth && !borrowed && target->depthPromotion()`），不能等某个 pass 创建时才记：
+>    借用该深度的消费者在**同一帧**就要校验，那时源的任何 pass 都还不存在。
+>
+> 另外两条行为约定：从未调用 `clear()` 的目标其 pass 仍每帧清颜色与深度（`clear_seen` 判据），
+> 否则只作为采样目的地的目标会从“每帧清屏”变成“保留”，改变既有语义；
+> `incrementalCompileViews()` 必须用 **pass 自己的 framebuffer** 建编译上下文（搜索结果需另存
+> `SlotKey`，结构化绑定在循环外已出作用域）。
 
 §22 的残留（首帧仍按旧策略收敛 1 帧、混合目标失去 render-pass 免费清屏而要付一条
 `ClearAttachments`、`depth_policy_mixed` sticky、**颜色清屏同样是"最后一次请求赢"**）

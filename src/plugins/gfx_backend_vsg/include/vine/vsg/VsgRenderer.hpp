@@ -620,15 +620,39 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * above it) instead of always drawing first or last. Any child that maps
      * to no known slot sorts as INT_MAX (drawn last).
      *
-     * @param target Output target whose graph receives the view (nullptr =
-     *               the window).
+     * @param graph  The pass' render graph that receives the view — the
+     *               window's swapchain graph, or an off-screen pass' own graph
+     *               (see passGraph).
+     * @param target Output target the graph belongs to (nullptr = the window),
+     *               used to resolve each child's explicit stacking order.
      * @param view   The View to position (removed from any current position
      *               first).
      * @param order  The view's explicit stacking order.
      */
-    void placeViewByOrder(vine::graphics::RenderTarget* target,
+    void placeViewByOrder(::vsg::ref_ptr<::vsg::RenderGraph> graph,
+                          vine::graphics::RenderTarget* target,
                           const ::vsg::ref_ptr<::vsg::View>& view,
                           int order);
+
+    /** @brief Gets the render graph a pass records its views into.
+     *
+     * The window session has exactly ONE graph — the swapchain graph, whose
+     * render pass vsg bakes to the surface — so every window pass shares it.
+     * An off-screen target has one graph PER PASS instead (§28): one render
+     * pass bakes ONE pair of attachment load-ops, so a pass that clears and a
+     * pass that preserves cannot share a render pass. A pass' graph is created
+     * on demand from that pass' own clear request (the open pass scope), which
+     * is what lets both requests be honoured without a ClearAttachments hack.
+     *
+     * A target's pass graphs record in the passes' explicit pipeline order
+     * (setPassOrder), i.e. the position the pass' content would have occupied as
+     * a View of a single target-wide render pass (see reconcileOffscreenOrder).
+     *
+     * @param target Off-screen target, or nullptr for the window session.
+     * @param key    Slot key of the pass that owns the graph.
+     * @return The pass' graph, or null when the target has no attachments yet.
+     */
+    ::vsg::ref_ptr<::vsg::RenderGraph> passGraph(vine::graphics::RenderTarget* target, const SlotKey& key);
 
     /** @brief Incrementally compiles only the content-slot views that gained
      * new/rebuild subtrees this frame (D22).

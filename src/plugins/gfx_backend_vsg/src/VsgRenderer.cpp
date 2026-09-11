@@ -454,16 +454,6 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     retargetPass(impl->request.pass, target_key);
 
     auto& target = impl->entryFor(target_key);
-    // A depth-LOAD policy (clearDepth=false) needs a render pass whose depth
-    // attachment is not cleared; when the target's persisted clear policy
-    // differs from its current pass, the graph is rebuilt so depth is either
-    // genuinely preserved (LOAD) or cleared (CLEAR) — buildOffscreenTarget
-    // bakes the policy and colour into the pass. A target that BORROWS another
-    // target's depth never selects the depth-LOAD pass (its depth policy comes
-    // from the owner), so the rebuild predicate must not expect one there (H4).
-    // A target whose passes disagree (mixed) LOADs too: the passes that asked
-    // for a clear clear it themselves (ContentSlot::clears_depth).
-    const bool want_load_depth = target.wantsDepthLoad();
     // A depth borrow that could not be honoured yet (the source had no depth
     // image when this target was built) is retried as soon as the source has
     // one: the baked borrow differs from the requested one. A source that is
@@ -492,17 +482,18 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
         borrow_stale = src_it == impl->targets.end() || src_it->second.depth_view != target.depth_source_view;
     }
     if (target_key != nullptr &&
-        (target.graph == nullptr || target.width != target_key->width() ||
-         target.height != target_key->height() || target.depth_load != want_load_depth || borrow_pending ||
+        (!target.attachments_built || target.width != target_key->width() ||
+         target.height != target_key->height() || borrow_pending ||
          borrow_stale || !target.build_key.matches(*target_key))) {
         // First render into this off-screen target, or it was resized, or its
-        // depth-clear policy changed, or its attachment / pass shape did
-        // (colour attachments, depth format, depth promotion — see
-        // Target::BuildKey): build (or rebuild) its attachments +
-        // render graph. Any content slots compiled against an older graph are
-        // dropped by buildOffscreenTarget.
+        // attachment shape changed (colour attachments, depth format, depth
+        // promotion — see Target::BuildKey), or its depth borrow changed: build
+        // (or rebuild) its attachments. Each pass then creates its own render
+        // pass from its own clear request (see passGraph), so a depth-policy
+        // change needs no rebuild. Any content slots compiled against the old
+        // attachments are dropped by buildOffscreenTarget.
         buildOffscreenTarget(target_key);
-        if (target.graph == nullptr) {
+        if (!target.attachments_built) {
             return; // off-screen target could not be built
         }
     }
@@ -565,12 +556,14 @@ bool VsgRenderer::incrementalCompileViews()
         // framebuffer — a graphics pipeline cannot be created without one).
         Impl::Target*     owner    = nullptr;
         Impl::ContentSlot* slot    = nullptr;
+        SlotKey           slot_key;
         bool              is_window = false;
         for (auto& [target_key, target] : impl->targets) {
-            for (auto& [slot_key, candidate] : target.content_slots) {
+            for (auto& [candidate_key, candidate] : target.content_slots) {
                 if (candidate.ready && candidate.view == view) {
                     owner     = &target;
                     slot      = &candidate;
+                    slot_key  = candidate_key;
                     is_window = (target_key == nullptr);
                     break;
                 }
@@ -603,10 +596,16 @@ bool VsgRenderer::incrementalCompileViews()
                     compileManager->add(*impl->window, view, requirements);
                 }
                 else {
-                    if (owner->framebuffer == nullptr || owner->framebuffer->getDevice() == nullptr) {
+                    // The compile context carries the render pass the pipeline
+                    // is built against, so it must be THIS pass' framebuffer —
+                    // an off-screen target has one per pass (§28).
+                    const auto pass_fb = owner->passes.find(slot_key);
+                    const ::vsg::ref_ptr<::vsg::Framebuffer> framebuffer =
+                        pass_fb == owner->passes.end() ? ::vsg::ref_ptr<::vsg::Framebuffer>() : pass_fb->second.framebuffer;
+                    if (framebuffer == nullptr || framebuffer->getDevice() == nullptr) {
                         return false;
                     }
-                    compileManager->add(*owner->framebuffer, view, requirements);
+                    compileManager->add(*framebuffer, view, requirements);
                 }
             }
             catch (...) {
@@ -729,23 +728,25 @@ void VsgRenderer::submitFrame()
         }
         impl->pending_compile_views.clear();
     }
-    // Depth-LOAD (clearDepth=false) off-screen targets alternate between two
-    // compatible render passes: the first frame after a (re)build uses the
-    // depth-CLEAR pass, which initialises the fresh depth image's layout and
-    // content; every later frame uses the depth-LOAD pass, which preserves it.
-    // Swapping the graph's render pass is legal because the two passes differ
-    // only in the depth load-op (framebuffer / pipeline compatible).
-    for (auto& entry : impl->targets) {
-        auto& t = entry.second;
-        if (entry.first == nullptr || t.graph == nullptr || !t.depth_load ||
-            t.render_pass_load == nullptr) {
-            continue;
-        }
-        t.graph->renderPass = t.depth_ready ? t.render_pass_load : t.render_pass;
-        t.depth_ready       = true;
-    }
     impl->viewer->recordAndSubmit();
     impl->viewer->present();
+
+    // A pass that preserves depth on a target whose depth image no pass had
+    // defined yet recorded the depth-CLEAR "seed" variant for THIS frame (a
+    // render pass cannot LOAD an UNDEFINED image). Only now that the frame is
+    // submitted may it switch to the steady LOAD variant: doing this BEFORE
+    // recordAndSubmit would make the pass' very FIRST frame record the LOAD
+    // variant against a still-UNDEFINED depth image. Swapping the graph's
+    // render pass — not the framebuffer — is legal because the two variants
+    // differ only in the depth load-op, so they are render-pass compatible.
+    for (auto& entry : impl->targets) {
+        for (auto& pass : entry.second.passes) {
+            if (pass.second.seeded && pass.second.graph != nullptr && pass.second.render_pass != nullptr) {
+                pass.second.graph->renderPass = pass.second.render_pass;
+                pass.second.seeded            = false;
+            }
+        }
+    }
 
     // One frame has been submitted: release the retained nodes that were
     // parked kRetireRingDepth frames ago, when every command-buffer slot that
@@ -788,30 +789,14 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
         backgroundColor.b / 255.0f,
         backgroundColor.a / 255.0f
     };
-    const bool seen_before = t.clear_seen;
-    t.clear_seen  = true;
-    t.clear_color = color;
-    // Two passes of one target that disagree about clearing depth cannot both
-    // be served by that target's single render pass (it bakes ONE depth
-    // load-op): remember the clash so the target switches to the depth-LOAD
-    // pass and the passes that asked for a clear issue it themselves, before
-    // their own draws (see Target::wantsDepthLoad /
-    // ContentSlot::clears_depth). Without this the LAST request silently won
-    // for the whole target — a later pass's "preserve depth" then also
-    // suppressed the earlier pass's clear, and the depth of the previous frame
-    // stayed behind content that should have been redrawn from scratch.
-    if (seen_before && t.clear_depth != clearDepth) {
-        t.depth_policy_mixed = true;
-    }
-    t.clear_depth = clearDepth;
-
-    if (t.graph == nullptr) {
-        // No graph yet (e.g. the first pass into an off-screen target): render()
-        // builds one from the recorded request via buildOffscreenTarget.
-        return;
-    }
+    t.clear_seen              = true;
+    t.clear_color             = color;
+    impl->request.clear_color = color;
 
     if (key == nullptr) {
+        if (t.graph == nullptr) {
+            return; // the window session has no graph yet
+        }
         // Window graph: the swapchain render pass (vsg-owned) clears colour AND
         // depth at the start of every frame, so the requested colour is pushed
         // through and the depth-clear value is the main pass's (0.0). The
@@ -826,20 +811,27 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
         return;
     }
 
-    // Off-screen graph: update the colour entries in place (the pass was built
-    // with the right depth load-op — CLEAR or LOAD — from t.clear_depth).
-    // Attachment 0 gets the requested colour; extra MRT attachments stay
-    // transparent black so untouched G-buffer regions remain empty.
+    // Off-screen: every pass graph that exists is updated in place (attachment
+    // 0 gets the requested colour; extra MRT attachments stay transparent black
+    // so untouched G-buffer regions remain empty), and the colour is recorded on
+    // the target and on each pass so a pass graph created LATER clears to it
+    // too. Each pass keeps its own depth load-op — this only moves colour.
     const int color_count = key->colorCount();
-    const std::size_t n   = std::min<std::size_t>(t.graph->clearValues.size(),
-                                                  static_cast<std::size_t>(color_count));
-    for (std::size_t i = 0; i < n; ++i) {
-        t.graph->clearValues[i].color = VkClearColorValue{
-            { i == 0u ? color.r : 0.0f,
-              i == 0u ? color.g : 0.0f,
-              i == 0u ? color.b : 0.0f,
-              i == 0u ? color.a : 0.0f }
-        };
+    for (auto& pass : t.passes) {
+        pass.second.clear_color = color;
+        if (pass.second.graph == nullptr) {
+            continue;
+        }
+        const std::size_t n = std::min<std::size_t>(pass.second.graph->clearValues.size(),
+                                                    static_cast<std::size_t>(color_count));
+        for (std::size_t i = 0; i < n; ++i) {
+            pass.second.graph->clearValues[i].color = VkClearColorValue{
+                { i == 0u ? color.r : 0.0f,
+                  i == 0u ? color.g : 0.0f,
+                  i == 0u ? color.b : 0.0f,
+                  i == 0u ? color.a : 0.0f }
+            };
+        }
     }
 }
 

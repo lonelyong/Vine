@@ -2855,10 +2855,11 @@ bool runMixedDepthPolicyPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
     const std::size_t builds_before = renderer.offscreenBuildCount();
     drive(std::vector<RenderCommand>{ occluder_command });
     const std::size_t builds_stage1 = renderer.offscreenBuildCount();
-    if (builds_stage1 - builds_before > 2u) {
+    if (builds_stage1 - builds_before != 1u) {
         std::fprintf(stderr,
-                     "[selftest] FAIL: a mixed-depth-policy target built %zu time(s) over %d frames (at most the"
-                     " initial build plus the switch to the depth-LOAD pass are expected)\n",
+                     "[selftest] FAIL: a mixed-depth-policy target built %zu time(s) over %d frames (exactly the"
+                     " initial attachment build is expected: every pass carries its OWN render pass, so passes that"
+                     " disagree about clearing depth must not rebuild the target a second time)\n",
                      builds_stage1 - builds_before, frames);
         ok = false;
     }
