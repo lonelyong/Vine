@@ -107,6 +107,12 @@ RenderBackend::releasePass(pass)    // 释放该 pass 的全部保留状态（�
   `stride()`/`vertexCount()`/`xyz(i)`，`Geometry::localBounds/positionCount/normalCount` 与
   `RayIntersection` 的网格解析全部改用它（此前假设每顶点 3 个 float，vec4 位置通道会算错 AABB
   → 错误剔除 / 错误 `fitToScreen`，且拾取直接失效）。
+- **删除 `Geometry::setShape(Shape)`**（公共 API 收窄）：它与 `geometryFromShape()` 职责重复；
+  形参用 `intrusive_ptr` 暗示持有却从不保留；传给非 Mesh 形状（`Sphere` 等 `Primitive`、`BrepShape`）
+  时会**先清空再什么都不填**（静默丢数据，无返回值无诊断）；且 `attributes_.clear()` 会连带清掉
+  自定义 loc 通道。现在 `geometryFromShape()` 是唯一 `Shape → vertex data` 入口（非 Mesh 返回 null
+  可判断），就地（重）填用 `setPositions/setNormals/setIndices`。调用点迁移后 `AxisGizmo` /
+  `FpsOverlay` / `app_shell::addBox` 反而更短（不再需要中转 mesh 与随之失效的 `computeAabb()`）。
 
 未做（需单独排期，均已在下方说明理由）：
 
@@ -153,7 +159,8 @@ RenderBackend::releasePass(pass)    // 释放该 pass 的全部保留状态（�
 
 ## 7. 公共 API 命名提案（未实施，属破坏性变更）
 
-- `Geometry::buffer(location)` / `bufferLocations()` → `attribute(location)` / `attributeLocations()`：
+- 已实施（2026-09-11）：删除 `Geometry::setShape(Shape)`，见 §6；`Geometry::buffer(location)` /
+  `bufferLocations()` → `attribute(location)` / `attributeLocations()`：
   “buffer”在 3D 引擎里通常指 GPU 缓冲，而这里是**按 shader location 索引的顶点属性**
   （`AttributeBuffer`）；现名易与索引缓冲/顶点缓冲混淆。
 - `Geometry::setIndices(std::shared_ptr<UInt32Array>)`：以 `std::shared_ptr` 表达共享与

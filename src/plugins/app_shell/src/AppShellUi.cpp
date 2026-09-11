@@ -8,7 +8,7 @@
 #include <QTimer>
 
 #include <vine/Colorf.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/Array.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
@@ -72,8 +72,9 @@ gui::RibbonButton* addCommandButton(gui::RibbonGroup* group, const String& text,
 /**
  * @brief Builds a flat-shaded axis-aligned box node centred at a position.
  *
- * The box is authored as an IndexedTriangleMesh (six faces, twelve triangles,
- * per-face vertex normals) so the vsg backend renders it directly.
+ * The box is authored as raw position / normal / index arrays (six faces,
+ * twelve triangles, per-face vertex normals) filled into the geometry's
+ * channels, so the vsg backend renders it directly.
  *
  * @param root    Root group receiving the node.
  * @param diffuse Flat diffuse colour of the box.
@@ -136,16 +137,11 @@ addBox(vine::graphics::Group* root, const vine::Colorf& diffuse, const vine::Str
         indices.push_back(base + 3);
     }
 
-    auto mesh = vine::intrusive_ptr<vine::geometry::IndexedTriangleMesh>(new vine::geometry::IndexedTriangleMesh());
-    mesh->setPositions(std::move(positions));
-    mesh->setNormals(std::move(normals));
-    mesh->setIndices(std::move(indices));
-    // Pre-compute the cached AABB so drawable/scene bounds reuse it.
-    mesh->computeAabb();
-
     auto geometry = vine::make_intrusive<vine::graphics::Geometry>();
     geometry->setName(name);
-    geometry->setShape(mesh);
+    geometry->setPositions(positions);
+    geometry->setNormals(normals);
+    geometry->setIndices(indices);
 
     auto material = vine::make_intrusive<vine::graphics::Material>();
     material->setDiffuse(diffuse);

@@ -250,8 +250,10 @@
 > PolygonMode::Line）——同一数据可换状态变三角/点/线框，不换几何（vsg/Vulkan 拓扑属管线）。
 >
 > 2026-09-03 Geometry 纯数据化完成：移除 `shape_`/`shape()`——Geometry 只存 buffers
-> （positions/normals/indices + revision）；`setShape(Shape)` 降级为便捷"填入"（不保留 Shape）；
-> 新增转换器 `geometryFromShape()`；SceneBridge（缓存键改 revision、建几何读 buffers）与
+> （positions/normals/indices + revision）；新增转换器 `geometryFromShape()`（**2026-09-11：**
+> `setShape(Shape)` 已删除——与转换器重复、非 Mesh 形状（Sphere/BRep）静默清空几何且连带清掉
+> 自定义 loc 通道、签名以 `intrusive_ptr` 暗示持有却不持有；就地（重）填用
+> `setPositions/setNormals/setIndices`）；SceneBridge（缓存键改 revision、建几何读 buffers）与
 > RayIntersection（meshOfGeometry）已切 buffers；bbox/计数全从 buffers。⚠ 语义变化：不再借用
 > Shape 的 Aabb 缓存（测试改名 BoundingBoxComputedFromBuffers）。未做：通用 setBuffer(loc)/Buffer
 > 容器（留点云/Geometry 叶子切片）。注：test_vsg 的 ctest 在进程退出期 SegFault（用例全 PASS 后、
@@ -363,8 +365,8 @@ Object
 - `boundingBox()` — 局部 AABB
 
 ### Geometry（几何体）
-- `setShape()` — 关联 vine::geometry::Shape
-- `geometryType()` — 类型：Mesh/BRep/Primitive
+- buffers：`setPositions/setNormals/setIndices`（loc 0/1 + 索引）、`addBuffer(loc, ...)` 开放通道
+- `geometryFromShape()` — `Shape` → Vertex data 的唯一转换入口（非 Mesh 返回 null）
 
 ### Material（材质）
 - RGB 颜色：diffuse, specular, ambient

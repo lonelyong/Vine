@@ -35,8 +35,10 @@
 >   均留待后续切片；`Geometry` 的开放 loc buffer 列表已在早前切片落地。
 >
 > 早期“落地后修订”记录（2026-09-03，先于本次 R1）：
-> - `Geometry` 已**纯数据化**：移除 `shape_`/`shape()`；`setShape(Shape)` = 便捷"填入"（不保留
->   Shape）；新增 `geometryFromShape()` 转换器与 normals/revision 通道；`SceneBridge`（缓存键=
+> - `Geometry` 已**纯数据化**：移除 `shape_`/`shape()`；新增 `geometryFromShape()` 转换器与
+>   normals/revision 通道（**2026-09-11：`setShape(Shape)` 已删除**——与转换器职责重复、非 Mesh
+>   形状（Sphere/BRep）会静默清空几何、且 `attributes_.clear()` 连带清掉自定义 loc 通道；就地
+>   重填改用 `setPositions/setNormals/setIndices`）；`SceneBridge`（缓存键=
 >   revision、建几何读 buffers）与 `RayIntersection`（meshOfGeometry）已切 buffers；bbox/计数全从
 >   buffers（不再借用 Shape 的 Aabb 缓存）。
 > - 拓扑已从 Geometry 移出：`PrimitiveType` 移除，改**渲染状态项 `Topology`**（默认 Triangles，见

@@ -17,7 +17,7 @@
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/geometry/Array.hpp>
 #include <vine/math/Transform3.hpp>
 
 V_APPFW_NS_BEGIN
@@ -46,12 +46,14 @@ intrusive_ptr<vine::graphics::MatrixTransform> addDemoTriangle(vine::graphics::S
                                                               const vine::String& name,
                                                               const Vec3d& at)
 {
-    auto mesh = make_intrusive<vine::geometry::TriangleMesh>();
-    mesh->addTriangle(Vec3f(-1.0f, -1.0f, 0.0f), Vec3f(1.0f, -1.0f, 0.0f), Vec3f(0.0f, 1.0f, 0.0f));
+    // One triangle in the XY plane, authored directly as positions.
+    const vine::geometry::Vec3fArray positions = { Vec3f(-1.0f, -1.0f, 0.0f),
+                                                   Vec3f(1.0f, -1.0f, 0.0f),
+                                                   Vec3f(0.0f, 1.0f, 0.0f) };
 
     auto geometry = make_intrusive<vine::graphics::Geometry>();
     geometry->setName(name);
-    geometry->setShape(mesh);
+    geometry->setPositions(positions);
 
     auto material = make_intrusive<vine::graphics::Material>();
     material->setDiffuse(diffuse);

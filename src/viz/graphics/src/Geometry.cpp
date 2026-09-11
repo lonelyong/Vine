@@ -73,21 +73,6 @@ AttributeBuffer packVec3(const vine::geometry::Vec3fArray& src)
 }
 }  // namespace
 
-void Geometry::setShape(intrusive_ptr<vine::geometry::Shape> shape)
-{
-    // Geometry stores vertex data only: copy the mesh into the open attribute
-    // list and drop the Shape reference.
-    attributes_.clear();
-    indices_.reset();
-    if (shape != nullptr) {
-        if (const GeometryPtr filled = geometryFromShape(*shape)) {
-            attributes_ = filled->attributes_;
-            indices_    = filled->indices_;
-        }
-    }
-    ++revision_;
-}
-
 void Geometry::addBuffer(std::uint32_t location, const AttributeBuffer& buffer)
 {
     attributes_[location] = buffer;

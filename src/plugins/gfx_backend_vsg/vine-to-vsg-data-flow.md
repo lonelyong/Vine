@@ -81,7 +81,7 @@ struct AttributeBuffer {
 ```
 
 - **纯按 location 号存储，没有"名字"**；"0 = position、1 = normal"是注释约定，
-  靠便捷 API 固化：`setPositions→loc0`、`setNormals→loc1`、`setShape→loc0+loc1(+indices)`。
+  靠便捷 API 固化：`setPositions→loc0`、`setNormals→loc1`、`geometryFromShape→loc0+loc1(+indices)`。
 - 数据用 `shared_ptr` 持有，可多几何共享；后端可按键做上传缓存。
 - 每次 `addBuffer/removeBuffer/setPositions/setNormals/setIndices` 都 bump `revision()`。
 

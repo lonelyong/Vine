@@ -61,6 +61,23 @@ intrusive_ptr<vine::geometry::TriangleMesh> makeUnitTriangle()
 }
 
 /**
+ * @brief Converts a mesh to a geometry, asserting the conversion succeeded.
+ *
+ * Thin wrapper over the SDK converter so each test does not repeat the null
+ * check; geometryFromShape() itself is covered directly by
+ * GeometryTest.ConverterFillsBuffersFromTriangleMesh.
+ *
+ * @param mesh Source mesh.
+ * @return New geometry holding the mesh's vertex data.
+ */
+intrusive_ptr<Geometry> geometryOf(const vine::geometry::Mesh& mesh)
+{
+    auto geom = geometryFromShape(mesh);
+    EXPECT_NE(geom.get(), nullptr);
+    return geom;
+}
+
+/**
  * @brief Builds a node holding a single triangle at a world-space position.
  *
  * @param position World-space translation of the node.
@@ -72,9 +89,7 @@ intrusive_ptr<MatrixTransform> makeTriangleNode(const Vec3d& position, intrusive
                                                 const vine::String& name = {})
 {
     auto node = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    auto mesh = makeUnitTriangle();
-    geom->setShape(mesh);
+    auto geom = geometryOf(*makeUnitTriangle());
     geom->setMaterial(std::move(material));
     geom->setName(name);
     node->setMatrix(vine::math::translate(position));
@@ -141,9 +156,7 @@ TEST(SceneTest, BoundingBoxAggregates)
 {
     Scene scene;
     auto node = intrusive_ptr<Group>(new Group());
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    auto mesh = makeUnitTriangle();
-    geom->setShape(mesh);
+    auto geom = geometryOf(*makeUnitTriangle());
     node->addChild(geom);
     scene.setRoot(node);
 
@@ -158,9 +171,7 @@ TEST(SceneTest, InvisibleNodeExcludedFromBoundingBox)
 {
     Scene scene;
     auto node = intrusive_ptr<Group>(new Group());
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    auto mesh = makeUnitTriangle();
-    geom->setShape(mesh);
+    auto geom = geometryOf(*makeUnitTriangle());
     node->addChild(geom);
     node->setVisible(false);
     scene.setRoot(node);
@@ -311,11 +322,9 @@ TEST(SceneTest, CollectCommandsHidesDrawable)
 {
     Scene scene;
     auto node = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    auto g1 = intrusive_ptr<Geometry>(new Geometry());
-    g1->setShape(makeUnitTriangle());
+    auto g1 = geometryOf(*makeUnitTriangle());
     g1->setName(u8"g1");
-    auto g2 = intrusive_ptr<Geometry>(new Geometry());
-    g2->setShape(makeUnitTriangle());
+    auto g2 = geometryOf(*makeUnitTriangle());
     g2->setName(u8"g2");
     g1->setVisible(false);
     node->addChild(g1);
@@ -762,9 +771,7 @@ TEST(RayTest, DistanceToPoint)
 
 TEST(RayIntersectionTest, HitsTriangle)
 {
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    auto mesh = makeUnitTriangle();
-    geom->setShape(mesh);
+    auto geom = geometryOf(*makeUnitTriangle());
 
     Ray ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
     RayIntersectionResult result = RayIntersection::intersect(ray, geom.get(), Mat4d());
@@ -778,9 +785,7 @@ TEST(RayIntersectionTest, HitsTriangle)
 
 TEST(RayIntersectionTest, MissesTriangle)
 {
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    auto mesh = makeUnitTriangle();
-    geom->setShape(mesh);
+    auto geom = geometryOf(*makeUnitTriangle());
 
     // Ray aimed outside the triangle.
     Ray ray(Vec3d(5, 5, 1), Vec3d(0, 0, -1));
@@ -792,10 +797,8 @@ TEST(RayIntersectionTest, SceneQuery)
 {
     auto scene = intrusive_ptr<Scene>(new Scene());
     auto node = intrusive_ptr<Group>(new Group());
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    auto mesh = makeUnitTriangle();
+    auto geom = geometryOf(*makeUnitTriangle());
     geom->setName(u8"tri");
-    geom->setShape(mesh);
     node->addChild(geom);
     scene->setRoot(node);
 
@@ -812,7 +815,6 @@ TEST(RayIntersectionTest, AllHitsCollectsEveryTriangleSortedByDepth)
     // near to far while Nearest returns only the closer one.
     auto scene = intrusive_ptr<Scene>(new Scene());
     auto node = intrusive_ptr<Group>(new Group());
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
     auto mesh = intrusive_ptr<vine::geometry::TriangleMesh>(new vine::geometry::TriangleMesh());
     mesh->addTriangle(vine::math::Vec3f(0.0f, 0.0f, 0.0f),
                       vine::math::Vec3f(1.0f, 0.0f, 0.0f),
@@ -820,7 +822,7 @@ TEST(RayIntersectionTest, AllHitsCollectsEveryTriangleSortedByDepth)
     mesh->addTriangle(vine::math::Vec3f(0.0f, 0.0f, -2.0f),
                       vine::math::Vec3f(1.0f, 0.0f, -2.0f),
                       vine::math::Vec3f(0.0f, 1.0f, -2.0f));
-    geom->setShape(mesh);
+    auto geom = geometryOf(*mesh);
     node->addChild(geom);
     scene->setRoot(node);
 
@@ -874,9 +876,7 @@ TEST(MaterialTest, Setters)
 
 TEST(GeometryTest, MeshCounts)
 {
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    auto mesh = makeUnitTriangle();
-    geom->setShape(mesh);
+    auto geom = geometryOf(*makeUnitTriangle());
 
     EXPECT_EQ(geom->vertexCount(), 3u);
 }
@@ -951,9 +951,7 @@ TEST(NodeTest, WorldTransformCascades)
 TEST(NodeTest, BoundingBoxWithTransform)
 {
     auto node = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    auto mesh = makeUnitTriangle();
-    geom->setShape(mesh);
+    auto geom = geometryOf(*makeUnitTriangle());
     node->addChild(geom);
     node->setMatrix(vine::math::translate(Vec3d(10, 0, 0)));
 
@@ -1019,8 +1017,7 @@ TEST(MatrixTransformTest, NestedBoundingBoxIsWorld)
     inner->setMatrix(vine::math::translate(Vec3d(0, 5, 0)));
     outer->addChild(inner);
 
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    geom->setShape(makeUnitTriangle());
+    auto geom = geometryOf(*makeUnitTriangle());
     inner->addChild(geom);
 
     // World box: unit triangle [0,1]^2 placed by both translations.
@@ -1082,8 +1079,7 @@ TEST(GeometryTest, CountsStayDataStatsUnderPointsTopology)
     // Topology lives on StateNode render state, NOT on the geometry data:
     // the vertex count is a pure data statistic and must not change when an
     // enclosing StateNode overrides the draw topology.
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    geom->setShape(makeUnitTriangle());  // 3 vertices
+    auto geom = geometryOf(*makeUnitTriangle());  // 3 vertices
     EXPECT_EQ(geom->vertexCount(), 3u);
 
     Scene scene;
@@ -1202,11 +1198,8 @@ TEST(MeshTest, AttributesSharedOnBase)
 
 TEST(GeometryTest, BoundingBoxComputedFromBuffers)
 {
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
-    auto mesh = makeUnitTriangle();
-
-    // setShape fills the geometry's buffers; the box derives from them.
-    geom->setShape(mesh);
+    // The converter fills the geometry's buffers; the box derives from them.
+    auto geom = geometryOf(*makeUnitTriangle());
     const Aabbd box = geom->boundingBox();
     EXPECT_TRUE(box.isValid());
     EXPECT_NEAR(box.min().x, 0.0, 1e-9);
@@ -2741,9 +2734,7 @@ TEST(AxisGizmoTest, OrientationMirrorTracksSource)
 TEST(RenderPassTest, ProgramOverrideReplacesEffectiveProgram)
 {
     // A single visible triangle with no per-geometry program.
-    auto mesh = makeUnitTriangle();
-    auto geometry = intrusive_ptr<Geometry>(new Geometry());
-    geometry->setShape(mesh);
+    auto geometry = geometryOf(*makeUnitTriangle());
     geometry->setMaterial(intrusive_ptr<Material>(new Material()));
     auto group = intrusive_ptr<Group>(new Group());
     group->addChild(geometry);
@@ -3329,11 +3320,15 @@ TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
     EXPECT_FALSE(geom->hasNormals());
     EXPECT_FALSE(geom->hasIndices());
 
-    // setShape on an empty geometry is equivalent to the converter.
-    auto via_setter = intrusive_ptr<Geometry>(new Geometry());
-    via_setter->setShape(mesh);
-    EXPECT_TRUE(via_setter->hasPositions());
-    EXPECT_EQ(via_setter->vertexCount(), 3u);
+    // The converter is the Shape -> vertex-data bridge; a geometry filled by
+    // the per-channel setters must carry exactly the same data.
+    Geometry via_setters;
+    via_setters.setPositions(mesh->positions());
+    EXPECT_TRUE(via_setters.hasPositions());
+    EXPECT_EQ(via_setters.vertexCount(), 3u);
+    EXPECT_EQ(via_setters.positionCount(), geom->positionCount());
+    EXPECT_EQ(via_setters.hasIndices(), geom->hasIndices());
+    EXPECT_EQ(via_setters.hasNormals(), geom->hasNormals());
 }
 
 TEST(GeometryTest, OpenAttributeBufferList)
@@ -3616,8 +3611,7 @@ TEST(NodeTest, DeepHierarchyWorldMatrixFoldsWholeChain)
         levels.push_back(transform);
     }
 
-    auto leaf = intrusive_ptr<Geometry>(new Geometry());
-    leaf->setShape(makeUnitTriangle());
+    auto leaf = geometryOf(*makeUnitTriangle());
     parent->addChild(leaf);
 
     const auto close = [](const Mat4d& lhs, const Mat4d& rhs) {
@@ -3661,9 +3655,8 @@ TEST(SceneTest, CollectCommandsAccumulatesWorldMatrixAcrossNesting)
     auto middle = intrusive_ptr<Group>(new Group());
     auto inner = intrusive_ptr<MatrixTransform>(new MatrixTransform());
     inner->setMatrix(vine::math::translate(Vec3d(-100.0, 0.0, -3.0)));
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
+    auto geom = geometryOf(*makeUnitTriangle());
     geom->setName(u8"nested");
-    geom->setShape(makeUnitTriangle());
     root->addChild(outer);
     outer->addChild(middle);
     middle->addChild(inner);
@@ -3809,7 +3802,9 @@ TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
         }
     }
     auto leaf = intrusive_ptr<CountingGeometry>(new CountingGeometry());
-    leaf->setShape(makeUnitTriangle());
+    // CountingGeometry is a Geometry subclass, so fill it through the
+    // per-channel setter (the Shape converter always returns a plain Geometry).
+    leaf->setPositions(makeUnitTriangle()->positions());
     deep->addChild(leaf);
 
     Camera cam;

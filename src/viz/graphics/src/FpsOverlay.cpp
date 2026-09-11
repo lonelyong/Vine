@@ -10,7 +10,7 @@
 #include <vine/graphics/Node.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/Scene.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/Array.hpp>
 
 V_GRAPHICS_NS_BEGIN
 
@@ -261,13 +261,10 @@ void FpsOverlay::rebuild()
             vine::geometry::UInt32Array indices;
             appendBox(positions, normals, indices, centre - half, centre + half);
 
-            auto mesh = make_intrusive<vine::geometry::IndexedTriangleMesh>();
-            mesh->setPositions(std::move(positions));
-            mesh->setNormals(std::move(normals));
-            mesh->setIndices(std::move(indices));
-
             auto geometry = make_intrusive<Geometry>();
-            geometry->setShape(mesh);
+            geometry->setPositions(positions);
+            geometry->setNormals(normals);
+            geometry->setIndices(indices);
 
             auto material = make_intrusive<Material>();
             material->setDiffuse(kDim);

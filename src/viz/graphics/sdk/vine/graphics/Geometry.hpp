@@ -107,18 +107,6 @@ class V_GRAPHICS_API Geometry : public Node {
     ~Geometry();
 
   public:
-    /** @brief Fills the raw buffers from a triangle-mesh Shape.
-     *
-     * Copies the mesh's positions (and normals when present, plus indices for
-     * indexed meshes) into this geometry's vertex data. The Shape is NOT
-     * retained: Geometry stores vertex data only (equivalent to applying
-     * geometryFromShape() to an empty geometry). Pass nullptr to clear the
-     * data.
-     *
-     * @param shape Mesh shape to convert, or nullptr to clear.
-     */
-    void setShape(intrusive_ptr<vine::geometry::Shape> shape);
-
     /** @brief Adds or replaces the per-vertex attribute buffer at @p location.
      *
      * Geometry holds an open list of vertex-attribute buffers keyed by their
@@ -264,6 +252,14 @@ using GeometryPtr = intrusive_ptr<Geometry>;
  * meshes (primitives, BRep, ...) are not convertible and yield null. This is
  * the bridge that lets Shape live purely in the geometry module while
  * Geometry stays vertex-data only.
+ *
+ * This is the only Shape -> Geometry conversion: Geometry has no setShape()
+ * member, because a setter named after a property it never retains is
+ * misleading, and silently emptying an existing geometry when handed a shape
+ * it cannot convert (a Sphere, a BRep, ...) loses data with no way to report
+ * it. To (re)fill an existing geometry, use the per-channel setters —
+ * setPositions() / setNormals() / setIndices() — which leave custom attribute
+ * channels alone.
  *
  * @param shape Mesh shape to convert.
  * @return Filled geometry, or null for unsupported shapes.
