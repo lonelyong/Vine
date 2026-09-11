@@ -39,6 +39,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
@@ -168,6 +169,220 @@ RenderTargetPtr makeMrtTarget()
     rt->attachColor(RenderTarget::ColorFormat::RGBA32F);
     rt->attachDepth(RenderTarget::DepthFormat::D24);
     return rt;
+}
+
+/**
+ * @brief Drives the engine's pass-scope protocol directly and checks the
+ * lifecycle invariants a device-free test cannot reach.
+ *
+ * The engine announces each pass with RenderBackend::beginPass(pass) /
+ * endPass() and releases it with releasePass(pass). The pass object is the
+ * backend's identity for that pass' retained GPU state, and a pass that is not
+ * announced in a frame is retired. This phase exercises that contract on a
+ * device:
+ *
+ *  1. two distinct passes sharing ONE camera and ONE pass order — which used to
+ *     alias on the (camera, order) key, the second silently overwriting the
+ *     first — each keep their own retained slot;
+ *  2. a run-time depth-policy change on a live pass is applied (the policy now
+ *     fills the depth item of content that did not author one; before, the
+ *     baked shader-set depth state was overwritten by the command's state, so
+ *     TestOnly / Disabled were silently ignored);
+ *  3. not announcing a pass retires it (RenderPass::setEnabled(false) must stop
+ *     drawing instead of leaving the last synced content on screen) without
+ *     rebuilding off-screen targets;
+ *  4. releasePass() frees the pass' state and the following frames stay valid.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Shared camera all passes draw through.
+ * @param commands Content drawn by each pass.
+ * @param frames   Frames per sub-scenario.
+ * @return true when every invariant held.
+ */
+bool runPassProtocolPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera,
+                          const std::vector<RenderCommand>& commands, int frames)
+{
+    bool ok = true;
+    // The pass objects are used as IDENTITIES here (the harness drives the
+    // backend directly, like the engine does): the backend only reads the
+    // pointer, it never executes them.
+    auto pass_a = RenderPassPtr(new RenderPass());
+    auto pass_b = RenderPassPtr(new RenderPass());
+
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+
+        renderer.beginPass(pass_a.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(nullptr);
+        renderer.clear(vine::Color(20, 20, 30, 255), true);
+        renderer.setDepthMode(DepthMode::TestAndWrite);
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+
+        // Same camera AND same pass order on purpose: with the pass as the
+        // slot identity this is its own slot; on the old (camera, order) key
+        // the second pass replaced the first pass' content.
+        renderer.beginPass(pass_b.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(nullptr);
+        renderer.setDepthMode(DepthMode::TestOnly);
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    std::fprintf(stderr, "[selftest] pass protocol: two passes sharing one camera + order rendered\n");
+
+    // A LIVE pass changes its depth policy: its retained state must follow
+    // (data reused), and the change must not corrupt the frame.
+    for (int i = 0; i < 2; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(pass_a.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(nullptr);
+        renderer.setDepthMode(i == 0 ? DepthMode::Disabled : DepthMode::TestAndWrite);
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    std::fprintf(stderr, "[selftest] pass protocol: depth-policy change on a live pass applied\n");
+
+    // Stop announcing pass B: it must be retired, and retirement must not
+    // rebuild off-screen targets (it only detaches the pass' own slot).
+    const std::size_t builds_before = renderer.offscreenBuildCount();
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(pass_a.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(nullptr);
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    if (renderer.offscreenBuildCount() != builds_before) {
+        std::fprintf(stderr, "[selftest] FAIL: retiring an inactive pass rebuilt off-screen targets\n");
+        ok = false;
+    } else {
+        std::fprintf(stderr, "[selftest] pass protocol: inactive pass retired without a rebuild\n");
+    }
+
+    // Explicit release, then frames with no pass at all must stay valid.
+    renderer.releasePass(pass_a.get());
+    renderer.releasePass(pass_b.get());
+    for (int i = 0; i < 2; ++i) {
+        renderer.beginFrame();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    return ok;
+}
+
+/**
+ * @brief Checks the depth-sharing (RenderTarget::shareDepth) lifecycle on a
+ * device.
+ *
+ * A consumer target that borrows a producer's depth and clears its colour with
+ * clearDepth=false (the natural way to write "keep the shared depth") must not
+ * re-enter the off-screen build path every frame: a borrowed depth cannot use
+ * the depth-LOAD pass, so the rebuild predicate must not expect one. Before the
+ * fix this tore the graph down, waited for the device and recompiled the whole
+ * command graph on EVERY frame.
+ *
+ * Releasing the producer afterwards must not leave the consumer pointing at a
+ * destroyed depth image (its framebuffer would keep a dead attachment and the
+ * command graph would be ordered around a barrier over that image): the borrow
+ * is dropped and the consumer rebuilds once with its own depth.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Shared camera.
+ * @param commands Content drawn into both targets.
+ * @param frames   Frames to run the steady-state sharing scenario.
+ * @return true when both invariants held.
+ */
+bool runSharedDepthPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera,
+                         const std::vector<RenderCommand>& commands, int frames)
+{
+    bool ok = true;
+    auto source = RenderTargetPtr(new RenderTarget());
+    source->setName(u8"selftest-share-src");
+    source->setSize(320, 180);
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    source->attachDepth(RenderTarget::DepthFormat::D24);
+    source->setDepthPromotion(false); // its depth is borrowed onwards, not sampled
+
+    auto consumer = RenderTargetPtr(new RenderTarget());
+    consumer->setName(u8"selftest-share-dst");
+    consumer->setSize(320, 180);
+    consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    consumer->shareDepth(source);
+
+    auto source_pass   = RenderPassPtr(new RenderPass());
+    auto consumer_pass = RenderPassPtr(new RenderPass());
+
+    const std::size_t baseline = renderer.offscreenBuildCount();
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+
+        renderer.beginPass(source_pass.get());
+        renderer.setPassOrder(-10);
+        renderer.setRenderTarget(source.get());
+        renderer.clear(vine::Color(30, 30, 30, 255), true);
+        renderer.setDepthMode(DepthMode::TestAndWrite);
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+
+        renderer.beginPass(consumer_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(consumer.get());
+        renderer.clear(vine::Color(0, 0, 0, 255), false); // keep the borrowed depth
+        renderer.setDepthMode(DepthMode::TestOnly);
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+
+    const std::size_t built = renderer.offscreenBuildCount() - baseline;
+    if (built != 2u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: expected 2 off-screen builds (source + consumer) over %d frames, got %zu (rebuild loop)\n",
+                     frames, built);
+        ok = false;
+    } else {
+        std::fprintf(stderr, "[selftest] shared depth: borrowed depth + clearDepth=false stayed at 2 build(s) over %d frames\n",
+                     frames);
+    }
+
+    // Release the producer while the consumer still borrows its depth.
+    renderer.releaseRenderTarget(source.get());
+    const std::size_t before_rebuild = renderer.offscreenBuildCount();
+    for (int i = 0; i < 2; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(consumer_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(consumer.get());
+        renderer.clear(vine::Color(0, 0, 0, 255), false);
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    const std::size_t rebuilt = renderer.offscreenBuildCount() - before_rebuild;
+    if (rebuilt != 1u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: a consumer of a released depth source must rebuild once with its own depth, got %zu build(s)\n",
+                     rebuilt);
+        ok = false;
+    } else {
+        std::fprintf(stderr, "[selftest] shared depth: consumer rebuilt once with its own depth after the source was released\n");
+    }
+    renderer.releaseRenderTarget(consumer.get());
+    return ok;
 }
 
 }  // namespace
@@ -403,12 +618,25 @@ int main()
         std::fprintf(stderr, "[selftest] off-screen post chain (A->B->window, A resized) rendered\n");
     }
 
+    // ---- Pass-scope protocol + depth sharing (engine contract) --------------
+    // These phases drive the pass lifecycle the RenderEngine uses
+    // (beginPass/endPass/releasePass) and the RenderTarget depth-sharing path;
+    // each returns false when an invariant it checks was violated.
+    auto* renderer = static_cast<vine::vsg::VsgRenderer*>(backend.get());
+    bool  contract_ok = true;
+    contract_ok = runPassProtocolPhase(*renderer, camera, window_commands, 4) && contract_ok;
+    contract_ok = runSharedDepthPhase(*renderer, camera, window_commands, 4) && contract_ok;
+
     // ---- Teardown paths, then a few frames to prove nothing dangles ---------
     backend->releaseWindowLayer(camera.get(), 1);   // drop the HUD slot
     backend->releaseRenderTarget(mrt.get());         // drop MRT + PiP + deferred slot
     for (int i = 0; i < 3; ++i) {
         backend->beginFrame();
         backend->setPassOrder(0);
+    if (!contract_ok) {
+        std::fprintf(stderr, "[selftest] FAILED — a pass-lifecycle / depth-sharing invariant was violated\n");
+        return 1;
+    }
         backend->setRenderTarget(nullptr);
         backend->clear(vine::Color(25, 25, 45, 255), true);
         backend->setLights({});

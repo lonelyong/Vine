@@ -270,10 +270,10 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
      * StateNode resolution). Setting an override replaces the program of every
      * collected command, so the same content scene can be re-rendered with a
      * different shader (e.g. a wireframe or alternate-shading pass over the
-     * same scene). Pair it with an off-screen render target or a distinct
-     * order so the two variants do not collapse into the same retained
-     * content slot (the backend keys a camera's content slots by the pass
-     * order).
+     * same scene). The pass is its own retained slot in the backend (keyed by
+     * the pass, see RenderBackend::beginPass), so an override and the
+     * per-geometry pass never collapse into one slot; use setViewport /
+     * setClearEnabled to control where each one lands.
      * The pass keeps a reference.
      *
      * @param program Program applied to all content, or null for per-geometry

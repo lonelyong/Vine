@@ -481,6 +481,36 @@ VkShaderStageFlagBits stageFlag(vine::graphics::ShaderStageType type)
 }
 
 /**
+ * @brief Derives the render state a command is drawn with.
+ *
+ * The command carries the state folded from the scene graph (RenderCommand::
+ * renderState). A pass additionally declares how its content treats the
+ * target's depth (RenderPass::depthMode): TestAndWrite for opaque scene
+ * content, TestOnly for translucent content that tests without writing,
+ * Disabled for HUD content drawn on top. That policy fills the depth test /
+ * write enable bits of every command that did not author depth itself, while
+ * an explicit StateNode depth keeps winning (finer-grained intent over the
+ * pass default). Folding it here — rather than into the slot's baked shader
+ * set — is what makes the policy reach the pipeline and a run-time change
+ * detectable as a state change.
+ *
+ * @param command           Command whose state to derive.
+ * @param content_depth_mode The pass' depth policy (see setContentDepthMode).
+ * @return The state the command's pipeline must honour.
+ */
+vine::graphics::ResolvedRenderState effectiveCommandState(
+    const vine::graphics::RenderCommand& command,
+    vine::graphics::DepthMode            content_depth_mode)
+{
+    vine::graphics::ResolvedRenderState state = command.renderState;
+    if (!command.depthExplicit) {
+        state.depth.test  = content_depth_mode != vine::graphics::DepthMode::Disabled;
+        state.depth.write = content_depth_mode == vine::graphics::DepthMode::TestAndWrite;
+    }
+    return state;
+}
+
+/**
  * @brief Hashes the identity of one (program, material, render-state) pipeline
  * variant into a cache key for the L2 variant template cache.
  *
@@ -728,6 +758,28 @@ void SceneBridge::clearCache()
     program_stage_compiles_ = 0;
 }
 
+void SceneBridge::setContentDepthMode(vine::graphics::DepthMode mode)
+{
+    content_depth_mode_ = mode;
+}
+
+void SceneBridge::invalidateState()
+{
+    // Keep the per-geometry DATA (arrays + bind/draw commands, the uploaded
+    // mesh) and drop only the STATE wrapper: the next syncRenderCommands()
+    // rebuilds every pipeline / descriptor bind while reusing the vertex data.
+    for (auto& entry : cache_) {
+        Item* item = entry.second.get();
+        if (item == nullptr) {
+            continue;
+        }
+        item->state_node = {};
+        // Force the per-layout rebuild path too: the channel set tracked by the
+        // dropped wrapper is meaningless once the wrapper itself is gone.
+        item->state_channels.clear();
+    }
+}
+
 bool SceneBridge::syncRenderCommands(
     const std::vector<vine::graphics::RenderCommand>& commands,
     ::vsg::Group* root,
@@ -783,6 +835,13 @@ bool SceneBridge::syncRenderCommands(
         const bool had_node = item->transform != nullptr;
         const auto program_rev =
             cmd.program.get() != nullptr ? cmd.program.get()->revision() : std::uint64_t{0};
+        // The state the pipeline must honour: the command's folded state plus
+        // the pass-level depth policy for content that did not author depth
+        // (see effectiveCommandState). Deriving it here means a pass that
+        // changes its depth mode is detected as a state change and rebuilt,
+        // instead of serving a pipeline built for the previous policy.
+        const vine::graphics::ResolvedRenderState state =
+            effectiveCommandState(cmd, content_depth_mode_);
         // The DATA identity is the vertex/index payload plus the two draw
         // inputs that change how it is materialised: the primitive topology
         // (drives normal derivation) and, for a mesh that carries an authored
@@ -792,17 +851,17 @@ bool SceneBridge::syncRenderCommands(
             geometry->buffer(2) != nullptr && !geometry->buffer(2)->empty();
         const bool data_dirty =
             !had_node || item->revision != geometry->revision() ||
-            item->topology != cmd.renderState.topology ||
+            item->topology != state.topology ||
             (has_loc2 && (item->program == nullptr) != (cmd.program.get() == nullptr));
         const bool state_dirty = !had_node || item->material != cmd.material.get() ||
-                                 item->render_state != cmd.renderState ||
+                                 item->render_state != state ||
                                  item->program != cmd.program.get() ||
                                  item->program_revision != program_rev;
         if (data_dirty || state_dirty) {
             item->revision         = geometry->revision();
-            item->topology         = cmd.renderState.topology;
+            item->topology         = state.topology;
             item->material         = cmd.material.get();
-            item->render_state     = cmd.renderState;
+            item->render_state     = state;
             item->program          = cmd.program.get();
             item->program_revision = program_rev;
             changed                = true;
@@ -820,7 +879,7 @@ bool SceneBridge::syncRenderCommands(
             // carrier is dropped with it and rewritten on the next frames.
             item->extra_channels.clear();
             item->data_node = buildGeometryData(geometry, item->program == nullptr,
-                                                cmd.renderState.topology, item->colors,
+                                                state.topology, item->colors,
                                                 item->extra_channels);
             if (item->data_node == nullptr) {
                 // Unsupported shape / malformed vertex data (unusable attribute

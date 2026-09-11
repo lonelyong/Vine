@@ -14,17 +14,20 @@ class Camera;
 class Scene;
 
 /**
- * @brief Base class for content drawn on top of the main scene (HUD).
+ * @brief Legacy helper pairing a content scene with a render pass (HUD).
  *
- * An overlay pairs a content scene with a render pass (camera, optional
- * sub-viewport and clear policy). The RenderEngine draws every visible
- * overlay after the main pass in ascending zOrder. update() runs once per
- * frame before drawing; the default implementation mirrors the configured
- * source camera onto the overlay camera (see setMirrorMode()).
+ * An overlay bundles a content scene with a render pass (camera, optional
+ * sub-viewport and clear policy) and a per-frame update hook. The pass can be
+ * registered with a RenderEngine like any other pass — HUD content is just a
+ * pass at a high order (see the AxisGizmo / FpsOverlay HUD passes, which are
+ * RenderPass subclasses and the recommended shape for new HUD content).
  *
- * Typical overlays: an axis gizmo in a corner, a minimap, a crosshair, or
- * screen-space markers. Overlays reuse the ordinary Scene / RenderPass /
- * backend pipeline, so a new render backend needs no overlay-specific code.
+ * NOTE: this class predates the pure-scheduler engine and is NOT wired into
+ * it. There is no RenderEngine::addOverlay / removeOverlay and no
+ * RenderBackend::releaseOverlay hook any more, so the overlay's pass must be
+ * registered / released through the engine's ordinary pass API by the caller,
+ * and no engine code calls update() or onSurfaceResized() for you. Treat it as
+ * a convenience container only.
  */
 class V_GRAPHICS_API Overlay : public Object, public RefCounted<Overlay> {
     V_OBJECT_META_DECL;
@@ -65,12 +68,10 @@ class V_GRAPHICS_API Overlay : public Object, public RefCounted<Overlay> {
     /** @brief Sets the pass that draws this overlay.
      *
      * The overlay draws through this pass (content scene, clear policy and
-     * optional sub-viewport); the pass's camera identifies the overlay to the
-     * render backend, which retains the overlay's view keyed by that camera.
-     * The overlay keeps a reference. Whether the backend releases the pass's
-     * GPU resources when the overlay is removed depends on whether the same
-     * pass is still used by the engine (main / extra passes) or another
-     * overlay.
+     * optional sub-viewport). Registering the pass with a RenderEngine is the
+     * caller's job (addPass): the engine keeps the pass alive and asks the
+     * backend to release its GPU state when the pass is removed. The overlay
+     * keeps a reference.
      *
      * @param pass Render pass, or null to clear.
      */
@@ -116,7 +117,11 @@ class V_GRAPHICS_API Overlay : public Object, public RefCounted<Overlay> {
      */
     void setSourceCamera(raw_ptr<Camera> camera);
 
-    /** @brief Called by the engine when the rendering surface is resized.
+    /** @brief Hook for the host to report a rendering-surface resize.
+     *
+     * The engine does not call this (it manages no overlay layout): a host that
+     * uses an Overlay drives its own surface-layout step, e.g. through
+     * SceneView::addSurfaceLayout, and calls this when the surface changes.
      *
      * @param width  New surface width in pixels.
      * @param height New surface height in pixels.

@@ -53,6 +53,16 @@ struct V_GRAPHICS_API RenderCommand {
      */
     ResolvedRenderState renderState;
 
+    /** Whether @ref renderState's depth item came from a StateNode.
+     *
+     * False when no StateNode on the path set depth, so @ref renderState only
+     * carries the defaults. A backend uses this to honour the pass-level depth
+     * policy (RenderPass::depthMode) for content that does not ask for a
+     * specific depth handling of its own, while an explicit StateNode depth
+     * still wins (finer-grained intent over the pass default).
+     */
+    bool depthExplicit = false;
+
     /** @brief Default constructor. */
     RenderCommand() = default;
 
@@ -62,7 +72,6 @@ struct V_GRAPHICS_API RenderCommand {
      * @param m     Material to use.
      * @param model World-space model matrix.
      */
-    RenderCommand(intrusive_ptr<Geometry> g, intrusive_ptr<Material> m, const Mat4d& model);
-};
+    RenderCommand(intrusive_ptr<Geometry> g, intrusive_ptr<Material> m, const Mat4d& model);};
 
 V_GRAPHICS_NS_END

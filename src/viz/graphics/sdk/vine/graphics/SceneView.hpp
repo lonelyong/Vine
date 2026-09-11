@@ -45,9 +45,14 @@ class Scene;
  * ensureWindowPass()). When attached, ensureWindowPass() registers an
  * order-0 window pass that presents this view's camera to the backbuffer -
  * unless the application already registered such a pass (e.g. a
- * deferred-lighting main pass that carries this view's camera). Several
- * views may share one engine by each binding its own content to its own
- * passes.
+ * deferred-lighting main pass that carries this view's camera).
+ *
+ * Several views may share one engine, but each view's DEFAULT window pass
+ * clears the whole surface and draws full-surface: with two such passes the
+ * second erases the first. Side-by-side views therefore need explicit layout -
+ * give each pass a sub-viewport (RenderPass::setViewport) and disable clearing
+ * on all but one (setClearEnabled), or build the pipeline yourself with
+ * RenderPipelineBuilder. The engine never manages viewport layout.
  *
  * The engine stays camera- and content-agnostic: it forwards no mouse /
  * scroll / key input, holds no camera and no content scene. The host pushes

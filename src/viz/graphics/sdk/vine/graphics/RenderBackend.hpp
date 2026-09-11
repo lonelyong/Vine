@@ -79,6 +79,44 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         return false;
     }
 
+    /** @brief Opens a pass scope: announces the pass about to be executed.
+     *
+     * The engine calls this once per enabled registered pass, immediately
+     * before that pass's per-pass state (setRenderTarget / setViewport /
+     * setLights / setDepthMode / clear / setPassOrder) and its draw call
+     * (render / drawScreenTexture / drawScreenProgram); endPass() follows
+     * once the pass ran.
+     *
+     * The pass is the pass's identity to the backend: a backend that retains
+     * per-pass GPU state (a content view, a compiled pipeline, a sampling
+     * slot) keys that state by this object, so two passes never alias each
+     * other even when they share a camera and an order. Announcing the pass
+     * also marks it active for the current frame: a backend may retire the
+     * retained state of any pass it was not asked to draw this frame, which
+     * is what makes disabling a pass (RenderPass::setEnabled) or changing its
+     * camera / render target / depth mode take effect instead of leaving
+     * stale content on screen.
+     *
+     * The default no-op keeps backends without retained per-pass state (and
+     * direct backend drivers that skip the pass protocol) working unchanged.
+     *
+     * @param pass The pass about to execute (borrowed for the scope).
+     */
+    virtual void beginPass(raw_ptr<const RenderPass> pass)
+    {
+        (void)pass;
+    }
+
+    /** @brief Closes the pass scope opened by beginPass().
+     *
+     * Called after the pass's draw call. Per-pass state queued by this scope
+     * that no draw call consumed (a pass that set a render target but then
+     * drew nothing) is discarded here, so it can never leak into the next
+     * pass. A backend must not retain any per-pass state beyond this call
+     * except the GPU resources it owns for the pass itself.
+     */
+    virtual void endPass() {}
+
     /** @brief Draws a full-screen textured pass sampling a target's colour
      * attachment.
      *
@@ -150,15 +188,15 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      *
      * The engine calls this right before each registered pass executes, with
      * the order the caller passed to addPass() — the explicit pipeline order
-     * that already drives pass execution. A backend that keeps multiple
-     * retained content slots under one target keys each slot by (pass camera,
-     * this order): the order is both the slot's identity (so passes sharing a
-     * camera stack as separate content slots when they use distinct orders)
-     * and the stacking key (ascending), so the stacking always equals the
-     * user-set pipeline order regardless of when each slot was first created
-     * (e.g. a pre-frame warm-up pass may create a higher-order slot before a
-     * lower-order one has run). It is consumed by the following render() call.
-     * The default no-op lets backends without per-slot ordering ignore it.
+     * that already drives pass execution. A backend that keeps several
+     * retained content slots under one target uses it as the slot's STACKING
+     * position (ascending), so the draw order inside the target always equals
+     * the user-set pipeline order regardless of when each slot was created
+     * (a pre-frame warm-up pass may create a higher-order slot before a
+     * lower-order one has run). The slot's IDENTITY, in contrast, is the pass
+     * announced by beginPass(), so two passes never share a slot. The value is
+     * consumed by the following render() call. The default no-op lets backends
+     * without per-slot ordering ignore it.
      *
      * @param order The current pass's explicit pipeline order.
      */
@@ -167,16 +205,36 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         (void)order;
     }
 
+    /** @brief Releases the backend GPU resources a pass owns.
+     *
+     * Called by the engine just before a removed pass is dropped. The backend
+     * owns everything it retained for that pass (its content view / compiled
+     * pipelines / per-pass scene-bridge cache, any sampling slot it drew
+     * through, and the window layer it presented through), so it must free
+     * that state here to keep a closed resource loop; the RenderPass object
+     * itself stays a logical description owned by the caller. It is separate
+     * from releaseRenderTarget(): a pass may own a render target (freed by
+     * both), while the retained per-pass GPU state is only known to the
+     * backend and is keyed by the pass announced via beginPass().
+     *
+     * The default no-op lets backends that keep no per-pass GPU state ignore
+     * the call.
+     *
+     * @param pass The pass being removed (borrowed for the call).
+     */
+    virtual void releasePass(raw_ptr<const RenderPass> pass)
+    {
+        (void)pass;
+    }
+
     /** @brief Releases backend GPU state for a removed pass' window content.
      *
-     * Called by the engine just before a removed pass's resources are
-     * dropped, so the backend can stop drawing that pass and free its GPU
-     * objects (view / pipelines / scene-bridge cache). The backend retains
-     * each window content slot keyed by (pass camera, pass order) — the slot
-     * the pass drew through — and this call removes that key. Passes carry no
-     * Vine-side GPU state, so the backend is the only owner of these
-     * resources. The default no-op lets backends that keep no per-camera GPU
-     * state ignore the call.
+     * Legacy counterpart of releasePass() for the historical (pass camera,
+     * pass order) content-slot key. The engine still calls it for backends
+     * that only implement this narrower contract; new backends should key
+     * their per-pass state by the pass announced via beginPass() and release
+     * it in releasePass(). The default no-op lets backends that keep no
+     * per-camera GPU state ignore the call.
      *
      * @param camera The removed pass's camera (the content-slot key), or
      *               nullptr.

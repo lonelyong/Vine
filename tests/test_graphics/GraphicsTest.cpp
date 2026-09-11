@@ -1357,17 +1357,37 @@ class MockBackend : public RenderBackend {
     void clear(const Color&, bool) override { ++clear_calls; }
     void swapBuffers() override { ++swap_calls; }
 
+    // Pass-scope recording: the engine opens/closes one scope per executed
+    // pass, announcing the pass itself (the backend's per-pass state key).
+    std::vector<const RenderPass*> began;
+    std::vector<const RenderPass*> ended;
+    int begin_passes = 0;
+    int end_passes = 0;
+    void beginPass(vine::raw_ptr<const RenderPass> pass) override
+    {
+        ++begin_passes;
+        began.push_back(pass);
+    }
+    void endPass() override { ++end_passes; }
+
     // Closed-loop release recording (removePass/clearPasses -> backend).
     int layer_releases = 0;
     int target_releases = 0;
+    int pass_releases = 0;
     const Camera* last_released_layer = nullptr;
     int last_released_slot = 0;
     RenderTarget* last_released_target = nullptr;
+    const RenderPass* last_released_pass = nullptr;
     void releaseWindowLayer(vine::raw_ptr<const Camera> camera, int slot) override
     {
         ++layer_releases;
         last_released_layer = camera;
         last_released_slot = slot;
+    }
+    void releasePass(vine::raw_ptr<const RenderPass> pass) override
+    {
+        ++pass_releases;
+        last_released_pass = pass;
     }
     void releaseRenderTarget(RenderTarget* target) override
     {
@@ -1375,6 +1395,68 @@ class MockBackend : public RenderBackend {
         last_released_target = target;
     }
 };
+
+TEST(RenderEngineTest, PassScopeOpensAndClosesOncePerExecutedPass)
+{
+    // Every executed pass runs inside its own pass scope: the backend is told
+    // which pass is running (its identity for retained per-pass GPU state and
+    // the marker of "active this frame"), and the scope is closed afterwards
+    // so un-consumed per-pass state cannot leak into the next pass. A disabled
+    // pass is not executed and therefore opens no scope.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    auto scene  = intrusive_ptr<Scene>(new Scene());
+    auto pass_a = intrusive_ptr<RenderPass>(new RenderPass());
+    pass_a->setCamera(camera.get());
+    auto pass_b = intrusive_ptr<RenderPass>(new RenderPass());
+    pass_b->setCamera(camera.get());
+    auto hidden = intrusive_ptr<RenderPass>(new RenderPass());
+    hidden->setCamera(camera.get());
+    hidden->setEnabled(false);
+
+    engine->addPass(pass_a, scene, 0);
+    engine->addPass(pass_b, scene, 1);
+    engine->addPass(hidden, scene, 2);
+
+    engine->frame(0.016);
+
+    ASSERT_EQ(backend->began.size(), 2u);
+    EXPECT_EQ(backend->began[0], pass_a.get());
+    EXPECT_EQ(backend->began[1], pass_b.get());
+    EXPECT_EQ(backend->began.back(), pass_b.get());
+    EXPECT_EQ(backend->end_passes, 2);
+    EXPECT_EQ(backend->begin_passes, backend->end_passes);
+
+    // Enabling the pass again brings its scope (and drawing) back.
+    hidden->setEnabled(true);
+    engine->frame(0.016);
+    ASSERT_EQ(backend->began.size(), 5u);
+    EXPECT_EQ(backend->began[2], pass_a.get());
+    EXPECT_EQ(backend->began[3], pass_b.get());
+    EXPECT_EQ(backend->began[4], hidden.get());
+    EXPECT_EQ(backend->end_passes, 5);
+}
+
+TEST(RenderEngineTest, RemovePassReleasesBackendPerPassState)
+{
+    // The primary closed loop: a removed pass' retained GPU state is released
+    // by identity (releasePass), not only through the legacy camera-keyed
+    // window-layer call.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    engine->addPass(pass, 0);
+    engine->removePass(pass.get());
+
+    EXPECT_EQ(backend->pass_releases, 1);
+    EXPECT_EQ(backend->last_released_pass, pass.get());
+}
 
 TEST(RenderEngineTest, RemovePassReleasesBackendRenderTarget)
 {
@@ -1415,6 +1497,8 @@ TEST(RenderEngineTest, RemovePassReleasesBackendWindowLayerAndTarget)
     EXPECT_EQ(backend->last_released_layer, camera.get());
     EXPECT_EQ(backend->target_releases, 1);
     EXPECT_EQ(backend->last_released_target, target.get());
+    EXPECT_EQ(backend->pass_releases, 1);
+    EXPECT_EQ(backend->last_released_pass, pass.get());
 }
 
 TEST(RenderEngineTest, ClearPassesReleasesEveryRegisteredPass)
@@ -1444,6 +1528,7 @@ TEST(RenderEngineTest, ClearPassesReleasesEveryRegisteredPass)
     EXPECT_EQ(backend->layer_releases, 2);
     EXPECT_EQ(backend->target_releases, 1);
     EXPECT_EQ(backend->last_released_target, target.get());
+    EXPECT_EQ(backend->pass_releases, 2);
 }
 
 TEST(RenderEngineTest, HasWindowPassReflectsCameraPresentation)

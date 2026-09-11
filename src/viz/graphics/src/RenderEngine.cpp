@@ -58,17 +58,20 @@ bool RenderEngine::initialize()
         // frame()) has proven unreliable in the vsg backend, and the main
         // content is pre-compiled during backend initialize. Re-execution in
         // later frames is a no-op for already-built content. Each pass is
-        // announced with its explicit order so the backend can stack its
-        // retained content slots by that order even though the warm-up runs
-        // non-clearing passes ahead of the clearing ones.
+        // opened as a pass scope and announced with its explicit order so the
+        // backend can key / stack its retained per-pass state correctly even
+        // though the warm-up runs non-clearing passes ahead of the clearing
+        // ones.
         for (const auto& slot : slots_) {
             RenderPass* pass   = slot.pass.get();
             Scene*      content = slot.content.get();
             if (pass == nullptr || content == nullptr || !pass->enabled() || pass->clearEnabled()) {
                 continue;
             }
+            backend_->beginPass(pass);
             backend_->setPassOrder(slot.order);
             pass->execute(content, backend_.get());
+            backend_->endPass();
         }
     }
     return initialized_;
@@ -111,10 +114,16 @@ void RenderEngine::frame(double dt)
             continue;
         }
         raw_ptr<Scene> content = slot.content.get();
+        // Pass scope: the backend is told which pass is running (its identity
+        // for retained per-pass GPU state, and that it is active this frame),
+        // runs the whole pass, then the scope is closed so per-pass state a
+        // pass did not consume cannot leak into the next pass.
+        backend_->beginPass(pass);
         backend_->setPassOrder(slot.order);
         resolvePassInputs(pass);
         drawScenePass(pass, content);
         publishPassOutput(pass);
+        backend_->endPass();
     }
 
     backend_->endFrame();
@@ -180,12 +189,14 @@ void RenderEngine::removePass(raw_ptr<RenderPass> pass)
                  slots_.end());
 
     // A pass is registered at most once, so any removal drops its only user:
-    // release the backend window content slot it kept keyed by (pass camera,
-    // pass order) and any off-screen target the pass owns.
+    // release the backend state it retained — keyed by the pass itself (the
+    // primary contract, releasePass) and by (pass camera, pass order) (the
+    // legacy contract) — plus any off-screen target the pass owns.
     if (backend_ != nullptr && pass != nullptr && slots_.size() != old_size) {
         if (raw_ptr<Camera> camera = pass->camera(); camera != nullptr) {
             backend_->releaseWindowLayer(camera, order);
         }
+        backend_->releasePass(pass);
         if (raw_ptr<RenderTarget> target = pass->renderTarget(); target != nullptr) {
             backend_->releaseRenderTarget(target);
         }
@@ -212,6 +223,9 @@ void RenderEngine::clearPasses()
             RenderPass* pass = entry.first;
             if (raw_ptr<Camera> camera = (pass != nullptr) ? pass->camera() : nullptr; camera != nullptr) {
                 backend_->releaseWindowLayer(camera, entry.second);
+            }
+            if (pass != nullptr) {
+                backend_->releasePass(pass);
             }
             if (raw_ptr<RenderTarget> target = (pass != nullptr) ? pass->renderTarget() : nullptr; target != nullptr) {
                 backend_->releaseRenderTarget(target);

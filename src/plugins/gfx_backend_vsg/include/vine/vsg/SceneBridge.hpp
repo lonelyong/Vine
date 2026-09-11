@@ -16,6 +16,7 @@
 #include <vsg/utils/SharedObjects.h>
 
 #include <vine/raw_ptr.hpp>
+#include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 
@@ -86,6 +87,38 @@ class V_VSG_API SceneBridge {
 
     /** @brief Releases all retained per-geometry vsg nodes. */
     void clearCache();
+
+    /** @brief Sets the pass-level depth policy for content that does not set
+     * depth itself.
+     *
+     * A pass declares how its content treats the target's depth
+     * (RenderPass::depthMode): TestAndWrite for opaque scene content, TestOnly
+     * for translucent content that tests without writing, Disabled for HUD
+     * content drawn on top. The policy fills the depth item of every command
+     * that did not author one (RenderCommand::depthExplicit false); a
+     * StateNode that sets depth explicitly keeps winning, as it is the
+     * finer-grained intent.
+     *
+     * Changing the policy re-derives the depth state of every command, so call
+     * invalidateState() afterwards to rebuild the retained state wrappers
+     * (the vertex data is untouched).
+     *
+     * @param mode Depth handling for this slot's content.
+     */
+    void setContentDepthMode(vine::graphics::DepthMode mode);
+
+    /** @brief Gets the pass-level depth policy (see setContentDepthMode). */
+    vine::graphics::DepthMode contentDepthMode() const { return content_depth_mode_; }
+
+    /** @brief Drops the retained state wrappers so the next sync rebuilds them.
+     *
+     * The retained subtree is split into vertex DATA (arrays + bind/draw
+     * commands) and STATE (pipeline + descriptor binds). Dropping only the
+     * state wrappers makes the next syncRenderCommands() rebuild the pipelines
+     * for every geometry while reusing the uploaded mesh, which is what a
+     * pass-level state change (a new depth policy, a swapped shader set) needs.
+     */
+    void invalidateState();
 
     /** @brief Gets the number of distinct compiled pipeline variants.
      *
@@ -247,6 +280,10 @@ class V_VSG_API SceneBridge {
     ::vsg::ref_ptr<::vsg::ShaderSet> baseShaderSet();
 
     ::vsg::ref_ptr<::vsg::ShaderSet> shader_set_;
+    // Pass-level depth policy applied to commands that did not author depth
+    // (see setContentDepthMode); part of the retained state identity, so
+    // changing it invalidates the state wrappers.
+    vine::graphics::DepthMode content_depth_mode_ = vine::graphics::DepthMode::TestAndWrite;
     // Shares layout / pipeline / descriptor-set content across every geometry
     // this bridge builds: GraphicsPipelineConfigurator::copyTo() deduplicates
     // through SharedObjects (content equality), so geometry that resolves to

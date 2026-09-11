@@ -647,6 +647,12 @@ TEST(SceneBridgePipelineSharingTest, StateEditRebuildsStateReusesData)
     const auto first_vertex_data = first_bind->arrays[0]->data;
     ASSERT_EQ(bridge.pipelineVariantCount(), 1u);
 
+    // The depth item is marked as authored here, exactly as the scene
+    // collector does for a command under a StateNode that sets depth: an
+    // authored depth item overrides the pass-level depth policy
+    // (SceneBridge::setContentDepthMode), while an un-authored one is filled
+    // from it.
+    commands[0].depthExplicit          = true;
     // Disable the depth test: a state edit, not a material/data edit.
     commands[0].renderState.depth.test = false;
     created.clear();
@@ -669,6 +675,74 @@ TEST(SceneBridgePipelineSharingTest, StateEditRebuildsStateReusesData)
     ASSERT_EQ(created.size(), 1u);
     EXPECT_EQ(bridge.pipelineVariantCount(), 2u);
     EXPECT_GT(bridge.variantReuseCount(), 0u);
+}
+
+/**
+ * @brief The pass-level depth policy reaches the pipeline for content that did
+ * not author a depth item, and changing it rebuilds only the state wrapper.
+ *
+ * Regression for the defect where RenderPass::setDepthMode / setClearEnabled
+ * had no effect: the depth state was baked into the slot's shader set but then
+ * overwritten by the command's resolved state, so Disabled / TestOnly content
+ * (HUD, translucent) was silently depth-tested and depth-writing. The policy
+ * now fills the depth item of un-authored commands, and a policy change is a
+ * state change (data reused).
+ */
+TEST(SceneBridgePipelineSharingTest, ContentDepthModeAppliesAndRebuildsState)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+    auto geometry = makeTriangle(0);
+
+    std::vector<RenderCommand> commands;
+    commands.emplace_back(geometry, material, Mat4d()); // depth not authored
+    ASSERT_FALSE(commands[0].depthExplicit);
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+    const auto first_root = created[0];
+    auto*      first_bind = findBindVertexBuffers(first_root.get());
+    ASSERT_NE(first_bind, nullptr);
+    const auto first_vertex_data = first_bind->arrays[0]->data;
+    ASSERT_EQ(bridge.pipelineVariantCount(), 1u);
+
+    // TestOnly (translucent: test on, write off) differs from the default
+    // TestAndWrite, so it must add a variant - and only a state rebuild.
+    bridge.setContentDepthMode(vine::graphics::DepthMode::TestOnly);
+    bridge.invalidateState();
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+    EXPECT_EQ(created[0].get(), first_root.get())
+        << "a depth-policy change must keep the retained transform";
+    auto* second_bind = findBindVertexBuffers(created[0].get());
+    ASSERT_NE(second_bind, nullptr);
+    EXPECT_EQ(second_bind->arrays[0]->data, first_vertex_data)
+        << "a depth-policy change must not re-materialise vertex data";
+    EXPECT_EQ(bridge.pipelineVariantCount(), 2u);
+
+    // Disabled (HUD: no test, no write) is a third distinct state.
+    bridge.setContentDepthMode(vine::graphics::DepthMode::Disabled);
+    bridge.invalidateState();
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+    EXPECT_EQ(bridge.pipelineVariantCount(), 3u);
+
+    // An authored depth item wins over the pass policy; authoring exactly what
+    // the current policy would derive reuses the same variant (the policy
+    // folds into the same state space, not a parallel one).
+    commands[0].depthExplicit          = true;
+    commands[0].renderState.depth.test = true;
+    commands[0].renderState.depth.write = false; // == the previous policy
+    bridge.invalidateState();
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+    EXPECT_EQ(bridge.pipelineVariantCount(), 3u)
+        << "an authored state equal to the derived one must reuse its variant";
 }
 
 /**

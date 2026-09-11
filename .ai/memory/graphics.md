@@ -1,5 +1,19 @@
 # Graphics 模块核心
 
+> 2026-09-11 **pass 生命周期（架构级）**：新增 `RenderBackend::beginPass(pass)/endPass()/releasePass(pass)`
+> （默认空实现，向后兼容）；**后端保留状态的槽身份从 `(camera, order)` 改为 pass 指针**
+> （`VsgRenderer::SlotKey`；直接驱动后端、不调 beginPass 的调用方仍走历史键）。引擎在每个 enabled pass
+> 前 beginPass、后 endPass，removePass/clearPasses 额外调 releasePass。修复：禁用 pass 仍绘制（幽灵）、
+> 运行期换 camera/RT 残留旧槽、槽 depth/presenting 首帧冻结、同 (camera,order) 两 pass 互相覆盖、
+> pending 泄漏到下一 pass。另修：`shareDepth`+`clearDepth=false` 每帧重建（H4）、释放被借深度者留悬垂屏障（H5）、
+> **本帧必 present**（beginFrame 已 acquire 交换帧图像，跳过 submit → `VUID-vkAcquireNextImageKHR-07783`）。
+> **DepthMode 权威化**：`RenderCommand::depthExplicit` + `SceneBridge::setContentDepthMode` → TestOnly/Disabled
+> 真正进管线（此前被 `applyRenderStateObjects` 覆盖=失效）。**铁律：先 `deviceWaitIdle` 再删被提交命令缓冲引用的
+> 对象**（否则 `VUID-vkDestroyPipeline-00765`/`vkDestroySampler-01082`，validation 实测抓到）。
+> 新诊断 `VsgRenderer::offscreenBuildCount()`（稳态不增长）。详见 `.ai/design/vsg-pass-lifecycle.md`。
+> 验证：test_graphics 135 / test_vsg 53 / `scripts/gfx_lavapipe_check.sh` RESULT: PASS；
+> `ISSUES.md` / `REVIEW_FINDINGS.md` 顶部已加“已全部解决”状态表（原正文勿重复实现）。
+
 > **世界坐标系约定：Z-up**（robotics：X 前、Y 左、Z 上）。OrbitCameraManipulator 与全部
 > app_shell demo 已按此转换（内容映射 Y-up `(x,y_h,z)` → Z-up `(x,z,y_h)`；demo 相机 up=`(0,0,1)`）。
 > vsg/glTF 生态原生 Y-up，将来在加载边界转换；URDF 原生 Z-up。

@@ -1,5 +1,24 @@
 # gfx_backend_vsg 复查问题清单
 
+> ## ⚠️ 状态：本文件的问题已全部处理（2026-09-11 复核）
+>
+> 这是 2026-09-08 的一次复查记录。清单中的每一项**都已修复或已按文档收窄**，
+> 正文保留作为复查来源，**不要按“建议修复”重复实现**：
+>
+> | # | 现状 |
+> |---|---|
+> | 1 Lines/Points 索引被按三角形拒绝/截断 | **已修**：索引保真（仅越界拒绝），topology 进入数据身份；Points/Lines 缺法线用常量 | 
+> | 2 ScreenPass 未写当前 RenderTarget | **已修**：`drawScreenTexture/Program` 写 `setRenderTarget` 选定的当前 target（含离屏），自采样拒绝、跨 target 录制按依赖排序 |
+> | 3 Window 不遵守 clearDepth=false | **已按能力收窄并文档化**：window 恒清深度（vsg 拥有交换链 pass），需保留深度的 pass 应渲染到离屏 target；三处文档同步 |
+> | 4 custom 程序无法使用 loc2 | **已修**：custom 路径优先绑定 authored loc2（`pack_color4`），内建路径保留内部白 DYNAMIC opacity carrier |
+> | 5 不同 layout 重复 GLSL 编译 | **已修**：L1a 按 (program, revision) 编译 stage + L1b 按 (program, revision, layout) 组装 ShaderSet；`programStageCompileCount()` 钉住 |
+> | 6 readback 占位 | **已诚实标注**：`RenderTarget::readColorBuffer/readDepthBuffer` 标 NOT IMPLEMENTED，`RenderBackend::readColorBuffer/readDepthBuffer` 默认返回 false=unsupported（真实现点见注释） |
+> | 7 文档漂移 | **已处理**：`vine-to-vsg-data-flow.md` 页首加权威声明；本文件与 `ISSUES.md` 顶部加状态表；当前权威见 `.ai/design/vsg-pass-lifecycle.md` |
+>
+> 2026-09-11 另外修复了正文未覆盖的一批生命周期缺陷（pass 身份/回收、深度策略归属、
+> 深度共享重建风暴与释放、每帧必须提交）——见 `.ai/design/vsg-pass-lifecycle.md`。
+> 验证：`test_graphics` 135 / `test_vsg` 53 / `scripts/gfx_lavapipe_check.sh` RESULT: PASS。
+
 > 复查范围：`src/viz/graphics` 的公开接口与实现、`gfx_backend_vsg`、VSG/graphics
 > 测试用例、设计文档。
 >

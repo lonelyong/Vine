@@ -153,7 +153,12 @@ void collectNodeCommands(const Node* node, const Frustum& frustum, float opacity
         cmd.isTransparent = effective < 1.0f - 1e-6f;
         // Render state folds along the node path: every StateNode from the
         // scene root to this geometry contributes, deeper nodes overriding.
-        cmd.renderState = effectiveRenderState(node);
+        // The fold is computed once so the backend can also tell whether the
+        // depth item was explicitly authored (an explicit StateNode depth wins
+        // over the pass-level depth policy, see RenderCommand::depthExplicit).
+        const RenderState folded = collectRenderState(node);
+        cmd.renderState    = resolveRenderState(folded);
+        cmd.depthExplicit  = folded.depth.has_value();
         // Shading program resolves leaf-first then ancestor StateNodes.
         cmd.program = effectiveProgram(node);
         return;

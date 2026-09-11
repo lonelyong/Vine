@@ -155,6 +155,11 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      * one pass the engine draws nothing. Registering the same pass instance
      * twice is ignored.
      *
+     * Two DIFFERENT passes may share a camera and an order: the backend keys
+     * its retained state by the pass, so they stay separate content (the order
+     * only decides their stacking inside the target). Give them distinct
+     * orders (and a sub-viewport / clear policy) when they must layer.
+     *
      * @param pass  Pass to add (the engine keeps a reference).
      * @param order Execution order (ascending; any integer allowed).
      */
@@ -178,7 +183,8 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     /** @brief Removes a previously added pass.
      *
      * The pass is dropped from the ordered list. Its backend resources are
-     * released: the window layer the backend retained keyed by the pass's
+     * released: the retained per-pass GPU state (RenderBackend::releasePass,
+     * keyed by the pass itself), the legacy window layer keyed by the pass's
      * camera (RenderBackend::releaseWindowLayer), plus any off-screen render
      * target the pass owns (RenderBackend::releaseRenderTarget).
      *
@@ -189,8 +195,8 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     /** @brief Removes all registered passes.
      *
      * Every registered pass is removed and its backend resources released
-     * (window layer keyed by the pass camera, plus any off-screen render
-     * target the pass owns).
+     * (the retained per-pass GPU state, the legacy camera-keyed window layer,
+     * plus any off-screen render target the pass owns).
      */
     void clearPasses();
 
