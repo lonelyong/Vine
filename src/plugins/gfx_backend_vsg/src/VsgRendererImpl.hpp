@@ -77,6 +77,10 @@ struct VsgRenderer::Impl {
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_testonly_shader_set;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_off_shader_set;
     bool                                initialized = false;
+    // The device report is logged once, from the first submitted frame: the
+    // window's Vulkan device / swapchain only materialises when it is first
+    // used, so querying it during initialize() returns nothing.
+    bool                                device_reported = false;
 
     /** @brief Identifies one content slot.
      *

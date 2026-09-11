@@ -59,6 +59,7 @@
 #include <vsg/utils/ShaderCompiler.h>
 #include <vsg/utils/ShaderSet.h>
 #include <vsg/vk/Device.h>
+#include <vsg/vk/PhysicalDevice.h>
 #include <vsg/vk/Framebuffer.h>
 #include <vsg/vk/RenderPass.h>
 #include <vsg/vk/ResourceRequirements.h>
@@ -608,6 +609,26 @@ bool VsgRenderer::incrementalCompileViews()
 
 void VsgRenderer::submitFrame()
 {
+    // Which device this session actually runs on, on the record: "the gate
+    // passed" is only meaningful together with the driver it passed on, and a
+    // software rasteriser and a real GPU exercise different paths. Reported on
+    // the first submit, because that is where the window's device and swapchain
+    // exist (vsg creates them lazily, on first use).
+    if (!impl->device_reported && impl->window != nullptr) {
+        impl->device_reported = true;
+        const ::vsg::ref_ptr<::vsg::PhysicalDevice> physical = impl->window->getPhysicalDevice();
+        if (physical != nullptr) {
+            const VkPhysicalDeviceProperties& properties = physical->getProperties();
+            std::fprintf(stderr, "[VsgRenderer] device: %s (Vulkan %u.%u.%u, driver %u, type %d)\n",
+                         properties.deviceName, VK_API_VERSION_MAJOR(properties.apiVersion),
+                         VK_API_VERSION_MINOR(properties.apiVersion), VK_API_VERSION_PATCH(properties.apiVersion),
+                         properties.driverVersion, static_cast<int>(properties.deviceType));
+        }
+        else {
+            std::fprintf(stderr, "[VsgRenderer] device: (none reported by the window)\n");
+        }
+    }
+
     if (!impl->initialized || impl->viewer == nullptr) {
         return;
     }

@@ -636,3 +636,59 @@ MODULE）。
 
 **验收**：仅注释变更（零代码改动），全量重编通过；test_vsg 67、test_graphics 151 全绿；
 `scripts/gfx_lavapipe_check.sh` → `RESULT: PASS`。头文件与本节是"实现者视角"的同一份契约。
+
+## 15. 像素回读与像素断言（D20 的正面修补，2026-09-11）
+
+**问题**：整套门禁的信号一直是"没有 VUID"。而 VUID 只说明 API 调用合法，**不说明画出了任何
+东西** —— 这一节的第一版实现就撞上了：像素断言一上线，立刻报告"离屏目标中心像素是清屏色"，
+而那次运行是 0 VUID 的。
+
+**1. `RenderBackend::readColorBuffer` 在 vsg 后端落地**（`VsgRendererTargets.cpp`，契约见
+`RenderBackend.hpp` 既有文档）：
+
+- 只支持**离屏 RGBA8** 附件：blit 到一张 `VK_IMAGE_TILING_LINEAR` 的宿主可见图 → 按
+  `rowPitch` 收成紧凑 RGBA8 返回。float 附件（RGBA16F/32F）需要转换与语义约定，**诚实报
+  不支持**（返回 false + `ContentSkipped` 警告），不猜测、不误打包。
+- 同步语义：先 `deviceWaitIdle()`（写该目标的帧必须已完成）；源图在渲染通道结束时处于
+  `SHADER_READ_ONLY`，因此屏障先转 `TRANSFER_SRC`、拷完再转回 —— 下一帧仍能采样它。
+- 一次性提交复用 vsg 公共设施（`CommandPool` + `Fence` + `submitCommandsToQueue`），
+  与独立颜色探针（`vsg_probe`）同一条已验证路径。
+
+**踩到的坑（写下来省下一个人半小时）**：第一版最后一道屏障写
+`dstStageMask = TRANSFER|FRAGMENT_SHADER` + `dstAccessMask = HOST_READ`，立刻被 validation
+抓到 `VUID-vkCmdPipelineBarrier-dstAccessMask-02816`：`HOST_READ` 只能配
+`VK_PIPELINE_STAGE_HOST_BIT`。**这正是 validation 在"布局/屏障"这一层无可替代的价值**。
+
+**2. selftest 新增像素阶段**（`runPixelReadbackPhase`）：把世界空间四边形（带法线、红色
+diffuse）画进自建离屏目标并断言
+
+| 断言 | 含义 |
+| --- | --- |
+| 中心像素"明显偏红"（R ≥ 30 且 R > G+15、R > B+15） | 被光照的表面真的被光栅化进了该目标 |
+| 角像素 == 清屏色 (10,20,30)（±1） | 清屏真的到达图像，且四边形没有盖满整张图 |
+| 两处 alpha == 255 | 不透明写入 |
+| RGBA16F 附件 → `readColorBuffer` 返回 false | 不支持的能力诚实上报，不返回似是而非的数据 |
+
+阶段自带诊断 sink 并把收到的东西打到 stderr：内容桥只向 sink 上报，**没有 sink 的拒绝是
+完全静默的**（这本身就是"只靠无 VUID 会漏掉什么"的又一层）。
+
+**3. 顺带查明的旧盲点**：selftest 里原有的辅助几何**占 0 像素** —— 用户程序把顶点直接当裁剪
+空间坐标用，而 `makeTriangle(x)` / `makeChannelTriangle()` 的顶点 x 全相同（边长零面积）；用
+Phong 通路时三角形又与世界视线共面（正对侧看）。也就是说**过去所有"无 VUID"通过，从未证明
+过任何一次光栅化**。像素阶段因此改用世界空间四边形。
+
+**4. 设备自述**：后端在**首次 submit** 时打印一行
+`[VsgRenderer] device: <name> (Vulkan x.y.z, driver N, type T)`。为什么要等首帧：vsg 的
+`Window` 懒创建 device/swapchain，`initialize()` 期间 `getPhysicalDevice()` 返回空
+（第一版写在 initialize 里，条件恒假、静默不打印 —— 又一个"静默"教训）。harness 现在把这行
+提出来显示成 `[info] Vulkan device: ...`，并把 `[selftest] FAIL` 当硬失败。
+
+**5. 环境事实（D20 的剩余部分）**：本机只有软件光栅化器 —— `VK_ICD_FILENAMES` 强制或默认，
+拿到的都是 `llvmpipe (LLVM 20.1.2) / Vulkan 1.4.318`；`/dev/dri` 不存在（`/dev/dxg` 在，但没有
+可用的 GPU Vulkan 驱动）。因此"真机 GPU 冒烟"仍未完成，只是现在**任何一次绿灯都能说出自己是在
+什么设备上绿的**。门禁摘要里同时给出 ICD 路径与设备名。
+
+**验证**：test_vsg 67、test_graphics 151 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`，
+输出含 `[info] Vulkan device: llvmpipe ...`；像素阶段输出
+`centre=(46,8,3) corner=(10,20,30) clear=(10,20,30)`（红四边形 vs 清屏色）；
+selftest exit 0、0 VUID；该断言已被证明会响（修好之前它以 0 VUID 的状态报出"中心是清屏色"）。

@@ -113,6 +113,36 @@ GeometryPtr makeChannelTriangle()
     return geom;
 }
 
+/**
+ * @brief Builds a camera-facing quad in WORLD space with surface normals.
+ *
+ * A pixel assertion needs geometry the shaded pipeline actually rasterises, so
+ * the quad is a real world-space surface (x,y in [-0.4, 0.4] on z = 0, normal
+ * +z) that the camera at (0,0,5) sees face-on, unlike the clip-space helper
+ * geometries the other phases use: those place every vertex at one x, so they
+ * are edge-on (or exactly on the near plane) and occupy no pixels at all. That
+ * is why "no validation error" could never notice a rendering regression.
+ *
+ * @return The quad geometry (two triangles, one normal).
+ */
+GeometryPtr makeVisibleQuad()
+{
+    auto geom = GeometryPtr(new Geometry());
+    vine::geometry::Vec3fArray positions;
+    const float corners[6][2] = { { -0.4f, -0.4f }, { 0.4f, -0.4f }, { 0.4f, 0.4f },
+                                 { -0.4f, -0.4f }, { 0.4f, 0.4f },  { -0.4f, 0.4f } };
+    for (const auto& corner : corners) {
+        positions.emplace_back(corner[0], corner[1], 0.0f);
+    }
+    geom->setPositions(positions);
+    vine::geometry::Vec3fArray normals;
+    for (int i = 0; i < 6; ++i) {
+        normals.emplace_back(0.0f, 0.0f, 1.0f);
+    }
+    geom->setNormals(normals);
+    return geom;
+}
+
 /** @brief Builds a custom program that reads vine_Attribute3 (loc3) as colour. */
 ShaderProgramPtr makeAttributeProgram()
 {
@@ -612,6 +642,164 @@ bool runDiagnosticsPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
     return ok;
 }
 
+/**
+ * @brief Asserts actual PIXELS instead of only "no validation error".
+ *
+ * A validation clean run says the API calls were legal; it does not say
+ * anything was drawn. This phase renders a known scene into an off-screen
+ * target and checks the pixels that come back:
+ *
+ *  1. the target is cleared to a distinctive colour and a solid-coloured quad
+ *     is drawn over its middle with a user program, so a centre pixel must hold
+ *     the quad colour while a corner pixel must still hold the clear colour —
+ *     if the pass never reached the target, or the clear / the rasteriser
+ *     silently did nothing, the read-back says so;
+ *  2. a float attachment is reported as unsupported (false) rather than being
+ *     returned wrongly packed — the readback contract is honest about what it
+ *     cannot do (RenderBackend::readColorBuffer).
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quad is drawn through.
+ * @param frames   Frames to drive before reading back.
+ * @return true when the pixels matched, false otherwise.
+ */
+bool runPixelReadbackPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setSize(256, 144);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D24);
+
+    const vine::Color clear_color(10, 20, 30, 255);
+    auto              quad     = makeVisibleQuad();
+    auto              material = MaterialPtr(new Material());
+    material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));   // distinctly red
+    RenderCommand command(quad, material, Mat4d());
+
+    // Listen while this phase runs: a content bridge reports to the installed
+    // sink only, so without one a rejected geometry would leave no trace at all
+    // — the exact blind spot a pixel assertion exists to close.
+    std::vector<vine::graphics::RenderDiagnostic> received;
+    renderer.setDiagnosticSink([&received](const vine::graphics::RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+
+    auto pass = RenderPassPtr(new RenderPass());
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(target.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        renderer.clear(clear_color, true);
+        renderer.setLights({});
+        renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+
+    for (const auto& diagnostic : received) {
+        std::fprintf(stderr, "[selftest] pixels: backend reported [%s]: %s\n",
+                     diagnostic.category == vine::graphics::DiagnosticCategory::GeometryRejected ? "geometry rejected"
+                     : diagnostic.category == vine::graphics::DiagnosticCategory::ShaderFallback ? "shader fallback"
+                                                                                               : "other",
+                     diagnostic.message.stdstr().c_str());
+    }
+
+    std::vector<std::uint8_t> pixels;
+    if (!renderer.readColorBuffer(target.get(), 0, pixels)) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: readColorBuffer() refused the RGBA8 attachment this phase just rendered into\n");
+        return false;
+    }
+    const std::size_t expected = 256u * 144u * 4u;
+    if (pixels.size() != expected) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() returned %zu bytes, expected %zu\n",
+                     pixels.size(), expected);
+        return false;
+    }
+
+    const auto channel_at = [&pixels](int x, int y, int channel) {
+        return static_cast<int>(pixels[(static_cast<std::size_t>(y) * 256u + static_cast<std::size_t>(x)) * 4u +
+                                       static_cast<std::size_t>(channel)]);
+    };
+    const auto close_to = [&channel_at](int x, int y, int r, int g, int b, int tolerance) {
+        return std::abs(channel_at(x, y, 0) - r) <= tolerance &&
+               std::abs(channel_at(x, y, 1) - g) <= tolerance &&
+               std::abs(channel_at(x, y, 2) - b) <= tolerance;
+    };
+
+    // Centre (128,72) of a 256x144 target: inside the quad, so the rasterised,
+    // lit surface must be there. The exact value depends on the lighting, so
+    // the assertion is "clearly red" — the material's diffuse is red and the
+    // clear colour is dark blue-grey, which no plausible light setup turns
+    // into each other.
+    const int centre_r = channel_at(128, 72, 0);
+    const int centre_g = channel_at(128, 72, 1);
+    const int centre_b = channel_at(128, 72, 2);
+    if (centre_r < 30 || centre_r < centre_g + 15 || centre_r < centre_b + 15) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: centre pixel is (%d,%d,%d); a lit red quad was drawn there"
+                     " — the pass did not reach the off-screen target\n",
+                     centre_r, centre_g, centre_b);
+        ok = false;
+    }
+    // Corner (4,4): outside the quad, so the clear colour must still be there.
+    if (!close_to(4, 4, 10, 20, 30, 1)) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: corner pixel is (%d,%d,%d), expected the clear colour (10,20,30)"
+                     " — the clear did not reach the off-screen target\n",
+                     channel_at(4, 4, 0), channel_at(4, 4, 1), channel_at(4, 4, 2));
+        ok = false;
+    }
+    // Alpha must be opaque on both (the quad writes 1.0, the clear does too).
+    if (channel_at(128, 72, 3) != 255 || channel_at(4, 4, 3) != 255) {
+        std::fprintf(stderr, "[selftest] FAIL: alpha is (%d,%d), expected opaque\n",
+                     channel_at(128, 72, 3), channel_at(4, 4, 3));
+        ok = false;
+    }
+
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] pixels: centre=(%d,%d,%d) corner=(%d,%d,%d) clear=(10,20,30) over %d frames\n",
+                     channel_at(128, 72, 0), channel_at(128, 72, 1), channel_at(128, 72, 2),
+                     channel_at(4, 4, 0), channel_at(4, 4, 1), channel_at(4, 4, 2), frames);
+    }
+
+    // A float attachment cannot be packed as RGBA8: the contract says report it
+    // as unsupported instead of returning something plausible-but-wrong.
+    auto float_target = RenderTargetPtr(new RenderTarget());
+    float_target->setSize(64, 64);
+    float_target->attachColor(RenderTarget::ColorFormat::RGBA16F);
+    float_target->attachDepth(RenderTarget::DepthFormat::D24);
+    renderer.beginFrame();
+    renderer.beginPass(pass.get());
+    renderer.setPassOrder(0);
+    renderer.setRenderTarget(float_target.get());
+    renderer.clear(vine::Color(0, 0, 0, 255), true);
+    renderer.setLights({});
+    renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+    renderer.endPass();
+    renderer.endFrame();
+    renderer.swapBuffers();
+
+    std::vector<std::uint8_t> floats;
+    if (renderer.readColorBuffer(float_target.get(), 0, floats)) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: readColorBuffer() claimed to read an RGBA16F attachment (%zu bytes)\n",
+                     floats.size());
+        ok = false;
+    }
+    else if (ok) {
+        std::fprintf(stderr, "[selftest] pixels: RGBA16F attachment honestly reported unsupported\n");
+    }
+    renderer.setDiagnosticSink({});
+    return ok;
+}
+
 }  // namespace
 
 int main()
@@ -855,6 +1043,12 @@ int main()
     contract_ok = runSharedDepthPhase(*renderer, camera, window_commands, 4) && contract_ok;
     contract_ok = runInFlightChurnPhase(*renderer, camera, 8) && contract_ok;
     contract_ok = runDiagnosticsPhase(*renderer, camera, 6) && contract_ok;
+    contract_ok = runPixelReadbackPhase(*renderer, camera, 4) && contract_ok;
+    if (!contract_ok) {
+        std::fprintf(stderr,
+                     "[selftest] FAILED — a pass-lifecycle / depth-sharing / pixel-readback invariant was violated\n");
+        return 1;
+    }
 
     // ---- Teardown paths, then a few frames to prove nothing dangles ---------
     backend->releaseWindowLayer(camera.get(), 1);   // drop the HUD slot
@@ -862,10 +1056,6 @@ int main()
     for (int i = 0; i < 3; ++i) {
         backend->beginFrame();
         backend->setPassOrder(0);
-    if (!contract_ok) {
-        std::fprintf(stderr, "[selftest] FAILED — a pass-lifecycle / depth-sharing invariant was violated\n");
-        return 1;
-    }
         backend->setRenderTarget(nullptr);
         backend->clear(vine::Color(25, 25, 45, 255), true);
         backend->setLights({});

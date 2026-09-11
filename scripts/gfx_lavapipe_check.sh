@@ -29,6 +29,13 @@
 #   VINE_VSG_DEBUG_LAYER    Existing value wins; defaults to ON when the
 #                           Khronos validation layer is installed (0 disables).
 #
+# The self-test asserts PIXELS, not just "no validation error": it reads back
+# an off-screen target (RenderBackend::readColorBuffer) and requires that a lit
+# quad reached it and that its corners still hold the clear colour, so a run
+# that stayed validation-clean while drawing nothing FAILS. The device the run
+# exercised is printed as "[info] Vulkan device: ..." — on a machine without a
+# GPU driver that is a software rasteriser (llvmpipe / lavapipe).
+#
 # Exit code 0 when every stage is clean, 1 otherwise.
 
 set -u
@@ -151,12 +158,24 @@ else
     (cd "$BUILD" && VINE_SELFTEST_FRAMES="$SELF_FRAMES" timeout "$SECONDS_V" ./bin/vsg_backend_selftest) >"$log" 2>&1
     rc=$?
     echo "    (exit=$rc; 124 = still running when the timeout fired, i.e. OK)"
+    # Which device this run actually exercised: a green result is only
+    # attributable when the driver is part of the output (a software rasteriser
+    # and a real GPU do not exercise the same code paths).
+    device=$(grep -m1 "\[VsgRenderer\] device:" "$log" | sed 's/^.*device: //')
+    [ -n "$device" ] && echo "[info] Vulkan device: $device"
     # The self-test is expected to finish (0); a timeout (124) is also OK.
     if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
         echo "[FAIL] vsg_backend_selftest exited early with $rc"
         tail -30 "$log"
         FAILED=1
     else
+        # The self-test's pixel assertions are hard failures: a run that stayed
+        # validation-clean while drawing nothing must not read as a pass.
+        if grep -q "\[selftest\] FAIL" "$log"; then
+            echo "[FAIL] vsg_backend_selftest reported a pixel/invariant failure"
+            grep "\[selftest\] FAIL" "$log" | head -10
+            FAILED=1
+        fi
         report "vsg_backend_selftest" "$log"
     fi
 fi

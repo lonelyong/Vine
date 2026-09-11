@@ -191,6 +191,26 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void releaseRenderTarget(vine::graphics::RenderTarget* target) override;
 
+    /** @brief Reads back a colour attachment of an off-screen render target.
+     *
+     * Synchronously copies colour attachment @p attachment of @p target into
+     * @p outPixels as packed RGBA8 (width * height * 4 bytes, row-major) — the
+     * device-side readback that lets a harness assert PIXELS, so a rendering
+     * regression is caught by the picture instead of by the absence of
+     * validation errors. RGBA8 attachments are read directly; a float
+     * attachment (RGBA16F / RGBA32F) is reported as unsupported rather than
+     * being silently mis-packed, and the window target has no off-screen image
+     * to read.
+     *
+     * @param target     Off-screen target this backend rendered into.
+     * @param attachment Colour attachment index in [0, target->colorCount()).
+     * @param outPixels  Receives the packed RGBA8 pixels on success.
+     * @return true when the pixels were read; false when the target was never
+     *         built, the attachment is out of range or its format is not RGBA8.
+     */
+    bool readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
+                         std::vector<std::uint8_t>& outPixels) override;
+
     /** @brief Renders the current frame from the render command stream.
      *
      * The retained vsg scene is reconciled against the commands (SceneBridge)

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <set>
@@ -10,14 +11,20 @@
 
 #include <vsg/app/RenderGraph.h>
 #include <vsg/app/View.h>
+#include <vsg/commands/BlitImage.h>
 #include <vsg/commands/PipelineBarrier.h>
 #include <vsg/lighting/Light.h>
 #include <vsg/state/Image.h>
 #include <vsg/state/ImageView.h>
 #include <vsg/state/ViewportState.h>
 #include <vsg/state/material.h>
+#include <vsg/vk/CommandPool.h>
 #include <vsg/vk/Device.h>
+#include <vsg/vk/DeviceMemory.h>
+#include <vsg/vk/Fence.h>
 #include <vsg/vk/Framebuffer.h>
+#include <vsg/vk/PhysicalDevice.h>
+#include <vsg/vk/SubmitCommands.h>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Node.hpp>
@@ -638,6 +645,140 @@ void VsgRenderer::placeViewByOrder(vine::graphics::RenderTarget* target,
         }
     }
     children.insert(it, view); // ref_ptr<View> -> ref_ptr<Node> (View is a Node)
+}
+
+bool VsgRenderer::readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
+                                  std::vector<std::uint8_t>& outPixels)
+{
+    if (target == nullptr || impl->viewer == nullptr || impl->window == nullptr) {
+        // Nothing has been rendered off-screen in this session: the request is
+        // unsupported, which is what false means (see the base contract).
+        return false;
+    }
+    const auto entry = impl->targets.find(target);
+    if (entry == impl->targets.end() || entry->second.graph == nullptr) {
+        return false;
+    }
+    auto& built = entry->second;
+    if (attachment < 0 || static_cast<std::size_t>(attachment) >= built.color_images.size() ||
+        built.width <= 0 || built.height <= 0) {
+        reportFailure(vine::graphics::DiagnosticSeverity::Error,
+                      vine::graphics::DiagnosticCategory::ContentSkipped,
+                      formatDiagnostic(u8"readColorBuffer: attachment %d is out of range for this target", attachment));
+        return false;
+    }
+    // The packed-RGBA8 output contract needs a same-format blit. A float
+    // attachment would have to be converted (and the caller told how), so it is
+    // reported as unsupported instead of returning wrongly packed bytes.
+    if (target->colorFormat(attachment) != vine::graphics::RenderTarget::ColorFormat::RGBA8) {
+        reportFailure(vine::graphics::DiagnosticSeverity::Warning,
+                      vine::graphics::DiagnosticCategory::ContentSkipped,
+                      formatDiagnostic(u8"readColorBuffer: attachment %d is not RGBA8 (packed RGBA8 readback only)", attachment));
+        return false;
+    }
+
+    const std::uint32_t width  = static_cast<std::uint32_t>(built.width);
+    const std::uint32_t height = static_cast<std::uint32_t>(built.height);
+
+    // The frame that wrote this target must be complete before its image is
+    // copied out; this call is synchronous by contract.
+    impl->viewer->deviceWaitIdle();
+
+    auto device   = impl->window->getDevice();
+    auto physical = impl->window->getPhysicalDevice();
+    auto source   = built.color_images[attachment];
+    if (device == nullptr || physical == nullptr || source == nullptr) {
+        return false;
+    }
+    const VkFormat format = source->format;
+    VkFormatProperties properties{};
+    vkGetPhysicalDeviceFormatProperties(*physical, format, &properties);
+    if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0 ||
+        (properties.linearTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0) {
+        reportFailure(vine::graphics::DiagnosticSeverity::Warning,
+                      vine::graphics::DiagnosticCategory::ContentSkipped,
+                      formatDiagnostic(u8"readColorBuffer: format %d cannot be blitted", static_cast<int>(format)));
+        return false;
+    }
+
+    // A linear host-visible image the pixels land in (rows may carry padding,
+    // see rowPitch below): the same shape the standalone colour probe uses.
+    auto destination         = ::vsg::Image::create();
+    destination->imageType   = VK_IMAGE_TYPE_2D;
+    destination->format      = format;
+    destination->extent      = VkExtent3D{ width, height, 1 };
+    destination->mipLevels   = 1;
+    destination->arrayLayers = 1;
+    destination->samples     = VK_SAMPLE_COUNT_1_BIT;
+    destination->tiling      = VK_IMAGE_TILING_LINEAR;
+    destination->usage       = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    destination->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    destination->compile(device);
+    auto memory = ::vsg::DeviceMemory::create(device, destination->getMemoryRequirements(device->deviceID),
+                                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    destination->bind(memory, 0);
+
+    const VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    auto                          commands = ::vsg::Commands::create();
+    // The attachment is sampleable when the render pass ends (its final layout),
+    // so it is made a transfer source here and handed back below: the next
+    // frame samples it again.
+    commands->addChild(::vsg::PipelineBarrier::create(
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+        ::vsg::ImageMemoryBarrier::create(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, source, range),
+        ::vsg::ImageMemoryBarrier::create(0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination, range)));
+
+    VkImageBlit region{};
+    region.srcSubresource = VkImageSubresourceLayers{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.srcOffsets[1]  = VkOffset3D{ static_cast<std::int32_t>(width), static_cast<std::int32_t>(height), 1 };
+    region.dstSubresource = VkImageSubresourceLayers{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.dstOffsets[1]  = VkOffset3D{ static_cast<std::int32_t>(width), static_cast<std::int32_t>(height), 1 };
+    auto blit            = ::vsg::BlitImage::create();
+    blit->srcImage       = source;
+    blit->srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    blit->dstImage       = destination;
+    blit->dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    blit->regions.push_back(region);
+    blit->filter = VK_FILTER_NEAREST;
+    commands->addChild(blit);
+
+    commands->addChild(::vsg::PipelineBarrier::create(
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0,
+        ::vsg::ImageMemoryBarrier::create(VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT,
+                                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, source, range),
+        ::vsg::ImageMemoryBarrier::create(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT,
+                                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                                          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination, range)));
+
+    const auto queue_family = physical->getQueueFamily(VK_QUEUE_GRAPHICS_BIT);
+    auto       command_pool = ::vsg::CommandPool::create(device, queue_family);
+    auto       fence        = ::vsg::Fence::create(device);
+    auto       queue        = device->getQueue(queue_family);
+    ::vsg::submitCommandsToQueue(command_pool, fence, 100000000000, queue,
+                                [&commands](::vsg::CommandBuffer& command_buffer) { commands->record(command_buffer); });
+
+    VkImageSubresource  sub_resource{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 };
+    VkSubresourceLayout sub_layout{};
+    vkGetImageSubresourceLayout(*device, destination->vk(device->deviceID), &sub_resource, &sub_layout);
+    auto mapped = ::vsg::MappedData<::vsg::ubyteArray>::create(memory, sub_layout.offset, 0,
+                                                               ::vsg::Data::Properties{ format }, sub_layout.rowPitch * height);
+
+    // Pack the rows: a linear image may pad them (rowPitch), the caller gets
+    // tightly packed RGBA8.
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * 4u;
+    outPixels.resize(row_bytes * height);
+    for (std::uint32_t row = 0; row < height; ++row) {
+        std::memcpy(outPixels.data() + static_cast<std::size_t>(row) * row_bytes,
+                    mapped->dataPointer(static_cast<std::size_t>(row) * sub_layout.rowPitch), row_bytes);
+    }
+    return true;
 }
 
 V_VSG_NS_END

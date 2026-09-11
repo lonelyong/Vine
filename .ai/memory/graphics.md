@@ -1,5 +1,15 @@
 # Graphics 模块核心
 
+> 2026-09-11 **像素回读 + 像素断言（D20 正面修补）**：`VsgRenderer::readColorBuffer` 落地
+> （离屏 RGBA8：blit 到线性宿主可见图 + 按 rowPitch 收成紧凑 RGBA8；float 附件诚实返回 false
+> + ContentSkipped；同步语义先 `deviceWaitIdle`，源图 SHADER_READ_ONLY↔TRANSFER_SRC 双向屏障）。
+> selftest 新增 `runPixelReadbackPhase`（中心像素=被光照红四边形、角像素=清屏色、alpha=255、
+> RGBA16F 返回 false），harness 把 `[selftest] FAIL` 当硬失败。**旧盲点**：原有辅助几何占 0 像素
+> （裁剪空间 x 全相同 / Phong 通路下与世界视线共面），所以过去"无 VUID"从未证明光栅化。
+> 后端在**首次 submit** 打印 `[VsgRenderer] device: ...`（vsg 懒创建 device，initialize 期间
+> 拿不到），harness 显示为 `[info] Vulkan device:`。本机只有 llvmpipe（无 GPU 驱动），真机冒烟
+> 仍未做。设计 §15。
+
 ## 后端契约（规范性在 `RenderBackend.hpp` 类注释；预算见设计文档 §14）
 - **调用序**：`beginFrame` → 每启用 pass（order 升序）`beginPass`→`setPassOrder`→可选逐
   pass 状态→绘制→`endPass` → `endFrame` → `swapBuffers`（**唯一 present 点**）。首帧前有

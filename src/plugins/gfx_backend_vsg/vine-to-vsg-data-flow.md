@@ -431,7 +431,7 @@ sequenceDiagram
 
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|
-| D20 | 验证仅在 lavapipe + `debugLayer=false`：真机驱动差异（宽线/深度格式/严格 VUID）未覆盖；抓帧有 swapchain 无 `TRANSFER_SRC` VUID 警告 | 验证 | 🟡 |
+| D20 | 验证原先只有“无 VUID”，**没有任何像素断言**。**已补（2026-09-11，设计 §15）**：`VsgRenderer::readColorBuffer` 落地（RGBA8，离屏，blit 到线性图 + 映射回读；float 附件诚实报不支持），selftest 新增像素阶段（中心像素=被光照的红四边形、角像素=清屏色、float 附件返回 false），harness 把 `[selftest] FAIL` 当硬失败并打印实际使用的设备。**仍需**：真机 GPU 冒烟（本机只有 llvmpipe/lavapipe，无 GPU 驱动） | 验证 | 🟡 |
 | D21 | 离屏 multipass 未在最新 showcase 下复验；`VINE_VSG_OWN_WINDOW` 独立窗口 vs Qt 子窗口 compositing 主路径仍"待定" | `VsgRenderer` | 🟡 |
 | D22 | 运行期新增几何触发**全图 compile()**（非增量；启动预编译已规避，运行期历史不可靠） | `VsgRenderer::render` | 🟡 |
 | D23 | 无关基线噪声：`test_vsg` ctest SegFault（进程退出预存问题，直跑 10/10）、`test_cppstd/runtime/system` 失败；清 `_deps` 重建需联网（FETCHCONTENT） | 测试/构建 | 🟢 |
