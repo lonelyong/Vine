@@ -136,7 +136,8 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
     ::vsg::Device*                    device,
     const std::vector<VkFormat>&      color_formats,
     VkFormat                          depth_format,
-    bool                              promote_depth)
+    bool                              promote_depth,
+    bool                              color_clear)
 {
     const bool has_depth = depth_format != VK_FORMAT_UNDEFINED;
 
@@ -151,11 +152,15 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
         ::vsg::AttachmentDescription color = {};
         color.format                       = color_format;
         color.samples                      = VK_SAMPLE_COUNT_1_BIT;
-        color.loadOp                       = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.loadOp                       = color_clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         color.storeOp                      = VK_ATTACHMENT_STORE_OP_STORE;
         color.stencilLoadOp                = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         color.stencilStoreOp               = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        color.initialLayout                = VK_IMAGE_LAYOUT_UNDEFINED;
+        // A CLEAR may start from an undefined image; a LOAD reads what the
+        // previous pass left, which this backend always ends in
+        // SHADER_READ_ONLY (see the subpass-external dependency below).
+        color.initialLayout = color_clear ? VK_IMAGE_LAYOUT_UNDEFINED
+                                          : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         color.finalLayout                  = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         attachments.push_back(color);
 
@@ -196,6 +201,9 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
     ext_to_sub.dstSubpass               = 0;
     ext_to_sub.srcStageMask             = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
     ext_to_sub.dstStageMask             = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    // A colour LOAD consumes what the previous pass wrote: make those writes
+    // available (a CLEAR starts from UNDEFINED and needs no source access).
+    ext_to_sub.srcAccessMask            = color_clear ? 0u : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     ext_to_sub.dstAccessMask            = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     dependencies.push_back(ext_to_sub);
 
@@ -263,7 +271,8 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
     ::vsg::Device*               device,
     const std::vector<VkFormat>& color_formats,
     VkFormat                     depth_format,
-    bool                         initial_clear)
+    bool                         initial_clear,
+    bool                         color_clear)
 {
     const bool has_depth = depth_format != VK_FORMAT_UNDEFINED;
 
@@ -278,11 +287,12 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
         ::vsg::AttachmentDescription color = {};
         color.format                       = color_format;
         color.samples                      = VK_SAMPLE_COUNT_1_BIT;
-        color.loadOp                       = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.loadOp                       = color_clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         color.storeOp                      = VK_ATTACHMENT_STORE_OP_STORE;
         color.stencilLoadOp                = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         color.stencilStoreOp               = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        color.initialLayout                = VK_IMAGE_LAYOUT_UNDEFINED;
+        color.initialLayout = color_clear ? VK_IMAGE_LAYOUT_UNDEFINED
+                                          : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         color.finalLayout                  = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         attachments.push_back(color);
 
@@ -326,7 +336,8 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
     ext_to_sub.dstSubpass               = 0;
     ext_to_sub.srcStageMask             = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
     ext_to_sub.dstStageMask             = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    ext_to_sub.srcAccessMask            = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    ext_to_sub.srcAccessMask            = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                          (color_clear ? 0u : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
     ext_to_sub.dstAccessMask            = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     dependencies.push_back(ext_to_sub);
 
@@ -345,6 +356,47 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
 }
 
 // The body is the moved definition: its documentation lives on the declaration.
+
+PassRenderPassPlan planPassRenderPass(bool color_clear,
+                                      bool want_depth_clear,
+                                      bool has_depth,
+                                      bool promote_requested,
+                                      bool any_load_pass,
+                                      bool depth_seeded,
+                                      bool borrowed_depth)
+{
+    PassRenderPassPlan plan;
+    plan.color_load = color_clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    if (!has_depth) {
+        return plan; // colour-only target: the depth fields stay inert
+    }
+    if (borrowed_depth) {
+        // The source's pass defined this depth earlier in the frame and owns
+        // its layout; this pass only tests against it.
+        plan.depth_load    = VK_ATTACHMENT_LOAD_OP_LOAD;
+        plan.depth_initial = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        plan.promote_depth = false;
+        plan.seed_required = false;
+        return plan;
+    }
+    if (want_depth_clear) {
+        plan.depth_load    = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        plan.depth_initial = VK_IMAGE_LAYOUT_UNDEFINED;
+        // Promotion is only legal while no pass of the target LOADs depth: a
+        // LOAD pass must find the image in the attachment layout.
+        plan.promote_depth = promote_requested && !any_load_pass;
+        plan.seed_required = false;
+        return plan;
+    }
+    // Preserving pass: LOAD the depth the previous frame / pass left. An
+    // UNDEFINED image cannot be loaded, so an unseeded target needs the CLEAR
+    // (seed) variant recorded once first (see PassObjects::render_pass_seed).
+    plan.depth_load    = VK_ATTACHMENT_LOAD_OP_LOAD;
+    plan.depth_initial = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    plan.promote_depth = false; // LOAD and promotion are mutually exclusive
+    plan.seed_required = !depth_seeded;
+    return plan;
+}
 
 ::vsg::ref_ptr<::vsg::Node> makeDepthClearCommand(const VkExtent2D& extent, float depth_clear_value)
 {
@@ -590,18 +642,32 @@ void main()
     }
 }
 
-void setGroupLights(::vsg::Group* group, const std::vector<const vine::graphics::Light*>& lights)
+std::size_t setGroupLights(::vsg::Group* group, const std::vector<const vine::graphics::Light*>& lights)
 {
     if (group == nullptr || lights.empty()) {
-        return;
+        return 0u;
     }
-    group->children.clear();
+    // Build first, replace second: only a list that yields at least one usable
+    // light node may displace the view's seeded default. A list whose every
+    // entry is disabled / untranslatable means "no active light", and leaving
+    // the view with no light would shade the whole pass to black (see the
+    // header contract).
+    std::vector<::vsg::ref_ptr<::vsg::Node>> nodes;
+    nodes.reserve(lights.size());
     for (const auto* light : lights) {
-        auto node = buildLightNode(light);
-        if (node != nullptr) {
-            group->addChild(node);
+        if (auto node = buildLightNode(light)) {
+            nodes.push_back(std::move(node));
         }
     }
+    if (nodes.empty()) {
+        return 0u;
+    }
+    const std::size_t attached = nodes.size();
+    group->children.clear();
+    for (auto& node : nodes) {
+        group->addChild(std::move(node));
+    }
+    return attached;
 }
 
 ::vsg::ref_ptr<::vsg::Node> makeAmbientLight(const char* name)

@@ -440,6 +440,15 @@ bool SceneBridge::syncRenderCommands(
         visible.emplace_back(item->transform);
     }
 
+    changed = evictAbsentItems(seen) || changed;
+    publishRetainedChildren(*root, visible, commands);
+    releaseAbandonedCaches();
+    return changed;
+}
+
+bool SceneBridge::evictAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& seen)
+{
+    bool changed = false;
     // A geometry missing from the frame is not dropped immediately: hiding a
     // node/drawable or a frustum-culled object must stay cheap (its compiled
     // node is simply detached from the root and reused when it reappears, with
@@ -471,24 +480,31 @@ bool SceneBridge::syncRenderCommands(
             ++it;
         }
     }
+    return changed;
+}
 
+void SceneBridge::publishRetainedChildren(
+    ::vsg::Group& root,
+    const std::vector<::vsg::ref_ptr<::vsg::Node>>& visible,
+    const std::vector<vine::graphics::RenderCommand>& commands)
+{
     // Reparent the retained children to match the (already sorted) command
     // stream; a no-op when the order did not change.
     const bool same = [&] {
-        if (root->children.size() != visible.size()) {
+        if (root.children.size() != visible.size()) {
             return false;
         }
         for (std::size_t i = 0; i < visible.size(); ++i) {
-            if (root->children[i] != visible[i]) {
+            if (root.children[i] != visible[i]) {
                 return false;
             }
         }
         return true;
     }();
     if (!same) {
-        root->children.clear();
+        root.children.clear();
         for (auto& node : visible) {
-            root->children.emplace_back(node);
+            root.children.emplace_back(node);
         }
     }
 
@@ -509,15 +525,6 @@ bool SceneBridge::syncRenderCommands(
             manager.updateMaterial(cmd.material.get());
         }
     }
-
-    // Only here (once per pass and frame) is it affordable to look at every
-    // retained cache entry. An entry the app has let go of can never be looked
-    // up again, so it goes now instead of pinning its compiled stages, assembled
-    // ShaderSet and cached bind commands; entries the sibling caches still hold
-    // are released once those let go too (see releaseAbandonedCaches).
-    releaseAbandonedCaches();
-
-    return changed;
 }
 
 std::size_t SceneBridge::releaseAbandonedCaches()

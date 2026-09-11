@@ -459,9 +459,25 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
     persistent->cameraBridge.apply(request.camera, content.vsg_camera);
 
     // Lights come from the pass' content scene each frame (the scene is the
-    // source of truth); an empty list keeps the slot's seeded default light.
-    // The light source is never chosen by the slot's depth style.
-    setGroupLights(content.light_group.get(), *request.lights);
+    // source of truth). setGroupLights leaves the slot's seeded default light in
+    // place unless at least one announced light is usable, so a scene whose
+    // lights are all disabled (or of an untranslatable kind) stays lit by the
+    // default instead of going black; say so once per episode. The light source
+    // is never chosen by the slot's depth style.
+    const std::size_t attached_lights = setGroupLights(content.light_group.get(), *request.lights);
+    if (attached_lights == 0u && !request.lights->empty()) {
+        if (!content.light_fallback_reported) {
+            content.light_fallback_reported = true;
+            reportFailure(vine::graphics::DiagnosticSeverity::Warning,
+                          vine::graphics::DiagnosticCategory::ChannelIgnored,
+                          formatDiagnostic(u8"%zu announced light(s) are all disabled or of an unsupported "
+                                           u8"kind; the pass keeps its default light",
+                                           request.lights->size()));
+        }
+    }
+    else {
+        content.light_fallback_reported = false;
+    }
 
     // The command stream is the source of truth: reconcile the retained slot
     // root against it (in-place for moves/material edits). The legacy own-

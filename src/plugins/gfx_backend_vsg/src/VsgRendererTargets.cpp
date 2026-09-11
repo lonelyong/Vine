@@ -481,11 +481,14 @@ void VsgRenderer::reconcileOffscreenOrder()
     // (ping-pong inside one frame) is not a supported pattern, so the edge
     // graph is acyclic in practice; a cycle would only leave targets in their
     // current order below.
-    std::map<vine::graphics::RenderTarget*, int>                                              indegree;
-    std::map<vine::graphics::RenderTarget*, std::vector<vine::graphics::RenderTarget*>> consumers;
-    for (auto* t : present) {
-        indegree[t] = 0;
+    // Index the off-screen targets by their CURRENT record position, turn the
+    // sampling / depth-borrow edges into index pairs, and let the pure stable
+    // topological helper order them (see stableTopologicalOrder).
+    std::map<vine::graphics::RenderTarget*, std::size_t> index_of;
+    for (std::size_t i = 0; i < present.size(); ++i) {
+        index_of.emplace(present[i], i);
     }
+    std::vector<GraphOrderEdge> edges;
     for (auto* t : present) {
         const auto entry = impl->targets.find(t);
         if (entry == impl->targets.end()) {
@@ -493,11 +496,14 @@ void VsgRenderer::reconcileOffscreenOrder()
         }
         const auto& target = entry->second;
         const auto add_source = [&](vine::graphics::RenderTarget* source) {
-            if (source == nullptr || source == t || graph_of.find(source) == graph_of.end()) {
+            if (source == nullptr || source == t) {
                 return;
             }
-            consumers[source].push_back(t);
-            ++indegree[t];
+            const auto src = index_of.find(source);
+            if (src == index_of.end()) {
+                return; // the source is not recorded this frame: no edge
+            }
+            edges.push_back(GraphOrderEdge{ index_of[t], src->second });
         };
         // A DEPTH BORROW is a dependency too, and not a sampling one: the
         // borrower's pass LOADs (tests against) the depth the source's pass
@@ -527,30 +533,10 @@ void VsgRenderer::reconcileOffscreenOrder()
         }
     }
 
-    // Stable topological order (Kahn): seed with the zero-indegree targets in
-    // current order, emit each and unlock its consumers.
     std::vector<vine::graphics::RenderTarget*> order;
     order.reserve(present.size());
-    std::vector<vine::graphics::RenderTarget*> ready;
-    ready.reserve(present.size());
-    for (auto* t : present) {
-        if (indegree[t] == 0) {
-            ready.push_back(t);
-        }
-    }
-    for (std::size_t head = 0; head < ready.size(); ++head) {
-        auto* t = ready[head];
-        order.push_back(t);
-        for (auto* c : consumers[t]) {
-            if (--indegree[c] == 0) {
-                ready.push_back(c);
-            }
-        }
-    }
-    for (auto* t : present) {
-        if (indegree[t] > 0) {
-            order.push_back(t); // cycle remainder (unsupported pattern)
-        }
+    for (const std::size_t index : stableTopologicalOrder(present.size(), edges)) {
+        order.push_back(present[index]);
     }
 
     // Rewrite the command graph's children: off-screen graphs in dependency
@@ -888,6 +874,14 @@ bool VsgRenderer::readDepthBuffer(vine::graphics::RenderTarget* target, std::vec
     }
     auto& built = entry->second;
     if (built.depth_image == nullptr || built.render_pass == nullptr || built.width <= 0 || built.height <= 0) {
+        if (built.depth_source != nullptr) {
+            // The depth is real but owned by the target it was borrowed from
+            // (shareDepth): it is read through the SOURCE, not the borrower, so
+            // this is a documented unsupported case rather than a silent one.
+            reportFailure(vine::graphics::DiagnosticSeverity::Warning,
+                          vine::graphics::DiagnosticCategory::ChannelIgnored,
+                          u8"readDepthBuffer: this target borrows its depth (shareDepth); read the source target instead");
+        }
         return false;
     }
 

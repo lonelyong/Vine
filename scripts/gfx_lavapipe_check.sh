@@ -188,6 +188,7 @@ else
         fi
     }
     require_evidence "^\[selftest\] pixels:" 4 "pixel assertion"
+    require_evidence "^\[selftest\] program hotspot:" 1 "fullscreen program hot-edit assertion"
     require_evidence "^\[selftest\] depth:" 1 "depth assertion"
     require_evidence "^\[selftest\] depth load:" 1 "depth-LOAD assertion"
     require_evidence "^\[selftest\] shared depth pixels:" 1 "shared-depth assertion"

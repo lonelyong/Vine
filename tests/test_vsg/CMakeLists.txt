@@ -9,6 +9,9 @@ set(SRC_FILE_LIST
 	CustomAttributeTest.cpp
 	PassProtocolTest.cpp
 	MaterialManagerTest.cpp
+	LightGroupTest.cpp
+	PassRenderPassPlanTest.cpp
+	GraphOrderTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)

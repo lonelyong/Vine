@@ -1293,7 +1293,59 @@ O(1)，而不是每帧 O(表)。
 **验收**：test_vsg **72**（71 + 本条）、test_graphics 157 全绿；`gfx_lavapipe_check.sh`
 → `RESULT: PASS`（0 VUID）；app 冒烟 exit 124、离屏 3 次构建、0 VUID。
 
-## 28. 计划：把 render pass 从**目标粒度**下沉到 **pass 粒度**（未实施，分阶段）
+## 28. 计划：把 render pass 从**目标粒度**下沉到 **pass 粒度**（**进行中**，分阶段）
+
+> **实施进度（2026-09-11）**
+> - ✅ **第 1 步：render-pass 工厂支持 per-pass 颜色 load-op。** `makeSampleableRenderPass` /
+>   `makeDepthLoadRenderPass` 新增 `color_clear`（含 LOAD 时的
+>   `color.initialLayout = SHADER_READ_ONLY_OPTIMAL` 与外部依赖
+>   `srcAccessMask = COLOR_ATTACHMENT_WRITE`），默认 `true` ⇒ 现有调用零行为变更。
+>   验收：`test_vsg` 77 / `test_graphics` 157 / `gfx_lavapipe_check.sh` RESULT: PASS。
+>   **诚实说明**：新路径（`color_clear=false`）要等第 3 步接入每 pass render pass 后才被设备门禁
+>   覆盖，当前仅为编译期就绪的工厂能力。
+> - ✅ **第 2 步：`Target::PassObjects` 数据模型 + 纯策略函数。** 新增
+>   `Target::PassObjects`（render_pass / render_pass_seed / framebuffer / graph /
+>   load_depth / color_clear / clear_color / seeded）与目标级 `attachments_built` /
+>   `depth_seeded` / `any_load_pass`（**先加不删**，旧字段仍权威）；并把 §28 的三条不变量
+>   （颜色 LOAD、LOAD↔提升互斥、未定义图像需 seed、借深度恒 LOAD 不提升）抽成**设备无关**的
+>   `detail::planPassRenderPass()`。验收：`test_vsg` 77 → **83**（新增 `PassRenderPassPlanTest` ×6）、
+>   `test_graphics` 157、gate PASS。
+> - ✅ **第 2 步（续）：命令图排序核心抽成纯函数。** `detail::stableTopologicalOrder(node_count, edges)`
+>   （Kahn、按 index 稳定、环不丢）现在驱动 `reconcileOffscreenOrder`（采样边 + 深度借用边），
+>   新增 `GraphOrderTest` ×6；gate 的 `depth share order` 相位确认行为不变。这样第 3/4 步把
+>   “每目标一张 graph”改成“每 pass 一张 graph”时，排序内核已有测试兜底。
+> - ⏭ 第 3 步（按 TU 分批接入每 pass render pass/graph）见下。
+>
+> **第 3 步尝试记录（2026-09-11）**：本步是**原子性**的——`buildOffscreenTarget` 的
+> ~180 行 render-pass/framebuffer/graph 构建必须整体改成每 pass 懒建（`ensurePassObjects`），
+> 同时 `reconcileOffscreenOrder` / `placeViewByOrder` / release / retire / readback /
+> `clear()` / `submitFrame` 全部要换输入，四个 TU 必须同时改完才能编译。实测无法在不破坏
+> 当前全绿基线的前提下一次完成，**已回滚到上一版绿色快照**（工作区与 `test_vsg` 89 / gate PASS
+> 完全一致）。下一步应作为**单独一次专注改动**执行，回滚点见 `/tmp/vsg_backup/`（临时）。
+>
+> **第 3 步第二次尝试记录（2026-09-11，同样回滚）**：整份改动（7 个文件）一次写完，零警告
+> 构建，单测 89 + 157 全绿，设备门禁 **9 个相位过 8 个** —— 含本步的两条目标判据：
+> `mixed depth` 由 2 次构建降到 **1 次**（§28-7 达成）、`depth testonly` 转绿。唯一阻塞是
+> 共享深度借用相位的 **7 × `VUID-vkCmdDraw-None-09600`**（`expects …
+> DEPTH_STENCIL_ATTACHMENT_OPTIMAL--instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED`，
+> 即某次绘制读了本帧从未定义过的深度图）。第二次尝试换来的两条结论**务必先读，能省一整轮**：
+> 1. **每个目标的 pass graph 必须按各 pass 的 `setPassOrder` 顺序记录。** 视图散到各自的
+>    render pass 之后，“在同一个 render pass 内按 order 排序视图”（`placeViewByOrder` 原先的
+>    职责）必须上移为“在命令图里按 order 排列 pass graph”。若顺序取自
+>    `std::map<SlotKey, PassObjects>` 的迭代序（即指针序），目标的第二个 pass 会记录在第一个
+>    之前，它的颜色清屏直接抹掉第一个 pass 的绘制 —— 症状是混合相位阶段 2 报“远平面四边形
+>    仍不可见”、TestOnly 相位报出**不透明**的中心色。做法：`PassObjects` 增 `order`（在
+>    `passGraph` 里取 `request.order`），变化时重新 `reconcileOffscreenOrder()`，并按它
+>    `stable_sort`（用当前子序做稳定种子，order 相同者保持相对位置）。
+> 2. **`Target::depth_sampleable` 必须在附件构建期就记下**
+>    （`has_depth && depth_src == nullptr && target->depthPromotion()`），不能等某个 pass
+>    创建时才记：借用该深度的消费者在**同一帧**就要校验，那时源的任何 pass 都还不存在。
+>
+> 另：`incrementalCompileViews()` 必须用 **pass 自己的 framebuffer** 建编译上下文
+> （`owner->passes.find(slot_key)`）；搜索循环结束后结构化绑定已出作用域，需另存 `SlotKey`。
+> **首要怀疑点（下次先改这一行再跑门禁）**：借用者若在源的**第一张 pass graph 存在之前**建图，
+> `reconcileOffscreenOrder` 里 `index_of.find(source) == end()` ⇒ **借用边被静默丢弃**，
+> 于是借用者的 LOAD pass 去读一张从未被定义的深度图。
 
 §22 的残留（首帧仍按旧策略收敛 1 帧、混合目标失去 render-pass 免费清屏而要付一条
 `ClearAttachments`、`depth_policy_mixed` sticky、**颜色清屏同样是"最后一次请求赢"**）
@@ -1323,11 +1375,26 @@ RenderGraph），图像按目标共享"。已勘察的改动面与**必须同时
    混合目标**首帧即正确**、目标构建数从 2 降到 **1**（残留消失的可观测判据）。§22 保留为
    历史，实施后在此标注 superseded。
 
+**补充不变量（实现勘察发现，2026-09-11）**：
+
+- **颜色 load-op 也必须下沉**：不清屏的 pass（HUD / 透明）其 render pass 必须
+  `LOAD_OP_LOAD` color，否则它会清掉同目标更早各 pass 的画面。工厂已支持该组合（第 1 步），
+  颜色 LOAD 的 `initialLayout` 必须是 `SHADER_READ_ONLY_OPTIMAL`（上游 pass 的 finalLayout），
+  且外部依赖要补 `srcAccessMask = COLOR_ATTACHMENT_WRITE`。
+- **“LOAD 与提升互斥”会触发重建级联**：pass 是懒创建的，可能先建了“提升版 CLEAR pass”，
+  之后才出现 LOAD pass ⇒ 必须**重建**该 pass 的 render pass + framebuffer + graph，并把
+  已挂的 View **重新挂回新 graph**，同时刷新 `reconcileOffscreenOrder` 的依赖边。这是本项
+  最容易出隐蔽 bug 的一条（计划原文只写了“不得提升”，没写已有 pass 怎么处理）。
+- **`Target::graph` / `render_pass` / `framebuffer` 等字段在 5 个 TU 中被直接引用 98 次**
+  （`VsgRenderer.cpp` 22 / `VsgRendererTargets.cpp` 41 / `VsgRendererPasses.cpp` 17 /
+  `VsgRendererOverlay.cpp` 10 / `VsgRendererImpl.hpp` 8），迁移要按 TU 分批、每批 gate 绿。
+
 ## 29. 交班状态与下一步清单（2026-09-11 收工记录）
 
-**交班状态**：HEAD `e69ebb1`（D40 共享对象表 prune），工作区干净。基线：
-`test_vsg` **72**、`test_graphics` **157**、`gfx_lavapipe_check.sh` → `RESULT: PASS`
-（0 VUID，证据行含 `depth load:` / `shared depth pixels:` / `mixed depth:` /
+**交班状态**：本次提交（D41–D45 + §28 第 1/2 步），工作区干净。基线：
+`test_vsg` **89**、`test_graphics` **157**、`gfx_lavapipe_check.sh` → `RESULT: PASS`
+（第二轮评审补 `LightGroupTest` ×5 与 D41–D45，见 `vine-to-vsg-data-flow.md` §13.8）
+（0 VUID，证据行含 `depth load:` / `program hotspot:` / `shared depth pixels:` / `mixed depth:` /
 `depth borrow:` / `depth testonly:` / `depth share order:` / `target description:`）；
 app 冒烟 `timeout 25 ./dist/bin/Vine` exit 124、离屏 3 次构建、0 VUID。复验命令：
 
@@ -1357,6 +1424,10 @@ cp -f build/lib/*.so* dist/lib/ && cp -f build/plugins/vine/*.so dist/plugins/vi
      barrier 插在**源最后一张 graph 之后**。
 2. **`SceneBridge::syncRenderCommands` 拆分**（256 行 → "缓存决策 / 节点替换 / 收尾"三个函数，
    纯搬运）：判据是 72 + 157 全绿 + gate PASS，无新行为。
+   **已部分落地（2026-09-11）**：收尾两段抽出为 `evictAbsentItems`（37 行）与
+   `publishRetainedChildren`（44 行），`syncRenderCommands` 降到 **191 行**（纯搬运，gate PASS）。
+   命令循环体（~150 行）仍需抽出为 `reconcileCommand`；它整段位于 `for` 内（8 空格缩进），
+   抽取必须整体重排缩进，属高风险纯格式改动，留待单独一次提交（无行为收益）。
 3. **信息性 stderr 迁 `vine/logging`**：harness 与 `scripts/gfx_lavapipe_check.sh` 有多处
    stderr 断言（`[VsgRenderer] device:` / `EXPERIMENTAL off-screen target` / `has no depth
    image yet`），必须**同一次提交**里同步改，否则闸门会红。

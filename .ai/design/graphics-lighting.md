@@ -166,7 +166,10 @@ vsg 侧实现要点（决策 #4，需小幅重构主视图的创建方式）：
    Ambient+Directional 无需位置）。接口以 scene 为查询边界：v4 用“兄弟列表”，v5 升级为“遍历根节点收集
    光节点”（`Light` 变 Node 子类、可挂树），`scene->lights()` 与调用方不变，只换实现。
 2. **默认光回退**：scene 无光 → 各视图沿用后端默认（主 headlight / overlay ambient），零回归；
-   有光 → 内容光替换默认。
+   有光 → 内容光替换默认。**“无光”按“无可用光”理解（2026-09-11 补）**：空列表、全部 `setEnabled(false)`、
+   或全部是不翻译的灯类型，都算无可用光 → **不动光根**，默认光保留。视图零光源会把整个 pass 照成黑
+   （vsg Phong 对光集求和），而“禁用一盏灯”是关灯、不是要一个无光照场景；此规则与全屏程序路径
+   （`fillLightPushBlock` 无可用光时补默认 ambient）一致。
 3. **传光接口**：`RenderBackend::setLights(vector<raw_ptr<const Light>>)`，RenderPass::execute 在
    `render()` 前调用；默认 no-op，向后兼容。
 4. **vsg 主视图手工化**是 v4a 的必要小重构（拿到 View 句柄才能挂/换光），与 §10.4 “每 pass 一图”

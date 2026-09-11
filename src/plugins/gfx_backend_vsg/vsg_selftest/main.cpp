@@ -2215,6 +2215,67 @@ bool runCompositingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
                          pip_w, pip_h, dr, dg, db, received.size());
         }
     }
+
+    // ---- Program hot-edit: edit the SAME ShaderProgram object in place -----
+    // The retained fullscreen slot's identity must include the program's
+    // CONTENT revision, not just its address: replacing the stages of a
+    // retained program (ShaderProgram::replaceStages / setStage) must rebuild
+    // the node and draw the new shader. A pointer-only identity kept drawing
+    // the old SPIR-V (D42), and nothing here caught it.
+    const std::size_t program_builds_before = renderer.programSlotBuildCount();
+    {
+        ShaderStage edited;
+        edited.type   = ShaderStageType::Fragment;
+        edited.source = u8"#version 450\n"
+                        u8"layout(location = 0) out vec4 outColor;\n"
+                        u8"void main() { outColor = vec4(0.8, 0.2, 0.4, 1.0); }\n";
+        deferred_program->replaceStages(std::vector<ShaderStage>{ edited });
+    }
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(deferred_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(deferred_consumer.get());
+        renderer.clear(consumer_clear, true);
+        renderer.setLights({});
+        renderer.drawScreenProgram(producer.get(), deferred_program.get(), camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    const std::size_t program_builds_after = renderer.programSlotBuildCount();
+    PixelImage        hot;
+    if (!readTarget(renderer, deferred_consumer.get(), hot)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the target after the program hot-edit\n");
+        ok = false;
+    }
+    else {
+        const int hr = hot.at(128, 72, 0);
+        const int hg = hot.at(128, 72, 1);
+        const int hb = hot.at(128, 72, 2);
+        // The edited fragment stage writes vec4(0.8, 0.2, 0.4, 1.0) = (204,51,102).
+        if (std::abs(hr - 204) > 3 || std::abs(hg - 51) > 3 || std::abs(hb - 102) > 3) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: after the in-place program edit the centre is (%d,%d,%d),"
+                         " expected the edited shader's colour (204,51,102)\n",
+                         hr, hg, hb);
+            ok = false;
+        }
+        // Exactly one rebuild: the first frame after the edit rebinds the new
+        // source, the following frames must reuse the retained slot.
+        if (program_builds_after != program_builds_before + 1u) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the in-place program edit rebuilt the fullscreen slot %zu time(s), expected 1\n",
+                         program_builds_after - program_builds_before);
+            ok = false;
+        }
+        if (ok) {
+            std::fprintf(stderr,
+                         "[selftest] program hotspot: in-place program edit rebuilt the fullscreen slot once and"
+                         " drew (%d,%d,%d)\n",
+                         hr, hg, hb);
+        }
+    }
     renderer.setDiagnosticSink({});
     return ok;
 }
@@ -2987,13 +3048,21 @@ int main()
         // Material property hot-edit (shared by every slot).
         const float t = static_cast<float>(i) / static_cast<float>(frames);
         m_red->setDiffuse(vine::Colorf(0.5f + 0.5f * t, 0.2f, 0.1f, 1.0f));
-        // Per-drawable opacity hot-edit (green only; HUD keeps its alpha).
-        window_commands[1].opacity = (i % 10 < 5) ? 1.0f : 0.4f;
         // Remove / re-add the green drawable from the WINDOW slot only (the
-        // off-screen slot keeps drawing it every frame).
+        // off-screen slot keeps drawing it every frame). REBUILD the stream
+        // from the canonical commands each frame: a re-add must restore the
+        // real green drawable (resize() would append a default-constructed
+        // one), and the previous frame's stream may have omitted it entirely —
+        // editing the second entry before rebuilding it is what used to index
+        // past the end of the vector at i % 12 == 0.
         const bool keep_green_in_window = (i % 12) < 10;
-        window_commands.resize(keep_green_in_window ? 2u : 1u);
-        // Swap a user program onto the green window drawable for a stretch.
+        window_commands.assign(1u, cmd_red);
+        if (keep_green_in_window) {
+            window_commands.push_back(cmd_green);
+            // Per-drawable opacity hot-edit (green only; HUD keeps its alpha).
+            window_commands[1].opacity = (i % 10 < 5) ? 1.0f : 0.4f;
+        }
+        // Swap a user program onto the window stream for a stretch.
         window_commands[0].program =
             (i >= 12 && i < 20) ? user_program : ShaderProgramPtr();
         // Reorder the window stream periodically (retained-transform reuse).

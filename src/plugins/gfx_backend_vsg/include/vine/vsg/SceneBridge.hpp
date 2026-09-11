@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <vsg/commands/Commands.h>
@@ -390,6 +391,36 @@ class V_VSG_API SceneBridge {
      * @return Number of erased entries.
      */
     std::size_t releaseAbandonedCaches();
+
+    /** @brief Evicts retained items the frame no longer draws.
+     *
+     * The tail half of syncRenderCommands(): hiding a node / frustum culling
+     * stays cheap (the retained node is detached from the root and reused when
+     * it reappears), while an entry the app itself released — or one absent
+     * past the reuse window — is dropped, its subtree parked on the retire ring
+     * because an in-flight command buffer may still reference it.
+     *
+     * @param seen Geometries drawn this frame.
+     * @return true when anything was evicted.
+     */
+    bool evictAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& seen);
+
+    /** @brief Republishes the retained children in command order and refreshes
+     * the materials the frame drew.
+     *
+     * The command list is already sorted by the caller, so the retained
+     * children are re-ordered to match it (a no-op when the order is unchanged)
+     * and every distinct material the frame draws is refreshed through the
+     * material manager's single compare-and-write path (D19), which keeps a
+     * steady frame transfer-free while an edit lands immediately.
+     *
+     * @param root     Stable vsg root the retained children live under.
+     * @param visible  Retained transforms in draw order.
+     * @param commands Commands drawn this frame (for the material refresh).
+     */
+    void publishRetainedChildren(::vsg::Group& root,
+                                 const std::vector<::vsg::ref_ptr<::vsg::Node>>& visible,
+                                 const std::vector<vine::graphics::RenderCommand>& commands);
 
     ::vsg::ref_ptr<::vsg::ShaderSet> shader_set_;
     // Pass-level depth policy applied to commands that did not author depth

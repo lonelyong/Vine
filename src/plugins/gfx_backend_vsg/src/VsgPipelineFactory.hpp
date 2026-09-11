@@ -12,6 +12,7 @@
 // without knowing which pass asked for the object.
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -141,13 +142,22 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
  *                      attachment order).
  * @param depth_format Depth attachment format, or VK_FORMAT_UNDEFINED for a
  *                     colour-only pass.
+ * @param promote_depth When true the depth attachment ends in
+ *                     SHADER_READ_ONLY_OPTIMAL (sampleable); false leaves it a
+ *                     plain depth attachment another target can borrow.
+ * @param color_clear  When true (the default) the colour attachments are
+ *                     CLEARed at pass start; false LOADs the previous pass'
+ *                     colour (a pass that composites over earlier content
+ *                     without clearing it). A LOAD assumes the colour is
+ *                     already defined (an earlier pass wrote it this frame).
  * @return The configured render pass.
  */
 ::vsg::ref_ptr<::vsg::RenderPass> makeSampleableRenderPass(
     ::vsg::Device*                    device,
     const std::vector<VkFormat>&      color_formats,
     VkFormat                          depth_format,
-    bool                              promote_depth = true);
+    bool                              promote_depth = true,
+    bool                              color_clear = true);
 
 /**
  * @brief Builds a depth-only off-screen render pass (shadow maps).
@@ -182,13 +192,66 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
  *                      from UNDEFINED into DEPTH_STENCIL_ATTACHMENT_OPTIMAL —
  *                      instead of being LOADed. Use it for exactly the first
  *                      frame after (re)building a depth-LOAD target.
+ * @param color_clear  When true (the default) the colour attachments are
+ *                     CLEARed at pass start; false LOADs the previous pass'
+ *                     colour (a pass that composites over earlier content
+ *                     without clearing it). A LOAD assumes the colour is
+ *                     already defined (an earlier pass wrote it this frame).
  * @return The configured render pass.
  */
 ::vsg::ref_ptr<::vsg::RenderPass> makeDepthLoadRenderPass(
     ::vsg::Device*               device,
     const std::vector<VkFormat>& color_formats,
     VkFormat                     depth_format,
-    bool                         initial_clear = false);
+    bool                         initial_clear = false,
+    bool                         color_clear = true);
+
+/**
+ * @brief The render-pass variant ONE pass under an off-screen target needs (§28).
+ *
+ * Pure value: it encodes the load-op / layout / promotion decision for a pass
+ * without touching a device, so the §28 invariants are unit-testable:
+ *
+ *  - a pass that clears gets its own CLEAR pass; a pass that preserves gets a
+ *    LOAD pass — that is what removes the "one target, one baked load-op" model
+ *    (and its ClearAttachments patch);
+ *  - **LOAD and promotion are mutually exclusive**: once any pass of the target
+ *    LOADs depth, no pass may leave the depth in SHADER_READ_ONLY, or the next
+ *    LOAD would read a layout it cannot attach;
+ *  - a LOAD requires the depth image to be DEFINED already; an UNDEFINED image
+ *    must be CLEARed once first, which the caller records with
+ *    @ref seed_required (the pass' `render_pass_seed` variant);
+ *  - a BORROWED depth belongs to its source's policy: always LOAD, never
+ *    promoted, and never seeded (the source defined it this frame).
+ */
+struct PassRenderPassPlan
+{
+    VkAttachmentLoadOp color_load    = VK_ATTACHMENT_LOAD_OP_CLEAR; ///< CLEAR, or LOAD for a pass that composites.
+    VkAttachmentLoadOp depth_load    = VK_ATTACHMENT_LOAD_OP_CLEAR; ///< CLEAR, or LOAD for a preserving pass.
+    VkImageLayout      depth_initial = VK_IMAGE_LAYOUT_UNDEFINED;   ///< The depth layout the pass starts from.
+    bool               promote_depth = false;                       ///< Depth ends SHADER_READ_ONLY (sampleable).
+    bool               seed_required = false;                       ///< Record the CLEAR variant once before LOADing.
+};
+
+/**
+ * @brief Computes the render-pass variant for one pass under a target.
+ *
+ * @param color_clear       The pass clears colour (false composites over it).
+ * @param want_depth_clear  The pass clears depth (false preserves it).
+ * @param has_depth         The target has a depth attachment.
+ * @param promote_requested The target asked for a sampleable depth.
+ * @param any_load_pass     Another pass of this target already LOADs depth.
+ * @param depth_seeded      The target's depth image has been defined already.
+ * @param borrowed_depth    The depth belongs to another target (shareDepth).
+ * @return The variant to build (see PassRenderPassPlan).
+ */
+PassRenderPassPlan planPassRenderPass(bool color_clear,
+                                      bool want_depth_clear,
+                                      bool has_depth,
+                                      bool promote_requested,
+                                      bool any_load_pass,
+                                      bool depth_seeded,
+                                      bool borrowed_depth);
 
 /**
  * @brief Builds a command that clears a target's depth attachment in place.
@@ -294,14 +357,23 @@ const std::string& fullscreenVertexSource();
  * @brief Replaces a view's light-group children with the given Vine lights.
  *
  * Light nodes carry no GPU resources (they are collected into the per-view
- * lightData uniform at record time), so replacing them each frame is cheap
- * and needs no recompile. An empty list leaves the group as-is so the view
- * keeps its default light(s).
+ * lightData uniform at record time), so rebuilding them each frame is cheap
+ * and needs no recompile.
  *
- * @param group  The view's light group.
- * @param lights Vine lights to attach.
+ * A view must always be lit by SOMETHING: vsg's Phong accumulates the view's
+ * light set, so a view with no light shades every surface to black, and a host
+ * that disables a light is toggling it off, not asking for an unlit scene. The
+ * group is therefore left untouched — the caller's seeded default light
+ * survives — unless the announced list yields at least one usable light node.
+ * "No usable node" covers an empty list, every entry disabled, and every entry
+ * of a kind this backend does not translate.
+ *
+ * @param group  The view's light group (null is ignored).
+ * @param lights Vine lights to attach (borrowed for the call).
+ * @return Number of light nodes attached; 0 means the group was left as-is
+ *         (the caller keeps its default light and may report the fallback).
  */
-void setGroupLights(::vsg::Group* group, const std::vector<const vine::graphics::Light*>& lights);
+std::size_t setGroupLights(::vsg::Group* group, const std::vector<const vine::graphics::Light*>& lights);
 
 /**
  * @brief Builds the flat white ambient light used to seed non-scene content

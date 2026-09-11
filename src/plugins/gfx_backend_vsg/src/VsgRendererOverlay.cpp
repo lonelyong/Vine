@@ -285,6 +285,14 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
     if (attachment > 0) {
         attachment_index = static_cast<std::size_t>(attachment);
         if (attachment_index >= src.color_views.size()) {
+            // Sampling a non-existent attachment is a wiring mistake: clamp so
+            // the pass still draws, but say so instead of silently substituting
+            // a different texture.
+            reportFailure(vine::graphics::DiagnosticSeverity::Warning,
+                          vine::graphics::DiagnosticCategory::ChannelIgnored,
+                          formatDiagnostic(u8"drawScreenTexture: attachment %d is out of range (%zu available); "
+                                           u8"sampling the last attachment",
+                                           attachment, src.color_views.size()));
             attachment_index = src.color_views.size() - 1;
         }
     }
@@ -562,9 +570,11 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
     // (Re)build the retained slot when it is missing, the sampled source
     // changed (or was resized: its colour views were rebuilt), the DESTINATION
     // was resized, or the program changed.
+    const std::uint64_t program_revision = program->revision();
     const bool stale = !slot.ready || slot.source_target != source ||
                        slot.source_w != src.width || slot.source_h != src.height ||
-                       slot.dest_w != surf_w || slot.dest_h != surf_h || slot.program != program;
+                       slot.dest_w != surf_w || slot.dest_h != surf_h ||
+                       slot.program.get() != program || slot.program_revision != program_revision;
     if (stale) {
         removeGraphChild(dest_entry.graph.get(), slot.view);
         slot = Impl::ProgramSlot{};
@@ -595,8 +605,9 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         slot.source_h = src.height;
         slot.dest_w   = surf_w;
         slot.dest_h   = surf_h;
-        slot.program  = const_cast<vine::graphics::ShaderProgram*>(program);
-        slot.node     = node;
+        slot.program          = vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program);
+        slot.program_revision = program_revision;
+        slot.node             = node;
 
         // Create + compile the fullscreen view against this target's render
         // pass (inserted provisionally at the front so the compile sees it),
@@ -618,6 +629,7 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         slot.camera        = view->camera;
         slot.view          = view;
         slot.ready         = true;
+        ++impl->program_slot_build_count;
         placeViewByOrder(dest, view, slot.order);
         std::fprintf(stderr, "[VsgRenderer] EXPERIMENTAL deferred fullscreen program %dx%d -> %s %d,%d %dx%d attached\n", src.width, src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
         if (dest != nullptr) {

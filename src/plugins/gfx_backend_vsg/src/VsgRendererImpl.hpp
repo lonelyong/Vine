@@ -14,6 +14,7 @@
 // simply replaced wholesale on shutdown()/initialize().
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <memory>
@@ -42,6 +43,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Viewport.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/vsg/CameraBridge.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
@@ -126,6 +128,11 @@ struct VsgRenderer::Impl {
         // re-uploading the mesh and recompiling.
         bool                          detached = false;
         bool                          ready = false;
+        // True once this slot has reported that its announced lights were all
+        // unusable and it therefore keeps the seeded default light (see
+        // setGroupLights). Re-armed when usable lights arrive, so each episode
+        // reports once instead of every frame.
+        bool                          light_fallback_reported = false;
     };
 
     // ---- Pass scope (RenderBackend::beginPass / endPass) ----
@@ -215,6 +222,10 @@ struct VsgRenderer::Impl {
     // Successful off-screen target builds (diagnostic; see
     // VsgRenderer::offscreenBuildCount()).
     std::size_t offscreen_build_count = 0;
+    // Successful fullscreen-program slot builds (diagnostic; see
+    // VsgRenderer::programSlotBuildCount()). Counted in drawScreenProgram when
+    // a slot becomes ready, so a program hot-reload is observable.
+    std::size_t program_slot_build_count = 0;
 
     // Content-slot VIEWs that gained new/rebuild subtrees this frame. D22
     // incremental compile: submitFrame() recompiles ONLY these views (not the
@@ -265,7 +276,16 @@ struct VsgRenderer::Impl {
         ::vsg::ref_ptr<::vsg::View>      view;       // extra View of this target's render graph
         ::vsg::ref_ptr<::vsg::Node>      node;       // the fullscreen program drawable
         ::vsg::ref_ptr<::vsg::Data>      push_data;  // per-frame push-constant bytes
-        vine::graphics::ShaderProgram*   program = nullptr; // program the node was built with
+        // The program the node was compiled from, HELD (not merely compared):
+        // the address is the slot's identity, so a released program replaced at
+        // the same address must not read as "unchanged" (the ownership rule
+        // SceneBridge's caches follow). Its content revision is part of the
+        // rebuild identity too, so editing the program's GLSL in place
+        // (ShaderProgram::replaceStages / setStage) rebuilds the node on the
+        // next frame — the scene-geometry path keys its compiled state by the
+        // revision the same way (D10).
+        vine::intrusive_ptr<const vine::graphics::ShaderProgram> program;
+        std::uint64_t                    program_revision = 0;
         int                              source_w = 0;
         int                              source_h = 0;
         int                              dest_w   = 0; // destination surface the node was built for
@@ -358,6 +378,49 @@ struct VsgRenderer::Impl {
                 return true;
             }
         };
+
+        /** @brief Per-pass GPU objects for one pass under this target (§28).
+         *
+         * Transitional (added 2026-09-11; wired in the following steps). The
+         * per-pass render pass / framebuffer / RenderGraph replaces the former
+         * one-render-pass-per-target model: a pass that clears and a pass that
+         * preserves materialise their own load-op variant, so the target no
+         * longer has to bake one policy and patch the other passes with
+         * ClearAttachments. The legacy target-level render_pass / framebuffer /
+         * graph fields below stay authoritative until every call site migrates.
+         */
+        struct PassObjects {
+            ::vsg::ref_ptr<::vsg::RenderPass>  render_pass;      ///< The pass' own colour/depth load-op variant.
+            ::vsg::ref_ptr<::vsg::RenderPass>  render_pass_seed; ///< CLEAR variant recorded once for an unseeded LOAD pass.
+            ::vsg::ref_ptr<::vsg::Framebuffer> framebuffer;      ///< Framebuffer for @ref render_pass.
+            ::vsg::ref_ptr<::vsg::RenderGraph> graph;            ///< Render graph (one per pass).
+            /// True when this pass preserves (LOADs) depth instead of clearing it.
+            bool        load_depth  = false;
+            /// True when this pass clears colour at its start; false LOADs the
+            /// previous pass' colour (see makeSampleableRenderPass).
+            bool        color_clear = true;
+            /// This pass' clear colour (its own clear() request).
+            ::vsg::vec4 clear_color{ 0.2f, 0.2f, 0.2f, 1.0f };
+            /// True while @ref graph records @ref render_pass_seed (the
+            /// one-frame CLEAR that defines a fresh depth image before LOADing).
+            bool        seeded      = false;
+        };
+
+        // Per-pass objects, keyed by the owning pass (address-stable map so a
+        // pass' objects keep their address). Empty until the following steps
+        // create them.
+        std::map<SlotKey, PassObjects> passes;
+        // True once this target's images / views exist: the per-pass model's
+        // "target is built" test (there is no single target-level graph).
+        bool attachments_built = false;
+        // True once this target's depth image has been defined (cleared) at
+        // least once, so a LOAD pass may load it — an UNDEFINED image cannot be
+        // loaded. Target-level, because the image is shared by every pass.
+        bool depth_seeded = false;
+        // True once any pass of this target LOADs depth: the depth must then
+        // stay in the attachment layout, so NO pass of this target may promote
+        // it to a sampleable texture (see the §28 invariants).
+        bool any_load_pass = false;
 
         /** @brief Returns whether this target's off-screen pass LOADs depth.
          *

@@ -133,7 +133,12 @@ class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarge
     /** @brief Returns whether a color attachment is configured. */
     bool hasColor() const;
 
-    /** @brief Returns whether a depth attachment is configured. */
+    /** @brief Returns whether a depth attachment is configured.
+     *
+     * True for an own depth attachment or one borrowed via shareDepth();
+     * readback of a borrowed depth goes through the source target (see
+     * RenderBackend::readDepthBuffer).
+     */
     bool hasDepth() const;
 
     /** @brief Gets the number of configured color attachments.
@@ -163,7 +168,9 @@ class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarge
      * A target is valid when it has at least one attachment and positive
      * dimensions; a valid (non-null) target passed to a backend means
      * "render into this off-screen buffer" as opposed to the default
-     * framebuffer.
+     * framebuffer. A depth borrowed via shareDepth() is not an OWN attachment:
+     * a target that borrows depth still needs at least one attachment of its
+     * own (a colour attachment) to be valid — it has to render something.
      *
      * @return true when the target has an attachment and a positive size.
      */

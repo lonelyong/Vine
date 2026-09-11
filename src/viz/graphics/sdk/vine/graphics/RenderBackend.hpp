@@ -417,7 +417,9 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * Synchronously copies @p target's depth buffer into @p outDepths as
      * width * height floats in [0, 1], row-major. Ownership and support model
      * match readColorBuffer(): the default implementation reports the
-     * operation as unsupported.
+     * operation as unsupported. A target whose depth is borrowed
+     * (RenderTarget::shareDepth) is read through the SOURCE target, not the
+     * borrower, which reports the request as unsupported.
      *
      * @param target    Off-screen target whose depth buffer to read.
      * @param outDepths Receives the depth values on success.

@@ -468,7 +468,17 @@ sequenceDiagram
 
 
 
-### 13.8 性能 / 启动层（2026-09-11 补充登记，设计见 `.ai/design/vsg-pass-lifecycle.md` §9）
+### 13.8 视图光照 / 全屏程序 / 静默降级补口（2026-09-11 第二轮评审）
+
+| ID | 缺陷 | 位置 | 严重度 |
+|---|---|---|---|
+| D41 | **“公告的灯全部不可用”会清空视图默认光**：`setGroupLights` 只要 `lights` 非空就 `children.clear()`，而 `buildLightNode` 对禁用灯 / 未翻译灯类型返回 null —— 全部不可用时留下**空光根**，把槽的默认光（window presenting → headlight，其余 → ambient）也清掉 → 视图零光源 → vsg Phong 把整个 pass 照成黑，**无诊断**；且与全屏程序路径（`fillLightPushBlock` 无可用光补默认 ambient）不一致。**已修（2026-09-11，设计 graphics-lighting §8）**：先建节点、后替换；**产出 0 个可用灯就完全不动光根**（默认光保留），返回 `std::size_t` 供调用方**每段报一次**（`ChannelIgnored` Warning），可用灯恢复即重新武装 | `VsgPipelineFactory::setGroupLights` / `VsgRendererPasses::renderContentSlot` | 🟢 |
+| D42 | **全屏程序槽的重建身份只含 program 指针，不含 revision**：`drawScreenProgram` 的 `stale` 谓词比较 `slot.program != program`，忽略 `ShaderProgram::revision()` —— 就地热重载延迟光照/后处理的全屏 program（`replaceStages` / `setStage`）**不生效**（旧 SPIR-V/节点继续画），而同一 program 走几何路径（`SceneBridge` 的 L1/L2、`Item::program_revision`，D10）会重建。另：`slot.program` 是不自持裸指针（D34 同类）。**已修（2026-09-11）**：`ProgramSlot` 持有 `intrusive_ptr<const ShaderProgram>`（地址不可复用）+ `program_revision`，`stale` 同时比较二者，重建时写入（`drawScreenProgram` 的更新点在 `VsgRendererImpl.hpp` / `VsgRendererOverlay.cpp`）；**设备级守卫**：`VsgRenderer::programSlotBuildCount()` + selftest 在 `runCompositingPixelPhase` 里对**同一对象** `replaceStages` 后断言“槽重建恰好 1 次 + 像素变为 (204,51,102)”；反证：去掉 revision 比较 → 两条断言同时红（旧色 140,153,166 / 重建 0 次） | `ProgramSlot` / `drawScreenProgram` | 🟢 |
+| D43 | **`clear()` 的 mixed 判定是死条件**：`t.clear_seen = true;` 写在 `if (t.clear_seen && t.clear_depth != clearDepth)` **之前**，守卫恒真 ⇒ 首次 `clear(c, false)` 也会把 `depth_policy_mixed` 置位（sticky、重建不重置）。当前被 `wantsDepthLoad()` 的 `!clear_depth` 掩盖、无可观测差异，但一旦 §28 的 pass 粒度重构改动谓词即成真缺陷。**已修（2026-09-11）**：先存 `seen_before`，只有“前一次已 clear 且策略不同”才标记 mixed | `VsgRenderer::clear` | 🟢 |
+| D44 | **两处静默降级补口（2026-09-11）**：① `drawScreenTexture` 的 `attachment` 越界**静默**钳到最后一个附件；② `readDepthBuffer` 对**借用深度**的目标（`depth_image == nullptr`）静默返回 false，而 `hasDepth()` 对其为 true。两处均改为上报 `ChannelIgnored` Warning（“采样了最后一个附件” / “请读源目标”），并把“借深度经源读取”写进 `RenderBackend` / `VsgRenderer` 文档 | `VsgRendererOverlay` / `VsgRendererTargets` | 🟢 |
+| D45 | **selftest 主循环越界（`std::vector<RenderCommand>::operator[]`）**：`window_commands[1]` 在循环顶部被读写，而上一轮可能在 `i % 12 >= 10` 时把流缩到 1（`resize(1)`）→ 下一轮 `i % 12 == 0` **先访问 `[1]` 再重建** → `__n < size()` 断言中止。**任何 `VINE_SELFTEST_FRAMES >= 13` 都会在 `i=12` 中止**，门禁因此红（此前记录的 PASS 用的是更少帧数）。另 `resize(2)` 的“重新加入”会追加**默认构造**的 RenderCommand（空几何），并非真正的 green。**已修（2026-09-11）**：每帧从 canonical 命令**重建**流（`assign(1, cmd_red)` + 可选 `push_back(cmd_green)`），再施加本帧编辑；green 存在时才改 opacity | `vsg_selftest/main.cpp` | 🟢 |
+
+### 13.9 性能 / 启动层（2026-09-11 补充登记，设计见 `.ai/design/vsg-pass-lifecycle.md` §9）
 
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|

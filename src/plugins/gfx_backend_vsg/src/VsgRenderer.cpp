@@ -788,6 +788,7 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
         backgroundColor.b / 255.0f,
         backgroundColor.a / 255.0f
     };
+    const bool seen_before = t.clear_seen;
     t.clear_seen  = true;
     t.clear_color = color;
     // Two passes of one target that disagree about clearing depth cannot both
@@ -799,7 +800,7 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
     // for the whole target — a later pass's "preserve depth" then also
     // suppressed the earlier pass's clear, and the depth of the previous frame
     // stayed behind content that should have been redrawn from scratch.
-    if (t.clear_seen && t.clear_depth != clearDepth) {
+    if (seen_before && t.clear_depth != clearDepth) {
         t.depth_policy_mixed = true;
     }
     t.clear_depth = clearDepth;
@@ -960,6 +961,11 @@ void VsgRenderer::frame()
 std::size_t VsgRenderer::offscreenBuildCount() const noexcept
 {
     return impl->offscreen_build_count;
+}
+
+std::size_t VsgRenderer::programSlotBuildCount() const noexcept
+{
+    return impl->program_slot_build_count;
 }
 
 std::size_t VsgRenderer::detachedSlotCount() const noexcept

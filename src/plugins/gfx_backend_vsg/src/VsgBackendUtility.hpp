@@ -11,10 +11,42 @@
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>
 
+#include <cstddef>
+#include <vector>
+
 V_VSG_NS_BEGIN
 
 namespace detail
 {
+
+/** @brief One record-order dependency: @ref consumer must be recorded after @ref source. */
+struct GraphOrderEdge
+{
+    std::size_t consumer = 0; ///< Node index that must come later.
+    std::size_t source   = 0; ///< Node index that must come first.
+};
+
+/**
+ * @brief Stable topological order of @p node_count nodes under @p edges.
+ *
+ * The renderer's command graph records each target's render graph (and, with
+ * the per-pass model, each PASS' render graph) in a dependency-valid order: a
+ * consumer that samples another target's colour, or LOADs its depth, must be
+ * recorded after that source. This is Kahn's algorithm seeded in index order,
+ * so unrelated nodes keep the caller's input order (the caller seeds the
+ * indices in the current record order), which keeps unrelated targets stable
+ * frame to frame. A cycle is not a supported pattern (feedback loops are
+ * rejected when a slot is attached), so the remaining nodes are appended in
+ * index order rather than dropped — a cycle can never make the caller lose a
+ * graph.
+ *
+ * @param node_count Number of nodes to order.
+ * @param edges      Dependency edges (consumer after source); out-of-range and
+ *                   self edges are ignored.
+ * @return Node indices in dependency-valid order (size @p node_count).
+ */
+std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count,
+                                                const std::vector<GraphOrderEdge>& edges);
 
 /**
  * @brief Detaches a child node from a vsg group (command graph / render

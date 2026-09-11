@@ -45,8 +45,8 @@
 | 7 | 改 StateNode（深度/剔除/线框/blend/拓扑） | `ResolvedRenderState` 变 → state-only（L2 变体模板命中则跳过 configurator） | state_node | 仅新变体 D22 增量 | 次帧 | 拓扑变化=新管线变体（Vulkan 属性） |
 | 8 | 改顶点/索引数据（revision） | data-only：重建 data_node（物化+上传） | data_node | D22 增量（上传） | 次帧 | state_node 原样复用；仍整份重物化（见 §4） |
 | 9 | 新增 drawable / 删 drawable | 新建 Item / 600 帧逐出 | 按需 | D22 增量 | 次帧 | 新几何加入即编译 |
-| 10 | 改 `ShaderProgram` GLSL（同对象，源变） | revision 变 → state-only（L1/L2 含 revision） | state_node | D22 增量（新变体） | 次帧 | **已修(2026-09-08)**：`ShaderProgram::revision()`；数据节点复用 |
-| 11 | 灯光的增/删/改 | 每帧替换 light_group 子节点 | 无 | 无（record 期收进 lightData uniform） | 当帧 | 无需重编译 |
+| 10 | 改 `ShaderProgram` GLSL（同对象，源变） | revision 变 → state-only（L1/L2 含 revision）；**全屏程序槽同样按 revision 重建节点**（2026-09-11 补，此前只比指针，热重载不生效） | state_node / 全屏槽 node | D22 增量（新变体） | 次帧 | **已修(2026-09-08)**：`ShaderProgram::revision()`；数据节点复用；几何路径与全屏路径现同口径 |
+| 11 | 灯光的增/删/改 | 每帧替换 light_group 子节点；**公告的灯全部不可用（禁用 / 未翻译类型）时不动光根，默认光保留**（2026-09-11 补） | 无 | 无（record 期收进 lightData uniform） | 当帧 | 无需重编译；零光源会把整个 pass 照黑 |
 | 12 | Camera 变换 / 视口 / 窗口尺寸变化 | 每帧 apply；动态 viewport | 无（几何管线与尺寸解耦） | 无 | 当帧 | vsg `DYNAMIC_VIEWPORTSTATE` 默认开 |
 | 13 | RenderTarget 尺寸变化/重建 | 摘图→`deviceWaitIdle`→各槽 `clearCache`→按新尺寸重建→全图编一次 | 全槽 | 全图（重建点） | 全停 | 一次性代价（D18） |
 | 14 | 移除 pass / target / 槽 | `releaseWindowLayer/releaseRenderTarget`：摘图→`deviceWaitIdle`→clearCache→erase | — | — | 全停 | 清理顺序统一（先摘图再释放 GPU 对象） |

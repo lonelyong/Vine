@@ -224,7 +224,9 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * @param target    Off-screen target this backend rendered into.
      * @param outDepths Receives the depth values on success.
      * @return true when the depth values were read; false when the target was
-     *         never built, has no depth attachment or uses a packed format.
+     *         never built, has no depth attachment or uses a packed format. A
+     *         target that borrows its depth (RenderTarget::shareDepth) reports
+     *         false: read the source target's depth instead.
      */
     bool readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths) override;
 
@@ -371,6 +373,21 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * @return Number of slot views currently detached.
      */
     [[nodiscard]] std::size_t detachedSlotCount() const noexcept;
+
+    /** @brief Gets how many fullscreen-program slots this backend has built.
+     *
+     * Diagnostic: counts every successful build / rebuild of a retained
+     * fullscreen-program slot (drawScreenProgram). A slot is rebuilt when its
+     * sampled source, destination size or program changes — and, since the
+     * slot's identity includes the program's CONTENT revision, also when the
+     * program object is edited in place (ShaderProgram::replaceStages /
+     * setStage). This makes a hot-reload observable, which a pointer-only
+     * identity could not: it kept drawing the old SPIR-V. A steady scene must
+     * keep this flat.
+     *
+     * @return Number of fullscreen-program slot builds so far.
+     */
+    [[nodiscard]] std::size_t programSlotBuildCount() const noexcept;
 
   private:
     /** @brief Identity of one retained backend slot.
