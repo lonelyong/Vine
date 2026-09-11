@@ -30,9 +30,63 @@ struct RenderCommand;
 /**
  * @brief Abstract render backend interface.
  *
- * Defines the contract that concrete graphics backends (OpenGL, Vulkan, etc.)
- * must implement. Supports both high-level pass execution and low-level
- * command rendering.
+ * Defines the contract that concrete graphics backends (vsg/Vulkan, OpenGL,
+ * null/test) must implement, and what the engine guarantees in return.
+ * Supports both high-level pass execution and low-level command rendering.
+ *
+ * CALL ORDER. The engine drives a frame one pass at a time, in this order:
+ *
+ *   1. beginFrame();
+ *   2. per enabled pass, in ascending pass order:
+ *        beginPass(pass)          announces the pass (its identity) as active;
+ *        setPassOrder(order)      where the pass stacks in the target;
+ *        setRenderTarget / setViewport / setLights / setDepthMode / clear
+ *                                 optional per-pass state (see beginPass);
+ *        render() | drawScreenTexture() | drawScreenProgram();
+ *        endPass();
+ *   3. endFrame();
+ *   4. swapBuffers();            once per frame — the only call that presents.
+ *
+ * Everything between the frame pair is optional: a pass may draw several
+ * times, set no state, or a backend may leave a call unimplemented (that is
+ * what the no-op defaults are for). Before the first beginFrame() the engine
+ * runs a warm-up: every enabled, non-clearing pass executes once, so a backend
+ * sees its whole pass set before it ever presents a frame and can place each
+ * pass' retained state in its final position. beginFrame() may acquire the
+ * next presentable image, so a driven frame must end in swapBuffers(); a
+ * backend must not present from endFrame().
+ *
+ * BORROWED ARGUMENTS. Every pointer or reference argument (camera, commands,
+ * lights, target, program) is borrowed for the duration of the call and never
+ * owned; the pass announced by beginPass() is borrowed for its scope. The host
+ * may destroy any of them as soon as the call returns — or, for a pass, as soon
+ * as its scope closes or it is removed from the engine, which releasePass() /
+ * releaseRenderTarget() announce. A backend that needs the data later must
+ * copy or upload it and must never keep such a pointer.
+ *
+ * WHAT MAY BE RETAINED. Retained GPU state (a content view, a compiled
+ * pipeline, a sampling slot, a texture cache) is expected, but it must be
+ * keyed by the lifetime of what it serves (see beginPass), released by the
+ * matching release* call, and must not grow with the frame count: a long-
+ * running session has to reach a steady state. A backend must never require
+ * the host to call a release* method for correctness — the host calls them
+ * because a pass or target is gone.
+ *
+ * THREADING. The engine drives one pass at a time from one thread, so calls
+ * into a backend are serialised, never concurrent and never reentrant. A
+ * backend may therefore keep its state unsynchronised, but must not assume it
+ * stays on the same thread across an initialize()/shutdown() pair. The
+ * diagnostic sink is invoked synchronously from inside a backend call, so a
+ * sink must record and return, never call back into the backend.
+ *
+ * FAILURE. A backend reports what it could not do instead of degrading
+ * silently (see setDiagnosticSink) and never throws across this interface:
+ * initialize() returns false, the readback methods return false, and a request
+ * that cannot be served leaves the previous state intact. A false return never
+ * means "partially applied". A false initialize() must not leave a half-built
+ * session behind: the engine calls shutdown() only after a successful
+ * initialize() (see RenderEngine::shutdown), so the backend owns the cleanup
+ * of its own partial state.
  *
  * RenderBackend is reference-counted: factories return an intrusive_ptr and
  * RenderEngine keeps its own reference, so ownership and lifetime are
@@ -44,16 +98,42 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
   public:
     virtual ~RenderBackend() = default;
 
-    /** @brief Initializes the backend. */
+    /** @brief Initializes the backend: device, surface, pipelines, caches.
+     *
+     * Called once per session, after the host announced the native window
+     * (setWindowHandle) and the shading preset (setShaderPreset). A backend
+     * that is already initialized tears the previous session down first, so
+     * this may be called again on a recreated surface.
+     *
+     * @return true when the backend is ready to render; false when a required
+     *         resource could not be created. On false the backend owns the
+     *         cleanup of whatever it built (the engine does not call
+     *         shutdown() after a failed initialize()) and reports the reason
+     *         on its diagnostics channel.
+     */
     virtual bool initialize() = 0;
 
-    /** @brief Releases backend resources. */
+    /** @brief Releases everything the backend owns for the current session.
+     *
+     * Safe to call after a failed initialize(), before any initialize(), or
+     * twice: when it returns, the backend must be in the state of a freshly
+     * constructed one and initializable again. Every window / GPU object the
+     * session created must be gone — the engine calls it both when the
+     * renderer shuts down and when the rendering surface is recreated.
+     */
     virtual void shutdown() = 0;
 
-    /** @brief Begins a frame. */
+    /** @brief Begins a frame.
+     *
+     * May acquire the next presentable image of the surface, which the frame
+     * must hand back through swapBuffers() (see the class contract).
+     */
     virtual void beginFrame() = 0;
 
-    /** @brief Ends a frame. */
+    /** @brief Ends the frame: flushes what the frame's passes queued.
+     *
+     * Must not present — presenting is swapBuffers().
+     */
     virtual void endFrame() = 0;
 
     /** @brief Sets the active render target.
@@ -354,6 +434,13 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
 
     /** @brief Renders a list of commands.
      *
+     * Draws the current pass' content. The commands are this frame's
+     * transients and are borrowed (see the class contract): a backend must not
+     * keep a reference to them, or to @p camera, past the call. The backend
+     * reconciles its retained scene against them, so the call is incremental —
+     * a frame whose commands did not change structurally must neither
+     * re-upload geometry nor recompile pipelines.
+     *
      * @param commands Render commands to draw.
      * @param camera   Camera used for view/projection.
      */
@@ -415,7 +502,10 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      */
     virtual void clear(const Color& backgroundColor, bool clearDepth = true) = 0;
 
-    /** @brief Swaps buffers (double buffering). */
+    /** @brief Presents the rendered frame.
+     *
+     * The only call that presents, and the last call of a driven frame.
+     */
     virtual void swapBuffers() = 0;
 
     /** @brief Gets the backend's material manager.
@@ -515,6 +605,10 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * having to link a logging framework or write to stderr. Installing no
      * sink keeps the backend's own stderr tracing and still counts every
      * diagnostic (diagnosticCount()).
+     *
+     * The sink is invoked synchronously from inside the backend call that
+     * reported, so it must only record and return — calling back into the
+     * backend from a sink is unsupported.
      *
      * @param sink Callback invoked for every diagnostic, or empty to clear.
      */

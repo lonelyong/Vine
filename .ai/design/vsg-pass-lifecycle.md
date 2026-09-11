@@ -592,3 +592,47 @@ MODULE）。
 
 **仍未做**：`SceneBridge.cpp` 1532 行仍偏大（`syncSceneForSlot` 281 行），可按同一
 思路再切（几何同步 / 程序与材质同步 / 缓存决策三类）。
+
+## 14. 后端契约写进 `RenderBackend.hpp`（2026-09-11）
+
+**为什么**：该接口有 40+ 虚函数，而类级注释只有一句"抽象渲染后端接口"。实现者（与宿主）
+真正需要知道的六件事——调用序、借用语义、可保留什么、线程、失败语义、诊断——一条都没写，
+只能靠读 vsg 后端反推。现在它们是 `RenderBackend.hpp` 类级注释里的规范性文本，本节只记录
+**本后端的具体数字**与落地说明。
+
+**契约要点（正文在头文件）**：
+
+1. **调用序**：`beginFrame` → 每个启用 pass（按 order 升序）`beginPass` → `setPassOrder`
+   → 可选逐 pass 状态（`setRenderTarget` / `setViewport` / `setLights` / `setDepthMode`
+   / `clear`）→ 绘制（`render` / `drawScreenTexture` / `drawScreenProgram`）→ `endPass`
+   → `endFrame` → `swapBuffers`（**唯一的 present 点**，`endFrame` 不得呈现）。
+   **首帧之前有 warm-up**：引擎先把每个"启用且非清屏"的 pass 跑一遍 —— 后端因此能在呈现
+   任何一帧之前看到完整的 pass 集合，把保留态摆到最终位置（本后端正是据此让"首帧前创建"
+   的槽落在正确堆叠序）。`beginFrame` 可能已获取下一张交换链图像，所以被驱动的帧必须以
+   `swapBuffers` 收尾。
+2. **借用语义**：所有指针/引用参数（camera、commands、lights、target、program）只在该次
+   调用期间有效；`beginPass` 的 pass 只在其作用域内有效。宿主可以在调用返回后立刻销毁它们，
+   pass 也可以随时被移除（由 `releasePass` / `releaseRenderTarget` 宣告）。后端需要后续
+   使用就必须拷贝或上传，**不得保留这类指针**。
+3. **可保留什么**：保留 GPU 状态（内容视图、编译好的管线、采样槽、纹理缓存）是预期行为，
+   但必须按"被服务对象的寿命"定键、由对应的 `release*` 释放、且**不随帧数增长**（长跑必须
+   收敛到稳态）。后端不得让宿主为了正确性而调用 `release*`。
+4. **线程**：单线程、串行、不可重入 —— 后端无需加锁，但不得假设跨 `initialize`/`shutdown`
+   保持同一线程。**诊断 sink 是在后端调用内部同步回调的**，sink 只能记录并返回，不得回调后端。
+5. **失败语义**：失败必须上报（§10），接口内不抛异常；`false` 永远不表示"部分生效"。
+   **`initialize()` 返回 false 时后端自己收拾残局** —— 引擎只在 initialize 成功后才调
+   `shutdown()`（见 `RenderEngine::shutdown`）。本后端已满足（三条失败路径都先 `shutdown()`
+   再 `return false`），现在把它写成要求，避免下一个后端实现者踩。
+
+**保留预算（本后端的数字；契约本身只要求"有界 + 可释放"）**：
+
+| 保留项 | 上限 | 何时释放 |
+| --- | --- | --- |
+| 在飞几何/数据节点（退役环） | `kRetireRingDepth = 4`（= 命令槽 3 + 1） | 每提交帧推进一格，格子里的旧节点才销毁 |
+| 几何缓存条目（未再出现的） | `kAbsentEvictFrames = 600` 帧 | 连续 600 帧未出现即回收 |
+| 材质缓存 | `kMaxEntries = 256` 条 | app 放弃即回收（每提交帧 sweep）+ FIFO 兜底 |
+| 变体 / ShaderSet 缓存 | 超限整表清空（D16） | 只丢模板；已建管线仍被保留状态组持有 |
+| pass / target 的槽与目标 | 无寿命上限 | 显式 `releasePass` / `releaseRenderTarget` |
+
+**验收**：仅注释变更（零代码改动），全量重编通过；test_vsg 67、test_graphics 151 全绿；
+`scripts/gfx_lavapipe_check.sh` → `RESULT: PASS`。头文件与本节是"实现者视角"的同一份契约。

@@ -1,5 +1,20 @@
 # Graphics 模块核心
 
+## 后端契约（规范性在 `RenderBackend.hpp` 类注释；预算见设计文档 §14）
+- **调用序**：`beginFrame` → 每启用 pass（order 升序）`beginPass`→`setPassOrder`→可选逐
+  pass 状态→绘制→`endPass` → `endFrame` → `swapBuffers`（**唯一 present 点**）。首帧前有
+  warm-up（启用且非清屏的 pass 先各跑一遍），所以"首帧前创建的东西"也要能摆对位置。
+- **借用**：camera / commands / lights / target / program 只在当次调用内有效（commands 是本
+  帧临时量），`beginPass` 的 pass 只在作用域内有效；**不得保留**，需要就拷贝/上传。
+- **保留**：保留 GPU 状态必须按被服务对象寿命定键、由对应 `release*` 释放、**不随帧数增长**；
+  宿主不必为正确性调 `release*`。
+- **线程**：串行、不可重入、无需加锁；不得假设跨 `initialize`/`shutdown` 同线程；**诊断 sink
+  是同步回调**，只能记录返回，不得回调后端。
+- **失败**：接口内不抛异常；`false` ≠ 部分生效；**`initialize()` 返回 false 必须自己收拾残局**
+  （引擎只在 initialize 成功后才调 `shutdown()`，见 `RenderEngine::shutdown`）。
+- **保留预算**（本后端数字）：退役环 4（提交帧）、几何复用窗 600 帧、材质 256 条、
+  变体/ShaderSet 超限整表清空、pass/target 槽靠 `releasePass`/`releaseRenderTarget`。
+
 > 2026-09-11 **后端模块拆分（结构，行为零变更）**：`VsgRenderer.cpp` 3603 -> 901 行，
 > 按职责拆成 `VsgRendererPasses/Targets/Overlay.cpp` + `VsgRendererImpl.hpp`（会话态）
 > + `VsgPipelineFactory.{hpp,cpp}`（纯工厂，`vine::vsg::detail`）+ `VsgBackendUtility.*`
