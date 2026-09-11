@@ -504,6 +504,114 @@ bool runInFlightChurnPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
     return true;
 }
 
+/**
+ * @brief Verifies the diagnostics channel end to end on a device.
+ *
+ * A backend that cannot serve a request must say so on the host's channel, not
+ * only on stderr: this phase installs a sink on the renderer, feeds it content
+ * it cannot draw (a mesh whose index is out of range, and a program whose GLSL
+ * does not compile), renders a few frames, and checks what arrived — category,
+ * severity, and that a rejection is reported once per data revision rather than
+ * once per frame.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the content is drawn with.
+ * @param frames   Number of frames to draw the broken content for.
+ * @return true when every expected diagnostic arrived exactly as documented.
+ */
+bool runDiagnosticsPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+
+    std::vector<vine::graphics::RenderDiagnostic> received;
+    renderer.setDiagnosticSink([&received](const vine::graphics::RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    const auto count_of = [&received](vine::graphics::DiagnosticCategory category) {
+        std::size_t n = 0;
+        for (const auto& item : received) {
+            if (item.category == category) {
+                ++n;
+            }
+        }
+        return n;
+    };
+
+    // 1. A mesh whose index is out of range: nothing to draw -> Error.
+    auto bad_geometry = makeTriangle(0.0f);
+    bad_geometry->setIndices(vine::geometry::UInt32Array{ 0u, 1u, 9u });
+    auto material = MaterialPtr(new Material());
+    RenderCommand bad_command(bad_geometry, material, Mat4d());
+
+    // 2. A program that cannot compile: the built-in shader takes over -> Warning.
+    auto bad_program    = ShaderProgramPtr(new ShaderProgram());
+    vine::graphics::ShaderStage broken;
+    broken.type   = vine::graphics::ShaderStageType::Fragment;
+    broken.source = u8"#version 450\nthis is not glsl\n";
+    bad_program->addStage(broken);
+
+    auto good_geometry = makeTriangle(1.0f);
+    RenderCommand good_command(good_geometry, material, Mat4d());
+    good_command.program = bad_program;
+
+    auto pass = RenderPassPtr(new RenderPass());
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(nullptr);
+        renderer.clear(vine::Color(20, 20, 30, 255), true);
+        renderer.render(std::vector<RenderCommand>{ bad_command, good_command }, camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+
+    const std::size_t rejected  = count_of(vine::graphics::DiagnosticCategory::GeometryRejected);
+    const std::size_t fallbacks = count_of(vine::graphics::DiagnosticCategory::ShaderFallback);
+    if (rejected != 1u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: a rejected geometry must be reported once per revision, got %zu over %d frames\n",
+                     rejected, frames);
+        ok = false;
+    }
+    if (fallbacks < 1u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: a program that cannot compile must report a shader fallback, got %zu\n",
+                     fallbacks);
+        ok = false;
+    }
+    if (renderer.diagnosticCount() != rejected + fallbacks) {
+        std::fprintf(stderr, "[selftest] FAIL: diagnosticCount() = %zu, received %zu\n",
+                     renderer.diagnosticCount(), received.size());
+        ok = false;
+    }
+    for (const auto& item : received) {
+        if (item.message.empty()) {
+            std::fprintf(stderr, "[selftest] FAIL: a diagnostic arrived without a message\n");
+            ok = false;
+            break;
+        }
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] diagnostics: %zu rejection(s) + %zu fallback(s) reached the host sink over %d frames\n",
+                     rejected, fallbacks, frames);
+    }
+
+    // Stop listening: the renderer must keep working (and counting) without a sink.
+    renderer.setDiagnosticSink({});
+    renderer.beginFrame();
+    renderer.beginPass(pass.get());
+    renderer.setRenderTarget(nullptr);
+    renderer.clear(vine::Color(0, 0, 0, 255), true);
+    renderer.render(std::vector<RenderCommand>{ bad_command }, camera.get());
+    renderer.endPass();
+    renderer.endFrame();
+    renderer.swapBuffers();
+    return ok;
+}
+
 }  // namespace
 
 int main()
@@ -746,6 +854,7 @@ int main()
     contract_ok = runPassProtocolPhase(*renderer, camera, window_commands, 4) && contract_ok;
     contract_ok = runSharedDepthPhase(*renderer, camera, window_commands, 4) && contract_ok;
     contract_ok = runInFlightChurnPhase(*renderer, camera, 8) && contract_ok;
+    contract_ok = runDiagnosticsPhase(*renderer, camera, 6) && contract_ok;
 
     // ---- Teardown paths, then a few frames to prove nothing dangles ---------
     backend->releaseWindowLayer(camera.get(), 1);   // drop the HUD slot

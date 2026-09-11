@@ -1329,6 +1329,15 @@ class MockBackend : public RenderBackend {
   public:
     bool ok = false;
     int begin_calls = 0;
+
+    /// Emits one diagnostic through the backend contract (test hook for the
+    /// engine's sink pass-through; reportDiagnostic is protected).
+    void emitDiagnostic(DiagnosticSeverity severity, DiagnosticCategory category,
+                        const vine::String& message)
+    {
+        reportDiagnostic(severity, category, message);
+    }
+
     int end_calls = 0;
     int swap_calls = 0;
     int render_calls = 0;
@@ -3880,4 +3889,54 @@ TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
     first_transform->setMatrix(vine::math::translate(Vec3d(4000.0, 0.0, 0.0)));
     EXPECT_TRUE(scene.collectRenderCommands(&cam).empty());
     EXPECT_EQ(leaf->bound_calls, 3);
+}
+
+// ============ Backend diagnostics channel ============
+
+/**
+ * @brief The engine forwards the host's diagnostic sink to its backend.
+ *
+ * A host holds the engine (not the backend instance) and may install the sink
+ * before or after the backend, so the engine must store it and apply it to
+ * whichever backend is current or set later. This is the programmatic channel
+ * that replaces "the backend printed something to stderr".
+ */
+TEST(DiagnosticsTest, EngineForwardsSinkToCurrentAndFutureBackend)
+{
+    RenderEngine engine;
+    std::vector<RenderDiagnostic> received;
+    engine.setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine.setBackend(backend);
+
+    // The backend received the stored sink (installed after setBackend, the
+    // engine applies it to the backend it currently holds).
+    EXPECT_TRUE(static_cast<bool>(backend->diagnosticSink()));
+
+    // A backend set later gets it too.
+    auto later = intrusive_ptr<MockBackend>(new MockBackend());
+    engine.setBackend(later);
+    EXPECT_TRUE(static_cast<bool>(later->diagnosticSink()));
+
+    // Emitting on the current backend reaches the host, and the engine can
+    // report the count without listening.
+    later->emitDiagnostic(DiagnosticSeverity::Warning, DiagnosticCategory::ShaderFallback,
+                          u8"synthetic");
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].severity, DiagnosticSeverity::Warning);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ShaderFallback);
+    EXPECT_EQ(received[0].message, u8"synthetic");
+    EXPECT_EQ(engine.diagnosticCount(), 1u);
+
+    // Clearing the sink stops delivery but not counting; no backend means 0.
+    engine.setDiagnosticSink({});
+    later->emitDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::GeometryRejected,
+                          u8"second");
+    EXPECT_EQ(received.size(), 1u);
+    EXPECT_EQ(engine.diagnosticCount(), 2u);
+    engine.setBackend(nullptr);
+    EXPECT_EQ(engine.diagnosticCount(), 0u);
 }

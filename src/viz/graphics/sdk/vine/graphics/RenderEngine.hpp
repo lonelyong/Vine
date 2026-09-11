@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <cstddef>
 #include <map>
 #include <vector>
 
@@ -10,6 +11,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "FrameContext.hpp"
+#include "RenderDiagnostic.hpp"
 #include "ShaderPreset.hpp"
 
 V_GRAPHICS_NS_BEGIN
@@ -68,11 +70,37 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      * The engine keeps a reference to the backend for as long as it is set,
      * so the backend stays alive at least until the engine is destroyed or
      * a different backend (or nullptr) is set. Call before initialize().
-     * Setting the same backend instance again is a no-op.
+     * Setting the same backend instance again is a no-op. The installed
+     * diagnostic sink (setDiagnosticSink) is applied to the new backend too.
      *
      * @param backend Backend used for drawing, or null to clear.
      */
     void setBackend(intrusive_ptr<RenderBackend> backend);
+
+    /** @brief Installs the sink that receives backend diagnostics.
+     *
+     * The backend reports what it could not serve (rejected geometry, dropped
+     * channel, shader fallback, off-screen target it could not build) instead
+     * of degrading silently; this is the host's programmatic channel to it
+     * (log / overlay / telemetry). The sink is stored by the engine and
+     * applied to the current backend immediately and to any backend set
+     * later, so a host can install it before setBackend().
+     *
+     * @param sink Callback invoked for every backend diagnostic, or empty.
+     */
+    void setDiagnosticSink(DiagnosticSink sink);
+
+    /** @brief Gets the installed diagnostic sink (empty when unset). */
+    const DiagnosticSink& diagnosticSink() const { return diagnostic_sink_; }
+
+    /** @brief Gets how many diagnostics the current backend reported.
+     *
+     * 0 without a backend. Counted by the backend whether or not a sink is
+     * installed, so a host can gate on it without listening.
+     *
+     * @return Number of reported diagnostics (0 when no backend is set).
+     */
+    std::size_t diagnosticCount() const;
 
     /** @brief Initializes the backend.
      *
@@ -316,6 +344,9 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     // ---- Fields ----
 
     intrusive_ptr<RenderBackend>        backend_;
+    // Stored by the engine (not only forwarded) so a backend set later still
+    // receives the host's diagnostics.
+    DiagnosticSink                      diagnostic_sink_;
     ShaderPreset                        shader_preset_{ ShaderPreset::StandardPhong };
     std::vector<Slot>                   slots_;         // uniform ordered draw registry
     FrameContext                        frame_ctx_;

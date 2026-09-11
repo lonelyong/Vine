@@ -16,9 +16,12 @@
 #include <QWidget>
 #include <QWindow>
 
+#include <string>
+
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/SceneView.hpp>
+#include <vine/logging/Log.hpp>
 
 #include <vine/window/InputEvent.hpp>
 #include <vine/window/KeyCode.hpp>
@@ -348,6 +351,29 @@ RenderControl::RenderControl()
     d->view  = vine::intrusive_ptr<vine::graphics::SceneView>(
         new vine::graphics::SceneView());
     d->view->setEngine(d->engine.get());
+
+    // Backend diagnostics become log records. This is what makes a failing draw
+    // visible in a GUI app at all: the backend reports what it could not serve
+    // (a rejected geometry, a shader that fell back to the built-in one, an
+    // off-screen target it could not build) through the engine, and without a
+    // listener that information only ever reaches stderr, which a windowed app
+    // never shows. The engine stores the sink, so it also applies to the backend
+    // created later by initialize().
+    d->engine->setDiagnosticSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+        auto&             logger  = vine::logging::defaultLogger();
+        const std::string message = diagnostic.message.stdstr();
+        switch (diagnostic.severity) {
+            case vine::graphics::DiagnosticSeverity::Error:
+                logger.error("[graphics] {}", message);
+                break;
+            case vine::graphics::DiagnosticSeverity::Warning:
+                logger.warn("[graphics] {}", message);
+                break;
+            case vine::graphics::DiagnosticSeverity::Info:
+                logger.info("[graphics] {}", message);
+                break;
+        }
+    });
 }
 
 RenderControl::~RenderControl()

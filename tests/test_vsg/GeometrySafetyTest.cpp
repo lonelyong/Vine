@@ -609,3 +609,166 @@ TEST(GeometrySafetyTest, ReplacedDataNodeIsParkedUntilTheRingAdvances)
     }
     EXPECT_EQ(old_data->referenceCount(), 1u); // only this test still holds it
 }
+
+// ============ Diagnostics channel (failures must not be silent) ============
+
+namespace
+{
+
+/// Collects the diagnostics a bridge (or backend) reports.
+struct CapturedDiagnostics
+{
+    std::vector<RenderDiagnostic> items;
+
+    /// Installs this collector as the sink of @p bridge.
+    void installOn(vine::vsg::SceneBridge& bridge)
+    {
+        bridge.setDiagnosticSink([this](const RenderDiagnostic& diagnostic) {
+            items.push_back(diagnostic);
+        });
+    }
+
+    /// Number of captured diagnostics in @p category.
+    std::size_t count(DiagnosticCategory category) const
+    {
+        std::size_t n = 0;
+        for (const auto& item : items) {
+            if (item.category == category) {
+                ++n;
+            }
+        }
+        return n;
+    }
+};
+
+}  // namespace
+
+/**
+ * @brief A rejected geometry is reported to the host's sink, once per revision.
+ *
+ * The backend used to only print to stderr: a host had no way to learn that
+ * content it asked to draw is missing. The rejection must reach the sink with
+ * the right category/severity, exactly once per data revision (not per frame,
+ * so a broken mesh in a live scene does not flood the log), and stop once the
+ * data is fixed.
+ */
+TEST(DiagnosticsTest, RejectedGeometryIsReportedOncePerRevision)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+
+    CapturedDiagnostics captured;
+    captured.installOn(bridge);
+
+    auto geom = makePackedGeometry(triangleFloats(), 3u,
+                                   std::make_shared<vine::geometry::UInt32Array>(
+                                       vine::geometry::UInt32Array{ 0u, 1u, 5u }));
+
+    // First sync: rejected -> one Error/GeometryRejected diagnostic.
+    bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
+                              root.get(), nullptr);
+    ASSERT_EQ(root->children.size(), 0u);
+    ASSERT_EQ(captured.items.size(), 1u);
+    EXPECT_EQ(captured.items[0].severity, DiagnosticSeverity::Error);
+    EXPECT_EQ(captured.items[0].category, DiagnosticCategory::GeometryRejected);
+    EXPECT_FALSE(captured.items[0].message.empty());
+    EXPECT_EQ(bridge.diagnosticCount(), 1u);
+    EXPECT_EQ(bridge.diagnosticCount(DiagnosticCategory::GeometryRejected), 1u);
+
+    // Same revision, another frame: still rejected, but not reported again.
+    bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
+                              root.get(), nullptr);
+    EXPECT_EQ(captured.items.size(), 1u);
+    EXPECT_EQ(bridge.diagnosticCount(), 1u);
+
+    // Fixed data (bumps the revision): drawn again, and no further diagnostic.
+    geom->setIndices(vine::geometry::UInt32Array{ 0u, 1u, 2u });
+    bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
+                              root.get(), nullptr);
+    ASSERT_EQ(root->children.size(), 1u);
+    EXPECT_EQ(captured.items.size(), 1u);
+
+    // Broken again with a NEW revision: reported again.
+    geom->setIndices(vine::geometry::UInt32Array{ 0u, 1u, 9u });
+    bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
+                              root.get(), nullptr);
+    ASSERT_EQ(captured.items.size(), 2u);
+    EXPECT_EQ(bridge.diagnosticCount(DiagnosticCategory::GeometryRejected), 2u);
+}
+
+/**
+ * @brief A dropped channel is a Warning, and the mesh is still drawn.
+ *
+ * The distinction matters to a host: ChannelIgnored means "looks wrong", while
+ * GeometryRejected means "missing entirely".
+ */
+TEST(DiagnosticsTest, DroppedChannelWarnsButStillDraws)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+
+    CapturedDiagnostics captured;
+    captured.installOn(bridge);
+
+    auto geom = makePackedGeometry(triangleFloats(), 3u);
+    // A malformed custom channel (2 vertices where the mesh has 3): dropped.
+    AttributeBuffer bad;
+    bad.components = 4u;
+    bad.data       = packedFloats({ 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f });
+    geom->addBuffer(4u, bad);
+
+    bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
+                              root.get(), nullptr);
+
+    ASSERT_EQ(root->children.size(), 1u); // still drawn
+    ASSERT_EQ(captured.items.size(), 1u);
+    EXPECT_EQ(captured.items[0].severity, DiagnosticSeverity::Warning);
+    EXPECT_EQ(captured.items[0].category, DiagnosticCategory::ChannelIgnored);
+    EXPECT_EQ(bridge.diagnosticCount(DiagnosticCategory::ChannelIgnored), 1u);
+}
+
+/**
+ * @brief A clean frame reports nothing, and clearing the sink stops delivery.
+ *
+ * The channel must be usable as a "did anything unexpected happen" gate: a
+ * valid scene produces no diagnostics at all (no per-frame noise), and a host
+ * that clears the sink stops receiving them without the counting stopping.
+ */
+TEST(DiagnosticsTest, CleanFrameIsSilentAndSinkCanBeCleared)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+
+    CapturedDiagnostics captured;
+    captured.installOn(bridge);
+
+    // A well-formed mesh, a material and a custom channel: nothing to report.
+    auto geom = makePackedGeometry(triangleFloats(), 3u);
+    AttributeBuffer colour;
+    colour.components = 3u;
+    colour.data       = packedFloats({ 1, 0, 0, 0, 1, 0, 0, 0, 1 });
+    geom->addBuffer(3u, colour);
+
+    for (int frame = 0; frame < 3; ++frame) {
+        bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
+                                  root.get(), nullptr);
+    }
+    EXPECT_EQ(root->children.size(), 1u);
+    EXPECT_TRUE(captured.items.empty());
+    EXPECT_EQ(bridge.diagnosticCount(), 0u);
+
+    // A bad mesh still counts after the sink is cleared, but is no longer
+    // delivered (and the bridge falls back to its stderr trace).
+    geom->setIndices(vine::geometry::UInt32Array{ 0u, 1u, 7u });
+    bridge.setDiagnosticSink({});
+    bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
+                              root.get(), nullptr);
+    EXPECT_TRUE(captured.items.empty());
+    EXPECT_EQ(bridge.diagnosticCount(DiagnosticCategory::GeometryRejected), 1u);
+}

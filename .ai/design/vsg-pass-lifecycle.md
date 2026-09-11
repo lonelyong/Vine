@@ -380,3 +380,62 @@ descriptor set 可能仍被**已提交但未完成**的命令缓冲引用：view
   单线程，仍应在文档标注前提）。
 
 **依赖 / 优先级**：依赖 vsg 能力（A/C 路线）；🟢（启动性能，非正确性）。
+
+## 10. 后端诊断通道（2026-09-11 落地）
+
+**问题**：`RenderBackend` 的 22 个方法是 `void`、仅 5 个返回 `bool`，81% 的接口**无法报告失败**；
+后端内部 20 处 `return nullptr/false` 静默返回、34 处 `fprintf(stderr, ...)`（`vine/logging` 用量 0）。
+于是"没画出来"对宿主完全不可见 —— 这正是本模块最大的风险面（终检 §8 的 9 个缺陷除 1 个外全是静默类）。
+
+**契约（`vine/graphics/RenderDiagnostic.hpp`，增量、非破坏）**
+
+```cpp
+enum class DiagnosticSeverity { Info, Warning, Error };      // Error = 该内容没被画出
+enum class DiagnosticCategory { GeometryRejected, ChannelIgnored, ShaderFallback,
+                                CompileFailed, TargetBuildFailed, ContentSkipped,
+                                InitFailed, Count };
+struct RenderDiagnostic { DiagnosticSeverity severity; DiagnosticCategory category; String message; };
+using DiagnosticSink = std::function<void(const RenderDiagnostic&)>;
+```
+
+- `RenderBackend::setDiagnosticSink(sink)` / `diagnosticSink()` / `diagnosticCount()` /
+  `diagnosticCount(category)`；`protected reportDiagnostic(...)` 供后端上报。**默认实现齐全 → 现有后端零改动**。
+- 分类按**后果**（宿主需要知道什么）而非原因划分，且是**枚举**（宿主/测试靠 `switch` 匹配，改文案不破坏调用方）；
+  severity 与 category 正交。
+- `RenderEngine::setDiagnosticSink(...)` 是宿主的稳定入口：引擎**保存** sink 并应用到当前后端，
+  以及**之后**才 setBackend 的后端（宿主不必关心后端实例何时创建）。
+
+**vsg 后端接线**
+
+- `VsgRenderer` 是**唯一上报权威**：`reportFailure(sev, cat, msg)` = stderr 追踪 + 后端计数器 + 宿主 sink。
+  槽内 `SceneBridge` 的拒绝/降级经由 `installDiagnosticRoute(bridge)`（bridge 的 sink 被设为一个
+  回调到 `reportFailure` 的 lambda）→ **bridge 的发现就是后端的发现**（`diagnosticCount()` 诚实；
+  bridge 自身不再写 stderr，避免双份追踪）。
+- 已接线的失败点：loc0 不可用/分量 stride 非法/索引越界（`GeometryRejected`，Error）、
+  loc1/loc2/自定义通道被丢弃（`ChannelIgnored`，Warning，网格仍然绘制）、
+  用户 program 编译或装配失败→回退内建（`ShaderFallback`，Warning；**原 D9 全静默**）、
+  PiP/全屏 program/Screen pass 的编译与装配失败（`CompileFailed`）、
+  离屏 target 建不起来（`TargetBuildFailed`）、pass 内容准备失败/相机桥失败/PiP 反馈环拒绝
+  （`ContentSkipped`）、初始化失败（`InitFailed`）。
+  自由函数 helper（`makeScreenTextureNode` / `makeFullscreenProgramNode` / `makeCompiledOverlayView`）
+  不自行上报，改为**返回失败原因**（`ProgramNodeFailure` / out-param），由调用方（成员函数，
+  知道是哪个 pass）上报 —— 与 `unpackXyz` 同一手法。
+- 频次纪律沿用既有语义：**按 revision 上报**（几何拒绝、program 编译）而不是每帧刷屏；
+  帧内重复出现的内容不会重复上报。
+
+**宿主侧（appfw）**：`RenderControl` 安装一个把诊断写进 `vine/logging` 的 sink
+（`logger.error/warn/info("[graphics] {}")`），这样窗口应用（看不到 stderr）也能在日志/控制台看到
+"哪块内容没画出来、为什么"。`src/app/src/main.cpp` 已初始化 console + 按日文件 sink。
+
+**验证**
+
+- 设备无关：`test_vsg` 新增 3 例（`DiagnosticsTest.*`：按 revision 只报一次、丢弃通道是 Warning
+  且仍绘制、干净帧零诊断 + 清空 sink 后只计数不再投递）；`test_graphics` 新增 1 例
+  （引擎把 sink 转发给当前与之后的后端，`diagnosticCount()` 一致）。共 151 + 58 全绿。
+- 设备侧：`vsg_backend_selftest::runDiagnosticsPhase()` 在真实 Vulkan 上装 sink、喂入
+  "索引越界网格 + 编译不过的 program"，6 帧后断言 **1 条 GeometryRejected + ≥1 条 ShaderFallback**、
+  `diagnosticCount() == 收到条数`、消息非空、清空 sink 后仍可继续渲染。
+- lavapipe 门禁 RESULT: PASS（0 VUID）。
+
+**仍未做**：`gfx_backend_vsg.md` 里的 `fprintf` 信息性追踪（"target attached"、"released GPU
+resources" 等）仍是 stderr —— 它们是**追踪**不是失败，收敛到日志系统需要同时改 harness 的 stderr 断言。

@@ -36,6 +36,24 @@ void RenderEngine::setBackend(intrusive_ptr<RenderBackend> backend)
         return;
     }
     backend_ = std::move(backend);
+    // A backend set after the sink was installed still gets it: the engine is
+    // the stable place a host holds, not the backend instance.
+    if (backend_ != nullptr) {
+        backend_->setDiagnosticSink(diagnostic_sink_);
+    }
+}
+
+void RenderEngine::setDiagnosticSink(DiagnosticSink sink)
+{
+    diagnostic_sink_ = std::move(sink);
+    if (backend_ != nullptr) {
+        backend_->setDiagnosticSink(diagnostic_sink_);
+    }
+}
+
+std::size_t RenderEngine::diagnosticCount() const
+{
+    return backend_ != nullptr ? backend_->diagnosticCount() : 0u;
 }
 
 bool RenderEngine::initialize()

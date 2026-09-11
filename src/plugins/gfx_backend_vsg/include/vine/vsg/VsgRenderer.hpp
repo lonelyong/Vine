@@ -24,6 +24,11 @@ struct RenderCommand;
 
 V_VSG_NS_BEGIN
 
+// Defined in SceneBridge.hpp (a slot's retained-state bridge). Forward declared
+// so this header stays independent of it: the renderer only routes diagnostics
+// to it, and holds it inside its PImpl.
+class SceneBridge;
+
 /**
  * @brief VSG render backend implementing vine::graphics::RenderBackend.
  *
@@ -257,6 +262,21 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * @return The attached native handle, or nullptr.
      */
     void* nativeHandle() const override;
+
+    /** @brief Installs the sink that receives backend diagnostics.
+     *
+     * Every request this backend cannot serve — a rejected geometry, a dropped
+     * channel, a user shader that fell back to the built-in one, an off-screen
+     * target that could not be built, a pass whose content could not be
+     * prepared — is reported instead of degrading silently. The sink is stored
+     * and forwarded to every content slot's SceneBridge, including slots
+     * created later, so a host installed sink sees the whole backend. Without a
+     * sink the renderer keeps its stderr tracing and still counts diagnostics
+     * (diagnosticCount()).
+     *
+     * @param sink Callback invoked for every diagnostic, or empty to clear.
+     */
+    void setDiagnosticSink(vine::graphics::DiagnosticSink sink) override;
 
     /** @brief Selects the shading-model preset for scene geometry.
      *
@@ -560,6 +580,31 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     bool incrementalCompileViews();
 
   private:
+    /** @brief Reports one backend diagnostic: stderr trace plus the host sink.
+     *
+     * The stderr half is this backend's built-in tracing (the validation
+     * harness reads it); the sink half is the host's programmatic channel.
+     * Failing to draw content must never be silent, so every place that gives
+     * up on a request calls this instead of only printing.
+     *
+     * @param severity How bad the situation is.
+     * @param category What it is about.
+     * @param message  Human-readable detail, with the numbers involved.
+     */
+    /** @brief Installs this renderer's diagnostics route on @p bridge.
+     *
+     * The bridge reports a diagnostic; the renderer turns it into the single
+     * route (stderr trace + backend counters + host sink), so a bridge report is
+     * counted and delivered exactly like a renderer report.
+     *
+     * @param bridge Content-slot bridge to route.
+     */
+    void installDiagnosticRoute(SceneBridge& bridge);
+
+    void reportFailure(vine::graphics::DiagnosticSeverity severity,
+                       vine::graphics::DiagnosticCategory category,
+                       const vine::String&          message);
+
     struct Impl;
     struct Persistent;
     std::unique_ptr<Impl> impl;

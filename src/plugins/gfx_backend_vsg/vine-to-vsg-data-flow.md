@@ -409,7 +409,7 @@ sequenceDiagram
 
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|
-| D9 | program 编译失败**静默回退内建**，无用户可见诊断（坏 shader 表现为"还是默认灰"） | `buildProgramShaderSet` | 🔴 |
+| D9 | program 编译失败**静默回退内建**，无用户可见诊断（坏 shader 表现为"还是默认灰"）。**已修（2026-09-11，设计 §10）**：回退与装配失败经诊断通道上报（`ShaderFallback`，按 program revision 一次），appfw 写入 `vine/logging` | `getProgramShaderSet` / 诊断通道 | 🟢 |
 | D10 | `ShaderProgram` **无 revision/变更通知**，重建键是指针不是内容 → 同一对象改 GLSL 不重编译/不重试（改 shader 没反应） | `ShaderProgram.hpp` + `SceneBridge::Item` | 🔴 |
 | D11 | 内建 phong 是序列化 blob；`ShaderStage` 反序列化后不留 source → 默认 GLSL 不可改/难诊断 | vsg blob | 🟢 |
 | D12 | 运行期 glslang 仅在 fetch-vsg 路径可用；`VINE_USE_FETCHCONTENT=OFF`（旧 /opt/opensrc/VSG 无 ShaderCompiler）→ program 功能整体失效且静默回退 | 构建 | 🟡 |

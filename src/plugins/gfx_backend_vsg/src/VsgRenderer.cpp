@@ -1,5 +1,7 @@
 ﻿#include <vine/vsg/VsgRenderer.hpp>
 
+#include "VsgUtils.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -595,8 +597,28 @@ void main()
  * @param extent     Surface extent for the baked static viewport.
  * @return The drawable state-group, or null when shader compilation failed.
  */
-::vsg::ref_ptr<::vsg::Node> makeScreenTextureNode(::vsg::ref_ptr<::vsg::ImageView> image_view, const VkExtent2D& extent)
+/**
+ * @brief Why an overlay/program node could not be built.
+ *
+ * Returned to the caller instead of reported here: only the calling member
+ * knows which pass asked, and it owns the sink and the diagnostic counters.
+ */
+enum class ProgramNodeFailure
 {
+    None,           ///< Built successfully.
+    NoCompiler,     ///< The runtime GLSL compiler is unavailable (no shaderc).
+    NoFragmentStage,///< The user program carries no fragment stage.
+    CompileFailed,  ///< GLSL compilation failed.
+};
+
+::vsg::ref_ptr<::vsg::Node> makeScreenTextureNode(::vsg::ref_ptr<::vsg::ImageView> image_view, const VkExtent2D& extent,
+                                                  ProgramNodeFailure* failure = nullptr)
+{
+    // The caller owns the reporting (it knows which pass asked and which sink to
+    // use); this helper only says why it could not build the node.
+    if (failure != nullptr) {
+        *failure = ProgramNodeFailure::None;
+    }
     const std::string vertex_source   = fullscreenVertexSource();
     const std::string fragment_source = R"(#version 450
 layout(location = 0) in vec2 v_uv;
@@ -616,11 +638,15 @@ void main()
 
     auto compiler = ::vsg::ShaderCompiler::create();
     if (compiler == nullptr || !compiler->supported()) {
-        std::fprintf(stderr, "[VsgRenderer] screen pass: shader compiler unavailable\n");
+        if (failure != nullptr) {
+            *failure = ProgramNodeFailure::NoCompiler;
+        }
         return ::vsg::ref_ptr<::vsg::Node>();
     }
     if (!compiler->compile(vs) || !compiler->compile(fs)) {
-        std::fprintf(stderr, "[VsgRenderer] screen pass: GLSL compilation failed\n");
+        if (failure != nullptr) {
+            *failure = ProgramNodeFailure::CompileFailed;
+        }
         return ::vsg::ref_ptr<::vsg::Node>();
     }
 
@@ -700,8 +726,14 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
     const ::vsg::ImageViews&                          image_views,
     ::vsg::ref_ptr<::vsg::ImageView>                  depth_view,
     const VkExtent2D&                                 extent,
-    ::vsg::ref_ptr<::vsg::Data>                       push_data)
+    ::vsg::ref_ptr<::vsg::Data>                       push_data,
+    ProgramNodeFailure*                               failure = nullptr)
 {
+    // The caller reports (it knows the pass and the sink); this helper only says
+    // why it could not build the node.
+    if (failure != nullptr) {
+        *failure = ProgramNodeFailure::None;
+    }
     if (program == nullptr || image_views.empty() || push_data == nullptr) {
         return ::vsg::ref_ptr<::vsg::Node>();
     }
@@ -714,7 +746,9 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
         }
     }
     if (fs_spec == nullptr) {
-        std::fprintf(stderr, "[VsgRenderer] fullscreen program: no fragment stage\n");
+        if (failure != nullptr) {
+            *failure = ProgramNodeFailure::NoFragmentStage;
+        }
         return ::vsg::ref_ptr<::vsg::Node>();
     }
 
@@ -724,8 +758,16 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
     auto fs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, fs_spec->entryPoint.stdstr(), fs_spec->source.stdstr());
 
     auto compiler = ::vsg::ShaderCompiler::create();
-    if (compiler == nullptr || !compiler->supported() || !compiler->compile(vs) || !compiler->compile(fs)) {
-        std::fprintf(stderr, "[VsgRenderer] fullscreen program: GLSL compilation failed\n");
+    if (compiler == nullptr || !compiler->supported()) {
+        if (failure != nullptr) {
+            *failure = ProgramNodeFailure::NoCompiler;
+        }
+        return ::vsg::ref_ptr<::vsg::Node>();
+    }
+    if (!compiler->compile(vs) || !compiler->compile(fs)) {
+        if (failure != nullptr) {
+            *failure = ProgramNodeFailure::CompileFailed;
+        }
         return ::vsg::ref_ptr<::vsg::Node>();
     }
 
@@ -935,7 +977,8 @@ void waitForIdle(::vsg::Viewer* viewer)
     int w,
     int h,
     bool front,
-    const char* what)
+    const char* what,
+    bool*       compile_failed = nullptr)
 {
     auto camera           = ::vsg::Camera::create();
     camera->viewportState = ::vsg::ViewportState::create(x, y, static_cast<uint32_t>(w), static_cast<uint32_t>(h));
@@ -955,8 +998,12 @@ void waitForIdle(::vsg::Viewer* viewer)
     // pass) before it is first recorded.
     const auto compileResult = viewer.compile();
     if (!compileResult) {
-        std::fprintf(stderr, "[VsgRenderer] %s compile failed: %s\n", what, compileResult.message.c_str());
-        // Drop the half-compiled View so it is never recorded.
+        // The caller reports this (it knows the pass and the host sink): all
+        // this helper does is drop the half-compiled View so it is never
+        // recorded, and say that the compile was the reason.
+        if (compile_failed != nullptr) {
+            *compile_failed = true;
+        }
         removeGraphChild(graph, view);
         return ::vsg::ref_ptr<::vsg::View>();
     }
@@ -1310,7 +1357,9 @@ bool VsgRenderer::initialize()
     init_stage = "initial viewer compile";
     const auto compileResult = impl->viewer->compile();
     if (!compileResult) {
-        std::fprintf(stderr, "[VsgRenderer] initialize FAILED at '%s': %s\n", init_stage, compileResult.message.c_str());
+        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
+                      formatDiagnostic(u8"initialize FAILED at '%s': %s", init_stage,
+                                       compileResult.message.c_str()));
         shutdown();
         return false;
     }
@@ -1319,8 +1368,9 @@ bool VsgRenderer::initialize()
     return true;
     }
     catch (...) {
-        std::fprintf(stderr, "[VsgRenderer] initialize FAILED at '%s': %s\n",
-                     init_stage, describeCurrentException().c_str());
+        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
+                      formatDiagnostic(u8"initialize FAILED at '%s': %s", init_stage,
+                                       describeCurrentException().c_str()));
         // Environment hints: an init failure here is usually a missing/invalid
         // Vulkan ICD (VK_ICD_FILENAMES), a device/driver problem or a missing
         // display — print what the backend saw so a local environment issue is
@@ -1816,9 +1866,10 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         // the framebuffer below attaches the shared depth, loaded not cleared.
         auto src_it = impl->targets.find(depth_src);
         if (src_it == impl->targets.end() || src_it->second.depth_view == nullptr) {
-            std::fprintf(stderr, "[VsgRenderer] shared-depth target '%s': source '%s' not built yet\n",
-                         target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str(),
-                         depth_src->name().empty() ? "(unnamed)" : depth_src->name().stdstr().c_str());
+            reportFailure(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+                          formatDiagnostic(u8"shared-depth target '%s': source '%s' not built yet; this frame keeps its own depth",
+                                           target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str(),
+                                           depth_src->name().empty() ? "(unnamed)" : depth_src->name().stdstr().c_str()));
             return;
         }
         attachments.push_back(src_it->second.depth_view);
@@ -2135,7 +2186,8 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
 
     auto src_it = impl->targets.find(source);
     if (src_it == impl->targets.end() || src_it->second.color_views.empty()) {
-        std::fprintf(stderr, "[VsgRenderer] drawScreenTexture: source target has no colour attachment\n");
+        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                      u8"drawScreenTexture: source target has no colour attachment: the pass draws nothing");
         return;
     }
     const auto& src = src_it->second;
@@ -2168,14 +2220,16 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
     // this pass writes. Reject it with a diagnostic (a ping-pong pair of
     // targets is the standard way to build a feedback chain).
     if (dest == source) {
-        std::fprintf(stderr, "[VsgRenderer] drawScreenTexture: source == destination; feedback loop rejected\n");
+        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                      u8"drawScreenTexture: source == destination (feedback loop): the pass draws nothing");
         return;
     }
     auto& dest_entry = impl->targets[dest];
     if (dest != nullptr) {
         // Writing into an off-screen target: (re)build its graph to its size.
         if (dest->colorCount() <= 0 || dest->width() <= 0 || dest->height() <= 0) {
-            std::fprintf(stderr, "[VsgRenderer] drawScreenTexture: destination off-screen target has no usable colour attachment\n");
+            reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                          u8"drawScreenTexture: destination target has no usable colour attachment: the pass draws nothing");
             return;
         }
         if (dest_entry.graph == nullptr || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
@@ -2272,15 +2326,28 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
         // graph (like overlays) so the sub-viewport clips the
         // picture-in-picture rectangle.
         const VkExtent2D surface{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) };
-        auto content = makeScreenTextureNode(source_view, surface);
+        ProgramNodeFailure screen_failure = ProgramNodeFailure::None;
+        auto content = makeScreenTextureNode(source_view, surface, &screen_failure);
         if (content == nullptr) {
+            reportFailure(vine::graphics::DiagnosticSeverity::Error,
+                          vine::graphics::DiagnosticCategory::CompileFailed,
+                          screen_failure == ProgramNodeFailure::NoCompiler
+                              ? u8"screen pass (PiP) needs the runtime GLSL compiler, which is unavailable: the pass draws nothing"
+                              : u8"screen pass (PiP) shader failed to compile: the pass draws nothing");
             dest_entry.screen_slots.erase(key);
             return;
         }
+        bool overlay_compile_failed = false;
         auto view = makeCompiledOverlayView(*impl->viewer, dest_entry.graph.get(), content,
                                             rect_x, rect_y, rect_w, rect_h,
-                                            /*front*/ false, "screen pass");
+                                            /*front*/ false, "screen pass",
+                                            &overlay_compile_failed);
         if (view == nullptr) {
+            if (overlay_compile_failed) {
+                reportFailure(vine::graphics::DiagnosticSeverity::Warning,
+                              vine::graphics::DiagnosticCategory::CompileFailed,
+                              u8"screen pass (PiP) view failed to compile; retrying with a full compile");
+            }
             dest_entry.screen_slots.erase(key);
             return;
         }
@@ -2482,7 +2549,8 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
 
     auto src_it = impl->targets.find(source);
     if (src_it == impl->targets.end() || src_it->second.color_views.empty()) {
-        std::fprintf(stderr, "[VsgRenderer] drawScreenProgram: source target has no colour attachment\n");
+        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                      u8"drawScreenProgram: source target has no colour attachment: the pass draws nothing");
         return;
     }
     const auto& src = src_it->second;
@@ -2500,13 +2568,15 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
     // this pass writes. Reject it (a ping-pong pair of targets is the standard
     // way to build a feedback chain).
     if (dest == source) {
-        std::fprintf(stderr, "[VsgRenderer] drawScreenProgram: source == destination; feedback loop rejected\n");
+        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                      u8"drawScreenProgram: source == destination (feedback loop): the pass draws nothing");
         return;
     }
     auto& dest_entry = impl->targets[dest];
     if (dest != nullptr) {
         if (dest->colorCount() <= 0 || dest->width() <= 0 || dest->height() <= 0) {
-            std::fprintf(stderr, "[VsgRenderer] drawScreenProgram: destination off-screen target has no usable colour attachment\n");
+            reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                          u8"drawScreenProgram: destination target has no usable colour attachment: the pass draws nothing");
             return;
         }
         if (dest_entry.graph == nullptr || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
@@ -2579,8 +2649,18 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         impl->pending_pass_order = 0;
         slot.push_data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(LightPushBlock)));
         const VkExtent2D surface{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) };
-        auto node = makeFullscreenProgramNode(program, src.color_views, source->depthPromotion() ? src.depth_view : ::vsg::ref_ptr<::vsg::ImageView>(), surface, slot.push_data);
+        ProgramNodeFailure program_failure = ProgramNodeFailure::None;
+        auto node = makeFullscreenProgramNode(program, src.color_views, source->depthPromotion() ? src.depth_view : ::vsg::ref_ptr<::vsg::ImageView>(), surface, slot.push_data, &program_failure);
         if (node == nullptr) {
+            const vine::String why =
+                program_failure == ProgramNodeFailure::NoCompiler
+                    ? u8"fullscreen program needs the runtime GLSL compiler, which is unavailable"
+                    : program_failure == ProgramNodeFailure::NoFragmentStage
+                          ? u8"fullscreen program has no fragment stage"
+                          : u8"fullscreen program shader failed to compile";
+            reportFailure(vine::graphics::DiagnosticSeverity::Error,
+                          vine::graphics::DiagnosticCategory::CompileFailed,
+                          why + vine::String(u8": the pass draws nothing"));
             dest_entry.program_slots.erase(slot_key);
             return;
         }
@@ -2595,10 +2675,17 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         // Create + compile the fullscreen view against this target's render
         // pass (inserted provisionally at the front so the compile sees it),
         // then move it to its explicit-order position below.
+        bool overlay_compile_failed = false;
         auto view = makeCompiledOverlayView(*impl->viewer, dest_entry.graph.get(), node,
                                             rect_x, rect_y, rect_w, rect_h,
-                                            /*front*/ true, "fullscreen program");
+                                            /*front*/ true, "fullscreen program",
+                                            &overlay_compile_failed);
         if (view == nullptr) {
+            if (overlay_compile_failed) {
+                reportFailure(vine::graphics::DiagnosticSeverity::Warning,
+                              vine::graphics::DiagnosticCategory::CompileFailed,
+                              u8"fullscreen program view failed to compile; retrying with a full compile");
+            }
             dest_entry.program_slots.erase(slot_key);
             return;
         }
@@ -2823,7 +2910,11 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
     }
     if (t.graph == nullptr) {
         // No graph yet (e.g. an off-screen target that failed to build): drop
-        // the half-made slot.
+        // the half-made slot. Reported because the pass then draws nothing,
+        // and the host may have no other way to learn the target is unusable.
+        reportFailure(vine::graphics::DiagnosticSeverity::Error,
+                      vine::graphics::DiagnosticCategory::TargetBuildFailed,
+                      u8"no render graph for the pass' target: the pass draws nothing");
         t.content_slots.erase(key);
         return;
     }
@@ -2832,6 +2923,9 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
     content.presenting = presenting;
     content.vsg_camera = persistent->cameraBridge.create(camera);
     if (content.vsg_camera == nullptr) {
+        reportFailure(vine::graphics::DiagnosticSeverity::Error,
+                      vine::graphics::DiagnosticCategory::ContentSkipped,
+                      u8"camera bridge could not be created: the pass draws nothing");
         t.content_slots.erase(key);
         return;
     }
@@ -2864,6 +2958,9 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
         content.bridge.setShaderSet(set_ref);
     }
     content.bridge.setMaterialManager(&persistent->materialManager);
+    // Route this slot's rejections through the renderer's diagnostics (trace,
+    // counters, host sink): the slot is what actually discovers them.
+    installDiagnosticRoute(content.bridge);
     // The pass' depth policy reaches the pipeline through the bridge (it fills
     // the depth item of content that did not author one), so it must be set
     // before the slot's first sync; a later change invalidates the state.
@@ -3204,7 +3301,9 @@ void VsgRenderer::submitFrame()
         if (!compiled) {
             const auto compileResult = impl->viewer->compile();
             if (!compileResult) {
-                std::fprintf(stderr, "[VsgRenderer] frame compile failed: %s\n", compileResult.message.c_str());
+                reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::CompileFailed,
+                              formatDiagnostic(u8"frame compile failed (%s): newly added content is not drawn this frame",
+                                               compileResult.message.c_str()));
             }
         }
         impl->pending_compile_views.clear();
@@ -3363,6 +3462,41 @@ void VsgRenderer::resize(int width, int height)
 void* VsgRenderer::nativeHandle() const
 {
     return persistent->bound_handle;
+}
+
+void VsgRenderer::installDiagnosticRoute(SceneBridge& bridge)
+{
+    // The bridge reports a diagnostic; the renderer turns it into the single
+    // route (stderr trace + backend counters + host sink). Routing it through
+    // the renderer instead of handing the host sink straight to the bridge is
+    // what keeps diagnosticCount() honest: a bridge report is a backend report.
+    bridge.setDiagnosticSink([this](const vine::graphics::RenderDiagnostic& diagnostic) {
+        reportFailure(diagnostic.severity, diagnostic.category, diagnostic.message);
+    });
+}
+
+void VsgRenderer::setDiagnosticSink(vine::graphics::DiagnosticSink sink)
+{
+    RenderBackend::setDiagnosticSink(std::move(sink));
+    // Re-route every retained slot bridge, and remember it for slots created
+    // later (setupContentSlot installs the route). The renderer is the object a
+    // host holds, so it must be the single place the sink is set.
+    for (auto& target_entry : impl->targets) {
+        for (auto& slot_entry : target_entry.second.content_slots) {
+            installDiagnosticRoute(slot_entry.second.bridge);
+        }
+    }
+}
+
+void VsgRenderer::reportFailure(vine::graphics::DiagnosticSeverity severity,
+                                vine::graphics::DiagnosticCategory category,
+                                const vine::String&             message)
+{
+    const char* level = severity == vine::graphics::DiagnosticSeverity::Error    ? "error"
+                        : severity == vine::graphics::DiagnosticSeverity::Warning ? "warning"
+                                                                                  : "info";
+    std::fprintf(stderr, "[VsgRenderer] %s: %s\n", level, message.stdstr().c_str());
+    reportDiagnostic(severity, category, message);
 }
 
 void VsgRenderer::frame()

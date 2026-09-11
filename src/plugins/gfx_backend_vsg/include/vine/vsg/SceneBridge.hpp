@@ -18,6 +18,7 @@
 
 #include <vine/raw_ptr.hpp>
 #include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 
@@ -120,6 +121,28 @@ class V_VSG_API SceneBridge {
      */
     void invalidateState();
 
+    /** @brief Installs the sink that receives this bridge's diagnostics.
+     *
+     * A bridge reports every request it could not serve — a rejected geometry,
+     * a dropped channel, a program that fell back to the built-in shader —
+     * instead of degrading silently, so the renderer can forward it to the
+     * host's RenderBackend sink. The bridge also keeps its stderr tracing, so
+     * installing no sink loses nothing but the programmatic channel.
+     *
+     * @param sink Callback invoked for every diagnostic, or empty to clear.
+     */
+    void setDiagnosticSink(vine::graphics::DiagnosticSink sink);
+
+    /** @brief Gets how many diagnostics this bridge has reported. */
+    std::size_t diagnosticCount() const noexcept { return diagnostic_count_; }
+
+    /** @brief Gets how many diagnostics of @p category were reported.
+     *
+     * @param category Category to count.
+     * @return Number of reported diagnostics in that category.
+     */
+    std::size_t diagnosticCount(vine::graphics::DiagnosticCategory category) const noexcept;
+
     /** @brief Parks a node whose Vulkan objects may still be in flight.
      *
      * Replacing a retained data/state node drops the old one, but the GPU may
@@ -205,6 +228,20 @@ class V_VSG_API SceneBridge {
 
     /** @brief Retained per-geometry render node (defined in the .cpp). */
     struct Item;
+
+    /** @brief Reports one diagnostic to the installed sink and counts it.
+     *
+     * Also writes the message to stderr: that is this backend's built-in
+     * tracing (the validation harness reads it), so routing a rejection site
+     * through here keeps today's out-of-band behaviour and adds the
+     * programmatic channel. Failing to draw something must never be silent.
+     *
+     * @param severity How bad the situation is.
+     * @param category What it is about.
+     * @param message  Human-readable detail, with the numbers involved.
+     */
+    void report(vine::graphics::DiagnosticSeverity severity,
+                vine::graphics::DiagnosticCategory category, const vine::String& message);
 
     /** @brief Builds (or rebuilds) the retained vertex-data node of a geometry.
      *
@@ -398,6 +435,14 @@ class V_VSG_API SceneBridge {
     std::array<std::vector<::vsg::ref_ptr<::vsg::Node>>, kRetireRingDepth>
         retire_ring_;
     std::size_t retire_head_ = 0;
+
+    // Host diagnostics channel (empty when unset) and its counters. Counted
+    // whether or not a sink is installed, so a host can gate on
+    // diagnosticCount() without listening.
+    vine::graphics::DiagnosticSink diagnostic_sink_;
+    std::size_t                    diagnostic_count_ = 0;
+    std::array<std::size_t, static_cast<std::size_t>(vine::graphics::DiagnosticCategory::Count)>
+        diagnostic_counts_{};
 };
 
 V_VSG_NS_END

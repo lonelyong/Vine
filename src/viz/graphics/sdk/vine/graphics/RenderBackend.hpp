@@ -1,7 +1,10 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <vine/Color.hpp>
@@ -10,6 +13,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "RenderDiagnostic.hpp"
 #include "RenderPass.hpp"
 #include "ShaderPreset.hpp"
 
@@ -466,8 +470,64 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         return nullptr;
     }
 
+    /** @brief Installs the sink that receives backend diagnostics.
+     *
+     * A backend reports what it could not serve (a rejected geometry, a
+     * dropped channel, a shader that fell back to the built-in one, an
+     * off-screen target it could not build) instead of degrading silently, so
+     * a host can surface it — log, overlay, telemetry — without the backend
+     * having to link a logging framework or write to stderr. Installing no
+     * sink keeps the backend's own stderr tracing and still counts every
+     * diagnostic (diagnosticCount()).
+     *
+     * @param sink Callback invoked for every diagnostic, or empty to clear.
+     */
+    virtual void setDiagnosticSink(DiagnosticSink sink);
+
+    /** @brief Gets the installed diagnostic sink (empty when unset).
+     *
+     * @return The sink a previous setDiagnosticSink() installed.
+     */
+    const DiagnosticSink& diagnosticSink() const { return diagnostic_sink_; }
+
+    /** @brief Gets how many diagnostics this backend has reported.
+     *
+     * Counted whether or not a sink is installed, so a host can gate on
+     * "did anything unexpected happen" without listening.
+     *
+     * @return Total number of reported diagnostics.
+     */
+    std::size_t diagnosticCount() const { return diagnostic_count_; }
+
+    /** @brief Gets how many diagnostics of @p category were reported.
+     *
+     * @param category Category to count.
+     * @return Number of reported diagnostics in that category.
+     */
+    std::size_t diagnosticCount(DiagnosticCategory category) const;
+
   protected:
+    /** @brief Reports one diagnostic to the installed sink and counts it.
+     *
+     * Backends call this instead of failing silently. The backend keeps its
+     * own out-of-band tracing (e.g. stderr) in addition to the sink, so an
+     * unmodified host sees today's behaviour plus a programmatic channel.
+     *
+     * @param severity How bad the situation is.
+     * @param category What it is about.
+     * @param message  Human-readable detail, with the numbers involved.
+     */
+    void reportDiagnostic(DiagnosticSeverity severity, DiagnosticCategory category,
+                          const String& message);
+
     RenderBackend() = default;
+
+  private:
+    DiagnosticSink diagnostic_sink_;
+    std::size_t    diagnostic_count_ = 0;
+    // Per-category counts, indexed by DiagnosticCategory (sized by its Count).
+    std::array<std::size_t, static_cast<std::size_t>(DiagnosticCategory::Count)>
+        diagnostic_counts_{};
 };
 
 V_GRAPHICS_NS_END

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -149,6 +150,20 @@ namespace
 }
 
 /**
+ * @brief Why an attribute channel could not be unpacked as xyz.
+ *
+ * Returned instead of printing: the CALLER owns the geometry context (which
+ * location, which geometry, whether the mesh is still drawable) and reports it
+ * through SceneBridge::report, so the reason travels with that context.
+ */
+enum class XyzUnpack
+{
+    Ok,          ///< Unpacked into the output array.
+    NotXyzStride,///< Component count is not a usable xyz stride (needs 3 or 4).
+    NotDivisible,///< Float count is not a whole number of vertices at that stride.
+};
+
+/**
  * @brief Unpacks an attribute buffer's xyz using its components as the stride.
  *
  * The AttributeBuffer contract allows 1-4 scalar components per vertex.
@@ -156,31 +171,21 @@ namespace
  * scalars of each vertex (a vec4 channel keeps its xyz and skips the extra w).
  * A channel whose component count is not a usable xyz stride, or whose float
  * count is not divisible by that stride, cannot be unpacked safely and is
- * reported (returning false) instead of being misread element by element.
+ * rejected instead of being misread element by element.
  *
  * @param attr Attribute buffer to unpack.
- * @param what Human-readable role used in the diagnostic (e.g. "loc0 position").
  * @param out  Receives the unpacked Vec3 values (cleared first).
- * @return true when unpacked, false when the channel was rejected.
+ * @return Ok when unpacked, otherwise why the channel was rejected.
  */
-bool unpackXyz(const vine::graphics::AttributeBuffer& attr, const char* what,
-               vine::geometry::Vec3fArray& out)
+XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry::Vec3fArray& out)
 {
     const auto  comps = attr.components;
     const auto& data  = *attr.data;
     if (comps < 3u || comps > 4u) {
-        std::fprintf(stderr,
-                     "[SceneBridge] %s has components=%u (a 3/4-component xyz "
-                     "channel is required); channel ignored\n",
-                     what, comps);
-        return false;
+        return XyzUnpack::NotXyzStride;
     }
     if (data.size() % comps != 0u) {
-        std::fprintf(stderr,
-                     "[SceneBridge] %s holds %zu floats, not divisible by its "
-                     "components=%u stride; channel ignored\n",
-                     what, data.size(), comps);
-        return false;
+        return XyzUnpack::NotDivisible;
     }
     const std::size_t count = data.size() / comps;
     out.clear();
@@ -189,7 +194,7 @@ bool unpackXyz(const vine::graphics::AttributeBuffer& attr, const char* what,
         const std::size_t b = v * comps;
         out.emplace_back(data[b], data[b + 1], data[b + 2]);
     }
-    return true;
+    return XyzUnpack::Ok;
 }
 
 /**
@@ -638,6 +643,16 @@ VsgMaterialManager& SceneBridge::materialManager()
     if (sit == program_stages_.end() || sit->second.revision != program_rev) {
         ::vsg::ShaderStages stages = compileProgramStages(program);
         ++program_stage_compiles_;
+        // A failed compile used to be silently cached as "no stages" and then
+        // drawn with the built-in shader: the user's shader simply did not
+        // appear (D9). Report it once per (program, revision) — this block runs
+        // exactly then, because the result is cached — with what to look at.
+        if (stages.empty()) {
+            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ShaderFallback,
+                   formatDiagnostic(u8"program '%s' has no compiled stage (bad GLSL or no "
+                                    u8"shader compiler); the built-in shader is used",
+                                    program->name().stdstr().c_str()));
+        }
         // The entry owns the program: the key is its address, and an entry that
         // did not hold it could outlive a destroyed program and then serve its
         // SPIR-V to a new program allocated at the same address (see the
@@ -658,6 +673,15 @@ VsgMaterialManager& SceneBridge::materialManager()
     // assembly is cached too (null) so later geometry of this layout does not
     // rebuild it every frame.
     auto shaderSet = assembleProgramShaderSet(sit->second.stages, base_states, extra);
+    // A failed assembly (no stages, or vsg refused the hand-built set) is
+    // reported for the same reason as a failed compile: the program silently
+    // stops applying (D9). One report per (program, layout, revision).
+    if (shaderSet == nullptr && !sit->second.stages.empty()) {
+        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ShaderFallback,
+               formatDiagnostic(u8"program '%s' could not be assembled with %zu custom "
+                                u8"channel(s); the built-in shader is used",
+                                program->name().stdstr().c_str(), extra.size()));
+    }
     auto entry          = std::make_unique<ProgramEntry>();
     entry->program      = program;
     entry->layout       = layout;
@@ -756,6 +780,33 @@ struct SceneBridge::VariantEntry {
     ::vsg::ref_ptr<::vsg::ArrayState> prototype_array_state;
     std::uint32_t base_binding = 0;
 };
+
+void SceneBridge::setDiagnosticSink(vine::graphics::DiagnosticSink sink)
+{
+    diagnostic_sink_ = std::move(sink);
+}
+
+std::size_t SceneBridge::diagnosticCount(vine::graphics::DiagnosticCategory category) const noexcept
+{
+    const auto index = static_cast<std::size_t>(category);
+    return index < diagnostic_counts_.size() ? diagnostic_counts_[index] : 0u;
+}
+
+void SceneBridge::report(vine::graphics::DiagnosticSeverity severity, vine::graphics::DiagnosticCategory category,
+                         const vine::String& message)
+{
+    ++diagnostic_count_;
+    const auto index = static_cast<std::size_t>(category);
+    if (index < diagnostic_counts_.size()) {
+        ++diagnostic_counts_[index];
+    }
+    // The sink is the renderer's route in the real backend (it adds the stderr
+    // trace, the backend-wide counters and the host's sink), so this bridge does
+    // not write out of band itself: one reporting authority, no double traces.
+    if (diagnostic_sink_) {
+        diagnostic_sink_(vine::graphics::RenderDiagnostic{ severity, category, message });
+    }
+}
 
 void SceneBridge::retireNode(::vsg::ref_ptr<::vsg::Node> node)
 {
@@ -1120,15 +1171,28 @@ bool SceneBridge::syncRenderCommands(
     vine::geometry::Vec3fArray positions;
     const auto* position_attr = geometry->buffer(0);
     if (position_attr == nullptr || position_attr->empty()) {
-        std::fprintf(stderr, "[SceneBridge] geometry has no loc0 position attribute; geometry rejected\n");
+        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+               u8"geometry has no loc0 position attribute; not drawn");
         return ::vsg::ref_ptr<::vsg::Commands>();
     }
-    if (!unpackXyz(*position_attr, "loc0 position", positions)) {
-        std::fprintf(stderr, "[SceneBridge] geometry loc0 position attribute is unusable; geometry rejected\n");
+    const XyzUnpack unpack = unpackXyz(*position_attr, positions);
+    if (unpack == XyzUnpack::NotXyzStride) {
+        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+               formatDiagnostic(u8"loc0 position has components=%u (a 3/4-component xyz "
+                                u8"channel is required); not drawn",
+                                position_attr->components));
+        return ::vsg::ref_ptr<::vsg::Commands>();
+    }
+    if (unpack == XyzUnpack::NotDivisible) {
+        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+               formatDiagnostic(u8"loc0 position holds %zu floats, not divisible by its "
+                                u8"components=%u stride; not drawn",
+                                position_attr->data->size(), position_attr->components));
         return ::vsg::ref_ptr<::vsg::Commands>();
     }
     if (positions.empty()) {
-        std::fprintf(stderr, "[SceneBridge] geometry loc0 position attribute is empty; geometry rejected\n");
+        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+               u8"geometry loc0 position attribute is empty; not drawn");
         return ::vsg::ref_ptr<::vsg::Commands>();
     }
     const std::size_t vertex_count = positions.size();
@@ -1147,8 +1211,17 @@ bool SceneBridge::syncRenderCommands(
     vine::geometry::Vec3fArray src_normals;
     if (const auto* normal_attr = geometry->buffer(1);
         normal_attr != nullptr && !normal_attr->empty()) {
-        if (!unpackXyz(*normal_attr, "loc1 normal", src_normals)) {
+        if (const XyzUnpack unpack = unpackXyz(*normal_attr, src_normals);
+            unpack != XyzUnpack::Ok) {
             src_normals.clear();
+            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
+                   formatDiagnostic(unpack == XyzUnpack::NotXyzStride
+                                        ? u8"loc1 normal has components=%u (3 or 4 required); "
+                                          u8"normals will be derived"
+                                        : u8"loc1 normal holds %zu floats, not divisible by its "
+                                          u8"components=%u stride; normals will be derived",
+                                    normal_attr->components, normal_attr->data->size(),
+                                    normal_attr->components));
         }
     }
 
@@ -1177,10 +1250,10 @@ bool SceneBridge::syncRenderCommands(
         const auto& src_indices = *geometry->indices();
         for (std::size_t i = 0; i < src_indices.size(); ++i) {
             if (src_indices[i] >= vertex_count) {
-                std::fprintf(stderr,
-                             "[SceneBridge] geometry index %zu (%u) is out of "
-                             "range for %zu vertices; geometry rejected\n",
-                             i, src_indices[i], vertex_count);
+                report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+                       formatDiagnostic(u8"index %zu (%u) is out of range for %zu vertices; "
+                                        u8"not drawn",
+                                        i, src_indices[i], vertex_count));
                 return ::vsg::ref_ptr<::vsg::Commands>();
             }
         }
@@ -1230,10 +1303,9 @@ bool SceneBridge::syncRenderCommands(
         if (const auto* loc2 = geometry->buffer(2); loc2 != nullptr && !loc2->empty()) {
             colors = pack_color4(*loc2, vertex_count);
             if (colors == nullptr) {
-                std::fprintf(stderr,
-                             "[SceneBridge] geometry loc2 colour channel is "
-                             "unusable (expected 3/4 components, one per "
-                             "vertex); falling back to white\n");
+                report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
+                       u8"loc2 colour channel is unusable (3/4 components, one per "
+                       u8"vertex required); falling back to white");
             }
         }
     }
@@ -1270,24 +1342,24 @@ bool SceneBridge::syncRenderCommands(
         }
         const auto comps = attr->components;
         if (comps < 1u || comps > 4u) {
-            std::fprintf(stderr,
-                         "[SceneBridge] loc%u custom channel has components=%u "
-                         "(expected 1..4); channel ignored\n",
-                         location, comps);
+            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
+                   formatDiagnostic(u8"loc%u custom channel has components=%u (1..4 "
+                                    u8"required); channel ignored",
+                                    location, comps));
             continue;
         }
         if (attr->data->size() % comps != 0u) {
-            std::fprintf(stderr,
-                         "[SceneBridge] loc%u custom channel holds %zu floats, "
-                         "not divisible by components=%u; channel ignored\n",
-                         location, attr->data->size(), comps);
+            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
+                   formatDiagnostic(u8"loc%u custom channel holds %zu floats, not divisible "
+                                    u8"by components=%u; channel ignored",
+                                    location, attr->data->size(), comps));
             continue;
         }
         if (attr->data->size() / comps != vertex_count) {
-            std::fprintf(stderr,
-                         "[SceneBridge] loc%u custom channel has %zu vertices, "
-                         "expected %zu; channel ignored\n",
-                         location, attr->data->size() / comps, vertex_count);
+            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
+                   formatDiagnostic(u8"loc%u custom channel has %zu vertices, expected %zu; "
+                                    u8"channel ignored",
+                                    location, attr->data->size() / comps, vertex_count));
             continue;
         }
         arrays.push_back(makeTypedVertexData(comps, *attr->data, vertex_count));
