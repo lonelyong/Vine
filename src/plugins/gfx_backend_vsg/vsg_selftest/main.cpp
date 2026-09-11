@@ -3065,6 +3065,83 @@ bool runStackedPassPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
 }
 
 /**
+ * @brief Drives a depth-promoting target with TWO passes that preserve depth.
+ *
+ * This is the combination whose depth policy has to be reconciled per target: a
+ * promoting target leaves its depth in SHADER_READ_ONLY, which no render pass may
+ * attach, so a pass that asks to preserve depth forces the target back to the
+ * attachment layout. Reconciling that must NOT un-seed a pass created earlier in
+ * the SAME frame: such a pass has not recorded yet, and a pass that LOADs an
+ * UNDEFINED depth image is a validation error (it has to clear it once first).
+ *
+ * The success criterion is therefore the absence of validation errors plus a
+ * drawn frame; the pixel assertion only proves the passes actually ran.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera both passes render with.
+ * @param frames   Frames to drive.
+ * @return true when both passes ran without a validation error.
+ */
+bool runPromotingPreservePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+    auto material = MaterialPtr(new Material());
+    material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    RenderCommand quad(makeVisibleQuad(0.4f, 1.0f), material, Mat4d());
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setSize(256, 144);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    target->setDepthPromotion(true);
+    auto pass_a = RenderPassPtr(new RenderPass());
+    auto pass_b = RenderPassPtr(new RenderPass());
+
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+        // Neither pass clears: both ask to PRESERVE the depth, which is what makes
+        // the target load it (and thereby conflict with its own promotion).
+        for (RenderPass* pass : { pass_a.get(), pass_b.get() }) {
+            renderer.beginPass(pass);
+            renderer.setPassOrder(pass == pass_a.get() ? 0 : 1);
+            renderer.setRenderTarget(target.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestOnly);
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+            renderer.endPass();
+        }
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+
+    PixelImage image;
+    if (!readTarget(renderer, target.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the promoting/preserving target\n");
+        return false;
+    }
+    std::size_t red = 0;
+    for (std::size_t i = 0; i + 2u < image.pixels.size(); i += 4u) {
+        if (static_cast<int>(image.pixels[i]) > static_cast<int>(image.pixels[i + 2u]) + 20) {
+            ++red;
+        }
+    }
+    if (red == 0u) {
+        std::fprintf(stderr, "[selftest] FAIL: neither pass drew on the promoting/preserving target\n");
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] promoting preserve: two preserving passes ran on a depth-promoting target"
+                     " (%zu red pixel(s) drawn) with no validation error\n",
+                     red);
+    }
+    renderer.releasePass(pass_a.get());
+    renderer.releasePass(pass_b.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
+/**
  * @brief Reports what each MRT colour attachment actually receives.
  *
  * A single-colour target hides it, but a multi-attachment (G-buffer) target is
@@ -3403,6 +3480,7 @@ int main()
     contract_ok = runSharedDepthPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runMixedDepthPolicyPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runStackedPassPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runPromotingPreservePhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runDepthBorrowValidationPhase(*renderer, camera, 3) && contract_ok;
     contract_ok = runDepthTestOnlyPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runDepthShareOrderPhase(*renderer, camera, 6) && contract_ok;

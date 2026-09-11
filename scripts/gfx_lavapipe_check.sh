@@ -194,6 +194,7 @@ else
     require_evidence "^\[selftest\] shared depth pixels:" 1 "shared-depth assertion"
     require_evidence "^\[selftest\] mixed depth:" 1 "mixed-depth-policy assertion"
     require_evidence "^\[selftest\] stacked pass:" 1 "stacked-pass (non-clearing pass) assertion"
+    require_evidence "^\[selftest\] promoting preserve:" 1 "depth-promoting + preserving-pass assertion"
     require_evidence "^\[selftest\] depth borrow:" 1 "depth-borrow validation assertion"
     require_evidence "^\[selftest\] depth testonly:" 1 "TestOnly depth assertion"
     require_evidence "^\[selftest\] depth share order:" 1 "depth-share ordering assertion"
