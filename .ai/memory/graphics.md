@@ -1,5 +1,15 @@
 ﻿# Graphics 模块核心
 
+> 2026-09-11 **深度 LOAD / 共享深度的语义断言（设计 §21）**：两条此前只靠"无 VUID"覆盖的语义
+> 现在有回读断言。**`runDepthLoadPixelPhase`**：`clearDepth` 是**目标**的 pass 属性（一个目标
+> 一个 depth load op，"最后一次 clear 请求"就是该目标的策略），所以"同一目标两个 pass、一个
+> CLEAR 一个 LOAD"是**模型外用法**（实测必败）；支持的用法是单 pass + 深度**跨帧** LOAD：
+> 阶段 1 画近面（0.0249）播种，阶段 2 换成远面（0.0166）→ 必须 0 蓝像素、中心保持该 pass
+> 清屏色、深度**一字不变**、目标只构建 1 次。**`runSharedDepthPixelPhase`**：出借方画近面，
+> 借用者（`shareDepth`，只清颜色）画远面必须**一个像素都不变**（拒绝），再画更近面必须赢
+> （接受）—— 两半都要，否则"全拒绝"也能通过。判据力做过反证（出借方改 `Disabled` → 立刻报
+> 256 蓝像素）。harness 现在要求 `depth load:` ≥1 与 `shared depth pixels:` ≥1 行证据。
+
 > 2026-09-11 **缓存收口：一套骨架、四种缓存（设计 §20，D16 / D34）**：`SceneBridge` 的四个
 > 缓存不再各写一套语义 —— 几何缓存（自持 + 600 帧窗，**无容量上限**）、`program_stages_`
 > （64 FIFO）、`program_shader_sets_`（64 FIFO）、`variant_cache_`（256 FIFO，**两个键都自持**）

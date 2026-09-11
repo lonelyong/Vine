@@ -1532,6 +1532,297 @@ bool runDepthOrderPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
 }
 
 /**
+ * @brief Asserts what a depth-LOAD pass (clearDepth=false) really does.
+ *
+ * A pass that clears its colour but not its depth asks the backend for a
+ * depth-LOAD pass: the depth written by the PREVIOUS frame must still be there,
+ * so content drawn now is tested against it. That is the contract that makes
+ * "keep the depth, keep painting" work, and until now the selftest only drove
+ * the path (build counts, no crash) without ever checking that the depth
+ * survived.
+ *
+ * The depth-clear request is a property of the TARGET's pass, so the scenario
+ * drives ONE pass (one target, clearDepth=false):
+ *  - stage 1 draws only the NEAR quad. Its first frame runs the seeding
+ *    depth-CLEAR pass, the later frames the steady depth-LOAD pass; either way
+ *    the buffer ends up holding the near quad's depth (~0.0249 in reverse-Z,
+ *    measured here rather than assumed).
+ *  - stage 2 replaces the content with the FAR quad over the same pixels. With
+ *    the depth loaded, the far fragment loses the test: no blue pixel may
+ *    appear, the centre stays the pass' own clear colour and the depth is
+ *    unchanged. Had the pass cleared depth instead, the far quad would win —
+ *    blue pixels plus a smaller stored depth.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera both quads are drawn through.
+ * @param frames   Frames to drive per stage.
+ * @return true when the depth survived the LOAD pass and the far quad lost.
+ */
+bool runDepthLoadPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok = true;
+    const vine::Color clear(90, 30, 30, 255); // deliberately NOT blue-dominant (r > b)
+
+    auto near_material = MaterialPtr(new Material());
+    near_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));   // red
+    auto far_material = MaterialPtr(new Material());
+    far_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f));      // blue
+    RenderCommand near_command(makeVisibleQuad(0.4f, 1.0f), near_material, Mat4d());
+    RenderCommand far_command(makeVisibleQuad(0.4f, -1.0f), far_material, Mat4d());
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setSize(256, 144);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto pass = RenderPassPtr(new RenderPass());
+
+    const auto drive = [&](const std::vector<RenderCommand>& commands) {
+        for (int i = 0; i < frames; ++i) {
+            renderer.beginFrame();
+            renderer.beginPass(pass.get());
+            renderer.setPassOrder(0);
+            renderer.setRenderTarget(target.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(clear, false); // colour cleared, depth LOADED
+            renderer.setLights({});
+            renderer.render(commands, camera.get());
+            renderer.endPass();
+            renderer.endFrame();
+            renderer.swapBuffers();
+        }
+    };
+
+    // Stage 1: seed the depth with the near quad and let the steady LOAD pass
+    // take over. The target must be built once and stay built: a depth-LOAD
+    // target that rebuilt every frame would be the D18-style rebuild loop again.
+    const std::size_t builds_before = renderer.offscreenBuildCount();
+    drive(std::vector<RenderCommand>{ near_command });
+    const std::size_t builds_after_stage1 = renderer.offscreenBuildCount();
+    if (builds_after_stage1 - builds_before != 1u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: a depth-LOAD target built %zu time(s) over %d frames; the first-frame"
+                     " seeding pass and the steady LOAD pass share one target entry\n",
+                     builds_after_stage1 - builds_before, frames);
+        ok = false;
+    }
+
+    const std::size_t  centre = static_cast<std::size_t>(72) * 256u + 128u;
+    std::vector<float> depths;
+    if (!renderer.readDepthBuffer(target.get(), depths) ||
+        depths.size() != static_cast<std::size_t>(target->width()) * static_cast<std::size_t>(target->height())) {
+        std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused the depth-LOAD phase target\n");
+        return false;
+    }
+    const float loaded_reference = depths[centre];
+    if (loaded_reference <= 0.0f) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the near quad left depth %.4f; nothing wrote depth in stage 1\n",
+                     loaded_reference);
+        return false;
+    }
+
+    // Stage 2: the far quad over the same pixels must lose against the loaded
+    // depth (it is behind the near surface the previous frames wrote).
+    drive(std::vector<RenderCommand>{ far_command });
+
+    PixelImage image;
+    if (!readTarget(renderer, target.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the depth-LOAD phase target\n");
+        return false;
+    }
+    const std::size_t stray_blue = image.blueDominant();
+    if (stray_blue != 0u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: %zu pixel(s) carry the far quad's blue although the depth was loaded from the"
+                     " previous frame; the far quad won a test it must have lost (depth-LOAD pass cleared depth"
+                     " instead?)\n",
+                     stray_blue);
+        ok = false;
+    }
+    const int centre_r = image.at(128, 72, 0);
+    const int centre_g = image.at(128, 72, 1);
+    const int centre_b = image.at(128, 72, 2);
+    if (centre_r != 90 || centre_g != 30 || centre_b != 30) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the depth-LOAD pass left (%d,%d,%d) at the centre; its own clear colour"
+                     " (90,30,30) must survive there unchanged\n",
+                     centre_r, centre_g, centre_b);
+        ok = false;
+    }
+
+    std::vector<float> after;
+    if (!renderer.readDepthBuffer(target.get(), after)) {
+        std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused the depth-LOAD phase target in stage 2\n");
+        return false;
+    }
+    if (std::fabs(after[centre] - loaded_reference) > 1e-5f) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the depth changed from %.4f to %.4f while the far quad was drawn — the loaded"
+                     " depth was not preserved (or the far quad overwrote it)\n",
+                     loaded_reference, after[centre]);
+        ok = false;
+    }
+
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] depth load: far quad over the same pixels left 0 blue pixel(s), centre stayed the"
+                     " LOAD pass' clear colour, depth unchanged at %.4f (loaded from the previous frame, not"
+                     " cleared); %zu build(s) over %d frames\n",
+                     after[centre], builds_after_stage1 - builds_before, frames);
+    }
+    renderer.releasePass(pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
+/**
+ * @brief Asserts that a borrowed depth (RenderTarget::shareDepth) is really
+ * TESTED against, not merely wired up.
+ *
+ * runSharedDepthPhase covers the lifecycle (no rebuild loop, no dangling
+ * borrow); this covers the semantics, which only a readback can show. The
+ * source draws the NEAR quad into its own depth first (order 0 < 1); the
+ * consumer then draws into its own colour while TESTING against that borrowed
+ * depth.
+ *
+ * Two stages, because either half alone is ambiguous:
+ *  - rejection: the consumer draws only the FAR quad. It is behind the source's
+ *    depth, so it must vanish — the consumer shows nothing but its clear colour.
+ *    (Without the shared depth, or with a cleared one, it would pass and paint
+ *    blue.)
+ *  - acceptance: the consumer also draws a NEARER quad, which must win — proving
+ *    the test is a real depth test rather than "everything is rejected".
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera both targets are drawn through.
+ * @param frames   Frames to drive per stage.
+ * @return true when both stages measured what they claim.
+ */
+bool runSharedDepthPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok           = true;
+    const vine::Color source_clear(10, 20, 30, 255);
+    const vine::Color consumer_clear(90, 30, 30, 255); // not blue-dominant
+    auto              near_material = MaterialPtr(new Material());
+    near_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));   // red
+    auto far_material = MaterialPtr(new Material());
+    far_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f));      // blue
+    auto nearer_material = MaterialPtr(new Material());
+    nearer_material->setDiffuse(vine::Colorf(0.1f, 0.8f, 0.2f, 1.0f));   // green
+    // Same camera (z = 5): 4 units away for z = 1, 6 for z = -1, 3.4 for z = 1.6.
+    RenderCommand near_command(makeVisibleQuad(0.4f, 1.0f), near_material, Mat4d());
+    RenderCommand far_command(makeVisibleQuad(0.4f, -1.0f), far_material, Mat4d());
+    RenderCommand nearer_command(makeVisibleQuad(0.4f, 1.6f), nearer_material, Mat4d());
+
+    auto source = RenderTargetPtr(new RenderTarget());
+    source->setSize(256, 144);
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    source->attachDepth(RenderTarget::DepthFormat::D32);
+    source->setDepthPromotion(false); // its depth is borrowed onwards, not sampled
+
+    auto consumer = RenderTargetPtr(new RenderTarget());
+    consumer->setSize(256, 144);
+    consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    consumer->shareDepth(source);
+
+    auto source_pass   = RenderPassPtr(new RenderPass());
+    auto consumer_pass = RenderPassPtr(new RenderPass());
+
+    const auto drive = [&](const std::vector<RenderCommand>& consumer_commands) {
+        for (int i = 0; i < frames; ++i) {
+            renderer.beginFrame();
+
+            renderer.beginPass(source_pass.get());
+            renderer.setPassOrder(0);
+            renderer.setRenderTarget(source.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(source_clear, true);
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
+            renderer.endPass();
+
+            renderer.beginPass(consumer_pass.get());
+            renderer.setPassOrder(1);
+            renderer.setRenderTarget(consumer.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(consumer_clear, false); // keep the borrowed depth
+            renderer.setLights({});
+            renderer.render(consumer_commands, camera.get());
+            renderer.endPass();
+
+            renderer.endFrame();
+            renderer.swapBuffers();
+        }
+    };
+
+    // Stage 1: behind the source's depth -> the fragment must be killed.
+    drive(std::vector<RenderCommand>{ far_command });
+    PixelImage rejected;
+    if (!readTarget(renderer, consumer.get(), rejected)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the shared-depth consumer\n");
+        return false;
+    }
+    const std::size_t covered = rejected.differingFrom(90, 30, 30);
+    if (covered != 0u || rejected.blueDominant() != 0u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: %zu pixel(s) of the borrowing target changed (%zu blue) — a quad BEHIND the"
+                     " shared depth must be rejected by it\n",
+                     covered, rejected.blueDominant());
+        ok = false;
+    }
+
+    // Stage 2: same borrowed depth, but a quad in FRONT of it must win.
+    drive(std::vector<RenderCommand>{ far_command, nearer_command });
+    PixelImage accepted;
+    if (!readTarget(renderer, consumer.get(), accepted)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the shared-depth consumer in stage 2\n");
+        return false;
+    }
+    const int centre_r = accepted.at(128, 72, 0);
+    const int centre_g = accepted.at(128, 72, 1);
+    const int centre_b = accepted.at(128, 72, 2);
+    if (centre_g <= centre_r + 20 || centre_g <= centre_b + 20) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the nearer quad did not cover the centre (%d,%d,%d) — it is in front of the"
+                     " shared depth and must pass, otherwise the 'rejected' stage above proved nothing\n",
+                     centre_r, centre_g, centre_b);
+        ok = false;
+    }
+    if (accepted.blueDominant() != 0u) {
+        std::fprintf(stderr, "[selftest] FAIL: %zu pixel(s) are blue although the far quad is behind the shared depth\n",
+                     accepted.blueDominant());
+        ok = false;
+    }
+
+    // The source's own depth is the thing being borrowed: it must be readable
+    // and hold real content (a near surface), not the cleared far plane.
+    std::vector<float> source_depths;
+    if (!renderer.readDepthBuffer(source.get(), source_depths) ||
+        source_depths.size() != static_cast<std::size_t>(source->width()) * static_cast<std::size_t>(source->height())) {
+        std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused the lender of a shared depth\n");
+        return false;
+    }
+    const float borrowed_depth = source_depths[static_cast<std::size_t>(72) * 256u + 128u];
+    if (borrowed_depth <= 0.01f) {
+        std::fprintf(stderr, "[selftest] FAIL: the lender's centre depth is %.4f; its content did not write depth\n",
+                     borrowed_depth);
+        ok = false;
+    }
+
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] shared depth pixels: behind the borrowed depth 0 pixel(s) drawn, in front it covered"
+                     " the centre (%d,%d,%d); lender depth %.4f\n",
+                     centre_r, centre_g, centre_b, borrowed_depth);
+    }
+    renderer.releasePass(source_pass.get());
+    renderer.releasePass(consumer_pass.get());
+    renderer.releaseRenderTarget(consumer.get());
+    renderer.releaseRenderTarget(source.get());
+    return ok;
+}
+
+/**
  * @brief Reports what each MRT colour attachment actually receives.
  *
  * A single-colour target hides it, but a multi-attachment (G-buffer) target is
@@ -1858,6 +2149,8 @@ int main()
     contract_ok = runPixelReadbackPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runCompositingPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runDepthOrderPixelPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runDepthLoadPixelPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runSharedDepthPixelPhase(*renderer, camera, 4) && contract_ok;
     // Diagnostics: what the MRT path receives per attachment (attachment 0 is
     // asserted), and which input a "nothing was drawn" result is attributable
     // to.

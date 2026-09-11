@@ -929,3 +929,66 @@ program**（旧实现在这里会释放 → 地址可被复用）。test_vsg 71�
 
 **仍未做**：`shared_objects_`（vsg 内容去重表）仍是"只增 + 槽释放时清空"，没有容量上界；
 D27（跨 pass 命令缓存）、D28（`VkPipelineCache`）与真机 GPU 冒烟仍待在册。
+
+## 21. 深度 LOAD 与共享深度的语义断言（2026-09-11）
+
+**出发点**：pass 协议里有两条语义此前**只被"无 VUID + 不崩"覆盖**，没有任何回读断言：
+`clearDepth=false`（深度的 depth-LOAD pass，深度跨帧保留）与 `RenderTarget::shareDepth`
+（借用者的深度测试真的对着出借方的深度）。§5 那个"借深度 + clearDepth=false 每帧重建"的
+缺陷、以及共享深度的生命周期（§5 的 tombstone）都已被测到，但**语义**从没被量过。
+
+**1. `runDepthLoadPixelPhase` —— 深度真的从上一帧 LOAD 出来了**
+
+先弄清模型：`clearDepth` 是**目标**的 pass 属性（`t.clear_seen && !t.clear_depth` 决定
+LOAD），所以"同一目标上两个 pass 一个要求 CLEAR、一个要求 LOAD"是自相矛盾的用法（见下面
+"踩到的坑"）。支持的用法是**一个 pass + 一个目标**，深度**跨帧**保留：
+
+- 阶段 1：只画近四边形（z=1，反 Z 深度 ≈0.0249）。首帧走"播种用 depth-CLEAR pass"
+  （LOAD pass 不能从 UNDEFINED 开始），之后走稳态 depth-LOAD pass；无论哪条路径，缓冲最终
+  持有近面的深度。
+- 阶段 2：内容换成远四边形（z=-1，≈0.0166）盖住同一批像素。深度被 LOAD 出来时，远片元
+  **必须输掉测试**：不允许出现蓝色像素、中心必须仍是该 pass 自己的清屏色、深度值必须
+  **一字不变**。若被误清屏，远四边形就会赢（蓝像素 + 深度变小到 0.0166）。
+
+证据行：`[selftest] depth load: far quad over the same pixels left 0 blue pixel(s), centre
+stayed the LOAD pass' clear colour, depth unchanged at 0.0249 (loaded from the previous
+frame, not cleared); 1 build(s) over 4 frames` —— 顺带断言 **LOAD 目标只构建一次**（首帧播种
+pass 与稳态 LOAD pass 共用一个目标条目，否则又是 §5 那种每帧重建）。
+
+**踩到的坑（写下来避免重犯）**：第一版把场景写成"pass A（clearDepth=true）画近 + pass B
+（clearDepth=false）画远、同一个目标"。它**必然失败**，而且失败得很有教育意义：目标只有
+一个 depth load op，"最后一次 clear 请求"决定它 → 远 pass 的 `clearDepth=false` 把目标切到
+LOAD，但 A 的清屏请求与它互斥，实测结果是 B 执行时深度仍被清 → 远四边形赢（256 蓝像素、
+深度从 0.0249 变 0.0166）。**这不是后端缺陷，是我把断言建在了模型外的用法上**；也正因为
+断言足够具体（像素 + 深度值都报出来），一眼就能看出是"深度被清了"。
+
+**2. `runSharedDepthPixelPhase` —— 借用来的深度真的被试过**
+
+出借方（`depthPromotion(false)` + D32）先画近四边形写自己的深度（order 0 < 1），借用者
+（`shareDepth`）只清颜色（`clearDepth=false`）后绘制自己的颜色：
+
+- **拒绝**：借用者只画远四边形 → 必须在出借方的深度上输掉 → 借用目标**一个像素都不变**。
+  （深度没共享或被清掉时它会通过并涂蓝。）
+- **接受**：借用者再画一个更近的四边形（z=1.6，3.4 单位）→ 必须赢 → 中心变绿。少了这一半，
+  "全部被拒绝"也能通过上一半的断言，等于什么都没证明。
+- 顺带断言**出借方自己的深度可读且非清屏值**（`readDepthBuffer(lender)`；共享深度不应让
+  出借方的图像变得不可读）。
+
+证据行：`[selftest] shared depth pixels: behind the borrowed depth 0 pixel(s) drawn, in
+front it covered the centre (5,41,10); lender depth 0.0293`。
+
+**判据力（做过反证）**：把出借方改成 `DepthMode::Disabled`（借出来的深度就只剩清屏值），
+该阶段立刻报 `256 pixel(s) of the borrowing target changed (256 blue)`；深度 LOAD 阶段的那
+次"模型外用法"失败同样报出 256 蓝像素 + 深度变化。两条断言都能被破坏性改动点红，不是
+"永远绿"的装饰。
+
+**harness**：`require_evidence` 现在要求 `pixels:` ≥4、`depth:` ≥1、**`depth load:` ≥1**、
+**`shared depth pixels:` ≥1**、`MRT ` ≥2 —— 断言被删掉而阶段照跑必须读作失败。
+
+**验收**：test_vsg 71、test_graphics 151 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`
+（0 VUID），新增两行证据随门禁打印。
+
+**仍未做**：真机 GPU 冒烟（本机只有 llvmpipe/lavapipe）；"同一目标上多 pass 的深度策略"
+仍是**每目标一个 load op** —— 多 pass 想各自声明 CLEAR/LOAD 需要把 render pass 从目标粒度
+下沉到 pass 粒度（登记为未做项，不是缺陷：当前模型里"最后一次 clear 请求"就是该目标的
+策略）。
