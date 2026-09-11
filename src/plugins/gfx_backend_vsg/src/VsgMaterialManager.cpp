@@ -75,14 +75,11 @@ struct VsgMaterialManager::Data {
 };
 
 VsgMaterialManager::VsgMaterialManager()
-  : d(new Data())
+  : d(std::make_unique<Data>())
 {
 }
 
-VsgMaterialManager::~VsgMaterialManager()
-{
-    delete d;
-}
+VsgMaterialManager::~VsgMaterialManager() = default;
 
 ::vsg::ref_ptr<::vsg::PhongMaterialValue> VsgMaterialManager::getOrCreate(
     vine::raw_ptr<vine::graphics::Material> material)

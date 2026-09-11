@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 
 #include <vsg/core/ref_ptr.h>
 #include <vsg/state/material.h>
@@ -71,7 +72,10 @@ class V_VSG_API VsgMaterialManager : public vine::graphics::MaterialManager {
 
   private:
     struct Data;
-    Data* const d;
+    // Owns the cache through RAII (see the repo's "avoid raw owning pointers"
+    // rule); declared after Data so the out-of-line destructor is the only
+    // place that needs the complete type.
+    std::unique_ptr<Data> d;
 };
 
 V_VSG_NS_END

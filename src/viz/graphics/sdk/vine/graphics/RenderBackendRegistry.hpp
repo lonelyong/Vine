@@ -2,6 +2,7 @@
 #include "graphics_global.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <vine/String.hpp>
@@ -163,7 +164,9 @@ class V_GRAPHICS_API RenderBackendRegistry {
     RenderBackendRegistry& operator=(const RenderBackendRegistry&) = delete;
 
     struct Data;
-    Data* const d;
+    // Owns the registry state through RAII (see the repo's "avoid raw owning
+    // pointers" rule); the out-of-line destructor keeps Data incomplete here.
+    std::unique_ptr<Data> d;
 };
 
 V_GRAPHICS_NS_END

@@ -45,14 +45,11 @@ struct RenderBackendRegistry::Data {
 };
 
 RenderBackendRegistry::RenderBackendRegistry()
-  : d(new Data())
+  : d(std::make_unique<Data>())
 {
 }
 
-RenderBackendRegistry::~RenderBackendRegistry()
-{
-    delete d;
-}
+RenderBackendRegistry::~RenderBackendRegistry() = default;
 
 RenderBackendRegistry& RenderBackendRegistry::instance()
 {
