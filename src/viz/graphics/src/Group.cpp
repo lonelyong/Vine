@@ -12,8 +12,19 @@ Group::~Group() = default;
 
 void Group::addChild(intrusive_ptr<Node> child)
 {
-    if (child == nullptr || child.get() == this) {
+    if (child == nullptr) {
         return;
+    }
+    // Reject a re-parent that would close a cycle: if @p child is this node or
+    // any of its ancestors, adopting it would make the graph non-tree, and
+    // every tree traversal (command collection, bounds, picking, findNode)
+    // recurses forever on it — a stack overflow rather than a visible error.
+    // The graph is also the invariant the per-traversal bounds cache relies on
+    // (a node has exactly one world matrix within one traversal).
+    for (const Node* ancestor = this; ancestor != nullptr; ancestor = ancestor->parent_) {
+        if (ancestor == child.get()) {
+            return;
+        }
     }
     // Detach from an existing parent (only Groups own children) before
     // re-parenting.

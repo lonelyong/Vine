@@ -1,5 +1,20 @@
 # Graphics 模块核心
 
+> 2026-09-11 **状态一致性 / 资源生命周期终检**（详见 `.ai/design/vsg-pass-lifecycle.md` §8）：
+> (1) **保留缓存的键必须指向活对象**：`SceneBridge` 的 `cache_`/`rejected_`/`program_stages_`
+> 原按裸指针索引且不自持 → 对象销毁后地址复用会把死条目的保留状态（旧网格 / 旧 SPIR-V /
+> 旧拒绝记录）喂给新对象（静默错误）。现条目**自持**所索引的几何/program，并把拒绝记录
+> 合并进 `Item`；几何被 app 放弃（`useCount()==1`）时立即回收，仍被引用才走 600 帧复用
+> 窗口。(2) **退役环**：活路径上被替换的保留节点（数据/状态包装/条目驱逐）先进
+> `SceneBridge::retireNode()`，由 `advanceRetireRing()` 在每个**已提交**帧后推进，环深 4
+> （=命令槽 3+1）→ 可能的槽已重新录制（其 fence 已等）后才能销毁，避免
+> `VUID-vkDestroyPipeline-00765`/`vkDestroyBuffer-*` 类的在飞销毁。(3) **`Group::addChild`
+> 拒绝成环**（祖先链检查，静默拒绝），否则递归遍历栈溢出并破坏包围盒缓存前提。
+> 复查通过：单线程（无 thread/锁）、`shutdown()` 先 `deviceWaitIdle` 再整体重建、
+> `clearCache()` 5 处调用点均先 `waitForIdle`。仍未做：D13（材质缓存无逐出 + 同地址
+> 复用风险）、跨 pass 命令缓存、`VkPipelineCache`。验证：test_graphics 150 /
+> test_vsg 55 / lavapipe 门禁 RESULT: PASS（含新 churn phase）。
+
 > 2026-09-11 **遍历热路径 + 顶点属性 stride**：`Scene::collectRenderCommands` 每 pass 每帧全树走，
 > 原实现有四处算法级重复：(1) `Node::worldMatrix()` 递归 O(depth²)；(2) 遍历中每节点再调一次
 > `worldMatrix()`（O(n·depth)）；(3) 每节点调 `boundingBox()`，容器又要 union 子树（O(n·depth)）；

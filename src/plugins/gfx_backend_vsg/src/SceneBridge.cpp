@@ -638,8 +638,15 @@ VsgMaterialManager& SceneBridge::materialManager()
     if (sit == program_stages_.end() || sit->second.revision != program_rev) {
         ::vsg::ShaderStages stages = compileProgramStages(program);
         ++program_stage_compiles_;
-        program_stages_[program]   = StageEntry{ program_rev, std::move(stages) };
-        sit                        = program_stages_.find(program);
+        // The entry owns the program: the key is its address, and an entry that
+        // did not hold it could outlive a destroyed program and then serve its
+        // SPIR-V to a new program allocated at the same address (see the
+        // StageEntry comment in the header).
+        program_stages_[program] = StageEntry{
+            vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program), program_rev,
+            std::move(stages)
+        };
+        sit = program_stages_.find(program);
     }
     const auto base_states = baseShaderSet()->defaultGraphicsPipelineStates;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> extra;
@@ -672,6 +679,18 @@ VsgMaterialManager& SceneBridge::materialManager()
 
 /** @brief Retained vsg node for one drawn geometry. */
 struct SceneBridge::Item {
+    // The geometry this item was built for. Held, not merely keyed: the map key
+    // is the geometry's address, and an entry that does not own what it keys on
+    // can outlive it and then be served to a DIFFERENT geometry allocated at
+    // the recycled address (see the cache_ comment in the header).
+    vine::graphics::GeometryPtr geometry;
+    // Rejection record: true when this geometry's data could not be built at
+    // @ref rejected_revision (malformed attributes / out-of-range indices).
+    // Kept so the diagnostic prints once per revision instead of every frame,
+    // and cleared when the geometry leaves the frame so a fixed geometry is
+    // re-evaluated on its next appearance.
+    bool rejected = false;
+    std::uint64_t rejected_revision = 0;
     // Last translated identity, used to detect geometry/material/state changes.
     vine::graphics::Material* material = nullptr;
     std::uint64_t revision = ~std::uint64_t{0};
@@ -738,10 +757,27 @@ struct SceneBridge::VariantEntry {
     std::uint32_t base_binding = 0;
 };
 
+void SceneBridge::retireNode(::vsg::ref_ptr<::vsg::Node> node)
+{
+    if (node == nullptr) {
+        return;
+    }
+    retire_ring_[retire_head_].emplace_back(std::move(node));
+}
+
+void SceneBridge::advanceRetireRing()
+{
+    // Move to the next slot and release it: it was filled kRetireRingDepth
+    // frames ago, so the command-buffer slot that could have referenced those
+    // nodes has been re-recorded since (start() waits on the slot's fence
+    // before re-recording it), and the GPU no longer executes them.
+    retire_head_ = (retire_head_ + 1) % kRetireRingDepth;
+    retire_ring_[retire_head_].clear();
+}
+
 void SceneBridge::clearCache()
 {
     cache_.clear();
-    rejected_.clear();
     program_shader_sets_.clear();
     program_stages_.clear();
     variant_cache_.clear();
@@ -768,12 +804,15 @@ void SceneBridge::invalidateState()
     // Keep the per-geometry DATA (arrays + bind/draw commands, the uploaded
     // mesh) and drop only the STATE wrapper: the next syncRenderCommands()
     // rebuilds every pipeline / descriptor bind while reusing the vertex data.
+    // The dropped wrapper is retired rather than destroyed: its pipeline may
+    // still be referenced by a submitted command buffer (the caller normally
+    // waits first, but parking it here keeps the bridge correct on its own).
     for (auto& entry : cache_) {
         Item* item = entry.second.get();
         if (item == nullptr) {
             continue;
         }
-        item->state_node = {};
+        retireNode(std::move(item->state_node));
         // Force the per-layout rebuild path too: the channel set tracked by the
         // dropped wrapper is meaningless once the wrapper itself is gone.
         item->state_channels.clear();
@@ -805,25 +844,22 @@ bool SceneBridge::syncRenderCommands(
         // out-of-range indices) is skipped until its data revision changes, so
         // its rejection diagnostic is emitted once per revision instead of
         // spamming the log on every frame while the bad mesh is still drawn.
-        {
-            const auto rej = rejected_.find(geometry);
-            if (rej != rejected_.end()) {
-                if (rej->second == geometry->revision()) {
-                    continue;
-                }
-                rejected_.erase(rej); // data changed: allow a rebuild below
-            }
-        }
-
         Item* item = nullptr;
         auto it = cache_.find(geometry);
         if (it == cache_.end()) {
             auto entry = std::make_unique<Item>();
+            entry->geometry = cmd.geometry;
             item = entry.get();
             cache_.emplace(geometry, std::move(entry));
             changed = true;
         } else {
             item = it->second.get();
+        }
+        if (item->rejected) {
+            if (item->rejected_revision == geometry->revision()) {
+                continue;
+            }
+            item->rejected = false; // data changed: allow a rebuild below
         }
 
         // Rebuild the retained subtree when any of its inputs changed. The
@@ -876,18 +912,24 @@ bool SceneBridge::syncRenderCommands(
         bool state_channels_changed = false;
         if (data_dirty) {
             // Fresh vertex data: rebuild the data node; the previous opacity
-            // carrier is dropped with it and rewritten on the next frames.
+            // carrier is dropped with it and rewritten on the next frames. The
+            // replaced node is parked (its buffers may still be in flight).
             item->extra_channels.clear();
+            retireNode(std::move(item->data_node));
             item->data_node = buildGeometryData(geometry, item->program == nullptr,
                                                 state.topology, item->colors,
                                                 item->extra_channels);
             if (item->data_node == nullptr) {
                 // Unsupported shape / malformed vertex data (unusable attribute
                 // strides, out-of-range indices, ...): nothing drawable. The
-                // rejection is recorded so the diagnostic prints once per data
-                // revision and the rebuild is not retried on every frame.
-                rejected_[geometry] = geometry->revision();
-                cache_.erase(geometry);
+                // rejection is recorded (once per data revision, so the
+                // diagnostic is not retried on every frame) and the state
+                // wrapper goes with the data it wrapped.
+                item->rejected          = true;
+                item->rejected_revision = geometry->revision();
+                retireNode(std::move(item->state_node));
+                item->state_channels.clear();
+                item->matrix_valid = false;
                 continue;
             }
             state_channels_changed = item->state_channels != item->extra_channels;
@@ -896,11 +938,14 @@ bool SceneBridge::syncRenderCommands(
         }
 
         if (state_dirty || item->state_node == nullptr || state_channels_changed) {
+            // The replaced wrapper (and the pipeline it holds) may still be
+            // referenced by an in-flight command buffer: park it.
+            retireNode(std::move(item->state_node));
             item->state_node = buildStateGroup(item->data_node, item->material,
                                                item->render_state, item->program,
                                                item->extra_channels);
             if (item->state_node == nullptr) {
-                cache_.erase(geometry);
+                cache_.erase(it);
                 continue;
             }
             item->state_channels = item->extra_channels;
@@ -962,25 +1007,29 @@ bool SceneBridge::syncRenderCommands(
     // removed from the scene — evicts the retained node.
     constexpr std::uint32_t kAbsentEvictFrames = 600;
     for (auto it = cache_.begin(); it != cache_.end();) {
+        Item* item = it->second.get();
         if (seen.count(it->first) != 0) {
-            it->second->absent_frames = 0;
+            item->absent_frames = 0;
             ++it;
-        } else if (++it->second->absent_frames > kAbsentEvictFrames) {
+            continue;
+        }
+        // The geometry left the frame, so its rejection record no longer
+        // applies: a fix that bumps the revision is re-evaluated on the next
+        // appearance instead of being skipped by a stale record.
+        item->rejected = false;
+        // The entry owns the geometry, which is what makes the pointer key
+        // valid. Once the app itself stops referencing it, nothing can ever
+        // look the entry up again, so release it — and the geometry with it —
+        // right away instead of pinning both for the whole reuse window.
+        const bool abandoned = item->geometry != nullptr && item->geometry->useCount() <= 1u;
+        if (abandoned || ++item->absent_frames > kAbsentEvictFrames) {
+            // The retained subtree may still be referenced by an in-flight
+            // command buffer, so park it instead of destroying it here.
+            retireNode(std::move(item->transform));
             changed = true;
             it = cache_.erase(it);
         } else {
             ++it;
-        }
-    }
-
-    // Drop rejection records for geometries that left the frame: if such a
-    // geometry comes back its data is re-evaluated (a fix that bumps the
-    // revision clears the stale record above).
-    for (auto it = rejected_.begin(); it != rejected_.end();) {
-        if (seen.count(it->first) != 0) {
-            ++it;
-        } else {
-            it = rejected_.erase(it);
         }
     }
 

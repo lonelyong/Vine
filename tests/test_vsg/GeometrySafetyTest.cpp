@@ -13,6 +13,7 @@
 #include <vsg/core/Array.h>
 #include <vsg/io/Options.h>
 #include <vsg/nodes/Group.h>
+#include <vsg/nodes/MatrixTransform.h>
 #include <vsg/utils/ShaderSet.h>
 
 #include <cmath>
@@ -494,3 +495,117 @@ TEST(GeometrySafetyTest, IndexedLinesKeepAllIndices)
     EXPECT_TRUE(normalsAreFinite(root.get())); // defaulted, not triangle-derived
 }
 
+
+// ============ Retained-cache identity and in-flight lifetime ============
+
+namespace
+{
+
+/**
+ * @brief Geometry that counts live instances.
+ *
+ * Used to observe who owns a geometry: the bridge's retained cache must hold a
+ * reference (that is what keeps its pointer key valid), and must release it
+ * once nothing else references the geometry any more.
+ */
+class TrackedGeometry : public Geometry
+{
+  public:
+    TrackedGeometry() { ++alive; }
+    ~TrackedGeometry() override { --alive; }
+
+    /// Instances currently alive.
+    static inline int alive = 0;
+};
+
+}  // namespace
+
+/**
+ * @brief The retained cache owns the geometry it is keyed by.
+ *
+ * The per-geometry cache is keyed by the geometry's address, but it cannot
+ * observe a geometry being destroyed. If it merely borrowed the key, an entry
+ * would outlive its geometry and a later geometry allocated at the recycled
+ * address would be served the dead entry's retained node (drawing the old mesh,
+ * or being skipped by a stale rejection record). Holding the reference keeps
+ * the key stable, and the entry is dropped as soon as the cache is the only
+ * owner left, so an abandoned geometry is still released promptly.
+ */
+TEST(GeometrySafetyTest, RetainedCacheOwnsTheGeometryItIsKeyedBy)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+
+    TrackedGeometry::alive = 0;
+    {
+        GeometryPtr geom(new TrackedGeometry());
+        geom->setPositions(vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
+                                                        vine::math::Vec3f(1.0f, 0.0f, 0.0f),
+                                                        vine::math::Vec3f(0.0f, 1.0f, 0.0f) });
+        bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
+                                  root.get(), nullptr);
+        ASSERT_EQ(root->children.size(), 1u);
+        EXPECT_EQ(TrackedGeometry::alive, 1);
+    }
+
+    // The app dropped its reference: the cache still owns the geometry, so the
+    // address cannot be recycled under the entry's key.
+    EXPECT_EQ(TrackedGeometry::alive, 1);
+
+    // A frame that no longer draws it drops the abandoned entry (the cache was
+    // the last owner) and releases the geometry with it.
+    bridge.syncRenderCommands(std::vector<RenderCommand>{}, root.get(), nullptr);
+    EXPECT_EQ(TrackedGeometry::alive, 0);
+    EXPECT_TRUE(root->children.empty());
+}
+
+/**
+ * @brief A replaced retained node is parked, then released after the ring.
+ *
+ * Rebuilding a geometry's vertex data replaces its retained data node, whose
+ * VkBuffers may still be referenced by a command buffer the GPU is executing.
+ * The old node must therefore stay alive until every command-buffer slot that
+ * could reference it has been re-recorded (each re-record waits on its fence),
+ * which is what SceneBridge::advanceRetireRing() accounts for.
+ */
+TEST(GeometrySafetyTest, ReplacedDataNodeIsParkedUntilTheRingAdvances)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+
+    auto geom = makePackedGeometry(triangleFloats(), 3u);
+    bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
+                              root.get(), nullptr);
+    ASSERT_EQ(root->children.size(), 1u);
+
+    // transform -> state wrapper -> retained data node.
+    auto* transform = root->children.front()->cast<vsg::MatrixTransform>();
+    ASSERT_NE(transform, nullptr);
+    ASSERT_FALSE(transform->children.empty());
+    auto* wrapper = transform->children.front()->cast<vsg::StateGroup>();
+    ASSERT_NE(wrapper, nullptr);
+    ASSERT_FALSE(wrapper->children.empty());
+    vsg::ref_ptr<vsg::Node> old_data = wrapper->children.front();
+    ASSERT_NE(old_data, nullptr);
+
+    // New vertex data (bumps the revision): the data node is rebuilt, and the
+    // replaced one is parked rather than destroyed.
+    geom->setPositions(vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
+                                                    vine::math::Vec3f(2.0f, 0.0f, 0.0f),
+                                                    vine::math::Vec3f(0.0f, 2.0f, 0.0f) });
+    bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
+                              root.get(), nullptr);
+    ASSERT_FALSE(wrapper->children.empty());
+    EXPECT_NE(wrapper->children.front().get(), old_data.get());
+    EXPECT_GT(old_data->referenceCount(), 1u); // parked: still owned by the ring
+
+    // Released once every slot that could reference it has been re-recorded.
+    for (std::size_t i = 0; i < vine::vsg::SceneBridge::kRetireRingDepth; ++i) {
+        bridge.advanceRetireRing();
+    }
+    EXPECT_EQ(old_data->referenceCount(), 1u); // only this test still holds it
+}

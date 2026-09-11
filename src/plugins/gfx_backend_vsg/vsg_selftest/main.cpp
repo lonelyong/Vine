@@ -427,6 +427,83 @@ bool runSharedDepthPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
     return ok;
 }
 
+/**
+ * @brief Replaces live retained state while frames are in flight.
+ *
+ * Rebuilding a geometry's vertex data drops its retained data node, and with it
+ * the VkBuffers the GPU may still be reading from a command buffer that is
+ * already submitted: the viewer keeps several command-buffer slots in flight
+ * and only re-records a slot after waiting on its fence. Destroying those
+ * objects early is a validation error (VUID-vkDestroyBuffer-* / -00765 family)
+ * and can fault the device, so the bridge parks replaced nodes and releases them
+ * once every slot has cycled (SceneBridge::retireNode / advanceRetireRing).
+ *
+ * This phase drives that on a device: the vertex data, the material identity and
+ * the drawn set all change on different frames while the harness keeps
+ * submitting, so the live rebuild paths (data-node replace, state-wrapper
+ * replace, absent-then-present) all run with submissions outstanding.
+ *
+ * Scope note: a software rasteriser completes a submission synchronously, so
+ * this phase cannot make a destroy-in-flight actually overlap — it is a churn
+ * regression check (no crash, no validation error, no retained-state
+ * corruption). The parking mechanism itself is pinned by the device-free test
+ * GeometrySafetyTest.ReplacedDataNodeIsParkedUntilTheRingAdvances, which
+ * asserts the replaced node stays owned until the ring advances.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the content is drawn with.
+ * @param frames   Number of frames to churn for.
+ * @return true when the churn frames recorded, submitted and presented cleanly.
+ */
+bool runInFlightChurnPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    auto pass     = RenderPassPtr(new RenderPass());
+    auto geometry = makeTriangle(0.0f);
+
+    // Three material identities: swapping the pointer every frame rebuilds the
+    // retained state wrapper on a live path.
+    std::vector<MaterialPtr> materials{ MaterialPtr(new Material()), MaterialPtr(new Material()),
+                                        MaterialPtr(new Material()) };
+    materials[0]->setDiffuse(vine::Colorf(0.9f, 0.2f, 0.2f, 1.0f));
+    materials[1]->setDiffuse(vine::Colorf(0.2f, 0.9f, 0.2f, 1.0f));
+    materials[2]->setDiffuse(vine::Colorf(0.2f, 0.4f, 0.9f, 1.0f));
+
+    for (int i = 0; i < frames; ++i) {
+        // Data churn: a revision bump rebuilds the retained data node (and its
+        // vertex buffers) on a live path every third frame.
+        if (i % 3 == 2) {
+            const float scale = 1.0f + 0.1f * static_cast<float>(i);
+            geometry->setPositions(vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
+                                                                vine::math::Vec3f(scale, 0.0f, 0.0f),
+                                                                vine::math::Vec3f(0.0f, scale, 0.0f) });
+        }
+
+        const auto material = materials[static_cast<std::size_t>(i) % materials.size()];
+
+        renderer.beginFrame();
+        renderer.beginPass(pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(nullptr);
+        renderer.clear(vine::Color(20, 20, 30, 255), true);
+        renderer.setDepthMode(DepthMode::TestAndWrite);
+        // Every fourth frame draws nothing while the harness keeps its own
+        // reference: the retained node must survive the absence (reused when it
+        // comes back, never destroyed while a slot could still reference it).
+        std::vector<RenderCommand> commands;
+        if (i % 4 != 3) {
+            commands.emplace_back(geometry, material, Mat4d());
+        }
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    std::fprintf(stderr,
+                 "[selftest] in-flight churn: %d frames replaced vertex data / material identity / drawn set\n",
+                 frames);
+    return true;
+}
+
 }  // namespace
 
 int main()
@@ -668,6 +745,7 @@ int main()
     bool  contract_ok = true;
     contract_ok = runPassProtocolPhase(*renderer, camera, window_commands, 4) && contract_ok;
     contract_ok = runSharedDepthPhase(*renderer, camera, window_commands, 4) && contract_ok;
+    contract_ok = runInFlightChurnPhase(*renderer, camera, 8) && contract_ok;
 
     // ---- Teardown paths, then a few frames to prove nothing dangles ---------
     backend->releaseWindowLayer(camera.get(), 1);   // drop the HUD slot

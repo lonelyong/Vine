@@ -931,6 +931,61 @@ TEST(NodeTest, ChildHierarchy)
     EXPECT_EQ(child->parent(), nullptr);
 }
 
+TEST(NodeTest, ChildHierarchyReparentsInsteadOfAdoptingTwice)
+{
+    auto first = intrusive_ptr<Group>(new Group());
+    auto second = intrusive_ptr<Group>(new Group());
+    auto child = intrusive_ptr<Node>(new Node());
+
+    first->addChild(child);
+    second->addChild(child);
+
+    // The child moved: a node has exactly one parent, which is the invariant
+    // the per-traversal world matrix / bounds cache relies on.
+    EXPECT_EQ(first->children().size(), 0u);
+    EXPECT_EQ(second->children().size(), 1u);
+    EXPECT_EQ(child->parent(), second.get());
+}
+
+TEST(NodeTest, AddChildRejectsCycles)
+{
+    // A cyclic graph would make every tree traversal (command collection,
+    // bounds, picking, find) recurse forever, so the add must be rejected and
+    // leave the graph untouched.
+    auto outer = intrusive_ptr<Group>(new Group());
+    auto middle = intrusive_ptr<Group>(new Group());
+    auto leaf = intrusive_ptr<Group>(new Group());
+    outer->addChild(middle);
+    middle->addChild(leaf);
+
+    // Self-parenting is rejected.
+    outer->addChild(outer);
+    EXPECT_EQ(outer->parent(), nullptr);
+    EXPECT_EQ(outer->children().size(), 1u);
+
+    // Direct cycle: making an ancestor a child of its own descendant.
+    leaf->addChild(outer);
+    EXPECT_EQ(leaf->children().size(), 0u);
+    EXPECT_EQ(outer->parent(), nullptr);
+    EXPECT_EQ(outer->children().size(), 1u);
+
+    // Indirect cycle, one level up: middle adopting outer.
+    middle->addChild(outer);
+    EXPECT_EQ(middle->children().size(), 1u);   // still just `leaf`
+    EXPECT_EQ(middle->childrenRef()[0].get(), leaf.get());
+    EXPECT_EQ(outer->childrenRef()[0].get(), middle.get());
+
+    // The tree is still traversable (no infinite recursion) and its structure
+    // is exactly the one built before the rejected adds.
+    Scene scene;
+    scene.setRoot(outer);
+    auto geom = geometryOf(*makeUnitTriangle());
+    leaf->addChild(geom);
+    Camera cam;
+    setupLookAtCamera(cam);
+    EXPECT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+}
+
 TEST(NodeTest, WorldTransformCascades)
 {
     auto parent = intrusive_ptr<MatrixTransform>(new MatrixTransform());

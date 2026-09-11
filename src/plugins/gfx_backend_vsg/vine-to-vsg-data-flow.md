@@ -418,7 +418,7 @@ sequenceDiagram
 
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|
-| D13 | `VsgMaterialManager::cache` **无逐出**：`releaseMaterial/updateMaterial` 接口存在但**全仓零调用点** → 每个出现过的 `Material*` 的 PhongMaterialValue 留到 shutdown（最像内存泄漏的留存） | `VsgMaterialManager` | 🔴 |
+| D13 | `VsgMaterialManager::cache` **无逐出**：`releaseMaterial/updateMaterial` 接口存在但**全仓零调用点** → 每个出现过的 `Material*` 的 PhongMaterialValue 留到 shutdown（最像内存泄漏的留存）。**另：按原始指针索引且不自持 —— 材质销毁后同地址新材质会复用旧 `PhongMaterialValue`/descriptor（颜色/高光错误）**，见 `.ai/design/vsg-pass-lifecycle.md` §8.1/§8.5 | `VsgMaterialManager` | 🔴 |
 | D14 | 裸指针缓存键 + 600 帧滞留窗：Geometry/Material 删除后、逐出前有悬垂窗口（安全依赖场景树保活） | `SceneBridge::cache_` | 🟡 |
 | D15 | `SceneBridge::cache_` 删除几何 600 帧后才释放（延迟释放） | `syncRenderCommands` | 🟢 |
 | D16 | 共享/变体缓存只增不减（随"历史见过的不同变体数"增长）；2026-09-08 起 `clearCache()`（槽 teardown/resize/release）同时清 `shared_objects_`/`program_shader_sets_`/`variant_cache_`，**槽内活跃期间仍不修剪** | `SceneBridge` | 🟢 |
@@ -448,7 +448,8 @@ sequenceDiagram
 1. **D10**：给 `ShaderProgram` 加 revision/变更通知，纳入 `Item` 重建键 → "改 shader 不生效"。
 2. **D9**：program 编译失败向前端/日志报错，去掉纯静默回退。
 3. **D3**：`SceneBridge` 尊重用户 loc6 顶点色（色 × opacity 合成）。
-4. **D13**：引擎在材质解绑/销毁时调 `releaseMaterial()`（或加容量上限逐出）。
+4. **D13**：引擎在材质解绑/销毁时调 `releaseMaterial()`（或加容量上限逐出）；同时按
+   §8.1 的做法让条目自持材质，否则同地址新材质会复用旧 Phong 值/descriptor。
 5. **D1**：读端按 `components` 跳步，兑现数据模型承诺。
 
 

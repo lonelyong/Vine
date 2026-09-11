@@ -32,9 +32,12 @@ class V_GRAPHICS_API Group : public Node {
     /** @brief Adds a child node.
      *
      * The node keeps a reference to the child and detaches it from any
-     * previous parent. Adding a node to itself is ignored.
+     * previous parent, so the graph stays a tree. An add that would close a
+     * cycle (the child is this node or one of its ancestors) is rejected and
+     * the child is left untouched: a cyclic graph makes every tree traversal
+     * (command collection, bounds, picking, find) recurse forever.
      *
-     * @param child Child to add.
+     * @param child Child to add (null is ignored).
      */
     void addChild(intrusive_ptr<Node> child);
 

@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "vsg_global.hpp"
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <unordered_map>
@@ -118,6 +119,37 @@ class V_VSG_API SceneBridge {
      * pass-level state change (a new depth policy, a swapped shader set) needs.
      */
     void invalidateState();
+
+    /** @brief Parks a node whose Vulkan objects may still be in flight.
+     *
+     * Replacing a retained data/state node drops the old one, but the GPU may
+     * still be executing command buffers that reference its pipeline, buffers
+     * or descriptor sets (the viewer keeps several command-buffer slots in
+     * flight). Destroying them then is a validation error
+     * (VUID-vkDestroyPipeline-00765 and friends) and can fault the device, so
+     * the node is parked here and released by advanceRetireRing() once every
+     * slot that could reference it has been re-recorded (which waits on its
+     * fence first).
+     *
+     * @param node Node to park (null is ignored).
+     */
+    void retireNode(::vsg::ref_ptr<::vsg::Node> node);
+
+    /** @brief Releases the nodes retired one ring cycle ago.
+     *
+     * Must be called exactly once per SUBMITTED frame — after that frame's
+     * recordAndSubmit() — because one advance is what accounts for one
+     * submission's fence wait (see retireNode).
+     */
+    void advanceRetireRing();
+
+    /** @brief Number of frame advances a retired node is parked for.
+     *
+     * One more than the viewer's command-buffer slot count, so the slot which
+     * could still reference a retired node has had its fence waited (the wait
+     * happens before that slot is re-recorded) before the node is destroyed.
+     */
+    static constexpr std::size_t kRetireRingDepth = 4;
 
     /** @brief Gets the number of distinct compiled pipeline variants.
      *
@@ -303,12 +335,17 @@ class V_VSG_API SceneBridge {
     // Default manager used when the renderer does not inject one.
     VsgMaterialManager default_manager_;
     // Retained per-geometry nodes, keyed by geometry pointer for O(1) lookup.
+    //
+    // Each Item OWNS the geometry it is keyed by, and that ownership is what
+    // makes the pointer key valid: a raw key would outlive the geometry (the
+    // map cannot observe destruction) and a later geometry allocated at the
+    // same address would be served the dead entry's retained node — drawing
+    // the old mesh, or being skipped by a stale rejection record. Holding the
+    // reference keeps the address unique; the sweep drops the entry as soon as
+    // the app itself no longer holds the geometry (useCount() == 1, i.e. only
+    // the cache references it), so an abandoned geometry is still released
+    // promptly instead of being pinned for the reuse window.
     std::unordered_map<const vine::graphics::Geometry*, std::unique_ptr<Item>> cache_;
-    // Geometries whose data was rejected (malformed attributes / out-of-range
-    // indices), keyed by the data revision they were rejected at. Kept so the
-    // rejection diagnostic prints once per revision instead of on every frame;
-    // a data revision change (or the geometry leaving the frame) clears it.
-    std::unordered_map<const vine::graphics::Geometry*, std::uint64_t> rejected_;
     // Cached run-time compiled ShaderSet per (user program, vertex layout) (L1):
     // every geometry bound to the same program with the SAME set of forwarded
     // custom channels shares one glslang compile + ShaderSet instead of
@@ -331,8 +368,14 @@ class V_VSG_API SceneBridge {
     // program then shares these stages and only the ShaderSet assembly differs
     // (L1b, program_shader_sets_). Editing a program bumps its revision and
     // forces a fresh compile (D10).
+    //
+    // Like cache_, each entry OWNS the program it is keyed by: the raw key
+    // would otherwise outlive a destroyed program, and a new program allocated
+    // at the same address with the same revision would be served the dead
+    // program's SPIR-V (wrong shader, silently).
     struct StageEntry
     {
+        vine::intrusive_ptr<const vine::graphics::ShaderProgram> program;
         std::uint64_t revision = ~std::uint64_t{0};
         ::vsg::ShaderStages stages;
     };
@@ -347,6 +390,14 @@ class V_VSG_API SceneBridge {
     // state-variant count rather than the geometry count.
     struct VariantEntry;
     std::unordered_map<std::uint64_t, std::unique_ptr<VariantEntry>> variant_cache_;
+
+    // Nodes dropped on a live path, held for kRetireRingDepth frame advances.
+    // One slot more than the viewer's command-buffer slot count, so the slot
+    // that referenced a retired node has had its fence waited before that
+    // node is destroyed.
+    std::array<std::vector<::vsg::ref_ptr<::vsg::Node>>, kRetireRingDepth>
+        retire_ring_;
+    std::size_t retire_head_ = 0;
 };
 
 V_VSG_NS_END

@@ -3226,6 +3226,17 @@ void VsgRenderer::submitFrame()
     }
     impl->viewer->recordAndSubmit();
     impl->viewer->present();
+
+    // One frame has been submitted: release the retained nodes that were
+    // parked kRetireRingDepth frames ago, when every command-buffer slot that
+    // could still reference them has been re-recorded (see
+    // SceneBridge::retireNode). Done after the submit so the parked objects
+    // stay alive for the whole frame that dropped them.
+    for (auto& target_entry : impl->targets) {
+        for (auto& slot_entry : target_entry.second.content_slots) {
+            slot_entry.second.bridge.advanceRetireRing();
+        }
+    }
 }
 
 void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)

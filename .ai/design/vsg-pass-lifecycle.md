@@ -170,3 +170,86 @@ RenderBackend::releasePass(pass)    // 释放该 pass 的全部保留状态（�
 - `Overlay`：与 engine/backend 已脱钩（无 addOverlay/releaseOverlay），建议删除或明确降级为
   样例代码。
 
+
+## 8. 状态一致性与资源生命周期（2026-09-11 终检）
+
+本轮以“不变量”方式逐条核对后端保留状态与资源生命周期，修掉三类真实缺陷，并把
+设备无关的机制用测试钉住。
+
+### 8.1 保留缓存的身份：键必须“指向活对象”
+
+`SceneBridge` 的保留缓存按**原始指针**索引（`Geometry*` / `ShaderProgram*`），但缓存
+无法观测对象析构：条目会比对象活得久，且**地址被复用**时会把死条目的保留状态喂给新对象。
+后果是静默错误而非崩溃：
+
+| 缓存 | 复用地址后的错误后果 |
+| --- | --- |
+| `cache_`（几何节点） | 新几何被判定“未变更”（revision 相同）→ **画的是旧网格** |
+| `rejected_`（拒绝记录） | 新几何命中旧拒绝记录的 revision → **合法几何被静默跳过（不显示）** |
+| `program_stages_`（SPIR-V） | 新 program 命中旧 revision → **用旧 SPIR-V 编译，着色错误** |
+
+修法（不新增公共 API，语义自洽）：**条目持有它所索引的对象**（`Item::geometry`、
+`StageEntry::program`），地址在条目存活期间不可能被复用；同时把 `rejected_` 合并进
+`Item`（一次哈希查找、一次扫描，且拒绝记录随条目一起被正确回收）。驱逐策略：
+
+- 几何**离开帧**时先清拒绝记录（保留“修好数据后重新评估”的语义）；
+- 条目**唯一持有者只剩缓存自身**（`useCount() == 1`，即 app 已放弃它）→ **立即**回收
+  几何与条目，不占满 600 帧复用窗口（这是“持有键”方案的代价补偿：不长期钉住对象）；
+- 仍持有（隐藏/剔除/临时离场）→ 沿用 600 帧窗口，重现时零重建（保持原快速路径）。
+
+测试：`GeometrySafetyTest.RetainedCacheOwnsTheGeometryItIsKeyedBy`（子类计数：
+app 释放后对象仍存活 → 空帧后立即被回收）。
+
+### 8.2 帧在飞（frames-in-flight）的延迟释放队列
+
+保留节点被**替换**时（数据 revision 变化 → 数据节点重建；材质/状态/程序标识变化 →
+状态包装重建；条目驱逐）会丢掉旧节点，而旧节点的 `VkBuffer` / `VkPipeline` /
+descriptor set 可能仍被**已提交但未完成**的命令缓冲引用：viewer 有多个命令缓冲槽在飞，
+某个槽要等它的 fence 被等待后才重新录制。此时销毁会触发
+`VUID-vkDestroyPipeline-00765` / `vkDestroyBuffer-*` 一类错误，严重时会让设备掉线。
+
+修法：`SceneBridge::retireNode(node)` 把被替换的节点停放在**退役环**里，
+`advanceRetireRing()` 每提交一帧推进一次并释放环上最老的一格。环深
+`kRetireRingDepth = 4`（= 命令缓冲槽数 3 + 1）：节点在第 F 帧停放，第 F+3 帧开始时那个
+可能的槽已被重新录制（`start()` 会先等它的 fence），因此**早于** F+3 帧末释放都危险，
+深 4 恰好安全。调用点：`VsgRenderer::submitFrame()` 在 `recordAndSubmit()` + `present()`
+之后推进；**未提交的帧不得推进**（一次推进对应一次 fence 等待）。
+
+显式销毁路径（槽 teardown / resize / 释放 target / depth 策略变更 / `shutdown()`）本就
+先 `deviceWaitIdle`（§3 铁律），`advanceRetireRing` 只覆盖那些**无等待**的活路径。
+
+测试：`GeometrySafetyTest.ReplacedDataNodeIsParkedUntilTheRingAdvances`（用
+`vsg::Object::referenceCount()` 断言被替换的数据节点在环推进前仍被持有、推进 4 次后释
+放）；设备侧 `vsg_backend_selftest::runInFlightChurnPhase()` 每帧替换数据/材质标识/绘制
+集合做 churn 回归。**诚实说明**：软件光栅器同步完成提交，该 phase 无法真正复现“销毁
+时仍在飞”，因此它只作为 churn 回归；机制正确性由上述设备无关测试 + 帧槽推理保证。
+
+### 8.3 场景图不变量：拒绝成环
+
+`Group::addChild` 原来只挡“自己作为自己的孩子”，不挡祖先环（`a->addChild(b)` 后
+`b->addChild(a)`）→ 图不再是树，而命令收集/包围盒/拾取/查找都是递归遍历：
+**栈溢出**（不是可诊断错误）；同时破坏“一趟遍历内一个节点只有一个世界矩阵”这一
+包围盒缓存前提。现按祖先链检查并**静默拒绝**（与已有的 null/自身拒绝一致），
+`Group.hpp` 文档化。测试：`NodeTest.AddChildRejectsCycles`、`NodeTest.ChildHierarchyReparentsInsteadOfAdoptingTwice`。
+
+### 8.4 复查通过（无需改动）
+
+- 线程模型：插件内**无** `std::thread` / 锁；viewer 不启 DatabasePager 线程池，
+  record/submit/present 都在调用线程同步完成 → 状态一致性问题域是单线程的（引擎与
+  UI 的跨线程约定仍应在 app 层文档化）。
+- `VsgRenderer::~VsgRenderer()` → `shutdown()`：先 `deviceWaitIdle()` + `removeWindow()`
+  + `close()`，再整体重建 `Impl`（一次性丢弃 window/viewer/图/槽/管线），最后
+  `materialManager.clear()`；不会在飞销毁。
+- 破坏性重建（`clearCache()`）的 5 个调用点均在 `waitForIdle()` 之后（槽 teardown、
+  resize、释放 target）。
+- `variant_cache_` 逐出（清模板）与 `program_shader_sets_` 上限逐出都只丢**模板**，
+  已建管线仍被各自保留的状态组持有 → 不会销毁在飞对象。
+
+### 8.5 仍未做（按优先级）
+
+1. **D13：`VsgMaterialManager::cache` 无逐出**（接口存在、全仓零调用）——除内存只增
+   不减外，**同样存在 8.1 的地址复用风险**：材质销毁后缓存条目的 `PhongMaterialValue`
+   + descriptor 会被同地址新材质复用（颜色/高光错误）。建议与 8.1 同法处理（条目持有
+   `Material` + 上限逐出），或在引擎解绑/销毁材质时调 `releaseMaterial()`。
+2. 多 pass 场景的**跨 pass 命令列表缓存**（单次遍历内部已完成，见 §6.1）。
+3. `VkPipelineCache` 持久化（受 vsg 传 `VK_NULL_HANDLE` 阻塞）。
