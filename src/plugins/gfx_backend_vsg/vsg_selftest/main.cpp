@@ -2875,6 +2875,23 @@ bool runMixedDepthPolicyPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
                      occluded.blueDominant());
         ok = false;
     }
+    // Per-pass COLOUR clear (§28): the second pass asked to fill the target, and
+    // each pass clears with its OWN request, so the second pass' own clear is
+    // what shows where it drew nothing. The former target-wide "one clear, the
+    // last request wins" model would have left the first pass' occluder colour
+    // here instead. Checked at the centre, which the second pass' quad cannot
+    // cover (it is rejected by the preserved depth).
+    const int  cx                      = occluded.width / 2;
+    const int  cy                      = occluded.height / 2;
+    const bool second_pass_clear_holds = occluded.at(cx, cy, 0) == 90 && occluded.at(cx, cy, 1) == 30 &&
+                                         occluded.at(cx, cy, 2) == 30;
+    if (!second_pass_clear_holds) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the centre is (%d,%d,%d); the second pass cleared the target to (90,30,30)"
+                     " itself, so its own clear must be what shows where it drew nothing (per-pass colour clear)\n",
+                     occluded.at(cx, cy, 0), occluded.at(cx, cy, 1), occluded.at(cx, cy, 2));
+        ok = false;
+    }
 
     // Stage 2: the occluder is gone, so the first pass' per-frame depth clear is
     // the only thing that can let the far quad through.
@@ -2904,8 +2921,8 @@ bool runMixedDepthPolicyPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
     if (ok) {
         std::fprintf(stderr,
                      "[selftest] mixed depth: occluded by the first pass' depth 0 pixel(s) drawn; after removing the"
-                     " occluder the second pass' quad covers %zu pixel(s) (the first pass still cleared depth);"
-                     " %zu build(s) over %d frames\n",
+                     " occluder the second pass' quad covers %zu pixel(s) (the first pass still cleared depth); the"
+                     " second pass' own colour clear showed as its (90,30,30); %zu build(s) over %d frames\n",
                      blue, builds_stage2 - builds_before, frames);
     }
     renderer.releasePass(opaque_pass.get());

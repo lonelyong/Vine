@@ -811,28 +811,11 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
         return;
     }
 
-    // Off-screen: every pass graph that exists is updated in place (attachment
-    // 0 gets the requested colour; extra MRT attachments stay transparent black
-    // so untouched G-buffer regions remain empty), and the colour is recorded on
-    // the target and on each pass so a pass graph created LATER clears to it
-    // too. Each pass keeps its own depth load-op — this only moves colour.
-    const int color_count = key->colorCount();
-    for (auto& pass : t.passes) {
-        pass.second.clear_color = color;
-        if (pass.second.graph == nullptr) {
-            continue;
-        }
-        const std::size_t n = std::min<std::size_t>(pass.second.graph->clearValues.size(),
-                                                    static_cast<std::size_t>(color_count));
-        for (std::size_t i = 0; i < n; ++i) {
-            pass.second.graph->clearValues[i].color = VkClearColorValue{
-                { i == 0u ? color.r : 0.0f,
-                  i == 0u ? color.g : 0.0f,
-                  i == 0u ? color.b : 0.0f,
-                  i == 0u ? color.a : 0.0f }
-            };
-        }
-    }
+    // Off-screen: the colour is only RECORDED here. It reaches a graph when the
+    // pass that asked for it next looks its own graph up (see passGraph): a pass
+    // must clear to ITS OWN request, so broadcasting this colour to every pass
+    // graph of the target would re-introduce exactly the "the last request wins
+    // for the whole target" behaviour that §28 removes.
 }
 
 void VsgRenderer::setDepthMode(vine::graphics::DepthMode mode)
