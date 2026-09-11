@@ -461,7 +461,9 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // bakes the policy and colour into the pass. A target that BORROWS another
     // target's depth never selects the depth-LOAD pass (its depth policy comes
     // from the owner), so the rebuild predicate must not expect one there (H4).
-    const bool want_load_depth = target.clear_seen && !target.clear_depth && target.depth_source == nullptr;
+    // A target whose passes disagree (mixed) LOADs too: the passes that asked
+    // for a clear clear it themselves (ContentSlot::clears_depth).
+    const bool want_load_depth = target.wantsDepthLoad();
     if (target_key != nullptr &&
         (target.graph == nullptr || target.width != target_key->width() ||
          target.height != target_key->height() || target.depth_load != want_load_depth)) {
@@ -481,14 +483,15 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // they changed; its stacking position follows the pass' explicit order.
     if (camera != nullptr) {
         ContentSlotRequest request;
-        request.target     = target_key;
-        request.camera     = camera;
-        request.commands   = &commands;
-        request.lights     = &lights;
-        request.depth_mode = depth_mode;
-        request.presenting = presenting;
-        request.order      = pass_order;
-        request.viewport   = viewport;
+        request.target      = target_key;
+        request.camera      = camera;
+        request.commands    = &commands;
+        request.lights      = &lights;
+        request.depth_mode  = depth_mode;
+        request.presenting  = presenting;
+        request.clear_depth = impl->request.clear_depth;
+        request.order       = pass_order;
+        request.viewport    = viewport;
         renderContentSlot(request);
     }
 
@@ -739,7 +742,8 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
     // is consumed in render(). This marker is separate from the real clear
     // below (colour + optional depth on the CURRENT target), so the depth-on/
     // off mechanism no longer swallows the actual clear semantics.
-    impl->request.presenting = true;
+    impl->request.presenting  = true;
+    impl->request.clear_depth = clearDepth;
 
     // The clear applies to the CURRENT render target (set by setRenderTarget;
     // nullptr = the window): an off-screen pass's clear must reach ITS graph,
@@ -756,6 +760,18 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
     };
     t.clear_seen  = true;
     t.clear_color = color;
+    // Two passes of one target that disagree about clearing depth cannot both
+    // be served by that target's single render pass (it bakes ONE depth
+    // load-op): remember the clash so the target switches to the depth-LOAD
+    // pass and the passes that asked for a clear issue it themselves, before
+    // their own draws (see Target::wantsDepthLoad /
+    // ContentSlot::clears_depth). Without this the LAST request silently won
+    // for the whole target — a later pass's "preserve depth" then also
+    // suppressed the earlier pass's clear, and the depth of the previous frame
+    // stayed behind content that should have been redrawn from scratch.
+    if (t.clear_seen && t.clear_depth != clearDepth) {
+        t.depth_policy_mixed = true;
+    }
     t.clear_depth = clearDepth;
 
     if (t.graph == nullptr) {

@@ -551,6 +551,7 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
         const std::vector<const vine::graphics::Light*>* lights  = nullptr; ///< Content lights (borrowed, may be empty).
         vine::graphics::DepthMode                      depth_mode = vine::graphics::DepthMode::TestAndWrite; ///< The pass' depth policy.
         bool                                           presenting = false; ///< True for the full-target pass that cleared.
+        bool                                           clear_depth = false; ///< The pass' own depth-clear request (a mixed target clears it per pass).
         int                                            order      = 0;     ///< The pass' explicit pipeline order (stacking).
         std::optional<vine::graphics::Viewport>        viewport;  ///< Sub-viewport, or nullopt for the full target.
     };

@@ -992,3 +992,49 @@ front it covered the centre (5,41,10); lender depth 0.0293`。
 仍是**每目标一个 load op** —— 多 pass 想各自声明 CLEAR/LOAD 需要把 render pass 从目标粒度
 下沉到 pass 粒度（登记为未做项，不是缺陷：当前模型里"最后一次 clear 请求"就是该目标的
 策略）。
+
+## 22. 同目标多 pass 的深度策略：从"最后一次请求赢"到每 pass 自清（D35，2026-09-11）
+
+**§21 结尾登记的那个模型边界，是缺陷，不是限制。** §21 只证明了"同一目标上两个 pass 一个
+要 CLEAR、一个要 LOAD"会失败（远 pass 的深度仍被清），当时归因为"模型外用法"。把它当用法
+问题放过去是不对的：**不透明 pass 每帧清深度 + 半透明 pass 保留深度**是真实多 pass 管线的
+标准写法，而旧实现里 `clearDepth` 是**目标**属性 → 目标只烧一个 depth load-op → **最后一次
+clear 请求赢**。于是第二个 pass 的 `clearDepth=false` 会把第一个 pass 的每帧清深度**吞掉**：
+
+- 目标恒为 LOAD → 上一帧的深度留在缓冲里；
+- 移开的物体/换掉的内容**仍然遮挡**（ghosting），下次绘制被"死几何"的深度拒绝，静默错画。
+
+**修法**（保持"一个目标一个 render pass"，把清除下沉到 pass）：
+
+1. `clearDepth` 变成**双重身份**：`PassRequest::clear_depth` 是 pass 作用域属性（和
+   `presenting` 同一机制，`beginPass`/`endPass` 自动清），`Target::clear_depth` 仍记最后请求。
+2. **冲突检测**：`clear()` 里若同一目标出现与上次**不同**的 `clearDepth` → 置
+   `Target::depth_policy_mixed`（sticky，避免在两种策略间来回重建图）。
+3. `Target::wantsDepthLoad()`（唯一判据，`render()` 的重建谓词与 `buildOffscreenTarget` 共用）：
+   `clear_seen && (!clear_depth || depth_policy_mixed) && depth_source == nullptr` ——
+   混合目标改用 depth-LOAD pass。
+4. **要清的人自己清**：混合目标里"请求了 clear"的 pass 在自己的 view 里、自己的绘制之前插一条
+   `vsg::ClearAttachments`（深度面，值为 `Target::depth_clear_value`，与 render pass 本来会写的
+   值同一个来源）。它放在**独立于 bridge root 的 group** 里 —— bridge 会按命令流重建 root 的
+   子节点，注入 root 就会被抹掉。位置在 view 内 → 就在 render pass 实例里 → `vkCmdClearAttachments`
+   合法性满足（验证层 0 VUID 已证）。
+5. 常量与顺序：`depth_clear_value` 由离屏构建时记录（colour 目标 0.0 = 反 Z 远平面 ✓，深度专用
+   目标 1.0），清除命令写同一个值；同目标内 view 按 order 升序 → 不透明 pass 先清先画、半透明
+   pass 后测 ✓。
+6. **已知残留（1 帧收敛）**：冲突是在**第二个请求到达时**才被发现的，所以"第一次混用"的那一帧
+   仍按旧策略执行（本例是半透明 pass 那帧清掉了深度）；从下一帧起两种请求都被满足。粘性标志
+   保证只发生一次，不震荡。域外借用深度的目标不受影响（`depth_source != nullptr` 时既不用 LOAD
+   pass 也不自清 —— 它借的是别人的深度，策略归出借方，H4 不变）。
+
+**验证**：`runMixedDepthPolicyPhase` —— 不透明 pass（order 0，`clearDepth=true`）画近面遮挡，
+半透明 pass（order 1，`clearDepth=false`）画远面：
+- 阶段 1（遮挡物在）：远面**必须被拒绝**（0 蓝像素）→ 证明保留的深度确实还在被测试；
+- 阶段 2（遮挡物移除）：远面**必须出现**（256 蓝像素）→ 证明不透明 pass 的每帧清深度没被吞掉；
+- 目标构建**恰好 2 次**（初次 + 切到 LOAD pass），阶段 2 增加 0 次 → 不是每帧重建。
+
+**判据力（反证）**：把自清那一行改成 `false`（等价于修前行为）→ 立刻报
+`the far quad is still invisible after the occluder was removed … the dead occluder still occludes
+(ghosting)`。harness 追加 `mixed depth:` ≥1 行证据要求。
+
+**验收**：test_vsg 71、test_graphics 151 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID，
+三行新证据随门禁打印）；dist 冒烟 25s 存活。

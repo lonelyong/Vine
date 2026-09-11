@@ -1,5 +1,17 @@
 ﻿# Graphics 模块核心
 
+> 2026-09-11 **同目标多 pass 的深度策略："最后一次请求赢"是缺陷，已修（设计 §22，D35）**。
+> 不透明 pass 每帧清深度 + 半透明 pass 保留深度是真实多 pass 管线的标准写法，而 `clearDepth`
+> 曾是**目标**属性 → 目标只烧一个 depth load-op → 第二个 pass 的 `clearDepth=false` **吞掉**了
+> 第一个 pass 的每帧清深度 → 旧帧深度留着 → 移开的物体继续遮挡（ghosting，静默错画）。
+> 修法：`clearDepth` 同时是 **pass 作用域属性**（`PassRequest::clear_depth`）；同一目标出现不同
+> 请求 → `Target::depth_policy_mixed`（sticky）→ `Target::wantsDepthLoad()` 改用 LOAD pass，
+> **要清的人自己在 view 里、自己绘制之前插 `ClearAttachments`**（值 = `Target::depth_clear_value`，
+> 与 render pass 同源）；该命令必须在**独立于 bridge root 的 group** 里（bridge 会重建 root 子节点）
+> 且位于 view 内（`vkCmdClearAttachments` 只能写在 render pass 实例里）。已知残留：冲突到**第二个
+> 请求到达时**才发现，**首帧仍按旧策略**，次帧起两者都满足（粘性标志不震荡）；借用深度的目标
+> （`depth_source != nullptr`）既不用 LOAD pass 也不自清。
+
 > 2026-09-11 **深度 LOAD / 共享深度的语义断言（设计 §21）**：两条此前只靠"无 VUID"覆盖的语义
 > 现在有回读断言。**`runDepthLoadPixelPhase`**：`clearDepth` 是**目标**的 pass 属性（一个目标
 > 一个 depth load op，"最后一次 clear 请求"就是该目标的策略），所以"同一目标两个 pass、一个

@@ -171,6 +171,7 @@ else
     grep "^\[selftest\] depth:" "$log" | sed 's/^/    /' || true
     grep "^\[selftest\] depth load:" "$log" | sed 's/^/    /' || true
     grep "^\[selftest\] shared depth pixels:" "$log" | sed 's/^/    /' || true
+    grep "^\[selftest\] mixed depth:" "$log" | sed 's/^/    /' || true
     grep "^\[selftest\] MRT " "$log" | sed 's/^/    /' || true
     # Each assertion group must report itself: a stage whose assertions were
     # removed (or silently stopped running) must not read as a pass.
@@ -186,6 +187,7 @@ else
     require_evidence "^\[selftest\] depth:" 1 "depth assertion"
     require_evidence "^\[selftest\] depth load:" 1 "depth-LOAD assertion"
     require_evidence "^\[selftest\] shared depth pixels:" 1 "shared-depth assertion"
+    require_evidence "^\[selftest\] mixed depth:" 1 "mixed-depth-policy assertion"
     require_evidence "^\[selftest\] MRT " 2 "MRT report"
     # The self-test is expected to finish (0); a timeout (124) is also OK.
     if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then

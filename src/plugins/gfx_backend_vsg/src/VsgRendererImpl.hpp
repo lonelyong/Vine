@@ -94,6 +94,21 @@ struct VsgRenderer::Impl {
         vine::graphics::DepthMode     depth_mode = vine::graphics::DepthMode::TestAndWrite;
         bool                          presenting = false; // this slot cleared the target (full-target main pass)
         bool                          headlight_seed = false; // its default light is the headlight (presenting window slot)
+        // True when this slot clears the target's DEPTH with its own command:
+        // set when the target's render pass LOADs depth because another pass of
+        // the same target asked to keep it (Target::depth_policy_mixed) while
+        // THIS pass asked for a clear. One render pass bakes ONE depth load-op,
+        // so a mixed target LOADs and every pass that wants a clear issues it
+        // itself, before its own draws (so it clears exactly its own pass, not
+        // the depth a later pass must still test against).
+        bool                          clears_depth = false;
+        // Holds that command (empty while clears_depth is false). A SEPARATE
+        // group rather than @ref root: the bridge reconciles the root's
+        // children against the command stream, so an injected child there would
+        // be wiped. It sits before the root in the view, i.e. before this
+        // pass' draws, and inside the render pass instance — which is where a
+        // view's scene is recorded and where vkCmdClearAttachments is legal.
+        ::vsg::ref_ptr<::vsg::Group>  depth_clear_group;
         ::vsg::ref_ptr<::vsg::Camera> vsg_camera;
         ::vsg::ref_ptr<::vsg::Group>  root;        // retained content root
         ::vsg::ref_ptr<::vsg::Group>  light_group; // lights under this slot's view
@@ -144,6 +159,12 @@ struct VsgRenderer::Impl {
         /// Set by clear(): this pass fills the target (the "presenting" pass
         /// that seeds the window's default headlight). Independent of depth.
         bool presenting = false;
+        /// Depth-clear request of the clear() call above — a scope attribute
+        /// like presenting, so every draw call of the scope keeps it. A pass
+        /// that asked for a clear still gets one when the target's single
+        /// render pass cannot clear the depth for this pass alone (a mixed
+        /// target LOADs it; see ContentSlot::clears_depth).
+        bool clear_depth = true;
         /// Sub-viewport announced by setViewport(), per draw call.
         std::optional<vine::graphics::Viewport> viewport;
         /// Lights announced by setLights(), per draw call. Empty keeps the
@@ -267,6 +288,24 @@ struct VsgRenderer::Impl {
      * way the window does.
      */
     struct Target {
+        /** @brief Returns whether this target's off-screen pass LOADs depth.
+         *
+         * A render pass bakes ONE depth load-op, so a target either clears its
+         * depth at the start of every pass or preserves it — it cannot do one
+         * for pass A and the other for pass B. The target LOADs when its last
+         * clear() asked to preserve depth, or when two of its passes asked for
+         * DIFFERENT policies (mixed): in the mixed case each pass that wanted a
+         * clear clears the depth itself (ContentSlot::clears_depth), so both
+         * requests are honoured. A target that BORROWS another's depth never
+         * selects the LOAD pass here: its depth policy comes from the owner.
+         *
+         * @return true when the off-screen pass must preserve the depth image.
+         */
+        bool wantsDepthLoad() const noexcept
+        {
+            return clear_seen && (!clear_depth || depth_policy_mixed) && depth_source == nullptr;
+        }
+
         // ---- off-screen GPU attachments (window target: unused) ----
         // One image + view per colour attachment (MRT / G-buffer targets carry
         // several sampleable textures; single-colour targets keep one entry).
@@ -302,6 +341,17 @@ struct VsgRenderer::Impl {
         ::vsg::vec4 clear_color{ 0.2f, 0.2f, 0.2f, 1.0f };
         bool        clear_depth = true;
         bool        depth_load  = false; // off-screen pass LOADs (preserves) depth
+        // Depth value the target's pass clears to (colour targets: 0.0, the
+        // reverse-Z far plane; depth-only targets: 1.0). A pass that has to
+        // clear the depth itself uses the same value as the render pass would,
+        // so the two are never in disagreement.
+        float       depth_clear_value = 0.0f;
+        // True once two passes of this target asked for DIFFERENT depth
+        // policies (one clears, one preserves) — see wantsDepthLoad(). Sticky,
+        // so the policy does not flip back and forth (and rebuild the graph)
+        // when the passes alternate; the passes that asked for a clear keep
+        // getting one (ContentSlot::clears_depth).
+        bool        depth_policy_mixed = false;
         // Depth-LOAD targets keep two compatible render passes over the same
         // attachments: the first-frame pass CLEARs the freshly created
         // (UNDEFINED) depth image so its layout becomes

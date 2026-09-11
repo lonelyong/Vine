@@ -319,6 +319,11 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
 
     content.view = ::vsg::View::create(content.vsg_camera);
     content.view->addChild(content.light_group);
+    // Per-slot depth clear (see ContentSlot::clears_depth): empty until the
+    // target turns out to LOAD depth while this pass asked for a clear. Recorded
+    // before the content root so it precedes this pass' draws.
+    content.depth_clear_group = ::vsg::Group::create();
+    content.view->addChild(content.depth_clear_group);
     content.view->addChild(content.root);
 
     // Position the slot's View in the target's render graph by its explicit
@@ -412,6 +417,23 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
     // the window target, the off-screen target's logical size otherwise.
     const int surf_w = (request.target == nullptr) ? static_cast<int>(impl->window->extent2D().width) : t.width;
     const int surf_h = (request.target == nullptr) ? static_cast<int>(impl->window->extent2D().height) : t.height;
+
+    // A pass that asked for a depth clear normally gets it from the render pass.
+    // It cannot when that pass LOADs depth because ANOTHER pass of this target
+    // asked to preserve it (a mixed target, see Target::wantsDepthLoad): the
+    // render pass bakes one depth load-op, so this pass clears the depth itself,
+    // before its own draws. Re-evaluated every frame because the target's policy
+    // (and this pass' own request) may change.
+    const bool want_depth_clear = request.target != nullptr && t.depth_source == nullptr && t.depth_load &&
+                                  request.presenting && request.clear_depth;
+    if (content.clears_depth != want_depth_clear) {
+        content.clears_depth = want_depth_clear;
+        content.depth_clear_group->children.clear();
+        if (want_depth_clear) {
+            content.depth_clear_group->addChild(makeDepthClearCommand(
+                VkExtent2D{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) }, t.depth_clear_value));
+        }
+    }
 
     // Keep the slot's vsg camera viewport in step with its role each frame:
     // presenting (full-target) content always fills the whole target; other

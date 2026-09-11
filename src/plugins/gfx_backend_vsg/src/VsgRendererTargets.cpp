@@ -191,7 +191,7 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
     // sampled) when it asked not to. A depth-LOAD pass cannot also promote the
     // depth to a sampled texture, so such a target must not be depth-sampled
     // (the deferred G-buffer always clears depth, so it never selects LOAD).
-    const bool load_depth = t.clear_seen && !t.clear_depth;
+    const bool load_depth = t.wantsDepthLoad();
     t.depth_load          = load_depth;
     if (has_color) {
         const VkFormat depth_format =
@@ -258,9 +258,13 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         // clear() pushes — the geometry depth test that works for the window
         // forward path must see the same cleared value off-screen or every
         // fragment fails and nothing rasterises. Depth-only (shadow) targets
-        // keep clearing to the far plane (1.0).
+        // keep clearing to the far plane (1.0). The same value is recorded on
+        // the target so a pass that has to clear the depth ITSELF (a mixed
+        // target, see ContentSlot::clears_depth) writes exactly what the render
+        // pass would have written.
         VkClearValue depth_clear = {};
         depth_clear.depthStencil = VkClearDepthStencilValue{ has_color ? 0.0f : 1.0f, 0 };
+        t.depth_clear_value      = depth_clear.depthStencil.depth;
         t.graph->clearValues.push_back(depth_clear);
     }
 

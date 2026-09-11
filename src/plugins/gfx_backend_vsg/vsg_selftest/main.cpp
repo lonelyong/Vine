@@ -1823,6 +1823,143 @@ bool runSharedDepthPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
 }
 
 /**
+ * @brief Asserts that two passes with DIFFERENT depth policies on ONE target
+ * both get what they asked for.
+ *
+ * A render pass bakes ONE depth load-op, so before this was handled the LAST
+ * clear() request decided the whole target: an "opaque" pass asking to clear the
+ * depth every frame lost that clear as soon as a second pass of the same target
+ * asked to preserve it, and the previous frame's depth stayed behind content
+ * that should have been drawn from scratch (ghosting: an object that moved away
+ * keeps occluding).
+ *
+ * Scenario: pass A (order 0) clears depth and draws the NEAR quad; pass B
+ * (order 1) preserves depth and draws the FAR quad over the same pixels.
+ *  - stage 1 (occluder present): the far quad must be REJECTED, i.e. pass B
+ *    really tests against the depth pass A wrote this frame.
+ *  - stage 2 (occluder removed from A): A's clear must still happen, so the far
+ *    quad becomes visible. Without it the depth keeps the occluder's value and
+ *    the far quad stays invisible — the ghosting above.
+ *
+ * The target is allowed exactly one extra build (the policy is detected when
+ * pass B's clear arrives, and the target then switches to its depth-LOAD pass);
+ * a target that rebuilt every frame would be the old rebuild loop.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera both quads are drawn through.
+ * @param frames   Frames to drive per stage.
+ * @return true when the occlusion worked and the per-frame clear survived.
+ */
+bool runMixedDepthPolicyPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok = true;
+    const vine::Color opaque_clear(10, 20, 30, 255);
+    const vine::Color overlay_clear(90, 30, 30, 255); // not blue-dominant (r > b)
+
+    auto occluder_material = MaterialPtr(new Material());
+    occluder_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    auto far_material = MaterialPtr(new Material());
+    far_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f));        // blue
+    RenderCommand occluder_command(makeVisibleQuad(0.4f, 1.0f), occluder_material, Mat4d());
+    RenderCommand far_command(makeVisibleQuad(0.4f, -1.0f), far_material, Mat4d());
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setSize(256, 144);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto opaque_pass = RenderPassPtr(new RenderPass());
+    auto overlay_pass = RenderPassPtr(new RenderPass());
+
+    const auto drive = [&](const std::vector<RenderCommand>& opaque_commands) {
+        for (int i = 0; i < frames; ++i) {
+            renderer.beginFrame();
+
+            renderer.beginPass(opaque_pass.get());
+            renderer.setPassOrder(0);
+            renderer.setRenderTarget(target.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(opaque_clear, true); // clears the depth every frame
+            renderer.setLights({});
+            renderer.render(opaque_commands, camera.get());
+            renderer.endPass();
+
+            renderer.beginPass(overlay_pass.get());
+            renderer.setPassOrder(1);
+            renderer.setRenderTarget(target.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(overlay_clear, false); // preserves the depth it tests
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
+            renderer.endPass();
+
+            renderer.endFrame();
+            renderer.swapBuffers();
+        }
+    };
+
+    // Stage 1: the far quad is behind the occluder the first pass draws.
+    const std::size_t builds_before = renderer.offscreenBuildCount();
+    drive(std::vector<RenderCommand>{ occluder_command });
+    const std::size_t builds_stage1 = renderer.offscreenBuildCount();
+    if (builds_stage1 - builds_before > 2u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: a mixed-depth-policy target built %zu time(s) over %d frames (at most the"
+                     " initial build plus the switch to the depth-LOAD pass are expected)\n",
+                     builds_stage1 - builds_before, frames);
+        ok = false;
+    }
+    PixelImage occluded;
+    if (!readTarget(renderer, target.get(), occluded)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the mixed-depth-policy target\n");
+        return false;
+    }
+    if (occluded.blueDominant() != 0u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: %zu pixel(s) are blue although the second pass' quad is behind the occluder the"
+                     " first pass drew — the preserved depth must still be TESTED against\n",
+                     occluded.blueDominant());
+        ok = false;
+    }
+
+    // Stage 2: the occluder is gone, so the first pass' per-frame depth clear is
+    // the only thing that can let the far quad through.
+    drive(std::vector<RenderCommand>{});
+    const std::size_t builds_stage2 = renderer.offscreenBuildCount();
+    if (builds_stage2 != builds_stage1) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the mixed-depth-policy target rebuilt %zu more time(s) while its content only"
+                     " got smaller\n",
+                     builds_stage2 - builds_stage1);
+        ok = false;
+    }
+    PixelImage visible;
+    if (!readTarget(renderer, target.get(), visible)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the mixed-depth-policy target in stage 2\n");
+        return false;
+    }
+    const std::size_t blue = visible.blueDominant();
+    if (blue == 0u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the far quad is still invisible after the occluder was removed — the first"
+                     " pass' clearDepth=true no longer clears the depth of this frame (it was suppressed by the"
+                     " second pass' clearDepth=false), so the dead occluder still occludes (ghosting)\n");
+        ok = false;
+    }
+
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] mixed depth: occluded by the first pass' depth 0 pixel(s) drawn; after removing the"
+                     " occluder the second pass' quad covers %zu pixel(s) (the first pass still cleared depth);"
+                     " %zu build(s) over %d frames\n",
+                     blue, builds_stage2 - builds_before, frames);
+    }
+    renderer.releasePass(opaque_pass.get());
+    renderer.releasePass(overlay_pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
+/**
  * @brief Reports what each MRT colour attachment actually receives.
  *
  * A single-colour target hides it, but a multi-attachment (G-buffer) target is
@@ -2151,6 +2288,7 @@ int main()
     contract_ok = runDepthOrderPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runDepthLoadPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runSharedDepthPixelPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runMixedDepthPolicyPhase(*renderer, camera, 4) && contract_ok;
     // Diagnostics: what the MRT path receives per attachment (attachment 0 is
     // asserted), and which input a "nothing was drawn" result is attributable
     // to.

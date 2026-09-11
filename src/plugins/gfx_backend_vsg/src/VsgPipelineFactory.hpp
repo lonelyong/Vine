@@ -191,6 +191,28 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
     bool                         initial_clear = false);
 
 /**
+ * @brief Builds a command that clears a target's depth attachment in place.
+ *
+ * Needed when a target's render pass LOADs depth (another pass of the same
+ * target asked to preserve it) while THIS pass asked for a clear: one render
+ * pass bakes one depth load-op, so it cannot clear the depth for one pass and
+ * preserve it for another. The pass therefore clears the depth itself, before
+ * its own draws, so it clears exactly its own pass and not the depth a later
+ * pass of the same target still has to test against.
+ *
+ * vkCmdClearAttachments is legal only inside a render pass instance, which is
+ * where a view's scene is recorded: the command must therefore sit in the view
+ * of the pass that needs it.
+ *
+ * @param extent            Render area to clear (the target's full extent).
+ * @param depth_clear_value Depth value to write; it must be the value the
+ *                          target's render pass would have cleared to
+ *                          (reverse-Z: 0 is the far plane).
+ * @return The clear command node.
+ */
+::vsg::ref_ptr<::vsg::Node> makeDepthClearCommand(const VkExtent2D& extent, float depth_clear_value);
+
+/**
  * @brief Vertex shader source shared by the full-screen overlay passes.
  *
  * Generates the full-screen triangle from gl_VertexIndex alone, so the draws

@@ -427,6 +427,7 @@ sequenceDiagram
 | D29 | pass 协议隐式：7 个 `pending_*` 字段 + 三个读取入口，"调用含义"依赖调用顺序（本会话 6 个缺陷的来源）。**已修（2026-09-11，设计 §11）**：收敛为单一 `PassRequest` + 显式作用域（作用域属性 vs 每次绘制属性），违反协议（嵌套 beginPass / 不配对 endPass）经诊断通道上报（`PassProtocolViolation`） | `VsgRenderer` | 🟢 |
 | D19 | 每帧 O(materials) 就地改写 + `updateMaterial` 双路径并存。**已修（2026-09-11，设计 §12）**：比较/写入移入缓存（`Entry` 记上次参数），`SceneBridge` 只调 `updateMaterial()` —— 单一路径，且该接口首次有真实调用点 | `syncRenderCommands` 尾部 / `VsgMaterialManager` | 🟢 |
 | D34 | **身份靠地址、但不持地址**：`Item::material` / `Item::program` 是裸指针，`program_shader_sets_` / `variant_cache_` 的哈希键条目也只存裸键。对象被 app 释放后销毁，同地址新对象（同 revision / 同变量身份）会**通过相等性检查** → 复用死对象的管线、descriptor、Phong 值（静默错色/错 shader）。**已修（2026-09-11，设计 §20）**：`Item` 自持它比较的 program/material；两个哈希键缓存分别用 `OwnedCacheEntry` / `OwnedPairCacheEntry` 自持键对象（variant 同时持 program 与 material）→ 地址在条目存活期内不可能被复用 | `SceneBridge::Item` / `program_shader_sets_` / `variant_cache_` | 🟢 |
+| D35 | **同一目标上两个 pass 的深度策略互吞**：`clearDepth` 是**目标**属性，目标只烧一个 depth load-op，于是"最后一次 clear 请求赢" —— 不透明 pass（每帧 `clearDepth=true`）+ 半透明 pass（`clearDepth=false`）的标准多 pass 写法里，第二个请求会**吞掉**第一个 pass 的每帧清深度，上一帧深度留在缓冲 → 移开的物体继续遮挡（ghosting），静默错画。**已修（2026-09-11，设计 §22）**：`clearDepth` 同时是 pass 作用域属性；同目标出现不同请求 → `depth_policy_mixed`（sticky）→ 目标改用 LOAD pass，请求了 clear 的 pass 在自己的 view 里插 `ClearAttachments`（值同 render pass）。**残留**：冲突在第二个请求到达时才发现，首帧仍按旧策略（1 帧收敛） | `VsgRenderer::clear` / `Target` / `ContentSlot` | 🟢 |
 
 ### 13.5 构建 / 环境 / 验证层
 
