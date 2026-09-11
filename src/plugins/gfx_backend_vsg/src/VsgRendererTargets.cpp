@@ -353,8 +353,8 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
     // Record the shape these attachments were built from, so render() rebuilds
     // when the host changes any of it (see Target::BuildKey).
     t.build_key = Impl::Target::BuildKey::of(*target);
-    std::fprintf(stderr, "[VsgRenderer] EXPERIMENTAL off-screen target '%s' %ux%u attached\n",
-                 target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str(), w, h);
+    V_LOGI("[VsgRenderer] EXPERIMENTAL off-screen target '{}' {}x{} attached",
+           target->name().empty() ? "(unnamed)" : target->name().stdstr(), w, h);
     ++impl->offscreen_build_count;
     // NOTE: no compile here — no pass graph exists until the first pass into
     // this target asks for one (passGraph); setupContentSlot() compiles then.
@@ -841,11 +841,10 @@ void VsgRenderer::releaseRenderTarget(vine::graphics::RenderTarget* target)
         if (other.depth_source != target) {
             continue;
         }
-        std::fprintf(stderr,
-                     "[VsgRenderer] target '%s' borrowed the released target '%s' depth; "
-                     "dropping the borrow (it rebuilds with its own depth)\n",
-                     entry.first->name().empty() ? "(unnamed)" : entry.first->name().stdstr().c_str(),
-                     target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str());
+        V_LOGW("[VsgRenderer] target '{}' borrowed the released target '{}' depth;"
+               " dropping the borrow (it rebuilds with its own depth)",
+               entry.first->name().empty() ? "(unnamed)" : entry.first->name().stdstr(),
+               target->name().empty() ? "(unnamed)" : target->name().stdstr());
         // Remember WHICH source became unusable instead of a global tombstone
         // set: a later shareDepth() with a live source clears the condition by
         // being a different pointer, and the memory is bounded by the live
@@ -896,7 +895,7 @@ void VsgRenderer::releaseRenderTarget(vine::graphics::RenderTarget* target)
         // The remaining command-graph child order may have changed (a sampling
         // edge disappeared, a graph was detached).
         reconcileOffscreenOrder();
-        std::fprintf(stderr, "[VsgRenderer] released GPU resources for removed render target\n");
+        V_LOGI("[VsgRenderer] released GPU resources for removed render target");
     }
 }
 

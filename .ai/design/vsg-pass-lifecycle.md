@@ -1439,6 +1439,12 @@ cp -f build/lib/*.so* dist/lib/ && cp -f build/plugins/vine/*.so dist/plugins/vi
 3. **信息性 stderr 迁 `vine/logging`**：harness 与 `scripts/gfx_lavapipe_check.sh` 有多处
    stderr 断言（`[VsgRenderer] device:` / `EXPERIMENTAL off-screen target` / `has no depth
    image yet`），必须**同一次提交**里同步改，否则闸门会红。
+   **已完成（2026-09-11）**：插件库自身的 10 处信息性跟踪改走 `V_LOGI` / `V_LOGW` /
+   `V_LOGE`（`vi::Logging` 已加入插件 / `vsg_backend_selftest` / `test_vsg` 三个目标），
+   **消息原文保持不变**、级别取 Info ⇒ 默认级别即可见，所以
+   `scripts/gfx_lavapipe_check.sh` 的 `[VsgRenderer] device:` 断言**无需改动**（已复跑确认
+   PASS）。两条有意不迁：`reportFailure` 的 stderr 半边（它自身就是“validation harness 会读
+   的内建跟踪”，真正的诊断已走宿主 sink）与 `[MRT-DIAG]`（env 门控的开发诊断）。
 4. **D28 `VkPipelineCache` 持久化**：仍被上游阻塞（vsg `GraphicsPipeline::compile` 传
    `VK_NULL_HANDLE`），只有等 vsg 暴露注入点才可做；不要自建管线。
 5. **可选：D40 的"释放半条"端到端断言**：需要设备级（真实 VkPipeline 被 `prune()` 回收后

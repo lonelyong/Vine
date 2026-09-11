@@ -456,7 +456,8 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
         // ran against this target's render pass, so only the record order
         // changes.
         placeViewByOrder(dest_graph, dest, view, slot.order);
-        std::fprintf(stderr, "[VsgRenderer] EXPERIMENTAL screen PiP %dx%d (att %zu) -> %s %d,%d %dx%d attached\n", src.width, src.height, attachment_index, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
+        V_LOGI("[VsgRenderer] EXPERIMENTAL screen PiP {}x{} (att {}) -> {} {},{},{}x{} attached", src.width, src.height,
+               attachment_index, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
         if (dest != nullptr) {
             // A new sampling edge appeared under an off-screen destination:
             // re-order the command graph so this consumer records after every
@@ -642,7 +643,8 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         slot.ready         = true;
         ++impl->program_slot_build_count;
         placeViewByOrder(dest_graph, dest, view, slot.order);
-        std::fprintf(stderr, "[VsgRenderer] EXPERIMENTAL deferred fullscreen program %dx%d -> %s %d,%d %dx%d attached\n", src.width, src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
+        V_LOGI("[VsgRenderer] EXPERIMENTAL deferred fullscreen program {}x{} -> {} {},{},{}x{} attached", src.width,
+               src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
         if (dest != nullptr) {
             // New sampling edges (this program samples every colour attachment
             // of source) appeared under an off-screen destination: re-order so

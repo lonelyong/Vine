@@ -240,11 +240,8 @@ bool VsgRenderer::initialize()
     }
     impl->window = ::vsg::Window::create(traits);
     if (impl->window == nullptr) {
-        std::fprintf(stderr,
-                     "[VsgRenderer] Window::create FAILED (nativeWindow=%d, %ux%u)\n",
-                     traits->nativeWindow.has_value() ? 1 : 0,
-                     traits->width,
-                     traits->height);
+        V_LOGE("[VsgRenderer] Window::create FAILED (nativeWindow={}, {}x{})",
+               traits->nativeWindow.has_value() ? 1 : 0, traits->width, traits->height);
         shutdown();
         return false;
     }
@@ -306,12 +303,11 @@ bool VsgRenderer::initialize()
         // Vulkan ICD (VK_ICD_FILENAMES), a device/driver problem or a missing
         // display — print what the backend saw so a local environment issue is
         // not mistaken for a code defect.
-        std::fprintf(stderr,
-                     "[VsgRenderer]   init env: VK_ICD_FILENAMES=%s  VINE_VSG_DEBUG_LAYER=%s  DISPLAY=%s  WAYLAND_DISPLAY=%s\n",
-                     std::getenv("VK_ICD_FILENAMES") ? std::getenv("VK_ICD_FILENAMES") : "(unset)",
-                     std::getenv("VINE_VSG_DEBUG_LAYER") ? std::getenv("VINE_VSG_DEBUG_LAYER") : "(unset)",
-                     std::getenv("DISPLAY") ? std::getenv("DISPLAY") : "(unset)",
-                     std::getenv("WAYLAND_DISPLAY") ? std::getenv("WAYLAND_DISPLAY") : "(unset)");
+        V_LOGE("[VsgRenderer]   init env: VK_ICD_FILENAMES={}  VINE_VSG_DEBUG_LAYER={}  DISPLAY={}  WAYLAND_DISPLAY={}",
+               std::getenv("VK_ICD_FILENAMES") ? std::getenv("VK_ICD_FILENAMES") : "(unset)",
+               std::getenv("VINE_VSG_DEBUG_LAYER") ? std::getenv("VINE_VSG_DEBUG_LAYER") : "(unset)",
+               std::getenv("DISPLAY") ? std::getenv("DISPLAY") : "(unset)",
+               std::getenv("WAYLAND_DISPLAY") ? std::getenv("WAYLAND_DISPLAY") : "(unset)");
     }
     shutdown();
     return false;
@@ -669,13 +665,13 @@ void VsgRenderer::submitFrame()
         const ::vsg::ref_ptr<::vsg::PhysicalDevice> physical = impl->window->getPhysicalDevice();
         if (physical != nullptr) {
             const VkPhysicalDeviceProperties& properties = physical->getProperties();
-            std::fprintf(stderr, "[VsgRenderer] device: %s (Vulkan %u.%u.%u, driver %u, type %d)\n",
-                         properties.deviceName, VK_API_VERSION_MAJOR(properties.apiVersion),
-                         VK_API_VERSION_MINOR(properties.apiVersion), VK_API_VERSION_PATCH(properties.apiVersion),
-                         properties.driverVersion, static_cast<int>(properties.deviceType));
+            V_LOGI("[VsgRenderer] device: {} (Vulkan {}.{}.{}, driver {}, type {})",
+                   properties.deviceName, VK_API_VERSION_MAJOR(properties.apiVersion),
+                   VK_API_VERSION_MINOR(properties.apiVersion), VK_API_VERSION_PATCH(properties.apiVersion),
+                   properties.driverVersion, static_cast<int>(properties.deviceType));
         }
         else {
-            std::fprintf(stderr, "[VsgRenderer] device: (none reported by the window)\n");
+            V_LOGW("[VsgRenderer] device: (none reported by the window)");
         }
     }
 

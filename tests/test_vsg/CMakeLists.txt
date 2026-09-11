@@ -44,7 +44,7 @@ find_package(vsg CONFIG QUIET)
 # write registration files into the user's real data directory.
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Core)
 
-target_link_libraries(${TEST_NAME} vi::Appfw vi::Graphics Qt6::Core)
+target_link_libraries(${TEST_NAME} vi::Appfw vi::Graphics vi::Logging Qt6::Core)
 if(vsg_FOUND)
 	target_link_libraries(${TEST_NAME} vsg::vsg)
 endif()

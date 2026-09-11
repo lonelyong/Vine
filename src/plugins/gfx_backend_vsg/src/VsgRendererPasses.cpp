@@ -242,7 +242,7 @@ void VsgRenderer::retireInactivePassSlots()
     }
     // Dropping a view can remove a command-graph dependency edge.
     reconcileOffscreenOrder();
-    std::fprintf(stderr, "[VsgRenderer] retired (detached) the retained view of pass(es) not active this frame\n");
+    V_LOGI("[VsgRenderer] retired (detached) the retained view of pass(es) not active this frame");
 }
 
 void VsgRenderer::releasePass(vine::raw_ptr<const vine::graphics::RenderPass> pass)

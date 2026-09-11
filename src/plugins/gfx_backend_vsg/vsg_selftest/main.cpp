@@ -33,6 +33,7 @@
 
 #include <vine/Color.hpp>
 #include <vine/intrusive_ptr.hpp>
+#include <vine/logging/Log.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>

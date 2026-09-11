@@ -120,11 +120,12 @@ else()
 endif()
 
 # vsg::vsg is PUBLIC because SceneBridge exposes vsg::ref_ptr<vsg::Node> in its API.
-# The plugin needs appfw for the Plugin base class and graphics for the backend
-# interface + registry.
+# The plugin needs appfw for the Plugin base class, graphics for the backend
+# interface + registry and logging for its informational traces.
 target_link_libraries(${GFX_BACKEND_VSG_TARGET} PRIVATE
     vi::Appfw
     vi::Graphics
+    vi::Logging
     vsg::vsg)
 
 # TEMP diagnostic: standalone minimal vsg executable that renders a red box
@@ -165,5 +166,5 @@ target_compile_definitions(vsg_backend_selftest PRIVATE V_VSG_LIB)
 target_include_directories(vsg_backend_selftest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(vsg_backend_selftest PRIVATE vi::Graphics vsg::vsg)
+target_link_libraries(vsg_backend_selftest PRIVATE vi::Graphics vi::Logging vsg::vsg)
 set_target_properties(vsg_backend_selftest PROPERTIES FOLDER third_party)

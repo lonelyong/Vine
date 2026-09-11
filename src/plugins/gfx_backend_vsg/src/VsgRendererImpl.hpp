@@ -44,6 +44,7 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Viewport.hpp>
 #include <vine/intrusive_ptr.hpp>
+#include <vine/logging/Log.hpp>
 #include <vine/vsg/CameraBridge.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
