@@ -3940,3 +3940,188 @@ TEST(DiagnosticsTest, EngineForwardsSinkToCurrentAndFutureBackend)
     engine.setBackend(nullptr);
     EXPECT_EQ(engine.diagnosticCount(), 0u);
 }
+
+// ============ Collected-content memo (D27) ============
+
+/**
+ * @brief The memo is an optimisation the ENGINE opens, not a new default.
+ *
+ * A caller that drives collectRenderCommands() itself (a tool, a test, a
+ * hand-rolled loop) must keep the plain "walk the tree on every call"
+ * behaviour: nothing is memoised until a content frame is announced, so such a
+ * caller cannot silently be served a stale list.
+ */
+TEST(SceneContentCacheTest, CollectingIsNotMemoisedUntilAContentFrameIsOpen)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"only"));
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    EXPECT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(scene.contentCollectCount(), 2u);
+    EXPECT_EQ(scene.contentCollectReuseCount(), 0u);
+}
+
+/**
+ * @brief Inside a content frame the list is memoised per VIEW, and the memo
+ * ends with the frame.
+ *
+ * The key is the camera's view (its projection*view and eye), not the camera
+ * object: collecting is a pure function of the view, so a second camera set up
+ * identically must share the entry — and a camera with a different view (here a
+ * camera further back) gets its own, without evicting the first one.
+ */
+TEST(SceneContentCacheTest, ContentFrameMemoisesPerViewAndEndsWithTheFrame)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"only"));
+    Camera cam_a;
+    setupLookAtCamera(cam_a);
+    Camera cam_same_view;
+    setupLookAtCamera(cam_same_view);
+    Camera cam_further;
+    cam_further.setViewMatrixAsLookAt(Vec3d(0, 0, 9), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    cam_further.setProjectionMatrixAsPerspective(60.0, 1.0, 0.1, 1000.0);
+
+    scene.setContentFrame(1);
+    EXPECT_EQ(scene.collectRenderCommands(&cam_a).size(), 1u);
+    EXPECT_EQ(scene.collectRenderCommands(&cam_a).size(), 1u);
+    EXPECT_EQ(scene.collectRenderCommands(&cam_same_view).size(), 1u); // same view: same entry
+    EXPECT_EQ(scene.contentCollectCount(), 1u);
+    EXPECT_EQ(scene.contentCollectReuseCount(), 2u);
+
+    // A different view is its own entry — and that does not evict the first one
+    // (the passes interleave).
+    EXPECT_EQ(scene.collectRenderCommands(&cam_further).size(), 1u);
+    EXPECT_EQ(scene.collectRenderCommands(&cam_a).size(), 1u);
+    EXPECT_EQ(scene.contentCollectCount(), 2u);
+    EXPECT_EQ(scene.contentCollectReuseCount(), 3u);
+
+    // Announcing the same frame again is a no-op (every pass may announce it).
+    scene.setContentFrame(1);
+    EXPECT_EQ(scene.collectRenderCommands(&cam_a).size(), 1u);
+    EXPECT_EQ(scene.contentCollectCount(), 2u);
+
+    // The next frame starts empty: the host may have edited the scene between
+    // frames (the normal place to edit it), and no entry may outlive its frame.
+    scene.setContentFrame(2);
+    EXPECT_EQ(scene.collectRenderCommands(&cam_a).size(), 1u);
+    EXPECT_EQ(scene.contentCollectCount(), 3u);
+}
+
+/**
+ * @brief A scene-level edit invalidates the memo, a no-op setter does not, and
+ * invalidateContent() is the escape hatch for direct node edits.
+ */
+TEST(SceneContentCacheTest, SceneLevelEditsInvalidateTheMemo)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"only"));
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    scene.setContentFrame(1);
+    EXPECT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(scene.contentCollectCount(), 1u);
+
+    scene.setOpacity(0.5f);
+    EXPECT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(scene.collectRenderCommands(&cam)[0].opacity, 0.5f);
+    EXPECT_EQ(scene.contentCollectCount(), 2u);
+
+    // Re-setting the same value is not a content change: an app that re-applies
+    // its settings every frame keeps the memo (and with it the single walk).
+    scene.setOpacity(0.5f);
+    EXPECT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(scene.contentCollectCount(), 2u);
+    EXPECT_EQ(scene.contentCollectReuseCount(), 2u);
+
+    // A node edited directly (transform / material / attributes) cannot be
+    // observed by the scene: invalidateContent() makes it visible at once. The
+    // command opacity is the scene multiplier timed this node's own opacity.
+    root->childrenRef()[0]->setOpacity(0.25f);
+    scene.invalidateContent();
+    EXPECT_EQ(scene.collectRenderCommands(&cam)[0].opacity, 0.125f);
+    EXPECT_EQ(scene.contentCollectCount(), 3u);
+}
+
+/**
+ * @brief Every caller gets its own copy of the memoised list.
+ *
+ * A pass post-processes the list it is handed (the pass-level program override
+ * rewrites every command's program), so the memo must not be shared by
+ * reference: one pass' edit would otherwise leak into every later pass.
+ */
+TEST(SceneContentCacheTest, EachCallerGetsItsOwnCopyOfTheMemoisedList)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"only"));
+    Camera cam;
+    setupLookAtCamera(cam);
+    scene.setContentFrame(1);
+
+    auto first = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(first.size(), 1u);
+    first[0].opacity = 0.25f;
+
+    const auto second = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(second.size(), 1u);
+    EXPECT_EQ(second[0].opacity, 1.0f);
+    EXPECT_EQ(scene.contentCollectReuseCount(), 1u);
+}
+
+/**
+ * @brief Several passes over one scene share one walk per view per frame.
+ *
+ * This is the D27 fix: a multi-pass pipeline that draws the same scene through
+ * the same camera several times per frame (G-buffer producer, its lighting
+ * consumer, ...) used to walk the whole tree once per pass; now it walks once
+ * per VIEW (the camera the pass uses), and each frame walks again because the
+ * host edits the scene between frames.
+ */
+TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"only"));
+    auto cam_a = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*cam_a);
+    // A genuinely different view (a shadow / reflection camera, say): an
+    // identical view would legitimately share the first camera's entry.
+    auto cam_b = intrusive_ptr<Camera>(new Camera());
+    cam_b->setViewMatrixAsLookAt(Vec3d(0, 0, 9), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    cam_b->setProjectionMatrixAsPerspective(60.0, 1.0, 0.1, 1000.0);
+
+    auto pass_a = intrusive_ptr<RenderPass>(new RenderPass());
+    pass_a->setCamera(cam_a.get());
+    auto pass_b = intrusive_ptr<RenderPass>(new RenderPass());
+    pass_b->setCamera(cam_a.get());
+    auto pass_c = intrusive_ptr<RenderPass>(new RenderPass());
+    pass_c->setCamera(cam_b.get());
+    engine->addPass(pass_a, scene, 0);
+    engine->addPass(pass_b, scene, 1);
+    engine->addPass(pass_c, scene, 2);
+
+    // Deltas: the pre-frame warm-up also executes passes and collects.
+    const auto walks_before  = scene->contentCollectCount();
+    const auto reuses_before = scene->contentCollectReuseCount();
+
+    engine->frame(0.016);
+    EXPECT_EQ(scene->contentCollectCount() - walks_before, 2u);       // one per view
+    EXPECT_EQ(scene->contentCollectReuseCount() - reuses_before, 1u); // pass_b reused pass_a's
+
+    engine->frame(0.016);
+    EXPECT_EQ(scene->contentCollectCount() - walks_before, 4u);       // the next frame walks again
+    EXPECT_EQ(scene->contentCollectReuseCount() - reuses_before, 2u);
+}

@@ -464,5 +464,5 @@ sequenceDiagram
 
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|
-| D27 | **跨 pass 命令列表重复计算**：`Scene::collectRenderCommands` 每 pass 每帧全树遍历 + 剔除 + 排序，多 pass 共用同一 `(scene, camera)` 时算 3~5 次；单次遍历内部已是 O(n)（§6.1），缺的是跨 pass 复用与只读视图（`std::span<const RenderCommand>`）。设计要点/验收/风险见设计文档 §9.2 | `RenderEngine::frame` / `Scene` | 🟡 性能 |
+| D27 | **跨 pass 命令列表重复计算**：`Scene::collectRenderCommands` 每 pass 每帧全树遍历 + 剔除 + 排序，多 pass 共用同一 `(scene, camera)` 时算 3~5 次。**已修（2026-09-11，设计 graphics-render-pipeline §12）**：帧内容 memo（键 = `(projection*view, eye, 场景内容版本)`，**不是相机地址**：同视图的另一相机共享、相机就地编辑 miss、堆栈相机安全）；`RenderEngine::frame` 用 `Scene::setContentFrame(token)` 开启（幂等；token==0 时**完全不缓存** → 自己调用的调用方零行为变更）；失效 = 帧边界 + 场景自身变更（同值 setter 不失效）+ `invalidateContent()`；交给调用方的是**副本**（pass 的 program override 不泄漏）。实测（debug、2000 节点、20 次均值）：遍历 17.1 ms vs 复用 0.10 ms → **170×**。残留：**同一帧两个 pass 之间**直接改节点要下一帧生效。可观测：`Scene::contentCollectCount()` / `contentCollectReuseCount()` | `RenderEngine::frame` / `Scene` | 🟢 |
 | D28 | **无 VkPipelineCache 持久化**：vsg `GraphicsPipeline::compile` 传 `VK_NULL_HANDLE` → Vine 无法注入管线缓存，每次启动重建全部 PSO（glslang/ShaderSet/变体模板均只进程内缓存）。路线 A（等上游暴露注入点）/ C（若 Options/Device 可挂）/ B（自建管线，不推荐）；`pipelineCacheUUID` 不匹配必须安全丢弃。见设计文档 §9.3 | vsg / `VsgRenderer` | 🟢 启动性能 |

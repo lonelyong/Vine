@@ -1,5 +1,17 @@
 ﻿# Graphics 模块核心
 
+> 2026-09-11 **内容收集的帧内复用（D27，设计 graphics-render-pipeline §12）**：
+> `RenderEngine::frame` 开局给每个场景 `Scene::setContentFrame(token)`（幂等），同一帧内**同视图**的
+> 多个 pass 共享一次全树遍历；memo 键是 `(projection*view, eye, 内容版本)`——**不是相机地址**
+> （同视图的另一相机共享、相机就地编辑 miss、**堆栈相机安全**：用 `intrusive_ptr` 持键会
+> `free(): invalid pointer`）；失效 = 帧边界 + 场景自身变更（同值 setter 不失效）+ `invalidateContent()`；
+> `token==0`（自己调 `collectRenderCommands`）时**完全不缓存** → 零行为变更；返回的是**副本**
+> （pass 的 `programOverride` 不泄漏）。实测 debug/2000 节点：遍历 17.1 ms vs 复用 0.10 ms（**170×**）。
+> 残留：**同一帧两个 pass 之间**直接改节点要下一帧生效。可观测：`Scene::contentCollectCount()` /
+> `contentCollectReuseCount()`（test_graphics 151 → 156）。**部署教训**：改 SDK 类布局（给 `Scene`/
+> `RenderEngine` 加成员）后必须整体刷新 `dist/lib/*.so*` + `dist/plugins/vine/*.so` + `dist/bin/Vine`，
+> 只换两个文件会让其它插件按旧布局分配对象 → `free(): invalid pointer`。
+
 > 2026-09-11 **同目标多 pass 的深度策略："最后一次请求赢"是缺陷，已修（设计 §22，D35）**。
 > 不透明 pass 每帧清深度 + 半透明 pass 保留深度是真实多 pass 管线的标准写法，而 `clearDepth`
 > 曾是**目标**属性 → 目标只烧一个 depth load-op → 第二个 pass 的 `clearDepth=false` **吞掉**了

@@ -381,3 +381,44 @@ class RenderPass {
   作为该里程碑的一部分（而非独立返工）。
 - 在此之前维持现状：两种 pass（scene / screen）+ resolve+execute 两阶段 + overlays，82 测试全绿，
   app 冒烟 exit=124。
+
+## 12. 内容收集的帧内复用（D27，2026-09-11）
+
+**问题**：`RenderPass::execute` 每次都调 `Scene::collectRenderCommands(camera)` —— 一次全树遍历 +
+每节点包围盒 + 视锥剔除 + 排序。多 pass 管线里同一个场景/同一个相机被多个 pass 画（deferred 链的
+G-buffer 生产 pass + 光照消费 pass + …），同样的结果算 N 遍，成本 O(passes × nodes)。
+
+**先度量**（debug 构建、2000 节点场景、20 次取平均）：一次遍历 **17.1 ms**，命中 memo 的复用
+**0.10 ms** → **170×**。"多一个共用视图的 pass"从 +17 ms 变成 +0.1 ms。
+
+**设计（安全边界优先）**：
+
+1. **键是"视图"，不是相机对象**：条目存 `(projection*view, eye, 场景内容版本)`。收集结果是这三者的
+   **纯函数**，所以同视图的另一个相机对象直接共享条目（正确性 by construction），相机被**就地编辑**
+   会 miss 并重算，而**堆栈上的相机**（`raw_ptr` 契约明确允许）也不会被当成拥有对象 —— 第一版用
+   `intrusive_ptr` 持相机键，堆栈相机直接 `free(): invalid pointer`，测试当场抓到。
+2. **只在引擎开启的"内容帧"内生效**：`RenderEngine::frame` 开局给每个场景
+   `setContentFrame(token)`（幂等，同一个 token 重复宣布是 no-op），`token == 0` 时**完全不缓存**。
+   自己调 `collectRenderCommands` 的调用方（工具、测试、手写循环）行为与从前一致 —— **零行为变更**，
+   测试专门钉住这条（"没有内容帧 → 每次都遍历"）。
+3. **失效来源**：帧边界（下一帧必然重算，所以宿主在帧之间做的编辑一定生效）+ 场景自身的内容变更
+   （`setRoot` / `setVisible` / `setOpacity` / `clear`）。**同值 setter 不失效**（否则"每帧重设一次
+   参数"的 app 会把缓存一律废掉）。灯光不属于收集结果，增删灯光**不**失效。
+4. **交给调用方的是副本**：pass 会对自己拿到的表做后处理（pass 级 `programOverride` 改写每条命令的
+   program），共享同一份引用会让一个 pass 的改写泄漏给后面的 pass。复制 N 条命令远比再走一遍树便宜。
+5. **残留（写进契约，不是秘密）**：直接改**节点**（变换/材质/属性）场景观测不到，所以"同一帧两个
+   pass 之间改节点"要下一帧才生效；`Scene::invalidateContent()` 是显式补丁。跨帧编辑（正常写法）
+   完全不受影响。
+
+**可观测**：`Scene::contentCollectCount()`（走了几遍树）/ `Scene::contentCollectReuseCount()`（命中
+几次）——测试直接断言"3 个 pass、2 个视图、1 帧 → 2 次遍历 + 1 次命中"，以及"第二帧再走一遍"。
+
+**测试**：`SceneContentCacheTest`（4 个：无内容帧不缓存 / 视图键与帧边界 / 场景变更失效 + 同值不失效
++ 显式失效 / 每次调用拿副本）+ `RenderEngineTest.PassesSharingSceneAndCameraCollectOncePerCameraPerFrame`；
+test_graphics 151 → 156。
+
+**部署教训（写下来，别再踩）**：`Scene` / `RenderEngine` 是 SDK 公共类，**加成员就等于改 ABI**。
+只刷新 `dist/lib/libviGraphicsd.so` + 后端插件，其它插件（`app_shelld.so` / `test_plugind.so`）仍按
+旧布局分配 `Scene`，新库越界写 → 堆损坏 → `free(): invalid pointer`（冒烟当场崩，gdb 栈落在插件里的
+一次 `vector::emplace_back`）。**改 SDK 类布局后必须整体刷新 `dist/lib/*.so*` +
+`dist/plugins/vine/*.so` + `dist/bin/Vine`。**

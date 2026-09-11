@@ -2,6 +2,7 @@
 #include "graphics_global.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <vector>
 
@@ -350,6 +351,12 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     ShaderPreset                        shader_preset_{ ShaderPreset::StandardPhong };
     std::vector<Slot>                   slots_;         // uniform ordered draw registry
     FrameContext                        frame_ctx_;
+    // Monotonic content-frame token, announced to every rendered scene each
+    // frame (Scene::setContentFrame): the passes of one frame that draw the same
+    // scene through the same camera then share one tree walk instead of walking
+    // it once per pass. 0 = no frame announced yet, which is also what a caller
+    // that never renders sees (no memoising at all).
+    std::uint64_t                       content_frame_      = 0;
     void*                               native_handle_      = nullptr;
     bool                                initialized_        = false;
 

@@ -26,6 +26,30 @@ namespace
 {
 
 /**
+ * @brief Returns whether two projection*view matrices are identical.
+ *
+ * Matrix4x4 has no operator==, and the memo only needs "the same view": exact
+ * element equality is the right test because the memo caches a pure function of
+ * the view, so a camera that happens to produce the same matrices must reuse
+ * the entry (its result is identical by construction).
+ *
+ * @param lhs First matrix to compare.
+ * @param rhs Second matrix to compare.
+ * @return true when every element matches.
+ */
+bool sameView(const Mat4d& lhs, const Mat4d& rhs)
+{
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            if (lhs(row, col) != rhs(row, col)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/**
  * @brief View frustum defined by six planes, used for culling.
  *
  * Planes are stored in the order: left, right, bottom, top, near, far.
@@ -224,6 +248,35 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
 
 }  // namespace
 
+/**
+ * @brief One frame's collected command lists, keyed by the camera's view.
+ *
+ * Scoped to a content frame (Scene::setContentFrame): the entries are dropped
+ * at the next frame boundary, so the memo cannot grow with time and cannot
+ * serve content from an earlier frame.
+ *
+ * The key is the camera's VIEW (its projection*view product and eye point), not
+ * its address: the collected list is a pure function of that view, so two
+ * cameras with the same view share the entry by construction, a camera edited
+ * between two passes misses (and gets a fresh walk), and — unlike a pointer key
+ * — nothing is assumed about the camera's lifetime. Cameras are borrowed as
+ * raw pointers by design (a stack camera is legal, see RenderPass::setCamera),
+ * so an owning key would be wrong, and a bare address key could not notice a
+ * camera being edited in place.
+ */
+struct Scene::ContentMemo {
+    /// One view's collected list.
+    struct Entry {
+        Mat4d                      view_proj;
+        Vec3d                      eye;
+        std::uint64_t              revision = 0;
+        std::vector<RenderCommand> commands;
+    };
+
+    /// Lists collected so far this frame (one per distinct view used).
+    std::vector<Entry> entries;
+};
+
 Scene::Scene() = default;
 
 Scene::~Scene() = default;
@@ -245,7 +298,11 @@ bool Scene::isVisible() const
 
 void Scene::setVisible(bool visible)
 {
+    if (visible_ == visible) {
+        return; // no content change: keep the frame's memo usable
+    }
     visible_ = visible;
+    invalidateContent();
 }
 
 float Scene::opacity() const
@@ -255,7 +312,11 @@ float Scene::opacity() const
 
 void Scene::setOpacity(float opacity)
 {
+    if (opacity_ == opacity) {
+        return; // no content change: keep the frame's memo usable
+    }
     opacity_ = opacity;
+    invalidateContent();
 }
 
 NodePtr Scene::root() const
@@ -265,7 +326,11 @@ NodePtr Scene::root() const
 
 void Scene::setRoot(intrusive_ptr<Node> root)
 {
+    if (root_ == root) {
+        return; // no content change: keep the frame's memo usable
+    }
     root_ = std::move(root);
+    invalidateContent();
 }
 
 NodePtr Scene::findNode(const String& name) const
@@ -278,7 +343,11 @@ NodePtr Scene::findNode(const String& name) const
 
 void Scene::clear()
 {
+    if (root_ == nullptr) {
+        return;
+    }
     root_.reset();
+    invalidateContent();
 }
 
 void Scene::addLight(intrusive_ptr<Light> light)
@@ -331,6 +400,31 @@ std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> ca
         return commands;
     }
     const Mat4d view_proj = camera->projectionMatrix() * camera->viewMatrix();
+    const Vec3d eye       = camera->eye();
+    // Frame-scoped memo (see setContentFrame): the passes a frame runs over one
+    // scene through one camera share a single tree walk. A miss means "this
+    // scene changed, this view is new or was edited, or no frame is open", and
+    // the walk below rebuilds the entry.
+    const auto memo_entry = [this, &view_proj, &eye]() -> ContentMemo::Entry* {
+        if (content_frame_ == 0 || content_memo_ == nullptr) {
+            return nullptr;
+        }
+        for (auto& entry : content_memo_->entries) {
+            if (entry.revision == content_revision_ && entry.eye == eye && sameView(entry.view_proj, view_proj)) {
+                return &entry;
+            }
+        }
+        return nullptr;
+    };
+    if (const ContentMemo::Entry* hit = memo_entry()) {
+        ++content_reuse_count_;
+        // Hand out a COPY: a pass may post-process the list it receives (the
+        // pass-level program override rewrites every command's program), and
+        // that must not reach the other passes sharing this memo.
+        return hit->commands;
+    }
+    ++content_collect_count_;
+
     const Frustum frustum = Frustum::fromViewProjection(view_proj);
     BoundsCache bounds;
     collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, opacity_, bounds, commands);
@@ -345,7 +439,6 @@ std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> ca
     // and skips the roots. Sorting pointers keeps std::stable_sort's stable
     // semantics over the collection order, so ties still favour the earlier
     // command.
-    const Vec3d eye = camera->eye();
     std::vector<std::pair<double, RenderCommand*>> keyed;
     keyed.reserve(commands.size());
     for (RenderCommand& cmd : commands) {
@@ -367,7 +460,46 @@ std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> ca
         (void)distance;
         ordered.push_back(std::move(*cmd));
     }
+    if (content_frame_ != 0) {
+        if (content_memo_ == nullptr) {
+            content_memo_ = std::make_unique<ContentMemo>();
+        }
+        if (ContentMemo::Entry* entry = memo_entry()) {
+            entry->commands = ordered; // the same view asked again after a change
+        }
+        else {
+            content_memo_->entries.push_back(ContentMemo::Entry{ view_proj, eye, content_revision_, ordered });
+        }
+    }
     return ordered;
+}
+
+void Scene::setContentFrame(std::uint64_t frame)
+{
+    if (content_frame_ == frame) {
+        return; // idempotent: every pass of a frame may announce the same token
+    }
+    content_frame_ = frame;
+    if (content_memo_ != nullptr) {
+        // The lists of the previous frame are not reusable: a memo entry is only
+        // valid inside the frame that built it.
+        content_memo_->entries.clear();
+    }
+}
+
+void Scene::invalidateContent()
+{
+    ++content_revision_;
+}
+
+std::uint64_t Scene::contentCollectCount() const noexcept
+{
+    return content_collect_count_;
+}
+
+std::uint64_t Scene::contentCollectReuseCount() const noexcept
+{
+    return content_reuse_count_;
 }
 
 V_GRAPHICS_NS_END

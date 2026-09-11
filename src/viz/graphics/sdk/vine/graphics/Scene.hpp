@@ -1,6 +1,8 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <vine/Object.hpp>
@@ -115,10 +117,49 @@ class V_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Collects render commands for the given camera.
      *
+     * The list is built by walking the tree (frustum culling, bounds caching,
+     * ordering), so a multi-pass pipeline that draws the same scene through the
+     * same camera several times per frame would walk it once per pass. Inside a
+     * content frame (see setContentFrame) the result of the first walk is kept
+     * and returned — as its own copy, so callers may post-process it (a pass'
+     * program override, for instance) — for every later call with the same
+     * camera, until the scene changes or the next frame begins.
+     *
      * @param camera Camera used for culling/ordering.
      * @return Collected render commands.
      */
     std::vector<RenderCommand> collectRenderCommands(raw_ptr<const Camera> camera) const;
+
+    /** @brief Opens the content frame the collected-command memo belongs to.
+     *
+     * The engine announces one content frame per rendered frame, so several
+     * passes of one frame drawing the same scene through the same camera share
+     * a single tree walk (see collectRenderCommands). Nothing is memoised until
+     * a frame has been opened, so a caller that drives the collection itself
+     * keeps the plain "walk on every call" behaviour.
+     *
+     * Idempotent: announcing the same token again does nothing, so any number
+     * of passes may announce it.
+     *
+     * @param frame Opaque frame token; the same token means the same frame.
+     */
+    void setContentFrame(std::uint64_t frame);
+
+    /** @brief Drops the memoised collected commands.
+     *
+     * The scene invalidates itself when its own content changes (root,
+     * visibility, opacity), and every frame boundary ends the memo. A node
+     * edited DIRECTLY (a transform, a material, a drawable's attributes) cannot
+     * be observed by the scene, so such an edit made between two passes of one
+     * frame is picked up by the next frame — call this to pick it up at once.
+     */
+    void invalidateContent();
+
+    /** @brief Gets how many times the tree was walked to collect commands. */
+    [[nodiscard]] std::uint64_t contentCollectCount() const noexcept;
+
+    /** @brief Gets how many collected lists came from the frame's memo. */
+    [[nodiscard]] std::uint64_t contentCollectReuseCount() const noexcept;
 
   private:
     String name_;
@@ -126,6 +167,20 @@ class V_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     float opacity_ = 1.0f;
     NodePtr root_;
     std::vector<LightPtr> lights_;
+
+    /** @brief Collected-command memo (defined in the .cpp: it holds commands). */
+    struct ContentMemo;
+
+    // Bumped by every scene-level content change, so a memo built before the
+    // change is not reused (see invalidateContent).
+    std::uint64_t content_revision_ = 1;
+    // Token of the content frame currently open, 0 = none (no memoising).
+    std::uint64_t content_frame_ = 0;
+    // The frame's collected lists, one per camera. Scoped to the frame, so it
+    // cannot grow with the number of frames and cannot serve stale content.
+    mutable std::unique_ptr<ContentMemo> content_memo_;
+    mutable std::uint64_t                content_collect_count_ = 0;
+    mutable std::uint64_t                content_reuse_count_ = 0;
 };
 
 using ScenePtr = intrusive_ptr<Scene>;

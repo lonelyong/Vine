@@ -111,6 +111,19 @@ void RenderEngine::frame(double dt)
     frame_ctx_.dt = dt;
     backend_->beginFrame();
 
+    // Announce the content frame BEFORE the passes run: every scene this frame
+    // renders may then memoise the command list it collects (see
+    // Scene::setContentFrame), so the multi-pass pipelines that draw one scene
+    // through one camera several times per frame (G-buffer + lighting + ...)
+    // walk the tree once instead of once per pass. The token is idempotent, so
+    // a scene shared by several slots is announced any number of times.
+    ++content_frame_;
+    for (const auto& slot : slots_) {
+        if (slot.content != nullptr) {
+            slot.content->setContentFrame(content_frame_);
+        }
+    }
+
     // Fresh named-output registry per frame: every producer publishes during
     // the ordered pass run, so a consumer only ever samples this frame's
     // output and stale entries from removed producers disappear automatically.
