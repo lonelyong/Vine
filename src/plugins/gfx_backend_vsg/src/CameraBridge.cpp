@@ -8,7 +8,7 @@
 
 V_VSG_NS_BEGIN
 
-::vsg::ref_ptr<::vsg::Camera> CameraBridge::create(vine::raw_ptr<vine::graphics::Camera> camera)
+::vsg::ref_ptr<::vsg::Camera> CameraBridge::create(vine::raw_ptr<const vine::graphics::Camera> camera)
 {
     auto view = ::vsg::LookAt::create();
     auto projection = ::vsg::ref_ptr<::vsg::ProjectionMatrix>();
@@ -17,7 +17,7 @@ V_VSG_NS_BEGIN
     return vsgCamera;
 }
 
-void CameraBridge::apply(vine::raw_ptr<vine::graphics::Camera> camera, ::vsg::ref_ptr<::vsg::Camera> vsgCamera)
+void CameraBridge::apply(vine::raw_ptr<const vine::graphics::Camera> camera, ::vsg::ref_ptr<::vsg::Camera> vsgCamera)
 {
     if (camera == nullptr || vsgCamera == nullptr) {
         return;

@@ -24,17 +24,17 @@ class V_VSG_API CameraBridge {
   public:
     /** @brief Creates a vsg::Camera from a Vine camera.
      *
-     * @param camera Vine camera to translate.
+     * @param camera Vine camera to translate (borrowed, read-only).
      * @return Newly created vsg camera.
      */
-    ::vsg::ref_ptr<::vsg::Camera> create(vine::raw_ptr<vine::graphics::Camera> camera);
+    ::vsg::ref_ptr<::vsg::Camera> create(vine::raw_ptr<const vine::graphics::Camera> camera);
 
     /** @brief Copies Vine camera matrices into an existing vsg camera.
      *
-     * @param camera    Vine camera source.
+     * @param camera    Vine camera source (borrowed, read-only).
      * @param vsgCamera Target vsg camera (matrices are updated in place).
      */
-    void apply(vine::raw_ptr<vine::graphics::Camera> camera, ::vsg::ref_ptr<::vsg::Camera> vsgCamera);
+    void apply(vine::raw_ptr<const vine::graphics::Camera> camera, ::vsg::ref_ptr<::vsg::Camera> vsgCamera);
 };
 
 V_VSG_NS_END

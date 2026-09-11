@@ -266,8 +266,50 @@ bool runPassProtocolPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& cam
     if (renderer.offscreenBuildCount() != builds_before) {
         std::fprintf(stderr, "[selftest] FAIL: retiring an inactive pass rebuilt off-screen targets\n");
         ok = false;
+    } else if (renderer.detachedSlotCount() == 0u) {
+        std::fprintf(stderr, "[selftest] FAIL: the inactive pass was not retired (its view still draws)\n");
+        ok = false;
     } else {
-        std::fprintf(stderr, "[selftest] pass protocol: inactive pass retired without a rebuild\n");
+        std::fprintf(stderr, "[selftest] pass protocol: inactive pass retired without a rebuild (%zu retired view(s))\n",
+                     renderer.detachedSlotCount());
+    }
+
+    // Disable EVERY pass: with no pass announced at all, the retained views
+    // must still be retired (an empty activity set means "every pass inactive",
+    // not "nothing to do"), and re-announcing a pass must re-attach its view.
+    const std::size_t retired_before_idle = renderer.detachedSlotCount();
+    for (int i = 0; i < 3; ++i) {
+        renderer.beginFrame();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    if (renderer.detachedSlotCount() <= retired_before_idle) {
+        std::fprintf(stderr, "[selftest] FAIL: with every pass inactive the remaining views were not retired (%zu)\n",
+                     renderer.detachedSlotCount());
+        ok = false;
+    }
+    const std::size_t retired_all_idle = renderer.detachedSlotCount();
+    const std::size_t builds_idle      = renderer.offscreenBuildCount();
+    for (int i = 0; i < 3; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(pass_a.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(nullptr);
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    if (renderer.offscreenBuildCount() != builds_idle) {
+        std::fprintf(stderr, "[selftest] FAIL: re-enabling a retired pass rebuilt off-screen targets\n");
+        ok = false;
+    } else if (renderer.detachedSlotCount() >= retired_all_idle) {
+        std::fprintf(stderr, "[selftest] FAIL: re-enabling a pass did not re-attach its view (%zu retired)\n",
+                     renderer.detachedSlotCount());
+        ok = false;
+    } else {
+        std::fprintf(stderr, "[selftest] pass protocol: re-enabled pass re-attached without a rebuild (%zu retired view(s))\n",
+                     renderer.detachedSlotCount());
     }
 
     // Explicit release, then frames with no pass at all must stay valid.

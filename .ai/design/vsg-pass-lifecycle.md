@@ -72,16 +72,59 @@ RenderBackend::releasePass(pass)    // 释放该 pass 的全部保留状态（�
 - on-device（lavapipe + Khronos validation，`scripts/gfx_lavapipe_check.sh` → RESULT: PASS）：
   - `vsg_backend_selftest` 新增两个阶段：
     1. **pass 协议**：同 camera 同 order 的两个 pass 各自成槽；运行期 depth 策略变化生效；
-       未宣告的 pass 被回收且**不重建**离屏目标；`releasePass` 后继续渲染正常。
+       未宣告的 pass 被回收且**不重建**离屏目标；**全部 pass 停用**时其余视图也被回收；
+       **重新启用只重挂视图**（不重建、不重传）；`releasePass` 后继续渲染正常。
     2. **深度共享**：借用深度 + `clearDepth=false` 在 N 帧内**只有 2 次构建**（无重建风暴）；
        释放被借方后借方**恰好重建 1 次**（以自有深度）。
-  - 两个阶段用 `VsgRenderer::offscreenBuildCount()`（诊断计数）断言“构建次数不随帧数增长”。
+  - 断言依据两个诊断计数：`VsgRenderer::offscreenBuildCount()`（离屏构建次数，稳态不增长）与
+    `VsgRenderer::detachedSlotCount()`（当前被回收/摘下的槽视图数）。
 - 真机（非 lavapipe）仍需复验：视觉正确性与驱动差异（见 §5）。
 
-## 5. 未做 / 后续
+## 5. 诊断 API（供 harness / 排障）
 
-- 真机像素级复验（lavapipe 只能断言“无崩溃 + 0 VUID”）。
-- `SceneBridge` 的数据节点替换（几何数据 revision 变化）仍会销毁旧的 ArrayState/VkBuffer，
-  当前依赖 vsg 的帧节奏；如需强一致，可在该路径统一走“先 deviceWaitIdle”或引入延迟回收。
-- 指针身份缓存（geometry/program/material）无世代号：地址复用可能命中陈旧项（缺陷表 D14）。
-- `Overlay` 类已与 engine/backend 脱钩（无 addOverlay/releaseOverlay 调用方），属遗留 API。
+| API | 语义 | 稳态期望 |
+|---|---|---|
+| `offscreenBuildCount()` | 成功构建/重建离屏目标的次数 | 不随帧数增长（增长=重建循环） |
+| `detachedSlotCount()` | 当前被回收（视图已摘）的槽数 | 全部 pass 在画时为 0；禁用后升高，重启用后回落 |
+| `SceneBridge::pipelineVariantCount()` / `variantReuseCount()` / `programStageCompileCount()` | 变体/复用/glslang 编译计数 | 管线数跟状态变体数走，不跟几何数走 |
+
+## 6. 行业规范对照（三维引擎）与本轮未做项
+
+已对齐的通行做法：
+
+- **pass 作用域 + 显式生命周期**（类似 RenderGraph / FrameGraph 的 pass 声明，OSG 的
+  RenderStage + Camera，vsg 的 View + RenderGraph）；
+- **保留渲染图 + 数据/状态解耦**（几何数据与管线状态分离，改材质不重传网格）；
+- **Pipeline State Object 化的状态键**（`ResolvedRenderState` 折成变体键，同状态共享管线）；
+- **MRT / G-buffer / 延迟光照 + 全屏 pass ABI**（每附件一个采样槽，push-constant 块）；
+- **不透明前→后、透明后→前排序**（`Scene::collectRenderCommands`）；
+- **深度共享 / 深度预 pass**（`shareDepth` + depth-LOAD pass）；
+- 命名：`owner/scope/index` 槽身份、`retire`/`detach`/`retarget` 动词、`begin/end` 作用域成对；
+- C++：`const` 正确性（相机链全 const，去掉 `const_cast`）、`std::optional` 代替 flag+哨兵、
+  `std::array` + `static_assert` 钉住 shader ABI、`[[nodiscard]]`/`noexcept`、
+  小 concept 头（`DepthMode.hpp`，include-what-you-use）、请求结构体代替 12 参数长表。
+
+未做（需单独排期，均已在下方说明理由）：
+
+- **VkPipelineCache 持久化 / PSO 磁盘缓存**：vsg 的 `GraphicsPipeline::compile` 传
+  `VK_NULL_HANDLE`，Vine 无法从外部注入；需等 vsg 支持或自行接管管线创建。
+- **帧在飞（frames-in-flight）资源回收队列**：当前销毁路径用 `vkDeviceWaitIdle`（已保证正确与
+  validation 干净），但代价是整帧停等。业界做法是 N 帧在飞 + per-frame fence / 延迟删除队列。
+- **命令列表缓存**：`Scene::collectRenderCommands` 每个 pass 每帧全树遍历 + 每节点 bbox 计算，
+  多 pass 场景是 O(passes x nodes)；业界会缓存一次遍历结果供多 pass 复用。
+- **剔除的包围盒缓存**：`boundingBox()` 每帧每节点重算（含分配），大装配是热点。
+- **后端诊断走日志系统**：`gfx_backend_vsg` 仍用 `fprintf(stderr, ...)`（历史约定 + lavapipe 脚本
+  依赖 stderr 文本），而 `app_shell` 等插件已改用 `vine/logging`。收敛需同时改 harness 断言。
+
+## 7. 公共 API 命名提案（未实施，属破坏性变更）
+
+- `Geometry::buffer(location)` / `bufferLocations()` → `attribute(location)` / `attributeLocations()`：
+  “buffer”在 3D 引擎里通常指 GPU 缓冲，而这里是**按 shader location 索引的顶点属性**
+  （`AttributeBuffer`）；现名易与索引缓冲/顶点缓冲混淆。
+- `Geometry::setIndices(std::shared_ptr<UInt32Array>)`：以 `std::shared_ptr` 表达共享与
+  `intrusive_ptr` 体系不一致（可选择统一到 `intrusive_ptr` 或文档化为何用 shared_ptr）。
+- `RenderEngine::drawScenePass` 为私有但命名像公共 API；`RenderBackend::releaseWindowLayer`
+  在 pass 身份化之后只剩 legacy 直连驱动在用，条件成熟时应删除（含其文档与测试断言）。
+- `Overlay`：与 engine/backend 已脱钩（无 addOverlay/releaseOverlay），建议删除或明确降级为
+  样例代码。
+

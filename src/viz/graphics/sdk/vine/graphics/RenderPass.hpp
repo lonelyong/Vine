@@ -9,6 +9,7 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/Color.hpp>
 
+#include "DepthMode.hpp"
 #include "Viewport.hpp"
 
 V_GRAPHICS_NS_BEGIN
@@ -22,26 +23,16 @@ class ShaderProgram;
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
 
 /**
- * @brief Depth handling of a pass's content relative to the target's depth.
- *
- * Independent of clearing (clearEnabled) and of lighting: whether the content
- * is lit comes from the lights of the scene it renders. Depth test and depth
- * write are separated so translucent content can occlude against existing
- * depth (test on) without writing depth of its own (write off) — the standard
- * rule for alpha-blended geometry.
- */
-enum class DepthMode {
-    Disabled,     ///< No depth test / write (drawn on top — HUD overlays).
-    TestOnly,     ///< Depth test on, depth write off (translucent content).
-    TestAndWrite, ///< Depth test + write on (opaque scene content).
-};
-
-/**
  * @brief A render pass describing one complete rendering stage.
  *
  * Binds a camera, render target, and clear state. Executing a pass
  * collects render commands from a scene and dispatches them to a backend.
  * Multiple passes can be chained for split-screen, post-processing, etc.
+ *
+ * Naming: this is an engine-level rendering STAGE (the equivalent of an
+ * OSG render stage / a VulkanSceneGraph view + target + clear policy), NOT a
+ * Vulkan render pass. Several passes targeting the same framebuffer are
+ * recorded into one backend render pass; the backend owns that distinction.
  */
 class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
     V_OBJECT_META_DECL;

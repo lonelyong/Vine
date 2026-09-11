@@ -1,10 +1,13 @@
 ﻿#pragma once
 #include "vsg_global.hpp"
 
+#include <optional>
+
 #include <vsg/app/Viewer.h>
 #include <vsg/core/ref_ptr.h>
 
 #include <vine/graphics/RenderBackend.hpp>
+#include <vine/graphics/Viewport.hpp>
 #include <vine/raw_ptr.hpp>
 
 namespace vine::graphics
@@ -288,56 +291,70 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *
      * @return Number of off-screen target builds so far.
      */
-    std::size_t offscreenBuildCount() const;
+    [[nodiscard]] std::size_t offscreenBuildCount() const noexcept;
+
+    /** @brief Gets how many retained slot views are currently retired.
+     *
+     * A slot whose pass did not execute in the last submitted frame has its
+     * view detached from the render graph (its data and pipelines are kept, so
+     * re-enabling the pass only re-attaches). This counts those detached views:
+     * it is 0 while every registered pass draws, and rises as passes are
+     * disabled / unregistered. Diagnostic for "why is nothing drawing?" and the
+     * regression check of the retirement path.
+     *
+     * @return Number of slot views currently detached.
+     */
+    [[nodiscard]] std::size_t detachedSlotCount() const noexcept;
 
   private:
     /** @brief Identity of one retained backend slot.
      *
-     * A slot is owned by the PASS that draws it (announced via beginPass), so
-     * two passes never alias each other even when they share a camera and a
-     * pass order, and the retained state follows the pass when its camera /
-     * render target / program changes.
+     * Primary identity: @ref owner, the pass that draws the slot (announced
+     * via beginPass). Two passes therefore never alias each other even when
+     * they share a camera and a pass order, and the retained state follows the
+     * pass when its camera / render target / program changes.
      *
      * A direct backend driver that skips the pass protocol (no beginPass, as
-     * the device self-test does) keeps the historical identity instead: the
-     * @ref id0 / @ref id1 pair carries that fallback key (camera + order for
-     * content, source target + attachment for a PiP screen slot, source target
-     * for a fullscreen program slot). The two identity schemes never mix in
-     * one slot map because pass-scoped keys leave id0/id1 at their defaults.
+     * the device self-test does) keeps the historical identity instead, carried
+     * by @ref scope / @ref index: camera + pass order for a content slot,
+     * sampled target + attachment for a picture-in-picture slot, sampled target
+     * for a fullscreen-program slot. The two identity schemes never mix in one
+     * slot map because a pass-scoped key leaves scope / index at their
+     * defaults.
      */
     struct SlotKey
     {
-        const vine::graphics::RenderPass* pass = nullptr; ///< Owning pass, or null (direct driver).
-        const void*                       id0  = nullptr; ///< Fallback identity (camera / source target).
-        int                               id1  = 0;       ///< Fallback identity (pass order / attachment).
+        const vine::graphics::RenderPass* owner = nullptr; ///< Pass that owns the slot, or null (direct driver).
+        const void*                       scope = nullptr; ///< Fallback identity: camera / sampled target.
+        int                               index = 0;       ///< Fallback identity: pass order / attachment index.
 
-        bool operator<(const SlotKey& o) const
+        bool operator<(const SlotKey& o) const noexcept
         {
-            if (pass != o.pass) return pass < o.pass;
-            if (id0 != o.id0) return id0 < o.id0;
-            return id1 < o.id1;
+            if (owner != o.owner) return owner < o.owner;
+            if (scope != o.scope) return scope < o.scope;
+            return index < o.index;
         }
 
-        /** @brief Key of a slot owned by @p pass. */
-        static SlotKey ofPass(const vine::graphics::RenderPass* pass)
+        /** @brief Key of the slot owned by a pass. */
+        static SlotKey ownerPass(const vine::graphics::RenderPass* pass) noexcept
         {
             return SlotKey{ pass, nullptr, 0 };
         }
 
         /** @brief Fallback key of a content slot: (camera, pass order). */
-        static SlotKey ofCameraOrder(const vine::graphics::Camera* camera, int order)
+        static SlotKey cameraOrder(const vine::graphics::Camera* camera, int order) noexcept
         {
             return SlotKey{ nullptr, camera, order };
         }
 
-        /** @brief Fallback key of a PiP screen slot: (source, attachment). */
-        static SlotKey ofSourceAttachment(const vine::graphics::RenderTarget* source, int attachment)
+        /** @brief Fallback key of a PiP screen slot: (sampled target, attachment). */
+        static SlotKey sampledTarget(const vine::graphics::RenderTarget* source, int attachment) noexcept
         {
             return SlotKey{ nullptr, source, attachment };
         }
 
-        /** @brief Fallback key of a fullscreen-program slot: its source. */
-        static SlotKey ofSource(const vine::graphics::RenderTarget* source)
+        /** @brief Fallback key of a fullscreen-program slot: its sampled target. */
+        static SlotKey sampledTarget(const vine::graphics::RenderTarget* source) noexcept
         {
             return SlotKey{ nullptr, source, 0 };
         }
@@ -375,42 +392,51 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * target (its content view, PiP screen slot and fullscreen-program slot).
      *
      * Used when a pass' retained state must be discarded: the pass is removed
-     * (releasePass), it was not active this frame (reapInactivePassSlots) or it
-     * moved to another target (reassignPass). The owning graph's child list is
+     * (releasePass), it was not active this frame (retireInactivePassSlots) or it
+     * moved to another target (retargetPass). The owning graph's child list is
      * swept first, then the device is waited on so no in-flight command buffer
      * still references the dropped view / pipelines.
      *
      * @param target Target key whose slots to inspect (nullptr = the window).
      * @param pass   Pass whose slots to drop.
      */
-    void erasePassSlots(vine::graphics::RenderTarget* target,
-                        const vine::graphics::RenderPass* pass);
+    void erasePassSlotsFromTarget(vine::graphics::RenderTarget* target,
+                                  const vine::graphics::RenderPass* pass);
 
-    /** @brief Drops a pass' slots from every target except @p keep_target.
+    /** @brief Restricts a pass to @p target by dropping its slots elsewhere.
      *
      * A pass owns exactly one retained slot per target; when a pass renders
      * into a different target than before (its render target changed at run
      * time) the slot it left behind would otherwise keep drawing its content
-     * forever. @p keep_target may be nullptr (the window target), so callers
-     * pass the target they are about to (re)create the slot under.
+     * forever. @p target may be nullptr (the window target), so callers pass
+     * the target the pass is (re)drawing into.
      *
-     * @param pass        Pass to reassign.
-     * @param keep_target Target the pass now renders into (nullptr = window).
+     * @param pass   Pass being re-targeted.
+     * @param target Target the pass now renders into (nullptr = window).
      */
-    void reassignPass(const vine::graphics::RenderPass* pass,
-                      vine::graphics::RenderTarget* keep_target);
+    void retargetPass(const vine::graphics::RenderPass* pass,
+                      vine::graphics::RenderTarget*     target);
 
-    /** @brief Retires the retained state of every pass that was not announced
-     * this frame (disabled / unregistered).
+    /** @brief Retires (detaches) the retained view of every pass that was not
+     * announced this frame (disabled / unregistered).
      *
-     * Runs once per submitted frame when the pass protocol is in use
-     * (beginPass was called at least once since the last submission). A slot
-     * whose pass did not execute this frame would otherwise keep drawing its
-     * last synced content — the pass would appear to ignore
-     * RenderPass::setEnabled(). Anything dropped here marks the frame as
-     * needing a submission so the removal is presented.
+     * Runs once per submitted frame once the pass protocol has been used at
+     * all: a slot whose pass did not execute this frame would otherwise keep
+     * drawing its last synced content, i.e. the pass would appear to ignore
+     * RenderPass::setEnabled(). The slot keeps its data and pipelines, so
+     * re-enabling the pass only re-attaches the view. Already-retired slots are
+     * skipped, so a pass that stays disabled costs nothing per frame.
      */
-    void reapInactivePassSlots();
+    void retireInactivePassSlots();
+
+    /** @brief Resets the queued per-pass state (target / viewport / lights /
+     * depth policy / pass order / presenting marker).
+     *
+     * Called when a pass scope opens (so a scope never inherits the previous
+     * pass' pending state) and when it closes (so state queued by a pass that
+     * drew nothing cannot leak into the next pass).
+     */
+    void resetPerPassState();
 
     /** @brief Builds (on first use) the retained vsg view for a content slot.
      *
@@ -427,56 +453,52 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *
      * @param key        Slot identity (the owning pass, or the legacy fallback key).
      * @param target     Output target key the slot lives under (nullptr = window).
-     * @param camera     Vine camera identifying the slot.
+     * @param camera     Vine camera identifying the slot (borrowed, read-only).
      * @param order      The pass's explicit pipeline order (stacking position).
      * @param depth_mode Depth handling for the slot's content.
      * @param presenting True when this slot is the full-target pass that cleared.
      */
     void setupContentSlot(const SlotKey& key,
                           vine::graphics::RenderTarget* target,
-                          vine::graphics::Camera* camera,
+                          vine::raw_ptr<const vine::graphics::Camera> camera,
                           int order,
                           vine::graphics::DepthMode depth_mode,
                           bool presenting);
 
+    /** @brief One content-slot draw request.
+     *
+     * Groups what one render() call contributes to a content slot, so the draw
+     * path takes one self-describing argument instead of a long positional
+     * parameter list (four adjacent ints in particular were easy to swap by
+     * mistake). Both collection pointers are borrowed for the call.
+     */
+    struct ContentSlotRequest
+    {
+        vine::graphics::RenderTarget*                  target   = nullptr; ///< Target key (nullptr = window).
+        vine::raw_ptr<const vine::graphics::Camera>    camera   = nullptr; ///< Camera identifying the slot.
+        const std::vector<vine::graphics::RenderCommand>* commands = nullptr; ///< Commands to reconcile (borrowed).
+        const std::vector<const vine::graphics::Light*>* lights  = nullptr; ///< Content lights (borrowed, may be empty).
+        vine::graphics::DepthMode                      depth_mode = vine::graphics::DepthMode::TestAndWrite; ///< The pass' depth policy.
+        bool                                           presenting = false; ///< True for the full-target pass that cleared.
+        int                                            order      = 0;     ///< The pass' explicit pipeline order (stacking).
+        std::optional<vine::graphics::Viewport>        viewport;  ///< Sub-viewport, or nullopt for the full target.
+    };
+
     /** @brief Renders one content slot (a View of a target's render graph).
      *
-     * The slot is created on first use, keyed by (camera, explicit pass
-     * order): each (camera, @p order) pair is its own retained View appended
-     * to the target's render graph — the window target (nullptr key) or an
-     * off-screen target — stacked in ascending @p order (the pass's explicit
-     * pipeline order). @p depth_mode is the content's depth handling (explicit,
-     * independent of clearing); @p presenting marks the full-target pass that
-     * cleared the target (such content fills the whole target and seeds the
-     * window headlight when there is no scene light). Lights come from the
-     * content scene each frame.
+     * The slot is owned by the pass that draws it (@ref SlotKey) and its view
+     * is stacked by that pass' explicit pipeline order, so several passes
+     * sharing one camera and one order stay separate content. The request's
+     * depth policy is the explicit content depth handling (independent of
+     * clearing; it fills the depth state of commands that did not author one),
+     * and its presenting flag marks the full-target pass that cleared the
+     * target (such content fills the whole target and seeds the window
+     * headlight when there is no scene light). Lights come from the content
+     * scene each frame.
      *
-     * @param target     Output target key the slot lives under (nullptr = the
-     *                   window).
-     * @param commands   Render commands for this slot.
-     * @param camera     Camera identifying the slot.
-     * @param lights     Content lights for the slot (empty keeps the slot's
-     *                   seeded default light: headlight for the window's
-     *                   presenting slot, ambient otherwise).
-     * @param depth_mode Depth handling for the slot's content.
-     * @param presenting True when this slot is the full-target pass that cleared.
-     * @param order      The pass's explicit pipeline order (slot key + stacking).
-     * @param vp_x       Viewport origin x in device pixels.
-     * @param vp_y       Viewport origin y in device pixels.
-     * @param vp_w       Viewport width (0 = full target).
-     * @param vp_h       Viewport height (0 = full target).
+     * @param request Draw request (see ContentSlotRequest).
      */
-    void renderContentSlot(vine::graphics::RenderTarget*                     target,
-                           const std::vector<vine::graphics::RenderCommand>& commands,
-                           vine::raw_ptr<const vine::graphics::Camera>       camera,
-                           const std::vector<const vine::graphics::Light*>&  lights,
-                           vine::graphics::DepthMode                         depth_mode,
-                           bool                                              presenting,
-                           int                                               order,
-                           int                                               vp_x,
-                           int                                               vp_y,
-                           int                                               vp_w,
-                           int                                               vp_h);
+    void renderContentSlot(const ContentSlotRequest& request);
 
     /** @brief Records and presents the frame (once, when swapBuffers is called). */
     void submitFrame();
@@ -485,16 +507,13 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *
      * Every draw path (main scene, PiP screen, fullscreen program) reads the
      * same pending rectangle and clears it, so the consume is factored here.
-     * A pass that never queued a viewport leaves the flags false and the
-     * caller substitutes the full surface.
+     * A pass that never queued a viewport gets std::nullopt and the caller
+     * substitutes the full target.
      *
-     * @param x Receives the queued origin x (0 when none was queued).
-     * @param y Receives the queued origin y (0 when none was queued).
-     * @param w Receives the queued width (0 when none was queued).
-     * @param h Receives the queued height (0 when none was queued).
-     * @return true when a viewport was queued for this pass.
+     * @return The queued rectangle, or std::nullopt when the pass queued none
+     *         (it then draws the full target).
      */
-    bool takePendingViewport(int& x, int& y, int& w, int& h);
+    [[nodiscard]] std::optional<vine::graphics::Viewport> takePendingViewport();
 
     /** @brief Moves a slot View into its target graph's children at the
      * position matching its explicit stacking order.

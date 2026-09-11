@@ -16,7 +16,7 @@
 #include <vsg/utils/SharedObjects.h>
 
 #include <vine/raw_ptr.hpp>
-#include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 
@@ -84,7 +84,6 @@ class V_VSG_API SceneBridge {
         const std::vector<vine::graphics::RenderCommand>& commands,
         ::vsg::Group* root,
         std::vector<::vsg::ref_ptr<::vsg::Node>>* created = nullptr);
-
     /** @brief Releases all retained per-geometry vsg nodes. */
     void clearCache();
 
@@ -108,7 +107,7 @@ class V_VSG_API SceneBridge {
     void setContentDepthMode(vine::graphics::DepthMode mode);
 
     /** @brief Gets the pass-level depth policy (see setContentDepthMode). */
-    vine::graphics::DepthMode contentDepthMode() const { return content_depth_mode_; }
+    [[nodiscard]] vine::graphics::DepthMode contentDepthMode() const noexcept { return content_depth_mode_; }
 
     /** @brief Drops the retained state wrappers so the next sync rebuilds them.
      *
@@ -131,7 +130,7 @@ class V_VSG_API SceneBridge {
      *
      * @return Number of distinct pipeline variants built so far.
      */
-    std::size_t pipelineVariantCount() const { return pipeline_variants_; }
+    std::size_t pipelineVariantCount() const noexcept { return pipeline_variants_; }
 
     /** @brief Gets how many times geometry reused a cached pipeline variant.
      *
@@ -143,7 +142,7 @@ class V_VSG_API SceneBridge {
      *
      * @return Number of variant-template reuses so far.
      */
-    std::size_t variantReuseCount() const { return variant_reuses_; }
+    std::size_t variantReuseCount() const noexcept { return variant_reuses_; }
 
     /** @brief Gets how many times this bridge ran the glslang stage compiler.
      *
@@ -154,7 +153,7 @@ class V_VSG_API SceneBridge {
      *
      * @return Number of glslang compile passes started.
      */
-    std::size_t programStageCompileCount() const { return program_stage_compiles_; }
+    std::size_t programStageCompileCount() const noexcept { return program_stage_compiles_; }
 
   private:
     /** @brief One forwarded custom vertex channel (location >= 3).
