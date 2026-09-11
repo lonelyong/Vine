@@ -153,7 +153,12 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CameraBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgMaterialManager.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRenderer.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRendererPasses.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRendererTargets.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRendererOverlay.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgBackendUtility.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPipelineFactory.cpp)
 target_compile_definitions(vsg_backend_selftest PRIVATE V_VSG_LIB)
 target_include_directories(vsg_backend_selftest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

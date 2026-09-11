@@ -543,3 +543,52 @@ app 持有但不绘制”的对象如何处置留给各自策略（几何用 600
 **仍未做**：D16 的变体/ShaderSet 缓存仍是“超限即整表清空”（正确：只丢模板，已建管线仍被保留
 状态组持有），可后续换成同一骨架的 FIFO 逐出；§8.1 的几何缓存可迁到同一骨架（当前是手工实现
 且行为正确，迁移只减 bespoke 代码、不修缺陷）。
+
+## 13. 模块拆分：从 3.6k 行单文件到按职责分层的多 TU（2026-09-11 落地）
+
+**问题**：`VsgRenderer.cpp` 一个文件 3603 行，把四件互不相关的事塞在一起（vsg 对象
+工厂、会话生命周期、离屏目标构建、叠加绘制、pass 协议 + 槽），并且共享一个 900 行的
+匿名命名空间。后果是真实的：改渲染通道要重编整文件；共享 helper 隐式耦合（谁用谁不
+用只能靠读）；一个函数的文档注释长期漂移到另一个类型上（见下）；没人能一眼说出
+"改动该往哪儿放"。
+
+**布局**（拆分后；职责单一，每个 TU 只依赖它真正用到的头）：
+
+| 文件 | 职责 | 行数 |
+| --- | --- | --- |
+| `include/vine/vsg/VsgRenderer.hpp` | 类声明（公开契约 + 私有嵌套类型） | 632 |
+| `src/VsgRendererImpl.hpp` | `Persistent` / `Impl`（会话态：窗口、viewer、命令图、目标表、槽、pass 请求） | 319 |
+| `src/VsgRenderer.cpp` | 会话生命周期、帧泵、诊断路由、查询访问器 | 901 |
+| `src/VsgRendererPasses.cpp` | pass 协议（begin/end/releasePass、退役、重定向）+ 内容槽搭建/绘制 | 519 |
+| `src/VsgRendererTargets.cpp` | 离屏目标构建与顺序、目标/槽释放、视图按序摆放 | 680 |
+| `src/VsgRendererOverlay.cpp` | PiP 采样 blit、全屏用户程序（含视图编译与光照 push 块填充） | 697 |
+| `src/VsgPipelineFactory.{hpp,cpp}` | vsg 对象工厂：格式转换、渲染通道、着色器集、管线状态、叠加/程序节点、灯光节点 | 298 / 598 |
+| `src/VsgBackendUtility.{hpp,cpp}` | 图手术（摘子节点）、设备同步、会话策略查询 | 57 / 39 |
+
+**三条规则**（新增代码照此放置）：
+
+1. **"只依赖显式参数的纯工厂"进 `VsgPipelineFactory` 的 `detail` 命名空间**：它不读
+   渲染器状态，所以能脱离"哪个 pass 问的"单独推理与复用；工厂只**返回失败原因**
+   （enum / out-param），不自己上报（见 §10 的既有约定）。
+2. **会话态只放 `VsgRendererImpl.hpp`**：`Impl` 持有所有引用 `vsg::Window` /
+   `vsg::Device` 的东西，`shutdown()/initialize()` 整块替换，因此不会漏释放；
+   扩展会话态 = 改这一个头（各 TU 自动可见）。
+3. **新成员函数按职责进对应 TU**，不需要额外的声明（成员已在类里声明）；跨 TU 的
+   自由函数一律进 `detail`，各 TU 用一句 `using namespace detail;` 保持调用点原样。
+
+**顺手修掉的两处**（拆分时必须做的决定，不是重写）：
+
+- 叠加绘制节点的文档注释长期挂在失败枚举（`ProgramNodeFailure`）上方一格：拆分按
+  "文档随声明走"搬运，注释回到了它描述的函数；
+- `LightPushBlock` 的两条 `static_assert`（尺寸 = 128、对齐 = 16）原本落在共享匿名
+  命名空间里，离结构体很远：现在贴回结构体定义（该文件顶部），改字段会立刻在编译期
+  报错。
+
+**验收**：所有目标零警告构建；test_vsg 67、test_graphics 151 全绿；`gfx_lavapipe_check.sh`
+→ `RESULT: PASS`（该门禁覆盖了全部搬走的代码：离屏 MRT、PiP 采样、全屏程序、pass 协议
+与退役路径）；dist 冒烟健康。**行为零变更**：纯搬运（含 `git diff -M` 可核对），
+`test_vsg`/`vsg_backend_selftest` 的源列表同步更新（二者直接编译插件源码，不能链接
+MODULE）。
+
+**仍未做**：`SceneBridge.cpp` 1532 行仍偏大（`syncSceneForSlot` 281 行），可按同一
+思路再切（几何同步 / 程序与材质同步 / 缓存决策三类）。

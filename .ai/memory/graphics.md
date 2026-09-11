@@ -1,6 +1,16 @@
 # Graphics 模块核心
 
-> 2026-09-11 **后端缓存骨架 + 材质缓存修复（D13/D19）**：新增
+> 2026-09-11 **后端模块拆分（结构，行为零变更）**：`VsgRenderer.cpp` 3603 -> 901 行，
+> 按职责拆成 `VsgRendererPasses/Targets/Overlay.cpp` + `VsgRendererImpl.hpp`（会话态）
+> + `VsgPipelineFactory.{hpp,cpp}`（纯工厂，`vine::vsg::detail`）+ `VsgBackendUtility.*`
+> （图手术/设备同步/策略）。置放规则：纯工厂只依赖显式参数、只返回失败原因；会话态改
+> `VsgRendererImpl.hpp`；跨 TU 自由函数进 `detail`（各 TU `using namespace detail;`）。
+> 顺手修正漂移的文档注释与 `LightPushBlock` 的编译期断言位置。设计 §13。
+> 注意：`test_vsg` 与 `vsg_backend_selftest` 直接编译插件源码，加/删 .cpp 必须同步其
+> 源列表。
+
+> 2026-09-11 **后端缓存骨架
+ + 材质缓存修复（D13/D19）**：新增
 > `src/plugins/gfx_backend_vsg/src/OwnedCache.hpp` —— 保留型缓存统一"条目自持键对象
 > （地址不可能在存活期内被复用）+ `eraseAbandoned()`（`useCount()<=1` ⇒ 除缓存无人能再查到
 > ⇒ 立即回收）+ `trimToCapacity()`（FIFO，永不动 null 键默认条目）"两半不变量。
