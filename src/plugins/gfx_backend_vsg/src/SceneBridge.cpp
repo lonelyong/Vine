@@ -224,8 +224,10 @@ void SceneBridge::clearCache()
         shared_objects_->clear();
     }
     pipeline_variants_ = 0;
-    variant_reuses_ = 0;
+    variant_reuses_   = 0;
     program_stage_compiles_ = 0;
+    shared_prune_count_     = 0;
+    pending_evictions_      = 0;
 }
 
 void SceneBridge::setContentDepthMode(vine::graphics::DepthMode mode)
@@ -524,8 +526,25 @@ std::size_t SceneBridge::releaseAbandonedCaches()
     // what bounds the chain of caches sharing one program; this is the prompt
     // half, shared by every program-keyed cache through OwnedCache.hpp so the
     // three of them cannot drift apart.
-    return eraseAbandoned(program_stages_) + eraseAbandoned(program_shader_sets_) +
-           eraseAbandoned(variant_cache_);
+    const std::size_t erased = eraseAbandoned(program_stages_) + eraseAbandoned(program_shader_sets_) +
+                               eraseAbandoned(variant_cache_);
+    // A registered variant is HELD BY shared_objects_ (registering is what the
+    // table does), so evicting its cache entries freed nothing: the table still
+    // referenced the pipeline, layout and descriptor sets, and it only ever grew
+    // — the caches stopped bounding memory for as long as the slot lived. vsg's
+    // prune() drops exactly the entries nothing else references (this codebase's
+    // own useCount() <= 1 rule), so live variants keep theirs through their
+    // cached bind commands and the evicted ones go. It runs only on a frame that
+    // evicted something — the abandonment sweep above or a capacity trim — which
+    // is the only way the table can have gained an unreferenced entry, so its
+    // O(entries) cost is paid once per eviction batch, not per frame.
+    const bool evicted = erased != 0u || pending_evictions_ != 0u;
+    pending_evictions_ = 0;
+    if (evicted && shared_objects_ != nullptr) {
+        shared_objects_->prune();
+        ++shared_prune_count_;
+    }
+    return erased;
 }
 
 

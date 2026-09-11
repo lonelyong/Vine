@@ -189,6 +189,32 @@ class V_VSG_API SceneBridge {
      */
     std::size_t pipelineVariantCount() const noexcept { return pipeline_variants_; }
 
+    /** @brief Gets how many times the shared-objects table was pruned.
+     *
+     * A variant registered with the shared-objects cache is HELD by that table,
+     * so a variant the retained caches evicted left its pipeline (and layout,
+     * descriptor sets) behind: the table only ever grew, which is what let it
+     * outlive the caches whose bounds are supposed to cap memory. The table is
+     * now pruned on the frames that evicted something, with vsg's own rule
+     * (drop the entries nothing else references — the same useCount() <= 1 test
+     * the caches use). This counts those prunes, so a test can tell a table that
+     * still pinned an evicted variant's pipeline from one that let it go.
+     *
+     * @return Number of shared-objects prunes so far.
+     */
+    std::size_t sharedPruneCount() const noexcept { return shared_prune_count_; }
+
+    /** @brief Records that a capacity trim of a program-keyed cache evicted an
+     * entry, so the next releaseAbandonedCaches() prunes the shared table.
+     *
+     * The table holds what it registers, so an evicted variant leaves its
+     * pipeline behind; the FIFO trims happen at the insert sites (they cannot
+     * wait for the end-of-pass sweep, which is what keeps the caches bounded),
+     * so they report here instead of pruning on their own — pruning belongs to
+     * the one place that can see every cache of this bridge.
+     */
+    void noteEviction() noexcept { ++pending_evictions_; }
+
     /** @brief Gets how many times geometry reused a cached pipeline variant.
      *
      * Incremented whenever buildGeometry reuses an already-built (program,
@@ -379,6 +405,11 @@ class V_VSG_API SceneBridge {
     // Distinct pipeline variants registered with shared_objects_ (diagnostic;
     // see pipelineVariantCount()).
     std::size_t pipeline_variants_ = 0;
+    // Number of prunes of shared_objects_ (see sharedPruneCount()).
+    std::size_t shared_prune_count_ = 0;
+    // Evictions reported by the capacity trims since the last prune
+    // (see noteEviction()).
+    std::size_t pending_evictions_ = 0;
     // Times buildGeometry reused a cached (program, material, state) template
     // instead of running a fresh configurator (diagnostic; see
     // variantReuseCount()).

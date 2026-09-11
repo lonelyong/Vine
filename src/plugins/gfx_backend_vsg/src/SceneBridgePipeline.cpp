@@ -376,7 +376,9 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
             ProgramStagesEntry(vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program),
                                StageEntry{ program_rev, std::move(stages) },
                                program_stages_clock_.tick()));
-        trimToCapacity(program_stages_, kMaxProgramCacheEntries);
+        if (trimToCapacity(program_stages_, kMaxProgramCacheEntries) != 0u) {
+            noteEviction(); // the shared table must let go of what this evicted
+        }
         sit = program_stages_.find(program);
     }
     const auto base_states = baseShaderSet()->defaultGraphicsPipelineStates;
@@ -414,7 +416,9 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
     // pipelines. This replaced a blot "clear the whole table at 64", which also
     // threw away every other program's compiled stages at once; the prompt half
     // (an entry whose program the app released) is releaseAbandonedCaches().
-    trimToCapacity(program_shader_sets_, kMaxProgramCacheEntries);
+    if (trimToCapacity(program_shader_sets_, kMaxProgramCacheEntries) != 0u) {
+        noteEviction();
+    }
     return shaderSet;
 }
 
@@ -626,7 +630,9 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
         // whose program AND material the app released) is
         // releaseAbandonedCaches().
         constexpr std::size_t kMaxVariantCacheEntries = 256;
-        trimToCapacity(variant_cache_, kMaxVariantCacheEntries);
+        if (trimToCapacity(variant_cache_, kMaxVariantCacheEntries) != 0u) {
+            noteEviction();
+        }
     }
 
     return stateGroup;

@@ -305,3 +305,67 @@ TEST(SceneBridgeCacheOwnershipTest, VariantTemplateKeepsItsProgramAddressUnique)
     ShaderProgramPtr fresh(new TrackedProgram());
     EXPECT_NE(fresh.get(), released);
 }
+
+/**
+ * @brief The shared-objects table is pruned when the caches evict, and only then.
+ *
+ * Registering a variant with the shared-objects table means the TABLE holds the
+ * pipeline (that is what registering does), so evicting the variant's cache
+ * entries frees nothing by itself: the table kept the pipeline, layout and
+ * descriptor sets for the life of the slot and only ever grew, which is what
+ * made the retained caches stop being a memory bound. The table is now pruned on
+ * the frames that evicted something — the abandonment sweep or a capacity trim —
+ * using vsg's own rule (drop the entries nothing else references, i.e. this
+ * codebase's useCount() <= 1 test), so the pipeline of a variant that is still
+ * drawn survives through its cached bind commands.
+ *
+ * What this test pins is the TRIGGER and its amortisation, because that is what
+ * is deterministic at this level: a frame whose FIFO trim evicted an entry must
+ * prune, and a frame that evicted nothing must not. The release itself is vsg's
+ * reference-count rule; the end-to-end effect on a re-drawn variant also depends
+ * on when the abandoned entries' owners actually drop (geometry items are
+ * released through the retirement ring), so it is observable at device level,
+ * not in a single bridge sync.
+ */
+TEST(SceneBridgeCacheOwnershipTest, SharedObjectsTableIsPrunedOnEvictionFramesOnly)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+    auto filler   = makeTriangle(0);
+
+    const auto draw = [&](const std::vector<ShaderProgramPtr>& programs) {
+        std::vector<RenderCommand> commands;
+        for (const auto& program : programs) {
+            commands.emplace_back(filler, material, Mat4d());
+            commands.back().program = program;
+        }
+        bridge.syncRenderCommands(commands, root.get(), nullptr);
+    };
+
+    // One more distinct program than the per-program caches hold (64): the
+    // inserts trim the oldest entry away, which is an eviction, so the shared
+    // table is pruned on that frame. The 64 identical fillers collapse into ONE
+    // pipeline, which is the sharing the table exists for and which the prune
+    // must not disturb.
+    constexpr int kPrograms = 65;
+    std::vector<ShaderProgramPtr> programs;
+    programs.reserve(kPrograms);
+    for (int i = 0; i < kPrograms; ++i) {
+        ShaderProgramPtr program(new ShaderProgram());
+        addTrivialStages(program);
+        programs.push_back(program);
+    }
+    ASSERT_EQ(bridge.sharedPruneCount(), 0u);
+    draw(programs);
+    EXPECT_GE(bridge.sharedPruneCount(), 1u) << "a capacity trim evicted entries, so the table must be pruned";
+    EXPECT_EQ(bridge.pipelineVariantCount(), 1u) << "identical variants must still collapse into one pipeline";
+
+    // A frame that evicts nothing must not prune: the table is walked only when
+    // it can have gained an unreferenced entry, not on every frame. Drawing one
+    // program that is already cached inserts nothing, so no trim can evict.
+    const std::size_t prunes = bridge.sharedPruneCount();
+    draw({ programs.back() }); // the newest entry: definitely still cached
+    EXPECT_EQ(bridge.sharedPruneCount(), prunes) << "a frame that evicted nothing must not walk the table";
+}

@@ -1257,3 +1257,68 @@ harness 追加 `target description:` ≥1 行证据要求。
 **验收**：test_vsg 71、test_graphics 157 全绿；`gfx_lavapipe_check.sh` → `RESULT:
 PASS`（0 VUID，含新证据行）；app 冒烟：exit 124、离屏只构建 3 次（无重建循环）、
 1 条预热借用警告、0 VUID。
+
+## 27. 共享对象表（`shared_objects_`）的保留必须跟着缓存驱逐走（D40，2026-09-11）
+
+`SceneBridge` 每个槽持有一个 `vsg::SharedObjects` 去重表：`config->copyTo(stateGroup,
+shared_objects_)` 把**管线 / 布局 / 描述符集**登记进去，内容相同的变体共用同一个对象
+（"64 个相同变体塌成 1 个 pipeline"就是它存在的意义）。问题是**登记即持有**：变体条目
+被 FIFO 逐出、或 App 释放了 program/material 让条目变成 abandoned 之后，表**仍然**抓着
+那个 pipeline —— 三个缓存的上限因此形同虚设，表只增不减，直到槽 teardown 才 `clear()`。
+
+**修法**：`releaseAbandonedCaches()` 在**有驱逐的那一帧**调 `shared_objects_->prune()`
+—— vsg 的 `prune()` 恰好就是本项目自己的规则（`referenceCount() == 1`，即"除了表没人
+要了"，见 `OwnedCache.hpp` 的 `keyReleased`），所以**在用的变体**通过各自缓存的 bind
+命令继续持有 pipeline 而被保留，被逐出的才真的释放。单调不减的 `shared_prune_count_`
+作为诊断（`sharedPruneCount()`）。
+
+**触发面**要覆盖两条驱逐路径：abandoned 清扫（`eraseAbandoned` 的返回值）**和**插入点
+的 FIFO 裁剪（`trimToCapacity`；它不能等到帧末 —— 那正是"缓存有界"的来源），后者通过
+`noteEviction()` 记账，由 `releaseAbandonedCaches()` 统一决定是否 prune。代价：只有在
+"确实驱逐过"的帧才走一遍表（表大小受在用变体数 + 当次驱逐量约束）⇒ 摊销到每次驱逐
+O(1)，而不是每帧 O(表)。
+
+**判据**（test_vsg `SharedObjectsTableIsPrunedOnEvictionFramesOnly`）：
+65 个程序（> 每程序缓存上限 64）⇒ 插入点裁剪 ⇒ **那一帧必须 prune**（`sharedPruneCount()
+>= 1`）；同时 64 个相同变体必须仍塌成 **1 个 pipeline**（prune 不能破坏共享）；再画一个
+**必定命中缓存**的程序 ⇒ 无驱逐 ⇒ **不得再 prune**（摊销的反面）。反证：停掉 prune →
+第一条断言红（`0 vs 1`）。
+
+**未单独断言的部分（诚实记录）**：`prune()` 真的把某个 pipeline 交还给 allocator 这一
+步由 vsg 的引用计数规则保证（"除了表没人要" ⇒ 删），而"重建一个被逐出的变体会重新计入
+`pipelineVariantCount()`"这个端到端现象依赖**条目所有者何时放手**（几何条目经 retire
+环释放），单个 bridge sync 内无法确定性地钉住 ⇒ 不再写脆弱的断言，改为在断言里写清
+"这里钉的是触发面与摊销，释放由 vsg 规则保证"。
+
+**验收**：test_vsg **72**（71 + 本条）、test_graphics 157 全绿；`gfx_lavapipe_check.sh`
+→ `RESULT: PASS`（0 VUID）；app 冒烟 exit 124、离屏 3 次构建、0 VUID。
+
+## 28. 计划：把 render pass 从**目标粒度**下沉到 **pass 粒度**（未实施，分阶段）
+
+§22 的残留（首帧仍按旧策略收敛 1 帧、混合目标失去 render-pass 免费清屏而要付一条
+`ClearAttachments`、`depth_policy_mixed` sticky、**颜色清屏同样是"最后一次请求赢"**）
+都源自同一个设计决定：**一个目标只有一个 render pass**，而 Vulkan 把 depth/colour 的
+load-op 烧在 render pass 里。要根治就得"每个 pass 一个 render pass（+ framebuffer +
+RenderGraph），图像按目标共享"。已勘察的改动面与**必须同时成立的不变量**如下（下一片
+按此执行，避免半成品）：
+
+1. `Target::PassObjects`（按 `SlotKey` 索引，`std::map` 地址稳定）：`render_pass`（语义
+   变体）+ `render_pass_seed`（仅"本 pass 要求 LOAD 且图像未定义"时需要）+ `framebuffer`
+   + `graph` + `load_depth` + `seeded` + `order` + 该 pass 的 clear 颜色；`Target::graph`
+   只留给窗口目标（swapchain graph），"目标已建"改判 `framebuffer != nullptr`。
+2. **LOAD / 提升互斥**：借用别的目标深度的 pass 一律用 LOAD（策略归出借方）；一旦某目标
+   出现 LOAD pass，该目标**所有** pass 都不得提升深度（否则上一帧末 pass 留下
+   `SHADER_READ_ONLY`，下一帧 LOAD pass 声明 `DEPTH_STENCIL_ATTACHMENT_OPTIMAL` 非法）。
+   先建的提升变体在这条规则被触及时要重建（不动图像）。
+3. **种子**：`seeded` 是**目标级**（"这张深度图至少被定义过一次"）——UNDEFINED 图像不能
+   LOAD，所以本帧第一个 LOAD pass 若目标从未清过，就用 CLEAR 变体录一帧（今天
+   `depth_ready` 的等价物）。
+4. **顺序**：`reconcileOffscreenOrder` 的目标级拓扑不变，改为"每个目标按 pass order 输出
+   它的一组 graph"；深度共享 barrier 插在**源的最后一张 graph 之后**、借用方组之前。
+5. **回读**：`readDepthBuffer` 不能再读 `Target::render_pass` 的 finalLayout（可能多个），
+   改成跟踪"最后一帧最后记录的那个 pass 的 finalLayout"。
+6. **清屏**：颜色清屏进各自 pass 的 `clearValues`（**颜色**也随之下沉，这是额外收益）；
+   窗口目标仍只有一个 vsg 拥有的 swapchain pass ⇒ 窗口仍"最后一次清屏请求赢"，写进契约。
+7. selftest 必须按新语义重写 `runMixedDepthPolicyPhase`：**不再注入 ClearAttachments**、
+   混合目标**首帧即正确**、目标构建数从 2 降到 **1**（残留消失的可观测判据）。§22 保留为
+   历史，实施后在此标注 superseded。
