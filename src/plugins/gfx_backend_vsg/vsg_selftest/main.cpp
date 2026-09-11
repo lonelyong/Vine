@@ -718,6 +718,179 @@ bool runInFlightChurnPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
 }
 
 /**
+ * @brief Asserts that a depth borrow the backend cannot honour is DIAGNOSED and
+ * falls back to the target's own depth.
+ *
+ * RenderTarget::shareDepth hands the source's depth IMAGE to this target as its
+ * depth attachment, which a render pass can only attach when that image is
+ * usable as it stands:
+ *  - the extents must match: Vulkan requires every framebuffer attachment to
+ *    have the framebuffer's dimensions, so a half-resolution composite cannot
+ *    borrow a full-resolution depth (a silently mismatched framebuffer is
+ *    VUID-VkFramebufferCreateInfo-pAttachments-00880 territory);
+ *  - the source must keep its depth as an ATTACHMENT: a source that promotes its
+ *    depth to a sampled texture (setDepthPromotion(true)) leaves it in
+ *    SHADER_READ_ONLY_OPTIMAL, which no render pass may attach.
+ *
+ * Neither may end in a broken framebuffer, a validation error or a missing
+ * drawable: the backend reports what it could not honour and renders the target
+ * with its own depth. Both cases are driven here and asserted on pixels (near
+ * quad wins over far quad, i.e. the fallback depth really works) and on the
+ * diagnostics channel.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera both quads are drawn through.
+ * @param frames   Frames to drive per case.
+ * @return true when both cases were diagnosed and drew correctly.
+ */
+bool runDepthBorrowValidationPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+
+    std::vector<vine::graphics::RenderDiagnostic> received;
+    renderer.setDiagnosticSink([&received](const vine::graphics::RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+
+    const vine::Color clear(10, 20, 30, 255);
+    auto              near_material = MaterialPtr(new Material());
+    near_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    auto far_material = MaterialPtr(new Material());
+    far_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f));    // blue
+    RenderCommand near_command(makeVisibleQuad(0.4f, 1.0f), near_material, Mat4d());
+    RenderCommand far_command(makeVisibleQuad(0.4f, -1.0f), far_material, Mat4d());
+    const std::vector<RenderCommand> commands{ near_command, far_command };
+
+    // One case: a source target plus a borrower that shares its depth, driving
+    // one pass into each, then reading the borrower back.
+    const auto run_case = [&](int source_w, int source_h, bool promote_source, int borrower_w, int borrower_h,
+                              const vine::String& what) {
+        auto source = RenderTargetPtr(new RenderTarget());
+        source->setName(u8"borrow-src");
+        source->setSize(source_w, source_h);
+        source->attachColor(RenderTarget::ColorFormat::RGBA8);
+        source->attachDepth(RenderTarget::DepthFormat::D32);
+        source->setDepthPromotion(promote_source);
+
+        auto borrower = RenderTargetPtr(new RenderTarget());
+        borrower->setName(u8"borrow-dst");
+        borrower->setSize(borrower_w, borrower_h);
+        borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
+        borrower->shareDepth(source);
+
+        auto source_pass   = RenderPassPtr(new RenderPass());
+        auto borrower_pass = RenderPassPtr(new RenderPass());
+
+        // Both passes draw the same near/far pair: with a working depth (borrowed
+        // or its own) the near quad wins, so the borrower's centre must be red.
+        for (int i = 0; i < frames; ++i) {
+            renderer.beginFrame();
+
+            renderer.beginPass(source_pass.get());
+            renderer.setPassOrder(0);
+            renderer.setRenderTarget(source.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(clear, true);
+            renderer.setLights({});
+            renderer.render(commands, camera.get());
+            renderer.endPass();
+
+            renderer.beginPass(borrower_pass.get());
+            renderer.setPassOrder(1);
+            renderer.setRenderTarget(borrower.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(clear, true);
+            renderer.setLights({});
+            renderer.render(commands, camera.get());
+            renderer.endPass();
+
+            renderer.endFrame();
+            renderer.swapBuffers();
+        }
+
+        PixelImage image;
+        if (!readTarget(renderer, borrower.get(), image)) {
+            std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the borrowing target (%s)\n",
+                         what.stdstr().c_str());
+            return false;
+        }
+        const int cx = borrower_w / 2;
+        const int cy = borrower_h / 2;
+        if (image.at(cx, cy, 0) <= image.at(cx, cy, 2) + 20) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the borrowing target (%s) centre is (%d,%d,%d); the NEAR quad must win, so"
+                         " the target did not fall back to a working depth\n",
+                         what.stdstr().c_str(), image.at(cx, cy, 0), image.at(cx, cy, 1), image.at(cx, cy, 2));
+            return false;
+        }
+        if (image.blueDominant() != 0u) {
+            std::fprintf(stderr, "[selftest] FAIL: %zu pixel(s) are blue although the far quad is behind (%s)\n",
+                         image.blueDominant(), what.stdstr().c_str());
+            return false;
+        }
+        renderer.releasePass(source_pass.get());
+        renderer.releasePass(borrower_pass.get());
+        renderer.releaseRenderTarget(borrower.get());
+        renderer.releaseRenderTarget(source.get());
+        return true;
+    };
+
+    const std::size_t before_1 = received.size();
+    if (!run_case(256, 144, false, 128, 72, u8"half-resolution borrower")) {
+        ok = false;
+    }
+    const std::size_t mismatched_extent_reports = received.size() - before_1;
+
+    const std::size_t before_2 = received.size();
+    if (!run_case(256, 144, true, 256, 144, u8"borrower of a depth-promoted source")) {
+        ok = false;
+    }
+    const std::size_t promoted_reports = received.size() - before_2;
+
+    renderer.setDiagnosticSink({});
+
+    // Each refused borrow must be reported (once — not per frame), and named, so
+    // the host can fix the graph instead of staring at a frame that renders
+    // differently than it asked for.
+    const auto described = [&received](std::size_t from) {
+        for (std::size_t i = from; i < received.size(); ++i) {
+            if (received[i].message.find(u8"shared-depth") != vine::String::npos) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (mismatched_extent_reports == 0u || !described(before_1)) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: a borrower half the source's size was not reported (%zu diagnostic(s) total);"
+                     " a mismatched attachment extent cannot build a valid framebuffer\n",
+                     mismatched_extent_reports);
+        ok = false;
+    }
+    if (promoted_reports == 0u || !described(before_2)) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: a borrower of a depth-promoted source was not reported (%zu diagnostic(s)"
+                     " total); a sampled depth cannot be attached\n",
+                     promoted_reports);
+        ok = false;
+    }
+    if (mismatched_extent_reports > 1u || promoted_reports > 1u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: a refused depth borrow must be reported once, got %zu / %zu over %d frames\n",
+                     mismatched_extent_reports, promoted_reports, frames);
+        ok = false;
+    }
+
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] depth borrow: mismatched extent (%zu report(s)) and depth-promoted source (%zu"
+                     " report(s)) both fell back to the target's own depth and still drew the near quad\n",
+                     mismatched_extent_reports, promoted_reports);
+    }
+    return ok;
+}
+
+/**
  * @brief Verifies the diagnostics channel end to end on a device.
  *
  * A backend that cannot serve a request must say so on the host's channel, not
@@ -2289,6 +2462,7 @@ int main()
     contract_ok = runDepthLoadPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runSharedDepthPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runMixedDepthPolicyPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runDepthBorrowValidationPhase(*renderer, camera, 3) && contract_ok;
     // Diagnostics: what the MRT path receives per attachment (attachment 0 is
     // asserted), and which input a "nothing was drawn" result is attributable
     // to.

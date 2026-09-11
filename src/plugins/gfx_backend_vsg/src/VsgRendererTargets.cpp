@@ -93,6 +93,7 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         t.framebuffer          = {};
         t.depth_source         = nullptr;
         t.depth_share_barrier  = {};
+        t.depth_sampleable     = false;
         t.graph                = {};
         t.depth_on_shader_set  = {};
         t.depth_testonly_shader_set = {};
@@ -115,11 +116,51 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
     // Depth may be OWNED (allocated below) or BORROWED from an earlier target
     // in the same frame (RenderTarget::shareDepth): the deferred-lit composite
     // reuses the G-buffer's depth so forward content can test against it.
-    // A borrow whose source has since been RELEASED cannot be honoured — the
-    // source's VkImage is gone — so such a target builds with its own depth
+    // A borrow is only possible when the source's depth image is usable as THIS
+    // framebuffer's depth attachment exactly as it stands, which the checks
+    // below establish; anything else must not reach vkCreateFramebuffer.
+    // A borrow whose source has since been RELEASED cannot be honoured either —
+    // the source's VkImage is gone — so such a target builds with its own depth
     // instead of failing to build forever (see releaseRenderTarget).
     vine::graphics::RenderTarget* const depth_src = target->depthSource();
-    const bool borrowed = depth_src != nullptr && t.unusable_depth_source != depth_src;
+    bool borrowed = depth_src != nullptr && t.unusable_depth_source != depth_src;
+    if (borrowed) {
+        // Three ways a borrow is unusable, each of which was silent before:
+        //  - the source has not rendered yet this frame (no depth image yet);
+        //  - the extents differ: Vulkan requires every framebuffer attachment to
+        //    have the framebuffer's dimensions, so a half-resolution composite
+        //    borrowing a full-resolution depth built an INVALID framebuffer
+        //    (VUID-VkFramebufferCreateInfo-pAttachments-00880) and then rendered
+        //    undefined;
+        //  - the source promoted its depth to a sampled texture: its image is in
+        //    SHADER_READ_ONLY_OPTIMAL, which no render pass may attach, so every
+        //    frame tripped VUID-VkImageMemoryBarrier-oldLayout-01197 (the
+        //    depth-share barrier assumes the attachment layout) and drew
+        //    nothing.
+        const auto   src_it = impl->targets.find(depth_src);
+        const char*  reason = nullptr;
+        if (src_it == impl->targets.end() || src_it->second.depth_view == nullptr) {
+            reason = "its source has no depth image this frame";
+        }
+        else if (src_it->second.width != static_cast<int>(w) || src_it->second.height != static_cast<int>(h)) {
+            reason = "its source has a different size (a framebuffer attachment must have the framebuffer's dimensions)";
+        }
+        else if (src_it->second.depth_sampleable) {
+            reason = "its source promoted its depth to a sampled texture (a sampled depth cannot be attached)";
+        }
+        if (reason != nullptr) {
+            reportFailure(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+                          formatDiagnostic(u8"shared-depth target '%s': source '%s' cannot be borrowed (%s); this target"
+                                           u8" builds its own depth",
+                                           target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str(),
+                                           depth_src->name().empty() ? "(unnamed)" : depth_src->name().stdstr().c_str(),
+                                           reason));
+            // Remembered as reported: the same unusable source must not produce a
+            // diagnostic every frame (the message names what to fix).
+            t.unusable_depth_source = depth_src;
+            borrowed                = false;
+        }
+    }
 
     std::vector<VkFormat> color_formats;
     color_formats.reserve(static_cast<std::size_t>(color_count));
@@ -174,14 +215,9 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
     else if (borrowed) {
         // Borrow the source's depth image/view (it renders earlier this frame):
         // the framebuffer below attaches the shared depth, loaded not cleared.
-        auto src_it = impl->targets.find(depth_src);
-        if (src_it == impl->targets.end() || src_it->second.depth_view == nullptr) {
-            reportFailure(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
-                          formatDiagnostic(u8"shared-depth target '%s': source '%s' not built yet; this frame keeps its own depth",
-                                           target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str(),
-                                           depth_src->name().empty() ? "(unnamed)" : depth_src->name().stdstr().c_str()));
-            return;
-        }
+        // The borrow was validated above, so the source image exists and matches
+        // this framebuffer.
+        const auto src_it = impl->targets.find(depth_src);
         attachments.push_back(src_it->second.depth_view);
     }
 
@@ -218,6 +254,10 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
             t.depth_ready      = false;
         } else {
             t.render_pass = makeSampleableRenderPass(device.get(), color_formats, depth_format, target->depthPromotion());
+            // A pass that promotes its depth leaves it in SHADER_READ_ONLY_OPTIMAL
+            // so it can be sampled: that image can no longer be attached as
+            // another target's depth (see the borrow validation above).
+            t.depth_sampleable = has_depth && target->depthPromotion();
         }
     } else {
         t.render_pass = makeDepthOnlyRenderPass(device.get(), toDepthFormat(target->depthFormat()));

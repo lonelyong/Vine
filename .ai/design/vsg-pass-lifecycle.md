@@ -1038,3 +1038,46 @@ clear 请求赢**。于是第二个 pass 的 `clearDepth=false` 会把第一个 
 
 **验收**：test_vsg 71、test_graphics 151 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID，
 三行新证据随门禁打印）；dist 冒烟 25s 存活。
+
+## 23. 深度借用的可用性校验（D36，2026-09-11）
+
+**出发点**：`RenderTarget::shareDepth` 是把**源目标的深度图像**当作本目标的深度附件用，因此只有在
+那张图"原样可用"时才能成立。以前只检查了一件事（"源在本帧里还没渲染过"），另两种不可用情形**完全
+静默**。都先用 selftest 探针量到，再修：
+
+| 不可用情形 | 之前的实际行为（探针量到的） |
+| --- | --- |
+| **尺寸不同**（半分辨率 composite 借全分辨率深度） | 0 条诊断；`vkCreateFramebuffer` 建出**非法帧缓冲**（`VUID-VkFramebufferCreateInfo-pAttachments-00880`：所有附件必须与帧缓冲同尺寸），之后是未定义渲染（llvmpipe 上"看起来正常"，所以只有验证层能戳破） |
+| **源把深度提升成了可采样纹理**（`setDepthPromotion(true)`） | 0 条诊断；源的深度留在 `SHADER_READ_ONLY_OPTIMAL`，而 render pass 的附件声明是 `DEPTH_STENCIL_ATTACHMENT_OPTIMAL` → **每帧** `VUID-VkImageMemoryBarrier-oldLayout-01197`（借深度用的屏障是按"附件布局"写的），并且**什么也没画**（读回是清屏色） |
+
+**修法**（`buildOffscreenTarget` 里一次三向校验，全部落到"报告一次 + 用自己的深度"）：
+
+1. **源本帧有没有深度图**（原有检查，保留）；
+2. **尺寸必须一致**：`src.width/height == target.width/height`（帧缓冲附件的硬要求）；
+3. **源不能把深度提升成可采样**：新增构建期标志 `Target::depth_sampleable`，在**选用 sampleable
+   pass 且 `depthPromotion()` 为真**时置位 —— 记构建期事实，而不是事后读 `depthPromotion()`（那可能
+   已经变了）。
+
+校验失败 → `reportFailure(Warning, ContentSkipped, "shared-depth target 'X': source 'Y' cannot be
+borrowed (<原因>); this target builds its own depth")`，并把源记进 `Target::unusable_depth_source`
+（与"源被释放"复用同一个墓碑：**只报一次**，不再每帧刷；宿主换源指针即自动恢复）。随后走既有的
+"自有深度"分支 —— `RenderTarget::hasDepth()` 在存在借用时也为真，所以自有深度会被分配，管线/深度
+策略（`wantsDepthLoad()` 因 `depth_source != nullptr` 不选 LOAD pass，走 CLEAR/sampleable）也一致。
+
+**契约（写进注释与记忆）**：借深度要求 ① 源与借方的**尺寸相同**、② 源**不**把深度提升为可采样
+（`setDepthPromotion(false)`，内置 deferred 管线正是这么做的）。
+
+**验证**：`runDepthBorrowValidationPhase` —— 两个用例各驱动 3 帧：
+- 半分辨率借方（256×144 源 → 128×72 借方）；
+- 借"深度已提升"的源（同尺寸）。
+两个用例都断言：**恰好 1 条**诊断（消息里含 `shared-depth`）+ 借方**像素正确**（近四边形必须赢、
+不得出现远四边形的蓝 → 证明回落的自有深度真的在测），并且门禁 0 VUID（提升用例的 01197 全部消失）。
+harness 追加 `depth borrow:` ≥1 行证据要求。证据行：
+
+```
+[selftest] depth borrow: mismatched extent (1 report(s)) and depth-promoted source (1 report(s)) both
+fell back to the target's own depth and still drew the near quad
+```
+
+**验收**：test_vsg 71、test_graphics 156 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID）；
+dist 冒烟存活。

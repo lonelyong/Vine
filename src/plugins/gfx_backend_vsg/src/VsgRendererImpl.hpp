@@ -358,8 +358,13 @@ struct VsgRenderer::Impl {
         // DEPTH_STENCIL_ATTACHMENT_OPTIMAL, and the steady pass LOADs it every
         // later frame. depth_ready tracks that one-time initialisation.
         ::vsg::ref_ptr<::vsg::RenderPass> render_pass_load;
-        bool        depth_ready = false;
-        // ---- content slots (retained Views under graph), keyed by owning pass ----
+        bool        depth_ready = false;        // True when this target's pass leaves its depth in
+        // SHADER_READ_ONLY_OPTIMAL because it promoted it to a sampled texture:
+        // that image can no longer serve as ANOTHER target's depth attachment,
+        // so a later shareDepth() of this target cannot be honoured (see the
+        // borrow validation in buildOffscreenTarget). Recorded at build time
+        // because that is what the created render pass actually does.
+        bool        depth_sampleable = false;        // ---- content slots (retained Views under graph), keyed by owning pass ----
         std::map<SlotKey, ContentSlot> content_slots;
         // ---- PiP views sampling other targets (drawn under this graph) ----
         std::map<SlotKey, ScreenSlot> screen_slots;

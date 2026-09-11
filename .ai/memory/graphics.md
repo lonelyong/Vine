@@ -1,5 +1,15 @@
 ﻿# Graphics 模块核心
 
+> 2026-09-11 **深度借用的可用性校验（D36，设计 §23）**：`shareDepth` 只在源深度图"原样可用"时才能
+> 成立，以前只检查了"源本帧没渲染过"，另两种情形全静默：**尺寸不同** → 非法帧缓冲
+> （`VUID-VkFramebufferCreateInfo-pAttachments-00880`，llvmpipe 上看起来还正常）；**源把深度提升成
+> 可采样**（`setDepthPromotion(true)`）→ 源深度留在 `SHADER_READ_ONLY_OPTIMAL` 而 render pass 声明的
+> 是附件布局，**每帧** `VUID-VkImageMemoryBarrier-oldLayout-01197` 且**什么都没画**。修法：构建时三
+> 向校验（有深度图 / 尺寸相同 / 未提升，用构建期标志 `Target::depth_sampleable`）→ 失败则 `ContentSkipped`
+> **报一次** + 墓碑 + **回落自有深度**。契约：借深度要求源**同尺寸**且 `setDepthPromotion(false)`
+> （内置 deferred 管线两件都做到了）。selftest `runDepthBorrowValidationPhase` 两个用例各断言"恰好 1
+> 条诊断 + 近四边形必须赢"，harness 要求 `depth borrow:` ≥1 行。
+
 > 2026-09-11 **内容收集的帧内复用（D27，设计 graphics-render-pipeline §12）**：
 > `RenderEngine::frame` 开局给每个场景 `Scene::setContentFrame(token)`（幂等），同一帧内**同视图**的
 > 多个 pass 共享一次全树遍历；memo 键是 `(projection*view, eye, 内容版本)`——**不是相机地址**
