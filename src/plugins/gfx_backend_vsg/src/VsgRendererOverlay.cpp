@@ -473,6 +473,11 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
         // view was detached from the graph.
         placeViewByOrder(dest_graph, dest, slot.view, slot.order);
         slot.detached = false;
+        if (dest != nullptr) {
+            // Re-attaching is what puts this pass' graph back into the command
+            // graph (a retired pass' graph is left out of it).
+            reconcileOffscreenOrder();
+        }
     }
 
     // Follow the requested sub-viewport each frame (dynamic viewport + scissor).
@@ -672,6 +677,11 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         // retireInactivePassSlots): its node and pipeline were kept.
         placeViewByOrder(dest_graph, dest, slot.view, slot.order);
         slot.detached = false;
+        if (dest != nullptr) {
+            // Re-attaching is what puts this pass' graph back into the command
+            // graph (a retired pass' graph is left out of it).
+            reconcileOffscreenOrder();
+        }
     }
 
     // Follow the requested sub-viewport each frame.

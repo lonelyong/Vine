@@ -410,6 +410,12 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
         // recompile is needed).
         placeViewByOrder(graph, request.target, content.view, content.order);
         content.detached = false;
+        // Re-attaching is what puts its graph back into the command graph: a
+        // retired pass' graph is deliberately left out of it (see
+        // reconcileOffscreenOrder).
+        if (request.target != nullptr) {
+            reconcileOffscreenOrder();
+        }
     }
 
     // The pass' properties are re-applied every frame, so changing them at run

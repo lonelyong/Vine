@@ -2969,8 +2969,9 @@ bool runStackedPassPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
     target->setSize(256, 144);
     target->attachColor(RenderTarget::ColorFormat::RGBA8);
     target->attachDepth(RenderTarget::DepthFormat::D32);
-    auto fill_pass  = RenderPassPtr(new RenderPass());
-    auto stack_pass = RenderPassPtr(new RenderPass());
+    auto fill_pass    = RenderPassPtr(new RenderPass());
+    auto stack_pass   = RenderPassPtr(new RenderPass());
+    auto clearer_pass = RenderPassPtr(new RenderPass());
 
     for (int i = 0; i < frames; ++i) {
         renderer.beginFrame();
@@ -2996,6 +2997,23 @@ bool runStackedPassPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
         renderer.setLights({});
         renderer.render(std::vector<RenderCommand>{ dot_command }, camera.get());
         renderer.endPass();
+
+        // For the FIRST half of the frames a third pass clears this target. It is
+        // then simply not announced any more, which retires it (see
+        // retireInactivePassSlots). A retired pass must stop affecting the target
+        // ENTIRELY — including its clear: each pass graph is its own render pass,
+        // so a retired graph left in the command graph would keep clearing what
+        // the other passes drew, i.e. a disabled pass would still erase the frame.
+        if (i < frames / 2) {
+            renderer.beginPass(clearer_pass.get());
+            renderer.setPassOrder(2);
+            renderer.setRenderTarget(target.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::Disabled);
+            renderer.clear(vine::Color(200, 200, 200, 255), true);
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{}, camera.get());
+            renderer.endPass();
+        }
 
         renderer.endFrame();
         renderer.swapBuffers();
@@ -3024,8 +3042,8 @@ bool runStackedPassPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
     }
     if (fill_pixels == 0u) {
         std::fprintf(stderr,
-                     "[selftest] FAIL: none of the first pass' red survived the second, non-clearing pass — a pass"
-                     " that never asked for a clear may not wipe the target\n");
+                     "[selftest] FAIL: none of the first pass' red survived — a pass that never asked for a clear may"
+                     " not wipe the target, and a RETIRED pass must not keep clearing it either\n");
         ok = false;
     }
     if (image.blueDominant() == 0u) {
@@ -3034,12 +3052,14 @@ bool runStackedPassPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
     }
     if (ok) {
         std::fprintf(stderr,
-                     "[selftest] stacked pass: the first pass' fill survived the second pass (%zu red pixel(s) still"
-                     " there) and the second pass' quad drew %zu pixel(s) on top\n",
+                     "[selftest] stacked pass: the first pass' fill survived the second pass with a retired clearing"
+                     " pass in between (%zu red pixel(s) still there) and the second pass' quad drew %zu pixel(s) on"
+                     " top\n",
                      fill_pixels, image.blueDominant());
     }
     renderer.releasePass(fill_pass.get());
     renderer.releasePass(stack_pass.get());
+    renderer.releasePass(clearer_pass.get());
     renderer.releaseRenderTarget(target.get());
     return ok;
 }

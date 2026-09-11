@@ -502,7 +502,6 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         }
         t.depth_sampleable = false;
     }
-
     // A pass that preserves an as-yet undefined depth image records the CLEAR
     // (seed) variant for THIS frame; submitFrame() swaps it for the steady LOAD
     // variant afterwards. The two differ only in the depth load-op, so they are
@@ -599,6 +598,25 @@ void VsgRenderer::reconcileOffscreenOrder()
     }
     const auto window_graph = win->second.graph;
 
+    // A pass whose retained slot was RETIRED (its views detached because the pass
+    // did not execute this frame) must not be recorded at all. Each pass graph is
+    // its own render pass now, so leaving a retired one in the command graph
+    // would execute that pass' load-ops every frame with NO content — a disabled
+    // clearing pass would go on clearing a target the active passes just drew
+    // into, which is the opposite of retiring it (see retireInactivePassSlots).
+    const auto pass_records = [](const Impl::Target& owner, const SlotKey& key) {
+        if (const auto it = owner.content_slots.find(key); it != owner.content_slots.end()) {
+            return !it->second.detached;
+        }
+        if (const auto it = owner.screen_slots.find(key); it != owner.screen_slots.end()) {
+            return !it->second.detached;
+        }
+        if (const auto it = owner.program_slots.find(key); it != owner.program_slots.end()) {
+            return !it->second.detached;
+        }
+        return true; // no retained slot (a direct-driver pass): nothing to retire
+    };
+
     // Index every off-screen PASS graph by its target, and collect the targets
     // currently in the command graph, preserving their current relative order
     // as the stable tie-break seed.
@@ -631,14 +649,14 @@ void VsgRenderer::reconcileOffscreenOrder()
                 continue;
             }
             for (const auto& pass : entry.second.passes) {
-                if (pass.second.graph == child) {
+                if (pass.second.graph == child && pass_records(entry.second, pass.first)) {
                     graphs.push_back(pass.second.graph);
                     break;
                 }
             }
         }
         for (const auto& pass : entry.second.passes) {
-            if (pass.second.graph != nullptr &&
+            if (pass.second.graph != nullptr && pass_records(entry.second, pass.first) &&
                 std::find(graphs.begin(), graphs.end(), pass.second.graph) == graphs.end()) {
                 graphs.push_back(pass.second.graph);
             }
