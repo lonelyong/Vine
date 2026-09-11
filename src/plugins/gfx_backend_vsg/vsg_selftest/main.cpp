@@ -718,6 +718,157 @@ bool runInFlightChurnPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
 }
 
 /**
+ * @brief Asserts what DepthMode::TestOnly really does (both shipped transparent
+ * passes use it, and nothing asserted it).
+ *
+ * A translucent pass tests against the opaque depth but must NOT write depth:
+ * that is what lets many transparent fragments land on the same pixel (painter's
+ * order within the pass) while still being occluded by solid geometry. The mode
+ * was only ever *driven*, never measured, so neither half was pinned.
+ *
+ * Scenario: an opaque pass (TestAndWrite) draws the NEAR quad; a second pass
+ * (TestOnly, no clear) draws, in order, a nearer quad (green), a quad between the
+ * two (blue) and one behind the opaque surface (grey).
+ *  - testing on: the grey one must vanish (it is behind the stored depth);
+ *  - writing off: the blue one must win the centre even though the green one was
+ *    drawn before it and is nearer — with a depth write the green fragment would
+ *    have stored a nearer depth and rejected it;
+ *  - the depth buffer must still hold the OPAQUE pass' value afterwards.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera all quads are drawn through.
+ * @param frames   Frames to drive per stage.
+ * @return true when the test/write split held.
+ */
+bool runDepthTestOnlyPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok = true;
+    const vine::Color clear(10, 20, 30, 255);
+    auto              opaque_material = MaterialPtr(new Material());
+    opaque_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));  // red
+    auto nearest_material = MaterialPtr(new Material());
+    nearest_material->setDiffuse(vine::Colorf(0.1f, 0.8f, 0.2f, 1.0f));   // green
+    auto middle_material = MaterialPtr(new Material());
+    middle_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f));    // blue
+    auto behind_material = MaterialPtr(new Material());
+    behind_material->setDiffuse(vine::Colorf(0.85f, 0.85f, 0.85f, 1.0f)); // grey
+
+    // Camera at z = 5: 4.0 units for z = 1.0, 3.4 for 1.6, 3.8 for 1.2, 6.0 for -1.
+    RenderCommand opaque_command(makeVisibleQuad(0.4f, 1.0f), opaque_material, Mat4d());
+    RenderCommand nearest_command(makeVisibleQuad(0.4f, 1.6f), nearest_material, Mat4d());
+    RenderCommand middle_command(makeVisibleQuad(0.4f, 1.2f), middle_material, Mat4d());
+    RenderCommand behind_command(makeVisibleQuad(0.4f, -1.0f), behind_material, Mat4d());
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setSize(256, 144);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto opaque_pass = RenderPassPtr(new RenderPass());
+    auto blend_pass  = RenderPassPtr(new RenderPass());
+
+    const std::size_t centre = static_cast<std::size_t>(72) * 256u + 128u;
+
+    // Stage 1: opaque only, so the depth the transparent pass has to respect is
+    // measured rather than assumed.
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(opaque_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(target.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        renderer.clear(clear, true);
+        renderer.setLights({});
+        renderer.render(std::vector<RenderCommand>{ opaque_command }, camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+    std::vector<float> opaque_depths;
+    if (!renderer.readDepthBuffer(target.get(), opaque_depths) ||
+        opaque_depths.size() != static_cast<std::size_t>(target->width()) * static_cast<std::size_t>(target->height())) {
+        std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused the TestOnly phase target\n");
+        return false;
+    }
+    const float opaque_depth = opaque_depths[centre];
+    if (opaque_depth <= 0.0f) {
+        std::fprintf(stderr, "[selftest] FAIL: the opaque pass wrote no depth (%.4f)\n", opaque_depth);
+        return false;
+    }
+
+    // Stage 2: the translucent pass. It never clears (see the engine's
+    // transparent passes) and only tests depth.
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+
+        renderer.beginPass(opaque_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(target.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        renderer.clear(clear, true);
+        renderer.setLights({});
+        renderer.render(std::vector<RenderCommand>{ opaque_command }, camera.get());
+        renderer.endPass();
+
+        renderer.beginPass(blend_pass.get());
+        renderer.setPassOrder(1);
+        renderer.setRenderTarget(target.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::TestOnly);
+        renderer.setLights({});
+        renderer.render(std::vector<RenderCommand>{ nearest_command, middle_command, behind_command }, camera.get());
+        renderer.endPass();
+
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+
+    PixelImage image;
+    if (!readTarget(renderer, target.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the TestOnly phase target\n");
+        return false;
+    }
+    const int centre_r = image.at(128, 72, 0);
+    const int centre_g = image.at(128, 72, 1);
+    const int centre_b = image.at(128, 72, 2);
+    // One assertion covers both halves of the mode, because each wrong half
+    // makes a different colour win the centre: the quad drawn BETWEEN the two
+    // others (blue) is nearer than the opaque surface and farther than the green
+    // one behind it in draw order. If the pass wrote depth, the green (nearer,
+    // drawn first) would have occluded it; if it did not test at all, the grey
+    // one drawn last (behind the opaque surface) would have covered both.
+    if (centre_b <= centre_r + 20 || centre_b <= centre_g + 20) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the TestOnly centre is (%d,%d,%d); the second translucent quad (blue) must"
+                     " win — it is in front of the opaque surface and no translucent fragment may write depth\n",
+                     centre_r, centre_g, centre_b);
+        ok = false;
+    }
+
+    std::vector<float> blended_depths;
+    if (!renderer.readDepthBuffer(target.get(), blended_depths)) {
+        std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused the TestOnly phase target in stage 2\n");
+        return false;
+    }
+    if (std::fabs(blended_depths[centre] - opaque_depth) > 1e-5f) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the depth changed from %.4f (opaque) to %.4f across a TestOnly pass — the"
+                     " translucent fragments must not write depth\n",
+                     opaque_depth, blended_depths[centre]);
+        ok = false;
+    }
+
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] depth testonly: middle translucent quad won the centre (%d,%d,%d), depth still the"
+                     " opaque pass' %.4f (tested, not written)\n",
+                     centre_r, centre_g, centre_b, blended_depths[centre]);
+    }
+    renderer.releasePass(opaque_pass.get());
+    renderer.releasePass(blend_pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
+/**
  * @brief Asserts that a depth borrow the backend cannot honour is DIAGNOSED and
  * falls back to the target's own depth.
  *
@@ -2543,6 +2694,7 @@ int main()
     contract_ok = runSharedDepthPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runMixedDepthPolicyPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runDepthBorrowValidationPhase(*renderer, camera, 3) && contract_ok;
+    contract_ok = runDepthTestOnlyPixelPhase(*renderer, camera, 4) && contract_ok;
     // Diagnostics: what the MRT path receives per attachment (attachment 0 is
     // asserted), and which input a "nothing was drawn" result is attributable
     // to.

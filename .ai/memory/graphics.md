@@ -1,5 +1,13 @@
 ﻿# Graphics 模块核心
 
+> 2026-09-11 **`DepthMode::TestOnly` 的语义断言（设计 §24）**：两条内置半透明 pass（forward /
+> deferred 的 `forward_transparent`）都用 TestOnly，但以前**只驱动、从没量过**。新阶段
+> `runDepthTestOnlyPixelPhase`：不透明 pass 先写近面深度；半透明 pass（不 clear、TestOnly）按序
+> 画 近/中/远 三个四边形 → 断言**中心必须是中间那个（蓝）** + **深度读回仍是不透明 pass 的值**。
+> 这一条中心断言同时盖住两半错误：写深度 → 更近的绿色（先画）会赢；不测试 → 最后画的灰色
+> （在不透明面之后）会赢（反证实测：TestOnly→蓝 (5,10,46)、改 TestAndWrite→绿 (5,41,10)、改
+> Disabled→灰 (43,43,43)）。harness 要求 `depth testonly:` ≥1 行。
+
 > 2026-09-11 **前端也有诊断通道了（D37，设计 graphics-render-pipeline §13）**：`RenderEngine` 以前只
 > 转发宿主的 sink，自己不能上报，于是"`ScreenPass` 声明的输入一个都没解析到 → 什么都不画"**完全静默**
 > （生产者被禁用/移除/改名/排在后面都触发）。现在 `reportEngineProblem()` 送同一宿主 sink +

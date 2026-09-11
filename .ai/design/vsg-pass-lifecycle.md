@@ -1092,3 +1092,35 @@ once and never retried`。
 
 **验收**：test_vsg 71、test_graphics 156 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID）；
 dist 冒烟存活。
+
+## 24. `DepthMode::TestOnly` 的语义断言（2026-09-11）
+
+**出发点**：两条内置半透明 pass（forward 与 deferred 链的 `forward_transparent`）都用
+`DepthMode::TestOnly`，但 selftest 从来只是**驱动**它（pass 协议阶段跑一下、共享深度阶段用一下），
+没有量过它两半语义中的任何一半：**测试开着**、**写入关着**。
+
+**场景**（`runDepthTestOnlyPixelPhase`，一个 D32 目标）：
+
+1. 阶段 1：不透明 pass（`TestAndWrite` + `clear(colour, true)`）画近面（红）→ 读回深度作为**基准**
+   （不假设魔法值）。
+2. 阶段 2：加一个**不调用 clear** 的半透明 pass（`TestOnly`，与内置管线同形），按顺序画
+   近（z=1.6，绿）→ 中（z=1.2，蓝，仍在不透明面**之前**）→ 远（z=-1，灰，在不透明面**之后**）。
+
+**断言**（两条，各自封死一种错误）：
+
+- **中心必须被"中间那个"（蓝）赢**：写深度 → 更近的绿色（先画）会遮挡它；不测试 → 最后画的灰色
+  （在不透明面之后）会盖住它。一条断言同时覆盖两半。
+- **深度读回必须仍是不透明 pass 的值**：半透明片元不得写深度（直接读深度，而不是从颜色反推）。
+
+**判据力（反证，实测三色各一次）**：`TestOnly` → 中心 `(5,10,46)`（蓝，符合预期）；改成
+`TestAndWrite` → `(5,41,10)`（绿，被更近的先画片元遮挡）→ 报红；改成 `Disabled` → `(43,43,43)`
+（灰，最后画的穿透了）→ 报红。证据行：
+
+```
+[selftest] depth testonly: middle translucent quad won the centre (5,10,46), depth still the opaque
+pass' 0.0249 (tested, not written)
+```
+
+harness 追加 `depth testonly:` ≥1 行证据要求。
+
+**验收**：test_vsg 71、test_graphics 157 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID）。
