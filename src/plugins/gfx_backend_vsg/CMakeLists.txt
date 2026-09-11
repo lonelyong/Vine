@@ -151,6 +151,8 @@ set_target_properties(vsg_shader_dump PROPERTIES FOLDER third_party)
 add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridge.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgeGeometry.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgePipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CameraBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgMaterialManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRenderer.cpp

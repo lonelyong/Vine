@@ -1,4 +1,15 @@
-# Graphics 模块核心
+﻿# Graphics 模块核心
+
+> 2026-09-11 **SceneBridge 拆分（设计 §19）**：1571 行 → 四单元：`SceneBridge.cpp` 512（会话态 +
+> `syncRenderCommands` + 保留态 `Item`）、`SceneBridgeGeometry.cpp` 473（`buildGeometryData` +
+> 顶点打包 helper）、`SceneBridgePipeline.cpp` 620（`getProgramShaderSet` / `buildStateGroup` +
+> 编译/变体 helper）、`SceneBridgeInternals.hpp` 44（两 TU 唯一共享的 `VariantEntry`，内部头不
+> 安装）。规则：**匿名 helper 只留在唯一使用者的 TU**（22 个 helper 里只有 `VariantEntry` 共享）
+> → 不升级成公开接口。纯搬运：非空行多重集只差 include / 命名空间 / 内部头前言，零代码改写。
+> include 按"符号驱动 + 编译验证"收窄（同步净减 1、几何净减 20、管线净减 12），判据是**插件 +
+> selftest + test_vsg 三份编译命令同时通过**（三目标 include 上下文不同，只验一份会漏）。
+> `test_vsg` / `vsg_backend_selftest` 的源列表已同步（MODULE 不能链接插件）。验收：67 + 151 全绿、
+> 门禁 `RESULT: PASS`（0 VUID，六组证据齐全）。
 
 > 2026-09-11 **深度回读 + 直接深度断言（设计 §18，顺带两个真缺陷）**：`VsgRenderer::readDepthBuffer`
 > 落地 —— 只读无歧义格式（D32_SFLOAT / D16_UNORM），**打包 D24 诚实返回 false**；做法

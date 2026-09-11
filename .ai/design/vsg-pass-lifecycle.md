@@ -1,4 +1,4 @@
-# VSG 后端 pass 生命周期与槽身份（2026-09-11 落地）
+﻿# VSG 后端 pass 生命周期与槽身份（2026-09-11 落地）
 
 > 关联：`.ai/design/vsg-user-mutation-strategy.md`（可变性策略表）、`vsg-pipeline-sharing.md`（管线/数据·状态共享）、
 > `.ai/design/graphics-render-pipeline.md`（engine 纯调度模型）、
@@ -828,3 +828,44 @@ llvmpipe 门禁里；harness 会把证据打出来并**要求至少 5 行像素�
 
 **验证**：test_vsg 67、test_graphics 151 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`
 （0 VUID）；harness 现在分别要求像素 ≥4 行、深度 ≥1 行、MRT ≥2 行证据，缺一组即失败。
+
+## 19. SceneBridge 拆分：几何 / 管线 / 同步三个 TU + 内部头（2026-09-11）
+
+**问题**：§13 收尾时登记的最后一块 —— `SceneBridge.cpp` 1571 行，其中 `syncRenderCommands`
+一个函数占 **256 行**，匿名命名空间里塞着 22 个 helper（顶点数据打包、法线推导、着色器编译、
+ShaderSet 组装、状态组搭建、变体哈希），彼此无共享，却共享同一个 TU：改一处顶点格式要重编
+整文件，helper 的调用关系只能靠读。
+
+**布局**（拆分后；与 §13 同一条规则：每个 TU 只依赖它真正用到的头）：
+
+| 文件 | 职责 | 行数 |
+| --- | --- | --- |
+| `src/SceneBridge.cpp` | 会话态与同步：setter/访问器、诊断路由、退役环、缓存清空/失效、`syncRenderCommands`（逐命令 → 节点替换 + 材质/几何/状态缓存决策） | 512 |
+| `src/SceneBridgeGeometry.cpp` | 几何数据：`buildGeometryData` + 顶点数据打包 helper（`makeWhiteColors` / `makeNormals` / `makeIndexedNormals` / `makeTypedVertexData` / `XyzUnpack` / `unpackXyz`） | 473 |
+| `src/SceneBridgePipeline.cpp` | 管线侧：`getProgramShaderSet`（编译 + 变体缓存查询）、`buildStateGroup`（属性绑定 + 深度/混合状态）+ 对应 helper（`compileProgramStages` / `assembleProgramShaderSet` / `hashStateVariant` / `boundArraysOf` / `customAttributeName` / `stageFlag` / `formatForComponents` / `sampleVertexData` / `shaderCompiler`） | 620 |
+| `src/SceneBridgeInternals.hpp` | 唯一被两个 TU 共享的保留态：`struct SceneBridge::VariantEntry`（变体键 → ShaderSet/管线）。**内部头，不安装** | 44 |
+
+**两条规则**：
+
+1. **匿名命名空间的 helper 只留在它唯一的使用者所在 TU**（拆分时逐个查过调用点：22 个 helper
+   里除 `VariantEntry` 外全是单用户），因此每个 TU 的 helper 都还能保持 `static`/匿名可见性，
+   不升级成公开接口。
+2. **`Item` 留在同步 TU**（它是 `syncRenderCommands` 的保留态），只把两个 TU 都要看的
+   `VariantEntry` 提到 `SceneBridgeInternals.hpp` —— 与 §13 的 `VsgRendererImpl.hpp` 同一手法。
+
+**纯搬运**（可核对）：`git show HEAD:…/SceneBridge.cpp` 与新四个文件的**非空行多重集**只差
+include / 命名空间 / 新内部头前言；**没有一行代码被改写或丢失**。include 块按仓库顺序重建
+（自带头（保留文件 BOM）→ 内部头 → 标准库 → vsg → vine → 同目录引号），并按"符号驱动 + 编译
+验证"收窄：同步 TU 净减 1 个头（它确实用到大部分 vsg 类型，试删的 8 个里有 7 个编译不过又加
+回来），几何 TU 净减 20、管线 TU 净减 12（各自砍掉一半以上）。判据是**编译通过**，且必须用
+插件 / selftest / test_vsg **三份编译命令**同时通过 —— 这三个目标各有自己的 include 上下文，
+只验一个会漏（第一版只验一份，`<vsg/io/Options.h>` 的完整类型需求就是那样漏过去的）。
+
+**验收**：所有目标零警告构建；test_vsg 67、test_graphics 151 全绿；`gfx_lavapipe_check.sh`
+→ `RESULT: PASS`（0 VUID，六组像素/深度/MRT 证据齐全）。两个直接编译插件源码的目标
+（`test_vsg`、`vsg_backend_selftest`）的源列表已同步 —— MODULE 目标不能链接，漏一个就是链接
+期或静默缺失。
+
+**仍未做**：`syncRenderCommands` 256 行仍是单函数最长（内部可按"缓存决策 / 节点替换"再切）；
+D16（变体缓存超限整表清空）、D27（跨 pass 命令缓存）、D28（`VkPipelineCache` 被 vsg 传
+`VK_NULL_HANDLE` 挡住）与真机 GPU 冒烟仍待在册事项里。

@@ -46,6 +46,8 @@ if(vsg_FOUND)
 endif()
 target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridge.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridgeGeometry.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridgePipeline.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgMaterialManager.cpp
 	# The pass protocol (the beginPass/endPass scope) lives in VsgRenderer, and
 	# its validation must be testable WITHOUT a device: constructing the renderer
