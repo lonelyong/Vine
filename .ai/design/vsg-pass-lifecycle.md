@@ -114,15 +114,19 @@ RenderBackend::releasePass(pass)    // 释放该 pass 的全部保留状态（�
   可判断），就地（重）填用 `setPositions/setNormals/setIndices`。调用点迁移后 `AxisGizmo` /
   `FpsOverlay` / `app_shell::addBox` 反而更短（不再需要中转 mesh 与随之失效的 `computeAabb()`）。
 
-未做（需单独排期，均已在下方说明理由）：
+未做（需单独排期；**逐项设计登记见 §9**）：
 
-- **VkPipelineCache 持久化 / PSO 磁盘缓存**：vsg 的 `GraphicsPipeline::compile` 传
+- **VkPipelineCache 持久化 / PSO 磁盘缓存**（§9.3，登记 D28）：vsg 的 `GraphicsPipeline::compile` 传
   `VK_NULL_HANDLE`，Vine 无法从外部注入；需等 vsg 支持或自行接管管线创建。
-- **帧在飞（frames-in-flight）资源回收队列**：当前销毁路径用 `vkDeviceWaitIdle`（已保证正确与
-  validation 干净），但代价是整帧停等。业界做法是 N 帧在飞 + per-frame fence / 延迟删除队列。
-- **命令列表缓存（跨 pass 复用）**：`Scene::collectRenderCommands` 每个 pass 每帧全树遍历，
+- **显式销毁路径的整帧停等**：teardown / resize / release target / depth 变更等仍用
+  `vkDeviceWaitIdle`（已保证正确与 validation 干净），代价是整帧停等。业界做法是 N 帧在飞 +
+  per-frame fence / 延迟删除队列；本轮的**退役环（§8.2）已把无等待的活路径纳入延迟释放**，
+  余下的是把显式路径也改成“延迟释放 + 去掉 wait”。
+- **命令列表缓存（跨 pass 复用）**（§9.2，登记 D27）：`Scene::collectRenderCommands` 每个 pass 每帧全树遍历，
   多 pass 场景仍是 O(passes x nodes)；业界会缓存一次遍历结果供多 pass 复用。
-  （单次遍历内部的 O(depth^2)/O(n·depth) 与重复 bbox 已在本轮修掉，见下）
+  （单次遍历内部的 O(depth^2)/O(n·depth) 与重复 bbox 已修掉，见 §6.1）
+- **材质缓存的逐出与身份**（§9.1，登记 D13）：`VsgMaterialManager` 缓存只增不减，且按裸指针索引
+  不自持 → 同地址新材质会复用旧 Phong 值 / descriptor（与 §8.1 同类）。
 - **后端诊断走日志系统**：`gfx_backend_vsg` 仍用 `fprintf(stderr, ...)`（历史约定 + lavapipe 脚本
   依赖 stderr 文本），而 `app_shell` 等插件已改用 `vine/logging`。收敛需同时改 harness 断言。
 
@@ -245,11 +249,134 @@ descriptor set 可能仍被**已提交但未完成**的命令缓冲引用：view
 - `variant_cache_` 逐出（清模板）与 `program_shader_sets_` 上限逐出都只丢**模板**，
   已建管线仍被各自保留的状态组持有 → 不会销毁在飞对象。
 
-### 8.5 仍未做（按优先级）
+### 8.5 仍未做（逐项设计登记见 §9）
 
-1. **D13：`VsgMaterialManager::cache` 无逐出**（接口存在、全仓零调用）——除内存只增
-   不减外，**同样存在 8.1 的地址复用风险**：材质销毁后缓存条目的 `PhongMaterialValue`
-   + descriptor 会被同地址新材质复用（颜色/高光错误）。建议与 8.1 同法处理（条目持有
-   `Material` + 上限逐出），或在引擎解绑/销毁材质时调 `releaseMaterial()`。
-2. 多 pass 场景的**跨 pass 命令列表缓存**（单次遍历内部已完成，见 §6.1）。
-3. `VkPipelineCache` 持久化（受 vsg 传 `VK_NULL_HANDLE` 阻塞）。
+1. **D13 材质缓存无逐出 + 地址复用风险** → §9.1
+2. **跨 pass 命令列表缓存** → §9.2
+3. **`VkPipelineCache` 持久化** → §9.3
+
+## 9. 待办设计登记（3 项；2026-09-11 记录，尚未实施）
+
+本节只做**设计登记**（问题、根因、方案、验收、风险、依赖），实施排期与优先级在各条目末尾。
+三项都属于“非正确性阻塞”但会被真实场景触发的缺口，登记目的是让后续切片有明确的入口与验收口径。
+
+### 9.1 材质缓存的逐出与身份（D13，§8.1 同源）
+
+**现状（代码事实）**
+- `VsgMaterialManager::cache`：`std::map<Material*, ref_ptr<PhongMaterialValue>>`，只在
+  `getOrCreate(Material*)` 中插入；`SceneBridge` 建管线时经由 `material_manager_` 取用。
+- `updateMaterial / releaseMaterial / find / forEachMaterial / materialCount / clear` 都已实现，
+  但除 `shutdown()` 的 `materialManager.clear()` 外**全仓零调用点**。
+- `MaterialManager.hpp` 的契约把“释放时机”交给调用方（`releaseMaterial()`）。
+
+**根因**
+- 引擎侧没有“材质解绑 / 销毁”事件：`Geometry::setMaterial(nullptr)`、几何销毁、场景清空都不会
+  通知后端；`MaterialManager` 只能靠调用方显式 `releaseMaterial()`，而调用方从未调用。
+- 后端按**裸指针**索引，且条目不自持材质 → 与 §8.1 同类：材质先于条目销毁、地址被复用后，
+  旧 `PhongMaterialValue` + descriptor 会被新材质复用。
+
+**影响**
+1. 内存：会话内每个出现过的 `Material*` 留一份 Phong UBO/descriptor（只增不减，最像泄漏的留存）。
+2. 正确性（静默）：同地址新材质渲染成旧颜色/旧高光，且无任何诊断。
+
+**方案**
+- **A（推荐，与 §8.1 同法，纯后端内改动）**：把缓存值改成自持条目
+  `struct Entry { vine::intrusive_ptr<Material> material; ::vsg::ref_ptr<::vsg::PhongMaterialValue> value; }`；
+  驱逐策略同样双轨：`useCount() == 1`（仅缓存持有）→ 立即驱逐；离开使用集合后按帧计数兜底，
+  再加**容量上限**（建议 256，与 `program_shader_sets_` 的 64/256 量级一致）兜底；
+  `releaseMaterial(m)` 语义不变（仍作显式入口，供引擎调用）。
+- **B（引擎侧事件）**：`Geometry::setMaterial` / `~Geometry` / `Scene::clear` 时调
+  `MaterialManager::releaseMaterial`。语义更直接，但要把 manager 反查到引擎/几何（跨模块耦合、
+  且析构期间调用需小心），**故不作为首选**；两种可并存（A 保证后端自洽，B 让资源更早释放）。
+
+**验收**
+- 新增 `test_vsg` 用例（对应 §8.1 的 `TrackedGeometry` 写法）：`TrackedMaterial` 在 app 释放后
+  立即被驱逐（活体计数归零）；同地址新材质不复用旧条目（旧值 / descriptor 不再共享）。
+- churn 场景下 `materialCount()` 稳定（不随帧数增长）；`shutdown()` 后为 0。
+- 现有 `VsgMaterialManager` 相关用例与 lavapipe 门禁保持 PASS。
+
+**风险 / 回滚**
+- 自持会延长 CPU 侧生命周期 → 由 `useCount()` 立即驱逐抵消（同 §8.1）。
+- 容量上限逐出会丢掉 UBO 复用（下次重建 descriptor）→ 只影响性能，不影响正确性。
+- 回滚成本低（改回裸 map 即可），不涉及公共 API。
+
+**依赖 / 优先级**：无外部依赖；🔴（正确性 + 内存，且与 §8.1 同一根因，建议紧随其后做）。
+
+### 9.2 跨 pass 命令列表缓存（D27）
+
+**现状**
+- `Scene::collectRenderCommands(camera)` 每调一次就**全树遍历 + 剔除 + 排序**，返回新
+  `std::vector<RenderCommand>`；`RenderEngine::frame()` 对每个 pass 各调一次。
+- 单次遍历内部已是 O(n)（§6.1：自顶向下矩阵累积、每趟 bbox 只算一次、排序键预计算）。
+- 引擎典型场景 3~5 个 pass 共用同一 `(scene, camera)`（主 pass + HUD + PiP + 离屏 + 后处理输入），
+  即把同一份结果算 3~5 次；命令列表对同一帧的同一 `(scene, camera)` 是**确定性**的。
+
+**根因**
+- `RenderPass` 只持有 `content`（`Scene*`）与 `camera`，没有“本帧已为该组合收集过”的记忆；
+  收集结果也没有跨 pass 的存放位置（每 pass 一个临时 vector）。
+
+**方案（设计要点，含必须先答的问题）**
+1. **缓存键 = `(scene, camera, frame_seq)`**，`frame_seq` 由 `RenderEngine` 自增（每 `frame()` +1）。
+   **不用**脏标记/时间启发式：相机被就地修改（`Camera::setViewMatrixAsLookAt` 不换指针）也必须失效，
+   帧序号是唯一安全兜底。
+2. **放置位置**：`RenderEngine`（调度器）内的 per-frame 缓存，**不放进 `Scene`**（Scene 不应知道 pass）。
+   引擎在 `frame()` 开始时清空缓存，逐个 pass 查询。
+3. **返回只读视图**：缓存持有 `std::vector<RenderCommand>`，向 pass 暴露
+   `std::span<const RenderCommand>`，避免每 pass 拷贝；`RenderBackend::render` 增加 `std::span` 重载
+   （保留现有 `const std::vector&` 重载以免破坏后端实现）。
+4. **保守起步（建议第一切片）**：仅当本帧存在**多个 pass 使用同一 `(scene, camera)` 且都不做 per-pass
+   追加/覆盖** 时才复用；HUD 叠加类 pass（追加自己的命令）走原路径。全量复用留作后续切片
+   （需要“每 pass 附加命令”的合并策略与排序口径）。
+5. **语义边界**：`Scene::collectRenderCommands` 保持现有可见性/透明度/排序语义不变；缓存只消除
+   重复计算，不改变命令内容与顺序（含 §6.1 的稳定排序语义）。
+
+**验收**
+- `RenderEngineTest`：同帧内 N 个 pass 共享 `(scene, camera)` → `collectRenderCommands` **调用计数为 1**；
+  帧推进后 +1；`scene` 结构变更（`setRoot`/`addChild`/`removeChild`）后 +1；相机就地修改后 +1。
+  （计数用测试桩注入，避免依赖计时。）
+- 命令内容等价性测试：缓存路径与非缓存路径产出的命令序列逐项相等（含 `opacity/isTransparent/
+  renderState/depthExplicit/program/modelMatrix`）。
+- 基准记录：3~5 pass、≥10k 命令场景的 CPU 时间改善（同一 debug 构建对比，方法同 §6.1）。
+
+**风险**
+- 键不全 → 画面停留旧帧（相机就地修改、scene 结构未通知）→ 由 `frame_seq` + 结构 revision 双保险，
+  并在验收里显式覆盖这两个反例。
+- 生命周期：命令持 `intrusive_ptr<Geometry/Material/ShaderProgram>`，缓存会延长一帧内的持有期
+  → 仅一帧，且引擎在帧尾释放（与 §8.1 的自持策略一致方向）。
+
+**依赖 / 优先级**：可能需要给 `Scene` 加结构 revision（或让引擎在 pass 注册/场景挂载时失效）；
+🟡（性能，非正确性）。
+
+### 9.3 VkPipelineCache 持久化 / PSO 磁盘缓存（D28）
+
+**现状**
+- vsg 的 `GraphicsPipeline::compile(...)` 内部以 `VK_NULL_HANDLE` 作为 `VkPipelineCache`
+  （已在 `build/_deps/vsg-src/src/vsg/state/GraphicsPipeline.cpp` 核对）→ Vine **无法从外部注入**
+  管线缓存；每次进程启动都要重新创建全部 PSO。
+- 已有缓解：glslang 阶段的 SPIR-V 结果在 Vine 侧按（program, revision）缓存（L1a）、按（program,
+  layout）缓存 ShaderSet（L1b）、按状态变体缓存管线模板（L2），但这些都是**进程内**。
+- 现状影响：冷启动/场景切换的 PSO 创建耗时无法跨会话复用（磁盘上没有可复用的 `VkPipelineCache`
+  数据）。
+
+**方案（按侵入度排序）**
+- **A 等上游**：向 vsg 提 issue/PR，让 `GraphicsPipeline`（或 `Device`）暴露 `VkPipelineCache`
+  注入点。Vine 侧零改动，后续只需“建 cache → 传 → 落盘”。**首选**（成本最低，且不与 vsg 版本耦合）。
+- **C 折中（先核对可行性）**：若 vsg 允许在 `Options`/`Device` 上挂 cache 句柄（需查新版 API），
+  则 Vine 只做“数据载体”：注入 + `vkGetPipelineCacheData` 落盘 + 启动时回读。侵入度小。
+- **B 自建管线**：绕过 vsg 的 `GraphicsPipeline`，自己 `vkCreateGraphicsPipelines` + 自己的
+  `VkPipelineCache`。需重做 vsg 的 shader 组装/descriptor 兼容/绑定逻辑，与 vsg 版本强耦合，
+  **不推荐**（除非上游长期不支持）。
+
+**验收**
+- 冷启动 vs 热启动对比：PSO 创建耗时或 `VkPipelineCache` 数据大小 > 0（最小可测口径）；
+  可用 `pipelineVariantCount()` + 计时日志作为观察点。
+- **失效安全**：cache 文件损坏 / `pipelineCacheUUID` 与驱动或 Vine 版本不匹配时必须**丢弃并重建**
+  （绝不因坏 cache 崩溃或产生非法管线）；写入使用临时文件 + 原子重命名。
+- 磁盘路径可配置且默认关闭（避免在只读/容器环境写文件失败）。
+
+**风险**
+- 跨驱动/跨版本复用非法 → 必须校验 `pipelineCacheUUID`。
+- 多线程创建管线需 `VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT` 时自行加锁（当前后端
+  单线程，仍应在文档标注前提）。
+
+**依赖 / 优先级**：依赖 vsg 能力（A/C 路线）；🟢（启动性能，非正确性）。

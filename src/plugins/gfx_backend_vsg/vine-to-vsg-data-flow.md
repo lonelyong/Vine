@@ -391,7 +391,7 @@ sequenceDiagram
 
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|
-| D1 | `components` 未当 stride：loc0/loc1 读取写死 `i+=3`，vec4/非 3 分量通道会交错读错 | `SceneBridge::buildGeometry`、`Geometry` localBounds/positionCount | 🔴 数据错位不报错 |
+| D1 | `components` 未当 stride：loc0/loc1 读取写死 `i+=3`，vec4/非 3 分量通道会交错读错 | `SceneBridge::buildGeometry`、`Geometry` localBounds/positionCount | 🔴 数据错位不报错。**已修（2026-08 后端 `unpackXyz`；2026-09-11 CPU 侧 `Geometry`/`RayIntersection`，设计 §6）** |
 | D2 | loc1 `components<3` 被静默忽略（如 uv 错放 loc1）→ 数据被无视、走法线推导 | `buildGeometry` | 🟡 |
 | D3 | 用户 loc6 顶点色被 SceneBridge 白色+opacity 覆盖 → 顶点色无效 | `buildGeometry`(默认路径) | 🔴 用户可感知 |
 | D4 | 各 buffer 顶点数不校验（假定全等 loc0），不一致时错位/越界读 | `buildGeometry` | 🟡 |
@@ -418,9 +418,9 @@ sequenceDiagram
 
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|
-| D13 | `VsgMaterialManager::cache` **无逐出**：`releaseMaterial/updateMaterial` 接口存在但**全仓零调用点** → 每个出现过的 `Material*` 的 PhongMaterialValue 留到 shutdown（最像内存泄漏的留存）。**另：按原始指针索引且不自持 —— 材质销毁后同地址新材质会复用旧 `PhongMaterialValue`/descriptor（颜色/高光错误）**，见 `.ai/design/vsg-pass-lifecycle.md` §8.1/§8.5 | `VsgMaterialManager` | 🔴 |
-| D14 | 裸指针缓存键 + 600 帧滞留窗：Geometry/Material 删除后、逐出前有悬垂窗口（安全依赖场景树保活） | `SceneBridge::cache_` | 🟡 |
-| D15 | `SceneBridge::cache_` 删除几何 600 帧后才释放（延迟释放） | `syncRenderCommands` | 🟢 |
+| D13 | `VsgMaterialManager::cache` **无逐出**：`releaseMaterial/updateMaterial` 接口存在但**全仓零调用点** → 每个出现过的 `Material*` 的 PhongMaterialValue 留到 shutdown（最像内存泄漏的留存）。**另：按原始指针索引且不自持 —— 材质销毁后同地址新材质会复用旧 `PhongMaterialValue`/descriptor（颜色/高光错误）**（与设计 §8.1 同源；方案/验收见 **§9.1**） | `VsgMaterialManager` | 🔴 |
+| D14 | 裸指针缓存键 + 600 帧滞留窗：Geometry/Material 删除后、逐出前有悬垂窗口（安全依赖场景树保活）。**Geometry 部分已修（2026-09-11，设计 §8.1）**：`Item` 自持所索引的几何 → 不再有悬垂窗口；**Material 部分仍见 D13** | `SceneBridge::cache_` | 🟡 |
+| D15 | `SceneBridge::cache_` 删除几何 600 帧后才释放（延迟释放）。**已改（2026-09-11，§8.1）**：仅剩缓存持有时（`useCount()==1`，app 已放弃）**立即驱逐**；仍被引用（隐藏/剔除/临时离场）才走 600 帧复用窗 | `syncRenderCommands` | 🟢 |
 | D16 | 共享/变体缓存只增不减（随"历史见过的不同变体数"增长）；2026-09-08 起 `clearCache()`（槽 teardown/resize/release）同时清 `shared_objects_`/`program_shader_sets_`/`variant_cache_`，**槽内活跃期间仍不修剪** | `SceneBridge` | 🟢 |
 | D17 | shutdown 顺序错 → 撞 `VSG_MAX_DEVICES==1`；`releaseWindow()` 漏调会 Destroy Qt 宿主窗口 | `VsgRenderer::shutdown` | 🟡 |
 | D18 | resize / release / 离屏 resize 走 `deviceWaitIdle` 全停（简单但会整帧卡顿） | `VsgRenderer` | 🟢 |
@@ -453,3 +453,10 @@ sequenceDiagram
 5. **D1**：读端按 `components` 跳步，兑现数据模型承诺。
 
 
+
+### 13.8 性能 / 启动层（2026-09-11 补充登记，设计见 `.ai/design/vsg-pass-lifecycle.md` §9）
+
+| ID | 缺陷 | 位置 | 严重度 |
+|---|---|---|---|
+| D27 | **跨 pass 命令列表重复计算**：`Scene::collectRenderCommands` 每 pass 每帧全树遍历 + 剔除 + 排序，多 pass 共用同一 `(scene, camera)` 时算 3~5 次；单次遍历内部已是 O(n)（§6.1），缺的是跨 pass 复用与只读视图（`std::span<const RenderCommand>`）。设计要点/验收/风险见设计文档 §9.2 | `RenderEngine::frame` / `Scene` | 🟡 性能 |
+| D28 | **无 VkPipelineCache 持久化**：vsg `GraphicsPipeline::compile` 传 `VK_NULL_HANDLE` → Vine 无法注入管线缓存，每次启动重建全部 PSO（glslang/ShaderSet/变体模板均只进程内缓存）。路线 A（等上游暴露注入点）/ C（若 Options/Device 可挂）/ B（自建管线，不推荐）；`pipelineCacheUUID` 不匹配必须安全丢弃。见设计文档 §9.3 | vsg / `VsgRenderer` | 🟢 启动性能 |

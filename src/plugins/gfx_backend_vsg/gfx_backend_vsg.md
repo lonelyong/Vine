@@ -35,6 +35,13 @@
 > pipeline；并新增 L1 program ShaderSet 缓存与 L2 变体模板缓存（跳过重复
 > configurator）。权威设计见 `.ai/design/vsg-pipeline-sharing.md`；回归测试见
 > `tests/test_vsg/SceneBridgePipelineSharingTest.cpp`（含 1k 量级不变量）。
+>
+> ⚠️ **2026-09-11 更新（保留状态身份 / 在飞资源生命周期）**：保留缓存的条目现在**自持**它
+> 所索引的对象（裸指针键 + 不自持会让对象销毁后的同地址新对象复用旧网格 / 旧 SPIR-V /
+> 旧拒绝记录），`rejected_` 合并进 `Item`；活路径替换的保留节点先经 `retireNode()` 停放、
+> 由 `advanceRetireRing()`（每**已提交**帧一次，环深 4 = 命令槽 3 + 1）延后销毁；`Group::addChild`
+> 拒绝成环。**权威设计/契约见 `.ai/design/vsg-pass-lifecycle.md` §8**（含未做项逐项设计登记 §9：
+> D13 材质缓存逐出与身份、D27 跨 pass 命令列表缓存、D28 VkPipelineCache 持久化）。
 
 ## 1. 模块定位与插件模型
 

@@ -12,7 +12,7 @@
 > 拒绝成环**（祖先链检查，静默拒绝），否则递归遍历栈溢出并破坏包围盒缓存前提。
 > 复查通过：单线程（无 thread/锁）、`shutdown()` 先 `deviceWaitIdle` 再整体重建、
 > `clearCache()` 5 处调用点均先 `waitForIdle`。仍未做：D13（材质缓存无逐出 + 同地址
-> 复用风险）、跨 pass 命令缓存、`VkPipelineCache`。验证：test_graphics 150 /
+> 复用风险）、跨 pass 命令缓存、`VkPipelineCache`（三项逐项设计登记见该文档 §9）。验证：test_graphics 150 /
 > test_vsg 55 / lavapipe 门禁 RESULT: PASS（含新 churn phase）。
 
 > 2026-09-11 **遍历热路径 + 顶点属性 stride**：`Scene::collectRenderCommands` 每 pass 每帧全树走，
