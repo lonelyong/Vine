@@ -422,3 +422,37 @@ test_graphics 151 → 156。
 旧布局分配 `Scene`，新库越界写 → 堆损坏 → `free(): invalid pointer`（冒烟当场崩，gdb 栈落在插件里的
 一次 `vector::emplace_back`）。**改 SDK 类布局后必须整体刷新 `dist/lib/*.so*` +
 `dist/plugins/vine/*.so` + `dist/bin/Vine`。**
+
+## 13. 前端也有诊断通道了：未解析的 pass 输入不再静默（D37，2026-09-11）
+
+**问题（结构性）**：`RenderEngine` 只是把宿主的 sink **转发**给后端，**自己没有任何上报手段** ——
+而后端从前端拿到的只是"一个没有 source 的 pass"，看不到**为什么**。于是前端层面最典型的接线错误
+**永远静默**：
+
+- `ScreenPass::resolveInputTextures` 只保留**第一个非空**输入，**全为空**时 `source_` 置空，
+  `execute` 直接 return → **整个 pass 什么也不画**；
+- 触发条件全是"接线错误"：生产者被 `setEnabled(false)`、被 `removePass`、改了 `setOutputName`、
+  或者 pass 顺序排在消费者**之后**（注册表每帧清空）；
+- 宿主只看到一个"缺内容的画面"，零解释（后端可能碰巧因为别的原因报一条，纯属运气）。
+
+**修法**：
+
+1. **给前端一条自己的上报路径**：`RenderEngine::reportEngineProblem()`（私有）把消息送进**同一个**
+   宿主 sink（`setDiagnosticSink` 装的那个），并计入新的 `engineDiagnosticCount()`
+   （`diagnosticCount()` 仍是"后端报了多少条"，语义不变）。前端没有 printf 风格的助手，消息用
+   `String` 拼接（`formatDiagnostic` 是后端的）。
+2. **在 `resolvePassInputs` 里判定并上报**：解析完声明的名字后，若**一个都没解析到** →
+   `ContentSkipped` 警告，消息含**pass 名 + 输入名**，并提示"检查生产者的 order / enabled / output name"。
+   注意"多名字=备选链"的用法：**只要有一个解析到就不报**。
+3. **每 pass 只报一次 + 重新武装**：`unresolved_inputs_reported_` 集合记住已报过的 pass；输入重新解析
+   成功后从集合移除（以后再断就再报）；`removePass` / `clearPasses` 清理集合（否则新 pass 复用同地址
+   会被旧记录噤声）。
+4. 契约写进 `RenderPass::addInputName`：**生产者必须在本帧更早运行**（更低的 order，或同 order 更早
+   注册），注册表每帧清空；全部落空即"这个 pass 不画东西"并上报。
+
+**测试**：`RenderEngineTest.UnresolvedDeclaredInputIsReportedOnceAndRearmed` —— 无生产者时
+`engineDiagnosticCount()==1`、消息含 `GBuffer` 与 `light`、再跑两帧仍为 1；接上生产者后不再增加；
+**再撤掉生产者后重新报**（`==2`）。
+
+**验收**：test_graphics 157、test_vsg 71 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID）；
+全量重新部署后 dist 冒烟 25s 存活，且 app **没有**任何未解析输入告警（内置管线的接线正确）。

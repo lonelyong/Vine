@@ -835,6 +835,78 @@ bool runDepthBorrowValidationPhase(vine::vsg::VsgRenderer& renderer, const Camer
         return true;
     };
 
+    const std::size_t before_3 = received.size();
+    // Case 3: TRANSIENT. The borrowing pass runs BEFORE its source's pass, so at
+    // build time the source has no depth image yet. The target must still render
+    // (with its own depth) and then RETRY the borrow as soon as the source
+    // exists — a borrow that was refused once must not stay refused for good.
+    {
+        auto source = RenderTargetPtr(new RenderTarget());
+        source->setName(u8"late-src");
+        source->setSize(256, 144);
+        source->attachColor(RenderTarget::ColorFormat::RGBA8);
+        source->attachDepth(RenderTarget::DepthFormat::D32);
+        source->setDepthPromotion(false);
+
+        auto borrower = RenderTargetPtr(new RenderTarget());
+        borrower->setName(u8"early-dst");
+        borrower->setSize(256, 144);
+        borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
+        borrower->shareDepth(source);
+
+        auto borrower_pass = RenderPassPtr(new RenderPass());
+        auto source_pass   = RenderPassPtr(new RenderPass());
+
+        // The borrower draws only the FAR quad: while its borrow is honoured the
+        // source's near depth must reject it, so "blue" means "the borrow was not
+        // in effect this frame" — the discriminator for the retry.
+        std::vector<std::size_t> blue_per_frame;
+        for (int i = 0; i < frames + 2; ++i) {
+            renderer.beginFrame();
+
+            // Borrower first (order 0): the source is not built yet on frame 1.
+            renderer.beginPass(borrower_pass.get());
+            renderer.setPassOrder(0);
+            renderer.setRenderTarget(borrower.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(clear, true);
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
+            renderer.endPass();
+
+            renderer.beginPass(source_pass.get());
+            renderer.setPassOrder(1);
+            renderer.setRenderTarget(source.get());
+            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+            renderer.clear(clear, true);
+            renderer.setLights({});
+            renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
+            renderer.endPass();
+
+            renderer.endFrame();
+            renderer.swapBuffers();
+        }
+
+        PixelImage late;
+        if (!readTarget(renderer, borrower.get(), late)) {
+            std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the late-source borrower\n");
+            ok = false;
+        }
+        else if (late.blueDominant() != 0u) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: %zu pixel(s) of the late-source borrower are still blue after %d frames —"
+                         " the borrow was refused once and never retried (the source exists by now, so the borrowed"
+                         " near depth must reject the far quad)\n",
+                         late.blueDominant(), frames + 2);
+            ok = false;
+        }
+        renderer.releasePass(borrower_pass.get());
+        renderer.releasePass(source_pass.get());
+        renderer.releaseRenderTarget(borrower.get());
+        renderer.releaseRenderTarget(source.get());
+    }
+    const std::size_t transient_reports = received.size() - before_3;
+
     const std::size_t before_1 = received.size();
     if (!run_case(256, 144, false, 128, 72, u8"half-resolution borrower")) {
         ok = false;
@@ -874,18 +946,26 @@ bool runDepthBorrowValidationPhase(vine::vsg::VsgRenderer& renderer, const Camer
                      promoted_reports);
         ok = false;
     }
-    if (mismatched_extent_reports > 1u || promoted_reports > 1u) {
+    if (mismatched_extent_reports > 1u || promoted_reports > 1u || transient_reports > 1u) {
         std::fprintf(stderr,
-                     "[selftest] FAIL: a refused depth borrow must be reported once, got %zu / %zu over %d frames\n",
-                     mismatched_extent_reports, promoted_reports, frames);
+                     "[selftest] FAIL: a refused depth borrow must be reported ONCE per episode, got %zu"
+                     " mismatched-extent / %zu promoted-source / %zu transient report(s) over %d frames\n",
+                     mismatched_extent_reports, promoted_reports, transient_reports, frames);
+        ok = false;
+    }
+    if (transient_reports == 0u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: building a borrower before its source exists was not reported; the first"
+                     " frame renders without the shared depth and the host cannot tell why\n");
         ok = false;
     }
 
     if (ok) {
         std::fprintf(stderr,
                      "[selftest] depth borrow: mismatched extent (%zu report(s)) and depth-promoted source (%zu"
-                     " report(s)) both fell back to the target's own depth and still drew the near quad\n",
-                     mismatched_extent_reports, promoted_reports);
+                     " report(s)) both fell back to the target's own depth and still drew the near quad; a borrower"
+                     " built before its source (%zu report(s)) retried and used the borrowed depth\n",
+                     mismatched_extent_reports, promoted_reports, transient_reports);
     }
     return ok;
 }

@@ -94,6 +94,7 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         t.depth_source         = nullptr;
         t.depth_share_barrier  = {};
         t.depth_sampleable     = false;
+        t.depth_borrow_pending_reported = false;
         t.graph                = {};
         t.depth_on_shader_set  = {};
         t.depth_testonly_shader_set = {};
@@ -137,10 +138,26 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         //    frame tripped VUID-VkImageMemoryBarrier-oldLayout-01197 (the
         //    depth-share barrier assumes the attachment layout) and drew
         //    nothing.
-        const auto   src_it = impl->targets.find(depth_src);
-        const char*  reason = nullptr;
-        if (src_it == impl->targets.end() || src_it->second.depth_view == nullptr) {
-            reason = "its source has no depth image this frame";
+        const auto  src_it   = impl->targets.find(depth_src);
+        const bool  src_ready = src_it != impl->targets.end() && src_it->second.depth_view != nullptr;
+        const char* reason    = nullptr;
+        if (!src_ready) {
+            // TRANSIENT: the source has no depth image yet (its pass has not
+            // built this frame — e.g. an engine warm-up that ran this target's
+            // consumer before the producer). Not remembered as unusable: this
+            // frame builds with its own depth and the borrow is retried as soon
+            // as the source exists (render()'s rebuild predicate). Reported once
+            // per episode, so a source that never arrives is not silent either.
+            if (!t.depth_borrow_pending_reported) {
+                reportFailure(vine::graphics::DiagnosticSeverity::Warning,
+                              vine::graphics::DiagnosticCategory::ContentSkipped,
+                              formatDiagnostic(u8"shared-depth target '%s': source '%s' has no depth image yet;"
+                                               u8" this target builds its own depth and retries the borrow",
+                                               target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str(),
+                                               depth_src->name().empty() ? "(unnamed)" : depth_src->name().stdstr().c_str()));
+                t.depth_borrow_pending_reported = true;
+            }
+            borrowed = false;
         }
         else if (src_it->second.width != static_cast<int>(w) || src_it->second.height != static_cast<int>(h)) {
             reason = "its source has a different size (a framebuffer attachment must have the framebuffer's dimensions)";
@@ -149,16 +166,22 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
             reason = "its source promoted its depth to a sampled texture (a sampled depth cannot be attached)";
         }
         if (reason != nullptr) {
+            // PERSISTENT: a property of the setup, not of this frame — the same
+            // source will stay unusable until the host changes it, so it is
+            // remembered (reported once) and retried only when the host points
+            // the borrow at a different source.
             reportFailure(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
                           formatDiagnostic(u8"shared-depth target '%s': source '%s' cannot be borrowed (%s); this target"
                                            u8" builds its own depth",
                                            target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str(),
                                            depth_src->name().empty() ? "(unnamed)" : depth_src->name().stdstr().c_str(),
                                            reason));
-            // Remembered as reported: the same unusable source must not produce a
-            // diagnostic every frame (the message names what to fix).
             t.unusable_depth_source = depth_src;
             borrowed                = false;
+        }
+        else {
+            // Honoured (or nothing to retry): re-arm the transient report.
+            t.depth_borrow_pending_reported = false;
         }
     }
 

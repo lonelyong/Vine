@@ -56,6 +56,21 @@ std::size_t RenderEngine::diagnosticCount() const
     return backend_ != nullptr ? backend_->diagnosticCount() : 0u;
 }
 
+std::size_t RenderEngine::engineDiagnosticCount() const noexcept
+{
+    return engine_diagnostic_count_;
+}
+
+void RenderEngine::reportEngineProblem(vine::graphics::DiagnosticSeverity severity,
+                                       vine::graphics::DiagnosticCategory category,
+                                       const String&                message)
+{
+    ++engine_diagnostic_count_;
+    if (diagnostic_sink_) {
+        diagnostic_sink_(vine::graphics::RenderDiagnostic{ severity, category, message });
+    }
+}
+
 bool RenderEngine::initialize()
 {
     if (backend_ == nullptr) {
@@ -218,6 +233,9 @@ void RenderEngine::removePass(raw_ptr<RenderPass> pass)
     slots_.erase(std::remove_if(slots_.begin(), slots_.end(),
                                 [pass](const Slot& slot) { return slot.pass.get() == pass; }),
                  slots_.end());
+    // A pass that leaves the list cannot be reported through again: an address
+    // kept here would be reused by a NEW pass and silence its first report.
+    unresolved_inputs_reported_.erase(pass);
 
     // A pass is registered at most once, so any removal drops its only user:
     // release the backend state it retained — keyed by the pass itself (the
@@ -248,6 +266,7 @@ void RenderEngine::clearPasses()
     }
 
     slots_.clear();
+    unresolved_inputs_reported_.clear();
 
     if (backend_ != nullptr) {
         for (const auto& entry : removed) {
@@ -315,6 +334,30 @@ void RenderEngine::resolvePassInputs(raw_ptr<RenderPass> pass)
         resolved.push_back(resolve(name));
     }
     pass->resolveInputTextures(resolved);
+
+    // A declared input nobody published this frame means the pass draws
+    // NOTHING (ScreenPass keeps the first non-null input and returns early when
+    // there is none), so the frame silently misses its content: the wiring is
+    // the engine's job, so it says so. A pass may declare several alternative
+    // names (a chain that falls back), so this only fires when NONE of them
+    // resolved.
+    const bool any_resolved = std::any_of(resolved.begin(), resolved.end(),
+                                          [](raw_ptr<RenderTarget> target) { return target != nullptr; });
+    if (any_resolved) {
+        // Re-arm: if this pass loses its producer later, that is a new problem.
+        unresolved_inputs_reported_.erase(pass);
+        return;
+    }
+    if (unresolved_inputs_reported_.insert(pass).second) {
+        // The frontend has no printf-style helper of its own: the message is
+        // assembled from String pieces (a formatting utility is the backend's).
+        const String pass_name = pass->name().empty() ? String(u8"(unnamed)") : pass->name();
+        reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
+                            vine::graphics::DiagnosticCategory::ContentSkipped,
+                            String(u8"pass '") + pass_name + String(u8"' declared input '") + names.front() +
+                                String(u8"' but no pass published it this frame; the pass draws nothing"
+                                       u8" (check the producer's order, its enabled state and its output name)"));
+    }
 }
 
 void RenderEngine::publishPassOutput(raw_ptr<RenderPass> pass)

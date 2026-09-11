@@ -223,6 +223,13 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
      * name against its named-output registry before execute() and hands the
      * matching targets to resolveInputTextures().
      *
+     * The producer must run EARLIER in the same frame (a lower pass order, or
+     * an earlier registration at the same order): the registry is cleared at the
+     * start of every frame. Several names may be declared as alternatives — the
+     * first that resolves is used (a chain that falls back). When NONE of them
+     * resolves, the pass draws nothing; the engine reports that on the host's
+     * diagnostic channel, because a wiring mistake used to be silent.
+     *
      * @param name Name of a published output to consume.
      */
     void addInputName(const String& name);

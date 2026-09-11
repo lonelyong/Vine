@@ -464,9 +464,23 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // A target whose passes disagree (mixed) LOADs too: the passes that asked
     // for a clear clear it themselves (ContentSlot::clears_depth).
     const bool want_load_depth = target.wantsDepthLoad();
+    // A depth borrow that could not be honoured yet (the source had no depth
+    // image when this target was built) is retried as soon as the source has
+    // one: the baked borrow differs from the requested one. A source that is
+    // permanently unusable is remembered as such (unusable_depth_source), so
+    // this retries only while the borrow is merely WAITING — a disabled or
+    // never-built producer costs one map lookup per frame, not a rebuild loop.
+    vine::graphics::RenderTarget* wanted_source =
+        target_key != nullptr ? target_key->depthSource() : nullptr;
+    bool borrow_pending = false;
+    if (wanted_source != nullptr && target.depth_source != wanted_source &&
+        target.unusable_depth_source != wanted_source) {
+        const auto src_it   = impl->targets.find(wanted_source);
+        borrow_pending = src_it != impl->targets.end() && src_it->second.depth_view != nullptr;
+    }
     if (target_key != nullptr &&
         (target.graph == nullptr || target.width != target_key->width() ||
-         target.height != target_key->height() || target.depth_load != want_load_depth)) {
+         target.height != target_key->height() || target.depth_load != want_load_depth || borrow_pending)) {
         // First render into this off-screen target, or it was resized, or its
         // depth-clear policy changed: build (or rebuild) its attachments +
         // render graph. Any content slots compiled against an older graph are

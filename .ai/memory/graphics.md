@@ -1,14 +1,21 @@
 ﻿# Graphics 模块核心
 
+> 2026-09-11 **前端也有诊断通道了（D37，设计 graphics-render-pipeline §13）**：`RenderEngine` 以前只
+> 转发宿主的 sink，自己不能上报，于是"`ScreenPass` 声明的输入一个都没解析到 → 什么都不画"**完全静默**
+> （生产者被禁用/移除/改名/排在后面都触发）。现在 `reportEngineProblem()` 送同一宿主 sink +
+> `engineDiagnosticCount()`，`resolvePassInputs` 在**全部落空**时 `ContentSkipped` 上报（含 pass 名与
+> 输入名）；每 pass 只报一次、解析成功即**重新武装**、`removePass`/`clearPasses` 清理记录（否则新 pass
+> 复用同地址会被旧记录噤声）。契约：声明的输入必须由本帧**更早**运行的 pass 发布（注册表每帧清空），
+> 多名字=备选链，只要一个命中就不报。
+
 > 2026-09-11 **深度借用的可用性校验（D36，设计 §23）**：`shareDepth` 只在源深度图"原样可用"时才能
-> 成立，以前只检查了"源本帧没渲染过"，另两种情形全静默：**尺寸不同** → 非法帧缓冲
-> （`VUID-VkFramebufferCreateInfo-pAttachments-00880`，llvmpipe 上看起来还正常）；**源把深度提升成
-> 可采样**（`setDepthPromotion(true)`）→ 源深度留在 `SHADER_READ_ONLY_OPTIMAL` 而 render pass 声明的
-> 是附件布局，**每帧** `VUID-VkImageMemoryBarrier-oldLayout-01197` 且**什么都没画**。修法：构建时三
-> 向校验（有深度图 / 尺寸相同 / 未提升，用构建期标志 `Target::depth_sampleable`）→ 失败则 `ContentSkipped`
-> **报一次** + 墓碑 + **回落自有深度**。契约：借深度要求源**同尺寸**且 `setDepthPromotion(false)`
-> （内置 deferred 管线两件都做到了）。selftest `runDepthBorrowValidationPhase` 两个用例各断言"恰好 1
-> 条诊断 + 近四边形必须赢"，harness 要求 `depth borrow:` ≥1 行。
+> 成立。三种不可用情形分**两类命运**：**瞬时**（源本帧还没深度图，如预热顺序）→ 本帧用自己的深度渲染
+> + **源一出现就重试借**（`render()` 重建谓词新增一项）+ 每段只报一次；**持久**（尺寸不同 / 源把深度
+> `setDepthPromotion(true)` 成可采样）→ 墓碑报一次 + 回落自有深度。三类过去都静默且都画错：尺寸不同 →
+> 非法帧缓冲（llvmpipe 上还"看起来正常"）；源提升过 → 每帧 `VUID-VkImageMemoryBarrier-oldLayout-01197`
+> 且什么都没画。**坑**：第一版把三类都当持久 → app 预热阶段把借永久关掉（表面能跑，半透明内容再也测不到
+> 不透明深度）；selftest 的"借生效后远面必须被拒"用例当场报红。契约：源**同尺寸** + `setDepthPromotion(false)`
+> + 源先于借方建好（否则下一帧重试）。harness 要求 `depth borrow:` ≥1 行。
 
 > 2026-09-11 **内容收集的帧内复用（D27，设计 graphics-render-pipeline §12）**：
 > `RenderEngine::frame` 开局给每个场景 `Scene::setContentFrame(token)`（幂等），同一帧内**同视图**的

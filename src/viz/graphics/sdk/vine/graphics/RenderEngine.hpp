@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <vector>
 
 #include <vine/Object.hpp>
@@ -102,6 +103,18 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      * @return Number of reported diagnostics (0 when no backend is set).
      */
     std::size_t diagnosticCount() const;
+
+    /** @brief Gets how many diagnostics the ENGINE itself reported.
+     *
+     * The backend reports what it could not draw; this counts what the ENGINE
+     * could not wire — currently a pass that declared an input no pass
+     * published this frame, which means the pass draws nothing (the wiring is
+     * something the backend cannot see, and it used to be silent). Reported to
+     * the same host sink as the backend's diagnostics.
+     *
+     * @return Number of diagnostics the engine reported.
+     */
+    [[nodiscard]] std::size_t engineDiagnosticCount() const noexcept;
 
     /** @brief Initializes the backend.
      *
@@ -329,6 +342,20 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     void publishPassOutput(raw_ptr<RenderPass> pass);
 
+    /** @brief Reports one problem the engine found in the pass wiring.
+     *
+     * The engine owns the host's sink, so the message reaches the host whether
+     * or not a backend is set (a wiring problem exists before any backend
+     * draws). Counted in engineDiagnosticCount().
+     *
+     * @param severity How bad the situation is.
+     * @param category What it is about.
+     * @param message  Human-readable detail, naming the pass and the slot.
+     */
+    void reportEngineProblem(vine::graphics::DiagnosticSeverity severity,
+                             vine::graphics::DiagnosticCategory category,
+                             const String&                message);
+
     /** @brief One registered draw slot in the engine's ordered pass list.
      *
      * A slot draws its bound @p content each frame; content may be null (a
@@ -363,6 +390,15 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     /// Named-output registry: slot name -> published render target. Cleared at
     /// the start of every frame and rebuilt as the ordered passes publish.
     std::map<String, intrusive_ptr<RenderTarget>> outputs_;
+
+    /// Count of diagnostics this engine reported itself (see
+    /// engineDiagnosticCount).
+    std::size_t engine_diagnostic_count_ = 0;
+    /// Passes already reported for an unresolved declared input, so a producer
+    /// that stays absent does not produce one message per frame. A pass whose
+    /// input resolves again is dropped from the set, so a later breakage is
+    /// reported again (pruned with the pass list).
+    std::set<raw_ptr<const RenderPass>> unresolved_inputs_reported_;
 };
 
 V_GRAPHICS_NS_END

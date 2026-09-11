@@ -4125,3 +4125,64 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
     EXPECT_EQ(scene->contentCollectCount() - walks_before, 4u);       // the next frame walks again
     EXPECT_EQ(scene->contentCollectReuseCount() - reuses_before, 2u);
 }
+
+/**
+ * @brief An unresolved declared pass input is reported, not silently empty.
+ *
+ * A ScreenPass keeps the first input that resolves and draws nothing when there
+ * is none, so a pass whose producer did not run this frame (disabled, removed,
+ * renamed, or ordered after it) used to lose its content without a word — the
+ * wiring is the engine's job, and only the engine can see it (the backend just
+ * gets a pass with no source). Reported once per pass, and re-armed when the
+ * input resolves again.
+ */
+TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    // A consumer with no producer for "GBuffer".
+    auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
+    consumer->setName(u8"light");
+    consumer->setCamera(camera.get());
+    consumer->addInputName(u8"GBuffer");
+    engine->addPass(consumer, 0);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"GBuffer"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"light"), vine::String::npos);
+
+    // Still missing: reported once, not once per frame.
+    engine->frame(0.016);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(received.size(), 1u);
+
+    // A producer publishing that name resolves the input: nothing more to say.
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"gbuffer");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(RenderTargetPtr(new RenderTarget()));
+    producer->setOutputName(u8"GBuffer");
+    engine->addPass(producer, -1);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // The producer leaves again: the same problem, so it is reported again.
+    engine->removePass(producer.get());
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(received.size(), 2u);
+}

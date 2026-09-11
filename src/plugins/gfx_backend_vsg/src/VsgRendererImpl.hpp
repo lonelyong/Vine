@@ -364,7 +364,14 @@ struct VsgRenderer::Impl {
         // so a later shareDepth() of this target cannot be honoured (see the
         // borrow validation in buildOffscreenTarget). Recorded at build time
         // because that is what the created render pass actually does.
-        bool        depth_sampleable = false;        // ---- content slots (retained Views under graph), keyed by owning pass ----
+        bool        depth_sampleable = false;
+        // True while a requested depth borrow could not be honoured YET because
+        // the source had no depth image at build time, and the report for that
+        // episode was already emitted. Transient: the borrow is retried as soon
+        // as the source exists (see render()'s rebuild predicate) and this flag
+        // is cleared when it is honoured, so a source that arrives late is
+        // reported once, not every frame.
+        bool        depth_borrow_pending_reported = false;        // ---- content slots (retained Views under graph), keyed by owning pass ----
         std::map<SlotKey, ContentSlot> content_slots;
         // ---- PiP views sampling other targets (drawn under this graph) ----
         std::map<SlotKey, ScreenSlot> screen_slots;
