@@ -436,24 +436,16 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         // A pass re-requesting a clear updates ITS OWN graph — never its
         // siblings': a pass clears to its own request (§28), so one pass' clear
         // must not become another pass' background colour.
-        const bool want_color_clear = !t.clear_seen || impl->request.presenting;
+        //
+        // Only the clear VALUE is updated here, never the graph's render pass: a
+        // pipeline is compiled against the render pass current when its view was
+        // compiled, so swapping in a render pass with a different load-op would
+        // leave that pipeline incompatible with the pass it is recorded in
+        // (VUID-vkCmdDraw-renderPass-02684). A pass' colour load-op is therefore
+        // fixed when its graph is created — from the same request that created
+        // it, so it cannot drift.
         const ::vsg::vec4 wanted_color =
-            (t.clear_seen || impl->request.presenting) ? t.clear_color : ::vsg::vec4{ 0.2f, 0.2f, 0.2f, 1.0f };
-        if (built->second.color_clear != want_color_clear) {
-            // The colour load-op is baked into the render pass, so a pass that
-            // starts (or stops) clearing needs its render pass and framebuffer
-            // re-created; the pass' views stay children of its graph.
-            waitForIdle(impl->viewer.get());
-            auto [render_pass, framebuffer] =
-                make_pass_objects(want_color_clear, built->second.load_depth, /*promote*/ false, /*seed*/ false);
-            built->second.render_pass = render_pass;
-            built->second.framebuffer = framebuffer;
-            built->second.color_clear = want_color_clear;
-            if (built->second.graph != nullptr) {
-                built->second.graph->renderPass  = render_pass;
-                built->second.graph->framebuffer = framebuffer;
-            }
-        }
+            t.clear_seen ? t.clear_color : ::vsg::vec4{ 0.2f, 0.2f, 0.2f, 1.0f };
         if (built->second.clear_color != wanted_color && built->second.graph != nullptr &&
             !built->second.graph->clearValues.empty()) {
             built->second.clear_color                 = wanted_color;
@@ -464,17 +456,22 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         return built->second.graph;
     }
 
-    // This pass' OWN clear request (the open pass scope) decides its load-ops.
-    // Two rules keep the historical behaviour for existing hosts:
-    //  - a target on which clear() was NEVER called clears both its colour and
-    //    its depth every pass, exactly as the former single render pass did —
-    //    such a target is normally a sampling destination (a PiP / post-chain
-    //    stage) that expects a clean plate every frame;
-    //  - a target whose colour image has never been cleared must clear it
-    //    whatever this pass asked for: the image is UNDEFINED and a render pass
-    //    may not LOAD an UNDEFINED image.
-    const bool want_color_clear = !t.clear_seen || impl->request.presenting;
-    const bool want_depth_clear = !t.clear_seen || (impl->request.presenting && impl->request.clear_depth);
+    // This pass' OWN clear request (the open pass scope) decides its load-ops —
+    // nothing else. A pass that never asked for a clear must LOAD what an
+    // earlier pass left, or the stacked-pass pipelines break: the engine's
+    // deferred + forward-composite pipeline stacks fullscreen lighting and the
+    // forward transparent content on ONE off-screen target whose passes all set
+    // clearEnabled=false, so "clear it anyway" wipes the lit result the next
+    // pass was meant to composite over.
+    //
+    // A pass that DID ask for a clear clears, whatever its siblings asked for.
+    //
+    // The one exception is the bootstrap case: a target whose colour image has
+    // never been cleared holds an UNDEFINED image, and a render pass may not
+    // LOAD an UNDEFINED image, so the first pass into a NEW target clears it
+    // regardless. The depth counterpart is the seed variant (needs_seed).
+    const bool want_color_clear = impl->request.presenting;
+    const bool want_depth_clear = impl->request.presenting && impl->request.clear_depth;
     const bool color_clear      = want_color_clear || !t.color_seeded;
     const ::vsg::vec4 clear_color =
         (t.clear_seen || impl->request.presenting) ? t.clear_color : ::vsg::vec4{ 0.2f, 0.2f, 0.2f, 1.0f };

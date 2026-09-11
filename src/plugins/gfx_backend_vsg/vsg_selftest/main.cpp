@@ -2933,6 +2933,118 @@ bool runMixedDepthPolicyPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
 }
 
 /**
+ * @brief Verifies a non-clearing pass does not wipe the pass stacked before it.
+ *
+ * The engine's deferred + forward-composite pipeline stacks two passes on ONE
+ * off-screen target — the fullscreen deferred lighting, then the forward
+ * transparent content — and NEITHER of them enables clearing. Only a pass that
+ * asks for a clear may discard what an earlier pass drew, so the second pass
+ * must LOAD the colour the first left and composite over it. Serving this with a
+ * per-TARGET "clear once, whichever pass runs" rule instead wipes the lit result
+ * and the scene silently loses its opaque content (the regression this phase
+ * pins).
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera both passes render with.
+ * @param frames   Frames to drive.
+ * @return true when the second pass composited over the first.
+ */
+bool runStackedPassPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+    auto opaque_material = MaterialPtr(new Material());
+    opaque_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    auto overlay_material = MaterialPtr(new Material());
+    overlay_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f)); // blue
+    // The first pass fills the whole target; the second draws a smaller, NEARER
+    // quad over it, so everything outside that quad must still be the first
+    // pass' fill. Both quads sit inside the visible depth range: reverse-Z maps
+    // z = -1 to the far plane's NEIGHBOURHOOD and z = +1 to the near one, so a
+    // quad at z = 0 would land exactly on the cleared depth (0.0) and be
+    // rejected by the strict GREATER test.
+    RenderCommand fill_command(makeVisibleQuad(1.0f, -1.0f), opaque_material, Mat4d());
+    RenderCommand dot_command(makeVisibleQuad(0.4f, 1.0f), overlay_material, Mat4d());
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setSize(256, 144);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto fill_pass  = RenderPassPtr(new RenderPass());
+    auto stack_pass = RenderPassPtr(new RenderPass());
+
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+
+        // NEITHER pass calls clear(): this is the engine's composite target,
+        // which only ever receives non-clearing passes. The colour image is
+        // still defined, because the first pass into a new target has to clear
+        // it (a render pass may not LOAD an UNDEFINED image) — that bootstrap
+        // must not become "every pass of this target clears".
+        renderer.beginPass(fill_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(target.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::Disabled);
+        renderer.setLights({});
+        renderer.render(std::vector<RenderCommand>{ fill_command }, camera.get());
+        renderer.endPass();
+
+        // Deliberately NO clear() here: this pass composites over the first.
+        renderer.beginPass(stack_pass.get());
+        renderer.setPassOrder(1);
+        renderer.setRenderTarget(target.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::TestOnly);
+        renderer.setLights({});
+        renderer.render(std::vector<RenderCommand>{ dot_command }, camera.get());
+        renderer.endPass();
+
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+
+    PixelImage image;
+    if (!readTarget(renderer, target.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the stacked-pass target\n");
+        return false;
+    }
+    // Pass 1's quad nests OUTSIDE pass 2's (larger half, farther z), so the
+    // pixels that are pass 1's red and NOT pass 2's blue are exactly the first
+    // pass' surviving fill. Counting by dominance instead of sampling a fixed
+    // coordinate or comparing against a clear colour keeps the assertion
+    // independent of how much of the target these WORLD-space quads cover from
+    // this phase's camera, and of which clear colour a non-clearing target
+    // happens to have.
+    std::size_t fill_pixels = 0;
+    for (std::size_t i = 0; i + 2u < image.pixels.size(); i += 4u) {
+        const int  r          = static_cast<int>(image.pixels[i]);
+        const int  b          = static_cast<int>(image.pixels[i + 2u]);
+        const bool red_filled = r > b + 20;
+        if (red_filled) {
+            ++fill_pixels;
+        }
+    }
+    if (fill_pixels == 0u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: none of the first pass' red survived the second, non-clearing pass — a pass"
+                     " that never asked for a clear may not wipe the target\n");
+        ok = false;
+    }
+    if (image.blueDominant() == 0u) {
+        std::fprintf(stderr, "[selftest] FAIL: the second pass' quad drew nothing over the first pass\n");
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] stacked pass: the first pass' fill survived the second pass (%zu red pixel(s) still"
+                     " there) and the second pass' quad drew %zu pixel(s) on top\n",
+                     fill_pixels, image.blueDominant());
+    }
+    renderer.releasePass(fill_pass.get());
+    renderer.releasePass(stack_pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
+/**
  * @brief Reports what each MRT colour attachment actually receives.
  *
  * A single-colour target hides it, but a multi-attachment (G-buffer) target is
@@ -3270,6 +3382,7 @@ int main()
     contract_ok = runDepthLoadPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runSharedDepthPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runMixedDepthPolicyPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runStackedPassPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runDepthBorrowValidationPhase(*renderer, camera, 3) && contract_ok;
     contract_ok = runDepthTestOnlyPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runDepthShareOrderPhase(*renderer, camera, 6) && contract_ok;
