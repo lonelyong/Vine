@@ -79,9 +79,13 @@ ShaderProgramPtr makeUserProgram()
     auto program = ShaderProgramPtr(new ShaderProgram());
     vine::graphics::ShaderStage vs;
     vs.type   = vine::graphics::ShaderStageType::Vertex;
+    // Clip z = 0.5: the backend is reverse-Z, so z = 0 would put this geometry
+    // on the far plane where the cleared depth already is and the strict
+    // "greater" depth test would reject every fragment (see the program
+    // contract in SceneBridge and the variant probe below).
     vs.source = u8"#version 450\n"
                 u8"layout(location = 0) in vec3 vsg_Vertex;\n"
-                u8"void main() { gl_Position = vec4(vsg_Vertex, 1.0); }\n";
+                u8"void main() { gl_Position = vec4(vsg_Vertex.xy, 0.5, 1.0); }\n";
     program->addStage(vs);
     vine::graphics::ShaderStage fs;
     fs.type   = vine::graphics::ShaderStageType::Fragment;
@@ -202,7 +206,7 @@ ShaderProgramPtr makeAttributeProgram()
                 u8"layout(location = 0) in vec3 vsg_Vertex;\n"
                 u8"layout(location = 3) in vec3 vine_Attribute3;\n"
                 u8"layout(location = 0) out vec3 vColor;\n"
-                u8"void main() { gl_Position = vec4(vsg_Vertex, 1.0); vColor = vine_Attribute3; }\n";
+                u8"void main() { gl_Position = vec4(vsg_Vertex.xy, 0.5, 1.0); vColor = vine_Attribute3; }\n";
     program->addStage(vs);
     vine::graphics::ShaderStage fs;
     fs.type   = vine::graphics::ShaderStageType::Fragment;
