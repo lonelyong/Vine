@@ -236,7 +236,7 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
     // window target (target == nullptr) and every off-screen target share
     // this one mechanism. Each pass is its own View + bridge, so several
     // passes sharing one camera and order still stack as separate content.
-    auto& t          = impl->targets[target];
+    auto& t          = impl->entryFor(target);
     auto& content    = t.content_slots[key];
     if (content.ready) {
         return;
@@ -353,7 +353,7 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
                             ? SlotKey::ownerPass(impl->request.pass)
                             : SlotKey::cameraOrder(request.camera, request.order);
 
-    auto& t  = impl->targets[request.target];
+    auto& t  = impl->entryFor(request.target);
     auto  it = t.content_slots.find(key);
     if (it == t.content_slots.end() || !it->second.ready) {
         setupContentSlot(key, request.target, request.camera, request.order, request.depth_mode, request.presenting);

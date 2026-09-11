@@ -315,7 +315,36 @@ struct VsgRenderer::Impl {
         std::map<SlotKey, ScreenSlot> screen_slots;
         // ---- fullscreen-program views (deferred lighting), keyed by owning pass ----
         std::map<SlotKey, ProgramSlot> program_slots;
+
+        // The target this entry belongs to. The entry OWNS it, exactly like the
+        // content caches own the geometry they are keyed by (see the ownership
+        // rule in the design notes): a raw pointer key whose entry does not hold
+        // the object can outlive it, and then a NEW target allocated at the same
+        // address silently inherits the dead one's attachments — its size, its
+        // colour formats and its depth format included. Owning it makes that
+        // address unreusable while the entry exists. Engine targets are released
+        // through releaseRenderTarget(); a target the host dropped without
+        // announcing it is swept in submitFrame().
+        vine::intrusive_ptr<vine::graphics::RenderTarget> owner;
     };
+
+    /** @brief Gets the output-target entry for @p target, pinning its address.
+     *
+     * Every path that touches the target table goes through here, so an entry can
+     * never exist without owning the target it is keyed by (see Target::owner).
+     *
+     * @param target Target key (nullptr = the window).
+     * @return The entry, created on first use.
+     */
+    Target& entryFor(vine::graphics::RenderTarget* target)
+    {
+        Target& entry = targets[target];
+        if (target != nullptr && entry.owner.get() != target) {
+            entry.owner = target;
+        }
+        return entry;
+    }
+
     std::map<vine::graphics::RenderTarget*, Target> targets; // nullptr key == window
 };
 

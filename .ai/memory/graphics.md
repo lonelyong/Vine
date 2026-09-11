@@ -1,5 +1,18 @@
 # Graphics 模块核心
 
+> 2026-09-11 **深度回读 + 直接深度断言（设计 §18，顺带两个真缺陷）**：`VsgRenderer::readDepthBuffer`
+> 落地 —— 只读无歧义格式（D32_SFLOAT / D16_UNORM），**打包 D24 诚实返回 false**；做法
+> `vkCmdCopyImageToBuffer` → 宿主可见 buffer（深度不能 blit），拷完转回原布局。断言直接读深度值：
+> 同一四边形 4 单位 vs 6 单位 → `near=0.0249 > far=0.0166 > 清屏 0`（比值 == 距离比，反 Z 的
+> `z ≈ near/d`），`Disabled` 时中心仍 0（写入侧也关）。
+> 顺带抓到的缺陷：**(A)** 离屏目标表条目**不自持** `RenderTarget` → 宿主销毁目标后同地址新目标
+> **继承死目标的附件**（断言第一次跑就撞上：第二个 D32 目标读回打包 D24）；修法照搬缓存骨架
+> （`Target::owner` + `Impl::entryFor()` + `submitFrame()` 回收 `useCount()<=1`）。
+> **(B)** 深度图缺 `VK_IMAGE_USAGE_TRANSFER_SRC_BIT`（连转到 TRANSFER_SRC 都非法，
+> `VUID-vkCmdCopyImageToBuffer-srcImage-00186`）——**只在开了 `VINE_VSG_DEBUG_LAYER=1` 的门禁里
+> 才暴露**，本地跑的时候没开：本地验证必须与门禁同环境。
+> harness 分别要求像素 ≥4 / 深度 ≥1 / MRT ≥2 行证据。
+
 > 2026-09-11 **像素断言铺开到其余路径（设计 §17）**：`vsg_backend_selftest` 现在断言 PiP blit
 > （子矩形中心=生产者内容、内缘=生产者清屏色、矩形外=消费者清屏色、**变化像素数恰好等于矩形
 > 面积**）、deferred 全屏程序（整张目标填满程序输出）、**深度顺序**（近红远蓝按"画家算法会画错

@@ -168,12 +168,21 @@ else
     # errors, and require them to be present at all (a stage whose assertions
     # silently disappeared must not read as a pass).
     grep "^\[selftest\] pixels:" "$log" | sed 's/^/    /' || true
+    grep "^\[selftest\] depth:" "$log" | sed 's/^/    /' || true
     grep "^\[selftest\] MRT " "$log" | sed 's/^/    /' || true
-    pixel_lines=$(grep -c "^\[selftest\] pixels:" "$log" || true)
-    if [ "${pixel_lines:-0}" -lt 5 ]; then
-        echo "[FAIL] vsg_backend_selftest produced ${pixel_lines:-0} pixel assertion line(s), expected at least 5"
-        FAILED=1
-    fi
+    # Each assertion group must report itself: a stage whose assertions were
+    # removed (or silently stopped running) must not read as a pass.
+    require_evidence() { # pattern minimum label
+        local found
+        found=$(grep -c "$1" "$log" || true)
+        if [ "${found:-0}" -lt "$2" ]; then
+            echo "[FAIL] vsg_backend_selftest reported ${found:-0} '$3' line(s), expected at least $2"
+            FAILED=1
+        fi
+    }
+    require_evidence "^\[selftest\] pixels:" 4 "pixel assertion"
+    require_evidence "^\[selftest\] depth:" 1 "depth assertion"
+    require_evidence "^\[selftest\] MRT " 2 "MRT report"
     # The self-test is expected to finish (0); a timeout (124) is also OK.
     if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
         echo "[FAIL] vsg_backend_selftest exited early with $rc"

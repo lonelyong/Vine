@@ -211,6 +211,23 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     bool readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
                          std::vector<std::uint8_t>& outPixels) override;
 
+    /** @brief Reads back the depth attachment of an off-screen render target.
+     *
+     * Synchronously copies @p target's depth buffer into @p outDepths as
+     * width * height values in [0, 1], row-major — the direct measurement the
+     * depth-order pixel assertion otherwise has to infer from colours. Only the
+     * unambiguous depth formats are read: D32_SFLOAT (the stored texel is the
+     * value) and D16_UNORM (divided by 65535). A packed D24_UNORM_S8_UINT target
+     * is reported as unsupported instead of guessing which 24 of its 32 bits
+     * hold the depth; a target without a depth attachment has nothing to read.
+     *
+     * @param target    Off-screen target this backend rendered into.
+     * @param outDepths Receives the depth values on success.
+     * @return true when the depth values were read; false when the target was
+     *         never built, has no depth attachment or uses a packed format.
+     */
+    bool readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths) override;
+
     /** @brief Renders the current frame from the render command stream.
      *
      * The retained vsg scene is reconciled against the commands (SceneBridge)

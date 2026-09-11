@@ -12,8 +12,10 @@
 #include <vsg/app/RenderGraph.h>
 #include <vsg/app/View.h>
 #include <vsg/commands/BlitImage.h>
+#include <vsg/commands/CopyImageToBuffer.h>
 #include <vsg/commands/PipelineBarrier.h>
 #include <vsg/lighting/Light.h>
+#include <vsg/state/Buffer.h>
 #include <vsg/state/Image.h>
 #include <vsg/state/ImageView.h>
 #include <vsg/state/ViewportState.h>
@@ -57,7 +59,7 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
     if (target == nullptr || impl->window == nullptr) {
         return;
     }
-    auto& t = impl->targets[target];
+    auto& t = impl->entryFor(target);
 
     // A rebuild (target resized) must first release the previous graph: it
     // may still be referenced by an in-flight command buffer, and every
@@ -158,7 +160,12 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
         depth->mipLevels     = 1;
         depth->arrayLayers   = 1;
         depth->tiling        = VK_IMAGE_TILING_OPTIMAL;
-        depth->usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        // TRANSFER_SRC is what readDepthBuffer() copies from (and what any
+        // future depth dump needs): without it the image cannot even be
+        // transitioned to TRANSFER_SRC_OPTIMAL, which validation reports as
+        // VUID-VkImageMemoryBarrier-oldLayout-01212.
+        depth->usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                               VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         depth->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         t.depth_image        = depth;
         t.depth_view         = ::vsg::createImageView(device.get(), depth, VK_IMAGE_ASPECT_DEPTH_BIT);
@@ -485,7 +492,7 @@ void VsgRenderer::releaseWindowLayer(vine::raw_ptr<const vine::graphics::Camera>
     // Window content slots live in the window target (nullptr key) of the
     // output-target table, keyed by (camera, explicit pass order). Off-screen
     // slots are released together with their whole target (releaseRenderTarget).
-    auto& t  = impl->targets[nullptr];
+    auto& t  = impl->entryFor(nullptr);
     // Legacy key (camera, order): only state created by a direct driver that
     // never opened a pass scope uses it. Engine-driven slots are released by
     // releasePass() (keyed by the pass itself).
@@ -601,7 +608,7 @@ void VsgRenderer::placeViewByOrder(vine::graphics::RenderTarget* target,
                                    const ::vsg::ref_ptr<::vsg::View>& view,
                                    int order)
 {
-    auto& t = impl->targets[target];
+    auto& t = impl->entryFor(target);
     if (t.graph == nullptr || view == nullptr) {
         return;
     }
@@ -777,6 +784,118 @@ bool VsgRenderer::readColorBuffer(vine::graphics::RenderTarget* target, int atta
     for (std::uint32_t row = 0; row < height; ++row) {
         std::memcpy(outPixels.data() + static_cast<std::size_t>(row) * row_bytes,
                     mapped->dataPointer(static_cast<std::size_t>(row) * sub_layout.rowPitch), row_bytes);
+    }
+    return true;
+}
+
+bool VsgRenderer::readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths)
+{
+    if (target == nullptr || impl->viewer == nullptr || impl->window == nullptr) {
+        return false;
+    }
+    const auto entry = impl->targets.find(target);
+    if (entry == impl->targets.end() || entry->second.graph == nullptr) {
+        return false;
+    }
+    auto& built = entry->second;
+    if (built.depth_image == nullptr || built.render_pass == nullptr || built.width <= 0 || built.height <= 0) {
+        return false;
+    }
+
+    // Only the formats whose texels ARE the value are read back: the packed
+    // D24_UNORM_S8_UINT needs the implementation's bit convention to decode, so
+    // it is reported as unsupported rather than decoded on a guess.
+    const VkFormat      format      = built.depth_image->format;
+    const std::size_t   texel_bytes = (format == VK_FORMAT_D32_SFLOAT) ? 4u : (format == VK_FORMAT_D16_UNORM) ? 2u : 0u;
+    if (texel_bytes == 0u) {
+        reportFailure(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+                      formatDiagnostic(u8"readDepthBuffer: format %d is packed (depth + stencil in one texel) and is "
+                                       u8"not decoded; use D32_SFLOAT or D16_UNORM for depth readback",
+                                       static_cast<int>(format)));
+        return false;
+    }
+
+    const std::uint32_t width  = static_cast<std::uint32_t>(built.width);
+    const std::uint32_t height = static_cast<std::uint32_t>(built.height);
+
+    impl->viewer->deviceWaitIdle();
+
+    auto device   = impl->window->getDevice();
+    auto physical = impl->window->getPhysicalDevice();
+    if (device == nullptr || physical == nullptr) {
+        return false;
+    }
+
+    // A depth image cannot be blitted (no blit support in the format's feature
+    // set), and a LINEAR depth image is not guaranteed either, so the copy goes
+    // through a host-visible staging buffer: vkCmdCopyImageToBuffer is mandatory
+    // for depth formats.
+    const VkDeviceSize byte_count = static_cast<VkDeviceSize>(width) * static_cast<VkDeviceSize>(height) *
+                                    static_cast<VkDeviceSize>(texel_bytes);
+    auto buffer = ::vsg::Buffer::create(byte_count, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_SHARING_MODE_EXCLUSIVE);
+    buffer->compile(device);
+    auto memory = ::vsg::DeviceMemory::create(device, buffer->getMemoryRequirements(device->deviceID),
+                                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    buffer->bind(memory, 0);
+
+    // The depth image is left in whatever layout its pass ends with (attachment
+    // for a depth test/write target, sampleable for a promoted one), so that is
+    // what it is returned to: the next frame renders and samples it again.
+    const VkImageLayout depth_layout = built.render_pass->attachments.back().finalLayout;
+    const VkImageSubresourceRange range{ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+    auto                          commands = ::vsg::Commands::create();
+    commands->addChild(::vsg::PipelineBarrier::create(
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+        ::vsg::ImageMemoryBarrier::create(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                                          depth_layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, built.depth_image, range)));
+
+    VkBufferImageCopy region{};
+    region.bufferOffset                    = 0;
+    region.bufferRowLength                = 0;
+    region.bufferImageHeight              = 0;
+    region.imageSubresource                = VkImageSubresourceLayers{ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1 };
+    region.imageOffset                     = VkOffset3D{ 0, 0, 0 };
+    region.imageExtent                     = VkExtent3D{ width, height, 1 };
+    auto copy                              = ::vsg::CopyImageToBuffer::create();
+    copy->srcImage                         = built.depth_image;
+    copy->srcImageLayout                   = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    copy->dstBuffer                        = buffer;
+    copy->regions.push_back(region);
+    commands->addChild(copy);
+
+    commands->addChild(::vsg::PipelineBarrier::create(
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_HOST_BIT,
+        0,
+        ::vsg::ImageMemoryBarrier::create(VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, depth_layout,
+                                          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, built.depth_image, range)));
+
+    const auto queue_family = physical->getQueueFamily(VK_QUEUE_GRAPHICS_BIT);
+    auto       command_pool = ::vsg::CommandPool::create(device, queue_family);
+    auto       fence        = ::vsg::Fence::create(device);
+    auto       queue        = device->getQueue(queue_family);
+    ::vsg::submitCommandsToQueue(command_pool, fence, 100000000000, queue,
+                                [&commands](::vsg::CommandBuffer& command_buffer) { commands->record(command_buffer); });
+
+    auto mapped = ::vsg::MappedData<::vsg::ubyteArray>::create(memory, 0, 0,
+                                                               ::vsg::Data::Properties{ VK_FORMAT_R8_UNORM }, byte_count);
+    outDepths.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
+    for (std::size_t i = 0; i < outDepths.size(); ++i) {
+        if (texel_bytes == 4u) {
+            float value = 0.0f;
+            std::memcpy(&value, mapped->dataPointer(i * 4u), 4u);
+            outDepths[i] = value;
+        }
+        else {
+            std::uint16_t value = 0u;
+            std::memcpy(&value, mapped->dataPointer(i * 2u), 2u);
+            outDepths[i] = static_cast<float>(value) / 65535.0f;
+        }
     }
     return true;
 }

@@ -279,7 +279,7 @@ bool VsgRenderer::initialize()
     // child of it.
     auto renderGraph      = ::vsg::RenderGraph::create(impl->window);
     renderGraph->contents = VK_SUBPASS_CONTENTS_INLINE;
-    impl->targets[nullptr].graph = renderGraph;
+    impl->entryFor(nullptr).graph = renderGraph;
     auto commandGraph     = ::vsg::CommandGraph::create(impl->window);
     commandGraph->addChild(renderGraph);
     impl->command_graph = commandGraph;
@@ -453,7 +453,7 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // slot so it stops drawing there (H2).
     retargetPass(impl->request.pass, target_key);
 
-    auto& target = impl->targets[target_key];
+    auto& target = impl->entryFor(target_key);
     // A depth-LOAD policy (clearDepth=false) needs a render pass whose depth
     // attachment is not cleared; when the target's persisted clear policy
     // differs from its current pass, the graph is rebuilt so depth is either
@@ -609,6 +609,24 @@ bool VsgRenderer::incrementalCompileViews()
 
 void VsgRenderer::submitFrame()
 {
+    // Off-screen targets the host dropped without announcing it: the table owns
+    // them (Target::owner), so once the host's last reference is gone nothing can
+    // ever look the entry up again — the same rule the geometry and material
+    // caches follow. Release them properly here instead of keeping their
+    // attachments, render graph and compiled pipelines alive for the session.
+    // Engine targets are normally released by releaseRenderTarget(); this is the
+    // safety net for a host that destroys the RenderTarget itself.
+    std::vector<vine::graphics::RenderTarget*> abandoned_targets;
+    for (const auto& entry : impl->targets) {
+        const auto& target_entry = entry.second;
+        if (entry.first != nullptr && target_entry.owner != nullptr && target_entry.owner->useCount() <= 1u) {
+            abandoned_targets.push_back(entry.first);
+        }
+    }
+    for (auto* target : abandoned_targets) {
+        releaseRenderTarget(target);
+    }
+
     // Which device this session actually runs on, on the record: "the gate
     // passed" is only meaningful together with the driver it passed on, and a
     // software rasteriser and a real GPU exercise different paths. Reported on
@@ -729,7 +747,7 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
     // off-screen graph (re)build reapplies the colour and the depth policy
     // (buildOffscreenTarget), then pushed into the graph when one exists.
     vine::graphics::RenderTarget* key = impl->request.target;
-    auto& t = impl->targets[key];
+    auto& t = impl->entryFor(key);
     const ::vsg::vec4 color{
         backgroundColor.r / 255.0f,
         backgroundColor.g / 255.0f,
@@ -821,7 +839,7 @@ void VsgRenderer::resize(int width, int height)
     // frame; refreshing here keeps slots correct even before their next
     // render). Other slots carry their own sub-viewport, re-set per frame by
     // their pass.
-    auto& window_target = impl->targets[nullptr];
+    auto& window_target = impl->entryFor(nullptr);
     if (impl->window == nullptr) {
         return;
     }

@@ -1360,16 +1360,19 @@ bool runDepthOrderPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
     RenderCommand far_command(makeVisibleQuad(0.4f, -1.0f), far_material, Mat4d());
     const std::vector<RenderCommand> commands{ near_command, far_command };
 
+    // D32_SFLOAT depths: the stored texel IS the depth value, so the depth can
+    // be read back and asserted directly (a packed D24 would only be readable by
+    // guessing the implementation's bit convention).
     auto depth_consumer = RenderTargetPtr(new RenderTarget());
     depth_consumer->setSize(256, 144);
     depth_consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
-    depth_consumer->attachDepth(RenderTarget::DepthFormat::D24);
+    depth_consumer->attachDepth(RenderTarget::DepthFormat::D32);
     auto depth_pass = RenderPassPtr(new RenderPass());
 
     auto disabled_consumer = RenderTargetPtr(new RenderTarget());
     disabled_consumer->setSize(256, 144);
     disabled_consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
-    disabled_consumer->attachDepth(RenderTarget::DepthFormat::D24);
+    disabled_consumer->attachDepth(RenderTarget::DepthFormat::D32);
     auto disabled_pass = RenderPassPtr(new RenderPass());
 
     for (int i = 0; i < frames; ++i) {
@@ -1425,10 +1428,105 @@ bool runDepthOrderPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
                      " (the policy did not reach the pipeline)\n");
         ok = false;
     }
+    // 3. The depth VALUES themselves, not just the colours that follow from
+    //    them: this is the difference between inferring "the near quad won" and
+    //    measuring it. Reverse-Z puts the near plane at depth 1 and the far
+    //    plane at 0, so a visibly nearer surface must hold the LARGER value.
+    if (!ok) {
+        return false;   // the colour assertions already failed; do not pile on
+    }
+    std::vector<float> depth_values;
+    std::vector<float> disabled_depths;
+    const bool         depth_read_ok    = renderer.readDepthBuffer(depth_consumer.get(), depth_values);
+    const bool         disabled_read_ok = renderer.readDepthBuffer(disabled_consumer.get(), disabled_depths);
+    if (!depth_read_ok || !disabled_read_ok) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: readDepthBuffer() refused a D32_SFLOAT depth attachment this phase rendered"
+                     " into (requested %d / %d, read %d / %d, values %zu / %zu for %d x %d)\n",
+                     static_cast<int>(depth_consumer->depthFormat()),
+                     static_cast<int>(disabled_consumer->depthFormat()), depth_read_ok ? 1 : 0,
+                     disabled_read_ok ? 1 : 0, depth_values.size(), disabled_depths.size(),
+                     depth_consumer->width(), depth_consumer->height());
+        return false;
+    }
+    const std::size_t depth_centre = static_cast<std::size_t>(72) * 256u + 128u;
+    const std::size_t depth_corner = static_cast<std::size_t>(4) * 256u + 4u;
+    const float       centre_depth = depth_values[depth_centre];
+    const float       corner_depth = depth_values[depth_corner];
+    // The SAME quad rendered alone at the far position, to compare against: the
+    // assertion is then "further away stores the smaller depth" — self-derived
+    // from the same projection instead of assuming a magic value. (The absolute
+    // value is small on purpose: reverse-Z with near = 0.1 and far = 1000 maps a
+    // surface 4 units away to ~0.025, which is why asserting "near ~ 1" would be
+    // wrong.)
+    auto far_only_consumer = RenderTargetPtr(new RenderTarget());
+    far_only_consumer->setSize(256, 144);
+    far_only_consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    far_only_consumer->attachDepth(RenderTarget::DepthFormat::D32);
+    auto far_only_pass = RenderPassPtr(new RenderPass());
+    driveContentPass(renderer, far_only_pass.get(), far_only_consumer.get(), std::vector<RenderCommand>{ far_command },
+                     camera, clear, vine::graphics::DepthMode::TestAndWrite, 2);
+    std::vector<float> far_only_depths;
+    if (!renderer.readDepthBuffer(far_only_consumer.get(), far_only_depths)) {
+        std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused the far-quad-only target\n");
+        return false;
+    }
+    const float far_depth = far_only_depths[depth_centre];
+
+    // The uncovered corner must still hold the cleared far plane (reverse-Z
+    // clears to 0 = far).
+    if (corner_depth > 0.01f) {
+        std::fprintf(stderr, "[selftest] FAIL: the uncovered corner depth is %.4f, expected the cleared 0\n",
+                     corner_depth);
+        ok = false;
+    }
+    // Ordering: the nearer surface must hold the LARGER depth (that is what
+    // reverse-Z means), both against the clear and against the same quad drawn
+    // further away.
+    if (centre_depth <= corner_depth) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: depth order inverted (centre %.4f <= cleared corner %.4f) — nearer must be"
+                     " larger\n",
+                     centre_depth, corner_depth);
+        ok = false;
+    }
+    if (centre_depth <= far_depth) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the near quad stored depth %.4f, the same quad drawn 2 units further stored"
+                     " %.4f — the nearer one must be larger\n",
+                     centre_depth, far_depth);
+        ok = false;
+    }
+    // With the pass depth policy Disabled the depth WRITE side must be off too:
+    // nothing wrote the buffer, so it still holds the cleared value everywhere.
+    if (disabled_depths[depth_centre] > 0.01f) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: with DepthMode::Disabled the centre depth is %.4f; nothing may write depth\n",
+                     disabled_depths[depth_centre]);
+        ok = false;
+    }
+    // And the packed depth format must be reported honestly rather than decoded
+    // on a guess: a D24_UNORM_S8_UINT target cannot be read back.
+    auto packed_consumer = RenderTargetPtr(new RenderTarget());
+    packed_consumer->setSize(128, 72);
+    packed_consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    packed_consumer->attachDepth(RenderTarget::DepthFormat::D24);
+    auto packed_pass = RenderPassPtr(new RenderPass());
+    driveContentPass(renderer, packed_pass.get(), packed_consumer.get(), commands, camera, clear,
+                     vine::graphics::DepthMode::TestAndWrite, 2);
+    std::vector<float> packed_depths;
+    if (renderer.readDepthBuffer(packed_consumer.get(), packed_depths)) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: readDepthBuffer() claimed to read a packed D24_UNORM_S8_UINT attachment"
+                     " (%zu values)\n",
+                     packed_depths.size());
+        ok = false;
+    }
     if (ok) {
         std::fprintf(stderr,
-                     "[selftest] pixels: depth order held (0 blue pixel(s) with TestAndWrite, %zu with Disabled)\n",
-                     disabled_pixels.blueDominant());
+                     "[selftest] depth: near=%.4f > far=%.4f > cleared corner=%.4f (reverse-Z ordering),"
+                     " Disabled centre=%.4f (no depth written); packed D24 honestly unsupported\n",
+                     centre_depth, far_depth, corner_depth, disabled_depths[depth_centre]);
     }
     return ok;
 }

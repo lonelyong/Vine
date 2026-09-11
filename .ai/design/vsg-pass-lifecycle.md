@@ -775,3 +775,56 @@ llvmpipe 门禁里；harness 会把证据打出来并**要求至少 5 行像素�
 **验证**：test_vsg 67、test_graphics 151 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`，
 输出逐条列出像素证据（基础 / 用户程序 / PiP / deferred / 深度 / MRT），并要求至少 5 行
 `[selftest] pixels:` 行存在。
+
+## 18. 深度回读与直接深度断言（顺带抓到两个真缺陷，2026-09-11）
+
+**出发点**：§17 的"深度顺序"是用**颜色**间接推断的（近处红、远处蓝，谁在中心谁赢）。这一
+节把它变成**直接测量**：`readDepthBuffer` 落地，断言读出的深度值本身。
+
+**1. `VsgRenderer::readDepthBuffer`**：只读**无歧义**的深度格式 —— `D32_SFLOAT`（texel
+就是值）与 `D16_UNORM`（除以 65535）；打包的 `D24_UNORM_S8_UINT` **诚实报不支持**
+（需要猜实现把深度放在 32 位里的哪 24 位，不猜）。深度的最终布局随 pass 而定
+（depth test/write 目标是 attachment、被提升的是 sampleable），所以拷贝完**转回
+`render_pass->attachments.back().finalLayout`**，下一帧照常渲染/采样。
+
+**2. 断言**（`runDepthOrderPixelPhase` 扩展）：同一个四边形放在 4 单位与 6 单位处各渲一次，
+直接读深度值断言
+
+```
+[selftest] depth: near=0.0249 > far=0.0166 > cleared corner=0.0000 (reverse-Z ordering),
+                 Disabled centre=0.0000 (no depth written); packed D24 honestly unsupported
+```
+
+- 近的 **大于** 远的（比值 0.0249/0.0166 = 1.5 == 6/4，即反 Z 的 `z ≈ near/d`）——这是反 Z
+  方向的**定量**证据；
+- 未覆盖的角落是**清成 0 的远平面**；
+- `DepthMode::Disabled` 时中心仍是 0 → 深度**写入**侧也真的被关掉（不只是测试侧）；
+- 打包 D24 返回 false（诚实上报）。
+- **修正一个我自己的错期望**：第一版断言写成"近处应接近 1"。实际算出 0.0249 是**正确**的
+  ——相机 near=0.1 / far=1000，反 Z 下 4 单位处的深度就是 ≈ near/d。断言随即改为**自证式**
+  （同一个四边形更远 → 更小），不再依赖魔法数字。
+
+**3. 顺带抓到的缺陷 A：离屏目标表按裸指针索引且条目不自持 → 同地址新目标继承死目标的附件**
+
+断言第一次跑就报"构造的第二个 D32 目标读回了**打包 D24**"。根因：`impl->targets` 是
+`std::map<RenderTarget*, Target>`，而 `Target` 条目**不持有**那个 `RenderTarget`。前一个相位
+的局部目标析构后条目还在，于是**新目标被分配到同一地址**时直接继承旧条目的 GPU 状态 ——
+包括深度格式（这就是 D24 的来源）、尺寸与颜色格式。这正是 §8.1/§12 早就为缓存定下的规则
+（"保留型缓存的条目必须自持它索引的对象"）在**目标表**上漏掉的一处。
+
+修法照搬既有骨架：`Target::owner`（`intrusive_ptr<RenderTarget>`）+ 所有表访问改走
+`Impl::entryFor()`（首次触碰即自持，地址在条目存活期内不可能被复用）；并在 `submitFrame()`
+里回收"宿主丢弃但没宣告"的目标（`useCount() <= 1` → 走 `releaseRenderTarget` 的完整拆解）——
+与几何/材质缓存的"放弃即回收"同一规则。
+
+**4. 顺带抓到的缺陷 B：深度图没建 `VK_IMAGE_USAGE_TRANSFER_SRC_BIT`**
+
+第一版 `readDepthBuffer` 功能上是对的（数值正确），但**只在开了 validation 的门禁里**报出
+`VUID-vkCmdCopyImageToBuffer-srcImage-00186` 与 `VUID-VkImageMemoryBarrier-oldLayout-01212`：
+深度图的 usage 只有 `DEPTH_STENCIL_ATTACHMENT | SAMPLED`，连转到 `TRANSFER_SRC_OPTIMAL` 都不
+允许。修法：加上 `TRANSFER_SRC`（颜色图早已有，深度图漏了）。**教训**：我本地跑 selftest 时
+没开 `VINE_VSG_DEBUG_LAYER=1`，于是"功能对 + 0 VUID"的假象只有在 harness 里才被戳破 —— 本地
+验证必须用与门禁相同的环境。
+
+**验证**：test_vsg 67、test_graphics 151 全绿；`gfx_lavapipe_check.sh` → `RESULT: PASS`
+（0 VUID）；harness 现在分别要求像素 ≥4 行、深度 ≥1 行、MRT ≥2 行证据，缺一组即失败。

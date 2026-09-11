@@ -309,7 +309,7 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
                       u8"drawScreenTexture: source == destination (feedback loop): the pass draws nothing");
         return;
     }
-    auto& dest_entry = impl->targets[dest];
+    auto& dest_entry = impl->entryFor(dest);
     if (dest != nullptr) {
         // Writing into an off-screen target: (re)build its graph to its size.
         if (dest->colorCount() <= 0 || dest->width() <= 0 || dest->height() <= 0) {
@@ -499,7 +499,7 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
                       u8"drawScreenProgram: source == destination (feedback loop): the pass draws nothing");
         return;
     }
-    auto& dest_entry = impl->targets[dest];
+    auto& dest_entry = impl->entryFor(dest);
     if (dest != nullptr) {
         if (dest->colorCount() <= 0 || dest->width() <= 0 || dest->height() <= 0) {
             reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
