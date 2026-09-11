@@ -1,5 +1,15 @@
 # Graphics 模块核心
 
+> 2026-09-11 **像素断言铺开到其余路径（设计 §17）**：`vsg_backend_selftest` 现在断言 PiP blit
+> （子矩形中心=生产者内容、内缘=生产者清屏色、矩形外=消费者清屏色、**变化像素数恰好等于矩形
+> 面积**）、deferred 全屏程序（整张目标填满程序输出）、**深度顺序**（近红远蓝按"画家算法会画错
+> 的顺序"提交：开深度测试时蓝色像素必须为 0）、**深度模式权威**（`DepthMode::Disabled` 时中心
+> 必须变蓝）、MRT 附件 0 必须收到几何。门禁打印逐条证据并**要求 ≥5 行 `[selftest] pixels:`**
+> （断言被删掉不能读作通过）。
+> 量到一条此前只写在注释里的规则：**MRT 附件 ≥1 一律清成透明黑**（附件 0 才拿 `clear()` 颜色）
+> ——对采样额外附件的消费者（deferred 读 G-buffer 法线）可见，已登记 D31 待决策。
+> 辅助设施：`PixelImage` / `readTarget(…, attachment)` / `driveContentPass` / `makeVisibleQuad(half, z)`。
+
 > 2026-09-11 **反 Z 陷阱（归因实验结论，设计 §16）**：本后端 reverse-Z（近→NDC 1、远→0、
 > 深度清 0、`COMPARE_OP_GREATER`）。**用户程序自己写 `gl_Position` 时若写 `z = 0`（非反 Z
 > 直觉的"近平面"）实际落在远平面，与清屏深度相等 → 严格 greater 拒绝全部片元 → 绘制对象

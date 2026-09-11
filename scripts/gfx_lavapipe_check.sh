@@ -163,6 +163,17 @@ else
     # and a real GPU do not exercise the same code paths).
     device=$(grep -m1 "\[VsgRenderer\] device:" "$log" | sed 's/^.*device: //')
     [ -n "$device" ] && echo "[info] Vulkan device: $device"
+    # The pixel assertions ARE the stage: show what they measured, so a green run
+    # states the picture it verified instead of only the absence of validation
+    # errors, and require them to be present at all (a stage whose assertions
+    # silently disappeared must not read as a pass).
+    grep "^\[selftest\] pixels:" "$log" | sed 's/^/    /' || true
+    grep "^\[selftest\] MRT " "$log" | sed 's/^/    /' || true
+    pixel_lines=$(grep -c "^\[selftest\] pixels:" "$log" || true)
+    if [ "${pixel_lines:-0}" -lt 5 ]; then
+        echo "[FAIL] vsg_backend_selftest produced ${pixel_lines:-0} pixel assertion line(s), expected at least 5"
+        FAILED=1
+    fi
     # The self-test is expected to finish (0); a timeout (124) is also OK.
     if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
         echo "[FAIL] vsg_backend_selftest exited early with $rc"

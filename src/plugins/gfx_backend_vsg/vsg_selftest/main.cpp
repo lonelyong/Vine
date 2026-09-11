@@ -121,22 +121,25 @@ GeometryPtr makeChannelTriangle()
  * @brief Builds a camera-facing quad in WORLD space with surface normals.
  *
  * A pixel assertion needs geometry the shaded pipeline actually rasterises, so
- * the quad is a real world-space surface (x,y in [-0.4, 0.4] on z = 0, normal
- * +z) that the camera at (0,0,5) sees face-on, unlike the clip-space helper
- * geometries the other phases use: those place every vertex at one x, so they
- * are edge-on (or exactly on the near plane) and occupy no pixels at all. That
- * is why "no validation error" could never notice a rendering regression.
+ * the quad is a real world-space surface (x,y in [-half, half], normal +z) that
+ * the camera at (0,0,5) sees face-on, unlike the clip-space helper geometries
+ * the other phases use: those place every vertex at one x, so they are edge-on
+ * (or exactly on the near plane) and occupy no pixels at all. That is why "no
+ * validation error" could never notice a rendering regression.
  *
+ * @param half Half extent on x and y (0.4 covers the middle of the target).
+ * @param z    World z of the quad: the camera sits at z = 5, so a larger z is
+ *             nearer, which is what the depth-order phase varies.
  * @return The quad geometry (two triangles, one normal).
  */
-GeometryPtr makeVisibleQuad()
+GeometryPtr makeVisibleQuad(float half = 0.4f, float z = 0.0f)
 {
     auto geom = GeometryPtr(new Geometry());
     vine::geometry::Vec3fArray positions;
-    const float corners[6][2] = { { -0.4f, -0.4f }, { 0.4f, -0.4f }, { 0.4f, 0.4f },
-                                 { -0.4f, -0.4f }, { 0.4f, 0.4f },  { -0.4f, 0.4f } };
+    const float corners[6][2] = { { -half, -half }, { half, -half }, { half, half },
+                                 { -half, -half }, { half, half },  { -half, half } };
     for (const auto& corner : corners) {
-        positions.emplace_back(corner[0], corner[1], 0.0f);
+        positions.emplace_back(corner[0], corner[1], z);
     }
     geom->setPositions(positions);
     vine::geometry::Vec3fArray normals;
@@ -145,6 +148,106 @@ GeometryPtr makeVisibleQuad()
     }
     geom->setNormals(normals);
     return geom;
+}
+
+/**
+ * @brief One read-back image with the sampling the pixel assertions need.
+ *
+ * Owns the packed RGBA8 pixels plus the target size, so a phase can ask "what
+ * is at (x,y)?" and "how many pixels differ from the clear colour?" — the two
+ * questions that separate "nothing was drawn" from "something was drawn, and
+ * it is (or is not) the expected picture".
+ */
+struct PixelImage
+{
+    std::vector<std::uint8_t> pixels;
+    int                       width  = 0;
+    int                       height = 0;
+
+    /** @brief Channel @p channel (0=R,1=G,2=B,3=A) of pixel (@p x, @p y). */
+    int at(int x, int y, int channel) const
+    {
+        return static_cast<int>(
+            pixels[(static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)) * 4u +
+                   static_cast<std::size_t>(channel)]);
+    }
+
+    /** @brief How many pixels differ from the colour (@p r, @p g, @p b). */
+    std::size_t differingFrom(int r, int g, int b) const
+    {
+        std::size_t count = 0;
+        for (std::size_t i = 0; i + 2u < pixels.size(); i += 4u) {
+            if (pixels[i] != static_cast<std::uint8_t>(r) || pixels[i + 1u] != static_cast<std::uint8_t>(g) ||
+                pixels[i + 2u] != static_cast<std::uint8_t>(b)) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    /** @brief How many pixels are dominated by blue (the far quad's signature). */
+    std::size_t blueDominant() const
+    {
+        std::size_t count = 0;
+        for (std::size_t i = 0; i + 2u < pixels.size(); i += 4u) {
+            if (static_cast<int>(pixels[i + 2u]) > static_cast<int>(pixels[i]) + 20) {
+                ++count;
+            }
+        }
+        return count;
+    }
+};
+
+/**
+ * @brief Reads one colour attachment of @p target back into @p image.
+ *
+ * @param renderer   Renderer under test.
+ * @param target     Off-screen target to read.
+ * @param image      Receives the packed RGBA8 pixels and the size.
+ * @param attachment Colour attachment index to read.
+ * @return true when the readback succeeded and the size is the target's.
+ */
+bool readTarget(vine::vsg::VsgRenderer& renderer, vine::graphics::RenderTarget* target, PixelImage& image,
+                int attachment = 0)
+{
+    if (!renderer.readColorBuffer(target, attachment, image.pixels)) {
+        return false;
+    }
+    image.width  = target->width();
+    image.height = target->height();
+    return image.pixels.size() == static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4u;
+}
+
+/**
+ * @brief Drives one content pass into a target for a few frames.
+ *
+ * @param renderer    Renderer under test.
+ * @param pass        Pass identity to announce.
+ * @param target      Target to render into.
+ * @param commands    Content to draw.
+ * @param camera      Camera to draw through.
+ * @param clear_color Clear colour of the pass.
+ * @param depth_mode  Pass depth policy.
+ * @param frames      Frames to drive.
+ */
+void driveContentPass(vine::vsg::VsgRenderer& renderer, vine::graphics::RenderPass* pass,
+                      vine::graphics::RenderTarget* target, const std::vector<RenderCommand>& commands,
+                      const CameraPtr& camera, const vine::Color& clear_color,
+                      vine::graphics::DepthMode depth_mode, int frames)
+{
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(pass);
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(target);
+        renderer.setDepthMode(depth_mode);
+        renderer.clear(clear_color, true);
+        renderer.setLights({});
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
 }
 
 /**
@@ -1056,6 +1159,348 @@ bool runContentVariantProbe(vine::vsg::VsgRenderer& renderer, const CameraPtr& c
     return ok;
 }
 
+/**
+ * @brief Asserts the PIXELS of the compositing paths (PiP blit, deferred program).
+ *
+ * Both paths were previously only checked for "no validation error", so a blit
+ * that sampled the wrong image, ignored the sub-viewport or never ran would
+ * have passed. What is asserted here:
+ *
+ *  1. a picture-in-picture pass must copy the producer's IMAGE (not a constant):
+ *     the sampled quad shows at the centre of the sub-rectangle while the
+ *     producer's own clear colour still shows near its edge;
+ *  2. the blit must respect the sub-viewport: the number of pixels that differ
+ *     from the consumer's clear colour is exactly the rectangle's area;
+ *  3. a deferred fullscreen program must run over the whole target and write
+ *     what the program says (the target shows the program's colour).
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the producer content is drawn through.
+ * @param frames   Frames to drive before reading back.
+ * @return true when every pixel assertion held.
+ */
+bool runCompositingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok = true;
+    const vine::Color consumer_clear(10, 20, 30, 255);
+    // The producer's clear is green so that "the producer's own background" and
+    // "the quad we drew into it" are distinguishable in the sampled result.
+    const vine::Color producer_clear(0, 200, 0, 255);
+
+    auto producer = RenderTargetPtr(new RenderTarget());
+    producer->setSize(128, 72);
+    producer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    producer->attachDepth(RenderTarget::DepthFormat::D24);
+    auto producer_material = MaterialPtr(new Material());
+    producer_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));
+    RenderCommand producer_command(makeVisibleQuad(), producer_material, Mat4d());
+    auto          producer_pass    = RenderPassPtr(new RenderPass());
+
+    auto pip_consumer = RenderTargetPtr(new RenderTarget());
+    pip_consumer->setSize(256, 144);
+    pip_consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    pip_consumer->attachDepth(RenderTarget::DepthFormat::D24);
+    auto pip_pass = RenderPassPtr(new RenderPass());
+    const int pip_x = 16, pip_y = 16, pip_w = 96, pip_h = 54;
+
+    auto deferred_consumer = RenderTargetPtr(new RenderTarget());
+    deferred_consumer->setSize(256, 144);
+    deferred_consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    deferred_consumer->attachDepth(RenderTarget::DepthFormat::D24);
+    auto deferred_pass    = RenderPassPtr(new RenderPass());
+    auto deferred_program = makeDeferredProgram();   // writes (0.55, 0.6, 0.65)
+
+    std::vector<vine::graphics::RenderDiagnostic> received;
+    renderer.setDiagnosticSink([&received](const vine::graphics::RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+
+        // Producer first: the consumers sample what this pass wrote, in the same
+        // frame (the dependency the renderer's graph ordering exists for).
+        renderer.beginPass(producer_pass.get());
+        renderer.setPassOrder(-10);
+        renderer.setRenderTarget(producer.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        renderer.clear(producer_clear, true);
+        renderer.setLights({});
+        renderer.render(std::vector<RenderCommand>{ producer_command }, camera.get());
+        renderer.endPass();
+
+        // Picture-in-picture: the producer's attachment 0 into a sub-rectangle.
+        renderer.beginPass(pip_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(pip_consumer.get());
+        renderer.clear(consumer_clear, true);
+        renderer.setViewport(pip_x, pip_y, pip_w, pip_h);
+        renderer.drawScreenTexture(producer.get(), 0);
+        renderer.endPass();
+
+        // Deferred: a fragment program over the producer, full target.
+        renderer.beginPass(deferred_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(deferred_consumer.get());
+        renderer.clear(consumer_clear, true);
+        renderer.setLights({});
+        renderer.drawScreenProgram(producer.get(), deferred_program.get(), camera.get());
+        renderer.endPass();
+
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+
+    PixelImage pip;
+    if (!readTarget(renderer, pip_consumer.get(), pip)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the PiP consumer target\n");
+        ok = false;
+    }
+    else {
+        const int centre_x = pip_x + pip_w / 2;
+        const int centre_y = pip_y + pip_h / 2;
+        const int edge_x   = pip_x + 4;
+        const int edge_y   = pip_y + 4;
+        // Centre of the rectangle: the producer's middle, which carries the lit
+        // quad (red) — so the pixel must be red-dominant.
+        if (pip.at(centre_x, centre_y, 0) <= pip.at(centre_x, centre_y, 2) + 20) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: PiP centre is (%d,%d,%d); the producer's red quad was sampled\n",
+                         pip.at(centre_x, centre_y, 0), pip.at(centre_x, centre_y, 1), pip.at(centre_x, centre_y, 2));
+            ok = false;
+        }
+        // Near the rectangle's edge: the producer's own clear colour (green).
+        // A constant-colour "blit" would fail here, an image copy must not.
+        if (pip.at(edge_x, edge_y, 1) <= pip.at(edge_x, edge_y, 0) + 20) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: PiP edge is (%d,%d,%d); the producer's clear colour was sampled\n",
+                         pip.at(edge_x, edge_y, 0), pip.at(edge_x, edge_y, 1), pip.at(edge_x, edge_y, 2));
+            ok = false;
+        }
+        // Outside the rectangle: the consumer's own clear colour, untouched.
+        if (pip.at(4, 4, 0) != 10 || pip.at(4, 4, 1) != 20 || pip.at(4, 4, 2) != 30) {
+            std::fprintf(stderr, "[selftest] FAIL: pixel outside the PiP rectangle is (%d,%d,%d), expected (10,20,30)\n",
+                         pip.at(4, 4, 0), pip.at(4, 4, 1), pip.at(4, 4, 2));
+            ok = false;
+        }
+        // And the blit must not spill: exactly the rectangle's pixels changed.
+        const std::size_t changed = pip.differingFrom(10, 20, 30);
+        if (changed != static_cast<std::size_t>(pip_w) * static_cast<std::size_t>(pip_h)) {
+            std::fprintf(stderr, "[selftest] FAIL: the PiP changed %zu pixel(s), expected exactly %d (the sub-rectangle)\n",
+                         changed, pip_w * pip_h);
+            ok = false;
+        }
+    }
+
+    PixelImage deferred;
+    if (!readTarget(renderer, deferred_consumer.get(), deferred)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the deferred consumer target\n");
+        ok = false;
+    }
+    else {
+        const int dr = deferred.at(128, 72, 0);
+        const int dg = deferred.at(128, 72, 1);
+        const int db = deferred.at(128, 72, 2);
+        // The fullscreen program writes vec4(0.55, 0.6, 0.65, 1.0) = (140,153,166).
+        if (std::abs(dr - 140) > 3 || std::abs(dg - 153) > 3 || std::abs(db - 166) > 3) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: after the deferred program the centre is (%d,%d,%d),"
+                         " expected the program's colour (140,153,166)\n",
+                         dr, dg, db);
+            ok = false;
+        }
+        const std::size_t covered = deferred.differingFrom(10, 20, 30);
+        if (covered != static_cast<std::size_t>(deferred.width) * static_cast<std::size_t>(deferred.height)) {
+            std::fprintf(stderr, "[selftest] FAIL: the fullscreen program covered %zu of %d pixel(s)\n",
+                         covered, deferred.width * deferred.height);
+            ok = false;
+        }
+        if (ok) {
+            std::fprintf(stderr,
+                         "[selftest] pixels: PiP rect %dx%d sampled both producer regions; deferred program filled"
+                         " the target with (%d,%d,%d); diagnostics=%zu\n",
+                         pip_w, pip_h, dr, dg, db, received.size());
+        }
+    }
+    renderer.setDiagnosticSink({});
+    return ok;
+}
+
+/**
+ * @brief Asserts DEPTH ORDER pixels, and that the pass depth policy reaches the pipeline.
+ *
+ * Two quads overlap in screen space with different colours: a near one (world
+ * z = +1, red) and a far one (world z = -1, blue), submitted in the order a
+ * painter's algorithm would get WRONG — near first, far after it. Two passes
+ * render the same command list:
+ *
+ *  1. TestAndWrite: the far quad must be rejected wherever it is behind the
+ *     near one, so not a single blue pixel may exist (this is the assertion
+ *     that a broken, inverted or absent depth test fails);
+ *  2. Disabled: the pass declares no depth handling, so the far quad — drawn
+ *     last — must cover the near one, i.e. the centre must turn blue. That is
+ *     the visual proof that the pass depth policy actually reaches the
+ *     pipeline (the device-free test can only assert the state object).
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quads are drawn through.
+ * @param frames   Frames to drive before reading back.
+ * @return true when the depth order and the depth policy behaved.
+ */
+bool runDepthOrderPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok = true;
+    const vine::Color clear(10, 20, 30, 255);
+    auto              near_material = MaterialPtr(new Material());
+    near_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));   // red
+    auto far_material = MaterialPtr(new Material());
+    far_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f));      // blue
+    // Same geometry, different depth: the camera sits at z = 5.
+    RenderCommand near_command(makeVisibleQuad(0.4f, 1.0f), near_material, Mat4d());
+    RenderCommand far_command(makeVisibleQuad(0.4f, -1.0f), far_material, Mat4d());
+    const std::vector<RenderCommand> commands{ near_command, far_command };
+
+    auto depth_consumer = RenderTargetPtr(new RenderTarget());
+    depth_consumer->setSize(256, 144);
+    depth_consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    depth_consumer->attachDepth(RenderTarget::DepthFormat::D24);
+    auto depth_pass = RenderPassPtr(new RenderPass());
+
+    auto disabled_consumer = RenderTargetPtr(new RenderTarget());
+    disabled_consumer->setSize(256, 144);
+    disabled_consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    disabled_consumer->attachDepth(RenderTarget::DepthFormat::D24);
+    auto disabled_pass = RenderPassPtr(new RenderPass());
+
+    for (int i = 0; i < frames; ++i) {
+        renderer.beginFrame();
+        renderer.beginPass(depth_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(depth_consumer.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        renderer.clear(clear, true);
+        renderer.setLights({});
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+
+        renderer.beginPass(disabled_pass.get());
+        renderer.setPassOrder(0);
+        renderer.setRenderTarget(disabled_consumer.get());
+        renderer.setDepthMode(vine::graphics::DepthMode::Disabled);
+        renderer.clear(clear, true);
+        renderer.setLights({});
+        renderer.render(commands, camera.get());
+        renderer.endPass();
+
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+
+    PixelImage depth_pixels;
+    PixelImage disabled_pixels;
+    if (!readTarget(renderer, depth_consumer.get(), depth_pixels) ||
+        !readTarget(renderer, disabled_consumer.get(), disabled_pixels)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused a depth-order target\n");
+        return false;
+    }
+
+    // 1. Depth testing on: the far quad is behind, so the picture must be the
+    //    near quad only.
+    if (depth_pixels.blueDominant() != 0u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: %zu pixel(s) are blue although the far quad is behind the near one"
+                     " (depth test / direction wrong)\n",
+                     depth_pixels.blueDominant());
+        ok = false;
+    }
+    if (depth_pixels.at(128, 72, 0) <= depth_pixels.at(128, 72, 2) + 20) {
+        std::fprintf(stderr, "[selftest] FAIL: the overlap is (%d,%d,%d); the NEAR quad must win\n",
+                     depth_pixels.at(128, 72, 0), depth_pixels.at(128, 72, 1), depth_pixels.at(128, 72, 2));
+        ok = false;
+    }
+    // 2. Depth policy Disabled: the last draw wins, so the centre must be blue.
+    if (disabled_pixels.blueDominant() == 0u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: with the pass depth policy Disabled the far quad did not cover the near one"
+                     " (the policy did not reach the pipeline)\n");
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] pixels: depth order held (0 blue pixel(s) with TestAndWrite, %zu with Disabled)\n",
+                     disabled_pixels.blueDominant());
+    }
+    return ok;
+}
+
+/**
+ * @brief Reports what each MRT colour attachment actually receives.
+ *
+ * A single-colour target hides it, but a multi-attachment (G-buffer) target is
+ * only correct when every attachment a consumer samples was really written: a
+ * pipeline whose blend state or fragment outputs cover fewer attachments leaves
+ * the rest at the clear value, and a later deferred pass then samples black
+ * without anything failing. This probe draws one quad into a 2-attachment RGBA8
+ * target and reports, per attachment, the centre pixel and the coverage, so the
+ * answer is visible rather than assumed.
+ *
+ * What it measured the first time it ran, on both lavapipe and the code path
+ * as written: attachment 0 carries the pass' clear colour and the geometry,
+ * while every extra attachment is TRANSPARENT BLACK everywhere, geometry
+ * included. That is deliberate (VsgRendererTargets clears attachment 0 to the
+ * engine's clear() colour and the rest to zero: "empty regions stay black until
+ * a fragment writes them"), and it is invisible to a consumer that samples the
+ * extra attachments — so it is measured here rather than assumed. The one half
+ * that is unambiguous is asserted (the geometry must reach attachment 0); the
+ * extra attachments are reported for the consumer to judge.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quad is drawn through.
+ * @param frames   Frames to drive before reading back.
+ * @return true when both readbacks succeeded.
+ */
+bool runMrtProbe(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    const vine::Color clear(10, 20, 30, 255);
+    auto              target = RenderTargetPtr(new RenderTarget());
+    target->setSize(128, 72);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D24);
+
+    auto          material = MaterialPtr(new Material());
+    material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));
+    RenderCommand command(makeVisibleQuad(), material, Mat4d());
+    auto          pass = RenderPassPtr(new RenderPass());
+
+    driveContentPass(renderer, pass.get(), target.get(), std::vector<RenderCommand>{ command }, camera, clear,
+                     vine::graphics::DepthMode::TestAndWrite, frames);
+
+    bool ok = true;
+    for (int attachment = 0; attachment < target->colorCount(); ++attachment) {
+        PixelImage image;
+        if (!readTarget(renderer, target.get(), image, attachment)) {
+            std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused MRT attachment %d\n", attachment);
+            ok = false;
+            continue;
+        }
+        std::fprintf(stderr,
+                     "[selftest] MRT attachment %d: centre=(%d,%d,%d) covered=%zu/%zu (clear is (10,20,30))\n",
+                     attachment, image.at(64, 36, 0), image.at(64, 36, 1), image.at(64, 36, 2),
+                     image.differingFrom(10, 20, 30), image.pixels.size() / 4u);
+        // The unambiguous half: the geometry must be visible in attachment 0
+        // (the primary output every consumer samples).
+        if (attachment == 0 && image.at(64, 36, 0) <= image.at(64, 36, 2) + 20) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: MRT attachment 0 centre is (%d,%d,%d); the quad was drawn there"
+                         " in red\n",
+                         image.at(64, 36, 0), image.at(64, 36, 1), image.at(64, 36, 2));
+            ok = false;
+        }
+    }
+    return ok;
+}
+
 }  // namespace
 
 int main()
@@ -1300,7 +1745,12 @@ int main()
     contract_ok = runInFlightChurnPhase(*renderer, camera, 8) && contract_ok;
     contract_ok = runDiagnosticsPhase(*renderer, camera, 6) && contract_ok;
     contract_ok = runPixelReadbackPhase(*renderer, camera, 4) && contract_ok;
-    // Diagnostic: attribute a "nothing was drawn" result to one input.
+    contract_ok = runCompositingPixelPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runDepthOrderPixelPhase(*renderer, camera, 4) && contract_ok;
+    // Diagnostics: what the MRT path receives per attachment (attachment 0 is
+    // asserted), and which input a "nothing was drawn" result is attributable
+    // to.
+    contract_ok = runMrtProbe(*renderer, camera, 3) && contract_ok;
     runContentVariantProbe(*renderer, camera, 3);
     if (!contract_ok) {
         std::fprintf(stderr,
