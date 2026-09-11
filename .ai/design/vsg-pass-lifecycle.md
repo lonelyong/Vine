@@ -1322,3 +1322,46 @@ RenderGraph），图像按目标共享"。已勘察的改动面与**必须同时
 7. selftest 必须按新语义重写 `runMixedDepthPolicyPhase`：**不再注入 ClearAttachments**、
    混合目标**首帧即正确**、目标构建数从 2 降到 **1**（残留消失的可观测判据）。§22 保留为
    历史，实施后在此标注 superseded。
+
+## 29. 交班状态与下一步清单（2026-09-11 收工记录）
+
+**交班状态**：HEAD `e69ebb1`（D40 共享对象表 prune），工作区干净。基线：
+`test_vsg` **72**、`test_graphics` **157**、`gfx_lavapipe_check.sh` → `RESULT: PASS`
+（0 VUID，证据行含 `depth load:` / `shared depth pixels:` / `mixed depth:` /
+`depth borrow:` / `depth testonly:` / `depth share order:` / `target description:`）；
+app 冒烟 `timeout 25 ./dist/bin/Vine` exit 124、离屏 3 次构建、0 VUID。复验命令：
+
+```
+ninja -C build && ./build/bin/test_vsg && ./build/bin/test_graphics
+timeout 900 bash scripts/gfx_lavapipe_check.sh
+cp -f build/lib/*.so* dist/lib/ && cp -f build/plugins/vine/*.so dist/plugins/vine/ \
+  && cp -f build/bin/Vine dist/bin/Vine && timeout 25 ./dist/bin/Vine   # 需退出码 124
+```
+
+（改 SDK 公共类布局才需要整份 `dist` 刷新；只改插件时 `cp` 插件 `.so` 即可。）
+
+### 下一步按此顺序做（每条都带判据，别跳步）
+
+1. **render pass 下沉到 pass 粒度**（§28 的完整计划，最高价值）：
+   * 提交 1（结构 + 语义）：`Target::PassObjects`（按 `SlotKey`）承载 render pass 双变体 /
+     framebuffer / graph / `load_depth` / `seeded` / `order` / 本 pass 清屏色；`Target::graph`
+     只留给窗口；"目标已建"改判 `framebuffer != nullptr`；`render()` 谓词去掉 `depth_load`
+     项（改由每个 pass 对象自己选变体，无需重建）；删除 `depth_policy_mixed` /
+     `ContentSlot::clears_depth` / `depth_clear_group` 与 `VsgRenderer::clear` 里的混合判定。
+     **必须同时成立**的 6 条不变量见 §28（LOAD/提升互斥最重要）。验收：现有 72 + 157 全绿，
+     §28-7 的 selftest 改写后 `runMixedDepthPolicyPhase` 报告目标构建数 **1**、证据行不再提
+     "注入清屏"；gate PASS；app 冒烟 124。
+   * 提交 2（判据 + 文档）：重写混合策略相位并按新语义补"颜色清屏按下沉"的断言（两 pass 各自
+     清不同颜色 → 各自成立），§22 标注 superseded，登记表补一行。
+   * 风险点（先想清再动手）：LOAD pass 与"提升"不能共存；`seeded` 必须是目标级；深度共享
+     barrier 插在**源最后一张 graph 之后**。
+2. **`SceneBridge::syncRenderCommands` 拆分**（256 行 → "缓存决策 / 节点替换 / 收尾"三个函数，
+   纯搬运）：判据是 72 + 157 全绿 + gate PASS，无新行为。
+3. **信息性 stderr 迁 `vine/logging`**：harness 与 `scripts/gfx_lavapipe_check.sh` 有多处
+   stderr 断言（`[VsgRenderer] device:` / `EXPERIMENTAL off-screen target` / `has no depth
+   image yet`），必须**同一次提交**里同步改，否则闸门会红。
+4. **D28 `VkPipelineCache` 持久化**：仍被上游阻塞（vsg `GraphicsPipeline::compile` 传
+   `VK_NULL_HANDLE`），只有等 vsg 暴露注入点才可做；不要自建管线。
+5. **可选：D40 的"释放半条"端到端断言**：需要设备级（真实 VkPipeline 被 `prune()` 回收后
+   重建变体重新计数）。单元层面解决不了（依赖 retire 环的放手时机），已记录在 §27。
+6. **真机 GPU 像素冒烟**：本机只有 llvmpipe/lavapipe（无 `/dev/dri`），仍待有 GPU 的机器。
