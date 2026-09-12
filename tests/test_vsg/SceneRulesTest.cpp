@@ -27,6 +27,8 @@ using vine::graphics::CullMode;
 using vine::graphics::PolygonMode;
 using vine::graphics::ResolvedRenderState;
 using vine::graphics::Topology;
+using vine::vsg::detail::aliasArray;
+using vine::vsg::detail::aliasTypedVertexData;
 using vine::vsg::detail::applyOpaqueBlendForAttachments;
 using vine::vsg::detail::ChannelShape;
 using vine::vsg::detail::channelShape;
@@ -42,7 +44,6 @@ using vine::vsg::detail::kHashSeed;
 using vine::vsg::detail::kLayoutSeed;
 using vine::vsg::detail::makeIndexedNormals;
 using vine::vsg::detail::makeNormals;
-using vine::vsg::detail::makeTypedVertexData;
 using vine::vsg::detail::makeWhiteColors;
 using vine::vsg::detail::normalIsUsable;
 using vine::vsg::detail::sampleVertexData;
@@ -588,29 +589,33 @@ TEST(SceneRulesTest, MakeWhiteColorsIsOpaqueWhiteForEveryVertex)
 }
 
 // ---------------------------------------------------------------------------
-// Materialising a packed channel: the array type must match the binding format it is bound to.
+// Making a channel readable by vsg: the array type must match the binding format it is bound to, and the
+// memory it reads is the model's (aliased), not a copy of it.
 // ---------------------------------------------------------------------------
 
-TEST(SceneRulesTest, MakeTypedVertexDataPicksTheArrayTypeFromTheComponentCount)
+TEST(SceneRulesTest, AliasTypedVertexDataPicksTheArrayTypeFromTheComponentCount)
 {
-    const std::vector<float> data{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f };
-    EXPECT_NE(makeTypedVertexData(1u, data, 8u).cast<::vsg::floatArray>(), nullptr);
-    EXPECT_NE(makeTypedVertexData(2u, data, 4u).cast<::vsg::vec2Array>(), nullptr);
-    EXPECT_NE(makeTypedVertexData(3u, data, 2u).cast<::vsg::vec3Array>(), nullptr);
-    EXPECT_NE(makeTypedVertexData(4u, data, 2u).cast<::vsg::vec4Array>(), nullptr);
+    const auto buffer = vine::intrusive_ptr<const vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f }));
+    EXPECT_NE(aliasTypedVertexData(1u, buffer, 8u).cast<::vsg::floatArray>(), nullptr);
+    EXPECT_NE(aliasTypedVertexData(2u, buffer, 4u).cast<::vsg::vec2Array>(), nullptr);
+    EXPECT_NE(aliasTypedVertexData(3u, buffer, 2u).cast<::vsg::vec3Array>(), nullptr);
+    EXPECT_NE(aliasTypedVertexData(4u, buffer, 2u).cast<::vsg::vec4Array>(), nullptr);
     // 0 / >4 are rejected by channelShape before this runs; the fallback is still the vec4 form.
-    EXPECT_NE(makeTypedVertexData(0u, data, 2u).cast<::vsg::vec4Array>(), nullptr);
-    EXPECT_NE(makeTypedVertexData(5u, data, 1u).cast<::vsg::vec4Array>(), nullptr);
+    EXPECT_NE(aliasTypedVertexData(0u, buffer, 2u).cast<::vsg::vec4Array>(), nullptr);
+    EXPECT_NE(aliasTypedVertexData(5u, buffer, 1u).cast<::vsg::vec4Array>(), nullptr);
 }
 
-TEST(SceneRulesTest, MakeTypedVertexDataTypeAgreesWithTheBindingFormat)
+TEST(SceneRulesTest, AliasTypedVertexDataTypeAgreesWithTheBindingFormat)
 {
     // The array built here is bound to the attribute whose Vulkan format formatForComponents declares:
     // if the two disagreed on the component count the configurator would accept it and the shader would
-    // misread the attribute at draw time, with nothing to report.
-    const std::vector<float> data{ 1.f, 2.f, 3.f, 4.f };
+    // misread the attribute at draw time, with nothing to report. Aliasing keeps them in step by
+    // construction — the array's element type IS the format's counterpart.
+    const auto buffer = vine::intrusive_ptr<const vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f }));
     for (std::uint32_t components : { 1u, 2u, 3u, 4u }) {
-        const auto built  = makeTypedVertexData(components, data, 1u);
+        const auto built  = aliasTypedVertexData(components, buffer, 1u);
         const auto sample = sampleVertexData(components);
         ASSERT_NE(built, nullptr);
         ASSERT_NE(sample, nullptr);
@@ -618,31 +623,65 @@ TEST(SceneRulesTest, MakeTypedVertexDataTypeAgreesWithTheBindingFormat)
     }
 }
 
-TEST(SceneRulesTest, MakeTypedVertexDataCopiesEveryComponentInOrder)
+TEST(SceneRulesTest, AliasTypedVertexDataReadsTheBuffersOwnMemory)
 {
-    // A 3-component channel: each vertex reads its three scalars at its own stride (the same interleave
-    // rule unpackXyz applies to positions), never three consecutive floats.
-    const std::vector<float> data{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f };
-    const auto arr = makeTypedVertexData(3u, data, 2u).cast<::vsg::vec3Array>();
+    // The point of aliasing: vsg reads the address the model owns, so the same scalars are not stored
+    // twice. Byte-identical rendering cannot tell the two apart — only the address can.
+    const auto buffer = vine::intrusive_ptr<const vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f }));
+    const float* scalars = buffer->data();
+
+    const auto arr = aliasTypedVertexData(3u, buffer, 2u).cast<::vsg::vec3Array>();
     ASSERT_NE(arr, nullptr);
-    ASSERT_EQ(arr->size(), 2u);
+    EXPECT_EQ(arr->size(), 2u);
+    EXPECT_EQ(arr->dataPointer(), static_cast<const void*>(scalars))
+        << "a 3-component channel must be read in place, at each vertex's own stride";
+    // The stride is the ARRAY's element size: that is the number vsg indexes by AND the number the GPU
+    // binding reads at. Taking the buffer's element size (4) instead interleaves every attribute on the
+    // GPU — and it is the kind of mistake the CPU-side values alone can happen to survive.
+    EXPECT_EQ(arr->properties.stride, sizeof(::vsg::vec3));
+    // Reading through the array sees the model's scalars: vertex 0 is (1,2,3), vertex 1 is (4,5,6).
     EXPECT_FLOAT_EQ((*arr)[0].x, 1.f);
-    EXPECT_FLOAT_EQ((*arr)[0].y, 2.f);
     EXPECT_FLOAT_EQ((*arr)[0].z, 3.f);
     EXPECT_FLOAT_EQ((*arr)[1].x, 4.f);
-    EXPECT_FLOAT_EQ((*arr)[1].y, 5.f);
     EXPECT_FLOAT_EQ((*arr)[1].z, 6.f);
 
-    // A 4-component channel keeps the fourth scalar in w: it is data, not padding.
-    const std::vector<float> rgba{ 1.f, 2.f, 3.f, 4.f };
-    const auto vec4s = makeTypedVertexData(4u, rgba, 1u).cast<::vsg::vec4Array>();
-    ASSERT_NE(vec4s, nullptr);
-    EXPECT_FLOAT_EQ((*vec4s)[0].w, 4.f);
-
     // Zero vertices is legal and yields an empty array, not a null one.
-    const auto none = makeTypedVertexData(3u, {}, 0u);
+    const auto none = aliasTypedVertexData(3u, buffer, 0u);
     ASSERT_NE(none, nullptr);
     EXPECT_EQ(none->valueCount(), 0u);
+}
+
+TEST(SceneRulesTest, AliasTypedVertexDataKeepsTheBufferAliveItself)
+{
+    // The renderer must keep exactly the memory it reads alive — the model may be destroyed first, and
+    // nothing in the scene graph holds it. The array holds the storage, and the storage holds the
+    // buffer, so dropping every outside handle must leave the values readable.
+    auto buffer = vine::intrusive_ptr<const vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ 7.f, 8.f, 9.f }));
+    const auto alive_before = buffer->useCount();
+    const auto arr          = aliasTypedVertexData(3u, buffer, 1u).cast<::vsg::vec3Array>();
+    ASSERT_NE(arr, nullptr);
+    EXPECT_GT(buffer->useCount(), alive_before) << "the built array must reference the buffer";
+
+    buffer = vine::intrusive_ptr<const vine::Buffer<float>>(); // the model's handle goes away
+    EXPECT_FLOAT_EQ(static_cast<const float*>(arr->dataPointer())[0], 7.f)
+        << "the renderer must still read the model's values after the model died";
+    EXPECT_FLOAT_EQ((*arr)[0].z, 9.f);
+}
+
+TEST(SceneRulesTest, AliasArrayWrapsAnIndexBufferAsRealUnsignedIntArrays)
+{
+    // Indices go through the same mechanism: a real uintArray over the model's uint32 buffer, which is
+    // the element type DrawIndexed reads.
+    const auto buffer = vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
+        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 3u, 0u }));
+    const auto indices = aliasArray<::vsg::uintArray, std::uint32_t>(buffer, 6u);
+    ASSERT_NE(indices, nullptr);
+    EXPECT_EQ(indices->size(), 6u);
+    EXPECT_EQ(indices->dataPointer(), static_cast<const void*>(buffer->data()));
+    EXPECT_EQ((*indices)[1], 1u);
+    EXPECT_EQ((*indices)[4], 3u);
 }
 
 TEST(VsgSceneRulesTest, MapsEveryPixelLayoutToItsVulkanFormat)

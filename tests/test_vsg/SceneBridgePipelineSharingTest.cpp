@@ -8,6 +8,7 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 
+#include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/BindVertexBuffers.h>
 #include <vsg/commands/Commands.h>
 #include <vsg/core/Array.h>
@@ -72,6 +73,37 @@ vsg::BindVertexBuffers* findBindVertexBuffers(vsg::Node* node)
     if (auto commands = node->cast<vsg::Commands>()) {
         for (const auto& child : commands->children) {
             if (auto* hit = findBindVertexBuffers(child.get())) {
+                return hit;
+            }
+        }
+    }
+    return nullptr;
+}
+
+/**
+ * @brief Finds the first BindIndexBuffer command under a retained subtree.
+ *
+ * @param node Root of the subtree to walk.
+ * @return The bind command, or null when none is present.
+ */
+vsg::BindIndexBuffer* findBindIndexBuffer(vsg::Node* node)
+{
+    if (node == nullptr) {
+        return nullptr;
+    }
+    if (auto bind = node->cast<vsg::BindIndexBuffer>()) {
+        return bind;
+    }
+    if (auto group = node->cast<vsg::Group>()) {
+        for (const auto& child : group->children) {
+            if (auto* hit = findBindIndexBuffer(child.get())) {
+                return hit;
+            }
+        }
+    }
+    if (auto commands = node->cast<vsg::Commands>()) {
+        for (const auto& child : commands->children) {
+            if (auto* hit = findBindIndexBuffer(child.get())) {
                 return hit;
             }
         }
@@ -1024,4 +1056,69 @@ TEST(SceneBridgePipelineSharingTest, PositionBindingAliasesTheModelBuffer)
               static_cast<const void*>(positions->scalars().data()))
         << "loc0 must alias the model's scalars instead of copying them";
     EXPECT_EQ(bvb->arrays[0]->data->valueCount(), positions->vertexCount());
+
+    // Every channel whose layout already matches its binding goes through the same helper: this geometry
+    // authors normals, so loc1 reads the model's floats as well.
+    const auto* normals = geometry->buffer(1);
+    ASSERT_NE(normals, nullptr);
+    ASSERT_FALSE(normals->scalars().empty());
+    EXPECT_EQ(bvb->arrays[1]->data->dataPointer(), static_cast<const void*>(normals->scalars().data()))
+        << "loc1 must alias the model's normals instead of copying them";
+}
+
+/**
+ * @brief Texture coordinates and indices are aliased too, each with the stride of its own array type.
+ *
+ * The channels that must NOT alias are the ones the backend builds itself: the white opacity carrier (its
+ * alpha is rewritten in place per drawable), zero-filled UVs and derived normals. Those are asserted by
+ * the tests that cover the derived paths; here the aliased ones are pinned by address.
+ */
+TEST(SceneBridgePipelineSharingTest, IndexedGeometryAliasesItsTexcoordsAndIndexBuffer)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+    auto geometry = GeometryPtr(new Geometry());
+
+    vine::geometry::Vec3fArray positions;
+    positions.emplace_back(0.0f, 0.0f, 0.0f);
+    positions.emplace_back(1.0f, 0.0f, 0.0f);
+    positions.emplace_back(0.0f, 1.0f, 0.0f);
+    geometry->setPositions(packAttribute(positions));
+    vine::geometry::Vec2fArray uvs;
+    uvs.emplace_back(0.0f, 0.0f);
+    uvs.emplace_back(1.0f, 0.0f);
+    uvs.emplace_back(0.0f, 1.0f);
+    geometry->setTexcoords(packAttribute(uvs));
+    geometry->setIndices(packIndices(std::vector<std::uint32_t>{ 0u, 1u, 2u }));
+
+    std::vector<RenderCommand> commands;
+    commands.emplace_back(geometry, material, Mat4d());
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+
+    // Vertex binding order is position, normal, texcoord, colour, so the UVs are the third array.
+    auto* bvb = findBindVertexBuffers(created[0].get());
+    ASSERT_NE(bvb, nullptr);
+    ASSERT_GE(bvb->arrays.size(), 3u);
+    ASSERT_NE(bvb->arrays[2]->data, nullptr);
+    EXPECT_NE(bvb->arrays[2]->data->cast<vsg::vec2Array>(), nullptr);
+    const auto* uv_channel = geometry->buffer(vine::graphics::Geometry::kTexCoordLocation);
+    ASSERT_NE(uv_channel, nullptr);
+    ASSERT_FALSE(uv_channel->scalars().empty());
+    EXPECT_EQ(bvb->arrays[2]->data->dataPointer(), static_cast<const void*>(uv_channel->scalars().data()))
+        << "the texcoord binding must alias the model's (u, v) pairs";
+    EXPECT_EQ(bvb->arrays[2]->data->properties.stride, sizeof(vsg::vec2))
+        << "a vec2 array reads its elements eight bytes apart, not four";
+
+    auto* index_bind = findBindIndexBuffer(created[0].get());
+    ASSERT_NE(index_bind, nullptr);
+    ASSERT_NE(index_bind->indices, nullptr);
+    ASSERT_NE(index_bind->indices->data, nullptr);
+    EXPECT_EQ(index_bind->indices->data->dataPointer(),
+              static_cast<const void*>(geometry->indices().data()))
+        << "the index binding must alias the model's index buffer";
+    EXPECT_EQ(index_bind->indices->data->valueCount(), geometry->indices().size());
 }

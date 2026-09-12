@@ -114,15 +114,18 @@ struct AttributeBuffer {
 
 1. **读 loc0** → 校验非空且 `components>=3`，否则整个几何不画（返回空）；
    按 **stride=3** 展开成 `Vec3fArray positions`，再绑定成 `vsg::vec3Array vertices`：
-   **不是拷贝，而是别名** —— `vsg::vec3Array::create(storage, 0, sizeof(vsg::vec3), n)`
-   指向 `detail::VsgBufferView<float>`，后者持住模型的 `Buffer<float>`，于是顶点只存在一份
-   （模型与场景图读同一块内存；场景图持 storage ⇒ 模型先死也安全）。
+   **不是拷贝，而是别名** —— `detail::aliasArray<vec3Array, float>(values, count)` 建一个真
+   `vsg::vec3Array`，它指向 `detail::VsgBufferView<float>`（持住模型的 `Buffer<float>`），
+   于是顶点只存在一份（模型与场景图读同一块内存；场景图持 storage ⇒ 模型先死也安全）。
    绑定对象**必须是真 `vsg::Array`**：只把 `properties` / `dataPointer()` 报对的 `Data`
    会被**静默**忽略（不出图、validation 不报）；元素类型仍是数组的，所以 format/stride
-   仍自动推断，无手写。
+   仍自动推断，无手写 —— 但 stride 必须是**数组自己的元素大小**（vec3 → 12，不是 4）。
+   **其余通道同款**：法线（loc1 布局匹配时）、texcoords、4 分量颜色、自定义通道都走
+   `aliasArray`；只有**推导量**自己分配真数组（白色 opacity 载体、零填充 texcoords、
+   推导法线、非索引几何的顺序索引）。
 2. **读 loc1（可选）** → 法线；缺失时后端用位置推导
    （indexed → `makeIndexedNormals` 平滑法线；非 indexed → `makeNormals` 面法线）。
-3. **索引**：`hasIndices()` → 拷成 `vsg::uintArray`；否则生成顺序索引 0..n-1。
+3. **索引**：`hasIndices()` → 同样**别名**模型的索引 buffer（先整段校验范围）；否则生成顺序索引 0..n-1（真数组）。
 4. **按名字喂给 configurator**：
 
 ```cpp

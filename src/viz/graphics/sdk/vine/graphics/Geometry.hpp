@@ -284,6 +284,15 @@ class V_GRAPHICS_API Geometry : public Node {
      */
     std::span<const std::uint32_t> indices() const;
 
+    /** @brief Returns the index buffer itself, for a consumer that reads its memory instead of a copy.
+     *
+     * The counterpart of indices(): the handle keeps the storage alive while a backend aliases the very
+     * bytes, so the indices exist once rather than once per side.
+     *
+     * @return The index buffer, or null when no index buffer is attached.
+     */
+    intrusive_ptr<const vine::Buffer<std::uint32_t>> indicesBuffer() const;
+
     /** @brief Gets the data revision.
      *
      * Bumped by every data mutation, so retained render nodes can detect

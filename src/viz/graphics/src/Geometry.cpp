@@ -164,6 +164,11 @@ std::span<const std::uint32_t> Geometry::indices() const
     return indices_ != nullptr ? indices_->view() : std::span<const std::uint32_t>{};
 }
 
+intrusive_ptr<const vine::Buffer<std::uint32_t>> Geometry::indicesBuffer() const
+{
+    return indices_;
+}
+
 std::uint64_t Geometry::revision() const
 {
     return revision_;

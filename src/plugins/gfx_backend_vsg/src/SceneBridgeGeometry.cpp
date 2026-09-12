@@ -12,7 +12,6 @@
 #include <vsg/state/material.h>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/vsg/SceneBridgeInternals.hpp>
-#include <vine/vsg/VsgBufferView.hpp>
 #include <vine/vsg/VsgSceneRules.hpp>
 #include <vine/vsg/VsgUtils.hpp>
 
@@ -23,13 +22,14 @@ V_VSG_NS_BEGIN
 
 // The bridge's device-free rules are shared with the rest of the plugin and unit-tested on
 // their own (see VsgSceneRules.hpp); these declarations keep the call sites below unqualified.
+using detail::aliasArray;
+using detail::aliasTypedVertexData;
 using detail::ChannelShape;
 using detail::channelShape;
 using detail::ignoredChannelMessage;
 using detail::ignoredNormalChannelMessage;
 using detail::makeIndexedNormals;
 using detail::makeNormals;
-using detail::makeTypedVertexData;
 using detail::makeWhiteColors;
 using detail::makeZeroTexcoords;
 using detail::unpackXyz;
@@ -68,12 +68,11 @@ using detail::XyzUnpack;
     ::vsg::ref_ptr<::vsg::Data> vertices;
     std::size_t                 vertex_count = 0;
     if (position_attr->components == kXyzComponents && position_attr->floatCount() % kXyzComponents == 0u) {
-        // A REAL vsg array aliases the model's memory: the element type stays the array's, so its format and
-        // stride keep being inferred from it (nothing about the binding is hand-written), and the storage
-        // Data it points at holds the buffer, so the memory outlives the node that reads it.
-        auto storage = detail::VsgBufferView<float>::create(position_attr->values);
-        vertices     = ::vsg::vec3Array::create(storage, 0u, static_cast<std::uint32_t>(sizeof(::vsg::vec3)),
-                                                static_cast<std::uint32_t>(position_attr->vertexCount()));
+        // A REAL vsg array aliases the model's memory (see detail::aliasArray): the element type stays the
+        // array's, so its format and stride keep being inferred from it (nothing about the binding is
+        // hand-written), and the storage Data it points at holds the buffer, so the memory outlives the
+        // node that reads it.
+        vertices     = aliasArray<::vsg::vec3Array, float>(position_attr->values, position_attr->vertexCount());
         positions    = position_attr->vec3View();
         vertex_count = positions.size();
     } else {
@@ -114,11 +113,16 @@ using detail::XyzUnpack;
     // positions — no copy of it either. A bad OPTIONAL channel must not reject an otherwise drawable mesh.
     vine::geometry::Vec3fArray         unpacked_normals;
     std::span<const vine::math::Vec3f> src_normals;
+    // Set only when the channel already IS the layout loc1 binds (three components per vertex): that is
+    // the case the binding can alias instead of copying. A vec4 channel is unpacked above and used from
+    // that copy, since aliasing it would need a stride the array's element type does not have.
+    const vine::graphics::AttributeBuffer* authored_normals = nullptr;
     if (const auto* normal_attr = geometry->buffer(1);
         normal_attr != nullptr && !normal_attr->empty()) {
         const std::span<const vine::math::Vec3f> authored = normal_attr->vec3View();
         if (authored.size() == vertex_count) {
-            src_normals = authored;
+            src_normals      = authored;
+            authored_normals = normal_attr;
         } else if (const XyzUnpack unpack = unpackXyz(*normal_attr, unpacked_normals); unpack != XyzUnpack::Ok) {
             unpacked_normals.clear();
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
@@ -146,10 +150,10 @@ using detail::XyzUnpack;
     // triangle-oriented rules: primitive assembly is the topology's job. Only
     // an out-of-range index is rejected (it would read OOB in the CPU normal
     // derivation and OOB / validation-fault on the GPU via DrawIndexed).
-    ::vsg::ref_ptr<::vsg::vec3Array> normals;
+    const bool                       is_triangles = topology == vine::graphics::Topology::Triangles;
+    const bool                       indexed      = geometry->hasIndices();
     ::vsg::ref_ptr<::vsg::uintArray> indices;
-    const bool is_triangles = topology == vine::graphics::Topology::Triangles;
-    if (geometry->hasIndices()) {
+    if (indexed) {
         const auto src_indices = geometry->indices();
         for (std::size_t i = 0; i < src_indices.size(); ++i) {
             if (src_indices[i] >= vertex_count) {
@@ -160,12 +164,9 @@ using detail::XyzUnpack;
                 return ::vsg::ref_ptr<::vsg::Commands>();
             }
         }
-        indices = ::vsg::uintArray::create(static_cast<uint32_t>(src_indices.size()));
-        for (std::size_t i = 0; i < src_indices.size(); ++i) {
-            (*indices)[i] = src_indices[i];
-        }
-        normals = is_triangles ? makeIndexedNormals(positions, src_normals, *indices)
-                               : non_triangle_normals();
+        // Validated, so the model's own indices are what DrawIndexed may read: they are aliased like the
+        // channels (uint32 is the element type the model stores them in).
+        indices = aliasArray<::vsg::uintArray, std::uint32_t>(geometry->indicesBuffer(), src_indices.size());
     } else {
         // Non-indexed: one identity index per vertex over the whole position
         // buffer; a trailing partial primitive is simply not rasterised.
@@ -173,8 +174,19 @@ using detail::XyzUnpack;
         for (uint32_t i = 0; i < vertex_count; ++i) {
             (*indices)[i] = i;
         }
-        normals = is_triangles ? makeNormals(positions, src_normals)
-                               : non_triangle_normals();
+    }
+
+    // Normals: an authored loc1 channel in the layout loc1 binds is aliased from the model's memory — the
+    // verbatim copy makeNormals / makeIndexedNormals would build for it is exactly those floats. Anything
+    // else is derived (Triangles) or defaulted (Points / Lines, which have no surface to derive from).
+    ::vsg::ref_ptr<::vsg::vec3Array> normals;
+    if (authored_normals != nullptr) {
+        normals = aliasArray<::vsg::vec3Array, float>(authored_normals->values, vertex_count);
+    } else if (is_triangles) {
+        normals = indexed ? makeIndexedNormals(positions, src_normals, *indices)
+                          : makeNormals(positions, src_normals);
+    } else {
+        normals = non_triangle_normals();
     }
 
     // vsg_Color (binding 2). On the built-in path this is ALWAYS the backend
@@ -193,11 +205,17 @@ using detail::XyzUnpack;
             data.size() / comps != vertex_count) {
             return {};
         }
+        if (comps == 4u) {
+            // Four components IS the layout this binding reads: alias the scalars (red, green, blue and
+            // alpha sit in the model's buffer in that order), no conversion involved.
+            return aliasArray<::vsg::vec4Array, float>(attr.values, vertex_count);
+        }
+        // Three components: the alpha is not authored, so the array is built (w = 1) rather than aliased —
+        // the binding reads four components and the model stores three.
         auto out = ::vsg::vec4Array::create(static_cast<uint32_t>(vertex_count));
         for (std::size_t v = 0; v < vertex_count; ++v) {
             const std::size_t b = v * comps;
-            const float       w = comps >= 4u ? data[b + 3u] : 1.0f;
-            (*out)[v] = ::vsg::vec4(data[b], data[b + 1u], data[b + 2u], w);
+            (*out)[v]           = ::vsg::vec4(data[b], data[b + 1u], data[b + 2u], 1.0f);
         }
         return out;
     };
@@ -231,16 +249,13 @@ using detail::XyzUnpack;
     // UVs" means: every fragment samples the same texel.
     const auto pack_texcoords = [](const vine::graphics::AttributeBuffer& attr,
                                    std::size_t vertex_count) -> ::vsg::ref_ptr<::vsg::vec2Array> {
-        const auto                   comps = attr.components;
-        const std::span<const float> data  = attr.scalars();
-        if (comps != 2u || data.size() != vertex_count * 2u) {
+        const auto comps = attr.components;
+        if (comps != 2u || attr.floatCount() != vertex_count * 2u) {
             return {};
         }
-        auto out = ::vsg::vec2Array::create(static_cast<uint32_t>(vertex_count));
-        for (std::size_t v = 0; v < vertex_count; ++v) {
-            (*out)[v] = ::vsg::vec2(data[v * 2u], data[v * 2u + 1u]);
-        }
-        return out;
+        // Two components per vertex IS the layout the vsg_TexCoord0 binding reads: alias the (u, v)
+        // pairs verbatim.
+        return aliasArray<::vsg::vec2Array, float>(attr.values, vertex_count);
     };
     ::vsg::ref_ptr<::vsg::vec2Array> texcoords;
     if (const auto* uv_channel = geometry->buffer(vine::graphics::Geometry::kTexCoordLocation);
@@ -290,7 +305,9 @@ using detail::XyzUnpack;
                    ignoredChannelMessage(location, *attr, vertex_count, shape));
             continue;
         }
-        arrays.push_back(makeTypedVertexData(comps, attr->scalars(), vertex_count));
+        // The channel's shape is exactly what its binding reads (channelShape just verified it), so the
+        // model's own scalars are aliased under an array of the matching element type.
+        arrays.push_back(aliasTypedVertexData(comps, attr->values, vertex_count));
         extra_channels.push_back(VertexChannel{ location, comps });
     }
 

@@ -320,39 +320,19 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
     return normals;
 }
 
-::vsg::ref_ptr<::vsg::Data> makeTypedVertexData(std::uint32_t components, std::span<const float> data,
+::vsg::ref_ptr<::vsg::Data> aliasTypedVertexData(std::uint32_t components,
+                                                intrusive_ptr<const vine::Buffer<float>> values,
                                                 std::size_t vertex_count)
 {
-    const auto n = static_cast<uint32_t>(vertex_count);
     switch (components) {
-    case 1u: {
-        auto arr = ::vsg::floatArray::create(n);
-        for (std::size_t v = 0; v < vertex_count; ++v) {
-            (*arr)[v] = data[v];
-        }
-        return arr;
-    }
-    case 2u: {
-        auto arr = ::vsg::vec2Array::create(n);
-        for (std::size_t v = 0; v < vertex_count; ++v) {
-            (*arr)[v] = ::vsg::vec2(data[v * 2u], data[v * 2u + 1u]);
-        }
-        return arr;
-    }
-    case 3u: {
-        auto arr = ::vsg::vec3Array::create(n);
-        for (std::size_t v = 0; v < vertex_count; ++v) {
-            (*arr)[v] = ::vsg::vec3(data[v * 3u], data[v * 3u + 1u], data[v * 3u + 2u]);
-        }
-        return arr;
-    }
-    default: {
-        auto arr = ::vsg::vec4Array::create(n);
-        for (std::size_t v = 0; v < vertex_count; ++v) {
-            (*arr)[v] = ::vsg::vec4(data[v * 4u], data[v * 4u + 1u], data[v * 4u + 2u], data[v * 4u + 3u]);
-        }
-        return arr;
-    }
+    case 1u:
+        return aliasArray<::vsg::floatArray, float>(std::move(values), vertex_count);
+    case 2u:
+        return aliasArray<::vsg::vec2Array, float>(std::move(values), vertex_count);
+    case 3u:
+        return aliasArray<::vsg::vec3Array, float>(std::move(values), vertex_count);
+    default:
+        return aliasArray<::vsg::vec4Array, float>(std::move(values), vertex_count);
     }
 }
 

@@ -46,6 +46,7 @@
 #include <vine/imaging/PixelFormat.hpp>
 
 #include <vine/vsg/RenderStateMapper.hpp>
+#include <vine/vsg/VsgBufferView.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -293,23 +294,59 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
                                                    const ::vsg::uintArray& indices);
 
 /**
- * @brief Materialises a packed float channel into a typed per-vertex array.
+ * @brief Wraps a Vine buffer as a REAL vsg array that reads it in place.
  *
- * The `@pre` @ref channelShape establishes is what makes the loops safe: the component count is 1..4
- * and the payload holds exactly one value per vertex, so the packed floats are indexed without a
- * second check (a malformed channel never reaches here). The element type is the counterpart of the
- * Vulkan format @ref formatForComponents declares (one four-byte component each), so the array built
- * here matches the binding declared from that format.
+ * The array is the object vsg infers its Vulkan format and binding stride FROM, which is why the
+ * bound object has to be a real array: a `vsg::Data` that merely reports the right properties is
+ * silently not bound (measured — see the note in VsgBufferView.hpp). `vsg::Array` accepts a
+ * storage object to alias, so the array reads the model's bytes while keeping that storage
+ * referenced, and the storage holds the buffer: the renderer keeps exactly the memory it reads
+ * alive, even if the model dies first, and nothing is copied.
  *
- * @pre `channelShape(attr, vertex_count) == ChannelShape::Ok` for the channel @p data came from.
+ * Nothing about the binding is hand-written either: the Vulkan format and the stride keep being
+ * inferred from @p Array's element type, so this cannot disagree with the binding declared from
+ * @ref formatForComponents (which a mismatched pair would be accepted for, silently).
+ *
+ * The elements are read @p Array's element size apart, because that is the stride vsg indexes a bound
+ * array by (the GPU binding uses the same number): a vec3 channel of floats is twelve bytes apart, not
+ * four. The array type therefore states the layout, and the caller is the one that verified the buffer
+ * is tightly packed at it.
+ *
+ * @tparam Array   Real vsg array type to build (e.g. `::vsg::vec3Array`); its element size is the stride.
+ * @tparam Element Scalar element type of the buffer, which @p count is counted in.
+ * @param buffer Buffer to read; null yields an array over an empty view.
+ * @param count  Elements to expose.
+ * @return The array, reading @p buffer's memory.
+ */
+template <typename Array, typename Element>
+::vsg::ref_ptr<Array> aliasArray(intrusive_ptr<const vine::Buffer<Element>> buffer, std::size_t count)
+{
+    using ArrayElement = typename Array::value_type;
+    static_assert(sizeof(ArrayElement) % sizeof(Element) == 0u,
+                  "an aliased array element must cover a whole number of buffer elements");
+    return Array::create(::vsg::ref_ptr<::vsg::Data>(VsgBufferView<Element>::create(std::move(buffer))), 0u,
+                         static_cast<std::uint32_t>(sizeof(ArrayElement)), static_cast<std::uint32_t>(count));
+}
+
+/**
+ * @brief Wraps a packed float channel as a typed per-vertex array that ALIASES it.
+ *
+ * The `@pre` @ref channelShape establishes is what makes this safe: the component count is 1..4 and
+ * the payload holds exactly one value per vertex, so the packed floats already ARE the array's
+ * elements, one per vertex, in order. The element type is the counterpart of the Vulkan format
+ * @ref formatForComponents declares (one four-byte component each), so the array built here matches
+ * the binding declared from that format.
+ *
+ * @pre `channelShape(attr, vertex_count) == ChannelShape::Ok` for the channel @p values came from.
  *
  * @param components   Scalar components per vertex (1..4; outside 1..3 the vec4 form is used, which
  *                     channelShape has already rejected).
- * @param data         Packed per-vertex floats.
- * @param vertex_count Expected vertex count.
- * @return Typed array owning the copied values.
+ * @param values       Packed per-vertex floats to read.
+ * @param vertex_count Vertices to expose.
+ * @return Typed array reading @p values.
  */
-::vsg::ref_ptr<::vsg::Data> makeTypedVertexData(std::uint32_t components, std::span<const float> data,
+::vsg::ref_ptr<::vsg::Data> aliasTypedVertexData(std::uint32_t components,
+                                                intrusive_ptr<const vine::Buffer<float>> values,
                                                 std::size_t vertex_count);
 
 /**

@@ -136,8 +136,14 @@ debug 打印证明 `format` / `stride` / `valueSize` / `valueCount` / `dataSize`
 - 新断言 `SceneBridgePipelineSharingTest.PositionBindingAliasesTheModelBuffer`：绑定数组的 `dataPointer()` 必须**等于**模型 buffer 的 `scalars().data()`，且必须是真 `vsg::vec3Array`（`test_vsg` 185 → **186**）。
 - 变异：关掉别名分支改回拷贝 → 该断言失败。渲染关口做不到这一点：拷贝渲染得逐字节相同，**只有指针同一性能区分**。
 
-**其余通道仍未做**：法线 / texcoords / 自定义通道 / 索引的别名。
-其中**推导量必须保持真数组**：白色 opacity 载体、零填充 texcoords、`makeNormals` / `makeIndexedNormals` 的推导法线。
+**其余通道（法线 / texcoords / 4 分量颜色 / 自定义通道 / 索引）已按同一机制落地**：`detail::aliasArray<Array, Element>(buffer, count)` 是所有通道的**唯一**入口（`aliasTypedVertexData` 只是按分量数选数组类型的 switch）；`geometry->indicesBuffer()` 补上以让索引也能别名。
+
+**推导量仍然自己分配真数组**：白色 opacity 载体（alpha 会被逐 drawable 就地改写，别名会写穿到模型）、零填充 texcoords、以及 `makeNormals` / `makeIndexedNormals` 的推导分支。`makeTypedVertexData`（拷贝版）**已删除** —— 自定义通道的布局由 `channelShape` 保证匹配，拷贝是纯开销。
+vec4 位置（stride 4）**有意不进别名**：它要的是 R32G32B32 绑定，别名会改成 R32G32B32A32，属行为变化；仍走 `unpackXyz`。
+
+**踩到的坑（值得记）**：stride 必须是**数组自己的元素大小**，不是 buffer 元素的大小。vsg 用 `properties.stride` **同时**索引 CPU 侧与 GPU 绑定 —— 给一个别名 float buffer 的 `vec3Array` 传 `sizeof(float)`（4）会让 GPU 按 4 字节跨步交错读，而 CPU 侧的值看着还挺像。**两个关口同时抓住了它**：新单测（`(*arr)[1].x` 读到 2 而不是 4）与渲染证据（47 行不再相同）。现在单测直接钉住 `properties.stride == sizeof(::vsg::vec3)`。
+
+**变异验证（本轮最有价值的一条）**：把 `aliasArray` 改成“复制同样的字节到自己的一份 buffer”（渲染输出逐字节相同、只是地址不同）⇒ **恰好 5 条地址/生命周期断言失败**（2 条共享断言 + 3 条单测），而 `vsg_selftest_evidence.sh` **仍然 PASS**。也就是说：**渲染关口对“拷贝 vs 共享”完全无感**，只有地址断言能区分 —— 这正是这条不变量必须有专门断言的理由。
 
 ## 注意
 
