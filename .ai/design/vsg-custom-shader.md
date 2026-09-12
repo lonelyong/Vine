@@ -370,6 +370,17 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | opacity | `outColor.a = material.diffuse.a`（顶点色只调制 rgb）；P10 再决定用材质值 + dynamic offset 表达 |
 | 阴影 / PBR / Flat | 仍走内建映射；§6 的 P1/P2 |
 
+接线的具体落点（P0.2 照着做即可）：
+
+| 步骤 | 位置 |
+| --- | --- |
+| 槽级 lights 缓冲 | `VsgContentSlot.cpp` 的每帧灯同步处（现在 `setGroupLights(...)` 那一行旁边）：`fillVineLightsBlock(request.camera, *request.lights, block)` 后 memcpy 进一个 `vsg::ubyteArray`（每帧刷，靠 `requiresCopy` 上传，与 overlay 的 `push_data` 同一套路） |
+| 注入桥 | 照 `setTextureCache` / `setMeshResourceCache` 的样子给 `SceneBridge` 加 `setLightsData(ref_ptr<Data>)`（桥是每槽一份 ⇒ 不会跨视图串味） |
+| 挂描述符 | `SceneBridge::buildStateGroup` 里当 `shaderSet` 声明了 `vine_lights` 时 `config->assignDescriptor("vine_lights", lights_data)`（ShaderSet 没声明就跳过，于是内建/自定义 program 路径完全不受影响） |
+| 选 set | `SceneBridge::baseShaderSet()`（或它调用 `buildShaderSet` 的地方）：先问 `buildVineShaderSet(...)`，非空则用（opt-in 开关决定是否走这一步） |
+| 变体键 | 若将来同一场景里两条路径并存，`hashStateVariant(...)` 的键要把“哪套 set”并进去（现在 preset 是会话级常量，暂不需要） |
+
+
 ### 11.3 本步门禁
 
 | 门禁 | 覆盖 |
