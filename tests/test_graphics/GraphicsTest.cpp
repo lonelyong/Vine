@@ -3859,10 +3859,10 @@ TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
     EXPECT_NEAR(box.max().y, 3.0, 1e-9);
 
     vine::geometry::UInt32Array indices = { 0u, 1u, 2u };
-    geom.setIndices(indices);
+    geom.setIndices(packIndices(indices));
     EXPECT_TRUE(geom.hasIndices());
-    ASSERT_NE(geom.indices(), nullptr);
-    EXPECT_EQ(geom.indices()->size(), 3u);
+    EXPECT_FALSE(geom.indices().empty());
+    EXPECT_EQ(geom.indices().size(), 3u);
     EXPECT_EQ(geom.vertexCount(), 3u);
 }
 
@@ -3950,6 +3950,30 @@ TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)
     EXPECT_EQ(geom->positionCount(), 3u);
     EXPECT_EQ(geom->normalCount(), 3u);
     EXPECT_EQ(geom->texcoordCount(), 3u);
+}
+
+TEST(GeometryTest, ConverterSharesTheMeshIndexStorage)
+{
+    auto mesh = intrusive_ptr<vine::geometry::IndexedTriangleMesh>(new vine::geometry::IndexedTriangleMesh());
+    mesh->addVertex(vine::math::Vec3f(0.0f, 0.0f, 0.0f));
+    mesh->addVertex(vine::math::Vec3f(1.0f, 0.0f, 0.0f));
+    mesh->addVertex(vine::math::Vec3f(0.0f, 1.0f, 0.0f));
+    mesh->addTriangle(0u, 1u, 2u);
+
+    const auto geom = geometryFromShape(*mesh);
+    ASSERT_NE(geom.get(), nullptr);
+    ASSERT_TRUE(geom->hasIndices());
+
+    // The index stream is shared too: one allocation, read by both sides.
+    EXPECT_EQ(geom->indices().data(), mesh->indicesBuffer()->data());
+    EXPECT_EQ(geom->indices().size(), 3u);
+    EXPECT_EQ(geom->indices()[2], 2u);
+
+    // ...and because the geometry holds the buffer rather than a snapshot, the mesh appending another
+    // triangle is followed instead of dangled.
+    mesh->addTriangle(2u, 1u, 0u);
+    EXPECT_EQ(geom->indices().size(), 6u);
+    EXPECT_EQ(geom->indices().data(), mesh->indicesBuffer()->data());
 }
 
 TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)

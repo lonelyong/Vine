@@ -1828,7 +1828,7 @@ bool runDiagnosticsPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
 
     // 1. A mesh whose index is out of range: nothing to draw -> Error.
     auto bad_geometry = makeTriangle(0.0f);
-    bad_geometry->setIndices(vine::geometry::UInt32Array{ 0u, 1u, 9u });
+    bad_geometry->setIndices(vine::graphics::packIndices(vine::geometry::UInt32Array{ 0u, 1u, 9u }));
     auto material = MaterialPtr(new Material());
     RenderCommand bad_command(bad_geometry, material, Mat4d());
 

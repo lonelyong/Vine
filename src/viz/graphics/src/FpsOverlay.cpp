@@ -264,7 +264,7 @@ void FpsOverlay::rebuild()
             auto geometry = make_intrusive<Geometry>();
             geometry->setPositions(packAttribute(positions));
             geometry->setNormals(packAttribute(normals));
-            geometry->setIndices(indices);
+            geometry->setIndices(packIndices(indices));
 
             auto material = make_intrusive<Material>();
             material->setDiffuse(kDim);

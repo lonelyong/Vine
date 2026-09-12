@@ -244,29 +244,24 @@ class V_GRAPHICS_API Geometry : public Node {
     /** @brief Gets the number of texture coordinates (location kTexCoordLocation). */
     std::size_t texcoordCount() const;
 
-    /** @brief Sets the optional index buffer from a shared buffer.
+    /** @brief Sets the optional index buffer by SHARING a buffer of indices.
      *
-     * @param indices Shared index buffer to attach, or null to clear.
-     */
-    void setIndices(std::shared_ptr<vine::geometry::UInt32Array> indices);
-
-    /** @brief Sets the optional index buffer from a borrowed uint32 view.
+     * The same rule as the attribute setters: the geometry reads the buffer instead of copying it, so a mesh
+     * hands its own index buffer over and both sides read ONE allocation. A caller that holds a plain index
+     * array packs it first with packIndices().
      *
-     * @param indices Index values to attach (copied); borrowed for the duration of the call only.
+     * @param indices Index scalars to read (three per triangle), or null for an empty index buffer.
      */
-    void setIndices(std::span<const std::uint32_t> indices);
-
-    /** @brief Sets the optional index buffer from a local array (copied).
-     *
-     * @param indices Index values to attach.
-     */
-    void setIndices(const vine::geometry::UInt32Array& indices);
+    void setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices);
 
     /** @brief Returns whether an index buffer is attached. */
     bool hasIndices() const;
 
-    /** @brief Gets the index buffer, or null when unset. */
-    const vine::geometry::UInt32Array* indices() const;
+    /** @brief Gets the index buffer as a borrowed view.
+     *
+     * @return The index scalars (three per triangle), empty when no index buffer is attached.
+     */
+    std::span<const std::uint32_t> indices() const;
 
     /** @brief Gets the data revision.
      *
@@ -342,8 +337,8 @@ class V_GRAPHICS_API Geometry : public Node {
 
   private:
     std::map<std::uint32_t, AttributeBuffer> attributes_;
-    std::shared_ptr<vine::geometry::UInt32Array> indices_;
-    std::uint64_t                            revision_ = 0;
+    intrusive_ptr<const vine::Buffer<std::uint32_t>> indices_;
+    std::uint64_t                                   revision_ = 0;
     intrusive_ptr<Material> material_;
     intrusive_ptr<ShaderProgram> program_;
 };
@@ -373,11 +368,20 @@ V_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::
 V_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec2f> vertices);
 
 /**
+ * @brief Packs an index run into the buffer a geometry's index stream reads.
+ *
+ * The index counterpart of packAttribute(): for a caller that holds a plain index array and no buffer.
+ *
+ * @param indices Index values to pack (three per triangle).
+ * @return Buffer owning the copied indices.
+ */
+V_GRAPHICS_API intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> indices);
+
+/**
  * @brief Builds a buffer-only Geometry from a triangle-mesh Shape.
  *
- * SHARES the shape's positions, normals and texture coordinates with the geometry — the geometry reads the
- * mesh's own buffers, so the vertices exist once in memory and not twice. Indexed meshes still copy their
- * index buffer (Geometry::indices() is a separate, array-typed API).
+ * SHARES the shape's positions, normals, texture coordinates AND indices with the geometry — the geometry
+ * reads the mesh's own buffers, so the vertex data exists once in memory and not twice.
  * Shapes that are not triangle meshes (primitives, BRep, ...) are not
  * convertible and yield null. This is the bridge that lets Shape live purely
  * in the geometry module while Geometry stays vertex-data only.

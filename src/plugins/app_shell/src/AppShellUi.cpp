@@ -141,7 +141,7 @@ addBox(vine::graphics::Group* root, const vine::Colorf& diffuse, const vine::Str
     geometry->setName(name);
     geometry->setPositions(vine::graphics::packAttribute(positions));
     geometry->setNormals(vine::graphics::packAttribute(normals));
-    geometry->setIndices(indices);
+    geometry->setIndices(vine::graphics::packIndices(indices));
 
     auto material = vine::make_intrusive<vine::graphics::Material>();
     material->setDiffuse(diffuse);

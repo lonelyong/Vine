@@ -148,20 +148,10 @@ std::size_t Geometry::texcoordCount() const
     return texcoords != nullptr ? texcoords->vertexCount() : 0u;
 }
 
-void Geometry::setIndices(std::shared_ptr<vine::geometry::UInt32Array> indices)
+void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices)
 {
     indices_ = std::move(indices);
     ++revision_;
-}
-
-void Geometry::setIndices(std::span<const std::uint32_t> indices)
-{
-    setIndices(std::make_shared<vine::geometry::UInt32Array>(indices.begin(), indices.end()));
-}
-
-void Geometry::setIndices(const vine::geometry::UInt32Array& indices)
-{
-    setIndices(std::span<const std::uint32_t>(indices));
 }
 
 bool Geometry::hasIndices() const
@@ -169,9 +159,9 @@ bool Geometry::hasIndices() const
     return indices_ != nullptr && !indices_->empty();
 }
 
-const vine::geometry::UInt32Array* Geometry::indices() const
+std::span<const std::uint32_t> Geometry::indices() const
 {
-    return indices_.get();
+    return indices_ != nullptr ? indices_->view() : std::span<const std::uint32_t>{};
 }
 
 std::uint64_t Geometry::revision() const
@@ -265,6 +255,12 @@ intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec2f> ve
     return intrusive_ptr<Buffer<float>>(new Buffer<float>(std::move(scalars)));
 }
 
+intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> indices)
+{
+    return intrusive_ptr<Buffer<std::uint32_t>>(
+        new Buffer<std::uint32_t>(std::vector<std::uint32_t>(indices.begin(), indices.end())));
+}
+
 GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
 {
     const auto* mesh = dynamic_cast<const vine::geometry::Mesh*>(&shape);
@@ -287,7 +283,7 @@ GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
     }
     if (const auto* indexed =
             dynamic_cast<const vine::geometry::IndexedTriangleMesh*>(&shape)) {
-        geometry->setIndices(indexed->indices());
+        geometry->setIndices(indexed->indicesBuffer());
     }
     return geometry;
 }

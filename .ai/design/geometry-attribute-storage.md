@@ -65,7 +65,7 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 | 3a | `AttributeBuffer` 改为「视图 + keepalive」（当时是类型擦除版），行为不变 | ✅ `55204a1` |
 | 3b | `geometryFromShape()` 走共享 ⇒ **内存不再翻倍** | ✅ `6e9acff` |
 | 3c | 元素钉死 float/uint32、`AttributeBuffer` 直接持 buffer（删掉擦除与快照）、setter 合一名 | ✅ 本批 |
-| 3d | 索引共享（`Geometry::indices()` 仍是 `const UInt32Array*`，带索引的 mesh 仍有一份副本） | ⬜ |
+| 3d | 索引同样改成 `intrusive_ptr<const Buffer<uint32_t>>` + `packIndices()`；`Geometry::indices()` 改返回 `std::span` | ✅ 本批 |
 | 4 | 后端从 `bytes()` 上传；`SceneBridgeGeometry` 不再逐顶点拷进 vsg typed array | ⬜ |
 
 ## 教训（第一版被推翻的过程）
@@ -88,6 +88,7 @@ use-after-free 引进了原本安全的路径，而换来的只是“省一半�
 | `geometryFromShape()` 改回 repack | 恰好 3 条指针同一性断言失败（positions/normals/texcoords），分量/坐标/计数断言全过 |
 | 给 `AttributeBuffer` 加回快照（裸指针 + 缓存长度） | 恰好 3 条增长断言失败：`floatCount()` 6≠9、`vertexCount()` 2≠3、`scalars().data()` 地址不同 |
 | `AttributeBuffer::shared()` 的 keepalive 换成空 lambda | 恰好 `useCount()` 断言失败（1≠2） |
+| `geometryFromShape()` 的索引改回 `packIndices(indexed->indices())`（复制而非共享） | 恰好 3 条索引断言失败：两侧地址不同、增长后计数 3≠6、增长后仍不同 |
 
 每条变异都只打中对应的那组断言、其余全过 —— 即那些断言卡的是它们声称的不变量，而不是碰巧因为别的
 原因一起失败。

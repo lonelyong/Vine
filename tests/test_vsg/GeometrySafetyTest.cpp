@@ -37,12 +37,13 @@ AttributeBuffer packedChannel(const std::vector<float>& floats, std::uint32_t co
  */
 GeometryPtr makePackedGeometry(const std::vector<float>& pos_floats,
                                std::uint32_t             pos_components,
-                               std::shared_ptr<vine::geometry::UInt32Array> indices = nullptr)
+                               const std::shared_ptr<vine::geometry::UInt32Array>& indices = nullptr)
 {
     auto geom = GeometryPtr(new Geometry());
     geom->addBuffer(0, packedChannel(pos_floats, pos_components));
-    if (indices != nullptr) {
-        geom->setIndices(indices);
+    if (indices != nullptr && !indices->empty()) {
+        // This helper builds its index lists as a shared vector for brevity; a geometry takes a buffer.
+        geom->setIndices(packIndices(*indices));
     }
     return geom;
 }
@@ -421,7 +422,7 @@ TEST(GeometrySafetyTest, FixedDataRevisionRebuildsRejectedGeometry)
     EXPECT_EQ(created.size(), 0u);
 
     // Fix the indices (bumps the revision): the geometry is rebuilt and drawn.
-    geom->setIndices(vine::geometry::UInt32Array{ 0u, 1u, 2u });
+    geom->setIndices(packIndices(vine::geometry::UInt32Array{ 0u, 1u, 2u }));
     created.clear();
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), &created);
@@ -678,14 +679,14 @@ TEST(DiagnosticsTest, RejectedGeometryIsReportedOncePerRevision)
     EXPECT_EQ(bridge.diagnosticCount(), 1u);
 
     // Fixed data (bumps the revision): drawn again, and no further diagnostic.
-    geom->setIndices(vine::geometry::UInt32Array{ 0u, 1u, 2u });
+    geom->setIndices(packIndices(vine::geometry::UInt32Array{ 0u, 1u, 2u }));
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), nullptr);
     ASSERT_EQ(root->children.size(), 1u);
     EXPECT_EQ(captured.items.size(), 1u);
 
     // Broken again with a NEW revision: reported again.
-    geom->setIndices(vine::geometry::UInt32Array{ 0u, 1u, 9u });
+    geom->setIndices(packIndices(vine::geometry::UInt32Array{ 0u, 1u, 9u }));
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), nullptr);
     ASSERT_EQ(captured.items.size(), 2u);
@@ -753,7 +754,7 @@ TEST(DiagnosticsTest, CleanFrameIsSilentAndSinkCanBeCleared)
 
     // A bad mesh still counts after the sink is cleared, but is no longer
     // delivered (and the bridge falls back to its stderr trace).
-    geom->setIndices(vine::geometry::UInt32Array{ 0u, 1u, 7u });
+    geom->setIndices(packIndices(vine::geometry::UInt32Array{ 0u, 1u, 7u }));
     bridge.setDiagnosticSink({});
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), nullptr);

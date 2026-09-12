@@ -77,20 +77,20 @@ struct AttributeBuffer {
     std::uint32_t                            components;  // 每顶点标量数 1..4（即 stride）
 };
 // Geometry 内部：std::map<uint32_t, AttributeBuffer> attributes_;
-//           + 可选 std::shared_ptr<UInt32Array> indices_（尚未改成 buffer）
+//           + intrusive_ptr<const Buffer<uint32_t>> indices_
 ```
 
 - **通道直接持 buffer，不是持快照**：属性元素类型钉死为 float，所以不需要类型擦除，
   `AttributeBuffer` 就直接存 `intrusive_ptr<const Buffer<float>>`；**每次访问现取**，
   buffer 之后再增长也不会悬空（快照式裸指针会）。
-- **属性 setter 每个通道只留一个名字**：`setPositions` / `setNormals` / `setTexcoords` 各收一个
-  buffer 句柄（不重载）；持有类型化顶点、没有 buffer 的调用方先
-  `packAttribute(span<const Vec3f|Vec2f>)`。`geometryFromShape()` 直接传 mesh 的句柄，
-  因此两侧读的是**同一块分配**，顶点不再存在两份。
+- **属性 setter 每个通道只留一个名字**：`setPositions` / `setNormals` / `setTexcoords` / `setIndices`
+  各收一个 buffer 句柄（不重载）；持有类型化数据的调用方先 `packAttribute(span<const Vec3f|Vec2f>)` /
+  `packIndices(span<const uint32_t>)`。`geometryFromShape()` 直接传 mesh 的句柄，
+  因此两侧读的是**同一块分配**，顶点和索引都不再存在两份。
 - **纯按 location 号存储，没有“名字”**；“0 = position、1 = normal”是注释约定，
   靠便捷 API 固化：`setPositions→loc0`、`setNormals→loc1`、`geometryFromShape→loc0+loc1(+indices)`。
 - 后端按 `attr.scalars()` 取标量、按 `components` 步进；上传仍是逐顶点拷进 vsg 的 typed array。
-- 每次 `addBuffer/removeBuffer/setPositions/setNormals/setIndices` 都 bump `revision()`。
+- 每次 `addBuffer/removeBuffer/setPositions/setNormals/setTexcoords/setIndices` 都 bump `revision()`。
 
 ### 1.2 Material：纯颜色（无透明度）
 

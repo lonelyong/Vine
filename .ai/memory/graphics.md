@@ -1349,8 +1349,9 @@ mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::ou
 3 条指针同一性断言失败（分量/坐标/计数全过）；`AttributeBuffer` 加回快照 → 3 条增长断言失败；
 keepalive 换成空 lambda → `useCount()` 断言失败。
 
-**仍未做**：阶段 3d（索引仍是复制：`Geometry::indices()` 还是 `const UInt32Array*`）、
-阶段 4（后端从 `bytes()` 上传，`SceneBridgeGeometry` 仍逐顶点拷进 vsg typed array）。
+**仍未做**：阶段 4（后端从 `bytes()` 上传，`SceneBridgeGeometry` 仍逐顶点拷进 vsg typed array）。
+索引已一并收掉（阶段 3d）：`Geometry::indices()` 返回 `std::span<const uint32_t>`，`setIndices` 亦只收
+buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ **索引也不再复制**。
 第一版被推翻的过程、setter 合名的理由、以及预测与实际破坏点清单的差异，
 详见 `.ai/design/geometry-attribute-storage.md`。
 

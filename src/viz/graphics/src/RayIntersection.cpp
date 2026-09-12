@@ -184,8 +184,8 @@ Vec3d toWorld(const Mat4d& m, double x, double y, double z)
  * geometry's index buffer. Lifetime spans the caller's picking call only.
  */
 struct GeometryMesh {
-    vine::geometry::Vec3fArray positions;
-    const vine::geometry::UInt32Array* indices = nullptr;
+    vine::geometry::Vec3fArray        positions;
+    std::span<const std::uint32_t>    indices;
 
     /** @brief Returns whether position data is available. */
     bool valid() const { return !positions.empty(); }
@@ -272,7 +272,7 @@ RayIntersectionResult makeTriangleHit(const Vec3d& a, const Vec3d& b, const Vec3
  */
 template <typename OnHit>
 bool traverseMesh(const vine::geometry::Vec3fArray& positions,
-                  const vine::geometry::UInt32Array* indices,
+                  std::span<const std::uint32_t> indices,
                   const Ray& ray, const Mat4d& world, OnHit&& on_hit)
 {
     if (positions.empty()) {
@@ -292,16 +292,16 @@ bool traverseMesh(const vine::geometry::Vec3fArray& positions,
                 ray.origin.z + ray.direction.z) -
         local_origin;
 
-    const std::size_t n = indices != nullptr ? indices->size() : positions.size();
+    const std::size_t n = !indices.empty() ? indices.size() : positions.size();
     bool any = false;
     for (std::size_t tri = 0; tri + 2 < n; tri += 3) {
         std::size_t i0 = tri;
         std::size_t i1 = tri + 1;
         std::size_t i2 = tri + 2;
-        if (indices != nullptr) {
-            i0 = (*indices)[tri];
-            i1 = (*indices)[tri + 1];
-            i2 = (*indices)[tri + 2];
+        if (!indices.empty()) {
+            i0 = indices[tri];
+            i1 = indices[tri + 1];
+            i2 = indices[tri + 2];
             if (i0 >= positions.size() || i1 >= positions.size() || i2 >= positions.size()) {
                 continue;
             }

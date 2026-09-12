@@ -122,7 +122,7 @@ using detail::XyzUnpack;
     ::vsg::ref_ptr<::vsg::uintArray> indices;
     const bool is_triangles = topology == vine::graphics::Topology::Triangles;
     if (geometry->hasIndices()) {
-        const auto& src_indices = *geometry->indices();
+        const auto src_indices = geometry->indices();
         for (std::size_t i = 0; i < src_indices.size(); ++i) {
             if (src_indices[i] >= vertex_count) {
                 report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
