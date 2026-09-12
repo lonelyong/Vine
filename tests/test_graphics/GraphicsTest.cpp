@@ -1042,6 +1042,133 @@ TEST(TextureTest, FillingAFaceBumpsTheContentRevision)
     EXPECT_GT(texture.revision(), before_clear);
 }
 
+// ============ Texture2D / CubeMap ============
+
+TEST(Texture2DTest, IsOneImageAndTakesNoFaceIndex)
+{
+    Texture2D texture(8, 4, PixelFormat::Rgba8Unorm, 2);
+
+    EXPECT_EQ(texture.shape(), Texture::Shape::D2);
+    EXPECT_EQ(texture.layerCount(), 1);
+    EXPECT_EQ(texture.faceCount(), 1);
+    EXPECT_EQ(texture.width(), 8);
+    EXPECT_EQ(texture.height(), 4);
+    EXPECT_EQ(texture.image(), nullptr);
+    EXPECT_FALSE(texture.complete());
+
+    texture.setImage(sourceImage(texture, 2));
+    EXPECT_TRUE(texture.complete());
+    EXPECT_EQ(texture.image(), texture.source(0));
+    EXPECT_EQ(texture.layer(0), texture.image());
+}
+
+TEST(Texture2DTest, AnOutOfRangeLayerIsAbsent)
+{
+    Texture2D texture(4, 4, PixelFormat::Rgba8Unorm);
+
+    // The shape-agnostic spelling follows the same rule as the numbered one: reading outside the shape is a
+    // query with the answer "no such layer", not an error.
+    EXPECT_EQ(texture.layer(1), nullptr);
+    EXPECT_EQ(texture.layer(-1), nullptr);
+}
+
+TEST(Texture2DTest, RejectsAnImageThatDoesNotMatchTheDescription)
+{
+    Texture2D texture(8, 4, PixelFormat::Rgba8Unorm, 2);
+
+    intrusive_ptr<const Image> wrong_size(new Image(4, 4, PixelFormat::Rgba8Unorm, 2));
+    EXPECT_THROW(texture.setImage(wrong_size), std::invalid_argument);
+    EXPECT_EQ(texture.image(), nullptr) << "a rejected image must not be stored";
+
+    texture.setImage(sourceImage(texture, 2));
+    EXPECT_EQ(texture.image()->width(), 8);
+}
+
+TEST(CubeMapTest, IsSixSquareFacesOfOneSize)
+{
+    // The faces are square BY CONSTRUCTION: a cube whose faces were not square is a description no sampling
+    // hardware accepts, so the size is stated once and cannot disagree with itself.
+    CubeMap cube(16, PixelFormat::Rgba8Unorm, 3);
+
+    EXPECT_EQ(cube.shape(), Texture::Shape::Cube);
+    EXPECT_EQ(cube.layerCount(), 6);
+    EXPECT_EQ(cube.width(), 16);
+    EXPECT_EQ(cube.height(), 16);
+    EXPECT_EQ(cube.mipCount(), 3);
+    EXPECT_FALSE(cube.complete());
+}
+
+TEST(CubeMapTest, FacesAreNamedInTheLayerOrderVulkanReads)
+{
+    // The numbering is not a free choice: Vulkan fixes the layer order, so a named face has to land on the
+    // layer a sampler will read it from — otherwise the cube samples the wrong sides and nothing else in the
+    // pipeline would notice.
+    EXPECT_EQ(static_cast<int>(CubeMap::Face::PosX), 0);
+    EXPECT_EQ(static_cast<int>(CubeMap::Face::NegX), 1);
+    EXPECT_EQ(static_cast<int>(CubeMap::Face::PosY), 2);
+    EXPECT_EQ(static_cast<int>(CubeMap::Face::NegY), 3);
+    EXPECT_EQ(static_cast<int>(CubeMap::Face::PosZ), 4);
+    EXPECT_EQ(static_cast<int>(CubeMap::Face::NegZ), 5);
+
+    EXPECT_STREQ(CubeMap::faceName(CubeMap::Face::PosX), "+X");
+    EXPECT_STREQ(CubeMap::faceName(CubeMap::Face::NegZ), "-Z");
+    EXPECT_STREQ(CubeMap::faceName(static_cast<CubeMap::Face>(99)), "Unknown");
+}
+
+TEST(CubeMapTest, EachFaceIsFilledAndReadBackByName)
+{
+    CubeMap cube(4, PixelFormat::Rgba8Unorm);
+
+    intrusive_ptr<const Image> front = sourceImage(cube, 1);
+    cube.setFaceImage(CubeMap::Face::PosZ, front);
+
+    EXPECT_EQ(cube.faceImage(CubeMap::Face::PosZ), front.get());
+    EXPECT_EQ(cube.faceImage(CubeMap::Face::NegZ), nullptr);
+    EXPECT_EQ(cube.layer(4), front.get()) << "faceImage(PosZ) must be the layer Vulkan reads as +Z";
+    EXPECT_FALSE(cube.complete());
+
+    for (const CubeMap::Face face : { CubeMap::Face::PosX, CubeMap::Face::NegX, CubeMap::Face::PosY,
+                                      CubeMap::Face::NegY, CubeMap::Face::NegZ }) {
+        cube.setFaceImage(face, sourceImage(cube, 1));
+    }
+    EXPECT_TRUE(cube.complete());
+}
+
+TEST(CubeMapTest, FillingAFaceBumpsTheContentRevision)
+{
+    CubeMap cube(4, PixelFormat::Rgba8Unorm);
+    const std::uint64_t before = cube.revision();
+
+    cube.setFaceImage(CubeMap::Face::NegY, sourceImage(cube, 1));
+    EXPECT_GT(cube.revision(), before);
+}
+
+TEST(TextureLayersTest, BothSpellingsDescribeTheSameTexture)
+{
+    // `layer()`/`layerCount()` is what a backend walks and `source()`/`faceCount()` is what the numbered API
+    // exposes. They have to be the same view of a texture, or a consumer that moved to the generic spelling
+    // would upload something different from one that did not.
+    Texture2D d2(4, 4, PixelFormat::Rgba8Unorm);
+    d2.setImage(sourceImage(d2, 1));
+
+    CubeMap cube(4, PixelFormat::Rgba8Unorm);
+    for (int face = 0; face < 6; ++face) {
+        cube.setSource(face, sourceImage(cube, 1));
+    }
+
+    const Texture* shapes[2] = { &d2, &cube };
+    for (const Texture* texture : shapes) {
+        EXPECT_EQ(texture->layerCount(), texture->faceCount()) << Texture::shapeName(texture->shape());
+        for (int index = 0; index < texture->layerCount(); ++index) {
+            EXPECT_EQ(texture->layer(index), texture->source(index)) << "layer " << index;
+        }
+        EXPECT_EQ(texture->layer(texture->layerCount()), nullptr);
+    }
+
+    EXPECT_EQ(d2.layerCount(), 1);
+    EXPECT_EQ(cube.layerCount(), 6);
+}
+
 // ============ Geometry ============
 
 TEST(GeometryTest, MeshCounts)

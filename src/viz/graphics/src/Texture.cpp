@@ -140,4 +140,78 @@ std::uint64_t Texture::revision() const noexcept
     return revision_;
 }
 
+int Texture::layerCount() const noexcept
+{
+    return static_cast<int>(sources_.size());
+}
+
+raw_ptr<const imaging::Image> Texture::layer(int index) const noexcept
+{
+    return source(index);
+}
+
+V_OBJECT_META_IMPL(Texture2D, Texture);
+
+Texture2D::Texture2D(int width, int height, imaging::PixelFormat format, int mip_count)
+  : Texture(Shape::D2, width, height, format, mip_count)
+{
+}
+
+Texture::Shape Texture2D::shape() const noexcept
+{
+    return Shape::D2;
+}
+
+void Texture2D::setImage(intrusive_ptr<const imaging::Image> image)
+{
+    setSource(0, image);
+}
+
+raw_ptr<const imaging::Image> Texture2D::image() const noexcept
+{
+    return source(0);
+}
+
+V_OBJECT_META_IMPL(CubeMap, Texture);
+
+const char* CubeMap::faceName(Face face) noexcept
+{
+    switch (face) {
+        case Face::PosX:
+            return "+X";
+        case Face::NegX:
+            return "-X";
+        case Face::PosY:
+            return "+Y";
+        case Face::NegY:
+            return "-Y";
+        case Face::PosZ:
+            return "+Z";
+        case Face::NegZ:
+            return "-Z";
+    }
+
+    return "Unknown"; // Also the answer for an out-of-range cast.
+}
+
+CubeMap::CubeMap(int size, imaging::PixelFormat format, int mip_count)
+  : Texture(Shape::Cube, size, size, format, mip_count)
+{
+}
+
+Texture::Shape CubeMap::shape() const noexcept
+{
+    return Shape::Cube;
+}
+
+void CubeMap::setFaceImage(Face face, intrusive_ptr<const imaging::Image> image)
+{
+    setSource(static_cast<int>(face), image);
+}
+
+raw_ptr<const imaging::Image> CubeMap::faceImage(Face face) const noexcept
+{
+    return source(static_cast<int>(face));
+}
+
 V_GRAPHICS_NS_END
