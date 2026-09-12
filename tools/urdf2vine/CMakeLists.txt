@@ -1,6 +1,6 @@
 add_executable(urdf2vine main.cpp)
 set_target_properties(urdf2vine PROPERTIES FOLDER tools)
-target_link_libraries(urdf2vine PRIVATE vi::RoboticsIO vi::RoboticsCore vi::Geometry vi::IOBase vi::ModelIo tinyxml2)
+target_link_libraries(urdf2vine PRIVATE vi::RoboticsIO vi::RoboticsCore vi::Geometry vi::IOBase vi::MeshIO tinyxml2)
 
 if(MSVC)
     # Same options the project's own code uses (see VineLibraryHelper.cmake).

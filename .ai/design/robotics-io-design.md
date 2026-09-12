@@ -56,7 +56,7 @@ src/robotics/
 
 `src/robotics/CMakeLists.txt` 由当前只包含 `add_subdirectory(core)` 增加 `add_subdirectory(io)`。
 
-`CMakeLists.txt`（沿用 modelio/iobase 的 FetchContent 静态烤进 DLL 模式）：
+`CMakeLists.txt`（沿用 meshio/iobase 的 FetchContent 静态烤进 DLL 模式）：
 
 ```cmake
 v_add_library(ROBOTICSIO_TARGET_NAME RoboticsIO)
@@ -652,7 +652,7 @@ XML 描述（在 `<geometry>` 内，引用包内二进制条目）：
 ### 6.9 BRep / STEP（本期不实现，设计预留）
 
 `vine::geometry::BrepShape` 以非拥有 `TopoDS_Shape*` 持有 OCCT 实体（SDK 头只前向声明、不引 OCCT）；
-`modelio::BrepLoader` 的 STEP/IGES 解析仍是 TODO（需引入 OpenCASCADE）。
+`brepio::BrepLoader` 的 STEP/IGES 解析仍是 TODO（需引入 OpenCASCADE）。
 
 **本期不实现 BRep**：`XmlIOBase::parseGeometry / exportGeometry` 对 `BrepShape` 跳过（或记警告），
 模型改动与测试均不涉及 OCCT。
@@ -673,7 +673,7 @@ XML 描述（在 `<geometry>` 内，引用包内二进制条目）：
   - STEP 文本（`STEPControl_Writer`）—— 可跨 CAD 互操作，但体积大、慢；
   - 阶段 A 占位：原 `.stp` 文件字节作不透明条目（`mountFile(vfs_path, src_path)`）。
 - **依赖**：OCCT 是重依赖（体积 / 构建成本高），预留为**可选后端**；接入点只在
-  `IoUtils` / `XmlIOBase` 的几何分支 + `modelio::BrepLoader`，不进入本期链接。
+  `IoUtils` / `XmlIOBase` 的几何分支 + `brepio::BrepLoader`，不进入本期链接。
 
 ### 6.10 复用与去重（设备实例 / mesh 共享）
 
@@ -703,7 +703,7 @@ XML 描述（在 `<geometry>` 内，引用包内二进制条目）：
    - 新增 `kinematics::IKSolverType ik_solver_type{ kinematics::IKSolverType::Iterative };`
      （workcell 已依赖 kinematics 的 Q/State/Frame，无循环问题）
 2. **新增 `workcell::LengthUnit`**：`enum class LengthUnit { Meter = 1, Millimeter = 1000 };`
-   （放 workcell 模块，IO 依赖 Core；复用 modelio 的枚举会引入对 modelio 的依赖，不采用）
+   （放 workcell 模块，IO 依赖 Core；复用 meshio 的枚举会引入对 meshio 的依赖，不采用）
 3. **`DeviceData` 新增 `DeviceKind kind{ DeviceKind::Other };`**，`Device::initDevice` 里
    `setDeviceKind(data->kind)`。这样加载时为 MotionDevice 设置 Manipulator/ExternalAxis/Positioner 等 kind。
 4. **`MotionDevice` 加载后设置**：`setHomeQ(...)`（已有）、`kinematics()->setIKSolverType(...)`（已有）。

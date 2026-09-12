@@ -21,7 +21,7 @@ include(VinePluginHelper)
 add_subdirectory(base)
 # loaders (assimp) consumes the zlibstatic that base/iobase builds, so base
 # must be configured before loaders for the target to exist when assimp runs
-# find_package(ZLIB) (assimp's bundled zlib is disabled in loaders/modelio).
+# find_package(ZLIB) (assimp's bundled zlib is disabled in loaders/meshio).
 add_subdirectory(loaders)
 add_subdirectory(viz)
 add_subdirectory(fw)
