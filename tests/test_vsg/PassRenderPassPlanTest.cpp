@@ -19,7 +19,7 @@
 
 #include <gtest/gtest.h>
 
-#include "VsgPipelineFactory.hpp"
+#include <vine/vsg/VsgPipelineFactory.hpp>
 
 using vine::vsg::detail::planPassRenderPass;
 using vine::vsg::detail::planPassVariant;

@@ -1,4 +1,4 @@
-#include "VsgPipelineFactory.hpp"
+#include <vine/vsg/VsgPipelineFactory.hpp>
 
 // The definitions below are the moved bodies: their documentation and default
 // arguments live on the declarations in the header.

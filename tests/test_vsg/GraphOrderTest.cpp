@@ -15,7 +15,7 @@
 #include <cstddef>
 #include <vector>
 
-#include "VsgBackendUtility.hpp"
+#include <vine/vsg/VsgBackendUtility.hpp>
 
 using vine::vsg::detail::GraphOrderEdge;
 using vine::vsg::detail::stableTopologicalOrder;

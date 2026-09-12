@@ -56,7 +56,7 @@
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 
-#include "VsgPipelineFactory.hpp"
+#include <vine/vsg/VsgPipelineFactory.hpp>
 
 
 #include <vine/vsg/vsg_global.hpp>

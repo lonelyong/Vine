@@ -634,7 +634,9 @@ app 持有但不绘制”的对象如何处置留给各自策略（几何用 600
 
 | 文件 | 职责 | 行数 |
 | --- | --- | --- |
-| `include/vine/vsg/VsgRenderer.hpp` | 类定义 + `Persistent` / `Impl`（会话态：窗口、viewer、命令图、目标表、槽、pass 请求）+ 私有 helper 声明（§44 并入、§45 改名迁入此处） | 2095 |
+| `include/vine/vsg/*.hpp` | 插件**全部头文件**（类定义 + `Persistent` / `Impl` 会话态 + 私有 helper 声明 + 工厂 / 工具 / 内部片段）；§44 并入、§45 改名、§46 把 `src/` 下剩下的头也搬进来 | — |
+| `src/*.cpp` | 只有实现（§46 后 `src/` 不再有头文件） | — |
+| `sdk/` | **未使用**：仅在某个头真要对外时才放这里（像库那样），目前没有 | — |
 | `src/VsgRenderer.cpp` | 会话生命周期、帧泵、诊断路由、查询访问器 | 901 |
 | `src/VsgRendererPasses.cpp` | pass 协议（begin/end/releasePass、退役、重定向）+ 内容槽搭建/绘制 | 519 |
 | `src/VsgRendererTargets.cpp` | 离屏目标构建与顺序、目标/槽释放、视图按序摆放 | 680 |
@@ -2457,3 +2459,26 @@ viewer/命令图 → 首次编译"。
 
 
 
+## 46. 头文件目录约定：`include/` 全给私有头，`sdk/` 留给真接口（2026-09-12）
+
+**用户定下的约定**：`include/` 里的是**插件私有**头（插件不是库、不对外提供接口）；将来若某个头**真有必要**
+对外，那样做：**像库一样放进 `sdk/`**。相应地，`src/` 下剩下的头也一并搬进 `include/`。
+
+**做法**
+
+- `git mv` 五个头进 `include/vine/vsg/`：`VsgPipelineFactory.hpp`、`VsgBackendUtility.hpp`、
+  `VsgUtils.hpp`、`SceneBridgeInternals.hpp`、`GfxBackendVsgPlugin.hpp`（插件入口头 —— 它只被自己的 .cpp
+  包含，同样属于私有）。
+- 26 处 include 改写为 `<vine/vsg/X.hpp>`（跨目录用尖括号；`include/` 内部相互包含仍用同目录的引号形式，
+  如 `VsgRenderer.hpp` 包含 `VsgPipelineFactory.hpp` 已是同目录）。
+- **清掉两处"手工绕过"**：`tests/test_vsg` 与 `vsg_backend_selftest` 的
+  `target_include_directories` 里原来都手工加了插件的 `src/`（就是为了这些头）⇒ 现在删掉。至此
+  **`src/` 只剩 `.cpp`**，"头在 `include/`、实现 在 `src/`"这条约定不再有例外。
+
+**为什么这不等于"把私有头发布出去"**：`v_add_plugin()` 把 `include/` 设为 PUBLIC 只是"本构建里可见"，而
+**没有任何 `install(FILES|DIRECTORY)` 安装插件头**；插件是 MODULE，宿主只经 `vine::graphics::RenderBackend`
+这个 SDK 接口拿渲染器。`sdk/` 目录目前**不存在**，也不需要在没有真接口时存在（helper 对它做 glob 与引用都
+容忍缺失）—— 它是一份**留白**：哪天有头要对外，就放那里，而不是迁就 `include/`。
+
+**验收**：零警告构建（含 CMake 重新配置）、`[selftest]` 45 行逐字节相同、VUID 0 / FAIL 0、
+`test_vsg` 100 / `test_graphics` 158、门禁 PASS、`check_diagnostic_formats.py` 0 命中。

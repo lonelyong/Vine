@@ -164,7 +164,6 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPipelineFactory.cpp)
 target_compile_definitions(vsg_backend_selftest PRIVATE V_VSG_LIB)
 target_include_directories(vsg_backend_selftest PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(vsg_backend_selftest PRIVATE vi::Graphics vi::Logging vsg::vsg)
 set_target_properties(vsg_backend_selftest PROPERTIES FOLDER third_party)

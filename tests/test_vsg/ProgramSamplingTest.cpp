@@ -21,7 +21,7 @@
 
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include "VsgPipelineFactory.hpp"
+#include <vine/vsg/VsgPipelineFactory.hpp>
 
 using vine::vsg::detail::programSamplesDepth;
 

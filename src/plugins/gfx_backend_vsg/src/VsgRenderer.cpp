@@ -1,8 +1,8 @@
 ﻿#include <vine/vsg/VsgRenderer.hpp>
 
-#include "VsgUtils.hpp"
-#include "VsgBackendUtility.hpp"
-#include "VsgPipelineFactory.hpp"
+#include <vine/vsg/VsgUtils.hpp>
+#include <vine/vsg/VsgBackendUtility.hpp>
+#include <vine/vsg/VsgPipelineFactory.hpp>
 
 #include <cstdint>
 #include <cstdio>

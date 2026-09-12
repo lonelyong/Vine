@@ -68,8 +68,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgPipelineFactory.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/CameraBridge.cpp)
 target_include_directories(${TEST_NAME} PRIVATE
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/include
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src)
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/include)
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 
 # 同上：渲染后端插件会建窗口/交换链，ctest 下一律走 offscreen，

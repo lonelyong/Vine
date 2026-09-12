@@ -27,7 +27,7 @@
 
 #include <vine/graphics/Light.hpp>
 
-#include "VsgPipelineFactory.hpp"
+#include <vine/vsg/VsgPipelineFactory.hpp>
 
 using namespace vine::graphics;
 

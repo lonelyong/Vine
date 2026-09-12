@@ -1,4 +1,4 @@
-﻿#include "GfxBackendVsgPlugin.hpp"
+﻿#include <vine/vsg/GfxBackendVsgPlugin.hpp>
 
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/plugin_export.hpp>

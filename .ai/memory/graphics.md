@@ -1,5 +1,12 @@
 ﻿# Graphics 模块核心
 
+> 2026-09-12 **头文件目录约定（设计 §46）**：**`include/` = 插件私有头（全部）**，`sdk/` = 将来"真要对外"
+> 的头才放（像库那样），目前为空/不存在；`src/` 只留 `.cpp`。做法：`git mv` 五个头（`VsgPipelineFactory` /
+> `VsgBackendUtility` / `VsgUtils` / `SceneBridgeInternals` / `GfxBackendVsgPlugin`）进 `include/vine/vsg/`，
+> 26 处 include 改 `<vine/vsg/X.hpp>`，**清掉 `tests/test_vsg` 与 `vsg_backend_selftest` 里手工加的插件 `src/`
+> 包含路径**（它们本来就是为了这些头）。**为什么这不等于发布私有头**：`v_add_plugin` 的 PUBLIC 只是"本构建
+> 可见"，**没有任何 install 规则安装插件头**，宿主只经 `RenderBackend` SDK 接口拿渲染器。验收同前。
+
 > 2026-09-12 **去掉 `VsgRenderer` 的 PImpl（设计 §44）**：事实 —— `vine/vsg/VsgRenderer.hpp` 只被插件自己的
 > 6 个 TU + selftest + `PassProtocolTest.cpp` include；插件是 MODULE DLL，宿主走 `RenderBackend` SDK 接口
 > ⇒ 该头**不在任何部署边界上**，PImpl 的 ABI 理由落空，而"编译防火墙"本来就半破（公开头已 include

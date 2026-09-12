@@ -18,8 +18,8 @@
 #include <vine/graphics/Node.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/RenderStateMapper.hpp>
-#include "SceneBridgeInternals.hpp"
-#include "VsgUtils.hpp"
+#include <vine/vsg/SceneBridgeInternals.hpp>
+#include <vine/vsg/VsgUtils.hpp>
 
 
 

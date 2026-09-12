@@ -1,5 +1,5 @@
 ﻿#include <vine/vsg/SceneBridge.hpp>
-#include "SceneBridgeInternals.hpp"
+#include <vine/vsg/SceneBridgeInternals.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -27,7 +27,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
-#include "VsgUtils.hpp"
+#include <vine/vsg/VsgUtils.hpp>
 
 V_VSG_NS_BEGIN
 

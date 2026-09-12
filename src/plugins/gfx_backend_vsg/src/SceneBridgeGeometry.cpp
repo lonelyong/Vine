@@ -11,8 +11,8 @@
 #include <vsg/nodes/Geometry.h>
 #include <vsg/state/material.h>
 #include <vine/graphics/Geometry.hpp>
-#include "SceneBridgeInternals.hpp"
-#include "VsgUtils.hpp"
+#include <vine/vsg/SceneBridgeInternals.hpp>
+#include <vine/vsg/VsgUtils.hpp>
 
 
 

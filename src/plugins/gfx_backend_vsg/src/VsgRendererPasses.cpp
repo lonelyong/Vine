@@ -26,9 +26,9 @@
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 
-#include "VsgUtils.hpp"
-#include "VsgBackendUtility.hpp"
-#include "VsgPipelineFactory.hpp"
+#include <vine/vsg/VsgUtils.hpp>
+#include <vine/vsg/VsgBackendUtility.hpp>
+#include <vine/vsg/VsgPipelineFactory.hpp>
 
 V_VSG_NS_BEGIN
 
