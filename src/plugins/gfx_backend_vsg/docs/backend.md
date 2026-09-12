@@ -138,6 +138,7 @@ graph TB
 | 3 | `vsg_Color` | **6** | **2** |
 | 4+i | `vine_Attribute{L}` | —（内建不声明） | **L**（即通道自己的源 location） |
 
+- **下标不是 Geometry 里写的值**：Geometry 指定的是 **location**（就上表第三/四列），下标是后端算出来的 —— 固定前缀永远占 0..3（不管它们的 location 是 0/1/8/2），自定义通道接在 4+i，`i` 按 **location 升序**（`Geometry::attributes_` 是 `std::map`，所以升序是确定的，不是哈希序）。
 - **数组下标**由 `SceneBridgeGeometry.cpp` 的 `arrays` 列表顺序决定（位置 → 法线 → texcoords → 颜色 → 自定义通道按 location 升序），
   在 `SceneBridgePipeline.cpp` 里按同一顺序 `assign_array(name, index)` 配对；`BindVertexBuffers::create(0u, arrays)` 再按列表位置绑成 binding 0..N-1。
   vsg 给顶点输入 binding 编号的方式是“按 `assignArray()` 成功的顺序递增”，所以**声明顺序必须与数组顺序逐位对齐**：漏声明一个名字或漏喂一个数组，

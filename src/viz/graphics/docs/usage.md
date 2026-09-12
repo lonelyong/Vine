@@ -431,7 +431,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 - shader 声明了 geometry **没有**的 location ⇒ 该名字不会被声明给 vsg ⇒ 不喂数据：Vulkan 合法、读到未定义值、**无任何诊断**。
 - 分量数必须一致（geometry 3 分量 ↔ shader `vec3`）：不一致时 configurator 会接受，只在绘制时表现为“属性读错/缺失”。
 - 反过来一个方向**有诊断**：数组喂了、但管线不声明那个名字 ⇒ 报一条 `ContentSkipped` 的 Warning（`vertex binding '%s' (array %zu, %s) was not matched by the pipeline…`）。
-- **绑定顺序（binding 编号）不用管、也改不了**：它由后端的喂入顺序决定（位置、法线、texcoords、颜色，再按 location 升序的自定义通道），GLSL 里根本没有这个概念 —— 你能控的只有 location。
+- **绑定顺序（binding 编号）不用管、也改不了**：它由后端的喂入顺序决定（位置、法线、texcoords、颜色，再按 location 升序的自定义通道），GLSL 里根本没有这个概念 —— 你能控的只有 location。注意 Geometry 里填的是 **location**：binding 下标是后端按那份通道列表算出来的，你既不能直接指定、也影响不到前缀四个的编号。
 
 > 实现细节（名字 ↔ 数组下标那张表、vsg 的两套编号为何不同）见
 > [`src/plugins/gfx_backend_vsg/docs/backend.md`](../../../plugins/gfx_backend_vsg/docs/backend.md) §2.4。
