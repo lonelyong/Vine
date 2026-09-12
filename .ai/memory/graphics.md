@@ -1340,7 +1340,7 @@ mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::ou
 于是“复制还是共享”由**传什么**决定。`geometryFromShape()` 走共享，
 **所以 mesh 与 Geometry 读同一块分配，顶点不再翻倍**。
 
-**判据**：`test_graphics` **219 → 221 → 222**、`test_core` **82**、`test_vsg` **185 → 189**；
+**判据**：`test_graphics` **219 → 221 → 223**、`test_core` **82**、`test_vsg` **185 → 190**；
 `ninja` 零 error/零 warning；`vsg_selftest_evidence.sh` → PASS（**47 行逐字节相同**）；
 `gfx_lavapipe_check.sh` → PASS（0 VUID）；`check_diagnostic_formats.py` → 0 suspicious。
 **判据里最有信息量的一条**：阶段 2（换存储）、3b（改走共享）、3c（钉死类型 + 合并 API）之后
@@ -1364,6 +1364,12 @@ keepalive 换成空 lambda → `useCount()` 断言失败；阶段 4：别名 off
 推导量（白色 opacity 载体、零填充 texcoords、`makeNormals` / `makeIndexedNormals`）仍自己分配真数组。
 **关键坑**：别名数组的 stride 是**数组自己的元素大小**（vec3 → 12），不是 buffer 的（float → 4）；vsg 用 `properties.stride`
 同时索引 CPU 侧与 GPU 绑定，取错会让 GPU 交错读 —— 证据关口与新单测同时抓到（判据已钉 `properties.stride == sizeof(vec3)`）。
+
+**手动 revision（同一批）**：`Geometry` 加 `setRevision(uint64)`（像 `Buffer` 那样由调用者给值）。理由是共享之后
+geometry **借**模型的 buffer，模型被重建（如每帧重新生成的程序化网格）它看不见，而渲染侧的重建闸门就是
+`geometry->revision()`（`SceneBridge.cpp:350`）⇒ 重建模型后由调用者公告。setter 的自动 bump 保留（两条路径共用
+同一个计数器，不会漂移）。判据：`ManuallyReportedRevisionRebuildsTheDataNode`（公告后顶点数据刷新、变换节点与状态包装不变）
++ 设备无关的 `RevisionCanBeReportedByHand`；变异（`setRevision` 改空操作）⇒ 恰好这两条红。
 索引已一并收掉（阶段 3d）：`Geometry::indices()` 返回 `std::span<const uint32_t>`，`setIndices` 亦只收
 buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ **索引也不再复制**。
 第一版被推翻的过程、setter 合名的理由、以及预测与实际破坏点清单的差异，

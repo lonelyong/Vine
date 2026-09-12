@@ -571,6 +571,53 @@ TEST(SceneBridgePipelineSharingTest, DataOnlyRebuildLeavesStateUntouched)
 }
 
 /**
+ * @brief Reporting a revision by hand is enough to make the renderer rebuild the data node.
+ *
+ * The geometry BORROWS the model's buffers, so a model rebuilt underneath it (a mesh builder appending
+ * vertices) changes the bytes the geometry reads without calling any of its setters. setRevision() is
+ * that announcement, and it has to reach the renderer on its own: the retained transform and the state
+ * wrapper stay, only the vertex data is refreshed.
+ */
+TEST(SceneBridgePipelineSharingTest, ManuallyReportedRevisionRebuildsTheDataNode)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+
+    std::vector<RenderCommand> commands;
+    commands.emplace_back(makeTriangle(0), material, Mat4d());
+
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+    const auto first_root = created[0];
+    auto*      first_bind = findBindVertexBuffers(first_root.get());
+    ASSERT_NE(first_bind, nullptr);
+    ASSERT_NE(first_bind->arrays[0]->data, nullptr);
+    const auto first_vertex_data = first_bind->arrays[0]->data;
+    ASSERT_EQ(bridge.pipelineVariantCount(), 1u);
+    ASSERT_EQ(bridge.variantReuseCount(), 0u);
+
+    // Announce a data change WITHOUT touching a setter: exactly what a caller that rebuilt the model
+    // underneath this geometry has to do.
+    const std::uint64_t before = commands[0].geometry->revision();
+    commands[0].geometry->setRevision(before + 1u);
+    ASSERT_EQ(commands[0].geometry->revision(), before + 1u);
+
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+    EXPECT_EQ(created[0].get(), first_root.get()) << "a data edit must keep the retained transform";
+    auto* second_bind = findBindVertexBuffers(created[0].get());
+    ASSERT_NE(second_bind, nullptr);
+    EXPECT_NE(second_bind->arrays[0]->data, first_vertex_data)
+        << "the announced revision must refresh the vertex data — nothing else reports it";
+    EXPECT_EQ(bridge.pipelineVariantCount(), 1u) << "a data edit must not add a pipeline variant";
+    EXPECT_EQ(bridge.variantReuseCount(), 0u);
+}
+
+/**
  * @brief Reordering the command stream (a drawable drawn under a different
  * parent / at a different stacking position) must NOT rebuild anything: the
  * retained transforms are reordered under the root, never re-materialised.

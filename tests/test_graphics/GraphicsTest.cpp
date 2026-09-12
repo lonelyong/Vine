@@ -3885,6 +3885,25 @@ TEST(GeometryTest, NormalsChannelAndRevision)
     EXPECT_EQ(geom.revision(), 2u);
 }
 
+TEST(GeometryTest, RevisionCanBeReportedByHand)
+{
+    // The geometry BORROWS the model's buffers, so a model rebuilt underneath it changes the bytes this
+    // geometry reads without calling any setter here. Reporting that by hand is the only way a retained
+    // render node can hear about it — and it is a value, not a bump, so it can mirror the model's version.
+    Geometry geom;
+    vine::geometry::Vec3fArray points = { vine::math::Vec3f(0, 0, 0) };
+    geom.setPositions(packAttribute(points));
+
+    geom.setRevision(41u);
+    EXPECT_EQ(geom.revision(), 41u);
+
+    // A later setter keeps moving the SAME counter: the two paths cannot drift apart, so a stale
+    // announcement can never mask a real edit.
+    geom.setIndices(packIndices(std::vector<std::uint32_t>{ 0u }));
+    EXPECT_EQ(geom.revision(), 42u);
+    EXPECT_TRUE(geom.hasIndices());
+}
+
 TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
 {
     auto mesh = makeUnitTriangle();

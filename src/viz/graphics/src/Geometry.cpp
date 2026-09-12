@@ -174,6 +174,11 @@ std::uint64_t Geometry::revision() const
     return revision_;
 }
 
+void Geometry::setRevision(std::uint64_t revision) noexcept
+{
+    revision_ = revision;
+}
+
 std::size_t Geometry::vertexCount() const
 {
     return positionCount();

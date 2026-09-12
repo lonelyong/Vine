@@ -295,12 +295,28 @@ class V_GRAPHICS_API Geometry : public Node {
 
     /** @brief Gets the data revision.
      *
-     * Bumped by every data mutation, so retained render nodes can detect
-     * when the geometry data changed and rebuild.
+     * Bumped by every data mutation (the attribute setters, addBuffer, setIndices), so retained render
+     * nodes can detect when the geometry data changed and rebuild.
      *
      * @return Monotonic revision counter (starts at 0).
      */
     std::uint64_t revision() const;
+
+    /** @brief Reports the data revision by hand.
+     *
+     * For the one mutation this object cannot see: the geometry BORROWS its attribute buffers (the mesh
+     * hands them over, see geometryFromShape()), so a model that is rebuilt — a mesh builder appending or
+     * replacing vertices — changes the very bytes this geometry reads without touching any setter here.
+     * Re-announcing the model's change is what makes a retained render node rebuild, because the revision
+     * is the whole gate: a caller that edits the model says so here, afterwards.
+     *
+     * The counter is only ever COMPARED, so nothing breaks if it jumps; but LOWERING it is a real hazard —
+     * a consumer holding a cached revision could then treat old bytes as current. Treat it as monotonic,
+     * and report `revision() + 1` or the model's own version rather than an arbitrary number.
+     *
+     * @param revision Revision to report.
+     */
+    void setRevision(std::uint64_t revision) noexcept;
 
     /** @brief Gets the vertex count.
      *

@@ -52,8 +52,11 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 
 - `span` 是**借用**：不得比 mesh 活得久；任何**增长**都会使既有 view 失效。
 - 共享句柄指向的是 mesh 的**活存储，不是快照**：后面对 mesh 的编辑在句柄侧可见。
-  这正是共享要承担的义务 —— **写者必须让编辑被公告**（走 mesh 的 API 会自动 bump，绕过它就必须
-  `setRevision()`），**读者必须比较 `revision()` 决定是否重读**。写者不公告，读者就静默沿用旧字节。
+  这正是共享要承担的义务 —— **写者必须让编辑被公告**。允许的写路径只有**模型自己的 API**
+  （`addVertex` / `clear` / setter；绕过它原地改 buffer 不在约定内），而**渲染侧重建闸门是
+  `Geometry::revision()`**：geometry 只是借了那块内存，模型被重建（如每帧重新生成的程序化网格）
+  它看不见 ⇒ 重建后调 `Geometry::setRevision()` 把这件事说出来（`setPositions` 一类 setter 会自动 bump）。
+  不公告，读者就静默沿用旧字节。
 - 因为通道**持的是 buffer 而不是快照**，即使源 buffer 增长，通道也不会悬空：长度与地址都现取。
 
 ## 分期
@@ -89,6 +92,7 @@ use-after-free 引进了原本安全的路径，而换来的只是“省一半�
 | 给 `AttributeBuffer` 加回快照（裸指针 + 缓存长度） | 恰好 3 条增长断言失败：`floatCount()` 6≠9、`vertexCount()` 2≠3、`scalars().data()` 地址不同 |
 | `AttributeBuffer::shared()` 的 keepalive 换成空 lambda | 恰好 `useCount()` 断言失败（1≠2） |
 | `geometryFromShape()` 的索引改回 `packIndices(indexed->indices())`（复制而非共享） | 恰好 3 条索引断言失败：两侧地址不同、增长后计数 3≠6、增长后仍不同 |
+| `Geometry::setRevision()` 改成空操作 | 恰好 2 条红：`ManuallyReportedRevisionRebuildsTheDataNode`（顶点数据没被刷新，变换节点与状态包装都在）与设备无关的 `GeometryTest.RevisionCanBeReportedByHand`（41 读成 1）—— 证明“公告”确实是唯一能触发重建的东西 |
 
 每条变异都只打中对应的那组断言、其余全过 —— 即那些断言卡的是它们声称的不变量，而不是碰巧因为别的
 原因一起失败。
