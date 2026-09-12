@@ -13,7 +13,7 @@
 > | 4 custom 程序无法使用 loc2 | **已修**：custom 路径优先绑定 authored loc2（`pack_color4`），内建路径保留内部白 DYNAMIC opacity carrier |
 > | 5 不同 layout 重复 GLSL 编译 | **已修**：L1a 按 (program, revision) 编译 stage + L1b 按 (program, revision, layout) 组装 ShaderSet；`programStageCompileCount()` 钉住 |
 > | 6 readback 占位 | **已诚实标注**：`RenderTarget::readColorBuffer/readDepthBuffer` 标 NOT IMPLEMENTED，`RenderBackend::readColorBuffer/readDepthBuffer` 默认返回 false=unsupported（真实现点见注释） |
-> | 7 文档漂移 | **已处理**：`vine-to-vsg-data-flow.md` 页首加权威声明；本文件与 `ISSUES.md` 顶部加状态表；当前权威见 `.ai/design/vsg-pass-lifecycle.md` |
+> | 7 文档漂移 | **已处理**：`docs/data-flow.md` 页首加权威声明；本文件与 `ISSUES.md` 顶部加状态表；当前权威见 `.ai/design/vsg-pass-lifecycle.md` |
 >
 > 2026-09-11 另外修复了正文未覆盖的一批生命周期缺陷（pass 身份/回收、深度策略归属、
 > 深度共享重建风暴与释放、每帧必须提交）——见 `.ai/design/vsg-pass-lifecycle.md`。
@@ -234,13 +234,13 @@ vector；VSG 后端没有 staging buffer、image-to-buffer copy、queue 同步�
 - VSG 实现 staging buffer、layout transition、copy、fence/wait 和格式转换；
 - 增加小尺寸 render target 的像素/深度 readback GPU 测试。
 
-## 7. vine-to-vsg-data-flow.md 与当前实现漂移
+## 7. docs/data-flow.md 与当前实现漂移
 
 **优先级：低（维护风险）**
 
 ### 位置
 
-- `src/plugins/gfx_backend_vsg/vine-to-vsg-data-flow.md`
+- `src/plugins/gfx_backend_vsg/docs/data-flow.md`
 
 ### 详情
 

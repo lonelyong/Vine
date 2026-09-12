@@ -13,7 +13,7 @@
 > Deferred 自动升级 composite，Forward 追加深度-on 后段）。
 > 上游：`graphics-mrt-gbuffer.md`（MRT/GBuffer + deferred 主窗）、`graphics-render-pipeline.md`
 > （多 pass/命名产出槽/Scene pass 表含 depth prepass）、`render-pipeline-builder.md`（preset recipe）。
-> 关联：`vsg-target-unification.md`（统一 Target / (camera, order) 内容槽）、`vine-to-vsg-data-flow.md` §13。
+> 关联：`vsg-target-unification.md`（统一 Target / (camera, order) 内容槽）、`docs/data-flow.md` §13。
 - 里程碑：**S1 F2**（显式 occlusion，替代 ContentStyle）→ **S2 F1**（program/PiP slot 显式 order）→
   **S3** builder+`Pipeline` composite 升级 → **S4** app_shell 接线瘦身 → **S5** 共享 gbuffer depth
   （删 composite_depth 重扫，`shareDepth`+`setDepthPromotion(false)`+跨 graph `PipelineBarrier`）→

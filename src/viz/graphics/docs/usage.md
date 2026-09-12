@@ -111,7 +111,7 @@ engine.setBackend(backend);
 4. 顶点数据是**别名，不是拷贝**：真的 `vsg::vec3Array` 等直接读 geometry 自己的 buffer，于是模型与
    渲染侧每个通道只占一份分配（位置 / 法线 / UV / 作者颜色 / 自定义通道 / 索引都是）。完整来龙去脉
    （包括让这件事成立的 vsg 约束和踩过的坑）见
-   [`src/plugins/gfx_backend_vsg/vine-to-vsg-data-flow.md`](../../../plugins/gfx_backend_vsg/vine-to-vsg-data-flow.md)，
+   [`src/plugins/gfx_backend_vsg/docs/data-flow.md`](../../../plugins/gfx_backend_vsg/docs/data-flow.md)，
    后端的运行时总览（生命周期 / 调用次数 / 更新策略）见
    [`src/plugins/gfx_backend_vsg/docs/backend.md`](../../../plugins/gfx_backend_vsg/docs/backend.md)。
 
@@ -465,7 +465,7 @@ deferred、离屏、深度共享、overlay —— 并打印 `[selftest]` 证据�
 
 | 内容 | 位置 |
 | --- | --- |
-| 后端数据流、每帧时序、已知坑 | `src/plugins/gfx_backend_vsg/vine-to-vsg-data-flow.md` |
+| 后端数据流、每帧时序、已知坑 | `src/plugins/gfx_backend_vsg/docs/data-flow.md` |
 | 后端运行时总览（生命周期 / 调用次数 / 更新策略） | `src/plugins/gfx_backend_vsg/docs/backend.md` |
 | 设计文档（渲染管线 / 状态 / 阴影 / 延迟 / overlay） | `.ai/design/*.md` |
 | 简明模块笔记（坑清单、实测结论、变异证据） | `.ai/memory/graphics.md` |

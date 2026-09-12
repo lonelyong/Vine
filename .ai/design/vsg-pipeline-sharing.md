@@ -3,7 +3,7 @@
 > 模块：`src/plugins/gfx_backend_vsg`
 > 日期：2026-09-08（本轮落地 SharedObjects 共享 + L1 program 缓存 + L2 变体模板缓存）
 > 关联：`src/plugins/gfx_backend_vsg/gfx_backend_vsg.md`（模块全解）、
-> `src/plugins/gfx_backend_vsg/vine-to-vsg-data-flow.md`（数据映射/缺陷表 D10/D16/D19/D22）、
+> `src/plugins/gfx_backend_vsg/docs/data-flow.md`（数据映射/缺陷表 D10/D16/D19/D22）、
 > `.ai/design/vsg-custom-shader.md`（program ABI）、
 > `.ai/design/vsg-user-mutation-strategy.md`（用户端可变/可配/可组合情形的处理策略）。
 >

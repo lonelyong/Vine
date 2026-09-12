@@ -4,7 +4,7 @@
 
 SDK 侧的类型设计（`Texture` / `Texture2D` / `CubeMap` / `Kind`、`layerCount()`/`layer()`）见
 `.ai/design/graphics-design.md` §3.3。链路的另一端（几何与材质如何物化成 vsg 数组）见
-`vine-to-vsg-data-flow.md`。
+`docs/data-flow.md`。
 
 > **为什么单独成篇。** 下面每一条约定都是 vsg 源码里的隐含行为，且**违反它们全部是静默的**：
 > 没有 VUID、没有异常、返回值不可查，画面上只是"少了点什么"或"采到了别的东西"。不写下来就只能

@@ -896,7 +896,7 @@
 > 旧多 root 表述仍留在 graphics-design.md §3.4/§7（已标注过时）。
 >
 > 2026-09-04 **已知缺陷已登记**（26 项 D1–D26，分级 🔴/🟡/🟢）：存
-> `src/plugins/gfx_backend_vsg/vine-to-vsg-data-flow.md` §13（内存审计：两侧引用
+> `src/plugins/gfx_backend_vsg/docs/data-flow.md` §13（内存审计：两侧引用
 > 计数、无环、真泄漏风险低；主要风险 = 只增不减留存 + 行为缺陷。🔴：D13 材质缓存
 > 无逐出且 `releaseMaterial` 全仓零调用点；D10 `ShaderProgram` 无 revision → 改
 > shader 不重编；D9 编译失败静默回退内建；D3 用户 loc6 顶点色被白覆盖；D1
@@ -1292,7 +1292,7 @@ Object
 
 **动机**：`Material::textureFile()` 那个路径字符串在 `src/` 里**零调用**（只有一个测试引用）—— 是个死 API，
 也正是 `ImageRef.hpp` 注释里承认的洞（*"a material texture is a file PATH"*）。
-VSG 侧 `vine-to-vsg-data-flow.md` 早已记着"纹理/uv 均未接线"。
+VSG 侧 `docs/data-flow.md` 早已记着"纹理/uv 均未接线"。
 
 **分工（拍定）**：CPU 像素 / 图像数据 → **新模块 `imaging`**（`Image` + `PixelFormat`，叶子，只依赖 Core/Global）；
 GPU 资源（format/mip/sampler/usage）→ `graphics`。

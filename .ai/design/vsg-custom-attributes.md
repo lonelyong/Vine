@@ -2,7 +2,7 @@
 
 > 状态：已实现（2026-09-08，复核批次 A 后同步）。权威来源 = `SceneBridge.cpp` / `VsgRenderer.cpp`；
 > 本文件为契约与取舍说明。承接 `vsg-custom-shader.md` / `vsg-pipeline-sharing.md` /
-> `vine-to-vsg-data-flow.md`。目标目录 `src/plugins/gfx_backend_vsg`。
+> `docs/data-flow.md`。目标目录 `src/plugins/gfx_backend_vsg`。
 > 本方案**不改动 SDK 公开 API**、**不破坏** Phong/FlatShaded、动态 opacity、pipeline sharing。
 
 ## 0. 实现核对（2026-09-08，批次 A 已落地）

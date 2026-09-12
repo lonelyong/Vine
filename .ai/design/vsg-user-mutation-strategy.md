@@ -4,7 +4,7 @@
 > 日期：2026-09-08
 > 关联：`.ai/design/vsg-pipeline-sharing.md`（管线/数据/状态共享与增量编译 D22）、
 > `.ai/design/vsg-selection-highlight.md`（STEP 元素选择/高亮）、
-> `src/plugins/gfx_backend_vsg/gfx_backend_vsg.md`、`vine-to-vsg-data-flow.md`（缺陷表 D8/D10/D13/D14/D16/D19/D22）。
+> `src/plugins/gfx_backend_vsg/gfx_backend_vsg.md`、`docs/data-flow.md`（缺陷表 D8/D10/D13/D14/D16/D19/D22）。
 >
 > 一句话：**后端遵循"增量变更模型"** —— 每个用户级变化先映射到
 > `检测键 → 受影响层(数据/状态/DS/编译) → 动作`；能**就地写**的绝不重建，

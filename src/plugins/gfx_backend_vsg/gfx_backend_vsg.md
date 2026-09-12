@@ -5,8 +5,8 @@
 >
 > 本文件是模块级**综合文档**：讲清类职责、数据链路、图结构、生命周期、资源
 > 清理、resize / pass 移除行为，以及**未定义行为 / 内存 / 线程 / 异常安全**风险。
-> 纯数据格式与 ShaderSet 契约、顶点读取细节见同目录
-> [`vine-to-vsg-data-flow.md`](./vine-to-vsg-data-flow.md)（本文件引用它，不重复整表）；
+> 纯数据格式与 ShaderSet 契约、顶点读取细节见 `docs/`
+> [`data-flow.md`](./docs/data-flow.md)（本文件引用它，不重复整表）；
 > 早期设计历史见 `.ai/design/vsg-design.md`；自定义着色 ABI 见 `.ai/design/vsg-custom-shader.md`。
 >
 > ⚠️ **当前工作区状态（2026-09-04，C6 重构后）**：`VsgRenderer` 不绑定任何 Vine Scene/Camera
@@ -133,7 +133,8 @@ src/plugins/gfx_backend_vsg/
   shaders/                        # 早期手工 flat shader（flat.vert/frag[.spv]，已不被构建使用）
   vsg_shader_dump/  vsg_probe/    # 独立探查工具 main.cpp（不进插件构建）
   vsg_selftest/                   # 无窗口自检（lavapipe 下跑完整帧装配）
-  vine-to-vsg-data-flow.md        # 数据映射专项文档
+  docs/data-flow.md               # 数据映射专项文档（旧名 vine-to-vsg-data-flow.md）
+  docs/backend.md                 # 后端运行时说明（生命周期 / 调用次数 / 更新策略）
   gfx_backend_vsg.md              # 本文
 ```
 
@@ -229,7 +230,7 @@ flowchart LR
 `vsg_Vertex` + 自建 `pc` ShaderSet（program 路径）→ 按 `ResolvedRenderState` 装管线态
 → `StateGroup` 挂 `BindVertexBuffers + BindIndexBuffer + DrawIndexed`。
 **顶点数据/世界变换/透明度、材质字段的完整映射与 ShaderSet 契约表**
-见 `vine-to-vsg-data-flow.md`。
+见 `docs/data-flow.md`。
 
 ### 5.4 GPU 上传 / 编译
 
@@ -493,7 +494,7 @@ deviceWaitIdle
 > 结论先行：所有权两侧都引用计数、**无环**（`Node::parent_` 是非拥有 raw_ptr；
 > 命令流帧级释放；vsg 编译产物随节点释放），**真泄漏风险低**。主要风险集中在
 > **裸指针缓存键 / 生命周期时序 / 线程**。以下按类编号，可与
-> `vine-to-vsg-data-flow.md` §13 的 D1–D26 对应。
+> `docs/data-flow.md` §13 的 D1–D26 对应。
 
 ### 14.1 悬垂与地址复用（最危险）
 
@@ -555,7 +556,7 @@ deviceWaitIdle
 
 ## 15. 已知缺陷登记（汇总）
 
-数据/Shader/材质/清理层的 D1–D26 完整登记在 `vine-to-vsg-data-flow.md` §13，
+数据/Shader/材质/清理层的 D1–D26 完整登记在 `docs/data-flow.md` §13，
 此处只补模块级新增 + 给出🔴 优先处置建议摘要：
 
 | 编号 | 缺陷 | 严重度 |
@@ -601,7 +602,7 @@ Phong 材质（共享缓存+每帧就地刷新）、scene×node×叶 opacity→p
 
 ## 18. 关联文档
 
-- `vine-to-vsg-data-flow.md`（同目录）——数据映射、ShaderSet 契约表、D1–D26 明细
+- `docs/data-flow.md`（同目录）——数据映射、ShaderSet 契约表、D1–D26 明细
 - `.ai/design/vsg-design.md` —— 插件化设计历史（v5）
 - `.ai/design/vsg-custom-shader.md` —— 自定义着色 ABI + 内建契约档案
 - `.ai/design/graphics-overlay.md` / `graphics-shadow.md` —— overlay / 阴影 / 离屏语义

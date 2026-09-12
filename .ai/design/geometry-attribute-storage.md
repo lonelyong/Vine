@@ -1,6 +1,6 @@
 # geometry 属性存储：一份分配，两侧共用
 
-> 相关：`.ai/memory/loaders.md`（`meshio` 拆分）、`src/plugins/gfx_backend_vsg/vine-to-vsg-data-flow.md`（前端 → 后端的字段映射）。
+> 相关：`.ai/memory/loaders.md`（`meshio` 拆分）、`src/plugins/gfx_backend_vsg/docs/data-flow.md`（前端 → 后端的字段映射）。
 
 ## 问题
 

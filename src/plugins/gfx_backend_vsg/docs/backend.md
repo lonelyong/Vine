@@ -5,7 +5,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 `RenderBackendRegistry::instance().create(u8"vsg")` 拿它）。
 
 本文回答四个问题：**数据怎么流**、**谁活多久**、**每帧/每变化各调用多少次**、**什么触发更新**。
-逐帧时序的详细版本在 [`../vine-to-vsg-data-flow.md`](../vine-to-vsg-data-flow.md)（本文只给概览并指向它），
+逐帧时序的详细版本在 [`data-flow.md`](data-flow.md)（本文只给概览并指向它），
 设计理由与实测结论在 `.ai/design/` 与 `.ai/memory/graphics.md`。
 
 ## 1. 文件地图：谁负责什么
@@ -59,7 +59,7 @@ graph LR
   存储由 `detail::VsgBufferView<Element>` 持有）。被绑定的对象**必须是真 `vsg::Array`**，裸 `vsg::Data`
   会被静默忽略（不出图、validation 不报）。
 - 详细的逐帧时序图、支持/不支持矩阵、已知缺陷清单见
-  [`../vine-to-vsg-data-flow.md`](../vine-to-vsg-data-flow.md)。
+  [`data-flow.md`](data-flow.md)。
 
 ## 3. 生命周期
 
@@ -85,7 +85,7 @@ graph LR
 - `shutdown()` 的做法是 **`state = VsgRendererState{};` 整体替换** —— 会话期资源不可能被手写拆卸清单漏掉
   （新增一个持有 vsg 对象的成员不需要改拆卸代码）。持久部分跟着 `persistent` 的析构走。
 - 清理顺序是硬约束（撞 `VSG_MAX_DEVICES==1`）：见
-  [`../vine-to-vsg-data-flow.md`](../vine-to-vsg-data-flow.md) §10.3。
+  [`data-flow.md`](data-flow.md) §10.3。
 
 ### 3.3 后端对宿主的承诺（借用 vs 保留）
 

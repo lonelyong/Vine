@@ -147,7 +147,7 @@ targets[ TargetKey ]                 // TargetKey：窗口=专用键；离屏=Re
 | `tests/test_vsg/*`（子组件单测） | C6.3 起新增“多槽/多 shader”语义用例 |
 | `src/plugins/app_shell/src/AppShellUi.cpp` | 若用 addOffscreenToScreen 等，C6.4 复核 |
 | `RenderPipelineBuilder` | 无引擎侧改动预期；复核离屏多槽 API 兼容 |
-| docs（`gfx_backend_vsg.md`/`vine-to-vsg-data-flow.md`/`.ai/*`） | C6.5 同步 |
+| docs（`gfx_backend_vsg.md`/`docs/data-flow.md`/`.ai/*`） | C6.5 同步 |
 
 ## 7. 风险与边界
 
@@ -163,4 +163,4 @@ targets[ TargetKey ]                 // TargetKey：窗口=专用键；离屏=Re
 - `.ai/design/graphics-overlay.md`（前置：pass 单列表/窗口层）
 - `.ai/design/graphics-render-pipeline.md`（多 pass / 槽 / 命名产出）
 - `gfx_backend_vsg.md` §7/11/12（现状窗口层/离屏/PiP、生命周期）
-- `vine-to-vsg-data-flow.md`（数据映射、SceneBridge 契约）
+- `docs/data-flow.md`（数据映射、SceneBridge 契约）

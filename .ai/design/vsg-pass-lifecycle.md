@@ -2,7 +2,7 @@
 
 > 关联：`.ai/design/vsg-user-mutation-strategy.md`（可变性策略表）、`vsg-pipeline-sharing.md`（管线/数据·状态共享）、
 > `.ai/design/graphics-render-pipeline.md`（engine 纯调度模型）、
-> `src/plugins/gfx_backend_vsg/gfx_backend_vsg.md`、`vine-to-vsg-data-flow.md`（缺陷表 D8/D14/D16/D22）。
+> `src/plugins/gfx_backend_vsg/gfx_backend_vsg.md`、`docs/data-flow.md`（缺陷表 D8/D14/D16/D22）。
 > 代码：`RenderBackend.hpp`（beginPass/endPass/releasePass）、`RenderEngine.cpp`（调用序）、
 > `VsgRenderer.{hpp,cpp}`（SlotKey / reap / erasePassSlots / reassignPass / offscreenBuildCount）、
 > `SceneBridge.{hpp,cpp}`（setContentDepthMode / invalidateState）。
@@ -1492,7 +1492,7 @@ RenderGraph），图像按目标共享"。已勘察的改动面与**必须同时
 
 **交班状态**：本次提交（D41–D45 + §28 第 1/2 步），工作区干净。基线：
 `test_vsg` **89**、`test_graphics` **157**、`gfx_lavapipe_check.sh` → `RESULT: PASS`
-（第二轮评审补 `LightGroupTest` ×5 与 D41–D45，见 `vine-to-vsg-data-flow.md` §13.8）
+（第二轮评审补 `LightGroupTest` ×5 与 D41–D45，见 `docs/data-flow.md` §13.8）
 （0 VUID，证据行含 `depth load:` / `program hotspot:` / `shared depth pixels:` / `mixed depth:` /
 `depth borrow:` / `depth testonly:` / `depth share order:` / `target description:`）；
 app 冒烟 `timeout 25 ./dist/bin/Vine` exit 124、离屏 3 次构建、0 VUID。复验命令：

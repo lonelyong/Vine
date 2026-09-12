@@ -4,7 +4,7 @@
 > 日期：2026-09-08
 > 关联：`.ai/design/vsg-pipeline-sharing.md`（管线共享 / 数据·状态解耦 / D22 增量）、
 > `.ai/design/vsg-user-mutation-strategy.md`（可变/可配情形策略）、
-> `src/plugins/gfx_backend_vsg/vine-to-vsg-data-flow.md`。
+> `src/plugins/gfx_backend_vsg/docs/data-flow.md`。
 >
 > 一句话：**可选中元素数量不能成为场景图/渲染成本** —— 每个 STEP 部件 = 少数几个
 > 大 drawable（base + highlight 子集），元素身份活在 CPU 元素表里，hover/选中只改一个
