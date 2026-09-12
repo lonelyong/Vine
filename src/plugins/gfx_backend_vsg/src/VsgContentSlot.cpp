@@ -171,6 +171,9 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // Upload textures through the SESSION's cache: the same texture sampled by two
     // slots would otherwise be staged (and held) twice, once per slot.
     content.bridge.setTextureCache(state.texture_cache.get());
+    // Route mesh streams through the SESSION's cache as well: the same model read by two slots (or by two
+    // drawables in one slot) would otherwise upload its vertices once per drawable.
+    content.bridge.setMeshResourceCache(state.mesh_cache.get());
     // Route this slot's rejections through the renderer's diagnostics (trace,
     // counters, host sink): the slot is what actually discovers them.
     installDiagnosticRoute(diagnostics, content.bridge);

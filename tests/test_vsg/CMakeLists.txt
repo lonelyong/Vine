@@ -20,6 +20,7 @@ set(SRC_FILE_LIST
 	ReadbackTest.cpp
 	SceneRulesTest.cpp
 	TextureCacheTest.cpp
+	MeshResourceCacheTest.cpp
 	OverlayLightingTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
@@ -64,6 +65,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridgePipeline.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgMaterialManager.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgTextureCache.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgMeshResourceCache.cpp
 	# The pass protocol (the beginPass/endPass scope) lives in VsgRenderer, and
 	# its validation must be testable WITHOUT a device: constructing the renderer
 	# creates no window/viewer, and the scope calls only touch the retained

@@ -51,6 +51,7 @@
 #include <vsg/maths/vec4.h>
 #include <vsg/utils/ShaderSet.h>
 
+#include <vine/vsg/VsgMeshResourceCache.hpp>
 #include <vine/vsg/VsgTextureCache.hpp>
 
 #include <vine/graphics/DepthMode.hpp>
@@ -191,6 +192,11 @@ struct VsgRendererState {
     // slot. Held through a pointer because the cache is not copyable and this state is assigned over
     // wholesale by shutdown() — which is also what drops those resources with the device they belong to.
     std::unique_ptr<VsgTextureCache> texture_cache;
+    // The session's MESH-stream cache, injected the same way (see SceneBridge::setMeshResourceCache): the
+    // streams a geometry ALIASES from a model buffer are bound through it, so N drawables reading the same
+    // mesh share one bind — and therefore one device buffer and one upload. Session-scoped for the same
+    // reason: the buffers belong to the session's device.
+    std::unique_ptr<VsgMeshResourceCache> mesh_cache;
     // Window-target shader sets shared by its content slots' bridges: one per
     // DepthMode (TestAndWrite / TestOnly / Disabled) so each slot bakes the
     // right depth test/write state. Per-geometry pipelines are compiled per

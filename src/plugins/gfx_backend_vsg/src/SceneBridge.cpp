@@ -121,6 +121,16 @@ void SceneBridge::setTextureCache(vine::raw_ptr<VsgTextureCache> cache)
     texture_cache_ = cache;
 }
 
+void SceneBridge::setMeshResourceCache(vine::raw_ptr<VsgMeshResourceCache> cache)
+{
+    mesh_cache_ = cache;
+}
+
+VsgMeshResourceCache& SceneBridge::meshResources()
+{
+    return mesh_cache_ != nullptr ? *mesh_cache_ : default_mesh_cache_;
+}
+
 VsgTextureCache& SceneBridge::textureCache()
 {
     return texture_cache_ != nullptr ? *texture_cache_ : default_texture_cache_;
@@ -251,6 +261,20 @@ std::vector<SceneBridge::ChannelKey> SceneBridge::channelKeysOf(const vine::grap
     return keys;
 }
 
+bool SceneBridge::streamsMatch(const std::vector<ChannelKey>& before, const std::vector<ChannelKey>& after)
+{
+    if (before.size() != after.size()) {
+        return false; // a channel appeared or disappeared: not the same set of streams
+    }
+    for (const ChannelKey& key : before) {
+        const ChannelKey* const current = keyAt(after, key.location);
+        if (current == nullptr || !(*current == key)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool SceneBridge::shapesMatch(const std::vector<ChannelKey>& before, const std::vector<ChannelKey>& after)
 {
     if (before.size() != after.size()) {
@@ -289,6 +313,32 @@ SceneBridge::ChannelKey SceneBridge::indexKeyOf(const vine::graphics::Geometry& 
     key.count      = indices->size();
     return key;
 }
+
+/**
+ * @brief Puts @p replacement where the retained bind command sits in its own command list.
+ *
+ * Refreshing a SHARED stream cannot re-point the bind it was built with: that command belongs to every
+ * geometry reading the same bytes, so the new one goes in at the SAME child slot instead (see
+ * RetainedBinds). Keeping the slot is what preserves the order the builder wrote — the order the shader
+ * contract's binding numbers were checked against.
+ *
+ * A bind that is not in a list (nothing to swap: a cached bind served for a stream no drawable bound, say)
+ * is simply left alone.
+ *
+ * @param binds       The drawable's retained binds, whose @ref RetainedBinds::commands is the list.
+ * @param child       Child slot of the bind being replaced (kNoChild when it is not in the list).
+ * @param replacement The bind to put there, or null to leave the list unchanged.
+ */
+void SceneBridge::swapRetainedChild(RetainedBinds& binds, std::size_t child, ::vsg::Command* replacement)
+{
+    if (replacement == nullptr || child == SceneBridge::RetainedBinds::kNoChild || binds.commands == nullptr ||
+        child >= binds.commands->children.size()) {
+        return;
+    }
+    binds.commands->children[child] = replacement;
+}
+
+
 
 void SceneBridge::retireNode(::vsg::ref_ptr<::vsg::Node> node){
     // A Node IS an Object: this bridge parks on the same ring the session parks its replaced
@@ -483,7 +533,16 @@ bool SceneBridge::syncRenderCommands(
             // the index-only case — the index stream is simply one more channel that refreshes in place.
             const bool index_changed = index_now.buffer != nullptr && item->index_key.buffer != nullptr &&
                                        index_now.buffer != item->index_key.buffer;
-            std::vector<std::pair<std::size_t, ::vsg::ref_ptr<::vsg::Data>>> refreshed;
+            // One refreshed channel: the bind to re-point, the array it now reads, and — when that bind is
+            // SHARED — the stream identity the cache has to serve it under (see the apply block below).
+            struct RefreshedChannel
+            {
+                std::size_t                          binding = 0u;
+                ::vsg::ref_ptr<::vsg::Data>          array;
+                VsgMeshResourceCache::ChannelKey     shared_key{};
+                bool                                 shared = false;
+            };
+            std::vector<RefreshedChannel> refreshed;
             bool refresh_ok = item->data_node != nullptr && item->binds.index != nullptr &&
                               shapesMatch(item->channel_keys, keys_now) &&
                               (!index_changed ||
@@ -523,7 +582,22 @@ bool SceneBridge::syncRenderCommands(
                         refresh_ok = false; // this channel needs the builder (and its diagnostics)
                         break;
                     }
-                    refreshed.emplace_back(binding, std::move(array));
+                    RefreshedChannel entry;
+                    entry.binding = binding;
+                    entry.array   = std::move(array);
+                    // A refresh only ever produces one of the VERBATIM views the builder aliases (a packed or
+                    // derived array needs the builder), so a shared bind may be refreshed through the cache:
+                    // the new key says "same buffer, new revision", which is exactly the stream the new bytes
+                    // are, and the next geometry to refresh the same stream joins this entry (one upload).
+                    if (item->binds.canonical_shared[binding] && after != nullptr) {
+                        entry.shared                       = true;
+                        entry.shared_key.binding           = static_cast<std::uint32_t>(binding);
+                        entry.shared_key.components        = after->components;
+                        entry.shared_key.buffer            = after->buffer;
+                        entry.shared_key.revision          = after->revision;
+                        entry.shared_key.count             = after->count;
+                    }
+                    refreshed.push_back(std::move(entry));
                 }
             }
 
@@ -537,12 +611,35 @@ bool SceneBridge::syncRenderCommands(
                 // those channels; the index stream is swapped the same way. Nothing is new here, but the
                 // replaced BufferInfos still need this frame's compile pass — which the
                 // (data_dirty || state_dirty) block below already queues.
-                for (auto& [binding, array] : refreshed) {
-                    item->binds.canonical[binding]->assignArrays(::vsg::DataList{ array });
+                for (RefreshedChannel& entry : refreshed) {
+                    if (entry.shared) {
+                        // A shared bind belongs to EVERY geometry reading that stream: re-pointing it here
+                        // would hand them this geometry's array, so this drawable gets the bind the cache
+                        // holds for the NEW stream instead and swaps it in at the same child slot (keeping
+                        // the command order, and therefore the binding numbers, intact).
+                        const auto bind = meshResources().getOrCreateVertexBind(entry.shared_key, entry.array);
+                        swapRetainedChild(item->binds, item->binds.canonical_child[entry.binding], bind.get());
+                        item->binds.canonical[entry.binding] = bind;
+                        continue;
+                    }
+                    item->binds.canonical[entry.binding]->assignArrays(::vsg::DataList{ entry.array });
                 }
                 if (index_changed) {
-                    item->binds.index->assignIndices(detail::aliasArray<::vsg::uintArray, std::uint32_t>(
-                        geometry->indicesBuffer(), index_now.count));
+                    auto indices = detail::aliasArray<::vsg::uintArray, std::uint32_t>(
+                        geometry->indicesBuffer(), index_now.count);
+                    if (item->binds.index_shared && indices != nullptr) {
+                        // Same rule as a shared vertex channel: the index stream's bind is not ours alone.
+                        VsgMeshResourceCache::ChannelKey key;
+                        key.count    = index_now.count;
+                        key.buffer   = index_now.buffer;
+                        key.revision = index_now.revision;
+                        const auto bind = meshResources().getOrCreateIndexBind(key, indices);
+                        swapRetainedChild(item->binds, item->binds.index_child, bind.get());
+                        item->binds.index = bind;
+                    }
+                    else {
+                        item->binds.index->assignIndices(indices);
+                    }
                     item->index_key = index_now;
                 }
                 item->channel_keys = keys_now;
@@ -553,11 +650,23 @@ bool SceneBridge::syncRenderCommands(
             // carrier is dropped with it and rewritten on the next frames. The
             // replaced node is parked (its buffers may still be in flight).
             item->extra_channels.clear();
+            // Whether this rebuild's announcement is one a STREAM accounts for: a fresh node (nothing was
+            // built yet), a channel reading a different buffer / revision, or an index stream that moved.
+            // A revision nothing explains — the geometry says its data changed while every stream still
+            // reads the same bytes, which is what a buffer written through a raw pointer reports — must be
+            // answered by RE-READING the model, and a retained shared bind was copied from the bytes as of
+            // ITS insertion: it cannot be vouched for here, so this node builds its own binds instead.
+            const bool streams_changed = item->data_node == nullptr ||
+                                         !streamsMatch(item->channel_keys, keys_now) ||
+                                         !(index_now == item->index_key);
+            // The retained node is parked (its buffers may still be in flight), which clears the member the
+            // check above reads — hence the order.
             retireNode(std::move(item->data_node));
-            item->binds      = RetainedBinds{};
-            item->data_node  = buildGeometryData(geometry, item->program.get() == nullptr,
+            item->binds     = RetainedBinds{};
+            item->data_node = buildGeometryData(geometry, item->program.get() == nullptr,
                                                 state.topology, item->colors,
-                                                item->extra_channels, item->derived, item->binds);
+                                                item->extra_channels, item->derived, item->binds,
+                                                streams_changed ? &meshResources() : nullptr);
             if (item->data_node == nullptr) {
                 // Unsupported shape / malformed vertex data (unusable attribute
                 // strides, out-of-range indices, ...): nothing drawable. The
@@ -749,6 +858,9 @@ std::size_t SceneBridge::releaseAbandonedCaches()
     // Deliberately NOT part of the eviction gate below: the shared-object table registers pipelines /
     // layouts / descriptor sets, never images, so releasing a texture is no reason to walk it.
     textureCache().releaseAbandoned();
+    // Same for the shared mesh binds: their entries hold the arrays (and through them the model's buffers),
+    // so an entry whose last geometry is gone must not keep that stream uploaded for the session.
+    meshResources().releaseAbandoned();
     // A registered variant is HELD BY shared_objects_ (registering is what the
     // table does), so evicting its cache entries freed nothing: the table still
     // referenced the pipeline, layout and descriptor sets, and it only ever grew

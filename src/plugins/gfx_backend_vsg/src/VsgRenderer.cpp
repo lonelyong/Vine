@@ -295,6 +295,12 @@ bool VsgRenderer::initialize()
     // it.
     state.texture_cache = std::make_unique<vine::vsg::VsgTextureCache>();
 
+    // The session's mesh-stream cache, created next to it for the same reason: the streams a geometry aliases
+    // from a model buffer are bound through this ONE cache, so N drawables reading the same vertices/indices
+    // share one bind, one device buffer and one upload instead of one each. Session-scoped: the buffers
+    // belong to the session's device, so shutdown() drops them with it.
+    state.mesh_cache = std::make_unique<vine::vsg::VsgMeshResourceCache>();
+
     // Window-target shader sets shared by its content slots (embedded SPIR-V,
     // no runtime glslang): the depth-on set keeps depth test/write on; the
     // depth-off set disables it so the slot's content always draws on top of

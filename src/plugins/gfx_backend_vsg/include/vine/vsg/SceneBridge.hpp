@@ -10,6 +10,7 @@
 
 #include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/BindVertexBuffers.h>
+#include <vsg/commands/Command.h>
 #include <vsg/commands/Commands.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>
@@ -26,6 +27,7 @@
 #include <vine/vsg/OwnedCache.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 #include <vine/vsg/VsgRetireRing.hpp>
+#include <vine/vsg/VsgMeshResourceCache.hpp>
 #include <vine/vsg/VsgTextureCache.hpp>
 
 namespace vine::graphics
@@ -86,6 +88,19 @@ class V_VSG_API SceneBridge {
      * @param cache Texture cache to use.
      */
     void setTextureCache(vine::raw_ptr<VsgTextureCache> cache);
+
+    /** @brief Injects the cache of SHARED mesh binds (see VsgMeshResourceCache).
+     *
+     * Must outlive the bridge. Handing every content slot of a session the session's cache means the streams
+     * whose bytes are the model's own — positions, authored normals / texcoords / colours, custom channels
+     * and the index stream — are bound through ONE command per stream, so N drawables reading them share one
+     * device buffer and one upload instead of staging the same bytes N times.
+     *
+     * When unset, the bridge creates (and owns) its own cache: sharing then stays inside this bridge.
+     *
+     * @param cache Mesh-resource cache to use.
+     */
+    void setMeshResourceCache(vine::raw_ptr<VsgMeshResourceCache> cache);
 
     /** @brief Reconciles the retained scene under root against the commands.
      *
@@ -316,13 +331,29 @@ class V_VSG_API SceneBridge {
 
         /** @brief Sentinel: the location is not one of the four canonical ones. */
         static constexpr std::size_t kNoBinding = ~std::size_t{ 0 };
+        /** @brief Sentinel: the bind is not in @ref commands (nothing to swap). */
+        static constexpr std::size_t kNoChild = ~std::size_t{ 0 };
         /** @brief Number of canonical vertex bindings (positions, normals, texcoords, loc2 colour). */
         static constexpr std::size_t kCanonicalCount = 4u;
 
+        // The command list the binds below are children of, so a refresh can swap ONE of them in place
+        // instead of re-pointing the command every geometry shares.
+        ::vsg::ref_ptr<::vsg::Commands> commands;
         // One bind per canonical binding index (see canonicalBindingOf).
         std::array<::vsg::ref_ptr<::vsg::BindVertexBuffers>, kCanonicalCount> canonical;
-        // The index stream's bind (its own command: the fast path swaps it in place).
+        // Where each canonical bind sits in @ref commands, so the swap keeps the command order (and with it
+        // the binding numbers) intact.
+        std::array<std::size_t, kCanonicalCount> canonical_child{ kNoChild, kNoChild, kNoChild, kNoChild };
+        // Whether each canonical bind came from the shared mesh cache. A SHARED bind must never be mutated:
+        // an in-place refresh routes the new bytes through the cache again instead, so the other geometries
+        // keep reading what they bound (see the refresh path in syncRenderCommands).
+        std::array<bool, kCanonicalCount> canonical_shared{};
+        // The index stream's bind (its own command: the in-place path swaps it).
         ::vsg::ref_ptr<::vsg::BindIndexBuffer> index;
+        // Where @ref index sits in @ref commands (same reason as canonical_child).
+        std::size_t index_child = kNoChild;
+        // Whether @ref index came from the shared mesh cache (same rule as above).
+        bool index_shared = false;
     };
 
     /** @brief Retained per-geometry render node (defined in the .cpp). */
@@ -375,6 +406,20 @@ class V_VSG_API SceneBridge {
      */
     static bool shapesMatch(const std::vector<ChannelKey>& before, const std::vector<ChannelKey>& after);
 
+    /** @brief Whether the two snapshots describe the SAME streams.
+     *
+     * Identity, not shape: every channel in @p before must be present in @p after reading the same buffer at
+     * the same revision with the same element count and the same component count. This is what tells an
+     * announcement a stream can account for (the caller replaced a buffer, or refilled one and bumped its
+     * revision) from one no stream explains — a buffer whose bytes moved without its own revision moving,
+     * which only the geometry-level revision reports (see Geometry::setRevision).
+     *
+     * @param before Snapshot the retained node was built from (empty when nothing was built yet).
+     * @param after  Current snapshot.
+     * @return true when both describe the same streams.
+     */
+    static bool streamsMatch(const std::vector<ChannelKey>& before, const std::vector<ChannelKey>& after);
+
     /** @brief Finds the snapshot entry for @p location.
      *
      * @param keys     Snapshot to search (ascending location order).
@@ -392,6 +437,19 @@ class V_VSG_API SceneBridge {
      * @return Key of the index stream, or a null-buffer key when there is none.
      */
     static ChannelKey indexKeyOf(const vine::graphics::Geometry& geometry);
+
+    /** @brief Puts @p replacement where a retained bind command sits in its own command list.
+     *
+     * Refreshing a SHARED stream must not re-point the bind the drawable was built with: that command
+     * belongs to every geometry reading the same bytes, so the fresh one goes in at the SAME child slot
+     * instead (see RetainedBinds). Keeping the slot preserves the order the builder wrote, which is the order
+     * the shader contract's binding numbers were checked against.
+     *
+     * @param binds       Retained binds whose commands list holds the slot.
+     * @param child       Child slot to replace (kNoChild when the bind is not in a list).
+     * @param replacement Bind (a Command) to put there, or null to leave the list unchanged.
+     */
+    static void swapRetainedChild(RetainedBinds& binds, std::size_t child, ::vsg::Command* replacement);
 
     /** @brief The BUILD vertex channels a data rebuild reuses instead of recomputing.
      *
@@ -503,6 +561,11 @@ class V_VSG_API SceneBridge {
      *                        copies, one channel instead of the whole mesh (P6).
      * @param out_binds       Receives the per-channel vertex binds (and the index bind) the node holds, so a
      *                        later edit can refresh ONE channel through its own command.
+     * @param mesh_cache      Cache of shared binds for the channels whose bytes are the model's own, or null
+     *                        to build every bind privately. Null is what a REBUILD announces when its
+     *                        revision is not explained by any stream's identity: the retained shared bind was
+     *                        copied from the bytes as of ITS insertion, so a build that cannot attribute
+     *                        what moved has to take its own copies (see VsgMeshResourceCache).
      * @return Data commands node, or null when not buildable.
      */
     ::vsg::ref_ptr<::vsg::Commands> buildGeometryData(
@@ -512,7 +575,8 @@ class V_VSG_API SceneBridge {
         ::vsg::ref_ptr<::vsg::vec4Array>& out_colors,
         std::vector<VertexChannel>& extra_channels,
         DerivedChannels& derived,
-        RetainedBinds& out_binds);
+        RetainedBinds& out_binds,
+        vine::raw_ptr<VsgMeshResourceCache> mesh_cache);
 
     /** @brief Builds (or rebuilds) the state wrapper around a data node.
      *
@@ -578,6 +642,9 @@ class V_VSG_API SceneBridge {
      * @return The texture cache (always non-null / usable).
      */
     VsgTextureCache& textureCache();
+
+    /** @brief Gets the mesh-resource cache in use (the injected one, or this bridge's own). */
+    VsgMeshResourceCache& meshResources();
 
     /** @brief Gets the slot's base shader set (the built-in default when unset).
      *
@@ -676,6 +743,10 @@ class V_VSG_API SceneBridge {
     vine::raw_ptr<VsgTextureCache> texture_cache_ = nullptr;
     // Used when the renderer does not inject one (see textureCache()).
     VsgTextureCache default_texture_cache_;
+    // Shared mesh binds. Injected from the session when there is one (setMeshResourceCache): streams whose
+    // bytes are the model's own are then bound once for the whole session. Owned privately otherwise.
+    vine::raw_ptr<VsgMeshResourceCache> mesh_cache_ = nullptr;
+    VsgMeshResourceCache                default_mesh_cache_;
     // Retained per-geometry nodes, keyed by geometry pointer for O(1) lookup.
     //
     // The entry OWNS the geometry it is keyed by (OwnedCacheEntry), and that

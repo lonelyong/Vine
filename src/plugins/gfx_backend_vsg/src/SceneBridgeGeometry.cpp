@@ -162,7 +162,8 @@ namespace
     ::vsg::ref_ptr<::vsg::vec4Array>& out_colors,
     std::vector<VertexChannel>& extra_channels,
     DerivedChannels& derived,
-    RetainedBinds& out_binds)
+    RetainedBinds& out_binds,
+    vine::raw_ptr<VsgMeshResourceCache> mesh_cache)
 {
     extra_channels.clear();
     out_binds = RetainedBinds{};
@@ -187,6 +188,9 @@ namespace
     // never a third array. The binding may view the model's memory where this is the same memory.
     std::span<const vine::math::Vec3f> positions;
     vine::geometry::Vec3fArray        unpacked_positions;
+    // Set only when the bound array IS the model's bytes (the case a shared bind may serve); the unpacked
+    // path below builds a private array instead.
+    const vine::graphics::AttributeBuffer* aliased_positions = nullptr;
 
     ::vsg::ref_ptr<::vsg::Data> vertices;
     std::size_t                 vertex_count = 0;
@@ -195,9 +199,10 @@ namespace
         // array's, so its format and stride keep being inferred from it (nothing about the binding is
         // hand-written), and the storage Data it points at holds the buffer, so the memory outlives the
         // node that reads it.
-        vertices     = aliasArray<::vsg::vec3Array, float>(position_attr->values, position_attr->vertexCount());
-        positions    = position_attr->vec3View();
-        vertex_count = positions.size();
+        vertices          = aliasArray<::vsg::vec3Array, float>(position_attr->values, position_attr->vertexCount());
+        positions         = position_attr->vec3View();
+        vertex_count      = positions.size();
+        aliased_positions = position_attr;
     } else {
         const XyzUnpack unpack = unpackXyz(*position_attr, unpacked_positions);
         if (unpack == XyzUnpack::NotXyzStride) {
@@ -311,8 +316,11 @@ namespace
     // verbatim copy makeNormals / makeIndexedNormals would build for it is exactly those floats. Anything
     // else is derived (Triangles) or defaulted (Points / Lines, which have no surface to derive from).
     ::vsg::ref_ptr<::vsg::vec3Array> normals;
+    // Set only when the bound array IS the model's bytes (the case a shared bind may serve).
+    const vine::graphics::AttributeBuffer* aliased_normals = nullptr;
     if (authored_normals != nullptr) {
-        normals = aliasArray<::vsg::vec3Array, float>(authored_normals->values, vertex_count);
+        normals                 = aliasArray<::vsg::vec3Array, float>(authored_normals->values, vertex_count);
+        aliased_normals         = authored_normals;
         derived.derived_normals = {};
     }
     else if (is_triangles) {
@@ -357,9 +365,15 @@ namespace
     // authored loc2 colour — when present and well-formed — is bound verbatim
     // as vsg_Color; otherwise a static white fallback is bound.
     ::vsg::ref_ptr<::vsg::vec4Array> colors;
+    // Four components alias the model's bytes verbatim; three are packed, which is per-geometry work and
+    // therefore not shared. On the built-in path binding 3 is the white carrier and never the model's.
+    const vine::graphics::AttributeBuffer* aliased_colors = nullptr;
     if (!opacity_carrier) {
         if (const auto* loc2 = geometry->buffer(2); loc2 != nullptr && !loc2->empty()) {
             colors = packColor4(*loc2, vertex_count);
+            if (colors != nullptr && loc2->components == 4u) {
+                aliased_colors = loc2;
+            }
             if (colors == nullptr) {
                 report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
                        u8"loc2 colour channel is unusable (3/4 components, one per "
@@ -400,9 +414,13 @@ namespace
         return aliasArray<::vsg::vec2Array, float>(attr.values, vertex_count);
     };
     ::vsg::ref_ptr<::vsg::vec2Array> texcoords;
+    const vine::graphics::AttributeBuffer* aliased_texcoords = nullptr;
     if (const auto* uv_channel = geometry->buffer(vine::graphics::Geometry::kTexCoordLocation);
         uv_channel != nullptr && !uv_channel->empty()) {
         texcoords = pack_texcoords(*uv_channel, vertex_count);
+        if (texcoords != nullptr) {
+            aliased_texcoords = uv_channel;
+        }
         if (texcoords == nullptr) {
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
                    u8"texture coordinate channel is unusable (exactly 2 components, "
@@ -464,15 +482,39 @@ namespace
     // ShaderSets are declared in is unchanged — the same four canonical bindings first, then the custom
     // ones in ascending location order.
     auto drawCommands = ::vsg::Commands::create();
-    const auto bind_channel = [&](std::size_t binding, ::vsg::ref_ptr<::vsg::Data> array) {
-        auto bind = ::vsg::BindVertexBuffers::create(static_cast<std::uint32_t>(binding), ::vsg::DataList{ array });
-        drawCommands->addChild(bind);
-        return bind;
+    // The binds below belong to this list, and a refresh swaps one of them IN PLACE (see RetainedBinds): the
+    // child slot is what keeps the command order — and with it the binding numbers the shader contract uses —
+    // unchanged when one channel is re-pointed.
+    out_binds.commands = drawCommands;
+    // A channel whose array is a verbatim view of a MODEL buffer is bound through the shared cache, so every
+    // geometry reading that stream shares one bind — and therefore one device buffer and one upload. The
+    // channels this builder BUILDS (the white opacity carrier, zero UVs, derived normals) are per-geometry by
+    // nature: the carrier even carries this drawable's opacity, so it can never be shared.
+    const auto bind_channel = [&](std::size_t                            canonical_index,
+                                  ::vsg::ref_ptr<::vsg::Data>            array,
+                                  const vine::graphics::AttributeBuffer* aliased) {
+        const auto binding = static_cast<std::uint32_t>(canonical_index);
+        if (mesh_cache != nullptr && aliased != nullptr && aliased->values != nullptr) {
+            VsgMeshResourceCache::ChannelKey key;
+            key.binding    = binding;
+            key.components = aliased->components;
+            key.buffer     = aliased->values.get();
+            key.revision   = aliased->values->revision();
+            key.count      = aliased->floatCount();
+            out_binds.canonical[canonical_index]        = mesh_cache->getOrCreateVertexBind(key, array);
+            out_binds.canonical_shared[canonical_index] = true;
+        }
+        else {
+            out_binds.canonical[canonical_index] =
+                ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ array });
+        }
+        out_binds.canonical_child[canonical_index] = drawCommands->children.size();
+        drawCommands->addChild(out_binds.canonical[canonical_index]);
     };
-    out_binds.canonical[0] = bind_channel(0u, vertices);
-    out_binds.canonical[1] = bind_channel(1u, normals);
-    out_binds.canonical[2] = bind_channel(2u, texcoords);
-    out_binds.canonical[3] = bind_channel(3u, colors);
+    bind_channel(0u, vertices, aliased_positions);
+    bind_channel(1u, normals, aliased_normals);
+    bind_channel(2u, texcoords, aliased_texcoords);
+    bind_channel(3u, colors, aliased_colors);
     if (!custom_arrays.empty()) {
         // The custom channels share ONE command: a change in their set or shape is a layout change (the
         // state wrapper is rebuilt for it), and refreshing one of several arrays in a shared command would
@@ -480,9 +522,20 @@ namespace
         drawCommands->addChild(::vsg::BindVertexBuffers::create(
             static_cast<std::uint32_t>(RetainedBinds::kCanonicalCount), custom_arrays));
     }
-    auto index_bind = ::vsg::BindIndexBuffer::create(indices);
-    drawCommands->addChild(index_bind);
-    out_binds.index = index_bind;
+    if (mesh_cache != nullptr && indexed && geometry->indicesBuffer() != nullptr) {
+        VsgMeshResourceCache::ChannelKey key;
+        key.binding  = 0u;
+        key.buffer   = geometry->indicesBuffer().get();
+        key.revision = geometry->indicesBuffer()->revision();
+        key.count    = geometry->indicesBuffer()->size();
+        out_binds.index        = mesh_cache->getOrCreateIndexBind(key, indices);
+        out_binds.index_shared = true;
+    }
+    else {
+        out_binds.index = ::vsg::BindIndexBuffer::create(indices);
+    }
+    out_binds.index_child = drawCommands->children.size();
+    drawCommands->addChild(out_binds.index);
     drawCommands->addChild(::vsg::DrawIndexed::create(
         static_cast<uint32_t>(indices->size()), 1, 0, 0, 0));
     return drawCommands;

@@ -207,6 +207,7 @@ graph TB
 | --- | --- | --- | --- |
 | `program_stages_` | program 对象 | 编译好的 SPIR-V stages | `program->revision()` 变化 ⇒ 重编译 |
 | `program_shader_sets_` | program + **布局 hash**（`vertexLayoutHash(extra_channels)`） | 该布局的 `vsg::ShaderSet` | program revision 或布局变化 ⇒ 重装配 |
+| `VsgMeshResourceCache`（**会话级**） | 通道流身份：`binding + components + Buffer 地址 + Buffer::revision() + 元素数` | 该流的 `BindVertexBuffers` / `BindIndexBuffer`（**一条 bind 就是一份设备缓冲 + 一次上传**） | key 变了自然是新条目；没人再读的条目由帧级 sweep 释放（§5.1.2） |
 
 ⇒ 同一份 program 配不同通道布局的 geometry 拿到**不同的 ShaderSet**（binding 不同），但共享同一份 stages。
 编译失败/装配失败都会缓存（空 stages / null）以免每帧重试；两者都回落内建 set，并各报一条 `ShaderFallback` Warning。两表上界都是 64，FIFO 淘汰。
@@ -223,6 +224,7 @@ graph TB
 | 保留节点（transform/state/commands） | `SceneBridge` 的缓存条目（缓存条目又归 `VsgRendererState`） | 键是 `Geometry*`，但条目**持有**该 geometry 的引用，所以地址不会是复用的陌生人（`OwnedCache.hpp`） |
 | 被换下的旧节点 | **退役环**（`VsgRetireRing`，深度 `kRetireRingDepth = 4`） | 可能还在飞行的命令缓冲里；提交之后推进环 |
 | `vsg::Image`/`ImageView`/采样器（纹理） | **会话**的 `VsgTextureCache`（`VsgRendererState::texture_cache`，经 `SceneBridge::setTextureCache()` 注入每个内容槽） | 每张纹理**一条**：同一张纹理被 N 个槽采样只上传一次（在此之前缓存是每 bridge 一份 ⇒ N 份 image + N 次上传）；按容量裁剪（`trimToCapacity`，上界 256），App 放手的条目由**帧级清扫**（`SceneBridge::releaseAbandonedCaches()` → `textureCache().releaseAbandoned()`）释放 |
+| 共享网格流（`BindVertexBuffers` / `BindIndexBuffer`） | **会话**的 `VsgMeshResourceCache`（`VsgRendererState::mesh_cache`，经 `SceneBridge::setMeshResourceCache()` 注入；没有注入时退化成该 bridge 自己的一份） | 每条**别名自模型缓冲**的流一条：k 个 drawable 读同一份顶点/索引只上传一次（在此之前每 drawable 一份 bind ⇒ 池区间与上传各一套）；按容量 FIFO 裁剪（上界 512），无人再读的条目由同一次帧级清扫释放（§5.1.2） |
 | `PhongMaterialValue` | `VsgMaterialManager` 的条目（条目持有 `Material` 的引用） | 每帧 `releaseAbandoned()` 回收已死材质 |
 | 渲染目标、附件、pass 图 | `VsgRendererState::targets` | 目标级不变量（`color_seeded`/`depth_seeded`/`any_load_pass`/`depth_sampleable`）随目标一起重置 |
 | 内容槽 | 目标账本 | 槽持有 view / 节点 / 编译队列条目 |
@@ -337,6 +339,66 @@ vsg 的重传粒度是**一条 `BindVertexBuffers` 命令**：命令里任一阵
 
 > 命名接口不变：`Geometry::revision()` 仍然只表示"变了"，刷新路径只是**额外**用逐流快照判断能不能少做；看不出来就
 > 老实重建（`Buffer::revision()` 的契约见 `vine/Buffer.hpp`：变了字节就要 bump）。
+
+### 5.1.2 共享网格流：一份模型字节，一条 bind
+
+`BufferInfo` **是命令自己拥有的**，而 vsg 把 `BufferInfo` 变成一个设备缓冲（`BindVertexBuffers::compile()` →
+`createBufferAndTransferData` → 池 reserve + 拷字节）。所以"k 个 drawable 读同一份顶点/索引"在 P9 之前是 k 条 bind、
+k 份设备内存、k 次上传 —— CPU 侧本来就是**同一段内存**（`AttributeBuffer` 借 `vine::Buffer`），GPU 侧却复制成 k 份。
+`VsgMeshResourceCache` 把这类流收敛成**一条 bind**，于是它们共享同一个设备缓冲。
+
+**哪些通道能共享**（判据只有一条：**这条数组是不是模型字节的原样视图**）：
+
+| 通道（binding） | 能共享？ | 为什么 |
+| --- | --- | --- |
+| 0 位置 | ✅ | `aliasArray` 原样读 `Buffer<float>`，没有任何转换 |
+| 1 法线 | ✅ 仅当**作者写了法线** | 写法线时同样是原样视图；否则是派生法线（见下） |
+| 2 texcoord | ✅ 仅当**作者写了 UV** | 写法线时同样是原样视图；否则是零填充数组（见下） |
+| 3 loc2 颜色 | ✅ 仅当**自定义 program 路径**且**四分量** | 四分量是原样视图；三分量要**打包成 vec4**（每 drawable 一份），内建路径此处是白载体（见下） |
+| 4+ 自定义通道 | ❌（暂） | 它们共用**一条**命令、其身份是布局（§5.1.1）；拆成每通道一条命令才谈得上共享，见待办 |
+| 索引流 | ✅ | 原样索引数组 |
+| 白 opacity 载体 | ❌ | 它的 alpha 就是**这个 drawable** 的 opacity；共享会让所有 drawable 用第一个的不透明度 |
+| 零 UV / 派生法线 | ❌ | 是按这个 geometry 的输入**算出来**的，不是模型的字节 |
+
+**键 = 这条流**（不是这个 geometry）：
+
+| 键字段 | 作用 |
+| --- | --- |
+| `binding` + `components` | 同一段内存按不同解释绑在不同槽上时不能混 |
+| `Buffer` 地址 | 两份内容相同的缓冲**各自一份**，绝不互借 |
+| `Buffer::revision()` | **重新填充过就是另一条流**：条目里的字节副本永远是"插入那一刻的 revision"，不会把旧副本当新的用 |
+| 元素数 | 视图长度不同就不是同一条流（也是越界与错位的最后一道） |
+
+**谁有资格共享**（P9 的第二个闸门，被既有测试抓出来的）：共享条目里的字节副本是**插入那一刻**拷的，而
+`Geometry::revision()`（唯一由调用者发出的"我数据变了"信号）允许"借用的模型缓冲被改于渲染器背后"。所以一次重建先问：
+**这条 revision 有没有哪条流能解释它？**
+
+| 情形 | 判定 | 结果 |
+| --- | --- | --- |
+| 首次建节点（还没建过） | — | 走共享表（k 个实例读同一 mesh ⇒ 只上传一次） |
+| 某通道换了缓冲 / bump 了 `Buffer::revision()`，或索引流变了 | `streamsMatch()` = false（逐键比身份） | 走共享表：变了的流是新 key ⇒ 新条目（拷一次），没变的流命中老条目（**不再拷**） |
+| geometry bump 了 revision，但**没有一条流变** | `streamsMatch()` = true | **不走共享表**：这条 revision 无法归因，只能当"模型被改过"⇒ 这套节点建**自己的** bind，重新读一遍模型字节（`buildGeometryData(..., mesh_cache = nullptr)`） |
+
+第三行就是 `ManuallyReportedRevisionRebuildsTheDataNode` 守住的契约：它 bump 的只有 geometry，没有任何流变。共享条目
+按 key 复用，就会把**上一次拷进去的字节**接着画 —— 静默的错误画面。
+
+**刷新与共享**（§5.1.1 的刷新路径）：共享的 bind **绝不被原地改** —— 它属于所有读这条流的 drawable，`assignArrays()` 会
+把它们的流一起换成"这个 drawable 的数组"。所以刷新走 `meshResources().getOrCreateVertexBind(新 key, 新数组)`：新 revision
+得到**新条目**，同一帧里其它也刷新到同一 revision 的 drawable 会**命中同一个条目**（一起只拷一次）；命令列表里换的是
+`RetainedBinds::canonical_child[binding]` 那个**槽位**，命令顺序（也就是绑定号）不变。
+
+**生存期**：条目持有 bind，bind 持有数组，数组持有模型缓冲 ⇒ 共享流顺带把模型字节留住。没人再读的条目（最后那个
+drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → `meshResources().releaseAbandoned()` 释放；容量上界
+512（FIFO，与其它缓存同一条规则）。
+
+**未做（诚实边界）**：
+
+| 缺口 | 说明 |
+| --- | --- |
+| 自定义通道不共享 | 它们共用一条命令（`firstBinding = 4`），身份是布局；要共享得先拆成每通道一条命令 |
+| arena 切片（P7） | `AttributeBuffer` 还没有 `offset`，所以"一个大缓冲 + 每 geometry 一段"表达不了 ⇒ 现在每条流都是整段视图 |
+| 内建路径的颜色槽 | 白载体是 per-drawable 的（opacity 在顶点色里）⇒ P10 把 opacity 移出顶点色后，内建路径能共享的通道会更多 |
+| 共享跨桥 | 只有**注入进来的会话缓存**能跨槽共享；两个都没有注入的 bridge 各有各的（各自的设备身份） |
 
 ### 5.2 DYNAMIC 与脏计数（谁"每帧"上传）
 
