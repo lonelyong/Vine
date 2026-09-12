@@ -128,6 +128,32 @@ engine.setBackend(backend);
   之后每次改数据都要用 `Geometry::setRevision()` 公告。revision 是渲染侧唯一的重建闸门 ——
   **写 setter 不会推进它**，因为 geometry 分不出"还没读过的新字节"和"上次读过的旧字节"。
 
+### 2.7 顶点数据：整块缓冲，或者缓冲里的一段（arena）
+
+一个通道可以只读缓冲的**一段**（`AttributeBuffer::offset` / `scalarCount`，都按**标量**计）——"一个大缓冲、
+每个 geometry 一段"。顶点因此只存在一份，不重打包：
+
+| 想要 | 写法 |
+| --- | --- |
+| 整块缓冲就是通道 | `setPositions / setNormals / setTexcoords`（= `AttributeBuffer::shared(values, components)`） |
+| 缓冲里的一段 | `addBuffer(0, AttributeBuffer::slice(arena, 3, first_vertex, vertex_count))`（自定义通道、法线、UV 同理） |
+| 索引也是缓冲的一段 | `setIndices(index_arena, first_index, index_count)`（`index_count == 0` 表示"到缓冲末尾"） |
+
+规则与后果：
+
+- **单位**：`slice()` 用**顶点**说（`first_vertex` / `vertex_count`），`shared(...)` 用**标量**说
+  （`offset` / `scalarCount`，`components` 就是步长）；`0` 长度表示"从起点到缓冲末尾"，所以没有固定长度的通道
+  会**跟着缓冲增长**。
+- **索引是段内相对的**：索引 0 指这一段自己的第一个顶点；越界检查按**这一段的顶点数**判 ——
+  一段的索引读不到邻居的数据。
+- **包围盒 / 拾取 / 视锥剔除只覆盖这一段**（它们都经 `AttributeBuffer` 的访问器）。
+- **一段就是一条流**：共享绑定缓存按 `缓冲地址 + Buffer::revision() + offset + 长度` 分辨，同缓冲的相邻两段
+  绝不互借设备缓冲；索引侧相反 —— 索引绑定别名**整段缓冲**，切片写在 draw 命令里（`firstIndex` / `indexCount`），
+  所以一个索引 arena 的所有 geometry 共享一次索引上传。
+- **改这一段要公告**：`buffer->setRevision(buffer->revision() + 1)`（重新填了字节）+ `geometry->setRevision(...)`
+  （渲染侧才知道要重建）。只挪 `offset`（同缓冲换一段）同样要公告。
+- **边界**：`offset` 越过缓冲末尾、或段长超过剩余长度 ⇒ 访问器一律当**空**处理（不会读越界）。
+
 ## 3. 使用
 
 ### 3.1 最小可跑：一个三角形 + forward

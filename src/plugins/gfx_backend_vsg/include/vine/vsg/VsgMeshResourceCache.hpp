@@ -41,8 +41,14 @@ V_VSG_NS_BEGIN
  * its own copies (see SceneBridge::buildGeometryData).
  *
  * THE KEY IS THE STREAM, NOT THE GEOMETRY: binding + component count + the buffer's address + its content
- * revision + the element count. A refilled buffer carries a new revision, which is a DIFFERENT key — so the
- * entry served is always one whose BufferInfo was built from exactly those bytes, never a stale copy.
+ * revision + the SLICE the array reads (first scalar and length). A refilled buffer carries a new revision
+ * and an arena's segments differ in their offset, and both are DIFFERENT keys — so the entry served is always
+ * one whose BufferInfo was built from exactly those bytes, never a stale copy.
+ *
+ * WHAT IT SHARES WITH THE VERTEX SLICE. The bind is per (stream, slice): the vertex array aliases the slice,
+ * so two geometries reading different segments of one arena must not share the command. The INDEX bind is the
+ * exception by design — it aliases the whole buffer and the DRAW states the span (see SceneBridge), so every
+ * geometry slicing one index arena resolves to the same key and shares one index upload.
  *
  * LIFETIME. An entry holds the bind, and the bind holds the array, which holds the model buffer (see
  * VsgBufferView): a shared stream therefore keeps its bytes alive, and releaseAbandoned() drops the entries
@@ -64,13 +70,14 @@ class V_VSG_API VsgMeshResourceCache
         std::uint32_t components = 0;
         const void*   buffer = nullptr;   ///< The `vine::Buffer` the array aliases.
         std::uint64_t revision = 0;       ///< Its content revision (a refill is a different stream).
+        std::size_t   offset = 0;         ///< First scalar the array reads (an arena's segments differ here).
         std::size_t   count = 0;          ///< Scalars (vertex channels) or indices the stream reads.
 
         /** @brief Whether two keys describe the same stream. */
         bool operator==(const ChannelKey& other) const noexcept
         {
             return binding == other.binding && components == other.components && buffer == other.buffer &&
-                   revision == other.revision && count == other.count;
+                   revision == other.revision && offset == other.offset && count == other.count;
         }
     };
 

@@ -314,17 +314,23 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
  *
  * @tparam Array   Real vsg array type to build (e.g. `::vsg::vec3Array`); its element size is the stride.
  * @tparam Element Scalar element type of the buffer, which @p count is counted in.
- * @param buffer Buffer to read; null yields an array over an empty view.
- * @param count  Elements to expose.
- * @return The array, reading @p buffer's memory.
+ * @param buffer         Buffer to read; null yields an array over an empty view.
+ * @param count          Elements to expose.
+ * @param offset_scalars First scalar of the channel inside @p buffer (see AttributeBuffer::offset). It is
+ *                       stated in the BUFFER's scalars, the unit the channel carries, and becomes the byte
+ *                       offset vsg's array aliases from — so one arena buffer can feed many geometries, each
+ *                       reading its own segment.
+ * @return The array, reading @p buffer's memory from @p offset_scalars on.
  */
 template <typename Array, typename Element>
-::vsg::ref_ptr<Array> aliasArray(intrusive_ptr<const vine::Buffer<Element>> buffer, std::size_t count)
+::vsg::ref_ptr<Array> aliasArray(intrusive_ptr<const vine::Buffer<Element>> buffer, std::size_t count,
+                                 std::size_t offset_scalars = 0u)
 {
     using ArrayElement = typename Array::value_type;
     static_assert(sizeof(ArrayElement) % sizeof(Element) == 0u,
                   "an aliased array element must cover a whole number of buffer elements");
-    return Array::create(::vsg::ref_ptr<::vsg::Data>(VsgBufferView<Element>::create(std::move(buffer))), 0u,
+    return Array::create(::vsg::ref_ptr<::vsg::Data>(VsgBufferView<Element>::create(std::move(buffer))),
+                         static_cast<std::uint32_t>(offset_scalars * sizeof(Element)),
                          static_cast<std::uint32_t>(sizeof(ArrayElement)), static_cast<std::uint32_t>(count));
 }
 
@@ -339,15 +345,17 @@ template <typename Array, typename Element>
  *
  * @pre `channelShape(attr, vertex_count) == ChannelShape::Ok` for the channel @p values came from.
  *
- * @param components   Scalar components per vertex (1..4; outside 1..3 the vec4 form is used, which
- *                     channelShape has already rejected).
- * @param values       Packed per-vertex floats to read.
- * @param vertex_count Vertices to expose.
+ * @param components     Scalar components per vertex (1..4; outside 1..3 the vec4 form is used, which
+ *                       channelShape has already rejected).
+ * @param values         Packed per-vertex floats to read.
+ * @param vertex_count   Vertices to expose.
+ * @param offset_scalars First scalar of the channel inside @p values (see AttributeBuffer::offset), so a
+ *                       custom channel can be a segment of an arena like every other channel.
  * @return Typed array reading @p values.
  */
 ::vsg::ref_ptr<::vsg::Data> aliasTypedVertexData(std::uint32_t components,
                                                 intrusive_ptr<const vine::Buffer<float>> values,
-                                                std::size_t vertex_count);
+                                                std::size_t vertex_count, std::size_t offset_scalars = 0u);
 
 /**
  * @brief The Vulkan vertex-input format of a channel with @p components scalars per vertex.

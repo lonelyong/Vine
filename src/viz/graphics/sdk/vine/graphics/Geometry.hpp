@@ -41,6 +41,13 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  * The buffer is re-read on every access rather than snapshotted, which is what makes that safe: growing the
  * buffer cannot leave the channel pointing at freed memory, and the scalar count simply follows.
  *
+ * A CHANNEL MAY BE A SLICE OF THE BUFFER. `offset` is the first scalar it reads (in SCALARS, not vertices)
+ * and `scalarCount` how many it reads (0 = the rest of the buffer, the whole-buffer case). That is what lets
+ * one arena buffer hold every geometry's vertices — "one big buffer, one segment per geometry" — without a
+ * repack: each geometry points a channel at its own segment. With an offset nothing changes about the
+ * channel's SHAPE: its own scalars are `scalars()`, its own length is `floatCount()`, and the buffer may be
+ * larger than either.
+ *
  * The component count IS the stride of the scalars: every consumer must step by it (use
  * vertexCount() / xyz() / stride() rather than assuming three floats per vertex), so a vec4 position
  * channel keeps its xyz and skips the trailing w.
@@ -51,6 +58,10 @@ struct V_GRAPHICS_API AttributeBuffer
     intrusive_ptr<const vine::Buffer<float>> values;
     /// Scalar components per vertex (1..4).
     std::uint32_t components{ 0 };
+    /// First scalar of this channel inside @ref values (0 = the buffer's start).
+    std::size_t offset{ 0 };
+    /// Scalars this channel reads, or 0 for "the rest of @ref values from @ref offset" (the growing case).
+    std::size_t scalarCount{ 0 };
 
     /**
      * @brief Builds a channel that OWNS @p values as its scalars.
@@ -76,36 +87,79 @@ struct V_GRAPHICS_API AttributeBuffer
      * The counterpart of packed() for a source that already owns packed scalars — a geometry::Mesh hands its
      * attribute buffer straight over, so no second allocation exists and nothing is converted.
      *
-     * @param values Buffer to read, or null for an empty channel.
-     * @param components Scalar components per vertex.
+     * @param values       Buffer to read, or null for an empty channel.
+     * @param components   Scalar components per vertex.
+     * @param offset       First scalar to read (0 = the buffer's start). Use slice() to state this in
+     *                     VERTICES instead, which is what an arena's segment usually is.
+     * @param scalar_count Scalars to read, or 0 for the rest of @p values from @p offset.
      * @return The channel, reading that buffer's scalars.
      */
     [[nodiscard]] static AttributeBuffer shared(intrusive_ptr<const vine::Buffer<float>> values,
-                                                std::uint32_t                          components)
+                                                std::uint32_t                          components,
+                                                std::size_t                            offset       = 0u,
+                                                std::size_t                            scalar_count = 0u)
     {
         AttributeBuffer out;
-        out.values     = std::move(values);
-        out.components = components;
+        out.values      = std::move(values);
+        out.components  = components;
+        out.offset      = offset;
+        out.scalarCount = scalar_count;
         return out;
     }
 
-    /** @brief Returns whether no scalar data is attached. */
-    bool empty() const { return values == nullptr || values->empty(); }
+    /**
+     * @brief Builds a channel reading @p vertex_count vertices of @p values from vertex @p first_vertex on.
+     *
+     * The entry point for an ARENA: one buffer holds several geometries' vertices, and each geometry states
+     * the segment it reads in the unit it authors vertices in. The conversion to the scalar offset the
+     * channel stores happens here, so a caller cannot get the stride wrong.
+     *
+     * @param values       Buffer to read (the arena), or null for an empty channel.
+     * @param components   Scalar components per vertex.
+     * @param first_vertex First vertex of this channel's segment.
+     * @param vertex_count Vertices in the segment (0 for the rest of the buffer from @p first_vertex).
+     * @return The channel, reading that segment.
+     */
+    [[nodiscard]] static AttributeBuffer slice(intrusive_ptr<const vine::Buffer<float>> values,
+                                               std::uint32_t components, std::size_t first_vertex,
+                                               std::size_t vertex_count)
+    {
+        return shared(std::move(values), components, first_vertex * components,
+                      vertex_count == 0u ? 0u : vertex_count * components);
+    }
+
+    /** @brief Returns whether no scalar data is attached (or the slice lies past the end of its buffer). */
+    bool empty() const { return floatCount() == 0u; }
 
     /** @brief Returns the packed scalars as a view.
      *
-     * @return All scalars of the channel, empty when none are attached.
+     * @return This CHANNEL's scalars (from @ref offset onwards), empty when it holds none. It is a view over
+     *         the buffer, so it must not outlive it.
      */
     std::span<const float> scalars() const
     {
-        return values != nullptr ? values->view() : std::span<const float>{};
+        if (values == nullptr) {
+            return {};
+        }
+        return values->view().subspan(std::min(offset, values->size()), floatCount());
     }
 
-    /** @brief Returns the number of packed scalars.
+    /** @brief Returns the number of packed scalars this CHANNEL reads.
+     *
+     * Not the buffer's size: a slice reads its own range (see @ref offset / @ref scalarCount), and a channel
+     * with no fixed count follows the buffer as it grows.
      *
      * @return Scalar count (`vertexCount() * stride()` when the length divides evenly).
      */
-    std::size_t floatCount() const { return values != nullptr ? values->size() : 0u; }
+    std::size_t floatCount() const
+    {
+        if (values == nullptr) {
+            return 0u;
+        }
+        const std::size_t begin     = std::min(offset, values->size());
+        const std::size_t available = values->size() - begin;
+        return scalarCount == 0u ? available : std::min(scalarCount, available);
+    }
 
     /** @brief Returns the stride (scalar floats per vertex).
      *
@@ -116,7 +170,7 @@ struct V_GRAPHICS_API AttributeBuffer
      */
     std::uint32_t stride() const { return components; }
 
-    /** @brief Returns the number of complete vertices in the packed data.
+    /** @brief Returns the number of complete vertices in this channel's scalars.
      *
      * The vertex count is `floatCount() / components`; a trailing partial
      * vertex is not counted. A zero stride yields 0.
@@ -125,25 +179,27 @@ struct V_GRAPHICS_API AttributeBuffer
      */
     std::size_t vertexCount() const
     {
-        if (values == nullptr || components == 0u) {
+        if (components == 0u) {
             return 0u;
         }
-        return values->size() / components;
+        return floatCount() / components;
     }
 
-    /** @brief Reads the xyz of a vertex, skipping any trailing component.
+    /** @brief Reads the xyz of a vertex of this channel, skipping any trailing component.
      *
      * Requires a 3- or 4-component channel (the documented minimum for
      * positions / normals) and @p vertex < vertexCount(); both are the
-     * caller's contract, matching the backend's attribute handling.
+     * caller's contract, matching the backend's attribute handling. The index is relative to the CHANNEL, so
+     * vertex 0 of a slice is the segment's first vertex, not the buffer's.
      *
      * @param vertex Vertex index in [0, vertexCount()).
      * @return The vertex's x, y and z scalars.
      */
     std::array<float, 3> xyz(std::size_t vertex) const
     {
-        const std::size_t base = vertex * components;
-        return { (*values)[base], (*values)[base + 1u], (*values)[base + 2u] };
+        const std::span<const float> data = scalars();
+        const std::size_t            base = vertex * components;
+        return { data[base], data[base + 1u], data[base + 2u] };
     }
 
     /** @brief Views a three-scalar channel as Vec3 elements.
@@ -153,18 +209,19 @@ struct V_GRAPHICS_API AttributeBuffer
      * for its own attribute storage, and it is what lets a consumer read an xyz channel without copying it.
      *
      * A channel with any other stride has no such view: it yields an empty span, so a caller does not have
-     * to check the stride before calling.
+     * to check the stride before calling. The view starts at this channel's first scalar (see @ref offset),
+     * so a slice's vertex 0 is its own first vertex.
      *
      * @return The channel as Vec3 elements, empty unless the stride is exactly three scalars.
      */
     std::span<const vine::math::Vec3f> vec3View() const
     {
         constexpr std::uint32_t kVec3Scalars = 3u;
-        if (values == nullptr || components != kVec3Scalars) {
+        if (components != kVec3Scalars) {
             return {};
         }
-        return { reinterpret_cast<const vine::math::Vec3f*>(values->data()),
-                 values->size() / kVec3Scalars };
+        const std::span<const float> data = scalars();
+        return { reinterpret_cast<const vine::math::Vec3f*>(data.data()), data.size() / kVec3Scalars };
     }
 };
 
@@ -272,26 +329,40 @@ class V_GRAPHICS_API Geometry : public Node {
     /** @brief Gets the number of texture coordinates (location kTexCoordLocation). */
     std::size_t texcoordCount() const;
 
-    /** @brief Sets the optional index buffer by SHARING a buffer of indices.
+    /** @brief Sets the optional index buffer by SHARING a buffer of indices, optionally a slice of it.
      *
      * The same rule as the attribute setters: the geometry reads the buffer instead of copying it, so a mesh
      * hands its own index buffer over and both sides read ONE allocation. A caller that holds a plain index
      * array packs it first with packIndices().
      *
+     * An INDEX ARENA works the same way as a vertex one: several geometries share one index buffer and each
+     * states its own slice with @p first_index / @p index_count. The indices are relative to this geometry's
+     * OWN vertices (index 0 is the first vertex its position channel reads), which is what keeps a vertex
+     * slice and an index slice consistent with each other.
+     *
      * Replacing the buffer does NOT announce the change: report one with setRevision().
      *
-     * @param indices Index scalars to read (three per triangle), or null for an empty index buffer.
+     * @param indices     Index scalars to read (three per triangle), or null for an empty index buffer.
+     * @param first_index First index this geometry draws (0 = the buffer's start).
+     * @param index_count Indices this geometry draws, or 0 for the rest of @p indices from @p first_index.
      */
-    void setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices);
+    void setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices, std::size_t first_index = 0u,
+                    std::size_t index_count = 0u);
 
-    /** @brief Returns whether an index buffer is attached. */
+    /** @brief Returns whether a non-empty index range is attached. */
     bool hasIndices() const;
 
-    /** @brief Gets the index buffer as a borrowed view.
+    /** @brief Gets the indices this geometry draws as a borrowed view.
      *
-     * @return The index scalars (three per triangle), empty when no index buffer is attached.
+     * @return The drawn index scalars, empty when there are none.
      */
     std::span<const std::uint32_t> indices() const;
+
+    /** @brief Gets the first index this geometry draws from its buffer (0 when it draws the whole buffer). */
+    std::size_t firstIndex() const;
+
+    /** @brief Gets the number of indices this geometry draws (0 when there is no index range). */
+    std::size_t indexCount() const;
 
     /** @brief Returns the index buffer itself, for a consumer that reads its memory instead of a copy.
      *
@@ -395,6 +466,10 @@ class V_GRAPHICS_API Geometry : public Node {
   private:
     std::map<std::uint32_t, AttributeBuffer> attributes_;
     intrusive_ptr<const vine::Buffer<std::uint32_t>> indices_;
+    /// First index of this geometry's slice inside @ref indices_ (0 = the buffer's start).
+    std::size_t                                     indices_first_ = 0;
+    /// Indices this geometry draws, or 0 for "the rest of @ref indices_ from @ref indices_first_".
+    std::size_t                                     indices_count_ = 0;
     std::uint64_t                                   revision_ = 0;
     intrusive_ptr<Material> material_;
     intrusive_ptr<ShaderProgram> program_;

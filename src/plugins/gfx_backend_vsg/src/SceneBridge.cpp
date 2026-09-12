@@ -255,7 +255,10 @@ std::vector<SceneBridge::ChannelKey> SceneBridge::channelKeysOf(const vine::grap
         key.components = channel->components;
         key.buffer     = channel->values.get();
         key.revision   = channel->values != nullptr ? channel->values->revision() : 0u;
-        key.count      = channel->values != nullptr ? channel->values->size() : 0u;
+        // The channel's OWN range, not the buffer's: an arena holds several geometries' vertices, so the
+        // slice is part of what identifies this stream (see AttributeBuffer::offset).
+        key.offset     = channel->offset;
+        key.count      = channel->floatCount();
         keys.push_back(key);
     }
     return keys;
@@ -310,8 +313,34 @@ SceneBridge::ChannelKey SceneBridge::indexKeyOf(const vine::graphics::Geometry& 
     key.components = 1u;
     key.buffer     = indices.get();
     key.revision   = indices->revision();
-    key.count      = indices->size();
+    // The DRAWN range, not the buffer's: an index arena holds several geometries' indices (see
+    // Geometry::setIndices), and a geometry that draws a different span draws different triangles.
+    key.offset     = geometry.firstIndex();
+    key.count      = geometry.indexCount();
     return key;
+}
+
+VsgMeshResourceCache::ChannelKey SceneBridge::indexBindKeyOf(const vine::graphics::Geometry& geometry)
+{
+    VsgMeshResourceCache::ChannelKey key;
+    const auto                      indices = geometry.indicesBuffer();
+    if (indices == nullptr) {
+        return key;
+    }
+    key.binding  = 0u;  // the index binds are their own map, so they cannot collide with a vertex binding
+    key.buffer   = indices.get();
+    key.revision = indices->revision();
+    key.count    = indices->size();
+    return key;
+}
+
+::vsg::ref_ptr<::vsg::uintArray> SceneBridge::boundIndexArray(const vine::graphics::Geometry& geometry)
+{
+    const auto indices = geometry.indicesBuffer();
+    if (indices == nullptr) {
+        return {};
+    }
+    return detail::aliasArray<::vsg::uintArray, std::uint32_t>(indices, indices->size());
 }
 
 /**
@@ -531,8 +560,16 @@ bool SceneBridge::syncRenderCommands(
             // of re-materialising (and re-uploading) the whole mesh: each channel has its own bind command,
             // so a fresh BufferInfo for one of them copies one channel (see RetainedBinds). This generalises
             // the index-only case — the index stream is simply one more channel that refreshes in place.
-            const bool index_changed = index_now.buffer != nullptr && item->index_key.buffer != nullptr &&
-                                       index_now.buffer != item->index_key.buffer;
+            //
+            // The index stream is a SLICE of its buffer (see Geometry::setIndices), and the bind aliases the
+            // whole buffer while the DRAW states first index / count. So replacing the bind in place is only
+            // valid when the same span is drawn from a different buffer: a changed span changes the draw
+            // command, which only a rebuild rewrites.
+            const bool index_buffer_changed = index_now.buffer != nullptr && item->index_key.buffer != nullptr &&
+                                              index_now.buffer != item->index_key.buffer;
+            const bool index_span_changed = index_now.offset != item->index_key.offset ||
+                                            index_now.count != item->index_key.count;
+            const bool index_changed = index_buffer_changed || index_span_changed;
             // One refreshed channel: the bind to re-point, the array it now reads, and — when that bind is
             // SHARED — the stream identity the cache has to serve it under (see the apply block below).
             struct RefreshedChannel
@@ -546,7 +583,7 @@ bool SceneBridge::syncRenderCommands(
             bool refresh_ok = item->data_node != nullptr && item->binds.index != nullptr &&
                               shapesMatch(item->channel_keys, keys_now) &&
                               (!index_changed ||
-                               (indices_in_range && index_now.count == item->index_key.count));
+                               (index_buffer_changed && !index_span_changed && indices_in_range));
             if (refresh_ok) {
                 const std::size_t vertex_count = position_channel != nullptr ? position_channel->vertexCount() : 0u;
                 const ChannelKey* const positions_before = keyAt(item->channel_keys, 0u);
@@ -590,12 +627,13 @@ bool SceneBridge::syncRenderCommands(
                     // the new key says "same buffer, new revision", which is exactly the stream the new bytes
                     // are, and the next geometry to refresh the same stream joins this entry (one upload).
                     if (item->binds.canonical_shared[binding] && after != nullptr) {
-                        entry.shared                       = true;
-                        entry.shared_key.binding           = static_cast<std::uint32_t>(binding);
-                        entry.shared_key.components        = after->components;
-                        entry.shared_key.buffer            = after->buffer;
-                        entry.shared_key.revision          = after->revision;
-                        entry.shared_key.count             = after->count;
+                        entry.shared                 = true;
+                        entry.shared_key.binding     = static_cast<std::uint32_t>(binding);
+                        entry.shared_key.components  = after->components;
+                        entry.shared_key.buffer      = after->buffer;
+                        entry.shared_key.revision    = after->revision;
+                        entry.shared_key.offset      = after->offset;
+                        entry.shared_key.count       = after->count;
                     }
                     refreshed.push_back(std::move(entry));
                 }
@@ -625,14 +663,10 @@ bool SceneBridge::syncRenderCommands(
                     item->binds.canonical[entry.binding]->assignArrays(::vsg::DataList{ entry.array });
                 }
                 if (index_changed) {
-                    auto indices = detail::aliasArray<::vsg::uintArray, std::uint32_t>(
-                        geometry->indicesBuffer(), index_now.count);
+                    auto indices = boundIndexArray(*geometry);
                     if (item->binds.index_shared && indices != nullptr) {
                         // Same rule as a shared vertex channel: the index stream's bind is not ours alone.
-                        VsgMeshResourceCache::ChannelKey key;
-                        key.count    = index_now.count;
-                        key.buffer   = index_now.buffer;
-                        key.revision = index_now.revision;
+                        const auto key  = indexBindKeyOf(*geometry);
                         const auto bind = meshResources().getOrCreateIndexBind(key, indices);
                         swapRetainedChild(item->binds, item->binds.index_child, bind.get());
                         item->binds.index = bind;

@@ -59,7 +59,7 @@ namespace
     if (comps == 4u) {
         // Four components IS the layout this binding reads: alias the scalars (red, green, blue and alpha sit
         // in the model's buffer in that order), no conversion involved.
-        return aliasArray<::vsg::vec4Array, float>(attr.values, vertex_count);
+        return aliasArray<::vsg::vec4Array, float>(attr.values, vertex_count, attr.offset);
     }
     // Three components: the alpha is not authored, so the array is built (w = 1) rather than aliased — the
     // binding reads four components and the model stores three.
@@ -91,7 +91,7 @@ namespace
             if (attr == nullptr || attr->components != 3u || attr->floatCount() % 3u != 0u) {
                 return {};
             }
-            return aliasArray<::vsg::vec3Array, float>(attr->values, attr->vertexCount());
+            return aliasArray<::vsg::vec3Array, float>(attr->values, attr->vertexCount(), attr->offset);
         }
         case 1u: {
             const auto* attr = geometry->buffer(1);
@@ -99,7 +99,7 @@ namespace
                 if (attr->components != 3u || attr->vec3View().size() != vertex_count) {
                     return {}; // the builder would unpack it or ignore it
                 }
-                return aliasArray<::vsg::vec3Array, float>(attr->values, vertex_count);
+                return aliasArray<::vsg::vec3Array, float>(attr->values, vertex_count, attr->offset);
             }
             if (topology != vine::graphics::Topology::Triangles) {
                 return {}; // Points / Lines have no surface: the builder decides the default array
@@ -115,24 +115,31 @@ namespace
             }
             ::vsg::ref_ptr<::vsg::vec3Array> normals;
             if (geometry->hasIndices()) {
+                // The DRAWN span, not the buffer: an index arena holds several geometries' indices, and the
+                // normals of this geometry are derived from its own triangles.
                 const auto src_indices = geometry->indices();
-                auto       index_array =
-                    aliasArray<::vsg::uintArray, std::uint32_t>(geometry->indicesBuffer(), src_indices.size());
+                auto       index_array = aliasArray<::vsg::uintArray, std::uint32_t>(
+                    geometry->indicesBuffer(), src_indices.size(), geometry->firstIndex());
                 normals                = makeIndexedNormals(positions, {}, *index_array);
                 derived.normal_indices = geometry->indicesBuffer().get();
                 derived.normal_indices_revision =
                     derived.normal_indices != nullptr ? derived.normal_indices->revision() : 0u;
+                derived.normal_indices_first = src_indices.empty() ? 0u : geometry->firstIndex();
+                derived.normal_indices_count = src_indices.size();
             }
             else {
                 normals                         = makeNormals(positions, {});
                 derived.normal_indices          = nullptr;
                 derived.normal_indices_revision = 0u;
+                derived.normal_indices_first    = 0u;
+                derived.normal_indices_count    = 0u;
             }
-            derived.derived_normals           = normals;
-            derived.normal_positions          = position_attr != nullptr ? position_attr->values.get() : nullptr;
+            derived.derived_normals    = normals;
+            derived.normal_positions   = position_attr != nullptr ? position_attr->values.get() : nullptr;
             derived.normal_positions_revision =
                 derived.normal_positions != nullptr ? derived.normal_positions->revision() : 0u;
-            derived.normal_vertex_count = vertex_count;
+            derived.normal_positions_offset = position_attr != nullptr ? position_attr->offset : 0u;
+            derived.normal_vertex_count     = vertex_count;
             return normals;
         }
         case vine::graphics::Geometry::kTexCoordLocation: {
@@ -141,7 +148,7 @@ namespace
                 attr->floatCount() != vertex_count * 2u) {
                 return {};
             }
-            return aliasArray<::vsg::vec2Array, float>(attr->values, vertex_count);
+            return aliasArray<::vsg::vec2Array, float>(attr->values, vertex_count, attr->offset);
         }
         case 2u: {
             const auto* attr = geometry->buffer(2);
@@ -199,7 +206,8 @@ namespace
         // array's, so its format and stride keep being inferred from it (nothing about the binding is
         // hand-written), and the storage Data it points at holds the buffer, so the memory outlives the
         // node that reads it.
-        vertices          = aliasArray<::vsg::vec3Array, float>(position_attr->values, position_attr->vertexCount());
+        vertices          = aliasArray<::vsg::vec3Array, float>(position_attr->values,
+                                                                position_attr->vertexCount(), position_attr->offset);
         positions         = position_attr->vec3View();
         vertex_count      = positions.size();
         aliased_positions = position_attr;
@@ -289,6 +297,10 @@ namespace
     const bool                       is_triangles = topology == vine::graphics::Topology::Triangles;
     const bool                       indexed      = geometry->hasIndices();
     ::vsg::ref_ptr<::vsg::uintArray> indices;
+    // The span DrawIndexed reads: a slice of the model's buffer when indexed, the whole synthesised one
+    // otherwise (see Geometry::setIndices).
+    std::size_t drawn_first_index = 0;
+    std::size_t drawn_index_count = 0;
     if (indexed) {
         const auto src_indices = geometry->indices();
         for (std::size_t i = 0; i < src_indices.size(); ++i) {
@@ -300,9 +312,12 @@ namespace
                 return ::vsg::ref_ptr<::vsg::Commands>();
             }
         }
-        // Validated, so the model's own indices are what DrawIndexed may read: they are aliased like the
-        // channels (uint32 is the element type the model stores them in).
-        indices = aliasArray<::vsg::uintArray, std::uint32_t>(geometry->indicesBuffer(), src_indices.size());
+        // Validated, so the model's own indices are what DrawIndexed may read: the bind aliases the WHOLE
+        // buffer (uint32 is the element type the model stores them in) and the draw states this geometry's
+        // span, so an index arena's geometries share one bind.
+        indices           = boundIndexArray(*geometry);
+        drawn_first_index = geometry->firstIndex();
+        drawn_index_count = geometry->indexCount();
     } else {
         // Non-indexed: one identity index per vertex over the whole position
         // buffer; a trailing partial primitive is simply not rasterised.
@@ -310,6 +325,7 @@ namespace
         for (uint32_t i = 0; i < vertex_count; ++i) {
             (*indices)[i] = i;
         }
+        drawn_index_count = vertex_count;
     }
 
     // Normals: an authored loc1 channel in the layout loc1 binds is aliased from the model's memory — the
@@ -319,7 +335,8 @@ namespace
     // Set only when the bound array IS the model's bytes (the case a shared bind may serve).
     const vine::graphics::AttributeBuffer* aliased_normals = nullptr;
     if (authored_normals != nullptr) {
-        normals                 = aliasArray<::vsg::vec3Array, float>(authored_normals->values, vertex_count);
+        normals = aliasArray<::vsg::vec3Array, float>(authored_normals->values, vertex_count,
+                                                      authored_normals->offset);
         aliased_normals         = authored_normals;
         derived.derived_normals = {};
     }
@@ -332,24 +349,35 @@ namespace
         const vine::Buffer<std::uint32_t>* const indices_buffer   = indexed ? geometry->indicesBuffer().get() : nullptr;
         const std::uint64_t positions_revision = positions_buffer != nullptr ? positions_buffer->revision() : 0u;
         const std::uint64_t indices_revision   = indices_buffer != nullptr ? indices_buffer->revision() : 0u;
+        // The SLICES belong to the identity: one arena holds several geometries' vertices and indices, so the
+        // same buffers at different offsets are different inputs and derive different normals.
+        const std::size_t positions_offset = position_attr->offset;
+        const std::size_t indices_first    = indexed ? geometry->firstIndex() : 0u;
+        const std::size_t indices_count    = indexed ? geometry->indexCount() : 0u;
 
         const bool reusable = derived.derived_normals != nullptr && derived.normal_vertex_count == vertex_count &&
                               derived.normal_positions == positions_buffer &&
                               derived.normal_positions_revision == positions_revision &&
+                              derived.normal_positions_offset == positions_offset &&
                               derived.normal_indices == indices_buffer &&
-                              derived.normal_indices_revision == indices_revision;
+                              derived.normal_indices_revision == indices_revision &&
+                              derived.normal_indices_first == indices_first &&
+                              derived.normal_indices_count == indices_count;
         if (reusable) {
             normals = derived.derived_normals;
         }
         else {
             normals = indexed ? makeIndexedNormals(positions, src_normals, *indices)
                               : makeNormals(positions, src_normals);
-            derived.derived_normals           = normals;
-            derived.normal_positions          = positions_buffer;
+            derived.derived_normals          = normals;
+            derived.normal_positions         = positions_buffer;
             derived.normal_positions_revision = positions_revision;
-            derived.normal_indices            = indices_buffer;
-            derived.normal_indices_revision   = indices_revision;
-            derived.normal_vertex_count       = vertex_count;
+            derived.normal_positions_offset  = positions_offset;
+            derived.normal_indices           = indices_buffer;
+            derived.normal_indices_revision  = indices_revision;
+            derived.normal_indices_first     = indices_first;
+            derived.normal_indices_count     = indices_count;
+            derived.normal_vertex_count      = vertex_count;
         }
     }
     else {
@@ -467,7 +495,7 @@ namespace
         }
         // The channel's shape is exactly what its binding reads (channelShape just verified it), so the
         // model's own scalars are aliased under an array of the matching element type.
-        custom_arrays.push_back(aliasTypedVertexData(comps, attr->values, vertex_count));
+        custom_arrays.push_back(aliasTypedVertexData(comps, attr->values, vertex_count, attr->offset));
         extra_channels.push_back(VertexChannel{ location, comps });
     }
 
@@ -500,6 +528,7 @@ namespace
             key.components = aliased->components;
             key.buffer     = aliased->values.get();
             key.revision   = aliased->values->revision();
+            key.offset     = aliased->offset;
             key.count      = aliased->floatCount();
             out_binds.canonical[canonical_index]        = mesh_cache->getOrCreateVertexBind(key, array);
             out_binds.canonical_shared[canonical_index] = true;
@@ -523,11 +552,9 @@ namespace
             static_cast<std::uint32_t>(RetainedBinds::kCanonicalCount), custom_arrays));
     }
     if (mesh_cache != nullptr && indexed && geometry->indicesBuffer() != nullptr) {
-        VsgMeshResourceCache::ChannelKey key;
-        key.binding  = 0u;
-        key.buffer   = geometry->indicesBuffer().get();
-        key.revision = geometry->indicesBuffer()->revision();
-        key.count    = geometry->indicesBuffer()->size();
+        // Keyed on the WHOLE buffer, which is what the bind aliases (see indexBindKeyOf): every geometry
+        // slicing one index arena therefore resolves to one entry and shares one index upload.
+        const auto key         = indexBindKeyOf(*geometry);
         out_binds.index        = mesh_cache->getOrCreateIndexBind(key, indices);
         out_binds.index_shared = true;
     }
@@ -536,8 +563,11 @@ namespace
     }
     out_binds.index_child = drawCommands->children.size();
     drawCommands->addChild(out_binds.index);
-    drawCommands->addChild(::vsg::DrawIndexed::create(
-        static_cast<uint32_t>(indices->size()), 1, 0, 0, 0));
+    // The DRAW states which span of the bound array this geometry uses (see Geometry::setIndices): the bind
+    // covers the whole buffer so it can be shared, and the slice lives here. A synthesised identity stream
+    // is private to this node and always starts at 0.
+    drawCommands->addChild(::vsg::DrawIndexed::create(static_cast<uint32_t>(drawn_index_count), 1,
+                                                      static_cast<uint32_t>(drawn_first_index), 0, 0));
     return drawCommands;
 }
 

@@ -362,9 +362,11 @@ class V_VSG_API SceneBridge {
     /** @brief Identity of one vertex channel, as the retained data was built from it.
      *
      * A rebuild has to know WHICH stream changed, not just that something did: a channel whose buffer, byte
-     * revision, location and component count are the same IS the same data, so the array the retained node
-     * holds for it is still correct. The revision is `vine::Buffer::revision()` — the contract a consumer
-     * that cached bytes compares against (the same rule Texture and ShaderProgram follow).
+     * revision, location, component count and SLICE are the same IS the same data, so the array the retained
+     * node holds for it is still correct. The slice matters because one arena buffer may hold several
+     * geometries' vertices (see AttributeBuffer::offset): two segments of it are two streams. The revision is
+     * `vine::Buffer::revision()` — the contract a consumer that cached bytes compares against (the same rule
+     * Texture and ShaderProgram follow).
      */
     struct ChannelKey
     {
@@ -372,12 +374,13 @@ class V_VSG_API SceneBridge {
         std::uint32_t components = 0;
         const void*   buffer = nullptr;
         std::uint64_t revision = 0;
+        std::size_t   offset = 0;
         std::size_t   count = 0;
 
         bool operator==(const ChannelKey& other) const
         {
             return location == other.location && components == other.components && buffer == other.buffer &&
-                   revision == other.revision && count == other.count;
+                   revision == other.revision && offset == other.offset && count == other.count;
         }
     };
 
@@ -431,12 +434,35 @@ class V_VSG_API SceneBridge {
     /** @brief Snapshots the identity of the geometry's index stream.
      *
      * A geometry without indices yields a default-constructed key (null buffer), which is what distinguishes
-     * "no index stream" from "an index stream whose bytes changed".
+     * "no index stream" from "an index stream whose bytes changed". The key covers the DRAWN span (first
+     * index and count), not the buffer's length: an index arena holds several geometries' indices, and a
+     * geometry that draws a different span draws different triangles.
      *
      * @param geometry Geometry to snapshot.
-     * @return Key of the index stream, or a null-buffer key when there is none.
+     * @return Key of the drawn index range, or a null-buffer key when there is none.
      */
     static ChannelKey indexKeyOf(const vine::graphics::Geometry& geometry);
+
+    /** @brief The shared-cache key of the geometry's index stream: the WHOLE buffer the bind aliases.
+     *
+     * Not to be confused with @ref indexKeyOf, which describes what this geometry DRAWS. The bind holds the
+     * whole buffer (the draw states the span), so every geometry slicing one index arena resolves to one
+     * entry — which is what makes the arena share one index upload.
+     *
+     * @param geometry Geometry whose index buffer to key.
+     * @return Key of the bound index stream (a null-buffer key when there are no indices).
+     */
+    static VsgMeshResourceCache::ChannelKey indexBindKeyOf(const vine::graphics::Geometry& geometry);
+
+    /** @brief The index array a retained node binds: the model's WHOLE index buffer, aliased in place.
+     *
+     * The slice is the DRAW's business (first index / count, see Geometry::setIndices), which keeps the
+     * bound array — and therefore the device copy — the same for every geometry reading that arena.
+     *
+     * @param geometry Geometry whose index buffer to alias.
+     * @return Array reading the buffer in place, or null when the geometry has no index buffer.
+     */
+    static ::vsg::ref_ptr<::vsg::uintArray> boundIndexArray(const vine::graphics::Geometry& geometry);
 
     /** @brief Puts @p replacement where a retained bind command sits in its own command list.
      *
@@ -460,9 +486,10 @@ class V_VSG_API SceneBridge {
      * remembers them per retained item, keyed by exactly the inputs they were derived from:
      *
      *   * white colours / zero UVs: the vertex count alone;
-     *   * derived normals: the positions buffer, the index buffer and the revisions those buffers carry
-     *     (`vine::Buffer::revision()`, the contract a consumer that cached derived bytes compares against —
-     *     the same rule Texture and ShaderProgram follow).
+     *   * derived normals: the positions and index streams they were read from — buffer, revision and slice
+     *     (`vine::Buffer::revision()` is the contract a consumer that cached derived bytes compares against,
+     *     the same rule Texture and ShaderProgram follow; the slice is what makes two segments of one arena
+     *     two different input sets).
      *
      * Reusing the ARRAY OBJECT does not avoid re-uploading it (a new data node builds new vsg BufferInfos,
      * and vsg re-copies whatever a command binds); what it avoids is the CPU work and the allocation. Only
@@ -481,11 +508,15 @@ class V_VSG_API SceneBridge {
         ::vsg::ref_ptr<::vsg::vec4Array> white_colors;
         ::vsg::ref_ptr<::vsg::vec2Array> zero_texcoords;
         // Derived normals: the positions and index streams they were computed from, plus the revisions that
-        // announce those bytes changed.
+        // announce those bytes changed. The slices are part of the identity: one arena holds several
+        // geometries' vertices, so the same buffer at a different offset is a different input set.
         const vine::Buffer<float>*         normal_positions = nullptr;
         std::uint64_t                      normal_positions_revision = kUnsetRevision;
+        std::size_t                        normal_positions_offset = kUnsetCount;
         const vine::Buffer<std::uint32_t>* normal_indices = nullptr;
         std::uint64_t                      normal_indices_revision = kUnsetRevision;
+        std::size_t                        normal_indices_first = kUnsetCount;
+        std::size_t                        normal_indices_count = kUnsetCount;
         std::size_t                        normal_vertex_count = kUnsetCount;
         ::vsg::ref_ptr<::vsg::vec3Array>   derived_normals;
     };

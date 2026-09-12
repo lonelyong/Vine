@@ -1,5 +1,6 @@
 ﻿#include <vine/graphics/Geometry.hpp>
 
+#include <algorithm>
 #include <span>
 #include <vector>
 
@@ -145,19 +146,39 @@ std::size_t Geometry::texcoordCount() const
     return texcoords != nullptr ? texcoords->vertexCount() : 0u;
 }
 
-void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices)
+void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices, std::size_t first_index,
+                          std::size_t index_count)
 {
-    indices_ = std::move(indices);
+    indices_first_ = first_index;
+    indices_count_ = index_count;
+    indices_       = std::move(indices);
 }
 
 bool Geometry::hasIndices() const
 {
-    return indices_ != nullptr && !indices_->empty();
+    return !indices().empty();
 }
 
 std::span<const std::uint32_t> Geometry::indices() const
 {
-    return indices_ != nullptr ? indices_->view() : std::span<const std::uint32_t>{};
+    if (indices_ == nullptr) {
+        return {};
+    }
+    // The slice is resolved against the buffer's CURRENT length, so a channel that draws "the rest of it"
+    // follows the buffer as it grows (the same rule an attribute channel with no fixed count follows).
+    const std::size_t begin     = std::min(indices_first_, indices_->size());
+    const std::size_t available = indices_->size() - begin;
+    return indices_->view().subspan(begin, indices_count_ == 0u ? available : std::min(indices_count_, available));
+}
+
+std::size_t Geometry::firstIndex() const
+{
+    return indices_ != nullptr ? std::min(indices_first_, indices_->size()) : 0u;
+}
+
+std::size_t Geometry::indexCount() const
+{
+    return indices().size();
 }
 
 intrusive_ptr<const vine::Buffer<std::uint32_t>> Geometry::indicesBuffer() const

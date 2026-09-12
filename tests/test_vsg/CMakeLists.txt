@@ -21,6 +21,7 @@ set(SRC_FILE_LIST
 	SceneRulesTest.cpp
 	TextureCacheTest.cpp
 	MeshResourceCacheTest.cpp
+	ChannelSliceTest.cpp
 	OverlayLightingTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})

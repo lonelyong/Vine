@@ -57,6 +57,7 @@ std::size_t VsgMeshResourceCache::ChannelKeyHash::operator()(const ChannelKey& k
     mix(key.components);
     mix(reinterpret_cast<std::uintptr_t>(key.buffer));
     mix(key.revision);
+    mix(key.offset);
     mix(key.count);
     return static_cast<std::size_t>(h);
 }

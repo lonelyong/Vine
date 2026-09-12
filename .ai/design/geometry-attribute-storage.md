@@ -37,7 +37,7 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 | | 组件 |
 | --- | --- |
 | 存储 | `core::Buffer<T>`：`RefCounted`，**内部组合** `std::vector<T>`（派生会被 `vector&` 传递切片掉引用计数） |
-| 通道 | `AttributeBuffer{ intrusive_ptr<const Buffer<float>> values; uint32_t components; }` |
+| 通道 | `AttributeBuffer{ intrusive_ptr<const Buffer<float>> values; uint32_t components; size_t offset; size_t scalarCount; }`（`offset`/`scalarCount` 按**标量**计，`0` 长度 = 到缓冲末尾 ⇒ 可做 arena 切片） |
 | 建模侧 | `Mesh` 存 `Buffer<float>`；`positions()` 等返回 `span<const Vec3f>`（同一批字节 reinterpret） |
 | 桥 | `geometryFromShape()` 传 `mesh->positionsBuffer()` —— 两侧读**同一块分配** |
 | 公告 | **一律手动**：`Buffer` 自己不 bump（它看不见每种写入，也不知道一次编辑何时结束）⇒ 写的人改完显式 `setRevision(revision()+1)`；`Mesh` 的 builder 在 `addVertex`/`addTriangle`/`clear` 里各公告一次（`Mesh::announceChange()`） |
@@ -64,6 +64,11 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
   允许的写路径只有**模型自己的 API**（`addVertex` / `clear` / setter；绕过它原地改 buffer 要自己补公告）。
   忘记公告不会报错：读者静默沿用旧字节（首次构建不受影响 —— 那是从零建，不看 revision）。
 - 因为通道**持的是 buffer 而不是快照**，即使源 buffer 增长，通道也不会悬空：长度与地址都现取。
+- **通道可以只是缓冲的一段（arena）**：`AttributeBuffer::slice(values, components, first_vertex, vertex_count)`
+  用顶点说话，`shared(..., offset, scalar_count)` 用标量说话；`floatCount()/vertexCount()/scalars()/xyz()/vec3View()`
+  全部只认**这一段**（越过末尾就是空，不会读到邻居）。索引侧用 `Geometry::setIndices(buffer, first_index, index_count)`
+  表达切片，但**绑定的是整段缓冲**（切片在 draw 命令里：`firstIndex/indexCount`）⇒ 一个索引 arena 共享一次索引上传。
+  段的身份进两层缓存 key：共享绑定缓存用 `缓冲地址 + revision + offset + 长度`，派生法线缓存另加索引的 `first/count`。
 
 ## 分期
 

@@ -322,17 +322,17 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
 
 ::vsg::ref_ptr<::vsg::Data> aliasTypedVertexData(std::uint32_t components,
                                                 intrusive_ptr<const vine::Buffer<float>> values,
-                                                std::size_t vertex_count)
+                                                std::size_t vertex_count, std::size_t offset_scalars)
 {
     switch (components) {
     case 1u:
-        return aliasArray<::vsg::floatArray, float>(std::move(values), vertex_count);
+        return aliasArray<::vsg::floatArray, float>(std::move(values), vertex_count, offset_scalars);
     case 2u:
-        return aliasArray<::vsg::vec2Array, float>(std::move(values), vertex_count);
+        return aliasArray<::vsg::vec2Array, float>(std::move(values), vertex_count, offset_scalars);
     case 3u:
-        return aliasArray<::vsg::vec3Array, float>(std::move(values), vertex_count);
+        return aliasArray<::vsg::vec3Array, float>(std::move(values), vertex_count, offset_scalars);
     default:
-        return aliasArray<::vsg::vec4Array, float>(std::move(values), vertex_count);
+        return aliasArray<::vsg::vec4Array, float>(std::move(values), vertex_count, offset_scalars);
     }
 }
 
