@@ -73,17 +73,25 @@ flowchart LR
 
 ```cpp
 struct AttributeBuffer {
-    std::shared_ptr<std::vector<float>> data;   // 打包的逐顶点 float
-    std::uint32_t components;                   // 每顶点标量数 1..4
+    std::shared_ptr<const void> owner;   // keepalive（类型擦除）
+    const float*  floats;                // 第一个标量
+    std::size_t   float_count;           // 标量总数
+    std::uint32_t components;            // 每顶点标量数 1..4（即 stride）
 };
 // Geometry 内部：std::map<uint32_t, AttributeBuffer> attributes_;
 //           + 可选 std::shared_ptr<UInt32Array> indices_
 ```
 
+- **通道是"视图 + keepalive"，不是"拥有一个 float 数组"**：`AttributeBuffer::packed()` 拥有打包好的
+  标量，`AttributeBuffer::shared()` 直接读 `core::Buffer<T>` 的元素（`Vec3f` 就是 3 个紧挨的 float，
+  所以根本没有转换可做）。`geometryFromShape()` 走 `shared()`，因此 mesh 和 Geometry 读的是**同一块
+  分配**，顶点不再存在两份。
+- **共享不是快照**：buffer 之后增长会使通道持有的指针失效 —— 还在构建中的 mesh 必须构建完再转换。
 - **纯按 location 号存储，没有"名字"**；"0 = position、1 = normal"是注释约定，
   靠便捷 API 固化：`setPositions→loc0`、`setNormals→loc1`、`geometryFromShape→loc0+loc1(+indices)`。
-- 数据用 `shared_ptr` 持有，可多几何共享；后端可按键做上传缓存。
-- 每次 `addBuffer/removeBuffer/setPositions/setNormals/setIndices` 都 bump `revision()`。
+- 后端按 `attr.scalars()` 取标量、按 `components` 步进；上传仍是逐顶点拷进 vsg 的 typed array。
+- 每次 `addBuffer/removeBuffer/setPositions/setNormals/setIndices`（及其 `…Buffer` 共享变体）都 bump
+  `revision()`。
 
 ### 1.2 Material：纯颜色（无透明度）
 

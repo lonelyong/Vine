@@ -1327,15 +1327,24 @@ mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::ou
 另有**手动** `setRevision()` 补 `data()` / `operator[]` 这类 buffer 看不见的可写引用。
 `Mesh` 改存 `intrusive_ptr<Buffer<T>>`，读访问器返回 `std::span`（借用视图），另给
 `positionsBuffer()` 等共享句柄（`intrusive_ptr<const Buffer<T>>`）。
-`Geometry` 增加 `std::span<const T>` 重载（保留原 `const Vec3fArray&` 重载并委托），**但仍 repack**。
+`AttributeBuffer` 从「拥有 `shared_ptr<vector<float>>`」改为「**视图 + 类型擦除 keepalive**」：
+`owner(shared_ptr<const void>) + floats + float_count + components`，两个工厂 `packed()`（拥有）/
+`shared()`（借用 `Buffer<T>` 的元素）；`Geometry` 增加 `span` 与 `…Buffer` 两组重载；
+`geometryFromShape()` 走 `…Buffer`，**所以 mesh 与 Geometry 读同一块分配，顶点不再翻倍**。
 
-**判据**：`test_graphics` **218 → 219**、`test_core` **82**、`test_vsg` **185**；
+**共享的尖角**：通道持有的是裸指针 + 当时的长度，**不是快照** —— 源 buffer 之后再增长会让它悬空。
+契约写在 `AttributeBuffer::shared()` 注释里（"还在构建中的 mesh 必须构建完再转换"）；
+同样的尖角在索引上早已存在（`Geometry::setIndices(shared_ptr<UInt32Array>)`）。
+
+**判据**：`test_graphics` **219 → 221**、`test_core` **82**、`test_vsg` **185**；
 `ninja` 零 error/零 warning；`vsg_selftest_evidence.sh` → PASS（**47 行逐字节相同**，后端零改动）；
 `gfx_lavapipe_check.sh` → PASS（0 VUID）；`check_diagnostic_formats.py` → 0 suspicious。
+**判据里最有信息量的一条**：3a（纯表示变更）与 3b（改走共享）之后证据都**逐字节相同** ——
+渲染输出一个字节没变，读的却是 mesh 自己的存储。
 **变异验证**：`addVertex` 改成每次重建存储 → 恰好 3 条共享断言失败（size 2≠3、两侧地址不同、revision 0 vs 0）。
+把 `geometryFromShape()` 改回 repack → 恰好 3 条指针同一性断言失败，而分量/坐标/计数断言全过。
 
-**仍未做**：阶段 3（`AttributeBuffer` 改「共享 owner + 视图」，`setPositions/setNormals/setTexcoords`
-共享而非 repack）、阶段 4（后端从 `bytes()` 上传）。**所以内存尚未减少**，减少发生在阶段 3。
-预测与实际破坏点清单的差异（预测不全）、以及"写者必须公告、读者必须比较 revision"的契约，
-详见 `.ai/design/geometry-attribute-storage.md`。
+**仍未做**：阶段 3c（索引仍是复制）、阶段 4（后端从 `bytes()` 上传，`SceneBridgeGeometry` 仍逐顶点拷进
+vsg typed array）。预测与实际破坏点清单的差异、"写者必须公告、读者必须比较 revision"的契约、
+以及共享引入的悬空尖角与可选加固方案，详见 `.ai/design/geometry-attribute-storage.md`。
 
