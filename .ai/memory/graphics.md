@@ -850,7 +850,8 @@
 > 对象**（否则 `VUID-vkDestroyPipeline-00765`/`vkDestroySampler-01082`，validation 实测抓到）。
 > 新诊断 `VsgRenderer::offscreenBuildCount()`（稳态不增长）。详见 `.ai/design/vsg-pass-lifecycle.md`。
 > 验证：test_graphics 135 / test_vsg 53 / `scripts/gfx_lavapipe_check.sh` RESULT: PASS；
-> `ISSUES.md` / `REVIEW_FINDINGS.md` 顶部已加“已全部解决”状态表（原正文勿重复实现）。
+> （历史：那两份评审记录 `src/plugins/gfx_backend_vsg/{ISSUES,REVIEW_FINDINGS}.md` 已于 2026-09-12 从仓库移除 ——
+> 它们列的缺陷全部已解决，结论已并入本文件与 `.ai/design/`；原文留在 git 历史里可查。）
 
 > **世界坐标系约定：Z-up**（robotics：X 前、Y 左、Z 上）。OrbitCameraManipulator 与全部
 > app_shell demo 已按此转换（内容映射 Y-up `(x,y_h,z)` → Z-up `(x,z,y_h)`；demo 相机 up=`(0,0,1)`）。
