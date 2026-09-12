@@ -401,6 +401,9 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | **内建**（没有 program） | 宿主传给桥的 vsg ShaderSet（如 `vsg::createPhongShaderSet()`） | **vsg 的编号**：位置 0、法线 1、texcoord **2**、颜色 **6**（实测 `vsg_shader_dump`） |
 | **自定义 program** | 后端按**几何体的通道布局**现建（`assembleProgramShaderSet`） | **模块契约**：位置 0、法线 1、颜色 **2**、texcoord **8**；自定义通道 = **它自己的 location** |
 
+> 两套编号**只有 0/1（位置、法线）一致**：`2` 在内建路径是 texcoord、在自定义路径是颜色，`6` 只有内建路径在用。
+> 所以一个按 vsg 习惯写的 shader 拿到自定义 program 路径上，在 location 2/6 会读到别的东西（静默）。想两边通用，就只用 0/1。
+
 自定义路径为什么不一样：vsg 的编号是**密集的 0..6 且被它自家属性占满**（`vsg_TexCoord0..3` 占 2..5、`vsg_Color` 占 6），而自定义通道**沿用它自己的源 location**（转发范围是 `L ≥ 3 且 L ≠ 8`）⇒ 照抄 vsg 编号，放在 3/4/5/6 的自定义通道就会与 vsg 的内建属性**撞号**。模块因此把两个 canonical 槽挤到自定义范围之外或显式保留（2 < 3；8 保留且不转发）。
 
 > 另一个常见误记：`enableArray("vsg_TexCoord0", …, 8)` 里的 **8 是数组槽号**（喂入顺序里的位置），不是 `layout(location=)`。vsg 自己的这两套编号就是分开的。
