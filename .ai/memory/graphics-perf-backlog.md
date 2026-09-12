@@ -25,6 +25,9 @@
 | `AttributeBuffer = {values, components}`，**无 offset/子区间**；`aliasArray` 一律 offset 0 | `src/viz/graphics/sdk/vine/graphics/Geometry.hpp:52-…`、`VsgSceneRules.hpp`（`aliasArray`） | "一个 arena buffer + 每 geometry 一段"**原本表达不了**。**已修（P7，2026-09-13）**：`offset`/`scalarCount`（标量计）+ `slice()`；别名按 offset 换算字节起点；索引侧用 `DrawIndexed(firstIndex)` 而绑定仍是整段缓冲 |
 | vsg 的 **BufferInfo 是 per-command 的**：新建数据节点就建新 BufferInfo/Buffer，即使里面装的是同一个 Data 对象 → 仍然从头 reserve + 重拷 | `vsg/commands/BindVertexBuffers.cpp:45`（构造时 per-array 建 BufferInfo）、`vsg/vk/Context.cpp`（`createBufferAndTransferData` → 池 reserve）、`vsg/state/BufferInfo.h:69`（`requiresCopy` 比 modifiedCount） | 想只重传一个通道，**必须保留承载它的命令对象**、只把那个通道的 `data` 换掉（见 P6） |
 | 同一 buffer 被多个 geometry 别名 ⇒ 每个 geometry 各自的 `vsg::Array`/`BindVertexBuffers`/`BufferInfo`（内容不去重） | vsg `BindVertexBuffers::assignArrays` per-command 建 `BufferInfo` | CPU 侧零拷贝共享，GPU 侧各自上传（**估算**，需实测确认）；**只共享 `vsg::Array` 对象还不够** —— 每条命令各自建 BufferInfo、各自 reserve ⇒ 必须共享**承载 BufferInfo 的命令对象**。**已修（P9，2026-09-13）**：别名自模型缓冲的流（位置/作者法线/作者 UV/四分量 loc2 颜色/索引）改为经会话级 `VsgMeshResourceCache` 取同一条 bind |
+| `string(SHA256 "…" var)` 在本机 CMake 4.2.3 上**恒返回空串**（MD5/SHA1/SHA3 同样空）；`file(SHA256 <path> var)` 正常 | 实测（`cmake -P`）：`string(SHA256 "abc" s)` ⇒ `s` 为空；`file(SHA256 <shader> f)` ⇒ 64 位十六进制 | 生成器算哈希**必须走 `file(<algo> <path>)`**；`string(<algo> <string>)` 在本环境不可用 |
+| `file(READ <path> var)` **会把 CRLF 归一化成 LF**（要原始字节得用 `HEX`） | 实测：CRLF 写回的 shader 读进来没有 CR；`file(READ … HEX)` 能看到 `0d` | 想守"嵌入文本 == 磁盘字节"必须用 HEX 检查 CR；否则 CRLF 文件会静默变成 LF 版本（与磁盘文件不再逐字节相同） |
+| `glslangValidator -V <shader>` **不带 `-o` 会把 `vert.spv`/`frag.spv` 写进当前目录** | 实测：在仓库根跑校验后 `git status` 多出 `vert.spv`/`frag.spv` | 校验脚本必须给 `-o <tmpdir>/x.spv`，否则门禁自己污染工作区 |
 | 作用域不对称：**材质全局，纹理原本每 bridge 一份** | `VsgContentSlot.cpp:165`（`setMaterialManager(&persistent.materialManager)`）、`VsgRenderer.cpp:388-391`（shutdown 时 `clear()` 掉死设备引用） | 原本：同一张纹理被 N 个槽采样 = N 份 image + N 次上传。**已修（P8，2026-09-13）**：`VsgRendererState::texture_cache` 会话级 + `SceneBridge::setTextureCache()` 注入每个槽 |
 | `VsgTextureCache::releaseAbandoned()` **原本没有生产调用点**；`SceneBridge::clearCache()` 也不清纹理缓存 | `VsgTextureCache.cpp:400`（实现）、`tests/test_vsg/TextureCacheTest.cpp:127`（单测）、`SceneBridge.cpp:228-245`（clearCache） | 原本：不再使用的纹理只等 256 容量 FIFO 淘汰或拆槽才释放。**已接线（P8）**：帧级 `releaseAbandonedCaches()` → `textureCache().releaseAbandoned()` |
 | **跨槽共享 `shared_objects_` 不可行（实测）**：vsg 的 `GraphicsPipeline::compile` 复用已有实现时**只比 `_pipelineStates`，不比 render pass**（`build/_deps/vsg-src/src/vsg/state/GraphicsPipeline.cpp:177`，实现用 `context.renderPass` 创建于 `:218`），而后端刻意按 pass 变体建不同的 `VkRenderPass`（§5.4） | 实验：把会话级 `SharedObjects` 注入每个槽的 bridge 后，`scripts/vsg_selftest_evidence.sh` 的 policy-churn 相位失败（“depth target's centre holds 0.0000, expected ~0.0249”）；回退后 `RESULT: PASS`（47 行一致） | 第二个 view 会拿到用不兼容 render pass 编译的 pipeline ⇒ **槽的管线注册表必须私有**（已把原因写进 `VsgContentSlot.cpp` / `VsgContentSlot.hpp` / `VsgRenderTargetEntry.hpp` 的注释） |
@@ -150,4 +153,21 @@
     mutation 六条各自恰好目标测试红（别名 offset / key 带 offset / span 闸门 / draw 带 span / `floatCount()` / `xyz()` 的 offset）。
   · 口径：索引是**段内相对**的（索引 0 = 这段第一个顶点），所以越界检查按这一段的顶点数判；arena 用户要把索引写成段内的。
   · 门禁：ninja 0 error 0 warning；test_core 82、test_graphics 230、test_vsg 220；selftest 证据 47 行一致；lavapipe 0 VUID；诊断格式 0 suspicious。
+- **着色器文件化 + 构建期嵌入（P12，2026-09-13）**：GLSL 不再写在 C++ 字符串里 —— 5 个产品 shader 变成真文件
+  （SDK 侧 `src/viz/graphics/shaders/{gbuffer_geometry.vert,gbuffer_geometry.frag,deferred_light.frag}`，
+  后端侧 `src/plugins/gfx_backend_vsg/shaders/{fullscreen.vert,screen_texture.frag}`），构建期生成
+  `vine/graphics/EmbeddedShaders.hpp` / `vine/vsg/EmbeddedShaders.hpp`；同时删掉死文件 `flat.*`（含两个提交进仓库的 `.spv`）。
+  · 机制：清单在**顶层** `cmake/VineShaders.cmake`（`include(VineShaders)`；生成规则必须在顶层，`tests/test_vsg` 直接编译插件源码，
+    要能依赖同一个生成头文件）→ `cmake/VineShaderHelper.cmake`（`v_declare_embedded_shaders` / `v_use_embedded_shaders`）→
+    `cmake/v_embed_shaders.cmake`（`cmake -P`，写 `inline constexpr std::u8string_view` + `Entry{name,hash,bytes}` 表）。
+  · 为什么用 `-P` + `add_custom_command`：ninja 原生依赖追踪（改 `.glsl` 只重编依赖它的 TU；实测改**生成器**本身也会重新生成），
+    避开 `file(READ)` + `CONFIGURE_DEPENDS` 的整包 reconfigure（实测约 15s）。内容没变则不重写头文件（否则 touch 一下 `.glsl` 引发一串重编）。
+  · 迁移是**行为中性**的：`scripts/vsg_selftest_evidence.sh` 47 行与基线逐字节相同；lavapipe 0 VUID；test_graphics 230→**234**（+4）、test_vsg 220→**224**（+4）。
+  · 新门禁 `scripts/vine_shader_check.sh`：每个 shader × define 变体组合（`VINE_VERTEX_COLOR` / `VINE_DIFFUSE_MAP`，共 4 种）过 glslangValidator +
+  嵌入副本的 SHA-256 前缀与字节数必须与磁盘一致 + 每个 `*/shaders/*` 文件必须在清单里。
+    mutation 验证：① 加一行非法 GLSL ⇒ 4 个变体全红（恢复后 PASS）；② 只改 shader 不重建 ⇒ "embedded copy is stale"（hash+字节数都报）；
+    ③ 加一个未入清单的 shader ⇒ "not listed"；④ 生成器把 hash 截成 8 位 ⇒ 门禁"stale" **且** `EmbeddedShadersTest.BookkeepingAgreesWithTheText` 变红（恢复后 4/4 绿）。
+  · 生成器自带两条构建期守卫（都做过 mutation）：源里有 CR ⇒ `FATAL_ERROR`（CRLF 写回的 shader 会红，恢复后绿）；源里出现 `)VINE_GLSL\"` ⇒ `FATAL_ERROR`。
+  · `ShaderStage::source` 是 `vine::String`（内部 `std::u8string`）⇒ `String(kX)`；vsg 侧需要 `std::string` ⇒ `asShaderSource(kX)`（`vine/vsg/VsgUtils.hpp`，GLSL 是 ASCII 的逐字节视图）。
+  · 后续（P0，§4/§6）：`vine_forward.*` 是第一个走新机制的**新** shader；设计见 `.ai/design/vsg-custom-shader.md` §4 / §10。
 

@@ -77,6 +77,11 @@ list(INSERT CMAKE_MODULE_PATH 0 ${CMAKE_SOURCE_DIR}/cmake)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
+# Shader embedding rules are declared here, at the top level, so that targets in
+# any directory below (src/... and tests/...) can depend on the same generated
+# header (see cmake/VineShaders.cmake).
+include(VineShaders)
+
 add_subdirectory(third_party)
 add_subdirectory(src)
 add_subdirectory(tools/urdf2vine)

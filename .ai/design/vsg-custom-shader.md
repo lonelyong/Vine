@@ -116,6 +116,8 @@ mat4  shadow_matrix;   // 仅 castShadow 有效
 
 - (2026-09-03) 选"自定义着色器"路线替代 vsg vendored phong；弃用
   `vsg::Light` / `PhongMaterialValue` / vsg 内建阴影；vsg 保留为工程层。
+- (2026-09-13) 着色器源码改为"真文件 + 构建期嵌入"（§10）：GLSL 不再写在 C++ 字符串里，
+  删除死文件 `src/plugins/gfx_backend_vsg/shaders/flat.*`（含两个 `.spv`）。
 - 依据：vsg 内建阴影在独立 viewer 可用但引擎内集成不可靠（`vsg_probe`，见
   `graphics-shadow.md` §10）；blob phong 不可改。
 - ABI 后端无关，作为未来 Diligent / 自研 Vulkan 后端的接缝。
@@ -234,3 +236,87 @@ RecordTraversal 每个 drawable 绘制前自动填 → 自定义 program 路径�
 ### 9.5 与 Vine 的关系
 - 默认路径只用了这张表的一小条：`vsg_Vertex`+`vsg_Normal`+`vsg_Color`(白)+
   `material`(b10)。§4 的 `vine_*` 自写 set 是"不用内建"时对这张表的等价重写。
+
+## 10. 着色器文件与嵌入方式（2026-09-13 落地）
+
+自写 shader 从"代码里的字符串字面量"改成"真文件 + 构建期嵌入"：文件有语法高亮、可 diff、可离线
+编译校验，内容随二进制走（**不**往 DLL 旁边拷资源，**不**提交预编译 `.spv`）。§4 的 ABI 草案不变，
+本节只回答四件事：文件放哪、怎么进二进制、怎么加一个、怎么被门禁挡住。
+
+### 10.1 文件位置与归属
+
+| 归属 | 目录 | 生成的头文件 | 命名空间 | 谁在用 |
+| --- | --- | --- | --- | --- |
+| graphics SDK（延迟管线） | `src/viz/graphics/shaders/` | `vine/graphics/EmbeddedShaders.hpp` | `vine::graphics::shaders` | `RenderPipelineBuilder`（gbuffer 几何 / 全屏光照） |
+| vsg 后端（自有阶段） | `src/plugins/gfx_backend_vsg/shaders/` | `vine/vsg/EmbeddedShaders.hpp` | `vine::vsg::shaders` | `VsgPipelineFactory`（overlay / PiP 全屏三角形，未来 `vine_forward.*`） |
+
+约定：
+
+| 规则 | 原因 |
+| --- | --- |
+| 后缀即阶段：`.vert` / `.frag` / `.comp` / `.geom` / `.tesc` / `.tese` | 校验器据此判阶段，不需要额外清单 |
+| 每行 LF 结尾 | CR 会被读写两端各自归一化，嵌入文本就与文件不一致；生成器直接报错 |
+| 小 fixture（`app_shell` / `vsg_probe` / `vsg_selftest` / 测试探针）保持内联 | 它们不是产品 shader，放进清单反而多一层间接 |
+| 常量名 = 文件名转大驼峰 + 阶段（`gbuffer_geometry.vert` → `kGbufferGeometryVert`） | 从文件名就能猜出常量名，拼错是编译错误而不是运行时回落 |
+
+### 10.2 嵌入机制（构建期，不拷资源）
+
+| 环节 | 位置 | 说明 |
+| --- | --- | --- |
+| 清单（shader → 头文件） | `cmake/VineShaders.cmake`（root `include(VineShaders)`） | 在**顶层**声明：生成规则对 `src/` 与 `tests/` 同时可见 |
+| 机制 | `cmake/VineShaderHelper.cmake` | `v_declare_embedded_shaders(...)` + `v_use_embedded_shaders(<target> ...)` |
+| 生成器 | `cmake/v_embed_shaders.cmake`（`cmake -P`） | 读文件 → 写 `inline constexpr std::u8string_view` + `Entry{name,hash,bytes}` 表 |
+| 消费 | 各 CMakeLists | 加生成目录到 include、加生成顺序依赖（`test_vsg` 直接编译插件源码，所以也要挂） |
+
+为什么是 `-P` 脚本 + `add_custom_command`，而不是 `file(READ)` + reconfigure：
+
+| 方案 | 依赖追踪 | 代价 |
+| --- | --- | --- |
+| `-P` 脚本 + `add_custom_command`（**采用**） | ninja 原生：改 `.glsl` 只重编依赖它的 TU | 生成器自身改动也进依赖（实测改生成器会重新生成） |
+| `file(READ)` + `CMAKE_CONFIGURE_DEPENDS` | 只能整包 reconfigure | 实测每次约 15s，改一个字也要全量 |
+
+另两条实现细节：
+
+| 细节 | 做法 | 为什么 |
+| --- | --- | --- |
+| 内容没变不重写头文件 | 生成器先比较再写 | 否则 touch 一下 `.glsl` 会引发一串无谓重编 |
+| 生成器自带两条守卫 | 源里出现 CR、或出现 `)VINE_GLSL"` → `FATAL_ERROR` | 前者让嵌入文本≠文件；后者会提前结束 raw string 字面量 |
+
+### 10.3 用法（C++ 侧）
+
+```cpp
+// SDK 侧（RenderPipelineBuilder.cpp）：ShaderStage::source 是 vine::String
+vs.source = String(shaders::kGbufferGeometryVert);
+
+// vsg 侧（VsgPipelineFactory.cpp）：vsg::ShaderStage::source 是 std::string
+const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils.hpp
+```
+
+| 类型 | 值 | 转换 |
+| --- | --- | --- |
+| 生成常量 | `std::u8string_view` | —— |
+| `vine::String` | 内部 `std::u8string` | `String(kX)`（构造函数 explicit） |
+| vsg `std::string` | —— | `asShaderSource(kX)`（`vine/vsg/VsgUtils.hpp`，GLSL 是 ASCII，逐字节视图） |
+
+### 10.4 门禁
+
+| 门禁 | 查什么 | 红了意味着 |
+| --- | --- | --- |
+| `scripts/vine_shader_check.sh` | (a) 每个 shader × 变体 define 组合（`VINE_VERTEX_COLOR` / `VINE_DIFFUSE_MAP`）跑 glslangValidator；(b) 每个嵌入副本的 SHA-256 前缀与字节数与磁盘文件一致；(c) 每个 `*/shaders/*` 文件都在清单里 | 语法错 / 变体分支编译不过 / 嵌入副本过期 / 有孤儿 shader 文件 |
+| `test_graphics` / `test_vsg` 的 `EmbeddedShadersTest` | 每个条目是完整 GLSL（`#version 450\n` 开头、有 `main`、以 `}\n` 结尾）、`bytes == size()`、hash 是 16 位小写十六进制、名字唯一；工厂确实在用嵌入文本 | 生成器截断/转义出错，或常量与使用者脱钩 |
+| `scripts/vsg_selftest_evidence.sh` | 47 行像素/计数证据与基线逐字节比对 | 移植造成渲染行为变化（本次迁移的等价性证明） |
+
+变体策略（§4 的 define 变体）在本机制里的落法：**一份源文件 + `#ifdef`**，门禁把每个 define 组合都
+编译一遍，所以"用了 define 却没测过另一支"在提交前就会被抓住。
+
+### 10.5 加一个 shader 的步骤
+
+1. 在归属目录放 `xxx.vert` / `xxx.frag`（LF 结尾）。
+2. 在 `cmake/VineShaders.cmake` 对应 `SOURCES` 里加一行。
+3. 在 C++ 里 `#include <vine/.../EmbeddedShaders.hpp>`，用 `kXxxVert`。
+4. `cmake -S . -B build`（新文件要重新 configure），然后 `scripts/vine_shader_check.sh`。
+
+> 与 §4 的关系：§4 是 ABI（set / binding / push constant 长什么样），本节是**这些 ABI 的载体**。
+> P0 的 `vine_forward.*` 是第一个走新机制的**新** shader：顶点色用 `VINE_VERTEX_COLOR` 门控，
+> 材质 UBO 从一开始就用 dynamic offset（§4.4）。
+

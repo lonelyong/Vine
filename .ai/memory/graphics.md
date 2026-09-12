@@ -1,4 +1,23 @@
-﻿> 2026-09-12 **§14 步 1 已实施（第四十七批）：`ImageRef` + 接线期两条校验**：D37/D55/D56 的共同**结构根因** =
+﻿> 2026-09-13 **着色器文件化 + 构建期嵌入（P12）**：产品 shader 从 C++ 字符串搬进真文件，构建期嵌进二进制；死文件
+> `flat.*`（含两个提交进仓库的 `.spv`）删除。清单在**顶层** `cmake/VineShaders.cmake`（生成规则必须在顶层：`tests/test_vsg`
+> 直接编译插件源码，要能依赖同一个生成头文件）→ 机制 `cmake/VineShaderHelper.cmake`（`v_declare_embedded_shaders` /
+> `v_use_embedded_shaders`）→ 生成器 `cmake/v_embed_shaders.cmake`（`cmake -P`，写 `inline constexpr std::u8string_view`
+> + `Entry{name,hash,bytes}` 表）。为什么不用 `file(READ)` + `CMAKE_CONFIGURE_DEPENDS`：那样每次改 shader 都整包
+> reconfigure（实测 ~15s），而 `-P` + `add_custom_command` 拿的是 ninja 原生依赖追踪（改 `.glsl` 只重编依赖它的 TU，
+> 改生成器本身也会重新生成），且内容没变就不重写头文件（否则 touch 一下 `.glsl` 引发一串重编）。
+> 类型口径：`ShaderStage::source` 是 `vine::String`（内部 `std::u8string`）⇒ `String(kX)`；vsg 侧要 `std::string`
+> ⇒ `asShaderSource(kX)`（`vine/vsg/VsgUtils.hpp`，GLSL 是 ASCII 的逐字节视图）。
+> **新门禁** `scripts/vine_shader_check.sh`：每个 shader × 4 种 define 变体（`VINE_VERTEX_COLOR` / `VINE_DIFFUSE_MAP`）
+> 过 glslangValidator + 嵌入副本的 SHA-256 前缀与字节数必须与磁盘一致 + 每个 `*/shaders/*` 文件必须在清单里。
+> 生成器两条**构建期**守卫（都做过 mutation）：源里出现 CR ⇒ 报错（`file(READ)` 会**静默**把 CRLF 归一化成 LF，所以要
+> 用 `HEX` 读原始字节判）；源里出现 `)VINE_GLSL"` ⇒ 报错（否则 raw string 提前结束）。环境事实：本机 CMake 4.2.3 的
+> `string(SHA256 …)` 恒返回空串 ⇒ 必须用 `file(SHA256 <path>)`；`glslangValidator -V` 不带 `-o` 会把 `vert.spv`/`frag.spv`
+> 写进**当前目录**（门禁曾自己污染工作区，已加 `-o <tmp>`）。
+> 判据：迁移**行为中性** —— selftest 证据 47 行逐字节相同、lavapipe 0 VUID、test_graphics 230 → **234**、test_vsg 220 → **224**、
+> 诊断格式 0 suspicious；四条 mutation（非法 GLSL / 只改不重建 / 未入清单 / hash 截断）各自恰好目标门禁红。
+> 设计与"加一个 shader 的步骤"见 `.ai/design/vsg-custom-shader.md` §10。
+
+> 2026-09-12 **§14 步 1 已实施（第四十七批）：`ImageRef` + 接线期两条校验**：D37/D55/D56 的共同**结构根因** =
 > "pass 之间用字符串当端点身份，且把三件不同的事（接线=静态 / '本帧产出了吗'=动态 / 谁是生产者=身份）塞进同一张
 > **每帧重建**的 map"。`graphics-render-pipeline.md` §14（并在 §5 加"已修订"指针）给出方案：端点 = 对象
 > `ImageRef`（**target + attachment 索引 + `Kind::Color/Depth`**，**强持** target ⇒ 链自描述），生产者写、宿主可

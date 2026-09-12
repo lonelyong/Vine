@@ -23,6 +23,7 @@ set(SRC_FILE_LIST
 	MeshResourceCacheTest.cpp
 	ChannelSliceTest.cpp
 	OverlayLightingTest.cpp
+	EmbeddedShadersTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
@@ -89,6 +90,9 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/CameraBridge.cpp)
 target_include_directories(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/include)
+# This test compiles the backend's sources, so VsgPipelineFactory.cpp includes the
+# backend's generated shader header: wire the embedding rule into the test too.
+v_use_embedded_shaders(${TEST_NAME} OUTPUT vine/vsg/EmbeddedShaders.hpp SOURCES)
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 
 # 同上：渲染后端插件会建窗口/交换链，ctest 下一律走 offscreen，

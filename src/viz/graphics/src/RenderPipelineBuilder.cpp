@@ -1,8 +1,9 @@
 ﻿#include <vine/graphics/RenderPipelineBuilder.hpp>
 
 #include <vine/graphics/AxisGizmo.hpp>
-#include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/Camera.hpp>
+#include <vine/graphics/EmbeddedShaders.hpp>
+#include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ScreenPass.hpp>
@@ -17,6 +18,8 @@ V_GRAPHICS_NS_BEGIN
  * (2) and view-space position (3). It matches the backend's per-material
  * block and view-space light ABI.
  *
+ * The GLSL lives in shaders/gbuffer_geometry.vert + .frag, embedded at build time (see cmake/VineShaders.cmake).
+ *
  * Temporary default: this GLSL is backend-ABI specific and will eventually be
  * owned by the render backend; callers may override it through
  * PipelineOptions::gbuffer_program.
@@ -29,46 +32,11 @@ intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultGbufferGeometryProgra
     program->setName(u8"gbuffer_geometry");
     ShaderStage vs;
     vs.type   = ShaderStageType::Vertex;
-    vs.source = u8"#version 450\n"
-                u8"layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
-                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
-                u8"layout(location = 1) in vec3 vsg_Normal;\n"
-                u8"layout(location = 0) out vec3 v_view_pos;\n"
-                u8"layout(location = 1) out vec3 v_view_normal;\n"
-                u8"void main()\n"
-                u8"{\n"
-                u8"    vec4 view_pos = pc.modelView * vec4(vsg_Vertex, 1.0);\n"
-                u8"    v_view_pos = view_pos.xyz;\n"
-                u8"    v_view_normal = mat3(pc.modelView) * vsg_Normal;\n"
-                u8"    gl_Position = pc.projection * view_pos;\n"
-                u8"}\n";
+    vs.source = String(shaders::kGbufferGeometryVert);
     program->addStage(vs);
     ShaderStage fs;
     fs.type   = ShaderStageType::Fragment;
-    fs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec3 v_view_pos;\n"
-                u8"layout(location = 1) in vec3 v_view_normal;\n"
-                u8"layout(location = 0) out vec4 out_albedo;\n"
-                u8"layout(location = 1) out vec4 out_normal;\n"
-                u8"layout(location = 2) out vec4 out_specular;\n"
-                u8"layout(location = 3) out vec4 out_position;\n"
-                u8"layout(set = 0, binding = 0, std140) uniform MaterialBlock\n"
-                u8"{\n"
-                u8"    vec4 ambient;\n"
-                u8"    vec4 diffuse;\n"
-                u8"    vec4 specular;\n"
-                u8"    vec4 emissive;\n"
-                u8"    float shininess;\n"
-                u8"    float alphaMask;\n"
-                u8"    float alphaMaskCutoff;\n"
-                u8"} material;\n"
-                u8"void main()\n"
-                u8"{\n"
-                u8"    out_albedo = vec4(material.diffuse.rgb, 1.0);\n"
-                u8"    out_normal = vec4(normalize(v_view_normal), clamp(material.shininess / 256.0, 0.0, 1.0));\n"
-                u8"    out_specular = vec4(clamp(material.specular.rgb, 0.0, 1.0), 1.0);\n"
-                u8"    out_position = vec4(v_view_pos, 1.0);\n"
-                u8"}\n";
+    fs.source = String(shaders::kGbufferGeometryFrag);
     program->addStage(fs);
     return program;
 }
@@ -78,6 +46,9 @@ intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultGbufferGeometryProgra
  * Samples the G-buffer's albedo / normal / specular / view-position
  * attachments (binding 0..3) and shades ambient + up to three directional
  * lights whose parameters arrive in the backend's view-space push block.
+ *
+ * The GLSL lives in shaders/deferred_light.frag, embedded at build time
+ * (see cmake/VineShaders.cmake).
  *
  * Temporary default: this GLSL is backend-ABI specific and will eventually be
  * owned by the render backend; callers may override it through
@@ -91,62 +62,7 @@ intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultDeferredLightProgram(
     program->setName(u8"deferred_light");
     ShaderStage fs;
     fs.type   = ShaderStageType::Fragment;
-    fs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec2 v_uv;\n"
-                u8"layout(location = 0) out vec4 out_color;\n"
-                u8"layout(binding = 0) uniform sampler2D albedo_tex;\n"
-                u8"layout(binding = 1) uniform sampler2D normal_tex;\n"
-                u8"layout(binding = 2) uniform sampler2D spec_tex;\n"
-                u8"layout(binding = 3) uniform sampler2D pos_tex;\n"
-                u8"layout(push_constant) uniform PushConstants\n"
-                u8"{\n"
-                u8"    vec4 ambient;\n"
-                u8"    vec4 projparms;\n"
-                u8"    vec4 sun_dir[3];\n"
-                u8"    vec4 sun_color[3];\n"
-                u8"} pc;\n"
-                u8"void main()\n"
-                u8"{\n"
-                u8"    // vsg projects world-up to the top G-buffer row (reverse-Y\n"
-                u8"    // perspective) and v_uv.y == 0 is the top of the screen,\n"
-                u8"    // so v_uv samples the buffers upright (no Y flip).\n"
-                u8"    vec2 uv = v_uv;\n"
-                u8"    vec3 albedo = texture(albedo_tex, uv).rgb;\n"
-                u8"    vec4 n4 = texture(normal_tex, uv);\n"
-                u8"    vec3 n = n4.xyz;\n"
-                u8"    vec3 pos = texture(pos_tex, uv).xyz;\n"
-                u8"    // Background (stored position ~0 where nothing was drawn).\n"
-                u8"    if (dot(pos, pos) < 1e-6) { out_color = vec4(vec3(0.06), 1.0); return; }\n"
-                u8"    n = normalize(n);\n"
-                u8"    // Per-pixel material from the G-buffer: specular colour rides\n"
-                u8"    // attachment 2, shininess rides the normal attachment's alpha.\n"
-                u8"    vec3 spec_col = clamp(texture(spec_tex, uv).rgb, 0.0, 1.0);\n"
-                u8"    float shininess = max(n4.a * 256.0, 1.0);\n"
-                u8"    vec3 view_dir = normalize(-pos);\n"
-                u8"    vec3 color = albedo * (pc.ambient.rgb * pc.ambient.a);\n"
-                u8"    for (int i = 0; i < 3; ++i)\n"
-                u8"    {\n"
-                u8"        vec3 d = pc.sun_dir[i].xyz;\n"
-                u8"        vec3 c = pc.sun_color[i].rgb;\n"
-                u8"        float a = pc.sun_color[i].a;\n"
-                u8"        if (dot(d, d) < 1e-6) continue;\n"
-                u8"        vec3 L = normalize(-d);\n"
-                u8"        float ndl = max(dot(n, L), 0.0);\n"
-                u8"        color += albedo * c * a * ndl;\n"
-                u8"        // Specular is gated by ndl like the diffuse term:\n"
-                u8"        // a face turned away from the light must not receive\n"
-                u8"        // a highlight (without the gate, shadowed faces pick\n"
-                u8"        // up bright white patches that read as glass / see-\n"
-                u8"        // through on opaque surfaces).\n"
-                u8"        if (ndl > 0.0)\n"
-                u8"        {\n"
-                u8"            vec3 H = normalize(L + view_dir);\n"
-                u8"            float spec = pow(max(dot(n, H), 0.0), shininess);\n"
-                u8"            color += c * a * spec * spec_col * ndl;\n"
-                u8"        }\n"
-                u8"    }\n"
-                u8"    out_color = vec4(color, 1.0);\n"
-                u8"}\n";
+    fs.source = String(shaders::kDeferredLightFrag);
     program->addStage(fs);
     return program;
 }

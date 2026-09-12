@@ -64,8 +64,10 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/CameraBridge.hpp>
+#include <vine/vsg/EmbeddedShaders.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
+#include <vine/vsg/VsgUtils.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -405,14 +407,7 @@ bool passVariantIsStale(bool recorded_want_color_clear, bool recorded_want_depth
 
 const std::string& fullscreenVertexSource()
 {
-    static const std::string source = R"(#version 450
-layout(location = 0) out vec2 v_uv;
-void main()
-{
-    v_uv = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));
-    gl_Position = vec4(v_uv * 2.0 - 1.0, 0.0, 1.0);
-}
-)";
+    static const std::string source(asShaderSource(shaders::kFullscreenVert));
     return source;
 }
 
@@ -510,18 +505,7 @@ void main()
         *failure = ProgramNodeFailure::None;
     }
     const std::string vertex_source   = fullscreenVertexSource();
-    const std::string fragment_source = R"(#version 450
-layout(location = 0) in vec2 v_uv;
-layout(location = 0) out vec4 out_color;
-layout(binding = 0) uniform sampler2D screen_tex;
-void main()
-{
-    // vsg projects world-up to the top image row (reverse-Y perspective), and
-    // the fullscreen triangle's v_uv.y == 0 sits at the top of the screen, so
-    // sampling v_uv directly keeps the source upright (no Y flip).
-    out_color = texture(screen_tex, v_uv);
-}
-)";
+    const std::string fragment_source(asShaderSource(shaders::kScreenTextureFrag));
 
     auto shader_set = makeOverlayShaderSet(vertex_source, fragment_source, "main", extent, failure);
     if (shader_set == nullptr) {

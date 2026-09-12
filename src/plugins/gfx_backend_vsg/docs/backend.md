@@ -28,6 +28,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgTargetBookkeeping.cpp` | 目标装配/注销：附件创建、深度借用解析、重建与释放 |
 | `VsgContentSlot.cpp` | 内容槽的每帧驱动（视口、灯、诊断） |
 | `VsgOverlay.cpp` | PiP / 全屏 program overlay 的两种绘制 |
+| `shaders/`（`fullscreen.vert` / `screen_texture.frag`） | 本后端自己的 GLSL：构建期嵌入成 `vine/vsg/EmbeddedShaders.hpp`（清单 `cmake/VineShaders.cmake`，机制见 [`.ai/design/vsg-custom-shader.md`](../../../../.ai/design/vsg-custom-shader.md) §10） |
 | `VsgViewCompiler.cpp` | 增量编译（只编译新 view） |
 | `VsgTextureCache.cpp` / `VsgMaterialManager.cpp` | 纹理上传缓存 / 材质值缓存（都是**按地址键 + owner 持有**） |
 | `VsgRetireRing.cpp` | 退役环（停放被换下的对象，而不是停设备） |
@@ -35,7 +36,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `CameraBridge.hpp/.cpp` | Vine 相机 → vsg 相机/view（overlay 的两种绘制共用） |
 | `VsgBackendUtility.cpp` | 窗口句柄/自建窗口等环境相关的小工具（含 `VINE_VSG_OWN_WINDOW` 逃生口） |
 | `VsgDiagnostics.cpp` | 诊断路由：本插件的报告 → SDK 的 sink |
-| 插件 CMakeLists（`v_add_plugin`） | `include/` 是 PUBLIC、`src/` 是 PRIVATE；源文件靠 `GLOB_RECURSE`（**无 `CONFIGURE_DEPENDS`**）⇒ 新增 `src/` 文件必须重新 configure |
+| 插件 CMakeLists（`v_add_plugin`） | `include/` 是 PUBLIC、`src/` 是 PRIVATE；源文件靠 `GLOB_RECURSE`（**无 `CONFIGURE_DEPENDS`**）⇒ 新增 `src/` 文件必须重新 configure；`shaders/` 不在 glob 里，靠 `v_use_embedded_shaders` 挂生成头文件 |
 
 ## 2. 数据流（纵向）
 
@@ -474,6 +475,9 @@ p-vertex 测试整棵子树剪掉，每节点世界盒经 `BoundsCache` 只算�
 - 检查：`scripts/check_diagnostic_formats.py`（按分支核对三元格式串，0 命中才算过）。
 - 渲染门禁：`scripts/gfx_lavapipe_check.sh`（lavapipe + 校验层，期望 0 VUID）与
   `scripts/vsg_selftest_evidence.sh`（后端自检的 `[selftest]` 证据行**逐字节**比对基线）。
+- 着色器门禁：`scripts/vine_shader_check.sh`（每个 shader × define 变体过 glslangValidator；嵌入副本的
+  SHA-256 与字节数必须与磁盘文件一致）—— 运行时才编译意味着语法错只会表现为“回落内建 set + 一条
+  `ShaderFallback` Warning”，这个脚本把它提到提交之前。
 - 设备无关规则有独立单测（`tests/test_vsg/SceneRulesTest.cpp`）—— 通道形状、解包、法线推导、格式/绑定
   点映射、布局与变体哈希都能在无设备环境下断言。
 
@@ -493,3 +497,5 @@ p-vertex 测试整棵子树剪掉，每节点世界盒经 `BoundsCache` 只算�
 7. **`VINE_VSG_OWN_WINDOW`** 是临时逃生口（后端自建窗口，忽略公告的表面尺寸），只用于测试。
 8. **新增 `src/` 文件后必须重新 `cmake -S . -B build`**（插件源文件列表是 `GLOB_RECURSE` 且无
    `CONFIGURE_DEPENDS`）；`tests/*/CMakeLists.txt` 的条目用 **tab** 缩进。
+9. **新增 shader 文件除了重新 configure，还要进 `cmake/VineShaders.cmake` 的清单**：清单漏了则
+   `scripts/vine_shader_check.sh` 报“孤儿文件”；shader 必须是 LF 结尾，否则生成器（构建期）直接报错。

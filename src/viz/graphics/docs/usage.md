@@ -512,6 +512,17 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 > 实现细节（名字 ↔ 数组下标那张表、vsg 的两套编号为何不同）见
 > [`src/plugins/gfx_backend_vsg/docs/backend.md`](../../../plugins/gfx_backend_vsg/docs/backend.md) §2.4。
 
+**内建 program 的 GLSL 从哪来**（自己写 shader 时想对照/改写它们）：
+
+| 内容 | 位置 |
+| --- | --- |
+| 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/`（真文件，构建期嵌入） |
+| 后端自己的 overlay / 全屏三角形阶段 | `src/plugins/gfx_backend_vsg/shaders/` |
+| 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-custom-shader.md`](../../../../.ai/design/vsg-custom-shader.md) §10 |
+
+> 这些 shader 是**真文件**（不是 C++ 字符串）：改了 `.glsl` 直接重编，`bash scripts/vine_shader_check.sh`
+> 会先把每个 shader（含各 define 变体）过一遍 glslangValidator，再核对嵌入副本与文件是否逐字节一致。
+
 ## 4. 现成例子：怎么构建、怎么跑
 
 ### 4.1 构建
@@ -573,6 +584,7 @@ VINE_PIPELINE=forward_shadowed ./build/bin/Vine # 接受，但今天等同 forwa
 
 bash scripts/gfx_lavapipe_check.sh    # 真帧 + lavapipe：期望 0 VUID / 0 validation error
 bash scripts/vsg_selftest_evidence.sh # 后端自检，与基线逐字节比对
+bash scripts/vine_shader_check.sh     # 每个 shader × define 变体过 glslangValidator + 嵌入副本同步
 ctest --test-dir build                # CTest 视角
 ```
 
