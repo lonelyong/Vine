@@ -3868,6 +3868,8 @@ TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
 
 TEST(GeometryTest, NormalsChannelAndRevision)
 {
+    // A data change is ANNOUNCED, never inferred: the setters change what the geometry holds and leave the
+    // revision alone, so a renderer only rebuilds on what the caller reported (see setRevision()).
     Geometry geom;
     EXPECT_FALSE(geom.hasNormals());
     EXPECT_EQ(geom.revision(), 0u);
@@ -3875,21 +3877,28 @@ TEST(GeometryTest, NormalsChannelAndRevision)
     vine::geometry::Vec3fArray points = { vine::math::Vec3f(0, 0, 0), vine::math::Vec3f(1, 0, 0),
                                           vine::math::Vec3f(0, 1, 0) };
     geom.setPositions(packAttribute(points));
-    EXPECT_EQ(geom.revision(), 1u);
+    EXPECT_EQ(geom.revision(), 0u) << "setting a channel is not an announcement";
 
     vine::geometry::Vec3fArray normals = { vine::math::Vec3f(0, 0, 1), vine::math::Vec3f(0, 0, 1),
                                            vine::math::Vec3f(0, 0, 1) };
     geom.setNormals(packAttribute(normals));
     EXPECT_TRUE(geom.hasNormals());
     EXPECT_EQ(geom.normalCount(), 3u);
-    EXPECT_EQ(geom.revision(), 2u);
+    EXPECT_EQ(geom.revision(), 0u);
+
+    // The announcement is the only thing that moves it — for adding and removing alike.
+    geom.setRevision(1u);
+    EXPECT_EQ(geom.revision(), 1u);
+    geom.removeBuffer(1);
+    EXPECT_FALSE(geom.hasNormals());
+    EXPECT_EQ(geom.revision(), 1u) << "removing a channel is not an announcement either";
 }
 
 TEST(GeometryTest, RevisionCanBeReportedByHand)
 {
     // The geometry BORROWS the model's buffers, so a model rebuilt underneath it changes the bytes this
-    // geometry reads without calling any setter here. Reporting that by hand is the only way a retained
-    // render node can hear about it — and it is a value, not a bump, so it can mirror the model's version.
+    // geometry reads without calling any setter here. Reporting that is the ONLY way a retained render
+    // node can hear about it — and it is a value, not a bump, so it can mirror the model's version.
     Geometry geom;
     vine::geometry::Vec3fArray points = { vine::math::Vec3f(0, 0, 0) };
     geom.setPositions(packAttribute(points));
@@ -3897,11 +3906,11 @@ TEST(GeometryTest, RevisionCanBeReportedByHand)
     geom.setRevision(41u);
     EXPECT_EQ(geom.revision(), 41u);
 
-    // A later setter keeps moving the SAME counter: the two paths cannot drift apart, so a stale
-    // announcement can never mask a real edit.
+    // A setter afterwards does NOT move it: the announcement belongs to the caller, so a stale report
+    // cannot quietly become fresh again (nor is a fresh one lost).
     geom.setIndices(packIndices(std::vector<std::uint32_t>{ 0u }));
-    EXPECT_EQ(geom.revision(), 42u);
     EXPECT_TRUE(geom.hasIndices());
+    EXPECT_EQ(geom.revision(), 41u);
 }
 
 TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
@@ -4012,7 +4021,7 @@ TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
 
     EXPECT_TRUE(geom.hasTexcoords());
     EXPECT_EQ(geom.texcoordCount(), 3u);
-    EXPECT_GT(geom.revision(), before) << "a channel write is a data mutation";
+    EXPECT_EQ(geom.revision(), before) << "a channel write is not an announcement (see setRevision())";
 
     const AttributeBuffer* channel = geom.buffer(Geometry::kTexCoordLocation);
     ASSERT_NE(channel, nullptr);
@@ -4067,14 +4076,13 @@ TEST(GeometryTest, OpenAttributeBufferList)
     EXPECT_EQ(geom.buffer(4)->components, 1u);
     EXPECT_EQ(geom.buffer(4)->floatCount(), 3u);
     EXPECT_EQ(geom.bufferLocations(), (std::vector<std::uint32_t>{ 2, 4 }));
-    EXPECT_GT(geom.revision(), base);
+    EXPECT_EQ(geom.revision(), base) << "adding channels is not an announcement";
 
-    // Replacing a location keeps the count stable and bumps the revision.
-    const std::uint64_t after_add = geom.revision();
+    // Replacing a location keeps the count stable — and, like every setter, reports nothing.
     AttributeBuffer replaced = colour;
     geom.addBuffer(2, replaced);
     EXPECT_EQ(geom.bufferCount(), 2u);
-    EXPECT_GT(geom.revision(), after_add);
+    EXPECT_EQ(geom.revision(), base);
 
     geom.removeBuffer(4);
     EXPECT_FALSE(geom.hasBuffer(4));

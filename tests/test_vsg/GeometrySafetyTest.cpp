@@ -421,8 +421,9 @@ TEST(GeometrySafetyTest, FixedDataRevisionRebuildsRejectedGeometry)
     ASSERT_EQ(root->children.size(), 0u);
     EXPECT_EQ(created.size(), 0u);
 
-    // Fix the indices (bumps the revision): the geometry is rebuilt and drawn.
+    // Fix the indices and announce it: the geometry is rebuilt and drawn.
     geom->setIndices(packIndices(vine::geometry::UInt32Array{ 0u, 1u, 2u }));
+    geom->setRevision(geom->revision() + 1u);
     created.clear();
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), &created);
@@ -587,11 +588,12 @@ TEST(GeometrySafetyTest, ReplacedDataNodeIsParkedUntilTheRingAdvances)
     vsg::ref_ptr<vsg::Node> old_data = wrapper->children.front();
     ASSERT_NE(old_data, nullptr);
 
-    // New vertex data (bumps the revision): the data node is rebuilt, and the
-    // replaced one is parked rather than destroyed.
+    // New vertex data, announced: the data node is rebuilt, and the replaced one is parked rather than
+    // destroyed.
     geom->setPositions(packAttribute(vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
                                                                  vine::math::Vec3f(2.0f, 0.0f, 0.0f),
                                                                  vine::math::Vec3f(0.0f, 2.0f, 0.0f) }));
+    geom->setRevision(geom->revision() + 1u);
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), nullptr);
     ASSERT_FALSE(wrapper->children.empty());
@@ -678,8 +680,9 @@ TEST(DiagnosticsTest, RejectedGeometryIsReportedOncePerRevision)
     EXPECT_EQ(captured.items.size(), 1u);
     EXPECT_EQ(bridge.diagnosticCount(), 1u);
 
-    // Fixed data (bumps the revision): drawn again, and no further diagnostic.
+    // Fixed data (announced): drawn again, and no further diagnostic.
     geom->setIndices(packIndices(vine::geometry::UInt32Array{ 0u, 1u, 2u }));
+    geom->setRevision(geom->revision() + 1u);
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), nullptr);
     ASSERT_EQ(root->children.size(), 1u);
@@ -687,6 +690,7 @@ TEST(DiagnosticsTest, RejectedGeometryIsReportedOncePerRevision)
 
     // Broken again with a NEW revision: reported again.
     geom->setIndices(packIndices(vine::geometry::UInt32Array{ 0u, 1u, 9u }));
+    geom->setRevision(geom->revision() + 1u);
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), nullptr);
     ASSERT_EQ(captured.items.size(), 2u);
@@ -755,6 +759,7 @@ TEST(DiagnosticsTest, CleanFrameIsSilentAndSinkCanBeCleared)
     // A bad mesh still counts after the sink is cleared, but is no longer
     // delivered (and the bridge falls back to its stderr trace).
     geom->setIndices(packIndices(vine::geometry::UInt32Array{ 0u, 1u, 7u }));
+    geom->setRevision(geom->revision() + 1u); // the rejection is only retried on a new revision
     bridge.setDiagnosticSink({});
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), nullptr);

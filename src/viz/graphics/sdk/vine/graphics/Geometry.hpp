@@ -195,14 +195,21 @@ class V_GRAPHICS_API Geometry : public Node {
      * channels can be added (only the backend's max-attribute limit applies).
      * Convention: location 0 holds positions (three components per vertex)
      * and drives vertex counts and the bounding box; location 1 may hold
-     * normals. Replacing or adding a buffer bumps the data revision.
+     * normals. Replacing or adding a buffer does NOT announce the change: a
+     * caller that wired this geometry into a scene reports one with
+     * setRevision() (see revision()).
      *
      * @param location Shader attribute location (0 = positions).
      * @param buffer   Packed per-vertex data.
      */
     void addBuffer(std::uint32_t location, const AttributeBuffer& buffer);
 
-    /** @brief Removes the attribute buffer at @p location (if present). */
+    /** @brief Removes the attribute buffer at @p location (if present).
+     *
+     * Like addBuffer(), removing one does not announce the change: report it with setRevision().
+     *
+     * @param location Shader attribute location to clear.
+     */
     void removeBuffer(std::uint32_t location);
 
     /** @brief Returns whether an attribute buffer is present at @p location. */
@@ -271,6 +278,8 @@ class V_GRAPHICS_API Geometry : public Node {
      * hands its own index buffer over and both sides read ONE allocation. A caller that holds a plain index
      * array packs it first with packIndices().
      *
+     * Replacing the buffer does NOT announce the change: report one with setRevision().
+     *
      * @param indices Index scalars to read (three per triangle), or null for an empty index buffer.
      */
     void setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices);
@@ -295,20 +304,22 @@ class V_GRAPHICS_API Geometry : public Node {
 
     /** @brief Gets the data revision.
      *
-     * Bumped by every data mutation (the attribute setters, addBuffer, setIndices), so retained render
-     * nodes can detect when the geometry data changed and rebuild.
+     * Moved ONLY by setRevision(): a data change is announced by the caller, never inferred here. The
+     * setters change what this geometry holds without touching this counter, because this object cannot
+     * tell bytes it has not read yet from the ones it read before (it does not copy them) — the caller,
+     * which does know, is the one that says so.
      *
-     * @return Monotonic revision counter (starts at 0).
+     * @return Revision counter (starts at 0).
      */
     std::uint64_t revision() const;
 
-    /** @brief Reports the data revision by hand.
+    /** @brief Announces a data change by reporting the revision.
      *
-     * For the one mutation this object cannot see: the geometry BORROWS its attribute buffers (the mesh
-     * hands them over, see geometryFromShape()), so a model that is rebuilt — a mesh builder appending or
-     * replacing vertices — changes the very bytes this geometry reads without touching any setter here.
-     * Re-announcing the model's change is what makes a retained render node rebuild, because the revision
-     * is the whole gate: a caller that edits the model says so here, afterwards.
+     * The ONLY way the revision moves, and the whole gate a retained render node rebuilds on: the renderer
+     * compares this counter, so a caller that changed the vertex or index data — by replacing a buffer
+     * here, or by rebuilding the model this geometry BORROWS from (see setPositions()) — reports the new
+     * revision afterwards. Nothing else reports it, not even the setters, and a forgotten announcement is
+     * silent: the renderer keeps drawing the data it uploaded first.
      *
      * The counter is only ever COMPARED, so nothing breaks if it jumps; but LOWERING it is a real hazard —
      * a consumer holding a cached revision could then treat old bytes as current. Treat it as monotonic,

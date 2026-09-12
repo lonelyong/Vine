@@ -558,11 +558,11 @@ TEST(SceneBridgePipelineSharingTest, DataOnlyRebuildLeavesStateUntouched)
     ASSERT_EQ(bridge.pipelineVariantCount(), 1u);
     ASSERT_EQ(bridge.variantReuseCount(), 0u);
 
-    // Force a DATA rebuild of the same geometry by bumping its revision; the
+    // Force a DATA rebuild of the same geometry by announcing a revision; the
     // resolved state is unchanged, so the state wrapper (pipeline/descriptor)
     // is kept verbatim — no new pipeline variant and no configurator run. Only
     // the vertex data node is refreshed (still needs one upload).
-    commands[0].geometry->setNormals(packAttribute(vine::geometry::Vec3fArray{}));
+    commands[0].geometry->setRevision(commands[0].geometry->revision() + 1u);
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
     EXPECT_EQ(bridge.pipelineVariantCount(), 1u);
@@ -957,6 +957,7 @@ TEST(SceneBridgePipelineSharingTest, CombinedDataMaterialStateProgramEdit)
     moved.emplace_back(10.0f, 1.0f, 0.0f);
     moved.emplace_back(10.0f, 0.0f, 1.0f);
     geometry->setPositions(packAttribute(moved));
+    geometry->setRevision(geometry->revision() + 1u); // data changes are announced, never inferred
     commands[0].material                  = material_b;
     commands[0].program                   = program;
     commands[0].renderState.blend.enabled = true;

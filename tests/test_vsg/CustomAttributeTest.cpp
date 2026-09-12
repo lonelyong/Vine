@@ -416,10 +416,10 @@ TEST(CustomAttributeTest, LiveChannelAddForcesStateRebuild)
     bridge.syncRenderCommands(std::vector<RenderCommand>{ cmd }, root.get(), &created);
     ASSERT_EQ(bridge.pipelineVariantCount(), 1u);
 
-    // Live-append a custom channel (loc3): the data revision bumps and the
-    // retained state wrapper must be rebuilt for the new layout even though
-    // the program / material / render state are all unchanged.
+    // Live-append a custom channel (loc3), then announce it: the retained state wrapper must be rebuilt
+    // for the new layout even though the program / material / render state are all unchanged.
     addChannel(geom.get(), 3u, 3u, { 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f });
+    geom->setRevision(geom->revision() + 1u);
     std::vector<vsg::ref_ptr<vsg::Node>> created2;
     bridge.syncRenderCommands(std::vector<RenderCommand>{ cmd }, root.get(), &created2);
     EXPECT_EQ(bridge.pipelineVariantCount(), 2u);
@@ -427,6 +427,7 @@ TEST(CustomAttributeTest, LiveChannelAddForcesStateRebuild)
     // A same-layout data edit (only vertex floats changed) must NOT add yet
     // another variant: the state wrapper is reused.
     addChannel(geom.get(), 0u, 3u, { 0.0f, 0.0f, 0.0f, 2.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f });
+    geom->setRevision(geom->revision() + 1u);
     std::vector<vsg::ref_ptr<vsg::Node>> created3;
     bridge.syncRenderCommands(std::vector<RenderCommand>{ cmd }, root.get(), &created3);
     EXPECT_EQ(bridge.pipelineVariantCount(), 2u);

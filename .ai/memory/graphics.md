@@ -1365,11 +1365,16 @@ keepalive 换成空 lambda → `useCount()` 断言失败；阶段 4：别名 off
 **关键坑**：别名数组的 stride 是**数组自己的元素大小**（vec3 → 12），不是 buffer 的（float → 4）；vsg 用 `properties.stride`
 同时索引 CPU 侧与 GPU 绑定，取错会让 GPU 交错读 —— 证据关口与新单测同时抓到（判据已钉 `properties.stride == sizeof(vec3)`）。
 
-**手动 revision（同一批）**：`Geometry` 加 `setRevision(uint64)`（像 `Buffer` 那样由调用者给值）。理由是共享之后
-geometry **借**模型的 buffer，模型被重建（如每帧重新生成的程序化网格）它看不见，而渲染侧的重建闸门就是
-`geometry->revision()`（`SceneBridge.cpp:350`）⇒ 重建模型后由调用者公告。setter 的自动 bump 保留（两条路径共用
-同一个计数器，不会漂移）。判据：`ManuallyReportedRevisionRebuildsTheDataNode`（公告后顶点数据刷新、变换节点与状态包装不变）
+**手动 revision（同一批）**：`Geometry` 加 `setRevision(uint64)`（像 `Buffer` 那样由调用者给值），并且**把 setter 里的
+`++revision_` 全删掉** —— 公告一律手动。理由是共享之后 geometry **借**模型的 buffer：它分不出“没读过的新字节”与
+“上次读过的旧字节”（并不复制），而渲染侧重建闸门就是 `geometry->revision()`（`SceneBridge.cpp:350`）⇒ 只有知道
+数据变了的人能说这句话（重建模型的一方、换 buffer 的一方）。忘记公告不报错，只是静默沿用旧字节；首次构建不受影响。
+判据：`ManuallyReportedRevisionRebuildsTheDataNode`（公告后顶点数据刷新、变换节点与状态包装不变）
 + 设备无关的 `RevisionCanBeReportedByHand`；变异（`setRevision` 改空操作）⇒ 恰好这两条红。
+**连带改动（也是完备性检查）**：写 setter 不再触发重建 ⇒ 6 处“改数据后期望重建”的测试要改成显式 `setRevision`
+（`DataOnlyRebuildLeavesStateUntouched`、“everything changes at once”、`FixedDataRevisionRebuildsRejectedGeometry`、
+`ReplacedDataNodeIsParkedUntilTheRingAdvances`、`LiveChannelAddForcesStateRebuild` ×2），第一次跑正好挂出这 3 个
+没被 grep 到的漏网（拒绝重试那两处也是靠 `rejected_revision` 才生效的）。
 索引已一并收掉（阶段 3d）：`Geometry::indices()` 返回 `std::span<const uint32_t>`，`setIndices` 亦只收
 buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ **索引也不再复制**。
 第一版被推翻的过程、setter 合名的理由、以及预测与实际破坏点清单的差异，

@@ -110,8 +110,8 @@ struct AttributeBuffer {
 
 `SceneBridge::syncRenderCommands` 以 `Geometry*` 为键做保留缓存；只有
 `geometry->revision() / material / resolvedRenderState / program` 变了才重建。
-`revision()` 就是数据的闸门：setter 会自动 bump，而“模型被重建、几何体看不见”那条路由调用者
-`Geometry::setRevision()` 手动公告。
+`revision()` 就是数据的闸门，而且**只由调用者 `Geometry::setRevision()` 推进**：共享之后几何体借的是模型的
+字节，它自己分不出新旧的（它并不复制），所以写 setter 不再自动 bump —— 改完数据要显式公告一次。
 重建调 `buildGeometry(...)`：
 
 1. **读 loc0** → 校验非空且 `components>=3`，否则整个几何不画（返回空）；

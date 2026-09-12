@@ -64,14 +64,11 @@ constexpr std::uint32_t kVec2Components = vine::geometry::Mesh::kVec2Components;
 void Geometry::addBuffer(std::uint32_t location, const AttributeBuffer& buffer)
 {
     attributes_[location] = buffer;
-    ++revision_;
 }
 
 void Geometry::removeBuffer(std::uint32_t location)
 {
-    if (attributes_.erase(location) != 0) {
-        ++revision_;
-    }
+    attributes_.erase(location);
 }
 
 bool Geometry::hasBuffer(std::uint32_t location) const
@@ -151,7 +148,6 @@ std::size_t Geometry::texcoordCount() const
 void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices)
 {
     indices_ = std::move(indices);
-    ++revision_;
 }
 
 bool Geometry::hasIndices() const

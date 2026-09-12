@@ -52,11 +52,12 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 
 - `span` 是**借用**：不得比 mesh 活得久；任何**增长**都会使既有 view 失效。
 - 共享句柄指向的是 mesh 的**活存储，不是快照**：后面对 mesh 的编辑在句柄侧可见。
-  这正是共享要承担的义务 —— **写者必须让编辑被公告**。允许的写路径只有**模型自己的 API**
-  （`addVertex` / `clear` / setter；绕过它原地改 buffer 不在约定内），而**渲染侧重建闸门是
-  `Geometry::revision()`**：geometry 只是借了那块内存，模型被重建（如每帧重新生成的程序化网格）
-  它看不见 ⇒ 重建后调 `Geometry::setRevision()` 把这件事说出来（`setPositions` 一类 setter 会自动 bump）。
-  不公告，读者就静默沿用旧字节。
+  这正是共享要承担的义务 —— **写者必须让编辑被公告**，而且公告**一律是手动的**：渲染侧重建闸门是
+  `Geometry::revision()`，它**只由 `Geometry::setRevision()` 推进**（`++revision_` 已从所有 setter 删掉）。
+  理由：geometry 借的就是那些字节，它自己分不出“还没读过的新字节”与“上次读过的旧字节”（它并不复制），
+  所以只有真正知道数据变了的人（重建模型的一方、换 buffer 的一方）能说这句话。
+  允许的写路径只有**模型自己的 API**（`addVertex` / `clear` / setter；绕过它原地改 buffer 不在约定内）。
+  忘记公告不会报错：读者静默沿用旧字节（首次构建不受影响 —— 那是从零建，不看 revision）。
 - 因为通道**持的是 buffer 而不是快照**，即使源 buffer 增长，通道也不会悬空：长度与地址都现取。
 
 ## 分期
