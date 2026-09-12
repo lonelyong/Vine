@@ -174,6 +174,10 @@ struct SceneBridge::Item {
     // per-layout ShaderSet / variant identity for state-only rebuilds (a
     // program / material edit reuses this without re-uploading the mesh).
     std::vector<VertexChannel> extra_channels;
+    // The channels this geometry's data builder DERIVES (white colour carrier, zero UVs, normals derived
+    // from the positions): the rebuild reuses them when the inputs they were derived from did not change,
+    // so an unrelated edit does not pay a pass over the vertices for them again (see DerivedChannels).
+    DerivedChannels derived;
     // Custom channels the retained state wrapper was built for (the layout
     // identity). Tracked separately so a data rebuild that changes the channel
     // SET (locations >= 3 added/removed live) forces the state wrapper to be
@@ -395,7 +399,7 @@ bool SceneBridge::syncRenderCommands(
             retireNode(std::move(item->data_node));
             item->data_node = buildGeometryData(geometry, item->program.get() == nullptr,
                                                 state.topology, item->colors,
-                                                item->extra_channels);
+                                                item->extra_channels, item->derived);
             if (item->data_node == nullptr) {
                 // Unsupported shape / malformed vertex data (unusable attribute
                 // strides, out-of-range indices, ...): nothing drawable. The

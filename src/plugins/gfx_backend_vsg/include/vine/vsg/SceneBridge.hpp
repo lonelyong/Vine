@@ -289,6 +289,45 @@ class V_VSG_API SceneBridge {
     /** @brief Retained per-geometry render node (defined in the .cpp). */
     struct Item;
 
+    /** @brief The BUILD vertex channels a data rebuild reuses instead of recomputing.
+     *
+     * A rebuild re-materialises the whole data node, but three of its channels do not come from the model:
+     * the white colour carrier (the built-in path's opacity carrier), the zero UV array a mesh without UVs
+     * binds, and the normals DERIVED when the geometry authors none. Each costs a pass over the vertices
+     * (plus a fresh allocation) on every rebuild — even a rebuild that changed none of its inputs. This
+     * remembers them per retained item, keyed by exactly the inputs they were derived from:
+     *
+     *   * white colours / zero UVs: the vertex count alone;
+     *   * derived normals: the positions buffer, the index buffer and the revisions those buffers carry
+     *     (`vine::Buffer::revision()`, the contract a consumer that cached derived bytes compares against —
+     *     the same rule Texture and ShaderProgram follow).
+     *
+     * Reusing the ARRAY OBJECT does not avoid re-uploading it (a new data node builds new vsg BufferInfos,
+     * and vsg re-copies whatever a command binds); what it avoids is the CPU work and the allocation. Only
+     * the bridge's own rebuild path sees this, because it is the only one that knows which inputs changed.
+     */
+    struct DerivedChannels
+    {
+        /** @brief Sentinel for "no count remembered yet". */
+        static constexpr std::size_t kUnsetCount = ~std::size_t{ 0 };
+        /** @brief Sentinel for "no revision remembered yet". */
+        static constexpr std::uint64_t kUnsetRevision = ~std::uint64_t{ 0 };
+
+        // White colour carrier and zero UVs: a function of the vertex count alone, so a count change drops
+        // both rather than letting either be reused at the wrong size.
+        std::size_t                      count = kUnsetCount;
+        ::vsg::ref_ptr<::vsg::vec4Array> white_colors;
+        ::vsg::ref_ptr<::vsg::vec2Array> zero_texcoords;
+        // Derived normals: the positions and index streams they were computed from, plus the revisions that
+        // announce those bytes changed.
+        const vine::Buffer<float>*         normal_positions = nullptr;
+        std::uint64_t                      normal_positions_revision = kUnsetRevision;
+        const vine::Buffer<std::uint32_t>* normal_indices = nullptr;
+        std::uint64_t                      normal_indices_revision = kUnsetRevision;
+        std::size_t                        normal_vertex_count = kUnsetCount;
+        ::vsg::ref_ptr<::vsg::vec3Array>   derived_normals;
+    };
+
     /** @brief Reports one diagnostic to the installed sink and counts it.
      *
      * Also writes the message to stderr: that is this backend's built-in
@@ -330,6 +369,9 @@ class V_VSG_API SceneBridge {
      * @param extra_channels  Receives one entry per forwarded custom channel
      *                        (location >= 3), in binding order after the three
      *                        canonical arrays (ascending location).
+     * @param derived         Cache of the channels this builder DERIVES (white colour carrier, zero UVs,
+     *                        derived normals): reused when the inputs they were derived from did not
+     *                        change, so an unrelated edit does not pay for them again. See DerivedChannels.
      * @return Data commands node, or null when not buildable.
      */
     ::vsg::ref_ptr<::vsg::Commands> buildGeometryData(
@@ -337,7 +379,8 @@ class V_VSG_API SceneBridge {
         bool opacity_carrier,
         vine::graphics::Topology topology,
         ::vsg::ref_ptr<::vsg::vec4Array>& out_colors,
-        std::vector<VertexChannel>& extra_channels);
+        std::vector<VertexChannel>& extra_channels,
+        DerivedChannels& derived);
 
     /** @brief Builds (or rebuilds) the state wrapper around a data node.
      *

@@ -40,7 +40,8 @@ using detail::XyzUnpack;
     bool opacity_carrier,
     vine::graphics::Topology topology,
     ::vsg::ref_ptr<::vsg::vec4Array>& out_colors,
-    std::vector<VertexChannel>& extra_channels)
+    std::vector<VertexChannel>& extra_channels,
+    DerivedChannels& derived)
 {
     extra_channels.clear();
     if (geometry == nullptr) {
@@ -105,6 +106,14 @@ using detail::XyzUnpack;
             (*typed)[i]   = ::vsg::vec3(v.x, v.y, v.z);
         }
         vertices = typed;
+    }
+
+    // The fallback channels are sized by the vertex count, so a mesh whose count changed must not reuse the
+    // arrays that were built for the previous size (the derived normals carry their own count in the key).
+    if (derived.count != vertex_count) {
+        derived.count          = vertex_count;
+        derived.white_colors   = {};
+        derived.zero_texcoords = {};
     }
 
     // Optional normals: when the channel is missing or unusable (bad stride or non-divisible length) it is
@@ -182,11 +191,40 @@ using detail::XyzUnpack;
     ::vsg::ref_ptr<::vsg::vec3Array> normals;
     if (authored_normals != nullptr) {
         normals = aliasArray<::vsg::vec3Array, float>(authored_normals->values, vertex_count);
-    } else if (is_triangles) {
-        normals = indexed ? makeIndexedNormals(positions, src_normals, *indices)
-                          : makeNormals(positions, src_normals);
-    } else {
+        derived.derived_normals = {};
+    }
+    else if (is_triangles) {
+        // A DERIVED channel is reused verbatim when the streams it was computed from are the ones it was
+        // computed from: same positions buffer, same index buffer, same revisions. An edit that left those
+        // alone (a custom channel re-packed, a colour swapped) then does not pay for the derivation again —
+        // the rebuild is what costs, not the reason for it.
+        const vine::Buffer<float>* const         positions_buffer = position_attr->values.get();
+        const vine::Buffer<std::uint32_t>* const indices_buffer   = indexed ? geometry->indicesBuffer().get() : nullptr;
+        const std::uint64_t positions_revision = positions_buffer != nullptr ? positions_buffer->revision() : 0u;
+        const std::uint64_t indices_revision   = indices_buffer != nullptr ? indices_buffer->revision() : 0u;
+
+        const bool reusable = derived.derived_normals != nullptr && derived.normal_vertex_count == vertex_count &&
+                              derived.normal_positions == positions_buffer &&
+                              derived.normal_positions_revision == positions_revision &&
+                              derived.normal_indices == indices_buffer &&
+                              derived.normal_indices_revision == indices_revision;
+        if (reusable) {
+            normals = derived.derived_normals;
+        }
+        else {
+            normals = indexed ? makeIndexedNormals(positions, src_normals, *indices)
+                              : makeNormals(positions, src_normals);
+            derived.derived_normals           = normals;
+            derived.normal_positions          = positions_buffer;
+            derived.normal_positions_revision = positions_revision;
+            derived.normal_indices            = indices_buffer;
+            derived.normal_indices_revision   = indices_revision;
+            derived.normal_vertex_count       = vertex_count;
+        }
+    }
+    else {
         normals = non_triangle_normals();
+        derived.derived_normals = {};
     }
 
     // vsg_Color (binding 2). On the built-in path this is ALWAYS the backend
@@ -231,7 +269,12 @@ using detail::XyzUnpack;
         }
     }
     if (colors == nullptr) {
-        colors = makeWhiteColors(vertex_count);
+        // Nothing authored: the white carrier. Built once per vertex count instead of once per rebuild —
+        // its bytes are a function of the count, and the built-in path rewrites only the alpha later.
+        if (derived.white_colors == nullptr) {
+            derived.white_colors = makeWhiteColors(vertex_count);
+        }
+        colors = derived.white_colors;
     }
     if (opacity_carrier) {
         colors->properties.dataVariance = ::vsg::DYNAMIC_DATA;
@@ -268,7 +311,11 @@ using detail::XyzUnpack;
         }
     }
     if (texcoords == nullptr) {
-        texcoords = makeZeroTexcoords(vertex_count);
+        // Same reuse as the white carrier: the zero array is a function of the vertex count alone.
+        if (derived.zero_texcoords == nullptr) {
+            derived.zero_texcoords = makeZeroTexcoords(vertex_count);
+        }
+        texcoords = derived.zero_texcoords;
     }
     // The bound vertex data follows the module's CANONICAL vertex binding order:
     //
