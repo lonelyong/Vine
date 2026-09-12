@@ -126,6 +126,36 @@ graph TB
 
 更细的逐帧时序、支持/不支持矩阵、已知缺陷清单见 [`data-flow.md`](data-flow.md)。
 
+### 2.4 属性喂入：名字、location 与绑定顺序
+
+一个通道要同时对上三张表，这张表就是全部：
+
+| 数组下标（= Vulkan binding） | 喂给的名字 | 内建路径的 location（vsg） | 自定义 program 的 location（模块） |
+| --- | --- | --- | --- |
+| 0 | `vsg_Vertex` | **0** | **0** |
+| 1 | `vsg_Normal` | **1** | **1** |
+| 2 | `vsg_TexCoord0` | **2** | **8** |
+| 3 | `vsg_Color` | **6** | **2** |
+| 4+i | `vine_Attribute{L}` | —（内建不声明） | **L**（即通道自己的源 location） |
+
+- **数组下标**由 `SceneBridgeGeometry.cpp` 的 `arrays` 列表顺序决定（位置 → 法线 → texcoords → 颜色 → 自定义通道按 location 升序），
+  在 `SceneBridgePipeline.cpp` 里按同一顺序 `assign_array(name, index)` 配对；`BindVertexBuffers::create(0u, arrays)` 再按列表位置绑成 binding 0..N-1。
+  vsg 给顶点输入 binding 编号的方式是“按 `assignArray()` 成功的顺序递增”，所以**声明顺序必须与数组顺序逐位对齐**：漏声明一个名字或漏喂一个数组，
+  后面全体错位，把下一个属性的数据喂给当前属性 —— 而 validation 不会报。这也是模块把前缀四个通道**永远都声明、永远都喂**（没有 UV 的网格喂零填充数组）的原因。
+- **内建路径的 location 是 vsg 自己的**（因为 ShaderSet 就是宿主传进来的 vsg set；实测 `vsg_shader_dump`：
+  `vsg_Vertex` 0 / `vsg_Normal` 1 / `vsg_TexCoord0..3` 2..5 / `vsg_Color` 6 —— 密集 0..6）。
+- **自定义 program 路径自建 ShaderSet**（`assembleProgramShaderSet`），location 用模块契约 0 / 1 / 2 / 8：
+  vsg 的 0..6 被它自家属性占满，而自定义通道**沿用自己的源 location**（转发范围 `L ≥ 3`）⇒ 照抄 vsg 编号必撞号
+  （放在 6 的自定义通道撞 `vsg_Color`）。所以颜色放在 2（< 3，落在自定义范围外）、texcoord 放在 8（落在范围内但是**保留槽**：`L == 8` 的通道不转发）。
+- **别把 vsg 的“数组槽号”当成 location**：`Builder.cpp:97` / `tile.cpp:488` 的 `enableArray("vsg_TexCoord0", …, 8)` 里的 8 是**喂入槽号**，
+  vsg 的 Phong set 里 texcoord 的 location 是 **2** —— 这两套编号 vsg 自己就是分开的。
+- 名字侧的守卫：`assignArray()` 失败且该名字**被管线声明**过 ⇒ 报一次 `ContentSkipped` Warning
+  （`vertex binding '%s' (array %zu, %s) was not matched by the pipeline; the shader reads an attribute the pipeline does not enable…`）。
+  反方向（shader 声明了几何体不存在的 location）**没有任何诊断** —— ShaderSet 是按几何体的通道布局建的，声明不出来的就是没喂。
+
+> 面向使用者的写法（Geometry 侧怎么挑 location、每段的示例 shader、描述符/push constant 清单）见
+> `src/viz/graphics/docs/usage.md` §3.8。
+
 ## 3. 生命周期
 
 ### 3.1 谁拥有什么

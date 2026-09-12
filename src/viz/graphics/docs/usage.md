@@ -389,6 +389,53 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | `ScreenPass` 有 program 但没有相机 | 这条路径必须先建 view，否则一个像素都不画 |
 | 承诺的是"这个 pass 并不画进去的 target" | 声明与 `renderTarget()` 对不上（报在真实的那条线上） |
 
+### 3.8 自己写 shader：location 契约与绑定顺序
+
+**单 pass 还是多 pass 与这件事无关**：只看这个 pass 有没有 program —— 场景 pass 用
+`RenderPass::setProgramOverride()`，全屏 / 后处理用 `ScreenPass::setProgram()`。
+
+两条路径用的 **location 是两套编号**，这是最容易踩的地方：
+
+| 路径 | 谁提供 ShaderSet | shader 里的 `layout(location=…)` |
+| --- | --- | --- |
+| **内建**（没有 program） | 宿主传给桥的 vsg ShaderSet（如 `vsg::createPhongShaderSet()`） | **vsg 的编号**：位置 0、法线 1、texcoord **2**、颜色 **6**（实测 `vsg_shader_dump`） |
+| **自定义 program** | 后端按**几何体的通道布局**现建（`assembleProgramShaderSet`） | **模块契约**：位置 0、法线 1、颜色 **2**、texcoord **8**；自定义通道 = **它自己的 location** |
+
+自定义路径为什么不一样：vsg 的编号是**密集的 0..6 且被它自家属性占满**（`vsg_TexCoord0..3` 占 2..5、`vsg_Color` 占 6），而自定义通道**沿用它自己的源 location**（转发范围是 `L ≥ 3 且 L ≠ 8`）⇒ 照抄 vsg 编号，放在 3/4/5/6 的自定义通道就会与 vsg 的内建属性**撞号**。模块因此把两个 canonical 槽挤到自定义范围之外或显式保留（2 < 3；8 保留且不转发）。
+
+> 另一个常见误记：`enableArray("vsg_TexCoord0", …, 8)` 里的 **8 是数组槽号**（喂入顺序里的位置），不是 `layout(location=)`。vsg 自己的这两套编号就是分开的。
+
+**怎么写**（Geometry 侧只选 location，其余全自动）：
+
+```cpp
+// 自定义通道：L >= 3 且 != 8，分量数决定数组类型/格式（1→float 2→vec2 3→vec3 4→vec4）
+geometry->addBuffer(5u, AttributeBuffer::packed(tangent_scalars, 3u));
+geometry->addBuffer(9u, AttributeBuffer::packed(tint_scalars,    4u));
+```
+
+```glsl
+layout(location = 0) in vec3 inPosition;   // 位置（固定）
+layout(location = 1) in vec3 inNormal;     // 法线（固定；缺失时由位置推导）
+layout(location = 2) in vec4 inColor;      // 颜色（固定）
+layout(location = 8) in vec2 inUV;         // texcoords（固定；模块保留槽）
+layout(location = 5) in vec3 inTangent;    // 自定义：就是 Geometry 的 loc 5
+layout(location = 9) in vec4 inTint;       // 自定义：就是 Geometry 的 loc 9
+
+layout(set = 0, binding = 0) uniform PhongMaterial { /* 与内建路径同一个材质值 */ };
+layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
+layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
+```
+
+**四件要自己对齐的事**（错了都是静默的）：
+
+- shader 声明了 geometry **没有**的 location ⇒ 该名字不会被声明给 vsg ⇒ 不喂数据：Vulkan 合法、读到未定义值、**无任何诊断**。
+- 分量数必须一致（geometry 3 分量 ↔ shader `vec3`）：不一致时 configurator 会接受，只在绘制时表现为“属性读错/缺失”。
+- 反过来一个方向**有诊断**：数组喂了、但管线不声明那个名字 ⇒ 报一条 `ContentSkipped` 的 Warning（`vertex binding '%s' (array %zu, %s) was not matched by the pipeline…`）。
+- **绑定顺序（binding 编号）不用管、也改不了**：它由后端的喂入顺序决定（位置、法线、texcoords、颜色，再按 location 升序的自定义通道），GLSL 里根本没有这个概念 —— 你能控的只有 location。
+
+> 实现细节（名字 ↔ 数组下标那张表、vsg 的两套编号为何不同）见
+> [`src/plugins/gfx_backend_vsg/docs/backend.md`](../../../plugins/gfx_backend_vsg/docs/backend.md) §2.4。
+
 ## 4. 现成例子：怎么构建、怎么跑
 
 ### 4.1 构建
