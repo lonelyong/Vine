@@ -5,7 +5,9 @@
  *
  * A content slot is the unit a pass' content lives in: its own View under the TARGET's render
  * graph (the window's swapchain graph, or the pass' own off-screen graph — §28), its own
- * SceneBridge (vsg compiles pipelines per viewID, so two slots never share compiled state),
+ * SceneBridge (vsg compiles pipelines per viewID, and its per-view implementation reuse never
+ * compares the render pass — which this backend varies per pass variant — so two slots must not
+ * share a pipeline-state registry),
  * its own camera / light group and its stacking position (the pass' explicit pipeline order).
  *
  * The slot is keyed by the pass that OWNS it (@ref SlotKey), so a pass' camera or target may

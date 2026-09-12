@@ -135,10 +135,16 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     }
     content.root = ::vsg::Group::create();
 
-    // Per-slot pipeline bridge. vsg compiles pipelines per viewID, so every
-    // content slot keeps its own SceneBridge (sharing already-compiled
-    // pipelines across views crashes GraphicsPipeline::vk()); the bridge's
-    // shader set bakes the slot's depth policy.
+    // Per-slot pipeline bridge. The bridge's shader set bakes the slot's depth
+    // policy, and the pipeline-state registry must stay PRIVATE to the slot:
+    // handing two slots one table (a session-level vsg::SharedObjects) makes
+    // them share a GraphicsPipeline OBJECT, and vsg's per-view implementation
+    // reuse compares only the pipeline states — never the render pass
+    // (GraphicsPipeline.cpp:177) — while this backend deliberately builds a
+    // distinct VkRenderPass per pass variant (clear policy / depth promotion,
+    // §5.4). The second view then gets a pipeline compiled against an
+    // incompatible render pass. Measured: sharing the table breaks the
+    // policy-churn phase's depth invariant (scripts/vsg_selftest_evidence.sh).
     if (target == nullptr) {
         // Window slots share the renderer's (window-sized) shader sets.
         content.bridge.setShaderSet(depth_mode == vine::graphics::DepthMode::TestAndWrite ? state.depth_on_shader_set

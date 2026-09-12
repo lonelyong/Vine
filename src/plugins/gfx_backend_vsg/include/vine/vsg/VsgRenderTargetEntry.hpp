@@ -124,7 +124,7 @@ struct ContentSlot {
     ::vsg::ref_ptr<::vsg::Group>  root;        // retained content root
     ::vsg::ref_ptr<::vsg::Group>  light_group; // lights under this slot's view
     ::vsg::ref_ptr<::vsg::View>   view;
-    SceneBridge                   bridge;      // per-view pipelines (vsg compiles per viewID)
+    SceneBridge                   bridge;      // per-view pipelines (vsg compiles per viewID; see VsgContentSlot.hpp on why the state registry must stay per slot)
     // D22: true once this slot's (window/framebuffer render pass + view)
     // context has been registered into the viewer's CompileManager pool
     // (incrementalCompileViews()). Each slot is registered once, so the
