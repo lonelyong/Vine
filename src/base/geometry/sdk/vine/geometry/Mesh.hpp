@@ -3,6 +3,7 @@
 #include "geometry_global.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <utility>
 #include <vector>
@@ -24,15 +25,21 @@ using vine::math::Aabbf;
  * Vertex storage (positions, normals, texture coordinates) is shared by all meshes here; derived classes
  * add their own topology (e.g. an index array).
  *
- * WHY THE ATTRIBUTES LIVE IN Buffer<T>. A mesh and a renderer Geometry describe the SAME vertices: modelling,
- * collision, picking and IO want typed element access, while the device wants the same bytes. When the mesh
- * held a bare `std::vector`, a second holder could only read it through a reference, so it had to COPY —
- * which put every vertex in memory twice. A ref-counted buffer can be handed to both sides, so a consumer
- * shares one allocation instead of duplicating it.
+ * STORAGE IS PACKED SCALARS. Attributes live in `Buffer<float>` — three floats per position or normal, two
+ * per texcoord — and indices in `Buffer<uint32_t>`. Those are exactly the shapes a device uploads, so a
+ * renderer-side holder takes the SAME buffer handle instead of repacking a copy: one allocation, read by
+ * both sides. Pinning the element type to float is what makes that possible — a channel can hold the handle
+ * directly, with no type erasure and no cached pointer that a later edit could leave dangling. (When the
+ * mesh held a bare `std::vector`, a second holder could only read it through a reference, so it had to COPY,
+ * which put every vertex in memory twice.)
  *
- * BORROWED ACCESS. The accessors return `std::span`, which is `pointer` + `count`: it keeps the storage type
- * out of the interface and keeps the typed access callers already use. Borrowed means borrowed, though — a
- * view must not outlive the mesh, and an edit that GROWS the storage invalidates it.
+ * TYPED ACCESS. The accessors still hand out `Vec3f` / `Vec2f` views — the SAME bytes, reinterpreted.
+ * `Vector3` is a union of `{T x, y, z}` and `T data[3]`, so a run of three floats IS a `Vec3f`; that union is
+ * what makes the reinterpretation sound, and the layout it relies on is static_asserted in Mesh.cpp.
+ * Modelling, collision, picking and IO therefore keep the typed access they had.
+ *
+ * BORROWED ACCESS. The accessors return `std::span`, which is `pointer` + `count`. Borrowed means borrowed,
+ * though — a view must not outlive the mesh, and an edit that GROWS the storage invalidates it.
  *
  * MUTATION IS ANNOUNCED. A builder appends vertices one at a time, so mutation is normal and the length is
  * not fixed; every mutation bumps the buffer's `revision()`, which lets a consumer that cached the bytes tell
@@ -40,6 +47,12 @@ using vine::math::Aabbf;
  */
 class V_GEOMETRY_API Mesh : public Shape {
     V_OBJECT_META_DECL;
+
+  public:
+    /// Scalar floats per position / normal element (xyz).
+    static constexpr std::uint32_t kVec3Components = 3u;
+    /// Scalar floats per texcoord element (uv).
+    static constexpr std::uint32_t kVec2Components = 2u;
 
   protected:
     /// Protected so Mesh cannot be instantiated directly; allocates the empty attribute buffers every
@@ -77,18 +90,18 @@ class V_GEOMETRY_API Mesh : public Shape {
     /**
      * @brief Returns the shareable handle to the vertex positions.
      *
-     * This is what makes the mesh and a second consumer hold ONE allocation instead of two: the handle keeps
-     * the storage alive, and `bytes()` on it is the view a device uploads — no conversion step, because for
-     * this element type the elements ARE the bytes.
+     * This is what makes the mesh and a renderer-side holder read ONE allocation instead of two: the handle
+     * keeps the storage alive and is the scalar run a device uploads — no conversion step exists to take,
+     * because the elements ARE the scalars.
      *
      * The buffer is the mesh's LIVE storage, not a snapshot: a later edit through the mesh is visible here.
      * That is the contract a shared handle carries — every such edit bumps `revision()`, so a holder tells
      * "new contents" from "still current", and a writer that bypasses the bump leaves the holder stale.
      *
-     * @return Handle to the positions buffer (never null).
+     * @return Handle to the positions buffer (never null; `kVec3Components` floats per vertex).
      */
     [[nodiscard]]
-    intrusive_ptr<const Buffer<vine::math::Vec3f>> positionsBuffer() const;
+    intrusive_ptr<const Buffer<float>> positionsBuffer() const;
 
     /**
      * @brief Returns the shareable handle to the per-vertex normals.
@@ -98,7 +111,7 @@ class V_GEOMETRY_API Mesh : public Shape {
      * @return Handle to the normal buffer (never null; empty when unset).
      */
     [[nodiscard]]
-    intrusive_ptr<const Buffer<vine::math::Vec3f>> normalsBuffer() const;
+    intrusive_ptr<const Buffer<float>> normalsBuffer() const;
 
     /**
      * @brief Returns the shareable handle to the per-vertex texture coordinates.
@@ -108,7 +121,7 @@ class V_GEOMETRY_API Mesh : public Shape {
      * @return Handle to the texcoord buffer (never null; empty when unset).
      */
     [[nodiscard]]
-    intrusive_ptr<const Buffer<vine::math::Vec2f>> texcoordsBuffer() const;
+    intrusive_ptr<const Buffer<float>> texcoordsBuffer() const;
 
     /**
      * @brief Replaces the vertex positions.
@@ -186,12 +199,12 @@ class V_GEOMETRY_API Mesh : public Shape {
         return intrusive_ptr<Buffer<T>>(new Buffer<T>(std::move(values)));
     }
 
-    /// Vertex positions; never null, empty when the mesh has no vertices.
-    intrusive_ptr<Buffer<vine::math::Vec3f>> positions_;
+    /// Vertex positions as packed scalars; never null, empty when the mesh has no vertices.
+    intrusive_ptr<Buffer<float>> positions_;
     /// Optional per-vertex normals (empty when unset; same length as positions when set).
-    intrusive_ptr<Buffer<vine::math::Vec3f>> normals_;
-    /// Optional per-vertex texture coordinates (empty when unset; same length as positions when set).
-    intrusive_ptr<Buffer<vine::math::Vec2f>> texcoords_;
+    intrusive_ptr<Buffer<float>> normals_;
+    /// Optional per-vertex texture coordinates (empty when unset; `kVec2Components` floats per vertex).
+    intrusive_ptr<Buffer<float>> texcoords_;
 
   private:
     /// Cached axis-aligned bounding box (empty until set or computed).

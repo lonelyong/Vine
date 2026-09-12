@@ -535,9 +535,9 @@ TEST(GeometrySafetyTest, RetainedCacheOwnsTheGeometryItIsKeyedBy)
     TrackedGeometry::alive = 0;
     {
         GeometryPtr geom(new TrackedGeometry());
-        geom->setPositions(vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
-                                                        vine::math::Vec3f(1.0f, 0.0f, 0.0f),
-                                                        vine::math::Vec3f(0.0f, 1.0f, 0.0f) });
+        geom->setPositions(packAttribute(vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
+                                                                     vine::math::Vec3f(1.0f, 0.0f, 0.0f),
+                                                                     vine::math::Vec3f(0.0f, 1.0f, 0.0f) }));
         bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                                   root.get(), nullptr);
         ASSERT_EQ(root->children.size(), 1u);
@@ -588,9 +588,9 @@ TEST(GeometrySafetyTest, ReplacedDataNodeIsParkedUntilTheRingAdvances)
 
     // New vertex data (bumps the revision): the data node is rebuilt, and the
     // replaced one is parked rather than destroyed.
-    geom->setPositions(vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
-                                                    vine::math::Vec3f(2.0f, 0.0f, 0.0f),
-                                                    vine::math::Vec3f(0.0f, 2.0f, 0.0f) });
+    geom->setPositions(packAttribute(vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
+                                                                 vine::math::Vec3f(2.0f, 0.0f, 0.0f),
+                                                                 vine::math::Vec3f(0.0f, 2.0f, 0.0f) }));
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), nullptr);
     ASSERT_FALSE(wrapper->children.empty());

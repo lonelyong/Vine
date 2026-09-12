@@ -1316,35 +1316,41 @@ mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::ou
 图像解码 / 读回路径未有；`RenderTarget` 自己的 `ColorFormat`/`DepthFormat` 与 `imaging::PixelFormat` **重复**，
 应并入后者（改公开 API，需单独一批）。
 
-## 顶点存储去重：`core::Buffer<T>` + `Mesh` 改存共享缓冲（阶段 1、2，2026-09-12）
+## 顶点存储去重：`core::Buffer<T>` + 元素类型钉死 float/uint32（阶段 1–3，2026-09-12）
 
 **动机**：`Mesh` 用 `std::vector<T>` 存顶点，`Geometry` 又用 `shared_ptr<vector<float>>` 存一份 packing
 副本（`packVec3` / `packVec2`）。对 `Vec3f` 这类元素，packing 的字节与源数据**逐字节相同** ——
 那份副本不是转换，是纯开销。让两侧指向同一块分配不需要任何转换代码。
 
-**做法**：`core::Buffer<T>`（`RefCounted`，**组合**而非派生 `std::vector` —— 派生会被 `vector&` 传递切片掉
-引用计数）；两个面 `view()`（类型化）/ `bytes()`（类型擦除，就是那些元素本身）；变更 `++revision_`，
-另有**手动** `setRevision()` 补 `data()` / `operator[]` 这类 buffer 看不见的可写引用。
-`Mesh` 改存 `intrusive_ptr<Buffer<T>>`，读访问器返回 `std::span`（借用视图），另给
-`positionsBuffer()` 等共享句柄（`intrusive_ptr<const Buffer<T>>`）。
-`AttributeBuffer` 从「拥有 `shared_ptr<vector<float>>`」改为「**视图 + 类型擦除 keepalive**」：
-`owner(shared_ptr<const void>) + floats + float_count + components`，两个工厂 `packed()`（拥有）/
-`shared()`（借用 `Buffer<T>` 的元素）；`Geometry` 增加 `span` 与 `…Buffer` 两组重载；
-`geometryFromShape()` 走 `…Buffer`，**所以 mesh 与 Geometry 读同一块分配，顶点不再翻倍**。
+**关键一步（方案中途改过方向）**：第一版保持 `Buffer<T>` 泛型，于是通道要持住“某种 buffer”
+就必须类型擦除（`Buffer<T>` 是模板、`RefCounted` 是 CRTP 无公共基类）；绕法是
+`shared_ptr<const void>` + 空 deleter **再配一份裸指针 + 长度的快照** —— 而那个快照留下了真实的
+悬空尖角（源 buffer 增长会让通道指向已释放内存）。正解是**把元素类型钉死**：属性就是 float
+（位置/法线 3 个、UV 2 个）、索引就是 uint32。不用泛型之后，`AttributeBuffer` 直接存
+`intrusive_ptr<const Buffer<float>> values + uint32_t components`，**每次访问现取** ——
+擦除、快照、悬空尖角一起消失，没有新增 core 类型、没有 vptr。
 
-**共享的尖角**：通道持有的是裸指针 + 当时的长度，**不是快照** —— 源 buffer 之后再增长会让它悬空。
-契约写在 `AttributeBuffer::shared()` 注释里（"还在构建中的 mesh 必须构建完再转换"）；
-同样的尖角在索引上早已存在（`Geometry::setIndices(shared_ptr<UInt32Array>)`）。
+**其余做法**：`core::Buffer<T>`（`RefCounted`，**组合**而非派生 `std::vector` —— 派生会被
+`vector&` 传递切片掉引用计数）；两个面 `view()` / `bytes()`；变更 `++revision_`，另有**手动**
+`setRevision()` 补 `data()` / `operator[]` 这类 buffer 看不见的可写引用。`Mesh` 存
+`Buffer<float>`，`positions()` 等仍返回 `span<const Vec3f>`（同一批字节 reinterpret，布局由
+`Mesh.cpp` 的 `static_assert` 钉住），另给 `positionsBuffer()` 等共享句柄。
+**属性 setter 每个通道只留一个**：`setPositions/setNormals/setTexcoords` 各收一个 buffer 句柄，
+不重载（原先的 `setPositionsBuffer` 与数组重载已删）；借用形式改走 `packAttribute(span)` 工厂，
+于是“复制还是共享”由**传什么**决定。`geometryFromShape()` 走共享，
+**所以 mesh 与 Geometry 读同一块分配，顶点不再翻倍**。
 
 **判据**：`test_graphics` **219 → 221**、`test_core` **82**、`test_vsg` **185**；
 `ninja` 零 error/零 warning；`vsg_selftest_evidence.sh` → PASS（**47 行逐字节相同**，后端零改动）；
 `gfx_lavapipe_check.sh` → PASS（0 VUID）；`check_diagnostic_formats.py` → 0 suspicious。
-**判据里最有信息量的一条**：3a（纯表示变更）与 3b（改走共享）之后证据都**逐字节相同** ——
-渲染输出一个字节没变，读的却是 mesh 自己的存储。
-**变异验证**：`addVertex` 改成每次重建存储 → 恰好 3 条共享断言失败（size 2≠3、两侧地址不同、revision 0 vs 0）。
-把 `geometryFromShape()` 改回 repack → 恰好 3 条指针同一性断言失败，而分量/坐标/计数断言全过。
+**判据里最有信息量的一条**：阶段 2（换存储）、3b（改走共享）、3c（钉死类型 + 合并 API）之后
+证据**都是**逐字节相同 —— 渲染输出一个字节没变，读的却已经是另一套存储。
+**变异验证**：`addVertex` 每次重建存储 → 3 条共享断言失败；`geometryFromShape()` 改回 repack →
+3 条指针同一性断言失败（分量/坐标/计数全过）；`AttributeBuffer` 加回快照 → 3 条增长断言失败；
+keepalive 换成空 lambda → `useCount()` 断言失败。
 
-**仍未做**：阶段 3c（索引仍是复制）、阶段 4（后端从 `bytes()` 上传，`SceneBridgeGeometry` 仍逐顶点拷进
-vsg typed array）。预测与实际破坏点清单的差异、"写者必须公告、读者必须比较 revision"的契约、
-以及共享引入的悬空尖角与可选加固方案，详见 `.ai/design/geometry-attribute-storage.md`。
+**仍未做**：阶段 3d（索引仍是复制：`Geometry::indices()` 还是 `const UInt32Array*`）、
+阶段 4（后端从 `bytes()` 上传，`SceneBridgeGeometry` 仍逐顶点拷进 vsg typed array）。
+第一版被推翻的过程、setter 合名的理由、以及预测与实际破坏点清单的差异，
+详见 `.ai/design/geometry-attribute-storage.md`。
 

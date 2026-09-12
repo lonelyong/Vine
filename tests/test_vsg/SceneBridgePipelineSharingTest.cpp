@@ -39,12 +39,12 @@ GeometryPtr makeTriangle(int index)
     positions.emplace_back(x, 0.0f, 0.0f);
     positions.emplace_back(x, 1.0f, 0.0f);
     positions.emplace_back(x, 0.0f, 1.0f);
-    geom->setPositions(positions);
+    geom->setPositions(packAttribute(positions));
     vine::geometry::Vec3fArray normals;
     normals.emplace_back(0.0f, 0.0f, 1.0f);
     normals.emplace_back(0.0f, 0.0f, 1.0f);
     normals.emplace_back(0.0f, 0.0f, 1.0f);
-    geom->setNormals(normals);
+    geom->setNormals(packAttribute(normals));
     return geom;
 }
 
@@ -530,7 +530,7 @@ TEST(SceneBridgePipelineSharingTest, DataOnlyRebuildLeavesStateUntouched)
     // resolved state is unchanged, so the state wrapper (pipeline/descriptor)
     // is kept verbatim — no new pipeline variant and no configurator run. Only
     // the vertex data node is refreshed (still needs one upload).
-    commands[0].geometry->setNormals(vine::geometry::Vec3fArray{});
+    commands[0].geometry->setNormals(packAttribute(vine::geometry::Vec3fArray{}));
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
     EXPECT_EQ(bridge.pipelineVariantCount(), 1u);
@@ -877,7 +877,7 @@ TEST(SceneBridgePipelineSharingTest, CombinedDataMaterialStateProgramEdit)
     moved.emplace_back(10.0f, 0.0f, 0.0f);
     moved.emplace_back(10.0f, 1.0f, 0.0f);
     moved.emplace_back(10.0f, 0.0f, 1.0f);
-    geometry->setPositions(moved);
+    geometry->setPositions(packAttribute(moved));
     commands[0].material                  = material_b;
     commands[0].program                   = program;
     commands[0].renderState.blend.enabled = true;

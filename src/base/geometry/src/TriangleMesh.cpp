@@ -11,9 +11,12 @@ TriangleMesh::TriangleMesh()
 
 void TriangleMesh::addTriangle(const vine::math::Vec3f& a, const vine::math::Vec3f& b, const vine::math::Vec3f& c)
 {
-    positions_->push_back(a);
-    positions_->push_back(b);
-    positions_->push_back(c);
+    const vine::math::Vec3f* const vertices[3] = { &a, &b, &c };
+    for (const auto* vertex : vertices) {
+        positions_->push_back(vertex->x);
+        positions_->push_back(vertex->y);
+        positions_->push_back(vertex->z);
+    }
 }
 
 void TriangleMesh::clear()
@@ -23,12 +26,12 @@ void TriangleMesh::clear()
 
 std::size_t TriangleMesh::triangleCount() const
 {
-    return positions_->size() / 3;
+    return positions_->size() / (3u * kVec3Components);
 }
 
 bool TriangleMesh::isValid() const
 {
-    return !positions_->empty() && positions_->size() % 3 == 0;
+    return !positions_->empty() && positions_->size() % (3u * kVec3Components) == 0u;
 }
 
 V_GEOMETRY_NS_END

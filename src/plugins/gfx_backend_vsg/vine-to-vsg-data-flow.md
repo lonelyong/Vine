@@ -73,25 +73,24 @@ flowchart LR
 
 ```cpp
 struct AttributeBuffer {
-    std::shared_ptr<const void> owner;   // keepalive（类型擦除）
-    const float*  floats;                // 第一个标量
-    std::size_t   float_count;           // 标量总数
-    std::uint32_t components;            // 每顶点标量数 1..4（即 stride）
+    intrusive_ptr<const vine::Buffer<float>> values;      // 标量就存在这个 buffer 里（元素类型钉死为 float）
+    std::uint32_t                            components;  // 每顶点标量数 1..4（即 stride）
 };
 // Geometry 内部：std::map<uint32_t, AttributeBuffer> attributes_;
-//           + 可选 std::shared_ptr<UInt32Array> indices_
+//           + 可选 std::shared_ptr<UInt32Array> indices_（尚未改成 buffer）
 ```
 
-- **通道是"视图 + keepalive"，不是"拥有一个 float 数组"**：`AttributeBuffer::packed()` 拥有打包好的
-  标量，`AttributeBuffer::shared()` 直接读 `core::Buffer<T>` 的元素（`Vec3f` 就是 3 个紧挨的 float，
-  所以根本没有转换可做）。`geometryFromShape()` 走 `shared()`，因此 mesh 和 Geometry 读的是**同一块
-  分配**，顶点不再存在两份。
-- **共享不是快照**：buffer 之后增长会使通道持有的指针失效 —— 还在构建中的 mesh 必须构建完再转换。
-- **纯按 location 号存储，没有"名字"**；"0 = position、1 = normal"是注释约定，
+- **通道直接持 buffer，不是持快照**：属性元素类型钉死为 float，所以不需要类型擦除，
+  `AttributeBuffer` 就直接存 `intrusive_ptr<const Buffer<float>>`；**每次访问现取**，
+  buffer 之后再增长也不会悬空（快照式裸指针会）。
+- **属性 setter 每个通道只留一个名字**：`setPositions` / `setNormals` / `setTexcoords` 各收一个
+  buffer 句柄（不重载）；持有类型化顶点、没有 buffer 的调用方先
+  `packAttribute(span<const Vec3f|Vec2f>)`。`geometryFromShape()` 直接传 mesh 的句柄，
+  因此两侧读的是**同一块分配**，顶点不再存在两份。
+- **纯按 location 号存储，没有“名字”**；“0 = position、1 = normal”是注释约定，
   靠便捷 API 固化：`setPositions→loc0`、`setNormals→loc1`、`geometryFromShape→loc0+loc1(+indices)`。
 - 后端按 `attr.scalars()` 取标量、按 `components` 步进；上传仍是逐顶点拷进 vsg 的 typed array。
-- 每次 `addBuffer/removeBuffer/setPositions/setNormals/setIndices`（及其 `…Buffer` 共享变体）都 bump
-  `revision()`。
+- 每次 `addBuffer/removeBuffer/setPositions/setNormals/setIndices` 都 bump `revision()`。
 
 ### 1.2 Material：纯颜色（无透明度）
 

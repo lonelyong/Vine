@@ -7,7 +7,6 @@
 #include <map>
 #include <memory>
 #include <span>
-#include <type_traits>
 #include <vector>
 
 #include <vine/Buffer.hpp>
@@ -29,34 +28,32 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
 /**
  * @brief A per-vertex channel bound to a shader attribute location.
  *
- * WHAT IT IS. A read-only VIEW of per-vertex scalars — `components` of them per vertex — plus whatever keeps
- * those scalars alive. It is generic and backend-agnostic: location 0 carries positions, location 1 may carry
+ * WHAT IT IS. A read-only VIEW of per-vertex scalars — `components` of them per vertex — plus the buffer
+ * holding them. It is generic and backend-agnostic: location 0 carries positions, location 1 may carry
  * normals, location 8 texture coordinates (see Geometry::kTexCoordLocation), and any other location carries a
  * custom channel a shader reads. Convention: use Geometry::addBuffer() to attach channels.
  *
- * WHY A VIEW AND NOT AN OWNED ARRAY. A channel used to BE its storage, so attaching a mesh's vertices to a
- * Geometry meant repacking them into a second array — every vertex in memory twice, even though for a `Vec3f`
- * attribute the packed floats ARE the vertex data, byte for byte (the element is three floats, so the packed
- * scalar view needs no conversion). A view lets a channel point straight at the mesh's own buffer, with
- * `owner` keeping that buffer alive; a channel that owns packed scalars still works the same way.
+ * WHY IT HOLDS THE BUFFER AND NOT AN OWNED ARRAY. A channel used to BE its storage, so attaching a mesh's
+ * vertices to a Geometry meant repacking them into a second array — every vertex in memory twice, even
+ * though the scalars this channel reads ARE the vertex data. Holding the buffer instead lets a mesh and a
+ * Geometry read ONE allocation.
  *
- * The component count IS the stride of the packed scalars: every consumer must step by it (use
+ * The buffer is re-read on every access rather than snapshotted, which is what makes that safe: growing the
+ * buffer cannot leave the channel pointing at freed memory, and the scalar count simply follows.
+ *
+ * The component count IS the stride of the scalars: every consumer must step by it (use
  * vertexCount() / xyz() / stride() rather than assuming three floats per vertex), so a vec4 position
  * channel keeps its xyz and skips the trailing w.
  */
 struct V_GRAPHICS_API AttributeBuffer
 {
-    /// Keeps `floats` alive: an owned packed array, or a shared core::Buffer whose elements are the scalars.
-    std::shared_ptr<const void> owner;
-    /// First scalar of the channel (null when nothing is attached).
-    const float* floats{ nullptr };
-    /// How many scalars `floats` points at.
-    std::size_t float_count{ 0 };
+    /// The scalars, or null when the channel holds nothing. Not snapshotted: every accessor reads through it.
+    intrusive_ptr<const vine::Buffer<float>> values;
     /// Scalar components per vertex (1..4).
     std::uint32_t components{ 0 };
 
     /**
-     * @brief Builds a channel that OWNS @p values as its packed scalars.
+     * @brief Builds a channel that OWNS @p values as its scalars.
      *
      * For a caller that has the scalars in hand — a channel authored by hand, or one repacked because its
      * layout did not match a shared buffer's. The values are moved in, so nothing is copied.
@@ -68,74 +65,47 @@ struct V_GRAPHICS_API AttributeBuffer
     [[nodiscard]] static AttributeBuffer packed(std::vector<float> values, std::uint32_t components)
     {
         AttributeBuffer out;
-        const auto      storage = std::make_shared<const std::vector<float>>(std::move(values));
-        out.float_count         = storage->size();
-        out.components          = components;
-        out.floats              = storage->data();
-        out.owner               = storage;
+        out.values     = intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(std::move(values)));
+        out.components = components;
         return out;
     }
 
     /**
-     * @brief Builds a channel that SHARES @p buffer instead of copying it.
+     * @brief Builds a channel that reads @p values, which the caller (or another holder) keeps owning.
      *
-     * This is the whole point of the view: the buffer's elements are already `sizeof(T) / sizeof(float)`
-     * tightly packed floats — `Vec3f` is three, `Vec2f` is two — so the channel can read the mesh's own
-     * vertices directly and no second allocation exists.
+     * The counterpart of packed() for a source that already owns packed scalars — a geometry::Mesh hands its
+     * attribute buffer straight over, so no second allocation exists and nothing is converted.
      *
-     * The channel keeps the buffer alive but does NOT snapshot it: if the buffer later grows, the pointer
-     * this channel holds is stale. Treat a shared channel as valid while its source is not being mutated —
-     * a writer that mutates a shared buffer invalidates every channel attached from it.
-     *
-     * @tparam BufferT `core::Buffer<T>`, optionally `const`; the constness only says whether the caller may
-     *         write through its own handle, never whether the channel may.
-     * @param buffer Buffer to share, or null for an empty channel.
-     * @return The channel, reading the buffer's elements as scalars.
+     * @param values Buffer to read, or null for an empty channel.
+     * @param components Scalar components per vertex.
+     * @return The channel, reading that buffer's scalars.
      */
-    template <typename BufferT>
-    [[nodiscard]] static AttributeBuffer shared(intrusive_ptr<BufferT> buffer)
+    [[nodiscard]] static AttributeBuffer shared(intrusive_ptr<const vine::Buffer<float>> values,
+                                                std::uint32_t                          components)
     {
-        using Element = typename std::remove_const_t<BufferT>::value_type;
-
-        static_assert(std::is_same_v<std::remove_const_t<BufferT>, vine::Buffer<Element>>,
-                      "AttributeBuffer::shared() takes a core::Buffer");
-        static_assert(std::is_trivially_copyable_v<Element>,
-                      "a shared channel reinterprets the elements as scalars, which a non-trivial type has none of");
-        static_assert(sizeof(Element) % sizeof(float) == 0u,
-                      "a shared channel's element must be a whole number of floats");
-
         AttributeBuffer out;
-        if (buffer == nullptr) {
-            return out;
-        }
-
-        const auto* const raw      = buffer.get();
-        const auto        count    = raw->size();
-        const auto* const elements = raw->data();
-        // The scalars live inside the buffer, so the channel has to keep it alive. The buffer is an
-        // intrusively counted Vine object, so hold that reference inside the deleter of the type-erased
-        // owner — a plain pointer plus a no-op deleter would free the buffer with the last handle.
-        out.owner       = std::shared_ptr<const void>(raw, [kept = std::move(buffer)](const void*) {});
-        out.floats      = reinterpret_cast<const float*>(elements);
-        out.float_count = count * (sizeof(Element) / sizeof(float));
-        out.components  = static_cast<std::uint32_t>(sizeof(Element) / sizeof(float));
+        out.values     = std::move(values);
+        out.components = components;
         return out;
     }
 
     /** @brief Returns whether no scalar data is attached. */
-    bool empty() const { return floats == nullptr || float_count == 0u; }
+    bool empty() const { return values == nullptr || values->empty(); }
 
     /** @brief Returns the packed scalars as a view.
      *
      * @return All scalars of the channel, empty when none are attached.
      */
-    std::span<const float> scalars() const { return { floats, float_count }; }
+    std::span<const float> scalars() const
+    {
+        return values != nullptr ? values->view() : std::span<const float>{};
+    }
 
     /** @brief Returns the number of packed scalars.
      *
      * @return Scalar count (`vertexCount() * stride()` when the length divides evenly).
      */
-    std::size_t floatCount() const { return float_count; }
+    std::size_t floatCount() const { return values != nullptr ? values->size() : 0u; }
 
     /** @brief Returns the stride (scalar floats per vertex).
      *
@@ -155,10 +125,10 @@ struct V_GRAPHICS_API AttributeBuffer
      */
     std::size_t vertexCount() const
     {
-        if (floats == nullptr || components == 0u) {
+        if (values == nullptr || components == 0u) {
             return 0u;
         }
-        return float_count / components;
+        return values->size() / components;
     }
 
     /** @brief Reads the xyz of a vertex, skipping any trailing component.
@@ -173,7 +143,7 @@ struct V_GRAPHICS_API AttributeBuffer
     std::array<float, 3> xyz(std::size_t vertex) const
     {
         const std::size_t base = vertex * components;
-        return { floats[base], floats[base + 1u], floats[base + 2u] };
+        return { (*values)[base], (*values)[base + 1u], (*values)[base + 2u] };
     }
 };
 
@@ -226,32 +196,18 @@ class V_GRAPHICS_API Geometry : public Node {
     /** @brief Gets the locations of every attribute buffer (ascending). */
     std::vector<std::uint32_t> bufferLocations() const;
 
-    /** @brief Sets the positions (location 0) from a borrowed Vec3 view.
-     *
-     * Lets a mesh hand its own attribute storage over without the caller first materialising an array.
-     *
-     * @param positions Vertex positions (three floats each); borrowed for the duration of the call only.
-     */
-    void setPositions(std::span<const vine::math::Vec3f> positions);
-
-    /** @brief Sets the positions (location 0) from a Vec3 array.
-     *
-     * @param positions Vertex positions (three floats each).
-     */
-    void setPositions(const vine::geometry::Vec3fArray& positions);
-
     /** @brief Sets the positions (location 0) by SHARING a vertex buffer.
      *
-     * The counterpart of the array/span setters for a source that owns its vertices (a geometry::Mesh): instead
-     * of repacking them into a second array, this reads the buffer's own elements — a Vec3f IS three floats, so
-     * no conversion exists to do. The geometry keeps the buffer alive.
+     * The buffer IS the vertex data — a Vec3f is three floats — so nothing is converted or repacked: a mesh
+     * hands its own storage over and both sides read ONE allocation. The geometry keeps the buffer alive, and
+     * because the channel re-reads it on every access (rather than snapshotting it) growing the buffer is
+     * followed, not dangled.
      *
-     * The buffer is not snapshotted: growing it afterwards leaves this channel stale, so a mesh still being
-     * built must be converted once it is finished.
+     * A caller that holds typed vertices and no buffer packs them first with packAttribute().
      *
-     * @param positions Vertex buffer to read (three floats per element), or null to clear the channel.
+     * @param positions Vertex scalars to read (three floats per vertex), or null for an empty channel.
      */
-    void setPositionsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec3f>> positions);
+    void setPositions(intrusive_ptr<const vine::Buffer<float>> positions);
 
     /** @brief Returns whether positions (location 0) are present. */
     bool hasPositions() const;
@@ -259,27 +215,13 @@ class V_GRAPHICS_API Geometry : public Node {
     /** @brief Gets the number of positions (location 0). */
     std::size_t positionCount() const;
 
-    /** @brief Sets the normals (location 1) from a borrowed Vec3 view.
-     *
-     * @param normals Vertex normals (three floats each); borrowed for the duration of the call only.
-     */
-    void setNormals(std::span<const vine::math::Vec3f> normals);
-
-    /** @brief Sets the normals (location 1) from a Vec3 array.
-     *
-     * Optional: when unset the renderer derives normals from the positions.
-     *
-     * @param normals Vertex normals (three floats each), one per position.
-     */
-    void setNormals(const vine::geometry::Vec3fArray& normals);
-
     /** @brief Sets the normals (location 1) by SHARING a vertex buffer.
      *
-     * See setPositionsBuffer() for the sharing and lifetime contract.
+     * Optional either way: when unset the renderer derives normals from the positions.
      *
-     * @param normals Normal buffer to read (three floats per element), or null to clear the channel.
+     * @param normals Normal scalars to read (three floats per vertex), or null for an empty channel.
      */
-    void setNormalsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec3f>> normals);
+    void setNormals(intrusive_ptr<const vine::Buffer<float>> normals);
 
     /** @brief Returns whether normals (location 1) are present. */
     bool hasNormals() const;
@@ -287,29 +229,14 @@ class V_GRAPHICS_API Geometry : public Node {
     /** @brief Gets the number of normals (location 1). */
     std::size_t normalCount() const;
 
-    /** @brief Sets the texture coordinates (location kTexCoordLocation) from a borrowed Vec2 view.
-     *
-     * @param texcoords Vertex texture coordinates (two floats each); borrowed for the duration of the call only.
-     */
-    void setTexcoords(std::span<const vine::math::Vec2f> texcoords);
-
-    /** @brief Sets the texture coordinates (location kTexCoordLocation) from a Vec2 array.
+    /** @brief Sets the texture coordinates (location kTexCoordLocation) by SHARING a vertex buffer.
      *
      * Optional: a geometry without UVs still renders, but a material carrying a
      * texture has nothing to sample it with.
      *
-     * @param texcoords Vertex texture coordinates (two floats each), one per
-     *                  position.
+     * @param texcoords Texcoord scalars to read (two floats per vertex), or null for an empty channel.
      */
-    void setTexcoords(const vine::geometry::Vec2fArray& texcoords);
-
-    /** @brief Sets the texture coordinates (location kTexCoordLocation) by SHARING a vertex buffer.
-     *
-     * See setPositionsBuffer() for the sharing and lifetime contract.
-     *
-     * @param texcoords Texcoord buffer to read (two floats per element), or null to clear the channel.
-     */
-    void setTexcoordsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec2f>> texcoords);
+    void setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords);
 
     /** @brief Returns whether texture coordinates (location kTexCoordLocation) are present. */
     bool hasTexcoords() const;
@@ -424,10 +351,33 @@ class V_GRAPHICS_API Geometry : public Node {
 using GeometryPtr = intrusive_ptr<Geometry>;
 
 /**
+ * @brief Packs a typed Vec3 run into the scalar buffer a geometry attribute reads.
+ *
+ * A caller that holds typed vertices — an axis gizmo, an overlay, a point cloud — has no buffer to share, so
+ * the vertices have to be packed into one. That conversion is `kVec3Components` floats per element and lives
+ * here rather than being repeated at every call site.
+ *
+ * @param vertices Vertices to pack (xyz per element).
+ * @return Buffer owning the packed scalars (three per vertex).
+ */
+V_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec3f> vertices);
+
+/**
+ * @brief Packs a typed Vec2 run into the scalar buffer a geometry attribute reads.
+ *
+ * See the Vec3 overload for why this exists.
+ *
+ * @param vertices Vertices to pack (uv per element).
+ * @return Buffer owning the packed scalars (two per vertex).
+ */
+V_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec2f> vertices);
+
+/**
  * @brief Builds a buffer-only Geometry from a triangle-mesh Shape.
  *
- * Copies the shape's positions (and normals and texture coordinates when
- * present) into the geometry; indexed meshes also copy their index buffer.
+ * SHARES the shape's positions, normals and texture coordinates with the geometry — the geometry reads the
+ * mesh's own buffers, so the vertices exist once in memory and not twice. Indexed meshes still copy their
+ * index buffer (Geometry::indices() is a separate, array-typed API).
  * Shapes that are not triangle meshes (primitives, BRep, ...) are not
  * convertible and yield null. This is the bridge that lets Shape live purely
  * in the geometry module while Geometry stays vertex-data only.

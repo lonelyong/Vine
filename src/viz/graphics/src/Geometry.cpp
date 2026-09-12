@@ -55,39 +55,10 @@ Aabbd transformBox(const Aabbd& local, const Mat4d& world)
     return result;
 }
 
-/**
- * @brief Packs a borrowed Vec3 view into a three-component float attribute buffer.
- *
- * @param src Typed vertex view.
- * @return Packed attribute buffer (components = 3).
- */
-AttributeBuffer packVec3(std::span<const vine::math::Vec3f> src)
-{
-    std::vector<float> scalars;
-    scalars.reserve(src.size() * 3u);
-    for (const auto& v : src) {
-        scalars.push_back(v.x);
-        scalars.push_back(v.y);
-        scalars.push_back(v.z);
-    }
-    return AttributeBuffer::packed(std::move(scalars), 3u);
-}
-/**
- * @brief Packs a borrowed Vec2 view into an attribute buffer.
- *
- * @param src Typed vertex view.
- * @return Packed attribute buffer (components = 2).
- */
-AttributeBuffer packVec2(std::span<const vine::math::Vec2f> src)
-{
-    std::vector<float> scalars;
-    scalars.reserve(src.size() * 2u);
-    for (const auto& v : src) {
-        scalars.push_back(v.x);
-        scalars.push_back(v.y);
-    }
-    return AttributeBuffer::packed(std::move(scalars), 2u);
-}
+/// Scalars per vertex of an attribute channel — the mesh's own element layout, which sharing reads directly.
+constexpr std::uint32_t kVec3Components = vine::geometry::Mesh::kVec3Components;
+constexpr std::uint32_t kVec2Components = vine::geometry::Mesh::kVec2Components;
+
 }  // namespace
 
 void Geometry::addBuffer(std::uint32_t location, const AttributeBuffer& buffer)
@@ -129,19 +100,9 @@ std::vector<std::uint32_t> Geometry::bufferLocations() const
     return locations;
 }
 
-void Geometry::setPositions(std::span<const vine::math::Vec3f> positions)
+void Geometry::setPositions(intrusive_ptr<const vine::Buffer<float>> positions)
 {
-    addBuffer(0, packVec3(positions));
-}
-
-void Geometry::setPositions(const vine::geometry::Vec3fArray& positions)
-{
-    setPositions(std::span<const vine::math::Vec3f>(positions));
-}
-
-void Geometry::setPositionsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec3f>> positions)
-{
-    addBuffer(0, AttributeBuffer::shared(std::move(positions)));
+    addBuffer(0, AttributeBuffer::shared(std::move(positions), kVec3Components));
 }
 
 bool Geometry::hasPositions() const
@@ -155,19 +116,9 @@ std::size_t Geometry::positionCount() const
     return positions != nullptr ? positions->vertexCount() : 0u;
 }
 
-void Geometry::setNormals(std::span<const vine::math::Vec3f> normals)
+void Geometry::setNormals(intrusive_ptr<const vine::Buffer<float>> normals)
 {
-    addBuffer(1, packVec3(normals));
-}
-
-void Geometry::setNormals(const vine::geometry::Vec3fArray& normals)
-{
-    setNormals(std::span<const vine::math::Vec3f>(normals));
-}
-
-void Geometry::setNormalsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec3f>> normals)
-{
-    addBuffer(1, AttributeBuffer::shared(std::move(normals)));
+    addBuffer(1, AttributeBuffer::shared(std::move(normals), kVec3Components));
 }
 
 bool Geometry::hasNormals() const
@@ -181,19 +132,9 @@ std::size_t Geometry::normalCount() const
     return normals != nullptr ? normals->vertexCount() : 0u;
 }
 
-void Geometry::setTexcoords(std::span<const vine::math::Vec2f> texcoords)
+void Geometry::setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords)
 {
-    addBuffer(kTexCoordLocation, packVec2(texcoords));
-}
-
-void Geometry::setTexcoords(const vine::geometry::Vec2fArray& texcoords)
-{
-    setTexcoords(std::span<const vine::math::Vec2f>(texcoords));
-}
-
-void Geometry::setTexcoordsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec2f>> texcoords)
-{
-    addBuffer(kTexCoordLocation, AttributeBuffer::shared(std::move(texcoords)));
+    addBuffer(kTexCoordLocation, AttributeBuffer::shared(std::move(texcoords), kVec2Components));
 }
 
 bool Geometry::hasTexcoords() const
@@ -301,6 +242,29 @@ Aabbd Geometry::boundingBox() const
     return transformBox(localBounds(this), worldMatrix());
 }
 
+intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec3f> vertices)
+{
+    std::vector<float> scalars;
+    scalars.reserve(vertices.size() * kVec3Components);
+    for (const auto& v : vertices) {
+        scalars.push_back(v.x);
+        scalars.push_back(v.y);
+        scalars.push_back(v.z);
+    }
+    return intrusive_ptr<Buffer<float>>(new Buffer<float>(std::move(scalars)));
+}
+
+intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec2f> vertices)
+{
+    std::vector<float> scalars;
+    scalars.reserve(vertices.size() * kVec2Components);
+    for (const auto& v : vertices) {
+        scalars.push_back(v.x);
+        scalars.push_back(v.y);
+    }
+    return intrusive_ptr<Buffer<float>>(new Buffer<float>(std::move(scalars)));
+}
+
 GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
 {
     const auto* mesh = dynamic_cast<const vine::geometry::Mesh*>(&shape);
@@ -312,14 +276,14 @@ GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
     const auto normals   = mesh->normals();
     const auto texcoords = mesh->texcoords();
 
-    // The mesh OWNS the vertex data and the geometry BORROWS it, so both sides read ONE allocation. Repacking
-    // here would put every vertex in memory twice for no conversion at all: a Vec3f already is three floats.
-    geometry->setPositionsBuffer(mesh->positionsBuffer());
+    // The mesh OWNS the vertex data and the geometry BORROWS it, so both sides read ONE allocation. The
+    // mesh already stores the scalars, so there is no conversion to do and nothing to repack.
+    geometry->setPositions(mesh->positionsBuffer());
     if (normals.size() == positions.size()) {
-        geometry->setNormalsBuffer(mesh->normalsBuffer());
+        geometry->setNormals(mesh->normalsBuffer());
     }
     if (texcoords.size() == positions.size()) {
-        geometry->setTexcoordsBuffer(mesh->texcoordsBuffer());
+        geometry->setTexcoords(mesh->texcoordsBuffer());
     }
     if (const auto* indexed =
             dynamic_cast<const vine::geometry::IndexedTriangleMesh*>(&shape)) {

@@ -97,12 +97,12 @@ GeometryPtr makeTriangle(int index)
     positions.emplace_back(x, 0.0f, 0.0f);
     positions.emplace_back(x, 1.0f, 0.0f);
     positions.emplace_back(x, 0.0f, 1.0f);
-    geom->setPositions(positions);
+    geom->setPositions(packAttribute(positions));
     vine::geometry::Vec3fArray normals;
     normals.emplace_back(0.0f, 0.0f, 1.0f);
     normals.emplace_back(0.0f, 0.0f, 1.0f);
     normals.emplace_back(0.0f, 0.0f, 1.0f);
-    geom->setNormals(normals);
+    geom->setNormals(packAttribute(normals));
     return geom;
 }
 

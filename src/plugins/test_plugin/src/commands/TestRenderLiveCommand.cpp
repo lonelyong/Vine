@@ -53,7 +53,7 @@ intrusive_ptr<vine::graphics::MatrixTransform> addDemoTriangle(vine::graphics::S
 
     auto geometry = make_intrusive<vine::graphics::Geometry>();
     geometry->setName(name);
-    geometry->setPositions(positions);
+    geometry->setPositions(vine::graphics::packAttribute(positions));
 
     auto material = make_intrusive<vine::graphics::Material>();
     material->setDiffuse(diffuse);

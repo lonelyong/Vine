@@ -202,8 +202,8 @@ void AxisGizmo::rebuild()
         appendBox(positions, normals, indices, stick.mn, stick.mx);
 
         auto geometry = make_intrusive<Geometry>();
-        geometry->setPositions(positions);
-        geometry->setNormals(normals);
+        geometry->setPositions(packAttribute(positions));
+        geometry->setNormals(packAttribute(normals));
         geometry->setIndices(indices);
 
         auto material = make_intrusive<Material>();

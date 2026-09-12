@@ -68,12 +68,12 @@ GeometryPtr makeTriangle(float x)
     positions.emplace_back(x, 0.0f, 0.0f);
     positions.emplace_back(x, 1.0f, 0.0f);
     positions.emplace_back(x, 0.0f, 1.0f);
-    geom->setPositions(positions);
+    geom->setPositions(vine::graphics::packAttribute(positions));
     vine::geometry::Vec3fArray normals;
     normals.emplace_back(0.0f, 0.0f, 1.0f);
     normals.emplace_back(0.0f, 0.0f, 1.0f);
     normals.emplace_back(0.0f, 0.0f, 1.0f);
-    geom->setNormals(normals);
+    geom->setNormals(vine::graphics::packAttribute(normals));
     return geom;
 }
 
@@ -108,7 +108,7 @@ GeometryPtr makeChannelTriangle()
     positions.emplace_back(0.0f, 0.0f, 0.0f);
     positions.emplace_back(0.0f, 1.0f, 0.0f);
     positions.emplace_back(0.0f, 0.0f, 1.0f);
-    geom->setPositions(positions);
+    geom->setPositions(vine::graphics::packAttribute(positions));
     // Custom per-vertex channel at location 3: one distinct colour per vertex
     // (red / green / blue). The backend must forward it as vine_Attribute3.
     vine::graphics::AttributeBuffer channel = vine::graphics::AttributeBuffer::packed(
@@ -144,12 +144,12 @@ GeometryPtr makeVisibleQuad(float half = 0.4f, float z = 0.0f)
     for (const auto& corner : corners) {
         positions.emplace_back(corner[0], corner[1], z);
     }
-    geom->setPositions(positions);
+    geom->setPositions(vine::graphics::packAttribute(positions));
     vine::geometry::Vec3fArray normals;
     for (int i = 0; i < 6; ++i) {
         normals.emplace_back(0.0f, 0.0f, 1.0f);
     }
-    geom->setNormals(normals);
+    geom->setNormals(vine::graphics::packAttribute(normals));
     return geom;
 }
 
@@ -380,13 +380,13 @@ GeometryPtr makeProbeQuad(float half, bool with_normals, bool with_channel, floa
     for (const auto& corner : corners) {
         positions.emplace_back(corner[0], corner[1], 0.0f);
     }
-    geom->setPositions(positions);
+    geom->setPositions(vine::graphics::packAttribute(positions));
     if (with_normals) {
         vine::geometry::Vec3fArray normals;
         for (int i = 0; i < 6; ++i) {
             normals.emplace_back(0.0f, 0.0f, 1.0f);
         }
-        geom->setNormals(normals);
+        geom->setNormals(vine::graphics::packAttribute(normals));
     }
     if (with_channel) {
         std::vector<float> colours;
@@ -506,7 +506,7 @@ GeometryPtr makeTexturedQuad()
     for (const auto& corner : corners) {
         texcoords.emplace_back(corner[0], corner[1]);
     }
-    geom->setTexcoords(texcoords);
+    geom->setTexcoords(vine::graphics::packAttribute(texcoords));
     return geom;
 }
 
@@ -932,9 +932,10 @@ bool runInFlightChurnPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
         // vertex buffers) on a live path every third frame.
         if (i % 3 == 2) {
             const float scale = 1.0f + 0.1f * static_cast<float>(i);
-            geometry->setPositions(vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
-                                                                vine::math::Vec3f(scale, 0.0f, 0.0f),
-                                                                vine::math::Vec3f(0.0f, scale, 0.0f) });
+            geometry->setPositions(vine::graphics::packAttribute(
+                vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
+                                            vine::math::Vec3f(scale, 0.0f, 0.0f),
+                                            vine::math::Vec3f(0.0f, scale, 0.0f) }));
         }
 
         const auto material = materials[static_cast<std::size_t>(i) % materials.size()];

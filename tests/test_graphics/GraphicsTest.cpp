@@ -1693,18 +1693,21 @@ TEST(MeshTest, AttributeStorageIsSharedNotCopied)
 
     // A second consumer (the renderer, here just a holder) takes the shareable handle rather than a copy.
     const auto shared = mesh->positionsBuffer();
-    EXPECT_EQ(shared->size(), 2u);
-    // One allocation, not two: both sides address the same bytes.
-    EXPECT_EQ(shared->data(), mesh->positions().data());
+    EXPECT_EQ(shared->size(), 2u * vine::geometry::Mesh::kVec3Components);
+    // One allocation, not two: the typed mesh view and the scalar run the holder reads are the same bytes.
+    EXPECT_EQ(shared->data(), reinterpret_cast<const float*>(mesh->positions().data()));
     EXPECT_EQ(shared->bytes().size(), 2u * sizeof(vine::math::Vec3f));
 
     // The model keeps building. The holder sees it because it IS the same storage, and the growth is
     // announced so a cache knows its copy of the bytes is stale.
     const auto before = shared->revision();
     mesh->addVertex(vine::math::Vec3f(2.0f, 0.0f, 0.0f));
-    EXPECT_EQ(shared->size(), 3u);
-    EXPECT_EQ(shared->data(), mesh->positions().data());
+    EXPECT_EQ(shared->size(), 3u * vine::geometry::Mesh::kVec3Components);
+    EXPECT_EQ(shared->data(), reinterpret_cast<const float*>(mesh->positions().data()));
     EXPECT_GT(shared->revision(), before);
+
+    // The scalars really are the vertices, in order.
+    EXPECT_FLOAT_EQ(mesh->positions()[2].x, 2.0f);
 
     // The index buffer is shared the same way, and appending a triangle announces itself too.
     mesh->addTriangle(0u, 1u, 2u);
@@ -3844,7 +3847,7 @@ TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
         vine::math::Vec3f(2.0f, 0.0f, 0.0f),
         vine::math::Vec3f(0.0f, 3.0f, 0.0f),
     };
-    geom.setPositions(points);
+    geom.setPositions(packAttribute(points));
     EXPECT_TRUE(geom.hasPositions());
     EXPECT_EQ(geom.positionCount(), 3u);
     EXPECT_EQ(geom.vertexCount(), 3u);
@@ -3871,12 +3874,12 @@ TEST(GeometryTest, NormalsChannelAndRevision)
 
     vine::geometry::Vec3fArray points = { vine::math::Vec3f(0, 0, 0), vine::math::Vec3f(1, 0, 0),
                                           vine::math::Vec3f(0, 1, 0) };
-    geom.setPositions(points);
+    geom.setPositions(packAttribute(points));
     EXPECT_EQ(geom.revision(), 1u);
 
     vine::geometry::Vec3fArray normals = { vine::math::Vec3f(0, 0, 1), vine::math::Vec3f(0, 0, 1),
                                            vine::math::Vec3f(0, 0, 1) };
-    geom.setNormals(normals);
+    geom.setNormals(packAttribute(normals));
     EXPECT_TRUE(geom.hasNormals());
     EXPECT_EQ(geom.normalCount(), 3u);
     EXPECT_EQ(geom.revision(), 2u);
@@ -3899,7 +3902,7 @@ TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
     // The converter is the Shape -> vertex-data bridge; a geometry filled by
     // the per-channel setters must carry exactly the same data.
     Geometry via_setters;
-    via_setters.setPositions(mesh->positions());
+    via_setters.setPositions(packAttribute(mesh->positions()));
     EXPECT_TRUE(via_setters.hasPositions());
     EXPECT_EQ(via_setters.vertexCount(), 3u);
     EXPECT_EQ(via_setters.positionCount(), geom->positionCount());
@@ -3927,10 +3930,10 @@ TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)
     ASSERT_NE(normals, nullptr);
     ASSERT_NE(uvs, nullptr);
 
-    // ONE allocation per attribute: the geometry reads the mesh's own floats instead of a repacked copy.
-    EXPECT_EQ(positions->scalars().data(), reinterpret_cast<const float*>(mesh->positions().data()));
-    EXPECT_EQ(normals->scalars().data(), reinterpret_cast<const float*>(mesh->normals().data()));
-    EXPECT_EQ(uvs->scalars().data(), reinterpret_cast<const float*>(mesh->texcoords().data()));
+    // ONE allocation per attribute: the geometry reads the mesh's own scalars instead of a repacked copy.
+    EXPECT_EQ(positions->scalars().data(), mesh->positionsBuffer()->data());
+    EXPECT_EQ(normals->scalars().data(), mesh->normalsBuffer()->data());
+    EXPECT_EQ(uvs->scalars().data(), mesh->texcoordsBuffer()->data());
     EXPECT_EQ(positions->components, 3u);
     EXPECT_EQ(uvs->components, 2u);
 
@@ -3939,6 +3942,10 @@ TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)
     EXPECT_FLOAT_EQ(second[0], 1.0f);
     EXPECT_FLOAT_EQ(second[1], 0.0f);
     EXPECT_FLOAT_EQ(second[2], 0.0f);
+
+    // The typed mesh view and the scalar run the geometry reads are the same bytes.
+    EXPECT_EQ(mesh->positions().data(), reinterpret_cast<const vine::math::Vec3f*>(positions->scalars().data()));
+    EXPECT_EQ(mesh->positions()[1].x, second[0]);
 
     EXPECT_EQ(geom->positionCount(), 3u);
     EXPECT_EQ(geom->normalCount(), 3u);
@@ -3957,8 +3964,8 @@ TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
     EXPECT_EQ(geom.texcoordCount(), 0u);
     const std::uint64_t before = geom.revision();
 
-    geom.setTexcoords({ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 0.0f),
-                        vine::math::Vec2f(0.0f, 1.0f) });
+    geom.setTexcoords(packAttribute(vine::geometry::Vec2fArray{ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 0.0f),
+                                                                vine::math::Vec2f(0.0f, 1.0f) }));
 
     EXPECT_TRUE(geom.hasTexcoords());
     EXPECT_EQ(geom.texcoordCount(), 3u);
@@ -4088,33 +4095,40 @@ TEST(GeometryTest, AttributeBufferStrideAccessors)
     EXPECT_EQ(buffer.vertexCount(), 0u);
 }
 
-TEST(AttributeBufferTest, SharedChannelReadsTheBuffersOwnElements)
+TEST(AttributeBufferTest, SharedChannelReadsTheBuffersOwnScalars)
 {
-    // The sharing design rests on this: a Vec3f is three tightly packed floats and a Vec2f is two, so a
-    // buffer of them can be read as scalars with no conversion. A padded or otherwise laid out element
-    // would make a shared channel read garbage, which is why the factory static_asserts the size.
+    // The sharing design rests on this: a Vec3f is three tightly packed floats and a Vec2f is two, so a run
+    // of scalars IS a run of vertices (this is also static_asserted in Mesh.cpp).
     static_assert(sizeof(vine::math::Vec3f) == 3u * sizeof(float));
     static_assert(sizeof(vine::math::Vec2f) == 2u * sizeof(float));
 
-    auto buffer = intrusive_ptr<vine::Buffer<vine::math::Vec3f>>(new vine::Buffer<vine::math::Vec3f>());
-    buffer->push_back(vine::math::Vec3f(1.0f, 2.0f, 3.0f));
-    buffer->push_back(vine::math::Vec3f(4.0f, 5.0f, 6.0f));
+    auto buffer = intrusive_ptr<vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }));
 
-    const AttributeBuffer channel = AttributeBuffer::shared(buffer);
+    const AttributeBuffer channel = AttributeBuffer::shared(buffer, 3u);
     EXPECT_EQ(channel.components, 3u);
     EXPECT_EQ(channel.floatCount(), 6u);
     EXPECT_EQ(channel.vertexCount(), 2u);
-    // The channel adds no storage of its own: it reads the buffer's elements in place.
-    EXPECT_EQ(channel.scalars().data(), reinterpret_cast<const float*>(buffer->data()));
+    // The channel adds no storage of its own: it reads the buffer's scalars in place.
+    EXPECT_EQ(channel.scalars().data(), buffer->data());
 
     const std::array<float, 3> second = channel.xyz(1);
     EXPECT_FLOAT_EQ(second[0], 4.0f);
     EXPECT_FLOAT_EQ(second[1], 5.0f);
     EXPECT_FLOAT_EQ(second[2], 6.0f);
 
+    // The buffer is re-read, not snapshotted, so GROWING it is followed: the new length shows up and the view
+    // is re-derived from the handle. A cached pointer + count would be stale here (and could point at freed
+    // memory), which is exactly what holding the buffer instead of a snapshot avoids.
+    buffer->append(std::vector<float>{ 7.0f, 8.0f, 9.0f });
+    EXPECT_EQ(channel.floatCount(), 9u);
+    EXPECT_EQ(channel.vertexCount(), 3u);
+    EXPECT_EQ(channel.scalars().data(), buffer->data());
+    EXPECT_FLOAT_EQ(channel.scalars()[8], 9.0f);
+
     // The channel has to keep the buffer alive — the scalars live inside it. (Reading them after dropping
     // the local handle would be a use-after-free, not a wrong value, if this reference were missing.)
-    const vine::Buffer<vine::math::Vec3f>* const raw = buffer.get();
+    const vine::Buffer<float>* const raw = buffer.get();
     ASSERT_EQ(raw->useCount(), 2u);
     buffer = nullptr;
     EXPECT_EQ(raw->useCount(), 1u);
@@ -4489,7 +4503,7 @@ TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
     auto leaf = intrusive_ptr<CountingGeometry>(new CountingGeometry());
     // CountingGeometry is a Geometry subclass, so fill it through the
     // per-channel setter (the Shape converter always returns a plain Geometry).
-    leaf->setPositions(makeUnitTriangle()->positions());
+    leaf->setPositions(packAttribute(makeUnitTriangle()->positions()));
     deep->addChild(leaf);
 
     Camera cam;

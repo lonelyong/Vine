@@ -139,8 +139,8 @@ addBox(vine::graphics::Group* root, const vine::Colorf& diffuse, const vine::Str
 
     auto geometry = vine::make_intrusive<vine::graphics::Geometry>();
     geometry->setName(name);
-    geometry->setPositions(positions);
-    geometry->setNormals(normals);
+    geometry->setPositions(vine::graphics::packAttribute(positions));
+    geometry->setNormals(vine::graphics::packAttribute(normals));
     geometry->setIndices(indices);
 
     auto material = vine::make_intrusive<vine::graphics::Material>();
@@ -350,7 +350,7 @@ void addDemoCubes(vine::graphics::Scene* scene)
                 points.emplace_back(-2.3f + r * std::cos(a), -1.2f + r * std::sin(a), z_h);
             }
         }
-        cloud->setPositions(points);
+        cloud->setPositions(vine::graphics::packAttribute(points));
         cloud->setProgram(program);
 
         auto state = make_intrusive<StateNode>();
@@ -380,7 +380,7 @@ void addDemoCubes(vine::graphics::Scene* scene)
                 points.emplace_back(2.05f + r * std::cos(a), 0.1f + r * std::sin(a), z_h);
             }
         }
-        stars->setPositions(points);
+        stars->setPositions(vine::graphics::packAttribute(points));
         stars->setProgram(program);
 
         auto state = make_intrusive<StateNode>();
@@ -975,7 +975,7 @@ vine::intrusive_ptr<vine::graphics::Scene> makeForwardOverlayScene()
                 points.emplace_back(2.0f + r * std::cos(a), 0.1f + r * std::sin(a), h);
             }
         }
-        stars->setPositions(points);
+        stars->setPositions(vine::graphics::packAttribute(points));
         stars->setProgram(program);
 
         auto state = make_intrusive<StateNode>();

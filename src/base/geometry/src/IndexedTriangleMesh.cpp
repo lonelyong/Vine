@@ -29,8 +29,10 @@ void IndexedTriangleMesh::setIndices(UInt32Array indices)
 
 std::uint32_t IndexedTriangleMesh::addVertex(const vine::math::Vec3f& position)
 {
-    positions_->push_back(position);
-    return static_cast<std::uint32_t>(positions_->size() - 1);
+    positions_->push_back(position.x);
+    positions_->push_back(position.y);
+    positions_->push_back(position.z);
+    return static_cast<std::uint32_t>(positions_->size() / kVec3Components - 1u);
 }
 
 void IndexedTriangleMesh::addTriangle(std::uint32_t i0, std::uint32_t i1, std::uint32_t i2)
