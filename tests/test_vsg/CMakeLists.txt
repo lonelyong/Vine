@@ -18,6 +18,7 @@ set(SRC_FILE_LIST
 	DiagnosticsTest.cpp
 	ReadbackTest.cpp
 	SceneRulesTest.cpp
+	TextureCacheTest.cpp
 	OverlayLightingTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
