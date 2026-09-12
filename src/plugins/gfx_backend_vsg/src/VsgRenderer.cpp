@@ -307,9 +307,9 @@ bool VsgRenderer::initialize()
     // earlier content (HUD). Off-screen targets bake their own per-size sets
     // lazily.
     init_stage = "building window shader sets";
-    state.depth_on_shader_set        = buildShaderSet(persistent.shader_preset, state.window->extent2D(), true, true);
-    state.depth_testonly_shader_set  = buildShaderSet(persistent.shader_preset, state.window->extent2D(), true, false);
-    state.depth_off_shader_set       = buildShaderSet(persistent.shader_preset, state.window->extent2D(), false, false);
+    state.depth_on_shader_set        = makeContentShaderSet(persistent.shader_preset, state.window->extent2D(), true, true);
+    state.depth_testonly_shader_set  = makeContentShaderSet(persistent.shader_preset, state.window->extent2D(), true, false);
+    state.depth_off_shader_set       = makeContentShaderSet(persistent.shader_preset, state.window->extent2D(), false, false);
 
     // The primary window layer is created lazily on the first window render
     // (the first pass that clears and draws the scene into the backbuffer).

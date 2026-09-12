@@ -1,6 +1,7 @@
 #include <vine/vsg/VsgContentSlot.hpp>
 
 #include <cstdio>
+#include <cstring>
 #include <optional>
 #include <string>
 
@@ -11,6 +12,7 @@
 #include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgContentSlot.hpp>
 #include <vine/vsg/VsgDiagnostics.hpp>
+#include <vine/vsg/VsgOverlay.hpp>
 #include <vine/vsg/VsgPassMaterialiser.hpp>
 #include <vine/vsg/VsgRecordOrder.hpp>
 #include <vine/vsg/VsgRendererState.hpp>
@@ -160,10 +162,10 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
         if (set_ref == nullptr) {
             const bool depth_test  = depth_mode != vine::graphics::DepthMode::Disabled;
             const bool depth_write = depth_mode == vine::graphics::DepthMode::TestAndWrite;
-            set_ref = buildShaderSet(persistent.shader_preset,
-                                     VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) },
-                                     depth_test, depth_write,
-                                     target->colorCount());
+            set_ref = makeContentShaderSet(persistent.shader_preset,
+                                           VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) },
+                                           depth_test, depth_write,
+                                           target->colorCount());
         }
         content.bridge.setShaderSet(set_ref);
     }
@@ -199,6 +201,11 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     else {
         content.light_group->addChild(makeAmbientLight(presenting ? "offscreen_ambient" : "content_ambient"));
     }
+
+    // This slot's light block, written every frame from the pass' own lights and
+    // bound at set 0 / binding 2 of our forward shader set (unused otherwise).
+    content.lights_data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(VineLightsBlock)));
+    content.bridge.setLightsData(content.lights_data);
 
     content.view = ::vsg::View::create(content.vsg_camera);
     content.view->addChild(content.light_group);
@@ -315,6 +322,19 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     // truth); setGroupLights leaves the slot's seeded default light in place unless at
     // least one announced light is usable (see beginLightsDroppedEpisode).
     const std::size_t attached_lights = setGroupLights(content.light_group.get(), *request.lights);
+
+    // The same lights, packed for OUR forward shader set (view space, ambient +
+    // up to three directionals). Written every frame because the directions are
+    // view-space: a moving camera moves them. Cheap by construction — one call
+    // and a 112-byte copy per slot per frame — and inert while the built-in set
+    // draws this slot (nothing binds the block then).
+    if (content.lights_data != nullptr && content.lights_data->dataSize() >= sizeof(VineLightsBlock)) {
+        VineLightsBlock block;
+        fillVineLightsBlock(request.camera, *request.lights, block);
+        std::memcpy(content.lights_data->dataPointer(), &block, sizeof(block));
+        content.lights_data->dirty();
+    }
+
     if (beginLightsDroppedEpisode(request.lights->size(), attached_lights, content.light_fallback_reported)) {
         const std::size_t announced = request.lights->size();
         // One message per branch: a shared format string whose arguments are ordered for one of

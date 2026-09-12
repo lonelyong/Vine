@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -206,6 +207,42 @@ TEST(ForwardShaderSetTest, StagesCompileToSpirv)
         ASSERT_NE(stage->module, nullptr);
         EXPECT_FALSE(stage->module->code.empty());
     }
+}
+
+TEST(ForwardShaderSetTest, ContentSetsAreNeverUnshaded)
+{
+    // makeContentShaderSet is the one entry point every content set is built from
+    // (the window's three depth-mode sets and each off-screen target's). Whatever
+    // the switch says, EVERY preset must come back with a usable set: a null here
+    // would leave a pass with no pipeline at all.
+    const VkExtent2D extent{ 640, 360 };
+    for (const auto preset : { vine::graphics::ShaderPreset::StandardPhong, vine::graphics::ShaderPreset::FlatShaded,
+                               vine::graphics::ShaderPreset::Pbr, vine::graphics::ShaderPreset::ShadowedPhong }) {
+        for (const bool depth_test : { true, false }) {
+            for (const bool depth_write : { true, false }) {
+                for (const int color_count : { 0, 1, 3 }) {
+                    EXPECT_NE(makeContentShaderSet(preset, extent, depth_test, depth_write, color_count), nullptr)
+                        << "preset " << static_cast<int>(preset) << " depth_test " << depth_test << " color_count "
+                        << color_count;
+                }
+            }
+        }
+    }
+}
+
+TEST(ForwardShaderSetTest, TheForwardSwitchIsOffByDefault)
+{
+    // VINE_VSG_FORWARD is a session decision read once; with it unset (the case in
+    // this process, and in the shipped configuration) content must go through the
+    // built-in set, whose layout has no vine_lights binding at all. If this ever
+    // flips, the self-test evidence baseline changes with it — this test says the
+    // flip was not accidental.
+    ASSERT_EQ(std::getenv("VINE_VSG_FORWARD"), nullptr);
+    EXPECT_FALSE(vineForwardShaderEnabled());
+    const auto set = makeContentShaderSet(vine::graphics::ShaderPreset::StandardPhong, VkExtent2D{ 640, 360 }, true, true, 1);
+    ASSERT_NE(set, nullptr);
+    // getDescriptorBinding reports "not declared" through its bool conversion.
+    EXPECT_FALSE(static_cast<bool>(set->getDescriptorBinding("vine_lights")));
 }
 
 }  // namespace

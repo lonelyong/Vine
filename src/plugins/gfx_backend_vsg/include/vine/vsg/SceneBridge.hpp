@@ -102,6 +102,23 @@ class V_VSG_API SceneBridge {
      */
     void setMeshResourceCache(vine::raw_ptr<VsgMeshResourceCache> cache);
 
+    /** @brief Injects the per-view light block this bridge binds for its own forward shader set.
+     *
+     * Must outlive the bridge. The block is the slot's (not the session's): the
+     * lights are per view, so a shared block would light the HUD's ambient-only
+     * slot with the scene's sun. The slot writes it every frame and this bridge
+     * only declares it in the pipeline layout / descriptor set of the variants
+     * built from a ShaderSet that asks for `vine_lights` (our forward set); the
+     * built-in vsg set does not, so nothing changes while it draws.
+     *
+     * When unset, a set declaring `vine_lights` gets no lights bound: the shader
+     * would read an unbound descriptor, which is why the renderer always injects
+     * one together with the forward set.
+     *
+     * @param data Uniform block holding a VineLightsBlock (see fillVineLightsBlock), or null.
+     */
+    void setLightsData(::vsg::ref_ptr<::vsg::Data> data);
+
     /** @brief Reconciles the retained scene under root against the commands.
      *
      * Each render command contributes one retained child (a vsg::MatrixTransform
@@ -778,6 +795,10 @@ class V_VSG_API SceneBridge {
     // bytes are the model's own are then bound once for the whole session. Owned privately otherwise.
     vine::raw_ptr<VsgMeshResourceCache> mesh_cache_ = nullptr;
     VsgMeshResourceCache                default_mesh_cache_;
+    // The slot's per-view light block (setLightsData): declared in the pipeline
+    // layout and descriptor set of the variants built from a ShaderSet that asks
+    // for `vine_lights` (our forward set). Null while the built-in set draws.
+    ::vsg::ref_ptr<::vsg::Data>         lights_data_;
     // Retained per-geometry nodes, keyed by geometry pointer for O(1) lookup.
     //
     // The entry OWNS the geometry it is keyed by (OwnedCacheEntry), and that

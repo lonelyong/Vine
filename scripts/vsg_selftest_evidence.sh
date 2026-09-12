@@ -22,6 +22,15 @@
 # Usage:
 #   scripts/vsg_selftest_evidence.sh [BUILD_DIR]   BUILD_DIR defaults to <root>/build
 #   scripts/vsg_selftest_evidence.sh --update      Rewrite the baseline from this build
+#   scripts/vsg_selftest_evidence.sh --forward     Check the CUSTOM forward shader path
+#                                                  (runs with VINE_VSG_FORWARD=1 against
+#                                                   vsg_selftest_forward_evidence.txt)
+#
+# Two baselines because the two paths legitimately draw different pictures: the
+# built-in vsg phong set and our own forward set shade differently (measured, see
+# .ai/design/vsg-custom-shader.md §11), so one baseline cannot cover both — and
+# without the second one a change to the custom path (or to the wiring that feeds
+# it) would be invisible to this gate.
 #
 # Exit code 0 when the evidence matches the baseline, 1 otherwise.
 
@@ -29,14 +38,24 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BASELINE="$SCRIPT_DIR/vsg_selftest_evidence.txt"
 
-if [ "${1:-}" = "--update" ]; then
-    BUILD="$ROOT/build"
-    UPDATE=1
+UPDATE=0
+MODE=default
+POSITIONAL=()
+for arg in "$@"; do
+    case "$arg" in
+        --update) UPDATE=1 ;;
+        --forward) MODE=forward ;;
+        *) POSITIONAL+=("$arg") ;;
+    esac
+done
+BUILD="${POSITIONAL[0]:-$ROOT/build}"
+
+if [ "$MODE" = forward ]; then
+    BASELINE="$SCRIPT_DIR/vsg_selftest_forward_evidence.txt"
+    export VINE_VSG_FORWARD=1
 else
-    BUILD="${1:-$ROOT/build}"
-    UPDATE=0
+    BASELINE="$SCRIPT_DIR/vsg_selftest_evidence.txt"
 fi
 
 SELFTEST="$BUILD/bin/vsg_backend_selftest"
@@ -54,7 +73,7 @@ grep '^\[selftest\]' "$RAW" > "$CURRENT"
 LINES="$(wc -l < "$CURRENT" | tr -d ' ')"
 if [ "$UPDATE" = 1 ]; then
     cp "$CURRENT" "$BASELINE"
-    echo "vsg_selftest_evidence.sh: baseline updated ($LINES evidence line(s))"
+    echo "vsg_selftest_evidence.sh: baseline updated ($LINES evidence line(s), mode=$MODE)"
     exit 0
 fi
 
@@ -64,10 +83,10 @@ if [ ! -f "$BASELINE" ]; then
 fi
 
 if diff -q "$BASELINE" "$CURRENT" > /dev/null; then
-    echo "RESULT: PASS — $LINES self-test evidence line(s) identical to the baseline."
+    echo "RESULT: PASS — $LINES self-test evidence line(s) identical to the baseline (mode=$MODE)."
     exit 0
 fi
 
-echo "RESULT: FAIL — the self-test evidence does not match the baseline:" >&2
+echo "RESULT: FAIL — the self-test evidence does not match the baseline (mode=$MODE):" >&2
 diff "$BASELINE" "$CURRENT" >&2
 exit 1

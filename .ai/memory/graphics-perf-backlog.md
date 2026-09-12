@@ -177,4 +177,14 @@
   · 门禁：`ForwardShaderSetTest` 6 条（含**两个 stage 门控必须一致** —— 不一致就是未定义输入，Vulkan 不报错）+ `OverlayLightingTest` +3 条（与 push 块光部分逐字段相同 / 无相机全零 / 无光种默认环境光）；四条 mutation 各自咬住目标测试。
   · 口径：本步**不改默认路径**（selftest 证据 47 行逐字节相同、lavapipe 0 VUID）；test_vsg 220 → **233**。
   · 下一步 P0.2：槽级 lights UBO + 描述符集 + opt-in 开关 + selftest 相位（像素级端到端）。
+- **P0.2 接线已完成（2026-09-13）**：`VINE_VSG_FORWARD=1` 下整套内容渲染走自写 set，默认仍走内建。
+  · 入口唯一：`makeContentShaderSet(...)`（窗口三档深度 + 每个离屏目标都走它）⇒ 不会出现“一半换了新 shader”。
+  · 槽级 `ContentSlot::lights_data`（112 B ubyteArray）+ `SceneBridge::setLightsData` 注入 + 每帧 `fillVineLightsBlock` + `dirty()`；
+    `buildStateGroup` 里“有块 **且** set 声明了 `vine_lights`”才挂描述符 ⇒ 内建/自定义 program 路径的 set 不受影响。
+  · **两个证据基线**：`vsg_selftest_evidence.sh [--forward]`。两条基线的差异**只有 6 个着色数字**（centre 46,8,3 → 34,6,2；
+    共享深度相位 5,41,10 → 4,31,8），**覆盖数/深度值/清屏色/诊断计数全同** ⇒ 证明“同一份几何、换了一套着色”而不是画错。
+  · lavapipe 新阶段 3d/4 跑 forward 自检（0 VUID + 无 `[selftest] FAIL` + 证据比自己的基线）；帧数由证据脚本统一（15 帧跑 vs 30 帧基线会假红）。
+  · mutation 两条：跳过每帧光块 ⇒ forward 基线红（画面变黑）；开关默认改 true ⇒ 内建基线红。
+  · 口径：test_vsg 233 → **235**（+2：`makeContentShaderSet` 对全部 preset/深度/色彩数永不为空；开关关闭时拿到内建 set）；lavapipe 整体 PASS。
+  · 未做（P0.3）：默认转正 + 去掉 vsg Light/VDS 的 content 用法；几何无作者色/UV 时不喂那两个数组（拿掉白载体、省一条绑定与一次采样）。
 

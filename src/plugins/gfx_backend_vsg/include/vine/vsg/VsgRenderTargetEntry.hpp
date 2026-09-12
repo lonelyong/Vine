@@ -123,6 +123,12 @@ struct ContentSlot {
     ::vsg::ref_ptr<::vsg::Camera> vsg_camera;
     ::vsg::ref_ptr<::vsg::Group>  root;        // retained content root
     ::vsg::ref_ptr<::vsg::Group>  light_group; // lights under this slot's view
+    // This slot's per-view light block, written from the pass' lights once per
+    // frame (see fillVineLightsBlock) and bound at set 0 / binding 2 of our own
+    // forward shader set. One block per SLOT because the lights are per view:
+    // a shared one would light the HUD's ambient-only slot with the scene's sun.
+    // Unused (and never bound) while the built-in set draws this slot.
+    ::vsg::ref_ptr<::vsg::Data>   lights_data;
     ::vsg::ref_ptr<::vsg::View>   view;
     SceneBridge                   bridge;      // per-view pipelines (vsg compiles per viewID; see VsgContentSlot.hpp on why the state registry must stay per slot)
     // D22: true once this slot's (window/framebuffer render pass + view)

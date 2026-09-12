@@ -8,6 +8,12 @@
 #   2. The Vine app (app_shell demo, 5 boxes) — proves the SceneBridge path
 #      (default RenderStateMapper mapping) syncs and renders every frame with
 #      no validation-layer errors.
+#   3. vsg_backend_selftest — the off-screen/MRT/PiP/deferred/multi-pass phases,
+#      with its `[selftest]` evidence compared byte-for-byte (vsg_selftest_evidence.sh).
+#   3d. The same self-test with VINE_VSG_FORWARD=1: our OWN forward shader set
+#      instead of vsg's built-in phong (see .ai/design/vsg-custom-shader.md §11),
+#      also evidence-compared, against vsg_selftest_forward_evidence.txt.
+#   4. Vine app (default demo).
 #
 # The RenderStateMapper unit mapping (incl. the non-default StateNode path) is
 # pinned by tests/test_vsg/RenderStateMapperTest, which needs no device; the
@@ -226,6 +232,54 @@ else
             FAILED=1
         fi
         report "vsg_backend_selftest" "$log"
+    fi
+fi
+
+# 3d/4: the same self-test with OUR OWN forward shader (VINE_VSG_FORWARD=1,
+# see .ai/design/vsg-custom-shader.md §11). The built-in path above stays the
+# shipped behaviour, so this stage is what keeps the custom one from rotting:
+# it must render the same phases (same coverage / depth / clear colours) with
+# its own shading, stay validation-clean, and match its own byte-exact evidence
+# baseline (a change in the shading itself shows up there as a colour diff).
+echo "== 3d/4 vsg_backend_selftest (custom forward shader) =="
+SELF_FORWARD_BASELINE="$ROOT/scripts/vsg_selftest_forward_evidence.txt"
+if [ ! -x "$SELF" ]; then
+    echo "[FAIL] vsg_backend_selftest not built"
+    FAILED=1
+else
+    log="$TMP/selftest_forward.log"
+    (cd "$BUILD" && VINE_SELFTEST_FRAMES="${VINE_SELFTEST_FRAMES:-15}" VINE_VSG_FORWARD=1 \
+        timeout "$SECONDS_V" ./bin/vsg_backend_selftest) >"$log" 2>&1
+    rc=$?
+    echo "    (exit=$rc; 124 = still running when the timeout fired, i.e. OK)"
+    grep "^\[selftest\] pixels:" "$log" | sed 's/^/    /' || true
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+        echo "[FAIL] custom forward self-test exited early with $rc"
+        tail -30 "$log"
+        FAILED=1
+    elif grep -q "\[selftest\] FAIL" "$log"; then
+        echo "[FAIL] custom forward self-test reported a pixel/invariant failure"
+        grep "\[selftest\] FAIL" "$log" | head -10
+        FAILED=1
+    else
+        report "vsg_backend_selftest (forward)" "$log"
+    fi
+    # The forward path draws the same content through our own stages, so its
+    # evidence may differ from the built-in baseline in COLOUR only — and must
+    # not lose a phase. The byte-exact comparison is delegated to the evidence
+    # script (which owns the baseline and runs the self-test with its own fixed
+    # frame count: the frame count is part of the evidence lines, so comparing a
+    # 15-frame run against a 30-frame baseline could never match).
+    if [ ! -f "$SELF_FORWARD_BASELINE" ]; then
+        echo "[FAIL] no forward baseline at $SELF_FORWARD_BASELINE (run vsg_selftest_evidence.sh --forward --update)"
+        FAILED=1
+    else
+        if "$SCRIPT_DIR/vsg_selftest_evidence.sh" --forward "$BUILD" 2>&1 | sed 's/^/    /'; then
+            echo "[PASS] custom forward evidence matches its baseline"
+        else
+            echo "[FAIL] custom forward evidence differs from its baseline"
+            FAILED=1
+        fi
     fi
 fi
 

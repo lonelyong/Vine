@@ -126,6 +126,13 @@ void SceneBridge::setMeshResourceCache(vine::raw_ptr<VsgMeshResourceCache> cache
     mesh_cache_ = cache;
 }
 
+void SceneBridge::setLightsData(::vsg::ref_ptr<::vsg::Data> data)
+{
+    // Not a cache: the block BELONGS to the slot, which refreshes it every frame,
+    // so the bridge only holds a reference for the descriptor sets it builds.
+    lights_data_ = std::move(data);
+}
+
 VsgMeshResourceCache& SceneBridge::meshResources()
 {
     return mesh_cache_ != nullptr ? *mesh_cache_ : default_mesh_cache_;

@@ -112,7 +112,7 @@ mat4  shadow_matrix;   // 仅 castShadow 有效
 - **P0 垂直切片**：`buildVineShaderSet` 平替 `buildShaderSet`，只用于主场景几何；
   先复刻当前 phong 光照（ambient+方向光）使画面与现有输出一致（主视图/PiP 对照 A/B）。
   - **P0.1 shader + set（2026-09-13 已落地，见 §11）**：`vine_forward.*` + ABI + 门禁；默认路径未接线。
-  - **P0.2 接线**：槽级 lights UBO + 描述符集、opt-in 开关、selftest 相位 + lavapipe 端到端像素验证。
+  - **P0.2 接线（2026-09-13 已落地，见 §11.2/§11.3）**：槽级 lights UBO + 描述符集、`makeContentShaderSet` 单一入口、`VINE_VSG_FORWARD` 开关、forward 独立证据基线 + lavapipe 阶段 3d/4。
   - **P0.3 转正**：默认走自写 set，去掉 vsg `Light`/VDS 的 content 用法（`view->features` 收敛）。
 - **P1 自写阴影**：绑定我们自己的 depth RT + `shadow_map` 采样，替换 vsg 内建。
 - **P2**：材质 dynamic 化 / 多光 / overlay 迁移（overlay 可暂留 vsg phong 作内部特例）。
@@ -361,24 +361,38 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
   `fillVineLightsBlock` 两个出口）⇒ 两条路径同一套“view-space 光 + 无光时种一个默认环境光”。
 - 管线状态与内建 set **逐项相同**（同一个 `makeScenePipelineStates`），否则“两条路径同 pass 不同画面”。
 
-### 11.2 本步**没有**做的（P0 后续）
+### 11.2 P0.2 接线（2026-09-13 已落地）
+
+| 环节 | 落点 |
+| --- | --- |
+| 开关 | `detail::vineForwardShaderEnabled()`：`VINE_VSG_FORWARD` 存在即开，**进程内只读一次**（这是会话级决策，不是每帧问题） |
+| 选 set | `detail::makeContentShaderSet(preset, extent, depth_test, depth_write, color_count)`：开关开且该 preset 有 Vine stages 就用我们的 set，否则回内建；**所有** content set（窗口三档深度 + 各离屏目标）都走这一个入口，避免“一半换成新 shader” |
+| 槽级光块 | `ContentSlot::lights_data`（`ubyteArray(sizeof(VineLightsBlock))`），`setupContentSlot` 建、注入桥（`SceneBridge::setLightsData`，照 `setTextureCache` 的样子） |
+| 每帧填 | `renderContentSlot`：`fillVineLightsBlock(request.camera, *request.lights, block)` + memcpy + `dirty()`（方向是视图空间的，相机一动就得刷；112 B/槽/帧） |
+| 挂描述符 | `SceneBridge::buildStateGroup`：`lights_data_ != nullptr && shaderSet->getDescriptorBinding("vine_lights")` 两条同时成立才 `assignDescriptor("vine_lights", …)` —— 内建/自定义 program 路径的 set 没声明它，于是完全不受影响 |
+
+**默认路径零变化**：开关默认关闭 ⇒ 内建基线 47 行逐字节相同（mutation 验证：把开关默认改成 `true` ⇒ 基线立刻红）。
+
+### 11.3 P0.2 的验证
+
+| 门禁 | 覆盖 |
+| --- | --- |
+| `vsg_selftest_evidence.sh --forward` | 用 `VINE_VSG_FORWARD=1` 跑同一份自检，与**独立基线** `scripts/vsg_selftest_forward_evidence.txt` 逐字节比对。两条基线的差异**只有 6 个着色数字**（如 centre 46,8,3 → 34,6,2；共享深度相位 5,41,10 → 4,31,8），**覆盖数、深度值、清屏色、诊断计数一律相同** ⇒ 证明“同一份几何、换了一套着色”，而不是“画错了/少画了” |
+| `gfx_lavapipe_check.sh` 新阶段 3d/4 | 跑 `VINE_VSG_FORWARD=1` 的自检：0 VUID、无 `[selftest] FAIL`、证据与 forward 基线一致（帧数由证据脚本统一，避免“15 帧跑 vs 30 帧基线”的假红） |
+| mutation | ① 跳过每帧光块填充 ⇒ forward 基线红（画面变黑）；② 开关默认改 `true` ⇒ 内建基线红 |
+| 单测 | `ForwardShaderSetTest` +2：`makeContentShaderSet` 对**四个 preset × 深度组合 × 色彩数**永不为空（没有任何一个 pass 会没管线）；开关关闭时 content set 是内建 set（其布局里没有 `vine_lights`） |
+| 口径 | 两边 47 行都不丢相位；test_vsg 233 → **235**；ninja 0 error 0 warning；lavapipe 整体 PASS |
+
+### 11.4 还没做的（P0 之后）
 
 | 项 | 说明 |
 | --- | --- |
-| 渲染路径接线 | 现在还没有任何 pass 用这个 set：需要槽级 lights UBO + 描述符集（每视图一份）、`assignDescriptor("vine_lights", …)`、以及一个 opt-in 开关；**默认路径因此零变化**（selftest 证据 47 行逐字节相同） |
-| 端到端像素验证 | 计划：`vsg_backend_selftest` 新增一个“自定义前向”相位（opt-in 开关下跑，断言受光面到达目标 + 角上仍是清屏色），由 lavapipe 脚本调用 |
-| opacity | `outColor.a = material.diffuse.a`（顶点色只调制 rgb）；P10 再决定用材质值 + dynamic offset 表达 |
+| 转正（P0.3） | 默认改走自写 set：要先定“画面差异可接受”的口径（当前 34,6,2 vs 46,8,3 是光照公式差异，不是 bug），然后去掉 vsg `Light`/VDS 在 content 上的用法（`view->features` 收敛） |
+| 顶点色/贴图门控的收益 | 现在仍照旧喂白载体与零 UV（两条路径的 define 都开着）；等 P0.3 后让 SceneBridge 在几何无作者色/UV 时**不喂**那两个数组，就自动得到不含该属性的变体（省一条绑定命令 + 一次采样） |
+| opacity | 现在 `outColor.a = material.diffuse.a`（顶点色只调制 rgb）；P10 再决定材质值 + dynamic offset 的承载方式 |
 | 阴影 / PBR / Flat | 仍走内建映射；§6 的 P1/P2 |
+| 自检相位命名 | 自检里那两条 `variant 'built-in Phong + …'` 的名字在 forward 模式下已名不副实（跑的是我们的 set）；改名字会让两条基线同时变，留到 P0.3 一起做 |
 
-接线的具体落点（P0.2 照着做即可）：
-
-| 步骤 | 位置 |
-| --- | --- |
-| 槽级 lights 缓冲 | `VsgContentSlot.cpp` 的每帧灯同步处（现在 `setGroupLights(...)` 那一行旁边）：`fillVineLightsBlock(request.camera, *request.lights, block)` 后 memcpy 进一个 `vsg::ubyteArray`（每帧刷，靠 `requiresCopy` 上传，与 overlay 的 `push_data` 同一套路） |
-| 注入桥 | 照 `setTextureCache` / `setMeshResourceCache` 的样子给 `SceneBridge` 加 `setLightsData(ref_ptr<Data>)`（桥是每槽一份 ⇒ 不会跨视图串味） |
-| 挂描述符 | `SceneBridge::buildStateGroup` 里当 `shaderSet` 声明了 `vine_lights` 时 `config->assignDescriptor("vine_lights", lights_data)`（ShaderSet 没声明就跳过，于是内建/自定义 program 路径完全不受影响） |
-| 选 set | `SceneBridge::baseShaderSet()`（或它调用 `buildShaderSet` 的地方）：先问 `buildVineShaderSet(...)`，非空则用（opt-in 开关决定是否走这一步） |
-| 变体键 | 若将来同一场景里两条路径并存，`hashStateVariant(...)` 的键要把“哪套 set”并进去（现在 preset 是会话级常量，暂不需要） |
 
 
 ### 11.3 本步门禁

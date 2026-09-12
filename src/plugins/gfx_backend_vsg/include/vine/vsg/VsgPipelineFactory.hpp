@@ -206,6 +206,36 @@ static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-
 ::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
 
 /**
+ * @brief Whether scene content should be drawn with our own forward shader.
+ *
+ * Off by default: the built-in vsg phong path stays the shipped behaviour until
+ * the custom path has passed the same end-to-end gates (see
+ * .ai/design/vsg-custom-shader.md §11). `VINE_VSG_FORWARD=1` turns it on, the
+ * same env-switch idiom the other temporary backend toggles use.
+ *
+ * @return true when the session should build its content sets from our stages.
+ */
+bool vineForwardShaderEnabled();
+
+/**
+ * @brief Builds the shader set a pass' scene content renders through.
+ *
+ * Ours (buildVineShaderSet) when vineForwardShaderEnabled() and the preset has
+ * Vine stages, otherwise the built-in set (buildShaderSet). One entry point, so
+ * every place that bakes a content set — the window's three depth-mode sets and
+ * each off-screen target's — switches together instead of one of them silently
+ * keeping the old shader.
+ *
+ * @param preset      Shading preset the engine asked for.
+ * @param extent      Target extent for the baked static viewport.
+ * @param depth_test  Enable depth test.
+ * @param depth_write Enable depth write.
+ * @param color_count Colour attachment count (0 for a depth-only pass).
+ * @return The set to render content with (never null for a valid preset).
+ */
+::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
+
+/**
  * @brief Builds the colour(+depth) render pass ONE pass records into.
  *
  * vsg::createRenderPass() leaves the colour attachment in PRESENT_SRC_KHR

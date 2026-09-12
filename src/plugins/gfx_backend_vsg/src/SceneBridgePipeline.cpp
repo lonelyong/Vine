@@ -471,6 +471,15 @@ namespace
         config->assignTexture("diffuseMap", ::vsg::ImageInfoList{ texture_info });
     }
 
+    // Per-view lights: only OUR forward set declares the binding, and only the slot
+    // holds the block. Both conditions have to hold — a set without the binding
+    // would put an unused descriptor in its layout, and a block without a set is
+    // the built-in path, where lights arrive through vsg's light nodes instead
+    // (documented in .ai/design/vsg-custom-shader.md §11).
+    if (lights_data_ != nullptr && shaderSet->getDescriptorBinding("vine_lights")) {
+        config->assignDescriptor("vine_lights", lights_data_);
+    }
+
     // Assemble the pipeline from the geometry's effective render state. The
     // mapped color blend keeps alpha blending enabled on every pipeline (the
     // per-vertex opacity alpha may drop below 1 at any time without a rebuild);

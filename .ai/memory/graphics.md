@@ -1,4 +1,11 @@
-﻿> 2026-09-13 **P0 第一步：自写前向 shader + ShaderSet（`vine_forward.*` + `buildVineShaderSet`）**：§4 的 ABI 草案在实现时撞上硬约束 ——
+﻿> 2026-09-13 **P0.2：自写前向着色接线（`VINE_VSG_FORWARD=1`）**：`makeContentShaderSet` 做唯一入口（窗口三档深度 + 每个离屏目标都走它），
+> 槽级 `ContentSlot::lights_data`（112B）+ `SceneBridge::setLightsData` 注入 + 每帧 `fillVineLightsBlock`+`dirty()`，`buildStateGroup` 里
+> “有块 **且** set 声明了 `vine_lights`”才挂描述符 ⇒ 内建/自定义 program 路径零影响（默认 47 行基线逐字节不变）。
+> **两个证据基线**：`vsg_selftest_evidence.sh [--forward]`；两者差异只有 **6 个着色数字**（46,8,3→34,6,2 等），覆盖数/深度/清屏/诊断计数全同
+> ⇒ “同一份几何、换了一套着色”。lavapipe 加 3d/4 阶段跑 forward 自检（0 VUID + 证据比自己的基线；帧数由证据脚本统一，否则 15 帧跑 vs 30 帧基线假红）。
+> mutation 两条：跳过每帧光块 ⇒ forward 基线红；开关默认改 true ⇒ 内建基线红。test_vsg 233 → **235**。
+
+> 2026-09-13 **P0 第一步：自写前向 shader + ShaderSet（`vine_forward.*` + `buildVineShaderSet`）**：§4 的 ABI 草案在实现时撞上硬约束 ——
 > Vulkan 只保证 **128 字节 push**，而 vsg 的矩阵栈已占满 0..128（全屏延迟路径能把 112 B 光块塞 push，正因它不需要矩阵）⇒ 前向的光必须走 **UBO**（set0/binding2，
 > `VineLightsBlock`）。因此每 drawable 的唯一数据仍是 vsg 自动推的 `modelView`，§4.4 的 dynamic UBO 不是前置条件。另两条查证：`assignArray` 的绑定号是
 > `base + arrays.size()`（按成功顺序，未声明就跳过并前移 ⇒ 声明顺序必须与数据节点的绑定顺序一致），而带 `define` 的绑定被赋值时会自动打开那个 define（= “喂了数据就开变体”）。

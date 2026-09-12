@@ -218,6 +218,26 @@ namespace
     return shader_set;
 }
 
+bool vineForwardShaderEnabled()
+{
+    // Read once: the answer is a session decision (it selects which sets get
+    // built at initialize), not something to re-check per frame.
+    static const bool enabled = std::getenv("VINE_VSG_FORWARD") != nullptr;
+    return enabled;
+}
+
+::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
+{
+    if (vineForwardShaderEnabled()) {
+        // A preset without Vine stages yields null here and falls through to the
+        // built-in mapping: switching the path must never leave a preset unshaded.
+        if (auto vine_set = buildVineShaderSet(preset, extent, depth_test, depth_write, color_count)) {
+            return vine_set;
+        }
+    }
+    return buildShaderSet(preset, extent, depth_test, depth_write, color_count);
+}
+
 VkFormat toColorFormat(vine::graphics::RenderTarget::ColorFormat f)
 {
     switch (f) {
