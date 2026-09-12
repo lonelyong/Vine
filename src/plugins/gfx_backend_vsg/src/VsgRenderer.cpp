@@ -1,7 +1,6 @@
-﻿#include "VsgRendererImpl.hpp"
+﻿#include <vine/vsg/VsgRenderer.hpp>
 
 #include "VsgUtils.hpp"
-#include "VsgRendererImpl.hpp"
 #include "VsgBackendUtility.hpp"
 #include "VsgPipelineFactory.hpp"
 

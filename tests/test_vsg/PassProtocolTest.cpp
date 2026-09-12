@@ -20,7 +20,7 @@
 
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include "VsgRendererImpl.hpp"
+#include <vine/vsg/VsgRenderer.hpp>
 
 #include <vector>
 

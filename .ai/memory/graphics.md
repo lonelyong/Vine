@@ -5,7 +5,7 @@
 > ⇒ 该头**不在任何部署边界上**，PImpl 的 ABI 理由落空，而"编译防火墙"本来就半破（公开头已 include
 > `<vsg/app/Viewer.h>`）。代价是真的：需要状态类型的 helper 不能声明在公开头 ⇒ "`Impl` 成员 vs 渲染器私有
 > 成员"那条规矩（§37/§36/§40b 都被它逼过）+ 204 处 `impl->` + §42 的实现理由写进"公开"头。**做法**：类定义
-> 并入 `src/VsgRendererImpl.hpp`（公开头删除），状态改**按值**成员，`Persistent`/`Impl` 的拆分**保留**（生命
+> 并入 `src/VsgRenderer.hpp`（公开头删除），状态改**按值**成员，`Persistent`/`Impl` 的拆分**保留**（生命
 > 周期语义：跨会话 vs 一个窗口会话），217 处 `impl->`→`impl.`、17 处 `persistent->`→`persistent.`、ctor
 > `= default`、`impl = Impl{};`。**暴露的真问题**：`unique_ptr::operator->` 在 const 方法里也返回非 const
 > 指针 ⇒ 去掉后 `detachedSlotCount() const` 等只读访问器立刻编译失败（它们原来在非 const 走槽表）；补 const
@@ -461,10 +461,10 @@
   变体/ShaderSet 超限整表清空、pass/target 槽靠 `releasePass`/`releaseRenderTarget`。
 
 > 2026-09-11 **后端模块拆分（结构，行为零变更）**：`VsgRenderer.cpp` 3603 -> 901 行，
-> 按职责拆成 `VsgRendererPasses/Targets/Overlay.cpp` + `VsgRendererImpl.hpp`（会话态）
+> 按职责拆成 `VsgRendererPasses/Targets/Overlay.cpp` + `VsgRenderer.hpp`（会话态）
 > + `VsgPipelineFactory.{hpp,cpp}`（纯工厂，`vine::vsg::detail`）+ `VsgBackendUtility.*`
 > （图手术/设备同步/策略）。置放规则：纯工厂只依赖显式参数、只返回失败原因；会话态改
-> `VsgRendererImpl.hpp`；跨 TU 自由函数进 `detail`（各 TU `using namespace detail;`）。
+> `VsgRenderer.hpp`；跨 TU 自由函数进 `detail`（各 TU `using namespace detail;`）。
 > 顺手修正漂移的文档注释与 `LightPushBlock` 的编译期断言位置。设计 §13。
 > 注意：`test_vsg` 与 `vsg_backend_selftest` 直接编译插件源码，加/删 .cpp 必须同步其
 > 源列表。

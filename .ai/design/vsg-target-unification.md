@@ -137,7 +137,7 @@ targets[ TargetKey ]                 // TargetKey：窗口=专用键；离屏=Re
 |---|---|
 | `src/viz/graphics/sdk/vine/graphics/RenderBackendFactory.hpp` | create 去参（纯虚 + doc） |
 | `src/viz/graphics/sdk/vine/graphics/RenderBackendRegistry.hpp/.cpp` | create(name) 去参 |
-| `src/plugins/gfx_backend_vsg/include/vine/vsg/VsgRenderer.hpp` | ctor 去参；Impl 去 scene/camera；槽/风格 API（**注：该头文件后于 §44 删除，类定义已并入 `src/VsgRendererImpl.hpp`**） |
+| `src/plugins/gfx_backend_vsg/include/vine/vsg/VsgRenderer.hpp` | ctor 去参；Impl 去 scene/camera；槽/风格 API（**注：该头一度于 §44 被删除、类定义并入内部头，又于 §45 以“整个类定义”的身份回到该路径**） |
 | `src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp` | 最大改动：Impl、initialize、render 路由、offscreen/screen、setupWindowLayer、release、frame()、访问器 |
 | `src/plugins/gfx_backend_vsg/include/vine/vsg/VsgRenderBackendFactory.hpp` + `.cpp` | create 无参 |
 | `src/fw/appfw/src/gui/RenderControl.cpp`（wireEvents） | factory->create() 无参 |

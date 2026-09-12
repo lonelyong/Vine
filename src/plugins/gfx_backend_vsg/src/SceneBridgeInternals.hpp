@@ -2,7 +2,7 @@
 
 // Internal header: the retained-state shapes SceneBridge's implementation units
 // share. Split out of SceneBridge.cpp together with the implementation units
-// themselves (geometry / pipeline / sync), the same way VsgRendererImpl.hpp is
+// themselves (geometry / pipeline / sync), the same way VsgRenderer.hpp is
 // shared by the renderer's units. Not installed.
 
 #include <cstdint>

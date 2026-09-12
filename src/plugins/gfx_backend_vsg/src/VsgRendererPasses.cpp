@@ -1,4 +1,4 @@
-#include "VsgRendererImpl.hpp"
+#include <vine/vsg/VsgRenderer.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -27,7 +27,6 @@
 #include <vine/vsg/VsgMaterialManager.hpp>
 
 #include "VsgUtils.hpp"
-#include "VsgRendererImpl.hpp"
 #include "VsgBackendUtility.hpp"
 #include "VsgPipelineFactory.hpp"
 

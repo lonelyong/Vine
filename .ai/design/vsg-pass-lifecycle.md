@@ -634,8 +634,7 @@ app 持有但不绘制”的对象如何处置留给各自策略（几何用 600
 
 | 文件 | 职责 | 行数 |
 | --- | --- | --- |
-| `src/VsgRendererImpl.hpp` | 类定义 + `Persistent` / `Impl`（会话态：窗口、viewer、命令图、目标表、槽、pass 请求）+ 私有 helper 声明 | 2091 |
-| ~~`include/vine/vsg/VsgRenderer.hpp`~~ | ~~类声明（公开契约 + 私有嵌套类型）~~ —— **§44 已删除**（并入 `src/VsgRendererImpl.hpp`） | — |
+| `include/vine/vsg/VsgRenderer.hpp` | 类定义 + `Persistent` / `Impl`（会话态：窗口、viewer、命令图、目标表、槽、pass 请求）+ 私有 helper 声明（§44 并入、§45 改名迁入此处） | 2095 |
 | `src/VsgRenderer.cpp` | 会话生命周期、帧泵、诊断路由、查询访问器 | 901 |
 | `src/VsgRendererPasses.cpp` | pass 协议（begin/end/releasePass、退役、重定向）+ 内容槽搭建/绘制 | 519 |
 | `src/VsgRendererTargets.cpp` | 离屏目标构建与顺序、目标/槽释放、视图按序摆放 | 680 |
@@ -648,7 +647,7 @@ app 持有但不绘制”的对象如何处置留给各自策略（几何用 600
 1. **"只依赖显式参数的纯工厂"进 `VsgPipelineFactory` 的 `detail` 命名空间**：它不读
    渲染器状态，所以能脱离"哪个 pass 问的"单独推理与复用；工厂只**返回失败原因**
    （enum / out-param），不自己上报（见 §10 的既有约定）。
-2. **会话态只放 `VsgRendererImpl.hpp`**：`Impl` 持有所有引用 `vsg::Window` /
+2. **会话态只放 `VsgRenderer.hpp`**：`Impl` 持有所有引用 `vsg::Window` /
    `vsg::Device` 的东西，`shutdown()/initialize()` 整块替换，因此不会漏释放；
    扩展会话态 = 改这一个头（各 TU 自动可见）。
 3. **新成员函数按职责进对应 TU**，不需要额外的声明（成员已在类里声明）；跨 TU 的
@@ -929,7 +928,7 @@ ShaderSet 组装、状态组搭建、变体哈希），彼此无共享，却共�
    里除 `VariantEntry` 外全是单用户），因此每个 TU 的 helper 都还能保持 `static`/匿名可见性，
    不升级成公开接口。
 2. **`Item` 留在同步 TU**（它是 `syncRenderCommands` 的保留态），只把两个 TU 都要看的
-   `VariantEntry` 提到 `SceneBridgeInternals.hpp` —— 与 §13 的 `VsgRendererImpl.hpp` 同一手法。
+   `VariantEntry` 提到 `SceneBridgeInternals.hpp` —— 与 §13 的 `VsgRenderer.hpp` 同一手法。
 
 **纯搬运**（可核对）：`git show HEAD:…/SceneBridge.cpp` 与新四个文件的**非空行多重集**只差
 include / 命名空间 / 新内部头前言；**没有一行代码被改写或丢失**。include 块按仓库顺序重建
@@ -1485,7 +1484,7 @@ RenderGraph），图像按目标共享"。已勘察的改动面与**必须同时
   `imageLayout-00344`），见 §30 的 D47 条。
 - **`Target::graph` / `render_pass` / `framebuffer` 等字段在 5 个 TU 中被直接引用 98 次**
   （`VsgRenderer.cpp` 22 / `VsgRendererTargets.cpp` 41 / `VsgRendererPasses.cpp` 17 /
-  `VsgRendererOverlay.cpp` 10 / `VsgRendererImpl.hpp` 8），迁移要按 TU 分批、每批 gate 绿。
+  `VsgRendererOverlay.cpp` 10 / `VsgRenderer.hpp` 8），迁移要按 TU 分批、每批 gate 绿。
 
 ## 29. 交班状态与下一步清单（2026-09-11 收工记录）
 
@@ -1882,7 +1881,7 @@ VUID 0 / FAIL 0 + 门禁 PASS。draw-count 断言拦住了"draw 被删"，而**�
 
 - `VsgRenderer` 的公开头只**前置声明** `struct Impl;`，所以内部 helper **不能**在公开头里写
   `Impl::Target&` 形参（会报 incomplete type）。结论：需要 `Target` 的 helper 一律做成
-  **`Impl` 的成员**（声明在 `VsgRendererImpl.hpp`、定义在对应 TU），或做成 `VsgRenderer` 的
+  **`Impl` 的成员**（声明在 `VsgRenderer.hpp`、定义在对应 TU），或做成 `VsgRenderer` 的
   私有方法且**形参不出现 `Impl` 类型**（如 `resolveDepthBorrow(RenderTarget&, u32, u32)`）。
   另外 `Impl` 内**声明位置**要晚于 `Target` 的定义（否则又是 incomplete type）。
 
@@ -2390,7 +2389,8 @@ viewer/命令图 → 首次编译"。
 重载、§40b 里 `PassPlan` 必须写 `const Target::PassObjects*`）；204 处 `impl->` 的间接；§42 的实现理由不得
 不写进"公开"头的私有区。
 
-**做法（一次性、机械）**：类定义并入 `src/VsgRendererImpl.hpp`（公开头删除），状态改为**按值**成员 ——
+**做法（一次性、机械）**：类定义并入内部头（当时叫 `src/VsgRendererImpl.hpp`；§45 已改名为
+`include/vine/vsg/VsgRenderer.hpp`），公开头删除，状态改为**按值**成员 ——
 `Persistent` 与 `Impl` **保留拆分**（这是生命周期语义：前者跨会话，后者是一个窗口会话、`shutdown()` 整体
 替换），只是不再经过指针。改写：217 处 `impl->` → `impl.`、17 处 `persistent->` → `persistent.`、构造改
 `= default`、会话重置 `impl = std::make_unique<Impl>()` → `impl = Impl{};`、8 个 include 点改指内部头。
@@ -2407,6 +2407,47 @@ viewer/命令图 → 首次编译"。
 
 **验收**：`[selftest]` 45 行逐字节相同、VUID 0 / FAIL 0、`test_vsg` 100 / `test_graphics` 158、门禁 PASS、
 `check_diagnostic_formats.py` 0 命中。改动 11 个文件 +2171/−2183（两个头文件合成一个，访问点全改）。
+
+## 45. 头文件的命名与位置：`VsgRenderer.hpp` 移入 `include/`（2026-09-12）
+
+**问题**（用户提出）：`VsgRendererImpl` 改名为 `VsgRenderer` 或 `VsgRenderBackend`、并移到 `include/` 下是否合理？
+
+**先取事实**
+
+- `v_add_plugin()`（`cmake/VinePluginHelper.cmake`）把 **`include/` 设为 PUBLIC** 包含目录、**`src/` 设为
+  PRIVATE**；两处的 `*.hpp` 都只是被 glob 进源码列表。
+- **没有任何 `install(FILES|DIRECTORY)` 安装插件头** ⇒ `include/` 不是"打包出去给消费者"的面，只是"本构建里
+  对本插件可见的面"。
+- 真正会 include 这个头的非插件-TU 有**两个**：`vsg_selftest/main.cpp`（独立可执行文件，直接编译插件的
+  `src/*.cpp`）与 `tests/test_vsg/PassProtocolTest.cpp`。今天它们能包含 `src/` 下的头，只是因为各自的 CMake
+  手工把 `src/` 加进了包含路径。
+- 插件其它"实现接头但测试要看得见"的头（`SceneBridge.hpp` / `RenderStateMapper.hpp` /
+  `VsgMaterialManager.hpp` / `CameraBridge.hpp`）**本来就在 `include/vine/vsg/`**。
+
+**判断**
+
+1. **改名成 `VsgRenderer.hpp`：合理。** 去掉 PImpl 后这个文件**就是**类定义，而 `Impl` 这个名字现在在撒谎
+   （暗示一个已经不存在的实现细节拆分）。仓库的命名约定是"文件名 = 里面声明的类型"（`SceneBridge.hpp` /
+   `CameraBridge.hpp` / `VsgMaterialManager.hpp` 都如此）。
+2. **改名成 `VsgRenderBackend.hpp`：不合理。** 它（a）与被声明的类 `VsgRenderer` 对不上；（b）会紧挨着
+   `VsgRenderBackendFactory.hpp`（创建这个对象的工厂）而立，语义上还和 SDK 的
+   `vine::graphics::RenderBackend`（真正的接口）撞概念；（c）要配套改类名，牵动 ~200 处 `VsgRenderer::` 与
+   全部文档，而语义收益为零。要改类名是另一个决定、另一份 diff。
+3. **移入 `include/`：合理，而且正好把一处"手工绕过"清掉。** `src/` 是 PRIVATE，而两个非本 target 的消费者
+   却要包含这个头 —— 今天靠测试 CMake 手工加路径；`include/` 本来就是构建里对本插件可见的面，且插件其它
+   "实现接头"已在其中。没有安装规则 ⇒ 放进去不等于"对外发布"。
+
+**附带清掉的真问题**：§44 的合并脚本把公开头的 `<vine/vsg/VsgRenderer.hpp>` 改成 `"VsgRendererImpl.hpp"`
+时，**四个渲染器 TU 里本来就有一行**同样的 include ⇒ 每个 TU 都**重复包含**了同一个头（`pragma once` 让它
+无害，但属于工具化改造留下的噪音）。这次一并去重。
+
+**做法**：`git mv src/VsgRendererImpl.hpp include/vine/vsg/VsgRenderer.hpp`；8 个 include 点改为
+`<vine/vsg/VsgRenderer.hpp>`（跨目录用尖括号，符合本仓库的 include 顺序约定）；去掉 4 处重复 include；文档里
+的路径引用全部跟进（设计文档 7 处 / 图形记忆 3 处 / 插件内数据流文档 2 处）。
+
+**验收**：零警告构建、`[selftest]` 45 行逐字节相同、VUID 0 / FAIL 0、`test_vsg` 100 / `test_graphics` 158、
+门禁 PASS、`check_diagnostic_formats.py` 0 命中。
+
 
 
 
