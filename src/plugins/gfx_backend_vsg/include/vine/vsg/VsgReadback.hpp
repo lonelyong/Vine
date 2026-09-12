@@ -33,19 +33,53 @@ V_VSG_NS_BEGIN
 namespace detail
 {
 
+/** @brief Why a readback prologue refused: the reason its caller reports.
+ *
+ * The prologue answers "null" for all of these, and the entry points used to turn that into a
+ * bare false — while this header and the interface both promise that a refused readback says
+ * why on the diagnostics route, so a host can tell a state a later call can succeed in from
+ * one this backend will never serve.
+ */
+enum class ReadbackRefusal
+{
+    None,        ///< Nothing refused: the entry is readable.
+    NoTarget,    ///< The caller passed no target (a caller error, not a backend limitation).
+    NoSession,   ///< No window / viewer: this session has rendered nothing at all.
+    NotRendered, ///< The target is unknown here: never rendered into, or already released.
+    NotBuilt,    ///< The target is known but its attachments were never built.
+    Empty,       ///< The target is built but has no usable size.
+    NoDevice,    ///< The session has no usable device / image to copy from.
+};
+
+/** @brief The message for one readback refusal, in that refusal's own words.
+ *
+ * One branch per refusal, each with its own format string: a shared format string whose
+ * arguments are ordered for a single branch is how a message ends up printing the wrong
+ * number (§54's lesson). The target's name is included when there is one.
+ *
+ * @param refusal Why the readback refused (None yields an empty message).
+ * @param what    Entry point that refused ("readColorBuffer" / "readDepthBuffer").
+ * @param target  Target the caller asked for (may be null).
+ * @return The message to report.
+ */
+[[nodiscard]] vine::String readbackRefusalMessage(ReadbackRefusal refusal, const char* what,
+                                                  const vine::graphics::RenderTarget* target);
+
 /** @brief The built target entry a readback reads from, or null.
  *
- * The shared prologue of readColorBuffer / readDepthBuffer: the window session
- * and viewer must exist, the target must have been built (its attachments exist)
- * and have a usable size. It deliberately does NOT stop the device: both callers
- * check the format (and report why) before paying for the wait.
+ * The shared prologue of readColorBuffer / readDepthBuffer: the session must be initialized
+ * (the authoritative "a window / device exists" state), the target must have been built (its
+ * attachments exist) and have a usable size. It deliberately does NOT stop the device: both
+ * callers check the format (and report why) before paying for the wait.
  *
- * @param state  Session the readback runs against.
- * @param target Target to read from (null = unsupported).
- * @return The entry, or null when this readback is unsupported.
+ * @param state   Session the readback runs against.
+ * @param target  Target to read from.
+ * @param refusal Receives why this prologue refused (None when it returns the entry).
+ * @return The entry, or null when this readback cannot be served.
  */
 [[nodiscard]] const VsgRenderTargetEntry* readbackTarget(const VsgRendererState& state,
-                                                        vine::graphics::RenderTarget* target);
+                                                        vine::graphics::RenderTarget* target,
+                                                        ReadbackRefusal& refusal);
 
 /** @brief Records @p commands into a fresh command buffer and waits for it.
  *

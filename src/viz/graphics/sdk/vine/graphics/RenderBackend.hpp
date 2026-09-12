@@ -377,6 +377,14 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * caller. The default no-op lets backends without off-screen targets
      * ignore the call.
      *
+     * The call also announces that the caller may destroy @p target now, so a
+     * backend that queued it (a direct driver's setRenderTarget announcement,
+     * which survives frames — see beginPass) must DROP that announcement rather
+     * than keep the pointer. A call that would still have used it cannot be
+     * honoured: it must be skipped and reported (with the reason) instead of
+     * being silently redirected to the default framebuffer, which would draw
+     * the content where the caller never asked for it.
+     *
      * @param target The render target being removed, or nullptr.
      */
     virtual void releaseRenderTarget(vine::graphics::RenderTarget* target)
@@ -448,13 +456,18 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      */
     virtual void render(const std::vector<RenderCommand>& commands, const Camera* camera) = 0;
 
-    /** @brief Sets the light sources for the upcoming render() pass.
+    /** @brief Sets the light sources for the NEXT drawing call of this pass scope.
      *
      * Called by RenderPass::execute() from the pass's content scene before
      * render(), so every pass lights whatever scene it renders. Backends that
      * support scene lights replace any view-level default light (e.g. a
      * headlight) with the given lights; an empty list restores the backend
      * default. Lights are borrowed for the duration of the call.
+     *
+     * ONE announcement serves ONE drawing call: a pass that draws more than once in one scope (a
+     * custom pass placing several pictures-in-picture, say) announces again before each draw, and a
+     * draw with no fresh announcement uses the backend default (for lights) / the whole surface (for
+     * the viewport). beginPass() resets both.
      *
      * @param lights Lights of the content scene, or empty for the backend
      *               default.
@@ -560,10 +573,18 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         (void)native_handle;
     }
 
-    /** @brief Handles a change of the rendering surface size.
+    /** @brief Announces a change of the rendering surface size.
      *
-     * @param width  New surface width in pixels.
-     * @param height New surface height in pixels.
+     * The surface itself owns its size, so the authority order is surface > announcement > default:
+     * a backend whose surface belongs to a window system (an embedded host window, a swapchain)
+     * FOLLOWS THAT SURFACE and uses this call to re-derive what hangs off the size, whereas a
+     * backend that owns its surface (headless, or it created the window itself) applies the
+     * announcement. Either way the announced numbers are what the engine keeps in its frame context
+     * for the passes that lay themselves out on the surface size (see RenderEngine::resize), so the
+     * two sides never disagree about it.
+     *
+     * @param width  Announced surface width in pixels.
+     * @param height Announced surface height in pixels.
      */
     virtual void resize(int width, int height)
     {
@@ -571,13 +592,18 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         (void)height;
     }
 
-    /** @brief Restricts subsequent drawing to a sub-rectangle of the surface.
+    /** @brief Restricts the NEXT drawing call of this pass scope to a sub-rectangle of the surface.
      *
      * Called by RenderPass::execute() before drawing a pass that owns a
      * sub-viewport (e.g. an axis gizmo in a screen corner). Backends should
      * combine the viewport and scissor to that rectangle. The default no-op
      * keeps drawing to the full surface, which is correct for backends that
      * do not support sub-viewports yet.
+     *
+     * ONE announcement serves ONE drawing call (see setLights): the base RenderPass announces its
+     * declared viewport once and draws once, while a pass that draws several times announces the
+     * viewport of each draw — which is what lets one scope place several pictures-in-picture.
+     * beginPass() resets the announcement.
      *
      * @param x      Viewport origin x in device pixels.
      * @param y      Viewport origin y in device pixels (top-left origin).

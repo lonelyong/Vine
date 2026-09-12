@@ -16,6 +16,7 @@
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderEngine.hpp>
+#include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ScreenPass.hpp>
@@ -1365,6 +1366,15 @@ class MockBackend : public RenderBackend {
     void shutdown() override { ok = false; }
     void beginFrame() override { ++begin_calls; }
     void endFrame() override { ++end_calls; }
+    void resize(int width, int height) override
+    {
+        ++resize_calls;
+        last_surface_width  = width;
+        last_surface_height = height;
+    }
+    int resize_calls         = 0;
+    int last_surface_width   = 0;
+    int last_surface_height  = 0;
     void setRenderTarget(RenderTarget* target) override
     {
         target_history.push_back(target);
@@ -4226,4 +4236,1671 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
+}
+
+/**
+ * @brief Two producers under ONE output name are reported, not silently last-wins.
+ *
+ * The named-output registry is a flat map keyed by the output name, so a second producer under a
+ * name a consumer already resolves simply overwrites the first: the consumer samples a target the
+ * caller never wired it to — and each pass on its own is perfectly valid, so nothing else can see
+ * it. Reported once per episode, like the unresolved-input case next to it.
+ */
+TEST(RenderEngineTest, TwoProducersUnderOneOutputNameAreReportedOnce)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    const auto make_producer = [&camera](const vine::String& name, RenderTargetPtr target) {
+        auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+        pass->setName(name);
+        pass->setCamera(camera.get());
+        pass->setRenderTarget(std::move(target));
+        pass->setOutputName(u8"shared");
+        return pass;
+    };
+    auto first  = make_producer(u8"first", RenderTargetPtr(new RenderTarget()));
+    auto second = make_producer(u8"second", RenderTargetPtr(new RenderTarget()));
+    engine->addPass(first, -2);
+    engine->addPass(second, -1);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"shared"), vine::String::npos);
+
+    // The same collision next frame is the SAME episode: not one message per frame.
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // One producer leaves: the name is wired again, so the report re-arms...
+    engine->removePass(second.get());
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // ...and the collision coming back is reported again.
+    engine->addPass(second, -1);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(received.size(), 2u);
+}
+
+/**
+ * @brief An output name the engine cannot publish is reported, not dropped silently.
+ *
+ * The named-output registry maps a name to a SAMPLEABLE target, so a pass that publishes while it
+ * renders into the window (no render target) asks for something the engine cannot do. Dropping it
+ * silently leaves the mistake pointing at the wrong place: a consumer of that name finds nothing
+ * and is told "nothing produced it this frame", which accuses the consumer of a wiring bug the
+ * PRODUCER made. Reported once per episode, like every other wiring problem.
+ */
+TEST(RenderEngineTest, PublishingANameWithoutARenderTargetIsReported)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    auto presenter = intrusive_ptr<RenderPass>(new RenderPass());
+    presenter->setName(u8"presenter");
+    presenter->setCamera(camera.get());
+    presenter->setOutputName(u8"SceneColor");   // renders into the window: nothing to publish
+    engine->addPass(presenter, 0);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"presenter"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"SceneColor"), vine::String::npos);
+
+    // The same problem next frame is the same episode: one message, not one per frame.
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // Giving the pass a target makes the publication possible, which ends the episode...
+    presenter->setRenderTarget(RenderTargetPtr(new RenderTarget()));
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    // ...so taking it away again is a NEW episode, reported again.
+    presenter->setRenderTarget(nullptr);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(received.size(), 2u);
+}
+
+/**
+ * @brief A host that publishes a name without a target is told, not ignored.
+ *
+ * The host-facing half of the same rule: publish() exists so an application can hand a target to
+ * by-name consumers, and a null target means there is nothing to hand out. Ignoring it silently
+ * leaves the host believing the name is served.
+ */
+TEST(RenderEngineTest, PublishingANullTargetIsReported)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    engine->publish(u8"External", RenderTargetPtr(nullptr));
+
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"External"), vine::String::npos);
+    EXPECT_EQ(engine->resolve(u8"External"), nullptr);
+
+    // The same call again is the same episode; a real target ends it, so the next failed publish
+    // is a new episode.
+    engine->publish(u8"External", RenderTargetPtr(nullptr));
+    EXPECT_EQ(received.size(), 1u);
+    engine->publish(u8"External", RenderTargetPtr(new RenderTarget()));
+    engine->publish(u8"External", RenderTargetPtr(nullptr));
+    EXPECT_EQ(received.size(), 2u);
+}
+
+/**
+ * @brief One wire, one message: the name and the object declarations report different mistakes.
+ *
+ * A pass may declare its output by name, as an image, as a whole target — or several of them. Two
+ * such passes can go wrong in two independent ways, and each is reported by exactly one check:
+ *   * they claim the SAME target (both write it, both promise it) -> the wiring check reports the
+ *     claim, and the name map sees one name for ONE target, which is not a collision at all;
+ *   * they publish the SAME name for DIFFERENT targets -> the name map reports it, and the wiring
+ *     check sees two targets claimed by one pass each, which is legal wiring.
+ * Pinned here so the three declarations cannot start reporting one mistake twice.
+ */
+TEST(RenderEngineTest, OneWireIsReportedByOneCheckWhetherDeclaredByNameOrObject)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    const auto make_pass = [&camera](const vine::String& name, RenderTargetPtr target, RenderTargetPtr promise) {
+        auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+        pass->setName(name);
+        pass->setCamera(camera.get());
+        pass->setRenderTarget(std::move(target));
+        pass->setOutputName(u8"shared");
+        if (promise != nullptr) {
+            pass->setOutputTarget(std::move(promise));
+        }
+        return pass;
+    };
+
+    // Two producers writing ONE target and publishing one name: the claim is the mistake (the name
+    // map sees a single target under the name), so the object check reports it — once. The target
+    // needs an attachment: a promise is validated per IMAGE, and a target with none has no image to
+    // claim.
+    auto shared_target = RenderTargetPtr(new RenderTarget());
+    shared_target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    auto first         = make_pass(u8"first", shared_target, shared_target);
+    auto second        = make_pass(u8"second", shared_target, shared_target);
+    engine->addPass(first, -2);
+    engine->addPass(second, -1);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_NE(received[0].message.find(u8"claim"), vine::String::npos);
+    engine->removePass(first.get());
+    engine->removePass(second.get());
+
+    // Two producers writing DIFFERENT targets under one name: the name map reports it — once — and
+    // the claims are legal wiring (one pass each).
+    received.clear();
+    auto third_target = RenderTargetPtr(new RenderTarget());
+    third_target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    auto fourth_target = RenderTargetPtr(new RenderTarget());
+    fourth_target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    auto third  = make_pass(u8"third", third_target, nullptr);
+    auto fourth = make_pass(u8"fourth", fourth_target, nullptr);
+    engine->addPass(third, -2);
+    engine->addPass(fourth, -1);
+    engine->frame(0.016);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_NE(received[0].message.find(u8"shared"), vine::String::npos);
+}
+
+/**
+ * @brief Publishing the SAME target under one name from two passes is not a collision.
+ *
+ * AppShellUi registers two passes that publish one shared target under one name; a consumer
+ * resolves the same image either way, so reporting that would be noise.
+ */
+TEST(ImageRefTest, LabelKindAndBindingRoundTrip)
+{
+    // An ImageRef identifies one image: a label for diagnostics, a kind, and the image it currently
+    // is. Unbound is the initial state (a producer that has not run yet), not an error.
+    auto color = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.color"));
+    EXPECT_EQ(color->label(), u8"GBuffer.color");
+    EXPECT_EQ(color->kind(), ImageRef::Kind::Color);
+    EXPECT_FALSE(color->bound());
+    EXPECT_EQ(color->target(), nullptr);
+    EXPECT_EQ(color->attachment(), 0);
+
+    auto depth = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.depth", ImageRef::Kind::Depth));
+    EXPECT_EQ(depth->kind(), ImageRef::Kind::Depth);
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(320, 180);
+    color->bind(target, 2);
+    EXPECT_TRUE(color->bound());
+    EXPECT_EQ(color->target(), target.get());
+    EXPECT_EQ(color->attachment(), 2);
+
+    // Unbinding is how "the image is gone" is expressed, so a consumer can
+    // never be handed a stale one.
+    color->unbind();
+    EXPECT_FALSE(color->bound());
+    EXPECT_EQ(color->target(), nullptr);
+    EXPECT_EQ(color->attachment(), 0);
+}
+
+/**
+ * @brief A bound image keeps its target alive: the hand-off describes itself.
+ *
+ * The host owns the target, but an image that merely referenced it would leave a consumer holding a
+ * dangling image the moment its owner dropped the target, and the wiring mistake would only surface
+ * later as a crash or a blank frame. The strong reference here is what makes "image->target()" safe
+ * to read at any time.
+ */
+TEST(ImageRefTest, HoldsItsTargetAlive)
+{
+    auto image = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.color"));
+    {
+        auto target = RenderTargetPtr(new RenderTarget());
+        target->setSize(64, 32);
+        image->bind(target, 1);
+    }
+    // The owner is gone; the image is still bound.
+    ASSERT_TRUE(image->bound());
+    ASSERT_NE(image->target(), nullptr);
+    EXPECT_EQ(image->target()->width(), 64);
+    EXPECT_EQ(image->target()->height(), 32);
+    EXPECT_EQ(image->attachment(), 1);
+}
+
+TEST(RenderPassTest, ObjectTypedOutputAndInputImages)
+{
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    EXPECT_EQ(pass->output(), nullptr);
+    EXPECT_TRUE(pass->inputs().empty());
+
+    auto color = intrusive_ptr<ImageRef>(new ImageRef(u8"SceneColor"));
+    auto depth = intrusive_ptr<ImageRef>(new ImageRef(u8"SceneDepth", ImageRef::Kind::Depth));
+
+    pass->setOutput(color);
+    EXPECT_EQ(pass->output(), color.get());
+
+    // Inputs keep declaration order: ScreenPass samples the first one that
+    // resolved, so the order a caller writes them in is the priority.
+    pass->addInput(color);
+    pass->addInput(depth);
+    ASSERT_EQ(pass->inputs().size(), 2u);
+    EXPECT_EQ(pass->inputs()[0].get(), color.get());
+    EXPECT_EQ(pass->inputs()[1].get(), depth.get());
+
+    // The object-typed API is a separate axis from the name API: neither
+    // clears the other (a pass mid-migration can declare both).
+    pass->setOutputName(u8"SceneColor");
+    EXPECT_EQ(pass->output(), color.get());
+    EXPECT_EQ(pass->outputName(), u8"SceneColor");
+
+    pass->clearInputs();
+    EXPECT_TRUE(pass->inputs().empty());
+    EXPECT_TRUE(pass->output() != nullptr);
+
+    pass->setOutput(intrusive_ptr<ImageRef>());
+    EXPECT_EQ(pass->output(), nullptr);
+}
+
+/**
+ * @brief One image declared as the output of TWO passes is reported, once per episode.
+ *
+ * This is the object-typed twin of the two-producers-under-one-name case: both passes write the
+ * SAME addressable image, so whichever runs last silently overwrites what the other promised and a
+ * consumer got an image nobody wired it to. Each pass on its own is valid, so nothing else can see
+ * it — and because the image is where the hand-off lives, it is visible from the declarations alone
+ * (design §14.4), not only at run time.
+ */
+TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto image  = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.color"));
+
+    // No output NAMES are declared, so the name registry stays silent: the single message can only
+    // come from the image declarations (the two rules must not double-report one mistake).
+    const auto make_producer = [&camera, &image](const vine::String& name, RenderTargetPtr target) {
+        auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+        pass->setName(name);
+        pass->setCamera(camera.get());
+        pass->setRenderTarget(std::move(target));
+        pass->setOutput(image);
+        return pass;
+    };
+    auto first  = make_producer(u8"first", RenderTargetPtr(new RenderTarget()));
+    auto second = make_producer(u8"second", RenderTargetPtr(new RenderTarget()));
+    engine->addPass(first, -2);
+    engine->addPass(second, -1);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"GBuffer.color"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"first"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"second"), vine::String::npos);
+
+    // The same collision next frame is the SAME episode: not one message per frame.
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // One producer leaves: the image has a single writer again, so nothing to report...
+    engine->removePass(second.get());
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // ...and the collision coming back is reported again (the episode re-arms).
+    engine->addPass(second, -1);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(received.size(), 2u);
+
+    // Two passes declaring the SAME object are one role, not a collision: only a second, DIFFERENT
+    // pass on the image is. The same pass cannot collide with itself.
+    engine->removePass(first.get());
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+}
+
+/**
+ * @brief Two DIFFERENT ImageRefs that turn out to be one image are a collision too.
+ *
+ * The identity of an image is its ADDRESS (target + attachment), not the object the host happened
+ * to declare it with: a pipeline assembled from two references to the same attachment has two
+ * producers for one image, and whoever runs last silently wins — exactly the case the name-based
+ * check used to catch and the object-based one could not. The message names both declarations, so a
+ * reader can see WHY they are the same image.
+ */
+TEST(RenderEngineTest, TwoImageRefsOfOneAttachmentAreReportedOnce)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    // Two independent declarations of the SAME attachment (nothing shares the object).
+    auto declared_by_first  = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.albedo"));
+    auto declared_by_second = intrusive_ptr<ImageRef>(new ImageRef(u8"albedo_copy"));
+    declared_by_first->bind(target, 0);
+    declared_by_second->bind(target, 0);
+
+    const auto make_producer = [&camera, &target](const vine::String& name, intrusive_ptr<ImageRef> image) {
+        auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+        pass->setName(name);
+        pass->setCamera(camera.get());
+        pass->setRenderTarget(target);
+        pass->setOutput(std::move(image));
+        return pass;
+    };
+    auto first  = make_producer(u8"first", declared_by_first);
+    auto second = make_producer(u8"second", declared_by_second);
+    engine->addPass(first, -2);
+    engine->addPass(second, -1);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    // Both declarations are named: the point of the report is that they are one image.
+    EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"albedo_copy"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"first"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"second"), vine::String::npos);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // One producer leaves: the image has a single writer again, so the episode re-arms...
+    engine->removePass(second.get());
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // ...and the collision coming back is reported again.
+    engine->addPass(second, -1);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(received.size(), 2u);
+}
+
+/**
+ * @brief Two images of ONE target with different attachments are not a collision.
+ *
+ * A pass binds ALL of its target's attachments, so several passes may write one target with
+ * different declared images — an MRT pass hands out several images at once, and the deferred
+ * pipeline renders two passes into `composite` (light and transparent). Keying the check on the
+ * target alone would report that legitimate pipeline.
+ */
+TEST(RenderEngineTest, TwoImagesOfOneTargetWithDifferentAttachmentsAreNotACollision)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachColor(RenderTarget::ColorFormat::RGBA16F);
+
+    auto albedo = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.albedo"));
+    auto normal = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.normal"));
+    albedo->bind(target, 0);
+    normal->bind(target, 1);
+
+    const auto make_pass = [&camera, &target](const vine::String& name, intrusive_ptr<ImageRef> image) {
+        auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+        pass->setName(name);
+        pass->setCamera(camera.get());
+        pass->setRenderTarget(target);
+        pass->setOutput(std::move(image));
+        return pass;
+    };
+    engine->addPass(make_pass(u8"gbuffer", albedo), -2);
+    engine->addPass(make_pass(u8"light", normal), -1);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_TRUE(received.empty());
+}
+
+/**
+ * @brief Two DIFFERENT unbound images declared as outputs are not one collision.
+ *
+ * An unbound image has no address, so the declared object is the only identity that exists — and two
+ * distinct objects are two distinct images as far as anyone can tell: nothing claims one image
+ * twice. Each of them IS reported for being unbound (an unbound declaration cannot be delivered, and
+ * the promise cannot be checked — see AnUnboundDeclaredImageIsReportedAtWiringTime); what is pinned
+ * here is that the two are not treated as ONE image, which a collapsed identity would make them.
+ * The same object declared twice IS a collision (see
+ * ImageDeclaredAsOutputByTwoPassesIsReportedOnce).
+ */
+TEST(RenderEngineTest, TwoDistinctUnboundImagesAreNotACollision)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    const auto make_pass = [&camera](const vine::String& name, intrusive_ptr<ImageRef> image) {
+        auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+        pass->setName(name);
+        pass->setCamera(camera.get());
+        pass->setRenderTarget(RenderTargetPtr(new RenderTarget()));
+        pass->setOutput(std::move(image));
+        return pass;
+    };
+    engine->addPass(make_pass(u8"first", intrusive_ptr<ImageRef>(new ImageRef(u8"not_bound_yet"))), -2);
+    engine->addPass(make_pass(u8"second", intrusive_ptr<ImageRef>(new ImageRef(u8"also_not_bound"))), -1);
+
+    engine->frame(0.016);
+
+    // One report per unbound image, neither of them about claiming an image: a collapsed identity
+    // ("any unbound image") would make the two collide and say so instead.
+    ASSERT_EQ(received.size(), 2u);
+    for (const auto& diagnostic : received) {
+        EXPECT_EQ(diagnostic.category, DiagnosticCategory::ContentSkipped);
+        EXPECT_NE(diagnostic.message.stdstr().find("not bound to a target"), std::string::npos);
+        EXPECT_EQ(diagnostic.message.stdstr().find("claim"), std::string::npos);
+    }
+    // The two messages are about their own image (each names its own label).
+    EXPECT_NE(received[0].message.stdstr(), received[1].message.stdstr());
+}
+
+/**
+ * @brief A declared input image NOBODY produces is reported, once per episode.
+ *
+ * The wiring is the engine's job: it can see that no pass declares the image, so the consumer can
+ * never be filled — and each pass on its own is perfectly valid, so nothing else can. This is the
+ * structural half of D37 brought forward to wiring time (design §14.4): the name-based counterpart
+ * of the same fact can only be judged once a frame has run, because a name resolves per frame.
+ */
+TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto source = RenderTargetPtr(new RenderTarget());
+    source->setName(u8"gbuffer");
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    auto image = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.albedo"));
+    image->bind(source, 0);
+
+    auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
+    consumer->setName(u8"light");
+    consumer->setCamera(camera.get());
+    consumer->addInput(image);
+    engine->addPass(consumer, 0);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"light"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vine::String::npos);
+
+    // Still nobody: reported once, not once per frame.
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // A producer appears BEFORE the consumer, drawing into the very target it promises: the wire is
+    // whole, so nothing more to say.
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"gbuffer");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(source);
+    producer->setOutput(image);
+    engine->addPass(producer, -1);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // The producer leaves again: the same problem, so it is reported again.
+    engine->removePass(producer.get());
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(received.size(), 2u);
+}
+
+/**
+ * @brief A producer registered AFTER its consumer is reported: the image is a frame behind.
+ *
+ * The pass will draw from an image that is filled later in the same frame, so it samples what was
+ * there last time (or nothing). Only the engine can see the registration order of a declaration
+ * pair, and the fix (register the producer first, or lower its order) is not something a reader of
+ * either pass can infer.
+ */
+TEST(RenderEngineTest, InputImageProducedByALaterPassIsReported)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto source = RenderTargetPtr(new RenderTarget());
+    source->setName(u8"gbuffer");
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    auto image = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.albedo"));
+    image->bind(source, 0);
+
+    auto consumer           = intrusive_ptr<ScreenPass>(new ScreenPass());
+    consumer->setName(u8"light");
+    consumer->setCamera(camera.get());
+    consumer->addInput(image);
+    engine->addPass(consumer, 0);
+
+    // Registered AFTER the consumer (higher order), drawing into the target it promises.
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"gbuffer");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(source);
+    producer->setOutput(image);
+    engine->addPass(producer, 5);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"light"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"gbuffer"), vine::String::npos);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // The producer moves before the consumer: fixed, and nothing more to say.
+    engine->removePass(producer.get());
+    engine->addPass(producer, -1);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // It moves back: the same problem, reported again.
+    engine->removePass(producer.get());
+    engine->addPass(producer, 5);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(received.size(), 2u);
+}
+
+/**
+ * @brief A pass that reads the target it draws into is left to the backend, not reported twice.
+ *
+ * Reading what you are writing is the feedback pattern: whether the actual draw call is a feedback
+ * loop depends on the layouts the backend manages, and it rejects source == destination with its own
+ * report. The engine's two layers (wiring and frame) stay quiet about it, so one mistake is stated
+ * once — by the layer that can judge it.
+ */
+TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setName(u8"frame");
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    auto image = intrusive_ptr<ImageRef>(new ImageRef(u8"frame"));
+    image->bind(target, 0);
+
+    auto pass = intrusive_ptr<ScreenPass>(new ScreenPass());
+    pass->setName(u8"overlay");
+    pass->setCamera(camera.get());
+    pass->setRenderTarget(target);   // it draws into the very target it reads
+    pass->setOutput(image);
+    pass->addInput(image);
+    engine->addPass(pass, 0);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_TRUE(received.empty());
+}
+
+/**
+ * @brief A surface size announced BEFORE initialize reaches the backend once it can honour it.
+ *
+ * A host knows its surface size before it has a backend to tell (it sizes its widget first), and the
+ * engine used to drop that announcement: the backend was only ever told about resizes that happened
+ * after initialization, so the first frames ran at the backend's default size. The engine now keeps
+ * the announcement in its frame context (which the passes lay themselves out on) and hands it over
+ * as soon as initialization succeeded.
+ */
+TEST(RenderEngineTest, SurfaceSizeAnnouncedBeforeInitializeReachesTheBackend)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+
+    // Announced first: the backend does not exist yet as far as the size is concerned.
+    engine->resize(800, 600);
+    EXPECT_EQ(backend->resize_calls, 0);
+    EXPECT_EQ(engine->frameContext().surface_width, 800);
+    EXPECT_EQ(engine->frameContext().surface_height, 600);
+
+    ASSERT_TRUE(engine->initialize());
+    EXPECT_EQ(backend->resize_calls, 1);
+    EXPECT_EQ(backend->last_surface_width, 800);
+    EXPECT_EQ(backend->last_surface_height, 600);
+
+    // A later resize is forwarded directly (one call per announcement, not two).
+    engine->resize(1024, 768);
+    EXPECT_EQ(backend->resize_calls, 2);
+    EXPECT_EQ(backend->last_surface_width, 1024);
+    EXPECT_EQ(backend->last_surface_height, 768);
+}
+
+/**
+ * @brief A size announced before initialize is not invented when nobody ever announced one.
+ *
+ * The engine starts at 0x0 (no announcement), and handing a 0-sized surface to the backend would be
+ * worse than saying nothing: the backend keeps whatever default its surface has.
+ */
+TEST(RenderEngineTest, NoSurfaceSizeAnnouncementIsNotForwarded)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+
+    ASSERT_TRUE(engine->initialize());
+    EXPECT_EQ(backend->resize_calls, 0);
+
+    // A non-positive announcement is ignored (the engine does not record it either).
+    engine->resize(0, 0);
+    EXPECT_EQ(backend->resize_calls, 0);
+    EXPECT_EQ(engine->frameContext().surface_width, 0);
+}
+
+/**
+ * @brief A whole-target promise answers a fine (one attachment) read of that target.
+ *
+ * The two declaration layers meet at the identity: an MRT producer promises the target (one line,
+ * shape-agnostic — a pass filling a target writes ALL its attachments in one render scope), and a PiP
+ * that samples attachment 3 of it declares exactly that one image. Neither side has to know how many
+ * attachments the other wrote.
+ */
+TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto gbuffer = RenderTargetPtr(new RenderTarget());
+    gbuffer->setName(u8"gbuffer");
+    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F);
+    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F);
+
+    // Producer: fills the target and promises the whole of it.
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"gbuffer_pass");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(gbuffer);
+    producer->setOutputTarget(gbuffer);
+    engine->addPass(producer, -3);
+
+    // Consumer: the one image it samples (attachment 2), declared at its own grain.
+    auto sampled = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.position"));
+    sampled->bind(gbuffer, 2);
+    auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
+    consumer->setName(u8"preview");
+    consumer->setCamera(camera.get());
+    consumer->addInput(sampled);
+    engine->addPass(consumer, 10);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_TRUE(received.empty());
+}
+
+/**
+ * @brief Reading a whole target nobody writes is reported: the unit really consumed is the target.
+ *
+ * A fullscreen program receives every colour attachment of its source, so it declares the target —
+ * and if no pass renders into it, the program has nothing to read. One declaration, one report,
+ * however many attachments the target has.
+ */
+TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto orphan = RenderTargetPtr(new RenderTarget());
+    orphan->setName(u8"never_written");
+    orphan->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto light = intrusive_ptr<ScreenPass>(new ScreenPass());
+    light->setName(u8"deferred_light");
+    light->setCamera(camera.get());
+    light->addInputTarget(orphan);
+    engine->addPass(light, 0);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"deferred_light"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"never_written"), vine::String::npos);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // A writer appears (it fills the target; no promise needed): the read is answered.
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"fill");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(orphan);
+    engine->addPass(producer, -1);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // The writer leaves: reported again.
+    engine->removePass(producer.get());
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+}
+
+/**
+ * @brief The depth of a target is a DIFFERENT image from its colour attachment 0.
+ *
+ * The fullscreen-program path samples a depth buffer to reconstruct positions, and a depth read has
+ * to be answered by a target that actually has one: a program asking for the depth of a colour-only
+ * target reads nothing, which is a wiring mistake the fine (ImageRef) form can now state — the
+ * coarse form cannot, because "the target" does not say which of its images is wanted.
+ */
+TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto color_only = RenderTargetPtr(new RenderTarget());
+    color_only->setName(u8"composite");
+    color_only->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"light");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(color_only);   // fills the target, but it has no depth
+    engine->addPass(producer, -1);
+
+    auto depth_image = intrusive_ptr<ImageRef>(new ImageRef(u8"Composite.depth", ImageRef::Kind::Depth));
+    depth_image->bind(color_only, 0);
+    auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
+    consumer->setName(u8"reconstruct");
+    consumer->setCamera(camera.get());
+    consumer->addInput(depth_image);
+    engine->addPass(consumer, 1);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"Composite.depth"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"composite"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"depth"), vine::String::npos);
+}
+
+/**
+ * @brief A declared image nobody bound to a target is reported at wiring time.
+ *
+ * An unbound ImageRef has no address, so nothing can be delivered through it: resolveDeclaredImage()
+ * returns null and says nothing (its comment says the wiring check reports the declaration — this test
+ * is what makes that true). It also silently disables the promise check, which compares the promised
+ * target with the one the pass renders into and has nothing to compare while the image is unbound.
+ * One report per IMAGE, because a producer and its consumers share the same unbound object.
+ */
+TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto unbound = intrusive_ptr<ImageRef>(new ImageRef(u8"SceneColor"));
+
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"scene");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(target);
+    producer->setOutput(unbound);   // declared, but never bound to that target
+    engine->addPass(producer, -1);
+
+    auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
+    consumer->setName(u8"present");
+    consumer->setCamera(camera.get());
+    consumer->addInput(unbound);
+    engine->addPass(consumer, 1);
+
+    const int draws_before = backend->screen_draws;
+    engine->frame(0.016);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"SceneColor"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"bind"), vine::String::npos);
+    // What the report describes is what happens: the consumer resolves nothing and draws nothing.
+    EXPECT_EQ(backend->screen_draws - draws_before, 0);
+
+    // Same problem next frame: one episode, one message (the runtime path stays silent about it).
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // Binding the image wires the wire: the report stops and the consumer samples the target.
+    unbound->bind(target, 0);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(backend->screen_draws - draws_before, 1);
+    EXPECT_EQ(backend->last_screen_source, target.get());
+}
+
+/**
+ * @brief A declaration a ScreenPass cannot sample is reported, not silently substituted.
+ *
+ * A ScreenPass without a program copies ONE COLOUR attachment (see attachmentToSample), so a pass
+ * that declares images and none of them is a colour image is asking for something the pass cannot
+ * do: it would sample attachment 0 (or the index setSourceAttachment left) while the host declared
+ * — typically — the depth. Reported once per episode; the program path is different and is left
+ * alone (drawScreenProgram binds every colour attachment of the source plus its depth).
+ */
+TEST(RenderEngineTest, ScreenPassDeclaringOnlyDepthIsReportedNotSilentlySubstituted)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    // A producer that fills a target WITH depth: the declaration below is the only problem.
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setName(u8"composite");
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D24);
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"light");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(target);
+    engine->addPass(producer, -1);
+
+    auto depth_image = intrusive_ptr<ImageRef>(new ImageRef(u8"Composite.depth", ImageRef::Kind::Depth));
+    depth_image->bind(target, 0);
+    auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
+    consumer->setName(u8"reconstruct");
+    consumer->setCamera(camera.get());
+    consumer->addInput(depth_image);
+    engine->addPass(consumer, 1);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"reconstruct"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"Composite.depth"), vine::String::npos);
+    // The substitution it warns about is what actually happened: colour attachment 0 was sampled.
+    EXPECT_EQ(backend->last_screen_attachment, 0);
+
+    // Same problem next frame: one episode, one message.
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // Declaring the colour image the pass CAN sample ends the episode.
+    auto color_image = intrusive_ptr<ImageRef>(new ImageRef(u8"Composite.color"));
+    color_image->bind(target, 0);
+    consumer->addInput(color_image);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+}
+
+/**
+ * @brief Colour attachment 0 and the depth of one target are NOT the same image.
+ *
+ * In a naive "index into the target" model both are attachment 0, so two passes promising one each
+ * would look like a collision; they are different images (a program samples one or the other), which
+ * is why the identity carries the kind. A promise of the depth and a promise of colour 0 must coexist.
+ */
+TEST(RenderEngineTest, DepthAndColorAttachmentZeroAreDistinctImages)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setName(u8"composed");
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D24);
+
+    auto depth_image = intrusive_ptr<ImageRef>(new ImageRef(u8"composed.depth", ImageRef::Kind::Depth));
+    depth_image->bind(target, 0);
+    auto color_image = intrusive_ptr<ImageRef>(new ImageRef(u8"composed.color"));
+    color_image->bind(target, 0);
+
+    auto depths = intrusive_ptr<RenderPass>(new RenderPass());
+    depths->setName(u8"depth_owner");
+    depths->setCamera(camera.get());
+    depths->setRenderTarget(target);
+    depths->setOutput(depth_image);
+
+    auto colors = intrusive_ptr<RenderPass>(new RenderPass());
+    colors->setName(u8"color_owner");
+    colors->setCamera(camera.get());
+    colors->setRenderTarget(target);   // a promise has to be about what the pass writes
+    colors->setOutput(color_image);
+    engine->addPass(depths, 0);
+    engine->addPass(colors, 1);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_TRUE(received.empty());
+}
+
+/**
+ * @brief Two passes promising the SAME image, one of them as a whole target, are reported.
+ *
+ * A promise is a claim about whose content a consumer gets; two claims on one image mean whoever runs
+ * last wins silently. A whole-target promise covers each of the target's images, so it collides with
+ * a fine promise of any one of them — the comparison is per image, not per declaration.
+ */
+TEST(RenderEngineTest, WholeTargetPromiseCollidingWithAFineOneIsReported)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto shared = RenderTargetPtr(new RenderTarget());
+    shared->setName(u8"shared");
+    shared->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto promised_one = intrusive_ptr<ImageRef>(new ImageRef(u8"shared.color0"));
+    promised_one->bind(shared, 0);
+
+    auto fine = intrusive_ptr<RenderPass>(new RenderPass());
+    fine->setName(u8"fine_owner");
+    fine->setCamera(camera.get());
+    fine->setRenderTarget(shared);
+    fine->setOutput(promised_one);
+
+    auto whole = intrusive_ptr<RenderPass>(new RenderPass());
+    whole->setName(u8"whole_owner");
+    whole->setCamera(camera.get());
+    whole->setRenderTarget(shared);
+    whole->setOutputTarget(shared);
+    engine->addPass(fine, 0);
+    engine->addPass(whole, 1);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"fine_owner"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"whole_owner"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"shared"), vine::String::npos);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+}
+
+/**
+ * @brief A declared input image drives WHICH attachment the pass samples (no host-set index).
+ *
+ * The wire says "attachment 2 of the G-buffer", so the pass samples exactly that: the identity carries
+ * the grain, and the host does not have to say the same thing again from the consumer side
+ * (setSourceAttachment stays as the way to name one attachment of a COARSE declaration).
+ */
+TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto source = RenderTargetPtr(new RenderTarget());
+    source->setName(u8"gbuffer");
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    source->attachColor(RenderTarget::ColorFormat::RGBA16F);
+    source->attachColor(RenderTarget::ColorFormat::RGBA16F);
+
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"gbuffer_pass");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(source);
+    producer->setOutputTarget(source);
+    engine->addPass(producer, -3);
+
+    // Declares the third image and NOTHING else: no setSourceAttachment, no input name.
+    auto sampled = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.specular"));
+    sampled->bind(source, 2);
+    auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
+    preview->setName(u8"preview");
+    preview->setCamera(camera.get());
+    preview->addInput(sampled);
+    engine->addPass(preview, 10);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(backend->last_screen_source, source.get());
+    EXPECT_EQ(backend->last_screen_attachment, 2);
+}
+
+/**
+ * @brief A coarse declaration (a whole target) still lets the host pick one attachment.
+ *
+ * The program path consumes the whole target, but a PiP over an accumulated target has no fine
+ * declaration to carry the index, so setSourceAttachment stays the answer — and it must keep working.
+ */
+TEST(RenderEngineTest, CoarseDeclarationStillHonoursTheHostAttachment)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto baked = RenderTargetPtr(new RenderTarget());
+    baked->setName(u8"baked");
+    baked->attachColor(RenderTarget::ColorFormat::RGBA8);
+    baked->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"bake");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(baked);
+    engine->addPass(producer, -1);
+
+    auto pip = intrusive_ptr<ScreenPass>(new ScreenPass());
+    pip->setName(u8"pip");
+    pip->setCamera(camera.get());
+    pip->addInputTarget(baked);
+    pip->setSourceAttachment(1);
+    engine->addPass(pip, 100);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(backend->last_screen_source, baked.get());
+    EXPECT_EQ(backend->last_screen_attachment, 1);
+}
+
+/**
+ * @brief A declared input whose producer did not RUN this frame is reported, once per episode.
+ *
+ * The wiring check is declaration-only (a disabled producer still declares its wire — toggling a pass
+ * off is not a wiring mistake), so only the frame knows that nothing filled the image. This is the
+ * runtime half of D37, and it is what a consumer that "draws nothing" needs to be told.
+ */
+TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto source = RenderTargetPtr(new RenderTarget());
+    source->setName(u8"gbuffer");
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"gbuffer_pass");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(source);
+    producer->setOutputTarget(source);
+    engine->addPass(producer, -3);
+
+    auto sampled = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.albedo"));
+    sampled->bind(source, 0);
+    auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
+    preview->setName(u8"preview");
+    preview->setCamera(camera.get());
+    preview->addInput(sampled);
+    engine->addPass(preview, 10);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);   // wired and produced: silent
+    const int draws_before_pause = backend->screen_draws;
+
+    // The producer is paused (a legitimate runtime toggle, not a wiring mistake).
+    producer->setEnabled(false);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"preview"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vine::String::npos);
+    EXPECT_EQ(backend->screen_draws, draws_before_pause);   // nothing to draw from
+
+    // Still paused: one message for this episode, not one per frame.
+    engine->frame(0.016);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // It runs again, and breaks again later: a new episode, reported again.
+    producer->setEnabled(true);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    producer->setEnabled(false);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+}
+
+/**
+ * @brief A pass declaring both a name and an object resolves the wire ONCE.
+ *
+ * Names are the sugar over the declarations (design §14.3): a pass that states the same wire twice
+ * must not get two entries (and must not be resolved twice), or "the first non-null input" would
+ * depend on which layer the engine happened to consult first.
+ */
+TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto source = RenderTargetPtr(new RenderTarget());
+    source->setName(u8"gbuffer");
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"gbuffer_pass");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(source);
+    producer->setOutputName(u8"GBuffer");
+    producer->setOutputTarget(source);
+    engine->addPass(producer, -3);
+
+    auto sampled = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.albedo"));
+    sampled->bind(source, 0);
+    auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
+    preview->setName(u8"preview");
+    preview->setCamera(camera.get());
+    preview->addInputName(u8"GBuffer");
+    preview->addInput(sampled);
+    engine->addPass(preview, 10);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(backend->last_screen_source, source.get());
+    EXPECT_EQ(backend->last_screen_attachment, 0);
+}
+
+/**
+ * @brief A promise about a target the pass does not write is reported.
+ *
+ * A promise is a claim about the content a consumer gets ("this image is mine to hand out"), so it has
+ * to be about what the pass draws into: promising a target the pass never writes is a claim about
+ * nothing, and it makes the collision report fire on wires that do not exist. Both declaration layers
+ * are checked (the whole target and the single image).
+ */
+TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto drawn_into = RenderTargetPtr(new RenderTarget());
+    drawn_into->setName(u8"drawn_into");
+    drawn_into->attachColor(RenderTarget::ColorFormat::RGBA8);
+    // Two DIFFERENT targets neither pass writes — so the only reports are the mismatches (two passes
+    // promising one target would be a collision, which is another rule).
+    auto promised_coarse = RenderTargetPtr(new RenderTarget());
+    promised_coarse->setName(u8"promised_coarse");
+    promised_coarse->attachColor(RenderTarget::ColorFormat::RGBA8);
+    auto promised_fine = RenderTargetPtr(new RenderTarget());
+    promised_fine->setName(u8"promised_fine");
+    promised_fine->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto fine_image = intrusive_ptr<ImageRef>(new ImageRef(u8"promised_fine.color"));
+    fine_image->bind(promised_fine, 0);
+
+    auto coarse = intrusive_ptr<RenderPass>(new RenderPass());
+    coarse->setName(u8"coarse_liar");
+    coarse->setCamera(camera.get());
+    coarse->setRenderTarget(drawn_into);
+    coarse->setOutputTarget(promised_coarse);
+
+    auto fine = intrusive_ptr<RenderPass>(new RenderPass());
+    fine->setName(u8"fine_liar");
+    fine->setCamera(camera.get());
+    fine->setRenderTarget(drawn_into);
+    fine->setOutput(fine_image);
+    engine->addPass(coarse, 0);
+    engine->addPass(fine, 1);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);   // one per declaration form
+    ASSERT_EQ(received.size(), 2u);
+    for (const auto& diagnostic : received) {
+        EXPECT_EQ(diagnostic.category, DiagnosticCategory::ContentSkipped);
+        EXPECT_NE(diagnostic.message.find(u8"drawn_into"), vine::String::npos);
+    }
+    EXPECT_NE(received[0].message.find(u8"promised_coarse"), vine::String::npos);
+    EXPECT_NE(received[1].message.find(u8"promised_fine"), vine::String::npos);
+
+    // The same broken promise next frame is the same episode: one message each, not one per frame.
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+
+    // Promising what it draws into is what the rule asks for: silent.
+    coarse->setOutputTarget(drawn_into);
+    fine->setRenderTarget(promised_fine);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+
+    // Breaking it again is a new episode.
+    coarse->setOutputTarget(promised_coarse);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 3u);
+}
+
+/**
+ * @brief A host's publish() is a STANDING binding, not a per-frame publication.
+ *
+ * The named-output registry is cleared at the start of every frame so a pass that stopped running
+ * stops publishing — that reasoning is about PASSES (their producer must run each frame). A host
+ * binding has no producer to re-publish it and no per-frame hook to do it from, so wiping it makes
+ * the documented capability ("this lets application code publish extra targets") unusable: the
+ * binding dies before any consumer could resolve it.
+ */
+TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    // A target the host filled itself (an imported frame, an editor preview): no pass draws into it.
+    auto external = RenderTargetPtr(new RenderTarget());
+    external->setName(u8"external");
+    external->attachColor(RenderTarget::ColorFormat::RGBA8);
+    engine->publish(u8"External", external);
+
+    // A consumer that resolves the name.
+    auto by_name = intrusive_ptr<ScreenPass>(new ScreenPass());
+    by_name->setName(u8"by_name");
+    by_name->setCamera(camera.get());
+    by_name->addInputName(u8"External");
+    engine->addPass(by_name, 0);
+
+    // A consumer that declares the image it samples (the object path checks "was it produced this
+    // frame", and a host binding is available every frame).
+    auto declared = intrusive_ptr<ImageRef>(new ImageRef(u8"External.color"));
+    declared->bind(external, 0);
+    auto by_object = intrusive_ptr<ScreenPass>(new ScreenPass());
+    by_object->setName(u8"by_object");
+    by_object->setCamera(camera.get());
+    by_object->addInput(declared);
+    engine->addPass(by_object, 1);
+
+    for (int frame_index = 0; frame_index < 3; ++frame_index) {
+        engine->frame(0.016);
+        EXPECT_EQ(engine->engineDiagnosticCount(), 0u) << "frame " << frame_index;
+    }
+    EXPECT_EQ(engine->resolve(u8"External"), external.get());
+    EXPECT_EQ(backend->last_screen_source, external.get());
+
+    // unpublish() is what ends a host binding.
+    engine->unpublish(u8"External");
+    EXPECT_EQ(engine->resolve(u8"External"), nullptr);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);   // both consumers now have nothing
+    EXPECT_TRUE(received.empty() || received.size() >= 2u);
+}
+
+/**
+ * @brief A ScreenPass that declares no input at all is reported, once per episode.
+ *
+ * A ScreenPass samples exactly one input and returns without it, so with no input declared it can
+ * never draw — the frame silently loses its content. "No input" is not "an input whose producer is
+ * missing": resolvePassInputs only watches declared names, so this would otherwise be invisible.
+ */
+/**
+ * @brief A ScreenPass that can never draw is reported, not left silent.
+ *
+ * The fullscreen program path builds the pass' view from its camera (and pushes the scene's lights
+ * through that view space), so a ScreenPass with a program and NO camera draws nothing at all
+ * (ScreenPass::execute returns before asking the backend for anything). The host would see a
+ * post-process that never appears, with no reason for it — a wiring-time fact like the input-less
+ * case below, and static like it: the fix is setCamera().
+ */
+TEST(RenderEngineTest, ScreenPassWithAProgramAndNoCameraIsReported)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"scene");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(RenderTargetPtr(new RenderTarget()));
+    producer->setOutputName(u8"SceneColor");
+    engine->addPass(producer, -1);
+
+    auto program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    ShaderStage stage;
+    stage.type   = ShaderStageType::Fragment;
+    stage.source = u8"#version 450\nvoid main() {}\n";
+    program->addStage(stage);
+
+    auto light = intrusive_ptr<ScreenPass>(new ScreenPass());
+    light->setName(u8"light");
+    light->addInputName(u8"SceneColor");
+    light->setProgram(program);
+    // NO setCamera: the program path has no view to build.
+    engine->addPass(light, 1);
+
+    const int draws_before = backend->program_draws;
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"light"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"camera"), vine::String::npos);
+    // The report describes what actually happens: nothing was drawn through the program.
+    EXPECT_EQ(backend->program_draws - draws_before, 0);
+
+    // Same problem next frame: one episode, one message.
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // Giving it a camera ends the episode, and the pass draws.
+    light->setCamera(camera.get());
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(backend->program_draws - draws_before, 1);
+}
+
+TEST(RenderEngineTest, ScreenPassWithoutAnyInputIsReportedOnce)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
+    consumer->setName(u8"overlay");
+    consumer->setCamera(camera.get());
+    engine->addPass(consumer, 0);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"overlay"), vine::String::npos);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // An input appears (a bound image with a producer registered earlier): the pass can draw, so
+    // nothing more to say. The producer matters — an input image nobody produces is its own
+    // report (see the declared-input-image tests below).
+    auto source = RenderTargetPtr(new RenderTarget());
+    auto image  = intrusive_ptr<ImageRef>(new ImageRef(u8"SceneColor"));
+    image->bind(source, 0);
+    consumer->addInput(image);
+
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"fill");
+    producer->setCamera(camera.get());
+    producer->setRenderTarget(source);
+    producer->setOutput(image);
+    engine->addPass(producer, -1);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+
+    // Its input leaves again: the same problem, so it is reported again.
+    consumer->clearInputs();
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(received.size(), 2u);
+}
+
+/**
+ * @brief A base RenderPass with no input is NOT reported: drawing nothing is what it is for.
+ *
+ * Only a ScreenPass samples an input; a scene pass draws its bound content and needs no input at
+ * all, so the input-less rule must not touch it (otherwise every scene pass would warn).
+ */
+TEST(RenderEngineTest, ScenePassWithoutInputIsNotReported)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setName(u8"scene");
+    pass->setCamera(camera.get());
+    pass->setRenderTarget(RenderTargetPtr(new RenderTarget()));
+    engine->addPass(pass, 0);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_TRUE(received.empty());
+}
+
+TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
+{
+    std::vector<RenderDiagnostic> received;
+    auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera        = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto shared_target = RenderTargetPtr(new RenderTarget());
+
+    const auto make_producer = [&camera, &shared_target](const vine::String& name, int order) {
+        auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+        pass->setName(name);
+        pass->setCamera(camera.get());
+        pass->setRenderTarget(shared_target);
+        pass->setOutputName(u8"shared");
+        return std::make_pair(pass, order);
+    };
+    auto first  = make_producer(u8"first", -2);
+    auto second = make_producer(u8"second", -1);
+    engine->addPass(first.first, first.second);
+    engine->addPass(second.first, second.second);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_TRUE(received.empty());
 }

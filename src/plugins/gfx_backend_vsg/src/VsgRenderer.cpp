@@ -271,6 +271,15 @@ bool VsgRenderer::initialize()
     if (state.window == nullptr) {
         V_LOGE("[VsgRenderer] Window::create FAILED (nativeWindow={}, {}x{})",
                traits->nativeWindow.has_value() ? 1 : 0, traits->width, traits->height);
+        // The SDK contract for initialize() is that a false return ALSO reports the reason on the
+        // diagnostics channel (RenderBackend.hpp). This was the one early failure that only wrote
+        // the stderr trace, so a host watching its sink saw "failed" with no reason while the
+        // exception paths below reported normally.
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
+                           formatDiagnostic(u8"initialize FAILED at '%s': Window::create returned no window "
+                                            u8"(nativeWindow=%s, %dx%d)",
+                                            init_stage, traits->nativeWindow.has_value() ? "host" : "none",
+                                            traits->width, traits->height));
         shutdown();
         return false;
     }
@@ -405,8 +414,11 @@ void VsgRenderer::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> ta
     // A scope attribute: the pass announced by beginPass() renders into this
     // target for every draw call of its scope (setRenderTarget comes before the
     // first one, see RenderBackend::setRenderTarget).
-    state.request.target = target;
-}
+    state.request.target = target;    // Announcing a target (re)arms the refusal of a dead announcement: whatever
+    // was released before is none of THIS announcement's business
+    // (refuseDeadTargetAnnouncement).
+    state.request.target_released          = false;
+    state.request.target_release_reported  = false;}
 
 void VsgRenderer::resetPassRequest()
 {
@@ -433,6 +445,11 @@ bool VsgRenderer::supportsRenderTargets()
 
 void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& commands, vine::raw_ptr<const vine::graphics::Camera> camera)
 {
+    // A target announcement whose target was released cannot serve this draw call
+    // (the queued pointer lost its owner when it was released): say so once and skip it.
+    if (refuseDeadTargetAnnouncement("render()")) {
+        return;
+    }
     if (!state.initialized || state.viewer == nullptr) {
         return;
     }
@@ -622,6 +639,12 @@ void VsgRenderer::submitFrame()
 
 void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
 {
+    // The clear belongs to the target the pass announced (see below), so a released
+    // announcement refuses it like it refuses a draw call: clearing the WINDOW instead
+    // would wipe the frame the caller never asked to touch.
+    if (refuseDeadTargetAnnouncement("clear()")) {
+        return;
+    }
     // A clear marks the next render() as main (depth-on) content; a render
     // without a preceding clear is styled on-top (HUD, depth-off). The style
     // is consumed in render(). This marker is separate from the real clear
@@ -704,6 +727,12 @@ void VsgRenderer::setWindowHandle(void* native_handle)
 
 void VsgRenderer::resize(int width, int height)
 {
+    // The surface owns its size: this session renders into a vsg window, so the size that counts is
+    // that window's extent, and the announcement is advisory here (the engine keeps the announced
+    // numbers for the passes that lay themselves out on them — RenderBackend::resize documents the
+    // authority order). window->resize() re-queries the surface the host gave us (an embedded Qt
+    // window, which follows the widget), and the presenting slots' viewports are re-derived from
+    // the live extent below.
     (void)width;
     (void)height;
     if (state.window != nullptr) {
@@ -751,6 +780,11 @@ void VsgRenderer::releaseWindowLayer(vine::raw_ptr<const vine::graphics::Camera>
 
 void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int attachment)
 {
+    // Both screen paths draw into the CURRENT target (setRenderTarget), so a released
+    // announcement refuses them exactly as it refuses render().
+    if (refuseDeadTargetAnnouncement("drawScreenTexture()")) {
+        return;
+    }
     detail::drawScreenTexture(state, diagnostics, source, attachment);
 }
 
@@ -758,6 +792,9 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget* source,
                                     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
                                     vine::raw_ptr<const vine::graphics::Camera>        camera)
 {
+    if (refuseDeadTargetAnnouncement("drawScreenProgram()")) {
+        return;
+    }
     detail::drawScreenProgram(state, diagnostics, source, program, camera);
 }
 

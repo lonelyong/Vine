@@ -1,4 +1,179 @@
-﻿> 2026-09-12 **类里剩的七个概念（设计 §50，已落地 1–7））**：批次顺序 = **依赖方向**。**已做**：①诊断
+﻿> 2026-09-12 **§14 步 1 已实施（第四十七批）：`ImageRef` + 接线期两条校验**：D37/D55/D56 的共同**结构根因** =
+> "pass 之间用字符串当端点身份，且把三件不同的事（接线=静态 / '本帧产出了吗'=动态 / 谁是生产者=身份）塞进同一张
+> **每帧重建**的 map"。`graphics-render-pipeline.md` §14（并在 §5 加"已修订"指针）给出方案：端点 = 对象
+> `ImageRef`（**target + attachment 索引 + `Kind::Color/Depth`**，**强持** target ⇒ 链自描述），生产者写、宿主可
+> 手动 `bind`，名字**降级为标签 + 语法糖**（`name→port` 只在**接线期**解析一次）。**接线期**校验四条结构规则
+> （一个 port 至多一个生产者 = D55；消费者的 port 必须有生产者 = D37；`ScreenPass` 输入数不得为 0 = D56；生产者
+> order < 消费者 order = 顺序首次**可判**），运行期只留"本帧未产出"一条（分集上报；**绝不递上一帧的图** = D38
+> 教训）。后端**零改动**（插件/门禁/selftest 不动）。
+>
+> **步 1 落地（本次）**：`ImageRef.hpp/.cpp`（`label`/`kind`/`bind`/`unbind`/`target`/`attachment`/`bound`）+
+> `RenderPass::setOutput/output/addInput/inputs/clearInputs`（与名字 API **并列**，互不清空）+ 新增
+> `RenderEngine::validateWiring()`（`frame()` 首部、**只读**、无设备）。**本批先做两条**规则：① 一张图被两个
+> **不同** pass 声明为产出（D55 的结构孪生；与名字版 D55 检测**互不重复报**）；② `ScreenPass` 无图像也无名字输入
+> （D56 的解）。**当场推迟、次日补上**的另两条见下（"消费者的图无生产者"与"order 倒置"）——当时担心与 D37 的零周
+> 报告重复上报，实测不会（那条只看名字、这条只看声明的图像，互不重叠）。上报沿用既有语义：**分集**（一次）+ 每帧
+> 把集合重建为"本帧仍在的问题" ⇒ **重新武装**。
+> **糖的回收规则（拍定）**：`name→ImageRef` 表条目在**其生产/消费者全部消失**时丢弃、需要时重建（"条目活着的
+> 唯一理由是有人引用它"，与仓库既有的"表的条目必须自持其键"同源）。**判据**：`test_graphics` 160 → **166**（`ImageRef`
+> 2 + 图像 API 1 + 两条校验 3）、`test_vsg` 162；全量 `ninja` 零 error/零 warning；`[selftest]` **45 行**、
+> `released 115` 与上一轮相同（新校验只读，真实 app **零触发**）；门禁 `RESULT: PASS`；诊断格式 0 suspicious。
+>
+> **命名修订（同日）**：初稿 `RenderPort` → **`ImageRef`**。理由：`port` 说**角色**，对象装**身份**（哪张图），
+> 而引擎规则全是关于身份的（"一张图至多一个生产者"）；角色由用它的位置表达（`output()` 写侧 / `inputs()` 读侧）。
+> **问到"port 就是附件吧，可能是纹理吗"的结论**：一张图两种角色——写时是**附件**（`ATTACHMENT_OPTIMAL`）、
+> 采时是**纹理**（`SHADER_READ_ONLY`），后端为此有整套布局切换（深度提升/借用/撤销），所以身份必须与角色无关。
+> **不覆盖**的只有一类：**不是任何 pass 产物的图**（材质贴图、导入图、cube map）——SDK 里它们**没有身份**
+> （材质贴图 = `Material::textureFile()` 一个路径）。
+> **已知洞已修（第四十九批）**：冲突检测的键从 `ImageRef` 对象身份改成**地址**（`RenderEngine::OutputIdentity` =
+> 已绑定时 `(target, attachment)`、未绑定时"声明的对象"）⇒ "两个 `ImageRef` 指向同一张图的同一附件"也报（两种冲突用
+> **各自的消息分支**，符合同一批的"一条分支一个格式串"约定）。**不能只按 target**：同 target 多 pass 是**合法形态**
+> （MRT 一次交多张图；`RenderPipelineBuilder` 的 `light` 与 `transparent` 都写 `composite`）。**两条反证已跑**：
+> ①退回对象身份 ⇒ `TwoImageRefsOfOneAttachmentAreReportedOnce` 红；②退成"只看 target" ⇒
+> `TwoImagesOfOneTargetWithDifferentAttachmentsAreNotACollision` 红。
+>
+> **§14.4 推迟的两条也补上了（第五十批）**：`validateWiring()` 分**三阶段**（消费者可能先注册 ⇒ 先收齐生产者再判
+> 消费者）：①产出冲突（只看**启用**的 pass：禁用者不会"后跑覆盖"）；②**声明的输入图没人产出 / 生产者注册在消费者
+> 之后**（只看**声明**，禁用也算"声明了这根线"——开关 pass 不是接线错误）；③`ScreenPass` 完全没输入。②的两条分支
+> 各用自己的格式串，报告键为 `(消费者, 图身份)`，集合同样每帧重建 ⇒ 修好再断会重新武装。**有意不算错的两种形态**：
+> 同 target **不同附件**（MRT；`light`+`transparent` 共写 `composite`）与一个 pass **读自己写的图**（反馈环，后端有意
+> 支持）——各有单测钉住（`PassReadingItsOwnOutputImageIsNotReported`）。判据：`test_graphics` 169 → **172**
+> （+3：无生产者报一次+重新武装 / 生产者排在后面报一次+重新武装 / 反馈环不报），其余同前（证据 45 行逐字节不变、
+> 门禁 PASS、格式检查 0）。**真 app 零触发**（`RenderPipelineBuilder` 只声明名字，不用 `addInput(image)`）。
+> **两层声明（2026-09-12，第五十二批，仍不动执行路径）**：`RenderPass` 加 `setOutputTarget`/`outputTarget`、
+> `addInputTarget`/`inputTargets`（`clearInputs` 清两层）；**细（`ImageRef` = 一张图）与粗（`RenderTarget` = 整捆）
+> 在同一**地址**身份上汇合** ⇒ 粗的承诺能被细的读满足，两个各自建的 `ImageRef` 也认成同一张图；`OutputIdentity` 带
+> **kind**（**深度与颜色附件 0 是两张图**）。依据是后端事实：PiP 读一张图，全屏 program 读**整捆**（`makeFullscreenProgramNode`
+> 收到 `src.color_views` 全部）。判定：**生产者 = 写这张 target 的 pass（顺序最早）或声明了这张图的 pass**（承诺不是
+> 满足读的必要条件，它只是"谁拥有这次交接"的声明）；冲突**逐图**报。取舍：某 target 的**唯一写者**承诺整捆（一行、
+> 对附件数免疫）；多 pass **累加**写同一 target 时**不承诺**。**迁移**：`RenderPipelineBuilder`（gbuffer 承诺整捆 /
+> light、present 读整捆 / transparent 作为 composite 最后写者承诺 / `addOffscreenToScreen` 两侧）+ `AppShellUi` 四个
+> demo（G-buffer 预览改**细颗粒**：`ImageRef` 绑 (target,k) 后 `addInput`；multislot 累加 ⇒ 不承诺）。判据：门禁跑真 app
+> （含 `VINE_VSG_DEFERRED=1` + `VINE_VSG_OFFSCREEN_MULTISLOT=1`）⇒ **新校验零触发**、0 VUID ⇒ 真产线声明与新模型一致；
+> `test_graphics` 174 → **179**、`test_vsg` 162、证据 45 行逐字节相同、格式检查 0。
+> **未决**：①是否暴露"按名字取 `ImageRef`"的查询 API；②可寻址粒度何时扩到 mip / array / cube 层。
+
+> 2026-09-12 **§57 跟做：D55 已修（第四十六批）**：`RenderEngine` 的命名输出表是**按名字平铺的 map**，第二个生产者
+> 直接覆盖第一个——消费者静默拿到"记录顺序上靠后"的那个，而两个 pass 各自都合法，除了引擎没人看得见这个冲突。现在
+> `publish` 检测"同名 + **不同对象**"：`duplicate_outputs_seen_this_frame_`（每帧重建）+ `duplicate_outputs_reported_`
+> （帧末只保留仍在冲突的名字 ⇒ 冲突消失即重新武装），消息带输出名与两个目标名。**同一对象**同名两次是合法的
+> （`AppShellUi` 就这么用）⇒ 不报。**判据**：`test_graphics` 新增 2 例 ⇒ 158 → **160**。**如实记录**：新上报在
+> **默认 demo 与 `VINE_VSG_GBUFFER=1` 下都未触发**（实测 0 次）——三种 demo 互斥，所以这是**潜在**洞（单测钉住），
+> 不是当前会冒烟的行为。
+
+> 2026-09-12 **§57 跟做：D54 已修（第四十五批）**："部分灯不可用"以前**完全静默**——`beginLightsDroppedEpisode`
+> 只在 `attached == 0` 时报，而典型场景恰恰是"一个场景带了 2 盏可用灯 + 1 盏后端翻译不了的灯"。改法：判定
+> 改 `attached < announced`（空公告不算一段、全亮即重新武装），消息按"全丢 / 部分丢"**两条分支各用自己的格式串**
+> （§54 教训）；规则从 `VsgContentSlot.cpp` 的匿名命名空间提进 `detail`（声明+文档 → `VsgContentSlot.hpp`），
+> `light_fallback_reported` 的字段注释同步。**新测 4 例全设备无关**（`LightGroupTest.cpp`）⇒ `test_vsg` 158 → **162**；
+> `[selftest]` 45 行逐字节不变、无新警告（自检相位没有丢灯场景）。
+
+> 2026-09-12 **§58 跟做：D60 已修（第四十四批）**：回读的 `false` 现在**分类**了：prologue 返回 `ReadbackRefusal`
+> （`NoTarget` / `NoSession` / `NotRendered` / `NotBuilt` / `Empty` / `NoDevice`），两个入口在**停下设备之前**上报
+> （`readbackRefusalMessage` 每分支各用自己的格式串 —— §54 教训）；会话判定收紧为 `state.initialized`（它就是
+> "窗口/设备存在"的权威状态，且**不需要设备就能测**）。**判据**：`ReadbackTest.cpp` 4 → **6 例**全设备无关
+> （逐状态分类 + 两条入口的静默路径都上报 + 拒绝**不触发设备等待** + 每条消息各带自己措辞且不含别分支措辞）⇒
+> `test_vsg` 156 → **158**。自检 `[selftest]` 45 行**逐字节不变**（自检回读都打到已建目标，新分类不触发）；
+> stderr 那三条回读报告是**既有**的（RGBA16F / 打包 D24 / 附件越界）。
+
+> 2026-09-12 **§58 跟做：D59 已修（第四十三批）**：`releasePass()` / `retargetPass()` 现在会把该 pass 的 `PassObjects`
+> 一起丢掉：`erasePassSlotsFromTarget` → **`erasePassFromTarget`**（名字兑现新职责），GPU 对象 `retireRing.park`
+> （**不停设备**，与 load-op 重建同一策略），表项删除后由调用者的 `reconcileOffscreenOrder()` 把图从录制序列摘掉。
+> **判据全设备无关**（表 / 键 / 停放 / 环都不需要设备）：新增 `tests/test_vsg/PassObjectReleaseTest.cpp` 5 例 ——
+> 释放后表为空 + 停放 1 个 + `waits == 0`；32 次"建一个再释放"表**不增长**；`retargetPass` 只从离开的 target 删；
+> null / 未知 pass no-op；环 `kRetireRingDepth` 次 `advance()` 后交出 ⇒ `test_vsg` 151 → **156**。真 GPU 对象的停放
+> 安全性由门禁（VUID 0）覆盖。**证据行的变化（有意，已 A/B 归因）**：`policy churn:` 从 `released 107` → **115**；
+> 临时开关跳过停放可复现 107，且增量是**固定 +8**（30 帧与 44 帧下都恰好 +8）⇒ 它是**窗口之前**那批
+> `releasePass` 的停放（`released` 是环的*释放*计数，滞后停放 `kRetireRingDepth` 帧），**不是**窗口内逐帧
+> 删除/重建（那会随帧数增长）；`0 device wait(s)` / `built 2` 不变。
+
+> 2026-09-12 **§58 第五轮审查：`RenderBackend.hpp` 的承诺逐条对账（D59–D60，第四十二批）**：§57 修掉的 D52 只是
+> "文档承诺"类的一个实例，这轮把类级契约（CALL ORDER / BORROWED ARGUMENTS / WHAT MAY BE RETAINED / THREADING /
+> FAILURE）与各方法文档**逐条**对实现。**兑现的**：帧序（`endFrame` 不 present）、借用参数自持（D13/D14/D32/
+> D34/D42 各补过）、线程与同步 sink、`PassProtocolViolation` 两处、`grep throw` = 0、MRT 透明黑规则、`endPass`
+> 清请求。**新发现两条**：**D59（最重）`releasePass()` 不释放该 pass 的 `PassObjects`——`Target::passes` 的
+> 唯一移除点是目标重建的 `t.passes.clear()`（`VsgTargetBookkeeping.cpp:79`），`erasePassSlotsFromTarget` 只删**槽**。
+> 同时违反两条契约：①留存状态"不得随帧数增长"（编辑器每帧 addPass + removePass，`RenderEngine::removePass`
+> 确实调 `releasePass`，就按帧累积 RenderPass+Framebuffer+RenderGraph 到会话结束）；②键是裸 `RenderPass*` 且
+> `PassObjects` **不自持**它——D32/D34 给 target/material/geometry/program 都补过这条所有权规则，**pass 漏了**。
+> **不是错画**：`applyRecordPlan` 每帧 `children.clear()` 重建录制序（`VsgRecordOrder.cpp:164-187`），陈旧图不会
+> 继续被录制 ⇒ 是内存 + 契约缺陷。**为什么不当场修**：释放的是真 GPU 对象（render pass / framebuffer），
+> "计数等待 vs 停放进退役环"本身就是一次要带判据的改动（§28 第 9/10 批教训），而"没有判据不许改语义"是硬规矩
+> ⇒ 登记 + 附修法与判据计划。**D60** readback 的 `false` 无法区分"不支持/还没建好/失败"——契约明写 caller 总能
+> 区分，而 D20 已经把"float 附件不支持"报出来了 ⇒ 报告策略不一致，只看返回值的宿主无法决定"重试还是放弃"。
+
+> 2026-09-12 **§57 第四轮审查：后端 ↔ graphics 的协同（D52–D58，第四十一批）**：两条线并行审 ——①**边界静默
+> 失败**（每个 caller 可见的"什么都没发生"是否带诊断）；②**前端调用序列 ↔ 后端消费规则**（`setViewport` /
+> `setLights` 一次性消费、作用域属性到 `endPass`、screen draw 写当前 target）。**先记好消息**：前端现有**全部**
+> 调用点都遵守一次性消费（每个公告后恰好一次绘制）、`beginPass/endPass` 全成对、`ScreenPass` 两条 draw 前都设
+> target ⇒ 契约脆弱处不在现有调用点，而在"契约允许一个作用域画多次、viewport/lights 却只能消费一次"（自定义
+> `RenderPass` 覆写画第二次就静默丢 viewport/灯，登记不修）。**已修 2 条**：**D52** `initialize()` 的 null-window
+> 失败绕过诊断通道（只 `V_LOGE`，而契约写的是"false 也要在诊断通道报原因"）⇒ 补 `InitFailed` 上报；**D53**
+> `addDeferredDemo` 的 `ScreenPass` 没绑内容场景 ⇒ `setLights` 不执行 ⇒ 延迟预览只有 0.15 平坦环境光、零方向光
+> （而该函数文档写着"灯是内容场景自己的"；builder 的同一 pass 绑了 `content_`）⇒ `addPass(light, scene, 130)`。
+> **已登记 5 条**：D54 部分灯不可用静默丢（只有全不可用才报，`attached<announced` 可判）· D55 `outputs_` 同名
+> 输出静默后者覆盖（同对象重复发布合法，不能误报）· D56 `ScreenPass` 未声明 input 时静默不画（引擎只覆盖
+> "声明的 input 全落空"）· D57 overlay/PiP 的源 0×0 与窗口图未建静默不画 · D58 `resize(w,h)` 忽略尺寸参数。
+> **验收**：全量 ninja 零警告 + 证据 45 行逐字节相同 + VUID 0/FAIL 0 + 151/158 + 门禁 PASS + 格式检查 0；
+> **针对性验证**：门禁环境加 `VINE_VSG_DEFERRED=1` 复跑（延迟光照 pass 平时不在门禁里）⇒ 同样 PASS、0 VUID。
+
+> 2026-09-12 **§56 通道物化（components → typed array）也变成可测契约（第四十批）**：`SceneBridgeGeometry.cpp`
+> 匿名命名空间最后剩下的 `makeTypedVertexData` 是 §54 `channelShape` `@pre` 的**兑现者**：假定"分量 1..4、每顶点恰好
+> 一个值"，按 `components` 当 stride 取分量（1/2/3/4 → `floatArray`/`vec2Array`/`vec3Array`/`vec4Array`）。
+> **判词**：错了**不会失败** —— 分量数选错数组类型时 configurator 照样接受，只在绘制时"属性读错/缺失"；stride
+> 取错就是 D1 的交错读错换位复发；它还是唯一把**通道数据**与 §53 的 `formatForComponents`/`sampleVertexData`
+> 对齐的环节。提进 `detail`（声明+文档 → `VsgSceneRules.hpp`，定义 → `VsgSceneRules.cpp`）；**副产物**：几何 TU 的
+> 匿名命名空间因此清空 ⇒ 删掉 `namespace { }` 整块（该 TU 现在只剩 `SceneBridge` 的方法）。**新测 3 例全设备无关**
+> （数组类型按分量数 + 与 `sampleVertexData` 的 `className()` 逐一一致 + 按 stride 逐分量拷贝/vec4 的 w 是数据/
+> 0 顶点是空数组）⇒ `test_vsg` 148 → **151**。**踩坑**：返回 `ref_ptr<::vsg::Data>` ⇒ 断言 size 要 `valueCount()`
+> （`Data` 没有 `size()`）。**验收**：全量 ninja 零警告 + 证据 45 行逐字节相同 + VUID 0/FAIL 0 + 151/158 +
+> 门禁 PASS + 格式检查 0（22 文件）。**下一步候选**：`SceneBridgeGeometry.cpp` 的文件局部 helper 已全部归位；
+> 几何侧的下一步该转向真正需要设备的那部分（或用户指定的新方向）。
+
+> 2026-09-12 **§55 推导法线（零覆盖的那条路）也变成可测契约（第三十九批）**：先量覆盖 —— 自检里**每一处**几何
+> 都 `setNormals(...)`（7 处）⇒ "网格没给法线 ⇒ CPU 推导"这条分支**从未被执行过**，而它的失败模式最安静：退化
+> 三角形（共线/重复顶点）叉积为零，直接归一化就是**除以零 ⇒ NaN 写进顶点法线**（无验证层报 NaN 属性），绕序反了
+> 则是"从内部被照亮"。这两条规则在 `makeNormals` 与 `makeIndexedNormals` 里**各写一遍**（同一叉积 + 同一
+> `len_sq > 0` 守卫）⇒ 同一语义两份实现，该统一。做法：`faceNormal` / `normalIsUsable` 两个规则 + 三个构造器
+> （`makeWhiteColors` / `makeNormals` / `makeIndexedNormals`）从 `SceneBridgeGeometry.cpp` 匿名命名空间提进
+> `detail`（声明+文档 → `VsgSceneRules.hpp`，只多一个 `<vsg/core/Array.h>`；定义 → `VsgSceneRules.cpp`）。
+> **两条归一化算术有意保持不同**（倒数乘 vs `::vsg::normalize` 除法，合并会改末位比特；§39 已因同一理由拒绝过）
+> —— 本次只把判定与叉积各收一处。**新测 9 例全设备无关**（绕序/翻转/退化精确为零 · 只拒零长度 · 非索引单位化 ·
+> 退化保持零且 `!isnan` · 给定法线逐字拷贝 · 索引累加/越界跳过/无引用顶点保持零 · 白色 0 顶点为空数组）⇒
+> `test_vsg` 139 → **148**。**验收**：全量 ninja 零警告 + 证据 45 行逐字节相同 + VUID 0/FAIL 0 + 148/158 +
+> 门禁 PASS + 格式检查 0（22 文件）。**下一步候选**：`SceneBridgeGeometry.cpp` 剩下的 `makeTypedVertexData`
+> （channelShape 的 `@pre` 兑现者：components → typed array，零直接测试）可按同一判词抽；`sdk/` 用户说先不动。
+
+> 2026-09-12 **§54 几何侧 xyz 解包规则也变成可测契约（第三十八批）**：`SceneBridgeGeometry.cpp` 匿名命名
+> 空间剩的三件（`XyzUnpack` 三判定 / `unpackXyz` 按 `components` 当 stride 取前三个标量 / 
+> `ignoredNormalChannelMessage` 两条分支各带自己的数字）提进 `detail`：声明 + 文档 → `VsgSceneRules.hpp`
+> （只多一个 `<vine/geometry/Array.hpp>`），定义 → `VsgSceneRules.cpp`，该 TU 三行显式 `using`。**判词**：
+> 决定几何是否正确解包却只在整帧路径里执行过，错了**不会失败** —— stride 取错（写死每顶点 3 float）会把顶点
+> **交错读错**（D1 的缺陷，画面只是"看着不对"，无法定位）；诊断消息曾把两条分支合成一个格式串、参数按其中一
+> 条排 ⇒ 打印**互换的数字**（消息撒谎，编译/运行/验证全干净）。**新测 5 例全设备无关**：vec3/vec4 按 stride
+> 取 xyz 且 vec4 的 w 被跳过 + 合法空通道 Ok + 1/2/0/5 分量 ⇒ `NotXyzStride` + 3 分量 4 float、4 分量 5
+> float ⇒ `NotDivisible` + 被拒**不动**输出数组、成功**替换而非追加** + 两条消息各带自己分支的数字（互相
+> 不含对方的措辞）⇒ `test_vsg` 134 → **139**。**验收**：全量 ninja 零警告 + 证据 45 行逐字节相同 +
+> VUID 0 / FAIL 0 + 139 / 158 + 门禁 PASS + 格式检查 0（22 文件）。**下一步候选**：`SceneBridgeGeometry.cpp`
+> 里仅剩的非纯规则（`makeNormals` / `makeIndexedNormals` 的退化法线处理、`makeWhiteColors`）需要 to-vsg
+> 对象，是否值得抽按"错了会不会失败"逐个判；`sdk/` 先不动。
+
+> 2026-09-12 **§53 顶点绑定/stage 映射也变成可测契约（第三十七批）**：`SceneBridgePipeline.cpp` 匿名命名空间
+> 里剩的四个纯映射（`formatForComponents` / `sampleVertexData` / `customAttributeName` / `stageFlag`）提进
+> `detail`：声明 + 文档 → `VsgSceneRules.hpp`，定义 → `VsgSceneRules.cpp`（一个概念的头 ↔ 一个概念的 TU），
+> 该 TU 用四行显式 `using detail::xxx;` 接入（延续 §51b 面最小的做法）。**判词**：它们**决定绑定是否正确**却
+> 只在整帧路径里被执行过，而且错了**多半不会失败** —— `customAttributeName` 的两个使用者
+> （`addAttributeBinding` / `configurator.assignArray`）都调它，改名只改一处 ⇒ attribute **静默不绑定**
+> （几何照画、少一个属性、零报告）；`formatForComponents` 与 `sampleVertexData` 必须**互相一致**（格式的每分量
+> 4 字节 = 样例数组元素类型），不一致时 configurator 会接受，只在绘制时表现为属性错/缺失。头文件只加
+> `<string>` + `<vsg/core/Data.h>`（后者同时给 `Data` 与 Vulkan 类型）。**新测 4 例全设备无关**（1–4 的格式
+> 映射 + 0/>4 四分量兜底 + 样例数组**具体类型**/`valueCount()==1`/`valueSize()==components*4` + 命名稳定、
+> 区分、不与 `vsg_Vertex`/`vsg_Normal`/`vsg_Color`/`material` 撞名 + 三个 stage 各占一个**不同**的 Vulkan 位）
+> ⇒ `test_vsg` 130 → **134**。**验收**：全量 ninja 零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 +
+> 134 / 158 + 门禁 PASS + 格式检查 0（22 文件）。**下一步候选**：几何侧同类纯规则（`SceneBridgeGeometry.cpp`
+> 的 `unpackXyz` / `ignoredNormalChannelMessage`）；`sdk/` 仍空。
+
+> 2026-09-12 **类里剩的七个概念（设计 §50，已落地 1–7））**：批次顺序 = **依赖方向**。**已做**：①诊断
 > 2026-09-12 **§52 overlay 的两个纯 helper 也变成可测契约（第三十六批）**：`viewRotation`（look-at 基）与
 > `fillLightPushBlock`（128 字节 push 常量块：投影参数 / world→view 光方向 / 三个方向光上限 / 无 ambient 补
 > 0.15）从 `VsgOverlay.cpp` 的匿名命名空间提进 `detail`，声明+文档进 `VsgOverlay.hpp`，定义留 TU。**判词**：
@@ -574,10 +749,18 @@
   warm-up（启用且非清屏的 pass 先各跑一遍），所以"首帧前创建的东西"也要能摆对位置。
 - **借用**：camera / commands / lights / target / program 只在当次调用内有效（commands 是本
   帧临时量），`beginPass` 的 pass 只在作用域内有效；**不得保留**，需要就拷贝/上传。
+  * `releasePass()` / `releaseRenderTarget()` **同时宣布宿主可以立刻销毁该对象** ⇒ 队列里的“宣布”（
+    `request.pass` / `request.target`）必须一起作废：直接驱动路径的请求**跨帧存活**，留着就是悬垂指针；
+    接下来那一次画不了 ⇒ **拒画 + 分集报一次**（`PassProtocolViolation`，消息带哪个调用点被跳过），
+    **不得静默改画到窗口**。同理：0 尺寸的 target 建不了 ⇒ `TargetBuildFailed` 分集报一次，
+    不静默什么都不画。
 - **保留**：保留 GPU 状态必须按被服务对象寿命定键、由对应 `release*` 释放、**不随帧数增长**；
   宿主不必为正确性调 `release*`。
 - **线程**：串行、不可重入、无需加锁；不得假设跨 `initialize`/`shutdown` 同线程；**诊断 sink
   是同步回调**，只能记录返回，不得回调后端。
+- **声明**：输出的三种声明（`setRenderTarget` 画到哪 / `setOutput`·`setOutputTarget` 对象声明（校验 + 对象侧解析）/ `setOutputName` 查表键）**互不覆盖**，一个错误只报一次；**发不出去的必须报** —— 名字表只能交付可采样 target，所以"渲染进窗口却声明发布名"和 `publish(name, nullptr)` 都**分集上报**（过去是静默丢弃，消费者随后被告知"本帧没人产出它"，指向错的一方）。
+- **pass 的前置条件（接线期一次性检查）**：`ScreenPass` 必须有输入（否则永远不画）、只声明深度的 texture 路径会被**静默**换成彩色 0、**有 program 就必须有相机**（program 路径要先建 view）——这三条都在 `validateWiring()` 报一次（分集），因为 host 侧看到的是"这个 pass 从来不出现"。
+- **声明的 `ImageRef` 必须 `bind` 到一张 target**：未绑定的身份**没有地址** ⇒ 消费者解析不到、承诺校验也无从比较（旧注释写着"接线期已报"其实没报）⇒ 整根线静默。现按**每张图**报一次（分集），且**已被冲突报过的不再报**（一个错误一条消息）。
 - **失败**：接口内不抛异常；`false` ≠ 部分生效；**`initialize()` 返回 false 必须自己收拾残局**
   （引擎只在 initialize 成功后才调 `shutdown()`，见 `RenderEngine::shutdown`）。
 - **保留预算**（本后端数字）：退役环 4（提交帧）、几何复用窗 600 帧、材质 256 条、
@@ -1093,3 +1276,14 @@ Object
 4. **集成几何体** → Geometry 包装 Shape
 5. **渲染后端** → OpenGL/Vulkan 实现
 
+
+## 验证口径：self-test 的判据是 45 行 `[selftest]`（2026-09-12）
+
+- **判据**：`scripts/vsg_selftest_evidence.sh`（配 `scripts/vsg_selftest_evidence.txt` 基线，`--update` 刷新）
+  —— 只比 `[selftest]` 证据行、**逐字节**。**不要**拿整份 stderr trace 比：trace 行带 `file.cpp:line`（任何行数变动都会重写）
+  且按帧数计（`retired (detached)` / `EXPERIMENTAL ... attached`）。
+- **实测**：`retired (detached)` 行数在**一致构建**下 **HEAD 与当前工作树都是 25**（45 行证据完全相同）；一次记录的基线里是
+  26 —— 那是**构建产物不一致**（plugin `.so` 与 `libviGraphics` 版本不匹配）的那次运行留下的，不是行为变化。
+- **教训**：①数字比较用**整文件 + 程序统计**，别读终端里被换行/渲染过的行内数字；②回退实验必须**重建到齐**
+  （`ninja <target>` 不会重建运行时 `dlopen` 的 plugin `.so` 与 SDK 动态库 ⇒ 假结果）；③`publish()` 是**宿主常驻绑定**
+  （`host_outputs_`，跨帧有效），pass 输出是**本帧**账（`outputs_`）——两账分开，见设计文档 §14.7。

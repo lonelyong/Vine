@@ -17,7 +17,7 @@
  * goes through detachSlotView: a slot whose view is still attached to a graph keeps drawing.
  *
  * The destructive paths keep the COUNTED device wait (VsgRetireRing::waitForIdle) rather than
- * parking their objects; the notes on unhookTargetPasses and erasePassSlotsFromTarget record why
+ * parking their objects; the notes on unhookTargetPasses and erasePassFromTarget record why
  * (clearCache() releases the shared object registry, whose pipelines / samplers the retained nodes
  * are not necessarily the only owner of).
  */
@@ -202,20 +202,49 @@ void unhookTargetPasses(VsgRendererState& state, VsgRenderTargetEntry& t);
 void detachSlotView(VsgRendererState& state, VsgRenderTargetEntry& owner, vine::graphics::RenderTarget* owner_key,
                     const SlotKey& key, const ::vsg::ref_ptr<::vsg::View>& view);
 
-/** @brief Detaches and drops every retained slot a pass owns under one
- * target (its content view, PiP screen slot and fullscreen-program slot).
+/** @brief Whether a build attempt whose target has no size has to be reported now.
  *
- * Used when a pass' retained state must be discarded: the pass is removed
- * (releasePass), it was not active this frame (retireInactivePassSlots) or it
- * moved to another target (retargetPass). The owning graph's child list is
- * swept first, then the device is waited on so no in-flight command buffer
- * still references the dropped view / pipelines.
+ * An off-screen target with a zero width or height cannot be built: the passes drawing into
+ * it draw nothing, and the host would otherwise see a pass that never appears with no reason
+ * for it (the same shape D60 fixed on the readback side). The EPISODE is "this target has no
+ * size": the report fires on the first build attempt that finds it, and a later attempt with
+ * a usable size re-arms it — so a host that never sizes the target is told once, not every
+ * frame, while one that sizes it, then loses the size, is told again.
  *
- * @param target Target key whose slots to inspect (nullptr = the window).
- * @param pass   Pass whose slots to drop.
+ * The caller owns @p reported (it lives on the target's entry) and builds the message from
+ * the numbers it already has.
+ *
+ * @param width    Width the target reports for the build attempt.
+ * @param height   Height the target reports for the build attempt.
+ * @param reported Per-target episode flag (true while the current episode was reported).
+ * @return true on the ONE attempt the caller has to report.
  */
-void erasePassSlotsFromTarget(VsgRendererState& state, vine::graphics::RenderTarget* target,
-                              const vine::graphics::RenderPass* pass);
+[[nodiscard]] bool beginTargetSizeMissingEpisode(std::uint32_t width, std::uint32_t height, bool& reported);
+
+/** @brief Erases everything one target retains for a pass: its slots AND its materialised objects.
+ *
+ * The one "this pass is gone from this target" path: the pass is removed
+ * (releasePass) or it moved to another target (retargetPass). Its SLOTS (content view,
+ * PiP screen slot, fullscreen-program slot) are detached and dropped, and the pass' OWN
+ * materialised objects (its render pass + one-frame transient variant, its framebuffer and
+ * its RenderGraph — see VsgRenderTargetEntry::PassObjects) go with them.
+ *
+ * Dropping the pass objects is what keeps retained state from growing with the number of
+ * passes a session has ever seen (the interface states it must reach a steady state) and
+ * what makes the raw RenderPass* key safe to reuse: the entry never outlives its pass. They
+ * are PARKED, not waited on — an in-flight command buffer may still name them and nothing
+ * else owns them (the same policy as a load-op rebuild, see VsgRetireRing) — and the
+ * caller's reconcileOffscreenOrder() drops the graph from the record sequence.
+ *
+ * Only the SLOT teardown keeps the counted device wait (VsgRetireRing::waitForIdle):
+ * clearCache() releases the bridge's shared object registry, whose pipelines / samplers the
+ * retained nodes are not necessarily the only owner of.
+ *
+ * @param target Target key whose slots and pass objects to inspect (nullptr = the window).
+ * @param pass   Pass whose retained state to drop.
+ */
+void erasePassFromTarget(VsgRendererState& state, vine::graphics::RenderTarget* target,
+                         const vine::graphics::RenderPass* pass);
 
 /** @brief Restricts a pass to @p target by dropping its slots elsewhere.
  *

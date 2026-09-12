@@ -52,19 +52,6 @@ void seedSlotLight(::vsg::Group& light_group, bool want_headlight, bool presenti
     }
 }
 
-bool beginLightsDroppedEpisode(std::size_t announced, std::size_t attached, bool& reported)
-{
-    if (attached != 0u || announced == 0u) {
-        reported = false; // usable lights (or none announced): re-arm the report
-        return false;
-    }
-    if (reported) {
-        return false; // already reported for this episode
-    }
-    reported = true;
-    return true;
-}
-
 void logContentSlotDiagnostics(const vine::graphics::RenderTarget* target, vine::graphics::DepthMode depth_mode,
                                int order, std::size_t commands, std::size_t created, std::size_t root_children,
                                std::size_t variants)
@@ -80,6 +67,19 @@ void logContentSlotDiagnostics(const vine::graphics::RenderTarget* target, vine:
 
 namespace detail
 {
+
+bool beginLightsDroppedEpisode(std::size_t announced, std::size_t attached, bool& reported)
+{
+    if (announced == 0u || attached >= announced) {
+        reported = false; // nothing announced, or every announced light is lit: re-arm the report
+        return false;
+    }
+    if (reported) {
+        return false; // already reported for this episode
+    }
+    reported = true;
+    return true;
+}
 
 void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent,
                       const VsgDiagnostics& diagnostics, const SlotKey& key,
@@ -294,10 +294,17 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     // least one announced light is usable (see beginLightsDroppedEpisode).
     const std::size_t attached_lights = setGroupLights(content.light_group.get(), *request.lights);
     if (beginLightsDroppedEpisode(request.lights->size(), attached_lights, content.light_fallback_reported)) {
+        const std::size_t announced = request.lights->size();
+        // One message per branch: a shared format string whose arguments are ordered for one of
+        // them is how a branch ends up printing the wrong number (§54).
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
-                           formatDiagnostic(u8"%zu announced light(s) are all disabled or of an unsupported "
-                                            u8"kind; the pass keeps its default light",
-                                            request.lights->size()));
+                           attached_lights == 0u
+                               ? formatDiagnostic(u8"%zu announced light(s) are all disabled or of an unsupported "
+                                                  u8"kind; the pass keeps its default light",
+                                                  announced)
+                               : formatDiagnostic(u8"%zu of %zu announced light(s) are disabled or of an unsupported "
+                                                  u8"kind and are not lit",
+                                                  announced - attached_lights, announced));
     }
 
     // The command stream is the source of truth: reconcile the retained slot

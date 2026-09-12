@@ -76,6 +76,11 @@ class V_GRAPHICS_API ScreenPass : public RenderPass {
      * setCamera / the pass camera) as push-constant parameters. Clearing stays
      * disabled: the pass draws opaque over the sub-viewport it owns.
      *
+     * A CAMERA IS REQUIRED on this path: the backend builds the pass' view from
+     * it, so a program pass without a camera draws nothing at all (the engine
+     * reports it once, at wiring time — ScreenPass::execute returns before
+     * asking the backend for anything).
+     *
      * @param program Fragment-stage program, or null to sample as a plain
      *                copy (sourceAttachment()).
      */
@@ -104,6 +109,17 @@ class V_GRAPHICS_API ScreenPass : public RenderPass {
      * @param backend Backend to render with.
      */
     void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend) override;
+
+  private:
+    /** @brief Gets the colour attachment of the resolved source to sample.
+     *
+     * A declared input image says which attachment of which target it is, so it answers this (the
+     * object-typed wiring carries the grain the pass reads at); setSourceAttachment is the answer for
+     * a pass that declared the target as a whole (a coarse declaration names no single attachment).
+     *
+     * @return Colour attachment index to sample.
+     */
+    int attachmentToSample() const;
 
   private:
     /// Source texture sampled by this pass (borrowed; the engine registry keeps it alive).

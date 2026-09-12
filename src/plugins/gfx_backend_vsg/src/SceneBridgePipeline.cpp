@@ -31,9 +31,13 @@ V_VSG_NS_BEGIN
 // their own (see VsgSceneRules.hpp); these declarations keep the call sites below unqualified.
 using detail::applyOpaqueBlendForAttachments;
 using detail::colourAttachmentCount;
+using detail::customAttributeName;
+using detail::formatForComponents;
 using detail::hashCombine;
 using detail::hashStateVariant;
 using detail::kHashSeed;
+using detail::sampleVertexData;
+using detail::stageFlag;
 using detail::vertexLayoutHash;
 
 namespace
@@ -78,77 +82,6 @@ namespace
         }
     }
     return {};
-}
-
-/**
- * @brief Maps a custom vertex channel's components to its Vulkan format.
- *
- * @param components Scalar components per vertex (1..4).
- * @return The matching vertex-input format.
- */
-VkFormat formatForComponents(std::uint32_t components)
-{
-    switch (components) {
-        case 1u: return VK_FORMAT_R32_SFLOAT;
-        case 2u: return VK_FORMAT_R32G32_SFLOAT;
-        case 3u: return VK_FORMAT_R32G32B32_SFLOAT;
-        default: return VK_FORMAT_R32G32B32A32_SFLOAT;
-    }
-}
-
-/**
- * @brief Returns the stable binding name for a custom attribute location.
- *
- * Built-in locations 0/1/2 keep vsg_Vertex/vsg_Normal/vsg_Color; any custom
- * channel is named vine_Attribute{location}. The name is only a key between
- * the ShaderSet bindings and the configurator's assignArray (vsg matches the
- * Data by name and takes the location from the binding), so the user GLSL just
- * declares layout(location=N) with any input name.
- *
- * @param location Shader attribute location (>= 3).
- * @return The stable binding name.
- */
-std::string customAttributeName(std::uint32_t location)
-{
-    return "vine_Attribute" + std::to_string(location);
-}
-
-/**
- * @brief Builds a one-element typed vsg array for a channel's components.
- *
- * Used as the sample Data of an attribute binding (its value type must match
- * the binding format).
- *
- * @param components Scalar components per vertex (1..4).
- * @return A one-element typed array.
- */
-::vsg::ref_ptr<::vsg::Data> sampleVertexData(std::uint32_t components)
-{
-    switch (components) {
-        case 1u: return ::vsg::floatArray::create(1);
-        case 2u: return ::vsg::vec2Array::create(1);
-        case 3u: return ::vsg::vec3Array::create(1);
-        default: return ::vsg::vec4Array::create(1);
-    }
-}
-
-/**
- * @brief Maps an SDK shader-stage kind onto the matching Vulkan stage flag.
- *
- * @param type SDK stage kind.
- * @return Vulkan shader-stage flag.
- */
-VkShaderStageFlagBits stageFlag(vine::graphics::ShaderStageType type)
-{
-    switch (type) {
-        case vine::graphics::ShaderStageType::Fragment:
-            return VK_SHADER_STAGE_FRAGMENT_BIT;
-        case vine::graphics::ShaderStageType::Compute:
-            return VK_SHADER_STAGE_COMPUTE_BIT;
-        case vine::graphics::ShaderStageType::Vertex:
-            return VK_SHADER_STAGE_VERTEX_BIT;
-    }
-    return VK_SHADER_STAGE_VERTEX_BIT;
 }
 
 /**

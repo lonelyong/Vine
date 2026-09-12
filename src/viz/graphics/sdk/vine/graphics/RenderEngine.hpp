@@ -22,6 +22,7 @@ class Camera;
 class Light;
 class Scene;
 class RenderPass;
+class ImageRef;
 class RenderTarget;
 class RenderBackend;
 
@@ -266,19 +267,31 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     raw_ptr<Scene> contentOf(raw_ptr<RenderPass> pass) const;
 
-    /** @brief Publishes a render target under a named output slot.
+    /** @brief Binds a render target to a named output slot (a standing host binding).
      *
-     * The engine keeps a reference so the target stays alive while published.
-     * Passes that declare an output name (RenderPass::setOutputName) publish
-     * automatically after they run; this lets application code publish extra
-     * producers (e.g. CPU-generated textures) under the same mechanism.
+     * The engine keeps a reference so the target stays alive while bound, and the binding KEEPS until
+     * unpublish() removes it (or another publish() replaces it) — unlike a pass' output, which is
+     * published once per frame and disappears when the pass stops running. A host has no per-frame
+     * hook to re-publish from, so its binding must not be tied to a frame.
+     *
+     * Consumers declared by name resolve it (and an object-typed input addressing the same target is
+     * available too: a host binding counts as produced every frame). Publishing twice under one name
+     * replaces the binding — that is a host swapping what it offers, not a collision.
+     *
+     * A name can only be served by a target, so a null @p target is a request the engine cannot
+     * honour: it is reported (once per name, until a real target is published or unpublish()
+     * withdraws the name) instead of being ignored, which would leave the host believing the name is
+     * served.
      *
      * @param name   Slot name consumers resolve against.
-     * @param target Target to publish (the engine keeps a reference).
+     * @param target Target to bind (the engine keeps a reference; null is reported).
      */
     void publish(const String& name, intrusive_ptr<RenderTarget> target);
 
     /** @brief Looks up a published render target by slot name.
+     *
+     * A pass' publication from THIS frame wins over a host binding of the same name (the pass ran and
+     * its content is this frame's); otherwise a standing host binding answers.
      *
      * @param name Slot name to look up.
      * @return The published target, or nullptr when nothing is published
@@ -286,7 +299,7 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     raw_ptr<RenderTarget> resolve(const String& name) const;
 
-    /** @brief Removes a published output slot.
+    /** @brief Removes an output slot (a host binding and this frame's publication alike).
      *
      * @param name Slot name to remove (no-op when not published).
      */
@@ -332,15 +345,37 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     void resolvePassInputs(raw_ptr<RenderPass> pass);
 
+    /** @brief Reports the structural wiring problems the pass declarations themselves carry.
+     *
+     * Every pass on its own is valid, so nothing else can see these, and they are all properties of
+     * the DECLARATION (design §14.4):
+     *   * an image (or an output name) TWO passes declare as their output;
+     *   * a declared input image nobody produces, or whose producer is registered after its
+     *     consumer (the structural half of "the pass draws nothing");
+     *   * a ScreenPass that declares no input at all and therefore can never draw.
+     *
+     * Reported once per episode, from the declarations rather than from a frame — the backend only
+     * ever sees "a pass with nothing to draw".
+     */
+    void validateWiring();
+
     /** @brief Publishes a pass's output target under its output name.
      *
      * Called just after executing a pass. When the pass declares a non-empty
      * output name (RenderPass::setOutputName) and renders into a non-null
-     * RenderTarget, that target is registered for later consumers.
+     * RenderTarget, that target is registered for THIS frame's consumers — a pass publication is
+     * per frame, unlike a host binding (publish).
      *
      * @param pass Pass whose output to publish.
      */
     void publishPassOutput(raw_ptr<RenderPass> pass);
+
+    /** @brief Publishes a pass's output for this frame (the per-frame half of the registry).
+     *
+     * @param name   Slot name the pass declares.
+     * @param target Target the pass rendered into.
+     */
+    void publishFrameOutput(const String& name, intrusive_ptr<RenderTarget> target);
 
     /** @brief Reports one problem the engine found in the pass wiring.
      *
@@ -369,8 +404,99 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
         int                       order = 0;
     };
 
-    // ---- Fields ----
+    /** @brief WHICH image a declared output is, as the wiring check compares it (design §14.4).
+     *
+     * The rule is "one image, at most one producer", so the check must catch a second producer of
+     * the SAME IMAGE — including when the two passes each declared their own ImageRef for it. The
+     * identity is therefore the ADDRESS (target + attachment) once the image is bound, not the
+     * declared object.
+     *
+     * Two passes writing one target with DIFFERENT attachments are NOT a collision: a legitimate
+     * pipeline renders several passes into one target (RenderPipelineBuilder's light and
+     * transparent passes both write `composite`) and an MRT pass hands out several images of one
+     * target at once.
+     *
+     * An image that is not bound yet has no address, so its identity is the declared object: the
+     * host may declare an image before it binds it, and until then "same object" is the whole
+     * truth that exists.
+     */
+    struct OutputIdentity {
+        raw_ptr<const RenderTarget> target{ nullptr };      // set once the image is bound
+        int                         attachment = 0;          // colour index; kWholeTarget = the whole target
+        bool                        depth = false;           // a depth attachment is NOT attachment 0
+        raw_ptr<const ImageRef>     declared{ nullptr };    // identity while unbound
 
+        /// @brief The coarse form: a whole target, as a bundle declaration names it.
+        static constexpr int kWholeTarget = -1;
+
+        /** @brief Builds the identity of a declared output image.
+         *
+         * @param image Image a pass declared as its output.
+         * @return The image's address when bound, otherwise its declared object.
+         */
+        static OutputIdentity of(const ImageRef& image) noexcept;
+
+        /** @brief Builds the identity of one colour attachment of a target.
+         *
+         * @param target     Target the image belongs to.
+         * @param attachment Colour attachment index.
+         * @return The image's address.
+         */
+        static OutputIdentity colorOf(const RenderTarget& target, int attachment) noexcept;
+
+        /** @brief Builds the identity of a target's depth attachment.
+         *
+         * @param target Target the depth belongs to.
+         * @return The image's address.
+         */
+        static OutputIdentity depthOf(const RenderTarget& target) noexcept;
+
+        /** @brief Builds the identity of a whole target (a coarse declaration).
+         *
+         * @param target Target the declaration names.
+         * @return The coarse identity of @p target.
+         */
+        static OutputIdentity targetOf(const RenderTarget& target) noexcept;
+
+        /** @brief Orders identities so they can key a map / set.
+         *
+         * @param other Identity to compare against.
+         * @return true when this identity sorts before @p other.
+         */
+        bool operator<(const OutputIdentity& other) const noexcept;
+    };
+
+    /** @brief Resolves one declared input image: the target it addresses, or null when nothing
+     * produced it this frame.
+     *
+     * This is the frame-level half of "the pass draws nothing": the structural check sees the
+     * declaration, only the frame knows whether the producer ran. It reports once per episode, and
+     * not for a wire the structural check already reported (no producer at all, or one registered too
+     * late) — that is one problem, and it is the wiring check's to state.
+     *
+     * @param pass  Pass that declared the input.
+     * @param image Image the pass declared.
+     * @return The target to hand over, or null when the image was not produced this frame.
+     */
+    raw_ptr<RenderTarget> resolveDeclaredImage(raw_ptr<RenderPass> pass, const ImageRef& image);
+
+    /** @brief Resolves one declared input target, or null when nothing produced it this frame.
+     *
+     * @param pass   Pass that declared the input.
+     * @param target Target the pass declared.
+     * @return The target to hand over, or null when nothing drew into it this frame.
+     */
+    raw_ptr<RenderTarget> resolveDeclaredTarget(raw_ptr<RenderPass> pass, raw_ptr<RenderTarget> target);
+
+    /** @brief Reports a declared input nothing produced this frame (once per episode).
+     *
+     * @param pass     Pass whose input is missing.
+     * @param identity Image (or whole target) that was not produced.
+     * @param what     Human-readable description of what the pass declared.
+     */
+    void reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputIdentity& identity, const String& what);
+
+    // ---- Fields ----
     intrusive_ptr<RenderBackend>        backend_;
     // Stored by the engine (not only forwarded) so a backend set later still
     // receives the host's diagnostics.
@@ -387,9 +513,36 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     void*                               native_handle_      = nullptr;
     bool                                initialized_        = false;
 
-    /// Named-output registry: slot name -> published render target. Cleared at
-    /// the start of every frame and rebuilt as the ordered passes publish.
+    /// This frame's pass publications: slot name -> published target. Cleared at
+    /// the start of every frame and rebuilt as the ordered passes publish (a pass
+    /// that stops running stops publishing).
     std::map<String, intrusive_ptr<RenderTarget>> outputs_;
+    /// Standing host bindings (RenderEngine::publish): they have no producer to re-publish them each
+    /// frame, so they survive the per-frame clear until unpublish() removes them. Seeded into the
+    /// frame's produced targets, so an object-typed input addressing one is answered as well.
+    std::map<String, intrusive_ptr<RenderTarget>> host_outputs_;
+
+    /// Output names TWO passes published with DIFFERENT targets this frame (a collision: every
+    /// consumer resolving the name silently gets whichever pass ran last). Rebuilt per frame and
+    /// copied into the reported set below, which is what makes the message an episode instead of
+    /// a per-frame stream.
+    std::set<String> duplicate_outputs_seen_this_frame_;
+    /// Output names whose collision has already been reported: pruned to the names that are still
+    /// colliding, so a name that breaks again after a clean frame is reported again.
+    std::set<String> duplicate_outputs_reported_;
+
+    /// Passes that asked to publish an output name while having NO render target (they render into
+    /// the window): the registry maps a name to a sampleable target, so there is nothing to publish.
+    /// Rebuilt per frame and pruned into the reported set below, like the collision above — and for
+    /// the same reason: dropping the declaration silently leaves a consumer of that name reporting
+    /// "nothing produced it", which accuses the consumer of the producer's mistake.
+    std::set<raw_ptr<const RenderPass>> unpublishable_passes_seen_this_frame_;
+    /// Those of them already reported (pruned to the passes still declaring it).
+    std::set<raw_ptr<const RenderPass>> unpublishable_passes_reported_;
+    /// Host bindings currently refused because publish() was given no target. A host has no frame
+    /// to re-publish from, so the episode is the name itself: it leaves the set when a publish() for
+    /// it hands over a real target, or when unpublish() withdraws the name.
+    std::set<String> unpublishable_host_names_;
 
     /// Count of diagnostics this engine reported itself (see
     /// engineDiagnosticCount).
@@ -399,6 +552,48 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     /// input resolves again is dropped from the set, so a later breakage is
     /// reported again (pruned with the pass list).
     std::set<raw_ptr<const RenderPass>> unresolved_inputs_reported_;
+    /// Images two passes declared as their output (a structural collision), keyed by ADDRESS: pruned
+    /// to the images still colliding each frame, so a collision that goes away is reported again if
+    /// it comes back (see validateWiring).
+    std::set<OutputIdentity> output_collisions_reported_;
+    /// Promises about a target the pass does not write, keyed by (pass, declared image): a promise is
+    /// a claim about the content a consumer gets, so it has to be about what the pass draws into.
+    /// Pruned the same way (see validateWiring).
+    std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> mismatched_promises_reported_;
+    /// Declared input images a pass cannot draw from, keyed by (consumer, image): the image has no
+    /// producer at all, or its producer is registered after the consumer. Pruned the same way, so a
+    /// wire that is fixed and breaks again is reported again (see validateWiring).
+    std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unusable_inputs_reported_;
+
+    /// Targets a pass actually drew into THIS frame: what a declared input is answered from (a
+    /// promise says whose content a consumer gets, a filled target says what is there).
+    std::set<raw_ptr<const RenderTarget>> produced_targets_;
+    /// Declared inputs nothing produced this frame, collected while the passes run so the report is
+    /// an episode: seen this frame / already reported (the same prune-and-re-arm rule as the rest).
+    std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unproduced_inputs_seen_this_frame_;
+    std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unproduced_inputs_reported_;
+    /// ScreenPasses that declare no input at all and therefore can never draw (pruned the same
+    /// way; see validateWiring).
+    std::set<raw_ptr<const RenderPass>> missing_inputs_reported_;
+
+    /// ScreenPasses (without a program) whose declared input images are ALL depth images: the
+    /// texture path copies one COLOUR attachment, so such a declaration cannot drive it — the pass
+    /// would sample the attachment it was left with (sourceAttachment(), 0 by default) while the
+    /// host declared the depth. Pruned the same way as the reports above, so a pass that declares a
+    /// colour image (or gains a program) is re-armed.
+    std::set<raw_ptr<const RenderPass>> unsampleable_screen_inputs_reported_;
+
+    /// ScreenPasses that carry a fullscreen program but no camera: the program path builds the
+    /// pass' view from the camera, so such a pass draws nothing at all. Pruned the same way, so a
+    /// pass that is given a camera is re-armed.
+    std::set<raw_ptr<const RenderPass>> program_without_camera_reported_;
+
+    /// Declared images (an output promise or a declared input) that nobody BOUND to a target: an
+    /// unbound identity has no address, so nothing can be delivered through it, and the promise
+    /// check has nothing to compare with the rendered target either. Keyed by the IMAGE, because a
+    /// producer and its consumers share the same unbound object; pruned every frame (the set is
+    /// rebuilt from what this frame saw), so binding it re-arms the report.
+    std::set<raw_ptr<const ImageRef>> unbound_declared_images_reported_;
 };
 
 V_GRAPHICS_NS_END

@@ -318,6 +318,10 @@ bool RenderPipelineBuilder::buildDeferred(Pipeline& pipeline,
     gbuf_pass->setRenderTarget(gbuffer);
     gbuf_pass->setProgramOverride(std::move(gbuf_program));
     gbuf_pass->setOutputName(u8"GBuffer");
+    // The same wire, declared at object level: this pass is the G-buffer's ONLY writer, so it owns the
+    // hand-off and promises the whole target (one line instead of one per colour attachment — the
+    // promise is shape-agnostic). The name above still drives the per-frame registry (design §14).
+    gbuf_pass->setOutputTarget(gbuffer);
     engine_->addPass(gbuf_pass, content_, -3);
     pipeline.retainPass(gbuf_pass);
 
@@ -331,6 +335,10 @@ bool RenderPipelineBuilder::buildDeferred(Pipeline& pipeline,
         light->setName(u8"deferred_light");
         light->setCamera(camera_);
         light->addInputName(u8"GBuffer");
+        // It reads the WHOLE G-buffer: a fullscreen program receives every colour attachment of its
+        // source (plus its depth while that one is sampleable) and picks by binding, so the unit it
+        // consumes is the target — one declaration instead of "name + attachment index".
+        light->addInputTarget(gbuffer);
         light->setProgram(std::move(light_program));
         engine_->addPass(light, content_, 0);
         pipeline.retainPass(light);
@@ -361,6 +369,7 @@ bool RenderPipelineBuilder::buildDeferred(Pipeline& pipeline,
     light->setCamera(camera_);
     light->setRenderTarget(composite);
     light->addInputName(u8"GBuffer");
+    light->addInputTarget(gbuffer);   // reads the whole G-buffer (see the comment on the program path)
     light->setProgram(std::move(light_program));
     engine_->addPass(light, content_, 0);
     pipeline.retainPass(light);
@@ -377,6 +386,10 @@ bool RenderPipelineBuilder::buildDeferred(Pipeline& pipeline,
     transparent->setClearEnabled(false);
     transparent->setDepthMode(DepthMode::TestOnly);
     transparent->setOutputName(u8"Composite");
+    // The composite's LAST writer owns the hand-off (the lighting pass above also draws into the same
+    // target but promises nothing): promising on both would be a collision report, and the collision
+    // report is exactly about two passes both claiming to be the source of one image.
+    transparent->setOutputTarget(composite);
     engine_->addPass(transparent, transparent_, 1);
     pipeline.retainPass(transparent);
 
@@ -388,6 +401,7 @@ bool RenderPipelineBuilder::buildDeferred(Pipeline& pipeline,
     present->setName(u8"present");
     present->setCamera(camera_);
     present->addInputName(u8"Composite");
+    present->addInputTarget(composite);   // it presents the whole baked target
     engine_->addPass(present, 2);
     pipeline.retainPass(present);
 
@@ -426,6 +440,7 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     offscreen->setCamera(camera);
     offscreen->setRenderTarget(target);
     offscreen->setOutputName(output_slot);
+    offscreen->setOutputTarget(target);   // its only writer: it owns the hand-off
     if (content_ != nullptr) {
         engine_->addPass(offscreen, content_, -2);
     } else {
@@ -437,6 +452,7 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     auto screen = make_intrusive<ScreenPass>();
     screen->setName(output_slot);
     screen->addInputName(output_slot);
+    screen->addInputTarget(target);   // samples the whole published target
     screen->setViewport(pip_x, pip_y, pip_w, pip_h);
     engine_->addPass(screen, 100);
     passes_.push_back(screen);

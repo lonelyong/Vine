@@ -271,6 +271,9 @@ VsgOverlayDestination resolveOverlayDestination(VsgRendererState& state, const V
         }
     }
     else if (dest_entry.graph == nullptr) {
+        // The window's shared swapchain graph is created by initialize(), and both callers of this
+        // function return early unless the session is initialized ⇒ this cannot fire in a live
+        // session either (the other half of D57): kept as a guard on the same reasoning.
         return out; // window graph not created yet
     }
     out.target = dest;
@@ -361,6 +364,11 @@ void drawScreenTexture(VsgRendererState& state, const VsgDiagnostics& diagnostic
     }
     const auto& src = src_it->second;
     if (src.width <= 0 || src.height <= 0) {
+        // Cannot fire while the attachment invariant holds: an entry has colour views only after
+        // buildOffscreenTarget accepted a POSITIVE size, and the two are cleared together
+        // (resetTargetAttachments), so a source without a size is the "no colour attachment" case
+        // reported above. Kept as a guard rather than deleted: if it ever fires, a pass loses its
+        // content silently — the one thing this file exists to avoid (see D57).
         return;
     }
     // Select the colour attachment to sample (MRT / G-buffer targets expose
@@ -533,6 +541,8 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     }
     const auto& src = src_it->second;
     if (src.width <= 0 || src.height <= 0) {
+        // Same guard as drawScreenTexture: unreachable while the size and the colour views are set
+        // and cleared together, kept so a silent content loss is impossible (see D57 there).
         return;
     }
 

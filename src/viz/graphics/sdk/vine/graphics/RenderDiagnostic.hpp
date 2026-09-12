@@ -40,7 +40,9 @@ enum class DiagnosticCategory : std::uint8_t
     TargetBuildFailed, ///< An off-screen RenderTarget could not be built: passes using it draw nothing.
     ContentSkipped,    ///< A pass' content could not be prepared: that pass draws nothing this frame.
     InitFailed,        ///< The backend did not come up: nothing can be drawn at all.
-    PassProtocolViolation, ///< The host misused the pass scope (nested / unpaired beginPass/endPass).
+    PassProtocolViolation, ///< The host misused the pass protocol: the announced state did not apply
+                           ///< (a nested / unpaired beginPass/endPass, or a target released while
+                           ///< it was still announced).
 
     Count, ///< Number of categories (not a category itself; keeps count arrays sized).
 };

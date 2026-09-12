@@ -19,8 +19,10 @@
 #include <gtest/gtest.h>
 
 #include <vine/graphics/RenderDiagnostic.hpp>
+#include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/vsg/VsgRenderer.hpp>
+#include <vine/vsg/VsgRendererState.hpp>
 
 #include <vector>
 
@@ -160,4 +162,114 @@ TEST(PassProtocolTest, LegalSequencesAreSilent)
 
     EXPECT_TRUE(captured.items.empty());
     EXPECT_EQ(renderer.diagnosticCount(), 0u);
+}
+
+/**
+ * @brief One viewport / lights announcement serves exactly ONE drawing call.
+ *
+ * The contract is per drawing call (RenderBackend::setViewport / setLights), and that is what lets one
+ * pass scope place several pictures-in-picture: each draw announces its own rectangle. The rule is
+ * easy to lose in a refactor — a "sticky" viewport looks harmless and would silently move every
+ * second PiP of a pass to the full surface — so the queue's consumption is pinned here. A pass that
+ * draws more than once must announce again before each draw; a draw that finds nothing queued keeps
+ * the backend default (lights) / the whole surface (viewport).
+ */
+TEST(PassProtocolTest, OneAnnouncementServesOneDrawingCall)
+{
+    vine::vsg::VsgPassRequest request;
+
+    const Viewport rect{ 4, 5, 96, 54 };
+    request.viewport = rect;
+
+    const auto first = request.takeViewport();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(first->x, 4);
+    EXPECT_EQ(first->y, 5);
+    EXPECT_EQ(first->width, 96);
+    EXPECT_EQ(first->height, 54);
+
+    // Consumed: the next draw of the same scope finds nothing queued...
+    EXPECT_FALSE(request.takeViewport().has_value());
+    // ...and the same holds for the lights announced for that draw.
+    EXPECT_TRUE(request.takeLights().empty());
+
+    // A fresh announcement is served to the next draw, and only to it.
+    request.viewport = Viewport{ 8, 9, 10, 11 };
+    ASSERT_TRUE(request.takeViewport().has_value());
+    EXPECT_FALSE(request.takeViewport().has_value());
+}
+
+/**
+ * @brief A call whose announced target was released is refused, and says so once.
+ *
+ * The queued request is the direct driver's to manage and survives frames, so releasing the
+ * target it announces leaves the request naming an object whose last owner is gone — the
+ * class contract forbids keeping such a pointer (releaseRenderTarget() announces that the
+ * caller may destroy it now). The call cannot be honoured, and drawing into the window
+ * instead would put the content somewhere the host never asked for, so it is skipped and
+ * reported with the fix. The release is one EPISODE: the rest of it is refused silently, and
+ * the next announcement re-arms the report.
+ */
+TEST(PassProtocolTest, DrawingOnAReleasedTargetIsRefusedAndReportedOnce)
+{
+    vine::vsg::VsgRenderer renderer;
+    Captured                  captured;
+    captured.installOn(renderer);
+
+    RenderTargetPtr target(new RenderTarget());
+    renderer.setRenderTarget(target.get());
+    renderer.releaseRenderTarget(target.get());
+
+    renderer.render(std::vector<RenderCommand>{}, nullptr);
+    ASSERT_EQ(captured.items.size(), 1u);
+    EXPECT_EQ(captured.items[0].severity, DiagnosticSeverity::Warning);
+    EXPECT_EQ(captured.items[0].category, DiagnosticCategory::PassProtocolViolation);
+    // One format string per entry point: the host learns WHICH call was skipped.
+    EXPECT_NE(captured.items[0].message.stdstr().find("render()"), std::string::npos);
+
+    // The rest of the episode is the same problem: refused, but not a second report...
+    renderer.render(std::vector<RenderCommand>{}, nullptr);
+    EXPECT_EQ(captured.items.size(), 1u);
+    // ...and the other entry points that draw into the announced target refuse it too.
+    RenderTargetPtr source(new RenderTarget());
+    renderer.clear(vine::Color(0, 0, 0, 255), true);
+    renderer.drawScreenTexture(source.get(), 0);
+    EXPECT_EQ(captured.items.size(), 1u);
+
+    // Announcing a target again ends the episode: calls are served from here on.
+    renderer.setRenderTarget(nullptr);
+    renderer.render(std::vector<RenderCommand>{}, nullptr);
+    renderer.clear(vine::Color(0, 0, 0, 255), true);
+    EXPECT_EQ(captured.items.size(), 1u);
+
+    // A new release is a new episode, so it is reported again.
+    renderer.setRenderTarget(target.get());
+    renderer.releaseRenderTarget(target.get());
+    renderer.render(std::vector<RenderCommand>{}, nullptr);
+    ASSERT_EQ(captured.items.size(), 2u);
+    EXPECT_EQ(renderer.diagnosticCount(DiagnosticCategory::PassProtocolViolation), 2u);
+}
+
+/**
+ * @brief A pass scope starts clean, so the refusal cannot leak into the next pass.
+ *
+ * beginPass() drops the whole queued request, which is what keeps a direct driver's dead
+ * announcement from refusing the calls of a pass that announced its own (live) target.
+ */
+TEST(PassProtocolTest, APassScopeClearsADeadAnnouncement)
+{
+    vine::vsg::VsgRenderer renderer;
+    Captured                  captured;
+    captured.installOn(renderer);
+
+    RenderTargetPtr target(new RenderTarget());
+    renderer.setRenderTarget(target.get());
+    renderer.releaseRenderTarget(target.get());
+
+    RenderPassPtr pass(new RenderPass());
+    renderer.beginPass(pass.get());
+    renderer.render(std::vector<RenderCommand>{}, nullptr);
+    renderer.endPass();
+
+    EXPECT_TRUE(captured.items.empty());
 }

@@ -93,6 +93,28 @@ void VsgRenderer::endPass()
     resetPassRequest();
 }
 
+bool VsgRenderer::refuseDeadTargetAnnouncement(const char* call)
+{
+    bool report = false;
+    if (!state.request.takeDeadTargetAnnouncement(report)) {
+        return false;
+    }
+    // One report per release episode: the request's flag is cleared by the next
+    // setRenderTarget() (and with the request when a scope opens or closes), so a caller
+    // that keeps drawing on the same dead announcement is told once — with the fix, which
+    // is the point of the message: the draw went nowhere, not into the window.
+    if (report) {
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::PassProtocolViolation,
+                           formatDiagnostic(u8"%s: the announced render target was released while it was"
+                                            u8" still announced, so the call was skipped instead of falling"
+                                            u8" back to the window — announce the target again (or nullptr to"
+                                            u8" draw into the window)",
+                                            call));
+    }
+    return true;
+}
+
 void VsgRenderer::retireInactivePassSlots()
 {
     if (!state.pass_protocol_used) {
@@ -138,7 +160,7 @@ void VsgRenderer::releasePass(vine::raw_ptr<const vine::graphics::RenderPass> pa
     }
     const vine::graphics::RenderPass* removed = pass;
     for (auto& entry : state.targets) {
-        detail::erasePassSlotsFromTarget(state, entry.first, removed);
+        detail::erasePassFromTarget(state, entry.first, removed);
     }
     state.passes_active_this_frame.erase(removed);
     if (state.request.pass == removed) {

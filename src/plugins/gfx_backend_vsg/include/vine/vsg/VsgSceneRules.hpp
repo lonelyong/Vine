@@ -4,14 +4,18 @@
  * @brief The device-free decisions the bridge makes about geometry and pipeline state.
  *
  * A SceneBridge mostly builds vsg objects, and that needs a device. What does NOT need one: how a
- * custom vertex channel is classified (and why it is rejected), which colour attachments a shader
- * set declares, what a multi-attachment pipeline writes, and the three hash functions every cache
- * key is built from.
+ * custom vertex channel is classified (and why it is rejected), how a forwarded channel becomes a
+ * vsg vertex binding (its name, its Vulkan format and the sample data the binding must match),
+ * which Vulkan stage an SDK shader-stage kind maps to, how an xyz channel is unpacked at its
+ * stride, the normals / default colour derived for a mesh that provides none, which colour
+ * attachments a shader set declares, what a multi-attachment pipeline writes, and the three hash
+ * functions every cache key is built from.
  *
  * Those rules used to be file-local to SceneBridgeGeometry.cpp / SceneBridgePipeline.cpp, so the
  * only way to exercise them was to run the whole pipeline path. A rule that is wrong there does
- * not fail loudly either: a channel accepted at the wrong vertex count builds a corrupt buffer, and
- * a hash that forgets a field does not fail at all — it quietly stops sharing a cache entry and
+ * not fail loudly either: a channel accepted at the wrong vertex count builds a corrupt buffer, a
+ * binding name that only one of its two producers updates silently leaves the attribute unbound,
+ * and a hash that forgets a field does not fail at all — it quietly stops sharing a cache entry and
  * rebuilds per frame.
  *
  * They live here as functions over plain data, so a test can check them without a device
@@ -22,12 +26,17 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
+#include <vsg/core/Array.h>
+#include <vsg/core/Data.h>
 #include <vsg/core/ref_ptr.h>
 #include <vsg/state/ColorBlendState.h>
 #include <vsg/utils/ShaderSet.h>
 
 #include <vine/String.hpp>
+#include <vine/geometry/Array.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -76,6 +85,197 @@ ChannelShape channelShape(const vine::graphics::AttributeBuffer& attr, std::size
  */
 vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics::AttributeBuffer& attr,
                                    std::size_t vertex_count, ChannelShape shape);
+
+/**
+ * @brief Why an attribute channel could not be unpacked as xyz.
+ *
+ * Returned instead of printing: the CALLER owns the geometry context (which location, which
+ * geometry, whether the mesh is still drawable) and reports it through the bridge's sink, so the
+ * reason travels with that context.
+ */
+enum class XyzUnpack
+{
+    Ok,            ///< Unpacked into the output array.
+    NotXyzStride,  ///< Component count is not a usable xyz stride (needs 3 or 4).
+    NotDivisible,  ///< Float count is not a whole number of vertices at that stride.
+};
+
+/**
+ * @brief Unpacks an attribute buffer's xyz using its component count as the stride.
+ *
+ * The AttributeBuffer contract allows 1-4 scalar components per vertex; position / normal
+ * consumers need at least three and take the first three scalars of each vertex (a vec4 channel
+ * keeps its xyz and skips the extra w). A channel whose component count is not a usable xyz
+ * stride, or whose float count is not divisible by that stride, cannot be unpacked safely and is
+ * rejected instead of being misread element by element — reading three floats at a time regardless
+ * of the stride silently interleaves the vertices, a data error nothing downstream can detect.
+ *
+ * @param attr Attribute buffer to unpack.
+ * @param out  Receives the unpacked Vec3 values (replaced, cleared first, on Ok; untouched when
+ *             rejected, because the rejection happens before anything is written).
+ * @return Ok when unpacked, otherwise why the channel was rejected.
+ */
+XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry::Vec3fArray& out);
+
+/**
+ * @brief The diagnostic for an unusable loc1 normal channel.
+ *
+ * An unusable OPTIONAL channel is ignored, never fatal: the caller reports this and keeps the mesh,
+ * deriving normals instead. Each rejection carries its OWN numbers — a single shared format string
+ * with the arguments ordered for one of the two branches used to print the component count where
+ * the float count belongs, so the branches are written (and tested) separately.
+ *
+ * @param attr   The rejected normal channel.
+ * @param reason Why unpackXyz rejected it (never Ok).
+ * @return The message to report.
+ */
+vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeBuffer& attr, XyzUnpack reason);
+
+/**
+ * @brief The raw (unnormalised) right-handed face normal of a triangle.
+ *
+ * The one place `(b - a) x (c - a)` is written: both normal paths (per-face for a non-indexed
+ * mesh, accumulated for an indexed one) ask here, so a change to the winding convention cannot
+ * land in only one of them. The orientation IS the rule — a triangle wound the front-face way
+ * yields the outward normal the light and the culling test expect, and reversing it would light
+ * the mesh from the inside with nothing to report.
+ *
+ * A degenerate triangle (collinear or duplicated vertices) yields exactly (0,0,0); the caller must
+ * leave that as the vertex normal rather than normalising it (see @ref normalIsUsable).
+ *
+ * @param a First triangle vertex.
+ * @param b Second triangle vertex (the winding's middle vertex).
+ * @param c Third triangle vertex.
+ * @return The unnormalised face normal, zero when the triangle is degenerate.
+ */
+vine::math::Vec3f faceNormal(const vine::math::Vec3f& a, const vine::math::Vec3f& b, const vine::math::Vec3f& c);
+
+/**
+ * @brief Whether a normal is long enough to be scaled to unit length.
+ *
+ * The rule both normal paths share: a zero-length normal — a degenerate triangle, or collinear
+ * vertices accumulated together — is left as-is. Scaling it would divide by zero and write NaN
+ * into the vertex normal, which then propagates silently through every shading result touching
+ * that vertex (no validation layer reports a NaN attribute).
+ *
+ * @param length_sq Squared length of the normal.
+ * @return true when the normal can be normalised.
+ */
+inline constexpr bool normalIsUsable(float length_sq) noexcept
+{
+    return length_sq > 0.0f;
+}
+
+/**
+ * @brief Builds the default white per-vertex colour array.
+ *
+ * The Phong fragment shader multiplies the vertex colour by the material diffuse colour; since
+ * Vine's material is carried by the material descriptor, a white per-vertex colour keeps the
+ * result driven solely by the material without double modulation.
+ *
+ * @param count Number of vertices.
+ * @return White colour array (one vec4 per vertex).
+ */
+::vsg::ref_ptr<::vsg::vec4Array> makeWhiteColors(std::size_t count);
+
+/**
+ * @brief Builds the per-vertex normal array of a non-indexed mesh.
+ *
+ * Mesh normals are copied when the mesh provides one per position; otherwise each triangle's face
+ * normal is used for its three vertices. A degenerate triangle keeps a zero normal instead of NaN
+ * (see @ref normalIsUsable).
+ *
+ * @param positions   Mesh positions (three vertices per triangle).
+ * @param meshNormals Optional mesh normals (may be empty).
+ * @return Normal array, one vec3 per position.
+ */
+::vsg::ref_ptr<::vsg::vec3Array> makeNormals(const vine::geometry::Vec3fArray& positions,
+                                             const vine::geometry::Vec3fArray& meshNormals);
+
+/**
+ * @brief Builds the per-vertex normal array of an indexed mesh.
+ *
+ * Mesh normals are copied when the mesh provides one per position; otherwise each triangle's face
+ * normal is accumulated at the vertices it references and the sums are normalised. An index
+ * outside the position range is skipped rather than read (defensive: the data path rejects such
+ * geometry upstream), and a zero-length accumulated normal stays zero instead of becoming NaN.
+ *
+ * @param positions   Shared vertex positions.
+ * @param meshNormals Optional mesh normals (may be empty).
+ * @param indices     Triangle indices (three per triangle).
+ * @return Normal array, one vec3 per position.
+ */
+::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(const vine::geometry::Vec3fArray& positions,
+                                                    const vine::geometry::Vec3fArray& meshNormals,
+                                                    const ::vsg::uintArray& indices);
+
+/**
+ * @brief Materialises a packed float channel into a typed per-vertex array.
+ *
+ * The `@pre` @ref channelShape establishes is what makes the loops safe: the component count is 1..4
+ * and the payload holds exactly one value per vertex, so the packed floats are indexed without a
+ * second check (a malformed channel never reaches here). The element type is the counterpart of the
+ * Vulkan format @ref formatForComponents declares (one four-byte component each), so the array built
+ * here matches the binding declared from that format.
+ *
+ * @pre `channelShape(attr, vertex_count) == ChannelShape::Ok` for the channel @p data came from.
+ *
+ * @param components   Scalar components per vertex (1..4; outside 1..3 the vec4 form is used, which
+ *                     channelShape has already rejected).
+ * @param data         Packed per-vertex floats.
+ * @param vertex_count Expected vertex count.
+ * @return Typed array owning the copied values.
+ */
+::vsg::ref_ptr<::vsg::Data> makeTypedVertexData(std::uint32_t components, const std::vector<float>& data,
+                                                std::size_t vertex_count);
+
+/**
+ * @brief The Vulkan vertex-input format of a channel with @p components scalars per vertex.
+ *
+ * The sample data of an attribute binding must agree with this format, so this and
+ * @ref sampleVertexData are written together: vsg matches a bound array to a binding by value
+ * type, and a mismatch is accepted by the configurator (it only shows up as a wrong or missing
+ * attribute at draw time). A component count outside 1..4 falls back to the four-component
+ * format — @ref channelShape has already rejected such a channel, so this only has to keep the
+ * binding legal for that rejection to be what reports it.
+ *
+ * @param components Scalar components per vertex of the channel.
+ * @return The matching vertex-input format (R32 .. R32G32B32A32_SFLOAT).
+ */
+VkFormat formatForComponents(std::uint32_t components);
+
+/**
+ * @brief The one-element sample Data of a custom channel's attribute binding.
+ *
+ * The element type is the format's four-byte-per-component counterpart (see
+ * @ref formatForComponents), one element only: the sample declares the binding's value type to
+ * the configurator, it is never the array actually bound.
+ *
+ * @param components Scalar components per vertex of the channel.
+ * @return A one-element array whose element matches the binding format.
+ */
+::vsg::ref_ptr<::vsg::Data> sampleVertexData(std::uint32_t components);
+
+/**
+ * @brief The stable binding name of a custom attribute location.
+ *
+ * Built-in locations 0/1/2 keep vsg_Vertex / vsg_Normal / vsg_Color; any forwarded channel is
+ * named vine_Attribute{location}. The name is only a key between the ShaderSet binding and the
+ * configurator's assignArray, and both ask here — a rename that updated only one call site would
+ * silently leave the attribute unbound, with nothing to report.
+ *
+ * @param location Shader attribute location of a custom channel (>= 3).
+ * @return The binding name the ShaderSet and the configurator must agree on.
+ */
+std::string customAttributeName(std::uint32_t location);
+
+/**
+ * @brief The Vulkan stage flag of an SDK shader-stage kind.
+ *
+ * @param type SDK stage kind.
+ * @return The matching VkShaderStageFlagBits.
+ */
+VkShaderStageFlagBits stageFlag(vine::graphics::ShaderStageType type);
 
 /** @brief Seed of every cache key built from the hashing below (FNV-1a basis). */
 inline constexpr std::uint64_t kHashSeed = 0xcbf29ce484222325ull;

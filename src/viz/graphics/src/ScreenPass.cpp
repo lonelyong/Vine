@@ -56,6 +56,21 @@ void ScreenPass::resolveInputTextures(const std::vector<raw_ptr<RenderTarget>>& 
     }
 }
 
+int ScreenPass::attachmentToSample() const
+{
+    // The DECLARATION wins when the pass made one: an input image says which attachment of which
+    // target it is (design §14), which is exactly what this needs to know — and it makes
+    // setSourceAttachment() unnecessary for a pass wired through ImageRef. A coarse declaration
+    // (addInputTarget) names the target, not one of its images, so the host-set index remains the way
+    // to say "the second attachment of it".
+    for (const auto& image : inputs()) {
+        if (image != nullptr && image->target() == source_ && image->kind() != ImageRef::Kind::Depth) {
+            return image->attachment();
+        }
+    }
+    return source_attachment_;
+}
+
 void ScreenPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
 {
     if (backend == nullptr || source_ == nullptr) {
@@ -71,8 +86,8 @@ void ScreenPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
         backend->clear(clearColor(), shouldClearDepth());
     }
     if (program_ == nullptr) {
-        // Plain screen-space copy of one colour attachment.
-        backend->drawScreenTexture(source_, source_attachment_);
+        // Plain screen-space copy of one colour attachment (see attachmentToSample).
+        backend->drawScreenTexture(source_, attachmentToSample());
         return;
     }
     if (camera() == nullptr) {

@@ -108,6 +108,28 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
 void placeViewByOrder(VsgRendererState& state, ::vsg::ref_ptr<::vsg::RenderGraph> graph,
                       vine::graphics::RenderTarget* target, const ::vsg::ref_ptr<::vsg::View>& view, int order);
 
+/** @brief Whether a slot's announced lights have to be reported as (partly) unusable.
+ *
+ * A slot's lights come from its pass' content scene every frame, and a light the backend cannot
+ * map (disabled, or a kind with no vsg translation) is dropped while the slot keeps drawing.
+ * That must be said: an announced list whose EVERY entry is unusable leaves the slot on its
+ * seeded default light (and the whole view would shade to black if the fallback did not keep
+ * it), while a partly usable list lights the rest and drops the others — the normal way to hit
+ * this, and the case that used to be silent.
+ *
+ * The EPISODE is "at least one announced light is not lit". The report fires on the frame the
+ * episode starts and re-arms only once every announced light was attached again (or nothing was
+ * announced), so a slot whose scene keeps an unusable light year after year — the list is
+ * rebuilt per frame — says so once instead of every frame. The caller owns @p reported (it
+ * lives on the slot) and builds the message from the counts it already has.
+ *
+ * @param announced Lights the pass announced this frame (its scene's list size).
+ * @param attached  Lights @ref setGroupLights actually put into the slot's light group.
+ * @param reported  Per-slot episode flag (true while the current episode was reported).
+ * @return true on the ONE frame the caller has to report.
+ */
+[[nodiscard]] bool beginLightsDroppedEpisode(std::size_t announced, std::size_t attached, bool& reported);
+
 } // namespace detail
 
 V_VSG_NS_END

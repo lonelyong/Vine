@@ -1,0 +1,45 @@
+[selftest] backend initialized, 30 frames
+[selftest] targets: offscreen MRT 640x360 (3 color) + window
+[selftest] frame 1/30 rendered
+[selftest] frame 30/30 rendered
+[selftest] custom-attribute (loc3) phase rendered
+[selftest] off-screen post chain (A->B->window, A resized) rendered
+[selftest] pass protocol: two passes sharing one camera + order rendered
+[selftest] pass protocol: depth-policy change on a live pass applied
+[selftest] pass protocol: inactive pass retired without a rebuild (1 retired view(s))
+[selftest] pass protocol: re-enabled pass re-attached without a rebuild (1 retired view(s))
+[selftest] shared depth: borrowed depth + clearDepth=false stayed at 2 build(s) over 4 frames
+[selftest] shared depth: consumer rebuilt once with its own depth after the source was released
+[selftest] in-flight churn: 8 frames replaced vertex data / material identity / drawn set
+[selftest] diagnostics: 1 rejection(s) + 1 fallback(s) reached the host sink over 6 frames
+[selftest] pixels: centre=(46,8,3) corner=(10,20,30) clear=(10,20,30) over 4 frames
+[selftest] pixels: user program covered=5916/36864 centre=(255,51,51), diagnostics=0
+[selftest] pixels: RGBA16F attachment honestly reported unsupported
+[selftest] pixels: PiP rect 96x54 sampled both producer regions; deferred program filled the target with (140,153,166); diagnostics=0
+[selftest] program hotspot: in-place program edit rebuilt the fullscreen slot once and drew (204,51,102)
+[selftest] depth: near=0.0249 > far=0.0166 > cleared corner=0.0000 (reverse-Z ordering), Disabled centre=0.0000 (no depth written); packed D24 honestly unsupported
+[selftest] depth load: far quad over the same pixels left 0 blue pixel(s), centre stayed the LOAD pass' clear colour, depth unchanged at 0.0249 (loaded from the previous frame, not cleared); 1 build(s) over 4 frames
+[selftest] shared depth pixels: behind the borrowed depth 0 pixel(s) drawn, in front it covered the centre (5,41,10); lender depth 0.0293
+[selftest] mixed depth: occluded by the first pass' depth 0 pixel(s) drawn; after removing the occluder the second pass' quad covers 256 pixel(s) (the first pass still cleared depth); the second pass' own colour clear showed as its (90,30,30); 1 build(s) over 4 frames
+[selftest] stacked pass: the first pass' fill survived the second pass with a retired clearing pass in between (1188 red pixel(s) still there) and the second pass' quad drew 576 pixel(s) on top
+[selftest] promoting preserve: two preserving passes ran on a depth-promoting target (576 red pixel(s) drawn) with no validation error
+[selftest] depth only: the quad wrote depth 0.0249 over a far-plane clear 0.0000 while the clear colour changed every frame
+[selftest] depth only preserve: the far quad left the preserved depth at 0.0249, and after a clear request the same pass stored 0.0166 with the far plane 0.0000 in the untouched corner
+[selftest] clear flip: after clearDepth flipped on the SAME pass the depth went 0.0249 -> 0.0166 and the far quad drew (centre B=46)
+[selftest] preserved depth: the program over a depth-preserving source drew with its colour attachments only and the unsampleable depth was reported
+[selftest] depth sample: a program sampling the promoted source's depth read back the sampled depth, the same program over a depth-preserving source was refused with a report, and a slot built before the pass that revoked the promotion in the SAME frame was dropped (no stale descriptor recorded)
+[selftest] color bootstrap: the first pass' fill survived the frames it drew nothing in (5084 of 5184 pixel(s)) with the second pass' quad (100 pixel(s)) on top
+[selftest] depth borrow: mismatched extent (1 report(s)) and depth-promoted source (1 report(s)) both fell back to the target's own depth and still drew the near quad; a borrower built before its source (1 report(s)) retried and used the borrowed depth
+[selftest] depth testonly: middle translucent quad won the centre (5,10,46), depth still the opaque pass' 0.0249 (tested, not written)
+[selftest] depth share order: borrower followed the source's own frame and image (AAA--- over 6 frames; A = probe drawn)
+[selftest] target description: a colour attachment added and a depth promotion turned on after the first frame both took effect, each with the rebuild confined to its change frame; attachment 1 read back transparent black and the promoted source's borrow was refused (1 report)
+[selftest] policy churn: 30 frame(s) flipping the colour clear, the depth clear, the depth mode and a pass' activity took 0 device wait(s), released 115 parked object(s) and built 2 target(s); 30 more frame(s) flipping an attachment shape rebuilt 29 target(s) with 29 teardown wait(s)
+[selftest] MRT attachment 0: centre=(46,8,3) covered=100/9216 [takes the pass clear colour (10,20,30)]
+[selftest] MRT attachment 1: centre=(0,0,0) covered=9216/9216 [transparent black by contract, clear colour ignored]
+[selftest] variant 'built-in Phong + normals': centre=(46,8,3) corner=(10,20,30) covered=400/36864 diagnostics=0
+[selftest] variant 'built-in Phong + loc3 channel': centre=(46,8,3) corner=(10,20,30) covered=400/36864 diagnostics=0
+[selftest] variant 'custom constant-colour program + normals': centre=(255,51,51) corner=(10,20,30) covered=5916/36864 diagnostics=0
+[selftest] variant 'custom constant-colour program + loc3 channel': centre=(255,51,51) corner=(10,20,30) covered=5916/36864 diagnostics=0
+[selftest] variant 'custom loc3-attribute program + normals + loc3 channel': centre=(230,38,13) corner=(10,20,30) covered=5916/36864 diagnostics=0
+[selftest] variant 'custom mid-depth (z=0.5) constant-colour program': centre=(255,51,51) corner=(10,20,30) covered=5916/36864 diagnostics=0
+[selftest] done — no crash, no validation error expected

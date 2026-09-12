@@ -149,6 +149,26 @@ String RenderPass::outputName() const
     return output_name_;
 }
 
+void RenderPass::setOutput(intrusive_ptr<ImageRef> image)
+{
+    output_image_ = std::move(image);
+}
+
+raw_ptr<ImageRef> RenderPass::output() const
+{
+    return output_image_.get();
+}
+
+void RenderPass::setOutputTarget(intrusive_ptr<RenderTarget> target)
+{
+    output_target_ = std::move(target);
+}
+
+raw_ptr<RenderTarget> RenderPass::outputTarget() const
+{
+    return output_target_.get();
+}
+
 void RenderPass::addInputName(const String& name)
 {
     if (!name.empty()) {
@@ -164,6 +184,36 @@ const std::vector<String>& RenderPass::inputNames() const
 void RenderPass::clearInputNames()
 {
     input_names_.clear();
+}
+
+void RenderPass::addInput(intrusive_ptr<ImageRef> image)
+{
+    if (image != nullptr) {
+        input_images_.push_back(std::move(image));
+    }
+}
+
+const std::vector<intrusive_ptr<ImageRef>>& RenderPass::inputs() const
+{
+    return input_images_;
+}
+
+void RenderPass::addInputTarget(intrusive_ptr<RenderTarget> target)
+{
+    if (target != nullptr) {
+        input_targets_.push_back(std::move(target));
+    }
+}
+
+const std::vector<intrusive_ptr<RenderTarget>>& RenderPass::inputTargets() const
+{
+    return input_targets_;
+}
+
+void RenderPass::clearInputs()
+{
+    input_images_.clear();
+    input_targets_.clear();
 }
 
 raw_ptr<ShaderProgram> RenderPass::programOverride() const

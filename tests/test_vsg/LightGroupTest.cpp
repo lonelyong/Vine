@@ -12,7 +12,9 @@
  * path already applies (see fillLightPushBlock).
  *
  * These tests pin that contract device-free: the light translation is pure data
- * and needs no Vulkan device (see VsgPipelineFactory.hpp).
+ * and needs no Vulkan device (see VsgPipelineFactory.hpp). The reporting half —
+ * which frames have to say that announced lights were dropped — is pinned the
+ * same way (see beginLightsDroppedEpisode in VsgContentSlot.hpp).
  */
 
 #include <gtest/gtest.h>
@@ -27,9 +29,11 @@
 
 #include <vine/graphics/Light.hpp>
 
+#include <vine/vsg/VsgContentSlot.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 
 using namespace vine::graphics;
+using vine::vsg::detail::beginLightsDroppedEpisode;
 
 namespace
 {
@@ -140,4 +144,64 @@ TEST(LightGroupTest, NullGroupIsIgnored)
 {
     auto ambient = Light::createAmbient();
     EXPECT_EQ(vine::vsg::detail::setGroupLights(nullptr, { ambient.get() }), 0u);
+}
+
+/**
+ * @brief A PARTIAL drop is an episode too, not only a list whose every entry is unusable.
+ *
+ * The normal way to hit this is a scene that carries one light the backend cannot translate
+ * (a kind with no vsg equivalent, or a disabled one) next to usable lights: those lights ARE
+ * lit, so nothing used to be reported at all.
+ */
+TEST(LightGroupTest, ADroppedLightStartsAnEpisodeEvenWhenOthersStayLit)
+{
+    bool reported = false;
+
+    EXPECT_TRUE(beginLightsDroppedEpisode(3u, 2u, reported));
+    // The same list on the next frame is the SAME episode — the announced list is rebuilt every
+    // frame, so an episode may not report more than once — and a deeper drop in it is still that
+    // episode (the message carries the counts).
+    EXPECT_FALSE(beginLightsDroppedEpisode(3u, 2u, reported));
+    EXPECT_FALSE(beginLightsDroppedEpisode(3u, 1u, reported));
+    EXPECT_FALSE(beginLightsDroppedEpisode(3u, 0u, reported));
+}
+
+/**
+ * @brief Every announced light lit again re-arms the report.
+ */
+TEST(LightGroupTest, EveryLightLitAgainRearmsTheReport)
+{
+    bool reported = false;
+
+    EXPECT_TRUE(beginLightsDroppedEpisode(2u, 1u, reported));
+    EXPECT_FALSE(beginLightsDroppedEpisode(2u, 2u, reported)); // all lit: re-arm
+    EXPECT_TRUE(beginLightsDroppedEpisode(2u, 1u, reported));  // a NEW episode, reported again
+    EXPECT_FALSE(beginLightsDroppedEpisode(2u, 1u, reported));
+}
+
+/**
+ * @brief An empty announcement is not an episode (it is the normal scene-less state).
+ */
+TEST(LightGroupTest, AnEmptyAnnouncementIsNotAnEpisode)
+{
+    bool reported = true; // a previous episode was reported
+
+    // No lights announced: the slot keeps its seeded default light, which is the normal state of
+    // a pass whose content scene carries no lights — nothing to report, and it re-arms.
+    EXPECT_FALSE(beginLightsDroppedEpisode(0u, 0u, reported));
+    EXPECT_FALSE(reported);
+
+    // ...so the next real drop is a new episode.
+    EXPECT_TRUE(beginLightsDroppedEpisode(2u, 0u, reported));
+}
+
+/**
+ * @brief A list whose every entry is unusable stays reported (the original case).
+ */
+TEST(LightGroupTest, AWholeListDroppedIsStillReported)
+{
+    bool reported = false;
+
+    EXPECT_TRUE(beginLightsDroppedEpisode(1u, 0u, reported));
+    EXPECT_FALSE(beginLightsDroppedEpisode(1u, 0u, reported));
 }

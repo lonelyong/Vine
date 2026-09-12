@@ -10,6 +10,7 @@
 #include <vine/Color.hpp>
 
 #include "DepthMode.hpp"
+#include "ImageRef.hpp"
 #include "Viewport.hpp"
 
 V_GRAPHICS_NS_BEGIN
@@ -158,6 +159,10 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
      * Used for sub-viewports such as an axis gizmo in a screen corner. The
      * pass falls back to the full surface when no viewport is set.
      *
+     * The announcement is PER DRAWING CALL (RenderBackend::setViewport): the base execute() announces
+     * this rectangle once and draws once, so it covers the whole pass; a subclass that draws more than
+     * once must announce the viewport of each draw itself.
+     *
      * @param viewport Draw rectangle in device pixels (top-left origin).
      */
     void setViewport(const Viewport& viewport);
@@ -216,6 +221,59 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
      */
     String outputName() const;
 
+    /** @brief Declares the image this pass produces (design §14).
+     *
+     * The object-typed counterpart of setOutputName: the producer and every consumer point at
+     * the SAME ImageRef, so a hand-off cannot be mistyped, and the engine can SEE the wiring —
+     * it reports an image that two passes declare as their output instead of letting the second
+     * one silently win at run time.
+     *
+     * A promise is about the content a consumer gets, so the engine checks that the target named here
+     * is the one this pass RENDERS into (see setRenderTarget): promising what the pass never writes is
+     * a claim about nothing, and it is reported.
+     *
+     * The image has to be BOUND to a target (ImageRef::bind): an unbound identity has no address, so
+     * no consumer can resolve it and the check above has nothing to compare — declaring one is
+     * reported (once per image, per episode) instead of passing unnoticed.
+     *
+     * A pass may declare an output image, an output target, an output name, or several of them. The
+     * object-typed declarations drive the runtime; a name is resolved by the engine's named-output
+     * registry, which a pass without object declarations falls back on (design §14.3). See
+     * setOutputName for what each declaration is for.
+     *
+     * @param image Image this pass produces (null clears it).
+     */
+    void setOutput(intrusive_ptr<ImageRef> image);
+
+    /** @brief Gets the output image this pass produces.
+     *
+     * @return The declared output image, or null when none was declared.
+     */
+    raw_ptr<ImageRef> output() const;
+
+    /** @brief Declares a WHOLE target this pass hands to consumers (the coarse counterpart of
+     * setOutput(ImageRef), design §14).
+     *
+     * "Any image of this target is mine to hand out": a pass rendering into an MRT target fills
+     * ALL of its attachments in one render scope, so promising them one by one would mean
+     * repeating today's attachment count at every producer — and getting it wrong when the target
+     * grows an attachment. Shape-agnostic on purpose: the promise covers whatever the target has
+     * when the engine validates it. One of the three output declarations; see setOutputName for how
+     * they relate.
+     *
+     * The target is NOT where the content comes from (that is setRenderTarget); it is what this
+     * pass promises about it. Declaring both one image and a whole target is redundant, not wrong.
+     *
+     * @param target Target whose images this pass produces (null clears the declaration).
+     */
+    void setOutputTarget(intrusive_ptr<RenderTarget> target);
+
+    /** @brief Gets the whole target this pass promises to consumers.
+     *
+     * @return The declared output target, or null when none was declared.
+     */
+    raw_ptr<RenderTarget> outputTarget() const;
+
     /** @brief Adds an input texture slot this pass consumes by name.
      *
      * A consumer declares "I want the texture published as X" without
@@ -243,16 +301,57 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
     /** @brief Clears all declared input texture slots. */
     void clearInputNames();
 
-    /** @brief Receives the engine-resolved input textures.
+    /** @brief Declares one image this pass consumes (design §14).
      *
-     * Called by the engine just before execute() once per frame with the
-     * targets resolved from the named-output registry for each declared input
-     * (same order as inputNames(); entries stay null when a name is not yet
-     * published). The base pass ignores the inputs; subclasses such as
-     * ScreenPass consume them. The passed targets are borrowed: the registry
-     * keeps them alive while they are published.
+     * The object-typed counterpart of addInputName. A consumer samples one ATTACHMENT of the
+     * image's target (ImageRef::attachment), which is what an MRT pass hands out: the identity is
+     * "this target, attachment N", not just "this target".
      *
-     * @param inputs Resolved input targets in inputNames() order.
+     * The image has to be BOUND to a target (ImageRef::bind), and to the same object the producer
+     * declared: an unbound identity has no address, so nothing can fill it — declaring one is
+     * reported (once per image, per episode) instead of leaving the pass drawing nothing.
+     *
+     * @param image Image this pass consumes (null is ignored).
+     */
+    void addInput(intrusive_ptr<ImageRef> image);
+
+    /** @brief Gets the images this pass consumes.
+     *
+     * @return The input images, in the order they were added.
+     */
+    const std::vector<intrusive_ptr<ImageRef>>& inputs() const;
+
+    /** @brief Declares a WHOLE target this pass consumes (the coarse counterpart of addInput).
+     *
+     * "I read this target's images": a fullscreen program receives every colour attachment of its
+     * source (plus its depth while that one is sampleable) and its shader picks by binding — so the
+     * unit it really consumes is the target, not one attachment. Shape-agnostic like the promise
+     * side: a target that gains an attachment later needs no change here.
+     *
+     * @param target Target whose images this pass consumes (null is ignored).
+     */
+    void addInputTarget(intrusive_ptr<RenderTarget> target);
+
+    /** @brief Gets the whole targets this pass consumes.
+     *
+     * @return The input targets, in the order they were added.
+     */
+    const std::vector<intrusive_ptr<RenderTarget>>& inputTargets() const;
+
+    /** @brief Clears all declared input images AND input targets. */
+    void clearInputs();
+
+    /** @brief Receives the engine-resolved inputs.
+     *
+     * Called by the engine just before execute() once per frame: one entry per declaration, in
+     * declaration order — the images of inputs() first, then the targets of inputTargets(); a pass
+     * that declared neither falls back to its inputNames(), resolved against the engine's
+     * named-output registry (the sugar layer). An entry stays null when nothing produced it this
+     * frame (the engine reports that once per episode), so the base pass ignores the inputs and a
+     * subclass such as ScreenPass treats a leading null as "nothing to sample". The targets are
+     * borrowed: whatever produced them keeps them alive while the frame runs.
+     *
+     * @param inputs Resolved input targets, in declaration order (names last).
      */
     virtual void resolveInputTextures(const std::vector<raw_ptr<RenderTarget>>& inputs)
     {
@@ -290,6 +389,10 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
     String name_;
     String output_name_;
     std::vector<String> input_names_;
+    intrusive_ptr<ImageRef> output_image_;                 // fine output declaration (design §14)
+    intrusive_ptr<RenderTarget> output_target_;            // coarse output declaration (design §14)
+    std::vector<intrusive_ptr<ImageRef>> input_images_;    // fine input declarations (design §14)
+    std::vector<intrusive_ptr<RenderTarget>> input_targets_;   // coarse input declarations (design §14)
     ShaderProgramPtr program_override_;   // null = per-geometry programs
     intrusive_ptr<RenderTarget> render_target_;
     raw_ptr<Camera> camera_ = nullptr;

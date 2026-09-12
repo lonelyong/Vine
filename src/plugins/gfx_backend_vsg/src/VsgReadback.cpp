@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include <vsg/commands/BlitImage.h>
@@ -51,27 +52,81 @@ bool submitOneShot(const VsgRendererState& state, const ::vsg::ref_ptr<::vsg::Co
                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 }
 
-const VsgRenderTargetEntry* readbackTarget(const VsgRendererState& state,
-                                           vine::graphics::RenderTarget* target)
+vine::String readbackRefusalMessage(ReadbackRefusal refusal, const char* what,
+                                    const vine::graphics::RenderTarget* target)
 {
-    if (target == nullptr || state.viewer == nullptr || state.window == nullptr) {
-        // Nothing has been rendered off-screen in this session: the request is
-        // unsupported, which is what the readback's false means (base contract).
+    // The name is copied out first: a temporary's c_str() would dangle by the time the switch
+    // below uses it.
+    const std::string name =
+        (target != nullptr && !target->name().empty()) ? target->name().stdstr() : std::string("(unnamed)");
+    switch (refusal) {
+    case ReadbackRefusal::NoTarget:
+        return formatDiagnostic(u8"%s: no target was given, so there is nothing to read", what);
+    case ReadbackRefusal::NoSession:
+        return formatDiagnostic(u8"%s: the backend is not initialized yet, so nothing has been rendered to read "
+                                u8"(target '%s')",
+                                what, name.c_str());
+    case ReadbackRefusal::NotRendered:
+        return formatDiagnostic(u8"%s: target '%s' was never rendered by this backend (or was released); "
+                                u8"nothing to read",
+                                what, name.c_str());
+    case ReadbackRefusal::NotBuilt:
+        return formatDiagnostic(u8"%s: target '%s' has no built attachments yet", what, name.c_str());
+    case ReadbackRefusal::Empty:
+        return formatDiagnostic(u8"%s: target '%s' has no usable size", what, name.c_str());
+    case ReadbackRefusal::NoDevice:
+        return formatDiagnostic(u8"%s: the session has no usable device / image to copy from", what);
+    case ReadbackRefusal::None:
+        break;
+    }
+    return vine::String();
+}
+
+const VsgRenderTargetEntry* readbackTarget(const VsgRendererState& state,
+                                           vine::graphics::RenderTarget* target, ReadbackRefusal& refusal)
+{
+    if (target == nullptr) {
+        refusal = ReadbackRefusal::NoTarget;
+        return nullptr;
+    }
+    if (!state.initialized) {
+        // Nothing has been rendered off-screen in this session: the request is unsupported, and
+        // the caller says so (a later call, after initialize(), can succeed). The session flag is
+        // the authoritative "a window / device exists" state — initialize() sets it after
+        // creating both, and shutdown() replaces the whole state — which also makes this branch
+        // reachable without a device.
+        refusal = ReadbackRefusal::NoSession;
         return nullptr;
     }
     const auto entry = state.targets.find(target);
-    if (entry == state.targets.end() || !entry->second.attachments_built) {
+    if (entry == state.targets.end()) {
+        refusal = ReadbackRefusal::NotRendered;
+        return nullptr;
+    }
+    if (!entry->second.attachments_built) {
+        refusal = ReadbackRefusal::NotBuilt;
         return nullptr;
     }
     const VsgRenderTargetEntry& built = entry->second;
-    return (built.width > 0 && built.height > 0) ? &built : nullptr;
+    if (built.width <= 0 || built.height <= 0) {
+        refusal = ReadbackRefusal::Empty;
+        return nullptr;
+    }
+    refusal = ReadbackRefusal::None;
+    return &built;
 }
 
 bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                      vine::graphics::RenderTarget* target, int attachment, std::vector<std::uint8_t>& out_pixels)
 {
-    auto* built = readbackTarget(state, target);
+    ReadbackRefusal refusal = ReadbackRefusal::None;
+    auto*           built   = readbackTarget(state, target, refusal);
     if (built == nullptr) {
+        // Every reason to refuse is reported, and before the device is stopped (see the header):
+        // a bare false used to be indistinguishable from "unsupported" for the caller.
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::ContentSkipped,
+                           readbackRefusalMessage(refusal, "readColorBuffer", target));
         return false;
     }
     if (attachment < 0 || static_cast<std::size_t>(attachment) >= built->color_images.size()) {
@@ -102,6 +157,9 @@ bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
     auto physical = state.window->getPhysicalDevice();
     auto source   = built->color_images[attachment];
     if (device == nullptr || physical == nullptr || source == nullptr) {
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::ContentSkipped,
+                           readbackRefusalMessage(ReadbackRefusal::NoDevice, "readColorBuffer", target));
         return false;
     }
     const VkFormat format = source->format;
@@ -170,6 +228,9 @@ bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                                           VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination, range)));
 
     if (!submitOneShot(state, commands)) {
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::ContentSkipped,
+                           readbackRefusalMessage(ReadbackRefusal::NoDevice, "readColorBuffer", target));
         return false;
     }
 
@@ -193,8 +254,14 @@ bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
 bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                      vine::graphics::RenderTarget* target, std::vector<float>& out_depths)
 {
-    auto* built = readbackTarget(state, target);
+    ReadbackRefusal refusal = ReadbackRefusal::None;
+    auto*           built   = readbackTarget(state, target, refusal);
     if (built == nullptr) {
+        // See readColorBuffer: a refused readback says why (the state it is in), and does not
+        // reach the device wait below.
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::ContentSkipped,
+                           readbackRefusalMessage(refusal, "readDepthBuffer", target));
         return false;
     }
     if (built->depth_image == nullptr) {
@@ -232,6 +299,9 @@ bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
     // the one-shot submit, which guards for them itself.
     auto device = state.window->getDevice();
     if (device == nullptr) {
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::ContentSkipped,
+                           readbackRefusalMessage(ReadbackRefusal::NoDevice, "readDepthBuffer", target));
         return false;
     }
 
@@ -286,6 +356,9 @@ bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                                           VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, built->depth_image, range)));
 
     if (!submitOneShot(state, commands)) {
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::ContentSkipped,
+                           readbackRefusalMessage(ReadbackRefusal::NoDevice, "readDepthBuffer", target));
         return false;
     }
 

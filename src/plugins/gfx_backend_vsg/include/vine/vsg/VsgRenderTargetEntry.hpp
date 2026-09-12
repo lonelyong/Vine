@@ -137,10 +137,11 @@ struct ContentSlot {
     // re-uploading the mesh and recompiling.
     bool                          detached = false;
     bool                          ready = false;
-    // True once this slot has reported that its announced lights were all
-    // unusable and it therefore keeps the seeded default light (see
-    // setGroupLights). Re-armed when usable lights arrive, so each episode
-    // reports once instead of every frame.
+    // True while this slot has reported that some announced light was unusable
+    // — all of them (it therefore keeps the seeded default light, see
+    // setGroupLights) or only some (the rest are lit). Re-armed once every
+    // announced light is attached again, so each episode reports once instead
+    // of every frame (see beginLightsDroppedEpisode).
     bool                          light_fallback_reported = false;
 };
 
@@ -578,6 +579,14 @@ struct VsgRenderTargetEntry {
     // is cleared when it is honoured, so a source that arrives late is
     // reported once, not every frame.
     bool        depth_borrow_pending_reported = false;
+
+    // True while this target has no size, so a build attempt cannot produce attachments and
+    // every pass drawing into it draws nothing — and the report for that episode was already
+    // emitted. Cleared as soon as a build attempt finds a usable size, so a target the host
+    // sizes later is reported again if it loses the size, and a frame-by-frame build attempt
+    // on an unsized target says so once instead of every frame (see
+    // detail::beginTargetSizeMissingEpisode).
+    bool        size_missing_reported = false;
 
     // ---- content slots (retained Views under graph), keyed by owning pass ----
     std::map<SlotKey, ContentSlot> content_slots;

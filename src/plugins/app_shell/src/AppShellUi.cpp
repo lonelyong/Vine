@@ -766,6 +766,10 @@ void addOffscreenMultiSlotDemo(gui::RenderControl* render_control)
     auto screen = vine::make_intrusive<vine::graphics::ScreenPass>();
     screen->setName(u8"multislot_pip");
     screen->addInputName(u8"MultiColor");
+    // The two bake passes above accumulate into one target, so neither of them owns the hand-off
+    // (a promise is a claim about WHOSE content a consumer gets): the consumer reads the whole baked
+    // target, and the engine answers it from "a pass draws into it", not from a promise.
+    screen->addInputTarget(target);
     screen->setViewport(sx, sy, pip_w, pip_h);
     engine->addPass(screen, 100);
 }
@@ -807,9 +811,14 @@ void addGbufferDemo(gui::RenderControl* render_control)
     gbuf->setRenderTarget(target);
     gbuf->setProgramOverride(vine::graphics::RenderPipelineBuilder::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
+    gbuf->setOutputTarget(target);   // the G-buffer's only writer owns the hand-off (design §14)
     engine->addPass(gbuf, render_control->view()->scene(), -3);
 
-    // Preview each colour attachment of the same published target.
+    // Preview each colour attachment of the same published target: each preview declares the SAME wire
+    // at the grain it really is — one image, not "a name plus an attachment index". The identity is
+    // the address (target + attachment), so the producer's whole-target promise above answers it.
+    static const vine::String preview_labels[] = { u8"GBuffer.albedo", u8"GBuffer.normal",
+                                                   u8"GBuffer.specular", u8"GBuffer.position" };
     const double dpr   = render_control->devicePixelRatio();
     const int    pip_w = static_cast<int>(108.0 * dpr);
     const int    pip_h = static_cast<int>(61.0 * dpr);
@@ -817,7 +826,11 @@ void addGbufferDemo(gui::RenderControl* render_control)
         auto screen = vine::make_intrusive<vine::graphics::ScreenPass>();
         screen->setName(u8"gbuffer_preview");
         screen->addInputName(u8"GBuffer");
-        screen->setSourceAttachment(attachment);
+        // No setSourceAttachment: the declared image already says which attachment this preview
+        // samples (the name above is the sugar, the image is the wire).
+        auto image = vine::make_intrusive<vine::graphics::ImageRef>(preview_labels[attachment]);
+        image->bind(target, attachment);
+        screen->addInput(image);
         const int x = 8 + attachment * (pip_w + 8);
         screen->setViewport(x, 8, pip_w, pip_h);
         engine->addPass(screen, 120 + attachment);
@@ -856,6 +869,7 @@ void addDeferredDemo(gui::RenderControl* render_control)
     gbuf->setRenderTarget(target);
     gbuf->setProgramOverride(vine::graphics::RenderPipelineBuilder::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
+    gbuf->setOutputTarget(target);   // the G-buffer's only writer owns the hand-off (design §14)
     engine->addPass(gbuf, render_control->view()->scene(), -3);
 
     // Deferred-lighting preview: a fullscreen program sampling the G-buffer.
@@ -865,10 +879,14 @@ void addDeferredDemo(gui::RenderControl* render_control)
     auto         light = vine::make_intrusive<vine::graphics::ScreenPass>();
     light->setName(u8"deferred_light");
     light->addInputName(u8"GBuffer");
+    light->addInputTarget(target);   // a fullscreen program reads the whole source target
     light->setCamera(render_control->view()->camera());
     light->setProgram(vine::graphics::RenderPipelineBuilder::defaultDeferredLightProgram());
     light->setViewport(8, 8, pw, ph);
-    engine->addPass(light, 130);
+    // The content scene must be bound to THIS pass too: ScreenPass forwards a scene's lights to the
+    // fullscreen program, and a program pass with no scene is handed the backend's default ambient
+    // only (no directional term) - a flat image contradicting this function's own documentation.
+    engine->addPass(light, render_control->view()->scene(), 130);
 }
 
 /**
@@ -1103,11 +1121,20 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
         const double dpr   = render_control->devicePixelRatio();
         const int    pip_w = static_cast<int>(160.0 * dpr);
         const int    pip_h = static_cast<int>(90.0 * dpr);
+        // The G-buffer the builder created, reached through the pipeline handle: the previews declare
+        // the one image they sample (target + attachment) instead of a name plus an index — the same
+        // wire the builder's producer promised as a whole target.
+        auto*        gbuffer = pipeline->offscreenTarget();
         for (int attachment = 0; attachment < 4; ++attachment) {
             auto preview = vine::make_intrusive<vine::graphics::ScreenPass>();
             preview->setName(u8"gbuffer_preview");
             preview->addInputName(u8"GBuffer");
-            preview->setSourceAttachment(attachment);
+            if (gbuffer != nullptr) {
+                // The declared image carries the attachment, so the host does not repeat it.
+                auto image = vine::make_intrusive<vine::graphics::ImageRef>(u8"GBuffer.preview");
+                image->bind(vine::intrusive_ptr<vine::graphics::RenderTarget>(gbuffer), attachment);
+                preview->addInput(image);
+            }
             const int x = 8 + attachment * (pip_w + 8);
             preview->setViewport(x, 8, pip_w, pip_h);
             engine->addPass(preview, 120 + attachment);

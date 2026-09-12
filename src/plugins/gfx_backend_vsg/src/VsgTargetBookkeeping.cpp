@@ -43,6 +43,19 @@ using namespace detail;
 namespace detail
 {
 
+bool beginTargetSizeMissingEpisode(std::uint32_t width, std::uint32_t height, bool& reported)
+{
+    if (width != 0u && height != 0u) {
+        reported = false; // a usable size re-arms the report (the host sized the target)
+        return false;
+    }
+    if (reported) {
+        return false; // already reported for this episode
+    }
+    reported = true;
+    return true;
+}
+
 bool borrowNeedsRebuild(const VsgRendererState& state, const VsgRenderTargetEntry& t,
                       const vine::graphics::RenderTarget* target_key)
 {
@@ -313,7 +326,7 @@ void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnos
     // one RT can hold several content slots, like the window target).
     // EXPERIMENTAL: must be validated on a real Vulkan device before
     // production use.
-    if (target == nullptr || state.window == nullptr) {
+    if (target == nullptr) {
         return;
     }
     auto& t = state.entryFor(target);
@@ -328,7 +341,23 @@ void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnos
 
     const uint32_t w = static_cast<uint32_t>(target->width());
     const uint32_t h = static_cast<uint32_t>(target->height());
+    if (beginTargetSizeMissingEpisode(w, h, t.size_missing_reported)) {
+        // One report per episode: an unsized target is a host mistake with a clear fix, and a
+        // pass that silently draws nothing is exactly what the diagnostics channel exists for.
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::TargetBuildFailed,
+                           formatDiagnostic(u8"render target '%s' has no size (%ux%u): no attachments are"
+                                            u8" created, so the passes drawing into it draw nothing until it is"
+                                            u8" sized (RenderTarget::setSize)",
+                                            target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str(),
+                                            w, h));
+    }
     if (w == 0 || h == 0) {
+        return;
+    }
+    // The size check above is a fact about the REQUEST (it is reported whether or not a device
+    // is up); building the attachments is the part that needs the session.
+    if (state.window == nullptr) {
         return;
     }
     t.width             = static_cast<int>(w);
@@ -395,8 +424,8 @@ void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnos
     // this target asks for one (passGraph); setupContentSlot() compiles then.
 }
 
-void erasePassSlotsFromTarget(VsgRendererState& state, vine::graphics::RenderTarget* target,
-                              const vine::graphics::RenderPass* pass)
+void erasePassFromTarget(VsgRendererState& state, vine::graphics::RenderTarget* target,
+                         const vine::graphics::RenderPass* pass)
 {
     if (pass == nullptr) {
         return;
@@ -407,6 +436,23 @@ void erasePassSlotsFromTarget(VsgRendererState& state, vine::graphics::RenderTar
     }
     auto&         t   = target_entry->second;
     const SlotKey key = SlotKey::ownerPass(pass);
+
+    // The pass' own materialised objects go with it. They used to survive their pass (only a
+    // target rebuild cleared them), which broke the two rules the interface states for retained
+    // state: it must not grow with the frame count (a host that adds and removes a pass would
+    // accumulate one render pass + framebuffer + graph per ever-seen pass), and it must be keyed
+    // by something it owns — the key is a raw RenderPass* a released pass can be replaced at (the
+    // rule the target / material / geometry / program caches already follow). Parked, not
+    // destroyed: an in-flight command buffer may still name them and nothing else owns them (the
+    // same policy as a load-op rebuild in VsgPassMaterialiser).
+    if (const auto objects = t.passes.find(key); objects != t.passes.end()) {
+        state.retireRing.park(objects->second.graph);
+        state.retireRing.park(objects->second.render_pass);
+        state.retireRing.park(objects->second.render_pass_transient);
+        state.retireRing.park(objects->second.framebuffer);
+        t.passes.erase(objects);
+    }
+
     // Nothing to do for a pass this target holds no slot for: avoid a device wait
     // on the common path (a pass that moved targets usually owns a slot in only
     // one of them).
@@ -443,13 +489,27 @@ void retargetPass(VsgRendererState& state, const vine::graphics::RenderPass* pas
         if (entry.first == target) {
             continue;
         }
-        erasePassSlotsFromTarget(state, entry.first, pass);
+        erasePassFromTarget(state, entry.first, pass);
     }
 }
 
 void releaseRenderTarget(VsgRendererState& state, const VsgDiagnostics& diagnostics, vine::graphics::RenderTarget* target)
 {
-    if (target == nullptr || !state.initialized) {
+    if (target == nullptr) {
+        return;
+    }
+    // A queued direct-drive announcement may still name this target: the request is the
+    // caller's to manage and survives frames (RenderBackend::beginPass), and the caller
+    // releases the target because its last owner is going away — so the queued pointer must
+    // not be used again (the class contract forbids keeping it). Marking it rather than only
+    // clearing it is what lets the next call that needed it say why it was skipped instead of
+    // silently drawing into the window. Mirrors releasePass(), which drops the pass it
+    // announces the same way.
+    if (state.request.target == target) {
+        state.request.target         = nullptr;
+        state.request.target_released = true;
+    }
+    if (!state.initialized) {
         return;
     }
     bool released = false;
@@ -512,7 +572,7 @@ void releaseRenderTarget(VsgRendererState& state, const VsgDiagnostics& diagnost
         for (const auto& [kind, key] : drop) {
             // Destructive (the slot's node goes with it), so this keeps the
             // counted device wait rather than parking the view — see
-            // erasePassSlotsFromTarget.
+            // erasePassFromTarget.
             state.retireRing.waitForIdle(state.viewer);
             t.eraseSlot(kind, key);
             released = true;

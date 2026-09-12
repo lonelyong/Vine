@@ -2857,3 +2857,213 @@ f 兜底 (0,0,-1)；up 与视线平行 ⇒ r 兜底 (1,0,0)，都不是 NaN / �
 
 **验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` **130** /
 `test_graphics` 158 + 门禁 PASS + 格式检查 0（22 文件）。
+
+## 53. 顶点绑定与 stage 映射也变成可测契约（2026-09-12）
+
+**判词**：§52 之后 `SceneBridgePipeline.cpp` 的匿名命名空间里还剩四个**纯映射**：`formatForComponents`
+（分量数 → `VkFormat`）、`sampleVertexData`（分量数 → 绑定用的单元素样例数组）、`customAttributeName`
+（attribute location → 绑定名）、`stageFlag`（SDK stage 种类 → Vulkan stage 位）。它们**决定绑定是否正确**，
+却只能靠跑整条管线才被执行过，而且错了**多半不会失败**：`customAttributeName` 的两个使用者
+（`addAttributeBinding` 与 `assignArray`）都调它 —— 若改名只改了一处，名字对不上 ⇒ **attribute 静默不绑定**，
+几何照样画、只是少一个属性、零报告；`formatForComponents` 与 `sampleVertexData` 必须**互相一致**（格式的每
+分量 4 字节 = 样例数组元素类型），不一致时 configurator 会接受，只在绘制时表现为属性错/缺失。⇒ 与 §51/§52
+同一范畴（设备无关规则）。
+
+**做法**：四个函数从 `SceneBridgePipeline.cpp` 的匿名命名空间提进 `detail`，声明 + 文档进
+`VsgSceneRules.hpp`，定义进 `VsgSceneRules.cpp`（一个概念的头 ↔ 一个概念的 TU）；该 TU 的 using 块加四行
+**显式**接入（延续 §51b 的"面最小的 using 声明"做法）。头文件只需加 `<string>` 与 `<vsg/core/Data.h>`
+（后者同时提供 `ref_ptr`、`Data` 与 Vulkan 类型；`ShaderStageType` 已在既有 include 里）。
+
+**新测 `tests/test_vsg/SceneRulesTest.cpp`（+4 例，全部设备无关）**：分量数 1–4 的格式映射 + 0 / >4 的
+四分量兜底（与 `channelShape` 的拒绝配套）+ 样例数组的**具体类型**（`cast<floatArray/vec2Array/…>`）与
+`valueCount()==1`、`valueSize()==components*4`（把"格式与样例一致"钉成断言）+ 0 / >4 落到 vec4 +
+`customAttributeName` 的稳定性、区分度与不与 `vsg_Vertex` / `vsg_Normal` / `vsg_Color` / `material` 撞名 +
+三个 stage 各自映射到**不同**的 Vulkan 位。⇒ `test_vsg` **130 → 134**。
+
+**验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` **134** /
+`test_graphics` 158 + 门禁 PASS + 格式检查 0（22 文件）。
+
+## 54. 几何侧的 xyz 解包规则也变成可测契约（2026-09-12）
+
+**判词**：§53 之后 `SceneBridgeGeometry.cpp` 的匿名命名空间里还留着同一范畴的三件东西：
+`XyzUnpack`（三条判定：`Ok` / `NotXyzStride` / `NotDivisible`）、`unpackXyz`（按 `components` 当 stride
+取每顶点前三个标量，vec4 跳过 w）、`ignoredNormalChannelMessage`（两条分支各自带自己的数字）。它们
+**决定几何是否被正确解包**，却只在整帧路径里被执行过，而且错了**不会失败**：stride 取错（例如写死每顶点
+3 float）会把顶点**交错读错** —— 这正是 D1 记录的缺陷，画面只是"看着不对"，没有任何东西能告诉你哪个顶点
+错在哪；`ignoredNormalChannelMessage` 曾经把两条分支合成一个格式串、参数却按其中一条排 ⇒ 打印出**互换的
+数字**（消息撒谎，而编译 / 运行 / 验证三层全干净，是 §39 用 `check_diagnostic_formats.py` 才发现的那类）。
+
+**做法**：三条一起提进 `detail`，声明 + 文档进 `VsgSceneRules.hpp`，定义进 `VsgSceneRules.cpp`（延续
+"一个概念的头 ↔ 一个概念的 TU"）；`SceneBridgeGeometry.cpp` 的 using 块加三行**显式**接入。头文件只多一个
+`<vine/geometry/Array.hpp>`（`Vec3fArray = std::vector<vine::math::Vec3f>`）。头里的文档把
+`@param out` 的语义写准：**Ok 时替换（先 clear）、被拒时不动**（判定都发生在写入之前）。
+
+**新测 5 例（全设备无关）**：vec3 / vec4 按 stride 取 xyz —— vec4 的 w 被**跳过**而不是被读成下一个顶点的
+x（交错缺陷的正面判据）+ 合法空通道 Ok 且输出为空 + 分量 1 / 2 / 0 / 5 ⇒ `NotXyzStride` + 3 分量 4 float、
+4 分量 5 float ⇒ `NotDivisible` + 被拒时调用方数组**原样不动**、成功时**替换而非追加** + 两条诊断消息各带
+**自己分支**的数字（stride 分支含 `components=` 与 "3 or 4"、**不含** "floats"；divisible 分支含
+"4 floats" 与 `components=`、**不含** "3 or 4"）⇒ `test_vsg` **134 → 139**。
+
+**验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` **139** /
+`test_graphics` 158 + 门禁 PASS + 格式检查 0（22 文件）。
+
+## 55. 推导法线：零覆盖的那条路变成可测契约（2026-09-12）
+
+**判词（先量覆盖）**：先查自检与测试对 `makeNormals` / `makeIndexedNormals` 的调用 —— 自检里**每一处**几何都
+`setNormals(...)`（7 处），也就是说"网格没给法线 ⇒ CPU 推导"这条分支**从未被执行过**。而它的失败模式正好是本项目
+最怕的那种：退化三角形（共线 / 重复顶点）的叉积为零，直接归一化就是**除以零 ⇒ NaN 写进顶点法线**，NaN 随后无声
+地污染所有用到该顶点的着色结果（没有任何验证层会报 NaN 属性）；叉积方向（绕序）反了则是"从内部被照亮"，也只是
+"看着不对"。而这两条规则在 `makeNormals` 与 `makeIndexedNormals` 里**各写了一遍**（同一个 `(b-a) x (c-a)`、
+同一个 `len_sq > 0` 守卫）—— 同一语义两份实现 ⇒ 该统一（§51 判据）。
+
+**做法**：`faceNormal(a,b,c)`（唯一的叉积写法 + 绕序规则）、`normalIsUsable(len_sq)`（唯一的"零长度不归一化"
+规则）与三个构造器 `makeWhiteColors` / `makeNormals` / `makeIndexedNormals` 从 `SceneBridgeGeometry.cpp` 的
+匿名命名空间提进 `detail`：声明 + 文档进 `VsgSceneRules.hpp`，定义进 `VsgSceneRules.cpp`（延续"一个概念的头
+↔ 一个概念的 TU"）；`SceneBridgeGeometry.cpp` 的 using 块加三行接入。头文件因此多一个 `<vsg/core/Array.h>`
+（`vec3Array` / `vec4Array` / `uintArray`）。
+
+**两条归一化算术有意保持不同**（已写进实现旁的注释）：非索引路是 `1/sqrt(len_sq)` **倒数乘**，索引路是
+`::vsg::normalize`（除法）—— 合并会改最后一位比特，而这是"只改结构"的批次，不动行为。§39 曾因此拒绝合并；本次
+仍不合并，只把**判定**（`normalIsUsable`）与**叉积**（`faceNormal`）各收一处。
+
+**新测 9 例（全设备无关）**：`faceNormal` 逆时针面朝 +z（绕序即规则）+ 交换两顶点翻转 + 共线 / 重复顶点**精确为
+零** · `normalIsUsable` 只拒零（含负数兜底）· 非索引：三个顶点得单位 +z · 退化三角形**保持零、断言 `!isnan`** ·
+给定的网格法线**逐字拷贝**（非单位长也不重算）· 索引：四边形累加后单位化 + 越界索引被跳过且不影响已累加的法线 +
+被无引用的顶点**保持零、不是 NaN** · `makeWhiteColors` 每顶点不透明白 + 0 顶点是空数组而非 null ⇒ `test_vsg`
+**139 → 148**。
+
+**验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` **148** /
+`test_graphics` 158 + 门禁 PASS + 格式检查 0（22 文件）。
+
+## 56. 通道物化（components → typed array）也变成可测契约（2026-09-12）
+
+**判词**：`SceneBridgeGeometry.cpp` 的匿名命名空间最后剩下的 `makeTypedVertexData`，是 §54 那条
+`channelShape` `@pre` 的**兑现者**：它假定"分量 1..4、每顶点恰好一个值"，然后按 `components` 当 stride 从打包
+float 里取分量（1/2/3/4 → `floatArray` / `vec2Array` / `vec3Array` / `vec4Array`）。它错了**不会失败**：分量数
+选错数组类型时 configurator 照样接受，只在绘制时表现成"属性读错 / 缺失"；stride 取错（vec4 通道按 3 个一读）
+就是 D1 的交错读错换个位置复发。它又是唯一把**通道数据**与 §53 的 `formatForComponents` /
+`sampleVertexData` 对齐的环节（绑定格式 vs 实际数组），所以它应该和那两条一起被钉。
+
+**做法**：提进 `detail`（声明 + 文档 → `VsgSceneRules.hpp`，定义 → `VsgSceneRules.cpp`）；
+`SceneBridgeGeometry.cpp` 改加一行 `using detail::makeTypedVertexData;`。**副产物**：该 TU 的匿名命名空间因此清空
+⇒ 删掉 `namespace { ... }` 整块 —— 几何 TU 现在只剩 `SceneBridge` 的方法，每个文件局部 helper 都已归位。
+
+**新测 3 例（全设备无关）**：分量 1/2/3/4 → 对应数组类型（0 / >4 落到 vec4 形态）· 数组类型与
+`sampleVertexData` **逐一一致**（`className()` 相同 —— 这条把"绑定格式 vs 实际数组"钉住，是 §53 与 §56 的接缝）·
+按 stride 逐分量拷贝（3 分量两个顶点读 1..6、vec4 的 w 是数据不是 padding、0 顶点是空数组而非 null）⇒
+`test_vsg` **148 → 151**。
+
+**踩坑**：`makeTypedVertexData` 返回的是 `ref_ptr<::vsg::Data>`（不是具体数组类型）⇒ 断言 size 要用
+`valueCount()`（或先 `cast<>` 到具体类型）；`Data` 没有 `size()`，编译期就报。
+
+**验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` **151** /
+`test_graphics` 158 + 门禁 PASS + 格式检查 0（22 文件）。
+
+## 57. 第四轮审查：后端 ↔ graphics 的协同（D52–D58，2026-09-12）
+
+**范围**：`gfx_backend_vsg` 与 `vine::graphics`（含 SDK 接口 `RenderBackend.hpp` 与前端 `RenderEngine` /
+`RenderPass` / `ScreenPass` / `RenderPipelineBuilder`）之间的**协同契约**，不是单侧代码质量。两条线并行：
+①**边界静默失败**——每个 caller 可见的"什么都没发生"是否带诊断；②**前端调用序列 ↔ 后端消费规则**——
+`setViewport` / `setLights` 按"下一次绘制一次性消费"、作用域属性有效到 `endPass`、screen draw 写
+`setRenderTarget` 当前目标。
+
+**先记结论（好消息，避免后人重复怀疑）**：前端现有**全部**调用点都遵守一次性消费规则——每个
+`setViewport` / `setLights` 公告之后恰好一次绘制（`RenderPass.cpp:186/213-214`、`ScreenPass.cpp:68/75/91`、
+`AxisGizmo.cpp:164`、`FpsOverlay.cpp:159`、`RenderPipelineBuilder.cpp:440`），`beginPass`/`endPass` 全部成对
+（`RenderEngine.cpp:104-107,167-172`），`ScreenPass` 在两条 screen draw 之前都设了 target
+（`ScreenPass.cpp:64`）。**契约的脆弱处不在现有调用点，而在"契约允许一个作用域画多次、但 viewport / lights
+只能被消费一次"**——`RenderBackend.hpp:52-54` 说一个 pass 可以画多次，而两条公告是一次性的
+（`VsgRendererState.hpp` 的 `takeViewport` / `takeLights`）。自定义 `RenderPass` 覆写（公开扩展点）画第二次就
+静默丢掉 viewport 与灯光（无仓库内实例，登记 F3 类风险，不修）。
+
+| ID | 缺陷 | 位置 | 判词 / 影响 | 状态 |
+|---|---|---|---|---|
+| D52 | **`initialize()` 的 null-window 失败绕过诊断通道**：`Window::create` 返回 null 时只 `V_LOGE`（自带 stderr 通道）+ `shutdown()` + `return false`，而同一函数的 `compile()` 失败与 `catch(...)` 都 `diagnostics.report(InitFailed)` | `VsgRenderer.cpp:271-286` vs `RenderBackend.hpp:105-113`（"On false … **reports the reason on its diagnostics channel**"） | 契约违反：只看宿主 sink / `diagnosticCount()` 的宿主拿到 `false` 却拿不到原因（stderr 是另一条通道） | **已修（2026-09-12）**：补 `diagnostics.report(InitFailed)`，消息与另两处同形（`initialize FAILED at '<stage>': …`） |
+| D53 | **延迟光照 demo 的 `ScreenPass` 没有内容场景 ⇒ 全屏程序拿到零方向光**：`ScreenPass::execute` 只在 `scene != nullptr` 时 `setLights`，而 `addDeferredDemo` 用 `addPass(light, 130)` 注册（无场景）⇒ `takeLights()` 空 ⇒ `fillLightPushBlock` 只补 0.15 ambient | `AppShellUi.cpp:867-871`（`addDeferredDemo`）、`ScreenPass.cpp:87-90`、`VsgOverlay.cpp` 的 `fillLightPushBlock`；对照 `RenderPipelineBuilder.cpp:335`（builder 的同一 pass 绑了 `content_`） | 延迟预览是**平坦环境光**（0.15·albedo、无方向光项），而该函数自己的文档（`AppShellUi.cpp:829-839`）写的是"灯是内容场景自己的（ambient + directional）"；手写 demo 与 builder 两条路不一致 | **已修（2026-09-12）**：`engine->addPass(light, render_control->view()->scene(), 130)` |
+| D54 | **部分灯不可用被静默丢弃**：`beginLightsDroppedEpisode` 只在 `attached == 0` 时报；`setGroupLights` 的返回值本来就是"真正挂上的数量" | `VsgContentSlot.cpp:55-68` + `VsgPipelineFactory.cpp:735-737`（Point/Spot → null） | 一个"1 方向光 + 1 点光"的场景，点光被静默忽略（用户以为生效）；**全**不可用才有报告，**部分**没有 | **已修（2026-09-12）**：判定改 `attached < announced`（空公告不算一段、全亮即重新武装），消息按"全丢 / 部分丢"两条分支**各用自己的格式串**（§54 教训）；规则提进 `detail`（声明+文档 → `VsgContentSlot.hpp`，定义留 `VsgContentSlot.cpp`）⇒ 可无设备测试，`light_fallback_reported` 的字段注释同步（不再只是"全部不可用"）。**判据**：`LightGroupTest.cpp` 新增 4 例（部分丢就是一段 / 同一段每帧只报一次且更深的丢仍属同段 / 全亮重新武装后再丢是新段 / 空公告不是段且重新武装）⇒ `test_vsg` 158 → **162** |
+| D55 | **`RenderEngine::outputs_` 同名输出静默后者覆盖**：`publish` 直接 `outputs_[name] = …`，无重复检测 | `RenderEngine.cpp:363-384`（`publish` / `publishPassOutput`）、`:322-361`（按名解析） | 同帧两个 pass 同名 output ⇒ 消费者静默拿到记录顺序靠后的那个。仓库内当前三个 `"GBuffer"` 生产者恰好同目标同程序 ⇒ 像素无差异，**一旦有差异即静默错画面**（`RenderPipelineBuilder::addOffscreenToScreen` 亦无守卫） | 已登记（修法：同名且**对象不同**时报一次；同对象重复发布是合法的，不能误报） |
+| D56 | **`ScreenPass` 没声明 input 时静默不画**：`execute` 在 `source_ == nullptr` 直接 return；引擎的报告只覆盖"**声明的** input 全部落空" | `ScreenPass.cpp:57-59` + `RenderEngine.cpp:322-331`（`names.empty()` 直接 return） | 一个忘了 `addInputName` 的 ScreenPass **每帧静默什么都不画**，且事件链上没有任何一环会报（不是"解析失败"，是"没东西可解析"） | **已修（§14 步 1）**：接线期校验第三阶段报 `ContentSkipped`（`validateWiring`），单测 `ScreenPassWithoutAnyInputIsReportedOnce` |
+| D57 | **overlay/PiP 的"源未构建"与"窗口图未建"静默不画** | `VsgOverlay.cpp:363-364`、`535-536`（`src.width <= 0 \|\| src.height <= 0`）、`:272-274`（`dest_entry.graph == nullptr`） | 消费者排在生产者之前、或源 target 从未被渲染过时，PiP / 全屏程序**每帧静默不画**，调用方无法区分"没内容"与"还没准备好"。窗口图未建通常只是第一帧暂态，但"只画 overlay、从不画场景 pass"的驱动会**永久**静默 | **结案：无活缺陷（2026-09-12）**。逐条对账：①"源 target 从未构建/不认识"**已经报**（同一函数上方那条 `source target has no colour attachment: the pass draws nothing`，`ContentSkipped`/Error）——登记时把这条归属错了；②`src.width <= 0` **不可达**：entry 只有 `buildOffscreenTarget` 接受**正尺寸**（`if (w == 0 \|\| h == 0) return;`，在写 `t.width/t.height` 之前）才会创建颜色视图，而两者在 `resetTargetAttachments` 里**一起清**（`t.width = 0` + 清视图）⇒ "有视图 ⇒ 有正尺寸"；③窗口图分支 `dest_entry.graph == nullptr` **不可达**：窗口图在 `initialize()` 里创建，而两个调用者都先判 `state.initialized`。两处静默 `return` 都**保留为守卫并就地写清不变量与"为什么现在不会触发"**（删掉会让不变量失守时重新变成静默丢内容，而这正是本文件最怕的事） |
+| D58 | **`resize(w, h)` 忽略尺寸参数**：实现显式 `(void)width; (void)height;`，再 `window->resize()`（向宿主表面查询尺寸） | `VsgRenderer.cpp:705-711` vs `RenderBackend.hpp:560-566`（"@param width New surface width in pixels"） | 嵌入式路径（宿主表面是权威）行为正确但文档没说；`VINE_VSG_OWN_WINDOW` 独立窗口路径下传入尺寸不生效、退回 traits 初始尺寸且零报告 | **已修一半 + 结案（2026-09-12）**。①**真缺陷（已修，SDK 侧）**：公告**早于** `initialize()` 时被丢掉——`RenderEngine::resize` 只在 `initialized_` 时转发，而宿主通常在拿到 widget 尺寸时就公告（`AppShellUi` 的 `frameContext().surface_width` 消费者正是它自己那批 pass）⇒ 现在 `initialize()` 成功后、warm-up **之前**把公告交给后端一次（`frame_ctx_` 的尺寸不是 0 时）；单测 `SurfaceSizeAnnouncedBeforeInitializeReachesTheBackend` / `NoSurfaceSizeAnnouncementIsNotForwarded`（MockBackend 记录 `resize`），反证：把交接条件改 `false` ⇒ 前者红。②**契约写清**：`RenderBackend::resize` 的文档改为权威顺序 **surface > announcement > default**（宿主表面为权威的后端跟随表面，自持表面的后端应用公告；公告尺寸同时是引擎 frame context 里给 pass 布局用的那个），插件侧 `resize` 的 `(void)` 上方写清**为什么**（本会话的表面是宿主窗口，尺寸以它为准）。③**明确不做**：`VINE_VSG_OWN_WINDOW`（文档标为 **TEMP 测试逃生口**）自建窗口时仍不应用公告尺寸（要应用得把公告存进 state 并在 `makeWindowTraits` 里用上）；它是测试逃生口，有真实需求时再补 |
+
+**D57/D58 验收（2026-09-12）**：全量 `ninja` 零 error/零 warning + `test_graphics` **174** / `test_vsg` 162 + `[selftest]` 45 行**逐字节相同** + 门禁 `RESULT: PASS`（0 VUID）+ 格式检查 0。
+
+### 契约层收尾（2026-09-12）：`setViewport` / `setLights` 是**每次绘制**的
+
+§57 登记的最后一条（“一个 pass 作用域画多次时 viewport/lights 只能消费一次”）**结案：无行为改动，收窄契约 + 钉机制**。
+- **事实**：后端实现就是**每次绘制**一次（`VsgPassRequest::takeViewport/takeLights`），而 `VsgPassRequest` 自己的注释也写的是“for the next draw call”；SDK 两处的词是“subsequent drawing” / “upcoming render() pass” —— **模糊但不假**。
+- **为什么保留 per-draw**：这正是“一个作用域放多个 PiP”的能力所在（每个 draw 自己公告矩形；直接驱动路径更是只能这样）。
+- **做法**：①`RenderBackend::setViewport/setLights` 的文档收窄为“**下一次绘制调用**”，并写明“画多次的 pass 每次都要重新公告；没公告的 draw 用默认（灯）/ 全表面（viewport）；`beginPass()` 重置”；②`RenderPass::setViewport` 补一句“公告是 per drawing call，基类 execute 只公告一次并只画一次，子类画多次要自己每次公告”；③新增设备无关用例 `PassProtocolTest.OneAnnouncementServesOneDrawingCall` 钉住消费语义（“粘住”的 refactor 看起来无害，却会静默把第二个 PiP 移到全表面）。**反证已跑**：把 `takeViewport()` 改成不 `reset()` ⇒ 该用例红。
+- **验收**：`test_vsg` **163**（+1）/ `test_graphics` 183、全量 `ninja` 零 error/零 warning、`[selftest]` 45 行逐字节相同、门禁 PASS（0 VUID）、格式检查 0。
+
+**验收（本轮）**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` 151 /
+`test_graphics` 158 + 门禁 PASS + 格式检查 0（22 文件）。**D52 + D53 的针对性验证**：把门禁的
+lavapipe + 验证层环境加上 `VINE_VSG_DEFERRED=1` 复跑（延迟光照那条 pass 平时不在门禁里）⇒ 同样
+`RESULT: PASS`（0 VUID），说明改动没有把该路径弄坏。
+
+**验收（D54，跟做）**：全量 `ninja` 零警告 + `test_vsg` **162** / `test_graphics` 158 + 门禁 PASS（VUID 0）+ 格式检查 0（22 文件）；`[selftest]` 45 行**逐字节不变**，自检里也没有出现 `announced light` 那类新警告（自检的相位没有丢灯场景，新分支由单测覆盖）。
+
+**验收（D55，跟做）**：全量 `ninja` 零警告 + `test_vsg` 162 / `test_graphics` **160** + 门禁 PASS（VUID 0）+ 格式检查 0（22 文件）；`[selftest]` 45 行逐字节不变。**如实记录**：新上报在**默认 demo 与 `VINE_VSG_GBUFFER=1` 下都未触发**（实测 0 次）——三种 demo 互斥，任何一次运行里都没有两个**不同目标**共用同名，所以这是一条**潜在**洞（由单测钉住），不是当前会冒烟的行为。
+
+**验收（D55，跟做）**：全量 `ninja` 零警告 + `test_vsg` 162 / `test_graphics` **160** + 门禁 PASS（VUID 0）+ 格式检查 0（22 文件）；`[selftest]` 45 行逐字节不变。**如实记录**：新上报在**默认 demo 与 `VINE_VSG_GBUFFER=1` 下都未触发**（实测 0 次）——三种 demo 互斥，任何一次运行里都没有两个**不同目标**共用同名，所以这是一条**潜在**洞（由单测钉住），不是当前会冒烟的行为。
+
+## 58. 第五轮审查：`RenderBackend.hpp` 的承诺逐条对账（D59–D60，2026-09-12）
+
+**方法**：§57 修掉的 D52 只是"文档承诺"这一类的一个实例。这一轮把 `RenderBackend.hpp` 顶部**类级契约**
+（CALL ORDER / BORROWED ARGUMENTS / WHAT MAY BE RETAINED / THREADING / FAILURE，`:34-90`）与各方法文档里
+写下的承诺**逐条**拿去对实现。**对账结果**：
+
+| 承诺（`RenderBackend.hpp`） | 实现 | 判定 |
+|---|---|---|
+| 帧序：`beginFrame` → 每 pass（beginPass…draw…endPass）→ `endFrame` → `swapBuffers`；**`endFrame` 不得 present** | `endFrame()` = `viewer->update()`（`VsgRenderer.cpp:404-410`）；present 只在 `swapBuffers`→`submitFrame` | 兑现 |
+| 借用参数"never owned … must never keep such a pointer"；需要留存就必须自己复制/上传 | 缓存键对象一律**自持**：目标条目 `owner`（D32）、材质条目（D13）、`Item` 自持 geometry（D14）、`ProgramSlot` 自持 program（D42）、哈希键条目自持键（D34） | 兑现（**pass 例外见 D59**） |
+| 留存状态"must not grow with the frame count: a long-running session has to reach a steady state" | 三个 program 缓存有 FIFO 上限 + 每帧 `releaseAbandonedCaches`（D16/D40）；每帧活跃集 `passes_active_this_frame` 在 `beginFrame` 清空（`VsgRenderer.cpp:396`） | **部分违反（D59）** |
+| 线程：调用串行、不重入；诊断 sink **同步**调用 | `diagnostics.report` → `deliverToSdkChannel` → `reportDiagnostic` → sink，同步；插件内无跨调用共享可变状态 | 兑现 |
+| 协议违反要报 `PassProtocolViolation`（`:217`） | 嵌套 `beginPass` 与不配对 `endPass` 各报一条（`VsgRendererPasses.cpp:56-64, 85-94`） | 兑现 |
+| "never throws across this interface"；`initialize` false 时自己清理半成品 | 插件 src 内 `grep throw` = 0；每条 `return false` 之前都 `shutdown()`；`catch(...)` 兜底 | 兑现（**D52 补了唯一的静默路径**） |
+| readback：`false` **总能区分**"不支持 / 失败"（`:394-403`、`:419-426`） | 多条 `false` 路径零诊断 | **违反（D60）** |
+| MRT 附件 ≥1 清透明黑，若不遵守必须**在诊断通道说明**（`:506-508`） | 遵守（D31 决策 + selftest 断言） | 兑现 |
+| `beginPass` 不得把 per-pass **请求**留过作用域（`:212`） | `endPass`/`beginPass` 都 `resetPassRequest()`（`VsgRendererPasses.cpp:58-64, 92-93`） | 兑现 |
+
+| ID | 缺陷 | 位置 | 判词 / 影响 | 状态 |
+|---|---|---|---|---|
+| D59 | **`releasePass()` 不释放该 pass 的 `PassObjects`**：`Target::passes` 的唯一移除点是目标重建的 `t.passes.clear()`（`VsgTargetBookkeeping.cpp:79`）；`erasePassSlotsFromTarget` 只删**槽**（`:424-432`），`releasePass` 也只删槽 + 撤活跃集（`VsgRendererPasses.cpp:133-146`） | `VsgTargetBookkeeping.cpp:398-432`、`VsgRendererPasses.cpp:133-146`、`VsgRenderTargetEntry.hpp:364` | 两条契约同时被违反：①"留存状态**不得随帧数增长**"——`PassObjects` 握着 `RenderPass` + `transient` 变体 + `Framebuffer` + `RenderGraph`，编辑器里"每帧加一个 pass、再 `removePass`"（`RenderEngine::removePass` **确实**会调 `releasePass`，`RenderEngine.cpp:248`）就按帧累积到会话结束；②"键必须按服务对象寿命键入"——键是裸 `const RenderPass*`，`PassObjects` **不自持**它，而 D32/D34 已经给 target / material / geometry / program 各补过这条规则，**pass 漏了**（地址复用后新 pass 命中旧条目；load-op 类字段每帧会按新请求校验、多半自纠正，但复用的 `graph` 等对象的语义未验证）。**不是错画**：`applyRecordPlan` 每帧 `children.clear()` 重建录制序列（`VsgRecordOrder.cpp:164-187`），陈旧 pass 的图不会再被录制——所以这是**内存 + 契约**缺陷 | **已修（2026-09-12）**：`erasePassSlotsFromTarget` → `erasePassFromTarget`（名字兑现新职责：槽 **+** 该 pass 的 `PassObjects`），两个调用者 `releasePass` / `retargetPass` 都走它；GPU 对象 `retireRing.park`（**不停设备**：与 load-op 重建同一策略），`passes.erase` 后由调用者的 `reconcileOffscreenOrder()` 把图从录制序列摘掉（`applyRecordPlan` 重建 children）。**判据**：新增 `tests/test_vsg/PassObjectReleaseTest.cpp`（5 例，**全设备无关** —— 表 / 键 / 停放 / 环都不需要设备，用例把 `vsg::RenderGraph` 放进 `PassObjects` 当作停放对象）：释放后表为空 + 停放 1 个 + `waits == 0`；32 次"建一个 pass 再释放"表**不增长**；`retargetPass` 只从**离开的** target 删；null / 未知 pass 是 no-op；环在 `kRetireRingDepth` 次 `advance()` 后交出（`released == 1`）。停放**真 GPU 对象**的安全性由门禁覆盖（VUID 0）。⇒ `test_vsg` 151 → **156** |
+| D60 | **readback 的 `false` 无法区分"不支持"与"失败"**：契约明写"a backend that supports reading returns true … so the caller can always distinguish a successful read from unsupported" | `VsgReadback.cpp:59-76`（target null / viewer / window / 未建 / 0 尺寸 ⇒ 无报告）、`:105`、`:173`、`:198`、`:207-209`、`:235`、`:289`（device / physical / source null ⇒ 无报告） | 宿主只看返回值（不看 stderr）时，"目标还没建好"与"这个后端不支持回读"掉进同一个 `false`；而 D20 已经把"float 附件不支持"报出来了 ⇒ 报告策略**不一致**，调用方无法区分"稍后重试"与"永远不行" | **已修（2026-09-12）**：prologue 现在**分类**拒绝理由（`ReadbackRefusal`：`NoTarget` / `NoSession` / `NotRendered` / `NotBuilt` / `Empty` / `NoDevice`），两个入口在**停下设备之前**把它报出来（`readbackRefusalMessage` 每个分支各用自己的格式串——§54 的教训）；会话判定从"viewer / window 指针都非空"收紧为 `state.initialized`（它就是"窗口/设备存在"的权威状态，且不需要设备就能测试）。**判据**：`tests/test_vsg/ReadbackTest.cpp` 4 例 → **6 例**（逐个状态的分类 + 两条入口的静默路径都上报 + 拒绝**不触发设备等待** + 每条消息各带自己的措辞、且不出现别的分支的措辞），全设备无关 ⇒ `test_vsg` 156 → **158** |
+
+**判词（为什么 D59 不顺手修）**：`PassObjects` 里是**真 GPU 对象**（render pass / framebuffer），释放它们要么计数等待要么停放进退役环——两条既有策略的选择本身就是一次有判据的改动（§28 第 9/10 批的教训：非破坏性停放、破坏性等待）。**（已按此执行，见上表 D59 行。）**
+
+**验收（D60）**：全量 `ninja` 零警告 + `test_vsg` **158** / `test_graphics` 158 + 门禁 PASS（VUID 0）+ 格式检查 0（22 文件）；自检的 `[selftest]` 45 行**逐字节不变**——自检里的回读都打到已建目标，新分类不触发；stderr 里那三条回读报告是**既有**的（RGBA16F 不支持 / 打包的 D24 / 附件越界）。
+
+**证据行的变化（D59，有意且已 A/B 归因）**：自检 `policy churn:` 行从 `released 107` 变为 `released 115 parked object(s)`。这是**修复本身**——被释放 / 换 target 的 pass 现在把它的 `PassObjects` 停进环。归因不是靠推理：①A/B（临时开关跳过停放）复现 107；②增量是**固定 +8**（30 帧与 44 帧下都恰好 +8，其余部分两者逐字一致）⇒ 它来自**测量窗口之前**那批 `releasePass` 的停放（`released` 是环的*释放*计数，比停放滞后 `kRetireRingDepth` 帧），**不是**窗口内的逐帧删除/重建（那会随帧数增长）。同行的 `0 device wait(s)` 与 `built 2 target(s)` 两条断言不变。
+
+## 59. 第六轮对账：`releaseRenderTarget()` 的"宿主可立即销毁"承诺（D61–D62，2026-09-12）
+
+**方法**：接着 §58 的逐条对账，这一轮盯住类级契约 **BORROWED ARGUMENTS** 的那句
+（`RenderBackend.hpp:59-65`）："the host may destroy any of them as soon as the call returns — …, which
+`releasePass()` / `releaseRenderTarget()` **announce**"。它与 `beginPass()` 的"直接驱动路径的请求**留到调用者覆盖为止**"
+（`:212`）相乘，得到一条很容易漏的规则：**队列里那条 `setRenderTarget` 宣布，在它指名的 target 被 release 之后，不能再被使用**。
+
+| 承诺（`RenderBackend.hpp`） | 实现 | 判定 |
+|---|---|---|
+| `releaseRenderTarget()` 之后宿主可立即销毁 target，后端不得再留这个指针（`:59-65`、`:371-390`） | `releaseRenderTarget` **不清** `state.request.target`（`VsgTargetBookkeeping.cpp:467+`），而该请求在直接驱动路径跨帧存活 | **违反（D61）**：悬垂指针 —— `render()` 下一步就读 `target_key->valid()/hasColor()`（`VsgRenderer.cpp:468-472`），宿主"释放后继续按旧宣布画"就是 UAF；`releasePass()` 早就清了对称的那半个（`state.request.pass`） |
+| "a backend reports what it could not do instead of degrading silently"（`:82`） | 0 尺寸的 target **静默 `return`**，不建 attachments、没有任何报告（`VsgTargetBookkeeping.cpp:331`） | **违反（D62）**：pass 悄悄什么都不画，宿主看不到原因 |
+| 同族的第三种：`render()` 无相机 ⇒ 静默不画（`VsgRenderer.cpp:456-460` 的守卫注释 "nothing to draw this pass"） | 引擎侧**本来就不会**这样调：`RenderPass::execute` 在没有相机时不调 `render()`（`RenderPass.cpp:255-266`），而"只清目标的 pass"没有相机是**合法**用法 | **判定：不是缺陷（不报）**，记录在案 |
+
+**D61 修法（两条独立的账）**：`VsgPassRequest` 加 `target_released` / `target_release_reported`（`VsgRendererState.hpp:130,149`）——
+`releaseRenderTarget` 命中当前宣布时**清掉指针并标记**（`VsgTargetBookkeeping.cpp:504-511`，镜像 `releasePass`）；四个"会把内容画进已宣布 target"的入口
+（`render()` / `clear()` / `drawScreenTexture()` / `drawScreenProgram()`）在**做任何事之前**先过 `refuseDeadTargetAnnouncement(call)`（`VsgRendererPasses.cpp`）：
+**拒画 + 分集报一次**（`PassProtocolViolation`，消息带**哪个调用点**被跳过与修法）。
+**为什么不静默改画到窗口**：那会把内容画到宿主从没要求的地方——正是契约禁止的"静默降级"；**为什么拒画也不静默**：宿主只看到"什么都没画"时无从下手。
+重新 `setRenderTarget()`（或开一个 pass 作用域，`beginPass` 清整个请求）**重新武装**该分集。
+
+**D62 修法**：把 0 尺寸判定提成 `detail::beginTargetSizeMissingEpisode(w, h, reported)`（`VsgTargetBookkeeping.hpp` 声明、TU 定义，与 `beginLightsDroppedEpisode` 同一形状）：
+**分集 = "这个 target 没有尺寸"**，`buildOffscreenTarget` 第一次发现时报一次（`TargetBuildFailed`，消息带尺寸与修法 `RenderTarget::setSize`）、之后每帧静默拒绝，拿到可用尺寸即重新武装。
+顺带把尺寸判定挪到 `state.window == nullptr` 守卫**之前**：拒绝是**关于请求**的事实（有没有设备都成立），也因此**不需要设备就能测**。行为面零改动：`unhookTargetPasses`/`resetTargetAttachments` 仍在判定**之前**（把 target 改成 0 尺寸依然让旧 attachments 退场 ⇒ 内容停止绘制），只是现在**说了原因**。
+
+**判据**：`test_vsg` 163 → **168**（`PassProtocolTest.DrawingOnAReleasedTargetIsRefusedAndReportedOnce`：报一次 / 同一分集第二个调用点不重复报 / 重新宣布后重新武装 / 新一次 release 再报一次；
+`PassProtocolTest.APassScopeClearsADeadAnnouncement`；`PassObjectReleaseTest.ReleasingATargetDropsTheQueuedAnnouncementThatNamesIt`（另一个 target 的宣布不受影响）；
+`TargetBookkeepingTest` 2 例（报一次 + 分集重新武装），**全部设备无关**——`render()` 的守卫在 `!initialized` 之前、0 尺寸判定在 `window == nullptr` 之前，所以这些路径不需要设备；
+**三条反证**：去掉 release 的标记 ⇒ 前述 2 例红；忽略分集标志 ⇒ 拒画用例红；`beginTargetSizeMissingEpisode` 直接 `return false` ⇒ 目标册用例 2 例红）。
+`test_graphics` 185、全量 `ninja` 零 error/零 warning、`[selftest]` **45 行逐字节相同**、门禁 `RESULT: PASS`（VUID 0，默认 + `VINE_VSG_DEFERRED=1` + `VINE_VSG_OFFSCREEN_MULTISLOT=1`）且**两条新报告在生产路径零触发**、格式检查 0 suspicious。
+**SDK 文档同步**：`releaseRenderTarget()` 补"调用同时宣布宿主可以销毁该 target ⇒ 后端必须丢掉队列里的宣布，画不了要跳过并说明，不得静默改画到默认 framebuffer"；
+`DiagnosticCategory::PassProtocolViolation` 的说明从"nested / unpaired beginPass/endPass"扩到"宣布的状态没有生效"（含"宣布的 target 已被释放"）。

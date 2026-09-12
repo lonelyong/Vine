@@ -119,6 +119,42 @@ struct VsgPassRequest
     std::vector<const vine::graphics::Light*> lights;
     /// Draw calls (render / drawScreen*) this request served (diagnostic).
     std::size_t draws = 0;
+    /// The announced target was released while it was still announced
+    /// (RenderBackend::releaseRenderTarget). The queued request is the direct
+    /// driver's to manage and survives frames (RenderBackend::beginPass), so this
+    /// flag is how a call that would still use the dead pointer knows it cannot be
+    /// honoured: such a call must be skipped, not redirected to the window. A
+    /// pass-scope driven caller never sees it — beginPass() starts from an empty
+    /// request — and setRenderTarget() clears it, so it lives exactly as long as
+    /// the announcement it invalidates.
+    bool target_released = false;
+    /// True once the dead announcement above was reported: the report is an
+    /// EPISODE, one per release, so a caller looping on it is not flooded.
+    /// Cleared together with target_released.
+    bool target_release_reported = false;
+
+    /** @brief Consumes a dead target announcement, telling the caller to report it once.
+     *
+     * The announced target was released while the announcement was still queued
+     * (see target_released): the call that would have used it cannot be honoured, so its
+     * caller must skip it — drawing into the window instead would put the content
+     * somewhere the host never asked for. The refusal is an EPISODE, one report per
+     * release: the first refusal says so (@p report), the rest of the episode is silent but
+     * still refused, and the next setRenderTarget() (or a new pass scope) re-arms it.
+     *
+     * @param report Receives whether this is the episode's first refusal, i.e. whether the
+     *               caller reports now. Untouched when the announcement is usable.
+     * @return true when the announcement is dead and the caller must skip the call.
+     */
+    [[nodiscard]] bool takeDeadTargetAnnouncement(bool& report)
+    {
+        if (!target_released) {
+            return false;
+        }
+        report                  = !target_release_reported;
+        target_release_reported = true;
+        return true;
+    }
 
     /** @brief Consumes the queued sub-viewport.
      *

@@ -473,6 +473,26 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void retireInactivePassSlots();
 
+    /** @brief Refuses a call whose queued target announcement is dead.
+     *
+     * The queued request is the direct-drive caller's to manage and survives frames
+     * (RenderBackend::beginPass), so RenderBackend::releaseRenderTarget has to drop an
+     * announcement naming the released target: the host releases it because its last owner is
+     * going away, and the class contract forbids keeping such a pointer. A call that would
+     * still use it cannot be honoured — drawing into the window instead would put the content
+     * somewhere the caller never asked for — so the call is skipped and the caller is told
+     * once, with the fix (announce the target again, or nullptr for the window).
+     *
+     * The report is an EPISODE: it fires on the first call that needed the dead announcement
+     * and re-arms when the caller announces a target again (or a pass scope opens), so a loop
+     * that keeps drawing without re-announcing says so once instead of every frame.
+     *
+     * @param call Name of the entry point refusing the call (one message per call, so the host
+     *             knows which of render() / clear() / drawScreen*() was skipped).
+     * @return true when the caller must skip the call.
+     */
+    [[nodiscard]] bool refuseDeadTargetAnnouncement(const char* call);
+
     /** @brief Releases the off-screen targets the host dropped without announcing it.
      *
      * The target table owns every entry it holds (VsgRenderTargetEntry::owner), so once the host's last
@@ -524,17 +544,12 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void settleSubmittedFrame();
 
-    /** @brief Resets the queued per-pass state (target / viewport / lights /
-     * depth policy / pass order / presenting marker).
-     *
-     * Called when a pass scope opens (so a scope never inherits the previous
-     * pass' pending state) and when it closes (so state queued by a pass that
-     * drew nothing cannot leak into the next pass).
-     */
     /** @brief Drops the per-pass request (scope attributes included).
      *
-     * Called by endPass(): nothing a pass announced may outlive its scope, so
-     * the next pass (or a direct driver) starts from an empty request.
+     * Called when a pass scope opens (so a scope never inherits the previous pass'
+     * pending state) and by endPass() (so nothing a pass announced may outlive its
+     * scope, and the next pass — or the direct driver — starts from an empty
+     * request).
      */
     void resetPassRequest();
 
