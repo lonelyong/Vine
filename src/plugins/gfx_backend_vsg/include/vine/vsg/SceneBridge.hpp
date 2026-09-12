@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/Commands.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>
@@ -289,6 +290,50 @@ class V_VSG_API SceneBridge {
     /** @brief Retained per-geometry render node (defined in the .cpp). */
     struct Item;
 
+    /** @brief Identity of one vertex channel, as the retained data was built from it.
+     *
+     * A rebuild has to know WHICH stream changed, not just that something did: a channel whose buffer, byte
+     * revision, location and component count are the same IS the same data, so the array the retained node
+     * holds for it is still correct. The revision is `vine::Buffer::revision()` — the contract a consumer
+     * that cached bytes compares against (the same rule Texture and ShaderProgram follow).
+     */
+    struct ChannelKey
+    {
+        std::uint32_t location = 0;
+        std::uint32_t components = 0;
+        const void*   buffer = nullptr;
+        std::uint64_t revision = 0;
+        std::size_t   count = 0;
+
+        bool operator==(const ChannelKey& other) const
+        {
+            return location == other.location && components == other.components && buffer == other.buffer &&
+                   revision == other.revision && count == other.count;
+        }
+    };
+
+    /** @brief Snapshots the identity of every vertex channel @p geometry carries.
+     *
+     * The walk is the one the data builder makes — ascending location, canonical and custom channels alike —
+     * so two equal snapshots mean every stream the builder read is byte-for-byte the same one. A channel the
+     * builder rejects still appears here: a snapshot that cannot tell that case apart only costs a rebuild,
+     * never a stale reuse.
+     *
+     * @param geometry Geometry to snapshot.
+     * @return One key per channel, in ascending location order.
+     */
+    static std::vector<ChannelKey> channelKeysOf(const vine::graphics::Geometry& geometry);
+
+    /** @brief Snapshots the identity of the geometry's index stream.
+     *
+     * A geometry without indices yields a default-constructed key (null buffer), which is what distinguishes
+     * "no index stream" from "an index stream whose bytes changed".
+     *
+     * @param geometry Geometry to snapshot.
+     * @return Key of the index stream, or a null-buffer key when there is none.
+     */
+    static ChannelKey indexKeyOf(const vine::graphics::Geometry& geometry);
+
     /** @brief The BUILD vertex channels a data rebuild reuses instead of recomputing.
      *
      * A rebuild re-materialises the whole data node, but three of its channels do not come from the model:
@@ -372,6 +417,9 @@ class V_VSG_API SceneBridge {
      * @param derived         Cache of the channels this builder DERIVES (white colour carrier, zero UVs,
      *                        derived normals): reused when the inputs they were derived from did not
      *                        change, so an unrelated edit does not pay for them again. See DerivedChannels.
+     * @param out_index_bind  Receives the index bind command the node holds, so a later index-only edit can
+     *                        replace that stream IN PLACE — its own BufferInfo is what vsg re-creates and
+     *                        copies, one channel instead of the whole mesh (P6).
      * @return Data commands node, or null when not buildable.
      */
     ::vsg::ref_ptr<::vsg::Commands> buildGeometryData(
@@ -380,7 +428,8 @@ class V_VSG_API SceneBridge {
         vine::graphics::Topology topology,
         ::vsg::ref_ptr<::vsg::vec4Array>& out_colors,
         std::vector<VertexChannel>& extra_channels,
-        DerivedChannels& derived);
+        DerivedChannels& derived,
+        ::vsg::ref_ptr<::vsg::BindIndexBuffer>& out_index_bind);
 
     /** @brief Builds (or rebuilds) the state wrapper around a data node.
      *

@@ -19,8 +19,10 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 
+#include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/BindVertexBuffers.h>
 #include <vsg/commands/Commands.h>
+#include <vsg/commands/DrawIndexed.h>
 #include <vsg/io/Options.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/utils/ShaderSet.h>
@@ -81,6 +83,105 @@ vsg::Data* findBoundData(vsg::Node* node, std::size_t binding)
         }
     }
     return nullptr;
+}
+
+
+/// Builds @p values as an index buffer that owns them.
+vine::intrusive_ptr<const vine::Buffer<std::uint32_t>> packedIndices(std::vector<std::uint32_t> values)
+{
+    return vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
+        new vine::Buffer<std::uint32_t>(std::move(values)));
+}
+
+/// The triangle of triangle() as an INDEXED mesh (three indices).
+GeometryPtr indexedTriangle(float x)
+{
+    auto geometry = triangle(x);
+    geometry->setIndices(packedIndices({ 0u, 1u, 2u }));
+    return geometry;
+}
+
+
+/// Finds the retained vertex-data node (the Commands holding the vertex/index binds) under a subtree.
+vsg::Commands* findDataNode(vsg::Node* node)
+{
+    if (node == nullptr) {
+        return nullptr;
+    }
+    if (auto commands = node->cast<vsg::Commands>()) {
+        for (const auto& child : commands->children) {
+            if (child != nullptr && child->cast<vsg::BindVertexBuffers>() != nullptr) {
+                return commands;
+            }
+        }
+    }
+    if (auto group = node->cast<vsg::Group>()) {
+        for (const auto& child : group->children) {
+            if (auto* hit = findDataNode(child.get())) {
+                return hit;
+            }
+        }
+    }
+    return nullptr;
+}
+
+/// Finds the index bind command under a retained subtree.
+vsg::BindIndexBuffer* findBindIndexBuffer(vsg::Node* node)
+{
+    if (node == nullptr) {
+        return nullptr;
+    }
+    if (auto bind = node->cast<vsg::BindIndexBuffer>()) {
+        return bind;
+    }
+    if (auto commands = node->cast<vsg::Commands>()) {
+        for (const auto& child : commands->children) {
+            if (auto* hit = findBindIndexBuffer(child.get())) {
+                return hit;
+            }
+        }
+    }
+    if (auto group = node->cast<vsg::Group>()) {
+        for (const auto& child : group->children) {
+            if (auto* hit = findBindIndexBuffer(child.get())) {
+                return hit;
+            }
+        }
+    }
+    return nullptr;
+}
+
+/// Finds the DrawIndexed command under a retained subtree.
+vsg::DrawIndexed* findDrawIndexed(vsg::Node* node)
+{
+    if (node == nullptr) {
+        return nullptr;
+    }
+    if (auto draw = node->cast<vsg::DrawIndexed>()) {
+        return draw;
+    }
+    if (auto commands = node->cast<vsg::Commands>()) {
+        for (const auto& child : commands->children) {
+            if (auto* hit = findDrawIndexed(child.get())) {
+                return hit;
+            }
+        }
+    }
+    if (auto group = node->cast<vsg::Group>()) {
+        for (const auto& child : group->children) {
+            if (auto* hit = findDrawIndexed(child.get())) {
+                return hit;
+            }
+        }
+    }
+    return nullptr;
+}
+
+/// The Data the retained index bind copies from, or null when there is none.
+vsg::Data* indexDataOf(vsg::Node* node)
+{
+    auto* bind = findBindIndexBuffer(node);
+    return bind != nullptr && bind->indices != nullptr ? bind->indices->data.get() : nullptr;
 }
 
 /// Drives one sync of @p commands through a bridge and returns the retained root.
@@ -196,4 +297,189 @@ TEST(SceneBridgeDataRebuildTest, FallbackChannelsFollowTheVertexCount)
         << "the zero array was sized for the previous vertex count";
     EXPECT_NE(findBoundData(root.get(), kBindingColors), color_before)
         << "the white carrier was sized for the previous vertex count";
+}
+
+/**
+ * @brief An index-only edit replaces the index stream and leaves the vertex channels alone.
+ *
+ * The index stream lives in its OWN bind command, so its BufferInfo is the only one vsg re-creates and
+ * copies: a mesh whose indices were refilled must not re-upload every vertex channel (52-56 bytes per
+ * vertex) for that. The assertions are the addresses again: the vertex array must be the very same object,
+ * and the retained subtree must be re-compiled IN PLACE rather than replaced — a new transform means the
+ * whole node (and therefore every channel) was rebuilt.
+ */
+TEST(SceneBridgeDataRebuildTest, IndexOnlyEditReplacesTheIndexStreamAlone)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto geometry = indexedTriangle(0.0f);
+    auto material = MaterialPtr(new Material());
+
+    std::vector<RenderCommand>         commands;
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    commands.emplace_back(geometry, material, Mat4d());
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u) << "the first sync builds the subtree";
+    auto* data_node_before = findDataNode(root.get());
+    auto* positions_before = findBoundData(root.get(), kBindingPositions);
+    auto* indices_before   = indexDataOf(root.get());
+    ASSERT_NE(data_node_before, nullptr);
+    ASSERT_NE(positions_before, nullptr);
+    ASSERT_NE(indices_before, nullptr);
+
+    // An index-only edit: the same index count, new bytes (a new buffer object), announced by a revision
+    // bump — which is what a refilled index stream looks like from here.
+    geometry->setIndices(packedIndices({ 0u, 2u, 1u }));
+    geometry->setRevision(geometry->revision() + 1u);
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+
+    EXPECT_EQ(findBoundData(root.get(), kBindingPositions), positions_before)
+        << "a vertex channel that did not change must not be re-materialised";
+    EXPECT_NE(indexDataOf(root.get()), indices_before) << "the retained bind must read the new indices";
+    ASSERT_EQ(created.size(), 1u) << "the swapped index buffer still needs this frame's compile pass";
+    EXPECT_EQ(findDataNode(root.get()), data_node_before)
+        << "the data node must be kept and re-compiled in place; a new one means every channel was "
+           "re-materialised (and re-uploaded) with the indices";
+}
+
+/**
+ * @brief A vertex edit still rebuilds the data node (the control for the index-only path).
+ *
+ * Replacing one vertex channel changes the identity of that channel, so the fast path must NOT trigger: the
+ * node is rebuilt from the geometry (and the previous one parked on the retire ring).
+ */
+TEST(SceneBridgeDataRebuildTest, AVertexEditStillRebuildsTheWholeNode)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto geometry = indexedTriangle(0.0f);
+    auto material = MaterialPtr(new Material());
+
+    std::vector<RenderCommand>           commands;
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    commands.emplace_back(geometry, material, Mat4d());
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+    auto* data_node_before = findDataNode(root.get());
+    auto* positions_before = findBoundData(root.get(), kBindingPositions);
+    ASSERT_NE(data_node_before, nullptr);
+    ASSERT_NE(positions_before, nullptr);
+
+    // Same vertex count, new positions: the channel's identity changed, so this is not an index-only edit.
+    geometry->setPositions(packed({ 0.0f, 0.0f, 0.0f, 2.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f }));
+    geometry->setRevision(geometry->revision() + 1u);
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+
+    EXPECT_NE(findBoundData(root.get(), kBindingPositions), positions_before)
+        << "the changed vertex channel must be re-materialised";
+    ASSERT_EQ(created.size(), 1u);
+    EXPECT_NE(findDataNode(root.get()), data_node_before)
+        << "a vertex edit rebuilds the data node (the index-only path must not trigger)";
+}
+
+/**
+ * @brief An index-count change is NOT an index-only edit.
+ *
+ * The count is baked into the draw command and into the range the bind copies, so a stream that grew or
+ * shrank cannot be swapped into the retained bind: the fast path is limited to "same count, new bytes", and
+ * anything else must take the rebuild (which is what makes the bound-range and the draw agree again).
+ */
+TEST(SceneBridgeDataRebuildTest, AChangedIndexCountRebuildsTheNode)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto geometry = indexedTriangle(0.0f);
+    auto material = MaterialPtr(new Material());
+
+    std::vector<RenderCommand>           commands;
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    commands.emplace_back(geometry, material, Mat4d());
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    auto* data_node_before = findDataNode(root.get());
+    ASSERT_NE(data_node_before, nullptr);
+    ASSERT_NE(findDrawIndexed(root.get()), nullptr);
+
+    // Six indices instead of three (two triangles over the same three vertices).
+    geometry->setIndices(packedIndices({ 0u, 1u, 2u, 0u, 1u, 2u }));
+    geometry->setRevision(geometry->revision() + 1u);
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+
+    EXPECT_NE(findDataNode(root.get()), data_node_before)
+        << "a changed index count must rebuild the node (the draw command bakes the count)";
+    auto* draw = findDrawIndexed(root.get());
+    ASSERT_NE(draw, nullptr);
+    EXPECT_EQ(draw->indexCount, 6u) << "the rebuild must reflect the new index count";
+}
+
+/**
+ * @brief New vertices AND new indices: the index-only path must not swallow the vertices.
+ *
+ * Both streams changed, so the index fast path is not an option even though the index count is the same —
+ * taking it would swap the indices and keep reading the OLD vertex channels, drawing the old mesh with the
+ * new topology. This is the case the vertex-channel snapshot guards.
+ */
+TEST(SceneBridgeDataRebuildTest, AVertexEditWithNewIndicesRebuildsTheNode)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto geometry = indexedTriangle(0.0f);
+    auto material = MaterialPtr(new Material());
+
+    std::vector<RenderCommand>           commands;
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    commands.emplace_back(geometry, material, Mat4d());
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    auto* data_node_before = findDataNode(root.get());
+    auto* positions_before = findBoundData(root.get(), kBindingPositions);
+    ASSERT_NE(data_node_before, nullptr);
+    ASSERT_NE(positions_before, nullptr);
+
+    geometry->setPositions(packed({ 0.0f, 0.0f, 0.0f, 2.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f }));
+    geometry->setIndices(packedIndices({ 2u, 1u, 0u }));
+    geometry->setRevision(geometry->revision() + 1u);
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+
+    EXPECT_NE(findBoundData(root.get(), kBindingPositions), positions_before)
+        << "the new vertices must reach the GPU";
+    EXPECT_NE(findDataNode(root.get()), data_node_before)
+        << "with both streams replaced the node must be rebuilt";
+}
+
+/**
+ * @brief An out-of-range index edit is REJECTED, not swapped in.
+ *
+ * The index fast path must not be a way around the builder's bounds check: an index beyond the vertex count
+ * reads out of bounds on the GPU, and the rejection (reported once per revision) is the caller's only signal
+ * that the mesh is not drawable. So a stream that fails the check takes the rebuild, which rejects it.
+ */
+TEST(SceneBridgeDataRebuildTest, AnOutOfRangeIndexSwapIsRejectedInsteadOfUploaded)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto geometry = indexedTriangle(0.0f);
+    auto material = MaterialPtr(new Material());
+
+    std::vector<RenderCommand>           commands;
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    commands.emplace_back(geometry, material, Mat4d());
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(root->children.size(), 1u) << "the drawable mesh is retained";
+
+    // Index 9 does not exist in a three-vertex mesh: same count, so only the bounds check can tell.
+    geometry->setIndices(packedIndices({ 0u, 1u, 9u }));
+    geometry->setRevision(geometry->revision() + 1u);
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+
+    EXPECT_TRUE(root->children.empty())
+        << "an out-of-range index stream must be rejected, not swapped into the retained bind";
 }

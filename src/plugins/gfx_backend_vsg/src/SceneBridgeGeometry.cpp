@@ -41,9 +41,11 @@ using detail::XyzUnpack;
     vine::graphics::Topology topology,
     ::vsg::ref_ptr<::vsg::vec4Array>& out_colors,
     std::vector<VertexChannel>& extra_channels,
-    DerivedChannels& derived)
+    DerivedChannels& derived,
+    ::vsg::ref_ptr<::vsg::BindIndexBuffer>& out_index_bind)
 {
     extra_channels.clear();
+    out_index_bind = {};
     if (geometry == nullptr) {
         return ::vsg::ref_ptr<::vsg::Commands>();
     }
@@ -363,7 +365,11 @@ using detail::XyzUnpack;
     // finding as VsgRenderer::makeRawDemoNode).
     auto drawCommands = ::vsg::Commands::create();
     drawCommands->addChild(::vsg::BindVertexBuffers::create(0u, arrays));
-    drawCommands->addChild(::vsg::BindIndexBuffer::create(indices));
+    auto index_bind = ::vsg::BindIndexBuffer::create(indices);
+    drawCommands->addChild(index_bind);
+    // Handed back so a later index-only edit can replace that stream in place (see SceneBridge.cpp): the
+    // command's own BufferInfo is what vsg re-creates and copies then.
+    out_index_bind = index_bind;
     drawCommands->addChild(::vsg::DrawIndexed::create(
         static_cast<uint32_t>(indices->size()), 1, 0, 0, 0));
     return drawCommands;
