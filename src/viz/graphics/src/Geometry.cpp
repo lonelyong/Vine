@@ -1,5 +1,8 @@
 ﻿#include <vine/graphics/Geometry.hpp>
 
+#include <span>
+#include <vector>
+
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/geometry/IndexedTriangleMesh.hpp>
@@ -53,12 +56,12 @@ Aabbd transformBox(const Aabbd& local, const Mat4d& world)
 }
 
 /**
- * @brief Packs a Vec3 array into a three-component float attribute buffer.
+ * @brief Packs a borrowed Vec3 view into a three-component float attribute buffer.
  *
- * @param src Typed vertex array.
+ * @param src Typed vertex view.
  * @return Packed attribute buffer (components = 3).
  */
-AttributeBuffer packVec3(const vine::geometry::Vec3fArray& src)
+AttributeBuffer packVec3(std::span<const vine::math::Vec3f> src)
 {
     AttributeBuffer out;
     out.components = 3;
@@ -72,12 +75,12 @@ AttributeBuffer packVec3(const vine::geometry::Vec3fArray& src)
     return out;
 }
 /**
- * @brief Packs a Vec2 array into an attribute buffer.
+ * @brief Packs a borrowed Vec2 view into an attribute buffer.
  *
- * @param src Typed vertex array.
+ * @param src Typed vertex view.
  * @return Packed attribute buffer (components = 2).
  */
-AttributeBuffer packVec2(const vine::geometry::Vec2fArray& src)
+AttributeBuffer packVec2(std::span<const vine::math::Vec2f> src)
 {
     AttributeBuffer out;
     out.components = 2;
@@ -88,7 +91,8 @@ AttributeBuffer packVec2(const vine::geometry::Vec2fArray& src)
         out.data->push_back(v.y);
     }
     return out;
-}}  // namespace
+}
+}  // namespace
 
 void Geometry::addBuffer(std::uint32_t location, const AttributeBuffer& buffer)
 {
@@ -129,9 +133,14 @@ std::vector<std::uint32_t> Geometry::bufferLocations() const
     return locations;
 }
 
-void Geometry::setPositions(const vine::geometry::Vec3fArray& positions)
+void Geometry::setPositions(std::span<const vine::math::Vec3f> positions)
 {
     addBuffer(0, packVec3(positions));
+}
+
+void Geometry::setPositions(const vine::geometry::Vec3fArray& positions)
+{
+    setPositions(std::span<const vine::math::Vec3f>(positions));
 }
 
 bool Geometry::hasPositions() const
@@ -145,9 +154,14 @@ std::size_t Geometry::positionCount() const
     return positions != nullptr ? positions->vertexCount() : 0u;
 }
 
-void Geometry::setNormals(const vine::geometry::Vec3fArray& normals)
+void Geometry::setNormals(std::span<const vine::math::Vec3f> normals)
 {
     addBuffer(1, packVec3(normals));
+}
+
+void Geometry::setNormals(const vine::geometry::Vec3fArray& normals)
+{
+    setNormals(std::span<const vine::math::Vec3f>(normals));
 }
 
 bool Geometry::hasNormals() const
@@ -161,9 +175,14 @@ std::size_t Geometry::normalCount() const
     return normals != nullptr ? normals->vertexCount() : 0u;
 }
 
-void Geometry::setTexcoords(const vine::geometry::Vec2fArray& texcoords)
+void Geometry::setTexcoords(std::span<const vine::math::Vec2f> texcoords)
 {
     addBuffer(kTexCoordLocation, packVec2(texcoords));
+}
+
+void Geometry::setTexcoords(const vine::geometry::Vec2fArray& texcoords)
+{
+    setTexcoords(std::span<const vine::math::Vec2f>(texcoords));
 }
 
 bool Geometry::hasTexcoords() const
@@ -183,9 +202,14 @@ void Geometry::setIndices(std::shared_ptr<vine::geometry::UInt32Array> indices)
     ++revision_;
 }
 
+void Geometry::setIndices(std::span<const std::uint32_t> indices)
+{
+    setIndices(std::make_shared<vine::geometry::UInt32Array>(indices.begin(), indices.end()));
+}
+
 void Geometry::setIndices(const vine::geometry::UInt32Array& indices)
 {
-    setIndices(std::make_shared<vine::geometry::UInt32Array>(indices));
+    setIndices(std::span<const std::uint32_t>(indices));
 }
 
 bool Geometry::hasIndices() const
@@ -272,14 +296,14 @@ GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
     if (mesh == nullptr) {
         return GeometryPtr();
     }
-    auto geometry         = GeometryPtr(new Geometry());
-    const auto& positions = mesh->positions();
+    auto       geometry  = GeometryPtr(new Geometry());
+    const auto positions = mesh->positions();
     geometry->setPositions(positions);
-    const auto& normals = mesh->normals();
+    const auto normals = mesh->normals();
     if (normals.size() == positions.size()) {
         geometry->setNormals(normals);
     }
-    const auto& texcoords = mesh->texcoords();
+    const auto texcoords = mesh->texcoords();
     if (texcoords.size() == positions.size()) {
         geometry->setTexcoords(texcoords);
     }

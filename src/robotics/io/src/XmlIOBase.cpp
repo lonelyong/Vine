@@ -1,6 +1,7 @@
 ﻿#include <vine/robotics/io/XmlIOBase.hpp>
 
 #include <sstream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -108,10 +109,10 @@ void setAttr(tinyxml2::XMLElement* xe, const char* name, const String& value)
  * @return The geoms path prefix ("geoms/meshN") used by the XML description.
  */
 String writeMeshBins(vine::io::IMemoryVfs& vfs, std::size_t& geom_seq,
-                     const vine::geometry::Vec3fArray&  positions,
-                     const vine::geometry::Vec3fArray&  normals,
-                     const vine::geometry::Vec2fArray&  texcoords,
-                     const vine::geometry::UInt32Array& indices)
+                     std::span<const vine::math::Vec3f> positions,
+                     std::span<const vine::math::Vec3f> normals,
+                     std::span<const vine::math::Vec2f> texcoords,
+                     std::span<const std::uint32_t> indices)
 {
     const std::string seq_str = std::to_string(geom_seq++);
     const String      prefix  = String(u8"geoms/mesh")

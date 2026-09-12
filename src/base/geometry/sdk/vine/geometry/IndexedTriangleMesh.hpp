@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 #include "Array.hpp"
 #include "Mesh.hpp"
@@ -26,14 +27,25 @@ class V_GEOMETRY_API IndexedTriangleMesh : public Mesh {
     /**
      * @brief Returns the triangle indices.
      *
-     * @return Index array (3 entries per triangle).
+     * The result is a borrowed view; see Mesh for the lifetime rules.
+     *
+     * @return Read-only view over the indices (3 entries per triangle).
      */
-    const UInt32Array& indices() const;
+    std::span<const std::uint32_t> indices() const;
+
+    /**
+     * @brief Returns the shareable handle to the triangle indices.
+     *
+     * See Mesh::positionsBuffer() for the lifetime and revision contract.
+     *
+     * @return Handle to the index buffer (never null; empty when the mesh has no indices).
+     */
+    intrusive_ptr<const Buffer<std::uint32_t>> indicesBuffer() const;
 
     /**
      * @brief Replaces the triangle indices.
      *
-     * @param indices New index array.
+     * @param indices New index array (moved in, not copied).
      */
     void setIndices(UInt32Array indices);
 
@@ -71,8 +83,8 @@ class V_GEOMETRY_API IndexedTriangleMesh : public Mesh {
     bool isValid() const override;
 
   private:
-    /// Vertex indices, three per triangle.
-    UInt32Array indices_;
+    /// Vertex indices, three per triangle; never null, empty when the mesh has none.
+    intrusive_ptr<Buffer<std::uint32_t>> indices_;
 };
 
 V_GEOMETRY_NS_END

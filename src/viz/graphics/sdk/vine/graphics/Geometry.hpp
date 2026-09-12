@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include <vine/intrusive_ptr.hpp>
@@ -137,6 +138,14 @@ class V_GRAPHICS_API Geometry : public Node {
     /** @brief Gets the locations of every attribute buffer (ascending). */
     std::vector<std::uint32_t> bufferLocations() const;
 
+    /** @brief Sets the positions (location 0) from a borrowed Vec3 view.
+     *
+     * Lets a mesh hand its own attribute storage over without the caller first materialising an array.
+     *
+     * @param positions Vertex positions (three floats each); borrowed for the duration of the call only.
+     */
+    void setPositions(std::span<const vine::math::Vec3f> positions);
+
     /** @brief Sets the positions (location 0) from a Vec3 array.
      *
      * @param positions Vertex positions (three floats each).
@@ -148,6 +157,12 @@ class V_GRAPHICS_API Geometry : public Node {
 
     /** @brief Gets the number of positions (location 0). */
     std::size_t positionCount() const;
+
+    /** @brief Sets the normals (location 1) from a borrowed Vec3 view.
+     *
+     * @param normals Vertex normals (three floats each); borrowed for the duration of the call only.
+     */
+    void setNormals(std::span<const vine::math::Vec3f> normals);
 
     /** @brief Sets the normals (location 1) from a Vec3 array.
      *
@@ -162,6 +177,12 @@ class V_GRAPHICS_API Geometry : public Node {
 
     /** @brief Gets the number of normals (location 1). */
     std::size_t normalCount() const;
+
+    /** @brief Sets the texture coordinates (location kTexCoordLocation) from a borrowed Vec2 view.
+     *
+     * @param texcoords Vertex texture coordinates (two floats each); borrowed for the duration of the call only.
+     */
+    void setTexcoords(std::span<const vine::math::Vec2f> texcoords);
 
     /** @brief Sets the texture coordinates (location kTexCoordLocation) from a Vec2 array.
      *
@@ -184,6 +205,12 @@ class V_GRAPHICS_API Geometry : public Node {
      * @param indices Shared index buffer to attach, or null to clear.
      */
     void setIndices(std::shared_ptr<vine::geometry::UInt32Array> indices);
+
+    /** @brief Sets the optional index buffer from a borrowed uint32 view.
+     *
+     * @param indices Index values to attach (copied); borrowed for the duration of the call only.
+     */
+    void setIndices(std::span<const std::uint32_t> indices);
 
     /** @brief Sets the optional index buffer from a local array (copied).
      *

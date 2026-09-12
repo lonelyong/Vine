@@ -1315,3 +1315,27 @@ mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::ou
 **仍未做**：后端**不消费** `Texture`（face/mip 链不上传、不建 sampler、不进描述符集）；
 图像解码 / 读回路径未有；`RenderTarget` 自己的 `ColorFormat`/`DepthFormat` 与 `imaging::PixelFormat` **重复**，
 应并入后者（改公开 API，需单独一批）。
+
+## 顶点存储去重：`core::Buffer<T>` + `Mesh` 改存共享缓冲（阶段 1、2，2026-09-12）
+
+**动机**：`Mesh` 用 `std::vector<T>` 存顶点，`Geometry` 又用 `shared_ptr<vector<float>>` 存一份 packing
+副本（`packVec3` / `packVec2`）。对 `Vec3f` 这类元素，packing 的字节与源数据**逐字节相同** ——
+那份副本不是转换，是纯开销。让两侧指向同一块分配不需要任何转换代码。
+
+**做法**：`core::Buffer<T>`（`RefCounted`，**组合**而非派生 `std::vector` —— 派生会被 `vector&` 传递切片掉
+引用计数）；两个面 `view()`（类型化）/ `bytes()`（类型擦除，就是那些元素本身）；变更 `++revision_`，
+另有**手动** `setRevision()` 补 `data()` / `operator[]` 这类 buffer 看不见的可写引用。
+`Mesh` 改存 `intrusive_ptr<Buffer<T>>`，读访问器返回 `std::span`（借用视图），另给
+`positionsBuffer()` 等共享句柄（`intrusive_ptr<const Buffer<T>>`）。
+`Geometry` 增加 `std::span<const T>` 重载（保留原 `const Vec3fArray&` 重载并委托），**但仍 repack**。
+
+**判据**：`test_graphics` **218 → 219**、`test_core` **82**、`test_vsg` **185**；
+`ninja` 零 error/零 warning；`vsg_selftest_evidence.sh` → PASS（**47 行逐字节相同**，后端零改动）；
+`gfx_lavapipe_check.sh` → PASS（0 VUID）；`check_diagnostic_formats.py` → 0 suspicious。
+**变异验证**：`addVertex` 改成每次重建存储 → 恰好 3 条共享断言失败（size 2≠3、两侧地址不同、revision 0 vs 0）。
+
+**仍未做**：阶段 3（`AttributeBuffer` 改「共享 owner + 视图」，`setPositions/setNormals/setTexcoords`
+共享而非 repack）、阶段 4（后端从 `bytes()` 上传）。**所以内存尚未减少**，减少发生在阶段 3。
+预测与实际破坏点清单的差异（预测不全）、以及"写者必须公告、读者必须比较 revision"的契约，
+详见 `.ai/design/geometry-attribute-storage.md`。
+

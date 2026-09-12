@@ -129,7 +129,8 @@ void mergeAssimpScene(IndexedTriangleMesh& mesh, const aiScene* scene)
  */
 void applyScale(const MeshLoader::Options& options, IndexedTriangleMesh& mesh)
 {
-    const Vec3fArray& positions = mesh.positions();
+    // A borrowed view is enough here: the loop below reads it before setPositions() replaces the storage.
+    const auto positions = mesh.positions();
     if (positions.empty()) {
         return;
     }

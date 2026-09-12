@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <span>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -200,10 +201,10 @@ inline bool endsWith(const String& text, const char* suffix)
 /**
  * @brief Appends a float3 array as a little-endian byte buffer.
  *
- * @param arr The array.
+ * @param arr The values to write.
  * @param out Receives the bytes.
  */
-inline void vec3ArrayToBytes(const vine::geometry::Vec3fArray& arr, std::vector<unsigned char>& out)
+inline void vec3ArrayToBytes(std::span<const vine::math::Vec3f> arr, std::vector<unsigned char>& out)
 {
     out.clear();
     out.reserve(arr.size() * 3u * sizeof(float));
@@ -217,10 +218,10 @@ inline void vec3ArrayToBytes(const vine::geometry::Vec3fArray& arr, std::vector<
 /**
  * @brief Appends a float2 array as a little-endian byte buffer.
  *
- * @param arr The array.
+ * @param arr The values to write.
  * @param out Receives the bytes.
  */
-inline void vec2ArrayToBytes(const vine::geometry::Vec2fArray& arr, std::vector<unsigned char>& out)
+inline void vec2ArrayToBytes(std::span<const vine::math::Vec2f> arr, std::vector<unsigned char>& out)
 {
     out.clear();
     out.reserve(arr.size() * 2u * sizeof(float));
@@ -234,10 +235,10 @@ inline void vec2ArrayToBytes(const vine::geometry::Vec2fArray& arr, std::vector<
 /**
  * @brief Appends a uint32 array as a little-endian byte buffer.
  *
- * @param arr The array.
+ * @param arr The values to write.
  * @param out Receives the bytes.
  */
-inline void uint32ArrayToBytes(const vine::geometry::UInt32Array& arr, std::vector<unsigned char>& out)
+inline void uint32ArrayToBytes(std::span<const std::uint32_t> arr, std::vector<unsigned char>& out)
 {
     out.clear();
     out.reserve(arr.size() * sizeof(std::uint32_t));

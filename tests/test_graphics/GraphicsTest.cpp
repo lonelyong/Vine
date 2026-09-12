@@ -26,6 +26,8 @@
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
+#include <vine/Buffer.hpp>
+#include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
@@ -1681,6 +1683,34 @@ TEST(MeshTest, AttributesSharedOnBase)
     mesh->setNormals({ vine::math::Vec3f(0, 0, 1), vine::math::Vec3f(0, 0, 1),
                       vine::math::Vec3f(0, 0, 1) });
     EXPECT_EQ(mesh->normals().size(), 3u);
+}
+
+TEST(MeshTest, AttributeStorageIsSharedNotCopied)
+{
+    intrusive_ptr<vine::geometry::IndexedTriangleMesh> mesh(new vine::geometry::IndexedTriangleMesh());
+    mesh->addVertex(vine::math::Vec3f(0.0f, 0.0f, 0.0f));
+    mesh->addVertex(vine::math::Vec3f(1.0f, 0.0f, 0.0f));
+
+    // A second consumer (the renderer, here just a holder) takes the shareable handle rather than a copy.
+    const auto shared = mesh->positionsBuffer();
+    EXPECT_EQ(shared->size(), 2u);
+    // One allocation, not two: both sides address the same bytes.
+    EXPECT_EQ(shared->data(), mesh->positions().data());
+    EXPECT_EQ(shared->bytes().size(), 2u * sizeof(vine::math::Vec3f));
+
+    // The model keeps building. The holder sees it because it IS the same storage, and the growth is
+    // announced so a cache knows its copy of the bytes is stale.
+    const auto before = shared->revision();
+    mesh->addVertex(vine::math::Vec3f(2.0f, 0.0f, 0.0f));
+    EXPECT_EQ(shared->size(), 3u);
+    EXPECT_EQ(shared->data(), mesh->positions().data());
+    EXPECT_GT(shared->revision(), before);
+
+    // The index buffer is shared the same way, and appending a triangle announces itself too.
+    mesh->addTriangle(0u, 1u, 2u);
+    const auto indices = mesh->indicesBuffer();
+    EXPECT_EQ(indices->size(), 3u);
+    EXPECT_EQ(indices->data(), mesh->indices().data());
 }
 
 TEST(GeometryTest, BoundingBoxComputedFromBuffers)

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -21,8 +22,7 @@ namespace
 using Mesh                = vine::geometry::Mesh;
 using TriangleMesh        = vine::geometry::TriangleMesh;
 using IndexedTriangleMesh = vine::geometry::IndexedTriangleMesh;
-using UInt32Array         = vine::geometry::UInt32Array;
-using Vec3fArray          = vine::geometry::Vec3fArray;
+using Vec3f               = vine::math::Vec3f;
 
 /**
  * @brief RAII owner for a manually built assimp scene.
@@ -51,15 +51,18 @@ class AiSceneGuard
 /**
  * @brief View over the geometry of a triangle mesh, independent of whether it
  *        is stored as an indexed or a non-indexed mesh.
+ *
+ * An empty `indices` view means "non-indexed": a scene is only built for a mesh that passed `isValid()`,
+ * and a valid indexed mesh always holds at least one triangle.
  */
 struct MeshData
 {
-    /// Vertex positions; never null for a valid triangle mesh.
-    const Vec3fArray* positions{ nullptr };
-    /// Optional per-vertex normals.
-    const Vec3fArray* normals{ nullptr };
-    /// Triangle indices; null for non-indexed meshes.
-    const UInt32Array* indices{ nullptr };
+    /// Vertex positions; never empty for a valid triangle mesh.
+    std::span<const Vec3f> positions;
+    /// Optional per-vertex normals (empty when absent).
+    std::span<const Vec3f> normals;
+    /// Triangle indices; empty for a non-indexed mesh.
+    std::span<const std::uint32_t> indices;
 };
 
 /**
@@ -81,12 +84,12 @@ void buildAiScene(AiSceneGuard& guard, const Mesh& mesh, const MeshExporter::Opt
     switch (mesh.shapeType()) {
       case vine::geometry::ShapeType::IndexedTriangleMesh: {
           const auto& itm = obj_cast<IndexedTriangleMesh>(mesh);
-          data            = { &itm.positions(), &itm.normals(), &itm.indices() };
+          data            = { itm.positions(), itm.normals(), itm.indices() };
           break;
       }
       case vine::geometry::ShapeType::TriangleMesh: {
           const auto& tm = obj_cast<TriangleMesh>(mesh);
-          data           = { &tm.positions(), &tm.normals(), nullptr };
+          data           = { tm.positions(), tm.normals(), {} };
           break;
       }
       default:
@@ -105,33 +108,33 @@ void buildAiScene(AiSceneGuard& guard, const Mesh& mesh, const MeshExporter::Opt
     aiMesh&       ai_mesh = *ai_scene.mMeshes[0];
     const float   scale   = static_cast<float>(options.scale_factor);
 
-    if (data.positions && !data.positions->empty()) {
-        ai_mesh.mNumVertices = static_cast<unsigned int>(data.positions->size());
+    if (!data.positions.empty()) {
+        ai_mesh.mNumVertices = static_cast<unsigned int>(data.positions.size());
         ai_mesh.mVertices    = new aiVector3D[ai_mesh.mNumVertices];
         for (unsigned int i = 0; i < ai_mesh.mNumVertices; ++i) {
-            const auto& v = (*data.positions)[i];
+            const auto& v = data.positions[i];
             ai_mesh.mVertices[i] = aiVector3D(v.x * scale, v.y * scale, v.z * scale);
         }
 
-        if (data.normals && data.normals->size() == data.positions->size()) {
+        if (data.normals.size() == data.positions.size()) {
             ai_mesh.mNormals = new aiVector3D[ai_mesh.mNumVertices];
             for (unsigned int i = 0; i < ai_mesh.mNumVertices; ++i) {
-                const auto& n = (*data.normals)[i];
+                const auto& n = data.normals[i];
                 ai_mesh.mNormals[i] = aiVector3D(n.x, n.y, n.z);
             }
         }
     }
 
-    const std::size_t triangle_count = data.indices ? data.indices->size() / 3 : data.positions->size() / 3;
+    const std::size_t triangle_count = data.indices.empty() ? data.positions.size() / 3 : data.indices.size() / 3;
     ai_mesh.mNumFaces               = static_cast<unsigned int>(triangle_count);
     ai_mesh.mFaces                  = new aiFace[ai_mesh.mNumFaces];
     for (unsigned int i = 0; i < ai_mesh.mNumFaces; ++i) {
         ai_mesh.mFaces[i].mNumIndices = 3;
-        if (data.indices) {
+        if (!data.indices.empty()) {
             const std::size_t base = static_cast<std::size_t>(i) * 3;
-            ai_mesh.mFaces[i].mIndices = new unsigned int[3]{ (*data.indices)[base],
-                                                              (*data.indices)[base + 1],
-                                                              (*data.indices)[base + 2] };
+            ai_mesh.mFaces[i].mIndices = new unsigned int[3]{ data.indices[base],
+                                                              data.indices[base + 1],
+                                                              data.indices[base + 2] };
         } else {
             const unsigned int base = i * 3;
             ai_mesh.mFaces[i].mIndices = new unsigned int[3]{ base, base + 1, base + 2 };
