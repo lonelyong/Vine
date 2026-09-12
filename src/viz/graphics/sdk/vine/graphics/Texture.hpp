@@ -47,11 +47,16 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
         Cube, ///< Six 2D images, one per cube face.
     };
 
-  public:
+  protected:
     /**
      * @brief Describes a texture, with every face left unfilled.
      *
      * The texture starts incomplete: a description is not content, and the faces are filled separately.
+     *
+     * PROTECTED, because a shape is a TYPE here rather than a constructor argument. A public constructor
+     * taking a shape would let a caller describe a cube through a path that skips whatever invariants the
+     * named type carries — that its faces are square, that they are addressed by name rather than by an
+     * index whose meaning only Vulkan's layer order defines.
      *
      * @param shape     How many images the texture is made of.
      * @param width     Width in pixels of every face; must be positive.

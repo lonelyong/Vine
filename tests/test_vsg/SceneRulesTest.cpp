@@ -728,8 +728,12 @@ vine::intrusive_ptr<vine::graphics::Texture> filledTexture(vine::graphics::Textu
                                                            vine::imaging::PixelFormat format,
                                                            int faces)
 {
+    // Built through the named types rather than by handing a shape to a texture constructor: which object a
+    // shape is, and therefore which invariants it carries, is now the type's business.
+    const bool is_cube = (shape == vine::graphics::Texture::Shape::Cube);
     auto texture = vine::intrusive_ptr<vine::graphics::Texture>(
-        new vine::graphics::Texture(shape, 4, 4, format));
+        is_cube ? static_cast<vine::graphics::Texture*>(new vine::graphics::CubeMap(4, format))
+                : static_cast<vine::graphics::Texture*>(new vine::graphics::Texture2D(4, 4, format)));
     for (int face = 0; face < faces; ++face) {
         texture->setSource(face, vine::intrusive_ptr<const vine::imaging::Image>(
                                      new vine::imaging::Image(4, 4, format)));

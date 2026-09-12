@@ -4415,7 +4415,7 @@ bool runTexturePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, 
     }
 
     vine::intrusive_ptr<Texture> texture(
-        new Texture(Texture::Shape::D2, kSize, kSize, vine::imaging::PixelFormat::Rgba8Unorm, kLevels));
+        new Texture2D(kSize, kSize, vine::imaging::PixelFormat::Rgba8Unorm, kLevels));
     texture->setSource(0, colours);
 
     auto material = MaterialPtr(new Material());

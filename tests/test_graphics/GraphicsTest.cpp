@@ -891,7 +891,7 @@ TEST(MaterialTest, Setters)
 
 TEST(MaterialTest, CarriesTheTextureItSamples)
 {
-    auto texture = intrusive_ptr<Texture>(new Texture(Texture::Shape::D2, 4, 4, PixelFormat::Rgba8Unorm));
+    auto texture = intrusive_ptr<Texture>(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
 
     Material mat;
     EXPECT_EQ(mat.texture(), nullptr);
@@ -908,7 +908,7 @@ TEST(MaterialTest, CarriesTheTextureItSamples)
 
 TEST(TextureTest, A2DTextureIsOneFace)
 {
-    Texture texture(Texture::Shape::D2, 8, 4, PixelFormat::Rgba8Unorm, 2);
+    Texture2D texture(8, 4, PixelFormat::Rgba8Unorm, 2);
 
     EXPECT_EQ(texture.shape(), Texture::Shape::D2);
     EXPECT_EQ(texture.faceCount(), 1);
@@ -922,7 +922,7 @@ TEST(TextureTest, A2DTextureIsOneFace)
 
 TEST(TextureTest, ACubeTextureIsSixFacesSharingOneDescription)
 {
-    Texture texture(Texture::Shape::Cube, 16, 16, PixelFormat::Rgba8Unorm);
+    CubeMap texture(16, PixelFormat::Rgba8Unorm);
 
     EXPECT_EQ(texture.faceCount(), 6);
     EXPECT_EQ(texture.width(), 16);
@@ -935,7 +935,7 @@ TEST(TextureTest, ACubeTextureIsSixFacesSharingOneDescription)
 
 TEST(TextureTest, BecomesCompleteOnlyWhenEveryFaceIsFilled)
 {
-    Texture texture(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm);
+    CubeMap texture(4, PixelFormat::Rgba8Unorm);
 
     for (int face = 0; face < 5; ++face) {
         texture.setSource(face, sourceImage(texture, 1));
@@ -948,7 +948,7 @@ TEST(TextureTest, BecomesCompleteOnlyWhenEveryFaceIsFilled)
 
 TEST(TextureTest, HoldsItsFacesByStrongReference)
 {
-    Texture texture(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm);
+    CubeMap texture(4, PixelFormat::Rgba8Unorm);
 
     intrusive_ptr<const Image> face = sourceImage(texture, 1);
     texture.setSource(2, face);
@@ -963,8 +963,8 @@ TEST(TextureTest, HoldsItsFacesByStrongReference)
 
 TEST(TextureTest, AnOutOfRangeFaceIsRejectedWhenWritten)
 {
-    Texture d2(Texture::Shape::D2, 4, 4, PixelFormat::Rgba8Unorm);
-    Texture cube(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm);
+    Texture2D d2(4, 4, PixelFormat::Rgba8Unorm);
+    CubeMap cube(4, PixelFormat::Rgba8Unorm);
 
     EXPECT_THROW(d2.setSource(1, nullptr), std::out_of_range);
     EXPECT_THROW(d2.setSource(-1, nullptr), std::out_of_range);
@@ -978,7 +978,7 @@ TEST(TextureTest, AnOutOfRangeFaceIsRejectedWhenWritten)
 
 TEST(TextureTest, RejectsASourceThatDoesNotMatchTheDescription)
 {
-    Texture texture(Texture::Shape::D2, 8, 4, PixelFormat::Rgba8Unorm, 2);
+    Texture2D texture(8, 4, PixelFormat::Rgba8Unorm, 2);
 
     // Each of these differs from the description in exactly one field, so the check that fires is the one
     // under test rather than an earlier one.
@@ -998,15 +998,15 @@ TEST(TextureTest, RejectsASourceThatDoesNotMatchTheDescription)
 
 TEST(TextureTest, RejectsAnImpossibleDescription)
 {
-    EXPECT_THROW(Texture(Texture::Shape::D2, 0, 4, PixelFormat::Rgba8Unorm), std::invalid_argument);
-    EXPECT_THROW(Texture(Texture::Shape::D2, 4, 0, PixelFormat::Rgba8Unorm), std::invalid_argument);
-    EXPECT_THROW(Texture(Texture::Shape::Cube, 4, 4, PixelFormat::Unknown), std::invalid_argument);
+    EXPECT_THROW(Texture2D(0, 4, PixelFormat::Rgba8Unorm), std::invalid_argument);
+    EXPECT_THROW(Texture2D(4, 0, PixelFormat::Rgba8Unorm), std::invalid_argument);
+    EXPECT_THROW(CubeMap(4, PixelFormat::Unknown), std::invalid_argument);
 
     // 4x4 holds exactly 3 levels, so 0 and 4 are both impossible.
-    EXPECT_THROW(Texture(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm, 0), std::invalid_argument);
-    EXPECT_THROW(Texture(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm, 4), std::invalid_argument);
+    EXPECT_THROW(CubeMap(4, PixelFormat::Rgba8Unorm, 0), std::invalid_argument);
+    EXPECT_THROW(CubeMap(4, PixelFormat::Rgba8Unorm, 4), std::invalid_argument);
 
-    EXPECT_NO_THROW(Texture(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm, 3));
+    EXPECT_NO_THROW(CubeMap(4, PixelFormat::Rgba8Unorm, 3));
 }
 
 TEST(TextureTest, ShapeNamesItselfForDiagnostics)
@@ -1021,7 +1021,7 @@ TEST(TextureTest, FillingAFaceBumpsTheContentRevision)
     // A backend caches the uploaded image per texture ADDRESS, so a re-filled texture has to be
     // distinguishable from an unchanged one or it keeps sampling the old upload — the same failure the
     // shader program's revision exists to prevent.
-    Texture texture(Texture::Shape::D2, 4, 4, PixelFormat::Rgba8Unorm);
+    Texture2D texture(4, 4, PixelFormat::Rgba8Unorm);
     EXPECT_EQ(texture.revision(), 0u);
 
     texture.setSource(0, sourceImage(texture, 1));
