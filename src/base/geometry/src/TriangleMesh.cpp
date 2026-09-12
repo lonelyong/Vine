@@ -17,6 +17,8 @@ void TriangleMesh::addTriangle(const vine::math::Vec3f& a, const vine::math::Vec
         positions_->push_back(vertex->y);
         positions_->push_back(vertex->z);
     }
+    // One announcement per triangle appended, not one per scalar pushed (see Mesh::announceChange).
+    announceChange(positions_);
 }
 
 void TriangleMesh::clear()

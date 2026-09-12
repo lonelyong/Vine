@@ -338,7 +338,7 @@ vsg 的重传粒度是**一条 `BindVertexBuffers` 命令**：命令里任一阵
 派生通道与位置**耦合**：几何体不作者法线时，位置变会连带重新推导法线（P5 的缓存同步更新）。
 
 > 命名接口不变：`Geometry::revision()` 仍然只表示"变了"，刷新路径只是**额外**用逐流快照判断能不能少做；看不出来就
-> 老实重建（`Buffer::revision()` 的契约见 `vine/Buffer.hpp`：变了字节就要 bump）。
+> 老实重建。`Buffer::revision()` 的契约见 `vine/Buffer.hpp`：**写的人**改完字节要显式 bump（buffer 自己不 bump）。
 
 ### 5.1.2 共享网格流：一份模型字节，一条 bind
 

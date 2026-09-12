@@ -113,31 +113,37 @@ TEST(BufferTest, WriteAccessReachesTheElements)
     EXPECT_FLOAT_EQ(buffer->view()[0].z, 7.0f);
 }
 
-TEST(BufferTest, GrowthBumpsTheRevisionSoACachedConsumerCanNotice)
+TEST(BufferTest, NoMutationAnnouncesItselfSoTheWriterReportsTheEdit)
 {
-    // A modelling API appends, so the buffer must be able to grow — and then a consumer that cached the
-    // bytes has to be able to tell. Asserting the COUNTER rather than a copy is the point: the bytes may
-    // even sit at the same address after a reallocation-free grow, and the count is what says "re-read".
+    // A buffer cannot see every write (a pointer, a reference, another thread) and does not know where an edit
+    // ends, so it does not guess: NOTHING here moves the revision, and the writer states the change with
+    // setRevision(). What the test asserts is the absence of a half-truth — "appending announces, writing
+    // through data() silently does not" — because a revision-comparing consumer cannot tell those apart.
     auto buffer = intrusive_ptr<Buffer<int>>(new Buffer<int>());
     EXPECT_EQ(buffer->revision(), 0u);
 
     buffer->push_back(1);
-    const std::uint64_t after_push = buffer->revision();
-    EXPECT_GT(after_push, 0u);
+    EXPECT_EQ(buffer->revision(), 0u) << "an append does not announce itself";
 
     buffer->append(std::vector<int>{ 2, 3 });
-    EXPECT_GT(buffer->revision(), after_push);
+    EXPECT_EQ(buffer->revision(), 0u);
     EXPECT_EQ(buffer->size(), 3u);
 
     buffer->clear();
-    EXPECT_GT(buffer->revision(), after_push) << "emptying it is a change too";
+    EXPECT_EQ(buffer->revision(), 0u) << "neither does emptying it";
     EXPECT_TRUE(buffer->empty());
+
+    // The writer says so, once per edit — and now a cached consumer can tell.
+    buffer->setRevision(buffer->revision() + 1u);
+    EXPECT_EQ(buffer->revision(), 1u);
 }
 
 TEST(BufferTest, ReserveDoesNotCountAsAContentChange)
 {
     // reserve() may move the storage, but it does not change what a consumer would read — so it must not
     // make a cache look stale. (Taking a view before it is still wrong; that part is documented, not tracked.)
+    // It is also the one mutation that would have had to stay silent under the old rule, which is part of why
+    // the rule is now uniform.
     auto buffer = intrusive_ptr<Buffer<int>>(new Buffer<int>());
     buffer->push_back(1);
 
@@ -148,17 +154,16 @@ TEST(BufferTest, ReserveDoesNotCountAsAContentChange)
     EXPECT_EQ((*buffer)[0], 1);
 }
 
-TEST(BufferTest, AManualRevisionAnnouncesAWriteTheBufferCannotSee)
+TEST(BufferTest, SetRevisionIsTheOnlyWayTheRevisionMoves)
 {
-    // The gap this closes: `data()` and `operator[]` hand out writable references, so a caller can change
-    // the contents in ways the buffer can never notice. Without a manual announcement a revision-comparing
-    // consumer would keep reusing what it read — silently, and only for the writes that went through a
-    // reference rather than through push_back/append.
+    // `data()` and `operator[]` hand out writable references, so a caller can change the contents in ways the
+    // buffer can never notice. That is not a special case any more: it is the same rule as every other write
+    // path, which is what makes "announce it yourself" impossible to read as "unless you used push_back".
     auto buffer = intrusive_ptr<Buffer<int>>(new Buffer<int>(1));
 
     const std::uint64_t before = buffer->revision();
     buffer->data()[0] = 5;
-    EXPECT_EQ(buffer->revision(), before) << "an untracked write cannot bump anything by itself";
+    EXPECT_EQ(buffer->revision(), before) << "a write through a pointer cannot bump anything by itself";
 
     buffer->setRevision(before + 1);
     EXPECT_GT(buffer->revision(), before) << "now a cached consumer can tell";

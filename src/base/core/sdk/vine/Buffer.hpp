@@ -31,12 +31,16 @@ V_CORE_NS_BEGIN
  * Vine objects and `shared_ptr` for plain data. This is the former: it has identity, is not copyable, and
  * is meant to be shared — exactly the shape `RefCounted` describes.
  *
- * GROWTH IS ANNOUNCED, NOT FORBIDDEN. A modelling API appends (a mesh builder adds vertices one at a time),
- * so there is an append API and the length is not fixed. What a consumer must not do is assume the bytes it
- * read are still current: any mutation INVALIDATES byte pointers and views taken before it, and every
- * mutation bumps revision(). A consumer that cached the bytes compares the revision it read against
- * revision() before reusing them — the same rule `Texture` and `ShaderProgram` already follow for "the same
- * object, new contents". Freezing the length instead would have made the model side unexpressible.
+ * GROWTH IS ANNOUNCED BY THE WRITER, NOT INFERRED HERE. A modelling API appends (a mesh builder adds
+ * vertices one at a time), so there is an append API and the length is not fixed. What a consumer must not
+ * do is assume the bytes it read are still current: any mutation INVALIDATES byte pointers and views taken
+ * before it. But no mutation moves revision() — this object cannot see every write (a non-const `data()`
+ * pointer, an element reference, a write from another thread are all invisible to it) and it does not know
+ * where an edit begins and ends, so a self-bump could only ever be a half-truth: one write path announces
+ * itself, the next one silently does not. The WRITER reports the change with setRevision(), once per edit,
+ * and a consumer that cached the bytes compares the revision it read against revision() before reusing them
+ * — the rule `Geometry`, `Texture` and `ShaderProgram` already follow for "the same object, new contents".
+ * Freezing the length instead would have made the model side unexpressible.
  *
  * @tparam T Element type. Must be trivially copyable for `bytes()` to be meaningful.
  */
@@ -99,6 +103,8 @@ class Buffer : public RefCounted<Buffer<T>> {
      *
      * Writing through this pointer CANNOT be seen by the buffer, so a caller that does it must announce the
      * change with setRevision() — otherwise a consumer that compares revisions keeps reusing what it read.
+     * Every other write path follows the same rule (nothing here moves the revision by itself), which is what
+     * makes the rule absolute instead of "some writes announce themselves".
      * This is the same reason the write path exists at all: the model side writes vertices in place far more
      * often than it rebuilds the array.
      *
@@ -184,9 +190,10 @@ class Buffer : public RefCounted<Buffer<T>> {
     /**
      * @brief Gets the content revision.
      *
-     * Bumped by every mutation, so a consumer that cached bytes can tell "the same buffer, still the same
-     * contents" from "the same buffer, new contents". A pointer alone cannot: a cache keyed by the buffer's
-     * address would otherwise keep serving the contents it read first.
+     * Moved ONLY by setRevision(), so a consumer that cached the bytes can tell "the same buffer, still the
+     * same contents" from "the same buffer, new contents". A pointer alone cannot: a cache keyed by the
+     * buffer's address would otherwise keep serving the contents it read first. (The counterpart of
+     * `Geometry::revision()`, `Texture::revision()` and `ShaderProgram::revision()`.)
      *
      * @return Monotonic revision counter (starts at 0).
      */
@@ -196,16 +203,16 @@ class Buffer : public RefCounted<Buffer<T>> {
     }
 
     /**
-     * @brief Sets the content revision by hand.
+     * @brief Announces a content change by reporting the revision.
      *
-     * Needed because the write paths the buffer cannot see — a non-const `data()` pointer, an element
-     * reference from `operator[]`, a write from another thread — are exactly the ones the automatic bump
-     * misses. A caller that wrote through any of them announces it here. The usual value is
-     * `revision() + 1`.
+     * The ONLY way the revision moves: mutating the elements (push_back / append / clear, or a write through
+     * `data()` / `operator[]` / `view()`) does NOT move it. This object cannot see every write and cannot tell
+     * where an edit begins and ends, so it must not guess — the WRITER knows, and says so once per EDIT rather
+     * than once per element. That is also the granularity a consumer wants: "re-read, I am done".
      *
-     * The counter is only ever COMPARED, so nothing breaks if it jumps; but lowering it is a real hazard: a
-     * consumer holding a cached revision could then treat old bytes as current, or vice versa. Treat it as
-     * monotonic unless a caller genuinely needs otherwise.
+     * The usual value is `revision() + 1`. The counter is only ever COMPARED, so nothing breaks if it jumps;
+     * but lowering it is a real hazard: a consumer holding a cached revision could then treat old bytes as
+     * current, or vice versa. Treat it as monotonic unless a caller genuinely needs otherwise.
      *
      * @param revision Revision to report.
      */
@@ -230,16 +237,20 @@ class Buffer : public RefCounted<Buffer<T>> {
     /**
      * @brief Appends one element.
      *
+     * Does not announce the change: report it with setRevision() once the edit is done (see the class
+     * comment). A holder of the storage cannot tell "one more element" from "still the same" by itself.
+     *
      * @param value Element to append (copied).
      */
     void push_back(const T& value)
     {
         data_.push_back(value);
-        ++revision_;
     }
 
     /**
      * @brief Appends every element of @p values.
+     *
+     * Does not announce the change (see push_back).
      *
      * @param values Elements to append.
      */
@@ -250,16 +261,16 @@ class Buffer : public RefCounted<Buffer<T>> {
         }
 
         data_.insert(data_.end(), values.begin(), values.end());
-        ++revision_;
     }
 
     /**
      * @brief Removes every element.
+     *
+     * Does not announce the change: an emptied buffer is a change a holder has to hear about too.
      */
     void clear() noexcept
     {
         data_.clear();
-        ++revision_;
     }
 
   private:

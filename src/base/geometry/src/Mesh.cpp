@@ -155,9 +155,13 @@ Aabbf Mesh::computeAabb()
 
 void Mesh::clearAttributes()
 {
+    // Live storage a holder may already be reading: each cleared buffer says so, once (see announceChange).
     positions_->clear();
+    announceChange(positions_);
     normals_->clear();
+    announceChange(normals_);
     texcoords_->clear();
+    announceChange(texcoords_);
     aabb_ = Aabbf::empty();
 }
 

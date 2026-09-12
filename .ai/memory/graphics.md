@@ -1332,8 +1332,11 @@ mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::ou
 擦除、快照、悬空尖角一起消失，没有新增 core 类型、没有 vptr。
 
 **其余做法**：`core::Buffer<T>`（`RefCounted`，**组合**而非派生 `std::vector` —— 派生会被
-`vector&` 传递切片掉引用计数）；两个面 `view()` / `bytes()`；变更 `++revision_`，另有**手动**
-`setRevision()` 补 `data()` / `operator[]` 这类 buffer 看不见的可写引用。`Mesh` 存
+`vector&` 传递切片掉引用计数）；两个面 `view()` / `bytes()`。**变更一律手动公告**（2026-09-13
+把 `push_back`/`append`/`clear` 里的 `++revision_` 也删了）：buffer 看不见 `data()`/`operator[]`
+这类可写引用，也不知道一次编辑何时结束，自 bump 只能是半真话；写的人改完调 `setRevision(revision()+1)`。
+`Mesh` 就是那个写的人：`addVertex`/`addTriangle`/`clear` 各经 `announceChange()` 公告一次，所以
+“共享句柄能得知编辑”这条契约不变。`Mesh` 存
 `Buffer<float>`，`positions()` 等仍返回 `span<const Vec3f>`（同一批字节 reinterpret，布局由
 `Mesh.cpp` 的 `static_assert` 钉住），另给 `positionsBuffer()` 等共享句柄。
 **属性 setter 每个通道只留一个**：`setPositions/setNormals/setTexcoords` 各收一个 buffer 句柄，

@@ -94,7 +94,8 @@ struct AttributeBuffer {
 - **纯按 location 号存储，没有“名字”**；“0 = position、1 = normal”是注释约定，
   靠便捷 API 固化：`setPositions→loc0`、`setNormals→loc1`、`geometryFromShape→loc0+loc1(+indices)`。
 - 后端按 `attr.scalars()` 取标量、按 `components` 步进；上传仍是逐顶点拷进 vsg 的 typed array。
-- 每次 `addBuffer/removeBuffer/setPositions/setNormals/setTexcoords/setIndices` 都 bump `revision()`。
+- `addBuffer/removeBuffer/setPositions/setNormals/setTexcoords/setIndices` **都不自动 bump** `revision()`：
+  改完数据要显式 `Geometry::setRevision()` 公告（见 §2；`Buffer` 侧同理，见 `vine/Buffer.hpp`）。
 
 ### 1.2 Material：纯颜色（无透明度）
 

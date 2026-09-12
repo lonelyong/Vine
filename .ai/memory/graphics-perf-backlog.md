@@ -37,7 +37,7 @@
 | --- | --- | --- | --- | --- | --- |
 | **P1** | 保留策略：**容量 LRU** + 缺席窗口可配置（帧或秒） | 淘汰只看"缺席 600 次同步"，与帧率耦合，且不是内存上限 | 内存真正封顶；"仍在场景但长期不可见"的条目有归宿；与帧率解耦 | 需选 LRU 键（条目数/字节）；窗口单位要兼顾确定性测试 | 待办 |
 | **P2** | sweep 改**候选表**并提到**帧级一次**（本帧所有 pass 的并集都没收集到才计缺席） | 每槽每帧无条件扫整个 cache | 每帧 O(缺席数)；语义变成"这一帧没有任何 pass 画它" | 需要 `VsgRendererState` 级别的帧级 seen 登记（各 bridge 汇报）；要定义"某槽本帧没画"的语义 | 待办 |
-| **P3** | **局部 AABB 缓存**（键 = positions buffer 地址 + revision） | 每个 geometry 每帧重扫全部顶点算局部盒 | 收集侧 O(顶点)/帧 → O(1)/帧 | 缓存失效依赖"改数据就 bump revision"的既有契约 | 待办 |
+| **P3** | **局部 AABB 缓存**（键 = positions buffer 地址 + revision） | 每个 geometry 每帧重扫全部顶点算局部盒 | 收集侧 O(顶点)/帧 → O(1)/帧 | 缓存失效依赖"调用者改数据就 bump revision"的既有契约（`Geometry` 与 `Buffer` 都是公告一律手动） | 待办 |
 | **P4** | ~~`shared_objects_` 提到 session 级~~ | 每槽一套管线/描述符 | — | — | **已否决（有实测证据，见下）** |
 | **P5** | **派生通道缓存**：法线 / 白 / 零 UV 跨重建保留 | 每次数据重建都重算重分配（36 B/顶点） | 重建时省 O(V) 计算与分配 | 键：白/零 UV = 顶点数；派生法线 = positions 与 indices 的**缓冲区指针 + revision** | **已完成（2026-09-13）** |
 | **P6** | **per-location 变更检测 + 拆绑定**实现局部上传 | 一个 `revision_`，一变全量重建 | 只重建/只重传脏通道（改位置省 ~75% 字节，改索引省 ~93%） | 语义分工：`Geometry::revision()` = "变了"，逐流快照（`Buffer::revision()` + 指针 + 形状）= "变了哪一路"；刷新必须被快照**解释**，否则回退重建 | **已完成（2026-09-13）** |
@@ -108,6 +108,23 @@
     mutation 七条各自恰好目标测试红；运行时门禁：test_vsg 213 全绿、test_graphics 223 全绿、selftest 证据 47 行一致、
     lavapipe 0 VUID。
   · 仍未做：自定义通道共享（要先把它们拆成每通道一条命令）、内建路径的颜色槽（P10）、arena 切片（P7）。
+- **公告一律手动（2026-09-13）**：`Buffer::push_back/append/clear` 里的 `++revision_` 已删除 —— 与
+  `Geometry`（更早一批）、`Texture`、`ShaderProgram` 同一条规矩：**被共享的对象自己不推断“内容变了”**。
+  理由：buffer 看不见 `data()`/`operator[]`/跨线程这类写入，也不知道一次编辑何时结束，所以自 bump 只能是
+  半真话（一条写路径自己公告、下一条静默），而消费者分不出这两者；改成“写的人在编辑结束时 `setRevision(
+  revision()+1)`”后，规则是绝对的，粒度也对（**每编辑一次**，不是**每元素一次** —— 以前 append 一个顶点会
+  bump 3 次）。
+  · 承接方：`Mesh` 是那个写的人，新增 `Mesh::announceChange()`，`addVertex`/`addTriangle`/`clear` 各公告一次
+    ⇒ “共享句柄能得知编辑”这条契约不变（`MeshTest.AttributeStorageIsSharedNotCopied` 仍绿）。替换存储
+    （`setPositions`）本来就不是“编辑这个 buffer”，句柄持有者要重新取一次句柄。
+  · 与 P9 的关系：P9 的第二个闸门（“未解释的 revision ⇒ 不共享”）正好覆盖“写者忘了公告”的旧世界；而
+    只 bump `Geometry::revision()`、不 bump buffer 的调用者依旧**正确**（全量重建 + 私有 bind），只是不共享。
+  · 验证：`tests/test_core/BufferTest.cpp`（无变异自公告 / reserve 不算内容变 / setRevision 是唯一入口）+
+    `tests/test_graphics/GraphicsTest.cpp` 新增 `MeshTest.EveryEditAnnouncesItselfOncePerEdit`；mutation 三条
+    （`announceChange` 变空 / 改成每元素公告一次 / `clearAttributes` 不公告）各自恰好目标测试红。门禁：
+    test_core 82、test_graphics 224、test_vsg 213、selftest 证据 47 行一致、lavapipe 0 VUID。
+    （`test_cppstd` 2 条与 `test_system.MotherboardInfoIsFilled` 在本环境本来红：前者比栈地址的
+    `reinterpret_cast`，后者读 WSL 没有的 SMBIOS；两者都不引用 `Buffer`/`Mesh`。）
 - 与 P4 的区别值得记住：**纹理能跨槽共享，管线不能** —— vsg 的 image/imageview/sampler 是设备级，而 `GraphicsPipeline` 的每个 viewID 实现携带着当时 view 的 render pass。
 - 反例可以参考：材质管理器是**跨会话**全局（`persistent.materialManager`），shutdown 时显式 `clear()` 掉对死设备的引用 —— 全局缓存必须正面处理"设备身份"这件事。
 - **已接线（2026-09-13）**：`SceneBridge::releaseAbandonedCaches()` 现在会调 `textureCache().releaseAbandoned()`（在此之前它没有生产调用点），并新增公有诊断 `SceneBridge::textureCount()`；单测 `SceneBridgeCacheOwnershipTest.ADroppedTextureIsReleasedByTheFrameSweep`；mutation 验证：去掉那一行后恰好该测试红。

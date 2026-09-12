@@ -1716,6 +1716,33 @@ TEST(MeshTest, AttributeStorageIsSharedNotCopied)
     EXPECT_EQ(indices->data(), mesh->indices().data());
 }
 
+TEST(MeshTest, EveryEditAnnouncesItselfOncePerEdit)
+{
+    // The announcement is per EDIT, not per element — which is exactly what only the writer can know, and the
+    // reason `Buffer` does not move its own revision (an append used to bump once per scalar pushed). A holder
+    // wants to hear "I am done", so the count says that: one per appended vertex, one per appended triangle,
+    // one per cleared array.
+    intrusive_ptr<vine::geometry::IndexedTriangleMesh> mesh(new vine::geometry::IndexedTriangleMesh());
+    const auto positions = mesh->positionsBuffer();
+    const auto indices   = mesh->indicesBuffer();
+    ASSERT_NE(positions, nullptr);
+    ASSERT_NE(indices, nullptr);
+    EXPECT_EQ(positions->revision(), 0u);
+    EXPECT_EQ(indices->revision(), 0u);
+
+    mesh->addVertex(vine::math::Vec3f(0.0f, 0.0f, 0.0f));
+    EXPECT_EQ(positions->revision(), 1u) << "one vertex appended = one announcement";
+    mesh->addVertex(vine::math::Vec3f(1.0f, 0.0f, 0.0f));
+    EXPECT_EQ(positions->revision(), 2u);
+
+    mesh->addTriangle(0u, 1u, 1u);
+    EXPECT_EQ(indices->revision(), 1u) << "one triangle appended = one announcement";
+
+    mesh->clear();
+    EXPECT_EQ(positions->revision(), 3u) << "emptying the attribute storage is an edit too";
+    EXPECT_EQ(indices->revision(), 2u);
+}
+
 TEST(GeometryTest, BoundingBoxComputedFromBuffers)
 {
     // The converter fills the geometry's buffers; the box derives from them.

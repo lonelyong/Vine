@@ -42,8 +42,10 @@ using vine::math::Aabbf;
  * though — a view must not outlive the mesh, and an edit that GROWS the storage invalidates it.
  *
  * MUTATION IS ANNOUNCED. A builder appends vertices one at a time, so mutation is normal and the length is
- * not fixed; every mutation bumps the buffer's `revision()`, which lets a consumer that cached the bytes tell
- * "same buffer, new contents" from "same buffer, still current".
+ * not fixed. The buffers themselves never move their revision (see Buffer: only the writer knows where an
+ * edit ends), and the mesh IS that writer: every mutation of live storage announces itself through
+ * announceChange(), one call per edit. A consumer that cached the bytes then tells "same buffer, new
+ * contents" from "same buffer, still current".
  */
 class V_GEOMETRY_API Mesh : public Shape {
     V_OBJECT_META_DECL;
@@ -95,8 +97,10 @@ class V_GEOMETRY_API Mesh : public Shape {
      * because the elements ARE the scalars.
      *
      * The buffer is the mesh's LIVE storage, not a snapshot: a later edit through the mesh is visible here.
-     * That is the contract a shared handle carries — every such edit bumps `revision()`, so a holder tells
-     * "new contents" from "still current", and a writer that bypasses the bump leaves the holder stale.
+     * That is the contract a shared handle carries — every such edit announces itself by moving the buffer's
+     * `revision()`, so a holder tells "new contents" from "still current", and a writer that bypasses the
+     * announcement leaves the holder stale. REPLACING the storage (setPositions) is not an edit of this
+     * buffer: a holder of the old handle has to take the mesh's current one again.
      *
      * @return Handle to the positions buffer (never null; `kVec3Components` floats per vertex).
      */
@@ -197,6 +201,22 @@ class V_GEOMETRY_API Mesh : public Shape {
     [[nodiscard]] static intrusive_ptr<Buffer<T>> makeBuffer(std::vector<T> values)
     {
         return intrusive_ptr<Buffer<T>>(new Buffer<T>(std::move(values)));
+    }
+
+    /**
+     * @brief Announces a content change on @p buffer (the mesh's mutation contract).
+     *
+     * The ONE place the mesh reports an edit: a buffer never moves its own revision, so a writer that changed
+     * LIVE storage has to say so (see Buffer::setRevision) — and the mesh is a writer every derived builder
+     * delegates to. Called once per EDIT, not once per element, which is the granularity a holder wants:
+     * "re-read, I am done".
+     *
+     * @param buffer Storage whose contents changed (never null).
+     */
+    template <typename T>
+    void announceChange(const intrusive_ptr<Buffer<T>>& buffer) noexcept
+    {
+        buffer->setRevision(buffer->revision() + 1u);
     }
 
     /// Vertex positions as packed scalars; never null, empty when the mesh has no vertices.

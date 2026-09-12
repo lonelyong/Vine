@@ -40,7 +40,7 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 | 通道 | `AttributeBuffer{ intrusive_ptr<const Buffer<float>> values; uint32_t components; }` |
 | 建模侧 | `Mesh` 存 `Buffer<float>`；`positions()` 等返回 `span<const Vec3f>`（同一批字节 reinterpret） |
 | 桥 | `geometryFromShape()` 传 `mesh->positionsBuffer()` —— 两侧读**同一块分配** |
-| 公告 | 任何变更 `++revision_`；`data()` / `operator[]` 这类 buffer 看不见的写入用 `setRevision()` |
+| 公告 | **一律手动**：`Buffer` 自己不 bump（它看不见每种写入，也不知道一次编辑何时结束）⇒ 写的人改完显式 `setRevision(revision()+1)`；`Mesh` 的 builder 在 `addVertex`/`addTriangle`/`clear` 里各公告一次（`Mesh::announceChange()`） |
 | 打包 | `packAttribute(span<const Vec3f\|Vec2f>)` —— 给“有类型化顶点、没有 buffer”的调用方 |
 
 **属性 setter 每个通道只留一个**：`setPositions` / `setNormals` / `setTexcoords` 各收一个
@@ -52,11 +52,16 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 
 - `span` 是**借用**：不得比 mesh 活得久；任何**增长**都会使既有 view 失效。
 - 共享句柄指向的是 mesh 的**活存储，不是快照**：后面对 mesh 的编辑在句柄侧可见。
-  这正是共享要承担的义务 —— **写者必须让编辑被公告**，而且公告**一律是手动的**：渲染侧重建闸门是
-  `Geometry::revision()`，它**只由 `Geometry::setRevision()` 推进**（`++revision_` 已从所有 setter 删掉）。
-  理由：geometry 借的就是那些字节，它自己分不出“还没读过的新字节”与“上次读过的旧字节”（它并不复制），
-  所以只有真正知道数据变了的人（重建模型的一方、换 buffer 的一方）能说这句话。
-  允许的写路径只有**模型自己的 API**（`addVertex` / `clear` / setter；绕过它原地改 buffer 不在约定内）。
+  这正是共享要承担的义务 —— **写者必须让编辑被公告**，而且公告**一律是手动的**（`Buffer` 与
+  `Geometry` 同一条规矩：被共享者自己不推断“内容变了”）：
+  · `Buffer` 侧：`push_back`/`append`/`clear` 都不动 `revision_`，写的人改完自己 `setRevision(revision()+1)`；
+    `Mesh` 是那个写的人，所以它的每个 `addVertex`/`addTriangle`/`clear` 都经 `announceChange()` 公告一次。
+    理由：buffer 看不见 `data()`/`operator[]` 这类写入，也不知道一次编辑何时结束 —— 自 bump 只能是半真话
+    （一条写路径自己公告、下一条静默），而消费者分不出这两者。
+  · `Geometry` 侧：重建闸门是 `Geometry::revision()`，它**只由 `Geometry::setRevision()` 推进**
+    （`++revision_` 已从所有 setter 删掉）。理由：geometry 借的就是那些字节，它自己分不出“还没读过的新字节”
+    与“上次读过的旧字节”（它并不复制）。
+  允许的写路径只有**模型自己的 API**（`addVertex` / `clear` / setter；绕过它原地改 buffer 要自己补公告）。
   忘记公告不会报错：读者静默沿用旧字节（首次构建不受影响 —— 那是从零建，不看 revision）。
 - 因为通道**持的是 buffer 而不是快照**，即使源 buffer 增长，通道也不会悬空：长度与地址都现取。
 
