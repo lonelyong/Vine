@@ -37,29 +37,94 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgDiagnostics.cpp` | 诊断路由：本插件的报告 → SDK 的 sink |
 | 插件 CMakeLists（`v_add_plugin`） | `include/` 是 PUBLIC、`src/` 是 PRIVATE；源文件靠 `GLOB_RECURSE`（**无 `CONFIGURE_DEPENDS`**）⇒ 新增 `src/` 文件必须重新 configure |
 
-## 2. 数据流（概览）
+## 2. 数据流（纵向）
+
+从 Vine 到像素有四段，**只有第三段（桥）接触 vsg**：上面两段是纯 CPU、不需要设备，下面一段是 vsg
+自己在上传与录制时的行为。纵向看：
 
 ```mermaid
-graph LR
-    E["RenderEngine<br/>frame(dt)"] -->|逐 pass| R["VsgRenderer::render()"]
-    R --> S["Scene::collectRenderCommands(camera)<br/>每 (场景,相机) 每帧一次"]
-    S --> C["vector(RenderCommand)<br/>每帧的值：借用 geometry/material/camera"]
-    C --> B["SceneBridge::syncRenderCommands()<br/>逐 drawable 廉价脏检查"]
-    B -->|data_dirty| G["buildGeometryData()<br/>真 vsg 数组别名模型内存"]
-    B -->|state_dirty| P["buildStateGroup()<br/>管线 + 描述符 + 材质值 + 纹理"]
-    G --> N["保留节点：MatrixTransform → StateGroup → Commands"]
-    P --> N
-    N --> V["vsg::Viewer::recordAndSubmit() + present()<br/>一帧只提交一次"]
+graph TB
+    subgraph L1["① Vine 侧（graphics 模块，无设备）"]
+        E["RenderEngine::frame(dt)"]
+        R["VsgRenderer::render(commands, camera)<br/>RenderBackend 覆写，逐 pass 驱动"]
+        S["Scene::collectRenderCommands(camera)<br/>每 (场景,相机) 每帧一次"]
+        C["vector&lt;RenderCommand&gt;<br/>每帧的值：借 geometry / material / program / camera"]
+    end
+
+    subgraph L2["② 桥 SceneBridge：保留缓存 + 逐 drawable 廉价脏检查"]
+        K1{"revision / topology /<br/>loc2 路径变了？"}
+        KD["buildGeometryData()<br/>通道 → 数组 + 命令"]
+        K2{"material / texture+revision /<br/>state / program 变了？"}
+        KB["buildStateGroup()<br/>配置器 → 管线 + 描述符"]
+    end
+
+    subgraph L3["③ vsg CPU 对象（与 vsg 的接触面）"]
+        ARR["真数组 vec3Array / vec2Array / vec4Array / uintArray<br/>← detail::VsgBufferView（持住 Vine Buffer）"]
+        CMD["vsg::Commands<br/>BindVertexBuffers(0, arrays) · BindIndexBuffer · DrawIndexed"]
+        PIPE["vsg::StateGroup（GraphicsPipelineConfigurator 产出）<br/>GraphicsPipeline + DescriptorSet(s) + 采样器"]
+        MAT["vsg::PhongMaterialValue<br/>DYNAMIC UBO，每个 Material 一份"]
+        TEX["vsg::Image / ImageView / Sampler<br/>纹理缓存：键 = (Texture 地址, revision)"]
+        MT["vsg::MatrixTransform.matrix<br/>= 烘焙好的 cmd.modelMatrix（dmat4）"]
+        NODE["保留子树<br/>MatrixTransform → StateGroup → Commands"]
+    end
+
+    subgraph L4["④ vsg::Viewer → Vulkan"]
+        REC["recordAndSubmit()<br/>首次绑定上传 + DYNAMIC 重拷 + 录制 + vkQueueSubmit"]
+        PRE["present()<br/>vkQueuePresentKHR"]
+        RB["回读（按需）<br/>vkCmdCopyImageToBuffer + fence"]
+    end
+
+    E --> R --> S --> C --> K1
+    K1 -- "是（每次变化）" --> KD --> ARR --> CMD
+    K1 -- "否" --> K2
+    K2 -- "是（每次变化）" --> KB --> PIPE
+    K2 -- "否（沿用现有包装）" --> MT
+    C -. "每个 drawable 每帧一次比较" .-> MT
+    C -. "每个 drawable 每帧一次比较" .-> MAT
+    PIPE --> NODE
+    CMD --> NODE
+    MT --> NODE
+    MAT --> PIPE
+    TEX --> PIPE
+    NODE --> REC --> PRE
+    REC -. "宿主调 readColorBuffer / readDepthBuffer" .-> RB
 ```
 
-要点：
+### 2.1 每一步产出什么、发生多少次
 
-- **`RenderCommand` 是每帧的值**，只借用 Vine 对象；后端要留什么就自己取引用。
-- 顶点数据**不复制**：`vsg::vec3Array` 等**别名** geometry 的 buffer（`detail::aliasArray<Array, Element>`，
-  存储由 `detail::VsgBufferView<Element>` 持有）。被绑定的对象**必须是真 `vsg::Array`**，裸 `vsg::Data`
+| # | 步骤 | 产出 / 写入的 vsg 对象 | 频次 |
+| --- | --- | --- | --- |
+| 1 | `RenderEngine` → `Scene::collectRenderCommands(camera)` | 无（纯 Vine 值） | 每 (场景, 相机) **每帧一次** |
+| 2 | `SceneBridge::buildGeometryData()` | 真 `vsg::Array`（**别名**模型内存）+ `vsg::Commands`（`BindVertexBuffers` / `BindIndexBuffer` / `DrawIndexed`） | 每次**数据**变化一次（稳态 0） |
+| 3 | `SceneBridge::buildStateGroup()` | `vsg::StateGroup`（内含 `GraphicsPipeline` + `DescriptorSet`）+ 材质值 + 纹理 `ImageInfo` | 每次**状态**变化一次（稳态 0） |
+| 4 | 位置（每帧路径） | `vsg::MatrixTransform.matrix`（`::vsg::dmat4`，来自烘焙好的 `cmd.modelMatrix`） | **每帧**：每个 drawable 一次比较，值变了才写 |
+| 5 | 不透明度（每帧路径） | 该 drawable 的 DYNAMIC `vsg::vec4Array`（白色载体的 alpha） | **每帧**比较；`cmd.opacity` 变了才写 + `Data::dirty()` |
+| 6 | `VsgMaterialManager` | `vsg::PhongMaterialValue`（DYNAMIC uniform） | **每帧**比较参数；变了才写 + `dirty()` |
+| 7 | `VsgRenderer` 的 pass 物料化 | 把新节点挂进该 pass 的 `vsg::RenderGraph`（窗口图或离屏目标的图）；有新节点 ⇒ 交给 `CompileManager`（增量编译，只编译新 view） | 有 `created` 时（稳态 0） |
+| 8 | `vsg::Viewer` | `vkQueueSubmit`（**一帧一次**）+ `vkQueuePresentKHR` | 每帧 |
+| 9 | `VsgReadback` | `vkCmdCopyImageToBuffer` + fence（具名超时） | 宿主**按需** |
+
+### 2.2 上传路径：与 vsg 的第二次接触
+
+| 数据 | 谁决定上传 | 机制 | 频次 |
+| --- | --- | --- | --- |
+| 顶点 / 索引（静态） | vsg 首次使用该数组时 | `BufferInfo` → 设备本地 buffer（staging / `TransferTask`）；我们的数组**不是 DYNAMIC** ⇒ 只传一次 | 每次数据重建一次 |
+| 顶点颜色（opacity 载体） | 该 drawable 的 `cmd.opacity` 变了 | DYNAMIC ⇒ `Data::dirty()` → vsg `TransferTask` 拷贝（按 `(VkBuffer, offset)` **去重**） | 每次 opacity 变化一次 |
+| 材质值 | `Material` 参数变了 | 同上（DYNAMIC）：走 host-visible 分支是**直接 `memcpy`**，不建 staging、不进队列 | 每次材质变化一次 |
+| 纹理 | 新纹理，或 `Texture::revision()` 变了 | 新建 `vsg::Image` + 一次上传；旧条目由容量裁剪 / 废弃回收 | 每次变化一次 |
+
+于是**稳态帧**：不重建节点、不重编译管线、不重传任何数据、零设备等待（§4.4 的三个 0）。
+
+### 2.3 一句话概括
+
+- **`RenderCommand` 是每帧的值**，只借用 Vine 对象；后端要留什么，当场自己取引用。
+- **顶点不复制**：真 `vsg::Array` 别名 geometry 的 buffer（`detail::aliasArray<Array, Element>`，存储由
+  `detail::VsgBufferView<Element>` 持住）。被绑定的对象**必须是真 `vsg::Array`** —— 裸 `vsg::Data`
   会被静默忽略（不出图、validation 不报）。
-- 详细的逐帧时序图、支持/不支持矩阵、已知缺陷清单见
-  [`data-flow.md`](data-flow.md)。
+- **数据与状态解耦**：改几何数据只重建数据节点（重新上传），改材质 / 状态只重建状态包装（复用数据节点）。
+- 坏数据（越界索引、坏通道形状）在桥里就被**拒绝并上报**，不会带着疑问进入 vsg。
+
+更细的逐帧时序、支持/不支持矩阵、已知缺陷清单见 [`data-flow.md`](data-flow.md)。
 
 ## 3. 生命周期
 
