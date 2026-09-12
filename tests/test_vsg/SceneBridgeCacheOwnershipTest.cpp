@@ -23,7 +23,10 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Texture.hpp>
+#include <vine/imaging/Image.hpp>
 #include <vine/vsg/SceneBridge.hpp>
+#include <vine/vsg/VsgMaterialManager.hpp>
 
 #include <vsg/io/Options.h>
 #include <vsg/nodes/Group.h>
@@ -368,4 +371,66 @@ TEST(SceneBridgeCacheOwnershipTest, SharedObjectsTableIsPrunedOnEvictionFramesOn
     const std::size_t prunes = bridge.sharedPruneCount();
     draw({ programs.back() }); // the newest entry: definitely still cached
     EXPECT_EQ(bridge.sharedPruneCount(), prunes) << "a frame that evicted nothing must not walk the table";
+}
+
+/**
+ * @brief A texture nothing samples any more is released by the frame's sweep.
+ *
+ * VsgTextureCache::releaseAbandoned() had an implementation and a unit test but
+ * no caller in the backend, so a texture the scene stopped sampling kept its GPU
+ * image until 256 later textures pushed it out of the FIFO — or until the whole
+ * slot was destroyed. The sweep belongs to the frame, because that is when the
+ * question becomes answerable: a retained entry HOLDS the texture it was built
+ * for, and evictAbsentItems() runs before the sweep in the same sync, so the
+ * frame a geometry leaves the scene is the frame its texture becomes
+ * releasable.
+ */
+TEST(SceneBridgeCacheOwnershipTest, ADroppedTextureIsReleasedByTheFrameSweep)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    // The material manager is the RENDERER's (it sweeps it at the end of a submitted frame), and its entry
+    // owns the Material — which holds the texture. Injecting one lets the test drive that step itself.
+    vine::vsg::VsgMaterialManager manager;
+    bridge.setMaterialManager(&manager);
+    auto root = vsg::Group::create();
+
+    Material* material_address = nullptr;
+    {
+        auto texture =
+            vine::intrusive_ptr<Texture2D>(new Texture2D(4, 4, vine::imaging::PixelFormat::Rgba8Unorm));
+        texture->setImage(vine::intrusive_ptr<const vine::imaging::Image>(
+            new vine::imaging::Image(4, 4, vine::imaging::PixelFormat::Rgba8Unorm)));
+
+        auto material = MaterialPtr(new Material());
+        material->setTexture(texture);
+        material_address = material.get();
+        auto geometry    = makeTriangle(0);
+
+        std::vector<RenderCommand> commands;
+        commands.emplace_back(geometry, material, Mat4d());
+        bridge.syncRenderCommands(commands, root.get(), nullptr);
+
+        // The draw samples it, so the bridge holds cached resources for it.
+        ASSERT_EQ(bridge.textureCount(), 1u) << "the sampled texture's resources are cached";
+    }
+
+    // Everything the app held is gone with the scope above, so THIS sync erases the geometry's retained
+    // entry. The texture is still cached: the material that samples it is still alive, held by the material
+    // manager's entry and by this bridge's variant template — neither of which can let go first, because
+    // both decide by "am I the only holder left?" and each is a holder the other one waits for. Prompt
+    // release therefore needs the explicit path below, not a dropped app reference.
+    std::vector<RenderCommand> no_commands;
+    bridge.syncRenderCommands(no_commands, root.get(), nullptr);
+    EXPECT_EQ(bridge.textureCount(), 1u)
+        << "a texture still reachable through a live material must not be released";
+
+    // The SDK's explicit release: the manager drops its entry, the variant template's abandoned() becomes
+    // true on the next sweep, the material dies — and the frame that makes the texture unreachable is the
+    // frame the texture sweep releases its resources on.
+    manager.releaseMaterial(material_address);
+    bridge.syncRenderCommands(no_commands, root.get(), nullptr);
+    EXPECT_EQ(bridge.textureCount(), 0u)
+        << "the unreachable texture's resources must be released by the frame's sweep, not pinned until the "
+           "FIFO cap or the slot teardown";
 }

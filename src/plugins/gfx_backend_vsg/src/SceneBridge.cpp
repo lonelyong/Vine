@@ -109,6 +109,12 @@ void SceneBridge::setTextureAnisotropy(float device_limit)
     textureCache().setMaxAnisotropy(device_limit);
 }
 
+std::size_t SceneBridge::textureCount() const noexcept
+{
+    // Straight at the member: the cache accessor is the non-const one the builders use.
+    return default_texture_cache_.count();
+}
+
 VsgTextureCache& SceneBridge::textureCache()
 {
     return default_texture_cache_;
@@ -560,6 +566,17 @@ std::size_t SceneBridge::releaseAbandonedCaches()
     // three of them cannot drift apart.
     const std::size_t erased = eraseAbandoned(program_stages_) + eraseAbandoned(program_shader_sets_) +
                                eraseAbandoned(variant_cache_);
+    // Textures are swept here too, and this is the sweep's ONLY caller:
+    // VsgTextureCache::releaseAbandoned() had an implementation and a unit test but no production caller,
+    // so a texture the scene stopped sampling kept its GPU image until 256 later textures pushed it out of
+    // the FIFO (or the slot was destroyed). Its entry owns the texture it is keyed by, so "the app dropped
+    // it and no retained entry holds it any more" is observable exactly here — evictAbsentItems() ran
+    // earlier in this same sync, so the geometry that just left the frame has already let go of the
+    // texture its entry held.
+    //
+    // Deliberately NOT part of the eviction gate below: the shared-object table registers pipelines /
+    // layouts / descriptor sets, never images, so releasing a texture is no reason to walk it.
+    textureCache().releaseAbandoned();
     // A registered variant is HELD BY shared_objects_ (registering is what the
     // table does), so evicting its cache entries freed nothing: the table still
     // referenced the pipeline, layout and descriptor sets, and it only ever grew

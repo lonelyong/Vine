@@ -245,6 +245,17 @@ class V_VSG_API SceneBridge {
      */
     std::size_t programStageCompileCount() const noexcept { return program_stage_compiles_; }
 
+    /** @brief Gets the number of textures with cached GPU resources.
+     *
+     * The observable half of this bridge's texture sweep (see releaseAbandonedCaches): a texture the scene
+     * stopped sampling — or one whose last retained entry just left the frame — must drop out of this count,
+     * instead of keeping its GPU image until 256 later textures push it out of the FIFO or the slot is
+     * destroyed. It is what makes that sweep assertable without a device.
+     *
+     * @return Number of cached textures (the shared white fallback is not counted).
+     */
+    std::size_t textureCount() const noexcept;
+
   private:
     /** @brief One forwarded custom vertex channel (location >= 3).
      *
@@ -402,6 +413,10 @@ class V_VSG_API SceneBridge {
      * this sweep releases the tail of that chain, and the FIFO caps bound what
      * the chain can hold in the meantime. The per-geometry cache has its own
      * sweep inline (it also applies the reuse window), so it is not part of this.
+     *
+     * The TEXTURE cache is swept here as well: it is this sweep's only caller, and a texture the scene
+     * stopped sampling — or one whose last retained entry just left the frame — must not keep its GPU image
+     * until 256 later textures push it out of the FIFO.
      *
      * @return Number of erased entries.
      */
