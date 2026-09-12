@@ -1,4 +1,4 @@
-#include <vine/vsg/VsgRenderer.hpp>
+#include "VsgRendererImpl.hpp"
 
 #include <cstdint>
 #include <map>
@@ -259,7 +259,7 @@ VsgRenderer::OverlayDestination VsgRenderer::resolveOverlayDestination(vine::gra
     OverlayDestination out;
     // The destination is the SCOPE's target (setRenderTarget, nullptr = the
     // window): read, not consumed, so every draw call of the pass agrees on it.
-    vine::graphics::RenderTarget* dest = impl->request.target;
+    vine::graphics::RenderTarget* dest = impl.request.target;
     // A source == destination feedback loop would sample the very attachments this
     // pass writes. Reject it with a diagnostic: a ping-pong pair of targets is the
     // standard way to build a feedback chain.
@@ -268,7 +268,7 @@ VsgRenderer::OverlayDestination VsgRenderer::resolveOverlayDestination(vine::gra
                       formatDiagnostic(u8"%s: source == destination (feedback loop): the pass draws nothing", what));
         return out;
     }
-    auto& dest_entry = impl->entryFor(dest);
+    auto& dest_entry = impl.entryFor(dest);
     if (dest != nullptr) {
         // Writing into an off-screen target: (re)build its graph to its size.
         if (dest->colorCount() <= 0 || dest->width() <= 0 || dest->height() <= 0) {
@@ -288,14 +288,14 @@ VsgRenderer::OverlayDestination VsgRenderer::resolveOverlayDestination(vine::gra
         return out; // window graph not created yet
     }
     out.target = dest;
-    out.surf_w = (dest == nullptr) ? static_cast<int>(impl->window->extent2D().width) : dest_entry.width;
-    out.surf_h = (dest == nullptr) ? static_cast<int>(impl->window->extent2D().height) : dest_entry.height;
+    out.surf_w = (dest == nullptr) ? static_cast<int>(impl.window->extent2D().width) : dest_entry.width;
+    out.surf_h = (dest == nullptr) ? static_cast<int>(impl.window->extent2D().height) : dest_entry.height;
 
     // The pass owns its slot under this destination; if it drew elsewhere before
     // (its render target changed), drop that stale slot so it stops compositing
     // there. The graph this pass records into is the window session's shared
     // swapchain graph, or this pass' own off-screen graph (§28).
-    retargetPass(impl->request.pass, dest);
+    retargetPass(impl.request.pass, dest);
     out.graph = passGraph(dest, key);
     return out;
 }
@@ -318,7 +318,7 @@ bool VsgRenderer::installOverlayView(const OverlayDestination& dest, Slot& slot,
                                      bool front, const char* what)
 {
     bool compile_failed = false;
-    auto view = makeCompiledOverlayView(*impl->viewer, dest.graph.get(), content, x, y, w, h, front, &compile_failed);
+    auto view = makeCompiledOverlayView(*impl.viewer, dest.graph.get(), content, x, y, w, h, front, &compile_failed);
     if (view == nullptr) {
         if (compile_failed) {
             reportFailure(vine::graphics::DiagnosticSeverity::Warning,
@@ -336,7 +336,7 @@ bool VsgRenderer::installOverlayView(const OverlayDestination& dest, Slot& slot,
 
 void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int attachment)
 {
-    if (!impl->initialized || impl->viewer == nullptr || impl->window == nullptr || source == nullptr) {
+    if (!impl.initialized || impl.viewer == nullptr || impl.window == nullptr || source == nullptr) {
         return;
     }
 
@@ -344,8 +344,8 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
     // rectangle); mirrors how render() consumes one for overlays.
     const std::optional<vine::graphics::Viewport> viewport = takeRequestViewport();
 
-    auto src_it = impl->targets.find(source);
-    if (src_it == impl->targets.end() || src_it->second.color_views.empty()) {
+    auto src_it = impl.targets.find(source);
+    if (src_it == impl.targets.end() || src_it->second.color_views.empty()) {
         reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
                       u8"drawScreenTexture: source target has no colour attachment: the pass draws nothing");
         return;
@@ -385,15 +385,15 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
     // Pass-scoped identity when the engine opened a pass scope (the normal path);
     // the historical (source, attachment) identity otherwise, so a direct driver
     // that draws several PiPs in one frame stays distinct.
-    const SlotKey key = (impl->request.pass != nullptr)
-                            ? SlotKey::ownerPass(impl->request.pass)
+    const SlotKey key = (impl.request.pass != nullptr)
+                            ? SlotKey::ownerPass(impl.request.pass)
                             : SlotKey::sampledTarget(source, static_cast<int>(attachment_index));
     const OverlayDestination overlay = resolveOverlayDestination(source, key, "drawScreenTexture");
     if (overlay.graph == nullptr) {
         return;
     }
     vine::graphics::RenderTarget* const dest = overlay.target;
-    auto&                              dest_entry = impl->entryFor(dest);
+    auto&                              dest_entry = impl.entryFor(dest);
     const auto&                        dest_graph = overlay.graph;
     const int                          surf_w     = overlay.surf_w;
     const int                          surf_h     = overlay.surf_h;
@@ -454,7 +454,7 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
         // pipeline position: a full-screen present at a low order draws
         // beneath later HUD slots, while a small PiP at a high order stays on
         // top of them (the INT_MAX default keeps a legacy-created PiP last).
-        slot.order = impl->request.order;
+        slot.order = impl.request.order;
         slot.source_target = source;
         slot.attachment    = static_cast<int>(attachment_index);
         slot.source_w    = src.width;
@@ -507,15 +507,15 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
                                     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
                                     vine::raw_ptr<const vine::graphics::Camera>        camera)
 {
-    if (!impl->initialized || impl->viewer == nullptr || impl->window == nullptr || source == nullptr || program == nullptr) {
+    if (!impl.initialized || impl.viewer == nullptr || impl.window == nullptr || source == nullptr || program == nullptr) {
         return;
     }
 
     // Consume the sub-viewport queued by setViewport() (the pass's rectangle).
     const std::optional<vine::graphics::Viewport> viewport = takeRequestViewport();
 
-    auto src_it = impl->targets.find(source);
-    if (src_it == impl->targets.end() || src_it->second.color_views.empty()) {
+    auto src_it = impl.targets.find(source);
+    if (src_it == impl.targets.end() || src_it->second.color_views.empty()) {
         reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
                       u8"drawScreenProgram: source target has no colour attachment: the pass draws nothing");
         return;
@@ -532,15 +532,15 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
     //
     // Pass-scoped identity when a pass scope is open (normal path), else the
     // historical per-source identity used by direct drivers.
-    const SlotKey slot_key = (impl->request.pass != nullptr)
-                                 ? SlotKey::ownerPass(impl->request.pass)
+    const SlotKey slot_key = (impl.request.pass != nullptr)
+                                 ? SlotKey::ownerPass(impl.request.pass)
                                  : SlotKey::sampledTarget(source);
     const OverlayDestination overlay = resolveOverlayDestination(source, slot_key, "drawScreenProgram");
     if (overlay.graph == nullptr) {
         return;
     }
     vine::graphics::RenderTarget* const dest       = overlay.target;
-    auto&                              dest_entry = impl->entryFor(dest);
+    auto&                              dest_entry = impl.entryFor(dest);
     const auto&                        dest_graph = overlay.graph;
     const int                          surf_w     = overlay.surf_w;
     const int                          surf_h     = overlay.surf_h;
@@ -596,7 +596,7 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         // this pass) so the fullscreen view stacks at its pipeline position
         // among the target's content slots (e.g. between an opaque depth pass
         // and a forward transparent pass) instead of always drawing first.
-        slot.order = impl->request.order;
+        slot.order = impl.request.order;
         slot.push_data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(LightPushBlock)));
         const VkExtent2D surface{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) };
         ProgramNodeFailure program_failure = ProgramNodeFailure::None;
@@ -673,7 +673,7 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
             dest_entry.program_slots.erase(slot_key);
             return;
         }
-        ++impl->program_slot_build_count;
+        ++impl.program_slot_build_count;
         V_LOGI("[VsgRenderer] EXPERIMENTAL deferred fullscreen program {}x{} -> {} {},{},{}x{} attached", src.width,
                src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
     }
@@ -683,8 +683,8 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
     // seeds a small default ambient (see fillLightPushBlock) so a fullscreen
     // program pass that carries no lights still shades its albedo instead of
     // rendering black.
-    std::vector<const vine::graphics::Light*> lights = impl->request.takeLights();
-    ++impl->request.draws;
+    std::vector<const vine::graphics::Light*> lights = impl.request.takeLights();
+    ++impl.request.draws;
     LightPushBlock block{};
     fillLightPushBlock(camera, lights, block);
     if (slot.push_data != nullptr && slot.push_data->dataSize() >= sizeof(block)) {

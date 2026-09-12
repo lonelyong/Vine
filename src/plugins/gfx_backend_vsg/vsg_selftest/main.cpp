@@ -45,7 +45,7 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/vsg/SceneBridge.hpp>
-#include <vine/vsg/VsgRenderer.hpp>
+#include "VsgRendererImpl.hpp"
 
 #include <cstdio>
 #include <algorithm>

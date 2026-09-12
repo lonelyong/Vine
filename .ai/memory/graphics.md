@@ -1,5 +1,18 @@
 ﻿# Graphics 模块核心
 
+> 2026-09-12 **去掉 `VsgRenderer` 的 PImpl（设计 §44）**：事实 —— `vine/vsg/VsgRenderer.hpp` 只被插件自己的
+> 6 个 TU + selftest + `PassProtocolTest.cpp` include；插件是 MODULE DLL，宿主走 `RenderBackend` SDK 接口
+> ⇒ 该头**不在任何部署边界上**，PImpl 的 ABI 理由落空，而"编译防火墙"本来就半破（公开头已 include
+> `<vsg/app/Viewer.h>`）。代价是真的：需要状态类型的 helper 不能声明在公开头 ⇒ "`Impl` 成员 vs 渲染器私有
+> 成员"那条规矩（§37/§36/§40b 都被它逼过）+ 204 处 `impl->` + §42 的实现理由写进"公开"头。**做法**：类定义
+> 并入 `src/VsgRendererImpl.hpp`（公开头删除），状态改**按值**成员，`Persistent`/`Impl` 的拆分**保留**（生命
+> 周期语义：跨会话 vs 一个窗口会话），217 处 `impl->`→`impl.`、17 处 `persistent->`→`persistent.`、ctor
+> `= default`、`impl = Impl{};`。**暴露的真问题**：`unique_ptr::operator->` 在 const 方法里也返回非 const
+> 指针 ⇒ 去掉后 `detachedSlotCount() const` 等只读访问器立刻编译失败（它们原来在非 const 走槽表）；补 const
+> `forEachSlot` 重载后才是真 const —— PImpl 一直在掩盖 const 正确性。**过程教训**：不要对"脚本刚生成、缩进
+> 层级变过"的文件手写补丁（锚点按旧缩进会**静默吃掉相邻声明**，本次吃掉了 `visitSlot`，报 300 错）；正确做
+> 法是先把预期增量打在合并前的干净源上，再跑合并脚本。
+
 > 2026-09-12 **`render()` 只取一处（设计 §43）**：先判断 —— 115 行里值得抽的只有**一处**（两段深度借用判定），
 > 其余（`ContentSlotRequest` 填充、`retargetPass` 前后）是机械搬运。①`Impl::borrowNeedsRebuild(t, target_key)
 > const` 把两条互异的"借用失效"合成一个纯函数：**PENDING**（请求的借用还没兑现，源当时没有深度图像；永久不可用

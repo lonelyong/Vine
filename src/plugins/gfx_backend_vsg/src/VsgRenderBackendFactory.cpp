@@ -1,6 +1,6 @@
 ﻿#include <vine/vsg/VsgRenderBackendFactory.hpp>
 
-#include <vine/vsg/VsgRenderer.hpp>
+#include "VsgRendererImpl.hpp"
 
 V_VSG_NS_BEGIN
 

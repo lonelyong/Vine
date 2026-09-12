@@ -634,8 +634,8 @@ app 持有但不绘制”的对象如何处置留给各自策略（几何用 600
 
 | 文件 | 职责 | 行数 |
 | --- | --- | --- |
-| `include/vine/vsg/VsgRenderer.hpp` | 类声明（公开契约 + 私有嵌套类型） | 632 |
-| `src/VsgRendererImpl.hpp` | `Persistent` / `Impl`（会话态：窗口、viewer、命令图、目标表、槽、pass 请求） | 319 |
+| `src/VsgRendererImpl.hpp` | 类定义 + `Persistent` / `Impl`（会话态：窗口、viewer、命令图、目标表、槽、pass 请求）+ 私有 helper 声明 | 2091 |
+| ~~`include/vine/vsg/VsgRenderer.hpp`~~ | ~~类声明（公开契约 + 私有嵌套类型）~~ —— **§44 已删除**（并入 `src/VsgRendererImpl.hpp`） | — |
 | `src/VsgRenderer.cpp` | 会话生命周期、帧泵、诊断路由、查询访问器 | 901 |
 | `src/VsgRendererPasses.cpp` | pass 协议（begin/end/releasePass、退役、重定向）+ 内容槽搭建/绘制 | 519 |
 | `src/VsgRendererTargets.cpp` | 离屏目标构建与顺序、目标/槽释放、视图按序摆放 | 680 |
@@ -2369,6 +2369,45 @@ viewer/命令图 → 首次编译"。
 
 **踩坑**：又是 `targets` 表的键类型 —— 判据里 `wanted_source` 不能声明成 `const RenderTarget*`（`map::find`
 报 lose const qualifier），必须用普通指针（SDK 的 `depthSource() const` 本身就返回普通指针）。
+
+## 44. 去掉 `VsgRenderer` 的 PImpl（2026-09-12）
+
+**问题**（用户提出）：这个插件不是 SDK、不会被直接引用，PImpl 还有必要吗？
+
+**先看事实**：`vine/vsg/VsgRenderer.hpp` 的消费者只有插件自己的 6 个 TU + `vsg_selftest/main.cpp` +
+`tests/test_vsg/PassProtocolTest.cpp`；插件是 `v_add_plugin`（MODULE DLL），宿主通过
+**`vine::graphics::RenderBackend` 这个 SDK 接口**拿渲染器 —— `VsgRenderer.hpp` 不在任何部署边界上。
+于是 PImpl 的常规理由逐条落空：
+
+| 理由 | 结论 |
+| --- | --- |
+| 外部消费者的 ABI 稳定 | 不成立（没有外部消费者；同仓构建） |
+| 编译防火墙 | **半破**：公开头本来就 include 了 `<vsg/app/Viewer.h>` 并在私有签名里写 `::vsg::ref_ptr` ⇒ vsg 早就漏进了"公开"面 |
+| 隐藏 1118 行会话态 | 成立，但代价是下面那条规矩 |
+
+**代价（都在本会话真实付过）**：需要状态类型的 helper **不能**声明在公开头 ⇒ 必须有"`Impl` 成员 vs
+`VsgRenderer` 私有成员（签名里不出现 `Impl` 类型）"这条规矩（逼出 §37 把请求拆成 7 个字段、§36 用模板而非
+重载、§40b 里 `PassPlan` 必须写 `const Target::PassObjects*`）；204 处 `impl->` 的间接；§42 的实现理由不得
+不写进"公开"头的私有区。
+
+**做法（一次性、机械）**：类定义并入 `src/VsgRendererImpl.hpp`（公开头删除），状态改为**按值**成员 ——
+`Persistent` 与 `Impl` **保留拆分**（这是生命周期语义：前者跨会话，后者是一个窗口会话、`shutdown()` 整体
+替换），只是不再经过指针。改写：217 处 `impl->` → `impl.`、17 处 `persistent->` → `persistent.`、构造改
+`= default`、会话重置 `impl = std::make_unique<Impl>()` → `impl = Impl{};`、8 个 include 点改指内部头。
+
+**它暴露出来的东西（值得单独记）**：`unique_ptr` 的 `operator->` **在 const 方法里也返回非 const 指针** ⇒
+去掉之后 `detachedSlotCount() const` 这类只读访问器立刻编译失败：它们原来在**非 const** 地走槽表。补一个
+`const` 的 `forEachSlot` 重载后，这些计数器才真正是 const 的。也就是说 PImpl 一直**掩盖着 const 正确性**：
+一个声明为 `const` 的查询方法本可以改会话态。
+
+**过程教训（本批真实踩到）**：**不要对"脚本刚生成的、缩进层级变过的文件"打补丁** —— 第一次尝试之后我用手写
+替换加 `const` 重载，锚点按的是旧缩进，结果**静默吃掉了相邻的 `visitSlot` 声明**（编译器报 300 个错，最早的
+一个指向 `struct Target`）。正确顺序是：**先把预期增量打在合并前的干净源上，再跑合并脚本**（缩进由脚本统一
+处理）。已回滚重做，一次通过。
+
+**验收**：`[selftest]` 45 行逐字节相同、VUID 0 / FAIL 0、`test_vsg` 100 / `test_graphics` 158、门禁 PASS、
+`check_diagnostic_formats.py` 0 命中。改动 11 个文件 +2171/−2183（两个头文件合成一个，访问点全改）。
+
 
 
 

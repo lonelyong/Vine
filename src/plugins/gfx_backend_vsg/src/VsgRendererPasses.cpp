@@ -1,4 +1,4 @@
-#include <vine/vsg/VsgRenderer.hpp>
+#include "VsgRendererImpl.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -144,7 +144,7 @@ void logContentSlotDiagnostics(const vine::graphics::RenderTarget* target, vine:
 
 void VsgRenderer::beginPass(vine::raw_ptr<const vine::graphics::RenderPass> pass)
 {
-    if (impl->pass_open) {
+    if (impl.pass_open) {
         // The engine runs one pass at a time; a nested beginPass means the
         // previous scope was never ended, so its announced state would silently
         // apply to the new pass. Report it and start clean.
@@ -155,25 +155,25 @@ void VsgRenderer::beginPass(vine::raw_ptr<const vine::graphics::RenderPass> pass
     // A pass opens a CLEAN request: no pass may inherit what an earlier one
     // announced. The direct-driver path (no beginPass) keeps its queue instead.
     resetPassRequest();
-    impl->request.pass = pass;
-    impl->pass_open    = true;
+    impl.request.pass = pass;
+    impl.pass_open    = true;
     if (pass != nullptr) {
         // The pass owns its retained slot and counts as active this frame: a
         // pass that is not announced again next frame is retired (see
         // retireInactivePassSlots), which is what makes disabling it take effect.
-        impl->passes_active_this_frame.insert(pass);
-        impl->pass_protocol_used = true;
+        impl.passes_active_this_frame.insert(pass);
+        impl.pass_protocol_used = true;
     }
 }
 
 bool VsgRenderer::isPassScopeOpen() const
 {
-    return impl->pass_open;
+    return impl.pass_open;
 }
 
 void VsgRenderer::endPass()
 {
-    if (!impl->pass_open) {
+    if (!impl.pass_open) {
         // Reported because it means the pass protocol is out of step: the
         // state announced since the last endPass (or beginPass) had already
         // been dropped, so whatever the caller expected to apply did not.
@@ -184,7 +184,7 @@ void VsgRenderer::endPass()
     // Close the scope: everything the pass announced is dropped here (including
     // scope attributes no draw call consumed), so nothing can apply to the next
     // pass.
-    impl->pass_open = false;
+    impl.pass_open = false;
     resetPassRequest();
 }
 
@@ -230,8 +230,8 @@ void VsgRenderer::erasePassSlotsFromTarget(vine::graphics::RenderTarget* target,
     if (pass == nullptr) {
         return;
     }
-    const auto target_entry = impl->targets.find(target);
-    if (target_entry == impl->targets.end()) {
+    const auto target_entry = impl.targets.find(target);
+    if (target_entry == impl.targets.end()) {
         return;
     }
     auto&         t   = target_entry->second;
@@ -248,10 +248,10 @@ void VsgRenderer::erasePassSlotsFromTarget(vine::graphics::RenderTarget* target,
     // of), so this keeps the counted device wait rather than parking a view —
     // parking was measured to trip vkDestroyPipeline-00765 (see the
     // policy-churn notes).
-    impl->waitForIdle();
+    impl.waitForIdle();
 
     t.visitSlot(key, [&](auto& slot, Impl::Target::SlotKind kind) {
-        impl->detachSlotView(t, target, key, slot.view);
+        impl.detachSlotView(t, target, key, slot.view);
         // Only a content slot owns a bridge (its caches go with the slot).
         if constexpr (requires { slot.bridge; }) {
             slot.bridge.clearCache();
@@ -269,7 +269,7 @@ void VsgRenderer::retargetPass(const vine::graphics::RenderPass* pass,
     // A pass keeps exactly one retained slot per target. When it draws into a
     // different target than before, the slot it left behind would otherwise
     // keep drawing its content there forever.
-    for (auto& entry : impl->targets) {
+    for (auto& entry : impl.targets) {
         if (entry.first == target) {
             continue;
         }
@@ -279,7 +279,7 @@ void VsgRenderer::retargetPass(const vine::graphics::RenderPass* pass,
 
 void VsgRenderer::retireInactivePassSlots()
 {
-    if (!impl->pass_protocol_used) {
+    if (!impl.pass_protocol_used) {
         return; // direct driver (legacy keys): nothing is pass-owned
     }
     // A slot needs retiring when its pass did not execute this frame and its
@@ -288,7 +288,7 @@ void VsgRenderer::retireInactivePassSlots()
     // repeated diagnostic).
     const auto needs_retire = [this](const SlotKey& key, bool detached) {
         return !detached && key.owner != nullptr &&
-               impl->passes_active_this_frame.count(key.owner) == 0;
+               impl.passes_active_this_frame.count(key.owner) == 0;
     };
     // NO device wait here: this path DETACHES a view from its graph and keeps the
     // slot (the view, its node and the compiled pipelines stay referenced by the
@@ -296,13 +296,13 @@ void VsgRenderer::retireInactivePassSlots()
     // can go away. Disabling a pass is a per-frame host decision of an editor, and
     // stopping the device for it would be a stall for no lifetime reason.
     bool any = false;
-    for (auto& entry : impl->targets) {
+    for (auto& entry : impl.targets) {
         auto& t = entry.second;
         t.forEachSlot([&](const SlotKey& key, auto& slot, auto) {
             if (!needs_retire(key, slot.detached)) {
                 return;
             }
-            impl->detachSlotView(t, entry.first, key, slot.view);
+            impl.detachSlotView(t, entry.first, key, slot.view);
             slot.detached = true;
             any          = true;
         });
@@ -321,12 +321,12 @@ void VsgRenderer::releasePass(vine::raw_ptr<const vine::graphics::RenderPass> pa
         return;
     }
     const vine::graphics::RenderPass* removed = pass;
-    for (auto& entry : impl->targets) {
+    for (auto& entry : impl.targets) {
         erasePassSlotsFromTarget(entry.first, removed);
     }
-    impl->passes_active_this_frame.erase(removed);
-    if (impl->request.pass == removed) {
-        impl->request.pass = nullptr;
+    impl.passes_active_this_frame.erase(removed);
+    if (impl.request.pass == removed) {
+        impl.request.pass = nullptr;
     }
     // Dropping a sampling slot can change the off-screen record order.
     reconcileOffscreenOrder();
@@ -338,7 +338,7 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
     // window target (target == nullptr) and every off-screen target share
     // this one mechanism. Each pass is its own View + bridge, so several
     // passes sharing one camera and order still stack as separate content.
-    auto& t          = impl->entryFor(target);
+    auto& t          = impl.entryFor(target);
     auto& content    = t.content_slots[key];
     if (content.ready) {
         return;
@@ -360,7 +360,7 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
     content.order      = order;
     content.depth_mode = depth_mode;
     content.presenting = presenting;
-    content.vsg_camera = persistent->cameraBridge.create(camera);
+    content.vsg_camera = persistent.cameraBridge.create(camera);
     if (content.vsg_camera == nullptr) {
         reportFailure(vine::graphics::DiagnosticSeverity::Error,
                       vine::graphics::DiagnosticCategory::ContentSkipped,
@@ -376,9 +376,9 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
     // shader set bakes the slot's depth policy.
     if (target == nullptr) {
         // Window slots share the renderer's (window-sized) shader sets.
-        content.bridge.setShaderSet(depth_mode == vine::graphics::DepthMode::TestAndWrite ? impl->depth_on_shader_set
-                                    : depth_mode == vine::graphics::DepthMode::TestOnly ? impl->depth_testonly_shader_set
-                                                                                         : impl->depth_off_shader_set);
+        content.bridge.setShaderSet(depth_mode == vine::graphics::DepthMode::TestAndWrite ? impl.depth_on_shader_set
+                                    : depth_mode == vine::graphics::DepthMode::TestOnly ? impl.depth_testonly_shader_set
+                                                                                         : impl.depth_off_shader_set);
     }
     else {
         // Off-screen slots get a per-target shader set baked at the target's
@@ -389,14 +389,14 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
         if (set_ref == nullptr) {
             const bool depth_test  = depth_mode != vine::graphics::DepthMode::Disabled;
             const bool depth_write = depth_mode == vine::graphics::DepthMode::TestAndWrite;
-            set_ref = buildShaderSet(persistent->shader_preset,
+            set_ref = buildShaderSet(persistent.shader_preset,
                                      VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) },
                                      depth_test, depth_write,
                                      target->colorCount());
         }
         content.bridge.setShaderSet(set_ref);
     }
-    content.bridge.setMaterialManager(&persistent->materialManager);
+    content.bridge.setMaterialManager(&persistent.materialManager);
     // Route this slot's rejections through the renderer's diagnostics (trace,
     // counters, host sink): the slot is what actually discovers them.
     installDiagnosticRoute(content.bridge);
@@ -443,8 +443,8 @@ void VsgRenderer::setupContentSlot(const SlotKey& key, vine::graphics::RenderTar
     // it is finally created.
     placeViewByOrder(graph, target, content.view, content.order);
     content.ready = true;
-    if (impl->viewer != nullptr) {
-        impl->viewer->compile();
+    if (impl.viewer != nullptr) {
+        impl.viewer->compile();
     }
 }
 
@@ -455,11 +455,11 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
     }
     // The slot is owned by the pass that draws it (pass scope) or, for a
     // direct driver, by the historical (camera, order) pair.
-    const SlotKey key = (impl->request.pass != nullptr)
-                            ? SlotKey::ownerPass(impl->request.pass)
+    const SlotKey key = (impl.request.pass != nullptr)
+                            ? SlotKey::ownerPass(impl.request.pass)
                             : SlotKey::cameraOrder(request.camera, request.order);
 
-    auto& t  = impl->entryFor(request.target);
+    auto& t  = impl.entryFor(request.target);
     auto  it = t.content_slots.find(key);
     if (it == t.content_slots.end() || !it->second.ready) {
         setupContentSlot(key, request.target, request.camera, request.order, request.depth_mode, request.presenting);
@@ -522,15 +522,15 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
 
     // Full target extent for this slot's viewport: the live swapchain size for
     // the window target, the off-screen target's logical size otherwise.
-    const int surf_w = (request.target == nullptr) ? static_cast<int>(impl->window->extent2D().width) : t.width;
-    const int surf_h = (request.target == nullptr) ? static_cast<int>(impl->window->extent2D().height) : t.height;
+    const int surf_w = (request.target == nullptr) ? static_cast<int>(impl.window->extent2D().width) : t.width;
+    const int surf_h = (request.target == nullptr) ? static_cast<int>(impl.window->extent2D().height) : t.height;
 
     // Keep the slot's vsg camera viewport in step with its role each frame (see
     // updateSlotViewport): presenting content fills the target, other content carries
     // its pass sub-viewport.
     updateSlotViewport(*content.vsg_camera, content.presenting, request.viewport, surf_w, surf_h);
 
-    persistent->cameraBridge.apply(request.camera, content.vsg_camera);
+    persistent.cameraBridge.apply(request.camera, content.vsg_camera);
 
     // Lights come from the pass' content scene each frame (the scene is the source of
     // truth); setGroupLights leaves the slot's seeded default light in place unless at
@@ -554,7 +554,7 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
             // submitFrame(): traversing the View sets the correct viewID, so
             // the new/rebuild subtrees compile for the view they will be
             // recorded under (D22). One entry per view per frame.
-            auto& pending = impl->pending_compile_views;
+            auto& pending = impl.pending_compile_views;
             if (std::find(pending.begin(), pending.end(), content.view) == pending.end()) {
                 pending.push_back(content.view);
             }

@@ -1,4 +1,4 @@
-#include <vine/vsg/VsgRenderer.hpp>
+#include "VsgRendererImpl.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -189,7 +189,7 @@ void VsgRenderer::dropDepthSamplingProgramSlots(vine::graphics::RenderTarget* ta
     // Only slots that really BIND the depth are dropped: a colour-only program's
     // pipeline layout has no depth sampler, so nothing it records names that
     // layout, and it keeps drawing — this frame and every one after.
-    for (auto& dest_entry : impl->targets) {
+    for (auto& dest_entry : impl.targets) {
         auto& slots = dest_entry.second.program_slots;
         for (auto slot_it = slots.begin(); slot_it != slots.end();) {
             auto& slot = slot_it->second;
@@ -201,7 +201,7 @@ void VsgRenderer::dropDepthSamplingProgramSlots(vine::graphics::RenderTarget* ta
             // The node owns the program's pipeline / descriptor objects, and the
             // command buffer that recorded this slot may still be pending: park it
             // rather than release it in flight (a view holds no Vulkan object).
-            impl->retireObject(slot.node);
+            impl.retireObject(slot.node);
             reportFailure(vine::graphics::DiagnosticSeverity::Warning,
                           vine::graphics::DiagnosticCategory::ContentSkipped,
                           formatDiagnostic(u8"drawScreenProgram: sampled target '%s' started preserving depth, which"
@@ -216,7 +216,7 @@ void VsgRenderer::dropDepthSamplingProgramSlots(vine::graphics::RenderTarget* ta
 
 bool VsgRenderer::resolveDepthBorrow(vine::graphics::RenderTarget& target, uint32_t w, uint32_t h)
 {
-    auto& t = impl->entryFor(&target);
+    auto& t = impl.entryFor(&target);
     // A borrow whose source has since been RELEASED cannot be honoured either — the
     // source's VkImage is gone — so such a target builds with its own depth instead
     // of failing to build for ever (see releaseRenderTarget).
@@ -235,8 +235,8 @@ bool VsgRenderer::resolveDepthBorrow(vine::graphics::RenderTarget& target, uint3
     //    SHADER_READ_ONLY_OPTIMAL, which no render pass may attach, so every frame
     //    tripped VUID-VkImageMemoryBarrier-oldLayout-01197 (the depth-share barrier
     //    assumes the attachment layout) and drew nothing.
-    const auto  src_it    = impl->targets.find(depth_src);
-    const bool  src_ready = src_it != impl->targets.end() && src_it->second.depth_view != nullptr;
+    const auto  src_it    = impl.targets.find(depth_src);
+    const bool  src_ready = src_it != impl.targets.end() && src_it->second.depth_view != nullptr;
     const char* reason    = nullptr;
     if (!src_ready) {
         // TRANSIENT: the source has no depth image yet (its pass has not built this
@@ -462,17 +462,17 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
     // one RT can hold several content slots, like the window target).
     // EXPERIMENTAL: must be validated on a real Vulkan device before
     // production use.
-    if (target == nullptr || impl->window == nullptr) {
+    if (target == nullptr || impl.window == nullptr) {
         return;
     }
-    auto& t = impl->entryFor(target);
+    auto& t = impl.entryFor(target);
 
     // A rebuild (target resized or its attachment shape changed) must first stop the previous
     // pass graphs being recorded and release what hangs off them, then forget the previous
     // build's images / views / flags (the counted device wait lives in that unhook).
     if (t.attachments_built) {
-        impl->unhookTargetPasses(t);
-        impl->resetTargetAttachments(t);
+        impl.unhookTargetPasses(t);
+        impl.resetTargetAttachments(t);
     }
 
     const uint32_t w = static_cast<uint32_t>(target->width());
@@ -482,7 +482,7 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
     }
     t.width             = static_cast<int>(w);
     t.height            = static_cast<int>(h);
-    auto       device     = impl->window->getOrCreateDevice();
+    auto       device     = impl.window->getOrCreateDevice();
     const int  color_count = target->colorCount();
     const bool has_color   = color_count > 0;
     const bool has_depth   = target->hasDepth();
@@ -498,7 +498,7 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
 
     // One colour image + view per attachment, plus this target's depth (owned, or the source's
     // image when the borrow was honoured).
-    impl->createTargetAttachments(t, device.get(), *target, w, h, depth_src);
+    impl.createTargetAttachments(t, device.get(), *target, w, h, depth_src);
 
     // What is shared — and what this function owns — is the ATTACHMENT SET:
     // the render pass, framebuffer and graph are per pass now (see passGraph),
@@ -524,13 +524,13 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
     // A (re)built target created FRESH colour views: any OTHER target that samples this one
     // (PiP screen slots / fullscreen-program slots) still holds the OLD views — see
     // Impl::dropConsumersSampling.
-    impl->dropConsumersSampling(target);
+    impl.dropConsumersSampling(target);
 
     if (borrowed) {
         // The barrier the command graph needs so this pass LOADs / tests the depth
         // after the source's passes wrote it (reconcileOffscreenOrder inserts it
         // right after the source's last graph).
-        t.depth_share_barrier = impl->makeDepthShareBarrier(depth_src);
+        t.depth_share_barrier = impl.makeDepthShareBarrier(depth_src);
         t.depth_source        = depth_src;
     }
 
@@ -539,7 +539,7 @@ void VsgRenderer::buildOffscreenTarget(vine::graphics::RenderTarget* target)
     t.build_key = Impl::Target::BuildKey::of(*target);
     V_LOGI("[VsgRenderer] EXPERIMENTAL off-screen target '{}' {}x{} attached",
            target->name().empty() ? "(unnamed)" : target->name().stdstr(), w, h);
-    ++impl->offscreen_build_count;
+    ++impl.offscreen_build_count;
     // NOTE: no compile here — no pass graph exists until the first pass into
     // this target asks for one (passGraph); setupContentSlot() compiles then.
 }
@@ -669,7 +669,7 @@ VsgRenderer::Impl::PassPlan VsgRenderer::Impl::planPass(const Target& t, const S
 
 ::vsg::ref_ptr<::vsg::RenderGraph> VsgRenderer::passGraph(vine::graphics::RenderTarget* target, const SlotKey& key)
 {
-    auto& t = impl->entryFor(target);
+    auto& t = impl.entryFor(target);
     if (target == nullptr) {
         // The window session has ONE graph. Its render pass is the swapchain's
         // (vsg creates it with the window), so every window pass shares it —
@@ -684,15 +684,15 @@ VsgRenderer::Impl::PassPlan VsgRenderer::Impl::planPass(const Target& t, const S
     // What this pass needs THIS frame: attachment set, load-op variant, clear requests and
     // whether its depth is still promoted — one decision, taken in one place (see
     // Impl::planPass). Everything below APPLIES it.
-    const Impl::PassPlan plan = impl->planPass(t, key, *target);
+    const Impl::PassPlan plan = impl.planPass(t, key, *target);
 
     const auto built = t.passes.find(key);
 
     if (built != t.passes.end()) {
         // A pass that changed its explicit pipeline order moves its graph to the matching
         // record position (see reconcileOffscreenOrder).
-        if (built->second.order != impl->request.order) {
-            built->second.order = impl->request.order;
+        if (built->second.order != impl.request.order) {
+            built->second.order = impl.request.order;
             reconcileOffscreenOrder();
         }
         // Steady frame: reuse the recorded variant unless this pass changed its clear
@@ -700,8 +700,8 @@ VsgRenderer::Impl::PassPlan VsgRenderer::Impl::planPass(const Target& t, const S
         // Every other per-pass property (order, depth mode, lights, viewport) is re-applied
         // each frame; the load-ops have to follow suit, or a pass that starts clearing keeps
         // LOADing and its request is silently ignored.
-        if (auto graph = impl->reuseSteadyPass(built->second, plan.want_color_clear, plan.want_depth_clear,
-                                               plan.has_color, impl->request.clear_color)) {
+        if (auto graph = impl.reuseSteadyPass(built->second, plan.want_color_clear, plan.want_depth_clear,
+                                               plan.has_color, impl.request.clear_color)) {
             return graph;
         }
     }
@@ -715,7 +715,7 @@ VsgRenderer::Impl::PassPlan VsgRenderer::Impl::planPass(const Target& t, const S
     // (see clear()); the constant is the historical default for a target nobody
     // has ever cleared.
     const ::vsg::vec4 clear_color =
-        (t.clear_seen || impl->request.presenting) ? t.clear_color : ::vsg::vec4{ 0.2f, 0.2f, 0.2f, 1.0f };
+        (t.clear_seen || impl.request.presenting) ? t.clear_color : ::vsg::vec4{ 0.2f, 0.2f, 0.2f, 1.0f };
 
     // A pass that LOADs depth must find the image in a layout it named, so no
     // pass of this target may promote it any more. A target whose earlier passes
@@ -733,7 +733,7 @@ VsgRenderer::Impl::PassPlan VsgRenderer::Impl::planPass(const Target& t, const S
     // is in (a pass that STOPS promoting is exactly the one whose depth may still
     // carry the promoted layout — see planPassVariant).
     if (plan.has_color && plan.depth_load && t.depth_sampleable) {
-        impl->revokeDepthPromotion(t, plan.current, plan.variant.steady_depth_initial);
+        impl.revokeDepthPromotion(t, plan.current, plan.variant.steady_depth_initial);
         // A fullscreen program that SAMPLES this depth was built earlier in this
         // frame, while the promotion still stood, so its descriptor set names the
         // promoted layout — and the revoke (plus this pass) leaves the image in
@@ -759,12 +759,12 @@ VsgRenderer::Impl::PassPlan VsgRenderer::Impl::planPass(const Target& t, const S
     // with the depth attachment's initial layout corrected. The variants differ
     // only in the depth load-op and the depth attachment's initial layout, so
     // they are render-pass compatible and share the framebuffer.
-    auto [render_pass, framebuffer] = impl->makePassObjects(t, plan.att, plan.color_clear, plan.depth_load,
+    auto [render_pass, framebuffer] = impl.makePassObjects(t, plan.att, plan.color_clear, plan.depth_load,
                                                           plan.variant.promote_depth, plan.variant.depth_initial);
     ::vsg::ref_ptr<::vsg::RenderPass> render_pass_transient;
     if (plan.variant.transient) {
         render_pass_transient = render_pass;
-        render_pass            = impl->makePassObjects(t, plan.att,
+        render_pass            = impl.makePassObjects(t, plan.att,
                                                        plan.variant.steady_color_load == VK_ATTACHMENT_LOAD_OP_CLEAR,
                                                        plan.depth_load, plan.variant.promote_depth,
                                                        plan.variant.steady_depth_initial)
@@ -784,12 +784,12 @@ VsgRenderer::Impl::PassPlan VsgRenderer::Impl::planPass(const Target& t, const S
     ::vsg::ref_ptr<::vsg::RenderGraph> graph =
         (built != t.passes.end()) ? built->second.graph : ::vsg::ref_ptr<::vsg::RenderGraph>();
     if (built != t.passes.end()) {
-        impl->retireObject(built->second.render_pass);
-        impl->retireObject(built->second.render_pass_transient);
-        impl->retireObject(built->second.framebuffer);
+        impl.retireObject(built->second.render_pass);
+        impl.retireObject(built->second.render_pass_transient);
+        impl.retireObject(built->second.framebuffer);
     }
     if (graph == nullptr) {
-        graph = impl->makePassGraph(t, plan.has_depth, clear_color);
+        graph = impl.makePassGraph(t, plan.has_depth, clear_color);
     }
     graph->renderPass  = plan.variant.transient ? render_pass_transient : render_pass;
     graph->framebuffer = framebuffer;
@@ -812,15 +812,15 @@ VsgRenderer::Impl::PassPlan VsgRenderer::Impl::planPass(const Target& t, const S
     objects.want_color_clear      = plan.want_color_clear;
     objects.want_depth_clear      = plan.want_depth_clear;
     objects.clear_color           = clear_color;
-    objects.order                 = impl->request.order;
+    objects.order                 = impl.request.order;
     objects.transient             = plan.variant.transient;
-    impl->publishPass(t, key, objects, plan.has_color);
+    impl.publishPass(t, key, objects, plan.has_color);
 
-    if (impl->command_graph != nullptr) {
+    if (impl.command_graph != nullptr) {
         if (built == t.passes.end()) {
             // Only a NEW pass' graph has to be added: a rebuilt pass' graph never
             // left the command graph (it is the same object).
-            impl->command_graph->children.push_back(graph);
+            impl.command_graph->children.push_back(graph);
         }
         // Reorder every off-screen graph into a dependency-valid sequence — each
         // consumer is recorded after the targets it samples (see
@@ -837,18 +837,18 @@ void VsgRenderer::reconcileOffscreenOrder()
     // texture, and the sample is only CURRENT when the producer's graph is recorded
     // first. The three phases (collect → order → apply) are named units; each
     // explains what it guarantees.
-    if (impl->command_graph == nullptr) {
+    if (impl.command_graph == nullptr) {
         return;
     }
-    const auto win = impl->targets.find(nullptr);
-    if (win == impl->targets.end() || win->second.graph == nullptr) {
+    const auto win = impl.targets.find(nullptr);
+    if (win == impl.targets.end() || win->second.graph == nullptr) {
         return;
     }
     Impl::RecordPlan plan;
     plan.window_graph = win->second.graph;
-    impl->fillRecordPlan(plan);
-    impl->orderRecordPlan(plan);
-    impl->applyRecordPlan(plan);
+    impl.fillRecordPlan(plan);
+    impl.orderRecordPlan(plan);
+    impl.applyRecordPlan(plan);
 }
 
 void VsgRenderer::Impl::fillRecordPlan(RecordPlan& plan) const
@@ -1023,13 +1023,13 @@ void VsgRenderer::Impl::applyRecordPlan(const RecordPlan& plan)
 
 void VsgRenderer::releaseWindowLayer(vine::raw_ptr<const vine::graphics::Camera> camera, int order)
 {
-    if (camera == nullptr || !impl->initialized) {
+    if (camera == nullptr || !impl.initialized) {
         return;
     }
     // Window content slots live in the window target (nullptr key) of the
     // output-target table, keyed by (camera, explicit pass order). Off-screen
     // slots are released together with their whole target (releaseRenderTarget).
-    auto& t  = impl->entryFor(nullptr);
+    auto& t  = impl.entryFor(nullptr);
     // Legacy key (camera, order): only state created by a direct driver that
     // never opened a pass scope uses it. Engine-driven slots are released by
     // releasePass() (keyed by the pass itself).
@@ -1044,27 +1044,27 @@ void VsgRenderer::releaseWindowLayer(vine::raw_ptr<const vine::graphics::Camera>
     removeGraphChild(t.graph.get(), it->second.view);
     // The slot's bridge is destroyed with it, so the bridge's own ring goes too:
     // the cache drop needs the counted device wait (see Impl::unhookTargetPasses).
-    impl->waitForIdle();
+    impl.waitForIdle();
     it->second.bridge.clearCache();
     t.content_slots.erase(it);
 }
 
 void VsgRenderer::releaseRenderTarget(vine::graphics::RenderTarget* target)
 {
-    if (target == nullptr || !impl->initialized) {
+    if (target == nullptr || !impl.initialized) {
         return;
     }
     bool released = false;
-    auto ot       = impl->targets.find(target);
-    if (ot != impl->targets.end()) {
+    auto ot       = impl.targets.find(target);
+    if (ot != impl.targets.end()) {
         // Stop recording the target's off-screen pass graphs and make the release
         // safe before dropping its images / views / render passes / slots (the
         // counted device wait lives in that unhook).
-        impl->unhookTargetPasses(ot->second);
+        impl.unhookTargetPasses(ot->second);
         // Drop the target's whole table entry (its off-screen attachments /
         // render graph / content slots). Any sampling slot that reads it lives
         // in another target's slot tables and is removed right below.
-        impl->targets.erase(ot);
+        impl.targets.erase(ot);
         released = true;
     }
     // A target that BORROWED the removed target's depth (RenderTarget::
@@ -1074,7 +1074,7 @@ void VsgRenderer::releaseRenderTarget(vine::graphics::RenderTarget* target)
     // a dead attachment (and the command graph is ordered around a dead
     // barrier). Clearing the recorded size re-enters the rebuild path on its
     // next draw.
-    for (auto& entry : impl->targets) {
+    for (auto& entry : impl.targets) {
         auto& other = entry.second;
         if (other.depth_source != target) {
             continue;
@@ -1098,7 +1098,7 @@ void VsgRenderer::releaseRenderTarget(vine::graphics::RenderTarget* target)
     // the target that DRAWS it, and its source is a slot attribute) would keep a
     // dead image bound: drop it wherever it lives. Content slots own no sampling
     // edge, so they are skipped by the requires-clause.
-    for (auto& target_entry : impl->targets) {
+    for (auto& target_entry : impl.targets) {
         auto& t = target_entry.second;
         // Collect first: erasing while the visitor walks the tables would
         // invalidate the walk.
@@ -1106,7 +1106,7 @@ void VsgRenderer::releaseRenderTarget(vine::graphics::RenderTarget* target)
         t.forEachSlot([&](const SlotKey& key, auto& slot, Impl::Target::SlotKind kind) {
             if constexpr (requires { slot.source_target; }) {
                 if (slot.source_target == target) {
-                    impl->detachSlotView(t, target_entry.first, key, slot.view);
+                    impl.detachSlotView(t, target_entry.first, key, slot.view);
                     drop.emplace_back(kind, key);
                 }
             }
@@ -1115,7 +1115,7 @@ void VsgRenderer::releaseRenderTarget(vine::graphics::RenderTarget* target)
             // Destructive (the slot's node goes with it), so this keeps the
             // counted device wait rather than parking the view — see
             // erasePassSlotsFromTarget.
-            impl->waitForIdle();
+            impl.waitForIdle();
             t.eraseSlot(kind, key);
             released = true;
         }
@@ -1133,7 +1133,7 @@ void VsgRenderer::placeViewByOrder(::vsg::ref_ptr<::vsg::RenderGraph> graph,
                                    const ::vsg::ref_ptr<::vsg::View>& view,
                                    int order)
 {
-    auto& t = impl->entryFor(target);
+    auto& t = impl.entryFor(target);
     if (graph == nullptr || view == nullptr) {
         return;
     }
@@ -1182,7 +1182,7 @@ void VsgRenderer::placeViewByOrder(::vsg::ref_ptr<::vsg::RenderGraph> graph,
 bool VsgRenderer::readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
                                   std::vector<std::uint8_t>& outPixels)
 {
-    auto* built = impl->readbackTarget(target);
+    auto* built = impl.readbackTarget(target);
     if (built == nullptr) {
         return false;
     }
@@ -1208,10 +1208,10 @@ bool VsgRenderer::readColorBuffer(vine::graphics::RenderTarget* target, int atta
     // The frame that wrote this target must be complete before its image is
     // copied out; this call is synchronous by contract. Counted, like every other
     // device-wide idle this backend takes (deviceWaitCount).
-    impl->waitForIdle();
+    impl.waitForIdle();
 
-    auto device   = impl->window->getDevice();
-    auto physical = impl->window->getPhysicalDevice();
+    auto device   = impl.window->getDevice();
+    auto physical = impl.window->getPhysicalDevice();
     auto source   = built->color_images[attachment];
     if (device == nullptr || physical == nullptr || source == nullptr) {
         return false;
@@ -1240,7 +1240,7 @@ bool VsgRenderer::readColorBuffer(vine::graphics::RenderTarget* target, int atta
     destination->usage       = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     destination->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     destination->compile(device);
-    auto memory = impl->hostVisibleMemory(device.get(), destination->getMemoryRequirements(device->deviceID));
+    auto memory = impl.hostVisibleMemory(device.get(), destination->getMemoryRequirements(device->deviceID));
     destination->bind(memory, 0);
 
     const VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
@@ -1281,7 +1281,7 @@ bool VsgRenderer::readColorBuffer(vine::graphics::RenderTarget* target, int atta
                                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
                                           VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination, range)));
 
-    if (!impl->submitOneShot(commands)) {
+    if (!impl.submitOneShot(commands)) {
         return false;
     }
 
@@ -1304,7 +1304,7 @@ bool VsgRenderer::readColorBuffer(vine::graphics::RenderTarget* target, int atta
 
 bool VsgRenderer::readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths)
 {
-    auto* built = impl->readbackTarget(target);
+    auto* built = impl.readbackTarget(target);
     if (built == nullptr) {
         return false;
     }
@@ -1337,11 +1337,11 @@ bool VsgRenderer::readDepthBuffer(vine::graphics::RenderTarget* target, std::vec
     const std::uint32_t height = static_cast<std::uint32_t>(built->height);
 
     // Synchronous by contract, and counted: see readColorBuffer.
-    impl->waitForIdle();
+    impl.waitForIdle();
 
     // The transfer needs the device; the physical device / queue family come from
     // the one-shot submit, which guards for them itself.
-    auto device = impl->window->getDevice();
+    auto device = impl.window->getDevice();
     if (device == nullptr) {
         return false;
     }
@@ -1354,7 +1354,7 @@ bool VsgRenderer::readDepthBuffer(vine::graphics::RenderTarget* target, std::vec
                                     static_cast<VkDeviceSize>(texel_bytes);
     auto buffer = ::vsg::Buffer::create(byte_count, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_SHARING_MODE_EXCLUSIVE);
     buffer->compile(device);
-    auto memory = impl->hostVisibleMemory(device.get(), buffer->getMemoryRequirements(device->deviceID));
+    auto memory = impl.hostVisibleMemory(device.get(), buffer->getMemoryRequirements(device->deviceID));
     buffer->bind(memory, 0);
 
     // The depth image is left in whatever layout the last pass of this target
@@ -1396,7 +1396,7 @@ bool VsgRenderer::readDepthBuffer(vine::graphics::RenderTarget* target, std::vec
                                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, depth_layout,
                                           VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, built->depth_image, range)));
 
-    if (!impl->submitOneShot(commands)) {
+    if (!impl.submitOneShot(commands)) {
         return false;
     }
 
