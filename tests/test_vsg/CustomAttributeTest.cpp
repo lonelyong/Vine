@@ -138,7 +138,7 @@ vsg::DrawIndexed* findDrawIndexed(vsg::Node* node)
 
 /**
  * @brief Custom vertex channels (location >= 3) are forwarded into the data
- * node after the three canonical arrays, each materialised to the typed array
+ * node after the four canonical arrays, each materialised to the typed array
  * its components imply, in ascending location order.
  */
 TEST(CustomAttributeTest, CustomChannelsAreForwardedAndTyped)
@@ -161,10 +161,10 @@ TEST(CustomAttributeTest, CustomChannelsAreForwardedAndTyped)
     ASSERT_EQ(root->children.size(), 1u);
     auto* bvb = findBindVertexBuffers(root.get());
     ASSERT_NE(bvb, nullptr);
-    // 3 canonical arrays + loc3 + loc4.
-    ASSERT_EQ(bvb->arrays.size(), 5u);
+    // 4 canonical arrays (vertex / normal / texcoord / colour) + loc3 + loc4.
+    ASSERT_EQ(bvb->arrays.size(), 6u);
 
-    auto* v3 = boundData(root.get(), 3u);
+    auto* v3 = boundData(root.get(), 4u);
     ASSERT_NE(v3, nullptr);
     auto* vec3 = v3->cast<vsg::vec3Array>();
     ASSERT_NE(vec3, nullptr);
@@ -172,7 +172,7 @@ TEST(CustomAttributeTest, CustomChannelsAreForwardedAndTyped)
     EXPECT_FLOAT_EQ((*vec3)[0].x, 0.1f);
     EXPECT_FLOAT_EQ((*vec3)[2].z, 2.3f);
 
-    auto* v4 = boundData(root.get(), 4u);
+    auto* v4 = boundData(root.get(), 5u);
     ASSERT_NE(v4, nullptr);
     auto* f1 = v4->cast<vsg::floatArray>();
     ASSERT_NE(f1, nullptr);
@@ -260,10 +260,10 @@ TEST(CustomAttributeTest, BuiltInPathCarriesChannelsAndDraws)
 
     ASSERT_EQ(root->children.size(), 1u);
     ASSERT_NE(findDrawIndexed(root.get()), nullptr);
-    // Data superset still bound (3 canonical + loc3) even on the built-in path.
+    // Data superset still bound (4 canonical + loc3) even on the built-in path.
     auto* bvb = findBindVertexBuffers(root.get());
     ASSERT_NE(bvb, nullptr);
-    EXPECT_EQ(bvb->arrays.size(), 4u);
+    EXPECT_EQ(bvb->arrays.size(), 5u);
     EXPECT_EQ(bridge.pipelineVariantCount(), 1u);
 }
 
@@ -289,7 +289,7 @@ TEST(CustomAttributeTest, MalformedCustomChannelIgnored)
     ASSERT_EQ(root->children.size(), 1u); // still drawable
     auto* bvb = findBindVertexBuffers(root.get());
     ASSERT_NE(bvb, nullptr);
-    EXPECT_EQ(bvb->arrays.size(), 3u); // malformed channel not bound
+    EXPECT_EQ(bvb->arrays.size(), 4u); // 4 canonical arrays; the malformed channel is not bound
 }
 
 /**
@@ -314,9 +314,9 @@ TEST(CustomAttributeTest, LocationTwoRemainsCanonicalCarrier)
     ASSERT_EQ(root->children.size(), 1u);
     auto* bvb = findBindVertexBuffers(root.get());
     ASSERT_NE(bvb, nullptr);
-    EXPECT_EQ(bvb->arrays.size(), 3u); // loc2 stays the internal carrier
-    // Built-in path ignores the authored loc2: binding 2 is the white carrier.
-    auto* c = boundData(root.get(), 2u)->cast<vsg::vec4Array>();
+    EXPECT_EQ(bvb->arrays.size(), 4u); // 4 canonical arrays; loc2 stays the internal carrier
+    // Built-in path ignores the authored loc2: index 3 is the white carrier.
+    auto* c = boundData(root.get(), 3u)->cast<vsg::vec4Array>();
     ASSERT_NE(c, nullptr);
     ASSERT_EQ(c->size(), 3u);
     EXPECT_FLOAT_EQ((*c)[0].x, 1.0f);
@@ -348,8 +348,8 @@ TEST(CustomAttributeTest, CustomLoc2ColorIsBoundOnProgramPath)
     ASSERT_EQ(root->children.size(), 1u);
     auto* bvb = findBindVertexBuffers(root.get());
     ASSERT_NE(bvb, nullptr);
-    EXPECT_EQ(bvb->arrays.size(), 3u); // loc2 consumed as vsg_Color, not an extra
-    auto* c = boundData(root.get(), 2u)->cast<vsg::vec4Array>();
+    EXPECT_EQ(bvb->arrays.size(), 4u); // 4 canonical arrays; loc2 consumed as vsg_Color, not an extra
+    auto* c = boundData(root.get(), 3u)->cast<vsg::vec4Array>();
     ASSERT_NE(c, nullptr);
     ASSERT_EQ(c->size(), 3u);
     EXPECT_FLOAT_EQ((*c)[0].x, 1.0f);

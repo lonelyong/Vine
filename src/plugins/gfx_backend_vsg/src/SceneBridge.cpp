@@ -103,6 +103,11 @@ VsgMaterialManager& SceneBridge::materialManager()
     return shader_set_;
 }
 
+VsgTextureCache& SceneBridge::textureCache()
+{
+    return default_texture_cache_;
+}
+
 
 /** @brief Retained vsg node for one drawn geometry. */
 struct SceneBridge::Item {
@@ -122,6 +127,11 @@ struct SceneBridge::Item {
     // their keys for the same reason (see OwnedPairCacheEntry).
     vine::intrusive_ptr<vine::graphics::Material> material;
     vine::intrusive_ptr<const vine::graphics::ShaderProgram> program;
+    // The texture the material samples, and the content revision it was translated at. Both are needed:
+    // the pointer catches "a different texture", the revision catches "the same texture, re-filled" —
+    // which a pointer cannot see, and which would otherwise keep sampling the previous upload.
+    vine::intrusive_ptr<const vine::graphics::Texture> texture;
+    std::uint64_t                                      texture_revision = ~std::uint64_t{0};
     std::uint64_t revision = ~std::uint64_t{0};
     // Last resolved render state the retained pipeline was built with.
     vine::graphics::ResolvedRenderState render_state;
@@ -140,8 +150,9 @@ struct SceneBridge::Item {
     // Per-vertex color array; its alpha carries the effective per-drawable
     // opacity and is rewritten only when the opacity actually changed.
     ::vsg::ref_ptr<::vsg::vec4Array> colors;
-    // Forwarded custom vertex channels (locations >= 3) bound after the three
-    // canonical arrays, in binding order (see buildGeometryData). Drives the
+    // Forwarded custom vertex channels (locations >= 3, except the canonical
+    // texcoord location) bound after the canonical prefix, in binding order (see
+    // buildGeometryData). Drives the
     // per-layout ShaderSet / variant identity for state-only rebuilds (a
     // program / material edit reuses this without re-uploading the mesh).
     std::vector<VertexChannel> extra_channels;
@@ -324,11 +335,18 @@ bool SceneBridge::syncRenderCommands(
         // custom (authored colour) path binds binding 2.
         const bool has_loc2 =
             geometry->buffer(2) != nullptr && !geometry->buffer(2)->empty();
-        const bool data_dirty =
+        // The texture is part of the STATE identity: a different texture, or the same one re-filled (its
+        // revision), must rebuild the descriptor bind rather than keep sampling the old upload.
+        const vine::graphics::Texture* const texture =
+            cmd.material.get() != nullptr ? cmd.material.get()->texture() : nullptr;
+        const std::uint64_t texture_revision = texture != nullptr ? texture->revision() : 0u;
+        const bool          data_dirty =
             !had_node || item->revision != geometry->revision() ||
             item->topology != state.topology ||
             (has_loc2 && (item->program.get() == nullptr) != (cmd.program.get() == nullptr));
         const bool state_dirty = !had_node || item->material.get() != cmd.material.get() ||
+                                 item->texture.get() != texture ||
+                                 item->texture_revision != texture_revision ||
                                  item->render_state != state ||
                                  item->program.get() != cmd.program.get() ||
                                  item->program_revision != program_rev;
@@ -336,6 +354,8 @@ bool SceneBridge::syncRenderCommands(
             item->revision         = geometry->revision();
             item->topology         = state.topology;
             item->material         = cmd.material;
+            item->texture          = vine::intrusive_ptr<const vine::graphics::Texture>(texture);
+            item->texture_revision = texture_revision;
             item->render_state     = state;
             item->program          = cmd.program;
             item->program_revision = program_rev;
@@ -381,8 +401,8 @@ bool SceneBridge::syncRenderCommands(
             // referenced by an in-flight command buffer: park it.
             retireNode(std::move(item->state_node));
             item->state_node = buildStateGroup(item->data_node, item->material.get(),
-                                               item->render_state, item->program.get(),
-                                               item->extra_channels);
+                                               item->texture.get(), item->render_state,
+                                               item->program.get(), item->extra_channels);
             if (item->state_node == nullptr) {
                 cache_.erase(it);
                 continue;

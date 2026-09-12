@@ -125,6 +125,7 @@ endif()
 target_link_libraries(${GFX_BACKEND_VSG_TARGET} PRIVATE
     vi::Appfw
     vi::Graphics
+    vi::Imaging
     vi::Logging
     vsg::vsg)
 
@@ -156,6 +157,7 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgePipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CameraBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgMaterialManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgTextureCache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgSceneRules.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgDiagnostics.cpp

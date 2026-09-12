@@ -24,6 +24,7 @@
 #include <vine/vsg/OwnedCache.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 #include <vine/vsg/VsgRetireRing.hpp>
+#include <vine/vsg/VsgTextureCache.hpp>
 
 namespace vine::graphics
 {
@@ -310,20 +311,23 @@ class V_VSG_API SceneBridge {
      * through the per-(program, layout) ShaderSet cache and the per-variant L2
      * template cache, so repeated variants skip the configurator entirely. The
      * forwarded custom channels (locations >= 3) are bound after the canonical
-     * three arrays and named vine_Attribute{location}.
+     * arrays and named vine_Attribute{location}.
      *
      * @param data           The retained vertex-data node to wrap (non-null).
      * @param material       Bound material (may be null).
+     * @param texture        Texture the material samples, or null when it has none (the shared white
+     *                       fallback is bound instead, so the shader always samples something).
      * @param state          Resolved render state the pipeline must honour.
      * @param program        User shader program, or null for the built-in
      *                       default.
      * @param extra_channels Custom channels carried by @p data (locations >= 3),
-     *                       in binding order after the three canonical arrays.
+     *                       in binding order after the canonical arrays.
      * @return State wrapper, or null when not buildable.
      */
     ::vsg::ref_ptr<::vsg::StateGroup> buildStateGroup(
         ::vsg::ref_ptr<::vsg::Node> data,
         vine::raw_ptr<vine::graphics::Material> material,
+        vine::raw_ptr<const vine::graphics::Texture> texture,
         const vine::graphics::ResolvedRenderState& state,
         vine::raw_ptr<const vine::graphics::ShaderProgram> program,
         const std::vector<VertexChannel>& extra_channels);
@@ -357,6 +361,12 @@ class V_VSG_API SceneBridge {
      * @return The active material manager (always non-null).
      */
     VsgMaterialManager& materialManager();
+
+    /** @brief Gets the cache that uploads the textures the scene samples.
+     *
+     * @return The texture cache (always non-null / usable).
+     */
+    VsgTextureCache& textureCache();
 
     /** @brief Gets the slot's base shader set (the built-in default when unset).
      *
@@ -445,6 +455,9 @@ class V_VSG_API SceneBridge {
     vine::raw_ptr<VsgMaterialManager> material_manager_ = nullptr;
     // Default manager used when the renderer does not inject one.
     VsgMaterialManager default_manager_;
+    // Texture uploads, keyed by texture. Always the bridge's own: nothing injects one (unlike the
+    // material manager, whose interface the SDK owns), so there is no injection point yet.
+    VsgTextureCache default_texture_cache_;
     // Retained per-geometry nodes, keyed by geometry pointer for O(1) lookup.
     //
     // The entry OWNS the geometry it is keyed by (OwnedCacheEntry), and that

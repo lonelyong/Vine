@@ -193,9 +193,9 @@ class V_GRAPHICS_API Material : public Object, public RefCounted<Material> {
     float opacity() const;
     void setOpacity(float alpha);
 
-    /** @brief 纹理文件路径（可为空）。 */
-    String textureFile() const;
-    void setTextureFile(const String& path);
+    /** @brief 本材质采样的纹理（可为空）。 */
+    raw_ptr<Texture> texture() const;
+    void setTexture(intrusive_ptr<Texture> texture);
 
   private:
     struct Data;
@@ -206,6 +206,8 @@ using MaterialPtr = intrusive_ptr<Material>;
 ```
 
 > 说明：颜色使用浮点 `Colorf`（[0,1]），而非 8-bit 的 `Color`。
+> 材质采样的是 `graphics::Texture` **对象**，不再是路径字符串：
+> 路径字符串在 `src/` 里零调用，是个死 API。`Texture` 的 shape / 源图设计见 `.ai/design/imaging-design.md`。
 
 ### 3.4 `Scene`（场景）
 

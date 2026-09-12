@@ -36,7 +36,8 @@
 
 **非目标（本稿不落地）**
 - PBR（`Pbr` 预留）、阴影采样（`ShadowedPhong` = P1，消费 v4b-1 depth RT，§6 给 ABI 接缝）；
-- 纹理贴图（Material.textureFile 尚未有纹理管线）、多光（LightsUBO 数组已按 4 预留，但只验
+- 纹理贴图（`Material::texture()` 现已是 `graphics::Texture` 对象，但后端**仍不消费**它：
+  face / mip 链不上传、不建 sampler、不进描述符集）、多光（LightsUBO 数组已按 4 预留，但只验
   ambient + 单方向光）、材质 dynamic UBO（P2）。
 - 用户可编程 Program / pass 级自定义着色：**方向已确认**（§11，SDK 第一准则），P0 后实现；
   P0 内置 shader 须与它同契约，避免两套机制。

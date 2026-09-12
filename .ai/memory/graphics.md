@@ -1287,3 +1287,31 @@ Object
 - **教训**：①数字比较用**整文件 + 程序统计**，别读终端里被换行/渲染过的行内数字；②回退实验必须**重建到齐**
   （`ninja <target>` 不会重建运行时 `dlopen` 的 plugin `.so` 与 SDK 动态库 ⇒ 假结果）；③`publish()` 是**宿主常驻绑定**
   （`host_outputs_`，跨帧有效），pass 输出是**本帧**账（`outputs_`）——两账分开，见设计文档 §14.7。
+
+## 纹理对象化：`graphics::Texture`（2D + Cube）+ `Material` 迁移（2026-09-12）
+
+**动机**：`Material::textureFile()` 那个路径字符串在 `src/` 里**零调用**（只有一个测试引用）—— 是个死 API，
+也正是 `ImageRef.hpp` 注释里承认的洞（*"a material texture is a file PATH"*）。
+VSG 侧 `vine-to-vsg-data-flow.md` 早已记着"纹理/uv 均未接线"。
+
+**分工（拍定）**：CPU 像素 / 图像数据 → **新模块 `imaging`**（`Image` + `PixelFormat`，叶子，只依赖 Core/Global）；
+GPU 资源（format/mip/sampler/usage）→ `graphics`。
+自问："这东西在 headless、无渲染器、无 Qt 的环境里有意义吗？" 有 → `imaging`。
+**否掉的方案**：① `Image` 放 `graphics`（会让 `meshio` **依赖渲染器**；且 `graphics → Geometry` 说明顶点数据在其
+**下面**，像素数据不该在上面）；② 改名 `window`→`display` 再放 `Image`（名字硬凑；改名要同步短名/目录名/宏名/别名
+**四处**，漏一处 Windows 上 `dllimport` 自炸）。详见 `.ai/design/imaging-design.md`。
+
+**落地**：`graphics::Texture` = **逻辑描述**（与 `RenderTarget` 同一个模式，**不持 GPU 对象**）
++ 每 face 一张 `imaging::Image` 源图；`Shape{D2,Cube}`（**只做这两个**，不做 1D/3D/array）；
+源图必须与描述在 format/size/mipCount **三项都一致**（不一致在**调用处**就拒绝，不让后端到上传时才发现）；
+mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::out_of_range`、读越界 face 返回 null
+（查询不是错误）。`graphics` 现在 **PUBLIC 依赖 `vi::Imaging`**。
+`Material`：删 `textureFile()/setTextureFile()`（死 API），改 `texture()/setTexture()`。
+
+**判据**：`test_graphics` **191 → 200**（+9 = 8 个 `TextureTest` + 1 个 `MaterialTest`）；
+全量 `ninja` 零 error/零 warning；`vsg_selftest_evidence.sh` → PASS（**45 行逐字节相同**，后端零改动）；
+`gfx_lavapipe_check.sh` → PASS（0 VUID）；`check_diagnostic_formats.py` → 0 suspicious。
+
+**仍未做**：后端**不消费** `Texture`（face/mip 链不上传、不建 sampler、不进描述符集）；
+图像解码 / 读回路径未有；`RenderTarget` 自己的 `ColorFormat`/`DepthFormat` 与 `imaging::PixelFormat` **重复**，
+应并入后者（改公开 API，需单独一批）。

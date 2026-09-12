@@ -8,6 +8,7 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/Material.hpp>
+#include <vine/graphics/Texture.hpp>
 #include <vine/graphics/MaterialManager.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/CameraMirror.hpp>
@@ -26,6 +27,8 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
+#include <vine/imaging/Image.hpp>
+#include <vine/imaging/PixelFormat.hpp>
 #include <vine/Colorf.hpp>
 #include <vine/math/Transform3.hpp>
 
@@ -33,11 +36,14 @@
 
 #include <functional>
 #include <set>
+#include <stdexcept>
 
 using namespace vine::graphics;
 using vine::intrusive_ptr;
 using vine::Colorf;
 using vine::Color;
+using vine::imaging::Image;
+using vine::imaging::PixelFormat;
 using vine::math::Vec2d;
 using vine::math::Vec3d;
 using vine::math::Mat4d;
@@ -46,6 +52,18 @@ using vine::math::Aabbf;
 
 namespace
 {
+
+/**
+ * @brief Makes a source image that matches a texture's description.
+ *
+ * @param texture   Texture whose size, format and mip count the image is built to match.
+ * @param mip_count Number of mip levels the image should have.
+ * @return A new image matching the description.
+ */
+intrusive_ptr<const Image> sourceImage(const Texture& texture, int mip_count)
+{
+    return intrusive_ptr<const Image>(new Image(texture.width(), texture.height(), texture.format(), mip_count));
+}
 
 /**
  * @brief Builds a unit triangle mesh in the XY plane.
@@ -865,12 +883,163 @@ TEST(MaterialTest, Setters)
     mat.setName(u8"red");
     mat.setDiffuse(Colorf(1.0f, 0.0f, 0.0f, 1.0f));
     mat.setShininess(64.0f);
-    mat.setTextureFile(u8"tex.png");
 
     EXPECT_EQ(mat.name(), u8"red");
     EXPECT_NEAR(mat.diffuse().r, 1.0f, 1e-6f);
     EXPECT_NEAR(mat.shininess(), 64.0f, 1e-6f);
-    EXPECT_EQ(mat.textureFile(), u8"tex.png");
+}
+
+TEST(MaterialTest, CarriesTheTextureItSamples)
+{
+    auto texture = intrusive_ptr<Texture>(new Texture(Texture::Shape::D2, 4, 4, PixelFormat::Rgba8Unorm));
+
+    Material mat;
+    EXPECT_EQ(mat.texture(), nullptr);
+
+    mat.setTexture(texture);
+    EXPECT_EQ(mat.texture(), texture.get());
+    EXPECT_EQ(texture->useCount(), 2u);
+
+    mat.setTexture(nullptr);
+    EXPECT_EQ(mat.texture(), nullptr);
+}
+
+// ============ Texture ============
+
+TEST(TextureTest, A2DTextureIsOneFace)
+{
+    Texture texture(Texture::Shape::D2, 8, 4, PixelFormat::Rgba8Unorm, 2);
+
+    EXPECT_EQ(texture.shape(), Texture::Shape::D2);
+    EXPECT_EQ(texture.faceCount(), 1);
+    EXPECT_EQ(texture.width(), 8);
+    EXPECT_EQ(texture.height(), 4);
+    EXPECT_EQ(texture.format(), PixelFormat::Rgba8Unorm);
+    EXPECT_EQ(texture.mipCount(), 2);
+    EXPECT_EQ(texture.source(0), nullptr);
+    EXPECT_FALSE(texture.complete());
+}
+
+TEST(TextureTest, ACubeTextureIsSixFacesSharingOneDescription)
+{
+    Texture texture(Texture::Shape::Cube, 16, 16, PixelFormat::Rgba8Unorm);
+
+    EXPECT_EQ(texture.faceCount(), 6);
+    EXPECT_EQ(texture.width(), 16);
+    EXPECT_EQ(texture.height(), 16);
+
+    for (int face = 0; face < 6; ++face) {
+        EXPECT_FALSE(texture.hasSource(face)) << "face " << face;
+    }
+}
+
+TEST(TextureTest, BecomesCompleteOnlyWhenEveryFaceIsFilled)
+{
+    Texture texture(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm);
+
+    for (int face = 0; face < 5; ++face) {
+        texture.setSource(face, sourceImage(texture, 1));
+        EXPECT_FALSE(texture.complete()) << "face " << face;
+    }
+
+    texture.setSource(5, sourceImage(texture, 1));
+    EXPECT_TRUE(texture.complete());
+}
+
+TEST(TextureTest, HoldsItsFacesByStrongReference)
+{
+    Texture texture(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm);
+
+    intrusive_ptr<const Image> face = sourceImage(texture, 1);
+    texture.setSource(2, face);
+
+    EXPECT_EQ(texture.source(2), face.get());
+    EXPECT_EQ(face->useCount(), 2u);
+
+    texture.setSource(2, nullptr);
+    EXPECT_EQ(face->useCount(), 1u);
+    EXPECT_FALSE(texture.hasSource(2));
+}
+
+TEST(TextureTest, AnOutOfRangeFaceIsRejectedWhenWritten)
+{
+    Texture d2(Texture::Shape::D2, 4, 4, PixelFormat::Rgba8Unorm);
+    Texture cube(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm);
+
+    EXPECT_THROW(d2.setSource(1, nullptr), std::out_of_range);
+    EXPECT_THROW(d2.setSource(-1, nullptr), std::out_of_range);
+    EXPECT_THROW(cube.setSource(6, nullptr), std::out_of_range);
+
+    // Reading outside the shape is a query, not a mistake: it answers "no such face".
+    EXPECT_EQ(d2.source(1), nullptr);
+    EXPECT_EQ(cube.source(-1), nullptr);
+    EXPECT_FALSE(d2.hasSource(1));
+}
+
+TEST(TextureTest, RejectsASourceThatDoesNotMatchTheDescription)
+{
+    Texture texture(Texture::Shape::D2, 8, 4, PixelFormat::Rgba8Unorm, 2);
+
+    // Each of these differs from the description in exactly one field, so the check that fires is the one
+    // under test rather than an earlier one.
+    intrusive_ptr<const Image> wrong_format(new Image(8, 4, PixelFormat::Rgba32Float, 2));
+    intrusive_ptr<const Image> wrong_size(new Image(4, 4, PixelFormat::Rgba8Unorm, 2));
+    intrusive_ptr<const Image> wrong_mips(new Image(8, 4, PixelFormat::Rgba8Unorm, 1));
+
+    EXPECT_THROW(texture.setSource(0, wrong_format), std::invalid_argument);
+    EXPECT_THROW(texture.setSource(0, wrong_size), std::invalid_argument);
+    EXPECT_THROW(texture.setSource(0, wrong_mips), std::invalid_argument);
+    EXPECT_FALSE(texture.hasSource(0)) << "a rejected source must not be stored";
+
+    texture.setSource(0, sourceImage(texture, 2));
+    EXPECT_TRUE(texture.hasSource(0));
+    EXPECT_TRUE(texture.complete());
+}
+
+TEST(TextureTest, RejectsAnImpossibleDescription)
+{
+    EXPECT_THROW(Texture(Texture::Shape::D2, 0, 4, PixelFormat::Rgba8Unorm), std::invalid_argument);
+    EXPECT_THROW(Texture(Texture::Shape::D2, 4, 0, PixelFormat::Rgba8Unorm), std::invalid_argument);
+    EXPECT_THROW(Texture(Texture::Shape::Cube, 4, 4, PixelFormat::Unknown), std::invalid_argument);
+
+    // 4x4 holds exactly 3 levels, so 0 and 4 are both impossible.
+    EXPECT_THROW(Texture(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm, 0), std::invalid_argument);
+    EXPECT_THROW(Texture(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm, 4), std::invalid_argument);
+
+    EXPECT_NO_THROW(Texture(Texture::Shape::Cube, 4, 4, PixelFormat::Rgba8Unorm, 3));
+}
+
+TEST(TextureTest, ShapeNamesItselfForDiagnostics)
+{
+    EXPECT_STREQ(Texture::shapeName(Texture::Shape::D2), "D2");
+    EXPECT_STREQ(Texture::shapeName(Texture::Shape::Cube), "Cube");
+    EXPECT_STREQ(Texture::shapeName(static_cast<Texture::Shape>(99)), "Unknown");
+}
+
+TEST(TextureTest, FillingAFaceBumpsTheContentRevision)
+{
+    // A backend caches the uploaded image per texture ADDRESS, so a re-filled texture has to be
+    // distinguishable from an unchanged one or it keeps sampling the old upload — the same failure the
+    // shader program's revision exists to prevent.
+    Texture texture(Texture::Shape::D2, 4, 4, PixelFormat::Rgba8Unorm);
+    EXPECT_EQ(texture.revision(), 0u);
+
+    texture.setSource(0, sourceImage(texture, 1));
+    const std::uint64_t after_fill = texture.revision();
+    EXPECT_GT(after_fill, 0u);
+
+    // Reading is not a mutation.
+    (void)texture.source(0);
+    (void)texture.complete();
+    EXPECT_EQ(texture.revision(), after_fill);
+
+    // Replacing the pixels counts, as does clearing the face.
+    texture.setSource(0, sourceImage(texture, 1));
+    EXPECT_GT(texture.revision(), after_fill);
+
+    const std::uint64_t before_clear = texture.revision();
+    texture.setSource(0, nullptr);
+    EXPECT_GT(texture.revision(), before_clear);
 }
 
 // ============ Geometry ============
@@ -3444,6 +3613,55 @@ TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
     EXPECT_EQ(via_setters.positionCount(), geom->positionCount());
     EXPECT_EQ(via_setters.hasIndices(), geom->hasIndices());
     EXPECT_EQ(via_setters.hasNormals(), geom->hasNormals());
+}
+
+TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
+{
+    // The number is part of the contract only in the sense that it must stay
+    // stable and must not collide with the custom-channel range the backend
+    // forwards; the backend binds the array under vsg_TexCoord0 by name.
+    EXPECT_EQ(Geometry::kTexCoordLocation, 8u);
+
+    Geometry geom;
+    EXPECT_FALSE(geom.hasTexcoords());
+    EXPECT_EQ(geom.texcoordCount(), 0u);
+    const std::uint64_t before = geom.revision();
+
+    geom.setTexcoords({ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 0.0f),
+                        vine::math::Vec2f(0.0f, 1.0f) });
+
+    EXPECT_TRUE(geom.hasTexcoords());
+    EXPECT_EQ(geom.texcoordCount(), 3u);
+    EXPECT_GT(geom.revision(), before) << "a channel write is a data mutation";
+
+    const AttributeBuffer* channel = geom.buffer(Geometry::kTexCoordLocation);
+    ASSERT_NE(channel, nullptr);
+    EXPECT_EQ(channel->components, 2u) << "a UV is two scalars per vertex, not three";
+    EXPECT_EQ(channel->vertexCount(), 3u);
+}
+
+TEST(GeometryTest, ConverterCopiesTexcoordsWhenTheyMatchTheVertexCount)
+{
+    auto mesh = makeUnitTriangle();
+    mesh->setTexcoords({ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 0.0f),
+                         vine::math::Vec2f(0.0f, 1.0f) });
+
+    const auto geom = geometryFromShape(*mesh);
+    ASSERT_NE(geom.get(), nullptr);
+    EXPECT_TRUE(geom->hasTexcoords());
+    EXPECT_EQ(geom->texcoordCount(), 3u);
+}
+
+TEST(GeometryTest, ConverterSkipsTexcoordsThatDoNotMatchTheVertexCount)
+{
+    auto mesh = makeUnitTriangle();
+    // Two UVs for three vertices: a channel that cannot be indexed per vertex
+    // is dropped rather than sampled against the wrong UV.
+    mesh->setTexcoords({ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 1.0f) });
+
+    const auto geom = geometryFromShape(*mesh);
+    ASSERT_NE(geom.get(), nullptr);
+    EXPECT_FALSE(geom->hasTexcoords());
 }
 
 TEST(GeometryTest, OpenAttributeBufferList)

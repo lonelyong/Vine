@@ -705,9 +705,13 @@ warning；`[selftest]` **45 行逐字节相同**；`gfx_lavapipe_check.sh` → `
 **未决（动手前要拍）**：①糖是否要暴露"按名字取 `ImageRef`"的查询 API（今天只有 pass 侧 `setOutputName`/
 `addInputName` 隐藏式解析）；②**一张图的可寻址粒度**什么时候扩到 mip / array / cube 层。
 
-**明确不覆盖（附触发条件）**：**不是任何 pass 产物的图像**（材质贴图、导入图、cube map）今天无法接线，因为
-SDK 里它们**没有身份**（材质贴图 = 一个路径字符串，`Material::textureFile()`）。触发条件 = 出现第一处"pass 要
-采样不是 pass 产物的图"（材质贴图当环境图、相机画面、外部导入）；那时需要先有图像对象，再让 `RenderBackend`
+**明确不覆盖（附触发条件）**：**不是任何 pass 产物的图像**（材质贴图、导入图、cube map）今天仍无法接线，因为
+SDK 里它们**没有接线身份**。
+（2026-09-12 更新：它们现在有**数据身份**了 —— `graphics::Texture`（2D + Cube）+ 基座模块 `imaging::Image`，
+见 `.ai/design/imaging-design.md`；`Material::textureFile()` 那个路径字符串已删除。
+但 `Texture` **仍不进渲染图**：后端还不消费它，`ImageRef` 也没为它提供端点。）
+触发条件 = 出现第一处"pass 要
+采样不是 pass 产物的图"（材质贴图当环境图、相机画面、外部导入）；那时需要让 `RenderBackend`
 的入参从 `RenderTarget* + int` 换成该对象——`ImageRef` 的命名正好为它留了位置。
 
 **诚实边界**：①顺序**不能**在接线期一定判出（消费者可能先注册、order 也可能后改），所以 §14.4 那条校验的

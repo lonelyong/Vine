@@ -56,14 +56,14 @@ void Material::setShininess(float shine)
     shininess_ = shine;
 }
 
-String Material::textureFile() const
+raw_ptr<Texture> Material::texture() const
 {
-    return texture_file_;
+    return texture_.get();
 }
 
-void Material::setTextureFile(const String& path)
+void Material::setTexture(intrusive_ptr<Texture> texture)
 {
-    texture_file_ = path;
+    texture_ = texture;
 }
 
 V_GRAPHICS_NS_END

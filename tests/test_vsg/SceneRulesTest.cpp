@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -14,6 +15,8 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
+#include <vine/graphics/Texture.hpp>
+#include <vine/imaging/Image.hpp>
 #include <vine/vsg/RenderStateMapper.hpp>
 #include <vine/vsg/VsgSceneRules.hpp>
 
@@ -88,10 +91,10 @@ AttributeBuffer packed(std::uint32_t components, std::vector<float> values)
     return set;
 }
 
-/** @brief The variant key of @p state with no program / material and a built-in layout. */
+/** @brief The variant key of @p state with no program / material / texture resource and a built-in layout. */
 std::uint64_t variantHash(const ResolvedRenderState& state, std::uint64_t layout = kLayoutSeed)
 {
-    return hashStateVariant(nullptr, nullptr, state, layout);
+    return hashStateVariant(nullptr, nullptr, nullptr, state, layout);
 }
 
 } // namespace
@@ -646,4 +649,156 @@ TEST(SceneRulesTest, MakeTypedVertexDataCopiesEveryComponentInOrder)
     const auto none = makeTypedVertexData(3u, {}, 0u);
     ASSERT_NE(none, nullptr);
     EXPECT_EQ(none->valueCount(), 0u);
+}
+
+TEST(VsgSceneRulesTest, MapsEveryPixelLayoutToItsVulkanFormat)
+{
+    using vine::imaging::PixelFormat;
+    using vine::vsg::detail::vkFormatFor;
+
+    EXPECT_EQ(vkFormatFor(PixelFormat::R8Unorm), VK_FORMAT_R8_UNORM);
+    EXPECT_EQ(vkFormatFor(PixelFormat::R8Srgb), VK_FORMAT_R8_SRGB);
+    EXPECT_EQ(vkFormatFor(PixelFormat::Rg8Unorm), VK_FORMAT_R8G8_UNORM);
+    EXPECT_EQ(vkFormatFor(PixelFormat::Rgba8Unorm), VK_FORMAT_R8G8B8A8_UNORM);
+    EXPECT_EQ(vkFormatFor(PixelFormat::Rgba8Srgb), VK_FORMAT_R8G8B8A8_SRGB);
+    EXPECT_EQ(vkFormatFor(PixelFormat::Bgra8Unorm), VK_FORMAT_B8G8R8A8_UNORM);
+    EXPECT_EQ(vkFormatFor(PixelFormat::Bgra8Srgb), VK_FORMAT_B8G8R8A8_SRGB);
+    EXPECT_EQ(vkFormatFor(PixelFormat::R16Float), VK_FORMAT_R16_SFLOAT);
+    EXPECT_EQ(vkFormatFor(PixelFormat::Rg16Float), VK_FORMAT_R16G16_SFLOAT);
+    EXPECT_EQ(vkFormatFor(PixelFormat::Rgba16Float), VK_FORMAT_R16G16B16A16_SFLOAT);
+    EXPECT_EQ(vkFormatFor(PixelFormat::R32Float), VK_FORMAT_R32_SFLOAT);
+    EXPECT_EQ(vkFormatFor(PixelFormat::Rg32Float), VK_FORMAT_R32G32_SFLOAT);
+    EXPECT_EQ(vkFormatFor(PixelFormat::Rgba32Float), VK_FORMAT_R32G32B32A32_SFLOAT);
+    EXPECT_EQ(vkFormatFor(PixelFormat::D16Unorm), VK_FORMAT_D16_UNORM);
+    EXPECT_EQ(vkFormatFor(PixelFormat::D24UnormS8Uint), VK_FORMAT_D24_UNORM_S8_UINT);
+    EXPECT_EQ(vkFormatFor(PixelFormat::D32Float), VK_FORMAT_D32_SFLOAT);
+}
+
+TEST(VsgSceneRulesTest, AThreeChannelLayoutHasNoVulkanFormat)
+{
+    using vine::imaging::PixelFormat;
+    using vine::vsg::detail::vkFormatFor;
+
+    // Vulkan has no 24-bit format at all. The rule reports "no such format" rather than quietly picking
+    // a 4-channel one, because widening the pixels is the caller's decision, not the mapping's.
+    EXPECT_EQ(vkFormatFor(PixelFormat::Rgb8Unorm), VK_FORMAT_UNDEFINED);
+    EXPECT_EQ(vkFormatFor(PixelFormat::Rgb8Srgb), VK_FORMAT_UNDEFINED);
+}
+
+TEST(VsgSceneRulesTest, AnUnknownPixelLayoutHasNoVulkanFormat)
+{
+    using vine::imaging::PixelFormat;
+    using vine::vsg::detail::vkFormatFor;
+
+    EXPECT_EQ(vkFormatFor(PixelFormat::Unknown), VK_FORMAT_UNDEFINED);
+    EXPECT_EQ(vkFormatFor(static_cast<PixelFormat>(200)), VK_FORMAT_UNDEFINED);
+}
+
+TEST(VsgSceneRulesTest, EveryMappedLayoutGetsItsOwnVulkanFormat)
+{
+    using vine::imaging::PixelFormat;
+    using vine::vsg::detail::vkFormatFor;
+
+    // A duplicated mapping is the copy-paste mistake this table is prone to, and it would sample a
+    // texture as the wrong layout with no validation error at all.
+    const PixelFormat layouts[] = {
+        PixelFormat::R8Unorm,     PixelFormat::R8Srgb,        PixelFormat::Rg8Unorm,
+        PixelFormat::Rgba8Unorm,  PixelFormat::Rgba8Srgb,     PixelFormat::Bgra8Unorm,
+        PixelFormat::Bgra8Srgb,   PixelFormat::R16Float,      PixelFormat::Rg16Float,
+        PixelFormat::Rgba16Float, PixelFormat::R32Float,      PixelFormat::Rg32Float,
+        PixelFormat::Rgba32Float, PixelFormat::D16Unorm,      PixelFormat::D24UnormS8Uint,
+        PixelFormat::D32Float,
+    };
+
+    std::vector<VkFormat> seen;
+    for (const PixelFormat layout : layouts) {
+        const VkFormat format = vkFormatFor(layout);
+        ASSERT_NE(format, VK_FORMAT_UNDEFINED) << vine::imaging::formatName(layout);
+        EXPECT_EQ(std::find(seen.begin(), seen.end(), format), seen.end())
+            << vine::imaging::formatName(layout) << " reuses another layout's Vulkan format";
+        seen.push_back(format);
+    }
+}
+
+namespace
+{
+
+/// Builds a texture of the given description with `faces` of its faces filled.
+vine::intrusive_ptr<vine::graphics::Texture> filledTexture(vine::graphics::Texture::Shape shape,
+                                                           vine::imaging::PixelFormat format,
+                                                           int faces)
+{
+    auto texture = vine::intrusive_ptr<vine::graphics::Texture>(
+        new vine::graphics::Texture(shape, 4, 4, format));
+    for (int face = 0; face < faces; ++face) {
+        texture->setSource(face, vine::intrusive_ptr<const vine::imaging::Image>(
+                                     new vine::imaging::Image(4, 4, format)));
+    }
+    return texture;
+}
+
+} // namespace
+
+TEST(VsgSceneRulesTest, ClassifiesWhetherATextureCanBeUploaded)
+{
+    using vine::vsg::detail::classifyTexture;
+    using vine::vsg::detail::TextureReject;
+
+    EXPECT_EQ(classifyTexture(nullptr), TextureReject::Absent);
+
+    // A description with no source yet is a texture still being filled, not a broken one.
+    auto unfilled = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgba8Unorm, 0);
+    EXPECT_EQ(classifyTexture(unfilled.get()), TextureReject::Incomplete);
+
+    auto filled = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgba8Unorm, 1);
+    EXPECT_EQ(classifyTexture(filled.get()), TextureReject::Ok);
+}
+
+TEST(VsgSceneRulesTest, AShapeTheBackendDoesNotUploadYetOutranksTheFormat)
+{
+    using vine::vsg::detail::classifyTexture;
+    using vine::vsg::detail::TextureReject;
+
+    // Cube is checked before the pixel layout, because a caller that asked for a cube needs to be told
+    // about the SHAPE — a format report would send them looking at the wrong thing.
+    auto cube = filledTexture(vine::graphics::Texture::Shape::Cube, vine::imaging::PixelFormat::Rgba8Unorm, 6);
+    EXPECT_EQ(classifyTexture(cube.get()), TextureReject::NotTwoDimensional);
+}
+
+TEST(VsgSceneRulesTest, AThreeChannelTextureIsRefusedForHavingNoVulkanFormat)
+{
+    using vine::vsg::detail::classifyTexture;
+    using vine::vsg::detail::TextureReject;
+
+    auto three_channel = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgb8Unorm, 1);
+    EXPECT_EQ(classifyTexture(three_channel.get()), TextureReject::UnsupportedFormat);
+}
+
+TEST(VsgSceneRulesTest, EachRefusalSaysWhichCaseFired)
+{
+    using vine::vsg::detail::textureRejectMessage;
+    using vine::vsg::detail::TextureReject;
+
+    auto unfilled = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgba8Unorm, 0);
+    auto cube = filledTexture(vine::graphics::Texture::Shape::Cube, vine::imaging::PixelFormat::Rgba8Unorm, 6);
+    auto three_channel = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgb8Unorm, 1);
+
+    const auto incomplete = textureRejectMessage(TextureReject::Incomplete, *unfilled);
+    const auto shape = textureRejectMessage(TextureReject::NotTwoDimensional, *cube);
+    const auto format = textureRejectMessage(TextureReject::UnsupportedFormat, *three_channel);
+
+    EXPECT_FALSE(incomplete.empty());
+    EXPECT_FALSE(shape.empty());
+    EXPECT_FALSE(format.empty());
+
+    // One format string per branch: a shared message would leave a caller unable to tell an unfinished
+    // texture from one the backend cannot represent at all.
+    EXPECT_NE(incomplete, shape);
+    EXPECT_NE(shape, format);
+    EXPECT_NE(incomplete, format);
+
+    // Neither is a diagnostic: absence is the ordinary "this material has no texture", and Ok is never
+    // reported at all.
+    EXPECT_TRUE(textureRejectMessage(TextureReject::Absent, *unfilled).empty());
+    EXPECT_TRUE(textureRejectMessage(TextureReject::Ok, *unfilled).empty());
 }

@@ -138,9 +138,11 @@ vsg::vec4Array* findColorArray(vsg::Node* node)
         return nullptr;
     }
     if (auto bvb = node->cast<vsg::BindVertexBuffers>()) {
-        if (bvb->arrays.size() > 2u && bvb->arrays[2] != nullptr &&
-            bvb->arrays[2]->data != nullptr) {
-            return bvb->arrays[2]->data->cast<vsg::vec4Array>();
+        // The colour array sits at the canonical binding index 3, after
+        // vertex (0), normal (1) and texcoord (2) — see buildGeometryData.
+        if (bvb->arrays.size() > 3u && bvb->arrays[3] != nullptr &&
+            bvb->arrays[3]->data != nullptr) {
+            return bvb->arrays[3]->data->cast<vsg::vec4Array>();
         }
         return nullptr;
     }

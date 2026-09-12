@@ -31,7 +31,8 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  * scalar floats, `components` of them per vertex. The float data is held by
  * shared_ptr so several Geometry objects can share one buffer without copying
  * and backends can cache/upload GPU buffers keyed by buffer identity.
- * Convention: location 0 holds positions; location 1 may hold normals. Use
+ * Convention: location 0 holds positions; location 1 may hold normals;
+ * location 8 holds texture coordinates (see Geometry::kTexCoordLocation). Use
  * Geometry::addBuffer() to attach channels.
  *
  * The component count IS the stride of the packed data: every consumer must
@@ -162,6 +163,22 @@ class V_GRAPHICS_API Geometry : public Node {
     /** @brief Gets the number of normals (location 1). */
     std::size_t normalCount() const;
 
+    /** @brief Sets the texture coordinates (location kTexCoordLocation) from a Vec2 array.
+     *
+     * Optional: a geometry without UVs still renders, but a material carrying a
+     * texture has nothing to sample it with.
+     *
+     * @param texcoords Vertex texture coordinates (two floats each), one per
+     *                  position.
+     */
+    void setTexcoords(const vine::geometry::Vec2fArray& texcoords);
+
+    /** @brief Returns whether texture coordinates (location kTexCoordLocation) are present. */
+    bool hasTexcoords() const;
+
+    /** @brief Gets the number of texture coordinates (location kTexCoordLocation). */
+    std::size_t texcoordCount() const;
+
     /** @brief Sets the optional index buffer from a shared buffer.
      *
      * @param indices Shared index buffer to attach, or null to clear.
@@ -234,6 +251,24 @@ class V_GRAPHICS_API Geometry : public Node {
      */
     Aabbd boundingBox() const override;
 
+  public:
+    /** @brief The vertex attribute location that carries texture coordinates.
+     *
+     * Two scalar components per vertex (`R32G32_SFLOAT`).
+     *
+     * This is VINE's own convention, not vsg's: the backend reads the UVs from
+     * here and binds the array under the name vsg's Phong shader advertises
+     * (`vsg_TexCoord0`), which the shader itself declares at its own location —
+     * so the number chosen here is free and only has to stay stable.
+     * 8 (rather than 2, where vsg's shader happens to declare it) keeps the low
+     * locations in one block and leaves room for a future texcoord set 1..3.
+     *
+     * Locations 0 and 1 stay positions and normals (see AttributeBuffer), and
+     * the backend forwards custom channels as `vine_Attribute{location}` from
+     * location 3 upward — so a custom channel must NOT use 8.
+     */
+    static constexpr std::uint32_t kTexCoordLocation = 8u;
+
   private:
     std::map<std::uint32_t, AttributeBuffer> attributes_;
     std::shared_ptr<vine::geometry::UInt32Array> indices_;
@@ -247,19 +282,19 @@ using GeometryPtr = intrusive_ptr<Geometry>;
 /**
  * @brief Builds a buffer-only Geometry from a triangle-mesh Shape.
  *
- * Copies the shape's positions (and normals when present) into the geometry;
- * indexed meshes also copy their index buffer. Shapes that are not triangle
- * meshes (primitives, BRep, ...) are not convertible and yield null. This is
- * the bridge that lets Shape live purely in the geometry module while
- * Geometry stays vertex-data only.
+ * Copies the shape's positions (and normals and texture coordinates when
+ * present) into the geometry; indexed meshes also copy their index buffer.
+ * Shapes that are not triangle meshes (primitives, BRep, ...) are not
+ * convertible and yield null. This is the bridge that lets Shape live purely
+ * in the geometry module while Geometry stays vertex-data only.
  *
  * This is the only Shape -> Geometry conversion: Geometry has no setShape()
  * member, because a setter named after a property it never retains is
  * misleading, and silently emptying an existing geometry when handed a shape
  * it cannot convert (a Sphere, a BRep, ...) loses data with no way to report
  * it. To (re)fill an existing geometry, use the per-channel setters —
- * setPositions() / setNormals() / setIndices() — which leave custom attribute
- * channels alone.
+ * setPositions() / setNormals() / setTexcoords() / setIndices() — which leave
+ * custom attribute channels alone.
  *
  * @param shape Mesh shape to convert.
  * @return Filled geometry, or null for unsupported shapes.

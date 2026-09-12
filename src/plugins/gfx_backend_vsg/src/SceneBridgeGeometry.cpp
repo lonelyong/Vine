@@ -30,6 +30,7 @@ using detail::makeIndexedNormals;
 using detail::makeNormals;
 using detail::makeTypedVertexData;
 using detail::makeWhiteColors;
+using detail::makeZeroTexcoords;
 using detail::unpackXyz;
 using detail::XyzUnpack;
 
@@ -193,22 +194,63 @@ using detail::XyzUnpack;
     else {
         out_colors = ::vsg::ref_ptr<::vsg::vec4Array>();
     }
-    // The bound vertex data follows the shader set's attribute-binding order
-    // (vertex, normal, colour) starting at binding 0, followed by every
-    // well-formed custom channel (location >= 3) the geometry carries, in
-    // ascending location order. The data node is program-independent: it binds
-    // this superset so switching a geometry between the built-in pipeline and
-    // a custom program that reads the extra channels never re-uploads the
-    // mesh (only the state wrapper is rebuilt). A malformed custom channel
-    // (bad component count, non-divisible or count-mismatched payload) is
-    // reported and skipped — it must not misread or reject the mesh.
+    // Texture coordinates: two components per vertex, the shape vsg's Phong
+    // shader reads vsg_TexCoord0 as (the channel itself lives at the module's
+    // canonical source location, see Geometry::kTexCoordLocation). The array is
+    // ALWAYS emitted — like normals and colours — so the vertex binding order is
+    // fixed and the custom channels below keep their indices whether or not this
+    // mesh has UVs. A mesh without a UV channel binds zeros, which is what "no
+    // UVs" means: every fragment samples the same texel.
+    const auto pack_texcoords = [](const vine::graphics::AttributeBuffer& attr,
+                                   std::size_t vertex_count) -> ::vsg::ref_ptr<::vsg::vec2Array> {
+        const auto  comps = attr.components;
+        const auto& data  = *attr.data;
+        if (comps != 2u || data.size() != vertex_count * 2u) {
+            return {};
+        }
+        auto out = ::vsg::vec2Array::create(static_cast<uint32_t>(vertex_count));
+        for (std::size_t v = 0; v < vertex_count; ++v) {
+            (*out)[v] = ::vsg::vec2(data[v * 2u], data[v * 2u + 1u]);
+        }
+        return out;
+    };
+    ::vsg::ref_ptr<::vsg::vec2Array> texcoords;
+    if (const auto* uv_channel = geometry->buffer(vine::graphics::Geometry::kTexCoordLocation);
+        uv_channel != nullptr && !uv_channel->empty()) {
+        texcoords = pack_texcoords(*uv_channel, vertex_count);
+        if (texcoords == nullptr) {
+            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
+                   u8"texture coordinate channel is unusable (exactly 2 components, "
+                   u8"one per vertex required); zero UVs are used instead");
+        }
+    }
+    if (texcoords == nullptr) {
+        texcoords = makeZeroTexcoords(vertices->size());
+    }
+    // The bound vertex data follows the module's CANONICAL vertex binding order:
+    //
+    //   0 = vsg_Vertex   1 = vsg_Normal   2 = vsg_TexCoord0   3 = vsg_Color   4+ = custom
+    //
+    // vsg numbers a vertex input binding by the order assignArray() succeeds (it
+    // pushes the array and advances its binding counter), and a ShaderSet that
+    // does not declare a name SKIPS it — so a gap in the prefix would shift every
+    // later binding and quietly feed one attribute the next one's data. Both
+    // shader sets therefore declare the whole prefix in this order, and this list
+    // matches it exactly. The tail is the superset of custom channels (location
+    // >= 3, except the canonical texcoord location) in ascending location order:
+    // a ShaderSet that does not declare them simply ignores the extra buffers, so
+    // switching a geometry between the built-in pipeline and a custom program
+    // never re-uploads the mesh (only the state wrapper is rebuilt). A malformed
+    // custom channel (bad component count, non-divisible or count-mismatched
+    // payload) is reported and skipped — it must not misread or reject the mesh.
     ::vsg::DataList arrays;
     arrays.emplace_back(vertices);
     arrays.emplace_back(normals);
+    arrays.emplace_back(texcoords);
     arrays.emplace_back(colors);
     for (const std::uint32_t location : geometry->bufferLocations()) {
-        if (location <= 2u) {
-            continue; // canonical position / normal / colour handled above
+        if (location <= 2u || location == vine::graphics::Geometry::kTexCoordLocation) {
+            continue; // canonical position / normal / colour / texcoord handled above
         }
         const auto* attr = geometry->buffer(location);
         if (attr == nullptr || attr->empty()) {

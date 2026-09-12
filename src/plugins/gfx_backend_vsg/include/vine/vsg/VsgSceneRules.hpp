@@ -41,6 +41,8 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
+#include <vine/graphics/Texture.hpp>
+#include <vine/imaging/PixelFormat.hpp>
 
 #include <vine/vsg/RenderStateMapper.hpp>
 
@@ -177,6 +179,74 @@ inline constexpr bool normalIsUsable(float length_sq) noexcept
  * @return White colour array (one vec4 per vertex).
  */
 ::vsg::ref_ptr<::vsg::vec4Array> makeWhiteColors(std::size_t count);
+
+/**
+ * @brief Builds a zero-filled texture-coordinate array.
+ *
+ * A geometry with no UV channel still binds SOMETHING to the texcoord
+ * attribute, because the vertex binding order is fixed (so the custom channels
+ * keep their indices whether or not a mesh has UVs). (0,0) is what "no UVs"
+ * means: every fragment samples the same texel.
+ *
+ * @param count Number of vertices.
+ * @return A vec2 array of @p count zeroes.
+ */
+::vsg::ref_ptr<::vsg::vec2Array> makeZeroTexcoords(std::size_t count);
+
+/**
+ * @brief Maps a pixel layout to the Vulkan format a texture of it uses.
+ *
+ * Kept here rather than inline in the upload path so the mapping is a rule a
+ * test can check without a device — a wrong format does not fail validation, it
+ * silently samples garbage.
+ *
+ * `Rgb8Unorm` / `Rgb8Srgb` map to VK_FORMAT_UNDEFINED because Vulkan has no
+ * 24-bit format at all: whether to widen such an image to RGBA or to refuse it
+ * belongs to whoever built the texture, so the rule reports "no such format"
+ * and lets the caller say why.
+ *
+ * @param format Pixel layout to map.
+ * @return The matching Vulkan format, or VK_FORMAT_UNDEFINED when there is none.
+ */
+VkFormat vkFormatFor(vine::imaging::PixelFormat format) noexcept;
+
+/**
+ * @brief Why a texture cannot become a backend resource.
+ *
+ * The uppercase-free spelling is deliberate: these are the cases a caller reports, and a single enum
+ * keeps the decision (which case applies) apart from the reporting (what to say), so the decision is
+ * testable without a device.
+ */
+enum class TextureReject
+{
+    Ok,                 ///< Usable: every face is filled and the format has a Vulkan counterpart.
+    Absent,             ///< No texture at all (a material without one).
+    Incomplete,         ///< Not every face has been filled yet.
+    NotTwoDimensional,  ///< A shape this backend does not upload yet (a cube map).
+    UnsupportedFormat,  ///< The pixel layout has no Vulkan format (a three-channel layout).
+};
+
+/**
+ * @brief Classifies a texture against what the backend can upload today.
+ *
+ * The order of the checks is the order a caller can act on them: absence is the normal case, an
+ * incomplete texture is still being filled, a shape or format is a decision the caller made.
+ *
+ * @param texture Texture to classify (may be null).
+ * @return Why the texture cannot be uploaded, or TextureReject::Ok.
+ */
+TextureReject classifyTexture(const vine::graphics::Texture* texture) noexcept;
+
+/**
+ * @brief Reasons a texture was refused, for a diagnostic.
+ *
+ * One format string per case, so a report names the one that actually fired.
+ *
+ * @param reason  Why the texture was refused (never TextureReject::Ok).
+ * @param texture The texture that was refused.
+ * @return A human-readable reason.
+ */
+vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Texture& texture);
 
 /**
  * @brief Builds the per-vertex normal array of a non-indexed mesh.
@@ -339,13 +409,23 @@ template <class ChannelRange> std::uint64_t vertexLayoutHash(const ChannelRange&
  * variant template. Collisions with a different variant are safe: they only
  * displace a template entry, which rebuilds on its next use.
  *
+ * The BOUND TEXTURE's resolved backend resource is part of the identity too:
+ * two materials can share one Phong value and still sample different images,
+ * and without it the second would be served the first one's descriptor bind —
+ * the same silent wrong-image failure the material and program keys exist to
+ * prevent. It is passed as an opaque identity (the cache's resolved resource),
+ * never dereferenced here.
+ *
  * @param program  User shader program (null = built-in default).
  * @param material Bound material (may be null).
+ * @param texture_resource Identity of the backend resource @p material's texture resolved to, or null
+ *                 when it resolved to the shared white fallback.
  * @param state    Resolved render state the pipeline honours.
  * @param layout   Hash of the geometry's forwarded custom channels (see vertexLayoutHash).
  * @return The content hash used as the variant cache key.
  */
 std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program, const vine::graphics::Material* material,
+                               const void* texture_resource,
                                const vine::graphics::ResolvedRenderState& state, std::uint64_t layout);
 
 /**

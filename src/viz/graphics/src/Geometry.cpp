@@ -71,7 +71,24 @@ AttributeBuffer packVec3(const vine::geometry::Vec3fArray& src)
     }
     return out;
 }
-}  // namespace
+/**
+ * @brief Packs a Vec2 array into an attribute buffer.
+ *
+ * @param src Typed vertex array.
+ * @return Packed attribute buffer (components = 2).
+ */
+AttributeBuffer packVec2(const vine::geometry::Vec2fArray& src)
+{
+    AttributeBuffer out;
+    out.components = 2;
+    out.data       = std::make_shared<std::vector<float>>();
+    out.data->reserve(src.size() * 2u);
+    for (const auto& v : src) {
+        out.data->push_back(v.x);
+        out.data->push_back(v.y);
+    }
+    return out;
+}}  // namespace
 
 void Geometry::addBuffer(std::uint32_t location, const AttributeBuffer& buffer)
 {
@@ -142,6 +159,22 @@ std::size_t Geometry::normalCount() const
 {
     const AttributeBuffer* normals = buffer(1);
     return normals != nullptr ? normals->vertexCount() : 0u;
+}
+
+void Geometry::setTexcoords(const vine::geometry::Vec2fArray& texcoords)
+{
+    addBuffer(kTexCoordLocation, packVec2(texcoords));
+}
+
+bool Geometry::hasTexcoords() const
+{
+    return hasBuffer(kTexCoordLocation);
+}
+
+std::size_t Geometry::texcoordCount() const
+{
+    const AttributeBuffer* texcoords = buffer(kTexCoordLocation);
+    return texcoords != nullptr ? texcoords->vertexCount() : 0u;
 }
 
 void Geometry::setIndices(std::shared_ptr<vine::geometry::UInt32Array> indices)
@@ -245,6 +278,10 @@ GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
     const auto& normals = mesh->normals();
     if (normals.size() == positions.size()) {
         geometry->setNormals(normals);
+    }
+    const auto& texcoords = mesh->texcoords();
+    if (texcoords.size() == positions.size()) {
+        geometry->setTexcoords(texcoords);
     }
     if (const auto* indexed =
             dynamic_cast<const vine::geometry::IndexedTriangleMesh*>(&shape)) {

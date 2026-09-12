@@ -370,7 +370,7 @@ sequenceDiagram
 
 | 面 | 限制 |
 |---|---|
-| 纹理/uv | `Material::texture_file_`、`diffuseMap`、`vsg_TexCoord0..3` 均**未接线** |
+| 纹理/uv | `Material::texture()` 已是一个 `graphics::Texture` **对象**（不再是路径字符串），但后端仍**未接线**：face / mip 链不上传、不建 sampler、不进描述符集；`diffuseMap`、`vsg_TexCoord0..3` 同样未接线 |
 | 用户自定义通道 | loc≥2 的数据后端不消费；program 路径也不喂（需 §7 两步接线） |
 | 顶点色 | 用户 loc6 会被 `SceneBridge` 白色覆盖（只认自己生成的 colors + opacity） |
 | 线/点 | 无 `LINE_STRIP`；`lineWidth>1` 需 `wideLines` 特性（未开）；无法调线宽/点大小 |

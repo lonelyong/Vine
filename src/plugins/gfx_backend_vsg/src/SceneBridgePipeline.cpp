@@ -176,11 +176,22 @@ namespace
     auto shader_set = ::vsg::ShaderSet::create(stages);
     shader_set->addAttributeBinding("vsg_Vertex", "", 0, VK_FORMAT_R32G32B32_SFLOAT,
                                     ::vsg::vec3Array::create(1));
-    // Normal / colour follow the canonical locations (1 / 2) so a user
-    // program can shade with per-vertex normals / colours; the SceneBridge
-    // program path feeds these arrays and the material descriptor below.
+    // Normal / texcoord / colour carry the same SHADER LOCATIONS our built-in
+    // contract uses (0 / 1 / 8 / 2). 8 is the module's reserved texcoord slot:
+    // it is deliberately not vsg's own number (vsg's Phong set declares
+    // vsg_TexCoord0 at 2 and vsg_Color at 6), because a forwarded custom channel
+    // reuses its SOURCE location as its shader location, so adopting vsg's
+    // crowded 2..11 range would let a custom channel collide with a canonical
+    // one (a custom channel at 6 would clash with vsg_Color).
+    //
+    // What the two sets MUST agree on is the BINDING ORDER, not the locations:
+    // vsg numbers a vertex input binding by the order assignArray() succeeds, so
+    // a name either set does not declare would be skipped and shift every later
+    // binding (see the canonical order in buildGeometryData).
     shader_set->addAttributeBinding("vsg_Normal", "", 1, VK_FORMAT_R32G32B32_SFLOAT,
                                     ::vsg::vec3Array::create(1));
+    shader_set->addAttributeBinding("vsg_TexCoord0", "", 8, VK_FORMAT_R32G32_SFLOAT,
+                                    ::vsg::vec2Array::create(1));
     shader_set->addAttributeBinding("vsg_Color", "", 2, VK_FORMAT_R32G32B32A32_SFLOAT,
                                     ::vsg::vec4Array::create(1));
     // Custom vertex channels: one vine_Attribute{location} binding per
@@ -309,6 +320,7 @@ namespace
 ::vsg::ref_ptr<::vsg::StateGroup> SceneBridge::buildStateGroup(
     ::vsg::ref_ptr<::vsg::Node> data,
     vine::raw_ptr<vine::graphics::Material> material,
+    vine::raw_ptr<const vine::graphics::Texture> texture,
     const vine::graphics::ResolvedRenderState& state,
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
     const std::vector<VertexChannel>& extra_channels)
@@ -336,11 +348,25 @@ namespace
     // set must never reuse another geometry's template.
     const std::uint64_t layout = vertexLayoutHash(extra_channels);
 
+    // The material's texture resolves BEFORE the variant key is computed, because what the descriptor
+    // will bind is the RESOLVED resource, not the texture object: two materials can share one Phong value
+    // and still sample different images, and a re-filled texture resolves to a different resource. Keying
+    // on the texture pointer instead would let a variant outlive the pixels it was built for.
+    detail::TextureReject texture_reason = detail::TextureReject::Absent;
+    auto texture_info = textureCache().getOrCreate(texture, texture_reason);
+    if (texture_reason != detail::TextureReject::Ok && texture_reason != detail::TextureReject::Absent &&
+        texture != nullptr) {
+        // Reported here rather than per frame: this block runs when the variant is BUILT, and a built
+        // variant is reused, so a scene reports each unusable texture once.
+        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+               detail::textureRejectMessage(texture_reason, *texture));
+    }
+
     // L2 variant reuse: an identical (program, material, resolved-state,
     // vertex-layout) variant built earlier contributes its reusable bind
     // commands (the shared pipeline bind + the per-material descriptor bind).
     // Reuse skips the configurator entirely.
-    const auto hash_key   = hashStateVariant(program, material, state, layout);
+    const auto hash_key   = hashStateVariant(program, material, texture_info.get(), state, layout);
     const auto variant_it = variant_cache_.find(hash_key);
     if (variant_it != variant_cache_.end() && variant_it->second.payload() != nullptr &&
         variant_it->second.firstKey() == program &&
@@ -397,15 +423,29 @@ namespace
         };
         assign_array("vsg_Vertex", 0u);
         assign_array("vsg_Normal", 1u);
-        assign_array("vsg_Color", 2u);
+        // The canonical order both shader sets share (see buildGeometryData).
+        // The texcoord array is always present in the data node (zeros when the
+        // mesh has no UVs); on the built-in path vsg's Phong shader advertises
+        // this binding and gates its attribute on a shader define, which
+        // assignArray() activates.
+        assign_array("vsg_TexCoord0", 2u);
+        assign_array("vsg_Color", 3u);
         // Custom channels: bind each forwarded array under its stable
         // vine_Attribute{location} name. Only a ShaderSet that declares the
         // name consumes it (the built-in set does not declare any, so extra
         // arrays are simply unused vertex buffers for the built-in path).
         for (std::size_t i = 0; i < extra_channels.size(); ++i) {
-            assign_array(customAttributeName(extra_channels[i].location), 3u + i);
+            assign_array(customAttributeName(extra_channels[i].location), 4u + i);
         }
         config->assignDescriptor("material", material_value);
+        // The diffuse texture: always bound, because an untextured material resolves to the shared white
+        // fallback — the shader then has ONE path (it always multiplies by a texture) instead of a branch
+        // that would have to be kept in step with this binding.
+        //
+        // Wrapped in an ImageInfoList: assignTexture also has a (textureData, sampler) overload taking a
+        // ref_ptr<Data>, and a bare ImageInfo matches that one instead — which fails to compile with a
+        // pointer-type mismatch rather than doing anything sensible.
+        config->assignTexture("diffuseMap", ::vsg::ImageInfoList{ texture_info });
     }
 
     // Assemble the pipeline from the geometry's effective render state. The

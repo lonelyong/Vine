@@ -3,9 +3,12 @@
 
 #include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
+#include <vine/raw_ptr.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/Colorf.hpp>
 #include <vine/String.hpp>
+
+#include "Texture.hpp"
 
 V_GRAPHICS_NS_BEGIN
 
@@ -67,22 +70,25 @@ class V_GRAPHICS_API Material : public Object, public RefCounted<Material> {
      */
     void setShininess(float shine);
 
-    /** @brief Gets the texture file path (may be empty). */
-    String textureFile() const;
-
-    /** @brief Sets the texture file path.
+    /** @brief Gets the texture this material samples.
      *
-     * @param path Texture file path, or empty to clear.
+     * @return The texture, or null when the material has none.
      */
-    void setTextureFile(const String& path);
+    raw_ptr<Texture> texture() const;
+
+    /** @brief Sets the texture this material samples.
+     *
+     * @param texture The texture to sample, or null to clear it.
+     */
+    void setTexture(intrusive_ptr<Texture> texture);
 
   private:
-    String name_;
-    Colorf diffuse_{ 0.8f, 0.8f, 0.8f, 1.0f };
-    Colorf specular_{ 1.0f, 1.0f, 1.0f, 0.5f };
-    Colorf ambient_{ 0.2f, 0.2f, 0.2f, 1.0f };
-    float shininess_ = 32.0f;
-    String texture_file_;
+    String              name_;
+    Colorf              diffuse_{ 0.8f, 0.8f, 0.8f, 1.0f };
+    Colorf              specular_{ 1.0f, 1.0f, 1.0f, 0.5f };
+    Colorf              ambient_{ 0.2f, 0.2f, 0.2f, 1.0f };
+    float               shininess_ = 32.0f;
+    intrusive_ptr<Texture> texture_;
 };
 
 using MaterialPtr = intrusive_ptr<Material>;
