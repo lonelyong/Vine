@@ -39,6 +39,7 @@ V_VSG_NS_BEGIN
 namespace detail
 {
 struct LightPushBlock;
+struct VineLightsBlock;
 }
 /** @brief What an overlay draw (PiP / fullscreen program) records into.
  *
@@ -122,6 +123,22 @@ void viewRotation(const vine::graphics::Camera* camera, double r[3], double u[3]
  */
 void fillLightPushBlock(const vine::graphics::Camera* camera,
                         const std::vector<const vine::graphics::Light*>& lights, LightPushBlock& block);
+
+/**
+ * @brief Fills the forward path's per-view light block.
+ *
+ * The same packing as fillLightPushBlock's light half (one ambient plus up to
+ * three directionals, world -> view on the CPU), but written into the uniform
+ * block the forward shader reads instead of into the push-constant range the
+ * full-screen path owns: the forward path needs that range for the camera
+ * matrices (see VineLightsBlock).
+ *
+ * @param camera Camera whose view transforms the lights (may be null).
+ * @param lights Scene lights to bake (borrowed).
+ * @param block  Receives the packed block (zeroed first).
+ */
+void fillVineLightsBlock(const vine::graphics::Camera* camera,
+                         const std::vector<const vine::graphics::Light*>& lights, VineLightsBlock& block);
 
 /** @brief Draws a sampled target's colour attachment as a picture-in-picture overlay.
  *

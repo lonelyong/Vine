@@ -159,6 +159,98 @@ void viewRotation(const vine::graphics::Camera* camera, double r[3], double u[3]
     f[2] = fz;
 }
 
+namespace
+{
+
+/**
+ * @brief Packs a light list into view-space ambient + up to three directional slots.
+ *
+ * One implementation for both consumers: the full-screen deferred path encodes
+ * this into its push block (LightPushBlock) and the forward path into its
+ * per-view uniform block (VineLightsBlock). Directions arrive in world space and
+ * leave in view space (rotation only: rows r, u, -f), which is what lets both
+ * shaders light in view space and skip the world matrix entirely.
+ *
+ * An empty (or entirely unusable) light list keeps a small default ambient so a
+ * scene is still visible instead of being multiplied by zero.
+ *
+ * @param camera  Face rotation source (null leaves the block empty).
+ * @param lights  Lights to pack (borrowed; null entries and disabled lights are skipped).
+ * @param ambient Receives rgb + intensity.
+ * @param dirs    Receives up to three view-space directions (xyz, w = 0).
+ * @param cols    Receives rgb + intensity per direction.
+ */
+void collectViewSpaceLights(const vine::graphics::Camera*                    camera,
+                            const std::vector<const vine::graphics::Light*>& lights,
+                            std::array<float, 4>&                            ambient,
+                            std::array<std::array<float, 4>, 3>&             dirs,
+                            std::array<std::array<float, 4>, 3>&             cols)
+{
+    if (camera == nullptr) {
+        return;
+    }
+    double r[3] = {}, u[3] = {}, f[3] = {};
+    viewRotation(camera, r, u, f);
+    int  dirlight    = 0;
+    bool has_ambient = false;
+    for (const auto* light : lights) {
+        if (light == nullptr || !light->isEnabled()) {
+            continue;
+        }
+        const auto c = light->color();
+        switch (light->type()) {
+        case vine::graphics::LightType::Ambient:
+            ambient[0]  = c.r;
+            ambient[1]  = c.g;
+            ambient[2]  = c.b;
+            ambient[3]  = light->intensity();
+            has_ambient = true;
+            break;
+        case vine::graphics::LightType::Directional:
+            if (dirlight >= 3) {
+                break; // the block holds up to three directional lights
+            }
+            {
+                const auto d = light->direction();
+                // world -> view direction (rotation only): rows r, u, -f.
+                double vx = r[0] * d.x + r[1] * d.y + r[2] * d.z;
+                double vy = u[0] * d.x + u[1] * d.y + u[2] * d.z;
+                double vz = -f[0] * d.x - f[1] * d.y - f[2] * d.z;
+                const double vl = std::sqrt(vx * vx + vy * vy + vz * vz);
+                if (vl > 1e-9) {
+                    vx /= vl;
+                    vy /= vl;
+                    vz /= vl;
+                }
+                float* dd = dirs[dirlight].data();
+                float* cc = cols[dirlight].data();
+                dd[0] = static_cast<float>(vx);
+                dd[1] = static_cast<float>(vy);
+                dd[2] = static_cast<float>(vz);
+                dd[3] = 0.0f;
+                cc[0] = c.r;
+                cc[1] = c.g;
+                cc[2] = c.b;
+                cc[3] = light->intensity();
+                ++dirlight;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    if (!has_ambient) {
+        // Keep an unlit pass visible: without any ambient the fragment shader
+        // would multiply the albedo by zero (see the header).
+        ambient[0] = 0.15f;
+        ambient[1] = 0.15f;
+        ambient[2] = 0.15f;
+        ambient[3] = 1.0f;
+    }
+}
+
+}  // namespace
+
 void fillLightPushBlock(const vine::graphics::Camera*                               camera,
                         const std::vector<const vine::graphics::Light*>&            lights,
                         LightPushBlock&                                             block)
@@ -178,65 +270,17 @@ void fillLightPushBlock(const vine::graphics::Camera*                           
         block.projparms[2]  = static_cast<float>(cot / aspect); // proj[0][0]
         block.projparms[3]  = static_cast<float>(cot);          // proj[1][1]
     }
-    double r[3] = {}, u[3] = {}, f[3] = {};
-    viewRotation(camera, r, u, f);
-    int  dirlight    = 0;
-    bool has_ambient = false;
-    for (const auto* light : lights) {
-        if (light == nullptr || !light->isEnabled()) {
-            continue;
-        }
-        const auto c = light->color();
-        switch (light->type()) {
-        case vine::graphics::LightType::Ambient:
-            block.ambient[0] = c.r;
-            block.ambient[1] = c.g;
-            block.ambient[2] = c.b;
-            block.ambient[3] = light->intensity();
-            has_ambient      = true;
-            break;
-        case vine::graphics::LightType::Directional:
-            if (dirlight >= 3) {
-                break; // the push block holds up to three directional lights
-            }
-            {
-                const auto d = light->direction();
-                // world -> view direction (rotation only): rows r, u, -f.
-                double vx = r[0] * d.x + r[1] * d.y + r[2] * d.z;
-                double vy = u[0] * d.x + u[1] * d.y + u[2] * d.z;
-                double vz = -f[0] * d.x - f[1] * d.y - f[2] * d.z;
-                const double vl = std::sqrt(vx * vx + vy * vy + vz * vz);
-                if (vl > 1e-9) {
-                    vx /= vl;
-                    vy /= vl;
-                    vz /= vl;
-                }
-                float* dd = block.dirs[dirlight].data();
-                float* cc = block.cols[dirlight].data();
-                dd[0] = static_cast<float>(vx);
-                dd[1] = static_cast<float>(vy);
-                dd[2] = static_cast<float>(vz);
-                dd[3] = 0.0f;
-                cc[0] = c.r;
-                cc[1] = c.g;
-                cc[2] = c.b;
-                cc[3] = light->intensity();
-                ++dirlight;
-            }
-            break;
-        default:
-            break;
-        }
-    }
-    if (!has_ambient) {
-        // Keep an unlit fullscreen program visible: without any ambient the
-        // fragment shader would multiply the albedo by zero (see the header).
-        block.ambient[0] = 0.15f;
-        block.ambient[1] = 0.15f;
-        block.ambient[2] = 0.15f;
-        block.ambient[3] = 1.0f;
-    }
+    collectViewSpaceLights(camera, lights, block.ambient, block.dirs, block.cols);
 }
+
+void fillVineLightsBlock(const vine::graphics::Camera*                    camera,
+                         const std::vector<const vine::graphics::Light*>&  lights,
+                         VineLightsBlock&                                  block)
+{
+    block = VineLightsBlock{};
+    collectViewSpaceLights(camera, lights, block.ambient, block.dirs, block.cols);
+}
+
 
 VsgOverlayDestination resolveOverlayDestination(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                                                 vine::graphics::RenderTarget* source, const SlotKey& key,

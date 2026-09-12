@@ -59,6 +59,9 @@
 - 自写 binding 命名避免与 vsg view-dependent 名冲突（`vine_*` 前缀）。
 
 ### 4.2 描述符 set 布局
+
+> **已按 §11 落地**：前向路径的 push 范围被矩阵占满（Vulkan 只保证 128 B），所以光走
+> set0/binding2 的 UBO，材质仍在 set0/binding0；下面这段是原始草案，保留作对照。
 ```
 set0  每帧
   b0  FrameUBO    { mat4 viewProj; mat4 view; mat4 proj; vec3 cam_pos; ... }
@@ -108,6 +111,9 @@ mat4  shadow_matrix;   // 仅 castShadow 有效
 
 - **P0 垂直切片**：`buildVineShaderSet` 平替 `buildShaderSet`，只用于主场景几何；
   先复刻当前 phong 光照（ambient+方向光）使画面与现有输出一致（主视图/PiP 对照 A/B）。
+  - **P0.1 shader + set（2026-09-13 已落地，见 §11）**：`vine_forward.*` + ABI + 门禁；默认路径未接线。
+  - **P0.2 接线**：槽级 lights UBO + 描述符集、opt-in 开关、selftest 相位 + lavapipe 端到端像素验证。
+  - **P0.3 转正**：默认走自写 set，去掉 vsg `Light`/VDS 的 content 用法（`view->features` 收敛）。
 - **P1 自写阴影**：绑定我们自己的 depth RT + `shadow_map` 采样，替换 vsg 内建。
 - **P2**：材质 dynamic 化 / 多光 / overlay 迁移（overlay 可暂留 vsg phong 作内部特例）。
 - 每阶段 GraphicsTest 不依赖后端，保持不变；用 lavapipe 截图 A/B + 真机 validation 验证。
@@ -319,4 +325,59 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 > 与 §4 的关系：§4 是 ABI（set / binding / push constant 长什么样），本节是**这些 ABI 的载体**。
 > P0 的 `vine_forward.*` 是第一个走新机制的**新** shader：顶点色用 `VINE_VERTEX_COLOR` 门控，
 > 材质 UBO 从一开始就用 dynamic offset（§4.4）。
+
+## 11. P0 第一步：`vine_forward` + `buildVineShaderSet`（2026-09-13 落地）
+
+§4 的 ABI 草案在实现时撞上一条硬约束，据此定型（**结论写在 §4.2 之前先读本节**）：
+
+| 约束 | 事实（`build/_deps/vsg-src` 核对 + 实测） | 后果 |
+| --- | --- | --- |
+| push constant 总量 | Vulkan 只保证 **128 字节**；vsg 的矩阵栈（`vsg::State::projectionMatrixStack/modelviewMatrixStack`）**已占满** 0..128（`{mat4 projection; mat4 modelView;}`） | 前向路径**没有** push 空间放光。全屏延迟路径能把 112 字节光块塞进 push，正是因为它不需要矩阵 ⇒ **前向的光必须走 UBO** |
+| 顶点绑定号从哪来 | `GraphicsPipelineConfigurator::assignArray` 里 `bindingIndex = baseAttributeBinding + arrays.size()`：**按成功赋值的顺序**编号；名字未声明 ⇒ 跳过、后面全部前移 | ShaderSet 的**属性声明顺序**必须与数据节点的绑定顺序一致（位置 / 法线 / uv / 颜色 / 自定义），**location 可以不同** |
+| define 变体怎么生效 | `assignArray` / `assignTexture` / `enableDescriptor` 在命中带 `define` 的绑定时 `shaderHints->defines.insert(define)` | “喂了数据 = 打开那个 define” ⇒ 不喂作者的顶点色，就自然得到**不含该属性**的变体（不需要白载体） |
+
+### 11.1 落地形态
+
+- 着色器：`src/plugins/gfx_backend_vsg/shaders/vine_forward.{vert,frag}`（走 §10 的文件 + 嵌入机制；
+  `VINE_VERTEX_COLOR` / `VINE_DIFFUSE_MAP` 两个门控）。
+- 组装：`detail::buildVineShaderSet(preset, extent, depth_test, depth_write, color_count)`
+  （`VsgPipelineFactory.cpp`），只对 `StandardPhong` 返回非空 —— 其它 preset 宁可用内建 set，
+  也不要“被当成 phong 静默着色错”。
+- ABI（**取代 §4.2 草案的 set 布局**）：
+
+| 位置 | 内容 | 谁填 |
+| --- | --- | --- |
+| attribute 0 / 1 | `vsg_Vertex` / `vsg_Normal` | SceneBridge 的数据节点 |
+| attribute 2 | `vsg_Color`（define `VINE_VERTEX_COLOR`） | 同上（**作者颜色，调制而非不透明载体**） |
+| attribute 8 | `vsg_TexCoord0`（define `VINE_DIFFUSE_MAP`） | 同上 |
+| set0 / binding0 | `material`（std140，`PhongMaterialValue` 形状） | `VsgMaterialManager`（与内建/延迟路径同一个值） |
+| set0 / binding1 | `diffuseMap`（define `VINE_DIFFUSE_MAP`） | 纹理缓存（含白色回退） |
+| set0 / binding2 | `vine_lights`（`VineLightsBlock`，112 B） | **pass 的槽**，每视图一次 |
+| push 0..128 | `{ mat4 projection; mat4 modelView; }` | vsg 矩阵栈（每 drawable） |
+
+- 光照在**视图空间**做（与延迟路径同一约定），所以前向 shader 不需要 world 矩阵，
+  **每 drawable 的唯一数据仍是 vsg 自动推的 modelView** ⇒ §4.4 的 dynamic UBO 不是 P0 的前置条件。
+- 光的打包复用延迟路径那份实现（`collectViewSpaceLights`，`fillLightPushBlock` /
+  `fillVineLightsBlock` 两个出口）⇒ 两条路径同一套“view-space 光 + 无光时种一个默认环境光”。
+- 管线状态与内建 set **逐项相同**（同一个 `makeScenePipelineStates`），否则“两条路径同 pass 不同画面”。
+
+### 11.2 本步**没有**做的（P0 后续）
+
+| 项 | 说明 |
+| --- | --- |
+| 渲染路径接线 | 现在还没有任何 pass 用这个 set：需要槽级 lights UBO + 描述符集（每视图一份）、`assignDescriptor("vine_lights", …)`、以及一个 opt-in 开关；**默认路径因此零变化**（selftest 证据 47 行逐字节相同） |
+| 端到端像素验证 | 计划：`vsg_backend_selftest` 新增一个“自定义前向”相位（opt-in 开关下跑，断言受光面到达目标 + 角上仍是清屏色），由 lavapipe 脚本调用 |
+| opacity | `outColor.a = material.diffuse.a`（顶点色只调制 rgb）；P10 再决定用材质值 + dynamic offset 表达 |
+| 阴影 / PBR / Flat | 仍走内建映射；§6 的 P1/P2 |
+
+### 11.3 本步门禁
+
+| 门禁 | 覆盖 |
+| --- | --- |
+| `scripts/vine_shader_check.sh` | `vine_forward.*` 已进清单：4 种 define 组合全部过 glslangValidator + 嵌入副本与磁盘逐字节一致（7 个 shader） |
+| `tests/test_vsg/ForwardShaderSetTest.cpp` | 6 条：只给有 stage 的 preset 建 set / 四个属性的 location 与 define / material+diffuseMap+vine_lights 的 set·binding·类型·块大小 / push 范围 / 状态与内建 set 逐项同类 / **两个 stage 的门控必须一致**（否则链接出未定义输入，Vulkan 不报错）/ 两个 stage 真的编出 SPIR-V |
+| `tests/test_vsg/OverlayLightingTest.cpp` | +3 条：`fillVineLightsBlock` 与 push 块的光部分逐字段相同 / 无相机时全零 / 无光时种默认环境光 |
+| mutation | 四条各自咬住目标测试：改一个 stage 的 define 名（门控一致性红）、把 `vine_lights` 从 b2 挪到 b3（ABI 红）、把 depthWrite 写死 false（状态一致性红）、去掉默认环境光种（两条可见性测试红） |
+| 回归 | test_graphics 234、test_vsg 220 → **233**、test_core 82；selftest 证据 47 行逐字节相同（默认路径未接线）；lavapipe 0 VUID |
+
 

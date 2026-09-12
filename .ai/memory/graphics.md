@@ -1,4 +1,12 @@
-﻿> 2026-09-13 **着色器文件化 + 构建期嵌入（P12）**：产品 shader 从 C++ 字符串搬进真文件，构建期嵌进二进制；死文件
+﻿> 2026-09-13 **P0 第一步：自写前向 shader + ShaderSet（`vine_forward.*` + `buildVineShaderSet`）**：§4 的 ABI 草案在实现时撞上硬约束 ——
+> Vulkan 只保证 **128 字节 push**，而 vsg 的矩阵栈已占满 0..128（全屏延迟路径能把 112 B 光块塞 push，正因它不需要矩阵）⇒ 前向的光必须走 **UBO**（set0/binding2，
+> `VineLightsBlock`）。因此每 drawable 的唯一数据仍是 vsg 自动推的 `modelView`，§4.4 的 dynamic UBO 不是前置条件。另两条查证：`assignArray` 的绑定号是
+> `base + arrays.size()`（按成功顺序，未声明就跳过并前移 ⇒ 声明顺序必须与数据节点的绑定顺序一致），而带 `define` 的绑定被赋值时会自动打开那个 define（= “喂了数据就开变体”）。
+> 实现：两个 stage（`VINE_VERTEX_COLOR` / `VINE_DIFFUSE_MAP` 门控）+ `makeScenePipelineStates`（与内建 set 逐项相同）+ `VineLightsBlock`/`fillVineLightsBlock`（与延迟路径共用
+> `collectViewSpaceLights` 一份实现）；**默认路径未接线**（证据 47 行不变）。门禁：`ForwardShaderSetTest` 6 条（含 stage 门控一致性）+ `OverlayLightingTest` +3 条；
+> 四条 mutation（改 define 名 / 挪 `vine_lights` 绑定 / 写死 depthWrite / 去掉默认环境光）各自咬住目标测试。test_vsg 220 → **233**。设计与后续（P0.2 接线）见 §11。
+
+> 2026-09-13 **着色器文件化 + 构建期嵌入（P12）**：产品 shader 从 C++ 字符串搬进真文件，构建期嵌进二进制；死文件
 > `flat.*`（含两个提交进仓库的 `.spv`）删除。清单在**顶层** `cmake/VineShaders.cmake`（生成规则必须在顶层：`tests/test_vsg`
 > 直接编译插件源码，要能依赖同一个生成头文件）→ 机制 `cmake/VineShaderHelper.cmake`（`v_declare_embedded_shaders` /
 > `v_use_embedded_shaders`）→ 生成器 `cmake/v_embed_shaders.cmake`（`cmake -P`，写 `inline constexpr std::u8string_view`

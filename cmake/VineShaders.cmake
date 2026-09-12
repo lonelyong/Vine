@@ -36,4 +36,6 @@ v_declare_embedded_shaders(
     SOURCES
         "${VINE_VSG_SHADER_DIR}/fullscreen.vert"
         "${VINE_VSG_SHADER_DIR}/screen_texture.frag"
+        "${VINE_VSG_SHADER_DIR}/vine_forward.vert"
+        "${VINE_VSG_SHADER_DIR}/vine_forward.frag"
 )

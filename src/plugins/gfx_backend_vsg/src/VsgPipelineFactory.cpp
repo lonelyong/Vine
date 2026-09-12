@@ -74,13 +74,22 @@ V_VSG_NS_BEGIN
 namespace detail
 {
 
-::vsg::ref_ptr<::vsg::ShaderSet> buildShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
+/**
+ * @brief Builds the default pipeline states every scene pipeline shares.
+ *
+ * Split out of buildShaderSet so our own forward shader set (buildVineShaderSet)
+ * gets IDENTICAL depth/raster/blend/input-assembly/multisample/viewport states:
+ * the two sets must be interchangeable per pass, and any difference in the
+ * states would show up as a different picture rather than as an error.
+ *
+ * @param extent      Target extent for the baked static viewport.
+ * @param depth_test  Enable depth test.
+ * @param depth_write Enable depth write.
+ * @param color_count Colour attachment count (0 for a depth-only pass).
+ * @return The default states.
+ */
+::vsg::GraphicsPipelineStates makeScenePipelineStates(const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
 {
-    // Pbr / ShadowedPhong are reserved presets without a backend mapping yet
-    // (Pbr needs its own PbrMaterialValue; shadow comes last in the roadmap),
-    // so they fall back to the Phong shader set for now.
-    ::vsg::ref_ptr<::vsg::ShaderSet> shaderSet =
-        (preset == vine::graphics::ShaderPreset::FlatShaded) ? ::vsg::createFlatShadedShaderSet() : ::vsg::createPhongShaderSet();
     auto raster_state      = ::vsg::RasterizationState::create();
     raster_state->cullMode = VK_CULL_MODE_NONE; // tolerate either winding order
     auto depth_state       = ::vsg::DepthStencilState::create();
@@ -108,7 +117,7 @@ namespace detail
         blend_attachments.push_back(attachment);
     }
     auto blend_state = ::vsg::ColorBlendState::create(blend_attachments);
-    shaderSet->defaultGraphicsPipelineStates = ::vsg::GraphicsPipelineStates{
+    return ::vsg::GraphicsPipelineStates{
         depth_state,
         raster_state,
         blend_state,
@@ -116,7 +125,97 @@ namespace detail
         ::vsg::MultisampleState::create(),
         ::vsg::ViewportState::create(extent),
     };
+}
+
+::vsg::ref_ptr<::vsg::ShaderSet> buildShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
+{
+    // Pbr / ShadowedPhong are reserved presets without a backend mapping yet
+    // (Pbr needs its own PbrMaterialValue; shadow comes last in the roadmap),
+    // so they fall back to the Phong shader set for now.
+    ::vsg::ref_ptr<::vsg::ShaderSet> shaderSet =
+        (preset == vine::graphics::ShaderPreset::FlatShaded) ? ::vsg::createFlatShadedShaderSet() : ::vsg::createPhongShaderSet();
+    shaderSet->defaultGraphicsPipelineStates = makeScenePipelineStates(extent, depth_test, depth_write, color_count);
     return shaderSet;
+}
+
+
+namespace
+{
+
+/**
+ * @brief Compiles the embedded forward stages once per process.
+ *
+ * glslang is the expensive part of building the set, and every pass/depth-mode
+ * variant of it uses the same two stages, so the compiled SPIR-V is shared
+ * (the ShaderSet only adds interface declarations on top).
+ *
+ * @return Compiled stages, or an empty list when unsupported / failed to compile.
+ */
+::vsg::ShaderStages compileForwardStages()
+{
+    auto compiler = ::vsg::ShaderCompiler::create();
+    if (compiler == nullptr || !compiler->supported()) {
+        return ::vsg::ShaderStages();
+    }
+    auto vs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_VERTEX_BIT, "main",
+                                         std::string(asShaderSource(shaders::kVineForwardVert)));
+    auto fs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, "main",
+                                         std::string(asShaderSource(shaders::kVineForwardFrag)));
+    if (!compiler->compile(vs) || !compiler->compile(fs)) {
+        return ::vsg::ShaderStages();
+    }
+    return ::vsg::ShaderStages{ vs, fs };
+}
+
+}  // namespace
+
+::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
+{
+    // One Vine implementation so far: the lit forward path. The other presets
+    // keep the built-in mapping (see buildShaderSet) until they get their own
+    // stages, because a set that shaded them as phong would be silently wrong.
+    if (preset != vine::graphics::ShaderPreset::StandardPhong) {
+        return {};
+    }
+    static const ::vsg::ShaderStages stages = compileForwardStages();
+    if (stages.empty()) {
+        return {};
+    }
+
+    auto shader_set = ::vsg::ShaderSet::create(stages);
+    // Attributes: the canonical four, in the BINDING ORDER the data node binds
+    // them (positions, normals, texcoords, colours), with the custom-program
+    // LOCATIONS (colour 2, texcoord 8) rather than vsg's own numbering.
+    shader_set->addAttributeBinding("vsg_Vertex", "", 0, VK_FORMAT_R32G32B32_SFLOAT,
+                                    ::vsg::vec3Array::create(1));
+    shader_set->addAttributeBinding("vsg_Normal", "", 1, VK_FORMAT_R32G32B32_SFLOAT,
+                                    ::vsg::vec3Array::create(1));
+    // The two optional attributes carry the define that gates them in the GLSL:
+    // assigning an array enables the define (vsg's assignArray does that), which
+    // selects the compiled variant that declares the attribute. Geometry without
+    // an authored colour therefore draws the variant without vsg_Color instead of
+    // being padded with a white carrier.
+    shader_set->addAttributeBinding("vsg_TexCoord0", "VINE_DIFFUSE_MAP", 8, VK_FORMAT_R32G32_SFLOAT,
+                                    ::vsg::vec2Array::create(1));
+    shader_set->addAttributeBinding("vsg_Color", "VINE_VERTEX_COLOR", 2, VK_FORMAT_R32G32B32A32_SFLOAT,
+                                    ::vsg::vec4Array::create(1));
+    // Material: the same vsg::PhongMaterialValue the built-in path binds, which
+    // is why the material manager and the deferred G-buffer stage need no change.
+    shader_set->addDescriptorBinding("material", "", 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT, ::vsg::PhongMaterialValue::create());
+    // Texture: the resolved diffuse map (the material's own, or the cache's white
+    // fallback), gated so geometry without UVs compiles without the sampler.
+    shader_set->addDescriptorBinding("diffuseMap", "VINE_DIFFUSE_MAP", 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT, {});
+    // Per-view lights: a UBO, because the 128-byte push-constant range is
+    // already spoken for by the camera matrices vsg pushes per drawable (see
+    // VineLightsBlock). The host binds this set's own lights buffer here; vsg
+    // assigns nothing to it, which is why it is declared with an empty sample.
+    shader_set->addDescriptorBinding("vine_lights", "", 0, 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT, ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(VineLightsBlock))));
+    shader_set->addPushConstantRange("pc", "", VK_SHADER_STAGE_VERTEX_BIT, 0, 128);
+    shader_set->defaultGraphicsPipelineStates = makeScenePipelineStates(extent, depth_test, depth_write, color_count);
+    return shader_set;
 }
 
 VkFormat toColorFormat(vine::graphics::RenderTarget::ColorFormat f)

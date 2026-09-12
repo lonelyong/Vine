@@ -170,4 +170,11 @@
   · 生成器自带两条构建期守卫（都做过 mutation）：源里有 CR ⇒ `FATAL_ERROR`（CRLF 写回的 shader 会红，恢复后绿）；源里出现 `)VINE_GLSL\"` ⇒ `FATAL_ERROR`。
   · `ShaderStage::source` 是 `vine::String`（内部 `std::u8string`）⇒ `String(kX)`；vsg 侧需要 `std::string` ⇒ `asShaderSource(kX)`（`vine/vsg/VsgUtils.hpp`，GLSL 是 ASCII 的逐字节视图）。
   · 后续（P0，§4/§6）：`vine_forward.*` 是第一个走新机制的**新** shader；设计见 `.ai/design/vsg-custom-shader.md` §4 / §10。
+- **P0.1a 自写前向 shader + ShaderSet（2026-09-13）**：`vine_forward.{vert,frag}` + `detail::buildVineShaderSet`（只对 `StandardPhong` 返回非空）。
+  · **关键约束（决定了 ABI）**：Vulkan 只保证 **128 字节 push**，而 vsg 的矩阵栈已占满 0..128 ⇒ 延迟全屏路径能把 112 字节光块塞 push（它不需要矩阵）而**前向不能**，前向的光必须走 UBO（set0/binding2，`VineLightsBlock` 112 B）。因此**每 drawable 的唯一数据仍是 vsg 自动推的 modelView**，§4.4 的 dynamic UBO 不是前置条件。
+  · **绑定号规则**：`GraphicsPipelineConfigurator::assignArray` 用 `bindingIndex = base + arrays.size()`（按**成功赋值的顺序**），名字未声明就跳过、后面全部前移 ⇒ ShaderSet 的属性**声明顺序**必须与数据节点的绑定顺序一致（位置/法线/uv/颜色/自定义），location 可以不同（我们用自定义契约的 2=色、8=uv）。
+  · **define 变体怎么来**：`assignArray`/`assignTexture` 命中带 `define` 的绑定时会 `shaderHints->defines.insert(define)` ⇒ **喂了数据 = 打开 define**，于是“不喂作者色”自然得到不含该属性的变体（将来替掉白载体靠的就是这条）。
+  · 门禁：`ForwardShaderSetTest` 6 条（含**两个 stage 门控必须一致** —— 不一致就是未定义输入，Vulkan 不报错）+ `OverlayLightingTest` +3 条（与 push 块光部分逐字段相同 / 无相机全零 / 无光种默认环境光）；四条 mutation 各自咬住目标测试。
+  · 口径：本步**不改默认路径**（selftest 证据 47 行逐字节相同、lavapipe 0 VUID）；test_vsg 220 → **233**。
+  · 下一步 P0.2：槽级 lights UBO + 描述符集 + opt-in 开关 + selftest 相位（像素级端到端）。
 

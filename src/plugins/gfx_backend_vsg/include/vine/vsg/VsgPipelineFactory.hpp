@@ -101,6 +101,34 @@ static_assert(sizeof(LightPushBlock) == 128, "LightPushBlock must match the 128-
 static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-aligned");
 
 /**
+ * @brief CPU mirror of the forward shader's per-view light block.
+ *
+ * The FORWARD path needs the camera matrices in push constants (vsg's matrix
+ * stacks own the 128-byte range and fill it per drawable), and the Vulkan
+ * guaranteed push-constant budget is exactly those 128 bytes — so unlike the
+ * full-screen deferred path (which needs no matrices and therefore spends the
+ * whole push range on lights), the forward lights have to live in a UNIFORM
+ * BUFFER. This struct is that block: it is bound once per view (descriptor set
+ * 0, binding 2) and refreshed when the view's lights or camera move.
+ *
+ * Layout matches the GLSL block declared by shaders/vine_forward.frag; the
+ * light VALUES come from the same packing the full-screen path uses
+ * (fillVineLightsBlock).
+ */
+struct alignas(16) VineLightsBlock
+{
+    std::array<float, 4> ambient{};               ///< ambient rgb + intensity
+    std::array<std::array<float, 4>, 3> dirs{};   ///< view-space directions
+    std::array<std::array<float, 4>, 3> cols{};   ///< rgb + intensity
+};
+
+// Same reasoning as LightPushBlock: the struct IS the shader ABI, so a field
+// added here without updating the GLSL (or vice versa) must fail the build.
+
+static_assert(sizeof(VineLightsBlock) == 112, "VineLightsBlock must match the GLSL LightsBlock layout");
+static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-aligned");
+
+/**
  * @brief Builds the shader set for the given shading preset with complete
  * pipeline states.
  *
@@ -128,6 +156,54 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
  * @return Configured shader set.
  */
 ::vsg::ref_ptr<::vsg::ShaderSet> buildShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
+
+/**
+ * @brief Builds our OWN shader set for the given preset (the forward path).
+ *
+ * Replaces the vendored vsg phong set for scene geometry: the stages are the
+ * repository's own GLSL (shaders/vine_forward.vert + .frag, embedded at build
+ * time), compiled once per process and shared by every set this function
+ * returns.
+ *
+ * The declared interface is the whole ABI:
+ *
+ * | where | what | who fills it |
+ * | --- | --- | --- |
+ * | attribute 0 / 1 | `vsg_Vertex` / `vsg_Normal` | SceneBridge's data node |
+ * | attribute 2 | `vsg_Color` (define `VINE_VERTEX_COLOR`) | same |
+ * | attribute 8 | `vsg_TexCoord0` (define `VINE_DIFFUSE_MAP`) | same |
+ * | set 0 / binding 0 | `material` (std140, PhongMaterialValue) | VsgMaterialManager |
+ * | set 0 / binding 1 | `diffuseMap` (define `VINE_DIFFUSE_MAP`) | texture cache |
+ * | set 0 / binding 2 | `vine_lights` (VineLightsBlock) | the pass' slot, per view |
+ * | push constant 0..128 | `{ mat4 projection; mat4 modelView; }` | vsg (matrix stacks) |
+ *
+ * The attribute LOCATIONS are the custom-program contract's (colour 2, texcoord
+ * 8), not vsg's crowded 2..6 range, and the BINDING ORDER (positions, normals,
+ * texcoords, colours, then custom channels) is what it must share with the data
+ * node: vsg numbers a vertex binding by the order assignArray() accepts, so a
+ * name this set does not declare shifts every later binding.
+ *
+ * The optional attributes carry a DEFINE: `assignArray` enables the define when
+ * an array is assigned for the binding, and the define selects which compiled
+ * stage variant the ShaderSet returns (see ShaderSet::getShaderStages). A caller
+ * that supplies no colour therefore gets the variant without the attribute
+ * instead of a white carrier it does not want.
+ *
+ * Lighting is done in VIEW space (the lights block is view-space, like the
+ * deferred path's push block), so the shader never needs the world matrix and
+ * the model matrix stays the only per-drawable data in the pipeline.
+ *
+ * @param preset      Shading preset; only StandardPhong has a Vine
+ *                    implementation so far (null is returned for the others, and
+ *                    the caller keeps the built-in set).
+ * @param extent      Target extent for the baked static viewport.
+ * @param depth_test  When false, depth test/write are disabled (HUD overlays).
+ * @param depth_write Depth write enable for this pass.
+ * @param color_count Colour attachment count (0 for a depth-only pass).
+ * @return The shader set, or null when this preset has no Vine set or the
+ *         stages could not be compiled (no compiler / bad GLSL).
+ */
+::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
 
 /**
  * @brief Builds the colour(+depth) render pass ONE pass records into.

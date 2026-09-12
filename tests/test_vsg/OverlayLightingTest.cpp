@@ -14,8 +14,10 @@ using vine::graphics::Camera;
 using vine::graphics::Light;
 using vine::graphics::LightPtr;
 using vine::vsg::detail::fillLightPushBlock;
+using vine::vsg::detail::fillVineLightsBlock;
 using vine::vsg::detail::LightPushBlock;
 using vine::vsg::detail::viewRotation;
+using vine::vsg::detail::VineLightsBlock;
 
 namespace
 {
@@ -273,3 +275,71 @@ TEST(OverlayLightingTest, OnlyThreeDirectionalLightsAreBaked)
         EXPECT_FLOAT_EQ(block.dirs[i][3], 0.0f);
     }
 }
+
+// ---------------------------------------------------------------------------
+// The forward path's light block: same packing, different destination.
+//
+// The forward shader reads its lights from a UNIFORM BUFFER (set 0, binding 2)
+// instead of the push-constant range, because that range is already spent on the
+// camera matrices vsg pushes per drawable. What must not differ is the CONTENT:
+// a light list baked for the forward path has to match what the deferred path
+// would bake for the same camera and lights, or the two paths would light the
+// same scene differently.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+/** @brief Bakes @p lights for @p camera into a fresh forward block. */
+VineLightsBlock forwardBlockFor(const Camera* camera, const std::vector<const Light*>& lights)
+{
+    VineLightsBlock block;
+    fillVineLightsBlock(camera, lights, block);
+    return block;
+}
+
+} // namespace
+
+TEST(OverlayLightingTest, ForwardBlockIsTheLightHalfOfThePushBlock)
+{
+    Camera camera;
+    makeForwardCamera(camera);
+
+    const auto ambient = Light::createAmbient();
+    ambient->setColor(vine::Colorf(0.2f, 0.3f, 0.4f, 1.0f));
+    ambient->setIntensity(0.5f);
+    const auto                     sun     = Light::createDirectional(vine::math::Vec3d(0.0, 1.0, 0.0));
+    const std::vector<const Light*> lights{ ambient.get(), sun.get() };
+
+    const LightPushBlock push   = blockFor(&camera, lights);
+    const VineLightsBlock forward = forwardBlockFor(&camera, lights);
+    EXPECT_EQ(forward.ambient, push.ambient);
+    EXPECT_EQ(forward.dirs, push.dirs);
+    EXPECT_EQ(forward.cols, push.cols);
+}
+
+TEST(OverlayLightingTest, ForwardBlockIsZeroedWithoutACamera)
+{
+    const auto                  sun = Light::createDirectional(vine::math::Vec3d(0.0, 1.0, 0.0));
+    const VineLightsBlock block = forwardBlockFor(nullptr, { sun.get() });
+
+    // Without a camera the light directions cannot be expressed in view space, so
+    // nothing is baked (rather than baking world-space directions by accident).
+    for (const auto& c : block.ambient) {
+        EXPECT_FLOAT_EQ(c, 0.0f);
+    }
+    for (const auto& d : block.dirs) {
+        EXPECT_FLOAT_EQ(d[1], 0.0f);
+    }
+}
+
+TEST(OverlayLightingTest, ForwardBlockSeedsAmbientSoASceneIsNeverBlack)
+{
+    Camera camera;
+    makeForwardCamera(camera);
+
+    const VineLightsBlock block = forwardBlockFor(&camera, {});
+    EXPECT_FLOAT_EQ(block.ambient[3], 1.0f);
+    EXPECT_GT(block.ambient[0], 0.0f);
+}
+
