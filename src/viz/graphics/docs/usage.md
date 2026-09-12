@@ -396,25 +396,50 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 
 **先分清三个数字**（后文只用这三个词）：
 
-- **通道 location**：你在 Geometry 里填的那个编号（`setPositions` 固定 0、`setNormals` 固定 1、
-  `setTexcoords` 固定 8；`addBuffer(L, …)` 的自定义通道 L ≥ 3 且 ≠ 8）。
-- **shader location**：shader 里写的 `layout(location = N)` —— 下表比的就是它。
-- **数组下标 = Vulkan binding**：后端排的（位置→法线→texcoords→颜色→自定义通道按 location 升序）；
-  你既不写它、也看不到它，GLSL 里没有这个概念。
-
-两条路径用的 **shader location 是两套编号**，这是最容易踩的地方：
-
-| 路径 | 谁提供 ShaderSet | shader 里的 `layout(location=…)` |
+| 词 | 是什么 | 谁决定 |
 | --- | --- | --- |
-| **内建**（没有 program） | 宿主传给桥的 vsg ShaderSet（如 `vsg::createPhongShaderSet()`） | **vsg 的编号**：位置 0、法线 1、texcoord **2**、颜色 **6**（实测 `vsg_shader_dump`） |
-| **自定义 program** | 后端按**几何体的通道布局**现建（`assembleProgramShaderSet`） | **模块契约**：位置 0、法线 1、颜色 **2**、texcoord **8**；自定义通道 = **它自己的 location** |
+| **通道 location** | 你在 Geometry 里填的编号，也就是 `Geometry::attributes_` 的键 | **你**：`setPositions` 0、`setNormals` 1、`setTexcoords` 8；自定义通道 `addBuffer(L, …)`，L ≥ 3 且 ≠ 8 |
+| **shader location** | shader 里的 `layout(location = N)` —— 下表比的就是它 | **写 shader 的人**：内建路径用 vsg 的编号，自定义 program 用模块契约 |
+| **数组下标 = Vulkan binding** | 喂入列表里的位置（`VkVertexInputBindingDescription.binding`） | **后端**；你既不写、也看不到，GLSL 里没有这个概念 |
 
-> 两套编号**只有 0/1（位置、法线）一致**：`2` 在内建路径是 texcoord、在自定义路径是颜色，`6` 只有内建路径在用。
-> 所以一个按 vsg 习惯写的 shader 拿到自定义 program 路径上，在 location 2/6 会读到别的东西（静默）。想两边通用，就只用 0/1。
+**走哪条路径由 pass 决定，不由 geometry 决定** —— 同一个 geometry 可以在 A pass 走内建、在 B pass 走自定义：
 
-自定义路径为什么不一样：vsg 的编号是**密集的 0..6 且被它自家属性占满**（`vsg_TexCoord0..3` 占 2..5、`vsg_Color` 占 6），而自定义通道**沿用它自己的源 location**（转发范围是 `L ≥ 3 且 L ≠ 8`）⇒ 照抄 vsg 编号，放在 3/4/5/6 的自定义通道就会与 vsg 的内建属性**撞号**。模块因此把两个 canonical 槽挤到自定义范围之外或显式保留（2 < 3；8 保留且不转发）。
+| | 内建路径 | 自定义 program 路径 |
+| --- | --- | --- |
+| 触发条件 | 该 draw 的 program 为空 | `RenderPass::setProgramOverride()` / `ScreenPass::setProgram()` 给了 program |
+| ShaderSet 谁提供 | 宿主传给桥的 vsg ShaderSet（如 `vsg::createPhongShaderSet()`） | 后端按**这个 geometry 的通道布局**现建（`assembleProgramShaderSet`） |
+| shader location 从哪来 | **vsg 自己的编号** | **通道 location 一一对应**（canonical 的 0/1/2/8 也是常量） |
+| 顶点数据从哪取 | 固定 `buffer(0)` / `buffer(1)` / `buffer(2)` / `buffer(8)` + 自定义通道 | **完全相同**（两条路径取的是同一批数据） |
+| 换路径时重建 | 只重建 state wrapper，数据节点复用 | 同左（唯一例外见下面的边角表） |
+| 同一份 program、布局不同 | —— | **两个不同的 ShaderSet**（cache key = program + layout hash） |
 
-> 另一个常见误记：`enableArray("vsg_TexCoord0", …, 8)` 里的 **8 是数组槽号**（喂入顺序里的位置），不是 `layout(location=)`。vsg 自己的这两套编号就是分开的。
+两条路径的 **shader location 是两套编号**，这是最容易踩的地方（逐通道对照；binding 那列是后端排的）：
+
+| 通道 | 通道 location（你在 Geometry 填的） | 内建路径 `layout(location=…)` | 自定义 program `layout(location=…)` | 数组下标/binding |
+| --- | --- | --- | --- | --- |
+| 位置 | 0 | **0** | **0** | 0 |
+| 法线 | 1 | **1** | **1** | 1 |
+| 颜色 | 2 | **6** | **2** | 3 |
+| texcoord | **8** | **2** | **8** | 2 |
+| 自定义 | L ≥ 3 且 ≠ 8 | ——（内建 set 不声明它，喂了也不被读） | **L** | 4+i |
+
+> 两套编号**只有 0/1（位置、法线）一致**（实测 `vsg_shader_dump`）：`2` 在内建路径是 texcoord、在自定义路径是颜色。
+> 所以按 vsg 习惯写的 shader（texcoord 写 2、颜色写 6）拿到自定义 program 路径上：location 2 读到的是颜色（静默错值），
+> location 6 要么没被声明（读到未定义值）、要么是某个 `L = 6` 的自定义通道 —— 反正不是颜色。想两边通用，就只用 0/1。
+
+自定义路径为什么不一样：vsg 的编号**密集占满 0..6**（`vsg_TexCoord0..3` 占 2..5、`vsg_Color` 占 6），而自定义通道**沿用自己的源 location**（转发范围 `L ≥ 3 且 L ≠ 8`）—— 照抄 vsg 编号，放在 3/4/5/6 的自定义通道就会与 vsg 的内建属性**撞号**。
+
+> 另一个常见误记：`enableArray("vsg_TexCoord0", …, 8)` 里的 **8 是数组下标（喂入顺序里的位置，= Vulkan binding）**，不是 `layout(location=)`。vsg 自己的这两套编号就是分开的。
+
+**四个 canonical location 为什么是 0 / 1 / 2 / 8**：自定义路径下“通道 location = shader location”，而自定义通道的转发范围是
+`L ≥ 3 且 L ≠ 8` —— 所以 canonical 只有 `0/1/2` 三个位置能用，texcoord 必须去 `≥ 3` 区里占一个**保留号**：
+
+| 位置 | 给谁 | 为什么是这个号 |
+| --- | --- | --- |
+| 0 / 1 | 位置、法线 | 与 vsg 一致 ⇒ 只读位置/法线的 shader 两条路径通用 |
+| 2 | 颜色 | `< 3` 的最后一个空位（内建 set 里颜色是 6，而 2..6 被 `vsg_TexCoord0..3`(2..5) 与 `vsg_Color`(6) 占满） |
+| 8 | texcoord | `≥ 3` 里由模块**显式保留**：通道 location == 8 的通道**不转发**，用户占不掉它（`Geometry::kTexCoordLocation`） |
+| 3..7、9.. | 自定义通道 | 全留给你（vsg 的 8 是 `vsg_Rotation`；两套 set 永不同时存在，撞号无害） |
 
 **怎么写**（Geometry 侧只选 location，其余全自动）：
 
@@ -437,12 +462,23 @@ layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
 layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 ```
 
-**四件要自己对齐的事**（错了都是静默的）：
+**四件要自己对齐的事**（多数错了是静默的）：
 
-- shader 声明了 geometry **没有**的 location ⇒ 该名字不会被声明给 vsg ⇒ 不喂数据：Vulkan 合法、读到未定义值、**无任何诊断**。
-- 分量数必须一致（geometry 3 分量 ↔ shader `vec3`）：不一致时 configurator 会接受，只在绘制时表现为“属性读错/缺失”。
-- 反过来一个方向**有诊断**：数组喂了、但管线不声明那个名字 ⇒ 报一条 `ContentSkipped` 的 Warning（`vertex binding '%s' (array %zu, %s) was not matched by the pipeline…`）。
-- **绑定顺序（binding 编号）不用管、也改不了**：它由后端的喂入顺序决定（位置、法线、texcoords、颜色，再按 location 升序的自定义通道），GLSL 里根本没有这个概念 —— 你能控的只有 location。注意 Geometry 里填的是 **location**：binding 下标是后端按那份通道列表算出来的，你既不能直接指定、也影响不到前缀四个的编号。
+| 事项 | 规则 | 错了会怎样 |
+| --- | --- | --- |
+| location 覆盖 | shader 只能声明 geometry 真有数据的 location | 声明了没有的 ⇒ 不喂数据：Vulkan 合法、读到未定义值、**无任何诊断** |
+| 分量数 | geometry 的 3 分量 ↔ shader 的 `vec3` | 两边都能接受，只在绘制时表现为“属性读错/缺失” |
+| 反方向 | 数组喂了、但管线不声明那个名字 | 报一条 `ContentSkipped` 的 Warning（`vertex binding '%s' (array %zu, %s) was not matched by the pipeline…`） |
+| 绑定顺序 | **不用管、也改不了**：后端按固定顺序排（位置、法线、texcoords、颜色，再按 location 升序的自定义通道） | 你能控的只有 location；binding 下标由后端按通道列表算出 |
+
+**边角**：
+
+| 情形 | 行为 |
+| --- | --- |
+| program 编译失败 / vsg 拒绝手工 Set | **回落内建 set**，并报一条 `ShaderFallback` Warning（不静默） |
+| geometry 带 loc2 颜色、切换路径 | **数据节点也要重建**：内建路径 binding 2 是后端白 **DYNAMIC** 载体（alpha 驱动 opacity），自定义路径绑作者的颜色原样 |
+| 自定义通道遇上**内建路径** | 照喂但没人声明 ⇒ `assignArray` 失败被跳过；它在尾部，不挤前缀四个 binding，也**不需要重新上传** |
+| 同一份 program 的多个布局 | 共享一次 glslang 编译，按布局各建一个 ShaderSet（缓存上界 64，FIFO 淘汰） |
 
 > 实现细节（名字 ↔ 数组下标那张表、vsg 的两套编号为何不同）见
 > [`src/plugins/gfx_backend_vsg/docs/backend.md`](../../../plugins/gfx_backend_vsg/docs/backend.md) §2.4。

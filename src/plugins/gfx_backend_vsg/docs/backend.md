@@ -137,6 +137,20 @@ graph TB
 | **数组下标 = Vulkan binding** | 顶点输入数组在喂入列表里的位置：`VkVertexInputBindingDescription.binding` / `vkCmdBindVertexBuffers` 的 binding | **后端**（调用者既不写它，也影响不到前缀四个的编号；GLSL 里根本没有这个概念） |
 | **喂给的名字** | 后端与 ShaderSet 之间配对用的字符串：`vsg_Vertex` / `vsg_Normal` / `vsg_TexCoord0` / `vsg_Color` / `vine_Attribute{L}` | **后端**生成（`customAttributeName(L)`），调用者只在自定义通道的 L 上间接影响 `{L}` |
 
+**走哪条路径由 draw command 上的 program 决定，不由 geometry 决定**（`buildStateGroup()` 里 `program != nullptr`，`SceneBridgePipeline.cpp:348-353`）：
+
+| | 内建路径 | 自定义 program 路径 |
+| --- | --- | --- |
+| 触发 | `cmd.program == nullptr` | `RenderPass::setProgramOverride()` / `ScreenPass::setProgram()` 给的 program |
+| ShaderSet | `baseShaderSet()`（宿主传进来的 vsg set） | `getProgramShaderSet()` → `assembleProgramShaderSet()` |
+| shader location 的来源 | vsg 自己的编号 | 通道 location 一一对应（canonical 0/1/2/8 + 自定义 `L`） |
+| 顶点数据来源 | **两条路径完全相同**：`buildGeometryData()` 按固定 canonical location 取数据，再按名字配对 | 同左 |
+| 换路径时重建 | 只重建 state wrapper，数据节点复用 | 同左（例外：带作者写的 loc2 颜色时数据也要重建） |
+| 同一个 geometry | 可以在 A pass 走内建、B pass 走自定义；两条路径的 set 互相独立 | 同左 |
+
+唯一需要重建数据的情形：几何体带**作者写的 loc2 颜色**时，内建路径的 binding 2 是后端白 `DYNAMIC` 载体（alpha 驱动 opacity）、
+自定义路径绑作者的颜色原样，所以切换路径要重建**数据**节点（`SceneBridge.cpp` 的 `data_dirty` 里那一条）。
+
 三张表的关系就下面这张（左边两列是后端的，右边两列是 shader 的）：
 
 | 数组下标（= binding） | 喂给的名字 | 内建路径的 shader location（vsg） | 自定义 program 的 shader location（模块） |
@@ -170,17 +184,32 @@ graph TB
   `vsg_Vertex` 0 / `vsg_Normal` 1 / `vsg_TexCoord0..3` 2..5 / `vsg_Color` **6** / `vsg_Translation(_scaleDistance)` 7 /
   `vsg_Rotation` **8** / `vsg_Scale` 9 / `vsg_JointIndices` 10 / `vsg_JointWeights` 11 —— flat/phong/pbr 三套完全一样，
   也就是**密集占满 0..11**）。
-- **自定义 program 路径自建 ShaderSet**（`assembleProgramShaderSet`），shader location 用模块契约 0 / 1 / 2 / 8：
-  canonical 的四个必须避开自定义通道能占的位置（**通道 location ≥ 3**，因为自定义通道沿用自己的源 location 当 shader location），
-  而 `< 3` 只有 0/1/2 三个空位 —— 0/1 保持与 vsg 一致（只读位置/法线的 shader 两条路径通用），颜色只能占 2；
-  texcoords 只能去 `≥ 3` 里一个**模块保留的 location**：取 8，并且**通道 location == 8 的通道不转发**（所以用户不可能占掉它）。
-  vsg 的 8 是 `vsg_Rotation` 也无妨：两套 set 永不同时存在（一个 geometry 要么走内建、要么走自定义 program）。
-  结果是模块这套是**稀疏**编号，把 `3..7`、`9..` 全留给自定义通道。
+- **自定义 program 路径自建 ShaderSet**（`assembleProgramShaderSet`），shader location 用模块契约 0 / 1 / 2 / 8。
+  推导就是下面这张表（前提：自定义通道**沿用自己的源 location** 当 shader location，转发范围 `L ≥ 3 且 L ≠ 8`）：
+
+  | 契约位置 | 给谁 | 为什么是这个号 |
+  | --- | --- | --- |
+  | 0 / 1 | 位置、法线 | 与 vsg 一致 ⇒ 只读位置/法线的 shader 两条路径通用 |
+  | 2 | 颜色 | `< 3` 的最后一个空位；vsg 内建 set 里颜色是 6，而 2..6 被 `vsg_TexCoord0..3`(2..5) 与 `vsg_Color`(6) 占满 |
+  | 8 | texcoord | `≥ 3` 里由模块**显式保留**，且 `L == 8` 的通道不转发 ⇒ 用户占不掉（`Geometry::kTexCoordLocation`） |
+  | 3..7、9.. | 自定义通道 | 全留给用户；vsg 的 8 是 `vsg_Rotation`，两套 set 永不同时存在，撞号无害 |
+
+  结果是模块这套是**稀疏**编号（vsg 那套是密集的 0..11）。
 - **别把 vsg Builder 的数组下标当成 shader location**：`Builder.cpp:97` / `tile.cpp:488` 的 `enableArray("vsg_TexCoord0", …, 8)`
   里的 8 是 vsg 那边的**数组下标**，而它 Phong set 里 texcoord 的 shader location 是 **2** —— 这两套编号 vsg 自己就是分开的。
 - 名字侧的守卫：`assignArray()` 失败且该名字**被管线声明**过 ⇒ 报一次 `ContentSkipped` Warning
   （`vertex binding '%s' (array %zu, %s) was not matched by the pipeline; the shader reads an attribute the pipeline does not enable…`）。
   反方向（shader 声明了几何体没有的 shader location）**没有任何诊断** —— ShaderSet 是按几何体的通道布局建的，没声明的就是没喂。
+
+**缓存与重建**（布局进 cache key，所以“按 geometry 映射”实际是“按每个布局映射一遍”）：
+
+| 缓存 | 键 | 值 | 何时失效 |
+| --- | --- | --- | --- |
+| `program_stages_` | program 对象 | 编译好的 SPIR-V stages | `program->revision()` 变化 ⇒ 重编译 |
+| `program_shader_sets_` | program + **布局 hash**（`vertexLayoutHash(extra_channels)`） | 该布局的 `vsg::ShaderSet` | program revision 或布局变化 ⇒ 重装配 |
+
+⇒ 同一份 program 配不同通道布局的 geometry 拿到**不同的 ShaderSet**（binding 不同），但共享同一份 stages。
+编译失败/装配失败都会缓存（空 stages / null）以免每帧重试；两者都回落内建 set，并各报一条 `ShaderFallback` Warning。两表上界都是 64，FIFO 淘汰。
 
 > 面向使用者的写法（Geometry 侧怎么挑 location、每段的示例 shader、描述符/push constant 清单）见
 > `src/viz/graphics/docs/usage.md` §3.8。

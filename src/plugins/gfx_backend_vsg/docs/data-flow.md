@@ -398,7 +398,7 @@ sequenceDiagram
 | 线/点 | 无 `LINE_STRIP`；`lineWidth>1` 需 `wideLines` 特性（未开）；无法调线宽/点大小 |
 | 阴影 | 深度 RT 通道已有；**shadowed Phong 采样（v4b-2）未完成** |
 | preset | `Pbr / ShadowedPhong` 预留无实现（仅 StandardPhong/FlatShaded 映射内建） |
-| instancing | vsg loc7-11（billboard/instance/skinning）槽未向 Vine 暴露 |
+| instancing | vsg loc7-11（billboard/instance/skinning）未向 Vine 暴露；注意这里说的是 **shader location**，与顶点数组下标（binding）无关 |
 | 固定项 | `frontFace` 固定 CCW、MRT/自定义 blend op/独立 mask 未做 |
 | 生命周期局限 | 缓存以裸指针为键，依赖场景树保活；几何删除后最多滞留 600 帧才释放 |
 
