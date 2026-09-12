@@ -724,13 +724,13 @@ namespace
 {
 
 /// Builds a texture of the given description with `faces` of its faces filled.
-vine::intrusive_ptr<vine::graphics::Texture> filledTexture(vine::graphics::Texture::Shape shape,
+vine::intrusive_ptr<vine::graphics::Texture> filledTexture(vine::graphics::Texture::Kind shape,
                                                            vine::imaging::PixelFormat format,
                                                            int faces)
 {
     // Built through the named types rather than by handing a shape to a texture constructor: which object a
     // shape is, and therefore which invariants it carries, is now the type's business.
-    const bool is_cube = (shape == vine::graphics::Texture::Shape::Cube);
+    const bool is_cube = (shape == vine::graphics::Texture::Kind::Cube);
     auto texture = vine::intrusive_ptr<vine::graphics::Texture>(
         is_cube ? static_cast<vine::graphics::Texture*>(new vine::graphics::CubeMap(4, format))
                 : static_cast<vine::graphics::Texture*>(new vine::graphics::Texture2D(4, 4, format)));
@@ -751,22 +751,27 @@ TEST(VsgSceneRulesTest, ClassifiesWhetherATextureCanBeUploaded)
     EXPECT_EQ(classifyTexture(nullptr), TextureReject::Absent);
 
     // A description with no source yet is a texture still being filled, not a broken one.
-    auto unfilled = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgba8Unorm, 0);
+    auto unfilled = filledTexture(vine::graphics::Texture::Kind::D2, vine::imaging::PixelFormat::Rgba8Unorm, 0);
     EXPECT_EQ(classifyTexture(unfilled.get()), TextureReject::Incomplete);
 
-    auto filled = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgba8Unorm, 1);
+    auto filled = filledTexture(vine::graphics::Texture::Kind::D2, vine::imaging::PixelFormat::Rgba8Unorm, 1);
     EXPECT_EQ(classifyTexture(filled.get()), TextureReject::Ok);
 }
 
-TEST(VsgSceneRulesTest, AShapeTheBackendDoesNotUploadYetOutranksTheFormat)
+TEST(VsgSceneRulesTest, ACubeMapIsUploadedAsSixLayers)
 {
     using vine::vsg::detail::classifyTexture;
     using vine::vsg::detail::TextureReject;
 
-    // Cube is checked before the pixel layout, because a caller that asked for a cube needs to be told
-    // about the SHAPE — a format report would send them looking at the wrong thing.
-    auto cube = filledTexture(vine::graphics::Texture::Shape::Cube, vine::imaging::PixelFormat::Rgba8Unorm, 6);
-    EXPECT_EQ(classifyTexture(cube.get()), TextureReject::UnsupportedShape);
+    // A cube is six 2D layers read through a cube view, so it goes down the same upload path as a 2D texture:
+    // there is no shape left that this backend refuses.
+    auto cube = filledTexture(vine::graphics::Texture::Kind::Cube, vine::imaging::PixelFormat::Rgba8Unorm, 6);
+    EXPECT_EQ(classifyTexture(cube.get()), TextureReject::Ok);
+
+    // Supporting a shape did not weaken the check before it: an unfinished cube is still reported as
+    // unfinished rather than as something usable.
+    auto half_cube = filledTexture(vine::graphics::Texture::Kind::Cube, vine::imaging::PixelFormat::Rgba8Unorm, 3);
+    EXPECT_EQ(classifyTexture(half_cube.get()), TextureReject::Incomplete);
 }
 
 TEST(VsgSceneRulesTest, AThreeChannelTextureIsRefusedForHavingNoVulkanFormat)
@@ -774,7 +779,7 @@ TEST(VsgSceneRulesTest, AThreeChannelTextureIsRefusedForHavingNoVulkanFormat)
     using vine::vsg::detail::classifyTexture;
     using vine::vsg::detail::TextureReject;
 
-    auto three_channel = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgb8Unorm, 1);
+    auto three_channel = filledTexture(vine::graphics::Texture::Kind::D2, vine::imaging::PixelFormat::Rgb8Unorm, 1);
     EXPECT_EQ(classifyTexture(three_channel.get()), TextureReject::UnsupportedFormat);
 }
 
@@ -783,22 +788,17 @@ TEST(VsgSceneRulesTest, EachRefusalSaysWhichCaseFired)
     using vine::vsg::detail::textureRejectMessage;
     using vine::vsg::detail::TextureReject;
 
-    auto unfilled = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgba8Unorm, 0);
-    auto cube = filledTexture(vine::graphics::Texture::Shape::Cube, vine::imaging::PixelFormat::Rgba8Unorm, 6);
-    auto three_channel = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgb8Unorm, 1);
+    auto unfilled = filledTexture(vine::graphics::Texture::Kind::D2, vine::imaging::PixelFormat::Rgba8Unorm, 0);
+    auto three_channel = filledTexture(vine::graphics::Texture::Kind::D2, vine::imaging::PixelFormat::Rgb8Unorm, 1);
 
     const auto incomplete = textureRejectMessage(TextureReject::Incomplete, *unfilled);
-    const auto shape = textureRejectMessage(TextureReject::UnsupportedShape, *cube);
     const auto format = textureRejectMessage(TextureReject::UnsupportedFormat, *three_channel);
 
     EXPECT_FALSE(incomplete.empty());
-    EXPECT_FALSE(shape.empty());
     EXPECT_FALSE(format.empty());
 
     // One format string per branch: a shared message would leave a caller unable to tell an unfinished
     // texture from one the backend cannot represent at all.
-    EXPECT_NE(incomplete, shape);
-    EXPECT_NE(shape, format);
     EXPECT_NE(incomplete, format);
 
     // Neither is a diagnostic: absence is the ordinary "this material has no texture", and Ok is never

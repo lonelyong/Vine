@@ -194,8 +194,15 @@ TextureReject classifyTexture(const vine::graphics::Texture* texture) noexcept
     if (texture == nullptr) {
         return TextureReject::Absent;
     }
-    if (texture->shape() != Texture::Shape::D2) {
-        return TextureReject::UnsupportedShape;
+    // Both shapes this backend knows are uploaded: a cube is six 2D layers read through a cube view, so it
+    // goes down the same path as a 2D texture. The switch is exhaustive with NO default, which is what makes
+    // adding a shape a compile-time decision (-Wswitch) instead of a silent upload that treats it as one
+    // layer. The reject value and its diagnostic come back with the first shape that needs them, together
+    // with the test that exercises them.
+    switch (texture->kind()) {
+        case Texture::Kind::D2:
+        case Texture::Kind::Cube:
+            break;
     }
     if (!texture->complete()) {
         return TextureReject::Incomplete;
@@ -214,12 +221,6 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
             return formatDiagnostic(u8"texture is incomplete (%d of %d face(s) filled); "
                                     u8"the material renders untextured",
                                     filledFaceCount(texture), texture.faceCount());
-
-        case TextureReject::UnsupportedShape:
-            return formatDiagnostic(u8"texture shape '%s' is not uploaded yet (only '%s' is); "
-                                    u8"the material renders untextured",
-                                    vine::graphics::Texture::shapeName(texture.shape()),
-                                    vine::graphics::Texture::shapeName(vine::graphics::Texture::Shape::D2));
 
         case TextureReject::UnsupportedFormat:
             return formatDiagnostic(u8"texture pixel layout '%s' has no Vulkan format; "

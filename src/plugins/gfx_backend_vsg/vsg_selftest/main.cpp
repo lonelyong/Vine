@@ -548,6 +548,100 @@ ShaderProgramPtr makeTextureSampleProgram()
     return program;
 }
 
+/**
+ * @brief Builds a program that samples a CUBE map, one named face per vertical band of the quad.
+ *
+ * Sampling every face from ONE draw is what makes a layer-order mistake observable: each band reads back one
+ * face's colour, so an interleave that is off by a layer makes two bands swap colours. Nothing else could
+ * catch that — the byte count is the same whichever order the layers are staged in, so the copies stay valid
+ * and no validation layer has anything to say.
+ *
+ * @return The cube map sampling program.
+ */
+ShaderProgramPtr makeCubeSampleProgram()
+{
+    auto program = ShaderProgramPtr(new ShaderProgram());
+    vine::graphics::ShaderStage vs;
+    vs.type   = vine::graphics::ShaderStageType::Vertex;
+    vs.source = u8"#version 450\n"
+                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
+                u8"layout(location = 8) in vec2 vsg_TexCoord0;\n"
+                u8"layout(location = 0) out vec2 uv;\n"
+                u8"void main()\n"
+                u8"{\n"
+                u8"    uv = vsg_TexCoord0;\n"
+                u8"    gl_Position = vec4(vsg_Vertex.xy, 0.5, 1.0);\n"
+                u8"}\n";
+    program->addStage(vs);
+    vine::graphics::ShaderStage fs;
+    fs.type   = vine::graphics::ShaderStageType::Fragment;
+    // The band's axis direction is the exact centre of a cube face, so no filtering decides which face is
+    // read: the answer is decided by which layer the sampler found there.
+    fs.source = u8"#version 450\n"
+                u8"layout(location = 0) in vec2 uv;\n"
+                u8"layout(location = 0) out vec4 outColor;\n"
+                u8"layout(binding = 1) uniform samplerCube diffuseMap;\n"
+                u8"void main()\n"
+                u8"{\n"
+                u8"    const int band = int(clamp(uv.x, 0.0, 0.999) * 6.0);\n"
+                u8"    vec3 dirs[6] = vec3[6](vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 1, 0),\n"
+                u8"                            vec3(0, -1, 0), vec3(0, 0, 1), vec3(0, 0, -1));\n"
+                u8"    outColor = texture(diffuseMap, dirs[band]);\n"
+                u8"}\n";
+    program->addStage(fs);
+    return program;
+}
+
+/**
+ * @brief Builds a cube map whose six faces each carry their own unmistakable colour.
+ *
+ * Every level repeats the face's colour, so the readback holds whichever level the sampler picks: this
+ * asserts the wiring and the layer order, not the mip selection, and making a level disagree would only make
+ * the test brittle.
+ *
+ * @param size      Face size in pixels.
+ * @param mip_count Levels per face; more than one drives the layer interleave at every level rather than
+ *                  only at the base.
+ * @return The cube map, with all six faces filled.
+ */
+vine::intrusive_ptr<CubeMap> makeSixColourCube(int size, int mip_count)
+{
+    // In CubeMap::Face order, which is Vulkan's layer order: +X, -X, +Y, -Y, +Z, -Z.
+    const std::uint8_t colours[6][3] = { { 255u, 0u, 0u },     // +X red
+                                         { 0u, 255u, 0u },     // -X green
+                                         { 0u, 0u, 255u },     // +Y blue
+                                         { 255u, 255u, 0u },   // -Y yellow
+                                         { 255u, 0u, 255u },   // +Z magenta
+                                         { 0u, 255u, 255u } }; // -Z cyan
+
+    auto cube =
+        vine::intrusive_ptr<CubeMap>(new CubeMap(size, vine::imaging::PixelFormat::Rgba8Unorm, mip_count));
+
+    for (int face = 0; face < 6; ++face) {
+        auto image = vine::intrusive_ptr<vine::imaging::Image>(
+            new vine::imaging::Image(size, size, vine::imaging::PixelFormat::Rgba8Unorm, mip_count));
+        for (int level = 0; level < mip_count; ++level) {
+            const int width  = image->mipWidth(level);
+            const int height = image->mipHeight(level);
+            auto*     pixels = reinterpret_cast<std::uint8_t*>(image->mipData(level).data());
+            for (int y = 0; y < height; ++y) {
+                for (int x = 0; x < width; ++x) {
+                    std::uint8_t* texel = pixels + (static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                                                    static_cast<std::size_t>(x)) *
+                                                       4u;
+                    texel[0] = colours[face][0];
+                    texel[1] = colours[face][1];
+                    texel[2] = colours[face][2];
+                    texel[3] = 255u;
+                }
+            }
+        }
+        cube->setFaceImage(static_cast<CubeMap::Face>(face), image);
+    }
+
+    return cube;
+}
+
 /** @brief Builds a look-at perspective camera matching a 16:9 aspect. */
 CameraPtr makeCamera()
 {
@@ -4492,6 +4586,94 @@ bool runTexturePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, 
     return ok;
 }
 
+/**
+ * @brief Asserts a cube map's six faces reach the sampler in the order they were named.
+ *
+ * This is the only thing that can prove the six-layer upload. Every other gate is blind to it: the byte count
+ * of the staged data is the same whichever order the layers are interleaved in, so the copy regions all stay
+ * inside the image and the validation layer reports nothing. An interleave that is off by one layer produces
+ * a perfectly legal upload whose faces sample each other's pixels.
+ *
+ * The quad's uv.x is split into six vertical bands, each sampling one named face by its axis direction, so a
+ * single draw reads all six back. The expected colours are restated here rather than shared with the builder
+ * on purpose: if the builder's order ever changes, this has to fail rather than quietly follow it.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quad is drawn through.
+ * @param frames   Frames to drive.
+ * @return true when every band read back the colour of the face it sampled.
+ */
+bool runCubeMapPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+
+    // Three levels, so the interleave runs for more than one level: a repack that only got the base level
+    // right would still upload something that looks valid at level 0.
+    constexpr int kSize   = 8;
+    constexpr int kLevels = 3;
+    auto          cube    = makeSixColourCube(kSize, kLevels);
+
+    auto material = MaterialPtr(new Material());
+    material->setTexture(cube);
+    RenderCommand quad(makeTexturedQuad(), material, Mat4d());
+    quad.program = makeCubeSampleProgram();
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setName(u8"cube map");
+    target->setSize(96, 54);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto pass = RenderPassPtr(new RenderPass());
+
+    for (int i = 0; i < std::max(frames, 2); ++i) {
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, pass.get(), 0, target.get(), vine::Color(25, 25, 45, 255), true,
+                                 vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+    }
+
+    PixelImage image;
+    if (!readTarget(renderer, target.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the cube map target\n");
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+
+    // The quad is the middle 80% of the target, so a band is 6.4 px wide and its centre sits at 32 + 6.4k.
+    constexpr int kRow = 27;
+    const int     band_x[6] = { 32, 38, 45, 51, 58, 64 };
+    const char*   face_name[6] = { "+X", "-X", "+Y", "-Y", "+Z", "-Z" };
+    // In CubeMap::Face order, written out again rather than shared with makeSixColourCube().
+    const int expected[6][3] = { { 255, 0, 0 },   { 0, 255, 0 },   { 0, 0, 255 },
+                                 { 255, 255, 0 }, { 255, 0, 255 }, { 0, 255, 255 } };
+
+    for (int band = 0; band < 6; ++band) {
+        const int r = image.at(band_x[band], kRow, 0);
+        const int g = image.at(band_x[band], kRow, 1);
+        const int b = image.at(band_x[band], kRow, 2);
+        if (std::abs(r - expected[band][0]) > 8 || std::abs(g - expected[band][1]) > 8 ||
+            std::abs(b - expected[band][2]) > 8) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the cube map's %s band is (%d,%d,%d), not face %d's colour — the six "
+                         "layers did not reach the sampler in CubeMap::Face order\n",
+                         face_name[band], r, g, b, band);
+            ok = false;
+        }
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] cube map: all six faces sampled in CubeMap::Face order (+X,-X,+Y,-Y,+Z,-Z), "
+                     "one pixel read back per face\n");
+    }
+
+    renderer.releasePass(pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
 int main()
 {
     const int frames =
@@ -4771,6 +4953,7 @@ int main()
     // and no phase at all reports 115). Placing it after every reporting phase keeps the diff down to the one
     // line this phase exists to add, so the evidence stays readable as evidence.
     contract_ok = runTexturePhase(*renderer, camera, 3) && contract_ok;
+    contract_ok = runCubeMapPhase(*renderer, camera, 3) && contract_ok;
     if (!contract_ok) {
         std::fprintf(stderr,
                      "[selftest] FAILED — a pass-lifecycle / depth-sharing / pixel-readback invariant was violated\n");

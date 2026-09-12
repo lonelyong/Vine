@@ -8,38 +8,38 @@ namespace
 {
 
 /**
- * @brief Gets how many images a shape is made of.
+ * @brief Gets how many images a kind is made of.
  *
- * @param shape Shape to count.
- * @return The face count of the shape.
+ * @param kind Kind to count.
+ * @return The face count of the kind.
  */
-std::size_t faceCountOf(Texture::Shape shape) noexcept
+std::size_t faceCountOf(Texture::Kind kind) noexcept
 {
-    return (shape == Texture::Shape::Cube) ? 6u : 1u;
+    return (kind == Texture::Kind::Cube) ? 6u : 1u;
 }
 
 } // namespace
 
 V_OBJECT_META_IMPL(Texture, vine::Object);
 
-const char* Texture::shapeName(Shape shape) noexcept
+const char* Texture::kindName(Kind kind) noexcept
 {
-    switch (shape) {
-        case Shape::D2:
+    switch (kind) {
+        case Kind::D2:
             return "D2";
-        case Shape::Cube:
+        case Kind::Cube:
             return "Cube";
     }
 
     return "Unknown"; // Also the answer for an out-of-range cast.
 }
 
-Texture::Texture(Shape shape, int width, int height, imaging::PixelFormat format, int mip_count)
+Texture::Texture(Kind kind, int width, int height, imaging::PixelFormat format, int mip_count)
   : width_(width)
   , height_(height)
   , format_(format)
   , mip_count_(mip_count)
-  , shape_(shape)
+  , kind_(kind)
 {
     if (width <= 0 || height <= 0) {
         throw std::invalid_argument("Texture: width and height must be positive");
@@ -55,7 +55,7 @@ Texture::Texture(Shape shape, int width, int height, imaging::PixelFormat format
         throw std::invalid_argument("Texture: mip count must lie in [1, Image::mipCapacity(width, height)]");
     }
 
-    sources_.resize(faceCountOf(shape));
+    sources_.resize(faceCountOf(kind));
 }
 
 int Texture::faceCount() const noexcept
@@ -63,9 +63,9 @@ int Texture::faceCount() const noexcept
     return static_cast<int>(sources_.size());
 }
 
-Texture::Shape Texture::shape() const noexcept
+Texture::Kind Texture::kind() const noexcept
 {
-    return shape_;
+    return kind_;
 }
 
 int Texture::width() const noexcept
@@ -91,7 +91,7 @@ int Texture::mipCount() const noexcept
 void Texture::setSource(int face, intrusive_ptr<const imaging::Image> image)
 {
     if (face < 0 || face >= faceCount()) {
-        throw std::out_of_range("Texture: face index is outside this shape");
+        throw std::out_of_range("Texture: face index is outside this kind");
     }
 
     if (image != nullptr) {
@@ -153,13 +153,13 @@ raw_ptr<const imaging::Image> Texture::layer(int index) const noexcept
 V_OBJECT_META_IMPL(Texture2D, Texture);
 
 Texture2D::Texture2D(int width, int height, imaging::PixelFormat format, int mip_count)
-  : Texture(Shape::D2, width, height, format, mip_count)
+  : Texture(Kind::D2, width, height, format, mip_count)
 {
 }
 
-Texture::Shape Texture2D::shape() const noexcept
+Texture::Kind Texture2D::kind() const noexcept
 {
-    return Shape::D2;
+    return Kind::D2;
 }
 
 void Texture2D::setImage(intrusive_ptr<const imaging::Image> image)
@@ -195,13 +195,13 @@ const char* CubeMap::faceName(Face face) noexcept
 }
 
 CubeMap::CubeMap(int size, imaging::PixelFormat format, int mip_count)
-  : Texture(Shape::Cube, size, size, format, mip_count)
+  : Texture(Kind::Cube, size, size, format, mip_count)
 {
 }
 
-Texture::Shape CubeMap::shape() const noexcept
+Texture::Kind CubeMap::kind() const noexcept
 {
-    return Shape::Cube;
+    return Kind::Cube;
 }
 
 void CubeMap::setFaceImage(Face face, intrusive_ptr<const imaging::Image> image)

@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include <vsg/core/Array2D.h>
+#include <vsg/core/Array3D.h>
 #include <vsg/core/MipmapLayout.h>
 #include <vsg/core/ref_ptr.h>
 #include <vsg/maths/vec4.h>
@@ -30,118 +31,206 @@ namespace
 {
 
 /**
- * @brief Wraps a mip chain in the vsg 2D array whose ELEMENT is one texel.
+ * @brief Wraps the staged bytes in the vsg array whose ELEMENT is one texel.
  *
- * The element width has to be the texel width, not one byte, because vsg sizes the staging buffer as
- * `valueCount() * valueSize()` (see `Data::dataSize()`): over a ubyte array that product counts pixels,
- * so an RGBA8 chain would stage a quarter of itself. The element is never interpreted as a number — only
- * its size matters — so the mapping just has to pick a type of the right width.
+ * Two things matter here and neither is the element's type:
  *
- * @param storage Whole chain, in the module's compact layout.
- * @param layout  Per-level texel extents and byte offsets (see makeMipmapLayout).
+ *   - the element WIDTH has to be the texel width. vsg reads `properties.stride` as the size of one element
+ *     and multiplies it by texel counts, and over a byte-wide array those products count pixels instead of
+ *     bytes.
+ *   - the array's DIMENSIONALITY has to match the layer count, because that is where vsg takes its layer
+ *     count from. TransferTask derives `arrayLayers` from the image view type AND THE DATA'S DEPTH
+ *     (`case VK_IMAGE_VIEW_TYPE_CUBE: arrayLayers = faceDepth;`). A six-layer texture described by a 2D
+ *     array therefore reports a depth of 1, gets exactly ONE copy region, and leaves every layer past the
+ *     first holding whatever the allocation happened to contain — with no validation error, because the one
+ *     region it did copy is perfectly legal. That is the whole reason the layers are declared as a depth.
+ *
+ * The element is never interpreted as a number, only its width is used, so the mapping just has to pick a
+ * type of the right size — and a 3D one whenever there is more than a single layer.
+ *
+ * @param storage Whole staged chain, in the layout makeMipmapLayout describes.
+ * @param layout  Per-level extents and byte offsets (see makeMipmapLayout).
  * @param width   Base level width in pixels.
  * @param height  Base level height in pixels.
+ * @param layers  Layer count; also the depth a multi-layer array declares.
  * @param stride  Base level row stride in bytes.
- * @param properties Format / mip count / stride the array is declared with.
+ * @param properties Format / mip count / view type the array is declared with.
  * @param bytes_per_texel Texel width in bytes.
  * @return The array over @p storage, or null when no vsg type is that wide.
  */
 ::vsg::ref_ptr<::vsg::Data> makeTexelArray(::vsg::ref_ptr<::vsg::ubyteArray> storage,
                                            ::vsg::ref_ptr<::vsg::MipmapLayout> layout, std::uint32_t width,
-                                           std::uint32_t height, std::uint32_t stride,
+                                           std::uint32_t height, std::uint32_t layers, std::uint32_t stride,
                                            const ::vsg::Data::Properties& properties, std::uint32_t bytes_per_texel)
 {
-    const auto make = [&](auto* typed) -> ::vsg::ref_ptr<::vsg::Data> {
+    const auto make2d = [&](auto* typed) -> ::vsg::ref_ptr<::vsg::Data> {
         using Array = std::remove_pointer_t<decltype(typed)>;
         return Array::create(storage, 0u, stride, width, height, properties, layout.get());
+    };
+    const auto make3d = [&](auto* typed) -> ::vsg::ref_ptr<::vsg::Data> {
+        using Array = std::remove_pointer_t<decltype(typed)>;
+        return Array::create(storage, 0u, stride, width, height, layers, properties, layout.get());
     };
 
     switch (bytes_per_texel) {
         case 1u:
-            return make(static_cast<::vsg::ubyteArray2D*>(nullptr));
+            return (layers > 1u) ? make3d(static_cast<::vsg::ubyteArray3D*>(nullptr))
+                                 : make2d(static_cast<::vsg::ubyteArray2D*>(nullptr));
         case 2u:
-            return make(static_cast<::vsg::ushortArray2D*>(nullptr));
+            return (layers > 1u) ? make3d(static_cast<::vsg::ushortArray3D*>(nullptr))
+                                 : make2d(static_cast<::vsg::ushortArray2D*>(nullptr));
         case 4u:
-            return make(static_cast<::vsg::uintArray2D*>(nullptr));
+            return (layers > 1u) ? make3d(static_cast<::vsg::uintArray3D*>(nullptr))
+                                 : make2d(static_cast<::vsg::uintArray2D*>(nullptr));
         case 8u:
-            return make(static_cast<::vsg::doubleArray2D*>(nullptr));
+            return (layers > 1u) ? make3d(static_cast<::vsg::doubleArray3D*>(nullptr))
+                                 : make2d(static_cast<::vsg::doubleArray2D*>(nullptr));
         case 16u:
-            return make(static_cast<::vsg::uivec4Array2D*>(nullptr));
+            return (layers > 1u) ? make3d(static_cast<::vsg::vec4Array3D*>(nullptr))
+                                 : make2d(static_cast<::vsg::uivec4Array2D*>(nullptr));
         default:
             return {};
     }
 }
 
 /**
- * @brief Describes every mip level's extent and where it starts inside the chain.
+ * @brief Gets one mip level's extent along one axis.
  *
- * Attaching this is what makes the upload exact: with a layout vsg takes each copy region's extent AND
- * byte offset straight from these entries. Without one it derives them itself, and then the only lever is
- * `properties.blockWidth` — which multiplies the IMAGE's width to get the region width, so it is for
- * block-compressed formats and cannot be used to describe a byte-packed chain.
+ * @param size  Base-level extent in pixels.
+ * @param level Mip level index.
+ * @return The extent at that level, never below 1.
+ */
+std::uint32_t levelExtent(int size, std::size_t level) noexcept
+{
+    // A level beyond the bit width has collapsed to 1 already; shifting by that much would be undefined.
+    if (level >= 32u) {
+        return 1u;
+    }
+
+    const auto shifted = static_cast<unsigned>(size) >> level;
+    return (shifted == 0u) ? 1u : shifted;
+}
+
+/**
+ * @brief Describes every mip level's extent and where it starts inside the staged bytes.
  *
- * @param source Chain to describe.
+ * ONE entry per level — not per layer. vsg advances this table once per level and reaches the remaining
+ * layers of that level itself, by stepping a whole "face" (see the padding note below), so a table with an
+ * entry per (level, layer) would make level 1 read level 0's second entry: wrong extents and wrong offsets.
+ *
+ * The offsets are NOT the sum of the levels' byte sizes, because vsg's step between the layers of a level is
+ * `properties.stride * level_width * level_height` and its `properties.stride` is the ROW stride (Array2D
+ * and Array3D both overwrite the caller's properties with the stride they are constructed with). One layer
+ * therefore occupies more room than its texels need, and each level's base has to leave that room for every
+ * layer, or the second layer of a level lands somewhere the copy region never looks.
+ *
+ * For a single layer the padding is exactly zero and this is the plain contiguous chain.
+ *
+ * @param texture Texture whose levels are described.
  * @return One entry per level: texel width, texel height, depth 1, byte offset.
  */
-::vsg::ref_ptr<::vsg::MipmapLayout> makeMipmapLayout(const vine::imaging::Image& source)
+::vsg::ref_ptr<::vsg::MipmapLayout> makeMipmapLayout(const vine::graphics::Texture& texture)
 {
-    const auto bytes_per_texel = static_cast<std::size_t>(vine::imaging::bytesPerPixel(source.format()));
-    const auto level_count     = static_cast<std::size_t>(source.mipCount());
+    const auto bytes_per_texel = static_cast<std::size_t>(vine::imaging::bytesPerPixel(texture.format()));
+    const auto level_count     = static_cast<std::size_t>(texture.mipCount());
+    const auto layer_count     = static_cast<std::size_t>(texture.layerCount());
+    const auto row_stride      = static_cast<std::size_t>(texture.width()) * bytes_per_texel;
 
     auto layout = ::vsg::MipmapLayout::create(level_count);
 
     std::size_t offset = 0;
     for (std::size_t level = 0; level < level_count; ++level) {
-        const auto width  = static_cast<std::uint32_t>(source.mipWidth(static_cast<int>(level)));
-        const auto height = static_cast<std::uint32_t>(source.mipHeight(static_cast<int>(level)));
+        const auto width  = levelExtent(texture.width(), level);
+        const auto height = levelExtent(texture.height(), level);
 
         layout->at(level) = ::vsg::uivec4(width, height, 1u, static_cast<std::uint32_t>(offset));
-        offset += static_cast<std::size_t>(width) * height * bytes_per_texel;
+        offset += layer_count * row_stride * static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
     }
 
     return layout;
 }
 
 /**
- * @brief Builds the vsg image that carries a mip chain.
+ * @brief Builds the vsg image that carries a texture's layers and mip chain.
  *
- * The chain is copied ONCE, as a contiguous block, because that is already its layout: the module stores
- * each level packed, at the standard halved extents, which is what the MipmapLayout below records.
+ * The bytes are staged in MIP-MAJOR order, because that is what vsg's copy regions assume: for one level it
+ * reads every layer from consecutive offsets starting at that level's layout entry. The module stores each
+ * layer's own chain level after level, so a multi-layer texture has to be interleaved here.
  *
- * @param source Base-level pixels plus the whole chain, in the module's compact layout.
- * @param format Vulkan format both the data and the image are declared with.
+ * Getting that order wrong is SILENT: the total byte count is the same either way, so every copy stays
+ * within the image, no validation layer complains, and instead every face samples another face's data. That
+ * is the whole reason the cube case is asserted by pixels rather than by "it uploaded without an error".
+ *
+ * A single layer needs no interleaving at all — the inner loop copies one layer's whole chain — which is
+ * what keeps the two-dimensional upload byte-for-byte what it was.
+ *
+ * @param texture Texture to build the image for.
+ * @param format  Vulkan format both the data and the image are declared with.
  * @return The image, ready to be uploaded by a descriptor bind, or null when the texel width has no vsg
  *         array type (the caller reports it).
  */
-::vsg::ref_ptr<::vsg::Image> makeImage(const vine::imaging::Image& source, VkFormat format)
+::vsg::ref_ptr<::vsg::Image> makeImage(const vine::graphics::Texture& texture, VkFormat format)
 {
-    const auto width           = static_cast<std::uint32_t>(source.width());
-    const auto height          = static_cast<std::uint32_t>(source.height());
-    const auto mip_levels      = static_cast<std::uint32_t>(source.mipCount());
-    const auto bytes_per_texel = static_cast<std::uint32_t>(vine::imaging::bytesPerPixel(source.format()));
-    const auto chain_bytes     = static_cast<std::uint32_t>(source.totalByteSize());
+    const auto width           = static_cast<std::uint32_t>(texture.width());
+    const auto height          = static_cast<std::uint32_t>(texture.height());
+    const auto mip_levels      = static_cast<std::uint32_t>(texture.mipCount());
+    const auto layer_count     = static_cast<std::uint32_t>(texture.layerCount());
+    const auto bytes_per_texel = static_cast<std::uint32_t>(vine::imaging::bytesPerPixel(texture.format()));
+    const bool is_cube         = (texture.kind() == vine::graphics::Texture::Kind::Cube);
 
-    auto storage = ::vsg::ubyteArray::create(chain_bytes);
-    std::memcpy(storage->data(), source.mipData(0).data(), chain_bytes);
+    auto layout = makeMipmapLayout(texture);
+
+    // vsg's step between the layers of one level, which is what the layout's per-level base leaves room for.
+    const std::size_t row_stride = static_cast<std::size_t>(width) * bytes_per_texel;
+    std::size_t       total      = 0;
+    for (std::uint32_t level = 0; level < mip_levels; ++level) {
+        const auto entry = layout->at(level);
+        total = static_cast<std::size_t>(entry.w) + row_stride * static_cast<std::size_t>(entry.x) *
+                                                         static_cast<std::size_t>(entry.y) * layer_count;
+    }
+
+    auto  storage = ::vsg::ubyteArray::create(static_cast<std::uint32_t>(total));
+    auto* staged  = reinterpret_cast<std::uint8_t*>(storage->data());
+
+    // Each layer of each level is copied to the offset vsg will read that layer's copy region from, so the
+    // padding cannot drift out of step with what is written.
+    for (std::uint32_t level = 0; level < mip_levels; ++level) {
+        const auto entry      = layout->at(level);
+        const auto layer_span = row_stride * static_cast<std::size_t>(entry.x) * static_cast<std::size_t>(entry.y);
+        for (std::uint32_t layer = 0; layer < layer_count; ++layer) {
+            const auto level_bytes = texture.layer(static_cast<int>(layer))->mipData(static_cast<int>(level));
+            std::memcpy(staged + entry.w + static_cast<std::size_t>(layer) * layer_span, level_bytes.data(),
+                        level_bytes.size());
+        }
+    }
 
     ::vsg::Data::Properties properties;
     properties.format    = format;
     properties.mipLevels = static_cast<std::uint8_t>(mip_levels);
-    properties.stride    = width * bytes_per_texel;
+    // properties.stride is not set here: Array2D/Array3D::assign() overwrites it with the row stride the
+    // array is constructed with, and that IS the number vsg uses as `valueSize` below — which is why the
+    // layout above has to leave a whole row's worth of room per texel of every layer.
+    if (is_cube) {
+        // The view type is taken from the DATA, not from the ImageView: ImageView's constructors read
+        // properties.imageViewType and fall back to a type derived from the image extent whenever it is
+        // negative, so assigning to imageView->viewType would simply be overwritten — leaving a six-layer
+        // 2D array view that samples nothing.
+        properties.imageViewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    }
 
-    auto layout = makeMipmapLayout(source);
-    auto texels = makeTexelArray(storage, layout, width, height, properties.stride, properties, bytes_per_texel);
+    auto texels = makeTexelArray(storage, layout, width, height, layer_count, width * bytes_per_texel,
+                                 properties, bytes_per_texel);
     if (texels == nullptr) {
         return {};
     }
 
-    auto image = ::vsg::Image::create();
-    image->data          = texels;
+    auto image = ::vsg::Image::create();    image->data          = texels;
     image->imageType     = VK_IMAGE_TYPE_2D;
     image->format        = format;
     image->extent        = { width, height, 1u };
     image->mipLevels     = mip_levels;
-    image->arrayLayers   = 1u;
+    image->arrayLayers   = layer_count;
+    image->flags         = is_cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u;
     image->usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     image->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     return image;
@@ -259,7 +348,7 @@ VsgTextureCache::~VsgTextureCache() = default;
         return it->second.payload().info;
     }
 
-    const vine::imaging::Image* source = texture->source(0);
+    const vine::imaging::Image* source = texture->layer(0);
     if (source == nullptr) {
         // classifyTexture() only accepts a complete texture, so this cannot happen for a texture that is
         // not being mutated concurrently; it is checked rather than asserted because a null dereference
@@ -269,7 +358,7 @@ VsgTextureCache::~VsgTextureCache() = default;
     }
 
     const VkFormat format    = vkFormatFor(source->format());
-    auto           vsg_image = makeImage(*source, format);
+    auto           vsg_image = makeImage(*texture, format);
     if (vsg_image == nullptr) {
         // makeImage() reports this when no vsg array type is as wide as the texel. Every 3-byte format is
         // already turned away by vkFormatFor(), so nothing classifyTexture() accepts reaches here; it is
@@ -278,7 +367,7 @@ VsgTextureCache::~VsgTextureCache() = default;
         return whiteFallback();
     }
 
-    auto info = ::vsg::ImageInfo::create(makeSampler(static_cast<std::uint32_t>(source->mipCount())),
+    auto info = ::vsg::ImageInfo::create(makeSampler(static_cast<std::uint32_t>(texture->mipCount())),
                                          ::vsg::ImageView::create(vsg_image),
                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 

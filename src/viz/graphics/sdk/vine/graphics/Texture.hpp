@@ -18,7 +18,7 @@ V_GRAPHICS_NS_BEGIN
 /**
  * @brief A texture the renderer samples: a description plus the CPU images that fill it.
  *
- * WHAT IT HOLDS. The sampling-facing facts — shape, size, pixel format, mip count — and the source images
+ * WHAT IT HOLDS. The sampling-facing facts — kind, size, pixel format, mip count — and the source images
  * that fill it, one per face.
  * The description exists on its own so a texture can be created once and filled face by face, and it is the
  * description that a source image must match: a mismatch is rejected where it is made, not discovered at
@@ -33,8 +33,8 @@ V_GRAPHICS_NS_BEGIN
  * The backend that can create textures owns them and materialises this description — the same division that
  * lets a pipeline be built, validated and tested with no device present.
  *
- * SHAPES. `D2` is one 2D image; `Cube` is six, each a 2D image of its own with its own mip chain.
- * Larger shapes (1D, 3D, arrays) are deliberately absent until something needs them, and adding one means
+ * KINDS. `D2` is one 2D image; `Cube` is six, each a 2D image of its own with its own mip chain.
+ * Larger kinds (1D, 3D, arrays) are deliberately absent until something needs them, and adding one means
  * answering what `faceCount()` means for it.
  */
 class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
@@ -42,7 +42,7 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
 
   public:
     /** @brief How many images of which arrangement a texture is made of. */
-    enum class Shape {
+    enum class Kind {
         D2,   ///< One 2D image.
         Cube, ///< Six 2D images, one per cube face.
     };
@@ -53,12 +53,12 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
      *
      * The texture starts incomplete: a description is not content, and the faces are filled separately.
      *
-     * PROTECTED, because a shape is a TYPE here rather than a constructor argument. A public constructor
-     * taking a shape would let a caller describe a cube through a path that skips whatever invariants the
+     * PROTECTED, because a kind is a TYPE here rather than a constructor argument. A public constructor
+     * taking a kind would let a caller describe a cube through a path that skips whatever invariants the
      * named type carries — that its faces are square, that they are addressed by name rather than by an
      * index whose meaning only Vulkan's layer order defines.
      *
-     * @param shape     How many images the texture is made of.
+     * @param kind      How many images the texture is made of.
      * @param width     Width in pixels of every face; must be positive.
      * @param height    Height in pixels of every face; must be positive.
      * @param format    Byte layout of one pixel; must be a format with a non-zero pixel size.
@@ -66,16 +66,16 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
      *                  `[1, Image::mipCapacity(width, height)]`.
      * @throws std::invalid_argument if any of the above is violated.
      */
-    Texture(Shape shape, int width, int height, imaging::PixelFormat format, int mip_count = 1);
+    Texture(Kind kind, int width, int height, imaging::PixelFormat format, int mip_count = 1);
 
   public:
     /**
-     * @brief Gets a stable, human-readable name for a shape, for diagnostics.
+     * @brief Gets a stable, human-readable name for a kind, for diagnostics.
      *
-     * @param shape Shape to name.
-     * @return The shape's name, or `"Unknown"` for an out-of-range value.
+     * @param kind Kind to name.
+     * @return The kind's name, or `"Unknown"` for an out-of-range value.
      */
-    [[nodiscard]] static const char* shapeName(Shape shape) noexcept;
+    [[nodiscard]] static const char* kindName(Kind kind) noexcept;
 
     /**
      * @brief Gets how many images this texture is made of.
@@ -85,14 +85,14 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     [[nodiscard]] int faceCount() const noexcept;
 
     /**
-     * @brief Gets the shape this texture was described with.
+     * @brief Gets the kind this texture was described with.
      *
      * A NAMING answer, not the one a consumer branches on: a backend that needs to know how much to upload
-     * asks `layerCount()`, so that adding a shape means adding a type rather than editing every switch.
+     * asks `layerCount()`, so that adding a kind means adding a type rather than editing every switch.
      *
-     * @return The shape.
+     * @return The kind.
      */
-    [[nodiscard]] virtual Shape shape() const noexcept;
+    [[nodiscard]] virtual Kind kind() const noexcept;
 
     /**
      * @brief Gets the width in pixels of every face.
@@ -143,7 +143,7 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     /**
      * @brief Gets one face's source image.
      *
-     * An index outside the shape is a query rather than a mistake, so it answers "no such face" instead of
+     * An index outside the kind is a query rather than a mistake, so it answers "no such face" instead of
      * failing; use `setSource()` to discover an out-of-range face.
      *
      * @param face Face index; an out-of-range index yields null.
@@ -185,9 +185,9 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     /**
      * @brief Gets how many images this texture is filled from.
      *
-     * The one question a consumer that does not care WHICH shape it holds has to ask: an uploader walks
+     * The one question a consumer that does not care WHICH kind it holds has to ask: an uploader walks
      * `0..layerCount()-1` through `layer()` and is done, so `D2` (1 layer), `Cube` (6) and a future array
-     * (N) need no branch anywhere — which is what keeps a shape hierarchy from costing a switch per shape.
+     * (N) need no branch anywhere — which is what keeps a kind hierarchy from costing a switch per kind.
      *
      * @return The layer count, at least 1.
      */
@@ -196,7 +196,7 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     /**
      * @brief Gets one layer's source image.
      *
-     * The shape-agnostic spelling of `source()`: an index outside the shape is a query rather than a
+     * The kind-agnostic spelling of `source()`: an index outside the kind is a query rather than a
      * mistake, so it answers null instead of failing.
      *
      * @param index Layer index; an out-of-range index yields null.
@@ -210,14 +210,14 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     int                       height_ = 0;
     imaging::PixelFormat      format_ = imaging::PixelFormat::Unknown;
     int                       mip_count_ = 1;
-    Shape                     shape_ = Shape::D2;
+    Kind                     kind_ = Kind::D2;
     std::uint64_t             revision_ = 0;
 };
 
 /**
  * @brief A texture of one 2D image.
  *
- * The named form of `Shape::D2`. It takes no layer index at all, because a 2D texture has exactly one image
+ * The named form of `Kind::D2`. It takes no layer index at all, because a 2D texture has exactly one image
  * and an index that can only ever be 0 is a mistake waiting to be written.
  */
 class V_GRAPHICS_API Texture2D : public Texture {
@@ -238,11 +238,11 @@ class V_GRAPHICS_API Texture2D : public Texture {
 
   public:
     /**
-     * @brief Gets the shape, for diagnostics.
+     * @brief Gets the kind, for diagnostics.
      *
-     * @return Always `Shape::D2`.
+     * @return Always `Kind::D2`.
      */
-    [[nodiscard]] Shape shape() const noexcept override;
+    [[nodiscard]] Kind kind() const noexcept override;
 
     /**
      * @brief Fills the texture with its image, or clears it.
@@ -298,11 +298,11 @@ class V_GRAPHICS_API CubeMap : public Texture {
 
   public:
     /**
-     * @brief Gets the shape, for diagnostics.
+     * @brief Gets the kind, for diagnostics.
      *
-     * @return Always `Shape::Cube`.
+     * @return Always `Kind::Cube`.
      */
-    [[nodiscard]] Shape shape() const noexcept override;
+    [[nodiscard]] Kind kind() const noexcept override;
 
     /**
      * @brief Gets a stable, human-readable name for a face, for diagnostics.

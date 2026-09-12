@@ -910,7 +910,7 @@ TEST(TextureTest, A2DTextureIsOneFace)
 {
     Texture2D texture(8, 4, PixelFormat::Rgba8Unorm, 2);
 
-    EXPECT_EQ(texture.shape(), Texture::Shape::D2);
+    EXPECT_EQ(texture.kind(), Texture::Kind::D2);
     EXPECT_EQ(texture.faceCount(), 1);
     EXPECT_EQ(texture.width(), 8);
     EXPECT_EQ(texture.height(), 4);
@@ -1009,11 +1009,11 @@ TEST(TextureTest, RejectsAnImpossibleDescription)
     EXPECT_NO_THROW(CubeMap(4, PixelFormat::Rgba8Unorm, 3));
 }
 
-TEST(TextureTest, ShapeNamesItselfForDiagnostics)
+TEST(TextureTest, KindNamesItselfForDiagnostics)
 {
-    EXPECT_STREQ(Texture::shapeName(Texture::Shape::D2), "D2");
-    EXPECT_STREQ(Texture::shapeName(Texture::Shape::Cube), "Cube");
-    EXPECT_STREQ(Texture::shapeName(static_cast<Texture::Shape>(99)), "Unknown");
+    EXPECT_STREQ(Texture::kindName(Texture::Kind::D2), "D2");
+    EXPECT_STREQ(Texture::kindName(Texture::Kind::Cube), "Cube");
+    EXPECT_STREQ(Texture::kindName(static_cast<Texture::Kind>(99)), "Unknown");
 }
 
 TEST(TextureTest, FillingAFaceBumpsTheContentRevision)
@@ -1048,7 +1048,7 @@ TEST(Texture2DTest, IsOneImageAndTakesNoFaceIndex)
 {
     Texture2D texture(8, 4, PixelFormat::Rgba8Unorm, 2);
 
-    EXPECT_EQ(texture.shape(), Texture::Shape::D2);
+    EXPECT_EQ(texture.kind(), Texture::Kind::D2);
     EXPECT_EQ(texture.layerCount(), 1);
     EXPECT_EQ(texture.faceCount(), 1);
     EXPECT_EQ(texture.width(), 8);
@@ -1090,7 +1090,7 @@ TEST(CubeMapTest, IsSixSquareFacesOfOneSize)
     // hardware accepts, so the size is stated once and cannot disagree with itself.
     CubeMap cube(16, PixelFormat::Rgba8Unorm, 3);
 
-    EXPECT_EQ(cube.shape(), Texture::Shape::Cube);
+    EXPECT_EQ(cube.kind(), Texture::Kind::Cube);
     EXPECT_EQ(cube.layerCount(), 6);
     EXPECT_EQ(cube.width(), 16);
     EXPECT_EQ(cube.height(), 16);
@@ -1158,7 +1158,7 @@ TEST(TextureLayersTest, BothSpellingsDescribeTheSameTexture)
 
     const Texture* shapes[2] = { &d2, &cube };
     for (const Texture* texture : shapes) {
-        EXPECT_EQ(texture->layerCount(), texture->faceCount()) << Texture::shapeName(texture->shape());
+        EXPECT_EQ(texture->layerCount(), texture->faceCount()) << Texture::kindName(texture->kind());
         for (int index = 0; index < texture->layerCount(); ++index) {
             EXPECT_EQ(texture->layer(index), texture->source(index)) << "layer " << index;
         }
