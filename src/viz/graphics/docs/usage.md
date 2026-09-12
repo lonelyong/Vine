@@ -394,7 +394,15 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 **单 pass 还是多 pass 与这件事无关**：只看这个 pass 有没有 program —— 场景 pass 用
 `RenderPass::setProgramOverride()`，全屏 / 后处理用 `ScreenPass::setProgram()`。
 
-两条路径用的 **location 是两套编号**，这是最容易踩的地方：
+**先分清三个数字**（后文只用这三个词）：
+
+- **通道 location**：你在 Geometry 里填的那个编号（`setPositions` 固定 0、`setNormals` 固定 1、
+  `setTexcoords` 固定 8；`addBuffer(L, …)` 的自定义通道 L ≥ 3 且 ≠ 8）。
+- **shader location**：shader 里写的 `layout(location = N)` —— 下表比的就是它。
+- **数组下标 = Vulkan binding**：后端排的（位置→法线→texcoords→颜色→自定义通道按 location 升序）；
+  你既不写它、也看不到它，GLSL 里没有这个概念。
+
+两条路径用的 **shader location 是两套编号**，这是最容易踩的地方：
 
 | 路径 | 谁提供 ShaderSet | shader 里的 `layout(location=…)` |
 | --- | --- | --- |
@@ -420,7 +428,7 @@ geometry->addBuffer(9u, AttributeBuffer::packed(tint_scalars,    4u));
 layout(location = 0) in vec3 inPosition;   // 位置（固定）
 layout(location = 1) in vec3 inNormal;     // 法线（固定；缺失时由位置推导）
 layout(location = 2) in vec4 inColor;      // 颜色（固定）
-layout(location = 8) in vec2 inUV;         // texcoords（固定；模块保留槽）
+layout(location = 8) in vec2 inUV;         // texcoords（固定；模块保留的 location）
 layout(location = 5) in vec3 inTangent;    // 自定义：就是 Geometry 的 loc 5
 layout(location = 9) in vec4 inTint;       // 自定义：就是 Geometry 的 loc 9
 

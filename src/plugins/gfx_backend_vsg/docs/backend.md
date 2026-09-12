@@ -128,35 +128,59 @@ graph TB
 
 ### 2.4 属性喂入：名字、location 与绑定顺序
 
-一个通道要同时对上三张表，这张表就是全部：
+**先把四个词分清**（本节全用这一套叫法，别混）：
 
-| 数组下标（= Vulkan binding） | 喂给的名字 | 内建路径的 location（vsg） | 自定义 program 的 location（模块） |
+| 词 | 是什么 | 谁写它 |
+| --- | --- | --- |
+| **通道 location**（= 源 location） | 通道在 Geometry 里的编号，是 `Geometry::attributes_` 这个 `std::map` 的键 | **调用者**：`setPositions` 固定 0、`setNormals` 固定 1、`setTexcoords` 固定 8、`setIndices` 不是属性；`addBuffer(L, …)` 的自定义通道 L ≥ 3 且 ≠ 8 |
+| **shader location** | GLSL 里的 `layout(location = N) in …`；也就是 SPIR-V 的输入编号 | **写 shader 的人**。内建路径必须用 vsg 的编号；自定义 program 路径必须用模块契约（下表） |
+| **数组下标 = Vulkan binding** | 顶点输入数组在喂入列表里的位置：`VkVertexInputBindingDescription.binding` / `vkCmdBindVertexBuffers` 的 binding | **后端**（调用者既不写它，也影响不到前缀四个的编号；GLSL 里根本没有这个概念） |
+| **喂给的名字** | 后端与 ShaderSet 之间配对用的字符串：`vsg_Vertex` / `vsg_Normal` / `vsg_TexCoord0` / `vsg_Color` / `vine_Attribute{L}` | **后端**生成（`customAttributeName(L)`），调用者只在自定义通道的 L 上间接影响 `{L}` |
+
+三张表的关系就下面这张（左边两列是后端的，右边两列是 shader 的）：
+
+| 数组下标（= binding） | 喂给的名字 | 内建路径的 shader location（vsg） | 自定义 program 的 shader location（模块） |
 | --- | --- | --- | --- |
 | 0 | `vsg_Vertex` | **0** | **0** |
 | 1 | `vsg_Normal` | **1** | **1** |
 | 2 | `vsg_TexCoord0` | **2** | **8** |
 | 3 | `vsg_Color` | **6** | **2** |
-| 4+i | `vine_Attribute{L}` | —（内建不声明） | **L**（即通道自己的源 location） |
+| 4+i | `vine_Attribute{L}` | —（内建不声明） | **L**（= 该通道的**源 location**） |
 
-- **下标不是 Geometry 里写的值**：Geometry 指定的是 **location**（就上表第三/四列），下标是后端算出来的 —— 固定前缀永远占 0..3（不管它们的 location 是 0/1/8/2），自定义通道接在 4+i，`i` 按 **location 升序**（`Geometry::attributes_` 是 `std::map`，所以升序是确定的，不是哈希序）。
-- **数组下标**由 `SceneBridgeGeometry.cpp` 的 `arrays` 列表顺序决定（位置 → 法线 → texcoords → 颜色 → 自定义通道按 location 升序），
+举个具体的：几何体有位置(0)、法线(1)、颜色(2)、UV(8) 和一个 `L = 5` 的自定义通道 ——
+
+| 通道 | 通道 location（Geometry） | 内建路径 shader location | 自定义路径 shader location | 数组下标/binding |
+| --- | --- | --- | --- | --- |
+| 位置 | 0 | 0 | 0 | 0 |
+| 法线 | 1 | 1 | 1 | 1 |
+| UV | 8 | **2** | **8** | **2** |
+| 颜色 | 2 | **6** | **2** | 3 |
+| 自定义 | 5 | ——（内建 set 不声明它，喂了也不被读） | **5** | 4 |
+
+注意最后一行与第三行的对照：**数组下标与 shader location 是两回事**（UV 的 binding 是 2 而 location 是 8）。
+
+其余规则：
+
+- **数组下标由 `SceneBridgeGeometry.cpp` 的 `arrays` 列表顺序决定**（位置 → 法线 → texcoords → 颜色 → 自定义通道按 location 升序），
   在 `SceneBridgePipeline.cpp` 里按同一顺序 `assign_array(name, index)` 配对；`BindVertexBuffers::create(0u, arrays)` 再按列表位置绑成 binding 0..N-1。
-  vsg 给顶点输入 binding 编号的方式是“按 `assignArray()` 成功的顺序递增”，所以**声明顺序必须与数组顺序逐位对齐**：漏声明一个名字或漏喂一个数组，
+  自定义通道的 `i` 按 **location 升序**排（`Geometry::attributes_` 是 `std::map`，升序确定，不是哈希序）。
+- vsg 给顶点输入 binding 编号的方式是“按 `assignArray()` 成功的顺序递增”，所以**ShaderSet 的声明顺序必须与 `arrays` 顺序逐位对齐**：漏声明一个名字或漏喂一个数组，
   后面全体错位，把下一个属性的数据喂给当前属性 —— 而 validation 不会报。这也是模块把前缀四个通道**永远都声明、永远都喂**（没有 UV 的网格喂零填充数组）的原因。
-- **内建路径的 location 是 vsg 自己的**（因为 ShaderSet 就是宿主传进来的 vsg set；实测 `vsg_shader_dump`：
+- **内建路径的 shader location 是 vsg 自己的**（ShaderSet 就是宿主传进来的 vsg set；实测 `vsg_shader_dump`：
   `vsg_Vertex` 0 / `vsg_Normal` 1 / `vsg_TexCoord0..3` 2..5 / `vsg_Color` **6** / `vsg_Translation(_scaleDistance)` 7 /
   `vsg_Rotation` **8** / `vsg_Scale` 9 / `vsg_JointIndices` 10 / `vsg_JointWeights` 11 —— flat/phong/pbr 三套完全一样，
   也就是**密集占满 0..11**）。
-- **自定义 program 路径自建 ShaderSet**（`assembleProgramShaderSet`），location 用模块契约 0 / 1 / 2 / 8：
-  canonical 槽必须避开自定义通道的范围（`L ≥ 3`，因为自定义通道沿用自己的源 location），而 `< 3` 只有 0/1/2 三个 ——
-  0/1 保持与 vsg 一致（让只读位置/法线的 shader 两条路径通用），颜色只能占 2；texcoords 只能去 `≥ 3` 里一个**保留**槽，
-  取 8 且 `L == 8` 的通道不转发（vsg 的 8 是 `vsg_Rotation`，借号不冲突：两套 set 永不同时存在）。
+- **自定义 program 路径自建 ShaderSet**（`assembleProgramShaderSet`），shader location 用模块契约 0 / 1 / 2 / 8：
+  canonical 的四个必须避开自定义通道能占的位置（**通道 location ≥ 3**，因为自定义通道沿用自己的源 location 当 shader location），
+  而 `< 3` 只有 0/1/2 三个空位 —— 0/1 保持与 vsg 一致（只读位置/法线的 shader 两条路径通用），颜色只能占 2；
+  texcoords 只能去 `≥ 3` 里一个**模块保留的 location**：取 8，并且**通道 location == 8 的通道不转发**（所以用户不可能占掉它）。
+  vsg 的 8 是 `vsg_Rotation` 也无妨：两套 set 永不同时存在（一个 geometry 要么走内建、要么走自定义 program）。
   结果是模块这套是**稀疏**编号，把 `3..7`、`9..` 全留给自定义通道。
-- **别把 vsg 的“数组槽号”当成 location**：`Builder.cpp:97` / `tile.cpp:488` 的 `enableArray("vsg_TexCoord0", …, 8)` 里的 8 是**喂入槽号**，
-  vsg 的 Phong set 里 texcoord 的 location 是 **2** —— 这两套编号 vsg 自己就是分开的。
+- **别把 vsg Builder 的数组下标当成 shader location**：`Builder.cpp:97` / `tile.cpp:488` 的 `enableArray("vsg_TexCoord0", …, 8)`
+  里的 8 是 vsg 那边的**数组下标**，而它 Phong set 里 texcoord 的 shader location 是 **2** —— 这两套编号 vsg 自己就是分开的。
 - 名字侧的守卫：`assignArray()` 失败且该名字**被管线声明**过 ⇒ 报一次 `ContentSkipped` Warning
   （`vertex binding '%s' (array %zu, %s) was not matched by the pipeline; the shader reads an attribute the pipeline does not enable…`）。
-  反方向（shader 声明了几何体不存在的 location）**没有任何诊断** —— ShaderSet 是按几何体的通道布局建的，声明不出来的就是没喂。
+  反方向（shader 声明了几何体没有的 shader location）**没有任何诊断** —— ShaderSet 是按几何体的通道布局建的，没声明的就是没喂。
 
 > 面向使用者的写法（Geometry 侧怎么挑 location、每段的示例 shader、描述符/push constant 清单）见
 > `src/viz/graphics/docs/usage.md` §3.8。
