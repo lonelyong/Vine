@@ -63,10 +63,13 @@ vsg::Data* findBoundData(vsg::Node* node, std::size_t binding)
         return nullptr;
     }
     if (auto bvb = node->cast<vsg::BindVertexBuffers>()) {
-        if (binding < bvb->arrays.size() && bvb->arrays[binding] != nullptr && bvb->arrays[binding]->data != nullptr) {
-            return bvb->arrays[binding]->data;
+        // A channel per command (see SceneBridge::RetainedBinds) means the binding has to be resolved
+        // through firstBinding; a command that does not carry it is not the answer, so the walk continues.
+        const std::size_t first = static_cast<std::size_t>(bvb->firstBinding);
+        if (binding >= first && binding - first < bvb->arrays.size()) {
+            const auto& info = bvb->arrays[binding - first];
+            return info != nullptr ? info->data.get() : nullptr;
         }
-        return nullptr;
     }
     if (auto commands = node->cast<vsg::Commands>()) {
         for (const auto& child : commands->children) {
@@ -283,16 +286,19 @@ TEST(SceneBridgeDataRebuildTest, FallbackChannelsFollowTheVertexCount)
     commands.emplace_back(geometry, material, Mat4d());
     sync(bridge, *root, commands);
 
-    auto* texcoord_before = findBoundData(root.get(), kBindingTexcoords);
-    auto* color_before    = findBoundData(root.get(), kBindingColors);
+    auto* texcoord_before  = findBoundData(root.get(), kBindingTexcoords);
+    auto* color_before     = findBoundData(root.get(), kBindingColors);
+    auto* data_node_before = findDataNode(root.get());
     ASSERT_NE(texcoord_before, nullptr);
     ASSERT_NE(color_before, nullptr);
+    ASSERT_NE(data_node_before, nullptr);
 
     // Grow the mesh: four vertices instead of three.
     geometry->setPositions(packed({ 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f }));
     geometry->setRevision(geometry->revision() + 1u);
     sync(bridge, *root, commands);
 
+    EXPECT_NE(findDataNode(root.get()), data_node_before) << "a shape change rebuilds the node";
     EXPECT_NE(findBoundData(root.get(), kBindingTexcoords), texcoord_before)
         << "the zero array was sized for the previous vertex count";
     EXPECT_NE(findBoundData(root.get(), kBindingColors), color_before)
@@ -345,86 +351,58 @@ TEST(SceneBridgeDataRebuildTest, IndexOnlyEditReplacesTheIndexStreamAlone)
 }
 
 /**
- * @brief A vertex edit still rebuilds the data node (the control for the index-only path).
+ * @brief A vertex edit refreshes that channel's bind and leaves the others alone.
  *
- * Replacing one vertex channel changes the identity of that channel, so the fast path must NOT trigger: the
- * node is rebuilt from the geometry (and the previous one parked on the retire ring).
+ * Each channel has its own command, so a positions edit re-materialises (and re-uploads) the POSITIONS
+ * only: the normals that were derived from them are refreshed too (they are what the positions fold into),
+ * while the texcoord and colour arrays — which did not change and do not depend on the positions — keep
+ * their very same objects. The data node itself is kept and re-compiled in place.
  */
-TEST(SceneBridgeDataRebuildTest, AVertexEditStillRebuildsTheWholeNode)
+TEST(SceneBridgeDataRebuildTest, AVertexEditRefreshesThatChannelInPlace)
 {
     vine::vsg::SceneBridge bridge;
     bridge.setShaderSet(vsg::createPhongShaderSet());
     auto root     = vsg::Group::create();
-    auto geometry = indexedTriangle(0.0f);
+    auto geometry = triangle(0.0f);
     auto material = MaterialPtr(new Material());
 
     std::vector<RenderCommand>           commands;
     std::vector<vsg::ref_ptr<vsg::Node>> created;
     commands.emplace_back(geometry, material, Mat4d());
     bridge.syncRenderCommands(commands, root.get(), &created);
-    ASSERT_EQ(created.size(), 1u);
     auto* data_node_before = findDataNode(root.get());
     auto* positions_before = findBoundData(root.get(), kBindingPositions);
+    auto* texcoord_before  = findBoundData(root.get(), kBindingTexcoords);
+    auto* color_before     = findBoundData(root.get(), kBindingColors);
     ASSERT_NE(data_node_before, nullptr);
     ASSERT_NE(positions_before, nullptr);
+    ASSERT_NE(texcoord_before, nullptr);
+    ASSERT_NE(color_before, nullptr);
 
-    // Same vertex count, new positions: the channel's identity changed, so this is not an index-only edit.
+    // Same vertex count, new positions: the shape is unchanged, so this is an in-place refresh.
     geometry->setPositions(packed({ 0.0f, 0.0f, 0.0f, 2.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f }));
     geometry->setRevision(geometry->revision() + 1u);
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
 
     EXPECT_NE(findBoundData(root.get(), kBindingPositions), positions_before)
-        << "the changed vertex channel must be re-materialised";
-    ASSERT_EQ(created.size(), 1u);
-    EXPECT_NE(findDataNode(root.get()), data_node_before)
-        << "a vertex edit rebuilds the data node (the index-only path must not trigger)";
+        << "the changed channel must be re-materialised";
+    EXPECT_EQ(findBoundData(root.get(), kBindingTexcoords), texcoord_before)
+        << "a channel that did not change must not be re-uploaded with it";
+    EXPECT_EQ(findBoundData(root.get(), kBindingColors), color_before)
+        << "a channel that did not change must not be re-uploaded with it";
+    EXPECT_EQ(findDataNode(root.get()), data_node_before)
+        << "the node is kept and re-compiled in place";
+    ASSERT_EQ(created.size(), 1u) << "the refreshed binds still need this frame's compile pass";
 }
 
 /**
- * @brief An index-count change is NOT an index-only edit.
+ * @brief A vertex edit AND an index edit in one revision refresh both streams in place.
  *
- * The count is baked into the draw command and into the range the bind copies, so a stream that grew or
- * shrank cannot be swapped into the retained bind: the fast path is limited to "same count, new bytes", and
- * anything else must take the rebuild (which is what makes the bound-range and the draw agree again).
+ * Both streams are refreshed through their own commands, so the mesh's other channels are not re-uploaded
+ * with them — the case that used to force a whole-mesh rebuild.
  */
-TEST(SceneBridgeDataRebuildTest, AChangedIndexCountRebuildsTheNode)
-{
-    vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
-    auto root     = vsg::Group::create();
-    auto geometry = indexedTriangle(0.0f);
-    auto material = MaterialPtr(new Material());
-
-    std::vector<RenderCommand>           commands;
-    std::vector<vsg::ref_ptr<vsg::Node>> created;
-    commands.emplace_back(geometry, material, Mat4d());
-    bridge.syncRenderCommands(commands, root.get(), &created);
-    auto* data_node_before = findDataNode(root.get());
-    ASSERT_NE(data_node_before, nullptr);
-    ASSERT_NE(findDrawIndexed(root.get()), nullptr);
-
-    // Six indices instead of three (two triangles over the same three vertices).
-    geometry->setIndices(packedIndices({ 0u, 1u, 2u, 0u, 1u, 2u }));
-    geometry->setRevision(geometry->revision() + 1u);
-    created.clear();
-    bridge.syncRenderCommands(commands, root.get(), &created);
-
-    EXPECT_NE(findDataNode(root.get()), data_node_before)
-        << "a changed index count must rebuild the node (the draw command bakes the count)";
-    auto* draw = findDrawIndexed(root.get());
-    ASSERT_NE(draw, nullptr);
-    EXPECT_EQ(draw->indexCount, 6u) << "the rebuild must reflect the new index count";
-}
-
-/**
- * @brief New vertices AND new indices: the index-only path must not swallow the vertices.
- *
- * Both streams changed, so the index fast path is not an option even though the index count is the same —
- * taking it would swap the indices and keep reading the OLD vertex channels, drawing the old mesh with the
- * new topology. This is the case the vertex-channel snapshot guards.
- */
-TEST(SceneBridgeDataRebuildTest, AVertexEditWithNewIndicesRebuildsTheNode)
+TEST(SceneBridgeDataRebuildTest, AVertexAndIndexEditRefreshesBothInPlace)
 {
     vine::vsg::SceneBridge bridge;
     bridge.setShaderSet(vsg::createPhongShaderSet());
@@ -438,8 +416,11 @@ TEST(SceneBridgeDataRebuildTest, AVertexEditWithNewIndicesRebuildsTheNode)
     bridge.syncRenderCommands(commands, root.get(), &created);
     auto* data_node_before = findDataNode(root.get());
     auto* positions_before = findBoundData(root.get(), kBindingPositions);
+    auto* texcoord_before  = findBoundData(root.get(), kBindingTexcoords);
+    auto* indices_before   = indexDataOf(root.get());
     ASSERT_NE(data_node_before, nullptr);
     ASSERT_NE(positions_before, nullptr);
+    ASSERT_NE(indices_before, nullptr);
 
     geometry->setPositions(packed({ 0.0f, 0.0f, 0.0f, 2.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f }));
     geometry->setIndices(packedIndices({ 2u, 1u, 0u }));
@@ -447,10 +428,45 @@ TEST(SceneBridgeDataRebuildTest, AVertexEditWithNewIndicesRebuildsTheNode)
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
 
-    EXPECT_NE(findBoundData(root.get(), kBindingPositions), positions_before)
-        << "the new vertices must reach the GPU";
+    EXPECT_NE(findBoundData(root.get(), kBindingPositions), positions_before) << "new vertices must reach the GPU";
+    EXPECT_NE(indexDataOf(root.get()), indices_before) << "new indices must reach the GPU";
+    EXPECT_EQ(findBoundData(root.get(), kBindingTexcoords), texcoord_before)
+        << "the untouched channels must not be re-uploaded";
+    EXPECT_EQ(findDataNode(root.get()), data_node_before) << "nothing about the shape changed";
+}
+
+/**
+ * @brief A revision the per-stream identities do NOT explain still rebuilds the data node.
+ *
+ * The refresh path is only an optimisation over "re-read everything", so it may only be taken when the
+ * snapshots say WHICH stream changed: a revision bump that accounts for nothing (a buffer mutated in place
+ * without bumping its own revision) must fall back to the rebuild, which re-reads the model. This is the
+ * guard the existing DiagnosticsTest.RejectedGeometryIsReportedOncePerRevision caught when the refresh path
+ * was naive about it.
+ */
+TEST(SceneBridgeDataRebuildTest, AnUnexplainedRevisionStillRebuildsTheNode)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto geometry = triangle(0.0f);
+    auto material = MaterialPtr(new Material());
+
+    std::vector<RenderCommand>           commands;
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    commands.emplace_back(geometry, material, Mat4d());
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    auto* data_node_before = findDataNode(root.get());
+    ASSERT_NE(data_node_before, nullptr);
+
+    // The geometry announces a revision, but no stream's identity changed: the refresh path cannot explain
+    // it, so the node is rebuilt from the model instead of the frame being treated as a no-op.
+    geometry->setRevision(geometry->revision() + 1u);
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+
     EXPECT_NE(findDataNode(root.get()), data_node_before)
-        << "with both streams replaced the node must be rebuilt";
+        << "an unexplained revision must be answered by re-reading the model, not by doing nothing";
 }
 
 /**
@@ -482,4 +498,51 @@ TEST(SceneBridgeDataRebuildTest, AnOutOfRangeIndexSwapIsRejectedInsteadOfUploade
 
     EXPECT_TRUE(root->children.empty())
         << "an out-of-range index stream must be rejected, not swapped into the retained bind";
+}
+
+/**
+ * @brief Authored normals and UVs each refresh on their own.
+ *
+ * The canonical channels are independent streams, so an edit to one must leave the others' arrays — and
+ * their uploads — untouched, whatever they are (here: authored, not derived).
+ */
+TEST(SceneBridgeDataRebuildTest, AuthoredChannelEditsRefreshOnlyThatChannel)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto geometry = triangle(0.0f);
+    auto material = MaterialPtr(new Material());
+
+    geometry->setNormals(packed({ 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f }));
+    geometry->setTexcoords(packed({ 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f }));
+
+    std::vector<RenderCommand>           commands;
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    commands.emplace_back(geometry, material, Mat4d());
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    auto* data_node_before = findDataNode(root.get());
+    auto* positions_before = findBoundData(root.get(), kBindingPositions);
+    auto* normals_before   = findBoundData(root.get(), kBindingNormals);
+    auto* texcoord_before  = findBoundData(root.get(), kBindingTexcoords);
+    ASSERT_NE(data_node_before, nullptr);
+    ASSERT_NE(normals_before, nullptr);
+    ASSERT_NE(texcoord_before, nullptr);
+
+    // UVs only.
+    geometry->setTexcoords(packed({ 0.0f, 1.0f, 1.0f, 1.0f, 0.5f, 0.0f }));
+    geometry->setRevision(geometry->revision() + 1u);
+    bridge.syncRenderCommands(commands, root.get(), &created);
+
+    EXPECT_NE(findBoundData(root.get(), kBindingTexcoords), texcoord_before) << "the new UVs must reach the GPU";
+    EXPECT_EQ(findBoundData(root.get(), kBindingPositions), positions_before) << "positions were not touched";
+    EXPECT_EQ(findBoundData(root.get(), kBindingNormals), normals_before) << "authored normals were not touched";
+
+    // Authored normals only.
+    geometry->setNormals(packed({ 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f }));
+    geometry->setRevision(geometry->revision() + 1u);
+    bridge.syncRenderCommands(commands, root.get(), &created);
+
+    EXPECT_NE(findBoundData(root.get(), kBindingNormals), normals_before) << "the new normals must reach the GPU";
+    EXPECT_EQ(findDataNode(root.get()), data_node_before) << "no shape changed";
 }

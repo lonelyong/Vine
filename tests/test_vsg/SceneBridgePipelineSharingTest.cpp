@@ -127,13 +127,14 @@ bool hasDynamicVertexData(vsg::Node* node)
         return false;
     }
     if (auto bvb = node->cast<vsg::BindVertexBuffers>()) {
+        // Do NOT return false here: each channel has its own command (see SceneBridge::RetainedBinds), so the
+        // dynamic carrier may sit in a later command than this one.
         for (const auto& buffer_info : bvb->arrays) {
             if (buffer_info != nullptr && buffer_info->data != nullptr &&
                 buffer_info->data->dynamic()) {
                 return true;
             }
         }
-        return false;
     }
     if (auto group = node->cast<vsg::Group>()) {
         for (const auto& child : group->children) {
@@ -155,6 +156,45 @@ bool hasDynamicVertexData(vsg::Node* node)
 }
 
 /**
+ * @brief Finds the vertex Data bound at binding @p binding under a retained subtree.
+ *
+ * The binding is resolved through each command's firstBinding, because a data node binds one channel per
+ * command (see SceneBridge::RetainedBinds); a command that does not carry the binding is skipped.
+ *
+ * @param node    Root of the subtree to walk.
+ * @param binding Vertex binding index (0 positions, 1 normals, 2 texcoords, 3 loc2 colour, 4+ custom).
+ * @return The bound array, or null when the binding is not bound.
+ */
+vsg::Data* findBoundData(vsg::Node* node, std::size_t binding)
+{
+    if (node == nullptr) {
+        return nullptr;
+    }
+    if (auto bvb = node->cast<vsg::BindVertexBuffers>()) {
+        const std::size_t first = static_cast<std::size_t>(bvb->firstBinding);
+        if (binding >= first && binding - first < bvb->arrays.size()) {
+            const auto& info = bvb->arrays[binding - first];
+            return info != nullptr ? info->data.get() : nullptr;
+        }
+    }
+    if (auto commands = node->cast<vsg::Commands>()) {
+        for (const auto& child : commands->children) {
+            if (auto* hit = findBoundData(child.get(), binding)) {
+                return hit;
+            }
+        }
+    }
+    if (auto group = node->cast<vsg::Group>()) {
+        for (const auto& child : group->children) {
+            if (auto* hit = findBoundData(child.get(), binding)) {
+                return hit;
+            }
+        }
+    }
+    return nullptr;
+}
+
+/**
  * @brief Finds the bound per-vertex colour array under a retained subtree.
  *
  * The default path always binds three arrays (vertex, normal, colour); the
@@ -170,11 +210,14 @@ vsg::vec4Array* findColorArray(vsg::Node* node)
         return nullptr;
     }
     if (auto bvb = node->cast<vsg::BindVertexBuffers>()) {
-        // The colour array sits at the canonical binding index 3, after
-        // vertex (0), normal (1) and texcoord (2) — see buildGeometryData.
-        if (bvb->arrays.size() > 3u && bvb->arrays[3] != nullptr &&
-            bvb->arrays[3]->data != nullptr) {
-            return bvb->arrays[3]->data->cast<vsg::vec4Array>();
+        // The colour array sits at binding index 3, after vertex (0), normal (1) and texcoord (2) — see
+        // buildGeometryData. Each channel has its own command now, so the index is resolved through
+        // firstBinding rather than by position in this command's array list.
+        constexpr std::size_t kColorBinding = 3u;
+        const std::size_t     first         = static_cast<std::size_t>(bvb->firstBinding);
+        if (kColorBinding >= first && kColorBinding - first < bvb->arrays.size()) {
+            const auto& info = bvb->arrays[kColorBinding - first];
+            return info != nullptr && info->data != nullptr ? info->data->cast<vsg::vec4Array>() : nullptr;
         }
         return nullptr;
     }
@@ -1110,7 +1153,9 @@ TEST(SceneBridgePipelineSharingTest, PositionBindingAliasesTheModelBuffer)
     const auto* normals = geometry->buffer(1);
     ASSERT_NE(normals, nullptr);
     ASSERT_FALSE(normals->scalars().empty());
-    EXPECT_EQ(bvb->arrays[1]->data->dataPointer(), static_cast<const void*>(normals->scalars().data()))
+    auto* normal_binding = findBoundData(created[0].get(), 1u);
+    ASSERT_NE(normal_binding, nullptr) << "binding 1 must be bound (each channel has its own command now)";
+    EXPECT_EQ(normal_binding->dataPointer(), static_cast<const void*>(normals->scalars().data()))
         << "loc1 must alias the model's normals instead of copying them";
 }
 
@@ -1147,18 +1192,16 @@ TEST(SceneBridgePipelineSharingTest, IndexedGeometryAliasesItsTexcoordsAndIndexB
     bridge.syncRenderCommands(commands, root.get(), &created);
     ASSERT_EQ(created.size(), 1u);
 
-    // Vertex binding order is position, normal, texcoord, colour, so the UVs are the third array.
-    auto* bvb = findBindVertexBuffers(created[0].get());
-    ASSERT_NE(bvb, nullptr);
-    ASSERT_GE(bvb->arrays.size(), 3u);
-    ASSERT_NE(bvb->arrays[2]->data, nullptr);
-    EXPECT_NE(bvb->arrays[2]->data->cast<vsg::vec2Array>(), nullptr);
+    // Binding 2 is the texcoord one (0 positions, 1 normals, 2 texcoords, 3 loc2 colour).
+    auto* uv_binding = findBoundData(created[0].get(), 2u);
+    ASSERT_NE(uv_binding, nullptr);
+    EXPECT_NE(uv_binding->cast<vsg::vec2Array>(), nullptr);
     const auto* uv_channel = geometry->buffer(vine::graphics::Geometry::kTexCoordLocation);
     ASSERT_NE(uv_channel, nullptr);
     ASSERT_FALSE(uv_channel->scalars().empty());
-    EXPECT_EQ(bvb->arrays[2]->data->dataPointer(), static_cast<const void*>(uv_channel->scalars().data()))
+    EXPECT_EQ(uv_binding->dataPointer(), static_cast<const void*>(uv_channel->scalars().data()))
         << "the texcoord binding must alias the model's (u, v) pairs";
-    EXPECT_EQ(bvb->arrays[2]->data->properties.stride, sizeof(vsg::vec2))
+    EXPECT_EQ(uv_binding->properties.stride, sizeof(vsg::vec2))
         << "a vec2 array reads its elements eight bytes apart, not four";
 
     auto* index_bind = findBindIndexBuffer(created[0].get());

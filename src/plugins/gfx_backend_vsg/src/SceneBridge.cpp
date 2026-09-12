@@ -173,9 +173,9 @@ struct SceneBridge::Item {
     // stream replaced: a rebuild would re-materialise — and re-upload — every channel with it.
     std::vector<ChannelKey> channel_keys;
     ChannelKey              index_key;
-    // The retained index bind: kept so an index-only edit can replace that stream in place (its BufferInfo
-    // is what vsg re-creates and copies — one channel, not the whole mesh).
-    ::vsg::ref_ptr<::vsg::BindIndexBuffer> index_bind;
+    // The retains of the built data node: one vertex bind per canonical channel and the index bind, so an
+    // edit whose shape did not change can refresh the ONE stream that changed (see RetainedBinds).
+    RetainedBinds binds;
     // Forwarded custom vertex channels (locations >= 3, except the canonical
     // texcoord location) bound after the canonical prefix, in binding order (see
     // buildGeometryData). Drives the
@@ -249,6 +249,30 @@ std::vector<SceneBridge::ChannelKey> SceneBridge::channelKeysOf(const vine::grap
         keys.push_back(key);
     }
     return keys;
+}
+
+bool SceneBridge::shapesMatch(const std::vector<ChannelKey>& before, const std::vector<ChannelKey>& after)
+{
+    if (before.size() != after.size()) {
+        return false; // a channel added or removed changes the layout, not just the bytes
+    }
+    for (const ChannelKey& key : before) {
+        const ChannelKey* const current = keyAt(after, key.location);
+        if (current == nullptr || current->components != key.components || current->count != key.count) {
+            return false;
+        }
+    }
+    return true;
+}
+
+const SceneBridge::ChannelKey* SceneBridge::keyAt(const std::vector<ChannelKey>& keys, std::uint32_t location)
+{
+    for (const ChannelKey& key : keys) {
+        if (key.location == location) {
+            return &key;
+        }
+    }
+    return nullptr;
 }
 
 SceneBridge::ChannelKey SceneBridge::indexKeyOf(const vine::graphics::Geometry& geometry)
@@ -453,21 +477,75 @@ bool SceneBridge::syncRenderCommands(
                 indices_in_range = std::all_of(src_indices.begin(), src_indices.end(),
                                                [vertex_count](std::uint32_t index) { return index < vertex_count; });
             }
-            const bool index_only =
-                indices_in_range && item->data_node != nullptr && item->index_bind != nullptr &&
-                item->channel_keys == keys_now && item->index_key.buffer != nullptr && index_now.buffer != nullptr &&
-                index_now.count == item->index_key.count && index_now.buffer != item->index_key.buffer;
+            // An edit that left the node's SHAPE alone can refresh the streams whose bytes changed instead
+            // of re-materialising (and re-uploading) the whole mesh: each channel has its own bind command,
+            // so a fresh BufferInfo for one of them copies one channel (see RetainedBinds). This generalises
+            // the index-only case — the index stream is simply one more channel that refreshes in place.
+            const bool index_changed = index_now.buffer != nullptr && item->index_key.buffer != nullptr &&
+                                       index_now.buffer != item->index_key.buffer;
+            std::vector<std::pair<std::size_t, ::vsg::ref_ptr<::vsg::Data>>> refreshed;
+            bool refresh_ok = item->data_node != nullptr && item->binds.index != nullptr &&
+                              shapesMatch(item->channel_keys, keys_now) &&
+                              (!index_changed ||
+                               (indices_in_range && index_now.count == item->index_key.count));
+            if (refresh_ok) {
+                const std::size_t vertex_count = position_channel != nullptr ? position_channel->vertexCount() : 0u;
+                const ChannelKey* const positions_before = keyAt(item->channel_keys, 0u);
+                const ChannelKey* const positions_after  = keyAt(keys_now, 0u);
+                const bool positions_changed =
+                    positions_before != nullptr && positions_after != nullptr && !(*positions_before == *positions_after);
+                for (const std::uint32_t location : { 0u, 1u, vine::graphics::Geometry::kTexCoordLocation, 2u })
+                {
+                    const std::size_t binding = RetainedBinds::canonicalBindingOf(location);
+                    if (binding == RetainedBinds::kNoBinding || item->binds.canonical[binding] == nullptr) {
+                        continue;
+                    }
+                    const ChannelKey* before = keyAt(item->channel_keys, location);
+                    const ChannelKey* after  = keyAt(keys_now, location);
+                    // A derived channel has no channel key at all (the geometry authors none), yet it is what
+                    // the positions are folded into: new positions invalidate it, so it is refreshed too.
+                    const bool derived_normals_invalidated = location == 1u && before == nullptr && after == nullptr &&
+                                                             positions_changed &&
+                                                             item->derived.derived_normals != nullptr;
+                    if (!derived_normals_invalidated &&
+                        (before == nullptr || after == nullptr || *before == *after)) {
+                        continue; // absent both times, or byte-for-byte the same stream
+                    }
+                    // The built-in path IGNORES an authored loc2 colour: binding 3 carries its own white
+                    // opacity carrier there, whose bytes depend on the vertex count alone (unchanged), so a
+                    // change to the authored channel is a no-op rather than a refresh or a rebuild.
+                    if (location == 2u && item->colors != nullptr) {
+                        continue;
+                    }
+                    auto array =
+                        refreshCanonicalChannel(geometry, location, vertex_count, state.topology, item->derived);
+                    if (array == nullptr) {
+                        refresh_ok = false; // this channel needs the builder (and its diagnostics)
+                        break;
+                    }
+                    refreshed.emplace_back(binding, std::move(array));
+                }
+            }
 
-            if (index_only) {
-                // Index-only edit: the vertex channels are already uploaded, so replacing the index stream in
-                // place re-copies the indices ALONE instead of the whole mesh. The new array is a fresh
-                // vsg::Data, so its BufferInfo requires a copy without any dirty() bookkeeping. Nothing is
-                // new here, but the swapped BufferInfo still needs this frame's compile pass — which the
+            // The refresh has to be EXPLAINED by the snapshots: a revision the per-stream identities do not
+            // account for (a buffer mutated in place without bumping its own revision, say) must not be
+            // answered with "nothing to do" — that would leave the previous bytes on the GPU, silently. Such
+            // a revision falls back to the rebuild below, which re-reads everything.
+            const bool refresh_applies = refresh_ok && (!refreshed.empty() || index_changed);
+            if (refresh_applies) {
+                // Every refreshed channel goes through its own bind, so vsg re-creates and copies exactly
+                // those channels; the index stream is swapped the same way. Nothing is new here, but the
+                // replaced BufferInfos still need this frame's compile pass — which the
                 // (data_dirty || state_dirty) block below already queues.
-                item->index_bind->assignIndices(
-                    detail::aliasArray<::vsg::uintArray, std::uint32_t>(geometry->indicesBuffer(), index_now.count));
-                item->index_key    = index_now;
-                item->matrix_valid = false;
+                for (auto& [binding, array] : refreshed) {
+                    item->binds.canonical[binding]->assignArrays(::vsg::DataList{ array });
+                }
+                if (index_changed) {
+                    item->binds.index->assignIndices(detail::aliasArray<::vsg::uintArray, std::uint32_t>(
+                        geometry->indicesBuffer(), index_now.count));
+                    item->index_key = index_now;
+                }
+                item->channel_keys = keys_now;
                 changed            = true;
             }
             else {
@@ -476,10 +554,10 @@ bool SceneBridge::syncRenderCommands(
             // replaced node is parked (its buffers may still be in flight).
             item->extra_channels.clear();
             retireNode(std::move(item->data_node));
-            item->index_bind = nullptr;
+            item->binds      = RetainedBinds{};
             item->data_node  = buildGeometryData(geometry, item->program.get() == nullptr,
                                                 state.topology, item->colors,
-                                                item->extra_channels, item->derived, item->index_bind);
+                                                item->extra_channels, item->derived, item->binds);
             if (item->data_node == nullptr) {
                 // Unsupported shape / malformed vertex data (unusable attribute
                 // strides, out-of-range indices, ...): nothing drawable. The

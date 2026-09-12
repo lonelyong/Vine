@@ -285,7 +285,7 @@ graph TB
 
 | 触发 | 调用 | 代价 |
 | --- | --- | --- |
-| `geometry->revision()` 变（或 topology / loc2 路径变） | `buildGeometryData()` 重建**数据节点** + 重新上传 | 新数组（别名模型内存）+ 一次上传；旧节点进退役环 |
+| `geometry->revision()` 变（或 topology / loc2 路径变） | 形状不变且快照能解释"变了哪一路" ⇒ **原地刷新那一路**（`assignArrays({新数组})`，只重拷该通道）；否则 `buildGeometryData()` 重建**数据节点** + 重新上传 | 刷新：该通道字节；重建：新数组（别名模型内存）+ 全通道上传，旧节点进退役环 |
 | material / texture(+revision) / render state / program(+revision) 变 | `buildStateGroup()` 重建**状态包装** | 变体查表命中则复用管线；否则编译一次 |
 | 自定义通道集合变了 | 连状态包装一起重建 | 布局哈希变 ⇒ 新变体 |
 | 某纹理首次出现或 `Texture::revision()` 变 | `VsgTextureCache::getOrCreate()` 未命中 ⇒ 新建 `vsg::Image` + 上传 | 一张纹理的一次上传 |
@@ -318,6 +318,25 @@ graph TB
 
 - 改几何数据**不**重编译管线；改材质/状态**不**重传网格。这是这个后端最基本的性能承诺。
 - 两个 `dirty` 的判定与理由都写在 `SceneBridge.cpp` 的注释里（`data_dirty` / `state_dirty`）。
+
+### 5.1.1 通道级增量：为什么数据节点每通道一条 bind
+
+vsg 的重传粒度是**一条 `BindVertexBuffers` 命令**：命令里任一阵列过期，`BindVertexBuffers::compile()` 就把该命令的**全部**
+阵列重新预留并重拷（`createBufferAndTransferData` → 池 reserve）。所以"只重传变了的那一路"要求两条：
+
+| 条件 | 做法 |
+| --- | --- |
+| 每个 canonical 通道有自己的命令 | `buildGeometryData()` 发 5 条 bind：0 位置、1 法线、2 texcoord、3 loc2 颜色、4+ 自定义（自定义共用一条，集合变就是布局变） |
+| 知道"变的是哪一路" | `SceneBridge::ChannelKey` = `位置/分量/缓冲指针/Buffer::revision()/元素数`；快照存在 `Item` 里，`shapesMatch()` 比形状（位置/分量/数量），逐键比字节身份 |
+
+于是数据 revision 分两档：**形状不变**（通道集合、分量、元素数一致，位置 0 仍是可别名布局）且快照解释了变化 ⇒ 只把变化
+通道的 bind 换成新数组（索引流同理），节点与 `MatrixTransform` 都是原对象；**其余情况**（形状变、有无解释不了的变化、通道
+不可别名、越界索引…）⇒ 走原来的全量重建，由 builder 报诊断/拒绝。
+
+派生通道与位置**耦合**：几何体不作者法线时，位置变会连带重新推导法线（P5 的缓存同步更新）。
+
+> 命名接口不变：`Geometry::revision()` 仍然只表示"变了"，刷新路径只是**额外**用逐流快照判断能不能少做；看不出来就
+> 老实重建（`Buffer::revision()` 的契约见 `vine/Buffer.hpp`：变了字节就要 bump）。
 
 ### 5.2 DYNAMIC 与脏计数（谁"每帧"上传）
 

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
@@ -98,12 +100,59 @@ vsg::BindVertexBuffers* findBindVertexBuffers(vsg::Node* node)
 
 vsg::Data* boundData(vsg::Node* node, std::size_t binding)
 {
-    auto* bvb = findBindVertexBuffers(node);
-    if (bvb == nullptr || binding >= bvb->arrays.size() || bvb->arrays[binding] == nullptr ||
-        bvb->arrays[binding]->data == nullptr) {
+    if (node == nullptr) {
         return nullptr;
     }
-    return bvb->arrays[binding]->data;
+    // Channels live in one command each, so the binding is resolved through firstBinding and the walk
+    // CONTINUES past a command that does not carry it (see SceneBridge::RetainedBinds).
+    if (auto* bvb = node->cast<vsg::BindVertexBuffers>()) {
+        const std::size_t first = static_cast<std::size_t>(bvb->firstBinding);
+        if (binding >= first && binding - first < bvb->arrays.size() && bvb->arrays[binding - first] != nullptr) {
+            return bvb->arrays[binding - first]->data.get();
+        }
+    }
+    if (auto commands = node->cast<vsg::Commands>()) {
+        for (const auto& child : commands->children) {
+            if (auto* hit = boundData(child.get(), binding)) {
+                return hit;
+            }
+        }
+    }
+    if (auto group = node->cast<vsg::Group>()) {
+        for (const auto& child : group->children) {
+            if (auto* hit = boundData(child.get(), binding)) {
+                return hit;
+            }
+        }
+    }
+    return nullptr;
+}
+
+/// Number of contiguous vertex bindings the data node fills (binding 0..N-1).
+///
+/// Each channel lives in its own BindVertexBuffers command (see SceneBridge::RetainedBinds), so "how many
+/// channels are bound" is the highest (firstBinding + array count) the node reaches, not one command's list
+/// length.
+std::size_t boundVertexBindingCount(vsg::Node* node)
+{
+    if (node == nullptr) {
+        return 0u;
+    }
+    if (auto bvb = node->cast<vsg::BindVertexBuffers>()) {
+        return static_cast<std::size_t>(bvb->firstBinding) + bvb->arrays.size();
+    }
+    std::size_t count = 0u;
+    if (auto commands = node->cast<vsg::Commands>()) {
+        for (const auto& child : commands->children) {
+            count = std::max(count, boundVertexBindingCount(child.get()));
+        }
+    }
+    if (auto group = node->cast<vsg::Group>()) {
+        for (const auto& child : group->children) {
+            count = std::max(count, boundVertexBindingCount(child.get()));
+        }
+    }
+    return count;
 }
 
 vsg::DrawIndexed* findDrawIndexed(vsg::Node* node)
@@ -156,10 +205,9 @@ TEST(CustomAttributeTest, CustomChannelsAreForwardedAndTyped)
     bridge.syncRenderCommands(std::vector<RenderCommand>{ cmd }, root.get(), &created);
 
     ASSERT_EQ(root->children.size(), 1u);
-    auto* bvb = findBindVertexBuffers(root.get());
-    ASSERT_NE(bvb, nullptr);
-    // 4 canonical arrays (vertex / normal / texcoord / colour) + loc3 + loc4.
-    ASSERT_EQ(bvb->arrays.size(), 6u);
+    ASSERT_NE(findBindVertexBuffers(root.get()), nullptr);
+    // 4 canonical bindings (vertex / normal / texcoord / colour) + loc3 + loc4.
+    ASSERT_EQ(boundVertexBindingCount(root.get()), 6u);
 
     auto* v3 = boundData(root.get(), 4u);
     ASSERT_NE(v3, nullptr);
@@ -258,9 +306,8 @@ TEST(CustomAttributeTest, BuiltInPathCarriesChannelsAndDraws)
     ASSERT_EQ(root->children.size(), 1u);
     ASSERT_NE(findDrawIndexed(root.get()), nullptr);
     // Data superset still bound (4 canonical + loc3) even on the built-in path.
-    auto* bvb = findBindVertexBuffers(root.get());
-    ASSERT_NE(bvb, nullptr);
-    EXPECT_EQ(bvb->arrays.size(), 5u);
+    ASSERT_NE(findBindVertexBuffers(root.get()), nullptr);
+    EXPECT_EQ(boundVertexBindingCount(root.get()), 5u);
     EXPECT_EQ(bridge.pipelineVariantCount(), 1u);
 }
 
@@ -284,9 +331,8 @@ TEST(CustomAttributeTest, MalformedCustomChannelIgnored)
     bridge.syncRenderCommands(std::vector<RenderCommand>{ cmd }, root.get(), &created);
 
     ASSERT_EQ(root->children.size(), 1u); // still drawable
-    auto* bvb = findBindVertexBuffers(root.get());
-    ASSERT_NE(bvb, nullptr);
-    EXPECT_EQ(bvb->arrays.size(), 4u); // 4 canonical arrays; the malformed channel is not bound
+    ASSERT_NE(findBindVertexBuffers(root.get()), nullptr);
+    EXPECT_EQ(boundVertexBindingCount(root.get()), 4u); // 4 canonical bindings; not bound: the malformed one
 }
 
 /**
@@ -309,9 +355,8 @@ TEST(CustomAttributeTest, LocationTwoRemainsCanonicalCarrier)
     bridge.syncRenderCommands(std::vector<RenderCommand>{ cmd }, root.get(), &created);
 
     ASSERT_EQ(root->children.size(), 1u);
-    auto* bvb = findBindVertexBuffers(root.get());
-    ASSERT_NE(bvb, nullptr);
-    EXPECT_EQ(bvb->arrays.size(), 4u); // 4 canonical arrays; loc2 stays the internal carrier
+    ASSERT_NE(findBindVertexBuffers(root.get()), nullptr);
+    EXPECT_EQ(boundVertexBindingCount(root.get()), 4u); // 4 canonical bindings; loc2 stays the carrier
     // Built-in path ignores the authored loc2: index 3 is the white carrier.
     auto* c = boundData(root.get(), 3u)->cast<vsg::vec4Array>();
     ASSERT_NE(c, nullptr);
@@ -343,9 +388,8 @@ TEST(CustomAttributeTest, CustomLoc2ColorIsBoundOnProgramPath)
     bridge.syncRenderCommands(std::vector<RenderCommand>{ cmd }, root.get(), &created);
 
     ASSERT_EQ(root->children.size(), 1u);
-    auto* bvb = findBindVertexBuffers(root.get());
-    ASSERT_NE(bvb, nullptr);
-    EXPECT_EQ(bvb->arrays.size(), 4u); // 4 canonical arrays; loc2 consumed as vsg_Color, not an extra
+    ASSERT_NE(findBindVertexBuffers(root.get()), nullptr);
+    EXPECT_EQ(boundVertexBindingCount(root.get()), 4u); // 4 canonical; loc2 is vsg_Color, not an extra
     auto* c = boundData(root.get(), 3u)->cast<vsg::vec4Array>();
     ASSERT_NE(c, nullptr);
     ASSERT_EQ(c->size(), 3u);

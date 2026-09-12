@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <vsg/commands/BindIndexBuffer.h>
+#include <vsg/commands/BindVertexBuffers.h>
 #include <vsg/commands/Commands.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>
@@ -287,6 +288,43 @@ class V_VSG_API SceneBridge {
         }
     };
 
+    /** @brief The bind commands a built data node holds, kept so an edit can refresh ONE stream.
+     *
+     * A data node binds one Canonical channel per command (binding 0..3) plus one more for the custom
+     * channels, instead of one command holding every array. The reason is vsg's re-copy granularity:
+     * `BindVertexBuffers::compile()` re-creates and re-copies EVERY array of a command whose ANY array is
+     * stale, so a single command can only ever re-upload the whole mesh. One command per channel makes the
+     * unit of re-upload one channel — the index stream already worked that way.
+     *
+     * The binding numbers stay the explicit `firstBinding` of each command (0..3 canonical, 4+ custom), so
+     * what the shader sees does not change with the split.
+     */
+    struct RetainedBinds
+    {
+        /** @brief Canonical binding index of @p location, or kNoBinding when it is not a canonical one. */
+        static std::size_t canonicalBindingOf(std::uint32_t location) noexcept
+        {
+            switch (location)
+            {
+                case 0u: return 0u;                                                                     // positions
+                case 1u: return 1u;                                                                     // normals
+                case vine::graphics::Geometry::kTexCoordLocation: return 2u;                             // texcoords
+                case 2u: return 3u;                                                                     // loc2 colour
+                default: return kNoBinding;
+            }
+        }
+
+        /** @brief Sentinel: the location is not one of the four canonical ones. */
+        static constexpr std::size_t kNoBinding = ~std::size_t{ 0 };
+        /** @brief Number of canonical vertex bindings (positions, normals, texcoords, loc2 colour). */
+        static constexpr std::size_t kCanonicalCount = 4u;
+
+        // One bind per canonical binding index (see canonicalBindingOf).
+        std::array<::vsg::ref_ptr<::vsg::BindVertexBuffers>, kCanonicalCount> canonical;
+        // The index stream's bind (its own command: the fast path swaps it in place).
+        ::vsg::ref_ptr<::vsg::BindIndexBuffer> index;
+    };
+
     /** @brief Retained per-geometry render node (defined in the .cpp). */
     struct Item;
 
@@ -323,6 +361,27 @@ class V_VSG_API SceneBridge {
      * @return One key per channel, in ascending location order.
      */
     static std::vector<ChannelKey> channelKeysOf(const vine::graphics::Geometry& geometry);
+
+    /** @brief Whether two channel snapshots describe the same channels with the same SHAPE.
+     *
+     * Shape is location, component count and element count — what decides how the node is assembled (the
+     * bindings, the array types, the derived channels' sizes). The bytes (buffer pointer and revision) are
+     * deliberately NOT compared: two snapshots that differ only there are exactly the case an in-place
+     * refresh serves.
+     *
+     * @param before Snapshot the retained node was built from.
+     * @param after  Current snapshot.
+     * @return true when every channel is present in both with the same shape.
+     */
+    static bool shapesMatch(const std::vector<ChannelKey>& before, const std::vector<ChannelKey>& after);
+
+    /** @brief Finds the snapshot entry for @p location.
+     *
+     * @param keys     Snapshot to search (ascending location order).
+     * @param location Channel location to find.
+     * @return The entry, or null when the snapshot has no such channel.
+     */
+    static const ChannelKey* keyAt(const std::vector<ChannelKey>& keys, std::uint32_t location);
 
     /** @brief Snapshots the identity of the geometry's index stream.
      *
@@ -387,6 +446,28 @@ class V_VSG_API SceneBridge {
     void report(vine::graphics::DiagnosticSeverity severity,
                 vine::graphics::DiagnosticCategory category, const vine::String& message);
 
+    /** @brief Builds ONE canonical channel's array for an in-place refresh, or null when it cannot.
+     *
+     * The counterpart of buildGeometryData() for a single channel: it reproduces exactly what that builder
+     * would bind for @p location — aliasing the model's bytes, or re-deriving the normals a positions edit
+     * invalidated — but only when the node's SHAPE did not change. Returning null means "this edit needs the
+     * full rebuild" (an unpacked layout, an unusable channel, a different vertex count), which is also what
+     * keeps the builder the single authority for the general case, diagnostics included.
+     *
+     * @param geometry     Geometry the channel belongs to.
+     * @param location     Channel location (0, 1, 2, or Geometry::kTexCoordLocation).
+     * @param vertex_count Vertices the retained node was built with (the shape is unchanged).
+     * @param topology     Topology the node was built with (decides whether normals are derived).
+     * @param derived      Derived-channel cache to keep in step when normals are re-derived.
+     * @return The array to bind now, or null when the caller must rebuild the node.
+     */
+    static ::vsg::ref_ptr<::vsg::Data> refreshCanonicalChannel(
+        vine::raw_ptr<const vine::graphics::Geometry> geometry,
+        std::uint32_t                                 location,
+        std::size_t                                   vertex_count,
+        vine::graphics::Topology                      topology,
+        DerivedChannels&                              derived);
+
     /** @brief Builds (or rebuilds) the retained vertex-data node of a geometry.
      *
      * Materialises the geometry's attribute buffers into vsg arrays and wraps
@@ -420,6 +501,8 @@ class V_VSG_API SceneBridge {
      * @param out_index_bind  Receives the index bind command the node holds, so a later index-only edit can
      *                        replace that stream IN PLACE — its own BufferInfo is what vsg re-creates and
      *                        copies, one channel instead of the whole mesh (P6).
+     * @param out_binds       Receives the per-channel vertex binds (and the index bind) the node holds, so a
+     *                        later edit can refresh ONE channel through its own command.
      * @return Data commands node, or null when not buildable.
      */
     ::vsg::ref_ptr<::vsg::Commands> buildGeometryData(
@@ -429,7 +512,7 @@ class V_VSG_API SceneBridge {
         ::vsg::ref_ptr<::vsg::vec4Array>& out_colors,
         std::vector<VertexChannel>& extra_channels,
         DerivedChannels& derived,
-        ::vsg::ref_ptr<::vsg::BindIndexBuffer>& out_index_bind);
+        RetainedBinds& out_binds);
 
     /** @brief Builds (or rebuilds) the state wrapper around a data node.
      *

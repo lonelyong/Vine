@@ -54,34 +54,47 @@ namespace
  */
 ::vsg::DataList boundArraysOf(const ::vsg::ref_ptr<::vsg::Node>& node)
 {
-    if (node == nullptr) {
-        return {};
-    }
-    if (auto bvb = node->cast<::vsg::BindVertexBuffers>()) {
-        ::vsg::DataList out;
-        out.reserve(bvb->arrays.size());
-        for (const auto& buffer_info : bvb->arrays) {
-            if (buffer_info != nullptr && buffer_info->data != nullptr) {
-                out.emplace_back(buffer_info->data);
+    // The arrays of a retained data node, INDEXED BY VERTEX BINDING: entry i is the array bound at binding
+    // i. The caller pairs them with the ShaderSet's attribute names by that index, so this has to hold
+    // regardless of how many BindVertexBuffers commands the node uses — buildGeometryData binds one
+    // canonical channel per command (so a change can refresh one stream), while a hand-built or older node
+    // may bind them all in one. Ordering by firstBinding instead of by traversal order is what makes the
+    // two shapes agree.
+    std::vector<::vsg::ref_ptr<::vsg::Data>> by_binding;
+    const auto collect = [&](const auto& self, const ::vsg::ref_ptr<::vsg::Node>& current) -> void {
+        if (current == nullptr) {
+            return;
+        }
+        if (auto bind = current->cast<::vsg::BindVertexBuffers>()) {
+            for (std::size_t i = 0; i < bind->arrays.size(); ++i) {
+                const auto& buffer_info = bind->arrays[i];
+                if (buffer_info == nullptr || buffer_info->data == nullptr) {
+                    continue;
+                }
+                const std::size_t index = static_cast<std::size_t>(bind->firstBinding) + i;
+                if (by_binding.size() <= index) {
+                    by_binding.resize(index + 1u);
+                }
+                by_binding[index] = buffer_info->data;
+            }
+            return;
+        }
+        if (auto commands = current->cast<::vsg::Commands>()) {
+            for (const auto& child : commands->children) {
+                self(self, child);
+            }
+            return;
+        }
+        if (auto group = current->cast<::vsg::Group>()) {
+            for (const auto& child : group->children) {
+                self(self, child);
             }
         }
-        return out;
-    }
-    if (auto commands = node->cast<::vsg::Commands>()) {
-        for (const auto& child : commands->children) {
-            if (auto r = boundArraysOf(child); !r.empty()) {
-                return r;
-            }
-        }
-    }
-    if (auto group = node->cast<::vsg::Group>()) {
-        for (const auto& child : group->children) {
-            if (auto r = boundArraysOf(child); !r.empty()) {
-                return r;
-            }
-        }
-    }
-    return {};
+    };
+    collect(collect, node);
+    // Gaps stay null: the caller skips an index whose array is null, which is exactly what "this binding is
+    // not bound" means.
+    return ::vsg::DataList(by_binding.begin(), by_binding.end());
 }
 
 /**

@@ -87,11 +87,13 @@ vsg::Data* findBoundData(vsg::Node* node, std::size_t binding)
         return nullptr;
     }
     if (auto bvb = node->cast<vsg::BindVertexBuffers>()) {
-        if (binding < bvb->arrays.size() && bvb->arrays[binding] != nullptr &&
-            bvb->arrays[binding]->data != nullptr) {
-            return bvb->arrays[binding]->data;
+        // A channel per command (see SceneBridge::RetainedBinds) means the binding has to be resolved
+        // through firstBinding; a command that does not carry it is not the answer, so the walk continues.
+        const std::size_t first = static_cast<std::size_t>(bvb->firstBinding);
+        if (binding >= first && binding - first < bvb->arrays.size()) {
+            const auto& info = bvb->arrays[binding - first];
+            return info != nullptr ? info->data.get() : nullptr;
         }
-        return nullptr;
     }
     if (auto commands = node->cast<vsg::Commands>()) {
         for (const auto& child : commands->children) {
@@ -588,11 +590,12 @@ TEST(GeometrySafetyTest, ReplacedDataNodeIsParkedUntilTheRingAdvances)
     vsg::ref_ptr<vsg::Node> old_data = wrapper->children.front();
     ASSERT_NE(old_data, nullptr);
 
-    // New vertex data, announced: the data node is rebuilt, and the replaced one is parked rather than
-    // destroyed.
+    // A data REBUILD (here: the vertex count changed, which the in-place refresh path cannot serve),
+    // announced: the data node is replaced, and the replaced one is parked rather than destroyed.
     geom->setPositions(packAttribute(vine::geometry::Vec3fArray{ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
                                                                  vine::math::Vec3f(2.0f, 0.0f, 0.0f),
-                                                                 vine::math::Vec3f(0.0f, 2.0f, 0.0f) }));
+                                                                 vine::math::Vec3f(0.0f, 2.0f, 0.0f),
+                                                                 vine::math::Vec3f(2.0f, 2.0f, 0.0f) }));
     geom->setRevision(geom->revision() + 1u);
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), nullptr);

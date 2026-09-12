@@ -35,6 +35,126 @@ using detail::makeZeroTexcoords;
 using detail::unpackXyz;
 using detail::XyzUnpack;
 
+namespace
+{
+/**
+ * @brief Packs a loc2 colour channel into the layout binding 3 reads, or null when it cannot carry it.
+ *
+ * Shared by the data builder and the per-channel refresh, so the two cannot disagree about what a colour
+ * channel means: four components alias the model's bytes verbatim, three are packed with an opaque alpha,
+ * anything else is refused (and the caller reports it).
+ *
+ * @param attr         Colour channel to pack.
+ * @param vertex_count Vertices the mesh has.
+ * @return The array to bind, or null when the channel is unusable.
+ */
+::vsg::ref_ptr<::vsg::vec4Array> packColor4(const vine::graphics::AttributeBuffer& attr,
+                                           std::size_t                        vertex_count)
+{
+    const auto                   comps = attr.components;
+    const std::span<const float> data  = attr.scalars();
+    if (comps < 3u || comps > 4u || data.size() % comps != 0u || data.size() / comps != vertex_count) {
+        return {};
+    }
+    if (comps == 4u) {
+        // Four components IS the layout this binding reads: alias the scalars (red, green, blue and alpha sit
+        // in the model's buffer in that order), no conversion involved.
+        return aliasArray<::vsg::vec4Array, float>(attr.values, vertex_count);
+    }
+    // Three components: the alpha is not authored, so the array is built (w = 1) rather than aliased — the
+    // binding reads four components and the model stores three.
+    auto out = ::vsg::vec4Array::create(static_cast<uint32_t>(vertex_count));
+    for (std::size_t v = 0; v < vertex_count; ++v) {
+        const std::size_t b = v * comps;
+        (*out)[v]           = ::vsg::vec4(data[b], data[b + 1u], data[b + 2u], 1.0f);
+    }
+    return out;
+}
+}  // namespace
+
+::vsg::ref_ptr<::vsg::Data> SceneBridge::refreshCanonicalChannel(
+    vine::raw_ptr<const vine::graphics::Geometry> geometry,
+    std::uint32_t                                 location,
+    std::size_t                                   vertex_count,
+    vine::graphics::Topology                      topology,
+    DerivedChannels&                              derived)
+{
+    // Only what the builder would build for the SAME shape can be refreshed: every branch below either
+    // aliases the model's bytes exactly as the builder does, or re-derives what this edit invalidated
+    // (derived normals when the positions moved). Anything else — an unpacked layout, an unusable channel,
+    // a different vertex count — changes how the node must be assembled, so it answers null and the caller
+    // rebuilds the node, which is also where those cases are reported.
+    switch (location)
+    {
+        case 0u: {
+            const auto* attr = geometry->buffer(0);
+            if (attr == nullptr || attr->components != 3u || attr->floatCount() % 3u != 0u) {
+                return {};
+            }
+            return aliasArray<::vsg::vec3Array, float>(attr->values, attr->vertexCount());
+        }
+        case 1u: {
+            const auto* attr = geometry->buffer(1);
+            if (attr != nullptr && !attr->empty()) {
+                if (attr->components != 3u || attr->vec3View().size() != vertex_count) {
+                    return {}; // the builder would unpack it or ignore it
+                }
+                return aliasArray<::vsg::vec3Array, float>(attr->values, vertex_count);
+            }
+            if (topology != vine::graphics::Topology::Triangles) {
+                return {}; // Points / Lines have no surface: the builder decides the default array
+            }
+            // The bound normals were DERIVED from the positions, so new positions invalidate them: re-derive
+            // here and keep the derived-channel cache in step, so a later unrelated rebuild cannot reuse the
+            // stale ones.
+            const auto* position_attr = geometry->buffer(0);
+            const auto  positions     = position_attr != nullptr ? position_attr->vec3View()
+                                                                 : std::span<const vine::math::Vec3f>{};
+            if (positions.size() != vertex_count) {
+                return {};
+            }
+            ::vsg::ref_ptr<::vsg::vec3Array> normals;
+            if (geometry->hasIndices()) {
+                const auto src_indices = geometry->indices();
+                auto       index_array =
+                    aliasArray<::vsg::uintArray, std::uint32_t>(geometry->indicesBuffer(), src_indices.size());
+                normals                = makeIndexedNormals(positions, {}, *index_array);
+                derived.normal_indices = geometry->indicesBuffer().get();
+                derived.normal_indices_revision =
+                    derived.normal_indices != nullptr ? derived.normal_indices->revision() : 0u;
+            }
+            else {
+                normals                         = makeNormals(positions, {});
+                derived.normal_indices          = nullptr;
+                derived.normal_indices_revision = 0u;
+            }
+            derived.derived_normals           = normals;
+            derived.normal_positions          = position_attr != nullptr ? position_attr->values.get() : nullptr;
+            derived.normal_positions_revision =
+                derived.normal_positions != nullptr ? derived.normal_positions->revision() : 0u;
+            derived.normal_vertex_count = vertex_count;
+            return normals;
+        }
+        case vine::graphics::Geometry::kTexCoordLocation: {
+            const auto* attr = geometry->buffer(location);
+            if (attr == nullptr || attr->empty() || attr->components != 2u ||
+                attr->floatCount() != vertex_count * 2u) {
+                return {};
+            }
+            return aliasArray<::vsg::vec2Array, float>(attr->values, vertex_count);
+        }
+        case 2u: {
+            const auto* attr = geometry->buffer(2);
+            if (attr == nullptr) {
+                return {};
+            }
+            return packColor4(*attr, vertex_count);
+        }
+        default:
+            return {};
+    }
+}
+
 ::vsg::ref_ptr<::vsg::Commands> SceneBridge::buildGeometryData(
     vine::raw_ptr<const vine::graphics::Geometry> geometry,
     bool opacity_carrier,
@@ -42,10 +162,10 @@ using detail::XyzUnpack;
     ::vsg::ref_ptr<::vsg::vec4Array>& out_colors,
     std::vector<VertexChannel>& extra_channels,
     DerivedChannels& derived,
-    ::vsg::ref_ptr<::vsg::BindIndexBuffer>& out_index_bind)
+    RetainedBinds& out_binds)
 {
     extra_channels.clear();
-    out_index_bind = {};
+    out_binds = RetainedBinds{};
     if (geometry == nullptr) {
         return ::vsg::ref_ptr<::vsg::Commands>();
     }
@@ -236,33 +356,10 @@ using detail::XyzUnpack;
     // custom path the program owns opacity (D8, no carrier rewrite), so an
     // authored loc2 colour — when present and well-formed — is bound verbatim
     // as vsg_Color; otherwise a static white fallback is bound.
-    const auto pack_color4 = [](const vine::graphics::AttributeBuffer& attr,
-                                std::size_t vertex_count)
-        -> ::vsg::ref_ptr<::vsg::vec4Array> {
-        const auto                   comps = attr.components;
-        const std::span<const float> data  = attr.scalars();
-        if (comps < 3u || comps > 4u || data.size() % comps != 0u ||
-            data.size() / comps != vertex_count) {
-            return {};
-        }
-        if (comps == 4u) {
-            // Four components IS the layout this binding reads: alias the scalars (red, green, blue and
-            // alpha sit in the model's buffer in that order), no conversion involved.
-            return aliasArray<::vsg::vec4Array, float>(attr.values, vertex_count);
-        }
-        // Three components: the alpha is not authored, so the array is built (w = 1) rather than aliased —
-        // the binding reads four components and the model stores three.
-        auto out = ::vsg::vec4Array::create(static_cast<uint32_t>(vertex_count));
-        for (std::size_t v = 0; v < vertex_count; ++v) {
-            const std::size_t b = v * comps;
-            (*out)[v]           = ::vsg::vec4(data[b], data[b + 1u], data[b + 2u], 1.0f);
-        }
-        return out;
-    };
     ::vsg::ref_ptr<::vsg::vec4Array> colors;
     if (!opacity_carrier) {
         if (const auto* loc2 = geometry->buffer(2); loc2 != nullptr && !loc2->empty()) {
-            colors = pack_color4(*loc2, vertex_count);
+            colors = packColor4(*loc2, vertex_count);
             if (colors == nullptr) {
                 report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
                        u8"loc2 colour channel is unusable (3/4 components, one per "
@@ -335,11 +432,7 @@ using detail::XyzUnpack;
     // never re-uploads the mesh (only the state wrapper is rebuilt). A malformed
     // custom channel (bad component count, non-divisible or count-mismatched
     // payload) is reported and skipped — it must not misread or reject the mesh.
-    ::vsg::DataList arrays;
-    arrays.emplace_back(vertices);
-    arrays.emplace_back(normals);
-    arrays.emplace_back(texcoords);
-    arrays.emplace_back(colors);
+    ::vsg::DataList custom_arrays;
     for (const std::uint32_t location : geometry->bufferLocations()) {
         if (location <= 2u || location == vine::graphics::Geometry::kTexCoordLocation) {
             continue; // canonical position / normal / colour / texcoord handled above
@@ -356,20 +449,40 @@ using detail::XyzUnpack;
         }
         // The channel's shape is exactly what its binding reads (channelShape just verified it), so the
         // model's own scalars are aliased under an array of the matching element type.
-        arrays.push_back(aliasTypedVertexData(comps, attr->values, vertex_count));
+        custom_arrays.push_back(aliasTypedVertexData(comps, attr->values, vertex_count));
         extra_channels.push_back(VertexChannel{ location, comps });
     }
 
     // NOTE: manual geometry must use explicit bind/draw commands, NOT a
     // manually-assembled VertexIndexDraw, or nothing is rasterized (same
     // finding as VsgRenderer::makeRawDemoNode).
+    //
+    // One BindVertexBuffers PER CHANNEL, each stating its own firstBinding: vsg re-creates and re-copies
+    // every array of a command whose any array is stale, so a single command could only ever re-upload the
+    // whole mesh (see RetainedBinds). The binding numbers are the canonical ones the shader contract uses
+    // (0 positions, 1 normals, 2 texcoords, 3 loc2 colour, 4+ custom), and the assignment order the two
+    // ShaderSets are declared in is unchanged — the same four canonical bindings first, then the custom
+    // ones in ascending location order.
     auto drawCommands = ::vsg::Commands::create();
-    drawCommands->addChild(::vsg::BindVertexBuffers::create(0u, arrays));
+    const auto bind_channel = [&](std::size_t binding, ::vsg::ref_ptr<::vsg::Data> array) {
+        auto bind = ::vsg::BindVertexBuffers::create(static_cast<std::uint32_t>(binding), ::vsg::DataList{ array });
+        drawCommands->addChild(bind);
+        return bind;
+    };
+    out_binds.canonical[0] = bind_channel(0u, vertices);
+    out_binds.canonical[1] = bind_channel(1u, normals);
+    out_binds.canonical[2] = bind_channel(2u, texcoords);
+    out_binds.canonical[3] = bind_channel(3u, colors);
+    if (!custom_arrays.empty()) {
+        // The custom channels share ONE command: a change in their set or shape is a layout change (the
+        // state wrapper is rebuilt for it), and refreshing one of several arrays in a shared command would
+        // re-copy all of them anyway.
+        drawCommands->addChild(::vsg::BindVertexBuffers::create(
+            static_cast<std::uint32_t>(RetainedBinds::kCanonicalCount), custom_arrays));
+    }
     auto index_bind = ::vsg::BindIndexBuffer::create(indices);
     drawCommands->addChild(index_bind);
-    // Handed back so a later index-only edit can replace that stream in place (see SceneBridge.cpp): the
-    // command's own BufferInfo is what vsg re-creates and copies then.
-    out_index_bind = index_bind;
+    out_binds.index = index_bind;
     drawCommands->addChild(::vsg::DrawIndexed::create(
         static_cast<uint32_t>(indices->size()), 1, 0, 0, 0));
     return drawCommands;
