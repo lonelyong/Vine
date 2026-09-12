@@ -774,6 +774,24 @@ TEST(VsgSceneRulesTest, ACubeMapIsUploadedAsSixLayers)
     EXPECT_EQ(classifyTexture(half_cube.get()), TextureReject::Incomplete);
 }
 
+TEST(VsgSceneRulesTest, AnisotropyIsClampedToWhatTheDeviceOffers)
+{
+    using vine::vsg::detail::anisotropyFor;
+
+    // A request above the device's limit is a validation error, so the number a sampler is created with has
+    // to be the smaller of the two. Vulkan's floor is 1.0, and 1 IS a legal request (it just filters
+    // isotropically), so even a device that offers no anisotropy gets a usable sampler instead of an illegal
+    // one.
+    EXPECT_FLOAT_EQ(anisotropyFor(0.0f), 1.0f);
+    EXPECT_FLOAT_EQ(anisotropyFor(1.0f), 1.0f);
+    EXPECT_FLOAT_EQ(anisotropyFor(2.0f), 2.0f);
+    EXPECT_FLOAT_EQ(anisotropyFor(16.0f), 16.0f);
+
+    // Above our own ceiling we ask for ours, not the device's: that limit bounds cost, it is not a claim
+    // about what the hardware can do.
+    EXPECT_FLOAT_EQ(anisotropyFor(64.0f), 16.0f);
+}
+
 TEST(VsgSceneRulesTest, AThreeChannelTextureIsRefusedForHavingNoVulkanFormat)
 {
     using vine::vsg::detail::classifyTexture;

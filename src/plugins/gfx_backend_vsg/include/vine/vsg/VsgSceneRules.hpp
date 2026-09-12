@@ -237,6 +237,19 @@ enum class TextureReject
 TextureReject classifyTexture(const vine::graphics::Texture* texture) noexcept;
 
 /**
+ * @brief Reduces a device's anisotropy limit to the level a sampler may be created with.
+ *
+ * Requesting more than `VkPhysicalDeviceLimits::maxSamplerAnisotropy` is a validation error, so the number
+ * handed to a sampler has to be the smaller of what the device offers and what this backend is willing to
+ * ask for. A limit below 1 is answered with 1, which is a legal request on every device (it filters
+ * isotropically) and keeps a device that offers no anisotropy usable rather than making the request illegal.
+ *
+ * @param device_limit The device's reported maxSamplerAnisotropy.
+ * @return The anisotropy to request, in [1, 16].
+ */
+float anisotropyFor(float device_limit) noexcept;
+
+/**
  * @brief Reasons a texture was refused, for a diagnostic.
  *
  * One format string per case, so a report names the one that actually fired.

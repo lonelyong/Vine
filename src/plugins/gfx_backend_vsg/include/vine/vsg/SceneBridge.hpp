@@ -185,6 +185,17 @@ class V_VSG_API SceneBridge {
      */
     std::size_t pipelineVariantCount() const noexcept { return pipeline_variants_; }
 
+    /**
+     * @brief States the anisotropy every sampler this bridge's cache creates may request.
+     *
+     * A device limit AND a device feature, so the side that owns the device announces it instead of this
+     * bridge assuming a number: a request above what the device reports is a validation error. Forwarded
+     * rather than exposing the cache, because the cache is an implementation detail of the bridge.
+     *
+     * @param device_limit The device's reported maxSamplerAnisotropy.
+     */
+    void setTextureAnisotropy(float device_limit);
+
     /** @brief Gets how many times the shared-objects table was pruned.
      *
      * A variant registered with the shared-objects cache is HELD by that table,

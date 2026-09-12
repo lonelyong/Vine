@@ -107,6 +107,17 @@ class V_VSG_API VsgTextureCache
      */
     bool has(vine::raw_ptr<const vine::graphics::Texture> texture) const;
 
+    /**
+     * @brief States the anisotropy a device's samplers may be created with.
+     *
+     * A device limit (and a device feature) rather than something this cache can derive, so the caller that
+     * knows the device announces it. Values below 1 are answered with 1 by the sampler's own clamp; the
+     * default of 1 keeps a cache that was never told usable rather than illegal.
+     *
+     * @param device_limit The device's reported maxSamplerAnisotropy.
+     */
+    void setMaxAnisotropy(float device_limit) noexcept;
+
   private:
     struct Data;
     // Owns the cache through RAII (see the repo's "avoid raw owning pointers" rule); declared after Data

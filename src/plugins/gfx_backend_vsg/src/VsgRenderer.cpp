@@ -194,6 +194,11 @@ class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer> {
     traits->deviceFeatures                         = ::vsg::DeviceFeatures::create();
     traits->deviceFeatures->get().fillModeNonSolid = VK_TRUE;
     traits->deviceFeatures->get().independentBlend = VK_TRUE;
+    // Anisotropic filtering: requested here because this list is the whole set of features the backend
+    // needs, and the texture cache's samplers ask for anisotropy. Enabling a sampler feature the device was
+    // never asked for is a validation error (VUID-VkSamplerCreateInfo-anisotropyEnable-01070), so leaving
+    // this out does not degrade to isotropic filtering — it fails.
+    traits->deviceFeatures->get().samplerAnisotropy = VK_TRUE;
 
     if (host_handle != nullptr) {
 #ifdef _WIN32

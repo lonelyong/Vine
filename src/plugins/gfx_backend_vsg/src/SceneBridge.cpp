@@ -103,6 +103,12 @@ VsgMaterialManager& SceneBridge::materialManager()
     return shader_set_;
 }
 
+void SceneBridge::setTextureAnisotropy(float device_limit)
+{
+    // Through the accessor, so this always reaches the very cache the samplers are built from.
+    textureCache().setMaxAnisotropy(device_limit);
+}
+
 VsgTextureCache& SceneBridge::textureCache()
 {
     return default_texture_cache_;

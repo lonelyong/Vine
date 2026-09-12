@@ -98,6 +98,16 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     if (content.ready) {
         return;
     }
+    // Anisotropy is a DEVICE limit, so it is read from the session's device instead of assumed: a request
+    // above VkPhysicalDeviceLimits::maxSamplerAnisotropy is a validation error, and the samplerAnisotropy
+    // feature has to be enabled on the device for the request to be legal at all. Read here because a slot's
+    // bridge owns the cache that builds the samplers.
+    if (state.window != nullptr) {
+        const auto physical = state.window->getPhysicalDevice();
+        if (physical != nullptr) {
+            content.bridge.setTextureAnisotropy(physical->getProperties().limits.maxSamplerAnisotropy);
+        }
+    }
     // The graph this pass records into: the window session's single swapchain
     // graph, or an off-screen graph created for THIS pass from its own clear
     // request (see passGraph). A pass that cannot get one — an off-screen

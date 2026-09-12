@@ -23,6 +23,7 @@ V_VSG_NS_BEGIN
 
 // The retained-cache machinery (OwnedCacheEntry and friends) lives in this namespace; the device-free
 // texture rules are under detail, so those are the ones that need pulling in.
+using detail::anisotropyFor;
 using detail::classifyTexture;
 using detail::TextureReject;
 using detail::vkFormatFor;
@@ -239,16 +240,22 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
 /**
  * @brief Builds the sampler a texture is read through.
  *
- * @param mip_levels How many levels the image has.
+ * @param mip_levels      How many levels the image has.
+ * @param max_anisotropy  Anisotropy to request, already clamped to what the device allows.
  * @return The sampler for it.
  */
-::vsg::ref_ptr<::vsg::Sampler> makeSampler(std::uint32_t mip_levels)
+::vsg::ref_ptr<::vsg::Sampler> makeSampler(std::uint32_t mip_levels, float max_anisotropy)
 {
     auto sampler = ::vsg::Sampler::create();
     sampler->maxLod = static_cast<float>(mip_levels);
     // A single-level image has nothing to interpolate BETWEEN: leaving the mipmap mode on linear would
     // make the GPU filter across levels that do not exist.
     sampler->mipmapMode = (mip_levels > 1u) ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    // Anisotropy only means anything with a mip chain to choose between, and only where the device enabled
+    // the samplerAnisotropy feature — which is why the request comes from the device's own limit rather than
+    // from a constant here.
+    sampler->anisotropyEnable = (mip_levels > 1u) ? VK_TRUE : VK_FALSE;
+    sampler->maxAnisotropy    = (mip_levels > 1u) ? max_anisotropy : 1.0f;
     return sampler;
 }
 
@@ -280,6 +287,8 @@ struct VsgTextureCache::Data
     Map                              cache;
     InsertionClock                   clock;
     ::vsg::ref_ptr<::vsg::ImageInfo> white;
+    // What the device offers (see setMaxAnisotropy); 1 is the safe answer for a cache that was never told.
+    float max_anisotropy = 1.0f;
 };
 
 VsgTextureCache::VsgTextureCache()
@@ -288,6 +297,11 @@ VsgTextureCache::VsgTextureCache()
 }
 
 VsgTextureCache::~VsgTextureCache() = default;
+
+void VsgTextureCache::setMaxAnisotropy(float device_limit) noexcept
+{
+    d->max_anisotropy = anisotropyFor(device_limit);
+}
 
 ::vsg::ref_ptr<::vsg::ImageInfo> VsgTextureCache::whiteFallback()
 {
@@ -323,7 +337,7 @@ VsgTextureCache::~VsgTextureCache() = default;
         image->usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         image->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-        d->white = ::vsg::ImageInfo::create(makeSampler(1u), ::vsg::ImageView::create(image),
+        d->white = ::vsg::ImageInfo::create(makeSampler(1u, d->max_anisotropy), ::vsg::ImageView::create(image),
                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
@@ -367,7 +381,8 @@ VsgTextureCache::~VsgTextureCache() = default;
         return whiteFallback();
     }
 
-    auto info = ::vsg::ImageInfo::create(makeSampler(static_cast<std::uint32_t>(texture->mipCount())),
+    auto info = ::vsg::ImageInfo::create(makeSampler(static_cast<std::uint32_t>(texture->mipCount()),
+                                                     d->max_anisotropy),
                                          ::vsg::ImageView::create(vsg_image),
                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 

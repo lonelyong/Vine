@@ -214,6 +214,18 @@ TextureReject classifyTexture(const vine::graphics::Texture* texture) noexcept
     return TextureReject::Ok;
 }
 
+float anisotropyFor(float device_limit) noexcept
+{
+    // The device may offer more than is worth paying for, and it may offer nothing (Vulkan's floor is 1.0).
+    constexpr float kCeiling = 16.0f;
+
+    if (device_limit < 1.0f) {
+        return 1.0f;
+    }
+
+    return (device_limit > kCeiling) ? kCeiling : device_limit;
+}
+
 vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Texture& texture)
 {
     switch (reason) {
