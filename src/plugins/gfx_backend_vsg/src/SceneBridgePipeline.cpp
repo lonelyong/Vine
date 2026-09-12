@@ -209,6 +209,16 @@ namespace
     // read it; harmless in that case.
     shader_set->addDescriptorBinding("material", "", 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
                                      VK_SHADER_STAGE_FRAGMENT_BIT, ::vsg::PhongMaterialValue::create());
+    // Texture: the optional sampler a program reads as `diffuseMap`.
+    // This declaration is NOT optional, because assignTexture() silently does
+    // nothing for a name the ShaderSet does not declare: it looks the binding up
+    // and skips the assignment when the lookup fails, with no error and no
+    // return value a caller can check. Without this line the resolved texture
+    // (the material's own, or the cache's white fallback) is computed, passed
+    // in, and dropped — which looks exactly like a working no-op.
+    // Binding 1 of set 0, the first slot free after `material`.
+    shader_set->addDescriptorBinding("diffuseMap", "", 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT, {});
     shader_set->addPushConstantRange("pc", "", VK_SHADER_STAGE_VERTEX_BIT, 0, 128);
     shader_set->defaultGraphicsPipelineStates = base_states;
     return shader_set;

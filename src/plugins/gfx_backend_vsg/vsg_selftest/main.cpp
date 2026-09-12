@@ -35,6 +35,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/logging/Log.hpp>
 #include <vine/math/Matrix4x4.hpp>
+#include <vine/imaging/Image.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
@@ -44,6 +45,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
+#include <vine/graphics/Texture.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgRenderer.hpp>
 
@@ -481,6 +483,67 @@ ShaderProgramPtr makeDepthSamplingProgram()
                 u8"    vec2 uv = gl_FragCoord.xy / vec2(textureSize(sourceDepth, 0));\n"
                 u8"    outColor = vec4(vec3(texture(sourceDepth, uv).r), 1.0);\n"
                 u8"}\n";
+    program->addStage(fs);
+    return program;
+}
+
+/**
+ * @brief Builds a clip-space quad whose vertices carry texture coordinates.
+ *
+ * The positions double as clip coordinates (the sampling program passes x/y straight through), so the quad
+ * is exactly the middle 80% of the target and the UVs can be asserted at known pixels rather than searched
+ * for. The UVs follow the GL convention (v = 0 at the TOP), which is what lets the readback tell a correct u
+ * axis apart from a mirrored one.
+ *
+ * @return The quad geometry (two triangles, one UV per vertex).
+ */
+GeometryPtr makeTexturedQuad()
+{
+    auto geom = makeVisibleQuad(0.4f, 0.0f);
+    // One UV per vertex, in the order makeVisibleQuad() emits its corners: a channel whose element count
+    // does not match the vertex count is dropped whole, which would silently leave the shader with no UVs.
+    const float corners[6][2] = { { 0.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f },
+                                  { 0.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f } };
+    vine::geometry::Vec2fArray texcoords;
+    for (const auto& corner : corners) {
+        texcoords.emplace_back(corner[0], corner[1]);
+    }
+    geom->setTexcoords(texcoords);
+    return geom;
+}
+
+/**
+ * @brief Builds a program that outputs the material's texture, sampled by UV.
+ *
+ * The locations are the program ABI, not a free choice: vsg_TexCoord0 is declared at location 8 and the
+ * texture at set 0 binding 1 (see assembleProgramShaderSet). A fragment stage that samples a name the
+ * ShaderSet does not declare is not an error at any layer — the assignment is silently dropped — so a
+ * mismatch here would show up as an untextured quad rather than as a failure.
+ *
+ * @return The sampling program.
+ */
+ShaderProgramPtr makeTextureSampleProgram()
+{
+    auto program = ShaderProgramPtr(new ShaderProgram());
+    vine::graphics::ShaderStage vs;
+    vs.type   = vine::graphics::ShaderStageType::Vertex;
+    vs.source = u8"#version 450\n"
+                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
+                u8"layout(location = 8) in vec2 vsg_TexCoord0;\n"
+                u8"layout(location = 0) out vec2 uv;\n"
+                u8"void main()\n"
+                u8"{\n"
+                u8"    uv = vsg_TexCoord0;\n"
+                u8"    gl_Position = vec4(vsg_Vertex.xy, 0.5, 1.0);\n"
+                u8"}\n";
+    program->addStage(vs);
+    vine::graphics::ShaderStage fs;
+    fs.type   = vine::graphics::ShaderStageType::Fragment;
+    fs.source = u8"#version 450\n"
+                u8"layout(location = 0) in vec2 uv;\n"
+                u8"layout(location = 0) out vec4 outColor;\n"
+                u8"layout(binding = 1) uniform sampler2D diffuseMap;\n"
+                u8"void main() { outColor = texture(diffuseMap, uv); }\n";
     program->addStage(fs);
     return program;
 }
@@ -4304,6 +4367,131 @@ bool runMrtProbe(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int 
 
 }  // namespace
 
+/**
+ * @brief Asserts a graphics::Texture reaches the shader and samples where its UVs say.
+ *
+ * This is the only phase that can prove the texture path works end to end, because the other gates are blind
+ * to it by construction: the validation layer checks the upload, and NOTHING checks the wiring.
+ * `assignTexture()` silently does nothing for a name the ShaderSet never declared, so an unwired texture and
+ * a wired texture that happens to sample as opaque white are indistinguishable from outside — both draw the
+ * same picture, and the 45-line evidence baseline stays byte-identical for either one.
+ *
+ * The texture is two-tone along u (left half pure red, right half pure blue), so one readback pins three
+ * separate things: that the texture was sampled at all, that u is not mirrored, and that the UVs survived
+ * attribute forwarding (a dropped or collapsed channel would render one flat tone).
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quad is drawn through.
+ * @param frames   Frames to drive.
+ * @return true when both halves of the textured quad sampled their own half of the texture.
+ */
+bool runTexturePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+
+    // A full 4-level chain, so the upload carries mip levels rather than a single base image. Every level
+    // repeats the two tones: the assertion is about the wiring and the u axis, not about which level the
+    // sampler picks, and making a level disagree would only make the test brittle.
+    constexpr int kSize   = 8;
+    constexpr int kLevels = 4;
+    auto          colours = vine::intrusive_ptr<vine::imaging::Image>(
+        new vine::imaging::Image(kSize, kSize, vine::imaging::PixelFormat::Rgba8Unorm, kLevels));
+    for (int level = 0; level < kLevels; ++level) {
+        const int width  = colours->mipWidth(level);
+        const int height = colours->mipHeight(level);
+        auto*     pixels = reinterpret_cast<std::uint8_t*>(colours->mipData(level).data());
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const bool    left  = (x * 2) < width;
+                std::uint8_t* texel = pixels + (static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                                                static_cast<std::size_t>(x)) *
+                                                   4u;
+                texel[0] = left ? 255u : 0u;
+                texel[1] = 0u;
+                texel[2] = left ? 0u : 255u;
+                texel[3] = 255u;
+            }
+        }
+    }
+
+    vine::intrusive_ptr<Texture> texture(
+        new Texture(Texture::Shape::D2, kSize, kSize, vine::imaging::PixelFormat::Rgba8Unorm, kLevels));
+    texture->setSource(0, colours);
+
+    auto material = MaterialPtr(new Material());
+    material->setTexture(texture);
+    RenderCommand quad(makeTexturedQuad(), material, Mat4d());
+    quad.program = makeTextureSampleProgram();
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setName(u8"textured");
+    target->setSize(96, 54);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto pass = RenderPassPtr(new RenderPass());
+
+    for (int i = 0; i < std::max(frames, 2); ++i) {
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, pass.get(), 0, target.get(), vine::Color(25, 25, 45, 255), true,
+                                 vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+    }
+
+    PixelImage image;
+    if (!readTarget(renderer, target.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the textured target\n");
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+
+    // The quad is the middle 80% of the target, so x = 38 and x = 57 sit inside it at u = 0.24 and u = 0.73,
+    // far enough from the u = 0.5 boundary at x = 48 that linear filtering blends neither sample.
+    constexpr int kRow   = 27;
+    constexpr int kLeft  = 38;
+    constexpr int kRight = 57;
+    const int     left_r  = image.at(kLeft, kRow, 0);
+    const int     left_b  = image.at(kLeft, kRow, 2);
+    const int     right_r = image.at(kRight, kRow, 0);
+    const int     right_b = image.at(kRight, kRow, 2);
+    const int     corner_r = image.at(5, 5, 0);
+    const int     corner_b = image.at(5, 5, 2);
+
+    if (left_r <= left_b + 20) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the textured quad's left half is (%d,_,%d), not the texture's RED — the "
+                     "texture was not sampled at all, or u is mirrored\n",
+                     left_r, left_b);
+        ok = false;
+    }
+    if (right_b <= right_r + 20) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the textured quad's right half is (%d,_,%d), not the texture's BLUE — the "
+                     "UVs did not reach the shader, so both halves sampled one texel\n",
+                     right_r, right_b);
+        ok = false;
+    }
+    if (corner_r != 25 || corner_b != 45) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the textured target's corner is (%d,_,%d), not the clear colour (25,_,45) — "
+                     "the quad is not confined to the middle 80%% of the target\n",
+                     corner_r, corner_b);
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] texture: the quad sampled its texture by UV — left half (%d,_,%d) = the red half, "
+                     "right half (%d,_,%d) = the blue half, over a clear corner (%d,_,%d)\n",
+                     left_r, left_b, right_r, right_b, corner_r, corner_b);
+    }
+
+    renderer.releasePass(pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
 int main()
 {
     const int frames =
@@ -4577,6 +4765,12 @@ int main()
     // to.
     contract_ok = runMrtProbe(*renderer, camera, 3) && contract_ok;
     runContentVariantProbe(*renderer, camera, 3);
+    // The texture phase runs LAST on purpose. It drives frames, and the parked-object count the churn phase
+    // reports is sensitive to frame alignment (a phase inserted before it moves that number for reasons that
+    // have nothing to do with the phase added — verified: 3 frames before churn reports 119, 30 reports 111,
+    // and no phase at all reports 115). Placing it after every reporting phase keeps the diff down to the one
+    // line this phase exists to add, so the evidence stays readable as evidence.
+    contract_ok = runTexturePhase(*renderer, camera, 3) && contract_ok;
     if (!contract_ok) {
         std::fprintf(stderr,
                      "[selftest] FAILED — a pass-lifecycle / depth-sharing / pixel-readback invariant was violated\n");

@@ -219,7 +219,7 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 ## 7. 第 4 个/自定义顶点通道：现状与待接线
 
 - **内建默认 shader 只认固定名字/location**。想加第 4 通道：
-  - 放 loc2..5（uv）：内建可读，但需激活变体 + 绑纹理；后端目前不喂 uv/纹理。
+  - 放 loc2..5（uv）：**已接线** —— `Geometry::setTexcoords()` 走 loc8（`vsg_TexCoord0`）并由后端绑定、喂 `diffuseMap`。
   - 放 loc6（顶点色）：内建会消费，但 `SceneBridge` 现在**无视用户 loc6**（永远写白+opacity）。
   - 放其它位置：内建未声明 → 一律不支持。
 - **正确路径 = 自定义 program + 两步接线（✅ 已实现，2026-09-08）**：
@@ -370,7 +370,7 @@ sequenceDiagram
 
 | 面 | 限制 |
 |---|---|
-| 纹理/uv | `Material::texture()` 已是一个 `graphics::Texture` **对象**（不再是路径字符串），但后端仍**未接线**：face / mip 链不上传、不建 sampler、不进描述符集；`diffuseMap`、`vsg_TexCoord0..3` 同样未接线 |
+| 纹理/uv | **已接线（L0–L3）**：`Material::texture()` 的 face 0 上传为 vsg 图像（整条 mip 链）、建 sampler、进描述符集 set0/binding1；`Geometry::setTexcoords()` 经 location 8 喂 `vsg_TexCoord0`。selftest 有像素断言钉住它（左右双色纹理按 UV 采样） |
 | 用户自定义通道 | loc≥2 的数据后端不消费；program 路径也不喂（需 §7 两步接线） |
 | 顶点色 | 用户 loc6 会被 `SceneBridge` 白色覆盖（只认自己生成的 colors + opacity） |
 | 线/点 | 无 `LINE_STRIP`；`lineWidth>1` 需 `wideLines` 特性（未开）；无法调线宽/点大小 |
