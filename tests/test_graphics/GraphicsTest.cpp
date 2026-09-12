@@ -3907,6 +3907,44 @@ TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
     EXPECT_EQ(via_setters.hasNormals(), geom->hasNormals());
 }
 
+TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)
+{
+    auto mesh = intrusive_ptr<vine::geometry::TriangleMesh>(new vine::geometry::TriangleMesh());
+    mesh->setPositions({ vine::math::Vec3f(0.0f, 0.0f, 0.0f), vine::math::Vec3f(1.0f, 0.0f, 0.0f),
+                         vine::math::Vec3f(0.0f, 1.0f, 0.0f) });
+    mesh->setNormals({ vine::math::Vec3f(0.0f, 0.0f, 1.0f), vine::math::Vec3f(0.0f, 0.0f, 1.0f),
+                       vine::math::Vec3f(0.0f, 0.0f, 1.0f) });
+    mesh->setTexcoords({ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 0.0f),
+                         vine::math::Vec2f(0.0f, 1.0f) });
+
+    const auto geom = geometryFromShape(*mesh);
+    ASSERT_NE(geom.get(), nullptr);
+
+    const AttributeBuffer* positions = geom->buffer(0);
+    const AttributeBuffer* normals   = geom->buffer(1);
+    const AttributeBuffer* uvs       = geom->buffer(Geometry::kTexCoordLocation);
+    ASSERT_NE(positions, nullptr);
+    ASSERT_NE(normals, nullptr);
+    ASSERT_NE(uvs, nullptr);
+
+    // ONE allocation per attribute: the geometry reads the mesh's own floats instead of a repacked copy.
+    EXPECT_EQ(positions->scalars().data(), reinterpret_cast<const float*>(mesh->positions().data()));
+    EXPECT_EQ(normals->scalars().data(), reinterpret_cast<const float*>(mesh->normals().data()));
+    EXPECT_EQ(uvs->scalars().data(), reinterpret_cast<const float*>(mesh->texcoords().data()));
+    EXPECT_EQ(positions->components, 3u);
+    EXPECT_EQ(uvs->components, 2u);
+
+    // ...and reading through the geometry yields the mesh's own coordinates.
+    const std::array<float, 3> second = positions->xyz(1);
+    EXPECT_FLOAT_EQ(second[0], 1.0f);
+    EXPECT_FLOAT_EQ(second[1], 0.0f);
+    EXPECT_FLOAT_EQ(second[2], 0.0f);
+
+    EXPECT_EQ(geom->positionCount(), 3u);
+    EXPECT_EQ(geom->normalCount(), 3u);
+    EXPECT_EQ(geom->texcoordCount(), 3u);
+}
+
 TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
 {
     // The number is part of the contract only in the sense that it must stay

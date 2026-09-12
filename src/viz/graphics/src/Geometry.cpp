@@ -139,6 +139,11 @@ void Geometry::setPositions(const vine::geometry::Vec3fArray& positions)
     setPositions(std::span<const vine::math::Vec3f>(positions));
 }
 
+void Geometry::setPositionsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec3f>> positions)
+{
+    addBuffer(0, AttributeBuffer::shared(std::move(positions)));
+}
+
 bool Geometry::hasPositions() const
 {
     return hasBuffer(0);
@@ -160,6 +165,11 @@ void Geometry::setNormals(const vine::geometry::Vec3fArray& normals)
     setNormals(std::span<const vine::math::Vec3f>(normals));
 }
 
+void Geometry::setNormalsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec3f>> normals)
+{
+    addBuffer(1, AttributeBuffer::shared(std::move(normals)));
+}
+
 bool Geometry::hasNormals() const
 {
     return hasBuffer(1);
@@ -179,6 +189,11 @@ void Geometry::setTexcoords(std::span<const vine::math::Vec2f> texcoords)
 void Geometry::setTexcoords(const vine::geometry::Vec2fArray& texcoords)
 {
     setTexcoords(std::span<const vine::math::Vec2f>(texcoords));
+}
+
+void Geometry::setTexcoordsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec2f>> texcoords)
+{
+    addBuffer(kTexCoordLocation, AttributeBuffer::shared(std::move(texcoords)));
 }
 
 bool Geometry::hasTexcoords() const
@@ -294,14 +309,17 @@ GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
     }
     auto       geometry  = GeometryPtr(new Geometry());
     const auto positions = mesh->positions();
-    geometry->setPositions(positions);
-    const auto normals = mesh->normals();
-    if (normals.size() == positions.size()) {
-        geometry->setNormals(normals);
-    }
+    const auto normals   = mesh->normals();
     const auto texcoords = mesh->texcoords();
+
+    // The mesh OWNS the vertex data and the geometry BORROWS it, so both sides read ONE allocation. Repacking
+    // here would put every vertex in memory twice for no conversion at all: a Vec3f already is three floats.
+    geometry->setPositionsBuffer(mesh->positionsBuffer());
+    if (normals.size() == positions.size()) {
+        geometry->setNormalsBuffer(mesh->normalsBuffer());
+    }
     if (texcoords.size() == positions.size()) {
-        geometry->setTexcoords(texcoords);
+        geometry->setTexcoordsBuffer(mesh->texcoordsBuffer());
     }
     if (const auto* indexed =
             dynamic_cast<const vine::geometry::IndexedTriangleMesh*>(&shape)) {

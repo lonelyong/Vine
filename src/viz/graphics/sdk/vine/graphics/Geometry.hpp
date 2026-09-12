@@ -240,6 +240,19 @@ class V_GRAPHICS_API Geometry : public Node {
      */
     void setPositions(const vine::geometry::Vec3fArray& positions);
 
+    /** @brief Sets the positions (location 0) by SHARING a vertex buffer.
+     *
+     * The counterpart of the array/span setters for a source that owns its vertices (a geometry::Mesh): instead
+     * of repacking them into a second array, this reads the buffer's own elements — a Vec3f IS three floats, so
+     * no conversion exists to do. The geometry keeps the buffer alive.
+     *
+     * The buffer is not snapshotted: growing it afterwards leaves this channel stale, so a mesh still being
+     * built must be converted once it is finished.
+     *
+     * @param positions Vertex buffer to read (three floats per element), or null to clear the channel.
+     */
+    void setPositionsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec3f>> positions);
+
     /** @brief Returns whether positions (location 0) are present. */
     bool hasPositions() const;
 
@@ -259,6 +272,14 @@ class V_GRAPHICS_API Geometry : public Node {
      * @param normals Vertex normals (three floats each), one per position.
      */
     void setNormals(const vine::geometry::Vec3fArray& normals);
+
+    /** @brief Sets the normals (location 1) by SHARING a vertex buffer.
+     *
+     * See setPositionsBuffer() for the sharing and lifetime contract.
+     *
+     * @param normals Normal buffer to read (three floats per element), or null to clear the channel.
+     */
+    void setNormalsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec3f>> normals);
 
     /** @brief Returns whether normals (location 1) are present. */
     bool hasNormals() const;
@@ -281,6 +302,14 @@ class V_GRAPHICS_API Geometry : public Node {
      *                  position.
      */
     void setTexcoords(const vine::geometry::Vec2fArray& texcoords);
+
+    /** @brief Sets the texture coordinates (location kTexCoordLocation) by SHARING a vertex buffer.
+     *
+     * See setPositionsBuffer() for the sharing and lifetime contract.
+     *
+     * @param texcoords Texcoord buffer to read (two floats per element), or null to clear the channel.
+     */
+    void setTexcoordsBuffer(intrusive_ptr<const vine::Buffer<vine::math::Vec2f>> texcoords);
 
     /** @brief Returns whether texture coordinates (location kTexCoordLocation) are present. */
     bool hasTexcoords() const;
