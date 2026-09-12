@@ -1,0 +1,185 @@
+#pragma once
+
+/**
+ * @brief The device-free decisions the bridge makes about geometry and pipeline state.
+ *
+ * A SceneBridge mostly builds vsg objects, and that needs a device. What does NOT need one: how a
+ * custom vertex channel is classified (and why it is rejected), which colour attachments a shader
+ * set declares, what a multi-attachment pipeline writes, and the three hash functions every cache
+ * key is built from.
+ *
+ * Those rules used to be file-local to SceneBridgeGeometry.cpp / SceneBridgePipeline.cpp, so the
+ * only way to exercise them was to run the whole pipeline path. A rule that is wrong there does
+ * not fail loudly either: a channel accepted at the wrong vertex count builds a corrupt buffer, and
+ * a hash that forgets a field does not fail at all — it quietly stops sharing a cache entry and
+ * rebuilds per frame.
+ *
+ * They live here as functions over plain data, so a test can check them without a device
+ * (tests/test_vsg/SceneRulesTest.cpp).
+ */
+
+#include <vine/vsg/vsg_global.hpp>
+
+#include <cstddef>
+#include <cstdint>
+
+#include <vsg/core/ref_ptr.h>
+#include <vsg/state/ColorBlendState.h>
+#include <vsg/utils/ShaderSet.h>
+
+#include <vine/String.hpp>
+#include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/Material.hpp>
+#include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/StateNode.hpp>
+
+#include <vine/vsg/RenderStateMapper.hpp>
+
+V_VSG_NS_BEGIN
+
+namespace detail
+{
+
+/**
+ * @brief Why a custom channel cannot be materialised at this vertex count.
+ *
+ * Decided in one place so the loop that walks the geometry's channels reports the
+ * reason and the array builder can rely on it having been checked: the rule
+ * (1..4 components, a whole number of vertices, exactly the mesh's vertex count)
+ * was previously written twice, once to report and once to build.
+ */
+enum class ChannelShape
+{
+    Ok,            ///< Usable: one typed value per vertex.
+    Components,    ///< Component count is outside 1..4.
+    NotDivisible,  ///< Float count is not a whole number of vertices.
+    VertexCount,   ///< Vertex count does not match the mesh's.
+};
+
+/**
+ * @brief Classifies a custom channel against the mesh's vertex count.
+ *
+ * @param attr         Channel to classify.
+ * @param vertex_count Vertices the mesh has (the channel must match it).
+ * @return Ok when the channel can be materialised, else why it cannot.
+ */
+ChannelShape channelShape(const vine::graphics::AttributeBuffer& attr, std::size_t vertex_count);
+
+/**
+ * @brief The "channel ignored" diagnostic for a rejected custom channel.
+ *
+ * @param location     shader attribute location of the channel.
+ * @param attr         The rejected channel.
+ * @param vertex_count Vertices the mesh has.
+ * @param shape        Why channelShape rejected it (never Ok).
+ * @return The message to report.
+ */
+vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics::AttributeBuffer& attr,
+                                   std::size_t vertex_count, ChannelShape shape);
+
+/** @brief Seed of every cache key built from the hashing below (FNV-1a basis). */
+inline constexpr std::uint64_t kHashSeed = 0xcbf29ce484222325ull;
+
+/** @brief Seed of the vertex-layout hash (its own value, so a layout is never a cache key). */
+inline constexpr std::uint64_t kLayoutSeed = 0x517cc1b727220a95ull;
+
+/**
+ * @brief Mixes one value into a running 64-bit hash.
+ *
+ * One definition for all the cache keys the bridge builds (the L1 program stage
+ * set, the L1b per-layout ShaderSet, the L2 variant template): copies of the mix
+ * would have to stay in step for the caches to keep sharing an entry, and a copy
+ * that drifted would not fail — it would just stop hitting its neighbour's entry
+ * and rebuild / re-compile per frame, with nothing to report.
+ *
+ * @param hash  Running hash (start at kHashSeed).
+ * @param value Value to mix in.
+ * @return The mixed hash.
+ */
+inline constexpr std::uint64_t hashCombine(std::uint64_t hash, std::uint64_t value) noexcept
+{
+    return hash ^ (value + 0x9e3779b97f4a7c15ull + (hash << 6u) + (hash >> 2u));
+}
+
+/**
+ * @brief Hashes a geometry's forwarded custom channels (its vertex layout).
+ *
+ * The layout is part of the identity of BOTH the per-layout ShaderSet (which
+ * bindings it must declare) and the L2 variant template (the pipeline's vertex
+ * input state), so both ask here instead of walking the channels again.
+ *
+ * A template so the channel type stays private where it belongs: the channel
+ * range is taken as an opaque parameter (the caller's own vector), so any range
+ * whose elements carry @c location / @c components works — including a test's own
+ * struct (@ref kLayoutSeed when the range is empty).
+ *
+ * @param extra_channels Forwarded channels (empty = built-in layout only).
+ * @return Layout hash.
+ */
+template <class ChannelRange> std::uint64_t vertexLayoutHash(const ChannelRange& extra_channels)
+{
+    std::uint64_t layout = kLayoutSeed;
+    for (const auto& channel : extra_channels) {
+        layout = hashCombine(layout, static_cast<std::uint64_t>(channel.location));
+        layout = hashCombine(layout, static_cast<std::uint64_t>(channel.components));
+    }
+    return layout;
+}
+
+/**
+ * @brief Hashes the identity of one (program, material, render-state) pipeline
+ * variant into a cache key for the L2 variant template cache.
+ *
+ * Pointer identities mix in the raw (program, material) pointers — their
+ * lifetime is guaranteed by the scene while the bridge uses them — plus the
+ * program's content revision, so editing a retained program's GLSL yields a
+ * fresh key and pipeline (D10), and every folded render-state field the
+ * pipeline must honour. The vertex layout (custom channels) is also part of
+ * the identity, so geometry with a different binding set never shares a
+ * variant template. Collisions with a different variant are safe: they only
+ * displace a template entry, which rebuilds on its next use.
+ *
+ * @param program  User shader program (null = built-in default).
+ * @param material Bound material (may be null).
+ * @param state    Resolved render state the pipeline honours.
+ * @param layout   Hash of the geometry's forwarded custom channels (see vertexLayoutHash).
+ * @return The content hash used as the variant cache key.
+ */
+std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program, const vine::graphics::Material* material,
+                               const vine::graphics::ResolvedRenderState& state, std::uint64_t layout);
+
+/**
+ * @brief How many colour attachments the slot's shader set declares.
+ *
+ * A pipeline recorded into a target must carry one colour-blend entry per colour
+ * attachment of that target, or Vulkan writes attachment 0 only and the rest stay
+ * cleared (black). The bridge's shader set comes from the renderer (one per depth
+ * policy, built from the target's colour-attachment count — see the per-target
+ * shader sets in VsgRenderer), so its colour blend state's attachment count IS
+ * that number. 1 for a set that declares no blend state: the single-attachment
+ * default every mapped state carries.
+ *
+ * @param shader_set Slot shader set (null = the single-attachment default).
+ * @return Colour attachment count, at least 1.
+ */
+int colourAttachmentCount(const ::vsg::ref_ptr<::vsg::ShaderSet>& shader_set);
+
+/**
+ * @brief Makes a multi-attachment pipeline write every colour attachment opaque.
+ *
+ * A G-buffer is written OPAQUE and UNBLENDED: the mapped opacity blend would
+ * attenuate any attachment whose alpha is not 1 — the normal attachment carries
+ * shininess/256 in alpha (~0.125), so blending scaled the stored normal down to
+ * ~12.5% of its real value. Every attachment must carry IDENTICAL blend state
+ * unless the independentBlend device feature is enabled, so ONE blend-DISABLED
+ * attachment is replicated across all outputs.
+ *
+ * @param states       Mapped state objects to adjust (its colour blend state is
+ *                     resized in place).
+ * @param colour_count Attachment count the pipeline is built for (>= 2).
+ */
+void applyOpaqueBlendForAttachments(RenderStateObjects& states, int colour_count);
+
+} // namespace detail
+
+V_VSG_NS_END

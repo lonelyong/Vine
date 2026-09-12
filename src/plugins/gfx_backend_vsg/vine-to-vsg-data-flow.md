@@ -271,7 +271,7 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 ### 9.4 材料管理器必须先于 bridge 存活
 
 - `SceneBridge` 持 `raw_ptr<VsgMaterialManager>`，接口约定 **manager 必须活得比 bridge 久**。
-- `VsgRenderer`（Impl 成员 `materialManager`）把它注入**每个 window 层 / 离屏 target 的 bridge**
+- `VsgRenderer`（持久态 `VsgRendererPersistent` 的 `materialManager` 成员）把它注入**每个 window 层 / 离屏 target 的 bridge**
   ——主/顶部/离屏共享同一材质缓存，不再各建一套；bridge 未注入时用自身成员 `default_manager_` 兜底。
 
 ## 10. 资源清理

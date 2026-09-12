@@ -2482,3 +2482,378 @@ viewer/命令图 → 首次编译"。
 
 **验收**：零警告构建（含 CMake 重新配置）、`[selftest]` 45 行逐字节相同、VUID 0 / FAIL 0、
 `test_vsg` 100 / `test_graphics` 158、门禁 PASS、`check_diagnostic_formats.py` 0 命中。
+
+## 47. 状态搬出类体：`SlotKey` / `VsgRendererPersistent` / `VsgRendererState`（2026-09-12）
+
+**用户提问**："为啥 `Impl` 还存在；不想要 PIMPL，能否去除或者抽出来。"
+
+**老实说**：§44 去掉的是 PImpl 的**机制**（指针、无实体类型、编译防火墙），两个状态结构
+（`Persistent` / `Impl`）是**按值留着**的，其中一个还叫 `Impl`。所以"`Impl` 还在"这个观察是对的：
+那次只做了机制层，没有做**语义层** —— 名字仍然在暗示一个已经不存在的东西。
+
+**做法（抽出来，不拍平）**：新头 `include/vine/vsg/VsgRendererState.hpp`（插件私有，同 §46 约定），
+里面按**生命周期**三件东西：
+
+- `SlotKey` —— 搬到命名空间作用域。状态用它对槽表做键（owner pass，或相机 / 采样目标回退身份）。
+- `VsgRendererPersistent` —— 原 `Persistent`：跨会话（材质管理器契约）。
+- `VsgRendererState` —— 原 `Impl`：单窗口会话，一切引用 `vsg::Window` / `vsg::Device` 的东西。
+
+类头 **2096 → 911 行**，只剩：公开 API、两个**参数**类型（`OverlayDestination`、
+`ContentSlotRequest`）、私有 helper 声明、两个按值成员
+（`VsgRendererPersistent persistent;` / `VsgRendererState state;`）。重命名 288 处
+（`VsgRenderer::Impl::` 与 `Impl::` → `VsgRendererState::`、`impl.` → `state.`），全落在 4 个渲染器
+TU 里；顺带把 §44 合并脚本留在类头 include 区的乱序与重复（`vsg_global.hpp` 居尾、两个 vine 头
+被塞在末尾、双空行）按仓库约定归位。
+
+**为什么不拍平（摊成类的成员）**：`shutdown()` 的会话拆卸靠 **`state = VsgRendererState{};` 一句整体
+替换**：会话期资源不可能被手写拆卸清单漏掉，今天新增一个持有 vsg 对象的成员也不必去改拆卸代码。
+拍平等于把 ~250 行成员逐个重置，并把这条保证换成"记得改这里"。**按生命周期分区是设计意图，不是
+编译技巧** —— 这也是 §44 保留两个结构的原因；§47 只是把它落到正确的名字与文件上。
+
+**抽出的前提约束**：命名空间作用域的结构**不能命名类的私有嵌套类型**。搬之前实测状态体内对
+`ContentSlotRequest` / `OverlayDestination` 的引用为 **0**，只有 `SlotKey` 被用 ⇒ 只有它需要跟着搬。
+`SlotKey` 是纯身份值（静态工厂 + `operator<`），两边（状态与类）都要用它，搬出去不牵动任何语义。
+
+**验收**：全量 `ninja` 零错零警告；`[selftest]` 45 行逐字节相同；VUID 0 / FAIL 0；
+`test_vsg` 100 / `test_graphics` 158；门禁 PASS；`check_diagnostic_formats.py` 0 命中。
+纯结构调整，行为零变化。
+
+**读旧节的名字对照**：本文 §31–§46 里写的 `Impl::x` / `Persistent` / `impl` 就是今天的
+`VsgRendererState::x` / `VsgRendererPersistent` / `state` —— 那些节记录的是当时的做法，只名字变了，
+语义与结论一字未改（"`Impl` 成员 vs 渲染器私有成员"那类规矩随名字一起作废，见 §44）。
+
+## 48. 概念出类：`VsgRenderTargetEntry` / `VsgFramePlan` / `VsgRetireRing` / `VsgPassMaterialiser`（2026-09-12）
+
+**用户提问**："概念性的提出来取一个合适的名字，是否合适呢，不然 state 成了神仙类。"
+
+**判词**：方向对，但**改名只解决一半**。§47 做的是命名层（`Impl` → `VsgRendererState`），1253 行里
+仍是四组互不相干的职责 —— 会话对象 / 泊车环 / 目标表 / pass 物料化 / 录制排序 / 回读 —— 21 个方法。
+**而且嵌套会助长它**：状态里没有"给某个概念写行为"的位置，于是每加一个行为就再往 state 上加一个方法。
+
+**先量耦合再拆**（实测每个方法碰了哪些 state 级成员，而不是凭感觉）：
+
+| 方法组 | 碰到的 state 级成员 |
+|---|---|
+| `retireObject` / `advanceRetireRing` / `waitForIdle` | 只碰环的 4 个字段 + `viewer` |
+| `passAttachments` / `planPass` / `makePassObjects` / `reuseSteadyPass` / `depthStillPromoted` / `revokeDepthPromotion` | `window`（取 device）/ `targets` / `request` / `passes_active_this_frame` |
+| `fillRecordPlan` / `orderRecordPlan` / `applyRecordPlan` | `targets` + `command_graph` |
+| `submitOneShot` / `hostVisibleMemory` / `readbackTarget` | `window` / `viewer` / `targets` |
+
+结论：这些职责**是能拆的**，不是为好看而拆。
+
+**批次 A（命名层）**：`VsgRendererState::Target` → **`VsgRenderTargetEntry`**（三种槽跟着内嵌进去），
+`PassRequest` → **`VsgPassRequest`**（提升到命名空间作用域），`PassAttachments` / `PassPlan` /
+`RecordPlan` → **`detail::*`**（新头 `VsgFramePlan.hpp`）；新头 `VsgRenderTargetEntry.hpp` 同时装
+`SlotKey`（它是槽表的键，与 entry 同族）。改名用**上下文正则**：只有 `Target` 后跟 `& * :: , ) > ; {`
+或行尾才算类型引用 —— 否则会把文档里的 "Target whose depth attachment to read" 一起改烂（实测这类散文
+5 处）。状态头 1253 → 674 行。
+
+**批次 B（泊车环）**：4 个字段 + 3 个方法 → `VsgRetireRing`（`park` / `advance` /
+`waitForIdle(viewer)`），"为什么必须泊车、哪些路径不能泊车"的推理随之下沉；`waitForIdle` 收一个
+`viewer` 参数（停设备是这里唯一需要会话的地方），诊断访问器改读 `retireRing.waits` / `.released`。
+**先做它**：这是唯一对 target 零知识的组，用来先验证手法。
+
+**批次 C（pass 物料化）**：8 个方法 → `detail` 自由函数（新头 `VsgPassMaterialiser.hpp`），签名只带
+真正读的事实：6 个收 `state`（`window` / `targets` / `request` / `passes_active_this_frame` /
+`retireRing`），而 `makePassGraph` / `publishPass` 是**纯函数**（只碰 entry，不收 state）。定义搬进
+同一个 TU（不新增 `.cpp`，因此三处源列表都不用动）。状态头 674 → **438 行**，方法 21 → 13。
+
+**为什么顺序是"先改名、再搬职责"**：命名空间作用域、有自己名字的类型才有资格当自由函数的第一参数
+（类私有区的没资格；嵌套的能写限定名但没人愿意写）。**命名是前提，不是装饰。**
+
+**为什么状态还留着 13 个方法**：留下的正好是**目标表自己的**操作（teardown / build / readback /
+录制排序 / 借用判定），它们的第一参数就是目标表；`state = VsgRendererState{};` 的整体替换保证（§47）
+也仍然成立，状态本身仍是"一次替换的会话对象"。D/E 批次若做，按同一标准搬。
+
+**行数账**：`VsgRendererState.hpp` 1253 → **438**；新增四个头 `VsgRenderTargetEntry.hpp` 584 /
+`VsgPassMaterialiser.hpp` 248 / `VsgFramePlan.hpp` 95 / `VsgRetireRing.hpp` 85（合计 1450，比原来多
+约 200 行 —— 多出来的全是每个概念自己的头注释与 include，换来"一个概念一个家"）。
+
+**顺带清掉的旧债**：①§44 合并脚本留在 `ContentSlot` 文档上的 `*/    struct ContentSlot {` 合并行
+（HEAD 里就有，不是 §47 引入的）；②`entryFor` 的文档被 §42b 的合并留在 `unhookTargetPasses` 上方
+（声明与文档分家、`entryFor` 自己反而没文档）；③状态头 include 区按新用途收缩，删掉 14 个已随概念搬走
+的 include。
+
+**验收**（三批各自跑）：全量 `ninja` 零错零警告；`[selftest]` 45 行逐字节相同；VUID 0 / FAIL 0；
+`test_vsg` 100 / `test_graphics` 158；门禁 PASS；`check_diagnostic_formats.py` 0 命中。行为零变化。
+
+## 49. 实现跟着头走：每个概念的实现在自己的 TU（2026-09-12）
+
+**用户要求**："`VsgRendererTargets.cpp` 也要拆吧，把对应的实现移动到对应的头文件的 cpp 里。"
+
+**问题**：§48 让概念各自有了头，但它们的**实现**仍留在 `VsgRendererTargets.cpp`（1426 行）里，与
+`VsgRenderer` 自己的方法交错 —— 找 `planPass` 的实现要先知道它当年属于哪个神仙结构。**头文件目录干净了、
+实现目录还没干净**，等于只解决了半张地图。
+
+**做法**（纯搬运，一行逻辑没改）：
+
+| 新 TU | 内容 | 行数 |
+| --- | --- | --- |
+| `src/VsgRetireRing.cpp` | `park` / `advance` / `waitForIdle` | 40 |
+| `src/VsgPassMaterialiser.cpp` | 8 个 `detail` 函数（`planPass` / `passAttachments` / `makePassObjects` / `makePassGraph` / `reuseSteadyPass` / `publishPass` / `depthStillPromoted` / `revokeDepthPromotion`） | 234 |
+| `src/VsgRendererState.cpp` | **全部** `VsgRendererState::` 方法（从 Targets **和** Passes 两个 TU 收拢：借用判定 / 读回 / 附件重置与创建 / 深度共享 barrier / 录制计划三步 / 摘 pass 与摘槽） | 454 |
+
+搬运后：
+
+| TU | 现在装什么 | 行数 |
+| --- | --- | --- |
+| `VsgRendererTargets.cpp` | `VsgRenderer` 的目标账本：构建/释放目标附件、每 pass 渲染图、命令图依赖序、颜色/深度读回 | 1426 → **829** |
+| `VsgRendererPasses.cpp` | `VsgRenderer` 的 pass 协议与内容槽（4 个文件局部 helper + 9 个方法） | 571 → **535** |
+| `VsgRenderer.cpp` / `Overlay.cpp` | 会话生命周期与帧泵 / PiP 与全屏程序 | 920 / 704 |
+
+**规则**（和头文件的 §48 对称）：**一个概念的头、一个概念的 TU**；`VsgRendererState.cpp` 收拢散在两处的
+状态实现，这样"状态的方法在哪"不再需要地图。`VsgRenderTargetEntry.hpp` / `VsgFramePlan.hpp` 不需要 TU：
+前者只有内联访问器，后者是纯数据。
+
+**三处源列表**：插件自身用 `file(GLOB_RECURSE ...)`（**没有** `CONFIGURE_DEPENDS`）⇒ 新增 TU 后必须
+重新 configure 才进构建；`vsg_backend_selftest`（插件 CMakeLists）与 `tests/test_vsg`（tests CMakeLists）
+是**显式列表**，各加三行 —— 与 §13 的提醒一致（加/删 `.cpp` 必须同步）。
+
+**踩坑（值得记）**：拆分后新 TU 的**第一个 include 是自己的头** ⇒ 每个头第一次被"独自"编译，立刻暴露
+两个**被传递包含掩盖的缺口**：`VsgRendererState.hpp` 用了 `vine::graphics::RenderPass` 却靠别人带进来
+（补 `<vine/graphics/RenderPass.hpp>`），`VsgRenderTargetEntry.hpp` 用了 `vine::graphics::RenderPass` 与
+`::vsg::PipelineBarrier` 同样靠别人（补两个 include）。**这是"一个头一个 TU"的附带收益：头文件被迫自足。**
+（§48 顺手做的 include 瘦身正是这次暴露的前提。）
+
+**验收**：全量 `ninja` 零错零警告；`[selftest]` 45 行逐字节相同；VUID 0 / FAIL 0；`test_vsg` 100 /
+`test_graphics` 158；门禁 PASS；`check_diagnostic_formats.py` 0 命中（现在扫 17 个文件）。行为零变化。
+
+## 50. 类里剩的七个概念：诊断 / 录制顺序 / 读回先落地（2026-09-12）
+
+**用户要求**："`VsgRenderer` 还能不能拆一些概念处理，结合整体还有其它概念，整体规划设计下" → 定案后
+"按最佳实践…再思考一遍，并开干"。
+
+**问题（实测）**：§49 之后类仍是 **帧协议 + 7 个别的概念**（25 个私有函数、2 个嵌套类型）：
+
+| # | 概念 | 现有位置 | 体量 |
+| --- | --- | --- | --- |
+| 1 | 诊断路由 | 类成员 + `reportFailure` **28 个调用点** + 异常描述 | ~120 + 28 |
+| 2 | 命令图录制顺序 | `fillRecordPlan`85 / `orderRecordPlan`58 / `applyRecordPlan`24 + 类 `reconcileOffscreenOrder`20 | 187 |
+| 3 | 读回 | `readColorBuffer`122 / `readDepthBuffer`115 / `submitOneShot`19 / `hostVisibleMemory`6 / `readbackTarget`14 | 276 |
+| 4 | 增量编译（D22） | `incrementalCompileViews`100 / `compilePendingViews`19 + 队列 | 119 |
+| 5 | 内容槽装配与绘制 | `setupContentSlot`115 / `renderContentSlot`119 + 请求类型 + 4 helper | ~280 |
+| 6 | 采样与摆放（PiP / 全屏程序 / 视图摆放 / 窗口层） | Overlay.cpp 705 + Targets+Renderer 侧的摆放与层 | ~690 |
+| 7 | 目标装配与深度借用 | `buildOffscreenTarget`89 / `resolveDepthBorrow`65 / `releaseRenderTarget`78 / `dropDepthSampling…`39 / `erasePassSlots…`35 等 + 状态侧 6 方法 | ~600 |
+
+**必须留在类里**（写进文档防止回流）：`RenderBackend` 覆写集、**pass 请求状态机**（`VsgPassRequest` +
+`resetPassRequest` + `takeRequestViewport` + 三个 setter —— §28 的教训：哪个调用意味着什么取决于调用
+顺序）、帧泵（`submitFrame` / `settleSubmittedFrame` / `releaseAbandonedTargets` /
+`reportSessionDevice`）、两个按值成员。**七批做完后类只剩协议与委派。**
+
+**批次顺序 = 依赖方向**（从"没人依赖"到"所有人依赖"）：1 诊断 → 2 录制顺序 → 3 读回 → 4 增量编译 →
+5 内容槽 → 6 采样/摆放 → 7 目标装配。每批独立跑满门禁，手法沿用 §48/§49 的四步（量耦合 → 命名空间作用
+域的类型 → `detail` 自由函数带显式会话参数 → 一个头一个 TU）。
+
+### 已落地：批次 1–3
+
+**1 诊断（`VsgDiagnostics.hpp/.cpp`，65 / ~40 行）**。**关键判断**：SDK 的 `RenderBackend` 已经拥有
+host sink 与计数（`reportDiagnostic` / `diagnosticCount`），所以插件**不该**再发明一套 sink+计数 ——
+要命名的是"报告往哪走"这一件事：**stderr 追踪 → 下游 channel**。于是 `VsgDiagnostics` =
+`report(severity, category, message)` + `route()`（把模块的 sink 接到同一条路，SceneBridge 用它）+
+`setDownstream`（构造函数里接 SDK channel）。25 处调用点改为 `diagnostics.report(...)`（纯文本改名 +
+续行缩进），`installDiagnosticRoute` 变一行 `bridge.setDiagnosticSink(diagnostics.route())`。
+**踩坑**：`reportDiagnostic` 是 **protected**，lambda 的闭包类型不是本类的成员 ⇒ 不能通过 `this` 调用，
+需要一个两行的成员蹦床 `deliverToSdkChannel`。
+
+**2 录制顺序（`VsgRecordOrder.hpp/.cpp`，113 / 212 行）**。三步从状态搬到 `detail`（`fillRecordPlan` /
+`orderRecordPlan` / `applyRecordPlan`），驱动器 `reconcileOffscreenOrder` 从类搬到 `detail`
+（`reconcileOffscreenOrder(VsgRendererState&)`），`detail::RecordPlan` 从 VsgFramePlan 迁到这里
+（"pass 的计划"与"录制顺序的计划"从此各归其位）；类头的声明与文档整块删除，文档搬到概念头。7 个调用点
+改为 `detail::reconcileOffscreenOrder(state)`。状态头 433 → **362**。
+
+**3 读回（`VsgReadback.hpp/.cpp`，117 / 312 行）**。`readColorBuffer` / `readDepthBuffer` 是
+**公开覆写** ⇒ 声明留在类上，实现搬走，类上只留 **3 行委派**（并顺手把这两个委派从 Targets.cpp 挪到
+`VsgRenderer.cpp`，Targets 从此只剩"目标账本"这一件事）；`submitOneShot` / `hostVisibleMemory` /
+`readbackTarget` 三个状态辅助也搬过去。**关键判断**：读回函数收 `VsgRendererState&`（**非 const**）
+—— 服务一次读回要停设备，而这个停是被计数的（`VsgRetireRing::waitForIdle`）；`readbackTarget` 保持
+const（只读）。**附带收益**：guard 契约现在可设备无关测试（`ReadbackTest.cpp`：无会话/无构建目标/从未
+构建的目标都返回 false 且不留半成品缓冲）。
+
+**验收（每批）**：全量 `ninja` 零错零警告；`[selftest]` 45 行逐字节相同；VUID 0 / FAIL 0；
+`test_vsg` **108**（+4 诊断 +4 读回）/ `test_graphics` 158；门禁 PASS；`check_diagnostic_formats.py` 0
+命中（扫 20 文件）。
+
+**脚本/流程教训（第三批踩到）**：①同一文件的多个切割段必须**合并后一次写回**（否则互相覆盖，第二十九批
+已踩、第三批脚本里又犯了一次 —— 已固化成脚本模板）；②按"精确文本"改写签名时，必须**报告未命中的改写
+项**（`hostVisibleMemory` 的对齐空格与预期不同 ⇒ 静默漏改，编译期才暴露）；③测试的 CMake 列表用 **tab**
+缩进（用空格匹配必然失败）。
+
+**行数账**：`VsgRenderer.hpp` 911 → **895**、`VsgRendererState.hpp` 433 → **362**、`VsgRenderer.cpp`
+920 → 934（委派 + 构造函数）、`VsgRendererTargets.cpp` 833 → **573**、`VsgRendererState.cpp` 454 →
+**241**；新增 `VsgDiagnostics` 65/40、`VsgRecordOrder` 113/212、`VsgReadback` 117/312。
+
+### 已落地：批次 4–5
+
+**4 增量编译（`VsgViewCompiler.hpp/.cpp`，58 / 141 行）**。`incrementalCompileViews`（只编译队列里的
+View：限制在预分配 view 匹配的 context，首次见到某槽时把 (render pass + view) 注册进 CompileManager
+池 —— 池是窗口图还空着时建好的，不注册就"编译了个寂寞"）与驱动器 `compilePendingViews`（D22 默认开、
+`VINE_VSG_DISABLE_INCREMENTAL_COMPILE` 是 A/B 逃生口、失败回落全图编译且**仍然提交**：已 acquire 的
+swapchain 图像必须被 present）搬成 `detail` 函数；编译**队列留在状态里**（它引用会话拥有的 view，
+`shutdown()` 必须随会话替换）✓。
+
+**5 内容槽（`VsgContentSlot.hpp/.cpp`，113 / 371 行）**。`setupContentSlot` / `renderContentSlot` +
+4 个文件局部 helper 搬出；**`VsgContentSlotRequest` 从类的私有区解放出来**（§37 当年"传 8 个松散字段"
+的根因就是它不可命名）。连带**它依赖的三个类方法**一并归位：
+`passGraph` + 它调用的 `dropDepthSamplingProgramSlots` → **pass 物料化**（一个 pass 的图就是物料化，
+紧挨 `makePassGraph`）；`placeViewByOrder` → 内容槽概念；`installDiagnosticRoute` → **诊断概念**
+（它就是那条路的接线）。参数名保持不变，函数体逐字搬运 ⇒ 纯搬迁。**教训**：批次要按"依赖"排序，而不是
+按"概念漂亮"排序 —— 内容槽看起来只依赖状态，实际依赖 `passGraph`，而 `passGraph` 又依赖
+`dropDepthSamplingProgramSlots`。**先让编译器把依赖列全**（改签名 → 编译 → 按报错逐个归位）比事前猜准。
+
+**⚠ 事故与护栏（必须记）**：批次 4 的搬运脚本把 `text = '\n'.join(...)` 里的换行写成了**字面量**
+⇒ `VsgRenderer.cpp` 被写成 **1 行**（内容在、换行全没）。**恢复**：VS Code 本地历史
+（`~/.vscode-server/data/User/History/<hash>/`）里最后一版完整快照（921 行）正好只缺我随后加的两处
+（`VsgReadback.hpp` include + 两段读回委派），补回后与"折叠文件"做**去空白 token 级 diff**，确认只差
+批次 4 本身的改动 ⇒ 恢复是**精确的**。**护栏（此后每个搬运脚本都有）**：①`chr(10)` join，永不写字面
+`\n`；②写前先 `shutil.copy` 到 `/tmp`；③写后断言"行数下降不超过搬走的行数 + 余量"，塌陷不可能不被发现；
+④按精确文本改写签名时**报告未命中项**（`hostVisibleMemory` 就这么静默漏改过一次）。
+
+### 已落地：批次 7（目标装配，先于 6 落地）
+
+**顺序改了，理由值得记**：计划里 6 是采样与摆放、7 是目标装配，但 **6 依赖 7** ——
+`resolveOverlayDestination()` 里的两行（`buildOffscreenTarget(dest)`、`retargetPass(state.request.pass, dest)`）
+正是 7 的东西，先做 6 就得先把这两件搬出来。⇒ **批次顺序 = 依赖方向**，和批次 4–5 的教训同一条
+（早先按"概念漂亮"排过，结果被依赖拽回来）。7 落地后 6 不再被挡住。
+
+**判词**：`VsgRendererState.cpp` 的 241 行里**没有一行是"状态自己的行为"** —— 七个方法
+（`borrowNeedsRebuild` / `resetTargetAttachments` / `dropConsumersSampling` / `createTargetAttachments` /
+`makeDepthShareBarrier` / `unhookTargetPasses` / `detachSlotView`）全是"目标装配"，其余只剩内联的
+`entryFor` 与 `VsgPassRequest` 的两个 take。⇒ **`VsgRendererState.cpp` 整个消失**：状态变成纯数据 +
+一张表，装配逻辑集中到一个概念头。这是"概念出类"最干净的一次 —— 搬完不是"文件变小"，而是
+"这个 TU 本来就不该存在"。
+
+**新单元 `VsgTargetBookkeeping`(275/553)**：①装配 `resetTargetAttachments` / `createTargetAttachments`
+（USAGE 位必须一处决定：一个颜色附件同时要能采样、能 blit，深度要能拷出）/ `makeDepthShareBarrier`
+（借用深度的屏障只写一次）/ `resolveDepthBorrow` / `buildOffscreenTarget`；②判定 `borrowNeedsRebuild`
+（WAITING 与 STALE 两问一处）/ `dropConsumersSampling`（重建后丢采样快照）；③注销 `unhookTargetPasses` /
+`detachSlotView` / `erasePassSlotsFromTarget` / `retargetPass`；④公开入口 `releaseRenderTarget` /
+`releaseWindowLayer`（类上只留 3 行委派）。**只有 `resetTargetAttachments` 不收 `state`**（它只清一个
+条目）—— 收不收 `state` 由函数真的碰不碰会话决定，而不是一律照抄。
+
+**踩坑（脚本，五条）**：①定位声明时把 `bool resolveDepthBorrow(` 写成 `void ...` ⇒ 断言退出（护栏
+生效，没有静默跳过）；②`drop_block()` 忘了 `return`，`SlotKey` 那段说明在内存里丢了 —— 好在**备份里
+有**（写前备份的第二个收益）；③第一版把函数体直接贴在 `vine::vsg` 作用域（只加了 `using namespace detail;`），
+于是定义成了一批**新**函数、与 `detail` 里的声明重名 ⇒ 一堆 "ambiguous" / "no member named in namespace
+ detail"；**正确做法是 `namespace detail { ... }` 包住定义**；④`VsgRendererPasses.cpp` 的两个旧成员定义
+要**从磁盘重读后再删**（我在内存里删过一次，随后 `read()` 又读了回来）⇒ 记一条：**"内存里删过"不等于
+"文件里删过"**；⑤新 TU 拿不到 `V_LOGI`（以前靠 `VsgRenderer.hpp` 传递包含）⇒ 显式
+`#include <vine/logging/Log.hpp>`，"一个头一个 TU"继续逼出自足。
+
+**顺带清三处旧债**：①类里 `dropDepthSamplingProgramSlots` 的声明（批次 5 搬走实现后留下的僵尸，无人
+调用）；②类私有区顶部那段 `SlotKey` 身份说明（类型早在 §47 搬去 `VsgRenderTargetEntry.hpp`，说明被遗在
+原地）⇒ 搬到 `struct SlotKey` 头上；③`private:` 后多出的空行。**对账结论**：`VsgRenderer` 的 49 个声明
+**全部有定义**（写了个"声明 vs 定义"扫描脚本）。
+
+**验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` 108 /
+`test_graphics` 158 + 门禁 PASS + 格式检查 0（扫 21 文件，少了一个 TU）。**规模**：`VsgRendererTargets.cpp`
+(319) 与 `VsgRendererState.cpp`(241) **两个 TU 消失**，`VsgRendererPasses.cpp` 203 → **150**（只剩 pass
+协议），新 TU 553（≈ 两者之和减去重复的 prelude / include）。
+
+### 已落地：批次 6（采样与摆放）
+
+**新单元 `VsgOverlay`(119/744)**：`VsgOverlayDestination`（原类私有嵌套 `OverlayDestination`，出到命名空间
+作用域 —— 和 `VsgContentSlotRequest` 同一个理由：helper 必须能命名它）+ `resolveOverlayDestination` /
+`placeOverlayView` / `installOverlayView`（模板，只在本 TU 内部使用 ⇒ **定义留在 TU**，头里不声明）+
+`drawScreenTexture` / `drawScreenProgram`（两个公开覆写在类上只留 3 行委派）。文件局部的三个 helper
+（`makeCompiledOverlayView` / `viewRotation` / `fillLightPushBlock`）随实现留在匿名命名空间。
+
+**一处细节值得记**：draw 里"取子视口"原来调的是类的私有 `takeRequestViewport()`（pass 请求状态机的
+一部分，**不该出类**）。它其实就是 `state.request.takeViewport()` —— 自由函数直接调状态上的那个 take
+即可，**pass 请求状态机一行都不用动**（§28 的调用顺序契约不变）。搬不动的东西，先问一句"它真的是类的
+行为，还是状态的取用？"。
+
+**踩坑**：①`installOverlayView` 的文档挂在 `template <class Slot>` 之上，第一版脚本"向上找文档"时被 template
+行挡住 ⇒ 文档没搬走、类头留下孤立的 doc + `template` 行（补了一轮清理，并从**备份**里取回文档）；
+②断言写得太糙（`OverlayDestination` 是 `resolveOverlayDestination` 的子串）⇒ 改成"计数配平"；③又一次把最后
+一个函数的 `}` 吃掉了（把 `\n}\n\nV_VSG_NS_END` 换成 `\n\n} // namespace detail\n\nV_VSG_NS_END`）—— 与批次 7
+同一个坑，**收尾替换必须保证"函数右括号 + 命名空间右括号"两个都在**（这条已写进护栏）。
+
+**验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` 108 /
+`test_graphics` 158 + 门禁 PASS + 格式检查 0（21 文件）。**规模**：`VsgRendererOverlay.cpp`(707) 消失，
+`VsgOverlay.cpp` 744，`VsgRenderer.hpp` 737 → **579**。
+
+### §50 收尾：七个概念全部落地
+
+| # | 概念 | 头/TU（行） | 类里留下的东西 |
+|---|---|---|---|
+| ① | 诊断 `VsgDiagnostics` | 83 / 60 | 2 行蹦床 `deliverToSdkChannel` |
+| ② | 录制顺序 `VsgRecordOrder` | 113 / 212 | — |
+| ③ | 读回 `VsgReadback` | 117 / 312 | 2 个 3 行委派 |
+| ④ | 增量编译 `VsgViewCompiler` | 58 / 141 | — |
+| ⑤ | 内容槽 `VsgContentSlot` | 113 / 378 | — |
+| ⑥ | 采样与摆放 `VsgOverlay` | 119 / 744 | 2 个 3 行委派 |
+| ⑦ | 目标装配 `VsgTargetBookkeeping` | 275 / 560 | 2 个 3 行委派 |
+
+`VsgRenderer` 从 §47 前的 2096 行类体 + 四个上千行 TU，收敛到 **579 行类头**（公开 API + 私有 helper 声明 +
+三个按值成员）与**两个自己的 TU**（`VsgRenderer.cpp` 830：帧泵 + 委派；`VsgRendererPasses.cpp` 150：pass 协议）。
+**判定"什么必须留下"的标准**：`RenderBackend` 覆写、pass 请求状态机（§28 调用顺序契约）、帧泵，以及
+`state = VsgRendererState{};` 的整体重置。**七个批次的最大收获不是行数**，而是那条被反复验证的顺序：
+**依赖方向 > 概念漂亮**（批次 4–5 被 `passGraph` 拽回、批次 7 被 `buildOffscreenTarget` 拽到 6 前面），
+以及"**一个头一个 TU**"顺手逼出来的自足性（每搬一次就暴露一批被传递包含掩盖的缺口）。
+
+## 51. 两处"整体"收尾：一个泊车环 + 设备无关规则变成可测契约（2026-09-12）
+
+### 51a. 一个泊车环，而不是两个
+
+**判词**：`SceneBridge` 自己手写了一组 `std::array<std::vector<ref_ptr<Node>>, kRetireRingDepth>` +
+`retire_head_`，而 `VsgRetireRing` 是**同一件事的另一份实现**（同一深度、同一"提交后推进"点）；
+`VsgRetireRing.hpp` 反过来 `#include <SceneBridge.hpp>` 只是为了借那个常数 —— **依赖方向是反的**，
+而且两份深度得手工保持一致（谁改谁忘）。`Node` 派生自 `Object` ⇒ 一个环能装两者。
+
+**做法**：`VsgRetireRing` 自己持有 `kRetireRingDepth`（文档说明"比命令缓冲槽数多一"），去掉对
+`SceneBridge.hpp` 的包含；`SceneBridge` 改持 `VsgRetireRing retire_ring_`，`retireNode()` /
+`advanceRetireRing()` 变成 1 行委派（`park(node)` / `advance()`），公开签名与语义不变；
+`SceneBridge::kRetireRingDepth` 删除，三处用点（selftest ×2、`GeometrySafetyTest` ×1）改指
+`VsgRetireRing::kRetireRingDepth`。**收益**：深度、桶语义、`released` / `waits` 计数只有一份定义；
+桥将来要停设备也有现成的计数入口。
+
+### 51b. 设备无关的规则出匿名命名空间：`VsgSceneRules`(169/130)
+
+**判词**：`channelShape` / `ignoredChannelMessage`（几何）与 `hashCombine` / `vertexLayoutHash` /
+`hashStateVariant` / `colourAttachmentCount` / `applyOpaqueBlendForAttachments`（管线）都是**纯规则**，
+却锁在两个 TU 的匿名命名空间里 —— 要验证只能跑整条管线，而它们错了**不会失败**：通道在错的顶点数上
+被接受会建出坏缓冲；哈希漏一个字段只是不再共享缓存条目、每帧重建（没有任何报告）。⇒ 搬到
+`VsgSceneRules`，两个 TU 用 `using detail::xxx;` **显式**接入（刻意不用 `using namespace detail;`：
+这两个 TU 是桥的实现，把整个 detail 拉进来风险大于收益，而迁移前后的名字本来就是文件局部的 ⇒
+用声明是面最小的做法）。模板 `vertexLayoutHash` 留在头里，于是**测试可以用自己的 channel 结构体**验它。
+
+**新测 `tests/test_vsg/SceneRulesTest.cpp`（11 例，全部设备无关）**：通道形状 4 种判定 + 诊断文本
+（含 loc / 数字 / "ignored"，且 Ok 时为空）+ 空布局哈希 == `kLayoutSeed` + 布局哈希对 location /
+components / **顺序**敏感 + 变体哈希对**每个**折叠字段（depth.test/write/compare、cullMode、
+blend.enabled/src/dst、polygonMode、topology、layout）都敏感 + `hashCombine` 的顺序混合 + 颜色附件数
+（null / 无 blend 态 / 0 个附件都 = 1，3 个 = 3）+ opaque 写（每附件 blend 关、ONE/ZERO、四通道写掩码，
+重复调用是替换不是追加）。⇒ `test_vsg` 108 → **119**。
+
+**踩坑**：①测试 CMake 的 `SRC_FILE_LIST` 用 **tab**（我把终端里显示的 8 列当成了 8 个空格 —— 同一坑
+第三次踩，这次记进本段）；②单行 doc `/** @brief ... */` 与多行 doc 的锚点写法不同："向上找 `/**`"
+必须允许"命中行本身就以 `/**` 开头"；③`ResolvedRenderState` 的字段名/枚举取值要现查
+（`depth.test/write/compare`、`blend.enabled/src/dst`、`CullMode::Back`…），别凭记忆写。
+
+**验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` **119** /
+`test_graphics` 158 + 门禁 PASS + 格式检查 0（扫 22 文件，多了一个新 TU）。
+
+## 52. overlay 的两个纯 helper 也变成可测契约（2026-09-12）
+
+**判词**：`VsgOverlay.cpp` 的匿名命名空间里还留着两个纯函数 —— `viewRotation(camera, r, u, f)`（look-at 基）
+与 `fillLightPushBlock(camera, lights, block)`（128 字节 push 常量块的 CPU 填充：投影参数、world→view 光方向、
+三个方向光上限、无 ambient 时补 0.15 默认）。它们**决定画面**却只在整帧路径里被执行过：光方向算错是「光照看着
+不对」，`projparms` 算错是「深度重建的物体位置偏了」，退化相机（eye == target、up 与视线平行）算错则是 **NaN
+进 push 常量**（比静默更糟）。两个函数都不碰设备、不碰状态 ⇒ 属于 §51 那类「设备无关规则」。
+
+**做法**：从匿名命名空间提进 `detail`，声明 + 文档进 `VsgOverlay.hpp`（与它唯一的调用者 `drawScreenProgram`
+同族；`LightPushBlock` 本身是 `detail::LightPushBlock`，定义在 `VsgPipelineFactory.hpp` ⇒ 头里只做
+`namespace detail { struct LightPushBlock; }` 前向声明，参数是引用所以够用，头不必拉进 466 行的工厂头）。
+定义留在 `VsgOverlay.cpp`（一个概念的头 ↔ 一个概念的 TU）。
+
+**新测 `tests/test_vsg/OverlayLightingTest.cpp`（11 例，全部设备无关）**：基向量右手性（朝 -Z 与朝 -X 两个
+朝向）+ 任意相机下的正交性（三组 eye×target 的 |r|=|u|=|f|=1 且两两点积为 0）+ **退化输入**（eye==target ⇒
+f 兜底 (0,0,-1)；up 与视线平行 ⇒ r 兜底 (1,0,0)，都不是 NaN / 零向量）+ 块被清零（预置 9.0f 也得清）+ 透视
+参数（fov 90 / aspect 2 ⇒ `{near, far, 0.5, 1}`）+ 正交相机不留透视参数但光照照旧 + ambient 烤入 / 缺失时补
+0.15/0.15/0.15/1 + 方向光在 **view space** 烤入（-Z 前向、+X 右向、非单位方向被归一化）+ 禁用与 null 光**不占
+三个槽位** + 第四个方向光被丢弃（S4 限制）而不是覆盖已烤入的。⇒ `test_vsg` 119 → **130**。
+
+**踩坑**：`LightPushBlock` 在 `detail` 里 —— 第一版前向声明写在了 `vine::vsg`，于是测试里 `using` 到的是那个
+**永远不完整**的外层声明（16 个 incomplete type 错误）；名字的真身在哪个 namespace，声明就得写在哪。
+
+**验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` **130** /
+`test_graphics` 158 + 门禁 PASS + 格式检查 0（22 文件）。

@@ -157,9 +157,17 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CameraBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgMaterialManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgSceneRules.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgDiagnostics.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRecordOrder.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgReadback.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgViewCompiler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgContentSlot.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgTargetBookkeeping.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPassMaterialiser.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRetireRing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRendererPasses.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRendererTargets.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRendererOverlay.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgOverlay.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgBackendUtility.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPipelineFactory.cpp)
 target_compile_definitions(vsg_backend_selftest PRIVATE V_VSG_LIB)

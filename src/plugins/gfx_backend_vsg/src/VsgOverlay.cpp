@@ -1,4 +1,4 @@
-#include <vine/vsg/VsgRenderer.hpp>
+#include <vine/vsg/VsgOverlay.hpp>
 
 #include <cstdint>
 #include <map>
@@ -18,6 +18,8 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/logging/Log.hpp>
+
 #include <vine/vsg/CameraBridge.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
@@ -25,6 +27,11 @@
 #include <vine/vsg/VsgUtils.hpp>
 #include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
+#include <vine/vsg/VsgContentSlot.hpp>
+#include <vine/vsg/VsgPassMaterialiser.hpp>
+#include <vine/vsg/VsgRecordOrder.hpp>
+#include <vine/vsg/VsgTargetBookkeeping.hpp>
+#include <vine/vsg/VsgTargetBookkeeping.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -32,6 +39,9 @@ V_VSG_NS_BEGIN
 // layer (VsgPipelineFactory.hpp / VsgBackendUtility.hpp); the directive keeps
 // its call sites unqualified.
 using namespace detail;
+
+namespace detail
+{
 
 namespace
 {
@@ -99,13 +109,8 @@ namespace
     return view;
 }
 
-/**
- * @brief Computes the world -> view rotation basis for a look-at camera. *
- * @param camera Vine camera (eye / target / up).
- * @param r      Receives the view-space X axis in world coords (right).
- * @param u      Receives the view-space Y axis in world coords (up).
- * @param f      Receives the view-space -Z axis in world coords (forward).
- */
+} // namespace
+
 void viewRotation(const vine::graphics::Camera* camera, double r[3], double u[3], double f[3])
 {
     const auto eye    = camera->eye();
@@ -154,23 +159,6 @@ void viewRotation(const vine::graphics::Camera* camera, double r[3], double u[3]
     f[2] = fz;
 }
 
-/**
- * @brief Fills a fullscreen light push block for a deferred-lighting pass.
- *
- * The G-buffer stores view-space normals / positions, so directional lights
- * are pre-transformed from world to view space on the CPU (the fragment
- * shader then never needs a view matrix). Supports the first ambient plus up
- * to three directional lights (the push block is exactly 128 bytes); further
- * lights are ignored (documented S4 limitation). When the pass carries no
- * ambient light a small default ambient is seeded, mirroring how a scene pass
- * with an empty light list keeps its view's default light: without it a
- * fullscreen program pass bound to no lights would shade everything to black
- * (ambient 0 x albedo) — a silent, hard-to-diagnose blank frame.
- *
- * @param camera Camera whose view transforms the lights (may be null).
- * @param lights Scene lights to bake (borrowed).
- * @param block  Receives the packed block (zeroed first).
- */
 void fillLightPushBlock(const vine::graphics::Camera*                               camera,
                         const std::vector<const vine::graphics::Light*>&            lights,
                         LightPushBlock&                                             block)
@@ -250,34 +238,33 @@ void fillLightPushBlock(const vine::graphics::Camera*                           
     }
 }
 
-} // namespace
-
-VsgRenderer::OverlayDestination VsgRenderer::resolveOverlayDestination(vine::graphics::RenderTarget* source,
-                                                                     const SlotKey& key, const char* what)
+VsgOverlayDestination resolveOverlayDestination(VsgRendererState& state, const VsgDiagnostics& diagnostics,
+                                                vine::graphics::RenderTarget* source, const SlotKey& key,
+                                                const char* what)
 {
-    OverlayDestination out;
+    VsgOverlayDestination out;
     // The destination is the SCOPE's target (setRenderTarget, nullptr = the
     // window): read, not consumed, so every draw call of the pass agrees on it.
-    vine::graphics::RenderTarget* dest = impl.request.target;
+    vine::graphics::RenderTarget* dest = state.request.target;
     // A source == destination feedback loop would sample the very attachments this
     // pass writes. Reject it with a diagnostic: a ping-pong pair of targets is the
     // standard way to build a feedback chain.
     if (dest == source) {
-        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
-                      formatDiagnostic(u8"%s: source == destination (feedback loop): the pass draws nothing", what));
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                           formatDiagnostic(u8"%s: source == destination (feedback loop): the pass draws nothing", what));
         return out;
     }
-    auto& dest_entry = impl.entryFor(dest);
+    auto& dest_entry = state.entryFor(dest);
     if (dest != nullptr) {
         // Writing into an off-screen target: (re)build its graph to its size.
         if (dest->colorCount() <= 0 || dest->width() <= 0 || dest->height() <= 0) {
-            reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
-                          formatDiagnostic(
-                              u8"%s: destination target has no usable colour attachment: the pass draws nothing", what));
+            diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                               formatDiagnostic(
+                                   u8"%s: destination target has no usable colour attachment: the pass draws nothing", what));
             return out;
         }
         if (!dest_entry.attachments_built || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
-            buildOffscreenTarget(dest);
+            detail::buildOffscreenTarget(state, diagnostics, dest);
             if (!dest_entry.attachments_built) {
                 return out;
             }
@@ -287,66 +274,89 @@ VsgRenderer::OverlayDestination VsgRenderer::resolveOverlayDestination(vine::gra
         return out; // window graph not created yet
     }
     out.target = dest;
-    out.surf_w = (dest == nullptr) ? static_cast<int>(impl.window->extent2D().width) : dest_entry.width;
-    out.surf_h = (dest == nullptr) ? static_cast<int>(impl.window->extent2D().height) : dest_entry.height;
+    out.surf_w = (dest == nullptr) ? static_cast<int>(state.window->extent2D().width) : dest_entry.width;
+    out.surf_h = (dest == nullptr) ? static_cast<int>(state.window->extent2D().height) : dest_entry.height;
 
     // The pass owns its slot under this destination; if it drew elsewhere before
     // (its render target changed), drop that stale slot so it stops compositing
     // there. The graph this pass records into is the window session's shared
     // swapchain graph, or this pass' own off-screen graph (§28).
-    retargetPass(impl.request.pass, dest);
-    out.graph = passGraph(dest, key);
+    detail::retargetPass(state, state.request.pass, dest);
+    out.graph = detail::passGraph(state, diagnostics, dest, key);
     return out;
 }
 
-void VsgRenderer::placeOverlayView(const OverlayDestination& dest, const ::vsg::ref_ptr<::vsg::View>& view, int order)
+void placeOverlayView(VsgRendererState& state, const VsgOverlayDestination& dest,
+                      const ::vsg::ref_ptr<::vsg::View>& view, int order)
 {
-    placeViewByOrder(dest.graph, dest.target, view, order);
+    detail::placeViewByOrder(state, dest.graph, dest.target, view, order);
     if (dest.target != nullptr) {
         // An off-screen destination: the pass' graph has to be back in the command
         // graph, recorded after every target it samples. A source == destination
         // feedback loop was rejected when the destination was resolved, so this
         // consumer cannot feed its own producer.
-        reconcileOffscreenOrder();
+        detail::reconcileOffscreenOrder(state);
     }
 }
 
+/** @brief Builds the View an overlay drawable records through and installs it in its slot.
+ *
+ * Shared by the PiP screen triangle and the fullscreen program: wrap @p content in
+ * its own View (own camera + the sub-rect viewport), compile it against the
+ * destination's render pass, then hand it to the slot and position it by the slot's
+ * explicit order. A compile failure reports (when it was the compile) and returns
+ * false, and the caller drops its slot so the next frame retries — the half-compiled
+ * view is never recorded.
+ *
+ * @tparam Slot    Screen / program slot type (both carry camera / view / order / ready).
+ * @param dest     Resolved destination of the draw.
+ * @param slot     Slot to install into (its @c order positions the view).
+ * @param content  The drawable the view wraps.
+ * @param x        Viewport origin x in device pixels.
+ * @param y        Viewport origin y in device pixels.
+ * @param w        Viewport width in device pixels.
+ * @param h        Viewport height in device pixels.
+ * @param front    Insert the view as the graph's FIRST child until it is ordered.
+ * @param what     Draw name for the compile-failure diagnostic.
+ * @return true when the slot now holds a compiled, placed view.
+ */
 template <class Slot>
-bool VsgRenderer::installOverlayView(const OverlayDestination& dest, Slot& slot,
-                                     const ::vsg::ref_ptr<::vsg::Node>& content, int x, int y, int w, int h,
-                                     bool front, const char* what)
+bool installOverlayView(VsgRendererState& state, const VsgDiagnostics& diagnostics, const VsgOverlayDestination& dest,
+                        Slot& slot, const ::vsg::ref_ptr<::vsg::Node>& content, int x, int y, int w, int h,
+                        bool front, const char* what)
 {
     bool compile_failed = false;
-    auto view = makeCompiledOverlayView(*impl.viewer, dest.graph.get(), content, x, y, w, h, front, &compile_failed);
+    auto view = makeCompiledOverlayView(*state.viewer, dest.graph.get(), content, x, y, w, h, front, &compile_failed);
     if (view == nullptr) {
         if (compile_failed) {
-            reportFailure(vine::graphics::DiagnosticSeverity::Warning,
-                          vine::graphics::DiagnosticCategory::CompileFailed,
-                          formatDiagnostic(u8"%s view failed to compile; retrying with a full compile", what));
+            diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                               vine::graphics::DiagnosticCategory::CompileFailed,
+                               formatDiagnostic(u8"%s view failed to compile; retrying with a full compile", what));
         }
         return false;
     }
     slot.camera = view->camera;
     slot.view   = view;
     slot.ready  = true;
-    placeOverlayView(dest, view, slot.order);
+    placeOverlayView(state, dest, view, slot.order);
     return true;
 }
 
-void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int attachment)
+void drawScreenTexture(VsgRendererState& state, const VsgDiagnostics& diagnostics, vine::graphics::RenderTarget* source,
+                       int attachment)
 {
-    if (!impl.initialized || impl.viewer == nullptr || impl.window == nullptr || source == nullptr) {
+    if (!state.initialized || state.viewer == nullptr || state.window == nullptr || source == nullptr) {
         return;
     }
 
     // Consume the sub-viewport queued by setViewport() (the ScreenPass's PiP
     // rectangle); mirrors how render() consumes one for overlays.
-    const std::optional<vine::graphics::Viewport> viewport = takeRequestViewport();
+    const std::optional<vine::graphics::Viewport> viewport = state.request.takeViewport();
 
-    auto src_it = impl.targets.find(source);
-    if (src_it == impl.targets.end() || src_it->second.color_views.empty()) {
-        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
-                      u8"drawScreenTexture: source target has no colour attachment: the pass draws nothing");
+    auto src_it = state.targets.find(source);
+    if (src_it == state.targets.end() || src_it->second.color_views.empty()) {
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                           u8"drawScreenTexture: source target has no colour attachment: the pass draws nothing");
         return;
     }
     const auto& src = src_it->second;
@@ -363,11 +373,11 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
             // Sampling a non-existent attachment is a wiring mistake: clamp so
             // the pass still draws, but say so instead of silently substituting
             // a different texture.
-            reportFailure(vine::graphics::DiagnosticSeverity::Warning,
-                          vine::graphics::DiagnosticCategory::ChannelIgnored,
-                          formatDiagnostic(u8"drawScreenTexture: attachment %d is out of range (%zu available); "
-                                           u8"sampling the last attachment",
-                                           attachment, src.color_views.size()));
+            diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                               vine::graphics::DiagnosticCategory::ChannelIgnored,
+                               formatDiagnostic(u8"drawScreenTexture: attachment %d is out of range (%zu available); "
+                                                u8"sampling the last attachment",
+                                                attachment, src.color_views.size()));
             attachment_index = src.color_views.size() - 1;
         }
     }
@@ -384,15 +394,16 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
     // Pass-scoped identity when the engine opened a pass scope (the normal path);
     // the historical (source, attachment) identity otherwise, so a direct driver
     // that draws several PiPs in one frame stays distinct.
-    const SlotKey key = (impl.request.pass != nullptr)
-                            ? SlotKey::ownerPass(impl.request.pass)
+    const SlotKey key = (state.request.pass != nullptr)
+                            ? SlotKey::ownerPass(state.request.pass)
                             : SlotKey::sampledTarget(source, static_cast<int>(attachment_index));
-    const OverlayDestination overlay = resolveOverlayDestination(source, key, "drawScreenTexture");
+    const VsgOverlayDestination overlay =
+        resolveOverlayDestination(state, diagnostics, source, key, "drawScreenTexture");
     if (overlay.graph == nullptr) {
         return;
     }
     vine::graphics::RenderTarget* const dest = overlay.target;
-    auto&                              dest_entry = impl.entryFor(dest);
+    auto&                              dest_entry = state.entryFor(dest);
     const auto&                        dest_graph = overlay.graph;
     const int                          surf_w     = overlay.surf_w;
     const int                          surf_h     = overlay.surf_h;
@@ -453,7 +464,7 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
         // pipeline position: a full-screen present at a low order draws
         // beneath later HUD slots, while a small PiP at a high order stays on
         // top of them (the INT_MAX default keeps a legacy-created PiP last).
-        slot.order = impl.request.order;
+        slot.order = state.request.order;
         slot.source_target = source;
         slot.attachment    = static_cast<int>(attachment_index);
         slot.source_w    = src.width;
@@ -470,16 +481,17 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
         ProgramNodeFailure screen_failure = ProgramNodeFailure::None;
         auto content = makeScreenTextureNode(source_view, surface, &screen_failure);
         if (content == nullptr) {
-            reportFailure(vine::graphics::DiagnosticSeverity::Error,
-                          vine::graphics::DiagnosticCategory::CompileFailed,
-                          screen_failure == ProgramNodeFailure::NoCompiler
-                              ? u8"screen pass (PiP) needs the runtime GLSL compiler, which is unavailable: the pass draws nothing"
-                              : u8"screen pass (PiP) shader failed to compile: the pass draws nothing");
+            diagnostics.report(vine::graphics::DiagnosticSeverity::Error,
+                               vine::graphics::DiagnosticCategory::CompileFailed,
+                               screen_failure == ProgramNodeFailure::NoCompiler
+                                   ? u8"screen pass (PiP) needs the runtime GLSL compiler, which is unavailable: the pass draws nothing"
+                                   : u8"screen pass (PiP) shader failed to compile: the pass draws nothing");
             dest_entry.screen_slots.erase(key);
             return;
         }
         bool overlay_compile_failed = false;
-        if (!installOverlayView(overlay, slot, content, rect_x, rect_y, rect_w, rect_h, /*front*/ false,
+        if (!installOverlayView(state, diagnostics, overlay, slot, content, rect_x, rect_y, rect_w, rect_h,
+                               /*front*/ false,
                                 "screen pass (PiP)")) {
             // The compile already reported (when it was the compile): drop the
             // half-made slot so the next frame retries.
@@ -494,7 +506,7 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
         // Re-attach a slot retired while its pass was inactive (see
         // retireInactivePassSlots): its node and pipeline were kept, only the
         // view was detached from the graph.
-        placeOverlayView(overlay, slot.view, slot.order);
+        placeOverlayView(state, overlay, slot.view, slot.order);
         slot.detached = false;
     }
 
@@ -502,21 +514,21 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
     slot.camera->viewportState = ::vsg::ViewportState::create(rect_x, rect_y, static_cast<uint32_t>(rect_w), static_cast<uint32_t>(rect_h));
 }
 
-void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              source,
-                                    vine::raw_ptr<const vine::graphics::ShaderProgram> program,
-                                    vine::raw_ptr<const vine::graphics::Camera>        camera)
+void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostics, vine::graphics::RenderTarget* source,
+                       vine::raw_ptr<const vine::graphics::ShaderProgram> program,
+                       vine::raw_ptr<const vine::graphics::Camera>        camera)
 {
-    if (!impl.initialized || impl.viewer == nullptr || impl.window == nullptr || source == nullptr || program == nullptr) {
+    if (!state.initialized || state.viewer == nullptr || state.window == nullptr || source == nullptr || program == nullptr) {
         return;
     }
 
     // Consume the sub-viewport queued by setViewport() (the pass's rectangle).
-    const std::optional<vine::graphics::Viewport> viewport = takeRequestViewport();
+    const std::optional<vine::graphics::Viewport> viewport = state.request.takeViewport();
 
-    auto src_it = impl.targets.find(source);
-    if (src_it == impl.targets.end() || src_it->second.color_views.empty()) {
-        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
-                      u8"drawScreenProgram: source target has no colour attachment: the pass draws nothing");
+    auto src_it = state.targets.find(source);
+    if (src_it == state.targets.end() || src_it->second.color_views.empty()) {
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                           u8"drawScreenProgram: source target has no colour attachment: the pass draws nothing");
         return;
     }
     const auto& src = src_it->second;
@@ -531,15 +543,16 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
     //
     // Pass-scoped identity when a pass scope is open (normal path), else the
     // historical per-source identity used by direct drivers.
-    const SlotKey slot_key = (impl.request.pass != nullptr)
-                                 ? SlotKey::ownerPass(impl.request.pass)
+    const SlotKey slot_key = (state.request.pass != nullptr)
+                                 ? SlotKey::ownerPass(state.request.pass)
                                  : SlotKey::sampledTarget(source);
-    const OverlayDestination overlay = resolveOverlayDestination(source, slot_key, "drawScreenProgram");
+    const VsgOverlayDestination overlay =
+        resolveOverlayDestination(state, diagnostics, source, slot_key, "drawScreenProgram");
     if (overlay.graph == nullptr) {
         return;
     }
     vine::graphics::RenderTarget* const dest       = overlay.target;
-    auto&                              dest_entry = impl.entryFor(dest);
+    auto&                              dest_entry = state.entryFor(dest);
     const auto&                        dest_graph = overlay.graph;
     const int                          surf_w     = overlay.surf_w;
     const int                          surf_h     = overlay.surf_h;
@@ -590,12 +603,12 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         if (dest_graph != nullptr) {
             removeGraphChild(dest_graph.get(), slot.view);
         }
-        slot = Impl::ProgramSlot{};
+        slot = ProgramSlot{};
         // Capture the pass's explicit order (announced by the engine before
         // this pass) so the fullscreen view stacks at its pipeline position
         // among the target's content slots (e.g. between an opaque depth pass
         // and a forward transparent pass) instead of always drawing first.
-        slot.order = impl.request.order;
+        slot.order = state.request.order;
         slot.push_data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(LightPushBlock)));
         const VkExtent2D surface{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) };
         ProgramNodeFailure program_failure = ProgramNodeFailure::None;
@@ -607,12 +620,12 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         // would leave the host guessing why. Reported once per slot build (the
         // slot is stable while the policy is).
         if (source->depthPromotion() && !src.depth_sampleable && src.depth_view != nullptr) {
-            reportFailure(vine::graphics::DiagnosticSeverity::Warning,
-                          vine::graphics::DiagnosticCategory::ChannelIgnored,
-                          formatDiagnostic(u8"drawScreenProgram: sampled target '%s' declares depth promotion, but a"
-                                           u8" pass of it preserves depth, so its depth is not sampleable and is not"
-                                           u8" bound (the program sees its colour attachments only)",
-                                           source->name().empty() ? "(unnamed)" : source->name().stdstr().c_str()));
+            diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                               vine::graphics::DiagnosticCategory::ChannelIgnored,
+                               formatDiagnostic(u8"drawScreenProgram: sampled target '%s' declares depth promotion, but a"
+                                                u8" pass of it preserves depth, so its depth is not sampleable and is not"
+                                                u8" bound (the program sees its colour attachments only)",
+                                                source->name().empty() ? "(unnamed)" : source->name().stdstr().c_str()));
         }
         // The source's depth is bound as a sampled texture ONLY when it really
         // ends in SHADER_READ_ONLY: the target's description
@@ -635,9 +648,9 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
                                 ? u8"fullscreen program samples a texture this pass cannot provide (the source binds"
                                   u8" its colour attachments, plus its depth only while that one is sampleable)"
                                 : u8"fullscreen program shader failed to compile";
-            reportFailure(vine::graphics::DiagnosticSeverity::Error,
-                          vine::graphics::DiagnosticCategory::CompileFailed,
-                          why + vine::String(u8": the pass draws nothing"));
+            diagnostics.report(vine::graphics::DiagnosticSeverity::Error,
+                               vine::graphics::DiagnosticCategory::CompileFailed,
+                               why + vine::String(u8": the pass draws nothing"));
             dest_entry.program_slots.erase(slot_key);
             return;
         }
@@ -665,14 +678,15 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         // Create + compile the fullscreen view against this target's render pass
         // (inserted provisionally at the front so the compile sees it), then move
         // it to its explicit-order position.
-        if (!installOverlayView(overlay, slot, node, rect_x, rect_y, rect_w, rect_h, /*front*/ true,
+        if (!installOverlayView(state, diagnostics, overlay, slot, node, rect_x, rect_y, rect_w, rect_h,
+                               /*front*/ true,
                                "fullscreen program")) {
             // The compile already reported (when it was the compile): drop the
             // half-made slot so the next frame retries.
             dest_entry.program_slots.erase(slot_key);
             return;
         }
-        ++impl.program_slot_build_count;
+        ++state.program_slot_build_count;
         V_LOGI("[VsgRenderer] EXPERIMENTAL deferred fullscreen program {}x{} -> {} {},{},{}x{} attached", src.width,
                src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
     }
@@ -682,8 +696,8 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
     // seeds a small default ambient (see fillLightPushBlock) so a fullscreen
     // program pass that carries no lights still shades its albedo instead of
     // rendering black.
-    std::vector<const vine::graphics::Light*> lights = impl.request.takeLights();
-    ++impl.request.draws;
+    std::vector<const vine::graphics::Light*> lights = state.request.takeLights();
+    ++state.request.draws;
     LightPushBlock block{};
     fillLightPushBlock(camera, lights, block);
     if (slot.push_data != nullptr && slot.push_data->dataSize() >= sizeof(block)) {
@@ -693,12 +707,14 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
     if (slot.ready && slot.detached) {
         // Re-attach a slot retired while its pass was inactive (see
         // retireInactivePassSlots): its node and pipeline were kept.
-        placeOverlayView(overlay, slot.view, slot.order);
+        placeOverlayView(state, overlay, slot.view, slot.order);
         slot.detached = false;
     }
 
     // Follow the requested sub-viewport each frame.
     slot.camera->viewportState = ::vsg::ViewportState::create(rect_x, rect_y, static_cast<uint32_t>(rect_w), static_cast<uint32_t>(rect_h));
 }
+
+} // namespace detail
 
 V_VSG_NS_END

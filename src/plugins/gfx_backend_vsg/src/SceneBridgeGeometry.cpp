@@ -12,12 +12,19 @@
 #include <vsg/state/material.h>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/vsg/SceneBridgeInternals.hpp>
+#include <vine/vsg/VsgSceneRules.hpp>
 #include <vine/vsg/VsgUtils.hpp>
 
 
 
 
 V_VSG_NS_BEGIN
+
+// The bridge's device-free rules are shared with the rest of the plugin and unit-tested on
+// their own (see VsgSceneRules.hpp); these declarations keep the call sites below unqualified.
+using detail::ChannelShape;
+using detail::channelShape;
+using detail::ignoredChannelMessage;
 
 namespace
 {
@@ -210,74 +217,6 @@ vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeBuffer& 
         }
     }
     return normals;
-}
-
-/**
- * @brief Why a custom channel cannot be materialised at this vertex count.
- *
- * Decided in one place so the loop that walks the geometry's channels reports the
- * reason and the array builder can rely on it having been checked: the rule
- * (1..4 components, a whole number of vertices, exactly the mesh's vertex count)
- * was previously written twice, once to report and once to build.
- */
-enum class ChannelShape
-{
-    Ok,            ///< Usable: one typed value per vertex.
-    Components,    ///< Component count is outside 1..4.
-    NotDivisible,  ///< Float count is not a whole number of vertices.
-    VertexCount,   ///< Vertex count does not match the mesh's.
-};
-
-/**
- * @brief Classifies a custom channel against the mesh's vertex count.
- *
- * @param attr         Channel to classify.
- * @param vertex_count Vertices the mesh has (the channel must match it).
- * @return Ok when the channel can be materialised, else why it cannot.
- */
-ChannelShape channelShape(const vine::graphics::AttributeBuffer& attr, std::size_t vertex_count)
-{
-    if (attr.components < 1u || attr.components > 4u) {
-        return ChannelShape::Components;
-    }
-    if (attr.data->size() % attr.components != 0u) {
-        return ChannelShape::NotDivisible;
-    }
-    if (attr.data->size() / attr.components != vertex_count) {
-        return ChannelShape::VertexCount;
-    }
-    return ChannelShape::Ok;
-}
-
-/**
- * @brief The "channel ignored" diagnostic for a rejected custom channel.
- *
- * @param location     shader attribute location of the channel.
- * @param attr         The rejected channel.
- * @param vertex_count Vertices the mesh has.
- * @param shape        Why channelShape rejected it (never Ok).
- * @return The message to report.
- */
-vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics::AttributeBuffer& attr,
-                                   std::size_t vertex_count, ChannelShape shape)
-{
-    switch (shape) {
-    case ChannelShape::Components:
-        return formatDiagnostic(u8"loc%u custom channel has components=%u (1..4 "
-                                u8"required); channel ignored",
-                                location, attr.components);
-    case ChannelShape::NotDivisible:
-        return formatDiagnostic(u8"loc%u custom channel holds %zu floats, not divisible "
-                                u8"by components=%u; channel ignored",
-                                location, attr.data->size(), attr.components);
-    case ChannelShape::VertexCount:
-        return formatDiagnostic(u8"loc%u custom channel has %zu vertices, expected %zu; "
-                                u8"channel ignored",
-                                location, attr.data->size() / attr.components, vertex_count);
-    case ChannelShape::Ok:
-        break;
-    }
-    return vine::String();
 }
 
 /**

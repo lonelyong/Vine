@@ -3417,7 +3417,7 @@ bool runClearPolicyFlipPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
  *
  * The source's passes are ordered before the program pass, so the program slot is
  * built AFTER the revocation: that is the path which has to read the ACTUAL state
- * (Target::depth_sampleable) rather than the target's description.
+ * (VsgRenderTargetEntry::depth_sampleable) rather than the target's description.
  *
  * The source's two passes are also ANNOUNCED in the opposite of the order they
  * record in (the preserving pass is announced first and the promoting one second,
@@ -3554,7 +3554,7 @@ bool runPreservedDepthNotSampledPhase(vine::vsg::VsgRenderer& renderer, const Ca
  * runPreservedDepthNotSampledPhase covers the side where the depth must NOT be
  * bound. This covers the side that has to WORK, and it is the only place in the
  * self-test where a user program actually samples a texture: until it existed the
- * depth-binding decision (Target::depth_sampleable) was unobservable, because a
+ * depth-binding decision (VsgRenderTargetEntry::depth_sampleable) was unobservable, because a
  * descriptor naming a layout its image is not in is only a validation error when
  * the shader ACCESSES it.
  *
@@ -3872,13 +3872,13 @@ bool runDepthSamplingProgramPhase(vine::vsg::VsgRenderer& renderer, const Camera
 bool runPolicyChurnStressPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
 {
     bool ok = true;
-    // The ring releases after SceneBridge::kRetireRingDepth advances, so the
+    // The ring releases after VsgRetireRing::kRetireRingDepth advances, so the
     // "it released" half needs at least that many frames plus one.
-    if (frames < static_cast<int>(vine::vsg::SceneBridge::kRetireRingDepth) + 2) {
+    if (frames < static_cast<int>(vine::vsg::VsgRetireRing::kRetireRingDepth) + 2) {
         std::fprintf(stderr,
                      "[selftest] FAIL: the policy-churn check needs at least %zu frames (got %d) to see the retire"
                      " ring release\n",
-                     vine::vsg::SceneBridge::kRetireRingDepth + 2, frames);
+                     vine::vsg::VsgRetireRing::kRetireRingDepth + 2, frames);
         return false;
     }
     const vine::Color clear_color(31, 41, 59, 255);

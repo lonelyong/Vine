@@ -193,20 +193,19 @@ void SceneBridge::report(vine::graphics::DiagnosticSeverity severity, vine::grap
 
 void SceneBridge::retireNode(::vsg::ref_ptr<::vsg::Node> node)
 {
-    if (node == nullptr) {
-        return;
-    }
-    retire_ring_[retire_head_].emplace_back(std::move(node));
+    // A Node IS an Object: this bridge parks on the same ring the session parks its replaced
+    // render passes / framebuffers on (see VsgRetireRing), so the depth and the advance point
+    // have one definition instead of two that had to be kept in step.
+    retire_ring_.park(std::move(node));
 }
 
 void SceneBridge::advanceRetireRing()
 {
-    // Move to the next slot and release it: it was filled kRetireRingDepth
-    // frames ago, so the command-buffer slot that could have referenced those
-    // nodes has been re-recorded since (start() waits on the slot's fence
-    // before re-recording it), and the GPU no longer executes them.
-    retire_head_ = (retire_head_ + 1) % kRetireRingDepth;
-    retire_ring_[retire_head_].clear();
+    // One advance per SUBMITTED frame: the bucket entered now was filled kRetireRingDepth
+    // submits ago, so the command-buffer slot that could have referenced its objects has been
+    // re-recorded since (start() waits on the slot's fence before re-recording it) and the GPU
+    // no longer executes them.
+    retire_ring_.advance();
 }
 
 void SceneBridge::clearCache()

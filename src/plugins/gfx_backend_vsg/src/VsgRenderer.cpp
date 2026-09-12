@@ -1,8 +1,15 @@
 ﻿#include <vine/vsg/VsgRenderer.hpp>
 
+#include <vine/vsg/VsgViewCompiler.hpp>
+
+#include <vine/vsg/VsgContentSlot.hpp>
+#include <vine/vsg/VsgOverlay.hpp>
+#include <vine/vsg/VsgReadback.hpp>
+
 #include <vine/vsg/VsgUtils.hpp>
 #include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
+#include <vine/vsg/VsgTargetBookkeeping.hpp>
 
 #include <cstdint>
 #include <cstdio>
@@ -211,7 +218,20 @@ class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer> {
 
 } // namespace
 
-VsgRenderer::VsgRenderer() = default;
+VsgRenderer::VsgRenderer()
+{
+    // The one diagnostic route: the stderr trace plus the SDK channel. The downstream goes
+    // through a member because reportDiagnostic() is protected (a lambda's closure type is not
+    // a member of this class and cannot call it).
+    diagnostics.setDownstream([this](const vine::graphics::RenderDiagnostic& diagnostic) {
+        deliverToSdkChannel(diagnostic);
+    });
+}
+
+void VsgRenderer::deliverToSdkChannel(const vine::graphics::RenderDiagnostic& diagnostic)
+{
+    reportDiagnostic(diagnostic.severity, diagnostic.category, diagnostic.message);
+}
 
 VsgRenderer::~VsgRenderer()
 {
@@ -227,7 +247,7 @@ bool VsgRenderer::initialize()
     // Defensive: tear down any still-live previous session (a caller that
     // skipped shutdown()) so this re-init starts from a clean session.
     // shutdown() nulls bound_handle, so restore the just-bound handle.
-    if (impl.window != nullptr) {
+    if (state.window != nullptr) {
         void* bound = persistent.bound_handle;
         shutdown();
         persistent.bound_handle = bound;
@@ -247,8 +267,8 @@ bool VsgRenderer::initialize()
         host_handle = nullptr;
     }
     auto traits = makeWindowTraits(host_handle);
-    impl.window = ::vsg::Window::create(traits);
-    if (impl.window == nullptr) {
+    state.window = ::vsg::Window::create(traits);
+    if (state.window == nullptr) {
         V_LOGE("[VsgRenderer] Window::create FAILED (nativeWindow={}, {}x{})",
                traits->nativeWindow.has_value() ? 1 : 0, traits->width, traits->height);
         shutdown();
@@ -261,9 +281,9 @@ bool VsgRenderer::initialize()
     // earlier content (HUD). Off-screen targets bake their own per-size sets
     // lazily.
     init_stage = "building window shader sets";
-    impl.depth_on_shader_set        = buildShaderSet(persistent.shader_preset, impl.window->extent2D(), true, true);
-    impl.depth_testonly_shader_set  = buildShaderSet(persistent.shader_preset, impl.window->extent2D(), true, false);
-    impl.depth_off_shader_set       = buildShaderSet(persistent.shader_preset, impl.window->extent2D(), false, false);
+    state.depth_on_shader_set        = buildShaderSet(persistent.shader_preset, state.window->extent2D(), true, true);
+    state.depth_testonly_shader_set  = buildShaderSet(persistent.shader_preset, state.window->extent2D(), true, false);
+    state.depth_off_shader_set       = buildShaderSet(persistent.shader_preset, state.window->extent2D(), false, false);
 
     // The primary window layer is created lazily on the first window render
     // (the first pass that clears and draws the scene into the backbuffer).
@@ -276,38 +296,38 @@ bool VsgRenderer::initialize()
     // later (see setupContentSlot) as extra Views — the canonical vsg
     // multi-viewport pattern: one render pass, later Views drawn on top.
     init_stage = "creating viewer / command graph";
-    impl.viewer = ::vsg::ref_ptr<::vsg::Viewer>(new EmbeddedViewer());
-    impl.viewer->addWindow(impl.window);
+    state.viewer = ::vsg::ref_ptr<::vsg::Viewer>(new EmbeddedViewer());
+    state.viewer->addWindow(state.window);
 
     // Window render graph (empty until the first content slot is created) +
     // command graph. The window target's graph IS this shared swapchain graph
     // (targets[nullptr].graph); every window content slot / PiP view is a
     // child of it.
-    auto renderGraph      = ::vsg::RenderGraph::create(impl.window);
+    auto renderGraph      = ::vsg::RenderGraph::create(state.window);
     renderGraph->contents = VK_SUBPASS_CONTENTS_INLINE;
-    impl.entryFor(nullptr).graph = renderGraph;
-    auto commandGraph     = ::vsg::CommandGraph::create(impl.window);
+    state.entryFor(nullptr).graph = renderGraph;
+    auto commandGraph     = ::vsg::CommandGraph::create(state.window);
     commandGraph->addChild(renderGraph);
-    impl.command_graph = commandGraph;
-    impl.viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ commandGraph });
+    state.command_graph = commandGraph;
+    state.viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ commandGraph });
 
     init_stage = "initial viewer compile";
-    const auto compileResult = impl.viewer->compile();
+    const auto compileResult = state.viewer->compile();
     if (!compileResult) {
-        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
-                      formatDiagnostic(u8"initialize FAILED at '%s': %s", init_stage,
-                                       compileResult.message.c_str()));
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
+                           formatDiagnostic(u8"initialize FAILED at '%s': %s", init_stage,
+                                            compileResult.message.c_str()));
         shutdown();
         return false;
     }
 
-    impl.initialized = true;
+    state.initialized = true;
     return true;
     }
     catch (...) {
-        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
-                      formatDiagnostic(u8"initialize FAILED at '%s': %s", init_stage,
-                                       describeCurrentException().c_str()));
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
+                           formatDiagnostic(u8"initialize FAILED at '%s': %s", init_stage,
+                                            describeCurrentException().c_str()));
         // Environment hints: an init failure here is usually a missing/invalid
         // Vulkan ICD (VK_ICD_FILENAMES), a device/driver problem or a missing
         // display — print what the backend saw so a local environment issue is
@@ -324,32 +344,32 @@ bool VsgRenderer::initialize()
 
 void VsgRenderer::shutdown()
 {
-    if (impl.viewer != nullptr) {
+    if (state.viewer != nullptr) {
         // The session is going away, so this wait cannot be avoided — and it is
         // counted (deviceWaitCount), like every other device-wide idle.
-        impl.waitForIdle();
+        state.retireRing.waitForIdle(state.viewer);
         // Detach the window from the viewer so its command graphs are dropped
         // before the viewer is released.
-        if (impl.window != nullptr) {
-            impl.viewer->removeWindow(impl.window);
+        if (state.window != nullptr) {
+            state.viewer->removeWindow(state.window);
         }
-        impl.viewer->close();
+        state.viewer->close();
     }
-    if (impl.window != nullptr) {
+    if (state.window != nullptr) {
         // Release the native handle the platform window wraps. When the
         // reference is dropped, the Win32_Window destructor would call
         // ::DestroyWindow() (and ::UnregisterClass()) on the HOST's window —
         // here a Qt-owned HWND that Qt is itself tearing down. releaseWindow()
         // nulls the internal HWND so the destructor leaves Qt's window alone.
-        impl.window->releaseWindow();
+        state.window->releaseWindow();
     }
-    // Whole-session teardown: replacing the (session) Impl drops the window,
+    // Whole-session teardown: assigning over the session state drops the window,
     // viewer, command graph, per-target render graphs, content slots and every
     // compiled pipeline that references the old vsg::Device — in one step, so
     // a newly retained vsg member cannot be forgotten here. The next
-    // initialize() starts from a fresh Impl and allocates device ID 0, so a
+    // initialize() starts from a fresh state and allocates device ID 0, so a
     // surface-recreate re-init never trips vsg's VSG_MAX_DEVICES limit.
-    impl = Impl{};
+    state = VsgRendererState{};
     // The material manager outlives sessions (MaterialManager contract), so it
     // is cleared explicitly to drop references its cache holds to the dead
     // device; bound_handle points at a surface that is going away.
@@ -364,20 +384,20 @@ void VsgRenderer::beginFrame()
     // protocol-used marker is deliberately STICKY (not cleared here): once the
     // backend has been driven through pass scopes, a frame in which every pass
     // is disabled announces nothing and must still retire the retained views.
-    impl.passes_active_this_frame.clear();
-    if (impl.viewer == nullptr) {
+    state.passes_active_this_frame.clear();
+    if (state.viewer == nullptr) {
         return;
     }
-    impl.viewer->advanceToNextFrame();
-    impl.viewer->handleEvents();
+    state.viewer->advanceToNextFrame();
+    state.viewer->handleEvents();
 }
 
 void VsgRenderer::endFrame()
 {
-    if (impl.viewer == nullptr) {
+    if (state.viewer == nullptr) {
         return;
     }
-    impl.viewer->update();
+    state.viewer->update();
 }
 
 void VsgRenderer::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> target)
@@ -385,24 +405,24 @@ void VsgRenderer::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> ta
     // A scope attribute: the pass announced by beginPass() renders into this
     // target for every draw call of its scope (setRenderTarget comes before the
     // first one, see RenderBackend::setRenderTarget).
-    impl.request.target = target;
+    state.request.target = target;
 }
 
 void VsgRenderer::resetPassRequest()
 {
-    // One assignment: a field added to PassRequest can never be forgotten here,
+    // One assignment: a field added to VsgPassRequest can never be forgotten here,
     // which is the point of holding the whole request in one structure.
-    impl.request = Impl::PassRequest{};
+    state.request = VsgPassRequest{};
 }
 
 void VsgRenderer::setLights(const std::vector<vine::raw_ptr<const vine::graphics::Light>>& lights)
 {
     // Queue the lights for the next render() call (mirrors setViewport()): the
     // light nodes are built when the matching view is reconciled in render().
-    impl.request.lights.clear();
-    impl.request.lights.reserve(lights.size());
+    state.request.lights.clear();
+    state.request.lights.reserve(lights.size());
     for (const auto* light : lights) {
-        impl.request.lights.push_back(light);
+        state.request.lights.push_back(light);
     }
 }
 
@@ -413,7 +433,7 @@ bool VsgRenderer::supportsRenderTargets()
 
 void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& commands, vine::raw_ptr<const vine::graphics::Camera> camera)
 {
-    if (!impl.initialized || impl.viewer == nullptr) {
+    if (!state.initialized || state.viewer == nullptr) {
         return;
     }
 
@@ -422,8 +442,8 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // and the lights from the content scene (empty keeps each view's default
     // light(s)). Taking clears them, so one draw call cannot inherit the other's.
     const std::optional<vine::graphics::Viewport> viewport = takeRequestViewport();
-    std::vector<const vine::graphics::Light*>     lights   = impl.request.takeLights();
-    ++impl.request.draws;
+    std::vector<const vine::graphics::Light*>     lights   = state.request.takeLights();
+    ++state.request.draws;
 
     // The SCOPE attributes are READ, never consumed: they describe the PASS, so every draw call
     // of the same scope sees the same order / depth policy / target / presenting flag (endPass()
@@ -433,10 +453,10 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // setRenderTarget — EVERY target shares the one slot path below, and the GPU attachments are
     // ensured before the slot draws (window = the shared swapchain graph from initialize();
     // off-screen = owned attachments + graph, built / rebuilt to the target's size).
-    const int                       pass_order = impl.request.order;
-    const vine::graphics::DepthMode depth_mode = impl.request.depth_mode;
-    const bool                      presenting = impl.request.presenting;
-    vine::graphics::RenderTarget*   target_key = impl.request.target;
+    const int                       pass_order = state.request.order;
+    const vine::graphics::DepthMode depth_mode = state.request.depth_mode;
+    const bool                      presenting = state.request.presenting;
+    vine::graphics::RenderTarget*   target_key = state.request.target;
 
     if (target_key != nullptr && (camera == nullptr || !target_key->valid() || (!target_key->hasColor() && !target_key->hasDepth()))) {
         // Off-screen target unusable (no camera, invalid, or neither colour
@@ -447,25 +467,25 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // A pass owns one slot per target: if this pass rendered into a DIFFERENT
     // target before (its render target changed at run time), drop that stale
     // slot so it stops drawing there (H2).
-    retargetPass(impl.request.pass, target_key);
+    detail::retargetPass(state, state.request.pass, target_key);
 
-    auto& target = impl.entryFor(target_key);
+    auto& target = state.entryFor(target_key);
     // A depth borrow that is merely WAITING or whose baked source image was replaced means the
     // recorded attachments no longer match the source they have to test against (see
-    // Impl::borrowNeedsRebuild for both cases).
-    const bool borrow_needs_rebuild = impl.borrowNeedsRebuild(target, target_key);
+    // detail::borrowNeedsRebuild for both cases).
+    const bool borrow_needs_rebuild = detail::borrowNeedsRebuild(state, target, target_key);
     if (target_key != nullptr &&
         (!target.attachments_built || target.width != target_key->width() ||
          target.height != target_key->height() || borrow_needs_rebuild ||
          !target.build_key.matches(*target_key))) {
         // First render into this off-screen target, or it was resized, or its
         // attachment shape changed (colour attachments, depth format, depth
-        // promotion — see Target::BuildKey), or its depth borrow changed: build
+        // promotion — see VsgRenderTargetEntry::BuildKey), or its depth borrow changed: build
         // (or rebuild) its attachments. Each pass then creates its own render
         // pass from its own clear request (see passGraph), so a depth-policy
         // change needs no rebuild. Any content slots compiled against the old
         // attachments are dropped by buildOffscreenTarget.
-        buildOffscreenTarget(target_key);
+        detail::buildOffscreenTarget(state, diagnostics, target_key);
         if (!target.attachments_built) {
             return; // off-screen target could not be built
         }
@@ -476,17 +496,17 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // depth style and presenting role are carried per call and re-applied when
     // they changed; its stacking position follows the pass' explicit order.
     if (camera != nullptr) {
-        ContentSlotRequest request;
+        VsgContentSlotRequest request;
         request.target      = target_key;
         request.camera      = camera;
         request.commands    = &commands;
         request.lights      = &lights;
         request.depth_mode  = depth_mode;
         request.presenting  = presenting;
-        request.clear_depth = impl.request.clear_depth;
+        request.clear_depth = state.request.clear_depth;
         request.order       = pass_order;
         request.viewport    = viewport;
-        renderContentSlot(request);
+        detail::renderContentSlot(state, persistent, diagnostics, request);
     }
 
     // Submission is deferred to swapBuffers() so one frame (main pass + all
@@ -495,12 +515,12 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
 
 void VsgRenderer::setViewport(int x, int y, int width, int height)
 {
-    impl.request.viewport = vine::graphics::Viewport{ x, y, width, height };
+    state.request.viewport = vine::graphics::Viewport{ x, y, width, height };
 }
 
 std::optional<vine::graphics::Viewport> VsgRenderer::takeRequestViewport()
 {
-    return impl.request.takeViewport();
+    return state.request.takeViewport();
 }
 
 void VsgRenderer::setPassOrder(int order)
@@ -508,114 +528,13 @@ void VsgRenderer::setPassOrder(int order)
     // A scope attribute: the engine announces each pass' addPass() order before
     // it executes, so every slot that pass creates stacks at that position
     // (setupContentSlot / placeViewByOrder).
-    impl.request.order = order;
-}
-
-bool VsgRenderer::incrementalCompileViews()
-{
-    auto compileManager = impl.viewer->compileManager;
-    if (compileManager == nullptr) {
-        return false;
-    }
-
-    for (const auto& view : impl.pending_compile_views) {
-        if (view == nullptr) {
-            return false;
-        }
-
-        // Locate the owning target (window target keyed by nullptr) and the
-        // retained content slot the view belongs to, so the compile context
-        // can carry that target's render pass (window swapchain vs off-screen
-        // framebuffer — a graphics pipeline cannot be created without one).
-        Impl::Target*     owner    = nullptr;
-        Impl::ContentSlot* slot    = nullptr;
-        SlotKey           slot_key;
-        bool              is_window = false;
-        for (auto& [target_key, target] : impl.targets) {
-            for (auto& [candidate_key, candidate] : target.content_slots) {
-                if (candidate.ready && candidate.view == view) {
-                    owner     = &target;
-                    slot      = &candidate;
-                    slot_key  = candidate_key;
-                    is_window = (target_key == nullptr);
-                    break;
-                }
-            }
-            if (slot != nullptr) {
-                break;
-            }
-        }
-        if (slot == nullptr) {
-            // A pending view that is not a content slot (e.g. a PiP or
-            // program slot compiled by another path): let the caller fall
-            // back to the full compile.
-            return false;
-        }
-
-        // Register the slot's (render pass + view) context once. The pool's
-        // pooled traversal was built by CompileManager::create(viewer, hints)
-        // when the window graph was still empty, so without this the pool has
-        // no context that matches this view and compile() would compile
-        // nothing.
-        if (!slot->compile_context_registered) {
-            ::vsg::CollectResourceRequirements collect;
-            view->accept(collect);
-            const auto& requirements = collect.requirements;
-            try {
-                if (is_window) {
-                    if (impl.window == nullptr) {
-                        return false;
-                    }
-                    compileManager->add(*impl.window, view, requirements);
-                }
-                else {
-                    // The compile context carries the render pass the pipeline
-                    // is built against, so it must be THIS pass' framebuffer —
-                    // an off-screen target has one per pass (§28).
-                    const auto pass_fb = owner->passes.find(slot_key);
-                    const ::vsg::ref_ptr<::vsg::Framebuffer> framebuffer =
-                        pass_fb == owner->passes.end() ? ::vsg::ref_ptr<::vsg::Framebuffer>() : pass_fb->second.framebuffer;
-                    if (framebuffer == nullptr || framebuffer->getDevice() == nullptr) {
-                        return false;
-                    }
-                    compileManager->add(*framebuffer, view, requirements);
-                }
-            }
-            catch (...) {
-                return false;
-            }
-            slot->compile_context_registered = true;
-        }
-
-        // Compile ONLY this view: restrict the compile to the context whose
-        // pre-assigned view matches, so the new/rebuild subtree is compiled
-        // for the viewID it will be recorded under and no other slot is
-        // touched.
-        ::vsg::CompileResult result;
-        try {
-            ::vsg::View* const target_view = view.get();
-            result = compileManager->compile(
-                view, [target_view](::vsg::Context& context) { return context.view == target_view; });
-        }
-        catch (...) {
-            return false;
-        }
-        if (!result) {
-            return false;
-        }
-        // Feed dynamic data / slot / bin updates from the incremental compile
-        // into the record tasks (per-frame dynamic buffers such as the DYNAMIC
-        // opacity colour arrays rely on this).
-        ::vsg::updateViewer(*impl.viewer, result);
-    }
-
-    return true;
+    state.request.order = order;
 }
 
 void VsgRenderer::releaseAbandonedTargets()
 {
     std::vector<vine::graphics::RenderTarget*> abandoned;
-    for (const auto& entry : impl.targets) {
+    for (const auto& entry : state.targets) {
         const auto& target_entry = entry.second;
         if (entry.first != nullptr && target_entry.owner != nullptr && target_entry.owner->useCount() <= 1u) {
             abandoned.push_back(entry.first);
@@ -629,11 +548,11 @@ void VsgRenderer::releaseAbandonedTargets()
 
 void VsgRenderer::reportSessionDevice()
 {
-    if (impl.device_reported || impl.window == nullptr) {
+    if (state.device_reported || state.window == nullptr) {
         return;
     }
-    impl.device_reported = true;
-    const ::vsg::ref_ptr<::vsg::PhysicalDevice> physical = impl.window->getPhysicalDevice();
+    state.device_reported = true;
+    const ::vsg::ref_ptr<::vsg::PhysicalDevice> physical = state.window->getPhysicalDevice();
     if (physical == nullptr) {
         V_LOGW("[VsgRenderer] device: (none reported by the window)");
         return;
@@ -645,31 +564,11 @@ void VsgRenderer::reportSessionDevice()
            properties.driverVersion, static_cast<int>(properties.deviceType));
 }
 
-void VsgRenderer::compilePendingViews()
-{
-    if (impl.pending_compile_views.empty()) {
-        return;
-    }
-    bool compiled = false;
-    if (std::getenv("VINE_VSG_DISABLE_INCREMENTAL_COMPILE") == nullptr && impl.viewer->compileManager != nullptr) {
-        compiled = incrementalCompileViews();
-    }
-    if (!compiled) {
-        const auto compileResult = impl.viewer->compile();
-        if (!compileResult) {
-            reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::CompileFailed,
-                          formatDiagnostic(u8"frame compile failed (%s): newly added content is not drawn this frame",
-                                           compileResult.message.c_str()));
-        }
-    }
-    impl.pending_compile_views.clear();
-}
-
 void VsgRenderer::settleSubmittedFrame()
 {
     // 1. Switch every pass that recorded a ONE-FRAME variant back to its steady variant — the
     //    one the NEXT frame has to record (see the declaration's notes).
-    for (auto& entry : impl.targets) {
+    for (auto& entry : state.targets) {
         for (auto& pass : entry.second.passes) {
             if (pass.second.transient && pass.second.graph != nullptr && pass.second.render_pass != nullptr) {
                 pass.second.graph->renderPass = pass.second.render_pass;
@@ -679,12 +578,12 @@ void VsgRenderer::settleSubmittedFrame()
     }
     // 2. Release what the rings parked kRetireRingDepth frames ago: one ring per content slot
     //    (the bridge's retained nodes) and one for the renderer-owned objects.
-    for (auto& target_entry : impl.targets) {
+    for (auto& target_entry : state.targets) {
         for (auto& slot_entry : target_entry.second.content_slots) {
             slot_entry.second.bridge.advanceRetireRing();
         }
     }
-    impl.advanceRetireRing();
+    state.retireRing.advance();
 }
 
 void VsgRenderer::submitFrame()
@@ -695,7 +594,7 @@ void VsgRenderer::submitFrame()
     releaseAbandonedTargets();
     reportSessionDevice();
 
-    if (!impl.initialized || impl.viewer == nullptr) {
+    if (!state.initialized || state.viewer == nullptr) {
         return;
     }
     // Retire the retained state of every pass that did not execute this frame (disabled, or no
@@ -704,15 +603,15 @@ void VsgRenderer::submitFrame()
     retireInactivePassSlots();
     // Compile any geometry synced this frame before the record. A frame that never submits
     // keeps the queue for the next one (nothing was presented in between).
-    compilePendingViews();
+    detail::compilePendingViews(state, diagnostics);
     // The frame is submitted even when nothing was drawn: beginFrame() already ACQUIRED a
     // swapchain image, and an acquired image is only returned to the presentation engine by
     // presenting it — skipping the submission (nothing to draw / every pass disabled) leaks
     // one image per frame, which validation reports as
     // VUID-vkAcquireNextImageKHR-surface-07783, and the swapchain eventually starves.
     // Re-recording an unchanged graph is cheap (vsg records the command graph every frame).
-    impl.viewer->recordAndSubmit();
-    impl.viewer->present();
+    state.viewer->recordAndSubmit();
+    state.viewer->present();
     settleSubmittedFrame();
 
     // Same point in the frame: release the material resources of materials the app has dropped.
@@ -728,16 +627,16 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
     // is consumed in render(). This marker is separate from the real clear
     // below (colour + optional depth on the CURRENT target), so the depth-on/
     // off mechanism no longer swallows the actual clear semantics.
-    impl.request.presenting  = true;
-    impl.request.clear_depth = clearDepth;
+    state.request.presenting  = true;
+    state.request.clear_depth = clearDepth;
 
     // The clear applies to the CURRENT render target (set by setRenderTarget;
     // nullptr = the window): an off-screen pass's clear must reach ITS graph,
     // not the window's. The request is recorded on that target so a later
     // off-screen graph (re)build reapplies the colour and the depth policy
     // (buildOffscreenTarget), then pushed into the graph when one exists.
-    vine::graphics::RenderTarget* key = impl.request.target;
-    auto& t = impl.entryFor(key);
+    vine::graphics::RenderTarget* key = state.request.target;
+    auto& t = state.entryFor(key);
     const ::vsg::vec4 color{
         backgroundColor.r / 255.0f,
         backgroundColor.g / 255.0f,
@@ -746,7 +645,7 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
     };
     t.clear_seen              = true;
     t.clear_color             = color;
-    impl.request.clear_color = color;
+    state.request.clear_color = color;
 
     if (key == nullptr) {
         if (t.graph == nullptr) {
@@ -779,7 +678,7 @@ void VsgRenderer::setDepthMode(vine::graphics::DepthMode mode)
     // TestOnly / TestAndWrite) and every draw call of the scope keeps it.
     // Independent of clear() (a pass can test-only against depth an earlier
     // pass of the same target wrote, without clearing) and of lighting.
-    impl.request.depth_mode = mode;
+    state.request.depth_mode = mode;
 }
 
 void VsgRenderer::swapBuffers()
@@ -807,8 +706,8 @@ void VsgRenderer::resize(int width, int height)
 {
     (void)width;
     (void)height;
-    if (impl.window != nullptr) {
-        impl.window->resize();
+    if (state.window != nullptr) {
+        state.window->resize();
     }
     // Every window presenting (full-target) content slot's camera viewport
     // follows the live window size so the render graph's render area tracks a
@@ -816,11 +715,11 @@ void VsgRenderer::resize(int width, int height)
     // frame; refreshing here keeps slots correct even before their next
     // render). Other slots carry their own sub-viewport, re-set per frame by
     // their pass.
-    auto& window_target = impl.entryFor(nullptr);
-    if (impl.window == nullptr) {
+    auto& window_target = state.entryFor(nullptr);
+    if (state.window == nullptr) {
         return;
     }
-    const auto extent = impl.window->extent2D();
+    const auto extent = state.window->extent2D();
     for (auto& kv : window_target.content_slots) {
         auto& slot = kv.second;
         if (slot.ready && slot.vsg_camera != nullptr && slot.presenting) {
@@ -829,20 +728,42 @@ void VsgRenderer::resize(int width, int height)
     }
 }
 
+bool VsgRenderer::readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
+                                  std::vector<std::uint8_t>& outPixels)
+{
+    return detail::readColorBuffer(state, diagnostics, target, attachment, outPixels);
+}
+
+bool VsgRenderer::readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths)
+{
+    return detail::readDepthBuffer(state, diagnostics, target, outDepths);
+}
+
+void VsgRenderer::releaseRenderTarget(vine::graphics::RenderTarget* target)
+{
+    detail::releaseRenderTarget(state, diagnostics, target);
+}
+
+void VsgRenderer::releaseWindowLayer(vine::raw_ptr<const vine::graphics::Camera> camera, int order)
+{
+    detail::releaseWindowLayer(state, camera, order);
+}
+
+void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int attachment)
+{
+    detail::drawScreenTexture(state, diagnostics, source, attachment);
+}
+
+void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget* source,
+                                    vine::raw_ptr<const vine::graphics::ShaderProgram> program,
+                                    vine::raw_ptr<const vine::graphics::Camera>        camera)
+{
+    detail::drawScreenProgram(state, diagnostics, source, program, camera);
+}
+
 void* VsgRenderer::nativeHandle() const
 {
     return persistent.bound_handle;
-}
-
-void VsgRenderer::installDiagnosticRoute(SceneBridge& bridge)
-{
-    // The bridge reports a diagnostic; the renderer turns it into the single
-    // route (stderr trace + backend counters + host sink). Routing it through
-    // the renderer instead of handing the host sink straight to the bridge is
-    // what keeps diagnosticCount() honest: a bridge report is a backend report.
-    bridge.setDiagnosticSink([this](const vine::graphics::RenderDiagnostic& diagnostic) {
-        reportFailure(diagnostic.severity, diagnostic.category, diagnostic.message);
-    });
 }
 
 void VsgRenderer::setDiagnosticSink(vine::graphics::DiagnosticSink sink)
@@ -851,27 +772,16 @@ void VsgRenderer::setDiagnosticSink(vine::graphics::DiagnosticSink sink)
     // Re-route every retained slot bridge, and remember it for slots created
     // later (setupContentSlot installs the route). The renderer is the object a
     // host holds, so it must be the single place the sink is set.
-    for (auto& target_entry : impl.targets) {
+    for (auto& target_entry : state.targets) {
         for (auto& slot_entry : target_entry.second.content_slots) {
-            installDiagnosticRoute(slot_entry.second.bridge);
+            detail::installDiagnosticRoute(diagnostics, slot_entry.second.bridge);
         }
     }
 }
 
-void VsgRenderer::reportFailure(vine::graphics::DiagnosticSeverity severity,
-                                vine::graphics::DiagnosticCategory category,
-                                const vine::String&             message)
-{
-    const char* level = severity == vine::graphics::DiagnosticSeverity::Error    ? "error"
-                        : severity == vine::graphics::DiagnosticSeverity::Warning ? "warning"
-                                                                                  : "info";
-    std::fprintf(stderr, "[VsgRenderer] %s: %s\n", level, message.stdstr().c_str());
-    reportDiagnostic(severity, category, message);
-}
-
 void VsgRenderer::frame()
 {
-    if (!impl.initialized || impl.viewer == nullptr) {
+    if (!state.initialized || state.viewer == nullptr) {
         return;
     }
     // VSG frame order: advance -> handleEvents -> update -> record -> present.
@@ -885,33 +795,33 @@ void VsgRenderer::frame()
 
 ::vsg::ref_ptr<::vsg::Viewer> VsgRenderer::viewer() const
 {
-    return impl.viewer;
+    return state.viewer;
 }
 
 std::size_t VsgRenderer::offscreenBuildCount() const noexcept
 {
-    return impl.offscreen_build_count;
+    return state.offscreen_build_count;
 }
 
 std::size_t VsgRenderer::programSlotBuildCount() const noexcept
 {
-    return impl.program_slot_build_count;
+    return state.program_slot_build_count;
 }
 
 std::size_t VsgRenderer::deviceWaitCount() const noexcept
 {
-    return impl.device_wait_count;
+    return state.retireRing.waits;
 }
 
 std::size_t VsgRenderer::retiredObjectCount() const noexcept
 {
-    return impl.retired_object_count;
+    return state.retireRing.released;
 }
 
 std::size_t VsgRenderer::detachedSlotCount() const noexcept
 {
     std::size_t count = 0;
-    for (auto& entry : impl.targets) {
+    for (auto& entry : state.targets) {
         entry.second.forEachSlot([&](const SlotKey&, const auto& slot, auto) { count += slot.detached ? 1u : 0u; });
     }
     return count;

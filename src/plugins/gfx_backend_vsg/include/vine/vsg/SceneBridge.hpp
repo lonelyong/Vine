@@ -23,6 +23,7 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/vsg/OwnedCache.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
+#include <vine/vsg/VsgRetireRing.hpp>
 
 namespace vine::graphics
 {
@@ -165,17 +166,10 @@ class V_VSG_API SceneBridge {
      *
      * Must be called exactly once per SUBMITTED frame — after that frame's
      * recordAndSubmit() — because one advance is what accounts for one
-     * submission's fence wait (see retireNode).
+     * submission's fence wait (see retireNode). The ring itself, its depth and its policy are
+     * VsgRetireRing.
      */
     void advanceRetireRing();
-
-    /** @brief Number of frame advances a retired node is parked for.
-     *
-     * One more than the viewer's command-buffer slot count, so the slot which
-     * could still reference a retired node has had its fence waited (the wait
-     * happens before that slot is re-recorded) before the node is destroyed.
-     */
-    static constexpr std::size_t kRetireRingDepth = 4;
 
     /** @brief Gets the number of distinct compiled pipeline variants.
      *
@@ -531,13 +525,11 @@ class V_VSG_API SceneBridge {
     std::unordered_map<std::uint64_t, VariantCacheEntry> variant_cache_;
     InsertionClock variant_cache_clock_;
 
-    // Nodes dropped on a live path, held for kRetireRingDepth frame advances.
-    // One slot more than the viewer's command-buffer slot count, so the slot
-    // that referenced a retired node has had its fence waited before that
-    // node is destroyed.
-    std::array<std::vector<::vsg::ref_ptr<::vsg::Node>>, kRetireRingDepth>
-        retire_ring_;
-    std::size_t retire_head_ = 0;
+    // Nodes dropped on a live path, held for VsgRetireRing::kRetireRingDepth frame advances
+    // and released by advanceRetireRing(). The ring is the session's too (VsgRendererState
+    // parks the renderer-owned objects it replaces on it), so the depth and the "advance after
+    // the submit" point have ONE definition.
+    VsgRetireRing retire_ring_;
 
     // Host diagnostics channel (empty when unset) and its counters. Counted
     // whether or not a sink is installed, so a host can gate on

@@ -83,22 +83,56 @@ src/plugins/gfx_backend_vsg/
   CMakeLists.txt                  # v_add_plugin + FetchContent(vsg/glslang)
   include/vine/vsg/
     vsg_global.hpp                # V_VSG_API 导出宏 + 命名空间宏（查 V_VSG_LIB）
-    VsgRenderer.hpp               # 后端（PIMPL：struct Impl; unique_ptr<Impl> impl）
+    VsgRenderer.hpp               # 后端类定义（RenderBackend 实现；无 PImpl，状态按值持有）
     SceneBridge.hpp               # 命令流 → 保留式 vsg 场景（保留缓存声明在此）
+    SceneBridgeInternals.hpp      # SceneBridge 的保留态形状（各实现单元共享）
     CameraBridge.hpp              # 相机桥
     VsgMaterialManager.hpp        # 材质管理器（实现 graphics::MaterialManager）
     RenderStateMapper.hpp         # ResolvedRenderState → 4 个 vsg 管线态（header-only）
+    OwnedCache.hpp                # 拥有键对象的缓存（契约见头）
+    VsgRendererState.hpp          # 会话态（纯数据）：Persistent / PassRequest / 目标表 + entryFor
+    VsgRenderTargetEntry.hpp      # 一个输出目标的保留态（SlotKey + 三种槽 + per-pass 对象）
+    VsgFramePlan.hpp              # detail::PassAttachments / PassPlan / RecordPlan（纯值）
+    VsgPassMaterialiser.hpp       # detail：把一个 pass 变成 render pass/framebuffer/graph
+    VsgRetireRing.hpp             # 泊车环：被替换的 GPU 对象延后 kRetireRingDepth 帧释放
+    VsgDiagnostics.hpp            # 诊断路线：stderr 追踪 → SDK channel（模块可接同一条路）
+    VsgRecordOrder.hpp            # 命令图录制顺序：计划 + 三阶段 + 驱动器
+    VsgReadback.hpp               # 颜色/深度读回（公开覆写的实现与共享守卫）
+    VsgViewCompiler.hpp           # D22 增量编译：只编译本帧新增的槽 View
+    VsgContentSlot.hpp            # 内容槽：请求类型 + 搭建 / 绘制 / 按序摆放
+    VsgTargetBookkeeping.hpp      # detail：目标装配/重建/注销（附件、借用深度、槽视图）
+    VsgOverlay.hpp                # 采样与摆放：VsgOverlayDestination + 解目标/摆放/绘制 + 光照 push 块
+    VsgSceneRules.hpp             # detail：设备无关规则（通道形状、缓存键哈希、颜色附件/opaque 写）
+    VsgPipelineFactory.hpp        # vsg 对象工厂 + detail（格式转换 / 渲染通道 / 着色器集 / 管线态）
+    VsgBackendUtility.hpp         # detail：图手术、设备同步、会话策略查询
+    VsgUtils.hpp                  # detail::toVsg(Mat4d→dmat4)
+    GfxBackendVsgPlugin.hpp       # 插件入口声明
     VsgRenderBackendFactory.hpp   # 工厂（按名创建后端）
-  src/
-    VsgRenderer.cpp               # 后端主体（约 1600 行）
+  src/                            # 只有 .cpp（§46）；一个概念的头 ↔ 一个概念的 TU（§49）
+    VsgRenderer.cpp               # 会话生命周期、帧泵、诊断路由、查询访问器
+    VsgPassMaterialiser.cpp       # detail：pass 物料化 8 个函数
+    VsgRetireRing.cpp             # 泊车环（park / advance / waitForIdle）
+    VsgDiagnostics.cpp            # 诊断路线（追踪格式在一处）
+    VsgRecordOrder.cpp            # 录制顺序三阶段 + reconcileOffscreenOrder
+    VsgReadback.cpp               # 读回：提交、host-visible 内存、颜色/深度拷贝
+    VsgViewCompiler.cpp           # 增量编译两条路径 + 全图回落
+    VsgContentSlot.cpp            # 内容槽搭建/绘制 + 四个文件局部 helper
+    VsgTargetBookkeeping.cpp      # detail：目标装配/重建/注销 + releaseRenderTarget/WindowLayer
+    VsgOverlay.cpp                # PiP 采样 + 全屏用户程序（视图编译、摆放、光照 push 块填充）
+    VsgSceneRules.cpp             # detail：通道形状判定 + 缓存键哈希 + opaque 多附件写
+    VsgRendererPasses.cpp         # pass 协议（begin/end/releasePass、退役）
     SceneBridge.cpp               # 保留 Item 缓存 / buildGeometry / syncRenderCommands
+    SceneBridgeGeometry.cpp       # 顶点/索引上传与通道处理
+    SceneBridgePipeline.cpp       # vsg 管线态构建（hash / buildStateGroup）
     CameraBridge.cpp
     VsgMaterialManager.cpp
-    VsgRenderBackendFactory.cpp
-    GfxBackendVsgPlugin.hpp/.cpp  # 插件外壳 + V_DECLARE_PLUGIN
-    VsgUtils.hpp                  # detail::toVsg(Mat4d→dmat4)
+    VsgBackendUtility.cpp         # detail：图手术、设备同步、会话策略
+    VsgPipelineFactory.cpp        # detail：格式转换、渲染通道、着色器集、叠加/程序节点、灯光节点
+    VsgRenderBackendFactory.cpp   # 后端工厂注册
+    GfxBackendVsgPlugin.cpp       # 插件外壳 + V_DECLARE_PLUGIN
   shaders/                        # 早期手工 flat shader（flat.vert/frag[.spv]，已不被构建使用）
   vsg_shader_dump/  vsg_probe/    # 独立探查工具 main.cpp（不进插件构建）
+  vsg_selftest/                   # 无窗口自检（lavapipe 下跑完整帧装配）
   vine-to-vsg-data-flow.md        # 数据映射专项文档
   gfx_backend_vsg.md              # 本文
 ```
@@ -373,6 +407,12 @@ graph TD
 | `GfxBackendVsgPlugin` 的 `static s_factory` / `Registrar` | 进程级静态 | 插件 load 注册 / unload 不动 | 跨 TU 静态初始化序（§14-9） |
 
 ### 11.1 PIMPL / Impl 内部成员
+
+> **已作废（2026-09-12，设计 §44/§45/§47/§48）**：PImpl 与 `Impl` 早已删除 —— 类定义现在整个在
+> `include/vine/vsg/VsgRenderer.hpp`，状态按值持有：`VsgRendererPersistent`（跨会话）+
+> `VsgRendererState`（单窗口会话，`VsgRendererState.hpp`），目标表 / pass 计划 / 物料化 / 泊车环
+> 各在 `VsgRenderTargetEntry.hpp` / `VsgFramePlan.hpp` / `VsgPassMaterialiser.hpp` / `VsgRetireRing.hpp`。
+> 下面这段是 PImpl 时代的记录，保留作历史。
 
 `VsgRenderer` 用 `std::unique_ptr<Impl> impl` 持有全部实现状态（窗口/图/缓存/槽等）。
 `Impl` 内**不拥有** Vine 对象；全用 vsg `ref_ptr` 拥有 GPU 对象。构造时
