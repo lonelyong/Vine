@@ -4,6 +4,7 @@
 > 2026-09-04 依据本机 vsg 1.1.16 源码 / `vsg_shader_dump` 反序列化 / 后端代码核对。
 > 关联：`.ai/design/vsg-custom-shader.md`（自定义着色 ABI + §9 内建契约档案）、
 > `.ai/memory/graphics.md`。
+> 运行时的另外三件（生命周期 / 调用次数 / 更新策略）：[`docs/backend.md`](docs/backend.md)。
 >
 > 一句话：**Vine 侧存"开放 location 属性缓冲 + 材质"，后端把它物化成 vsg 的
 > CPU Data 数组，按名字喂进 GraphicsPipelineConfigurator，挂 Bind*/Draw* 命令，
