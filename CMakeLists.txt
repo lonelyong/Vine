@@ -23,6 +23,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
+# 素材目录自带搬运规则：构建期拷到 bin 旁边、安装到 prefix 根（见 test_data/CMakeLists.txt）。
+add_subdirectory(test_data)
+
 set(CMAKE_DEBUG_POSTFIX d)
 set(CMAKE_RELEASE_POSTFIX "")
 set(CMAKE_RELWITHDEBINFO_POSTFIX "")

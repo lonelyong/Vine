@@ -1,7 +1,6 @@
 # test_data/images
 
-测试用图像素材。**目前没有任何代码引用它们**（整个 `test_data/` 都是如此，`robots/` 下的 `.vdev`
-同样没有引用方），是给后续**图像解码 / 纹理上传 / cube map** 测试准备的材料。
+测试用图像素材。**`tests/test_imageio` 会真实解码全部 12 张**（`robots/` 下的 `.vdev` 目前没有引用方）。
 
 ## 内容
 

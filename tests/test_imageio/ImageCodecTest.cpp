@@ -44,7 +44,10 @@ const PixelFormat kLayouts[] = {
 const ImageFileFormat kContainers[] = { ImageFileFormat::Png, ImageFileFormat::Bmp, ImageFileFormat::Tga };
 
 /**
- * @brief Gets the path of an asset under the source tree's test_data/.
+ * @brief Gets the path of an asset under test_data/.
+ *
+ * test_data/ is staged beside the binaries (<build>/bin/test_data) and installed beside bin/ and lib/, so
+ * this reads the copy that sits next to the test itself rather than the source tree.
  *
  * @param relative Path below test_data/.
  * @return The absolute path of the asset.

@@ -6,10 +6,12 @@ target_link_libraries(${TEST_NAME} vi::ImageIO vi::Imaging)
 
 # Where the shared test assets live.
 #
-# This is the first test that needs files off disk, so it also establishes the
-# convention for the rest: point at the SOURCE tree's test_data/, because the
-# build tree never copies it (and v_add_library's glob only covers sources).
+# test_data/CMakeLists.txt stages the assets beside the binaries (<build>/bin/test_data, target
+# stage_test_data) and installs them beside bin/ and lib/, so this test reads THAT copy: no source tree
+# and no install are needed at run time (on Windows the test binary would otherwise only work when the
+# source tree happens to be there).
 # A test that needs an asset then joins VINE_TEST_DATA_DIR with a relative path.
-target_compile_definitions(${TEST_NAME} PRIVATE VINE_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/test_data")
+target_compile_definitions(${TEST_NAME} PRIVATE VINE_TEST_DATA_DIR="${VINE_TEST_DATA_STAGE_DIR}")
+add_dependencies(${TEST_NAME} stage_test_data)
 
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})

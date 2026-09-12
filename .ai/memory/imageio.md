@@ -90,4 +90,7 @@ stb 的 BMP writer 只有两条路（`stb_image_write.h:494`）：`comp != 4` �
 
 **测试用到了真实素材**：`test_data/images/` 的 12 张 2048² JPEG 全部解过。
 `tests/test_imageio/CMakeLists.txt` 用 `target_compile_definitions(... VINE_TEST_DATA_DIR=...)`
-指向**源码树**的 `test_data/`（build 树不拷贝它）——**这是仓库里第一个读磁盘素材的测试，也就顺手把路径约定定下来了**。
+指向**二进制旁边的副本**（`<build>/bin/test_data`）——**这是仓库里第一个读磁盘素材的测试，也就顺手把路径约定定下来了**。
+约定后来（2026-09-13）改为：素材目录自带搬运规则（`test_data/CMakeLists.txt`，目标 `stage_test_data`：构建期
+`<build>/bin/test_data`、安装期 `<prefix>/test_data` 与 `bin/`/`lib/` 同级），**不再把源码树路径编进去** ——
+Windows 上不安装也能直接跑，且不再依赖绝对路径。
