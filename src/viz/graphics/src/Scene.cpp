@@ -219,11 +219,13 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
     const float node_opacity = opacity * node->opacity();
 
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
-        Material* material = geometry->material();
+        // Resolved rather than read off the geometry: a material set on an enclosing StateNode covers every
+        // Geometry in its subtree, and the leaf's own material still wins over it.
+        const MaterialPtr material = effectiveMaterial(node);
         const float effective = std::clamp(node_opacity, 0.0f, 1.0f);
         auto& cmd = out.emplace_back(
             intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)),
-            intrusive_ptr<Material>(material), world);
+            material, world);
         cmd.opacity = effective;
         cmd.isTransparent = effective < 1.0f - 1e-6f;
         // Render state folds along the node path: every StateNode from the

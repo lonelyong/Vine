@@ -904,6 +904,141 @@ TEST(MaterialTest, CarriesTheTextureItSamples)
     EXPECT_EQ(mat.texture(), nullptr);
 }
 
+// ============ Material inheritance ============
+
+namespace
+{
+
+/// @brief Collects the commands of a scene rooted at @p root.
+std::vector<RenderCommand> commandsOf(const intrusive_ptr<Node>& root, Camera& camera)
+{
+    Scene scene;
+    scene.setRoot(root);
+    return scene.collectRenderCommands(&camera);
+}
+
+} // namespace
+
+TEST(MaterialInheritanceTest, ASubtreeMaterialCoversEveryGeometryUnderIt)
+{
+    // The point of the feature: one material on a subtree instead of one per Geometry.
+    auto material = MaterialPtr(new Material());
+    auto state    = intrusive_ptr<StateNode>(new StateNode());
+    state->setMaterial(material);
+    state->addChild(geometryOf(*makeUnitTriangle()));
+
+    Camera     camera;
+    setupLookAtCamera(camera);
+    const auto commands = commandsOf(state, camera);
+
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), material.get());
+}
+
+TEST(MaterialInheritanceTest, AGeometrysOwnMaterialWinsOverAnAncestor)
+{
+    auto inherited = MaterialPtr(new Material());
+    auto own       = MaterialPtr(new Material());
+
+    auto geometry = geometryOf(*makeUnitTriangle());
+    geometry->setMaterial(own);
+
+    auto state = intrusive_ptr<StateNode>(new StateNode());
+    state->setMaterial(inherited);
+    state->addChild(geometry);
+
+    Camera     camera;
+    setupLookAtCamera(camera);
+    const auto commands = commandsOf(state, camera);
+
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), own.get()) << "the leaf is consulted first";
+}
+
+TEST(MaterialInheritanceTest, TheNearestAncestorWinsWhenSeveralSetOne)
+{
+    auto outermost = MaterialPtr(new Material());
+    auto innermost = MaterialPtr(new Material());
+
+    auto inner = intrusive_ptr<StateNode>(new StateNode());
+    inner->setMaterial(innermost);
+    inner->addChild(geometryOf(*makeUnitTriangle()));
+
+    auto outer = intrusive_ptr<StateNode>(new StateNode());
+    outer->setMaterial(outermost);
+    outer->addChild(inner);
+
+    Camera     camera;
+    setupLookAtCamera(camera);
+    const auto commands = commandsOf(outer, camera);
+
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), innermost.get()) << "a material replaces the shading wholesale";
+}
+
+TEST(MaterialInheritanceTest, ClearingTheOverrideRestoresInheritance)
+{
+    auto inherited = MaterialPtr(new Material());
+
+    auto inner = intrusive_ptr<StateNode>(new StateNode());
+    inner->setMaterial(MaterialPtr(new Material()));
+    inner->addChild(geometryOf(*makeUnitTriangle()));
+
+    auto outer = intrusive_ptr<StateNode>(new StateNode());
+    outer->setMaterial(inherited);
+    outer->addChild(inner);
+
+    Camera camera;
+    setupLookAtCamera(camera);
+
+    inner->clearMaterial();
+    const auto commands = commandsOf(outer, camera);
+
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), inherited.get());
+}
+
+TEST(MaterialInheritanceTest, TwoSubtreesWithDifferentMaterialsResolveSeparately)
+{
+    // Resolution is per PATH, not a single "first one found": two branches of one tree keep their own.
+    auto left_material  = MaterialPtr(new Material());
+    auto right_material = MaterialPtr(new Material());
+
+    auto left = intrusive_ptr<StateNode>(new StateNode());
+    left->setMaterial(left_material);
+    left->addChild(geometryOf(*makeUnitTriangle()));
+
+    auto right = intrusive_ptr<StateNode>(new StateNode());
+    right->setMaterial(right_material);
+    right->addChild(geometryOf(*makeUnitTriangle()));
+
+    auto root = intrusive_ptr<Group>(new Group());
+    root->addChild(left);
+    root->addChild(right);
+
+    Camera     camera;
+    setupLookAtCamera(camera);
+    const auto commands = commandsOf(root, camera);
+
+    ASSERT_EQ(commands.size(), 2u);
+    EXPECT_EQ(commands[0].material.get(), left_material.get());
+    EXPECT_EQ(commands[1].material.get(), right_material.get());
+}
+
+TEST(MaterialInheritanceTest, WithoutAnyMaterialTheCommandCarriesNone)
+{
+    // Null has to stay reachable: that is how "let the engine default apply" is expressed.
+    auto state = intrusive_ptr<StateNode>(new StateNode());
+    state->addChild(geometryOf(*makeUnitTriangle()));
+
+    Camera     camera;
+    setupLookAtCamera(camera);
+    const auto commands = commandsOf(state, camera);
+
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), nullptr);
+}
+
 // ============ Texture ============
 
 TEST(TextureTest, A2DTextureIsOneFace)

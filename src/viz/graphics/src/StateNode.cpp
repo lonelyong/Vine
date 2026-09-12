@@ -118,6 +118,21 @@ raw_ptr<ShaderProgram> StateNode::program() const
     return program_.get();
 }
 
+void StateNode::setMaterial(intrusive_ptr<Material> material)
+{
+    material_ = std::move(material);
+}
+
+void StateNode::clearMaterial()
+{
+    material_.reset();
+}
+
+raw_ptr<Material> StateNode::material() const
+{
+    return material_.get();
+}
+
 void RenderState::merge(const RenderState& other)
 {
     if (other.depth) {
@@ -203,6 +218,30 @@ ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node)
         }
     }
     return ShaderProgramPtr();
+}
+
+MaterialPtr effectiveMaterial(raw_ptr<const Node> node)
+{
+    // A leaf Geometry's own material wins; otherwise the nearest ancestor StateNode material applies; otherwise
+    // the engine default (null). Deliberately the SAME shape as effectiveProgram() above: both are
+    // single-valued overrides that replace the shading, as opposed to the render-state items, which fold
+    // item by item.
+    if (node == nullptr) {
+        return MaterialPtr();
+    }
+    if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
+        if (raw_ptr<Material> own = geometry->material()) {
+            return MaterialPtr(own);
+        }
+    }
+    for (const Node* current = node->parent(); current != nullptr; current = current->parent()) {
+        if (const auto* state_node = dynamic_cast<const StateNode*>(current)) {
+            if (raw_ptr<Material> ancestor = state_node->material()) {
+                return MaterialPtr(ancestor);
+            }
+        }
+    }
+    return MaterialPtr();
 }
 
 V_GRAPHICS_NS_END

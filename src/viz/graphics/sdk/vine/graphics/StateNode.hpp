@@ -4,6 +4,9 @@
 #include <optional>
 
 #include "Group.hpp"
+// Included rather than forward-declared: this class HOLDS an intrusive_ptr<Material>, so every translation
+// unit that destroys a StateNode instantiates the reference-count hooks and needs the complete type.
+#include "Material.hpp"
 
 V_GRAPHICS_NS_BEGIN
 
@@ -284,6 +287,26 @@ class V_GRAPHICS_API StateNode : public Group {
     /** @brief Gets this node's program override, or null when unset. */
     raw_ptr<ShaderProgram> program() const;
 
+    /** @brief Sets a material for this subtree.
+     *
+     * Material resolution follows the PROGRAM's rule, not the render-state one: a leaf Geometry's own
+     * material wins, otherwise the NEAREST ancestor StateNode material applies, otherwise the engine
+     * default. A material is single-valued and pointer-like, exactly like a program — which is why it is
+     * not one of the optional items of the state block above: those are pipeline-state slots, whereas a
+     * material reaches the backend as the command's material and shades through a descriptor.
+     *
+     * The point of it is that a subtree shading with one material does not have to be set per Geometry.
+     *
+     * @param material Material, or nullptr to clear.
+     */
+    void setMaterial(intrusive_ptr<Material> material);
+
+    /** @brief Clears this node's material override so it is inherited. */
+    void clearMaterial();
+
+    /** @brief Gets this node's material override, or null when unset (the enclosing material applies). */
+    raw_ptr<Material> material() const;
+
     /** @brief Gets this node's whole optional state block. */
     const RenderState& renderState() const;
 
@@ -296,6 +319,7 @@ class V_GRAPHICS_API StateNode : public Group {
   private:
     RenderState state_;
     intrusive_ptr<ShaderProgram> program_;
+    intrusive_ptr<Material> material_;
 };
 
 using StateNodePtr = intrusive_ptr<StateNode>;
@@ -341,5 +365,18 @@ V_GRAPHICS_API ResolvedRenderState effectiveRenderState(raw_ptr<const Node> node
  * @return Effective program, or null for the engine default.
  */
 V_GRAPHICS_API ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node);
+
+/**
+ * @brief Resolves the material a node's Geometry renders with.
+ *
+ * The same rule as effectiveProgram(): a leaf Geometry's own material wins, otherwise the nearest ancestor
+ * StateNode material applies, otherwise null (the engine default). Nearest, not literal — the first
+ * override found walking up the parents ends the search, because a material replaces the shading wholesale
+ * rather than overriding one item of it.
+ *
+ * @param node Node to resolve for (typically a Geometry).
+ * @return The material to render with, or null when neither the leaf nor any ancestor sets one.
+ */
+V_GRAPHICS_API MaterialPtr effectiveMaterial(raw_ptr<const Node> node);
 
 V_GRAPHICS_NS_END

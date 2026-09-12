@@ -82,12 +82,35 @@ class StateNode : public Group {
 ```
 - 成员用 `std::optional` 表达"未设"，语义干净且可直接参与折叠。
 
-## 3. 继承规则（沿 root→leaf 折叠）
+## 3. 继承规则
 
-- 遍历收集时维护一份"当前生效状态"；每进一个 `StateNode`，用它的**已设项**覆盖当前值；
-  出节点时还原（= vsg StateGroup 压栈 / GL glPushAttrib 语义）。
+**实现是"每叶独立合成"，不是压栈 / 出栈还原。** `Scene::collectNodeCommands` 在**每个叶子**处调用
+`collectRenderState(node)`：它先把叶子→根收集成链，再**根→叶**依次 `merge`，所以越深的节点越优先。
+`merge` 是**逐项**的（每项一个 `optional`），因此深层只设了 `depth` 时，外层的 `blend` 仍然生效。
+
+没有持久状态、也没有还原步骤 —— "离开子树"在实现上**不需要任何处理**，因为不在链上的节点自然不参与。
+代价是每个叶子都重走一次祖先链（M 个几何体 × 深度 D）。
+
 - 叶子 Geometry 拿到的"生效状态" = 路径上所有 StateNode 覆盖后的结果。
 - **叶子 Geometry 不直接设状态**（避免 per-object 变体泛滥）；除非出现真实用例再开白名单。
+
+### 3.1 两条继承规则，按属性的种类选
+
+同一个 `StateNode` 上有**两套**规则，不要混：
+
+| 规则 | 形状 | 适用 |
+|---|---|---|
+| **逐项折叠**（`collectRenderState` + `merge`） | 每项一个 `optional`，根→叶覆盖，**所有**祖先都参与 | 渲染状态：depth / cullMode / blend / polygonMode / topology |
+| **就近胜出、找到即停**（`effectiveProgram` / `effectiveMaterial`） | 单值指针，叶子优先 → 最近的祖先，**首个命中即结束** | program、material |
+
+判据：**单值、指针型、整体替换** ⇒ 后者；**多值、可逐项覆盖** ⇒ 前者。这与属性最终落到哪里是一致的 ——
+渲染状态是**管线状态**（进 variant 的状态键），而 program / material 在 variant 键里是**各自的独立入参**。
+
+- **material 可设在 `StateNode` 上**（`setMaterial` / `clearMaterial` / `material()`）：子树共用一份材质，
+  叶子用 `Geometry::setMaterial` 覆盖，省掉"每个 Geometry 都设一遍"；都未设 ⇒ `null` ⇒ 引擎默认。
+- **`Geometry` 自身没有任何渲染状态字段**（只有 `program()` 与 `material()`）：状态只能来自祖先 StateNode。
+- 材质继承**不引入新机制**，也不改变合批 —— 本渲染器**没有合批**：每几何体一条命令、一个 drawable，
+  只共享编译好的管线（管线共享省的是重编译，不是重复绘制）。
 
 ## 4. 与视图/pass 默认状态的关系
 
