@@ -1380,3 +1380,8 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 第一版被推翻的过程、setter 合名的理由、以及预测与实际破坏点清单的差异，
 详见 `.ai/design/geometry-attribute-storage.md`。
 
+## 模块文档（面向使用者）
+
+`src/viz/graphics/docs/usage.md`（仿 `src/base/math/docs/Eigen.md` 的"模块自带 docs 目录"约定）：分层架构、属性沿树折叠的四条规则、每帧数据流与"顶点被别名而非复制"、生命周期与变更契约（**数据变更一律 `Geometry::setRevision()` 公告**）、最小宿主用法，以及现成例子的**构建与运行方式**（`VINE_PIPELINE=forward|deferred|forward_shadowed|deferred_shadowed`（默认 deferred）、`VINE_VSG_GBUFFER` / `VINE_VSG_DEFERRED` / `VINE_VSG_OFFSCREEN_MULTISLOT` / `VINE_VSG_SLOT_DEMO` / `VINE_SHADER_PRESET`、无头门禁）。
+文档如实标注 **forward_shadowed / deferred_shadowed 目前是占位（等同无阴影预设）**：阴影切片（order<0 深度 pass + 阴影光照）未实现，只有 `Light::castShadow()/shadow()`、`ShadowSettings`、`ShadowFilter`、`ShaderPreset::ShadowedPhong`（保留）已就位，计划见 `.ai/design/graphics-shadow.md`。
+
