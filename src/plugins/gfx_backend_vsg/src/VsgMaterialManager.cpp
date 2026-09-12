@@ -15,16 +15,6 @@ namespace
 {
 
 /**
- * @brief Builds a PhongMaterialValue from a Vine material.
- *
- * Maps the Vine material's diffuse/specular/ambient/shininess/opacity onto
- * VSG's PhongMaterial struct. A default grey Phong material is produced when
- * no Vine material is bound.
- *
- * @param material Vine material (may be null).
- * @return VSG Phong material value.
- */
-/**
  * @brief The Phong parameters a Vine material maps to.
  *
  * Transparency is carried by the per-vertex alpha (Geometry / Node opacity),

@@ -63,17 +63,6 @@ std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count,
 void removeGraphChild(::vsg::Group* graph, const ::vsg::ref_ptr<::vsg::Node>& node);
 
 /**
- * @brief Waits for all in-flight GPU work on the viewer's device.
- *
- * Every teardown path (releasing a slot / target / rebuilding an off-screen
- * graph) must wait before dropping Vulkan objects that a still-in-flight
- * command buffer may reference. A null viewer is a safe no-op.
- *
- * @param viewer Viewer whose device to wait on (may be null).
- */
-void waitForIdle(::vsg::Viewer* viewer);
-
-/**
  * @brief Temporary test escape hatch: when VINE_VSG_OWN_WINDOW is set, the
  * backend creates its own independent vsg window instead of binding to the
  * Qt-hosted surface.

@@ -5,12 +5,10 @@
 #include "VsgBackendUtility.hpp"
 #include "VsgPipelineFactory.hpp"
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -163,6 +161,55 @@ class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer> {
     }
 };
 
+/**
+ * @brief Builds the window traits for one session.
+ *
+ * Everything the session's VkInstance / VkDevice / swapchain needs, in one place:
+ * the requested size, the validation-layer switch (VINE_VSG_DEBUG_LAYER — what makes
+ * a silent pipeline / render-pass failure visible at all) and the two OPTIONAL device
+ * features the SDK's render-state model maps onto. PolygonMode::Line needs
+ * fillModeNonSolid and MRT pipelines with differing attachments need independentBlend;
+ * both are near-universal core features, so requesting them keeps the mapped state
+ * honoured instead of tripping pipeline creation on a capable device.
+ *
+ * When @p host_handle is non-null the window attaches to the host's native surface (a
+ * Qt QWindow) rather than opening its own.
+ *
+ * @param host_handle Host native window handle, or null to create a vsg window.
+ * @return Traits to hand to vsg::Window::create (never null).
+ */
+::vsg::ref_ptr<::vsg::WindowTraits> makeWindowTraits(void* host_handle)
+{
+    auto traits         = ::vsg::WindowTraits::create();
+    traits->windowTitle = "Vine";
+    traits->width       = 1280;
+    traits->height      = 720;
+    traits->debugLayer  = std::getenv("VINE_VSG_DEBUG_LAYER") != nullptr;
+    traits->deviceFeatures                         = ::vsg::DeviceFeatures::create();
+    traits->deviceFeatures->get().fillModeNonSolid = VK_TRUE;
+    traits->deviceFeatures->get().independentBlend = VK_TRUE;
+
+    if (host_handle != nullptr) {
+#ifdef _WIN32
+        traits->nativeWindow = reinterpret_cast<HWND>(host_handle);
+        RECT client_rect{};
+        if (::GetClientRect(reinterpret_cast<HWND>(host_handle), &client_rect) &&
+            client_rect.right > client_rect.left && client_rect.bottom > client_rect.top) {
+            traits->width  = client_rect.right - client_rect.left;
+            traits->height = client_rect.bottom - client_rect.top;
+        }
+#else
+        // vsg's Xcb backend reads the native window as an xcb_window_t (uint32_t).
+        // The host handle carries QWindow::winId() bits, so narrow it to exactly
+        // that type: std::any only matches on the exact type, and storing a
+        // void*/64-bit handle makes vsg throw bad_any_cast when it casts back to
+        // xcb_window_t.
+        traits->nativeWindow = static_cast<unsigned int>(reinterpret_cast<std::uintptr_t>(host_handle));
+#endif
+    }
+    return traits;
+}
+
 } // namespace
 
 VsgRenderer::VsgRenderer()
@@ -195,49 +242,16 @@ bool VsgRenderer::initialize()
     // sets, viewer compile) instead of a bare "unknown exception".
     const char* init_stage = "creating Vulkan window (instance/device/swapchain)";
     try {
-    // Window. When a host native window is bound, attach to its surface (e.g.
-    // a Qt QWindow) instead of creating a separate window.
-    auto traits         = ::vsg::WindowTraits::create();
-    traits->windowTitle = "Vine";
-    traits->width       = 1280;
-    traits->height      = 720;
-    // Debug switch VINE_VSG_DEBUG_LAYER turns on the Vulkan validation layer so
-    // silent pipeline/render-pass failures (no validation in normal runs)
-    // surface as messages.
-    traits->debugLayer = std::getenv("VINE_VSG_DEBUG_LAYER") != nullptr;
-    // The SDK render-state model maps to pipeline features that are optional in
-    // Vulkan: PolygonMode::Line needs fillModeNonSolid, and MRT pipelines with
-    // differing attachments need independentBlend. Both are near-universal core
-    // features; request them so pipelines honour the mapped state instead of
-    // tripping validation / pipeline creation on capable devices.
-    traits->deviceFeatures = ::vsg::DeviceFeatures::create();
-    traits->deviceFeatures->get().fillModeNonSolid = VK_TRUE;
-    traits->deviceFeatures->get().independentBlend = VK_TRUE;
-
+    // Window. A bound host native window is attached to (e.g. a Qt QWindow)
+    // instead of opening our own; the traits carry the size, the validation-layer
+    // switch and the requested device features (see makeWindowTraits).
     void* host_handle = persistent->bound_handle;
     if (forceOwnWindow()) {
         // Temporary test path: create vsg's own window, ignoring the Qt-hosted
         // surface handle, to verify rendering independent of Qt compositing.
         host_handle = nullptr;
     }
-    if (host_handle != nullptr) {
-#ifdef _WIN32
-        traits->nativeWindow = reinterpret_cast<HWND>(host_handle);
-        RECT client_rect{};
-        if (::GetClientRect(reinterpret_cast<HWND>(host_handle), &client_rect) && client_rect.right > client_rect.left && client_rect.bottom > client_rect.top)
-        {
-            traits->width  = client_rect.right - client_rect.left;
-            traits->height = client_rect.bottom - client_rect.top;
-        }
-#else
-        // vsg's Xcb backend reads the native window as an xcb_window_t
-        // (uint32_t). The host handle carries QWindow::winId() bits, so
-        // narrow it to exactly that type; std::any only matches on the
-        // exact type, and storing a void*/64-bit handle makes vsg throw
-        // bad_any_cast when it casts back to xcb_window_t.
-        traits->nativeWindow = static_cast<unsigned int>(reinterpret_cast<std::uintptr_t>(host_handle));
-#endif
-    }
+    auto traits = makeWindowTraits(host_handle);
     impl->window = ::vsg::Window::create(traits);
     if (impl->window == nullptr) {
         V_LOGE("[VsgRenderer] Window::create FAILED (nativeWindow={}, {}x{})",
@@ -316,7 +330,9 @@ bool VsgRenderer::initialize()
 void VsgRenderer::shutdown()
 {
     if (impl->viewer != nullptr) {
-        impl->viewer->deviceWaitIdle();
+        // The session is going away, so this wait cannot be avoided — and it is
+        // counted (deviceWaitCount), like every other device-wide idle.
+        impl->waitForIdle();
         // Detach the window from the viewer so its command graphs are dropped
         // before the viewer is released.
         if (impl->window != nullptr) {
@@ -414,25 +430,14 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     std::vector<const vine::graphics::Light*>     lights   = impl->request.takeLights();
     ++impl->request.draws;
 
-    // The SCOPE attributes below are read, never consumed: they describe the
-    // pass, so every draw call of the same scope sees the same order / depth
-    // policy / target / presenting flag. endPass() drops them with the rest of
-    // the request (a direct driver overwrites them with its next set* call).
-    //
-    //  * order: the engine announces each pass' addPass() order before it runs.
-    //    It is the content-slot key under this camera AND the stacking order
-    //    (ascending) — setupContentSlot keeps each target's slot views sorted by
-    //    it, so stacking follows the user-set pipeline order whatever the
-    //    creation order.
-    //  * depth: setDepthMode() (from RenderPass::depthMode) decides Disabled /
-    //    TestOnly / TestAndWrite. clear() only records that this pass fills the
-    //    target (the "presenting" pass, used to seed the default light); it does
-    //    not imply a depth mode.
-    //  * target: setRenderTarget (nullptr = the window). Every target shares ONE
-    //    content-slot path (renderContentSlot): only the GPU attachment kind
-    //    differs, and it is ensured here before the slot draws (window = the
-    //    shared swapchain graph from initialize(); off-screen = owned
-    //    attachments + graph, built / rebuilt to the target's size).
+    // The SCOPE attributes are READ, never consumed: they describe the PASS, so every draw call
+    // of the same scope sees the same order / depth policy / target / presenting flag (endPass()
+    // drops them with the rest of the request, and a direct driver overwrites them with its next
+    // set* call). What each one means is documented where it is set: setPassOrder (it is also
+    // the content-slot key under this camera AND the stacking order), setDepthMode, and
+    // setRenderTarget — EVERY target shares the one slot path below, and the GPU attachments are
+    // ensured before the slot draws (window = the shared swapchain graph from initialize();
+    // off-screen = owned attachments + graph, built / rebuilt to the target's size).
     const int                       pass_order = impl->request.order;
     const vine::graphics::DepthMode depth_mode = impl->request.depth_mode;
     const bool                      presenting = impl->request.presenting;
@@ -450,37 +455,14 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     retargetPass(impl->request.pass, target_key);
 
     auto& target = impl->entryFor(target_key);
-    // A depth borrow that could not be honoured yet (the source had no depth
-    // image when this target was built) is retried as soon as the source has
-    // one: the baked borrow differs from the requested one. A source that is
-    // permanently unusable is remembered as such (unusable_depth_source), so
-    // this retries only while the borrow is merely WAITING — a disabled or
-    // never-built producer costs one map lookup per frame, not a rebuild loop.
-    vine::graphics::RenderTarget* wanted_source =
-        target_key != nullptr ? target_key->depthSource() : nullptr;
-    bool borrow_pending = false;
-    if (wanted_source != nullptr && target.depth_source != wanted_source &&
-        target.unusable_depth_source != wanted_source) {
-        const auto src_it   = impl->targets.find(wanted_source);
-        borrow_pending = src_it != impl->targets.end() && src_it->second.depth_view != nullptr;
-    }
-    // A borrow that WAS honoured holds on to the source's depth IMAGE (its
-    // framebuffer attachment is that view). A source that is rebuilt — a size
-    // change, or the depth-policy change that this same predicate watches for
-    // its own targets — replaces its depth image, and the borrower's framebuffer
-    // would keep testing the replaced one, which nobody writes any more: the
-    // borrowed depth silently freezes (and the old image stays alive). Compare
-    // the source's current image with the one this target was baked with and
-    // rebuild, which re-runs the borrow validation against the new image.
-    bool borrow_stale = false;
-    if (target.depth_source != nullptr && target.unusable_depth_source != target.depth_source) {
-        const auto src_it = impl->targets.find(target.depth_source);
-        borrow_stale = src_it == impl->targets.end() || src_it->second.depth_view != target.depth_source_view;
-    }
+    // A depth borrow that is merely WAITING or whose baked source image was replaced means the
+    // recorded attachments no longer match the source they have to test against (see
+    // Impl::borrowNeedsRebuild for both cases).
+    const bool borrow_needs_rebuild = impl->borrowNeedsRebuild(target, target_key);
     if (target_key != nullptr &&
         (!target.attachments_built || target.width != target_key->width() ||
-         target.height != target_key->height() || borrow_pending ||
-         borrow_stale || !target.build_key.matches(*target_key))) {
+         target.height != target_key->height() || borrow_needs_rebuild ||
+         !target.build_key.matches(*target_key))) {
         // First render into this off-screen target, or it was resized, or its
         // attachment shape changed (colour attachments, depth format, depth
         // promotion — see Target::BuildKey), or its depth borrow changed: build
@@ -635,130 +617,112 @@ bool VsgRenderer::incrementalCompileViews()
     return true;
 }
 
-void VsgRenderer::submitFrame()
+void VsgRenderer::releaseAbandonedTargets()
 {
-    // Off-screen targets the host dropped without announcing it: the table owns
-    // them (Target::owner), so once the host's last reference is gone nothing can
-    // ever look the entry up again — the same rule the geometry and material
-    // caches follow. Release them properly here instead of keeping their
-    // attachments, render graph and compiled pipelines alive for the session.
-    // Engine targets are normally released by releaseRenderTarget(); this is the
-    // safety net for a host that destroys the RenderTarget itself.
-    std::vector<vine::graphics::RenderTarget*> abandoned_targets;
+    std::vector<vine::graphics::RenderTarget*> abandoned;
     for (const auto& entry : impl->targets) {
         const auto& target_entry = entry.second;
         if (entry.first != nullptr && target_entry.owner != nullptr && target_entry.owner->useCount() <= 1u) {
-            abandoned_targets.push_back(entry.first);
+            abandoned.push_back(entry.first);
         }
     }
-    for (auto* target : abandoned_targets) {
+    // Collected first: releasing an entry invalidates the iteration.
+    for (auto* target : abandoned) {
         releaseRenderTarget(target);
     }
+}
 
-    // Which device this session actually runs on, on the record: "the gate
-    // passed" is only meaningful together with the driver it passed on, and a
-    // software rasteriser and a real GPU exercise different paths. Reported on
-    // the first submit, because that is where the window's device and swapchain
-    // exist (vsg creates them lazily, on first use).
-    if (!impl->device_reported && impl->window != nullptr) {
-        impl->device_reported = true;
-        const ::vsg::ref_ptr<::vsg::PhysicalDevice> physical = impl->window->getPhysicalDevice();
-        if (physical != nullptr) {
-            const VkPhysicalDeviceProperties& properties = physical->getProperties();
-            V_LOGI("[VsgRenderer] device: {} (Vulkan {}.{}.{}, driver {}, type {})",
-                   properties.deviceName, VK_API_VERSION_MAJOR(properties.apiVersion),
-                   VK_API_VERSION_MINOR(properties.apiVersion), VK_API_VERSION_PATCH(properties.apiVersion),
-                   properties.driverVersion, static_cast<int>(properties.deviceType));
-        }
-        else {
-            V_LOGW("[VsgRenderer] device: (none reported by the window)");
-        }
-    }
-
-    if (!impl->initialized || impl->viewer == nullptr) {
+void VsgRenderer::reportSessionDevice()
+{
+    if (impl->device_reported || impl->window == nullptr) {
         return;
     }
-    // Retire the retained state of every pass that did not execute this frame
-    // (disabled, or no longer registered) BEFORE submitting: such a pass must
-    // stop being drawn, and the removal itself needs a presented frame or the
-    // stale content would stay on screen.
-    retireInactivePassSlots();
-    // The frame is submitted even when nothing was drawn. beginFrame() already
-    // ACQUIRED a swapchain image for it, and an acquired image is only returned
-    // to the presentation engine by presenting it: skipping the submission
-    // (nothing to draw / every pass disabled) leaks one image per frame, which
-    // the validation layer reports as
-    // VUID-vkAcquireNextImageKHR-surface-07783 and which eventually starves the
-    // swapchain. Re-recording an unchanged graph is cheap (vsg records the
-    // command graph every frame anyway).
-    // Compile any geometry synced this frame before the record. If this frame
-    // never submits, the queue survives to the next submit (nothing was
-    // presented in between).
-    if (!impl->pending_compile_views.empty()) {
-        // D22 incremental compile: ON by default. vsg's compileManager.compile
-        // path is NOT wired for this renderer out of the box — the manager's
-        // pooled traversal is built once at Viewer::compile() time, and in
-        // Vine that first compile runs on an EMPTY window graph (content-slot
-        // views are appended lazily later), so the pool holds no contexts and
-        // compileManager->compile(view) silently compiles nothing ("successful"
-        // but with unbuilt pipelines), which crashes at record
-        // (GraphicsPipeline::vk on an empty _implementation). incrementalCompileViews()
-        // registers each queued view's context into the pool itself and
-        // compiles only that view, so it is safe to run every frame that some
-        // slot gained geometry. Setting VINE_VSG_DISABLE_INCREMENTAL_COMPILE
-        // forces the full-graph compile (stable, vsg skips already-compiled
-        // objects) as an A/B escape hatch; any incremental failure also falls
-        // back to the full compile automatically.
-        bool compiled = false;
-        if (std::getenv("VINE_VSG_DISABLE_INCREMENTAL_COMPILE") == nullptr &&
-            impl->viewer->compileManager != nullptr) {
-            compiled = incrementalCompileViews();
-        }
-        if (!compiled) {
-            const auto compileResult = impl->viewer->compile();
-            if (!compileResult) {
-                reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::CompileFailed,
-                              formatDiagnostic(u8"frame compile failed (%s): newly added content is not drawn this frame",
-                                               compileResult.message.c_str()));
-            }
-        }
-        impl->pending_compile_views.clear();
+    impl->device_reported = true;
+    const ::vsg::ref_ptr<::vsg::PhysicalDevice> physical = impl->window->getPhysicalDevice();
+    if (physical == nullptr) {
+        V_LOGW("[VsgRenderer] device: (none reported by the window)");
+        return;
     }
-    impl->viewer->recordAndSubmit();
-    impl->viewer->present();
+    const VkPhysicalDeviceProperties& properties = physical->getProperties();
+    V_LOGI("[VsgRenderer] device: {} (Vulkan {}.{}.{}, driver {}, type {})",
+           properties.deviceName, VK_API_VERSION_MAJOR(properties.apiVersion),
+           VK_API_VERSION_MINOR(properties.apiVersion), VK_API_VERSION_PATCH(properties.apiVersion),
+           properties.driverVersion, static_cast<int>(properties.deviceType));
+}
 
-    // A pass that preserves depth on a target whose depth image no pass had
-    // defined yet recorded the depth-CLEAR "seed" variant for THIS frame (a
-    // render pass cannot LOAD an UNDEFINED image). Only now that the frame is
-    // submitted may it switch to the steady LOAD variant: doing this BEFORE
-    // recordAndSubmit would make the pass' very FIRST frame record the LOAD
-    // variant against a still-UNDEFINED depth image. Swapping the graph's
-    // render pass — not the framebuffer — is legal because the two variants
-    // differ only in the depth load-op, so they are render-pass compatible.
+void VsgRenderer::compilePendingViews()
+{
+    if (impl->pending_compile_views.empty()) {
+        return;
+    }
+    bool compiled = false;
+    if (std::getenv("VINE_VSG_DISABLE_INCREMENTAL_COMPILE") == nullptr && impl->viewer->compileManager != nullptr) {
+        compiled = incrementalCompileViews();
+    }
+    if (!compiled) {
+        const auto compileResult = impl->viewer->compile();
+        if (!compileResult) {
+            reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::CompileFailed,
+                          formatDiagnostic(u8"frame compile failed (%s): newly added content is not drawn this frame",
+                                           compileResult.message.c_str()));
+        }
+    }
+    impl->pending_compile_views.clear();
+}
+
+void VsgRenderer::settleSubmittedFrame()
+{
+    // 1. Switch every pass that recorded a ONE-FRAME variant back to its steady variant — the
+    //    one the NEXT frame has to record (see the declaration's notes).
     for (auto& entry : impl->targets) {
         for (auto& pass : entry.second.passes) {
-            if (pass.second.seeded && pass.second.graph != nullptr && pass.second.render_pass != nullptr) {
+            if (pass.second.transient && pass.second.graph != nullptr && pass.second.render_pass != nullptr) {
                 pass.second.graph->renderPass = pass.second.render_pass;
-                pass.second.seeded            = false;
+                pass.second.transient         = false;
             }
         }
     }
-
-    // One frame has been submitted: release the retained nodes that were
-    // parked kRetireRingDepth frames ago, when every command-buffer slot that
-    // could still reference them has been re-recorded (see
-    // SceneBridge::retireNode). Done after the submit so the parked objects
-    // stay alive for the whole frame that dropped them.
+    // 2. Release what the rings parked kRetireRingDepth frames ago: one ring per content slot
+    //    (the bridge's retained nodes) and one for the renderer-owned objects.
     for (auto& target_entry : impl->targets) {
         for (auto& slot_entry : target_entry.second.content_slots) {
             slot_entry.second.bridge.advanceRetireRing();
         }
     }
+    impl->advanceRetireRing();
+}
 
-    // Same point in the frame: release the material resources of materials the
-    // app has dropped. Their entries own the Material (that is what keeps the
-    // pointer key valid), so this is what stops a live scene's material churn
-    // from pinning every material it has ever seen (D13).
+void VsgRenderer::submitFrame()
+{
+    // The frame protocol, in order. Each step's guarantee lives in its own comment: what is
+    // dropped before the record has to be dropped before it, and what is settled after the
+    // submit may only be settled after it.
+    releaseAbandonedTargets();
+    reportSessionDevice();
+
+    if (!impl->initialized || impl->viewer == nullptr) {
+        return;
+    }
+    // Retire the retained state of every pass that did not execute this frame (disabled, or no
+    // longer registered) BEFORE submitting: such a pass must stop being drawn, and the removal
+    // needs a presented frame or its stale content would stay on screen.
+    retireInactivePassSlots();
+    // Compile any geometry synced this frame before the record. A frame that never submits
+    // keeps the queue for the next one (nothing was presented in between).
+    compilePendingViews();
+    // The frame is submitted even when nothing was drawn: beginFrame() already ACQUIRED a
+    // swapchain image, and an acquired image is only returned to the presentation engine by
+    // presenting it — skipping the submission (nothing to draw / every pass disabled) leaks
+    // one image per frame, which validation reports as
+    // VUID-vkAcquireNextImageKHR-surface-07783, and the swapchain eventually starves.
+    // Re-recording an unchanged graph is cheap (vsg records the command graph every frame).
+    impl->viewer->recordAndSubmit();
+    impl->viewer->present();
+    settleSubmittedFrame();
+
+    // Same point in the frame: release the material resources of materials the app has dropped.
+    // Their entries own the Material (that is what keeps the pointer key valid), so this is what
+    // stops a live scene's material churn from pinning every material it has ever seen (D13).
     persistent->materialManager.releaseAbandoned();
 }
 
@@ -939,19 +903,21 @@ std::size_t VsgRenderer::programSlotBuildCount() const noexcept
     return impl->program_slot_build_count;
 }
 
+std::size_t VsgRenderer::deviceWaitCount() const noexcept
+{
+    return impl->device_wait_count;
+}
+
+std::size_t VsgRenderer::retiredObjectCount() const noexcept
+{
+    return impl->retired_object_count;
+}
+
 std::size_t VsgRenderer::detachedSlotCount() const noexcept
 {
     std::size_t count = 0;
-    for (const auto& entry : impl->targets) {
-        for (const auto& kv : entry.second.content_slots) {
-            count += kv.second.detached ? 1u : 0u;
-        }
-        for (const auto& kv : entry.second.screen_slots) {
-            count += kv.second.detached ? 1u : 0u;
-        }
-        for (const auto& kv : entry.second.program_slots) {
-            count += kv.second.detached ? 1u : 0u;
-        }
+    for (auto& entry : impl->targets) {
+        entry.second.forEachSlot([&](const SlotKey&, const auto& slot, auto) { count += slot.detached ? 1u : 0u; });
     }
     return count;
 }

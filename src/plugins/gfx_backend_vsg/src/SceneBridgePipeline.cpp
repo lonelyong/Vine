@@ -260,6 +260,54 @@ VkShaderStageFlagBits stageFlag(vine::graphics::ShaderStageType type)
     return shader_set;
 }
 
+/** @brief Seed of every cache key built in this translation unit (FNV-1a basis). */
+constexpr std::uint64_t kHashSeed = 0xcbf29ce484222325ull;
+
+/** @brief Seed of the vertex-layout hash (its own value, so a layout is never a key). */
+constexpr std::uint64_t kLayoutSeed = 0x517cc1b727220a95ull;
+
+/**
+ * @brief Mixes one value into a running 64-bit hash.
+ *
+ * One definition for all three cache keys this file builds (the L1 program stage
+ * set, the L1b per-layout ShaderSet, the L2 variant template): three copies of the
+ * mix would have to stay in step for the caches to keep sharing an entry, and a
+ * copy that drifted would not fail — it would just stop hitting its neighbour's
+ * entry and rebuild / re-compile per frame, with nothing to report.
+ *
+ * @param hash  Running hash (start at kHashSeed).
+ * @param value Value to mix in.
+ * @return The mixed hash.
+ */
+constexpr std::uint64_t hashCombine(std::uint64_t hash, std::uint64_t value) noexcept
+{
+    return hash ^ (value + 0x9e3779b97f4a7c15ull + (hash << 6u) + (hash >> 2u));
+}
+
+/**
+ * @brief Hashes a geometry's forwarded custom channels (its vertex layout).
+ *
+ * The layout is part of the identity of BOTH the per-layout ShaderSet (which
+ * bindings it must declare) and the L2 variant template (the pipeline's vertex
+ * input state), so both ask here instead of walking the channels again.
+ *
+ * A template because VertexChannel is private to SceneBridge while this helper is
+ * file-local: the channel range is taken as an opaque parameter (the caller's own
+ * vector), so the type is never named outside the class.
+ *
+ * @param extra_channels Forwarded channels (empty = built-in layout only).
+ * @return Layout hash (kLayoutSeed when there is no custom channel).
+ */
+template <class ChannelRange> std::uint64_t vertexLayoutHash(const ChannelRange& extra_channels)
+{
+    std::uint64_t layout = kLayoutSeed;
+    for (const auto& channel : extra_channels) {
+        layout = hashCombine(layout, static_cast<std::uint64_t>(channel.location));
+        layout = hashCombine(layout, static_cast<std::uint64_t>(channel.components));
+    }
+    return layout;
+}
+
 /**
  * @brief Hashes the identity of one (program, material, render-state) pipeline
  * variant into a cache key for the L2 variant template cache.
@@ -276,7 +324,7 @@ VkShaderStageFlagBits stageFlag(vine::graphics::ShaderStageType type)
  * @param program  User shader program (null = built-in default).
  * @param material Bound material (may be null).
  * @param state    Resolved render state the pipeline honours.
- * @param layout   Hash of the geometry's forwarded custom channels.
+ * @param layout   Hash of the geometry's forwarded custom channels (see vertexLayoutHash).
  * @return The content hash used as the variant cache key.
  */
 std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
@@ -284,32 +332,87 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
                                const vine::graphics::ResolvedRenderState& state,
                                std::uint64_t layout)
 {
-    const auto combine = [](std::uint64_t h, std::uint64_t v) {
-        return h ^ (v + 0x9e3779b97f4a7c15ull + (h << 6u) + (h >> 2u));
-    };
-    std::uint64_t h = 0xcbf29ce484222325ull;
-    const auto   mix_ptr = [&](const void* p) {
-        h = combine(h, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(p)));
+    std::uint64_t h = kHashSeed;
+    const auto    mix_ptr = [&](const void* p) {
+        h = hashCombine(h, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(p)));
     };
     mix_ptr(program);
     if (program != nullptr) {
         // Program content is part of the variant identity: editing a retained
         // program's GLSL bumps its revision, which yields a new template key
         // and a fresh pipeline (D10).
-        h = combine(h, program->revision());
+        h = hashCombine(h, program->revision());
     }
     mix_ptr(material);
-    h = combine(h, layout);
-    h = combine(h, static_cast<std::uint64_t>(state.depth.test));
-    h = combine(h, static_cast<std::uint64_t>(state.depth.write));
-    h = combine(h, static_cast<std::uint64_t>(state.depth.compare));
-    h = combine(h, static_cast<std::uint64_t>(state.cullMode));
-    h = combine(h, static_cast<std::uint64_t>(state.blend.enabled));
-    h = combine(h, static_cast<std::uint64_t>(state.blend.src));
-    h = combine(h, static_cast<std::uint64_t>(state.blend.dst));
-    h = combine(h, static_cast<std::uint64_t>(state.polygonMode));
-    h = combine(h, static_cast<std::uint64_t>(state.topology));
+    h = hashCombine(h, layout);
+    h = hashCombine(h, static_cast<std::uint64_t>(state.depth.test));
+    h = hashCombine(h, static_cast<std::uint64_t>(state.depth.write));
+    h = hashCombine(h, static_cast<std::uint64_t>(state.depth.compare));
+    h = hashCombine(h, static_cast<std::uint64_t>(state.cullMode));
+    h = hashCombine(h, static_cast<std::uint64_t>(state.blend.enabled));
+    h = hashCombine(h, static_cast<std::uint64_t>(state.blend.src));
+    h = hashCombine(h, static_cast<std::uint64_t>(state.blend.dst));
+    h = hashCombine(h, static_cast<std::uint64_t>(state.polygonMode));
+    h = hashCombine(h, static_cast<std::uint64_t>(state.topology));
     return h;
+}
+
+/**
+ * @brief How many colour attachments the slot's shader set declares.
+ *
+ * A pipeline recorded into a target must carry one colour-blend entry per colour
+ * attachment of that target, or Vulkan writes attachment 0 only and the rest stay
+ * cleared (black). The bridge's shader set comes from the renderer (one per depth
+ * policy, built from the target's colour-attachment count — see the per-target
+ * shader sets in VsgRenderer), so its colour blend state's attachment count IS
+ * that number. 1 for a set that declares no blend state: the single-attachment
+ * default every mapped state carries.
+ *
+ * @param shader_set Slot shader set (null = the single-attachment default).
+ * @return Colour attachment count, at least 1.
+ */
+int colourAttachmentCount(const ::vsg::ref_ptr<::vsg::ShaderSet>& shader_set)
+{
+    if (shader_set != nullptr) {
+        for (const auto& state : shader_set->defaultGraphicsPipelineStates) {
+            if (auto blend = state.cast<::vsg::ColorBlendState>()) {
+                return std::max(1, static_cast<int>(blend->attachments.size()));
+            }
+        }
+    }
+    return 1;
+}
+
+/**
+ * @brief Makes a multi-attachment pipeline write every colour attachment opaque.
+ *
+ * A G-buffer is written OPAQUE and UNBLENDED: the mapped opacity blend would
+ * attenuate any attachment whose alpha is not 1 — the normal attachment carries
+ * shininess/256 in alpha (~0.125), so blending scaled the stored normal down to
+ * ~12.5% of its real value. Every attachment must carry IDENTICAL blend state
+ * unless the independentBlend device feature is enabled, so ONE blend-DISABLED
+ * attachment is replicated across all outputs.
+ *
+ * @param states       Mapped state objects to adjust (its colour blend state is
+ *                     resized in place).
+ * @param colour_count Attachment count the pipeline is built for (>= 2).
+ */
+void applyOpaqueBlendForAttachments(RenderStateObjects& states, int colour_count)
+{
+    VkPipelineColorBlendAttachmentState opaque{};
+    opaque.blendEnable         = VK_FALSE;
+    opaque.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    opaque.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    opaque.colorBlendOp        = VK_BLEND_OP_ADD;
+    opaque.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    opaque.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    opaque.alphaBlendOp        = VK_BLEND_OP_ADD;
+    opaque.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                            VK_COLOR_COMPONENT_A_BIT;
+    states.colorBlend->attachments.clear();
+    for (int i = 0; i < colour_count; ++i) {
+        states.colorBlend->attachments.push_back(opaque);
+    }
 }
 
 }  // namespace
@@ -329,17 +432,10 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
     // The vertex layout (which custom channels the geometry carries) is part
     // of the cache key: geometry bound to the same program but with different
     // channel sets needs different ShaderSets (different bindings).
-    const auto combine = [](std::uint64_t h, std::uint64_t v) {
-        return h ^ (v + 0x9e3779b97f4a7c15ull + (h << 6u) + (h >> 2u));
-    };
-    std::uint64_t layout = 0x517cc1b727220a95ull;
-    for (const auto& ch : extra_channels) {
-        layout = combine(layout, static_cast<std::uint64_t>(ch.location));
-        layout = combine(layout, static_cast<std::uint64_t>(ch.components));
-    }
-    std::uint64_t key = 0xcbf29ce484222325ull;
-    key = combine(key, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(program)));
-    key = combine(key, layout);
+    const std::uint64_t layout = vertexLayoutHash(extra_channels);
+    std::uint64_t       key    = kHashSeed;
+    key = hashCombine(key, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(program)));
+    key = hashCombine(key, layout);
 
     const auto program_rev = program->revision();
     const auto it          = program_shader_sets_.find(key);
@@ -450,14 +546,7 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
     // The forwarded custom channels define the geometry's vertex layout, which
     // is part of the L2 variant identity: geometry with a different binding
     // set must never reuse another geometry's template.
-    const auto combine_hash = [](std::uint64_t h, std::uint64_t v) {
-        return h ^ (v + 0x9e3779b97f4a7c15ull + (h << 6u) + (h >> 2u));
-    };
-    std::uint64_t layout = 0x517cc1b727220a95ull;
-    for (const auto& ch : extra_channels) {
-        layout = combine_hash(layout, static_cast<std::uint64_t>(ch.location));
-        layout = combine_hash(layout, static_cast<std::uint64_t>(ch.components));
-    }
+    const std::uint64_t layout = vertexLayoutHash(extra_channels);
 
     // L2 variant reuse: an identical (program, material, resolved-state,
     // vertex-layout) variant built earlier contributes its reusable bind
@@ -538,43 +627,13 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program,
     // StateNode fold carried by the command.
     RenderStateObjects states = makeRenderStateObjects(state);
 
-    // MRT: the mapped blend is a single attachment (the renderer's default),
-    // but a pipeline recorded into a multi-colour-attachment subpass must
-    // carry one blend entry PER attachment, or Vulkan only writes attachment 0
-    // (the rest stay cleared -> black). Size it to the slot shader set's
-    // colour count (built from the target's colour attachments): attachment 0
-    // keeps the mapped opacity blend, the extra G-buffer attachments write
-    // opaque, unblended.
-    int mrt = 1;
-    if (shader_set_ != nullptr) {
-        for (const auto& s : shader_set_->defaultGraphicsPipelineStates) {
-            if (auto cb = s.cast<::vsg::ColorBlendState>()) {
-                mrt = std::max(1, static_cast<int>(cb->attachments.size()));
-                break;
-            }
-        }
-    }
+    // MRT: a pipeline recorded into a slot with several colour attachments must
+    // write all of them (mrt > 1), and a G-buffer is written unblended — both
+    // rules live in the two helpers (see colourAttachmentCount /
+    // applyOpaqueBlendForAttachments).
+    const int mrt = colourAttachmentCount(shader_set_);
     if (mrt > 1) {
-        // A G-buffer is written OPAQUE and UNBLENDED: the mapped opacity blend
-        // would attenuate any attachment whose alpha is not 1 — the normal
-        // attachment carries shininess/256 in alpha (~0.125), so blending
-        // scaled the stored normal down to ~12.5% of its real value. Every
-        // MRT attachment must carry identical blend state unless the
-        // independentBlend device feature is enabled, so build one
-        // blend-DISABLED attachment and replicate it across all outputs.
-        VkPipelineColorBlendAttachmentState opaque{};
-        opaque.blendEnable         = VK_FALSE;
-        opaque.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-        opaque.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-        opaque.colorBlendOp        = VK_BLEND_OP_ADD;
-        opaque.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        opaque.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        opaque.alphaBlendOp        = VK_BLEND_OP_ADD;
-        opaque.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        states.colorBlend->attachments.clear();
-        for (int i = 0; i < mrt; ++i) {
-            states.colorBlend->attachments.push_back(opaque);
-        }
+        applyOpaqueBlendForAttachments(states, mrt);
     }
     applyRenderStateObjects(*config, states);
 

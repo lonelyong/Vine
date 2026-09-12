@@ -3,6 +3,13 @@
 // The definitions below are the moved bodies: their documentation and default
 // arguments live on the declarations in the header.
 
+#include <cctype>
+#include <cstdint>
+#include <cstdlib>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <vsg/app/CommandGraph.h>
 #include <vsg/app/RenderGraph.h>
 #include <vsg/app/View.h>
@@ -77,29 +84,28 @@ namespace detail
     auto depth_state       = ::vsg::DepthStencilState::create();
     depth_state->depthTestEnable  = depth_test ? VK_TRUE : VK_FALSE;
     depth_state->depthWriteEnable = depth_write ? VK_TRUE : VK_FALSE;
-    ::vsg::ref_ptr<::vsg::ColorBlendState> blend_state;
-    if (color_count > 1) {
-        // MRT: one color-blend attachment per colour attachment, blending off
-        // and writing every channel (mirrors the single-attachment default).
-        ::vsg::ColorBlendState::ColorBlendAttachments attachments;
-        attachments.reserve(static_cast<std::size_t>(color_count));
-        for (int i = 0; i < color_count; ++i) {
-            VkPipelineColorBlendAttachmentState attachment = {};
-            attachment.blendEnable         = VK_FALSE;
-            attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-            attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-            attachment.colorBlendOp        = VK_BLEND_OP_ADD;
-            attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-            attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-            attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
-            attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-            attachments.push_back(attachment);
-        }
-        blend_state = ::vsg::ColorBlendState::create(attachments);
+    // One colour-blend attachment per COLOUR ATTACHMENT this pass has, blending
+    // off and writing every channel. The count must match the render pass'
+    // colourAttachmentCount or pipeline creation fails
+    // (VUID-VkGraphicsPipelineCreateInfo-renderPass-06055), so a DEPTH-ONLY pass
+    // (color_count == 0) declares NONE — declaring vsg's default single
+    // attachment would make the pipeline unbuildable against a depth-only
+    // render pass. One code path covers 0 / 1 / N.
+    ::vsg::ColorBlendState::ColorBlendAttachments blend_attachments;
+    blend_attachments.reserve(static_cast<std::size_t>(color_count));
+    for (int i = 0; i < color_count; ++i) {
+        VkPipelineColorBlendAttachmentState attachment = {};
+        attachment.blendEnable         = VK_FALSE;
+        attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+        attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+        attachment.colorBlendOp        = VK_BLEND_OP_ADD;
+        attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
+        attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        blend_attachments.push_back(attachment);
     }
-    else {
-        blend_state = ::vsg::ColorBlendState::create();
-    }
+    auto blend_state = ::vsg::ColorBlendState::create(blend_attachments);
     shaderSet->defaultGraphicsPipelineStates = ::vsg::GraphicsPipelineStates{
         depth_state,
         raster_state,
@@ -132,10 +138,59 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
     return VK_FORMAT_D32_SFLOAT;
 }
 
-::vsg::ref_ptr<::vsg::RenderPass> makeSampleableRenderPass(
+/**
+ * @brief The two subpass dependencies every COLOUR+DEPTH variant shares.
+ *
+ * They are built once and reused by every variant of a pass because the Vulkan
+ * spec's Render Pass Compatibility rules exempt initial/final layouts and
+ * load/store ops, but NOT subpass dependencies: two render passes are only
+ * compatible (and a pass may therefore swap between them at run time, keeping its
+ * pipelines) when their dependencies match field for field. Reusing this helper
+ * is what makes that structural — the masks are deliberately independent of the
+ * load ops, since the pass lifecycle picks them later.
+ *
+ * @return The subpass-external dependencies (writes in, reads out).
+ */
+::vsg::RenderPass::Dependencies makeColorDepthDependencies()
+{
+    constexpr VkPipelineStageFlags k_attachments =
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    constexpr VkAccessFlags k_attachment_writes =
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    ::vsg::RenderPass::Dependencies dependencies;
+
+    // External -> subpass: the previous frames' attachment writes are made
+    // available before this subpass CLEARs or LOADs the attachments.
+    ::vsg::SubpassDependency ext_to_sub = {};
+    ext_to_sub.srcSubpass               = VK_SUBPASS_EXTERNAL;
+    ext_to_sub.dstSubpass               = 0;
+    ext_to_sub.srcStageMask             = k_attachments;
+    ext_to_sub.dstStageMask             = k_attachments;
+    ext_to_sub.srcAccessMask            = k_attachment_writes;
+    ext_to_sub.dstAccessMask            = k_attachment_writes;
+    dependencies.push_back(ext_to_sub);
+
+    // Subpass -> external: the colour (and depth) writes become visible to a
+    // later pass that samples them.
+    ::vsg::SubpassDependency sub_to_ext = {};
+    sub_to_ext.srcSubpass               = 0;
+    sub_to_ext.dstSubpass               = VK_SUBPASS_EXTERNAL;
+    sub_to_ext.srcStageMask             = k_attachments;
+    sub_to_ext.dstStageMask             = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    sub_to_ext.srcAccessMask            = k_attachment_writes;
+    sub_to_ext.dstAccessMask            = VK_ACCESS_SHADER_READ_BIT;
+    dependencies.push_back(sub_to_ext);
+
+    return dependencies;
+}
+
+::vsg::ref_ptr<::vsg::RenderPass> makeColorDepthRenderPass(
     ::vsg::Device*                    device,
     const std::vector<VkFormat>&      color_formats,
     VkFormat                          depth_format,
+    VkImageLayout                     depth_initial,
     bool                              promote_depth,
     bool                              color_clear)
 {
@@ -174,7 +229,11 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
         ::vsg::AttachmentDescription depth = {};
         depth.format                       = depth_format;
         depth.samples                      = VK_SAMPLE_COUNT_1_BIT;
-        depth.loadOp                       = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        // An UNDEFINED image may only be CLEARed, so the load-op follows from the
+        // layout the caller names; a LOAD of an image in an unexpected layout is
+        // the mismatch VUID-vkCmdDraw-None-09600 reports.
+        depth.loadOp = depth_initial == VK_IMAGE_LAYOUT_UNDEFINED ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                                                                 : VK_ATTACHMENT_LOAD_OP_LOAD;
         // Stored: when @p promote_depth the depth is left sampleable (for
         // reconstruction / SSAO); otherwise it stays a plain depth attachment so
         // ANOTHER target can borrow it for a later depth test in the same frame
@@ -182,7 +241,7 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
         depth.storeOp                      = VK_ATTACHMENT_STORE_OP_STORE;
         depth.stencilLoadOp                = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         depth.stencilStoreOp               = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depth.initialLayout                = VK_IMAGE_LAYOUT_UNDEFINED;
+        depth.initialLayout                = depth_initial;
         depth.finalLayout = promote_depth ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
                                           : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         attachments.push_back(depth);
@@ -193,44 +252,25 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
         subpass.depthStencilAttachments.emplace_back(depth_ref);
     }
 
-    ::vsg::RenderPass::Dependencies dependencies;
-
-    // Initial (UNDEFINED) -> attachment-optimal before the first subpass.
-    ::vsg::SubpassDependency ext_to_sub = {};
-    ext_to_sub.srcSubpass               = VK_SUBPASS_EXTERNAL;
-    ext_to_sub.dstSubpass               = 0;
-    ext_to_sub.srcStageMask             = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    ext_to_sub.dstStageMask             = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    // A colour LOAD consumes what the previous pass wrote: make those writes
-    // available (a CLEAR starts from UNDEFINED and needs no source access).
-    ext_to_sub.srcAccessMask            = color_clear ? 0u : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    ext_to_sub.dstAccessMask            = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    dependencies.push_back(ext_to_sub);
-
-    // After the subpass, transition colour + depth to SHADER_READ_ONLY and
-    // make their writes visible to a later pass that samples either.
-    ::vsg::SubpassDependency sub_to_ext = {};
-    sub_to_ext.srcSubpass               = 0;
-    sub_to_ext.dstSubpass               = VK_SUBPASS_EXTERNAL;
-    sub_to_ext.srcStageMask             = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    sub_to_ext.dstStageMask             = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    sub_to_ext.srcAccessMask            = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    sub_to_ext.dstAccessMask            = VK_ACCESS_SHADER_READ_BIT;
-    dependencies.push_back(sub_to_ext);
-
-    return ::vsg::RenderPass::create(device, attachments, ::vsg::RenderPass::Subpasses{ subpass }, dependencies);
+    return ::vsg::RenderPass::create(device, attachments, ::vsg::RenderPass::Subpasses{ subpass },
+                                     makeColorDepthDependencies());
 }
 
-::vsg::ref_ptr<::vsg::RenderPass> makeDepthOnlyRenderPass(::vsg::Device* device, VkFormat depth_format)
+::vsg::ref_ptr<::vsg::RenderPass> makeDepthOnlyRenderPass(::vsg::Device* device, VkFormat depth_format,
+                                                          VkImageLayout depth_initial)
 {
     ::vsg::AttachmentDescription depth = {};
     depth.format                       = depth_format;
     depth.samples                      = VK_SAMPLE_COUNT_1_BIT;
-    depth.loadOp                       = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth.loadOp                       = depth_initial == VK_IMAGE_LAYOUT_UNDEFINED ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                                                                                      : VK_ATTACHMENT_LOAD_OP_LOAD;
     depth.storeOp                      = VK_ATTACHMENT_STORE_OP_STORE; // sampled later as a shadow map
     depth.stencilLoadOp                = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depth.stencilStoreOp               = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depth.initialLayout                = VK_IMAGE_LAYOUT_UNDEFINED;
+    // A depth-only target's image always ends sampleable (that is what the pass
+    // exists for), so a preserving pass names that layout and hands the image
+    // back in it; a clearing pass may start from UNDEFINED.
+    depth.initialLayout                = depth_initial;
     depth.finalLayout                  = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     ::vsg::RenderPass::Attachments attachments{ depth };
@@ -261,94 +301,6 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
     sub_to_ext.srcStageMask             = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
     sub_to_ext.dstStageMask             = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     sub_to_ext.srcAccessMask            = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    sub_to_ext.dstAccessMask            = VK_ACCESS_SHADER_READ_BIT;
-    dependencies.push_back(sub_to_ext);
-
-    return ::vsg::RenderPass::create(device, attachments, ::vsg::RenderPass::Subpasses{ subpass }, dependencies);
-}
-
-::vsg::ref_ptr<::vsg::RenderPass> makeDepthLoadRenderPass(
-    ::vsg::Device*               device,
-    const std::vector<VkFormat>& color_formats,
-    VkFormat                     depth_format,
-    bool                         initial_clear,
-    bool                         color_clear)
-{
-    const bool has_depth = depth_format != VK_FORMAT_UNDEFINED;
-
-    ::vsg::RenderPass::Attachments attachments;
-    attachments.reserve(color_formats.size() + (has_depth ? 1u : 0u));
-
-    ::vsg::SubpassDescription subpass = {};
-    subpass.pipelineBindPoint         = VK_PIPELINE_BIND_POINT_GRAPHICS;
-
-    uint32_t attachment_index = 0;
-    for (const VkFormat color_format : color_formats) {
-        ::vsg::AttachmentDescription color = {};
-        color.format                       = color_format;
-        color.samples                      = VK_SAMPLE_COUNT_1_BIT;
-        color.loadOp                       = color_clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-        color.storeOp                      = VK_ATTACHMENT_STORE_OP_STORE;
-        color.stencilLoadOp                = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        color.stencilStoreOp               = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        color.initialLayout = color_clear ? VK_IMAGE_LAYOUT_UNDEFINED
-                                          : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        color.finalLayout                  = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        attachments.push_back(color);
-
-        ::vsg::AttachmentReference color_ref = {};
-        color_ref.attachment                 = attachment_index++;
-        color_ref.layout                     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        subpass.colorAttachments.emplace_back(color_ref);
-    }
-
-    if (has_depth) {
-        ::vsg::AttachmentDescription depth = {};
-        depth.format                       = depth_format;
-        depth.samples                      = VK_SAMPLE_COUNT_1_BIT;
-        depth.loadOp = initial_clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-        depth.storeOp                      = VK_ATTACHMENT_STORE_OP_STORE;
-        depth.stencilLoadOp                = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        depth.stencilStoreOp               = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        // The depth attachment stays in the depth-attachment layout so the
-        // next pass can LOAD it; the colour attachments still end up sampled.
-        // On the initial-clear pass the depth starts UNDEFINED (fresh image)
-        // and is cleared into DEPTH_STENCIL_ATTACHMENT_OPTIMAL.
-        depth.initialLayout = initial_clear ? VK_IMAGE_LAYOUT_UNDEFINED
-                                            : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depth.finalLayout                  = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        attachments.push_back(depth);
-
-        ::vsg::AttachmentReference depth_ref = {};
-        depth_ref.attachment                 = attachment_index;
-        depth_ref.layout                     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        subpass.depthStencilAttachments.emplace_back(depth_ref);
-    }
-
-    ::vsg::RenderPass::Dependencies dependencies;
-
-    // Initial layout -> attachment layouts before the first subpass. Colour is
-    // cleared (UNDEFINED -> colour); depth is LOADED, so prior depth writes
-    // (the previous frame's pass, ordered by queue submission) must be visible
-    // before this pass reads them.
-    ::vsg::SubpassDependency ext_to_sub = {};
-    ext_to_sub.srcSubpass               = VK_SUBPASS_EXTERNAL;
-    ext_to_sub.dstSubpass               = 0;
-    ext_to_sub.srcStageMask             = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    ext_to_sub.dstStageMask             = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    ext_to_sub.srcAccessMask            = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
-                                          (color_clear ? 0u : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-    ext_to_sub.dstAccessMask            = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    dependencies.push_back(ext_to_sub);
-
-    // After the subpass, transition the colour attachments to SHADER_READ_ONLY
-    // so a later pass can sample them (the preserved depth is not sampled).
-    ::vsg::SubpassDependency sub_to_ext = {};
-    sub_to_ext.srcSubpass               = 0;
-    sub_to_ext.dstSubpass               = VK_SUBPASS_EXTERNAL;
-    sub_to_ext.srcStageMask             = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    sub_to_ext.dstStageMask             = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    sub_to_ext.srcAccessMask            = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     sub_to_ext.dstAccessMask            = VK_ACCESS_SHADER_READ_BIT;
     dependencies.push_back(sub_to_ext);
 
@@ -390,12 +342,65 @@ PassRenderPassPlan planPassRenderPass(bool color_clear,
     }
     // Preserving pass: LOAD the depth the previous frame / pass left. An
     // UNDEFINED image cannot be loaded, so an unseeded target needs the CLEAR
-    // (seed) variant recorded once first (see PassObjects::render_pass_seed).
+    // (seed) variant recorded once first (see PassObjects::render_pass_transient).
     plan.depth_load    = VK_ATTACHMENT_LOAD_OP_LOAD;
     plan.depth_initial = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     plan.promote_depth = false; // LOAD and promotion are mutually exclusive
     plan.seed_required = !depth_seeded;
     return plan;
+}
+
+PassVariant planPassVariant(bool has_color, bool has_depth, bool borrowed, bool promote_requested, bool any_load_pass,
+                            bool depth_seeded, bool color_seeded, bool want_color_clear, bool want_depth_clear,
+                            bool depth_left_promoted)
+{
+    // The colour bootstrap: a target whose colour image is still UNDEFINED may not
+    // LOAD it, so the pass that first renders it CLEARs — for ONE frame only (a
+    // transient variant), or it would wipe what its siblings drew every frame.
+    const bool bootstrap_color_clear = has_color && !color_seeded;
+    const bool color_clear           = has_color ? (want_color_clear || bootstrap_color_clear) : true;
+
+    const PassRenderPassPlan plan =
+        planPassRenderPass(color_clear, want_depth_clear, has_depth, promote_requested, any_load_pass, depth_seeded,
+                           borrowed);
+
+    PassVariant variant;
+    variant.color_load    = color_clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    variant.depth_load    = plan.depth_load;
+    variant.promote_depth = plan.promote_depth;
+    // The colour and depth regimes of a target differ: its colour attachments
+    // always end sampleable, while its depth ends sampleable only for a
+    // depth-only target (that is what such a target is for) or after a pass that
+    // promoted it.
+    variant.steady_depth_initial =
+        has_color ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    variant.steady_color_load = want_color_clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    if (!has_depth) {
+        variant.transient = bootstrap_color_clear;
+        return variant;
+    }
+
+    const bool depth_load = plan.depth_load == VK_ATTACHMENT_LOAD_OP_LOAD;
+    // A preserving pass may find the depth in SHADER_READ_ONLY: an earlier frame's
+    // promoting pass left it there and nothing has replaced that layout yet. It
+    // then names THAT layout for one frame and hands the image back in the layout
+    // its consumers expect. A depth-only target needs no such frame — its steady
+    // layout IS SHADER_READ_ONLY.
+    const bool needs_revoke = has_color && depth_load && depth_left_promoted;
+    // The layout the RECORDED pass declares: a CLEAR starts from an undefined
+    // image whatever it held before, so only a LOAD has to name the real one.
+    variant.depth_initial = !depth_load         ? VK_IMAGE_LAYOUT_UNDEFINED
+                            : needs_revoke      ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                            : plan.seed_required ? VK_IMAGE_LAYOUT_UNDEFINED
+                                                 : variant.steady_depth_initial;
+    variant.transient     = plan.seed_required || needs_revoke || bootstrap_color_clear;
+    return variant;
+}
+
+bool passVariantIsStale(bool recorded_want_color_clear, bool recorded_want_depth_clear, bool want_color_clear,
+                        bool want_depth_clear)
+{
+    return recorded_want_color_clear != want_color_clear || recorded_want_depth_clear != want_depth_clear;
 }
 
 const std::string& fullscreenVertexSource()
@@ -428,6 +433,74 @@ void main()
     };
 }
 
+/**
+ * @brief Compiles an overlay drawable's stages into a ShaderSet ready to configure.
+ *
+ * Both overlay drawables (the PiP screen triangle and the user fullscreen program)
+ * are the same thing to the device: a fullscreen triangle drawn with depth test and
+ * write off, blending off and the overlay's own viewport, its samples bound to set 0
+ * and their shader modules compiled at run time. This is the half that does not
+ * depend on WHAT is sampled; the caller adds the descriptor bindings and textures.
+ *
+ * @param vertex_source   Vertex stage source (see fullscreenVertexSource).
+ * @param fragment_source Fragment stage source.
+ * @param fragment_entry  Fragment entry point name ("main" for the built-in one).
+ * @param extent          Surface extent for the baked static viewport.
+ * @param failure         Receives why it failed (NoCompiler / CompileFailed).
+ * @return The shader set, or null when the compiler is unavailable or a stage fails.
+ */
+::vsg::ref_ptr<::vsg::ShaderSet> makeOverlayShaderSet(const std::string& vertex_source,
+                                                     const std::string& fragment_source,
+                                                     const std::string& fragment_entry, const VkExtent2D& extent,
+                                                     ProgramNodeFailure* failure)
+{
+    auto vs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_VERTEX_BIT, "main", vertex_source);
+    auto fs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, fragment_entry, fragment_source);
+
+    auto compiler = ::vsg::ShaderCompiler::create();
+    if (compiler == nullptr || !compiler->supported()) {
+        if (failure != nullptr) {
+            *failure = ProgramNodeFailure::NoCompiler;
+        }
+        return {};
+    }
+    if (!compiler->compile(vs) || !compiler->compile(fs)) {
+        if (failure != nullptr) {
+            *failure = ProgramNodeFailure::CompileFailed;
+        }
+        return {};
+    }
+    auto shaderSet    = ::vsg::ShaderSet::create();
+    shaderSet->stages = ::vsg::ShaderStages{ vs, fs };
+    shaderSet->defaultGraphicsPipelineStates = makeOverlayPipelineStates(extent);
+    return shaderSet;
+}
+
+/**
+ * @brief Wraps a configured overlay pipeline into the drawable an overlay View records.
+ *
+ * @param config    Configured pipeline (its textures assigned; init() runs here).
+ * @param push_data Per-frame push-constant bytes, or null for a drawable that reads
+ *                  none (the PiP screen triangle).
+ * @return The state group holding the pipeline and the fullscreen triangle draw.
+ */
+::vsg::ref_ptr<::vsg::StateGroup> makeOverlayStateGroup(const ::vsg::ref_ptr<::vsg::GraphicsPipelineConfigurator>& config,
+                                                       const ::vsg::ref_ptr<::vsg::Data>& push_data)
+{
+    config->init();
+    auto state_group = ::vsg::StateGroup::create();
+    config->copyTo(state_group, ::vsg::ref_ptr<::vsg::SharedObjects>());
+    auto draw_commands = ::vsg::Commands::create();
+    if (push_data != nullptr) {
+        // The per-frame block is recorded from push_data's CURRENT bytes, so the
+        // caller mutates and re-records it every frame.
+        draw_commands->addChild(::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0, push_data.get()));
+    }
+    draw_commands->addChild(::vsg::Draw::create(3, 1, 0, 0));
+    state_group->addChild(draw_commands);
+    return state_group;
+}
+
 ::vsg::ref_ptr<::vsg::Node> makeScreenTextureNode(::vsg::ref_ptr<::vsg::ImageView> image_view, const VkExtent2D& extent,
                                                   ProgramNodeFailure* failure)
 {
@@ -450,40 +523,88 @@ void main()
 }
 )";
 
-    auto vs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_VERTEX_BIT, "main", vertex_source);
-    auto fs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, "main", fragment_source);
-
-    auto compiler = ::vsg::ShaderCompiler::create();
-    if (compiler == nullptr || !compiler->supported()) {
-        if (failure != nullptr) {
-            *failure = ProgramNodeFailure::NoCompiler;
-        }
-        return ::vsg::ref_ptr<::vsg::Node>();
+    auto shader_set = makeOverlayShaderSet(vertex_source, fragment_source, "main", extent, failure);
+    if (shader_set == nullptr) {
+        return {};
     }
-    if (!compiler->compile(vs) || !compiler->compile(fs)) {
-        if (failure != nullptr) {
-            *failure = ProgramNodeFailure::CompileFailed;
-        }
-        return ::vsg::ref_ptr<::vsg::Node>();
-    }
+    shader_set->addDescriptorBinding("screen_tex", "", 0, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT, {});
 
-    auto shaderSet    = ::vsg::ShaderSet::create();
-    shaderSet->stages = ::vsg::ShaderStages{ vs, fs };
-    shaderSet->addDescriptorBinding("screen_tex", "", 0, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, {});
-    shaderSet->defaultGraphicsPipelineStates = makeOverlayPipelineStates(extent);
-
-    auto config     = ::vsg::GraphicsPipelineConfigurator::create(shaderSet);
+    auto config     = ::vsg::GraphicsPipelineConfigurator::create(shader_set);
     auto sampler    = ::vsg::Sampler::create();
     auto image_info = ::vsg::ImageInfo::create(sampler, image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     config->assignTexture("screen_tex", ::vsg::ImageInfoList{ image_info });
-    config->init();
+    return makeOverlayStateGroup(config, ::vsg::ref_ptr<::vsg::Data>());
+}
 
-    auto stateGroup = ::vsg::StateGroup::create();
-    config->copyTo(stateGroup, ::vsg::ref_ptr<::vsg::SharedObjects>());
-    auto draw = ::vsg::Commands::create();
-    draw->addChild(::vsg::Draw::create(3, 1, 0, 0));
-    stateGroup->addChild(draw);
-    return stateGroup;
+/**
+ * @brief Collects the descriptor bindings a GLSL source DECLARES.
+ *
+ * The full-screen program ABI (see makeFullscreenProgramNode) gives every source
+ * texture a binding index, so what a program NEEDS is knowable before anything is
+ * created — but vsg 1.1.16 exposes no shader reflection, and this backend already
+ * compiles the user's GLSL itself. Read the bindings from the source: every
+ * `layout(...)` qualifier that mentions `binding`, with `set` defaulting to 0 (the
+ * only set this pass uses). It is a scan, not a parser — the ABI's qualifier
+ * grammar is small and fixed — and it fails SAFE: what it cannot classify is
+ * reported to the caller as unsupported rather than silently ignored.
+ *
+ * @param source GLSL source of one stage.
+ * @return The declared (set, binding) pairs, in source order.
+ */
+std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std::string& source)
+{
+    // Reads "<name> = <uint>" out of a qualifier's text, or @p fallback when the
+    // name is absent (i.e. the GLSL default applies).
+    const auto assignment = [](const std::string& text, const char* name, std::uint32_t fallback) {
+        const std::size_t at = text.find(name);
+        const std::size_t eq = at == std::string::npos ? std::string::npos : text.find('=', at);
+        if (eq == std::string::npos) {
+            return fallback;
+        }
+        std::size_t digit = eq + 1;
+        while (digit < text.size() && !std::isdigit(static_cast<unsigned char>(text[digit]))) {
+            ++digit;
+        }
+        return digit < text.size() ? static_cast<std::uint32_t>(std::strtoul(text.c_str() + digit, nullptr, 10))
+                                   : fallback;
+    };
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> bindings;
+    std::size_t                                          pos = 0;
+    while ((pos = source.find("layout", pos)) != std::string::npos) {
+        const std::size_t open = source.find('(', pos);
+        const std::size_t close = open == std::string::npos ? std::string::npos : source.find(')', open);
+        if (close == std::string::npos) {
+            break;
+        }
+        const std::string qualifier = source.substr(open + 1, close - open - 1);
+        pos                         = close + 1;
+        if (qualifier.find("binding") == std::string::npos) {
+            continue; // location / push_constant / ... qualifiers name no descriptor
+        }
+        bindings.emplace_back(assignment(qualifier, "set", 0u), assignment(qualifier, "binding", 0u));
+    }
+    return bindings;
+}
+
+bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> program, std::size_t color_count)
+{
+    if (program == nullptr) {
+        return false;
+    }
+    const std::uint32_t depth_binding = static_cast<std::uint32_t>(color_count);
+    for (const auto& stage : program->stages()) {
+        if (stage.type != vine::graphics::ShaderStageType::Fragment) {
+            continue;
+        }
+        for (const auto& [set, binding] : declaredBindings(stage.source.stdstr())) {
+            if (set == 0u && binding == depth_binding) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 ::vsg::ref_ptr<::vsg::Node> makeFullscreenProgramNode(
@@ -519,42 +640,44 @@ void main()
 
     const std::string vertex_source = fullscreenVertexSource();
 
-    auto vs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_VERTEX_BIT, "main", vertex_source);
-    auto fs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, fs_spec->entryPoint.stdstr(), fs_spec->source.stdstr());
-
-    auto compiler = ::vsg::ShaderCompiler::create();
-    if (compiler == nullptr || !compiler->supported()) {
-        if (failure != nullptr) {
-            *failure = ProgramNodeFailure::NoCompiler;
-        }
-        return ::vsg::ref_ptr<::vsg::Node>();
-    }
-    if (!compiler->compile(vs) || !compiler->compile(fs)) {
-        if (failure != nullptr) {
-            *failure = ProgramNodeFailure::CompileFailed;
-        }
+    auto shader_set = makeOverlayShaderSet(vertex_source, fs_spec->source.stdstr(), fs_spec->entryPoint.stdstr(), extent,
+                                           failure);
+    if (shader_set == nullptr) {
         return ::vsg::ref_ptr<::vsg::Node>();
     }
 
-    auto shaderSet    = ::vsg::ShaderSet::create();
-    shaderSet->stages = ::vsg::ShaderStages{ vs, fs };
+    // This pass provides ONE descriptor set: binding i = the source's i-th colour
+    // attachment, and binding N (= the colour count) = the source's depth — but
+    // only when the caller has a sampleable depth to bind. A fragment stage that
+    // declares anything else would build a pipeline whose layout lacks that
+    // binding and fail at DRAW time (a validation error per frame, with nothing
+    // telling the host why), so refuse it here instead, before anything is built.
+    const std::uint32_t provided = static_cast<std::uint32_t>(image_views.size()) + (depth_view != nullptr ? 1u : 0u);
+    for (const auto& [set, binding] : declaredBindings(fs_spec->source.stdstr())) {
+        if (set != 0u || binding >= provided) {
+            if (failure != nullptr) {
+                *failure = ProgramNodeFailure::MissingDescriptorBinding;
+            }
+            return ::vsg::ref_ptr<::vsg::Node>();
+        }
+    }
+
     for (std::size_t i = 0; i < image_views.size(); ++i) {
-        shaderSet->addDescriptorBinding("gbuffer" + std::to_string(i), "", 0, static_cast<uint32_t>(i),
-                                        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
-                                        ::vsg::ref_ptr<::vsg::Data>());
+        shader_set->addDescriptorBinding("gbuffer" + std::to_string(i), "", 0, static_cast<uint32_t>(i),
+                                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+                                         ::vsg::ref_ptr<::vsg::Data>());
     }
     if (depth_view != nullptr) {
-        shaderSet->addDescriptorBinding("gbuffer_depth", "", 0, static_cast<uint32_t>(image_views.size()),
-                                        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
-                                        ::vsg::ref_ptr<::vsg::Data>());
+        shader_set->addDescriptorBinding("gbuffer_depth", "", 0, static_cast<uint32_t>(image_views.size()),
+                                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+                                         ::vsg::ref_ptr<::vsg::Data>());
     }
     // Per-frame light/view parameters (LightPushBlock, the full 128-byte
     // range; its size is asserted against sizeof(LightPushBlock)).
-    shaderSet->addPushConstantRange("pc_light", "", VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                    static_cast<uint32_t>(sizeof(LightPushBlock)));
-    shaderSet->defaultGraphicsPipelineStates = makeOverlayPipelineStates(extent);
+    shader_set->addPushConstantRange("pc_light", "", VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                     static_cast<uint32_t>(sizeof(LightPushBlock)));
 
-    auto config  = ::vsg::GraphicsPipelineConfigurator::create(shaderSet);
+    auto config = ::vsg::GraphicsPipelineConfigurator::create(shader_set);
     auto sampler = ::vsg::Sampler::create();
     for (std::size_t i = 0; i < image_views.size(); ++i) {
         auto image_info = ::vsg::ImageInfo::create(sampler, image_views[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -569,17 +692,7 @@ void main()
         auto depth_info = ::vsg::ImageInfo::create(depth_sampler, depth_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         config->assignTexture("gbuffer_depth", ::vsg::ImageInfoList{ depth_info });
     }
-    config->init();
-
-    auto stateGroup = ::vsg::StateGroup::create();
-    config->copyTo(stateGroup, ::vsg::ref_ptr<::vsg::SharedObjects>());
-    auto drawCommands = ::vsg::Commands::create();
-    // Push the per-frame block first (recorded from push_data's current bytes),
-    // then draw the full-screen triangle within the same pipeline layout.
-    drawCommands->addChild(::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0, push_data.get()));
-    drawCommands->addChild(::vsg::Draw::create(3, 1, 0, 0));
-    stateGroup->addChild(drawCommands);
-    return stateGroup;
+    return makeOverlayStateGroup(config, push_data);
 }
 
 /**

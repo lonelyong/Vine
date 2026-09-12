@@ -66,13 +66,6 @@ void removeGraphChild(::vsg::Group* graph, const ::vsg::ref_ptr<::vsg::Node>& no
         children.end());
 }
 
-void waitForIdle(::vsg::Viewer* viewer)
-{
-    if (viewer != nullptr) {
-        viewer->deviceWaitIdle();
-    }
-}
-
 } // namespace detail
 
 V_VSG_NS_END

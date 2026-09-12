@@ -1,10 +1,7 @@
 #include <vine/vsg/VsgRenderer.hpp>
 
-#include <algorithm>
 #include <cstdint>
-#include <limits>
 #include <map>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -60,7 +57,6 @@ namespace
  * @param w        Viewport width in device pixels.
  * @param h        Viewport height in device pixels.
  * @param front    When true, insert the View as the graph's first child.
- * @param what     Label for the compile-failure diagnostic.
  * @return The compiled View, or null when compilation failed.
  */
 ::vsg::ref_ptr<::vsg::View> makeCompiledOverlayView(
@@ -72,7 +68,6 @@ namespace
     int w,
     int h,
     bool front,
-    const char* what,
     bool*       compile_failed = nullptr)
 {
     auto camera           = ::vsg::Camera::create();
@@ -258,6 +253,87 @@ void fillLightPushBlock(const vine::graphics::Camera*                           
 
 } // namespace
 
+VsgRenderer::OverlayDestination VsgRenderer::resolveOverlayDestination(vine::graphics::RenderTarget* source,
+                                                                     const SlotKey& key, const char* what)
+{
+    OverlayDestination out;
+    // The destination is the SCOPE's target (setRenderTarget, nullptr = the
+    // window): read, not consumed, so every draw call of the pass agrees on it.
+    vine::graphics::RenderTarget* dest = impl->request.target;
+    // A source == destination feedback loop would sample the very attachments this
+    // pass writes. Reject it with a diagnostic: a ping-pong pair of targets is the
+    // standard way to build a feedback chain.
+    if (dest == source) {
+        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                      formatDiagnostic(u8"%s: source == destination (feedback loop): the pass draws nothing", what));
+        return out;
+    }
+    auto& dest_entry = impl->entryFor(dest);
+    if (dest != nullptr) {
+        // Writing into an off-screen target: (re)build its graph to its size.
+        if (dest->colorCount() <= 0 || dest->width() <= 0 || dest->height() <= 0) {
+            reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                          formatDiagnostic(
+                              u8"%s: destination target has no usable colour attachment: the pass draws nothing", what));
+            return out;
+        }
+        if (!dest_entry.attachments_built || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
+            buildOffscreenTarget(dest);
+            if (!dest_entry.attachments_built) {
+                return out;
+            }
+        }
+    }
+    else if (dest_entry.graph == nullptr) {
+        return out; // window graph not created yet
+    }
+    out.target = dest;
+    out.surf_w = (dest == nullptr) ? static_cast<int>(impl->window->extent2D().width) : dest_entry.width;
+    out.surf_h = (dest == nullptr) ? static_cast<int>(impl->window->extent2D().height) : dest_entry.height;
+
+    // The pass owns its slot under this destination; if it drew elsewhere before
+    // (its render target changed), drop that stale slot so it stops compositing
+    // there. The graph this pass records into is the window session's shared
+    // swapchain graph, or this pass' own off-screen graph (§28).
+    retargetPass(impl->request.pass, dest);
+    out.graph = passGraph(dest, key);
+    return out;
+}
+
+void VsgRenderer::placeOverlayView(const OverlayDestination& dest, const ::vsg::ref_ptr<::vsg::View>& view, int order)
+{
+    placeViewByOrder(dest.graph, dest.target, view, order);
+    if (dest.target != nullptr) {
+        // An off-screen destination: the pass' graph has to be back in the command
+        // graph, recorded after every target it samples. A source == destination
+        // feedback loop was rejected when the destination was resolved, so this
+        // consumer cannot feed its own producer.
+        reconcileOffscreenOrder();
+    }
+}
+
+template <class Slot>
+bool VsgRenderer::installOverlayView(const OverlayDestination& dest, Slot& slot,
+                                     const ::vsg::ref_ptr<::vsg::Node>& content, int x, int y, int w, int h,
+                                     bool front, const char* what)
+{
+    bool compile_failed = false;
+    auto view = makeCompiledOverlayView(*impl->viewer, dest.graph.get(), content, x, y, w, h, front, &compile_failed);
+    if (view == nullptr) {
+        if (compile_failed) {
+            reportFailure(vine::graphics::DiagnosticSeverity::Warning,
+                          vine::graphics::DiagnosticCategory::CompileFailed,
+                          formatDiagnostic(u8"%s view failed to compile; retrying with a full compile", what));
+        }
+        return false;
+    }
+    slot.camera = view->camera;
+    slot.view   = view;
+    slot.ready  = true;
+    placeOverlayView(dest, view, slot.order);
+    return true;
+}
+
 void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int attachment)
 {
     if (!impl->initialized || impl->viewer == nullptr || impl->window == nullptr || source == nullptr) {
@@ -299,60 +375,28 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
     const auto source_view = src.color_views[attachment_index];
 
     // PiP (screen) views are drawn into the CURRENT target (setRenderTarget;
-    // nullptr = the window), so their slots live in that target's entry: a
-    // pass can composite a sampled source into an off-screen target, enabling
-    // post-processing chains (A -> B -> window). The slot is owned by the pass
-    // drawing it (SlotKey); the sampled source + attachment are slot
-    // ATTRIBUTES re-checked every frame, so a pass that switches its input (or
-    // the attachment it reads of an MRT source) is rebuilt instead of silently
-    // sampling the previous texture.
-    // The destination is the SCOPE's target (setRenderTarget, nullptr = the
-    // window): read, not consumed, so every draw call of the pass agrees on it.
-    vine::graphics::RenderTarget* dest = impl->request.target;
-    // A source == destination feedback loop would sample the very attachments
-    // this pass writes. Reject it with a diagnostic (a ping-pong pair of
-    // targets is the standard way to build a feedback chain).
-    if (dest == source) {
-        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
-                      u8"drawScreenTexture: source == destination (feedback loop): the pass draws nothing");
-        return;
-    }
-    auto& dest_entry = impl->entryFor(dest);
-    if (dest != nullptr) {
-        // Writing into an off-screen target: (re)build its graph to its size.
-        if (dest->colorCount() <= 0 || dest->width() <= 0 || dest->height() <= 0) {
-            reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
-                          u8"drawScreenTexture: destination target has no usable colour attachment: the pass draws nothing");
-            return;
-        }
-        if (!dest_entry.attachments_built || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
-            buildOffscreenTarget(dest);
-            if (!dest_entry.attachments_built) {
-                return;
-            }
-        }
-    }
-    else if (dest_entry.graph == nullptr) {
-        return; // window graph not created yet
-    }
-    const int surf_w = (dest == nullptr) ? static_cast<int>(impl->window->extent2D().width) : dest_entry.width;
-    const int surf_h = (dest == nullptr) ? static_cast<int>(impl->window->extent2D().height) : dest_entry.height;
-
-    // The pass owns its slot under this destination; if it drew elsewhere
-    // before (its render target changed), drop that stale slot so it stops
-    // compositing there.
-    retargetPass(impl->request.pass, dest);
-
-    // Pass-scoped identity when the engine opened a pass scope (the normal
-    // path); the historical (source, attachment) identity otherwise, so a
-    // direct driver that draws several PiPs in one frame stays distinct.
+    // nullptr = the window), so their slots live in that target's entry: a pass can
+    // composite a sampled source into an off-screen target, enabling post-processing
+    // chains (A -> B -> window). The slot is owned by the pass drawing it (SlotKey);
+    // the sampled source + attachment are slot ATTRIBUTES re-checked every frame, so
+    // a pass that switches its input (or the attachment it reads of an MRT source) is
+    // rebuilt instead of silently sampling the previous texture.
+    //
+    // Pass-scoped identity when the engine opened a pass scope (the normal path);
+    // the historical (source, attachment) identity otherwise, so a direct driver
+    // that draws several PiPs in one frame stays distinct.
     const SlotKey key = (impl->request.pass != nullptr)
                             ? SlotKey::ownerPass(impl->request.pass)
                             : SlotKey::sampledTarget(source, static_cast<int>(attachment_index));
-
-    // The graph this pass records into: the window session's shared swapchain
-    // graph, or this pass' own off-screen graph (§28).
-    const auto dest_graph = passGraph(dest, key);
+    const OverlayDestination overlay = resolveOverlayDestination(source, key, "drawScreenTexture");
+    if (overlay.graph == nullptr) {
+        return;
+    }
+    vine::graphics::RenderTarget* const dest = overlay.target;
+    auto&                              dest_entry = impl->entryFor(dest);
+    const auto&                        dest_graph = overlay.graph;
+    const int                          surf_w     = overlay.surf_w;
+    const int                          surf_h     = overlay.surf_h;
 
     // Drop a stale slot when the sampled source / attachment changed, or the
     // sampled target OR the destination was resized (the sampled colour view /
@@ -436,48 +480,23 @@ void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int at
             return;
         }
         bool overlay_compile_failed = false;
-        auto view = makeCompiledOverlayView(*impl->viewer, dest_graph.get(), content,
-                                            rect_x, rect_y, rect_w, rect_h,
-                                            /*front*/ false, "screen pass",
-                                            &overlay_compile_failed);
-        if (view == nullptr) {
-            if (overlay_compile_failed) {
-                reportFailure(vine::graphics::DiagnosticSeverity::Warning,
-                              vine::graphics::DiagnosticCategory::CompileFailed,
-                              u8"screen pass (PiP) view failed to compile; retrying with a full compile");
-            }
+        if (!installOverlayView(overlay, slot, content, rect_x, rect_y, rect_w, rect_h, /*front*/ false,
+                                "screen pass (PiP)")) {
+            // The compile already reported (when it was the compile): drop the
+            // half-made slot so the next frame retries.
             dest_entry.screen_slots.erase(key);
             return;
         }
-        slot.camera        = view->camera;
-        slot.view          = view;
-        slot.ready         = true;
-        // Position the view by its explicit order; the compile above already
-        // ran against this target's render pass, so only the record order
-        // changes.
-        placeViewByOrder(dest_graph, dest, view, slot.order);
         V_LOGI("[VsgRenderer] EXPERIMENTAL screen PiP {}x{} (att {}) -> {} {},{},{}x{} attached", src.width, src.height,
                attachment_index, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
-        if (dest != nullptr) {
-            // A new sampling edge appeared under an off-screen destination:
-            // re-order the command graph so this consumer records after every
-            // target it samples (source == dest is rejected above, so this
-            // cannot feed the producer back on itself).
-            reconcileOffscreenOrder();
-        }
     }
 
     if (slot.ready && slot.detached) {
         // Re-attach a slot retired while its pass was inactive (see
         // retireInactivePassSlots): its node and pipeline were kept, only the
         // view was detached from the graph.
-        placeViewByOrder(dest_graph, dest, slot.view, slot.order);
+        placeOverlayView(overlay, slot.view, slot.order);
         slot.detached = false;
-        if (dest != nullptr) {
-            // Re-attaching is what puts this pass' graph back into the command
-            // graph (a retired pass' graph is left out of it).
-            reconcileOffscreenOrder();
-        }
     }
 
     // Follow the requested sub-viewport each frame (dynamic viewport + scissor).
@@ -508,49 +527,24 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
 
     // Fullscreen-program views are drawn into the CURRENT target
     // (setRenderTarget; nullptr = the window), so their slots live in that
-    // target's entry: deferred / post passes can write into an off-screen
-    // target as well as the window. A scope attribute: read, not consumed.
-    vine::graphics::RenderTarget* dest = impl->request.target;
-    // A source == destination feedback loop would sample the very attachments
-    // this pass writes. Reject it (a ping-pong pair of targets is the standard
-    // way to build a feedback chain).
-    if (dest == source) {
-        reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
-                      u8"drawScreenProgram: source == destination (feedback loop): the pass draws nothing");
-        return;
-    }
-    auto& dest_entry = impl->entryFor(dest);
-    if (dest != nullptr) {
-        if (dest->colorCount() <= 0 || dest->width() <= 0 || dest->height() <= 0) {
-            reportFailure(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
-                          u8"drawScreenProgram: destination target has no usable colour attachment: the pass draws nothing");
-            return;
-        }
-        if (!dest_entry.attachments_built || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
-            buildOffscreenTarget(dest);
-            if (!dest_entry.attachments_built) {
-                return;
-            }
-        }
-    }
-    else if (dest_entry.graph == nullptr) {
-        return; // window graph not created yet
-    }
-    const int surf_w = (dest == nullptr) ? static_cast<int>(impl->window->extent2D().width) : dest_entry.width;
-    const int surf_h = (dest == nullptr) ? static_cast<int>(impl->window->extent2D().height) : dest_entry.height;
-
-    // The pass owns its slot under this destination; a pass that drew
-    // elsewhere before (its render target changed) drops that stale slot here.
-    retargetPass(impl->request.pass, dest);
+    // target's entry: deferred / post passes can write into an off-screen target
+    // as well as the window.
+    //
     // Pass-scoped identity when a pass scope is open (normal path), else the
     // historical per-source identity used by direct drivers.
     const SlotKey slot_key = (impl->request.pass != nullptr)
                                  ? SlotKey::ownerPass(impl->request.pass)
                                  : SlotKey::sampledTarget(source);
-    // The graph this pass records into: the window session's shared swapchain
-    // graph, or this pass' own off-screen graph (§28).
-    const auto dest_graph = passGraph(dest, slot_key);
-    auto& slot = dest_entry.program_slots[slot_key];
+    const OverlayDestination overlay = resolveOverlayDestination(source, slot_key, "drawScreenProgram");
+    if (overlay.graph == nullptr) {
+        return;
+    }
+    vine::graphics::RenderTarget* const dest       = overlay.target;
+    auto&                              dest_entry = impl->entryFor(dest);
+    const auto&                        dest_graph = overlay.graph;
+    const int                          surf_w     = overlay.surf_w;
+    const int                          surf_h     = overlay.surf_h;
+    auto&                              slot       = dest_entry.program_slots[slot_key];
 
     // Destination rectangle: the pass' sub-viewport, else the full surface
     // (clamped into the surface - the fullscreen draw has no auto-fit).
@@ -584,11 +578,14 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
 
     // (Re)build the retained slot when it is missing, the sampled source
     // changed (or was resized: its colour views were rebuilt), the DESTINATION
-    // was resized, or the program changed.
+    // was resized, the program changed, or the source's depth stopped being
+    // sampleable (a pass of the source that preserves depth revokes the
+    // promotion, so the depth binding has to go with it).
     const std::uint64_t program_revision = program->revision();
     const bool stale = !slot.ready || slot.source_target != source ||
                        slot.source_w != src.width || slot.source_h != src.height ||
                        slot.dest_w != surf_w || slot.dest_h != surf_h ||
+                       slot.source_depth_sampleable != src.depth_sampleable ||
                        slot.program.get() != program || slot.program_revision != program_revision;
     if (stale) {
         if (dest_graph != nullptr) {
@@ -603,14 +600,42 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         slot.push_data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(LightPushBlock)));
         const VkExtent2D surface{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) };
         ProgramNodeFailure program_failure = ProgramNodeFailure::None;
-        auto node = makeFullscreenProgramNode(program, src.color_views, source->depthPromotion() ? src.depth_view : ::vsg::ref_ptr<::vsg::ImageView>(), surface, slot.push_data, &program_failure);
+        // The host asked for the source's depth to be sampleable
+        // (RenderTarget::setDepthPromotion) but a pass of the source PRESERVES
+        // depth, which overrides that request (§28: LOAD and promotion are
+        // mutually exclusive) — so the depth cannot be bound. Say so: a program
+        // that samples it will not build, and dropping the binding silently
+        // would leave the host guessing why. Reported once per slot build (the
+        // slot is stable while the policy is).
+        if (source->depthPromotion() && !src.depth_sampleable && src.depth_view != nullptr) {
+            reportFailure(vine::graphics::DiagnosticSeverity::Warning,
+                          vine::graphics::DiagnosticCategory::ChannelIgnored,
+                          formatDiagnostic(u8"drawScreenProgram: sampled target '%s' declares depth promotion, but a"
+                                           u8" pass of it preserves depth, so its depth is not sampleable and is not"
+                                           u8" bound (the program sees its colour attachments only)",
+                                           source->name().empty() ? "(unnamed)" : source->name().stdstr().c_str()));
+        }
+        // The source's depth is bound as a sampled texture ONLY when it really
+        // ends in SHADER_READ_ONLY: the target's description
+        // (RenderTarget::depthPromotion) is the host's request, but a pass of
+        // the source that PRESERVES depth overrides it (LOAD and promotion are
+        // mutually exclusive, §28), leaving the image in the attachment layout.
+        // Binding it as a sampled texture then would declare a layout the image
+        // is not in (a descriptor/layout mismatch validation reports every
+        // frame). The actual state is what decides.
+        auto node = makeFullscreenProgramNode(program, src.color_views,
+                                              src.depth_sampleable ? src.depth_view : ::vsg::ref_ptr<::vsg::ImageView>(),
+                                              surface, slot.push_data, &program_failure);
         if (node == nullptr) {
             const vine::String why =
                 program_failure == ProgramNodeFailure::NoCompiler
                     ? u8"fullscreen program needs the runtime GLSL compiler, which is unavailable"
                     : program_failure == ProgramNodeFailure::NoFragmentStage
                           ? u8"fullscreen program has no fragment stage"
-                          : u8"fullscreen program shader failed to compile";
+                          : program_failure == ProgramNodeFailure::MissingDescriptorBinding
+                                ? u8"fullscreen program samples a texture this pass cannot provide (the source binds"
+                                  u8" its colour attachments, plus its depth only while that one is sampleable)"
+                                : u8"fullscreen program shader failed to compile";
             reportFailure(vine::graphics::DiagnosticSeverity::Error,
                           vine::graphics::DiagnosticCategory::CompileFailed,
                           why + vine::String(u8": the pass draws nothing"));
@@ -622,41 +647,35 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
         slot.source_h = src.height;
         slot.dest_w   = surf_w;
         slot.dest_h   = surf_h;
+        slot.source_depth_sampleable = src.depth_sampleable;
+        // Whether the node BOUND the depth is the shader's decision, not the
+        // policy's: the depth descriptor only exists when the fragment stage
+        // declares the ABI binding (the colour count). A colour-only program
+        // keeps drawing whatever the source's depth promotion does — including
+        // the frame a pass of the source revokes it, where a slot that DOES bind
+        // the depth has to be dropped (its descriptor names a layout the image
+        // leaves later in that same frame, see the promotion cascade).
+        slot.binds_source_depth = slot.source_depth_sampleable && programSamplesDepth(program, src.color_views.size());
+        // Retained so the revoke can take the slot out of the frame on its own
+        // (the host is not called again in the frame that revokes).
+        slot.dest_graph       = dest_graph.get();
         slot.program          = vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program);
         slot.program_revision = program_revision;
         slot.node             = node;
 
-        // Create + compile the fullscreen view against this target's render
-        // pass (inserted provisionally at the front so the compile sees it),
-        // then move it to its explicit-order position below.
-        bool overlay_compile_failed = false;
-        auto view = makeCompiledOverlayView(*impl->viewer, dest_graph.get(), node,
-                                            rect_x, rect_y, rect_w, rect_h,
-                                            /*front*/ true, "fullscreen program",
-                                            &overlay_compile_failed);
-        if (view == nullptr) {
-            if (overlay_compile_failed) {
-                reportFailure(vine::graphics::DiagnosticSeverity::Warning,
-                              vine::graphics::DiagnosticCategory::CompileFailed,
-                              u8"fullscreen program view failed to compile; retrying with a full compile");
-            }
+        // Create + compile the fullscreen view against this target's render pass
+        // (inserted provisionally at the front so the compile sees it), then move
+        // it to its explicit-order position.
+        if (!installOverlayView(overlay, slot, node, rect_x, rect_y, rect_w, rect_h, /*front*/ true,
+                               "fullscreen program")) {
+            // The compile already reported (when it was the compile): drop the
+            // half-made slot so the next frame retries.
             dest_entry.program_slots.erase(slot_key);
             return;
         }
-        slot.camera        = view->camera;
-        slot.view          = view;
-        slot.ready         = true;
         ++impl->program_slot_build_count;
-        placeViewByOrder(dest_graph, dest, view, slot.order);
         V_LOGI("[VsgRenderer] EXPERIMENTAL deferred fullscreen program {}x{} -> {} {},{},{}x{} attached", src.width,
                src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
-        if (dest != nullptr) {
-            // New sampling edges (this program samples every colour attachment
-            // of source) appeared under an off-screen destination: re-order so
-            // the consumer records after its producer (source == dest is
-            // rejected above, so this cannot feed back on itself).
-            reconcileOffscreenOrder();
-        }
     }
 
     // Take the lights announced for this draw call (from the pass's content
@@ -675,13 +694,8 @@ void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget*              s
     if (slot.ready && slot.detached) {
         // Re-attach a slot retired while its pass was inactive (see
         // retireInactivePassSlots): its node and pipeline were kept.
-        placeViewByOrder(dest_graph, dest, slot.view, slot.order);
+        placeOverlayView(overlay, slot.view, slot.order);
         slot.detached = false;
-        if (dest != nullptr) {
-            // Re-attaching is what puts this pass' graph back into the command
-            // graph (a retired pass' graph is left out of it).
-            reconcileOffscreenOrder();
-        }
     }
 
     // Follow the requested sub-viewport each frame.

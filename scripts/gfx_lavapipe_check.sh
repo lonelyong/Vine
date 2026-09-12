@@ -195,10 +195,22 @@ else
     require_evidence "^\[selftest\] mixed depth:" 1 "mixed-depth-policy assertion"
     require_evidence "^\[selftest\] stacked pass:" 1 "stacked-pass (non-clearing pass) assertion"
     require_evidence "^\[selftest\] promoting preserve:" 1 "depth-promoting + preserving-pass assertion"
+    require_evidence "^\[selftest\] depth only:" 1 "depth-only target (far-plane clear) assertion"
+    require_evidence "^\[selftest\] depth only preserve:" 1 "depth-only target (preserved depth) assertion"
+    require_evidence "^\[selftest\] clear flip:" 1 "run-time clear-policy change assertion"
+    require_evidence "^\[selftest\] preserved depth:" 1 "preserved-depth-not-sampled assertion"
+    require_evidence "^\[selftest\] depth sample:" 1 "sampled-depth program assertion"
+    # The drop report is a renderer warning, not a selftest line: section 3 of the
+    # sampled-depth phase asserts the SAME-frame revoke drops the slot that bound
+    # the depth (without it the frame records a stale descriptor, so this line is
+    # what proves the residual window stayed closed).
+    require_evidence "dropped for this frame" 1 "same-frame depth-promotion revoke assertion"
+    require_evidence "^\[selftest\] color bootstrap:" 1 "colour-bootstrap (one-frame clear) assertion"
     require_evidence "^\[selftest\] depth borrow:" 1 "depth-borrow validation assertion"
     require_evidence "^\[selftest\] depth testonly:" 1 "TestOnly depth assertion"
     require_evidence "^\[selftest\] depth share order:" 1 "depth-share ordering assertion"
     require_evidence "^\[selftest\] target description:" 1 "target description rebuild assertion"
+    require_evidence "^\[selftest\] policy churn:" 1 "policy-churn (no device stall) assertion"
     require_evidence "^\[selftest\] MRT " 2 "MRT report"
     # The self-test is expected to finish (0); a timeout (124) is also OK.
     if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then

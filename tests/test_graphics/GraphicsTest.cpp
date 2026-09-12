@@ -1782,6 +1782,47 @@ TEST(SceneViewTest, DefaultManipulatorBindsViewCameraAndScene)
     EXPECT_EQ(view->manipulator(), custom.get());
 }
 
+TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
+{
+    // Replacing the view's scene must reach BOTH consumers the view created:
+    // the default window pass (whose content is bound to the PASS, not to the
+    // view) and a scene-aware manipulator, which holds a NON-OWNING scene
+    // pointer and would otherwise navigate a scene the host may have dropped
+    // (a use-after-free once its last reference goes away).
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+
+    auto view = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+
+    // Both scenes get a root: collectRenderCommands() only counts a walk when
+    // there is something to walk, so the count below is the observable.
+    auto original = view->scene();
+    original->setRoot(intrusive_ptr<Group>(new Group()));
+
+    view->ensureWindowPass();
+    ASSERT_EQ(engine->passCount(), 1u);
+    auto* orbit = dynamic_cast<OrbitCameraManipulator*>(view->manipulator());
+    ASSERT_NE(orbit, nullptr);
+    EXPECT_EQ(orbit->scene(), original.get());
+
+    auto replacement = intrusive_ptr<Scene>(new Scene());
+    replacement->setRoot(intrusive_ptr<Group>(new Group()));
+    const auto original_walks = original->contentCollectCount();
+
+    view->setScene(replacement);
+    EXPECT_EQ(view->scene().get(), replacement.get());
+    EXPECT_EQ(orbit->scene(), replacement.get());
+
+    // One frame: the default window pass must now walk the REPLACEMENT scene
+    // (its bound content) and no longer the scene it replaced.
+    ASSERT_TRUE(engine->initialize());
+    engine->frame(0.016);
+    EXPECT_EQ(replacement->contentCollectCount(), 1u);
+    EXPECT_EQ(original->contentCollectCount(), original_walks);
+}
+
 TEST(RenderEngineTest, ShaderPresetForwardedToBackend)
 {
     // The shading preset is held by the engine (render config) and forwarded

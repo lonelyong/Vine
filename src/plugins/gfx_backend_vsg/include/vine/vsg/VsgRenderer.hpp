@@ -149,6 +149,12 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * attachment as a sampled texture (binding 0..N-1) and pushes view-space
      * light parameters each frame.
      *
+     * The source's DEPTH is bound as an extra sampled texture only when it is
+     * actually sampleable: the source must declare depth promotion
+     * (RenderTarget::setDepthPromotion) AND no pass of it may preserve depth —
+     * a depth-LOAD pass overrides promotion (§28), leaving the image in the
+     * attachment layout so it cannot be sampled.
+     *
      * @param source  MRT target whose colour attachments are sampled.
      * @param program User program supplying the fragment stage.
      * @param camera  Camera whose view transforms the pushed lights.
@@ -389,6 +395,34 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     [[nodiscard]] std::size_t programSlotBuildCount() const noexcept;
 
+    /** @brief Gets how many device-wide idles this backend has taken.
+     *
+     * Diagnostic with an invariant behind it: NO frame-assembly path may stop the
+     * device any more — a replaced render pass / framebuffer, a dropped
+     * fullscreen-program node, a slot being torn down, a target being rebuilt and
+     * a bridge dropping its state wrappers all PARK their objects in the retire
+     * ring instead. So this stays 0, and a check that changes a pass' clear and
+     * depth policy, a pass' activity, its depth MODE and a target's attachment
+     * shape every frame asserts that it does (Impl::waitForIdle is the counted
+     * entry point a future teardown that cannot park would have to use).
+     *
+     * @return Number of device-wide idles taken so far.
+     */
+    [[nodiscard]] std::size_t deviceWaitCount() const noexcept;
+
+    /** @brief Gets how many parked objects the retire ring has released.
+     *
+     * Diagnostic: a replaced render pass / framebuffer or a dropped
+     * fullscreen-program node is parked for a few frame advances and then
+     * released (Impl::retireObject / advanceRetireRing). A ring that never
+     * released would grow without bound, so a policy-changing check asserts this
+     * advances — and, together with the validation-clean run, is what shows the
+     * deferral is live rather than merely silent.
+     *
+     * @return Number of objects released by the ring so far.
+     */
+    [[nodiscard]] std::size_t retiredObjectCount() const noexcept;
+
   private:
     /** @brief Identity of one retained backend slot.
      *
@@ -486,6 +520,106 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     void erasePassSlotsFromTarget(vine::graphics::RenderTarget* target,
                                   const vine::graphics::RenderPass* pass);
 
+    /** @brief Drops the fullscreen-program slots that BIND @p target's depth.
+     *
+     * Called when a pass of @p target revokes its depth promotion: a program slot
+     * built before that point was built while the promotion stood, so its
+     * descriptor set names the promoted layout, and recording it in the same frame
+     * would name a layout the image is no longer in. The slot is dropped (and
+     * reported) for that frame; the owner's next drawScreenProgram call rebuilds
+     * it, without the depth binding — or refuses the program when it needs it.
+     *
+     * @param target Target whose promotion was just revoked.
+     */
+    void dropDepthSamplingProgramSlots(vine::graphics::RenderTarget* target);
+
+    /** @brief Decides whether a target's shared depth can be borrowed.
+     *
+     * RenderTarget::shareDepth points a target at another target's depth image so
+     * forward content can test against a G-buffer's depth. That is only possible
+     * when the source's image is usable as THIS framebuffer's depth attachment as
+     * it stands; every other case is reported (once per episode) and the target
+     * builds its own depth instead of attaching an unusable image.
+     *
+     * @param target Target requesting the borrow.
+     * @param w      Width the framebuffer is being built with.
+     * @param h      Height the framebuffer is being built with.
+     * @return true when the target must attach its source's depth image.
+     */
+    bool resolveDepthBorrow(vine::graphics::RenderTarget& target, uint32_t w, uint32_t h);
+
+    /** @brief What an overlay draw (PiP / fullscreen program) records into.
+     *
+     * Every overlay draw resolves the same destination: the target the pass is
+     * bound to (setRenderTarget; nullptr = the window), the graph its view must
+     * record into, and the surface size its rectangle is expressed in. The two
+     * overlay kinds differ in WHAT they draw and in how they fit a rectangle —
+     * never in where they draw, which is why the rules live in one place (see
+     * resolveOverlayDestination).
+     */
+    struct OverlayDestination {
+        vine::graphics::RenderTarget*      target = nullptr; ///< Destination target (nullptr = the window).
+        ::vsg::ref_ptr<::vsg::RenderGraph> graph;            ///< Graph the view records into; null = refuse to draw.
+        int                                surf_w = 0;        ///< Surface width the rectangle is clamped to.
+        int                                surf_h = 0;        ///< Surface height the rectangle is clamped to.
+    };
+
+    /** @brief Resolves and prepares the destination of an overlay draw.
+     *
+     * Rejects the source == destination feedback loop (sampling the very
+     * attachments the pass writes), refuses a destination without a usable
+     * colour attachment, (re)builds an off-screen destination whose size changed,
+     * and hands back the graph the draw records into. Also re-targets the pass:
+     * a pass that drew into another target before drops the slot it left there,
+     * so it stops compositing into it.
+     *
+     * @param source Sampled target (also what the feedback loop is checked against).
+     * @param key    Slot key of the draw (identifies the graph of an off-screen pass).
+     * @param what   Draw name for the diagnostics ("drawScreenTexture" / "drawScreenProgram").
+     * @return The destination; @c graph is null when the draw must not record.
+     */
+    OverlayDestination resolveOverlayDestination(vine::graphics::RenderTarget* source, const SlotKey& key,
+                                                 const char* what);
+
+    /** @brief Places an overlay view in its destination's graph by its explicit order.
+     *
+     * The view is already compiled (against the destination's render pass), so this
+     * only changes the RECORD order — the stacking position among the target's other
+     * slot views (see placeViewByOrder). A view that (re)starts recording under an
+     * off-screen destination also puts that pass' graph back into the command graph,
+     * which is why the off-screen order is reconciled here.
+     *
+     * @param dest  Resolved destination of the draw.
+     * @param view  The slot's retained view (compiled).
+     * @param order The pass' explicit pipeline order.
+     */
+    void placeOverlayView(const OverlayDestination& dest, const ::vsg::ref_ptr<::vsg::View>& view, int order);
+
+    /** @brief Builds the View an overlay drawable records through and installs it in its slot.
+     *
+     * Shared by the PiP screen triangle and the fullscreen program: wrap @p content in
+     * its own View (own camera + the sub-rect viewport), compile it against the
+     * destination's render pass, then hand it to the slot and position it by the slot's
+     * explicit order. A compile failure reports (when it was the compile) and returns
+     * false, and the caller drops its slot so the next frame retries — the half-compiled
+     * view is never recorded.
+     *
+     * @tparam Slot    Screen / program slot type (both carry camera / view / order / ready).
+     * @param dest     Resolved destination of the draw.
+     * @param slot     Slot to install into (its @c order positions the view).
+     * @param content  The drawable the view wraps.
+     * @param x        Viewport origin x in device pixels.
+     * @param y        Viewport origin y in device pixels.
+     * @param w        Viewport width in device pixels.
+     * @param h        Viewport height in device pixels.
+     * @param front    Insert the view as the graph's FIRST child until it is ordered.
+     * @param what     Draw name for the compile-failure diagnostic.
+     * @return true when the slot now holds a compiled, placed view.
+     */
+    template <class Slot>
+    bool installOverlayView(const OverlayDestination& dest, Slot& slot, const ::vsg::ref_ptr<::vsg::Node>& content, int x,
+                            int y, int w, int h, bool front, const char* what);
+
     /** @brief Restricts a pass to @p target by dropping its slots elsewhere.
      *
      * A pass owns exactly one retained slot per target; when a pass renders
@@ -511,6 +645,72 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * skipped, so a pass that stays disabled costs nothing per frame.
      */
     void retireInactivePassSlots();
+
+    /** @brief Releases the off-screen targets the host dropped without announcing it.
+     *
+     * The target table owns every entry it holds (Target::owner), so once the host's last
+     * reference is gone nothing can ever look that entry up again — the same rule the
+     * geometry and material caches follow. Releasing them here keeps their attachments,
+     * render graph and compiled pipelines from living until the session ends. Engine targets
+     * are normally released by releaseRenderTarget(); this is the safety net for a host that
+     * drops the RenderTarget object itself.
+     *
+     * Safe to call at any frame boundary: it sweeps what the engine's own
+     * releaseRenderTarget() would have, and calling it again is a no-op when nothing is
+     * abandoned.
+     */
+    void releaseAbandonedTargets();
+
+    /** @brief Reports which device this session runs on — once, on the first submit.
+     *
+     * "The gate passed" is only meaningful together with the driver it passed on: a software
+     * rasteriser and a real GPU exercise different paths. The first submit is where the
+     * window's device and swapchain exist (vsg creates them lazily, on first use).
+     *
+     * Reports once per session (the flag is checked and set here), so a later call is a no-op
+     * and cannot duplicate the line.
+     */
+    void reportSessionDevice();
+
+    /** @brief Compiles the views this frame's slot syncs queued, before anything is recorded.
+     *
+     * D22 incremental compile, ON by default (see incrementalCompileViews for why vsg's own
+     * compile path is not wired up in this renderer). VINE_VSG_DISABLE_INCREMENTAL_COMPILE
+     * forces the full-graph compile as an A/B escape hatch, and any incremental failure falls
+     * back to it automatically. A failed compile is reported; the frame still submits, because
+     * an acquired swapchain image has to be presented.
+     *
+     * @pre Nothing of this frame has been recorded yet — the whole point is that the new
+     *      subtrees carry their compiled pipelines when the record happens.
+     * @post The pending queue is empty (a frame that never reaches here keeps it for the next
+     *       submit, since nothing was presented in between).
+     */
+    void compilePendingViews();
+
+    /** @brief What has to happen once a frame HAS been submitted, in this order.
+     *
+     * 1. A pass that preserved depth on a target whose depth image was in a transitional
+     *    layout (UNDEFINED, or still PROMOTED to SHADER_READ_ONLY) recorded the variant that
+     *    consumes that layout, for this frame only. Swapping it earlier would make the pass'
+     *    very first frame record a LOAD against an image that has not made that transition
+     *    yet. Swapping the graph's render pass (not the framebuffer) is legal because the
+     *    variants differ only in the depth load-op and the depth attachment's initial layout,
+     *    i.e. they are render-pass compatible.
+     * 2. The objects parked kRetireRingDepth frames ago can go: one frame has been submitted,
+     *    so every command-buffer slot that could still reference them has been re-recorded —
+     *    the scenes' retained nodes (one ring per content slot, see SceneBridge::retireNode)
+     *    and the renderer-owned objects the frame assembly parked rather than stopping the
+     *    device (a pass' replaced render pass / framebuffer, a dropped fullscreen-program
+     *    node — see Impl::retireObject).
+     *
+     * Both steps are keyed on the SAME event, which is why they share one entry point: a
+     * frame has been presented. Advancing a ring twice in one frame would release objects
+     * one frame too early, and settling variants before the submit would corrupt the frame
+     * being recorded — so the pair is applied together or not at all.
+     *
+     * @pre The frame has been submitted (recordAndSubmit() + present()).
+     */
+    void settleSubmittedFrame();
 
     /** @brief Resets the queued per-pass state (target / viewport / lights /
      * depth policy / pass order / presenting marker).

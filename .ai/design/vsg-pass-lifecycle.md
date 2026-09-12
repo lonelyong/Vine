@@ -222,6 +222,20 @@ descriptor set 可能仍被**已提交但未完成**的命令缓冲引用：view
 显式销毁路径（槽 teardown / resize / 释放 target / depth 策略变更 / `shutdown()`）本就
 先 `deviceWaitIdle`（§3 铁律），`advanceRetireRing` 只覆盖那些**无等待**的活路径。
 
+**2026-09-12 扩展**：渲染器**自己持有**的对象也有了同一条环（`Impl::retireObject()` /
+`advanceRetireRing()`，同为 `kRetireRingDepth = 4`、同在 `submitFrame()` 的提交之后推进）：
+被换下的 render pass / framebuffer（变体重建、提升撤销级联）、被丢弃的全屏 program 节点
+（同帧撤销提升）、以及"某个 pass 本帧不再公告"时被摘下的视图（那条路径根本没销毁任何东西，
+等待本来就是多余的）。判定标准仍是 §3：**破坏性销毁**继续显式 `deviceWaitIdle`。
+
+**关键反例（实测，值得记住）**："把槽的 view 停放进环"**不能**替掉破坏性路径的等待 ——
+`SceneBridge::clearCache()` 会清空共享对象注册表（`shared_objects_->clear()`），那里的管线 /
+采样器**不一定**还有存活节点作为唯一持有者，于是被停放的 view 撤不走它们：把 target 重建 /
+槽 teardown 的等待换成停放 view，lavapipe + validation 报出 **12 条**
+`VUID-vkDestroyPipeline-00765` / `vkDestroySampler-01082`（`VkPipeline ... in use by VkCommandBuffer`
+= 已录制但未重录的命令缓冲）。所以：**非破坏性路径停放（0 等待），破坏性路径（碰 clearCache /
+丢图像）保留计数等待**，边界就这么定的。
+
 测试：`GeometrySafetyTest.ReplacedDataNodeIsParkedUntilTheRingAdvances`（用
 `vsg::Object::referenceCount()` 断言被替换的数据节点在环推进前仍被持有、推进 4 次后释
 放）；设备侧 `vsg_backend_selftest::runInFlightChurnPhase()` 每帧替换数据/材质标识/绘制
@@ -254,11 +268,14 @@ descriptor set 可能仍被**已提交但未完成**的命令缓冲引用：view
 1. **D13 材质缓存无逐出 + 地址复用风险** → §9.1
 2. **跨 pass 命令列表缓存** → §9.2
 3. **`VkPipelineCache` 持久化** → §9.3
+4. **合并每 pass 的 `beginRenderPass`（dynamic rendering）** → §9.4 🔴 被上游 vsg 阻塞（仅登记）
 
-## 9. 待办设计登记（3 项；2026-09-11 记录，尚未实施）
+## 9. 待办设计登记（4 项；2026-09-11 起，逐项实施/登记）
 
 本节只做**设计登记**（问题、根因、方案、验收、风险、依赖），实施排期与优先级在各条目末尾。
-三项都属于“非正确性阻塞”但会被真实场景触发的缺口，登记目的是让后续切片有明确的入口与验收口径。
+四项都属于“非正确性阻塞”但会被真实场景触发的缺口，登记目的是让后续切片有明确的入口与验收口径。
+（§9.4 不同：它是**结构性重构方向**，且当前**无实现路径** —— 登记它是因为 §28 的一批机制
+本是为它之前的限制而存在，将来若要动，入口与判据都写在那里。）
 
 ### 9.1 材质缓存的逐出与身份（D13，§8.1 同源）——**已实施（2026-09-11）**
 
@@ -383,6 +400,67 @@ descriptor set 可能仍被**已提交但未完成**的命令缓冲引用：view
   单线程，仍应在文档标注前提）。
 
 **依赖 / 优先级**：依赖 vsg 能力（A/C 路线）；🟢（启动性能，非正确性）。
+
+### 9.4 合并每 pass 的 `beginRenderPass`（dynamic rendering）——**上游卡住，仅登记（2026-09-12）**
+
+> 本条是 §28 的后续方向，此前只在批次小结里被列为"待办①"，**没有写清它被上游挡住** ——
+> 本节补齐：现状、能删掉什么、为什么现在动不了、以及将来动手时的第一步。
+
+**现状（代码事实）**
+- §28 之后每个 pass 有自己的 render pass 对象 + framebuffer，记录进自己的 `vsg::RenderGraph`
+  （`Impl::PassObjects::graph`）。一个目标上 K 个 pass ⇒ 一帧 **K 对**
+  `vkCmdBeginRenderPass` / `vkCmdEndRenderPass`（vsg 侧就在
+  `src/vsg/app/RenderGraph.cpp:150/170`）。
+- 之所以"每 pass 一个对象"：**一个 render pass 只能烧死一种 load-op 组合**，而清屏的 pass 与保留的
+  pass 需要不同组合。由此派生出一整类机制：变体工厂
+  （`makeColorDepthRenderPass(depth_initial, promote_depth, color_clear)`）、
+  "变体必须结构兼容"（子通道依赖逐字段相同，否则 `renderPass-02684`）、
+  布局处于过渡态时的一次性变体 + 帧末换回（`render_pass_transient`）、
+  以及宿主运行期改清屏策略要重建（D49）。
+
+**合并指什么**：同一个目标的 K 个 pass 只记录 **1 个渲染作用域** —— 用
+`vkCmdBeginRendering` / `VkRenderingInfo` 内联 attachments，load/store 变成**逐 pass 的取值**
+（`VkRenderingAttachmentInfo::loadOp`），布局转换从 render pass 的 initial/final layout 变成
+**显式 barrier**，管线改用 `VkPipelineRenderingCreateInfo`（写格式而非 render pass 对象）。
+
+**能删掉什么 / 代价**
+- 删：变体工厂与"兼容"不变量、一次性 transient 变体 + 帧末换回、D49 的"请求变了就重建"、
+  每帧 K−1 对 begin/end。
+- 付：提升 / 撤销 / seed / 回读这四处的布局记账要**重新实现成 barrier**（语义不变，更微妙）。
+- **不白费**：`planPassVariant()` 的**决策**原样复用（喂给 `VkRenderingAttachmentInfo`），
+  selftest 全部相位（`clear flip:` / `preserved depth:` / `depth only preserve:` /
+  `promotion revoke` / `policy churn:` …）作为行为契约**不动** —— 判据先有，重构才有底。
+- 收益性质：桌面 / 离屏路径的 begin/end 开销很小，**主要收益是简化**，不是性能
+  （tile-based GPU 与记录开销才会真吃到）。
+
+**为什么现在动不了（实测证据，vsg 1.1.16）**
+1. `build/_deps/vsg-src` 全树**没有** `vkCmdBeginRendering` / `VkRenderingInfo` /
+   `dynamic_rendering`（`include/`、`src/` 都搜过）：vsg 的记录路径只有
+   `RenderGraph` 的 begin/end render pass。
+2. **没有任意命令的记录钩子**（`include/vsg/commands/` 里没有 `CustomCommand` 一类），
+   所以无法在 vsg 的遍历里插一个 `vkCmdBeginRendering`。
+3. `src/vsg/state/GraphicsPipeline.cpp:233` 是 `pipelineInfo.renderPass = *renderPass;`、
+   紧接着 `pNext = nullptr` ⇒ 管线**硬绑** render pass 对象，产不出 dynamic-rendering 形态的管线。
+
+⇒ 两条落地路径：**(a) 等上游 vsg 支持**（或合入 PR）；**(b) 渲染记录层自研**
+（不再用 vsg 的 `RenderGraph` / `GraphicsPipeline`）。后者是"换后端记录实现"量级，**不是 §28 的小后续**。
+
+**触发条件**（满足其一再开工）
+- 上游 vsg 支持 dynamic rendering（或我们用 PR 推上去）；
+- 实测记录开销 / tile GPU 的 load-store 成为瓶颈（`offscreenBuildCount` 与帧率对照）。
+
+**第一步（spike，判据用现有相位）**
+- 目标：**一个** target、**一个** 作用域用 `vkCmdBeginRendering` 跑通（管线用
+  `VkPipelineRenderingCreateInfo`，attachments 的初始布局自己 barrier）。
+- 判据：复用 `clear flip:`（运行期清屏策略改变生效）+ `policy churn:`（策略变化帧 0 次设备等待、
+  退役环释放、末帧像素/深度正确）+ 门禁 VUID 0；再做反证（去掉某个显式 barrier ⇒ 必红）。
+- 只在 spike 绿之后才谈"把 `PassObjects` 换成作用域分组"，并同步删除对应单元测试
+  （`PassRenderPassPlanTest` 里只有与 render pass 对象绑定的部分会消失，决策部分留下）。
+
+**风险**：布局转换责任转移到应用层，**错误是静默的**（表现为随机花屏 / 深度错，而非 VUID）⇒
+必须靠像素 / 深度断言与反证，而不是只看"无 VUID"。
+
+**依赖 / 优先级**：🔴 **被上游阻塞**（vsg 1.1.16 无能力）；正确性上无缺口，登记以备将来。
 
 ## 10. 后端诊断通道（2026-09-11 落地）
 
@@ -1299,6 +1377,14 @@ O(1)，而不是每帧 O(表)。
 
 ## 28. 计划：把 render pass 从**目标粒度**下沉到 **pass 粒度**（**进行中**，分阶段）
 
+> **"每 pass 一个 render pass 对象"不是终点（2026-09-12 补记）**：这条路线存在的理由只有一个 ——
+> 一个 render pass 对象只能烧死一种 load-op 组合。若将来能走 **dynamic rendering**
+> （`vkCmdBeginRendering`：attachments 内联、load-op 变成逐 pass 取值），同一个目标上的 K 个 pass
+> 可以合并成 **1 个渲染作用域**，本节这批机制（变体工厂、"变体必须兼容"的子通道依赖约束、
+> 一次性 transient 变体 + 帧末换回、D49 的"请求变了就重建"）**大部分都可以删掉**，剩下的只是
+> 把布局记账改写成显式 barrier。当前**走不通**（vsg 1.1.16 无 dynamic rendering、无自定义记录钩子、
+> 管线硬绑 render pass 对象）—— 证据、触发条件与第一步 spike 的判据见 **§9.4**。
+
 > **实施进度（2026-09-11）**
 > - ✅ **第 1 步：render-pass 工厂支持 per-pass 颜色 load-op。** `makeSampleableRenderPass` /
 >   `makeDepthLoadRenderPass` 新增 `color_clear`（含 LOAD 时的
@@ -1308,7 +1394,7 @@ O(1)，而不是每帧 O(表)。
 >   **诚实说明**：新路径（`color_clear=false`）要等第 3 步接入每 pass render pass 后才被设备门禁
 >   覆盖，当前仅为编译期就绪的工厂能力。
 > - ✅ **第 2 步：`Target::PassObjects` 数据模型 + 纯策略函数。** 新增
->   `Target::PassObjects`（render_pass / render_pass_seed / framebuffer / graph /
+>   `Target::PassObjects`（render_pass / render_pass_transient / framebuffer / graph /
 >   load_depth / color_clear / clear_color / seeded）与目标级 `attachments_built` /
 >   `depth_seeded` / `any_load_pass`（**先加不删**，旧字段仍权威）；并把 §28 的三条不变量
 >   （颜色 LOAD、LOAD↔提升互斥、未定义图像需 seed、借深度恒 LOAD 不提升）抽成**设备无关**的
@@ -1363,7 +1449,8 @@ RenderGraph），图像按目标共享"。已勘察的改动面与**必须同时
 按此执行，避免半成品）：
 
 1. `Target::PassObjects`（按 `SlotKey` 索引，`std::map` 地址稳定）：`render_pass`（语义
-   变体）+ `render_pass_seed`（仅"本 pass 要求 LOAD 且图像未定义"时需要）+ `framebuffer`
+   变体）+ `render_pass_transient`（只在本帧需要：图像 UNDEFINED 的 CLEAR seed，或图像还在
+   提升留下的 SHADER_READ_ONLY）+ `framebuffer`
    + `graph` + `load_depth` + `seeded` + `order` + 该 pass 的 clear 颜色；`Target::graph`
    只留给窗口目标（swapchain graph），"目标已建"改判 `framebuffer != nullptr`。
 2. **LOAD / 提升互斥**：借用别的目标深度的 pass 一律用 LOAD（策略归出借方）；一旦某目标
@@ -1393,6 +1480,9 @@ RenderGraph），图像按目标共享"。已勘察的改动面与**必须同时
   之后才出现 LOAD pass ⇒ 必须**重建**该 pass 的 render pass + framebuffer + graph，并把
   已挂的 View **重新挂回新 graph**，同时刷新 `reconcileOffscreenOrder` 的依赖边。这是本项
   最容易出隐蔽 bug 的一条（计划原文只写了“不得提升”，没写已有 pass 怎么处理）。
+  **同一时刻还要看槽**：撤销提升发生在一个正在组帧的帧里，而已建好的全屏 program 槽若**绑定了**
+  该目标的深度，它的描述符名的是"提升后"的布局 —— 必须在本帧里丢弃（否则帧内就过期，每帧一条
+  `imageLayout-00344`），见 §30 的 D47 条。
 - **`Target::graph` / `render_pass` / `framebuffer` 等字段在 5 个 TU 中被直接引用 98 次**
   （`VsgRenderer.cpp` 22 / `VsgRendererTargets.cpp` 41 / `VsgRendererPasses.cpp` 17 /
   `VsgRendererOverlay.cpp` 10 / `VsgRendererImpl.hpp` 8），迁移要按 TU 分批、每批 gate 绿。
@@ -1463,3 +1553,827 @@ cp -f build/lib/*.so* dist/lib/ && cp -f build/plugins/vine/*.so dist/plugins/vi
 5. **可选：D40 的"释放半条"端到端断言**：需要设备级（真实 VkPipeline 被 `prune()` 回收后
    重建变体重新计数）。单元层面解决不了（依赖 retire 环的放手时机），已记录在 §27。
 6. **真机 GPU 像素冒烟**：本机只有 llvmpipe/lavapipe（无 `/dev/dri`），仍待有 GPU 的机器。
+
+## 30. 第三轮审查（D47–D51，2026-09-11）
+
+审查范围：`gfx_backend_vsg`（pass / 目标 / 槽生命周期）+ `graphics`（前端引擎与 `SceneView`）。
+本轮**先证明再动手**：D47 / D48 / D50 做了反证或单元判据；D49 / D51 在第二批改动里
+落地（同一批，因为两者都改深度策略），并补齐设备级相位、门禁证据行与逐条反证。
+
+### D47（已修）全屏 program 的深度绑定读的是"描述"，不是"实际可采样性"
+
+`drawScreenProgram` 用 `source->depthPromotion()`（宿主写在**目标描述**里的请求）决定是否把源深度
+作为 `gbuffer_depth` 采样纹理绑定，而**实际**可采样性是 `Target::depth_sampleable`：一旦该目标上出现
+保留型（LOAD depth）pass，§28 的"LOAD 与提升互斥"就撤销提升（深度留在附件布局），但 program 仍按
+`SHADER_READ_ONLY_OPTIMAL` 声明描述符 ⇒ 布局不符（每帧 VUID）。**只有这里**还在读描述 ——
+`readDepthBuffer` 与 `buildOffscreenTarget` 的借用校验读的都是实际值，这种不对称就是它漏网的原因。
+修法：改用 `src.depth_sampleable`，并把 `ProgramSlot::source_depth_sampleable` 纳入重建身份（策略变化
+→ 节点重建）；`VsgRenderer.hpp` 的契约同步写明。
+**同帧残留（已修，判据先落地）**：若"采样深度"的 program pass 在同一帧**先于**撤销提升的保留型 pass
+创建，则本帧节点已按"可采样"建好（描述符声明 `SHADER_READ_ONLY_OPTIMAL`），而撤销发生在同一帧更晚
+⇒ 该帧记录的是**过期描述符**（`VUID-vkCmdDraw-imageLayout-00344`，每一条 draw 一条），宿主无从知道。
+判据：`runDepthSamplingProgramPhase` 第 3 段 —— P(order 0) 清屏（提升）→ 采样深度的 program
+(order 2，**先建**) → Q(order 1) 保留型（**后到**，但 order 在前 ⇒ P 已跑，Q 无需过渡变体，把问题
+**孤立到槽**而不是 pass 自身布局）。修复前实测：**1 条 VUID + 2 条 FAIL**（无丢弃报告；目标被写入
+采到的 `(6,6,6)`）；修复后 VUID 0、两条判据转绿。
+修法：撤销提升的级联里**丢弃**那些真的**绑定了**该深度的 program 槽（`removeGraphChild` + 删槽 +
+一条 `dropped for this frame` 报告）。宿主下一次 `drawScreenProgram` 会按新的可采样性重建：不需要
+深度的 program 正常重建并继续绘制，需要深度的走既有 `MissingDescriptorBinding` 拒绝路径（D47 的
+另一半语义）。
+判"真的绑定"用 `programSamplesDepth()`（纯函数，ABI：深度绑定号 = 颜色附件数；`ProgramSamplingTest`
+4 条单测钉住"跟随颜色数 / 只看 fragment 段 / 无声明即无绑定"）。**纯颜色 program 不受影响** ——
+它的管线布局里根本没有深度采样器，所以本帧照常绘制、下一帧也不需要重建：丢弃只针对"有东西可丢"的槽。
+级联里既有的 `waitForIdle()` 同时兜住了这一步（删槽会释放视图与管线对象，上一帧的命令缓冲可能仍在
+飞行）；延后释放（retire 环）仍是**独立改动**，与本条无关。
+
+### D48（已修）深度清屏值被颜色清屏值覆写（`VkClearValue` 是 union）
+
+`passGraph` 的"已建 pass 只更新清屏值"路径写 `graph->clearValues[0].color`，但 `VkClearValue` 是
+**union**：**depth-only** 目标（`attachDepth`、无 `attachColor`）的 `clearValues[0]` 是**深度项**
+⇒ 清屏颜色一变就把深度清屏值改成颜色的 float 位型（shadow-map 路径）。修法：仅当目标有颜色附件时
+才写该项。
+
+### D49（已修）pass 的清屏策略在运行期改变会被静默忽略
+
+`PassObjects` 的 load-op 在 graph 创建时按当时的请求烧死，早退路径只同步颜色**值**、不同步
+**load-op**。于是宿主运行期改 `RenderPass::setClearEnabled` / `setShouldClearDepth`（或 direct driver
+改 `clear(..., clearDepth)`）**不生效**：原来 LOAD 的仍 LOAD，原来 CLEAR 的仍 CLEAR。
+修法（与 D51 同批）：把"每 pass 变体"的决策全部提到早退路径之前（纯策略函数 `planPassRenderPass()`，
+不碰设备），并把重建判据改成**宿主请求**（`PassObjects::want_color_clear` / `want_depth_clear`）；
+请求变了就重建该 pass 的 render pass / framebuffer（**保留同一个 `RenderGraph` 对象** ⇒ 内容 View
+不重编），换之前 `waitForIdle`。
+
+实现时踩到并修好的三个坑，全部写进代码注释，避免后人再犯：
+
+1. **渲染通道兼容性包含子通道依赖**。运行期互换 render pass 的前提是"两个变体兼容"。规范豁免的只有
+   initial/final layout、load/store op、attachment reference 的 layout、两个 resolve flag ——
+   **子通道依赖必须逐字段相同**，否则 `VUID-vkCmdDrawIndexed-renderPass-02684`
+   （`pDependencies[0].srcAccessMask is incompatible ... VkAccessFlags2(0) !=
+   VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT`）。两个工厂原先各按自己的 load-op 算
+   `ext_to_sub.srcAccessMask`（CLEAR 变体 0、LOAD 变体含深度写），现在统一成与 load-op 无关的常量。
+2. **保留型（LOAD depth）pass 必须声明深度图像"真实所在"的布局**。它不只是 UNDEFINED（未定义，要先
+   CLEAR seed）或 ATTACHMENT（上一 pass 留在附件布局），还可能是 **SHADER_READ_ONLY**（上一帧的提升型
+   pass 把它留在可采样布局）。第三种情况若声明 ATTACHMENT ⇒ `VUID-vkCmdDraw-None-09600`。
+   因此 `makeDepthLoadRenderPass()` 的 `initial_clear` 升级为 `VkImageLayout depth_initial`：三种变体
+   只在 load-op 与 initial layout 上不同 ⇒ 互相兼容，可随时互换。该帧记**一次性变体**
+   （initial = SHADER_READ_ONLY，帧末 `submitFrame()` 换回常驻变体），与既有 seed 机制同一套路
+   （字段更名为 `render_pass_transient` / `transient`）。
+3. **重建判据不能比 load-op，要比请求**。同一帧里一个 pass 会被构建两次（`setupContentSlot()` 与
+   `render()` 各一次），而颜色 bootstrap（新目标的颜色图还是 UNDEFINED，第一个 pass 必须清一次）会让
+   第二次构建算出不同的 load-op ⇒ 旧判据在同一帧里就把变体重建成"对 UNDEFINED 图像做 LOAD"（09600）。
+   现在比较 `want_color_clear` / `want_depth_clear`。颜色 bootstrap 也改成**一次性变体**，否则
+   bootstrap 会变成"这个 pass 永远清颜色"，每帧擦掉同目标早先 pass 画的东西 —— 正是 §28 要根除的模型。
+   提升被撤销后本帧残存的 SHADER_READ_ONLY 布局由同一机制消费（`depth_read_only`：提升仍有效
+   + 本帧还没有别的 pass 先跑过；判据用 `passes_active_this_frame` 与实际 record 顺序）。
+
+判据：selftest 新相位 `runClearPolicyFlipPhase`（证据行 `[selftest] clear flip:`）—— 同一个 pass 先在
+`clear(clear, false)` 下画近 quad、再在 `clear(clear, true)` 下画远 quad；断言深度由 0.0249 变回 0.0166
+且远 quad 出现（中心 B=46）。反证：把早退判据强行改成恒真（§28 之前的"永不重建"）→ 该相位 FAIL
+（"the clear-policy change was ignored"）。
+
+### D50（已修，前端）`SceneView::setScene` 只换引用，两个消费者仍指向旧场景
+
+`setScene` 原实现只有 `scene_ = std::move(scene)`：
+* 默认 window pass 的内容是**绑在 pass 上**的（`RenderEngine::addPass(pass, content, order)`），换成
+  新场景后 viewer 仍画旧场景；
+* 惰性创建的默认 `OrbitCameraManipulator` 持旧场景的 **raw_ptr**（拾取 / `fitToScreen`）⇒ 宿主的最后
+  一个引用消失后就是**悬垂指针**。
+修法：`setScene` 内 `engine_->bindPassContent(window, scene_)` + 对 `OrbitCameraManipulator` 调
+`setScene()`（用 `dynamic_cast`，**不新增成员**以避免 SDK 类布局 / ABI 变更）。
+判据：`GraphicsTest.SceneViewTest.SetSceneReachesDefaultWindowPassAndSceneAwareManipulator`
+（帧内 `Scene::contentCollectCount()`：替换后的场景走 1 遍、被替换的 0 遍；manipulator 的 `scene()`
+也换过去）；反证：stash 掉 `SceneView.cpp` 的改动 → 断言红（实测被替换的场景走 1 遍）。
+
+### D51（已修）depth-only 目标两处叠加缺陷
+
+1. **深度清屏值取的是近平面**：`t.depth_clear_value = has_color ? 0.0f : 1.0f`，而本后端是
+   **reverse-Z**（`VK_COMPARE_OP_GREATER`，近 = 1、远 = 0）⇒ 清到 1.0 后 `fragment(depth) > 1.0` 恒假，
+   **任何几何体都过不了深度测试**。改为恒为 `0.0f`（远平面），与 window 清屏一致。
+2. **shader set 假设至少一个颜色附件**：`buildShaderSet()` 在 `color_count == 0` 时仍用默认（1 个颜色
+   附件）的 `ColorBlendState`，与 0 颜色附件的 render pass 不匹配 ⇒
+   `VUID-VkGraphicsPipelineCreateInfo-renderPass-06055`（管线创建失败）。改为按 `color_count` 显式构造
+   blend 附件列表（0 个即空列表）。
+3. D48 的颜色清屏覆写（`VkClearValue` 是 union）在 depth-only 目标上是同一个坑，早退路径已加
+   `has_color` 守卫。
+
+判据：selftest 新相位 `runDepthOnlyTargetPhase`（证据行 `[selftest] depth only:`）—— 96x54 的 depth-only
+D32 目标，每帧换清屏颜色、`DepthMode::TestAndWrite` 画一个 z=1 的 quad；回读深度断言 quad 写入
+~0.0249、未触碰角落 ~0.0000（远平面），且清屏颜色变化不会覆写深度清屏值。反证：把清屏值改回
+`has_color ? 0.0f : 1.0f` → 该相位报 2 条 FAIL（"the depth-only target centre holds 1.0000 ..."、
+"... untouched corner holds 1.0000, not the far plane"）。
+
+### D51 补（depth-only 目标也要遵守深度策略）
+
+第一轮修完 depth-only 目标"能画"之后，它仍然在两处与其它目标不一致：
+
+1. **`clearDepth=false` 被静默忽略**：`passGraph` 的 `!has_color` 分支恒用 `makeDepthOnlyRenderPass(...)`
+   （CLEAR），plan 判成 LOAD 也不管 —— 与 D49 同一类错误。修法：该工厂也接收
+   `VkImageLayout depth_initial`（UNDEFINED → CLEAR；其余 → LOAD），`passGraph` 传入
+   `depth_load ? depth_initial : UNDEFINED`。
+2. **谎报不可采样**：`if (depth_load) t.depth_sampleable = false;` 对 depth-only 目标是错的 ——
+   它的深度**永远**收在 `SHADER_READ_ONLY`（这正是这个 render pass 的契约），而
+   `readDepthBuffer()` 正是拿 `depth_sampleable` 当"图像当前布局"用 ⇒ 回读 barrier 会拿
+   ATTACHMENT 当 oldLayout，而图像实际在 SHADER_READ_ONLY（反证实测：8 行 VUID）。修法：
+   撤销提升的两处都加 `has_color` 守卫；depth-only 的"稳态布局"由一个新的
+   `steady_depth_layout`（depth-only ⇒ SHADER_READ_ONLY，否则 ATTACHMENT）表达，级联重建、
+   常驻变体、一次性变体都读它。
+
+判据：selftest 新相位 `runDepthOnlyPreservePhase`（证据行 `[selftest] depth only preserve:`）—— 同一个
+pass 先以 `clearDepth=false` 画近 quad、再以 `clearDepth=false` 画远 quad（必须输）、最后以
+`clearDepth=true` 画远 quad（必须赢）；三次回读都走 `readDepthBuffer`（顺带把布局断言钉住）。
+反证：① 改回"永远清屏" → 相位报 FAIL（"a depth-only pass that always clears ignores the request"）；
+② 改回无守卫地撤销提升 → 8 行 VUID（回读 barrier 的 oldLayout 不符）。
+
+### D49 补（颜色 bootstrap 的一次性语义有判据了）
+
+D49 的第三坑（同一帧内一个 pass 会被 build 两次 ⇒ 重建判据不能比 load-op）当时只是**推断**：
+"颜色 bootstrap 必须是一次性变体，否则这个 pass 会永远清颜色"。现在有了相位与两半反证：
+`runColorBootstrapPhase`（证据行 `[selftest] color bootstrap:`）在**一个 colour-only 目标**上放两个
+都不请求清屏的 pass：前几帧第一个 pass 铺满、第二个画小方块（bootstrap 清一次把 UNDEFINED 图像定义
+出来）；**然后第一个 pass 停止出图**（空命令，但仍被 announce、仍记录它自己的 render pass），
+它的填充必须还在 —— 没有任何 pass 请求过清颜色。
+
+反证（两半都实测）：
+* 把 `bootstrap_color_clear` 从一次性变体里拿掉（等价于"bootstrap 变永久"）⇒ 相位报 FAIL
+  （`only 100 of 5184 pixel(s) ... (0 blue fill, 100 red quad) — a pass that never asked to clear kept
+  clearing and wiped what the pass before it drew`），另有一条 FAIL 汇总；
+* 反过来让首帧直接记录"稳态变体"（不清 UNDEFINED 颜色图）⇒ **6 行 VUID**
+  （`VUID-vkCmdDraw-None-09600`：对 UNDEFINED 图像做 LOAD）。
+
+### 顺序假设：实测结论（记录，不改代码）
+
+`depth_read_only`（提升被撤销那一帧，LOAD pass 要吃下 SHADER_READ_ONLY）与提升级联都基于一个假设：
+**一个目标的 pass 按它们记录的 order 依次 build**。最可疑的是"host 把两个 pass 的 `render()` 调用
+顺序反过来（但 order 不变）"这一帧。做法：把 `runPreservedDepthNotSampleablePhase` 里两个 pass 的
+调用顺序对调（仍在 `setPassOrder(-10)` / `(-5)`）实测 —— **VUID 0 / FAIL 0，相位自己的判据依旧成立**。
+原因：该帧被构建的第一个 pass 是**保留型**的，它走的是 **seed** 分支（CLEAR 定义新图 + 帧末换回常驻
+变体），而提升型 pass 在 `any_load_pass` 变真后就**不再提升**，两者都收在附件布局；记录顺序仍是
+order（-10 先）。既然测不出反例，本轮**不做重构**（不做"撤销提升也延后一帧"的改法），而是把这个反序
+场景**永久留在该相位里**（它自己的断言 + 门禁的 VUID 扫描一起看住它），并在相位注释与 §28 的假设处
+写明"决策基于 build 时刻的目标状态"。
+
+**补记（2026-09-12，同帧残留修复时重新评估）**：D47 的同帧残留**确实**是这一族问题（program 槽的
+描述符比 pass 布局早一步），但最终**没有**走"撤销延后一帧"（那条路要同时改 `depth_still_promoted` 的
+判据与 install 时机，并把 `depth_sampleable` 的语义从"已撤销"改成"本帧仍可采样"，牵动 D47 诊断、
+借用校验与 `readDepthBuffer` 的 barrier 推导 —— 收益只是让槽多活一帧，代价是把整个提升时序改成两段式）。
+采用的做法是**只对槽动手**：撤销级联里丢弃真正绑定了该深度的槽（见 D47 一条）。
+且即便延后一帧，槽在"被撤销的那一帧"之后仍然可能过期（撤销 pass 自己就把深度交回附件布局），
+所以丢弃是**无论如何都要做**的那一步。
+
+### 代码整理（2026-09-12）：变体决策抽成纯函数 + 工厂合并
+
+本轮的三个坑（子通道依赖必须逐字相同、LOAD 必须命名真实布局、同一帧双建不能比 load-op）
+全部发生在 `passGraph` 的 9 个布尔量之间，而只有 `planPassRenderPass()` 那一半有单测。整理：
+
+* **决策收进纯函数**：新增 `PassVariant`（记录哪几个 load-op/layout + 是否一次性变体 +
+  常驻变体的参数）与 `planPassVariant()`（包住 `planPassRenderPass()`，补上颜色 bootstrap /
+  深度 seed / 提升撤销 这三个一次性决定）以及 `passVariantIsStale()`；`passGraph` 只剩
+  "取值 → 建对象 → 换图"。
+* **三个 render pass 工厂合并为两个**：`makeSampleableRenderPass` + `makeDepthLoadRenderPass`
+  → `makeColorDepthRenderPass(depth_initial, promote_depth, color_clear)`（行为等价：LOAD 分支原本
+  就强制 `promote=false`，而 plan 对 LOAD pass 也一直是 false），删掉 92 行重复体；两个变体的
+  依赖块抽成 `makeColorDepthDependencies()` —— 本轮 `renderPass-02684` 的根因是"两个工厂算的
+  依赖不一致"，现在"兼容"是结构性的，不再靠约定。
+* **单测 89 → 96**：`test_vsg/PassRenderPassPlanTest.cpp` 新增 7 例，销住 bootstrap 一次性 /
+  seed / 撤销 / depth-only 布局制度 / 借用深度 / stale 只看请求。
+  **测试当场拓出一个真简化**：`depth_initial` 原先对 CLEAR pass 也返回稳态布局，调用方只好
+  自己写 `depth_load ? depth_initial : UNDEFINED`；改成"CLEAR 一律 UNDEFINED"后调用方那层特例
+  分类消失了。
+* **有意不做**：没有为三种变体引入 Strategy/Factory 类层次 —— 变体是值语义 + 一次设备调用，策略已
+  由纯函数表达；项目规则也要求避免不必要的抽象。
+
+### 代码整理（2026-09-12，第二批）：selftest 驱动的 RAII 作用域
+
+自测的每个相位都在手写同一串调用（`beginFrame` → `beginPass` → order → target → depth mode →
+clear → lights → draw → `endPass` → `endFrame` + `swapBuffers`）。改成两个 RAII 助手：
+`FrameScope`（头尾一对）与 `PassScope`（一个 pass 的全部前置状态 + `endPass()`），再加
+`readDepthOrFail()`。**先只改本轮新增的 6 个相位**，旧相位不动，让 diff 可审。
+
+两个细节值得记住：
+* **一个 pass 要占一个块**：`PassScope` 若与下一个 pass 共用一个作用域，前者的 `endPass()` 会拖到
+  帧末才跑，pass 协议就错位了（backend 会把嵌套/未配对报成 `PassProtocolViolation`）⇒ 变换后每个
+  pass 是 `{ PassScope …; draw; }`。
+* **变换本身要能验证**：第一版脚本有个 off-by-one，把 draw 调用**删掉了**（编译得过、行为不对）。
+  修正后加了断言：变换前后 `renderer.render(` / `renderer.drawScreenProgram(` 的行数必须相等。
+  这是“机械重构也要有判据”的一个现成例子。
+
+成效：`main.cpp` 4485 → 4420 行（14 个 pass 块 + 8 个帧循环），后续新相位可直接用；旧相位仍用
+长形式，留作增量迁移。
+
+第三批（同日）：按同一套机制把**剩余全部相位**也过了一遍：又 43 个 pass 块 + 25 个帧循环，
+`main.cpp` 最终 4485 → **4228** 行；原生 `beginPass`/`endPass` 只剩两个助手自身的实现。
+
+第三个坑（比前两个更难看出来）：**帧对只在它是所在块的最后一条语句时才能折叠**。有四个相位
+**在循环内**回读（回读必须在 submit 之后），第一次尝试照样折叠了它，`runDepthShareOrderPhase`
+当时就炸了：12 行 VUID + "the borrower tested the PREVIOUS frame's depth" —— 因为回读现在跑在
+提交之前。识别方式：`swapBuffers()` 之后的第一个非空行若**缩进变浅**（块结束）才折叠；否则保留
+显式帧对。
+
+**机械重构的等价性判据**（以后都这么用）：重构前后各跑一次独立 selftest，`diff` 两份输出中的
+**全部 `[selftest]` 行**（像素计数、build 计数、深度值、诊断都在内）。最终结果：逐字节相同 +
+VUID 0 / FAIL 0 + 门禁 PASS。draw-count 断言拦住了"draw 被删"，而**证据行 diff 拦住了
+"draw 被挪到错误的时刻"** —— 两者都不多余。
+
+### 本轮验证与门禁
+
+* `ninja -C build` 零警告；`test_vsg` **100**（+7：变体决策单测；+4：`ProgramSamplingTest` 的
+  深度绑定判定）、`test_graphics` **158**（含 D50 的 +1）。
+* 独立设备跑（lavapipe + Khronos validation，`VINE_VSG_DEBUG_LAYER=1`）：`VUID-` 计数 **0**、
+  `[selftest] FAIL` 计数 **0**。
+* `scripts/gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID）；新证据行写进 `require_evidence`：
+  `depth only:` / `depth only preserve:` / `clear flip:` / `preserved depth:` / `depth sample:` /
+  `color bootstrap:` / `dropped for this frame` / `policy churn:`（既有证据行全部不变；`dropped for this
+  frame` 是唯一的非 `[selftest]` 行 —— 它是渲染器 warning，证明同帧撤销真的丢了槽）。
+* A/B（判据必须会咬，实测）：
+  * D51a 反证（清屏值改回近平面）→ `depth only:` 相位 FAIL（2 条）；
+  * D51 补反证（depth-only 永远清屏）→ `depth only preserve:` 相位 FAIL（2 条）；
+  * D51 补反证（无守卫地撤销提升）→ 8 行 VUID（回读 barrier oldLayout）；
+  * D49 反证（早退判据恒真）→ `clear flip:` 相位 FAIL（2 条）；
+  * D47 诊断反证（不报 ChannelIgnored）→ `preserved depth:` 相位 FAIL（2 条）；
+  * **D47 绑定反证（绑描述而非实际可采样性）→ `depth sample:` 相位 FAIL（4 条：未被拒、无解释、
+    目标被写成了采到的 （6,6,6））+ 6 行 VUID**；
+  * **D47 同帧残留反证（先加判据、后修）→ `depth sample:` 第 3 段 FAIL（2 条：无丢弃报告、
+    目标被写入 `(6,6,6)`）+ 1 行 `VUID-vkCmdDraw-imageLayout-00344`**；修复后同一次运行转绿；
+  * **策略变化不停设备的反证（第九批）**：①把变体交换 / 提升级联改回 `waitForIdle()` →
+    `policy churn:` 报 **29 次设备等待** + 退役环零释放（2 条 FAIL）；②单把"不再公告的 pass 的
+    视图摘除"的等待改回 → **7 次**（每个未公告帧一次，与相位里 toggle pass 的频率一致）；
+  * 颜色 bootstrap 反证①（拿掉一次性变体，等价于"bootstrap 变永久"）→ `color bootstrap:` 相位 FAIL
+    （`0 blue fill, 100 red quad` = 填充被抹掉）；
+  * 颜色 bootstrap 反证②（首帧不定义颜色图，直接记稳态 LOAD 变体）→ 6 行 VUID；
+  * 反序渲染实测（两个 pass 的 `render()` 调用顺序对调，order 不变）→ VUID 0 / FAIL 0
+    （结论已写在上面的"顺序假设"一节，该反序场景永久留相位）。
+  * D50 反证（stash `SceneView.cpp`）→ `GraphicsTest` 断言红。
+* **D47 判据空白已闭合**：新增相位 `runDepthSamplingProgramPhase`（证据行 `[selftest] depth sample:`）
+  是自测里唯一真的**采样纹理**的 program ——
+  （1）提升型源的深度收在 SHADER_READ_ONLY，按 ABI（binding 1 = 源深度）的 program 必须能构建、
+  并把采到的深度写回颜色（断言中心是小数值灰度：既不是源颜色、也不是 0）；
+  （2）同一个 program 跑到"深度被保留型 pass 撤销提升"的源上必须被**拒绝**；
+  （3）**同帧撤销**（program 先建、撤销后到）时该槽必须被丢弃、目标保留自己的清屏色。
+  为此后端新增了一条硬约束（D47 据此才可观测）：**fragment 声明的描述符绑定若本 pass 提供不了，
+  就在建节点时拒掉并上报**（`ProgramNodeFailure::MissingDescriptorBinding`）。vsg 1.1.16 没有
+  shader 反射，所以绑定是**从源码扫**出来的（`declaredBindings()`：`layout(...)` 限定符里
+  的 `binding` / `set`，set 缺省 0）；不拒的话管线缺少该 bind，错的是**每帧一条 VUID**、且宿主
+  一无所知。
+* **策略变化帧不再停设备（第九批，2026-09-12）**：变体重建、提升撤销级联、被丢弃的 program 节点、
+  以及"某个 pass 本帧不再公告"的视图摘除，过去都在帧装配期 `waitForIdle()`。现在它们把被换下的
+  render pass / framebuffer / 节点**停放**进渲染器自己的退役环（`Impl::retireObject()` /
+  `advanceRetireRing()`，环深与推进点和 §8.2 的节点环一致）。判定标准还是 §3：**破坏性销毁**
+  （槽 teardown、target 重建、`bridge.clearCache()`、depth 模式变更的状态重建）继续显式等待 ——
+  它们释放的对象是图像 / 视图级别的，逐个停放不划算。
+  判据：新增 `runPolicyChurnStressPhase`（证据行 `[selftest] policy churn:`）连续 15 帧翻颜色清屏、
+  深度清屏与"pass 是否公告"，断言 **`deviceWaitCount()` 增量 0**、退役环**确实释放**（
+  `retiredObjectCount()` 增量 > 0）、**target 构建数恰好 2**（一次一个，策略变化只能重建变体）、
+  以及末帧的像素与深度值仍符合末帧策略。
+  反证（实测）：把变体交换 / 级联改回等待 → 同 15 帧 **29 次设备等待** + 环零释放（2 条 FAIL）；
+  单独把"视图摘除"的等待改回 → **7 次**（每个未公告帧一次）。
+  为让等待可数，所有刻意的等待都走 `Impl::waitForIdle()`（计数）而不是自由函数。
+  仍未覆盖：**depth 模式变更**（`SceneBridge::invalidateState()` 会丢状态包装）与 `clearCache()`
+  系列 —— 要覆盖它们得先把桥接侧的节点也停放（`retireNode` 已在，缺的是"清缓存=停放而非销毁"），
+  留作独立改动；相位特意把 depth 模式固定住，正是为了让这条边界可见（第一版相位翻了 depth 模式，
+  于是每帧都撞上这处等待 —— 这本身就是一次实测确认）。
+
+* **桥接侧结果与边界（第十批，2026-09-12）**：`SceneBridge::invalidateState()` **本来就**把状态包装
+  停放（`retireNode`），所以 depth 模式变更那一处调用方等待是多余的 ⇒ 去掉（反证：改回 → 相位报
+  **14 次**等待 / 15 帧，因为该相位每帧翻一次 depth 模式）。现在相位同时翻 colour clear / depth clear /
+  **depth 模式** / pass 是否公告，四种都是 0 等待。
+  但同一批尝试的\"把 target 重建与槽 teardown 的等待也换成停放 view\"**被实测否决**：那两条路径会
+  `clearCache()`，清空共享对象注册表，那里的管线 / 采样器没有存活节点兜底 ⇒ **12 条**
+  `vkDestroyPipeline-00765` / `vkDestroySampler-01082`。于是把它们改回计数等待，并在注释里写明原因
+  （§8.2 的\"关键反例\"）。
+  相位同时加了**第二段**：每帧翻 target 的附件形态（depth promotion，属于 build key）⇒ 每帧重建，
+  断言\"重建次数 = 帧数-1、等待次数 = 重建次数\" ⇒ 破坏性路径每帧**恰好一次** teardown 等待，不会更多。
+  顺带量到一条语义不对称：**pass 请求**（清屏策略）在**当帧**生效，而**target 描述**变更在**下一帧
+  start 时**被采纳 —— 相位的计数按实测写成 `frames - 1`，并把这条写进相位注释（描述变更在帧内做出、
+  下一帧 start 后可见；帧前做出则当帧可见）。
+  新增/保留的诊断：`deviceWaitCount()`（破坏性等待计数）与 `retiredObjectCount()`（环释放计数，证明
+  停放真的会释放）。
+
+## 31. 结构整理：槽访问器 + `passGraph` / `buildOffscreenTarget` 拆分（2026-09-12）
+
+本轮只改**结构**（行为契约不动），判据是**机械重构的等价性**：重构前后各跑一次独立 selftest，
+`diff` 两份输出的**全部 `[selftest]` 行**必须逐字节相同（本批实测：相同），外加 `test_vsg` 100 /
+`test_graphics` 158 / VUID 0 / FAIL 0 / 门禁 `RESULT: PASS`。
+
+**改了什么（按收益排序）**
+
+1. **三张槽表的遍历收敛成一个访问器。** `Target` 持有三张槽表（content / screen / program），
+   它们的生命周期一样、只是"保留什么"不同，于是同一段双/三循环在 4 处重复
+   （`retireInactivePassSlots`、`erasePassSlotsFromTarget`、`releaseRenderTarget` 的采样槽清理、
+   `detachedSlotCount`）。新增 `Target::forEachSlot` / `visitSlot(key)` / `hasSlot(key)` /
+   `eraseSlot(kind, key)` 与 `SlotKind`，四处各变成**一个**循环；"只有 content 槽拥有 bridge"
+   这类差异由 `if constexpr (requires { slot.bridge; })` 就地表达（一侧），不再由三块近乎相同的
+   代码隐式表达。同时 `Impl::slotGraph()` 取代了三份"这个槽的记录图在哪"的 lambda（其中
+   `retireInactivePassSlots` 原先还有一次**只为判断"要不要动手"**的完整预扫描 + 一次真正的扫描，
+   现在合成一次遍历，返回值 `any` 决定要不要 `reconcileOffscreenOrder()` + 日志 ⇒ 语义不变）。
+2. **`passGraph` 387 → 271 行**，抽出四个命名单元（都在 `Impl`）：
+   `passAttachments()`（设备 + 附件格式 + has_color/has_depth/borrowed，含 `PassAttachments` 结构）、
+   `makePassObjects()`（一个 load-op 组合 → render pass + framebuffer）、
+   `depthStillPromoted()`（"深度是否还停在提升后的布局"这一判断，原先是一个 20 行 lambda）、
+   `revokeDepthPromotion()`（撤销级联：重建每个非当前 pass 的非提升变体并停放旧对象）。
+   同帧"丢弃绑定深度的 program 槽"单独成为 `VsgRenderer::dropDepthSamplingProgramSlots()`。
+3. **`buildOffscreenTarget` 317 → 257 行**：借用校验（三种不可用情形 + 一次/持久上报策略，
+   ~90 行）抽成 `VsgRenderer::resolveDepthBorrow()`，于是该函数读作
+   "校验借用 → 分配附件 → 发布"，不再在中间夹一段领域策略。
+4. 删掉两处**因重构而失效**的重复：`releaseRenderTarget` 里局部 `graph_of_slot` lambda
+   （已被 `Impl::slotGraph` 取代）、`VsgBackendUtility` 的自由 `waitForIdle`
+   （第十批之后无调用者）。
+
+**踩到的结构约束（值得记住）**
+
+- `VsgRenderer` 的公开头只**前置声明** `struct Impl;`，所以内部 helper **不能**在公开头里写
+  `Impl::Target&` 形参（会报 incomplete type）。结论：需要 `Target` 的 helper 一律做成
+  **`Impl` 的成员**（声明在 `VsgRendererImpl.hpp`、定义在对应 TU），或做成 `VsgRenderer` 的
+  私有方法且**形参不出现 `Impl` 类型**（如 `resolveDepthBorrow(RenderTarget&, u32, u32)`）。
+  另外 `Impl` 内**声明位置**要晚于 `Target` 的定义（否则又是 incomplete type）。
+
+**下一批的结构候选（未做，避免和本次混在一起）**
+
+- `VsgRendererOverlay.cpp` 的 `drawScreenTexture`（226 行）与 `drawScreenProgram`（247 行）
+  共享同一套骨架：dest 解析 → 尺寸/矩形钳位 → 旧槽失效判定 → 建视图 → 按 order 摆放。
+  抽出这套骨架能同时缩短两个函数，但两者的槽类型与失效条件不同，需要先写清"共同骨架"的契约。
+- `reconcileOffscreenOrder`（209 行）：排序 + 依赖边重建 + 命令图重挂三件事混在一起。
+
+## 32. 结构整理续：两个 overlay 函数的共享骨架 + 记录计划三段（2026-09-12）
+
+§31 末尾列的三个候选里，前两个在本节做掉（同样只改结构，判据还是**机械重构等价性**：
+前后各跑一次独立 selftest，`diff` 全部 `[selftest]` 行**逐字节相同** + VUID 0 / FAIL 0 +
+`test_vsg` 100 / `test_graphics` 158 + 门禁 `RESULT: PASS`）。
+
+**1. `drawScreenTexture` 226 → 194 行，`drawScreenProgram` 247 → 222 行**
+
+两者的头部（约 55 行 × 2）是**逐字重复**的：取 viewport → 源目标校验 → 目的目标解析
+（`source == destination` 反馈环拒绝 / 无可用颜色附件拒绝 / 离屏目标按尺寸重建）→ surf 尺寸 →
+`retargetPass` → `passGraph(dest, key)`。而且**报错措辞除前缀外完全相同**。
+
+修法：新增 `VsgRenderer::OverlayDestination{target, graph, surf_w, surf_h}` 与
+`resolveOverlayDestination(source, key, what)`，两个函数各只剩自己的**差异**：源校验
+（PiP 的 attachment 钳位 / program 的深度提升报告）、key 的构造（`sampledTarget(source, att)` /
+`sampledTarget(source)`）、矩形策略（PiP 自动贴右下 / program 只钳位）、节点工厂与日志。
+消息用 `formatDiagnostic(u8"%s: ...", what)` 保持**逐字节不变**（`what` 就是原来的两个前缀），
+所以相位里对消息的匹配不受影响。
+
+收益不只是行数：**"overlay 画到哪"的规则现在只有一份** —— 反馈环、无附件、离屏重建这三条
+一致性约束不会再在两个函数之间漂移。
+
+**2. `reconcileOffscreenOrder` 215 → 21 行**
+
+原函数把三件事串在一起：收集"本帧要记录哪些 pass 图"（并跳过已 retired 的 pass）、把目标按
+采样 / 借用依赖排成合法记录序、把命令图 children 重写成该序。现在是一个值 + 三个命名阶段，
+都挂在 `Impl` 上：
+
+- `RecordPlan`：`window_graph` / `graphs_of`（每个目标的 pass 图，已按该目标自己的 pass order
+  稳定排序）/ `present`（**当前**记录序，作为并列时的稳定种子）/ `order`（依赖合法序）；
+- `fillRecordPlan(plan)`：收集（含"retired 的 pass 不记录"这条语义，以及"同一目标内按显式
+  order 记录"的理由）；
+- `orderRecordPlan(plan)`：采样边 + **深度借用边**（借用方本帧 LOAD 源写的深度）+ 纯函数
+  `stableTopologicalOrder`；
+- `applyRecordPlan(plan)`：按序重挂 children，并在"别人借用其深度的目标"的**最后一张图之后**
+  插入借用方的 depth-share barrier，窗口图永远最后。
+
+`reconcileOffscreenOrder()` 只剩守卫 + 三步调用（21 行），阶段之间的数据流被显式化成 `RecordPlan`。
+
+**过程教训（大函数重构）**：只替换函数**头部**会留下旧函数体（第一版编辑就是这样，编译期立刻暴露）。
+拆函数要**整段替换**，且 oldString 的锚点必须选在**两版真正不同的行**上（本例里新旧的
+`pass_records` lambda 注释几乎相同，只有折行与 `Impl::Target&` / `Target&` 不同 ⇒ 只能靠这些
+差异行定位）。
+
+**仍剩下的结构候选**
+
+- `vsg_selftest/main.cpp` 4603 行：相位可按主题拆成多个 TU + 一个共享 helper 头（`FrameScope` /
+  `PassScope` / `PixelImage` / `readTarget` / `readDepthOrFail` / 若干程序构造）。**它的判据是
+  现成的**（输出逐字节相同），但工作量在测试侧，收益也主要在测试侧可读性。
+- 两个 overlay 函数的**尾部**（`makeCompiledOverlayView` 失败处理 → 记 `camera` / `view` /
+  `ready` → `placeViewByOrder` → `reconcileOffscreenOrder` → 日志）结构一致，可用一个
+  槽类型模板化的 helper 收敛（两者的槽类型不同，故需要 template member 或重载）。
+
+## 33. 结构整理三：回读路径去重 + 设备等待一律可数（2026-09-12）
+
+本节同样只改结构；判据仍是**机械重构等价性**（前后各跑一次独立 selftest，`diff` 全部
+`[selftest]` 行**逐字节相同** + VUID 0 / FAIL 0 + `test_vsg` 100 / `test_graphics` 158 +
+门禁 `RESULT: PASS`），本次还多了一条**不变量**：全后端不再有"未计入诊断"的直接
+`vkDeviceWaitIdle`。
+
+**1. 两个回读函数的公共前奏与一次性提交**
+
+`readColorBuffer`（134 → 122 行）与 `readDepthBuffer`（123 → 113 行）各自重复了同一套东西：
+会话 / 目标可用性判断、"同步前先等设备"、宿主可见内存的分配、"录制一次提交并等它完成"。
+抽出三个 `Impl` 单元：
+
+- `readbackTarget(target)`：会话 + `attachments_built` + 尺寸的公共前奏，**故意不等设备** ——
+  两个调用方都先做格式检查（并报明原因）再付等待的代价；
+- `hostVisibleMemory(device, requirements)`：把"回读落地内存必须是
+  `HOST_VISIBLE | HOST_COHERENT`"这条要求写在一处（colour 落在 LINEAR 图像、depth 落在
+  staging buffer，但内存要求相同）；
+- `submitOneShot(commands)`：队列选择 + fence + **具名的超时常量**
+  `kReadbackTimeoutNs`（原先两处各写 `100000000000`，且都没解释这个数字的含义：超时意味着
+  "GPU 根本没做完"，不是"很慢"）。
+
+**2. 设备等待：全部可数（诊断一致性）**
+
+第十批引入 `deviceWaitCount()` 时的说法是"每一次刻意的设备级等待都被计数"，但实测有三处漏网：
+`shutdown()`、`readColorBuffer`、`readDepthBuffer` 直接调 `viewer->deviceWaitIdle()`。
+现在它们都走 `Impl::waitForIdle()`（计数 + 同一条注释语义），于是
+**`grep "deviceWaitIdle"` 在插件里只剩 `Impl::waitForIdle()` 的函数体**，而
+`policy churn:` 相位的"0 次设备等待"断言覆盖的正是全部等待入口 —— 诊断与代码重新一致。
+
+**仍剩下的结构候选**（与 §32 相同，未做）
+
+- `vsg_selftest/main.cpp`（约 4600 行）：按主题拆 TU + 一个共享 helper 头（`FrameScope` /
+  `PassScope` / `PixelImage` / `readTarget` / `readDepthOrFail` / 程序构造）。它的判据是现成的
+  （输出逐字节相同），但把数千行在文件间搬运需要**整段重写**，当前工具链下代价高、收益主要在
+  测试侧可读性 ⇒ 记录在案，等专门一轮做。
+- 两个 overlay 函数尾部（建视图 → 记 camera/view/ready → `placeViewByOrder` → reconcile → 日志）
+  可用槽类型模板化的 helper 收敛。
+
+## 34. 结构整理四：两个 overlay drawable 工厂共享"配方"（2026-09-12）
+
+本轮仍是纯结构改动。判据同前（机械重构等价性：`[selftest]` 行逐字节相同 + VUID 0 / FAIL 0 +
+`test_vsg` 100 / `test_graphics` 158 + 门禁 PASS）。
+
+**发现**：`makeScreenTextureNode`（PiP 屏幕三角形）与 `makeFullscreenProgramNode`（用户全屏程序）
+在设备眼里是**同一件东西**：全屏三角形 + 深度测试/写入关闭 + 不混合 + overlay 的视口 + set 0 上绑
+采样纹理 + 运行时编译的 shader 模块。两人的"配方"里有三段逐字重复：
+
+1. prologue：`ShaderCompiler` 可用性 → 两个 stage 创建 → 编译失败 → `ShaderSet{vs,fs}` +
+   `defaultGraphicsPipelineStates = makeOverlayPipelineStates(extent)`（失败码 `NoCompiler` /
+   `CompileFailed` 完全一致）；
+2. `GraphicsPipelineConfigurator` 之后：`init()` → `copyTo(StateGroup, SharedObjects{})` →
+   push constant（仅 program 有）→ `Draw(3,1,0,0)`；
+3. 因此"两次 overlay 绘制长什么样"曾经写在两处，任何一处改动（例如将来给 overlay 加混合或
+   换深度状态）都要记得改另一处。
+
+**修法**：抽出 `makeOverlayShaderSet(vs_src, fs_src, fs_entry, extent, failure)` 与
+`makeOverlayStateGroup(config, push_data)`（`push_data` 为 null 即 PiP 那种不带 push constant 的
+drawable），两个工厂只剩自己的**差异**：描述符绑定与纹理（program 是 N 个颜色 + 可选深度，PiP 是
+一个屏幕纹理）、采样器（深度用 nearest）、push constant 范围。
+`makeScreenTextureNode` 73 → **51** 行，`makeFullscreenProgramNode` 182 → **159** 行。
+
+**诚实说明（收益性质）**：本批**没有**减少总行数（新 helper 的 Doxygen 比省下的代码更长，
+TU 758 → 780）。它的收益是**单点定义**："overlay drawable 的配方"现在只有一份，
+两个 pass 之间不会漂移 —— 与 §32 的 `resolveOverlayDestination` 同理。
+
+**未做**：`programSamplesDepth` / `declaredBindings` 仍只被全屏 program 使用（PiP 不需要 ABI 校验），
+不强行合并；`VsgPipelineFactory.hpp` 的 467 行里真正的声明只占一部分（其余是 Doxygen），
+暂不拆分。
+
+## 35. 重构残留检查：守卫要跟着使用者走（2026-09-12）
+
+§33 把"一次性提交"收进 `Impl::submitOneShot()` 之后，我在两个回读函数里留下了**没有编译错、
+但已经是死代码**的东西 —— 这一节把这次检查本身记下来，因为它是重构后**必做**的一步：
+
+**发现（都在 `VsgRendererTargets.cpp`）**
+
+1. `readColorBuffer` 里 `const auto queue_family = physical->getQueueFamily(...)` —— 提交搬走之后
+   没人用了（`submitOneShot` 自己算）；`readDepthBuffer` 里 `physical` 也只剩"判空"这一处使用。
+2. 更值得记的是**守卫的位置**：两个函数原本用 `if (device == nullptr || physical == nullptr) return
+   false;` 挡住"没有设备就去提交"。提交搬进 `submitOneShot()` 后，这个判空就与**真正解引用设备的地方**
+   分家了 —— 留在调用方是"守卫着别人的参数"，搬到 `submitOneShot` 才是守卫自己的使用。
+
+**修法**
+
+- `Impl::submitOneShot()` 从 `void` 改为 **`bool`**（`[[nodiscard]]`）：它自己判
+  `window` / `getDevice()` / `getPhysicalDevice()`，不可用就返回 false 并让调用方 `return false`；
+  两个调用方从此不再重复这段判空 —— 于是 `readColorBuffer` 只需 `device`（建图 / 查格式属性用）
+  与 `source`，`readDepthBuffer` 只需 `device`（建 staging buffer 用）。
+- 顺带修回一处**我在同一批里改错的东西**：抽取时误删了 colour 路径的
+  `VkImageSubresource sub_resource{...}` 声明（编译立刻报 `undeclared identifier`）—— 记下来的原因
+  不是"手滑"，而是**同类风险**：把"提交"这类语句从中间拿走时，紧邻它的局部声明容易被一起带走，
+  而编译器只在真的用到时才报。
+
+**判据**：仍是机械重构等价性（`[selftest]` 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` 100 /
+`test_graphics` 158 + 门禁 PASS）；另外 `-Wunused-result` 在这次改动前后分别报出"忽略返回值"，
+正好证明两个调用点都消费了 `submitOneShot` 的结果。
+
+**结论（写进流程）**：每个"抽走一段逻辑"的批次结束后，都要专门查三类残留 ——
+①死局部量 / 死参数；②守卫与被守卫的使用是否还在一起；③被搬走的语句**紧邻**的声明是否被带走。
+
+## 36. 结构整理五：overlay 的"安装/摆放"两步 + 一个死参数（2026-09-12）
+
+判据同前（机械重构等价性：`[selftest]` 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` 100 /
+`test_graphics` 158 + 门禁 PASS）。
+
+**发现**：两个 overlay 函数在"节点造好之后"的部分也几乎逐字重复 —— 建视图 → 记入槽
+（`camera` / `view` / `ready`）→ 按显式 order 摆放 → 若目的是离屏目标则 `reconcileOffscreenOrder()`，
+以及"槽是被 retire 过的 → 重新挂上"的分支（`slot.detached = false` + 同样的摆放 + reconcile）。
+另外 `makeCompiledOverlayView()` 的 `what` 形参**从无使用者**（当初用于日志，日志搬走后成了死参数 ——
+与 §35 同一类残留）。
+
+**修法**
+
+- `placeOverlayView(dest, view, order)`：摆放 + "离屏目标就要 reconcile"这条规则写一处
+  （3 个调用点：两个安装分支 + 两个 re-attach 分支）。
+- `template <class Slot> installOverlayView(dest, slot, content, x, y, w, h, front, what)`：
+  建视图（对目的目标的 render pass 编译）→ 失败则报一次并返回 false（调用方丢自己的槽，
+  下一帧重试）→ 成功则记入槽并按 order 摆放。**模板**而非重载：screen / program 两种槽
+  只有 `camera` / `view` / `order` / `ready` 四个共同字段被用到；声明放在私有区（形参里没有
+  任何 `Impl` 类型，所以公开头能写），定义在本 TU（两个实例化点都在这里）。
+- 删掉 `makeCompiledOverlayView()` 的死参数 `what`。
+
+**行数**：`drawScreenTexture` 194 → **169**、`drawScreenProgram` 222 → **199**（相对 §32 之前的
+226 / 247 分别少了 57 / 48 行），TU 724 → 705。更重要的仍是**单点定义**：编译失败即丢槽、
+"摆放即可能重排命令图"这两条规则各自只有一处。
+
+**验收**：`ninja` 零警告；独立 selftest `[selftest]` 行逐字节相同、VUID 0 / FAIL 0；
+`test_vsg` 100 / `test_graphics` 158；`scripts/gfx_lavapipe_check.sh` → `RESULT: PASS`。
+
+**overlay 这两个函数还剩什么（有意保留）**：源校验（PiP 的 attachment 钳位 / program 的深度提升
+报告）、key 构造、矩形策略（PiP 自动贴右下 / program 只钳位）、节点工厂与 `V_LOGI` 文案 ——
+这些正是两者的**差异**，再合并只会把差异藏进参数。
+
+## 37. 结构整理六：内容槽每帧路径的阶段化（2026-09-12）
+
+判据同前（`[selftest]` 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` 100 / `test_graphics` 158 +
+门禁 PASS）。
+
+**对象**：`renderContentSlot`（内容槽的每帧热路径）223 行，六个阶段串在一个函数里：守卫 + 槽查找
+（必要时建槽）→ `passGraph` → detached 重挂 → 运行时改变的 pass 属性重放（深度策略 / order /
+presenting 派生出的默认光）→ 视口维持 → 相机 + 灯光 → 命令流同步 + 增量编译入队 + TEMP 诊断。
+
+**做法（全部是文件内 helper，不动公开头）**
+
+- `updateSlotViewport(camera, presenting, viewport, surf_w, surf_h)`：presenting 填满目标，其余带
+  pass 的子视口（没有子视口 = 填满）—— 原先是 if/else-if/else 三分支共 14 行；
+- `seedSlotLight(light_group, want_headlight, presenting)`：presenting 角色翻转时重置默认光
+  （窗口 presenting 给 vsg headlight，其余给 ambient fill —— 方向光会把坐标轴 gizmo 从斜角照黑）；
+- `beginLightsDroppedEpisode(announced, attached, reported)`："宣告的灯全被丢掉"是**场景的属性**
+  而非帧的属性 ⇒ 每段只报一次、一旦有可用灯（或本帧没宣告灯）立刻重新武装；函数只回答"现在要不要报"，
+  真正的 `reportFailure` 留在调用方（它才有 sink）—— 这是 §31 那条"helper 不能持有 renderer 状态"
+  的自然延伸；
+- `logContentSlotDiagnostics(target, depth_mode, order, commands, created, root_children, variants)`：
+  把 env 门控的 TEMP 诊断（`VINE_VSG_DIAG_MRT`）从热路径里搬出去。**它是有文档的工具**
+  （`vsg-user-mutation-strategy.md` / `vsg-pass-lifecycle.md` 都提到），所以**不删**，只搬。
+  注意：它不能收 `ContentSlotRequest`（那是 `Impl` 的嵌套类型，文件内自由函数里不可命名）⇒ 传字段。
+
+**结果**：`renderContentSlot` 223 → **120** 行（TU 547 → 550，含新 helper 的 Doxygen），主流程现在读作
+"守卫 → 建槽/取图 → 重挂 → 重放属性 → 视口 → 相机/灯 → 同步命令 + 入队编译"七步，每步一句。
+
+**验收**：`ninja` 零警告；独立 selftest `[selftest]` 行逐字节相同、VUID 0 / FAIL 0；`test_vsg` 100 /
+`test_graphics` 158；门禁 `RESULT: PASS`。
+
+**仍未做**（记录）：`SceneBridge.cpp` 的 `syncRenderCommands`（191 行）、`SceneBridgePipeline.cpp` 的
+`buildStateGroup`（216 行）、`SceneBridgeGeometry.cpp` 的 `buildGeometryData`（225 行）、
+`VsgRenderer.cpp` 的 `submitFrame`（131 行）都是同量级对象，但涉及缓存身份 / 顶点打包等更微妙的契约
+（改动风险高于收益），以及 `vsg_selftest/main.cpp`（~4600 行）拆 TU —— 均留待专门一轮。
+
+## 38. 结构整理七：目标 teardown 只写一处（2026-09-12）
+
+判据同前（`[selftest]` 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` 100 / `test_graphics` 158 +
+门禁 PASS）。
+
+**对象（重复的"破坏性拆解"）**：`buildOffscreenTarget`（重建分支）272 行与 `releaseRenderTarget`
+（释放分支）266 行各自写了一遍**同一件破坏性拆解**：把该目标每个 pass 的 render graph 从命令图摘除 →
+**等待设备** → 逐个 content slot `bridge.clearCache()` 并把它排队的编译 view 摘出队列。两处的注释甚至
+互相指认（"see buildOffscreenTarget"）。
+
+**做法**
+
+- `Impl::unhookTargetPasses(Target&)`：上述三件事合成一个具名单位，两处各调一次。
+  **为什么等待必须在这里**（§3 的分类）写在这一处：`clearCache()` 释放的是桥的共享对象注册表，其上
+  的管线 / 采样器不一定还有存活节点作为唯一持有者 —— 第十批实测"停放 view"会报
+  `vkDestroyPipeline-00765` / `vkDestroySampler-01082`，所以这里是计数等待，不是停放；非破坏性路径
+  （换 render pass、丢 program 槽）仍旧 `Impl::retireObject()` 停放。原先指向 `buildOffscreenTarget`
+  的注释改指这里，读者不再需要去别处找"为什么等"。
+- `buildOffscreenTarget` 里**第四份**"槽的 view 记在哪个图"退化写法（局部 lambda `slot_graph`：pass 图
+  查不到就退回目标图）与局部 `forget_view`（只有 program 槽分支用）删除，消费者槽的摘除改走既有的
+  `Impl::detachSlotView()`（§31 的单点；顺带消掉一处死操作：只有 content 槽会排队编译，program 槽
+  那次 `erase` 从来没有删除过任何东西）。等价性说明：目标级 `graph` 只在窗口目标被赋值
+  （`VsgRenderer.cpp` 的 `entryFor(nullptr).graph = renderGraph`），离屏目标恒为空，故 `slotGraph()`
+  的"查不到即 null"与原 lambda 的"退回目标图"在两种情况下结果一致。
+- 深度共享 barrier 的构造抽成 `Impl::makeDepthShareBarrier(source)`：把"合并 depth/stencil 格式必须
+  两个 aspect 都覆盖"（`VUID-VkImageMemoryBarrier-image-03320`）这条规则从 30 行内联块变成一处。
+  同时把字段 `Target::depth_share_barrier` 从 `ref_ptr<Node>` 收紧为 `ref_ptr<PipelineBarrier>`
+  （内部头新增 `<vsg/commands/PipelineBarrier.h>`；`Command` 本身就是 `Node`，所以命令图 children 处
+  的隐式转换不受影响）—— 一个 barrier 不该在类型上被藏成"某个节点"。
+- 删掉**死声明** `Impl::parkTargetObjects`：第十批把"停放"方案否决后函数体已删，声明与它那段声称
+  "停放让这两条路径不用等设备"的注释却留着，与实测结论正好相反（§35 同类缺陷：重构残留）。
+
+**行数**：`buildOffscreenTarget` 272 → **234**、`releaseRenderTarget` 266 → **253**；
+`VsgRendererTargets.cpp` 1460 → **1423**，`VsgRendererPasses.cpp` 550 → **571**（新增
+`Impl::unhookTargetPasses` 定义）。
+
+**这次改动正好落在有断言的地方**：`policy churn:` 相位第二段每帧翻 target 附件形态 ⇒ 每帧都走重建的
+teardown 路径，并断言"重建数 = frames-1、等待数 = 重建数"。等价性不是靠眼看：等待次数变了这一行就会变。
+
+**顺带修掉一处外来残留**（缺陷，非本批次引入）：`tests/test_vsg/ProgramSamplingTest.cpp` 第 46 行出现
+`}-10/2=`（编译错误），全仓扫描只有这一处，已修回 `}`；随后**全量重建**（8/8 步）再判定，避免用旧
+二进制得出"测试通过"的假结论。
+
+## 39. 可维护性整理：一条规则一处（2026-09-12）
+
+判据同前（`[selftest]` 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` 100 / `test_graphics` 158 +
+门禁 PASS）。这一批的取舍标准从"函数太长"换成"同一条规则写在几处"。
+
+**① 桥的哈希键（`SceneBridgePipeline.cpp`）**：`hashCombine` 的混合式（`0x9e3779b97f4a7c15` + 移位）在这
+一个文件里抄了三份（L1 程序 stage 集 / L1b 每布局 ShaderSet / L2 变体模板），顶点布局哈希（种子
+`0x517cc1b727220a95` + 遍历 `extra_channels`）抄了两份。现在是一个 `hashCombine()`、一个
+`vertexLayoutHash()`、两个具名种子。**为什么值得合**：三份拷贝不同步不会报错 —— 它只是让缓存不再命中，
+于是每帧重编译 / 重造管线，而没有任何诊断。`vertexLayoutHash` 是**模板**：`VertexChannel` 是
+`SceneBridge` 的私有嵌套类型，文件内自由函数不能命名它，所以把通道区间当不透明参数收进来（与
+`forEachSlot` 的 `requires` 手法同理）。同批把 MRT 那两条规则各自命名：`colourAttachmentCount(shader_set)`
+（"一帧写几个颜色附件"取自槽 shader set 的混合状态）与 `applyOpaqueBlendForAttachments(states, n)`
+（G-buffer 必须**不混合**写入：法线附件的 alpha 是 shininess/256≈0.125，混合会把存下来的法线缩到 12.5%）。
+`buildStateGroup` 216 → **179** 行。
+
+**② 顶点通道形状检查（`SceneBridgeGeometry.cpp`）**：同一套"1..4 分量 / 整除 / 顶点数相符"检查写了两遍 ——
+一遍在调用处逐条 `report`、一遍在 `makeTypedVertexData` 内部当守卫（第二个永远为真）。现在
+`channelShape()` 判定一次，`ignoredChannelMessage()` 一处出消息，`makeTypedVertexData()` 只声明前置条件
+（`@pre channelShape(...) == Ok`）。`buildGeometryData` 225 → **202** 行。
+
+**③ 缺陷（本批实测发现并修掉）：`formatDiagnostic` 的参数只为一条分支排序。** loc1 法线被拒时的报告用
+`unpack == NotXyzStride ? u8"...%u..." : u8"...%zu...%u..."` 选格式，却按第一条分支的顺序传了
+`(components, size, components)` ⇒ **第二条分支打印的是"holds <components> floats, not divisible by its
+components=<size> stride"**（数字互换、`%zu` 读 32 位值）。它编译、运行、验证层干净，只是消息在撒谎。
+修法：两条分支各自一个 `ignoredNormalChannelMessage()` 调用，各传自己的数。**系统性排查**：写了一个
+`formatDiagnostic` / `V_LOG*` 的参数计数检查器（三元格式**按分支**核对，否则这类"顺序错"根本看不见，
+因为它不缺参数），对插件 14 个文件扫描 **0 命中** ⇒ 这一类缺陷只剩这一处。检查器已入库：
+`scripts/check_diagnostic_formats.py`（默认扫插件源码，有怀疑则退出码 1，可挂到门禁）。
+
+**④ 会话初始化（`VsgRenderer.cpp`）**：`initialize()` 里 38 行窗口 traits 构造（默认尺寸、验证层开关、
+两个可选设备特性、平台相关的宿主窗口句柄转换）搬成文件内 `makeWindowTraits(host_handle)`，"哪个设置为什么
+要"跟着设置走；`initialize` 137 → **104** 行，读作"清旧会话 → 建窗口 → 三套 depth 策略 shader set →
+viewer/命令图 → 首次编译"。
+
+**有意不做**：`makeNormals` 与 `makeIndexedNormals` 里"退化（零长）法线保持零"的写法没合并 —— 前者用
+倒数乘（`1/sqrt`）+ 乘法、后者用 `vsg::normalize` 的除法，合并必然改掉最后一位比特，而像素值在证据行里
+⇒ 这是行为改动，不值得为省两行承担。`initialize()` 的 `try {` 块体没有内缩（排版问题，历史上就有），
+纯空白改动会淹没 diff，同样留给专门一轮。
+
+**行数汇总**：`buildStateGroup` 216→179、`buildGeometryData` 225→202、`initialize` 137→104；
+三个 TU 分别 641→700 / 473→539 / 965→981（新增的 Doxygen 比省下的代码长，收益是单点定义与那处缺陷）。
+
+## 40. `passGraph` 拆分（2026-09-12）
+
+**先分析**：`passGraph` 是全插件最长的函数（270 行），先按"职责"数了一遍 —— ①窗口/未构建守卫 ②取附件集
+③算本 pass 的清屏请求 ④算深度是否仍在提升布局 ⑤`planPassVariant()` 定变体 ⑥稳态快速路径（顺序变更 +
+`passVariantIsStale` + 清屏值更新）⑦设备守卫 ⑧清屏颜色取值 ⑨撤销提升 + 丢弃采样该深度的 program 槽
+⑩materialise 变体（transient 时两次 `makePassObjects`）+ 停放被换下的对象 ⑪新建 RenderGraph + 清屏值布局
+⑫写 renderPass/framebuffer/清屏值 ⑬填 `PassObjects` 并入库 ⑭目标级不变量 ⑮命令图插入 + 重排 ⇒ **9 个
+职责**；270 行里 **约 110 行是解释性注释**（决策理由，保留）。结论：**能拆**，且拆法有现成范式 ——
+本文件已经用 `planPassVariant()`（纯决策）/ `passVariantIsStale()`（纯判据）把"决定"从"施工"里分出来。
+
+**本批做掉三步（每步单独验证）**：
+
+1. `Impl::makePassGraph(t, has_depth, clear_color)`：一个 pass 一个 RenderGraph（§28），**清屏值按 framebuffer
+   的附件顺序**——颜色附件在前、深度最后；attachment 0 放本 pass 自己的清屏色，额外的 MRT 附件保持透明黑，
+   深度项放目标的深度清屏值（每个目标的 reverse-Z 远平面）。这条"清屏值布局"规则原先内联 28 行。
+2. `Impl::reuseSteadyPass(objects, want_color_clear, want_depth_clear, has_color, clear_color)`：稳态帧的
+   全部开销（`passVariantIsStale` 判据 + 清屏值更新），返回 null 表示"清屏策略变了，要重建"。**"clear value 0
+   是颜色项只在目标真有颜色附件时"**这条推理（深度目标的那一项是深度值，`VkClearValue` 是 union）随之成为
+   该函数的文档。
+3. `Impl::publishPass(t, key, objects, has_color)`：填好的 `PassObjects` 入库 + 目标级不变量
+   （`color_seeded` / `depth_seeded` / `any_load_pass` / `depth_sampleable` 的撤销提升规则）。
+
+**踩坑（本批第一次编译就暴露的约束）**：`reconcileOffscreenOrder()` 是 `VsgRenderer` 的成员（命令图只有它
+有），而 `Impl` 是嵌套类型、没有外层的 `this` ⇒ **两个 `Impl` helper 不能调用它**。于是"顺序变更 → 重排"和
+"新 pass 图入图 → 重排"留在 `passGraph`（`VsgRenderer` 层的动作），`Impl` helper 只做本地记账；两处注释
+写明分工。
+
+**结果**：`passGraph` 270 → **210** 行，读作"守卫 → 计划 → 稳态复用或重建 → 发布"；
+`VsgRendererTargets.cpp` 1423 → 1425（三个 helper 的 Doxygen 抵掉省下的代码）。
+
+**仍剩下的（下一步候选，本次未做）**：把"决定"整体打成一个 `Impl::PassPlan` 值（`planPass(t, key, target)`
+返回 {附件集, 变体, 已记录对象指针, has_color/has_depth, 两个清屏请求, color_clear, depth_load}），并把那两段
+决策理由（load-op 策略、提升状态）搬到它的文档里 —— 预计 `passGraph` 再降到 ~135 行，"决定"与"施工"彻底
+分家。**风险高于本批**：`current` 指针（指向 `t.passes` 内）与 `planPassVariant` 读取的目标级标志
+（`any_load_pass` / `depth_seeded` / `color_seeded`）都必须在"发布"改写它们之前取值，顺序错会静默改变
+一个 pass 的 load-op。留待单独一轮。
+
+### 40b. 决定与施工分家（同批续做，2026-09-12）
+
+按上面那条候选做完：新增 `Impl::PassPlan`（值）+ `Impl::planPass(t, key, target) const`（**纯决策、无副作用**，
+把两段决策理由搬进它的文档），`passGraph` 只剩"取材 → 施工"。**取值顺序是这一步的全部风险**，所以把
+`planPass` 的文档写成契约：`current` 指向目标的 pass 表 ⇒ 必须在 `publishPass` 之前取；`planPassVariant` 读的
+`any_load_pass` / `depth_seeded` / `color_seeded` 正是"发布新对象"会改的 ⇒ 计划必须先于撤销提升与发布完成。
+`passGraph` 里 `has_color`/`has_depth` 两个中间变量删掉，统一读 `plan.*`（一份真相）。
+
+**踩坑**：`PassObjects` 是 `Target` 的嵌套类型 ⇒ `Impl::PassPlan` 里必须写 `const Target::PassObjects*`（第一次
+编译即报 `unknown type name 'PassObjects'`）。另一个约束沿用 §40：`reconcileOffscreenOrder()` 是 `VsgRenderer`
+成员，`Impl` 调不到，所以"顺序变更 / 新图入图 → 重排"仍在 `passGraph`。
+
+**结果**：`passGraph` **270 → 164** 行（两批合计 −39%），TU 1425 → 1410；`planPass` 58 行、`makePassGraph` 30、
+`reuseSteadyPass` 18、`publishPass` 22 —— 每一步都是一条能单独读、单独说的规则。验收同前（`[selftest]` 45 行
+逐字节相同 + VUID 0 / FAIL 0 + test_vsg 100 / test_graphics 158 + 门禁 PASS）。
+
+## 41. `buildOffscreenTarget` 拆分（2026-09-12）
+
+对象 202 行。这里的范式不是"计划/施工"（它的"决定"是 `resolveDepthBorrow()`，早就抽成**会报告**的纯函数），
+而是**按"一个 builder 拥有什么"命名**：
+
+1. `Impl::resetTargetAttachments(t)` —— 重建的第二半（第一半是 `unhookTargetPasses`）：**列清一次 build 拥有
+   的全部东西** —— 三张槽表、颜色 / 深度图像与视图、`passes`、`attachments_built` / `depth_seeded` /
+   `any_load_pass` / `color_seeded` / `depth_sampleable` / `depth_borrow_pending_reported`、借用的源与视图与
+   barrier、`graph`、三套 depth 策略 shader set、宽高、`build_key`。**为什么要写成一个函数**：这份清单就是
+   build 的所有权边界 —— `Target` 以后加一个字段而这里忘了重置，会以"残留图像 / 残留 built 标志 / 残留借用源"
+   的形式活过重建，没有任何断言会报（第九批的 `depth_borrow_pending_reported` 就是靠改这里加进去的）。
+2. `Impl::dropConsumersSampling(target)` —— "重建的一方把旧视图换掉了，而消费者的过期检查只看源**尺寸**"这
+   条规则：同尺寸重建时消费者仍握着旧视图，会一直采样一张没人再画的图。消费者靠**槽属性** `source_target`
+   找（槽的 key 是拥有它的 pass，不是它采样的目标），摘除一律走 `detachSlotView()`。
+3. `Impl::createTargetAttachments(t, device, target, w, h, depth_src)` —— 每个附件的图像 + 视图，外加深度
+   （自有，或借用源的图像）。把两条只在设备上才发作的规则写成文档：**usage 标志**（颜色附件同时要
+   `SAMPLED`/`TRANSFER_SRC`；深度没有 `TRANSFER_SRC` 连 `TRANSFER_SRC_OPTIMAL` 都到不了，
+   `VUID-VkImageMemoryBarrier-oldLayout-01212`）与 **必须走 `createImageView()`**（否则句柄是
+   `VK_NULL_HANDLE`，从它建出的 framebuffer 带脏句柄，只在 `vkCmdBeginRenderPass` 里崩）。
+
+**结果**：`buildOffscreenTarget` 202 → **89** 行，读作"守卫 → 拆旧（两半）→ 尺寸 → 算宽度/颜色数/深度 → 借用
+判定 → 建附件 → 目标级事实 → 丢消费者 → 借用 barrier → build key / 日志 / 计数"。TU 1410 → 1399。
+
+**踩坑（本批两次编译错）**：①`targets` 表以**非 const** `RenderTarget*` 为键 ⇒ `createTargetAttachments` 的
+`depth_src` 形参不能收 `const RenderTarget*`（`std::map::find` 报 "would lose const qualifier"）；② 中途给调用点
+误加了一句 `if (impl->targets.empty()) return;` —— 它会**提前返回整个函数**，把借用 barrier / build key / 日志
+全跳过（`targets` 也不可能为空：调用者的目标已在表里）。编译不会报这种错，是自查时发现的：**"加一个守卫"
+之前先想清楚 `return` 会不会跳过后续步骤**。
+
+## 42. `submitFrame` 拆成帧协议（2026-09-12）
+
+对象 130 行，内容是**六步顺序**，每一步的理由都写在它自己那一大段注释里 —— 也就是"顺序是内容，而内容被注释
+淹了"。拆成五个具名步骤（都是 `VsgRenderer` 私有成员、无参数，声明在公开头的私有区，与该区既有 helper 的
+风格一致）：
+
+| 步骤 | 行数 | 保证 |
+|---|---|---|
+| `releaseAbandonedTargets()` | 14 | 宿主没打招呼就丢掉的目标（表持有所有权 ⇒ 再也查不到它）在这里被正常释放 |
+| `reportSessionDevice()` | 17 | 首次提交时把"跑在哪个驱动上"记到日志（门禁通过只在这个前提下有意义） |
+| `compilePendingViews()` | 19 | 本帧槽同步排队的视图先编译（D22 增量 + `VINE_VSG_DISABLE_INCREMENTAL_COMPILE` A/B 逃逸 + 失败回落全图编译） |
+| `settleTransientPassVariants()` | 25 | 记录了一次性变体的 pass **提交之后**才换回稳态变体（提前换会让它的第一帧 LOAD 一张还没转换的图像） |
+| `releaseParkedObjects()` | 20 | 提交完成 ⇒ `kRetireRingDepth` 帧前停放的对象（每个内容槽的桥环 + 渲染器自己的环）可以释放 |
+
+`submitFrame` 于是变成**协议本身**：130 → **35** 行，读下来是
+"丢被抛弃的目标 → 记设备 → [未初始化就返回] → 退掉本帧没跑的 pass → 编译 → 提交 + 呈现 → 结算一次性变体 →
+释放停放对象 → 释放被丢弃材质的资源"，每一步一句，顺序一眼可见。
+
+**行数账**：函数体 130 → 35，但 `VsgRenderer.cpp` 981 → 960、`VsgRenderer.hpp` +55 —— 五段理由从函数体内
+搬进了声明处的 Doxygen（该文件私有区的既有 helper 都是这种写法）。**收益是 `submitFrame` 不再被理由淹没，
+而不是总行数**。
+
+**踩坑（值得记，非代码问题）**：第一次编译时 clang **崩了**（frontend exit 135，栈顶报在
+`VsgRenderer.hpp:620` 一个注释里的 "annotation token"）。按插入位置逐行看过注释内容没有任何可疑构造，
+直接重跑同一条命令即通过 ⇒ **编译器的一次瞬时崩溃**（同机并行编译的内存压力），不是代码问题。教训：
+`Stack dump` 形式的失败先重跑一次再排查，但**不能就此当作通过** —— 重跑干净后仍然走完整判据
+（证据逐字节相同 + VUID 0 / FAIL 0 + 两套单测 + 门禁）。
+
+### 42b. "单调用点 helper"审计（同批，由提问引出，2026-09-12）
+
+**问题**（用户提出）：`submitFrame` 拆出来的方法还有别处调用吗？将来可能吗？会不会增加复杂度？
+
+**审计（实测）**：五个方法各 **1 个调用点**，全部在 `submitFrame()` 内（对照：既有的
+`retireInactivePassSlots` 同样 1 个）。本批**没有产生死代码**。但它们不是一类：
+
+1. **有真实复用潜力的一个** —— `compilePendingViews()`：它处理的是一个**被别处也碰**的队列
+   （`renderContentSlot` 往里 push、detach/teardown 往里 erase）；将来若出现"需要提前编译"的入口
+   （同步预热、readback 前要管线已建），或出现第二条提交路径，它就该被共享。
+2. **"帧已提交"这个事件的（原为两个）** —— 变体结算 + 停放释放：任何未来的提交者**都必须**调它们，
+   复用形态是"契约共享"而非可选。
+3. **契约上就该单调用点的两个** —— `reportSessionDevice()`（每会话一次，函数内已有标志守卫 ⇒ 多调是
+   no-op）、`releaseAbandonedTargets()`（规则挂在**帧边界**上，而帧边界只有一处；多调只是空扫）。
+
+**风险与实证**：单调用点 helper 的真实代价是**静默腐烂**。本仓库有先例：`Impl::parkTargetObjects` ——
+方案被实测否决、函数体删除，而声明与那段"停放可以让这两条路径不必等设备"的注释又活了好几批（与实测结论
+相反），直到 §38 才清掉。
+
+**处理：不改结构，改可发现性** —— 给五个方法各写一条**前置 / 幂等契约**：顺序类写 `@pre`（编译必须早于
+本帧的记录；结算必须晚于 `recordAndSubmit()` + `present()`），幂等类写明可重复调用（"多调是 no-op"）。
+比在文档里写"只被调用一次"更稳 —— 事实型断言本身会腐烂，而前置条件是调用者真正需要的东西。
+
+**并按建议合并"提交之后"那一对**：`settleTransientPassVariants()` + `releaseParkedObjects()` →
+**`settleSubmittedFrame()`**。理由是两步**由同一事件触发**（帧已呈现）：合并后无法只做一半（早结算会毁掉
+正在记录的那一帧；一帧推两次环会早一帧释放）。名字 5 → 4。`submitFrame` **33** 行，读作
+"丢被抛弃的目标 → 记设备 → [未初始化返回] → 退掉本帧没跑的 pass → 编译 → 提交 + 呈现 → 结算已提交的帧 →
+释放被丢弃材质的资源"。
+
+**反向观察（同样重要）**：长得像但**保证不同**的规则不该合并。`releaseRenderTarget` 也有"丢弃采样某目标的
+槽"的循环，但它**每个槽要一次计数等待**（破坏性），而重建路径**不能等**（§38 实测结论）—— 合并就是把两种
+保证藏进参数。这种"看起来能复用、实际必须分开"的地方，比单调用点 helper 更值得警惕。
+
+## 43. `render()` 只取一处（2026-09-12）
+
+先说**判断**：115 行里绝大多数是"取状态 → 判定 → 交给槽"，真正值得抽的只有**一处** —— 两段深度借用判定。
+其余（`ContentSlotRequest` 的 12 行结构体填充、`retargetPass` 前后）都是机械搬运，抽了只是把行数挪个地方。
+
+**做法**
+
+1. `Impl::borrowNeedsRebuild(t, target_key) const`：两条**互不相同**的"借用失效"判据合成一个纯函数，理由全部
+   写进它的文档 ——
+   * **PENDING**：请求的借用还没能兑现（构建时源还没有深度图像），因此已烘入的借用与请求的不同，等到源有
+     图像就重试；而**永久不可用**的源被记成 `unusable_depth_source`，所以只在"仅仅在等"时重试（一个禁用 /
+     从未构建的产出方每帧只花一次查表，而不是重建循环）；
+   * **STALE**：已兑现的借用绑的是源的深度 **view**，而源被重建（尺寸变化，或"同一判据为它自己监视的
+     深度策略变化"）会换掉深度图像 ⇒ 借用方的 framebuffer 会继续测那张没人再写的旧图像，**借来的深度静默
+     冻结**而旧图像一直活着。用"源当前 view vs 本目标烘入时记下的 view"检测它，重建时会重新跑一遍借用校验。
+2. **删掉重复的注释**：`render()` 里那段 20 行的 scope 属性说明，其逐条内容在各自的 setter
+   （`setPassOrder` / `setDepthMode` / `setRenderTarget`）**已经写过一遍** ⇒ 只留"READ 而不是 consumed、整
+   个 scope 看到同一组值、含义见各自的 setter"，并把 render() 特有的那句（每个目标共用一条槽路径、GPU
+   附件在这里确保）压缩进去：20 → 8 行。
+
+**结果**：`render()` 115 → **81** 行，读作"守卫 → 取每绘制调用状态 → 取 scope 属性 → 目标可用性 → 重定向
+旧槽 → 借用/重建判定 → 画槽"。TU 960 → 926。
+
+**踩坑**：又是 `targets` 表的键类型 —— 判据里 `wanted_source` 不能声明成 `const RenderTarget*`（`map::find`
+报 lose const qualifier），必须用普通指针（SDK 的 `depthSource() const` 本身就返回普通指针）。
+
+
+
+
+
+
+
+

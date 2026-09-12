@@ -13,7 +13,6 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -69,6 +68,11 @@ enum class ProgramNodeFailure
     NoCompiler,     ///< The runtime GLSL compiler is unavailable (no shaderc).
     NoFragmentStage,///< The user program carries no fragment stage.
     CompileFailed,  ///< GLSL compilation failed.
+    /// The fragment stage declares a descriptor binding this pass cannot
+    /// provide (only the source's colour attachments are bound, plus its depth
+    /// when that one really is sampleable): a pipeline whose layout lacks the
+    /// binding would fail at DRAW time, so the pass is refused up front.
+    MissingDescriptorBinding,
 };
 
 /**
@@ -126,36 +130,57 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
 ::vsg::ref_ptr<::vsg::ShaderSet> buildShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
 
 /**
- * @brief Builds an off-screen render pass whose colour attachments end in
- * SHADER_READ_ONLY_OPTIMAL so a later pass can sample them as textures.
+ * @brief Builds the colour(+depth) render pass ONE pass records into.
  *
  * vsg::createRenderPass() leaves the colour attachment in PRESENT_SRC_KHR
- * (correct for swapchain output, wrong for a texture sampled by a later
- * pass). The dependency on subpass-external fragment-shader reads makes the
- * colour writes visible to the sampling pass without an extra barrier. A
- * target with several colour attachments (MRT / G-buffer) gets one attachment
- * per entry, all sampleable on their own; fragment output @p i writes
- * attachment @p i.
+ * (correct for swapchain output, wrong for a texture sampled by a later pass).
+ * Here the colour attachments always end in SHADER_READ_ONLY_OPTIMAL and the
+ * subpass-external fragment-read dependency makes their writes visible to the
+ * pass that samples them without an extra barrier. A target with several colour
+ * attachments (MRT / G-buffer) gets one attachment per entry, all sampleable on
+ * their own; fragment output @p i writes attachment @p i.
  *
- * @param device       Device the render pass is created on.
+ * Every colour+depth variant of a pass is this function with different
+ * arguments: the variants differ only in load-ops and in the depth attachment's
+ * initial layout — the two things the Vulkan spec's Render Pass Compatibility
+ * rules exempt — while the attachment set, the subpass and (critically) the
+ * subpass DEPENDENCIES stay identical, which is what lets a pass swap its render
+ * pass at run time and keep the pipelines it already compiled (see
+ * VsgRenderer::passGraph and makeColorDepthDependencies()).
+ *
+ * @param device        Device the render pass is created on.
  * @param color_formats Colour attachment formats, one per attachment (in
  *                      attachment order).
- * @param depth_format Depth attachment format, or VK_FORMAT_UNDEFINED for a
- *                     colour-only pass.
+ * @param depth_format  Depth attachment format, or VK_FORMAT_UNDEFINED for a
+ *                      colour-only pass.
+ * @param depth_initial The layout the depth image is in when the pass starts:
+ *                      VK_IMAGE_LAYOUT_UNDEFINED CLEARs it (a freshly created
+ *                      image no pass has defined yet),
+ *                      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL LOADs
+ *                      it from a previous pass' attachment use, and
+ *                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL LOADs it from an
+ *                      image a previous pass left PROMOTED to a sampled depth
+ *                      (the pass then hands it back in the layout its consumers
+ *                      expect). An UNDEFINED image may only be CLEARed, so a
+ *                      LOAD pass has to name the layout its image really is in.
  * @param promote_depth When true the depth attachment ends in
- *                     SHADER_READ_ONLY_OPTIMAL (sampleable); false leaves it a
- *                     plain depth attachment another target can borrow.
- * @param color_clear  When true (the default) the colour attachments are
- *                     CLEARed at pass start; false LOADs the previous pass'
- *                     colour (a pass that composites over earlier content
- *                     without clearing it). A LOAD assumes the colour is
- *                     already defined (an earlier pass wrote it this frame).
+ *                      SHADER_READ_ONLY_OPTIMAL (sampleable); false leaves it a
+ *                      plain depth attachment another target can borrow. Only a
+ *                      pass that CLEARs depth may promote it (a LOAD pass must
+ *                      hand the image back in the attachment layout, see
+ *                      planPassVariant()).
+ * @param color_clear   When true (the default) the colour attachments are
+ *                      CLEARed at pass start; false LOADs the previous pass'
+ *                      colour (a pass that composites over earlier content
+ *                      without clearing it). A LOAD assumes the colour is
+ *                      already defined (an earlier pass wrote it this frame).
  * @return The configured render pass.
  */
-::vsg::ref_ptr<::vsg::RenderPass> makeSampleableRenderPass(
+::vsg::ref_ptr<::vsg::RenderPass> makeColorDepthRenderPass(
     ::vsg::Device*                    device,
     const std::vector<VkFormat>&      color_formats,
     VkFormat                          depth_format,
+    VkImageLayout                     depth_initial = VK_IMAGE_LAYOUT_UNDEFINED,
     bool                              promote_depth = true,
     bool                              color_clear = true);
 
@@ -163,48 +188,26 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
  * @brief Builds a depth-only off-screen render pass (shadow maps).
  *
  * The depth attachment is stored and left in SHADER_READ_ONLY_OPTIMAL so a
- * later pass can sample it as a shadow map. The subpass-external fragment-read
+ * later pass can sample it as a shadow map; the subpass-external fragment-read
  * dependency makes the depth writes visible to the sampling pass.
  *
- * @param device      Device the render pass is created on.
+ * A depth-only target keeps its depth sampleable no matter which pass runs
+ * (that is what the target is for), so its two variants — CLEAR and LOAD —
+ * differ only in the load-op and the initial layout, exactly like the
+ * colour+depth pass above.
+ *
+ * @param device       Device the render pass is created on.
  * @param depth_format Depth attachment format.
+ * @param depth_initial Layout the depth image is in when the pass starts:
+ *                     VK_IMAGE_LAYOUT_UNDEFINED CLEARs it (a freshly created
+ *                     image no pass has defined yet), any other layout LOADs
+ *                     it — in practice
+ *                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, which is where
+ *                     a depth-only target's image always ends.
  * @return The configured render pass.
  */
-::vsg::ref_ptr<::vsg::RenderPass> makeDepthOnlyRenderPass(::vsg::Device* device, VkFormat depth_format);
-
-/**
- * @brief Builds a colour + depth render pass that PRESERVES depth (LOAD).
- *
- * Same attachment set / colour handling as makeSampleableRenderPass, but the
- * depth attachment keeps its previous contents across frames instead of being
- * cleared at pass start (loadOp = LOAD, staying in the depth-attachment
- * layout). Used when an engine clear(color, clearDepth=false) targets an
- * off-screen RenderTarget, so a pass keeps drawing against depth a previous
- * pass wrote. Because depth is never promoted to a sampled texture here, such
- * targets must not be sampled for depth (the deferred G-buffer always clears
- * depth, so it never selects this pass).
- *
- * @param device        Device the render pass is created on.
- * @param color_formats Colour attachment formats.
- * @param depth_format  Depth format (VK_FORMAT_UNDEFINED when no depth).
- * @param initial_clear When true, the depth attachment is CLEARED on this
- *                      (first) pass — transitioning a freshly created image
- *                      from UNDEFINED into DEPTH_STENCIL_ATTACHMENT_OPTIMAL —
- *                      instead of being LOADed. Use it for exactly the first
- *                      frame after (re)building a depth-LOAD target.
- * @param color_clear  When true (the default) the colour attachments are
- *                     CLEARed at pass start; false LOADs the previous pass'
- *                     colour (a pass that composites over earlier content
- *                     without clearing it). A LOAD assumes the colour is
- *                     already defined (an earlier pass wrote it this frame).
- * @return The configured render pass.
- */
-::vsg::ref_ptr<::vsg::RenderPass> makeDepthLoadRenderPass(
-    ::vsg::Device*               device,
-    const std::vector<VkFormat>& color_formats,
-    VkFormat                     depth_format,
-    bool                         initial_clear = false,
-    bool                         color_clear = true);
+::vsg::ref_ptr<::vsg::RenderPass> makeDepthOnlyRenderPass(
+    ::vsg::Device* device, VkFormat depth_format, VkImageLayout depth_initial = VK_IMAGE_LAYOUT_UNDEFINED);
 
 /**
  * @brief The render-pass variant ONE pass under an off-screen target needs (§28).
@@ -218,9 +221,10 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
  *  - **LOAD and promotion are mutually exclusive**: once any pass of the target
  *    LOADs depth, no pass may leave the depth in SHADER_READ_ONLY, or the next
  *    LOAD would read a layout it cannot attach;
- *  - a LOAD requires the depth image to be DEFINED already; an UNDEFINED image
- *    must be CLEARed once first, which the caller records with
- *    @ref seed_required (the pass' `render_pass_seed` variant);
+ *  - a LOAD requires the depth image to be in the layout the pass names; a
+ *    freshly created image no pass has defined yet is UNDEFINED and must be
+ *    CLEARed once first, which the caller records with @ref seed_required (the
+ *    pass' one-frame `render_pass_transient`);
  *  - a BORROWED depth belongs to its source's policy: always LOAD, never
  *    promoted, and never seeded (the source defined it this frame).
  */
@@ -252,6 +256,83 @@ PassRenderPassPlan planPassRenderPass(bool color_clear,
                                       bool any_load_pass,
                                       bool depth_seeded,
                                       bool borrowed_depth);
+
+/**
+ * @brief The render-pass variant ONE pass records this frame (§28).
+ *
+ * Values only: the load-ops and layouts a render pass is built from, plus whether
+ * the pass records a ONE-FRAME variant that VsgRenderer::submitFrame() swaps for
+ * the steady one. Split out of PassRenderPassPlan so "which pass records what" is
+ * device-free AND fully covered by tests — every invariant this backend needs is
+ * expressed here (see planPassVariant()).
+ */
+struct PassVariant
+{
+    VkAttachmentLoadOp color_load    = VK_ATTACHMENT_LOAD_OP_CLEAR; ///< RECORDED colour load-op.
+    VkAttachmentLoadOp depth_load    = VK_ATTACHMENT_LOAD_OP_CLEAR; ///< RECORDED depth load-op.
+    VkImageLayout      depth_initial = VK_IMAGE_LAYOUT_UNDEFINED;   ///< RECORDED depth initial layout (UNDEFINED when the pass CLEARs).
+    bool               promote_depth = false;                       ///< The depth may end SHADER_READ_ONLY.
+    /// True when the recorded variant is a ONE-FRAME one and submitFrame() has to
+    /// swap the graph to the steady variant afterwards.
+    bool               transient   = false;
+    /// The layout the STEADY variant (and every later frame's LOAD pass) expects:
+    /// SHADER_READ_ONLY for a depth-only target, whose depth is always sampleable,
+    /// and the attachment layout otherwise.
+    VkImageLayout      steady_depth_initial = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    /// The colour load-op the STEADY variant uses: the pass' own request, without
+    /// the one-frame bootstrap that defines a fresh target's colour image.
+    VkAttachmentLoadOp steady_color_load = VK_ATTACHMENT_LOAD_OP_LOAD;
+};
+
+/**
+ * @brief Decides the render-pass variant one pass records (§28).
+ *
+ * Pure: it wraps planPassRenderPass() (which decides the depth POLICY) and adds
+ * the materialisation the caller has to get right:
+ *
+ *  - the colour bootstrap: the first pass into a target whose colour image is
+ *    UNDEFINED clears it (a render pass may not LOAD an UNDEFINED image) — ONCE,
+ *    as a transient variant, or that pass would wipe its siblings' draws for ever;
+ *  - the depth SEED: a preserving pass on an image no pass has defined yet records
+ *    a depth CLEAR for one frame (plan.seed_required);
+ *  - the promotion REVOKE: a preserving pass whose image still carries the
+ *    SHADER_READ_ONLY layout an earlier frame's promoting pass left behind names
+ *    that layout for one frame (see @p depth_left_promoted).
+ *
+ * @param has_color        The target has colour attachments.
+ * @param has_depth        The target has a depth attachment (own or borrowed).
+ * @param borrowed         The depth belongs to another target (shareDepth).
+ * @param promote_requested The target's description asks for a sampleable depth.
+ * @param any_load_pass    A pass of this target already preserves (LOADs) depth.
+ * @param depth_seeded     The target's depth image has been defined already.
+ * @param color_seeded     The target's colour image has been defined already.
+ * @param want_color_clear The pass asked to clear colour (it called clear()).
+ * @param want_depth_clear The pass asked to clear depth.
+ * @param depth_left_promoted The depth image is still in SHADER_READ_ONLY: a pass
+ *                        of this target promoted it and no pass that records
+ *                        BEFORE this one has run yet this frame.
+ * @return The variant to build (see PassVariant).
+ */
+PassVariant planPassVariant(bool has_color, bool has_depth, bool borrowed, bool promote_requested,
+                            bool any_load_pass, bool depth_seeded, bool color_seeded, bool want_color_clear,
+                            bool want_depth_clear, bool depth_left_promoted);
+
+/**
+ * @brief Whether a pass has to re-record its render-pass variant.
+ *
+ * The comparison is on the pass' REQUESTS, never on the load-ops it materialised:
+ * those carry the one-frame bootstrap/seed too, and the same frame builds one pass
+ * twice (setupContentSlot() and render()), so comparing materialised load-ops would
+ * rebuild the second build into a LOAD against images nothing has defined yet.
+ *
+ * @param recorded_want_color_clear The pass' colour request when it was recorded.
+ * @param recorded_want_depth_clear The pass' depth request when it was recorded.
+ * @param want_color_clear The pass' colour request now.
+ * @param want_depth_clear The pass' depth request now.
+ * @return true when the requests differ and the variant has to be rebuilt.
+ */
+bool passVariantIsStale(bool recorded_want_color_clear, bool recorded_want_depth_clear, bool want_color_clear,
+                        bool want_depth_clear);
 
 /**
  * @brief Vertex shader source shared by the full-screen overlay passes.
@@ -330,6 +411,21 @@ const std::string& fullscreenVertexSource();
     const VkExtent2D&                                 extent,
     ::vsg::ref_ptr<::vsg::Data>                       push_data,
     ProgramNodeFailure*                               failure = nullptr);
+
+/**
+ * @brief Returns whether a full-screen program SAMPLES the source's depth.
+ *
+ * The full-screen program ABI gives the source's depth the binding index the
+ * colour count sets (see makeFullscreenProgramNode), so a program samples the
+ * depth exactly when its fragment stage declares that binding. Only such a
+ * program ends up with the depth in its pipeline layout and its descriptor set;
+ * a colour-only program records nothing that names the depth's layout.
+ *
+ * @param program     User program supplying the fragment stage (may be null).
+ * @param color_count Number of colour attachments of the sampled source.
+ * @return true when the fragment stage declares the depth binding.
+ */
+bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> program, std::size_t color_count);
 
 /**
  * @brief Replaces a view's light-group children with the given Vine lights.

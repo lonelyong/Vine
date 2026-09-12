@@ -11,6 +11,7 @@ set(SRC_FILE_LIST
 	MaterialManagerTest.cpp
 	LightGroupTest.cpp
 	PassRenderPassPlanTest.cpp
+	ProgramSamplingTest.cpp
 	GraphOrderTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})

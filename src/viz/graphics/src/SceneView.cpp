@@ -83,7 +83,26 @@ intrusive_ptr<Scene> SceneView::scene() const
 
 void SceneView::setScene(intrusive_ptr<Scene> scene)
 {
+    if (scene_ == scene) {
+        return;
+    }
     scene_ = std::move(scene);
+    // The default window pass was built with the scene that was current then,
+    // and the pass' content is bound to the pass, not to this view: without
+    // re-binding it the viewer would keep drawing the replaced scene.
+    if (default_pipeline_ != nullptr && engine_ != nullptr) {
+        if (RenderPass* window = default_pipeline_->windowPass(); window != nullptr) {
+            engine_->bindPassContent(window, scene_);
+        }
+    }
+    // A scene-aware manipulator (the lazily created orbit default) holds a
+    // NON-OWNING pointer to the scene it was given, for ray picking and
+    // fitToScreen(). Re-point it, or it would keep navigating the replaced
+    // scene — a dangling pointer once the host drops its last reference to it.
+    // A manipulator that is not scene-aware has nothing to re-point.
+    if (auto* orbit = dynamic_cast<OrbitCameraManipulator*>(manipulator_.get()); orbit != nullptr) {
+        orbit->setScene(scene_.get());
+    }
 }
 
 raw_ptr<CameraManipulator> SceneView::manipulator()

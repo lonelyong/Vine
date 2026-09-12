@@ -44,6 +44,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
+#include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgRenderer.hpp>
 
 #include <cstdio>
@@ -197,6 +198,18 @@ struct PixelImage
         }
         return count;
     }
+
+    /** @brief How many pixels are dominated by red (the near quad's signature). */
+    std::size_t redDominant() const
+    {
+        std::size_t count = 0;
+        for (std::size_t i = 0; i + 2u < pixels.size(); i += 4u) {
+            if (static_cast<int>(pixels[i]) > static_cast<int>(pixels[i + 2u]) + 20) {
+                ++count;
+            }
+        }
+        return count;
+    }
 };
 
 /**
@@ -220,6 +233,103 @@ bool readTarget(vine::vsg::VsgRenderer& renderer, vine::graphics::RenderTarget* 
 }
 
 /**
+ * @brief One frame of the direct driver: beginFrame() ... endFrame()+swapBuffers().
+ *
+ * RAII, so a phase cannot forget the pair — the backend counts frames, and a
+ * missed endFrame() would silently skip a submit.
+ */
+struct FrameScope
+{
+    explicit FrameScope(vine::vsg::VsgRenderer& renderer) : renderer(renderer)
+    {
+        renderer.beginFrame();
+    }
+    FrameScope(const FrameScope&)            = delete;
+    FrameScope& operator=(const FrameScope&) = delete;
+    ~FrameScope()
+    {
+        renderer.endFrame();
+        renderer.swapBuffers();
+    }
+
+    vine::vsg::VsgRenderer& renderer;
+};
+
+/**
+ * @brief One pass scope over ONE target: identity, order, depth policy and clear,
+ * with endPass() in the destructor.
+ *
+ * Every phase drives its passes the same way (beginPass → order → target → depth
+ * mode → clear → lights → render → endPass). Writing it once keeps a phase
+ * readable as "what does this pass draw", and makes an unpaired beginPass/endPass
+ * — which the backend reports as a protocol violation — impossible by accident.
+ *
+ * @note The clear is part of the scope: a pass that must NOT call clear() (it
+ *       composites over what an earlier pass drew) uses the other constructor. The
+ *       backend records the request per pass, so a scope never implies a sibling's
+ *       clear.
+ */
+struct PassScope
+{
+    /** @brief A pass that CLEARs @p clear_color (and optionally the depth). */
+    PassScope(vine::vsg::VsgRenderer& renderer, vine::graphics::RenderPass* pass, int order,
+              vine::graphics::RenderTarget* target, const vine::Color& clear_color, bool clear_depth,
+              vine::graphics::DepthMode depth_mode = vine::graphics::DepthMode::TestAndWrite)
+        : renderer(renderer)
+    {
+        begin(pass, order, target, depth_mode);
+        renderer.clear(clear_color, clear_depth);
+    }
+    /** @brief A pass that calls no clear() at all: it LOADs what a pass left. */
+    PassScope(vine::vsg::VsgRenderer& renderer, vine::graphics::RenderPass* pass, int order,
+              vine::graphics::RenderTarget* target,
+              vine::graphics::DepthMode depth_mode = vine::graphics::DepthMode::TestAndWrite)
+        : renderer(renderer)
+    {
+        begin(pass, order, target, depth_mode);
+    }
+    PassScope(const PassScope&)            = delete;
+    PassScope& operator=(const PassScope&) = delete;
+    ~PassScope()
+    {
+        renderer.endPass();
+    }
+
+    vine::vsg::VsgRenderer& renderer;
+
+  private:
+    void begin(vine::graphics::RenderPass* pass, int order, vine::graphics::RenderTarget* target,
+               vine::graphics::DepthMode depth_mode)
+    {
+        renderer.beginPass(pass);
+        renderer.setPassOrder(order);
+        renderer.setRenderTarget(target);
+        renderer.setDepthMode(depth_mode);
+        renderer.setLights({});
+    }
+};
+
+/**
+ * @brief Reads @p target's depth back, reporting a refusal with @p what.
+ *
+ * @param renderer Renderer under test.
+ * @param target   Target whose depth attachment to read.
+ * @param depths   Receives one value per pixel.
+ * @param what     What was being read (named in the failure).
+ * @return true when the readback succeeded and covered every pixel.
+ */
+bool readDepthOrFail(vine::vsg::VsgRenderer& renderer, vine::graphics::RenderTarget* target, std::vector<float>& depths,
+                     const char* what)
+{
+    if (!renderer.readDepthBuffer(target, depths) ||
+        depths.size() != static_cast<std::size_t>(target->width()) * static_cast<std::size_t>(target->height())) {
+        std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused %s\n", what);
+        return false;
+    }
+    return true;
+}
+
+/**
  * @brief Drives one content pass into a target for a few frames.
  *
  * @param renderer    Renderer under test.
@@ -237,17 +347,9 @@ void driveContentPass(vine::vsg::VsgRenderer& renderer, vine::graphics::RenderPa
                       vine::graphics::DepthMode depth_mode, int frames)
 {
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(pass);
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(target);
-        renderer.setDepthMode(depth_mode);
-        renderer.clear(clear_color, true);
-        renderer.setLights({});
+        FrameScope frame(renderer);
+        PassScope  pass_scope(renderer, pass, 0, target, clear_color, /*clear_depth*/ true, depth_mode);
         renderer.render(commands, camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
     }
 }
 
@@ -362,6 +464,27 @@ ShaderProgramPtr makeDeferredProgram()
     return program;
 }
 
+/** @brief Builds a fragment program that SAMPLES the source's depth texture. */
+ShaderProgramPtr makeDepthSamplingProgram()
+{
+    auto program = ShaderProgramPtr(new ShaderProgram());
+    vine::graphics::ShaderStage fs;
+    fs.type   = vine::graphics::ShaderStageType::Fragment;
+    // The full-screen program ABI (see makeFullscreenProgramNode): binding i
+    // samples the source's i-th colour attachment, binding N (= the colour count)
+    // samples its depth. One colour attachment, so the depth is binding 1.
+    fs.source = u8"#version 450\n"
+                u8"layout(location = 0) out vec4 outColor;\n"
+                u8"layout(binding = 1) uniform sampler2D sourceDepth;\n"
+                u8"void main()\n"
+                u8"{\n"
+                u8"    vec2 uv = gl_FragCoord.xy / vec2(textureSize(sourceDepth, 0));\n"
+                u8"    outColor = vec4(vec3(texture(sourceDepth, uv).r), 1.0);\n"
+                u8"}\n";
+    program->addStage(fs);
+    return program;
+}
+
 /** @brief Builds a look-at perspective camera matching a 16:9 aspect. */
 CameraPtr makeCamera()
 {
@@ -424,43 +547,32 @@ bool runPassProtocolPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& cam
     auto pass_b = RenderPassPtr(new RenderPass());
 
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
+        FrameScope frame(renderer);
 
-        renderer.beginPass(pass_a.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(nullptr);
-        renderer.clear(vine::Color(20, 20, 30, 255), true);
-        renderer.setDepthMode(DepthMode::TestAndWrite);
-        renderer.render(commands, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, pass_a.get(), 0, nullptr, vine::Color(20, 20, 30, 255), true, DepthMode::TestAndWrite);
+            renderer.render(commands, camera.get());
+        }
 
         // Same camera AND same pass order on purpose: with the pass as the
         // slot identity this is its own slot; on the old (camera, order) key
         // the second pass replaced the first pass' content.
-        renderer.beginPass(pass_b.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(nullptr);
-        renderer.setDepthMode(DepthMode::TestOnly);
-        renderer.render(commands, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, pass_b.get(), 0, nullptr, DepthMode::TestOnly);
+            renderer.render(commands, camera.get());
+        }
 
-        renderer.endFrame();
-        renderer.swapBuffers();
     }
     std::fprintf(stderr, "[selftest] pass protocol: two passes sharing one camera + order rendered\n");
 
     // A LIVE pass changes its depth policy: its retained state must follow
     // (data reused), and the change must not corrupt the frame.
     for (int i = 0; i < 2; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(pass_a.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(nullptr);
-        renderer.setDepthMode(i == 0 ? DepthMode::Disabled : DepthMode::TestAndWrite);
-        renderer.render(commands, camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, pass_a.get(), 0, nullptr, i == 0 ? DepthMode::Disabled : DepthMode::TestAndWrite);
+            renderer.render(commands, camera.get());
+        }
     }
     std::fprintf(stderr, "[selftest] pass protocol: depth-policy change on a live pass applied\n");
 
@@ -468,14 +580,11 @@ bool runPassProtocolPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& cam
     // rebuild off-screen targets (it only detaches the pass' own slot).
     const std::size_t builds_before = renderer.offscreenBuildCount();
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(pass_a.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(nullptr);
-        renderer.render(commands, camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, pass_a.get(), 0, nullptr);
+            renderer.render(commands, camera.get());
+        }
     }
     if (renderer.offscreenBuildCount() != builds_before) {
         std::fprintf(stderr, "[selftest] FAIL: retiring an inactive pass rebuilt off-screen targets\n");
@@ -493,9 +602,7 @@ bool runPassProtocolPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& cam
     // not "nothing to do"), and re-announcing a pass must re-attach its view.
     const std::size_t retired_before_idle = renderer.detachedSlotCount();
     for (int i = 0; i < 3; ++i) {
-        renderer.beginFrame();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
     }
     if (renderer.detachedSlotCount() <= retired_before_idle) {
         std::fprintf(stderr, "[selftest] FAIL: with every pass inactive the remaining views were not retired (%zu)\n",
@@ -505,14 +612,11 @@ bool runPassProtocolPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& cam
     const std::size_t retired_all_idle = renderer.detachedSlotCount();
     const std::size_t builds_idle      = renderer.offscreenBuildCount();
     for (int i = 0; i < 3; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(pass_a.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(nullptr);
-        renderer.render(commands, camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, pass_a.get(), 0, nullptr);
+            renderer.render(commands, camera.get());
+        }
     }
     if (renderer.offscreenBuildCount() != builds_idle) {
         std::fprintf(stderr, "[selftest] FAIL: re-enabling a retired pass rebuilt off-screen targets\n");
@@ -530,9 +634,7 @@ bool runPassProtocolPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& cam
     renderer.releasePass(pass_a.get());
     renderer.releasePass(pass_b.get());
     for (int i = 0; i < 2; ++i) {
-        renderer.beginFrame();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
     }
     return ok;
 }
@@ -581,26 +683,18 @@ bool runSharedDepthPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
 
     const std::size_t baseline = renderer.offscreenBuildCount();
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
+        FrameScope frame(renderer);
 
-        renderer.beginPass(source_pass.get());
-        renderer.setPassOrder(-10);
-        renderer.setRenderTarget(source.get());
-        renderer.clear(vine::Color(30, 30, 30, 255), true);
-        renderer.setDepthMode(DepthMode::TestAndWrite);
-        renderer.render(commands, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, source_pass.get(), -10, source.get(), vine::Color(30, 30, 30, 255), true, DepthMode::TestAndWrite);
+            renderer.render(commands, camera.get());
+        }
 
-        renderer.beginPass(consumer_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(consumer.get());
-        renderer.clear(vine::Color(0, 0, 0, 255), false); // keep the borrowed depth
-        renderer.setDepthMode(DepthMode::TestOnly);
-        renderer.render(commands, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, consumer_pass.get(), 0, consumer.get(), vine::Color(0, 0, 0, 255), false, DepthMode::TestOnly); // keep the borrowed depth
+            renderer.render(commands, camera.get());
+        }
 
-        renderer.endFrame();
-        renderer.swapBuffers();
     }
 
     const std::size_t built = renderer.offscreenBuildCount() - baseline;
@@ -618,15 +712,11 @@ bool runSharedDepthPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
     renderer.releaseRenderTarget(source.get());
     const std::size_t before_rebuild = renderer.offscreenBuildCount();
     for (int i = 0; i < 2; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(consumer_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(consumer.get());
-        renderer.clear(vine::Color(0, 0, 0, 255), false);
-        renderer.render(commands, camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, consumer_pass.get(), 0, consumer.get(), vine::Color(0, 0, 0, 255), false);
+            renderer.render(commands, camera.get());
+        }
     }
     const std::size_t rebuilt = renderer.offscreenBuildCount() - before_rebuild;
     if (rebuilt != 1u) {
@@ -694,23 +784,18 @@ bool runInFlightChurnPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
 
         const auto material = materials[static_cast<std::size_t>(i) % materials.size()];
 
-        renderer.beginFrame();
-        renderer.beginPass(pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(nullptr);
-        renderer.clear(vine::Color(20, 20, 30, 255), true);
-        renderer.setDepthMode(DepthMode::TestAndWrite);
-        // Every fourth frame draws nothing while the harness keeps its own
-        // reference: the retained node must survive the absence (reused when it
-        // comes back, never destroyed while a slot could still reference it).
-        std::vector<RenderCommand> commands;
-        if (i % 4 != 3) {
-            commands.emplace_back(geometry, material, Mat4d());
+        FrameScope frame(renderer);
+        {
+            // Every fourth frame draws nothing while the harness keeps its own
+            // reference: the retained node must survive the absence (reused when it
+            // comes back, never destroyed while a slot could still reference it).
+            PassScope pass_scope(renderer, pass.get(), 0, nullptr, vine::Color(20, 20, 30, 255), true, DepthMode::TestAndWrite);
+            std::vector<RenderCommand> commands;
+            if (i % 4 != 3) {
+                commands.emplace_back(geometry, material, Mat4d());
+            }
+            renderer.render(commands, camera.get());
         }
-        renderer.render(commands, camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
     }
     std::fprintf(stderr,
                  "[selftest] in-flight churn: %d frames replaced vertex data / material identity / drawn set\n",
@@ -806,38 +891,26 @@ bool runDepthShareOrderPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
 
         renderer.beginFrame();
 
-        renderer.beginPass(borrower_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(borrower.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::TestOnly); // never writes the shared depth
-        renderer.clear(clear, false);                               // keeps the borrowed depth
-        renderer.setLights({});
-        renderer.render(std::vector<RenderCommand>{ probe_command }, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, borrower_pass.get(), 0, borrower.get(), clear, false, vine::graphics::DepthMode::TestOnly); // keeps the borrowed depth
+            renderer.render(std::vector<RenderCommand>{ probe_command }, camera.get());
+        }
 
-        renderer.beginPass(source_pass.get());
-        renderer.setPassOrder(1);
-        renderer.setRenderTarget(source.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-        renderer.clear(clear, true); // its own depth: cleared while the target is not mixed
-        renderer.setLights({});
-        if (near_quad) {
-            renderer.render(std::vector<RenderCommand>{ far_command, near_command }, camera.get());
+        {
+            PassScope pass_scope(renderer, source_pass.get(), 1, source.get(), clear, true, vine::graphics::DepthMode::TestAndWrite); // its own depth: cleared while the target is not mixed
+            if (near_quad) {
+                renderer.render(std::vector<RenderCommand>{ far_command, near_command }, camera.get());
+            }
+            else {
+                renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
+            }
         }
-        else {
-            renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
-        }
-        renderer.endPass();
 
         if (mixed) {
-            renderer.beginPass(source_load_pass.get());
-            renderer.setPassOrder(2);
-            renderer.setRenderTarget(source.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(clear, false); // the policy flip that rebuilds the source
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{}, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, source_load_pass.get(), 2, source.get(), clear, false, vine::graphics::DepthMode::TestAndWrite); // the policy flip that rebuilds the source
+                renderer.render(std::vector<RenderCommand>{}, camera.get());
+            }
         }
 
         renderer.endFrame();
@@ -1000,14 +1073,10 @@ bool runTargetDescriptionChangePhase(vine::vsg::VsgRenderer& renderer, const Cam
                 builds_at_change = renderer.offscreenBuildCount();
             }
             renderer.beginFrame();
-            renderer.beginPass(pass.get());
-            renderer.setPassOrder(0);
-            renderer.setRenderTarget(target.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(clear, true);
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, pass.get(), 0, target.get(), clear, true, vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
+            }
             renderer.endFrame();
             renderer.swapBuffers();
 
@@ -1103,23 +1172,15 @@ bool runTargetDescriptionChangePhase(vine::vsg::VsgRenderer& renderer, const Cam
             }
             renderer.beginFrame();
 
-            renderer.beginPass(source_pass.get());
-            renderer.setPassOrder(0);
-            renderer.setRenderTarget(source.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(clear, true);
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, source_pass.get(), 0, source.get(), clear, true, vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
+            }
 
-            renderer.beginPass(borrower_pass.get());
-            renderer.setPassOrder(1);
-            renderer.setRenderTarget(borrower.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(clear, true);
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, borrower_pass.get(), 1, borrower.get(), clear, true, vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
+            }
 
             renderer.endFrame();
             renderer.swapBuffers();
@@ -1261,17 +1322,11 @@ bool runDepthTestOnlyPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPt
     // Stage 1: opaque only, so the depth the transparent pass has to respect is
     // measured rather than assumed.
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(opaque_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(target.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-        renderer.clear(clear, true);
-        renderer.setLights({});
-        renderer.render(std::vector<RenderCommand>{ opaque_command }, camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, opaque_pass.get(), 0, target.get(), clear, true, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ opaque_command }, camera.get());
+        }
     }
     std::vector<float> opaque_depths;
     if (!renderer.readDepthBuffer(target.get(), opaque_depths) ||
@@ -1288,27 +1343,18 @@ bool runDepthTestOnlyPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPt
     // Stage 2: the translucent pass. It never clears (see the engine's
     // transparent passes) and only tests depth.
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
+        FrameScope frame(renderer);
 
-        renderer.beginPass(opaque_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(target.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-        renderer.clear(clear, true);
-        renderer.setLights({});
-        renderer.render(std::vector<RenderCommand>{ opaque_command }, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, opaque_pass.get(), 0, target.get(), clear, true, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ opaque_command }, camera.get());
+        }
 
-        renderer.beginPass(blend_pass.get());
-        renderer.setPassOrder(1);
-        renderer.setRenderTarget(target.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::TestOnly);
-        renderer.setLights({});
-        renderer.render(std::vector<RenderCommand>{ nearest_command, middle_command, behind_command }, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, blend_pass.get(), 1, target.get(), vine::graphics::DepthMode::TestOnly);
+            renderer.render(std::vector<RenderCommand>{ nearest_command, middle_command, behind_command }, camera.get());
+        }
 
-        renderer.endFrame();
-        renderer.swapBuffers();
     }
 
     PixelImage image;
@@ -1425,28 +1471,18 @@ bool runDepthBorrowValidationPhase(vine::vsg::VsgRenderer& renderer, const Camer
         // Both passes draw the same near/far pair: with a working depth (borrowed
         // or its own) the near quad wins, so the borrower's centre must be red.
         for (int i = 0; i < frames; ++i) {
-            renderer.beginFrame();
+            FrameScope frame(renderer);
 
-            renderer.beginPass(source_pass.get());
-            renderer.setPassOrder(0);
-            renderer.setRenderTarget(source.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(clear, true);
-            renderer.setLights({});
-            renderer.render(commands, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, source_pass.get(), 0, source.get(), clear, true, vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(commands, camera.get());
+            }
 
-            renderer.beginPass(borrower_pass.get());
-            renderer.setPassOrder(1);
-            renderer.setRenderTarget(borrower.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(clear, true);
-            renderer.setLights({});
-            renderer.render(commands, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, borrower_pass.get(), 1, borrower.get(), clear, true, vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(commands, camera.get());
+            }
 
-            renderer.endFrame();
-            renderer.swapBuffers();
         }
 
         PixelImage image;
@@ -1503,29 +1539,19 @@ bool runDepthBorrowValidationPhase(vine::vsg::VsgRenderer& renderer, const Camer
         // in effect this frame" — the discriminator for the retry.
         std::vector<std::size_t> blue_per_frame;
         for (int i = 0; i < frames + 2; ++i) {
-            renderer.beginFrame();
+            FrameScope frame(renderer);
 
             // Borrower first (order 0): the source is not built yet on frame 1.
-            renderer.beginPass(borrower_pass.get());
-            renderer.setPassOrder(0);
-            renderer.setRenderTarget(borrower.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(clear, true);
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, borrower_pass.get(), 0, borrower.get(), clear, true, vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
+            }
 
-            renderer.beginPass(source_pass.get());
-            renderer.setPassOrder(1);
-            renderer.setRenderTarget(source.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(clear, true);
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, source_pass.get(), 1, source.get(), clear, true, vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
+            }
 
-            renderer.endFrame();
-            renderer.swapBuffers();
         }
 
         PixelImage late;
@@ -1663,15 +1689,11 @@ bool runDiagnosticsPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
 
     auto pass = RenderPassPtr(new RenderPass());
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(nullptr);
-        renderer.clear(vine::Color(20, 20, 30, 255), true);
-        renderer.render(std::vector<RenderCommand>{ bad_command, good_command }, camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, pass.get(), 0, nullptr, vine::Color(20, 20, 30, 255), true);
+            renderer.render(std::vector<RenderCommand>{ bad_command, good_command }, camera.get());
+        }
     }
 
     const std::size_t rejected  = count_of(vine::graphics::DiagnosticCategory::GeometryRejected);
@@ -1709,11 +1731,10 @@ bool runDiagnosticsPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
     // Stop listening: the renderer must keep working (and counting) without a sink.
     renderer.setDiagnosticSink({});
     renderer.beginFrame();
-    renderer.beginPass(pass.get());
-    renderer.setRenderTarget(nullptr);
-    renderer.clear(vine::Color(0, 0, 0, 255), true);
-    renderer.render(std::vector<RenderCommand>{ bad_command }, camera.get());
-    renderer.endPass();
+    {
+        PassScope pass_scope(renderer, pass.get(), 0, nullptr, vine::Color(0, 0, 0, 255), true);
+        renderer.render(std::vector<RenderCommand>{ bad_command }, camera.get());
+    }
     renderer.endFrame();
     renderer.swapBuffers();
     return ok;
@@ -1765,17 +1786,11 @@ bool runPixelReadbackPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
 
     auto pass = RenderPassPtr(new RenderPass());
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(target.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-        renderer.clear(clear_color, true);
-        renderer.setLights({});
-        renderer.render(std::vector<RenderCommand>{ command }, camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, pass.get(), 0, target.get(), clear_color, true, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+        }
     }
 
     for (const auto& diagnostic : received) {
@@ -1864,17 +1879,11 @@ bool runPixelReadbackPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
     RenderCommand program_command(quad, material, Mat4d());
     program_command.program = makeMidDepthProgram();
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(program_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(program_target.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-        renderer.clear(clear_color, true);
-        renderer.setLights({});
-        renderer.render(std::vector<RenderCommand>{ program_command }, camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, program_pass.get(), 0, program_target.get(), clear_color, true, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ program_command }, camera.get());
+        }
     }
     std::vector<std::uint8_t> program_pixels;
     if (!renderer.readColorBuffer(program_target.get(), 0, program_pixels) ||
@@ -1916,13 +1925,10 @@ bool runPixelReadbackPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
     float_target->attachColor(RenderTarget::ColorFormat::RGBA16F);
     float_target->attachDepth(RenderTarget::DepthFormat::D24);
     renderer.beginFrame();
-    renderer.beginPass(pass.get());
-    renderer.setPassOrder(0);
-    renderer.setRenderTarget(float_target.get());
-    renderer.clear(vine::Color(0, 0, 0, 255), true);
-    renderer.setLights({});
-    renderer.render(std::vector<RenderCommand>{ command }, camera.get());
-    renderer.endPass();
+    {
+        PassScope pass_scope(renderer, pass.get(), 0, float_target.get(), vine::Color(0, 0, 0, 255), true);
+        renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+    }
     renderer.endFrame();
     renderer.swapBuffers();
 
@@ -2006,17 +2012,11 @@ bool runContentVariantProbe(vine::vsg::VsgRenderer& renderer, const CameraPtr& c
 
         auto pass = RenderPassPtr(new RenderPass());
         for (int i = 0; i < frames; ++i) {
-            renderer.beginFrame();
-            renderer.beginPass(pass.get());
-            renderer.setPassOrder(0);
-            renderer.setRenderTarget(target.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(vine::Color(10, 20, 30, 255), true);
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{ command }, camera.get());
-            renderer.endPass();
-            renderer.endFrame();
-            renderer.swapBuffers();
+            FrameScope frame(renderer);
+            {
+                PassScope pass_scope(renderer, pass.get(), 0, target.get(), vine::Color(10, 20, 30, 255), true, vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+            }
         }
 
         std::vector<std::uint8_t> pixels;
@@ -2110,39 +2110,28 @@ bool runCompositingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
     });
 
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
+        FrameScope frame(renderer);
 
         // Producer first: the consumers sample what this pass wrote, in the same
         // frame (the dependency the renderer's graph ordering exists for).
-        renderer.beginPass(producer_pass.get());
-        renderer.setPassOrder(-10);
-        renderer.setRenderTarget(producer.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-        renderer.clear(producer_clear, true);
-        renderer.setLights({});
-        renderer.render(std::vector<RenderCommand>{ producer_command }, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, producer_pass.get(), -10, producer.get(), producer_clear, true, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ producer_command }, camera.get());
+        }
 
         // Picture-in-picture: the producer's attachment 0 into a sub-rectangle.
-        renderer.beginPass(pip_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(pip_consumer.get());
-        renderer.clear(consumer_clear, true);
-        renderer.setViewport(pip_x, pip_y, pip_w, pip_h);
-        renderer.drawScreenTexture(producer.get(), 0);
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, pip_pass.get(), 0, pip_consumer.get(), consumer_clear, true);
+            renderer.setViewport(pip_x, pip_y, pip_w, pip_h);
+            renderer.drawScreenTexture(producer.get(), 0);
+        }
 
         // Deferred: a fragment program over the producer, full target.
-        renderer.beginPass(deferred_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(deferred_consumer.get());
-        renderer.clear(consumer_clear, true);
-        renderer.setLights({});
-        renderer.drawScreenProgram(producer.get(), deferred_program.get(), camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, deferred_pass.get(), 0, deferred_consumer.get(), consumer_clear, true);
+            renderer.drawScreenProgram(producer.get(), deferred_program.get(), camera.get());
+        }
 
-        renderer.endFrame();
-        renderer.swapBuffers();
     }
 
     PixelImage pip;
@@ -2233,16 +2222,11 @@ bool runCompositingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
         deferred_program->replaceStages(std::vector<ShaderStage>{ edited });
     }
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(deferred_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(deferred_consumer.get());
-        renderer.clear(consumer_clear, true);
-        renderer.setLights({});
-        renderer.drawScreenProgram(producer.get(), deferred_program.get(), camera.get());
-        renderer.endPass();
-        renderer.endFrame();
-        renderer.swapBuffers();
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, deferred_pass.get(), 0, deferred_consumer.get(), consumer_clear, true);
+            renderer.drawScreenProgram(producer.get(), deferred_program.get(), camera.get());
+        }
     }
     const std::size_t program_builds_after = renderer.programSlotBuildCount();
     PixelImage        hot;
@@ -2331,27 +2315,17 @@ bool runDepthOrderPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
     auto disabled_pass = RenderPassPtr(new RenderPass());
 
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
-        renderer.beginPass(depth_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(depth_consumer.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-        renderer.clear(clear, true);
-        renderer.setLights({});
-        renderer.render(commands, camera.get());
-        renderer.endPass();
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, depth_pass.get(), 0, depth_consumer.get(), clear, true, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(commands, camera.get());
+        }
 
-        renderer.beginPass(disabled_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(disabled_consumer.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::Disabled);
-        renderer.clear(clear, true);
-        renderer.setLights({});
-        renderer.render(commands, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, disabled_pass.get(), 0, disabled_consumer.get(), clear, true, vine::graphics::DepthMode::Disabled);
+            renderer.render(commands, camera.get());
+        }
 
-        renderer.endFrame();
-        renderer.swapBuffers();
     }
 
     PixelImage depth_pixels;
@@ -2533,17 +2507,11 @@ bool runDepthLoadPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& c
 
     const auto drive = [&](const std::vector<RenderCommand>& commands) {
         for (int i = 0; i < frames; ++i) {
-            renderer.beginFrame();
-            renderer.beginPass(pass.get());
-            renderer.setPassOrder(0);
-            renderer.setRenderTarget(target.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(clear, false); // colour cleared, depth LOADED
-            renderer.setLights({});
-            renderer.render(commands, camera.get());
-            renderer.endPass();
-            renderer.endFrame();
-            renderer.swapBuffers();
+            FrameScope frame(renderer);
+            {
+                PassScope pass_scope(renderer, pass.get(), 0, target.get(), clear, false, vine::graphics::DepthMode::TestAndWrite); // colour cleared, depth LOADED
+                renderer.render(commands, camera.get());
+            }
         }
     };
 
@@ -2685,28 +2653,18 @@ bool runSharedDepthPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
 
     const auto drive = [&](const std::vector<RenderCommand>& consumer_commands) {
         for (int i = 0; i < frames; ++i) {
-            renderer.beginFrame();
+            FrameScope frame(renderer);
 
-            renderer.beginPass(source_pass.get());
-            renderer.setPassOrder(0);
-            renderer.setRenderTarget(source.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(source_clear, true);
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, source_pass.get(), 0, source.get(), source_clear, true, vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
+            }
 
-            renderer.beginPass(consumer_pass.get());
-            renderer.setPassOrder(1);
-            renderer.setRenderTarget(consumer.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(consumer_clear, false); // keep the borrowed depth
-            renderer.setLights({});
-            renderer.render(consumer_commands, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, consumer_pass.get(), 1, consumer.get(), consumer_clear, false, vine::graphics::DepthMode::TestAndWrite); // keep the borrowed depth
+                renderer.render(consumer_commands, camera.get());
+            }
 
-            renderer.endFrame();
-            renderer.swapBuffers();
         }
     };
 
@@ -2827,28 +2785,18 @@ bool runMixedDepthPolicyPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
 
     const auto drive = [&](const std::vector<RenderCommand>& opaque_commands) {
         for (int i = 0; i < frames; ++i) {
-            renderer.beginFrame();
+            FrameScope frame(renderer);
 
-            renderer.beginPass(opaque_pass.get());
-            renderer.setPassOrder(0);
-            renderer.setRenderTarget(target.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(opaque_clear, true); // clears the depth every frame
-            renderer.setLights({});
-            renderer.render(opaque_commands, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, opaque_pass.get(), 0, target.get(), opaque_clear, true, vine::graphics::DepthMode::TestAndWrite); // clears the depth every frame
+                renderer.render(opaque_commands, camera.get());
+            }
 
-            renderer.beginPass(overlay_pass.get());
-            renderer.setPassOrder(1);
-            renderer.setRenderTarget(target.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-            renderer.clear(overlay_clear, false); // preserves the depth it tests
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, overlay_pass.get(), 1, target.get(), overlay_clear, false, vine::graphics::DepthMode::TestAndWrite); // preserves the depth it tests
+                renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
+            }
 
-            renderer.endFrame();
-            renderer.swapBuffers();
         }
     };
 
@@ -2974,29 +2922,23 @@ bool runStackedPassPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
     auto clearer_pass = RenderPassPtr(new RenderPass());
 
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
+        FrameScope frame(renderer);
 
         // NEITHER pass calls clear(): this is the engine's composite target,
         // which only ever receives non-clearing passes. The colour image is
         // still defined, because the first pass into a new target has to clear
         // it (a render pass may not LOAD an UNDEFINED image) — that bootstrap
         // must not become "every pass of this target clears".
-        renderer.beginPass(fill_pass.get());
-        renderer.setPassOrder(0);
-        renderer.setRenderTarget(target.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::Disabled);
-        renderer.setLights({});
-        renderer.render(std::vector<RenderCommand>{ fill_command }, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, fill_pass.get(), 0, target.get(), vine::graphics::DepthMode::Disabled);
+            renderer.render(std::vector<RenderCommand>{ fill_command }, camera.get());
+        }
 
         // Deliberately NO clear() here: this pass composites over the first.
-        renderer.beginPass(stack_pass.get());
-        renderer.setPassOrder(1);
-        renderer.setRenderTarget(target.get());
-        renderer.setDepthMode(vine::graphics::DepthMode::TestOnly);
-        renderer.setLights({});
-        renderer.render(std::vector<RenderCommand>{ dot_command }, camera.get());
-        renderer.endPass();
+        {
+            PassScope pass_scope(renderer, stack_pass.get(), 1, target.get(), vine::graphics::DepthMode::TestOnly);
+            renderer.render(std::vector<RenderCommand>{ dot_command }, camera.get());
+        }
 
         // For the FIRST half of the frames a third pass clears this target. It is
         // then simply not announced any more, which retires it (see
@@ -3005,18 +2947,12 @@ bool runStackedPassPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& came
         // so a retired graph left in the command graph would keep clearing what
         // the other passes drew, i.e. a disabled pass would still erase the frame.
         if (i < frames / 2) {
-            renderer.beginPass(clearer_pass.get());
-            renderer.setPassOrder(2);
-            renderer.setRenderTarget(target.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::Disabled);
-            renderer.clear(vine::Color(200, 200, 200, 255), true);
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{}, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, clearer_pass.get(), 2, target.get(), vine::Color(200, 200, 200, 255), true, vine::graphics::DepthMode::Disabled);
+                renderer.render(std::vector<RenderCommand>{}, camera.get());
+            }
         }
 
-        renderer.endFrame();
-        renderer.swapBuffers();
     }
 
     PixelImage image;
@@ -3098,20 +3034,15 @@ bool runPromotingPreservePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
     auto pass_b = RenderPassPtr(new RenderPass());
 
     for (int i = 0; i < frames; ++i) {
-        renderer.beginFrame();
+        FrameScope frame(renderer);
         // Neither pass clears: both ask to PRESERVE the depth, which is what makes
         // the target load it (and thereby conflict with its own promotion).
         for (RenderPass* pass : { pass_a.get(), pass_b.get() }) {
-            renderer.beginPass(pass);
-            renderer.setPassOrder(pass == pass_a.get() ? 0 : 1);
-            renderer.setRenderTarget(target.get());
-            renderer.setDepthMode(vine::graphics::DepthMode::TestOnly);
-            renderer.setLights({});
-            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
-            renderer.endPass();
+            {
+                PassScope pass_scope(renderer, pass, pass == pass_a.get() ? 0 : 1, target.get(), vine::graphics::DepthMode::TestOnly);
+                renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+            }
         }
-        renderer.endFrame();
-        renderer.swapBuffers();
     }
 
     PixelImage image;
@@ -3137,6 +3068,1155 @@ bool runPromotingPreservePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
     }
     renderer.releasePass(pass_a.get());
     renderer.releasePass(pass_b.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
+/**
+ * @brief Asserts the depth clear of a DEPTH-ONLY off-screen target.
+ *
+ * A depth-only target (attachDepth, no attachColor) is the shadow-map /
+ * depth-prepass shape, and it is the one target whose single clear value IS its
+ * depth entry. Two invariants are asserted on the depth read-back:
+ *
+ *  - the clear value is the reverse-Z FAR plane (0.0) the GREATER depth test
+ *    needs, so a near quad passes the test and writes its depth. Clearing to the
+ *    near plane (1.0) makes `fragment_depth > cleared` false for every fragment:
+ *    the target stays empty with no validation error to show for it;
+ *  - changing the pass' clear COLOUR between frames must not disturb it
+ *    (VkClearValue is a union, so writing the colour half of that single clear
+ *    value would clear depth to a colour's floats).
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quad is drawn through.
+ * @param frames   Frames to drive (at least 2, so the clear colour changes).
+ * @return true when the quad wrote depth over a far-plane clear.
+ */
+bool runDepthOnlyTargetPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+    auto material = MaterialPtr(new Material());
+    material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    RenderCommand quad(makeVisibleQuad(0.4f, 1.0f), material, Mat4d());
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setName(u8"depth-only");
+    target->setSize(96, 54);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto pass = RenderPassPtr(new RenderPass());
+
+    for (int i = 0; i < std::max(frames, 2); ++i) {
+        FrameScope frame(renderer);
+        {
+            // The clear colour changes every frame: on a depth-only target it is
+            // inert, and it has to stay inert (see the header).
+            PassScope pass_scope(renderer, pass.get(), 0, target.get(), vine::Color(12 + i * 17, 40, 90, 255), true, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+    }
+
+    std::vector<float> depths;
+    if (!renderer.readDepthBuffer(target.get(), depths) ||
+        depths.size() != static_cast<std::size_t>(target->width()) * static_cast<std::size_t>(target->height())) {
+        std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused the depth-only target\n");
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+    const std::size_t centre       = static_cast<std::size_t>(27) * 96u + 48u;
+    const float       centre_depth = depths[centre];
+    const float       corner_depth = depths[0];
+    if (centre_depth <= 0.0f || centre_depth >= 0.9f) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the depth-only target centre holds %.4f — the near quad must have written its"
+                     " depth through the reverse-Z GREATER test (clearing to the near plane rejects every fragment)\n",
+                     centre_depth);
+        ok = false;
+    }
+    if (corner_depth >= 0.1f) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the depth-only target's untouched corner holds %.4f, not the far plane — a"
+                     " clear-colour change must not overwrite the depth clear value\n",
+                     corner_depth);
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] depth only: the quad wrote depth %.4f over a far-plane clear %.4f while the clear"
+                     " colour changed every frame\n",
+                     centre_depth, corner_depth);
+    }
+    renderer.releasePass(pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
+/**
+ * @brief Asserts a depth-only target HONOURS clearDepth=false.
+ *
+ * A depth-only target (the shadow-map shape) keeps its depth in
+ * SHADER_READ_ONLY_OPTIMAL between frames — that is what its render pass exists
+ * for — but that must not turn a preserving pass into a clearing one: a pass that
+ * asks to keep the depth has to LOAD the surface the previous frame left, so
+ * geometry BEHIND it loses the test. The readback afterwards also pins the layout
+ * the image really is in, which readDepthBuffer derives from the target's depth
+ * policy (a depth-only target's depth is always sampleable, a colour target's is
+ * not once a pass preserves it).
+ *
+ *  1. frames 1..N ask clear(..., clearDepth=false) and draw the NEAR quad: the
+ *     first frame seeds (CLEARs) the fresh image, the steady pass LOADs it, so the
+ *     depth ends at the near quad's value.
+ *  2. the same pass then draws the FAR quad, still with clearDepth=false: it is
+ *     behind the preserved surface, so the depth must NOT move.
+ *  3. one frame with clearDepth=true and the far quad: now it must win — which
+ *     proves stage 2 failed for the right reason (the preserved depth) instead of
+ *     because a depth-only target never writes depth at all.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quads are drawn through.
+ * @param frames   Frames to drive per stage.
+ * @return true when the preserved depth survived and the clear still cleared.
+ */
+bool runDepthOnlyPreservePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+    auto near_material = MaterialPtr(new Material());
+    near_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    auto far_material = MaterialPtr(new Material());
+    far_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f));    // blue
+    // Same camera (z = 5) as the other depth phases: z = 1 is 4 units away, z = -1
+    // is 6, so reverse-Z gives ~0.0249 and ~0.0166 respectively.
+    RenderCommand near_command(makeVisibleQuad(0.4f, 1.0f), near_material, Mat4d());
+    RenderCommand far_command(makeVisibleQuad(0.4f, -1.0f), far_material, Mat4d());
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setName(u8"depth-only-preserve");
+    target->setSize(96, 54);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto pass = RenderPassPtr(new RenderPass());
+
+    const auto drive = [&](const std::vector<RenderCommand>& commands, bool clear_depth) {
+        for (int i = 0; i < frames; ++i) {
+            FrameScope frame(renderer);
+            {
+                PassScope pass_scope(renderer, pass.get(), 0, target.get(), vine::Color(12, 40, 90, 255), clear_depth, vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(commands, camera.get());
+            }
+        }
+    };
+    const auto read_depth = [&](const char* stage, std::vector<float>& depths) {
+        if (!renderer.readDepthBuffer(target.get(), depths) ||
+            depths.size() != static_cast<std::size_t>(target->width()) * static_cast<std::size_t>(target->height())) {
+            std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused the depth-only preserve target (%s)\n",
+                         stage);
+            return false;
+        }
+        return true;
+    };
+
+    const std::size_t  centre = static_cast<std::size_t>(27) * 96u + 48u;
+    const std::size_t  builds_before = renderer.offscreenBuildCount();
+    std::vector<float> depths;
+
+    // Stage 1: preserve the depth while seeding it with the near quad.
+    drive(std::vector<RenderCommand>{ near_command }, /*clear_depth*/ false);
+    if (!read_depth("stage 1", depths)) {
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+    const float near_reference = depths[centre];
+    if (near_reference <= 0.0f || near_reference >= 0.9f) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the depth-only target's centre holds %.4f after the near quad; the quad must"
+                     " have written its depth through the reverse-Z GREATER test\n",
+                     near_reference);
+        ok = false;
+    }
+
+    // Stage 2: the far quad must lose against the depth this pass asked to KEEP.
+    drive(std::vector<RenderCommand>{ far_command }, /*clear_depth*/ false);
+    std::vector<float> preserved;
+    if (!read_depth("stage 2", preserved)) {
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+    if (std::fabs(preserved[centre] - near_reference) > 1e-5f) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the depth-only target's depth moved %.4f -> %.4f although the pass asked to"
+                     " KEEP it (clearDepth=false) — a depth-only pass that always clears ignores the request\n",
+                     near_reference, preserved[centre]);
+        ok = false;
+    }
+
+    // Stage 3: the same pass now CLEARS, so the far quad must win and the
+    // untouched corner must be the far plane.
+    drive(std::vector<RenderCommand>{ far_command }, /*clear_depth*/ true);
+    std::vector<float> cleared;
+    if (!read_depth("stage 3", cleared)) {
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+    if (!(cleared[centre] > 0.0f && cleared[centre] < near_reference - 1e-4f)) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: after the pass asked to CLEAR depth the far quad left %.4f, expected a value"
+                     " well below the preserved %.4f\n",
+                     cleared[centre], near_reference);
+        ok = false;
+    }
+    if (cleared[0] >= 0.1f) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the depth-only target's untouched corner holds %.4f, not the far plane — the"
+                     " cleared frame did not clear\n",
+                     cleared[0]);
+        ok = false;
+    }
+    const std::size_t builds = renderer.offscreenBuildCount() - builds_before;
+    if (builds != 1u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the depth-only preserve target built %zu time(s) over %d frames; a clear-policy"
+                     " change must rebuild the pass' VARIANT, not the target\n",
+                     builds, 3 * frames);
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] depth only preserve: the far quad left the preserved depth at %.4f, and after a"
+                     " clear request the same pass stored %.4f with the far plane %.4f in the untouched corner\n",
+                     preserved[centre], cleared[centre], cleared[0]);
+    }
+    renderer.releasePass(pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
+/**
+ * @brief Asserts a run-time change of a pass' CLEAR POLICY takes effect.
+ *
+ * Every other per-pass property (order, depth mode, lights, viewport) is
+ * re-applied every frame, so a pass that starts or stops clearing has to be too:
+ * the load-ops are baked into the pass' render pass, and rebuilding that variant
+ * is the only way to honour the change.
+ *
+ * The SAME pass with the SAME order is used throughout, so only its clear policy
+ * can explain a different picture:
+ *
+ *  1. frames 1..N ask clearDepth=false, i.e. the pass PRESERVES depth (its first
+ *     frame records the CLEAR seed variant, the steady frames LOAD). A near quad
+ *     is drawn, so the read-back depth is the near value;
+ *  2. the same pass then asks clearDepth=true and draws a FAR quad. Honouring the
+ *     change CLEARs the depth, so the far quad passes the reverse-Z GREATER test
+ *     and both the depth and the centre colour change to the far quad's. A frozen
+ *     load-op would keep LOADing, the preserved near depth would reject the far
+ *     quad, and neither would change — which is what this asserts against.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera both quads are drawn through.
+ * @param frames   Frames per half (at least 2).
+ * @return true when the flip cleared the depth and let the far quad draw.
+ */
+bool runClearPolicyFlipPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+    const vine::Color clear(30, 20, 10, 255);
+    auto near_material = MaterialPtr(new Material());
+    near_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    auto far_material = MaterialPtr(new Material());
+    far_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f));   // blue
+    RenderCommand near_command(makeVisibleQuad(0.4f, 1.0f), near_material, Mat4d());
+    RenderCommand far_command(makeVisibleQuad(0.4f, -1.0f), far_material, Mat4d());
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setName(u8"clear-flip");
+    target->setSize(128, 72);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto pass = RenderPassPtr(new RenderPass());
+
+    const int half = std::max(frames, 2);
+    for (int i = 0; i < half; ++i) {
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, pass.get(), 0, target.get(), clear, /*clearDepth*/ false, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ near_command }, camera.get());
+        }
+    }
+    std::vector<float> near_depths;
+    if (!renderer.readDepthBuffer(target.get(), near_depths) ||
+        near_depths.size() != static_cast<std::size_t>(target->width()) * static_cast<std::size_t>(target->height())) {
+        std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused the clear-flip target\n");
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+    const std::size_t centre     = static_cast<std::size_t>(36) * 128u + 64u;
+    const float       near_depth = near_depths[centre];
+    if (near_depth <= 0.0f) {
+        std::fprintf(stderr, "[selftest] FAIL: the preserving pass wrote no depth (%.4f)\n", near_depth);
+        ok = false;
+    }
+
+    // The SAME pass now asks to clear the depth; its load-op has to follow.
+    for (int i = 0; i < half; ++i) {
+        FrameScope frame(renderer);
+        {
+            PassScope pass_scope(renderer, pass.get(), 0, target.get(), clear, /*clearDepth*/ true, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ far_command }, camera.get());
+        }
+    }
+    std::vector<float> flipped_depths;
+    PixelImage         image;
+    if (!renderer.readDepthBuffer(target.get(), flipped_depths) || !readTarget(renderer, target.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readback refused the clear-flip target after the policy flip\n");
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+    const float flipped_depth = flipped_depths[centre];
+    const int   centre_r      = image.at(64, 36, 0);
+    const int   centre_g      = image.at(64, 36, 1);
+    const int   centre_b      = image.at(64, 36, 2);
+    if (!(flipped_depth < near_depth)) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: after the pass asked to CLEAR depth the read-back depth stayed %.4f (the near"
+                     " value) instead of the far quad's — the clear-policy change was ignored\n",
+                     flipped_depth);
+        ok = false;
+    }
+    if (centre_b <= centre_r + 20) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: after the pass asked to CLEAR depth the centre is (%d,%d,%d) instead of the"
+                     " far quad's blue — the far quad was still rejected by the preserved depth\n",
+                     centre_r, centre_g, centre_b);
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] clear flip: after clearDepth flipped on the SAME pass the depth went %.4f -> %.4f"
+                     " and the far quad drew (centre B=%d)\n",
+                     near_depth, flipped_depth, centre_b);
+    }
+    renderer.releasePass(pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
+/**
+ * @brief Asserts an unsampleable source depth is DIAGNOSED, not silently bound.
+ *
+ * RenderTarget::setDepthPromotion is the host's request that the target's depth
+ * end in SHADER_READ_ONLY so a fullscreen program can sample it. A pass of that
+ * target which PRESERVES depth revokes promotion (§28: LOAD and promotion are
+ * mutually exclusive), leaving the image in the attachment layout. A program
+ * consumer that then bound it as a sampled texture would declare a layout the
+ * image is not in (a per-frame validation error), so the backend binds the
+ * colour attachments only — and SAYS so, or the host has no way to learn why a
+ * depth-sampling program failed to build.
+ *
+ * The source's passes are ordered before the program pass, so the program slot is
+ * built AFTER the revocation: that is the path which has to read the ACTUAL state
+ * (Target::depth_sampleable) rather than the target's description.
+ *
+ * The source's two passes are also ANNOUNCED in the opposite of the order they
+ * record in (the preserving pass is announced first and the promoting one second,
+ * while setPassOrder still records -10 before -5). A pass' depth-layout variant is
+ * chosen from the state its target is in when the pass is BUILT, so the unusual
+ * call order has to stay valid as well — measured on the device, the frame is
+ * validation-clean either way: the preserving pass seeds the fresh image, and the
+ * promoting pass records first and leaves the depth in the attachment layout the
+ * seed expects.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the geometry and the program pass use.
+ * @param frames   Frames to drive.
+ * @return true when the program still drew and the condition was reported.
+ */
+bool runPreservedDepthNotSampledPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+    const vine::Color source_clear(10, 20, 30, 255);
+    const vine::Color dest_clear(5, 5, 5, 255);
+    auto material = MaterialPtr(new Material());
+    material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));
+    RenderCommand quad(makeVisibleQuad(0.4f, 1.0f), material, Mat4d());
+
+    auto source = RenderTargetPtr(new RenderTarget());
+    source->setName(u8"d47-src");
+    source->setSize(256, 144);
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    source->attachDepth(RenderTarget::DepthFormat::D32);
+    source->setDepthPromotion(true); // the host's request: a program samples it
+
+    auto dest = RenderTargetPtr(new RenderTarget());
+    dest->setName(u8"d47-dst");
+    dest->setSize(256, 144);
+    dest->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto promote_pass  = RenderPassPtr(new RenderPass()); // clears -> promotes
+    auto preserve_pass = RenderPassPtr(new RenderPass()); // preserves -> revokes
+    auto program_pass  = RenderPassPtr(new RenderPass());
+    auto program       = makeDeferredProgram(); // writes (0.55, 0.6, 0.65)
+
+    std::vector<vine::graphics::RenderDiagnostic> received;
+    renderer.setDiagnosticSink([&received](const vine::graphics::RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    const std::size_t ignored_before  = renderer.diagnosticCount(vine::graphics::DiagnosticCategory::ChannelIgnored);
+    const std::size_t compiled_before = renderer.diagnosticCount(vine::graphics::DiagnosticCategory::CompileFailed);
+
+    for (int i = 0; i < frames; ++i) {
+        FrameScope frame(renderer);
+
+        // Preserving depth on the SAME target revokes its promotion. Announced
+        // BEFORE the promoting pass below although it records after it: the
+        // backend picks a pass' depth-layout variant from the state of the target
+        // when the pass is BUILT, so this order has to hold up too (see the phase
+        // note above).
+        {
+            PassScope pass_scope(renderer, preserve_pass.get(), -5, source.get(), source_clear, /*clearDepth*/ false, vine::graphics::DepthMode::TestOnly);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+
+        {
+            PassScope pass_scope(renderer, promote_pass.get(), -10, source.get(), source_clear, true, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+
+        // The program consumer, ordered after the revocation.
+        {
+            PassScope pass_scope(renderer, program_pass.get(), 0, dest.get(), dest_clear, true);
+            renderer.drawScreenProgram(source.get(), program.get(), camera.get());
+        }
+
+    }
+    renderer.setDiagnosticSink({});
+
+    PixelImage image;
+    if (!readTarget(renderer, dest.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the program destination\n");
+        ok = false;
+    }
+    else {
+        const int r = image.at(128, 72, 0);
+        const int g = image.at(128, 72, 1);
+        const int b = image.at(128, 72, 2);
+        if (std::abs(r - 140) > 3 || std::abs(g - 153) > 3 || std::abs(b - 166) > 3) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the fullscreen program over a depth-preserving source drew (%d,%d,%d),"
+                         " expected (140,153,166)\n",
+                         r, g, b);
+            ok = false;
+        }
+    }
+    const std::size_t ignored_after  = renderer.diagnosticCount(vine::graphics::DiagnosticCategory::ChannelIgnored);
+    const std::size_t compiled_after = renderer.diagnosticCount(vine::graphics::DiagnosticCategory::CompileFailed);
+    if (ignored_after == ignored_before) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: binding the source's unsampleable depth was not reported (no ChannelIgnored"
+                     " diagnostic)\n");
+        ok = false;
+    }
+    bool named = false;
+    for (const auto& diagnostic : received) {
+        if (diagnostic.message.find(u8"d47-src") != vine::String::npos) {
+            named = true;
+            break;
+        }
+    }
+    if (!named) {
+        std::fprintf(stderr, "[selftest] FAIL: no diagnostic named the target whose depth could not be sampled\n");
+        ok = false;
+    }
+    if (compiled_after != compiled_before) {
+        std::fprintf(stderr, "[selftest] FAIL: the fullscreen program failed to build (%zu compile diagnostic(s))\n",
+                     compiled_after - compiled_before);
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] preserved depth: the program over a depth-preserving source drew with its colour"
+                     " attachments only and the unsampleable depth was reported\n");
+    }
+    renderer.releasePass(promote_pass.get());
+    renderer.releasePass(preserve_pass.get());
+    renderer.releasePass(program_pass.get());
+    renderer.releaseRenderTarget(source.get());
+    renderer.releaseRenderTarget(dest.get());
+    return ok;
+}
+
+/**
+ * @brief Asserts a program that SAMPLES the source's depth gets a real depth.
+ *
+ * runPreservedDepthNotSampledPhase covers the side where the depth must NOT be
+ * bound. This covers the side that has to WORK, and it is the only place in the
+ * self-test where a user program actually samples a texture: until it existed the
+ * depth-binding decision (Target::depth_sampleable) was unobservable, because a
+ * descriptor naming a layout its image is not in is only a validation error when
+ * the shader ACCESSES it.
+ *
+ *  - section 1: the source's pass clears, so its depth ends in
+ *    SHADER_READ_ONLY_OPTIMAL — the promotion its description asks for. A program
+ *    following the ABI (binding 1 = the source's depth) samples it and writes the
+ *    sampled value to its colour: the centre must read back that depth (the near
+ *    quad's small reverse-Z value, quantised into RGBA8), which is neither the
+ *    source's colour nor 0. A program whose binding was not provided would be
+ *    refused instead, so the slot build count is asserted too.
+ *  - section 2: the same program over a source whose depth a PRESERVING pass
+ *    revoked the promotion of must be REFUSED with a report — the pass cannot
+ *    bind that depth, and a pipeline whose layout lacks the binding would fail at
+ *    DRAW time with one validation error per frame and nothing telling the host
+ *    why — while the destination keeps its own clear colour.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the source's quad is drawn through.
+ * @param frames   Frames to drive.
+ * @return true when the sampled depth arrived and the unbound case was refused.
+ */
+bool runDepthSamplingProgramPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+    const vine::Color source_clear(10, 20, 30, 255);
+    const vine::Color dest_clear(70, 80, 90, 255);
+    auto              material = MaterialPtr(new Material());
+    material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    RenderCommand quad(makeVisibleQuad(0.4f, 1.0f), material, Mat4d());
+
+    // ---- section 1: a promoted source, sampled by a program -------------------
+    auto sampled = RenderTargetPtr(new RenderTarget());
+    sampled->setName(u8"depth-sampled");
+    sampled->setSize(96, 54);
+    sampled->attachColor(RenderTarget::ColorFormat::RGBA8);
+    sampled->attachDepth(RenderTarget::DepthFormat::D32);
+    sampled->setDepthPromotion(true); // the host's request: the depth is sampled
+
+    auto sampled_dest = RenderTargetPtr(new RenderTarget());
+    sampled_dest->setName(u8"depth-sampled-dst");
+    sampled_dest->setSize(96, 54);
+    sampled_dest->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    // ---- section 2: a source whose depth is preserved, so NOT sampleable -----
+    auto preserved = RenderTargetPtr(new RenderTarget());
+    preserved->setName(u8"depth-preserved");
+    preserved->setSize(96, 54);
+    preserved->attachColor(RenderTarget::ColorFormat::RGBA8);
+    preserved->attachDepth(RenderTarget::DepthFormat::D32);
+    preserved->setDepthPromotion(true);
+
+    auto refused_dest = RenderTargetPtr(new RenderTarget());
+    refused_dest->setName(u8"depth-preserved-dst");
+    refused_dest->setSize(96, 54);
+    refused_dest->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    // ---- section 3: the SAME-FRAME residual window --------------------------
+    // A program slot built BEFORE the pass that revokes the source's promotion
+    // (announced first, but ordered after it) samples a depth whose layout the
+    // revoke replaces later in the same frame. The slot's descriptor names
+    // SHADER_READ_ONLY; the revoke leaves the image in the attachment layout, so
+    // the frame records a descriptor the image is no longer in (one validation
+    // error per frame) unless the revocation drops the slot.
+    const vine::Color early_dest_clear(25, 35, 45, 255);
+    auto              early = RenderTargetPtr(new RenderTarget());
+    early->setName(u8"depth-early");
+    early->setSize(96, 54);
+    early->attachColor(RenderTarget::ColorFormat::RGBA8);
+    early->attachDepth(RenderTarget::DepthFormat::D32);
+    early->setDepthPromotion(true);
+
+    auto early_dest = RenderTargetPtr(new RenderTarget());
+    early_dest->setName(u8"depth-early-dst");
+    early_dest->setSize(96, 54);
+    early_dest->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto sampled_pass   = RenderPassPtr(new RenderPass());
+    auto sampled_prog   = RenderPassPtr(new RenderPass());
+    auto preserved_pass = RenderPassPtr(new RenderPass()); // clears -> promotes
+    auto preserving_pass = RenderPassPtr(new RenderPass()); // preserves -> revokes
+    auto refused_prog    = RenderPassPtr(new RenderPass());
+    auto early_promote_pass = RenderPassPtr(new RenderPass()); // order 0: promotes
+    auto early_prog_pass    = RenderPassPtr(new RenderPass()); // order 2: samples the depth
+    auto early_revoke_pass  = RenderPassPtr(new RenderPass()); // order 1: preserves -> revokes
+    auto program         = makeDepthSamplingProgram();
+
+    std::vector<vine::graphics::RenderDiagnostic> received;
+    renderer.setDiagnosticSink([&received](const vine::graphics::RenderDiagnostic& diagnostic) {
+        received.push_back(diagnostic);
+    });
+    const std::size_t builds_before = renderer.programSlotBuildCount();
+    const std::size_t failed_before = renderer.diagnosticCount(vine::graphics::DiagnosticCategory::CompileFailed);
+
+    for (int i = 0; i < frames; ++i) {
+        FrameScope frame(renderer);
+
+        {
+            PassScope pass_scope(renderer, sampled_pass.get(), 0, sampled.get(), source_clear, true, vine::graphics::DepthMode::TestAndWrite); // clears depth -> the depth ends sampleable
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+
+        {
+            PassScope pass_scope(renderer, sampled_prog.get(), 1, sampled_dest.get(), dest_clear, true);
+            renderer.drawScreenProgram(sampled.get(), program.get(), camera.get());
+        }
+
+        {
+            PassScope pass_scope(renderer, preserved_pass.get(), 0, preserved.get(), source_clear, true, vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+
+        {
+            PassScope pass_scope(renderer, preserving_pass.get(), 1, preserved.get(), source_clear, /*clearDepth*/ false, vine::graphics::DepthMode::TestOnly); // revokes the promotion
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+
+        {
+            PassScope pass_scope(renderer, refused_prog.get(), 2, refused_dest.get(), dest_clear, true);
+            renderer.drawScreenProgram(preserved.get(), program.get(), camera.get());
+        }
+
+        // Section 3 (see above): the program samples a depth that is STILL
+        // promoted when its slot is built, and the revoking pass is announced
+        // after it. P (order 0) runs before Q (order 1), so Q finds the depth
+        // already attachment-optimal and needs no transitional variant: this
+        // isolates the slot's stale descriptor from the passes' own layouts.
+        //
+        // Only in the FIRST frame: the promotion is revoked exactly once, in the
+        // frame in which the first preserving pass of a promoted target appears.
+        // Running it every frame would hide the evidence — from the second frame
+        // on the program is refused (binding 1 is gone), and the destination's
+        // own clear would wipe what the stale slot drew in the first one.
+        if (i == 0) {
+            {
+                PassScope pass_scope(renderer, early_promote_pass.get(), 0, early.get(), source_clear, true,
+                                     vine::graphics::DepthMode::TestAndWrite);
+                renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+            }
+            {
+                PassScope pass_scope(renderer, early_prog_pass.get(), 2, early_dest.get(), early_dest_clear, true);
+                renderer.drawScreenProgram(early.get(), program.get(), camera.get());
+            }
+            {
+                PassScope pass_scope(renderer, early_revoke_pass.get(), 1, early.get(), source_clear,
+                                     /*clearDepth*/ false, vine::graphics::DepthMode::TestOnly);
+                renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+            }
+        }
+
+    }
+    renderer.setDiagnosticSink({});
+
+    const std::size_t builds_after = renderer.programSlotBuildCount();
+    if (builds_after == builds_before) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the depth-sampling program was never built (%zu -> %zu slot build(s)); a"
+                     " promoted source must bind its depth\n",
+                     builds_before, builds_after);
+        ok = false;
+    }
+
+    PixelImage image;
+    if (!readTarget(renderer, sampled_dest.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the depth-sampling destination\n");
+        ok = false;
+    }
+    else {
+        const int r = image.at(48, 27, 0);
+        const int g = image.at(48, 27, 1);
+        const int b = image.at(48, 27, 2);
+        // The near quad's depth in reverse-Z is a small positive value; written
+        // through the sampler it lands in every channel (vec3(depth)) and must not
+        // be the source's red-orange colour, nor 0 (an unbound or undefined read).
+        if (r < 3 || r > 24 || std::abs(r - g) > 4 || std::abs(g - b) > 4) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the program sampling the source's depth wrote (%d,%d,%d), expected the"
+                         " near quad's small greyscale depth — the sampled texture is not the depth attachment (or"
+                         " was never bound)\n",
+                         r, g, b);
+            ok = false;
+        }
+    }
+
+    const std::size_t failed_after = renderer.diagnosticCount(vine::graphics::DiagnosticCategory::CompileFailed);
+    if (failed_after == failed_before) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: sampling the depth of a source whose promotion a preserving pass revoked was"
+                     " not refused (no CompileFailed report)\n");
+        ok = false;
+    }
+    bool explained = false;
+    for (const auto& diagnostic : received) {
+        if (diagnostic.message.find(u8"cannot provide") != vine::String::npos) {
+            explained = true;
+            break;
+        }
+    }
+    if (!explained) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the refusal of the unbound depth sampler did not say why (no diagnostic"
+                     " mentioning the binding it cannot provide)\n");
+        ok = false;
+    }
+    PixelImage refused;
+    if (!readTarget(renderer, refused_dest.get(), refused)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the refused-program destination\n");
+        ok = false;
+    }
+    else {
+        const int r = refused.at(48, 27, 0);
+        const int g = refused.at(48, 27, 1);
+        const int b = refused.at(48, 27, 2);
+        if (r != 70 || g != 80 || b != 90) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the destination of the refused program holds (%d,%d,%d), not its own clear"
+                         " colour (70,80,90) — a program whose binding cannot be provided must draw nothing\n",
+                         r, g, b);
+            ok = false;
+        }
+    }
+
+    // Section 3: the slot built BEFORE the revoking pass of the same frame has to
+    // be dropped for that frame. Its descriptor names the promoted layout and the
+    // revoke replaces it later in the frame, so recording it would name a layout
+    // the image is not in — the validation layer reports exactly that, once per
+    // frame, which is the residual window this section exists to close.
+    std::size_t dropped = 0;
+    for (const auto& diagnostic : received) {
+        if (diagnostic.message.find(u8"dropped for this frame") != vine::String::npos) {
+            ++dropped;
+        }
+    }
+    if (dropped == 0) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the program whose source lost its depth promotion later in the SAME frame was"
+                     " not dropped (no report says so) — its slot keeps a descriptor for the promoted layout\n");
+        ok = false;
+    }
+    PixelImage early_image;
+    if (!readTarget(renderer, early_dest.get(), early_image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the same-frame revoke destination\n");
+        ok = false;
+    }
+    else {
+        const int r = early_image.at(48, 27, 0);
+        const int g = early_image.at(48, 27, 1);
+        const int b = early_image.at(48, 27, 2);
+        if (r != 25 || g != 35 || b != 45) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the destination of the dropped program holds (%d,%d,%d), not its own clear"
+                         " colour (25,35,45) — a slot dropped for the frame it was revoked in must not draw\n",
+                         r, g, b);
+            ok = false;
+        }
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] depth sample: a program sampling the promoted source's depth read back the sampled"
+                     " depth, the same program over a depth-preserving source was refused with a report, and a slot"
+                     " built before the pass that revoked the promotion in the SAME frame was dropped (no stale"
+                     " descriptor recorded)\n");
+    }
+    renderer.releasePass(sampled_pass.get());
+    renderer.releasePass(sampled_prog.get());
+    renderer.releasePass(preserved_pass.get());
+    renderer.releasePass(preserving_pass.get());
+    renderer.releasePass(refused_prog.get());
+    renderer.releasePass(early_promote_pass.get());
+    renderer.releasePass(early_prog_pass.get());
+    renderer.releasePass(early_revoke_pass.get());
+    renderer.releaseRenderTarget(sampled.get());
+    renderer.releaseRenderTarget(sampled_dest.get());
+    renderer.releaseRenderTarget(preserved.get());
+    renderer.releaseRenderTarget(refused_dest.get());
+    renderer.releaseRenderTarget(early.get());
+    renderer.releaseRenderTarget(early_dest.get());
+    return ok;
+}
+
+/**
+ * @brief Asserts a host that ANIMATES its pass policies never stalls the device.
+ *
+ * Every per-pass policy change — a flip of RenderPass::setClearEnabled /
+ * setShouldClearDepth, a depth-promotion revoke, a pass that stops being
+ * announced — makes the backend replace a render pass / framebuffer or drop a
+ * node whose Vulkan handles a submitted command buffer may still name. Those
+ * objects are PARKED in a retire ring and released a few frame advances later,
+ * so the frame that changes a policy does not stop the device (every stop the
+ * backend does take, deliberate teardown included, is counted by
+ * VsgRenderer::deviceWaitCount()).
+ *
+ * This is the check of that: over @p frames frames every policy below flips, and
+ *
+ *  - no device-wide idle may be taken (`deviceWaitCount()` must not move),
+ *  - the ring must actually RELEASE — a ring that only accumulated would grow
+ *    without bound, so `retiredObjectCount()` must move,
+ *  - neither target may be rebuilt (`offscreenBuildCount()` +2 exactly, one per
+ *    target): a policy change is a render-pass VARIANT change, and a growing
+ *    target-build count is the signature of a path that treated it as an
+ *    attachment change,
+ *  - and the last frame's results must still be the ones its policies ask for —
+ *    a variant swap that lost the content would show up in the pixels.
+ *
+ * Three kinds of change are driven per frame, because three different teardown
+ * paths are involved: the COLOUR clear policy and the DEPTH clear policy (a
+ * render-pass variant swap), the DEPTH MODE (the bridge parks the state wrappers
+ * it rebuilds), and "this pass is not announced this frame" (the retained view is
+ * detached, nothing is destroyed). A second stage then flips a target's
+ * attachment SHAPE (depth promotion, part of the build key) every frame, which
+ * rebuilds the whole target: that one IS destructive (its bridges drop their
+ * caches and the images go), so it takes exactly its documented teardown wait per
+ * rebuild — and no more. The two stages together pin the boundary: churn that
+ * can park must not stall, churn that destroys must not stall twice.
+ */
+bool runPolicyChurnStressPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+    // The ring releases after SceneBridge::kRetireRingDepth advances, so the
+    // "it released" half needs at least that many frames plus one.
+    if (frames < static_cast<int>(vine::vsg::SceneBridge::kRetireRingDepth) + 2) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the policy-churn check needs at least %zu frames (got %d) to see the retire"
+                     " ring release\n",
+                     vine::vsg::SceneBridge::kRetireRingDepth + 2, frames);
+        return false;
+    }
+    const vine::Color clear_color(31, 41, 59, 255);
+    auto              material = MaterialPtr(new Material());
+    material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    RenderCommand quad(makeVisibleQuad(0.4f, 1.0f), material, Mat4d());
+
+    auto color_target = RenderTargetPtr(new RenderTarget());
+    color_target->setName(u8"churn-color");
+    color_target->setSize(96, 54);
+    color_target->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    auto depth_target = RenderTargetPtr(new RenderTarget());
+    depth_target->setName(u8"churn-depth");
+    depth_target->setSize(96, 54);
+    depth_target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    depth_target->attachDepth(RenderTarget::DepthFormat::D32);
+    // The clear -> preserve flip below revokes this promotion, which rebuilds the
+    // pass' variant for good (LOAD and promotion are mutually exclusive, §28).
+    depth_target->setDepthPromotion(true);
+
+    auto churn_pass  = RenderPassPtr(new RenderPass()); // flips its colour clear and its depth mode
+    auto toggle_pass = RenderPassPtr(new RenderPass()); // announced every other frame
+    auto depth_pass  = RenderPassPtr(new RenderPass()); // flips its depth clear
+
+    // Stage 2's target: its attachment shape (depth promotion, part of the build
+    // key) flips every frame, so the target is rebuilt every frame.
+    auto rebuild_target = RenderTargetPtr(new RenderTarget());
+    rebuild_target->setName(u8"churn-rebuild");
+    rebuild_target->setSize(96, 54);
+    rebuild_target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    rebuild_target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto rebuild_pass = RenderPassPtr(new RenderPass());
+
+    const std::size_t waits_before   = renderer.deviceWaitCount();
+    const std::size_t retired_before = renderer.retiredObjectCount();
+    const std::size_t builds_before  = renderer.offscreenBuildCount();
+
+    for (int i = 0; i < frames; ++i) {
+        FrameScope frame(renderer);
+        const bool clearing = (i % 2) == 0;
+        if (clearing) {
+            PassScope pass_scope(renderer, churn_pass.get(), 0, color_target.get(), clear_color, true,
+                                 vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+        else {
+            // The depth MODE flips with the clear policy: the bridge rebuilds its
+            // state wrappers for it (and parks the ones it drops).
+            PassScope pass_scope(renderer, churn_pass.get(), 0, color_target.get(),
+                                 vine::graphics::DepthMode::TestOnly);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+        if (clearing) {
+            // This pass is only announced on the clearing frames: the frames it
+            // skips retire its view (detached, but kept) and the next one
+            // re-attaches it. Nothing is destroyed, so it must cost no wait.
+            PassScope pass_scope(renderer, toggle_pass.get(), 1, color_target.get(), clear_color, false,
+                                 vine::graphics::DepthMode::TestOnly);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+        if (clearing) {
+            // CLEAR depth promotes the target's depth; preserving it (the frames
+            // without a clear) LOADs it and revokes the promotion.
+            PassScope pass_scope(renderer, depth_pass.get(), 0, depth_target.get(), clear_color, true,
+                                 vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+        else {
+            PassScope pass_scope(renderer, depth_pass.get(), 0, depth_target.get(),
+                                 vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+        }
+    }
+
+    const std::size_t waits   = renderer.deviceWaitCount() - waits_before;
+    const std::size_t retired = renderer.retiredObjectCount() - retired_before;
+    const std::size_t builds  = renderer.offscreenBuildCount() - builds_before;
+    if (waits != 0) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: %d frame(s) of policy churn stopped the device %zu time(s); a replaced render"
+                     " pass / framebuffer and a retired view must be parked, not waited for\n",
+                     frames, waits);
+        ok = false;
+    }
+    if (retired == 0) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the policy churn parked objects but the retire ring released none over %d"
+                     " frame(s) — a ring that never releases grows without bound\n",
+                     frames);
+        ok = false;
+    }
+    if (builds != 2) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the policy churn built %zu off-screen target(s), expected exactly 2 (one per"
+                     " target): a clear / depth policy change must rebuild the pass VARIANT, never the target\n",
+                     builds);
+        ok = false;
+    }
+
+    // Stage 2: flip an attachment shape (depth promotion) every frame, so the
+    // target is rebuilt every frame. A rebuild is the DESTRUCTIVE case: it drops
+    // the previous render passes / framebuffers / images and clears the slot
+    // bridges' caches, so it takes one device wait per rebuild — and no more than
+    // that (a second wait would mean a path that could park started waiting).
+    //
+    // Build the target once first (promotion off): the first build has nothing to
+    // release and takes no teardown wait, so without this warm-up every frame of
+    // the loop below would still be a rebuild but the count would be off by one.
+    {
+        FrameScope frame(renderer);
+        PassScope pass_scope(renderer, rebuild_pass.get(), 0, rebuild_target.get(), clear_color, true,
+                             vine::graphics::DepthMode::TestAndWrite);
+        renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+    }
+    const std::size_t rebuild_waits_before  = renderer.deviceWaitCount();
+    const std::size_t rebuild_builds_before = renderer.offscreenBuildCount();
+    for (int i = 0; i < frames; ++i) {
+        FrameScope frame(renderer);
+        rebuild_target->setDepthPromotion((i % 2) == 0);
+        PassScope pass_scope(renderer, rebuild_pass.get(), 0, rebuild_target.get(), clear_color, true,
+                             vine::graphics::DepthMode::TestAndWrite);
+        renderer.render(std::vector<RenderCommand>{ quad }, camera.get());
+    }
+    const std::size_t rebuild_waits  = renderer.deviceWaitCount() - rebuild_waits_before;
+    const std::size_t rebuild_builds = renderer.offscreenBuildCount() - rebuild_builds_before;
+    // One rebuild FEWER than frames: a target DESCRIPTION change is adopted when
+    // the target is next BUILT, i.e. by the following frame's beginFrame — a pass
+    // REQUEST change, by contrast, takes effect in the frame it is made (see the
+    // clear-flip phase). Every flip below is therefore applied one frame later,
+    // and the flip made on the last frame is never seen inside the loop.
+    if (rebuild_builds != static_cast<std::size_t>(frames) - 1u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the attachment-shape stage rebuilt the target %zu time(s) over %d frame(s),"
+                     " expected %d (one per frame but the last, whose flip the next frame adopts)\n",
+                     rebuild_builds, frames, frames - 1);
+        ok = false;
+    }
+    if (rebuild_waits != rebuild_builds) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: %zu target rebuild(s) took %zu device wait(s); a rebuild is destructive and"
+                     " takes exactly one (its teardown), so a higher count means a path that can park started"
+                     " waiting\n",
+                     rebuild_builds, rebuild_waits);
+        ok = false;
+    }
+    PixelImage rebuild_image;
+    if (!readTarget(renderer, rebuild_target.get(), rebuild_image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the rebuilt target\n");
+        ok = false;
+    }
+    else if (rebuild_image.at(2, 2, 0) != 31 || rebuild_image.at(2, 2, 1) != 41 || rebuild_image.at(2, 2, 2) != 59) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the rebuilt target's corner holds (%d,%d,%d), not the last frame's clear"
+                     " colour (31,41,59) — a rebuild lost the frame's content\n",
+                     rebuild_image.at(2, 2, 0), rebuild_image.at(2, 2, 1), rebuild_image.at(2, 2, 2));
+        ok = false;
+    }
+
+    PixelImage image;
+    if (!readTarget(renderer, color_target.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the policy-churn colour target\n");
+        ok = false;
+    }
+    else {
+        const int corner_r = image.at(2, 2, 0);
+        const int corner_g = image.at(2, 2, 1);
+        const int corner_b = image.at(2, 2, 2);
+        const int centre_r = image.at(48, 27, 0);
+        const int centre_g = image.at(48, 27, 1);
+        const int centre_b = image.at(48, 27, 2);
+        // The last frame clears (frames is even), so the corner must be that
+        // frame's clear colour and the centre the lit quad over it.
+        if (corner_r != 31 || corner_g != 41 || corner_b != 59) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the policy-churn target's corner holds (%d,%d,%d), not the last frame's"
+                         " clear colour (31,41,59) — a clear-policy flip did not reach the recorded variant\n",
+                         corner_r, corner_g, corner_b);
+            ok = false;
+        }
+        if (centre_r <= corner_r || centre_r <= centre_g || centre_r <= centre_b) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the policy-churn target's centre holds (%d,%d,%d), not the lit quad — a"
+                         " rebuilt variant lost the frame's content\n",
+                         centre_r, centre_g, centre_b);
+            ok = false;
+        }
+    }
+
+    std::vector<float> depths;
+    if (!renderer.readDepthBuffer(depth_target.get(), depths) ||
+        depths.size() != static_cast<std::size_t>(depth_target->width()) *
+                              static_cast<std::size_t>(depth_target->height())) {
+        std::fprintf(stderr, "[selftest] FAIL: readDepthBuffer() refused the policy-churn depth target\n");
+        ok = false;
+    }
+    else {
+        const std::size_t centre = static_cast<std::size_t>(27) * 96u + 48u;
+        // The last frame cleared the depth, so the centre holds the quad's
+        // reverse-Z depth (z = 1 at 4 units of 5) and the untouched corner the
+        // far plane. Reading it back also proves the layout the readback asks for
+        // followed the revoke (the image is an attachment from then on).
+        if (!(depths[centre] > 0.02f && depths[centre] < 0.03f)) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the policy-churn depth target's centre holds %.4f, expected the quad's"
+                         " reverse-Z depth (~0.0249) after a cleared frame\n",
+                         depths[centre]);
+            ok = false;
+        }
+        if (depths[0] >= 0.1f) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the policy-churn depth target's corner holds %.4f, not the far plane —"
+                         " the last frame did not clear the depth it was asked to clear\n",
+                         depths[0]);
+            ok = false;
+        }
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] policy churn: %d frame(s) flipping the colour clear, the depth clear, the depth"
+                     " mode and a pass' activity took %zu device wait(s), released %zu parked object(s) and built"
+                     " %zu target(s); %d more frame(s) flipping an attachment shape rebuilt %zu target(s) with %zu"
+                     " teardown wait(s)\n",
+                     frames, waits, retired, builds, frames, rebuild_builds, rebuild_waits);
+    }
+    renderer.releasePass(churn_pass.get());
+    renderer.releasePass(toggle_pass.get());
+    renderer.releasePass(depth_pass.get());
+    renderer.releasePass(rebuild_pass.get());
+    renderer.releaseRenderTarget(color_target.get());
+    renderer.releaseRenderTarget(depth_target.get());
+    renderer.releaseRenderTarget(rebuild_target.get());
+    return ok;
+}
+
+/**
+ * @brief Asserts the colour BOOTSTRAP is a one-frame thing.
+ *
+ * A pass that never asked to clear must LOAD its target's colour; the single
+ * exception is the first pass into a fresh target, whose image is UNDEFINED and
+ * may not be LOADed, so that pass CLEARs ONCE to define it (§28). The bootstrap
+ * must not leak into the frames after it: a pass that keeps clearing wipes what an
+ * earlier pass of the same target drew — every frame — which is exactly the
+ * "clear once, whichever pass runs" model §28 removed.
+ *
+ * Two passes on ONE colour-only target, NEITHER of them clearing:
+ *  1. for the first frames the first pass fills the target and the second draws a
+ *     small quad over it (the first pass' clear is the bootstrap that defines the
+ *     UNDEFINED image);
+ *  2. the first pass then stops drawing (empty content, still recorded and still
+ *     its own render pass) while the second keeps its quad. The fill has to
+ *     survive: nothing asked to clear the colour.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera both passes draw through.
+ * @param frames   Frames to drive per stage.
+ * @return true when the fill survived the stage in which the first pass drew
+ *         nothing.
+ */
+bool runColorBootstrapPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+    auto fill_material = MaterialPtr(new Material());
+    fill_material->setDiffuse(vine::Colorf(0.1f, 0.2f, 0.9f, 1.0f)); // blue (blueDominant)
+    auto dot_material = MaterialPtr(new Material());
+    dot_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red
+    // The camera sits at z = 5 with a 60-degree vertical FOV, so a quad at z = 1
+    // covers the whole target from half extent 4.11 (width) upwards.
+    RenderCommand fill(makeVisibleQuad(5.0f, 1.0f), fill_material, Mat4d());
+    RenderCommand dot(makeVisibleQuad(0.4f, 1.0f), dot_material, Mat4d());
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setName(u8"color-bootstrap");
+    target->setSize(96, 54);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    auto fill_pass = RenderPassPtr(new RenderPass());
+    auto dot_pass  = RenderPassPtr(new RenderPass());
+
+    const auto drive = [&](const std::vector<RenderCommand>& fill_commands) {
+        for (int i = 0; i < frames; ++i) {
+            FrameScope frame(renderer);
+
+            {
+                PassScope pass_scope(renderer, fill_pass.get(), 0, target.get(), vine::graphics::DepthMode::Disabled);
+                renderer.render(fill_commands, camera.get());
+            }
+
+            {
+                PassScope pass_scope(renderer, dot_pass.get(), 1, target.get(), vine::graphics::DepthMode::Disabled);
+                renderer.render(std::vector<RenderCommand>{ dot }, camera.get());
+            }
+
+        }
+    };
+
+    const std::size_t builds_before = renderer.offscreenBuildCount();
+    drive(std::vector<RenderCommand>{ fill }); // stage 1: the fill defines the image
+    drive(std::vector<RenderCommand>{});       // stage 2: the fill pass draws nothing
+
+    PixelImage image;
+    if (!readTarget(renderer, target.get(), image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the colour-bootstrap target\n");
+        renderer.releasePass(fill_pass.get());
+        renderer.releasePass(dot_pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+    const std::size_t red   = image.redDominant();
+    const std::size_t blue  = image.blueDominant();
+    const std::size_t total = image.pixels.size() / 4u;
+    if (blue + red < total / 2u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: only %zu of %zu pixel(s) carry a pass' own colour after the first pass stopped"
+                     " drawing (%zu blue fill, %zu red quad) — a pass that never asked to clear kept clearing and"
+                     " wiped what the pass before it drew\n",
+                     blue + red, total, blue, red);
+        ok = false;
+    }
+    if (red == 0u) {
+        std::fprintf(stderr, "[selftest] FAIL: the second pass' quad did not draw over the first pass' fill\n");
+        ok = false;
+    }
+    const std::size_t builds = renderer.offscreenBuildCount() - builds_before;
+    if (builds != 1u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the colour-bootstrap target built %zu time(s) over %d frames; the bootstrap"
+                     " swaps the pass' variant, it does not rebuild the target\n",
+                     builds, 2 * frames);
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] color bootstrap: the first pass' fill survived the frames it drew nothing in (%zu of"
+                     " %zu pixel(s)) with the second pass' quad (%zu pixel(s)) on top\n",
+                     blue, total, red);
+    }
+    renderer.releasePass(fill_pass.get());
+    renderer.releasePass(dot_pass.get());
     renderer.releaseRenderTarget(target.get());
     return ok;
 }
@@ -3481,10 +4561,17 @@ int main()
     contract_ok = runMixedDepthPolicyPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runStackedPassPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runPromotingPreservePhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runDepthOnlyTargetPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runDepthOnlyPreservePhase(*renderer, camera, 3) && contract_ok;
+    contract_ok = runClearPolicyFlipPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runPreservedDepthNotSampledPhase(*renderer, camera, 3) && contract_ok;
+    contract_ok = runDepthSamplingProgramPhase(*renderer, camera, 3) && contract_ok;
+    contract_ok = runColorBootstrapPhase(*renderer, camera, 3) && contract_ok;
     contract_ok = runDepthBorrowValidationPhase(*renderer, camera, 3) && contract_ok;
     contract_ok = runDepthTestOnlyPixelPhase(*renderer, camera, 4) && contract_ok;
     contract_ok = runDepthShareOrderPhase(*renderer, camera, 6) && contract_ok;
     contract_ok = runTargetDescriptionChangePhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runPolicyChurnStressPhase(*renderer, camera, frames) && contract_ok;
     // Diagnostics: what the MRT path receives per attachment (attachment 0 is
     // asserted), and which input a "nothing was drawn" result is attributable
     // to.

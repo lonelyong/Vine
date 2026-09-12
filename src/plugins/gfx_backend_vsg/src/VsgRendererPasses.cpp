@@ -2,7 +2,8 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <limits>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <set>
 #include <string>
@@ -36,6 +37,110 @@ V_VSG_NS_BEGIN
 // layer (VsgPipelineFactory.hpp / VsgBackendUtility.hpp); the directive keeps
 // its call sites unqualified.
 using namespace detail;
+
+namespace
+{
+
+/** @brief Keeps a content slot's camera viewport in step with its role.
+ *
+ * Presenting (full-target) content always fills the whole target; other content
+ * carries its pass sub-viewport when one was queued, and the full target when none
+ * was (an unset or empty sub-viewport means "the whole target"). This runs every
+ * frame because the slot is created lazily (on its first render) and the target may
+ * have been resized before that.
+ *
+ * @param camera     Slot camera whose baked viewport is updated.
+ * @param presenting Whether the slot fills the target (vs. composites into it).
+ * @param viewport   Sub-viewport the pass announced, if any.
+ * @param surf_w     Target surface width in device pixels.
+ * @param surf_h     Target surface height in device pixels.
+ */
+void updateSlotViewport(::vsg::Camera& camera, bool presenting, const std::optional<vine::graphics::Viewport>& viewport,
+                        int surf_w, int surf_h)
+{
+    if (!presenting && viewport && viewport->width > 0 && viewport->height > 0) {
+        camera.viewportState = ::vsg::ViewportState::create(
+            viewport->x, viewport->y, static_cast<uint32_t>(viewport->width), static_cast<uint32_t>(viewport->height));
+        return;
+    }
+    camera.viewportState =
+        ::vsg::ViewportState::create(VkExtent2D{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) });
+}
+
+/** @brief Seeds a slot's default light after its presenting role flipped.
+ *
+ * The seed keeps a slot whose scene carries no usable lights readable: the window's
+ * presenting slot gets vsg's default headlight, everything else an ambient fill (a
+ * directional headlight would shade an axis gizmo dark from diagonal views). A scene
+ * that provides lights replaces the seed every frame (see setGroupLights).
+ *
+ * @param light_group    Group holding the slot's lights (cleared first).
+ * @param want_headlight Whether the slot should be seeded with the headlight.
+ * @param presenting     Slot's presenting role (picks the ambient name).
+ */
+void seedSlotLight(::vsg::Group& light_group, bool want_headlight, bool presenting)
+{
+    light_group.children.clear();
+    if (want_headlight) {
+        light_group.addChild(::vsg::createHeadlight());
+    }
+    else {
+        light_group.addChild(makeAmbientLight(presenting ? "offscreen_ambient" : "content_ambient"));
+    }
+}
+
+/** @brief Whether an all-lights-dropped episode has to be reported right now.
+ *
+ * "Every announced light was disabled or of an unsupported kind" is a property of
+ * the scene, not of a frame: it is reported once per episode and re-armed as soon as
+ * any usable light shows up again (or the pass announces none at all, which is the
+ * normal "keep the slot's light" request).
+ *
+ * @param announced Number of lights the pass announced this frame.
+ * @param attached  Number of lights actually attached.
+ * @param reported  The slot's episode flag (raised when true is returned).
+ * @return true when the caller must report the episode.
+ */
+bool beginLightsDroppedEpisode(std::size_t announced, std::size_t attached, bool& reported)
+{
+    if (attached != 0u || announced == 0u) {
+        reported = false; // usable lights (or none announced): re-arm the report
+        return false;
+    }
+    if (reported) {
+        return false; // already reported for this episode
+    }
+    reported = true;
+    return true;
+}
+
+/** @brief Logs a content slot's per-frame counts when VINE_VSG_DIAG_MRT is set.
+ *
+ * TEMP diagnostics (see the MRT notes): tell "no geometry was collected" apart from
+ * "geometry was collected but not rasterised", and confirm pipeline sharing
+ * (variants << commands when states repeat). Env-gated so it costs nothing normally.
+ *
+ * @param target        Target the slot draws into (nullptr = the window).
+ * @param depth_mode    The pass' depth policy (logged as its enum value).
+ * @param order         The pass' explicit pipeline order.
+ * @param commands      Commands collected for this slot this frame.
+ * @param created       Subtrees the bridge built for this slot this frame.
+ * @param root_children Children under the slot's retained root.
+ * @param variants      Distinct pipeline variants the bridge registered.
+ */
+void logContentSlotDiagnostics(const vine::graphics::RenderTarget* target, vine::graphics::DepthMode depth_mode,
+                               int order, std::size_t commands, std::size_t created, std::size_t root_children,
+                               std::size_t variants)
+{
+    if (std::getenv("VINE_VSG_DIAG_MRT") == nullptr) {
+        return;
+    }
+    std::fprintf(stderr, "[MRT-DIAG] target=%s depth_mode=%d order=%d commands=%zu created=%zu rootChildren=%zu variants=%zu\n",
+                 target == nullptr ? "window" : (target->name().empty() ? "offscreen" : target->name().stdstr().c_str()),
+                 static_cast<int>(depth_mode), order, commands, created, root_children, variants);
+}
+
+} // namespace
 
 void VsgRenderer::beginPass(vine::raw_ptr<const vine::graphics::RenderPass> pass)
 {
@@ -83,6 +188,42 @@ void VsgRenderer::endPass()
     resetPassRequest();
 }
 
+void VsgRenderer::Impl::unhookTargetPasses(Target& t)
+{
+    for (auto& pass : t.passes) {
+        removeGraphChild(command_graph.get(), pass.second.graph);
+    }
+    // Destructive teardown keeps the counted device wait (§3): the bridge caches
+    // dropped below release the shared object registry, whose pipelines / samplers
+    // the retained nodes do not necessarily keep alive as the only owner. Parking
+    // the views instead was measured to trip vkDestroyPipeline-00765 /
+    // vkDestroySampler-01082, so this is the wait, not a park.
+    waitForIdle();
+    for (auto& slot_entry : t.content_slots) {
+        slot_entry.second.bridge.clearCache();
+        // A dropped slot must not stay queued for the frame's incremental compile:
+        // its view no longer belongs to any target.
+        const auto& view  = slot_entry.second.view;
+        auto&       queue = pending_compile_views;
+        queue.erase(std::remove(queue.begin(), queue.end(), view), queue.end());
+    }
+}
+
+void VsgRenderer::Impl::detachSlotView(Target&                            owner,
+                                      vine::graphics::RenderTarget*      owner_key,
+                                      const SlotKey&                     key,
+                                      const ::vsg::ref_ptr<::vsg::View>& view)
+{
+    if (auto graph = owner.slotGraph(owner, owner_key, key); graph != nullptr) {
+        removeGraphChild(graph.get(), view);
+    }
+    // A dropped view must not stay queued for the frame's incremental compile —
+    // only content slots queue their views, so this is a no-op for the other
+    // kinds (which compile the moment they are built).
+    auto& queue = pending_compile_views;
+    queue.erase(std::remove(queue.begin(), queue.end(), view), queue.end());
+}
+
 void VsgRenderer::erasePassSlotsFromTarget(vine::graphics::RenderTarget* target,
                                            const vine::graphics::RenderPass* pass)
 {
@@ -93,56 +234,30 @@ void VsgRenderer::erasePassSlotsFromTarget(vine::graphics::RenderTarget* target,
     if (target_entry == impl->targets.end()) {
         return;
     }
-    auto&      t   = target_entry->second;
+    auto&         t   = target_entry->second;
     const SlotKey key = SlotKey::ownerPass(pass);
-    // Nothing to do for a pass this target holds no slot for: avoid a device
-    // wait on the common path (a pass that moved targets usually owns a slot
-    // in only one of them).
-    if (t.content_slots.find(key) == t.content_slots.end() &&
-        t.screen_slots.find(key) == t.screen_slots.end() &&
-        t.program_slots.find(key) == t.program_slots.end()) {
+    // Nothing to do for a pass this target holds no slot for: avoid a device wait
+    // on the common path (a pass that moved targets usually owns a slot in only
+    // one of them).
+    if (!t.hasSlot(key)) {
         return;
     }
-    // Wait BEFORE detaching / dropping anything: the views, pipelines and
-    // samplers about to be destroyed may still be referenced by a submitted
-    // command buffer (destroying them first trips VUID-vkDestroyPipeline /
-    // vkDestroySampler).
-    waitForIdle(impl->viewer.get());
-    // A dropped view must not stay queued for the frame's incremental compile.
-    const auto forget_view = [this](const ::vsg::ref_ptr<::vsg::View>& view) {
-        auto& queue = impl->pending_compile_views;
-        queue.erase(std::remove(queue.begin(), queue.end(), view), queue.end());
-    };
-    // The graph this pass' views were attached to: the window's shared
-    // swapchain graph (target == nullptr), or this pass' own off-screen graph.
-    const auto slot_graph = [&t, target, &key]() -> ::vsg::ref_ptr<::vsg::RenderGraph> {
-        if (target == nullptr) {
-            return t.graph;
-        }
-        const auto pass = t.passes.find(key);
-        return pass == t.passes.end() ? ::vsg::ref_ptr<::vsg::RenderGraph>() : pass->second.graph;
-    };
+    // Destructive: the slots dropped below are erased together with their
+    // bridges, and SceneBridge::clearCache() releases the shared object registry
+    // (whose pipelines / samplers the retained nodes need not be the only owner
+    // of), so this keeps the counted device wait rather than parking a view —
+    // parking was measured to trip vkDestroyPipeline-00765 (see the
+    // policy-churn notes).
+    impl->waitForIdle();
 
-    if (const auto it = t.content_slots.find(key); it != t.content_slots.end()) {
-        if (auto graph = slot_graph(); graph != nullptr) {
-            removeGraphChild(graph.get(), it->second.view);
+    t.visitSlot(key, [&](auto& slot, Impl::Target::SlotKind kind) {
+        impl->detachSlotView(t, target, key, slot.view);
+        // Only a content slot owns a bridge (its caches go with the slot).
+        if constexpr (requires { slot.bridge; }) {
+            slot.bridge.clearCache();
         }
-        forget_view(it->second.view);
-        it->second.bridge.clearCache();
-        t.content_slots.erase(it);
-    }
-    if (const auto it = t.screen_slots.find(key); it != t.screen_slots.end()) {
-        if (auto graph = slot_graph(); graph != nullptr) {
-            removeGraphChild(graph.get(), it->second.view);
-        }
-        t.screen_slots.erase(it);
-    }
-    if (const auto it = t.program_slots.find(key); it != t.program_slots.end()) {
-        if (auto graph = slot_graph(); graph != nullptr) {
-            removeGraphChild(graph.get(), it->second.view);
-        }
-        t.program_slots.erase(it);
-    }
+        t.eraseSlot(kind, key);
+    });
 }
 
 void VsgRenderer::retargetPass(const vine::graphics::RenderPass* pass,
@@ -169,76 +284,31 @@ void VsgRenderer::retireInactivePassSlots()
     }
     // A slot needs retiring when its pass did not execute this frame and its
     // view is still attached. Already-retired slots are skipped, so a pass that
-    // stays disabled costs nothing per frame (no scan hit, no device wait, no
+    // stays disabled costs nothing per frame (no scan hit, no detach, no
     // repeated diagnostic).
     const auto needs_retire = [this](const SlotKey& key, bool detached) {
         return !detached && key.owner != nullptr &&
                impl->passes_active_this_frame.count(key.owner) == 0;
     };
-    bool any = false;    for (const auto& entry : impl->targets) {
-        const auto& t = entry.second;
-        for (const auto& kv : t.content_slots) {
-            any = any || needs_retire(kv.first, kv.second.detached);
-        }
-        for (const auto& kv : t.screen_slots) {
-            any = any || needs_retire(kv.first, kv.second.detached);
-        }
-        for (const auto& kv : t.program_slots) {
-            any = any || needs_retire(kv.first, kv.second.detached);
-        }
-        if (any) {
-            break;
-        }
-    }
-    if (!any) {
-        return;
-    }
-    // Wait BEFORE detaching: the pipelines the detached views hold must not be
-    // destroyed while a submitted command buffer may still reference them. The
-    // slots themselves are KEPT (only the view is detached) so re-enabling a
-    // pass re-attaches instead of re-uploading its mesh and recompiling.
-    waitForIdle(impl->viewer.get());
-
-    // A view lives in its pass' own graph (an off-screen target has one per
-    // pass; the window has the one swapchain graph).
-    const auto pass_graph_of = [](vine::graphics::RenderTarget* owner_key, Impl::Target& owner,
-                                  const SlotKey& key) -> ::vsg::ref_ptr<::vsg::RenderGraph> {
-        if (owner_key == nullptr) {
-            return owner.graph;
-        }
-        const auto pass = owner.passes.find(key);
-        return pass == owner.passes.end() ? ::vsg::ref_ptr<::vsg::RenderGraph>() : pass->second.graph;
-    };
-
+    // NO device wait here: this path DETACHES a view from its graph and keeps the
+    // slot (the view, its node and the compiled pipelines stay referenced by the
+    // slot), so nothing is destroyed and nothing a pending command buffer names
+    // can go away. Disabling a pass is a per-frame host decision of an editor, and
+    // stopping the device for it would be a stall for no lifetime reason.
+    bool any = false;
     for (auto& entry : impl->targets) {
         auto& t = entry.second;
-        for (auto& kv : t.content_slots) {
-            if (!needs_retire(kv.first, kv.second.detached)) {
-                continue;
+        t.forEachSlot([&](const SlotKey& key, auto& slot, auto) {
+            if (!needs_retire(key, slot.detached)) {
+                return;
             }
-            if (auto graph = pass_graph_of(entry.first, t, kv.first); graph != nullptr) {
-                removeGraphChild(graph.get(), kv.second.view);
-            }
-            kv.second.detached = true;
-        }
-        for (auto& kv : t.screen_slots) {
-            if (!needs_retire(kv.first, kv.second.detached)) {
-                continue;
-            }
-            if (auto graph = pass_graph_of(entry.first, t, kv.first); graph != nullptr) {
-                removeGraphChild(graph.get(), kv.second.view);
-            }
-            kv.second.detached = true;
-        }
-        for (auto& kv : t.program_slots) {
-            if (!needs_retire(kv.first, kv.second.detached)) {
-                continue;
-            }
-            if (auto graph = pass_graph_of(entry.first, t, kv.first); graph != nullptr) {
-                removeGraphChild(graph.get(), kv.second.view);
-            }
-            kv.second.detached = true;
-        }
+            impl->detachSlotView(t, entry.first, key, slot.view);
+            slot.detached = true;
+            any          = true;
+        });
+    }
+    if (!any) {
+        return; // nothing changed: no re-order, no log line
     }
     // Dropping a view can remove a command-graph dependency edge.
     reconcileOffscreenOrder();
@@ -427,10 +497,12 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
     //  - the presenting role drives the viewport each frame and re-seeds the
     //    slot's default light when it flips.
     if (content.depth_mode != request.depth_mode) {
-        // Wait before the state rebuild: the pipelines / descriptor sets the
-        // bridge is about to drop may still be referenced by a submitted
-        // command buffer.
-        waitForIdle(impl->viewer.get());
+        // No device wait: the state wrappers being dropped are PARKED by the
+        // bridge itself (SceneBridge::invalidateState), so the pipelines they own
+        // stay alive until every slot that could have recorded them has been
+        // re-recorded. The depth mode is a per-frame host decision (a UI toggling
+        // depth test), so waiting here would stall the device on every frame it
+        // changes — measured: 14 waits over 15 flipping frames before this.
         content.depth_mode = request.depth_mode;
         content.bridge.setContentDepthMode(request.depth_mode);
         content.bridge.invalidateState();
@@ -444,13 +516,7 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
         const bool want_headlight = (request.presenting && request.target == nullptr);
         if (content.headlight_seed != want_headlight) {
             content.headlight_seed = want_headlight;
-            content.light_group->children.clear();
-            if (want_headlight) {
-                content.light_group->addChild(::vsg::createHeadlight());
-            }
-            else {
-                content.light_group->addChild(makeAmbientLight(request.presenting ? "offscreen_ambient" : "content_ambient"));
-            }
+            seedSlotLight(*content.light_group, want_headlight, request.presenting);
         }
     }
 
@@ -459,48 +525,22 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
     const int surf_w = (request.target == nullptr) ? static_cast<int>(impl->window->extent2D().width) : t.width;
     const int surf_h = (request.target == nullptr) ? static_cast<int>(impl->window->extent2D().height) : t.height;
 
-    // Keep the slot's vsg camera viewport in step with its role each frame:
-    // presenting (full-target) content always fills the whole target; other
-    // content carries its pass sub-viewport when one was queued (an unset or
-    // empty sub-viewport means the full target). The slot is created lazily on
-    // its first render, so this also covers the first frame and any resize that
-    // happened before the slot existed.
-    if (content.presenting) {
-        content.vsg_camera->viewportState =
-            ::vsg::ViewportState::create(VkExtent2D{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) });
-    }
-    else if (request.viewport && request.viewport->width > 0 && request.viewport->height > 0) {
-        content.vsg_camera->viewportState =
-            ::vsg::ViewportState::create(request.viewport->x, request.viewport->y,
-                                         static_cast<uint32_t>(request.viewport->width),
-                                         static_cast<uint32_t>(request.viewport->height));
-    }
-    else {
-        content.vsg_camera->viewportState =
-            ::vsg::ViewportState::create(VkExtent2D{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) });
-    }
+    // Keep the slot's vsg camera viewport in step with its role each frame (see
+    // updateSlotViewport): presenting content fills the target, other content carries
+    // its pass sub-viewport.
+    updateSlotViewport(*content.vsg_camera, content.presenting, request.viewport, surf_w, surf_h);
 
     persistent->cameraBridge.apply(request.camera, content.vsg_camera);
 
-    // Lights come from the pass' content scene each frame (the scene is the
-    // source of truth). setGroupLights leaves the slot's seeded default light in
-    // place unless at least one announced light is usable, so a scene whose
-    // lights are all disabled (or of an untranslatable kind) stays lit by the
-    // default instead of going black; say so once per episode. The light source
-    // is never chosen by the slot's depth style.
+    // Lights come from the pass' content scene each frame (the scene is the source of
+    // truth); setGroupLights leaves the slot's seeded default light in place unless at
+    // least one announced light is usable (see beginLightsDroppedEpisode).
     const std::size_t attached_lights = setGroupLights(content.light_group.get(), *request.lights);
-    if (attached_lights == 0u && !request.lights->empty()) {
-        if (!content.light_fallback_reported) {
-            content.light_fallback_reported = true;
-            reportFailure(vine::graphics::DiagnosticSeverity::Warning,
-                          vine::graphics::DiagnosticCategory::ChannelIgnored,
-                          formatDiagnostic(u8"%zu announced light(s) are all disabled or of an unsupported "
-                                           u8"kind; the pass keeps its default light",
-                                           request.lights->size()));
-        }
-    }
-    else {
-        content.light_fallback_reported = false;
+    if (beginLightsDroppedEpisode(request.lights->size(), attached_lights, content.light_fallback_reported)) {
+        reportFailure(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
+                      formatDiagnostic(u8"%zu announced light(s) are all disabled or of an unsupported "
+                                       u8"kind; the pass keeps its default light",
+                                       request.lights->size()));
     }
 
     // The command stream is the source of truth: reconcile the retained slot
@@ -519,22 +559,12 @@ void VsgRenderer::renderContentSlot(const ContentSlotRequest& request)
                 pending.push_back(content.view);
             }
         }
-        // TEMP diagnostics (VINE_VSG_DIAG_MRT): report how many commands were
-        // collected for this slot, how many geometry subtrees were built and
-        // how many distinct pipeline variants the bridge registered, to tell
-        // "no geometry collected" from "geometry not rasterised" and to
-        // confirm pipeline sharing (variants << commands when states repeat).
-        if (std::getenv("VINE_VSG_DIAG_MRT") != nullptr) {
-            std::fprintf(stderr, "[MRT-DIAG] target=%s depth_mode=%d order=%d commands=%zu created=%zu rootChildren=%zu variants=%zu\n",
-                         request.target == nullptr ? "window"
-                                                   : (request.target->name().empty() ? "offscreen" : request.target->name().stdstr().c_str()),
-                         static_cast<int>(request.depth_mode),
-                         request.order,
-                         request.commands->size(),
-                         created.size(),
-                         content.root->children.size(),
-                         content.bridge.pipelineVariantCount());
-        }
+        // TEMP diagnostics, env-gated: how many commands this slot collected, how
+        // many subtrees were built and how many pipeline variants exist (see
+        // logContentSlotDiagnostics).
+        logContentSlotDiagnostics(request.target, request.depth_mode, request.order, request.commands->size(),
+                                  created.size(), content.root->children.size(),
+                                  content.bridge.pipelineVariantCount());
     }
 }
 

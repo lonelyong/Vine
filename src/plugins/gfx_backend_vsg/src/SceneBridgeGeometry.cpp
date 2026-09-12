@@ -134,6 +134,30 @@ XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry:
 }
 
 /**
+ * @brief The diagnostic for an unusable loc1 normal channel.
+ *
+ * An unusable OPTIONAL channel is ignored, never fatal: the caller reports this and
+ * keeps the mesh, deriving normals instead. Each rejection carries its OWN numbers —
+ * a single shared format string with the arguments ordered for one of the two used
+ * to print the component count where the float count belongs.
+ *
+ * @param attr   The rejected normal channel.
+ * @param reason Why unpackXyz rejected it (never Ok).
+ * @return The message to report.
+ */
+vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeBuffer& attr, XyzUnpack reason)
+{
+    if (reason == XyzUnpack::NotXyzStride) {
+        return formatDiagnostic(u8"loc1 normal has components=%u (3 or 4 required); "
+                                u8"normals will be derived",
+                                attr.components);
+    }
+    return formatDiagnostic(u8"loc1 normal holds %zu floats, not divisible by its "
+                            u8"components=%u stride; normals will be derived",
+                            attr.data->size(), attr.components);
+}
+
+/**
  * @brief Builds a per-vertex normal array for an indexed mesh.
  *
  * When the mesh provides normals they are copied; otherwise face normals are
@@ -189,25 +213,90 @@ XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry:
 }
 
 /**
+ * @brief Why a custom channel cannot be materialised at this vertex count.
+ *
+ * Decided in one place so the loop that walks the geometry's channels reports the
+ * reason and the array builder can rely on it having been checked: the rule
+ * (1..4 components, a whole number of vertices, exactly the mesh's vertex count)
+ * was previously written twice, once to report and once to build.
+ */
+enum class ChannelShape
+{
+    Ok,            ///< Usable: one typed value per vertex.
+    Components,    ///< Component count is outside 1..4.
+    NotDivisible,  ///< Float count is not a whole number of vertices.
+    VertexCount,   ///< Vertex count does not match the mesh's.
+};
+
+/**
+ * @brief Classifies a custom channel against the mesh's vertex count.
+ *
+ * @param attr         Channel to classify.
+ * @param vertex_count Vertices the mesh has (the channel must match it).
+ * @return Ok when the channel can be materialised, else why it cannot.
+ */
+ChannelShape channelShape(const vine::graphics::AttributeBuffer& attr, std::size_t vertex_count)
+{
+    if (attr.components < 1u || attr.components > 4u) {
+        return ChannelShape::Components;
+    }
+    if (attr.data->size() % attr.components != 0u) {
+        return ChannelShape::NotDivisible;
+    }
+    if (attr.data->size() / attr.components != vertex_count) {
+        return ChannelShape::VertexCount;
+    }
+    return ChannelShape::Ok;
+}
+
+/**
+ * @brief The "channel ignored" diagnostic for a rejected custom channel.
+ *
+ * @param location     shader attribute location of the channel.
+ * @param attr         The rejected channel.
+ * @param vertex_count Vertices the mesh has.
+ * @param shape        Why channelShape rejected it (never Ok).
+ * @return The message to report.
+ */
+vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics::AttributeBuffer& attr,
+                                   std::size_t vertex_count, ChannelShape shape)
+{
+    switch (shape) {
+    case ChannelShape::Components:
+        return formatDiagnostic(u8"loc%u custom channel has components=%u (1..4 "
+                                u8"required); channel ignored",
+                                location, attr.components);
+    case ChannelShape::NotDivisible:
+        return formatDiagnostic(u8"loc%u custom channel holds %zu floats, not divisible "
+                                u8"by components=%u; channel ignored",
+                                location, attr.data->size(), attr.components);
+    case ChannelShape::VertexCount:
+        return formatDiagnostic(u8"loc%u custom channel has %zu vertices, expected %zu; "
+                                u8"channel ignored",
+                                location, attr.data->size() / attr.components, vertex_count);
+    case ChannelShape::Ok:
+        break;
+    }
+    return vine::String();
+}
+
+/**
  * @brief Materialises a packed float channel into a typed per-vertex array.
  *
- * The channel must carry exactly @p vertex_count vertices of @p components
- * scalars each (divisible, count-matching); anything else returns null so a
- * malformed custom channel is skipped rather than misread.
+ * @pre The channel passed channelShape(*attr, vertex_count) == Ok: its component
+ *      count is 1..4 and its payload holds exactly one value per vertex, so the
+ *      loops below can index it without a second check (a malformed channel never
+ *      reaches this function).
  *
  * @param components   Scalar components per vertex (1..4).
  * @param data         Packed per-vertex floats.
  * @param vertex_count Expected vertex count.
- * @return Typed array, or null when the channel is unusable.
+ * @return Typed array owning the copied values.
  */
 ::vsg::ref_ptr<::vsg::Data> makeTypedVertexData(std::uint32_t components,
                                                 const std::vector<float>& data,
                                                 std::size_t vertex_count)
 {
-    if (components < 1u || components > 4u || data.size() % components != 0u ||
-        data.size() / components != vertex_count) {
-        return ::vsg::ref_ptr<::vsg::Data>();
-    }
     const auto n = static_cast<uint32_t>(vertex_count);
     switch (components) {
         case 1u: {
@@ -304,17 +393,10 @@ XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry:
     vine::geometry::Vec3fArray src_normals;
     if (const auto* normal_attr = geometry->buffer(1);
         normal_attr != nullptr && !normal_attr->empty()) {
-        if (const XyzUnpack unpack = unpackXyz(*normal_attr, src_normals);
-            unpack != XyzUnpack::Ok) {
+        if (const XyzUnpack unpack = unpackXyz(*normal_attr, src_normals); unpack != XyzUnpack::Ok) {
             src_normals.clear();
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
-                   formatDiagnostic(unpack == XyzUnpack::NotXyzStride
-                                        ? u8"loc1 normal has components=%u (3 or 4 required); "
-                                          u8"normals will be derived"
-                                        : u8"loc1 normal holds %zu floats, not divisible by its "
-                                          u8"components=%u stride; normals will be derived",
-                                    normal_attr->components, normal_attr->data->size(),
-                                    normal_attr->components));
+                   ignoredNormalChannelMessage(*normal_attr, unpack));
         }
     }
 
@@ -434,25 +516,9 @@ XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry:
             continue;
         }
         const auto comps = attr->components;
-        if (comps < 1u || comps > 4u) {
+        if (const ChannelShape shape = channelShape(*attr, vertex_count); shape != ChannelShape::Ok) {
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
-                   formatDiagnostic(u8"loc%u custom channel has components=%u (1..4 "
-                                    u8"required); channel ignored",
-                                    location, comps));
-            continue;
-        }
-        if (attr->data->size() % comps != 0u) {
-            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
-                   formatDiagnostic(u8"loc%u custom channel holds %zu floats, not divisible "
-                                    u8"by components=%u; channel ignored",
-                                    location, attr->data->size(), comps));
-            continue;
-        }
-        if (attr->data->size() / comps != vertex_count) {
-            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
-                   formatDiagnostic(u8"loc%u custom channel has %zu vertices, expected %zu; "
-                                    u8"channel ignored",
-                                    location, attr->data->size() / comps, vertex_count));
+                   ignoredChannelMessage(location, *attr, vertex_count, shape));
             continue;
         }
         arrays.push_back(makeTypedVertexData(comps, *attr->data, vertex_count));
