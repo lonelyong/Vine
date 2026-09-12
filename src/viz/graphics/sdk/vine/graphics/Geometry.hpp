@@ -7,8 +7,10 @@
 #include <map>
 #include <memory>
 #include <span>
+#include <type_traits>
 #include <vector>
 
+#include <vine/Buffer.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/geometry/Array.hpp>
@@ -25,29 +27,115 @@ class ShaderProgram;
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
 
 /**
- * @brief A user-defined per-vertex attribute buffer bound to a location.
+ * @brief A per-vertex channel bound to a shader attribute location.
  *
- * Generic, backend-agnostic carrier for custom vertex channels (e.g.
- * point-cloud colour/size, or any attribute a custom shader reads): packed
- * scalar floats, `components` of them per vertex. The float data is held by
- * shared_ptr so several Geometry objects can share one buffer without copying
- * and backends can cache/upload GPU buffers keyed by buffer identity.
- * Convention: location 0 holds positions; location 1 may hold normals;
- * location 8 holds texture coordinates (see Geometry::kTexCoordLocation). Use
- * Geometry::addBuffer() to attach channels.
+ * WHAT IT IS. A read-only VIEW of per-vertex scalars — `components` of them per vertex — plus whatever keeps
+ * those scalars alive. It is generic and backend-agnostic: location 0 carries positions, location 1 may carry
+ * normals, location 8 texture coordinates (see Geometry::kTexCoordLocation), and any other location carries a
+ * custom channel a shader reads. Convention: use Geometry::addBuffer() to attach channels.
  *
- * The component count IS the stride of the packed data: every consumer must
- * step by it (use vertexCount() / xyz() / stride() rather than assuming three
- * floats per vertex), so a vec4 position channel keeps its xyz and skips the
- * trailing w.
+ * WHY A VIEW AND NOT AN OWNED ARRAY. A channel used to BE its storage, so attaching a mesh's vertices to a
+ * Geometry meant repacking them into a second array — every vertex in memory twice, even though for a `Vec3f`
+ * attribute the packed floats ARE the vertex data, byte for byte (the element is three floats, so the packed
+ * scalar view needs no conversion). A view lets a channel point straight at the mesh's own buffer, with
+ * `owner` keeping that buffer alive; a channel that owns packed scalars still works the same way.
+ *
+ * The component count IS the stride of the packed scalars: every consumer must step by it (use
+ * vertexCount() / xyz() / stride() rather than assuming three floats per vertex), so a vec4 position
+ * channel keeps its xyz and skips the trailing w.
  */
 struct V_GRAPHICS_API AttributeBuffer
 {
-    std::shared_ptr<std::vector<float>> data;   ///< Shared packed per-vertex floats.
-    std::uint32_t components = 0;               ///< Scalar components per vertex (1..4).
+    /// Keeps `floats` alive: an owned packed array, or a shared core::Buffer whose elements are the scalars.
+    std::shared_ptr<const void> owner;
+    /// First scalar of the channel (null when nothing is attached).
+    const float* floats{ nullptr };
+    /// How many scalars `floats` points at.
+    std::size_t float_count{ 0 };
+    /// Scalar components per vertex (1..4).
+    std::uint32_t components{ 0 };
 
-    /** @brief Returns whether no float data is attached. */
-    bool empty() const { return data == nullptr || data->empty(); }
+    /**
+     * @brief Builds a channel that OWNS @p values as its packed scalars.
+     *
+     * For a caller that has the scalars in hand — a channel authored by hand, or one repacked because its
+     * layout did not match a shared buffer's. The values are moved in, so nothing is copied.
+     *
+     * @param values Packed per-vertex scalars.
+     * @param components Scalar components per vertex.
+     * @return The channel, owning that storage.
+     */
+    [[nodiscard]] static AttributeBuffer packed(std::vector<float> values, std::uint32_t components)
+    {
+        AttributeBuffer out;
+        const auto      storage = std::make_shared<const std::vector<float>>(std::move(values));
+        out.float_count         = storage->size();
+        out.components          = components;
+        out.floats              = storage->data();
+        out.owner               = storage;
+        return out;
+    }
+
+    /**
+     * @brief Builds a channel that SHARES @p buffer instead of copying it.
+     *
+     * This is the whole point of the view: the buffer's elements are already `sizeof(T) / sizeof(float)`
+     * tightly packed floats — `Vec3f` is three, `Vec2f` is two — so the channel can read the mesh's own
+     * vertices directly and no second allocation exists.
+     *
+     * The channel keeps the buffer alive but does NOT snapshot it: if the buffer later grows, the pointer
+     * this channel holds is stale. Treat a shared channel as valid while its source is not being mutated —
+     * a writer that mutates a shared buffer invalidates every channel attached from it.
+     *
+     * @tparam BufferT `core::Buffer<T>`, optionally `const`; the constness only says whether the caller may
+     *         write through its own handle, never whether the channel may.
+     * @param buffer Buffer to share, or null for an empty channel.
+     * @return The channel, reading the buffer's elements as scalars.
+     */
+    template <typename BufferT>
+    [[nodiscard]] static AttributeBuffer shared(intrusive_ptr<BufferT> buffer)
+    {
+        using Element = typename std::remove_const_t<BufferT>::value_type;
+
+        static_assert(std::is_same_v<std::remove_const_t<BufferT>, vine::Buffer<Element>>,
+                      "AttributeBuffer::shared() takes a core::Buffer");
+        static_assert(std::is_trivially_copyable_v<Element>,
+                      "a shared channel reinterprets the elements as scalars, which a non-trivial type has none of");
+        static_assert(sizeof(Element) % sizeof(float) == 0u,
+                      "a shared channel's element must be a whole number of floats");
+
+        AttributeBuffer out;
+        if (buffer == nullptr) {
+            return out;
+        }
+
+        const auto* const raw      = buffer.get();
+        const auto        count    = raw->size();
+        const auto* const elements = raw->data();
+        // The scalars live inside the buffer, so the channel has to keep it alive. The buffer is an
+        // intrusively counted Vine object, so hold that reference inside the deleter of the type-erased
+        // owner — a plain pointer plus a no-op deleter would free the buffer with the last handle.
+        out.owner       = std::shared_ptr<const void>(raw, [kept = std::move(buffer)](const void*) {});
+        out.floats      = reinterpret_cast<const float*>(elements);
+        out.float_count = count * (sizeof(Element) / sizeof(float));
+        out.components  = static_cast<std::uint32_t>(sizeof(Element) / sizeof(float));
+        return out;
+    }
+
+    /** @brief Returns whether no scalar data is attached. */
+    bool empty() const { return floats == nullptr || float_count == 0u; }
+
+    /** @brief Returns the packed scalars as a view.
+     *
+     * @return All scalars of the channel, empty when none are attached.
+     */
+    std::span<const float> scalars() const { return { floats, float_count }; }
+
+    /** @brief Returns the number of packed scalars.
+     *
+     * @return Scalar count (`vertexCount() * stride()` when the length divides evenly).
+     */
+    std::size_t floatCount() const { return float_count; }
 
     /** @brief Returns the stride (scalar floats per vertex).
      *
@@ -60,17 +148,17 @@ struct V_GRAPHICS_API AttributeBuffer
 
     /** @brief Returns the number of complete vertices in the packed data.
      *
-     * The vertex count is `data->size() / components`; a trailing partial
+     * The vertex count is `floatCount() / components`; a trailing partial
      * vertex is not counted. A zero stride yields 0.
      *
      * @return Number of vertices that can be read with a full stride.
      */
     std::size_t vertexCount() const
     {
-        if (data == nullptr || components == 0u) {
+        if (floats == nullptr || components == 0u) {
             return 0u;
         }
-        return data->size() / components;
+        return float_count / components;
     }
 
     /** @brief Reads the xyz of a vertex, skipping any trailing component.
@@ -85,7 +173,7 @@ struct V_GRAPHICS_API AttributeBuffer
     std::array<float, 3> xyz(std::size_t vertex) const
     {
         const std::size_t base = vertex * components;
-        return { (*data)[base], (*data)[base + 1u], (*data)[base + 2u] };
+        return { floats[base], floats[base + 1u], floats[base + 2u] };
     }
 };
 

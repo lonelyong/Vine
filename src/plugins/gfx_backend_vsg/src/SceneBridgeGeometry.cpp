@@ -69,7 +69,7 @@ using detail::XyzUnpack;
         report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
                formatDiagnostic(u8"loc0 position holds %zu floats, not divisible by its "
                                 u8"components=%u stride; not drawn",
-                                position_attr->data->size(), position_attr->components));
+                                position_attr->floatCount(), position_attr->components));
         return ::vsg::ref_ptr<::vsg::Commands>();
     }
     if (positions.empty()) {
@@ -159,8 +159,8 @@ using detail::XyzUnpack;
     const auto pack_color4 = [](const vine::graphics::AttributeBuffer& attr,
                                 std::size_t vertex_count)
         -> ::vsg::ref_ptr<::vsg::vec4Array> {
-        const auto  comps = attr.components;
-        const auto& data  = *attr.data;
+        const auto                   comps = attr.components;
+        const std::span<const float> data  = attr.scalars();
         if (comps < 3u || comps > 4u || data.size() % comps != 0u ||
             data.size() / comps != vertex_count) {
             return {};
@@ -203,8 +203,8 @@ using detail::XyzUnpack;
     // UVs" means: every fragment samples the same texel.
     const auto pack_texcoords = [](const vine::graphics::AttributeBuffer& attr,
                                    std::size_t vertex_count) -> ::vsg::ref_ptr<::vsg::vec2Array> {
-        const auto  comps = attr.components;
-        const auto& data  = *attr.data;
+        const auto                   comps = attr.components;
+        const std::span<const float> data  = attr.scalars();
         if (comps != 2u || data.size() != vertex_count * 2u) {
             return {};
         }
@@ -262,7 +262,7 @@ using detail::XyzUnpack;
                    ignoredChannelMessage(location, *attr, vertex_count, shape));
             continue;
         }
-        arrays.push_back(makeTypedVertexData(comps, *attr->data, vertex_count));
+        arrays.push_back(makeTypedVertexData(comps, attr->scalars(), vertex_count));
         extra_channels.push_back(VertexChannel{ location, comps });
     }
 

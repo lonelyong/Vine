@@ -111,12 +111,11 @@ GeometryPtr makeChannelTriangle()
     geom->setPositions(positions);
     // Custom per-vertex channel at location 3: one distinct colour per vertex
     // (red / green / blue). The backend must forward it as vine_Attribute3.
-    vine::graphics::AttributeBuffer channel;
-    channel.components = 3;
-    channel.data       = std::make_shared<std::vector<float>>(std::vector<float>{
-        1.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 1.0f });
+    vine::graphics::AttributeBuffer channel = vine::graphics::AttributeBuffer::packed(
+        { 1.0f, 0.0f, 0.0f,
+          0.0f, 1.0f, 0.0f,
+          0.0f, 0.0f, 1.0f },
+        3u);
     geom->addBuffer(3u, channel);
     return geom;
 }
@@ -396,9 +395,8 @@ GeometryPtr makeProbeQuad(float half, bool with_normals, bool with_channel, floa
             colours.push_back(g);
             colours.push_back(b);
         }
-        vine::graphics::AttributeBuffer channel;
-        channel.components = 3;
-        channel.data       = std::make_shared<std::vector<float>>(colours);
+        vine::graphics::AttributeBuffer channel =
+            vine::graphics::AttributeBuffer::packed(std::move(colours), 3u);
         geom->addBuffer(3u, channel);
     }
     return geom;

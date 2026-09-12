@@ -66,19 +66,13 @@ struct TestChannel
 /** @brief A channel whose payload holds @p floats and declares @p components per vertex. */
 AttributeBuffer channel(std::uint32_t components, std::size_t floats)
 {
-    AttributeBuffer buffer;
-    buffer.components = components;
-    buffer.data       = std::make_shared<std::vector<float>>(floats, 1.0f);
-    return buffer;
+    return AttributeBuffer::packed(std::vector<float>(floats, 1.0f), components);
 }
 
 /** @brief A buffer whose packed floats are @p values at @p components per vertex. */
 AttributeBuffer packed(std::uint32_t components, std::vector<float> values)
 {
-    AttributeBuffer buffer;
-    buffer.components = components;
-    buffer.data       = std::make_shared<std::vector<float>>(std::move(values));
-    return buffer;
+    return AttributeBuffer::packed(std::move(values), components);
 }
 
 /** @brief A shader set carrying one colour blend state with @p attachments entries. */

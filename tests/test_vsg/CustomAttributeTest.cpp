@@ -20,20 +20,17 @@ using vine::math::Mat4d;
 namespace
 {
 
-/// Builds a shared float payload for an AttributeBuffer.
-std::shared_ptr<std::vector<float>> packedFloats(const std::vector<float>& floats)
+/// Builds a channel that owns its packed floats.
+AttributeBuffer packedChannel(const std::vector<float>& floats, std::uint32_t components)
 {
-    return std::make_shared<std::vector<float>>(floats);
+    return AttributeBuffer::packed(floats, components);
 }
 
 /// Attaches an attribute buffer at a location.
 void addChannel(Geometry* geom, std::uint32_t location, std::uint32_t components,
                 const std::vector<float>& floats)
 {
-    AttributeBuffer buf;
-    buf.components = components;
-    buf.data       = packedFloats(floats);
-    geom->addBuffer(location, buf);
+    geom->addBuffer(location, packedChannel(floats, components));
 }
 
 /// One custom channel to attach: location + components + packed floats.

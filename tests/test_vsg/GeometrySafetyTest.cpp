@@ -24,10 +24,10 @@ using vine::math::Mat4d;
 namespace
 {
 
-/// Builds a shared float payload for an AttributeBuffer.
-std::shared_ptr<std::vector<float>> packedFloats(const std::vector<float>& floats)
+/// Builds a channel that owns its packed floats.
+AttributeBuffer packedChannel(const std::vector<float>& floats, std::uint32_t components)
 {
-    return std::make_shared<std::vector<float>>(floats);
+    return AttributeBuffer::packed(floats, components);
 }
 
 /**
@@ -40,10 +40,7 @@ GeometryPtr makePackedGeometry(const std::vector<float>& pos_floats,
                                std::shared_ptr<vine::geometry::UInt32Array> indices = nullptr)
 {
     auto geom = GeometryPtr(new Geometry());
-    AttributeBuffer buf;
-    buf.components = pos_components;
-    buf.data       = packedFloats(pos_floats);
-    geom->addBuffer(0, buf);
+    geom->addBuffer(0, packedChannel(pos_floats, pos_components));
     if (indices != nullptr) {
         geom->setIndices(indices);
     }
@@ -53,10 +50,7 @@ GeometryPtr makePackedGeometry(const std::vector<float>& pos_floats,
 /// Attaches a location-1 (normal) channel with the given components.
 void attachNormal(Geometry* geom, const std::vector<float>& floats, std::uint32_t components)
 {
-    AttributeBuffer buf;
-    buf.components = components;
-    buf.data       = packedFloats(floats);
-    geom->addBuffer(1, buf);
+    geom->addBuffer(1, packedChannel(floats, components));
 }
 
 /// Finds the DrawIndexed command under a retained subtree.
@@ -716,10 +710,7 @@ TEST(DiagnosticsTest, DroppedChannelWarnsButStillDraws)
 
     auto geom = makePackedGeometry(triangleFloats(), 3u);
     // A malformed custom channel (2 vertices where the mesh has 3): dropped.
-    AttributeBuffer bad;
-    bad.components = 4u;
-    bad.data       = packedFloats({ 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f });
-    geom->addBuffer(4u, bad);
+    geom->addBuffer(4u, packedChannel({ 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, 4u));
 
     bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },
                               root.get(), nullptr);
@@ -750,10 +741,7 @@ TEST(DiagnosticsTest, CleanFrameIsSilentAndSinkCanBeCleared)
 
     // A well-formed mesh, a material and a custom channel: nothing to report.
     auto geom = makePackedGeometry(triangleFloats(), 3u);
-    AttributeBuffer colour;
-    colour.components = 3u;
-    colour.data       = packedFloats({ 1, 0, 0, 0, 1, 0, 0, 0, 1 });
-    geom->addBuffer(3u, colour);
+    geom->addBuffer(3u, packedChannel({ 1, 0, 0, 0, 1, 0, 0, 0, 1 }, 3u));
 
     for (int frame = 0; frame < 3; ++frame) {
         bridge.syncRenderCommands(std::vector<RenderCommand>{ RenderCommand(geom, material, Mat4d()) },

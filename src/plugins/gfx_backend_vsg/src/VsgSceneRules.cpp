@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <span>
 #include <string>
 
 #include <vsg/core/Array.h>
@@ -27,10 +28,10 @@ ChannelShape channelShape(const vine::graphics::AttributeBuffer& attr, std::size
     if (attr.components < 1u || attr.components > 4u) {
         return ChannelShape::Components;
     }
-    if (attr.data->size() % attr.components != 0u) {
+    if (attr.floatCount() % attr.components != 0u) {
         return ChannelShape::NotDivisible;
     }
-    if (attr.data->size() / attr.components != vertex_count) {
+    if (attr.vertexCount() != vertex_count) {
         return ChannelShape::VertexCount;
     }
     return ChannelShape::Ok;
@@ -47,11 +48,11 @@ vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics:
     case ChannelShape::NotDivisible:
         return formatDiagnostic(u8"loc%u custom channel holds %zu floats, not divisible "
                                 u8"by components=%u; channel ignored",
-                                location, attr.data->size(), attr.components);
+                                location, attr.floatCount(), attr.components);
     case ChannelShape::VertexCount:
         return formatDiagnostic(u8"loc%u custom channel has %zu vertices, expected %zu; "
                                 u8"channel ignored",
-                                location, attr.data->size() / attr.components, vertex_count);
+                                location, attr.vertexCount(), vertex_count);
     case ChannelShape::Ok:
         break;
     }
@@ -60,8 +61,8 @@ vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics:
 
 XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry::Vec3fArray& out)
 {
-    const auto  comps = attr.components;
-    const auto& data  = *attr.data;
+    const auto             comps = attr.components;
+    const std::span<const float> data = attr.scalars();
     if (comps < 3u || comps > 4u) {
         return XyzUnpack::NotXyzStride;
     }
@@ -87,7 +88,7 @@ vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeBuffer& 
     }
     return formatDiagnostic(u8"loc1 normal holds %zu floats, not divisible by its "
                             u8"components=%u stride; normals will be derived",
-                            attr.data->size(), attr.components);
+                            attr.floatCount(), attr.components);
 }
 
 vine::math::Vec3f faceNormal(const vine::math::Vec3f& a, const vine::math::Vec3f& b, const vine::math::Vec3f& c)
@@ -319,7 +320,7 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
     return normals;
 }
 
-::vsg::ref_ptr<::vsg::Data> makeTypedVertexData(std::uint32_t components, const std::vector<float>& data,
+::vsg::ref_ptr<::vsg::Data> makeTypedVertexData(std::uint32_t components, std::span<const float> data,
                                                 std::size_t vertex_count)
 {
     const auto n = static_cast<uint32_t>(vertex_count);

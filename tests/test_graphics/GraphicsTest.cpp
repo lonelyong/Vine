@@ -3964,25 +3964,20 @@ TEST(GeometryTest, OpenAttributeBufferList)
     const std::uint64_t base = geom.revision();
 
     // Any number of custom channels can be added at arbitrary locations.
-    AttributeBuffer colour;
-    colour.components = 4;
-    colour.data       = std::make_shared<std::vector<float>>(
-        std::vector<float>{ 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f });
+    const AttributeBuffer colour =
+        AttributeBuffer::packed({ 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f }, 4u);
     geom.addBuffer(2, colour);
-    AttributeBuffer size;
-    size.components = 1;
-    size.data       = std::make_shared<std::vector<float>>(
-        std::vector<float>{ 1.0f, 2.0f, 3.0f });
+    const AttributeBuffer size = AttributeBuffer::packed({ 1.0f, 2.0f, 3.0f }, 1u);
     geom.addBuffer(4, size);
 
     EXPECT_EQ(geom.bufferCount(), 2u);
     ASSERT_NE(geom.buffer(2), nullptr);
     EXPECT_EQ(geom.buffer(2)->components, 4u);
-    ASSERT_NE(geom.buffer(2)->data, nullptr);
-    EXPECT_EQ(geom.buffer(2)->data->size(), 8u);
+    EXPECT_FALSE(geom.buffer(2)->empty());
+    EXPECT_EQ(geom.buffer(2)->floatCount(), 8u);
     ASSERT_NE(geom.buffer(4), nullptr);
     EXPECT_EQ(geom.buffer(4)->components, 1u);
-    EXPECT_EQ(geom.buffer(4)->data->size(), 3u);
+    EXPECT_EQ(geom.buffer(4)->floatCount(), 3u);
     EXPECT_EQ(geom.bufferLocations(), (std::vector<std::uint32_t>{ 2, 4 }));
     EXPECT_GT(geom.revision(), base);
 
@@ -4012,17 +4007,15 @@ namespace
  */
 AttributeBuffer makeVec4Positions(const std::vector<vine::math::Vec3f>& points)
 {
-    AttributeBuffer buffer;
-    buffer.components = 4;
-    buffer.data = std::make_shared<std::vector<float>>();
-    buffer.data->reserve(points.size() * 4u);
+    std::vector<float> scalars;
+    scalars.reserve(points.size() * 4u);
     for (const auto& p : points) {
-        buffer.data->push_back(p.x);
-        buffer.data->push_back(p.y);
-        buffer.data->push_back(p.z);
-        buffer.data->push_back(1.0f);
+        scalars.push_back(p.x);
+        scalars.push_back(p.y);
+        scalars.push_back(p.z);
+        scalars.push_back(1.0f);
     }
-    return buffer;
+    return AttributeBuffer::packed(std::move(scalars), 4u);
 }
 
 }  // namespace
@@ -4038,8 +4031,8 @@ TEST(GeometryTest, AttributeBufferStrideAccessors)
 
     // Two complete vec4 vertices plus a trailing partial vertex: the partial
     // one is not a vertex.
-    buffer.data = std::make_shared<std::vector<float>>(
-        std::vector<float>{ 1.0f, 2.0f, 3.0f, 1.0f, 4.0f, 5.0f, 6.0f, 1.0f, 7.0f, 8.0f, 9.0f });
+    buffer = AttributeBuffer::packed(
+        { 1.0f, 2.0f, 3.0f, 1.0f, 4.0f, 5.0f, 6.0f, 1.0f, 7.0f, 8.0f, 9.0f }, 4u);
     EXPECT_EQ(buffer.stride(), 4u);
     EXPECT_EQ(buffer.vertexCount(), 2u);
 
@@ -4055,6 +4048,39 @@ TEST(GeometryTest, AttributeBufferStrideAccessors)
     // A zero stride carries no usable layout.
     buffer.components = 0;
     EXPECT_EQ(buffer.vertexCount(), 0u);
+}
+
+TEST(AttributeBufferTest, SharedChannelReadsTheBuffersOwnElements)
+{
+    // The sharing design rests on this: a Vec3f is three tightly packed floats and a Vec2f is two, so a
+    // buffer of them can be read as scalars with no conversion. A padded or otherwise laid out element
+    // would make a shared channel read garbage, which is why the factory static_asserts the size.
+    static_assert(sizeof(vine::math::Vec3f) == 3u * sizeof(float));
+    static_assert(sizeof(vine::math::Vec2f) == 2u * sizeof(float));
+
+    auto buffer = intrusive_ptr<vine::Buffer<vine::math::Vec3f>>(new vine::Buffer<vine::math::Vec3f>());
+    buffer->push_back(vine::math::Vec3f(1.0f, 2.0f, 3.0f));
+    buffer->push_back(vine::math::Vec3f(4.0f, 5.0f, 6.0f));
+
+    const AttributeBuffer channel = AttributeBuffer::shared(buffer);
+    EXPECT_EQ(channel.components, 3u);
+    EXPECT_EQ(channel.floatCount(), 6u);
+    EXPECT_EQ(channel.vertexCount(), 2u);
+    // The channel adds no storage of its own: it reads the buffer's elements in place.
+    EXPECT_EQ(channel.scalars().data(), reinterpret_cast<const float*>(buffer->data()));
+
+    const std::array<float, 3> second = channel.xyz(1);
+    EXPECT_FLOAT_EQ(second[0], 4.0f);
+    EXPECT_FLOAT_EQ(second[1], 5.0f);
+    EXPECT_FLOAT_EQ(second[2], 6.0f);
+
+    // The channel has to keep the buffer alive — the scalars live inside it. (Reading them after dropping
+    // the local handle would be a use-after-free, not a wrong value, if this reference were missing.)
+    const vine::Buffer<vine::math::Vec3f>* const raw = buffer.get();
+    ASSERT_EQ(raw->useCount(), 2u);
+    buffer = nullptr;
+    EXPECT_EQ(raw->useCount(), 1u);
+    EXPECT_FLOAT_EQ(channel.scalars()[3], 4.0f);
 }
 
 TEST(GeometryTest, Vec4PositionsUseComponentsAsStride)
@@ -4095,10 +4121,8 @@ TEST(GeometryTest, Vec4NormalsCountedByStride)
 TEST(GeometryTest, ZeroStrideBufferBoundsNothing)
 {
     Geometry geom;
-    AttributeBuffer broken;
-    broken.components = 0;   // layout is required for any vertex count
-    broken.data = std::make_shared<std::vector<float>>(
-        std::vector<float>{ 1.0f, 2.0f, 3.0f });
+    // A zero stride carries no usable layout for any vertex count.
+    const AttributeBuffer broken = AttributeBuffer::packed({ 1.0f, 2.0f, 3.0f }, 0u);
     geom.addBuffer(0, broken);
 
     ASSERT_NE(geom.buffer(0), nullptr);
@@ -4112,10 +4136,8 @@ TEST(GeometryTest, ZeroStrideBufferBoundsNothing)
 TEST(GeometryTest, SubThreeComponentChannelBoundsNothing)
 {
     Geometry geom;
-    AttributeBuffer flat;
-    flat.components = 2;   // cannot carry xyz
-    flat.data = std::make_shared<std::vector<float>>(
-        std::vector<float>{ 1.0f, 2.0f, 3.0f, 4.0f });
+    // Two floats per vertex cannot carry xyz.
+    const AttributeBuffer flat = AttributeBuffer::packed({ 1.0f, 2.0f, 3.0f, 4.0f }, 2u);
     geom.addBuffer(0, flat);
 
     EXPECT_EQ(geom.positionCount(), 2u);   // two 2-component vertices

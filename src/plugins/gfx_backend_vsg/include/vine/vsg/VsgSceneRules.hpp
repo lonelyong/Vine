@@ -26,6 +26,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -308,7 +309,7 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
  * @param vertex_count Expected vertex count.
  * @return Typed array owning the copied values.
  */
-::vsg::ref_ptr<::vsg::Data> makeTypedVertexData(std::uint32_t components, const std::vector<float>& data,
+::vsg::ref_ptr<::vsg::Data> makeTypedVertexData(std::uint32_t components, std::span<const float> data,
                                                 std::size_t vertex_count);
 
 /**

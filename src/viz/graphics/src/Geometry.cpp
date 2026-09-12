@@ -63,16 +63,14 @@ Aabbd transformBox(const Aabbd& local, const Mat4d& world)
  */
 AttributeBuffer packVec3(std::span<const vine::math::Vec3f> src)
 {
-    AttributeBuffer out;
-    out.components = 3;
-    out.data       = std::make_shared<std::vector<float>>();
-    out.data->reserve(src.size() * 3u);
+    std::vector<float> scalars;
+    scalars.reserve(src.size() * 3u);
     for (const auto& v : src) {
-        out.data->push_back(v.x);
-        out.data->push_back(v.y);
-        out.data->push_back(v.z);
+        scalars.push_back(v.x);
+        scalars.push_back(v.y);
+        scalars.push_back(v.z);
     }
-    return out;
+    return AttributeBuffer::packed(std::move(scalars), 3u);
 }
 /**
  * @brief Packs a borrowed Vec2 view into an attribute buffer.
@@ -82,15 +80,13 @@ AttributeBuffer packVec3(std::span<const vine::math::Vec3f> src)
  */
 AttributeBuffer packVec2(std::span<const vine::math::Vec2f> src)
 {
-    AttributeBuffer out;
-    out.components = 2;
-    out.data       = std::make_shared<std::vector<float>>();
-    out.data->reserve(src.size() * 2u);
+    std::vector<float> scalars;
+    scalars.reserve(src.size() * 2u);
     for (const auto& v : src) {
-        out.data->push_back(v.x);
-        out.data->push_back(v.y);
+        scalars.push_back(v.x);
+        scalars.push_back(v.y);
     }
-    return out;
+    return AttributeBuffer::packed(std::move(scalars), 2u);
 }
 }  // namespace
 
