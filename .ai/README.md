@@ -5,6 +5,7 @@
 
 - `memory/` —— 精炼模块要点（对应 VS Code 记忆系统仓库级笔记的可提交副本）。
   - `robotics-proximity.md` —— Robotics proximity 模块要点。
+  - `graphics-perf-backlog.md` —— graphics / vsg 后端性能待办（已核实的机制 + 待办项 + 待实测数字）。
 - `design/` —— 完整设计文档。
   - `robotics-io-design.md` —— Robotics IO 设计（XML 序列化、VFS 打包、5 版本 API、材质库、无状态重构）。
   - `robotics-proximity-design.md` —— Robotics proximity 设计（接口清单、设计决策、VMR 对照、FCL 接入点、测试）。
