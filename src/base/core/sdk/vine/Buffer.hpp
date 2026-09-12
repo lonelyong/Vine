@@ -2,6 +2,7 @@
 #include "core_global.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -13,7 +14,7 @@
 V_CORE_NS_BEGIN
 
 /**
- * @brief A reference-counted, fixed-length run of T.
+ * @brief A reference-counted run of T that two consumers can share.
  *
  * WHY IT EXISTS. Vector data used to be held twice: a model keeps its vertices as `std::vector<T>` (typed
  * access is what modelling, collision, picking and IO need) while the renderer needs the same bytes at a
@@ -30,9 +31,12 @@ V_CORE_NS_BEGIN
  * Vine objects and `shared_ptr` for plain data. This is the former: it has identity, is not copyable, and
  * is meant to be shared — exactly the shape `RefCounted` describes.
  *
- * LENGTH IS FIXED. There is deliberately no resize: a view or byte pointer handed out earlier must stay
- * valid, so the count is decided once and only the elements may be written. Callers that build a buffer
- * incrementally do it in their own `std::vector` and hand it over (see the vector constructor).
+ * GROWTH IS ANNOUNCED, NOT FORBIDDEN. A modelling API appends (a mesh builder adds vertices one at a time),
+ * so there is an append API and the length is not fixed. What a consumer must not do is assume the bytes it
+ * read are still current: any mutation INVALIDATES byte pointers and views taken before it, and every
+ * mutation bumps revision(). A consumer that cached the bytes compares the revision it read against
+ * revision() before reusing them — the same rule `Texture` and `ShaderProgram` already follow for "the same
+ * object, new contents". Freezing the length instead would have made the model side unexpressible.
  *
  * @tparam T Element type. Must be trivially copyable for `bytes()` to be meaningful.
  */
@@ -43,6 +47,9 @@ class Buffer : public RefCounted<Buffer<T>> {
     using size_type  = std::size_t;
 
   public:
+    /** @brief Creates an empty buffer. */
+    Buffer() = default;
+
     /**
      * @brief Creates a buffer of @p count value-initialised elements.
      *
@@ -90,8 +97,10 @@ class Buffer : public RefCounted<Buffer<T>> {
     /**
      * @brief Gets writable access to the elements.
      *
-     * Writing is allowed — the LENGTH is what is fixed, not the contents — but a caller that did so after
-     * handing `bytes()` to a device must announce the change, or the device keeps the old contents.
+     * Writing through this pointer CANNOT be seen by the buffer, so a caller that does it must announce the
+     * change with setRevision() — otherwise a consumer that compares revisions keeps reusing what it read.
+     * This is the same reason the write path exists at all: the model side writes vertices in place far more
+     * often than it rebuilds the array.
      *
      * @return Pointer to the first element, or null when empty.
      */
@@ -172,8 +181,90 @@ class Buffer : public RefCounted<Buffer<T>> {
         return std::as_bytes(view());
     }
 
+    /**
+     * @brief Gets the content revision.
+     *
+     * Bumped by every mutation, so a consumer that cached bytes can tell "the same buffer, still the same
+     * contents" from "the same buffer, new contents". A pointer alone cannot: a cache keyed by the buffer's
+     * address would otherwise keep serving the contents it read first.
+     *
+     * @return Monotonic revision counter (starts at 0).
+     */
+    [[nodiscard]] std::uint64_t revision() const noexcept
+    {
+        return revision_;
+    }
+
+    /**
+     * @brief Sets the content revision by hand.
+     *
+     * Needed because the write paths the buffer cannot see — a non-const `data()` pointer, an element
+     * reference from `operator[]`, a write from another thread — are exactly the ones the automatic bump
+     * misses. A caller that wrote through any of them announces it here. The usual value is
+     * `revision() + 1`.
+     *
+     * The counter is only ever COMPARED, so nothing breaks if it jumps; but lowering it is a real hazard: a
+     * consumer holding a cached revision could then treat old bytes as current, or vice versa. Treat it as
+     * monotonic unless a caller genuinely needs otherwise.
+     *
+     * @param revision Revision to report.
+     */
+    void setRevision(std::uint64_t revision) noexcept
+    {
+        revision_ = revision;
+    }
+
+    /**
+     * @brief Reserves room for @p count elements.
+     *
+     * Does NOT count as a mutation of the contents, but it may move the storage, so views taken earlier are
+     * invalidated all the same — take a view after the building is done.
+     *
+     * @param count Elements to make room for.
+     */
+    void reserve(size_type count)
+    {
+        data_.reserve(count);
+    }
+
+    /**
+     * @brief Appends one element.
+     *
+     * @param value Element to append (copied).
+     */
+    void push_back(const T& value)
+    {
+        data_.push_back(value);
+        ++revision_;
+    }
+
+    /**
+     * @brief Appends every element of @p values.
+     *
+     * @param values Elements to append.
+     */
+    void append(std::span<const T> values)
+    {
+        if (values.empty()) {
+            return;
+        }
+
+        data_.insert(data_.end(), values.begin(), values.end());
+        ++revision_;
+    }
+
+    /**
+     * @brief Removes every element.
+     */
+    void clear() noexcept
+    {
+        data_.clear();
+        ++revision_;
+    }
+
   private:
     std::vector<T> data_;
+    std::uint64_t  revision_ = 0;
 };
 
 V_CORE_NS_END
