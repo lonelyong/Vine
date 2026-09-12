@@ -46,9 +46,11 @@ clear() 判定；**C6.3a** `RenderPass::setProgramOverride`（引擎）；**C6.3
 
 ### 1.1 后端绑定：`VsgRenderer(Scene*, Camera*)`
 - `Impl{ scene, camera, ... }`，构造时写入（`VsgRenderer.cpp` 构造 + `initialize()` 判空）。
-- `impl->scene` 用途：initialize 预编译主内容（`collectSceneCommandsNoCull(impl->scene)` →
-  `primary.bridge.syncRenderCommands`）；`setupWindowLayer` 种子主层默认光
-  （`impl->scene->lights()` 非空才建灯）。
+- `impl->scene` 用途（**立项时的现状，已被 C6.5 删除**）：initialize 预编译主内容
+  （`collectSceneCommandsNoCull(impl->scene)` → `primary.bridge.syncRenderCommands`，该函数已不存在）；
+  `setupWindowLayer` 种子主层默认光（`impl->scene->lights()` 非空才建灯）。
+  现在 `initialize()` 只建窗口 target 与空图，内容槽按 pass 惰性创建，几何子树走增量编译 ——
+  见 `src/plugins/gfx_backend_vsg/docs/backend.md` §4.3。
 - `impl->camera` 用途：主层身份 `camera == impl->camera` → `on_top=false`；
   `render()` 空相机回退；`releaseWindowLayer` 摘主层时清别名；便捷 `frame()`
   （`render({}, impl->camera)`）；公开访问器 `vsgCamera()/vsgScene()` 指向主层。
@@ -112,6 +114,7 @@ targets[ TargetKey ]                 // TargetKey：窗口=专用键；离屏=Re
 2. **初始预编译**：主内容“init 预编译避免帧中首编不可靠”改由**引擎 `initialize()` warm-up 承接**
    （对所有 enabled 且有内容的 pass 预热执行，先于首帧 present）；后端 `initialize()` 只建窗口 target。
    相应把 `collectSceneCommandsNoCull`/`primary.bridge` 预编译路径迁走或保留为窗口 target 惰性首帧编译。
+   **已落地**：两条路径都删了（预编译不再在后端），惰性首帧编译保留（`compilePendingViews`）。
 3. **顶部层风格**：`on_top`（depth-off + ambient）不再由 `camera != impl->camera` 推断，
    改为 pass/槽携带（如 `RenderPass` 加 depth-policy，或引擎按内容/顺序告知后端建槽风格）。
 

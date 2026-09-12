@@ -104,7 +104,10 @@ engine.setBackend(backend);
 
 1. 宿主调 `RenderEngine::frame(dt)`。
 2. 逐 pass：引擎打开内容帧，向场景要命令 —— `Scene::collectRenderCommands(camera)` 对
-   **(scene, camera)** 每帧只走一次树，结果记忆到帧末（规则见 §2.2）。
+   **(scene, camera)** 每帧只走一次树，结果记忆到帧末（规则见 §2.2）。返回的是**视锥剔除后**的列表：
+   `isVisible()` 是硬门，包围盒完全在视锥外（p-vertex 测试）的节点**整棵子树**被剪掉，被剔除的几何体
+   根本不在列表里；后端的保留节点则从根上摘下但不销毁，回来时直接复用（复用窗口 600 帧，细节见
+   `backend.md` §5.5）。
 3. 后端把每个 `RenderCommand` 物化成后端对象。在 vsg 后端里就是每个 drawable 一条保留的
    `MatrixTransform` → `StateGroup` → bind/draw 命令链，只在其输入（`geometry->revision()`、
    material、texture、resolved state、program）变化时重建。

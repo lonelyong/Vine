@@ -273,6 +273,7 @@ graph TB
 另外每帧一次（在逐 pass 驱动里）：
 
 - `Scene::collectRenderCommands(camera)`：**每个 (场景, 相机) 一次**，帧内记忆（同一 pass 里多槽共用）。
+  返回的是**视锥剔除后的**列表：剔除掉的对象根本不在 `RenderCommand` 里，后端“看不见”它（见 §5.5）。
 - 每个 pass 的 `render()` / `clear()`：各一次。
 - 每个窗口层的 `SceneBridge::syncRenderCommands()`：一次；内部**每个 drawable 一次廉价脏检查**
   （`revision` / topology / loc2 路径 / material / texture+revision / render state / program+revision /
@@ -345,6 +346,32 @@ graph TB
 - 变体之间必须 **render pass 兼容**，包括**子通道依赖逐字段相同**（否则 `renderPass-02684`）——
   `makeColorDepthRenderPass()` 把依赖块收成一处置，就是为了让这条从约定变成结构性。
 - 一次性变体（bootstrap / 需要特定初始布局）**提交之后**才换回稳态。
+
+### 5.5 剔除与缺席（culled / hidden）
+
+命令列表已经是**视锥剔除后**的（`Scene::collectRenderCommands`：`isVisible()` 是硬门、`Frustum::isOutside()` 用
+p-vertex 测试整棵子树剪掉，每节点世界盒经 `BoundsCache` 只算一次），所以“被剔除”在后端就表现为**该几何体不在本帧命令里**。
+`syncRenderCommands()` 只遍历命令，因此它这一帧什么都不做；下列行为由 `evictAbsentItems()` / `publishRetainedChildren()` 决定：
+
+| 方面 | 行为 | 依据 |
+| --- | --- | --- |
+| 绘制 | 保留节点的 transform 不再挂到 slot root（只有本帧 visible 的按命令顺序挂上）⇒ 不提交、不画 | `publishRetainedChildren` |
+| 数据 / 状态 | **不重建、不重编译、不重上传**；`cache_` 条目（transform / state / data）原样留着 | `Item` |
+| 计数 | `absent_frames++`；同时清掉 `rejected` 记录，下次回来重新评估 | `evictAbsentItems` |
+| 重新出现 | 缺席 ≤ **600 帧**（`kAbsentEvictFrames`）直接复用：只重挂；回来那一帧才比对 revision / material / texture+revision / state / program ⇒ 缺席期间攒的改动一次结算 | 同上 |
+| 缺席 > 600 帧，或 App 已释放该几何体 | 条目删除；子树进**退役环**（环深 4）而不是立刻析构 —— 在飞的 command buffer 可能还引用它 | `retireNode` |
+| 每帧成本 | 一次扫 `cache_`（O(条目数)），与几何体复杂度无关 | 同上 |
+
+容易踩的点：
+
+| 点 | 说明 |
+| --- | --- |
+| 只有 CPU 侧视锥剔除 | 模块不用 vsg 的 `CullGroup`（也没用 `ComputeBounds`），更无遮挡剔除；视锥内的对象一律提交，片元级省略只有光栅化的背面剔除（`CullMode`，默认 `None`） |
+| 首帧就被剔除的几何体 | 从未建过 ⇒ 第一次进入视锥那一帧才建 + 编译（走增量编译队列 `pending_compile_views`），会有一帧抖动，不是提前建好 |
+| 包围盒只会“多画” | 节点级 AABB 保守：相交就保留；反面是 Group 被剪掉时里面其实可见的子节点也一起没了 |
+| 缺席 ≠ 改动被丢弃 | 缺席期间 bump 的 `Geometry::revision()` 不会被消费（`Item::revision` 不更新），回来那一帧才重建 |
+| 每槽各自记账 | `syncRenderCommands()` 是**每个内容槽每帧**调一次，`seen` / `absent_frames` 也随之按槽走：同一几何体在 A 槽可见、B 槽被剔除时，B 那边照计缺席 |
+| 剔除 vs 隐藏 | 在后端两者长得一样（都是“缺席”），不区分 |
 
 ## 6. 诊断与验证
 

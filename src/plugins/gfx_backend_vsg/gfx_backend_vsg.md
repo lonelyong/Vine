@@ -318,8 +318,10 @@ graph TD
   否则 `createHeadlight()`）、`View::create(vsg_camera)`；别名 `vsg_camera/vsg_scene` 指向主层。
 - `render_graph = RenderGraph::create(window, primary.view)` → 挂 `command_graph` →
   `viewer->assignRecordAndSubmitTaskAndPresentation(...)` → 首次 `compile()`。
-- 主内容在 `initialize()` **预编译一次**（`collectSceneCommandsNoCull` 不剔除地
-  收集首帧可见内容，绕过“运行期新增编译不可靠”的历史坑）。
+- 主内容的**预编译不在后端**：`initialize()` 只建窗口 target 与空图（“the renderer binds neither a
+  Vine scene nor a camera and pre-creates nothing here”），内容槽按 pass 惰性创建，几何子树在
+  `submitFrame()` 里走增量编译（`compilePendingViews()` / `pending_compile_views`）。历史实现曾有的
+  `collectSceneCommandsNoCull`（不剔除地预收集一遍）已删除。
 
 ### 7.2 Window Layer（HUD / 顶部层）
 
