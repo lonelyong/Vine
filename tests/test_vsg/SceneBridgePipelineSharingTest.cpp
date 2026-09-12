@@ -980,3 +980,48 @@ TEST(SceneBridgePipelineSharingTest, OpacityUpdatesArePerCommandIndependent)
         << "unchanged drawable's opacity must stay untouched";
     EXPECT_NEAR(colors_1->at(0).a, 0.5f, 1e-6f);
 }
+
+/**
+ * @brief The bound loc0 array reads the model's own scalars, not a copy.
+ *
+ * The backend used to unpack every channel into a private vsg array, which
+ * doubled the vertex footprint of a scene. The position binding now aliases the
+ * geometry's Buffer<float> through a storage Data, so the address vsg reads is
+ * the address the model owns. This is asserted directly because a copy renders
+ * byte-identically: no rendering gate can tell the two apart.
+ *
+ * The bound object must also stay a REAL vsg array: a bare Data that reports
+ * matching properties is silently not bound (measured: the draw produces
+ * nothing and validation stays clean), so the array type is part of the
+ * contract, not an implementation detail.
+ */
+TEST(SceneBridgePipelineSharingTest, PositionBindingAliasesTheModelBuffer)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+    auto geometry = makeTriangle(0);
+
+    std::vector<RenderCommand> commands;
+    commands.emplace_back(geometry, material, Mat4d());
+
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+
+    auto* bvb = findBindVertexBuffers(created[0].get());
+    ASSERT_NE(bvb, nullptr);
+    ASSERT_GE(bvb->arrays.size(), 1u);
+    ASSERT_NE(bvb->arrays[0]->data, nullptr);
+    EXPECT_NE(bvb->arrays[0]->data->cast<vsg::vec3Array>(), nullptr)
+        << "loc0 must be bound through a real vsg::vec3Array";
+
+    const auto* positions = geometry->buffer(0);
+    ASSERT_NE(positions, nullptr);
+    ASSERT_FALSE(positions->scalars().empty());
+    EXPECT_EQ(bvb->arrays[0]->data->dataPointer(),
+              static_cast<const void*>(positions->scalars().data()))
+        << "loc0 must alias the model's scalars instead of copying them";
+    EXPECT_EQ(bvb->arrays[0]->data->valueCount(), positions->vertexCount());
+}

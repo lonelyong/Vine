@@ -113,7 +113,13 @@ struct AttributeBuffer {
 重建调 `buildGeometry(...)`：
 
 1. **读 loc0** → 校验非空且 `components>=3`，否则整个几何不画（返回空）；
-   按 **stride=3** 展开成 `Vec3fArray positions` → 拷成 `vsg::vec3Array vertices`。
+   按 **stride=3** 展开成 `Vec3fArray positions`，再绑定成 `vsg::vec3Array vertices`：
+   **不是拷贝，而是别名** —— `vsg::vec3Array::create(storage, 0, sizeof(vsg::vec3), n)`
+   指向 `detail::VsgBufferView<float>`，后者持住模型的 `Buffer<float>`，于是顶点只存在一份
+   （模型与场景图读同一块内存；场景图持 storage ⇒ 模型先死也安全）。
+   绑定对象**必须是真 `vsg::Array`**：只把 `properties` / `dataPointer()` 报对的 `Data`
+   会被**静默**忽略（不出图、validation 不报）；元素类型仍是数组的，所以 format/stride
+   仍自动推断，无手写。
 2. **读 loc1（可选）** → 法线；缺失时后端用位置推导
    （indexed → `makeIndexedNormals` 平滑法线；非 indexed → `makeNormals` 面法线）。
 3. **索引**：`hasIndices()` → 拷成 `vsg::uintArray`；否则生成顺序索引 0..n-1。

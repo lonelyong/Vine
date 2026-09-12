@@ -145,6 +145,27 @@ struct V_GRAPHICS_API AttributeBuffer
         const std::size_t base = vertex * components;
         return { (*values)[base], (*values)[base + 1u], (*values)[base + 2u] };
     }
+
+    /** @brief Views a three-scalar channel as Vec3 elements.
+     *
+     * The scalars of an xyz channel ARE Vec3 elements: `Vector3` is a union of `{T x, y, z}` and
+     * `T data[3]`, so a run of three floats is one. This is the same reinterpretation geometry::Mesh makes
+     * for its own attribute storage, and it is what lets a consumer read an xyz channel without copying it.
+     *
+     * A channel with any other stride has no such view: it yields an empty span, so a caller does not have
+     * to check the stride before calling.
+     *
+     * @return The channel as Vec3 elements, empty unless the stride is exactly three scalars.
+     */
+    std::span<const vine::math::Vec3f> vec3View() const
+    {
+        constexpr std::uint32_t kVec3Scalars = 3u;
+        if (values == nullptr || components != kVec3Scalars) {
+            return {};
+        }
+        return { reinterpret_cast<const vine::math::Vec3f*>(values->data()),
+                 values->size() / kVec3Scalars };
+    }
 };
 
 /**

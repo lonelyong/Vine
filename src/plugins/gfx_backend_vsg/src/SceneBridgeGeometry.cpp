@@ -12,6 +12,7 @@
 #include <vsg/state/material.h>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/vsg/SceneBridgeInternals.hpp>
+#include <vine/vsg/VsgBufferView.hpp>
 #include <vine/vsg/VsgSceneRules.hpp>
 #include <vine/vsg/VsgUtils.hpp>
 
@@ -45,58 +46,85 @@ using detail::XyzUnpack;
     if (geometry == nullptr) {
         return ::vsg::ref_ptr<::vsg::Commands>();
     }
-    // Materialise the open attribute list into typed CPU arrays for the vsg
-    // build. Location 0 is positions (mandatory), location 1 normals
-    // (optional). Each channel is unpacked honouring its AttributeBuffer
-    // components stride, and a malformed channel is rejected instead of being
-    // misread element by element.
-    vine::geometry::Vec3fArray positions;
+    // Location 0 is positions and is mandatory. An xyz channel whose length is a whole number of vertices
+    // already IS what vsg's loc0 binding reads, so the binding views the model's own memory instead of a
+    // copy of it; any other stride (a vec4 position, a non-divisible length) keeps the unpacking path, which
+    // is where the xyz/w handling and the diagnostics for those cases live.
     const auto* position_attr = geometry->buffer(0);
     if (position_attr == nullptr || position_attr->empty()) {
         report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
                u8"geometry has no loc0 position attribute; not drawn");
         return ::vsg::ref_ptr<::vsg::Commands>();
     }
-    const XyzUnpack unpack = unpackXyz(*position_attr, positions);
-    if (unpack == XyzUnpack::NotXyzStride) {
-        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
-               formatDiagnostic(u8"loc0 position has components=%u (a 3/4-component xyz "
-                                u8"channel is required); not drawn",
-                                position_attr->components));
-        return ::vsg::ref_ptr<::vsg::Commands>();
-    }
-    if (unpack == XyzUnpack::NotDivisible) {
-        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
-               formatDiagnostic(u8"loc0 position holds %zu floats, not divisible by its "
-                                u8"components=%u stride; not drawn",
-                                position_attr->floatCount(), position_attr->components));
-        return ::vsg::ref_ptr<::vsg::Commands>();
-    }
-    if (positions.empty()) {
-        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
-               u8"geometry loc0 position attribute is empty; not drawn");
-        return ::vsg::ref_ptr<::vsg::Commands>();
-    }
-    const std::size_t vertex_count = positions.size();
 
-    ::vsg::ref_ptr<::vsg::vec3Array> vertices =
-        ::vsg::vec3Array::create(static_cast<uint32_t>(vertex_count));
-    for (std::size_t i = 0; i < vertex_count; ++i) {
-        const auto& v = positions[i];
-        (*vertices)[i] = ::vsg::vec3(v.x, v.y, v.z);
+    /// Scalars per xyz element: three, the stride geometry::Mesh stores and vsg's loc0/loc1 bindings read.
+    constexpr std::uint32_t kXyzComponents = 3u;
+
+    // Positions as the CPU sees them while building: the model's own scalars, or the unpacked copy below —
+    // never a third array. The binding may view the model's memory where this is the same memory.
+    std::span<const vine::math::Vec3f> positions;
+    vine::geometry::Vec3fArray        unpacked_positions;
+
+    ::vsg::ref_ptr<::vsg::Data> vertices;
+    std::size_t                 vertex_count = 0;
+    if (position_attr->components == kXyzComponents && position_attr->floatCount() % kXyzComponents == 0u) {
+        // A REAL vsg array aliases the model's memory: the element type stays the array's, so its format and
+        // stride keep being inferred from it (nothing about the binding is hand-written), and the storage
+        // Data it points at holds the buffer, so the memory outlives the node that reads it.
+        auto storage = detail::VsgBufferView<float>::create(position_attr->values);
+        vertices     = ::vsg::vec3Array::create(storage, 0u, static_cast<std::uint32_t>(sizeof(::vsg::vec3)),
+                                                static_cast<std::uint32_t>(position_attr->vertexCount()));
+        positions    = position_attr->vec3View();
+        vertex_count = positions.size();
+    } else {
+        const XyzUnpack unpack = unpackXyz(*position_attr, unpacked_positions);
+        if (unpack == XyzUnpack::NotXyzStride) {
+            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+                   formatDiagnostic(u8"loc0 position has components=%u (a 3/4-component xyz "
+                                    u8"channel is required); not drawn",
+                                    position_attr->components));
+            return ::vsg::ref_ptr<::vsg::Commands>();
+        }
+        if (unpack == XyzUnpack::NotDivisible) {
+            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+                   formatDiagnostic(u8"loc0 position holds %zu floats, not divisible by its "
+                                    u8"components=%u stride; not drawn",
+                                    position_attr->floatCount(), position_attr->components));
+            return ::vsg::ref_ptr<::vsg::Commands>();
+        }
+        if (unpacked_positions.empty()) {
+            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+                   u8"geometry loc0 position attribute is empty; not drawn");
+            return ::vsg::ref_ptr<::vsg::Commands>();
+        }
+        positions    = unpacked_positions;
+        vertex_count = positions.size();
+
+        auto typed = ::vsg::vec3Array::create(static_cast<uint32_t>(vertex_count));
+        for (std::size_t i = 0; i < vertex_count; ++i) {
+            const auto& v = positions[i];
+            (*typed)[i]   = ::vsg::vec3(v.x, v.y, v.z);
+        }
+        vertices = typed;
     }
 
-    // Optional normals: when the channel is missing or unusable (bad stride
-    // or non-divisible length) it is reported and treated as absent; the
-    // normals are then derived (Triangles) or defaulted (Points / Lines)
-    // below. A bad OPTIONAL channel must not reject an otherwise drawable mesh.
-    vine::geometry::Vec3fArray src_normals;
+    // Optional normals: when the channel is missing or unusable (bad stride or non-divisible length) it is
+    // reported and treated as absent; the normals are then derived (Triangles) or defaulted (Points / Lines)
+    // below. An authored channel in the layout loc1 binds is read from the model's memory, like the
+    // positions — no copy of it either. A bad OPTIONAL channel must not reject an otherwise drawable mesh.
+    vine::geometry::Vec3fArray         unpacked_normals;
+    std::span<const vine::math::Vec3f> src_normals;
     if (const auto* normal_attr = geometry->buffer(1);
         normal_attr != nullptr && !normal_attr->empty()) {
-        if (const XyzUnpack unpack = unpackXyz(*normal_attr, src_normals); unpack != XyzUnpack::Ok) {
-            src_normals.clear();
+        const std::span<const vine::math::Vec3f> authored = normal_attr->vec3View();
+        if (authored.size() == vertex_count) {
+            src_normals = authored;
+        } else if (const XyzUnpack unpack = unpackXyz(*normal_attr, unpacked_normals); unpack != XyzUnpack::Ok) {
+            unpacked_normals.clear();
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
                    ignoredNormalChannelMessage(*normal_attr, unpack));
+        } else {
+            src_normals = unpacked_normals;
         }
     }
 
@@ -185,7 +213,7 @@ using detail::XyzUnpack;
         }
     }
     if (colors == nullptr) {
-        colors = makeWhiteColors(vertices->size());
+        colors = makeWhiteColors(vertex_count);
     }
     if (opacity_carrier) {
         colors->properties.dataVariance = ::vsg::DYNAMIC_DATA;
@@ -225,7 +253,7 @@ using detail::XyzUnpack;
         }
     }
     if (texcoords == nullptr) {
-        texcoords = makeZeroTexcoords(vertices->size());
+        texcoords = makeZeroTexcoords(vertex_count);
     }
     // The bound vertex data follows the module's CANONICAL vertex binding order:
     //

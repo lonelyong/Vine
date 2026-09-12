@@ -115,6 +115,30 @@ use-after-free 引进了原本安全的路径，而换来的只是“省一半�
 两侧 `data()` 地址不同（两份分配）、`revision()` 0 vs 0（增长没有在持有者的 buffer 上公告）。
 其余断言全过 —— 证明这几条断言精确地卡住"共享"这个不变量，而不是碰巧因为别的原因失败。
 
+## 阶段 4 的实测结论：裸 `Data` 绑不上，真 `vsg::Array` 别名才成立（2026-09-12）
+
+目标：后端不再逐顶点拷进 `vsg::vec3Array`（`SceneBridgeGeometry` 的 `unpackXyz` + `makeTypedVertexData`），渲染侧直接读模型内存。
+
+**第一版做法（错）**：自己写一个 `vsg::Data` 子类，报 `dataPointer()` / `properties`，直接当顶点数组绑。结果 **画出空白，且 validation 一条不报** —— 静默失败。
+debug 打印证明 `format` / `stride` / `valueSize` / `valueCount` / `dataSize` 与同形状 `vec3Array` **完全一致**也无效；强行把 `properties.format` 改成 `VK_FORMAT_UNDEFINED` 同样无变化。
+结论：vsg 的绑定路径是围绕它自己的 `Array` 类型建的，"只是把属性报对"的 `Data` 不会被当数组用。
+
+**第二版（正解）**：用 `vsg::Array(ref_ptr<Data> storage, offset, stride, numElements, ...)` 的**别名构造** —— `assign()` 把 `storage` 存成 `ref_ptr`，并令 `_data = storage->dataPointer() + offset`。
+所以**被绑定的对象必须是真 `vsg::vec3Array`**，它别名一个持有 Vine buffer 的 `Data`（`detail::VsgBufferView<float>`，只做存储那一半）。
+
+**为什么这个版本更好**：元素类型仍然是**数组的**类型 ⇒ Vulkan format / stride 仍由 `vsg::vec3Array` 推断，**没有任何手写** —— 绕开了 `VsgSceneRules.hpp` 记的"格式不匹配会被 configurator 静默接受"的坑。
+生命周期也自然成立：数组持 storage、storage 持 buffer ⇒ 模型可以先死，渲染侧恰好活到读它的那一刻为止。
+
+**判据（都是实测）**：
+
+- `vsg_selftest_evidence.sh` → PASS，**47 行逐字节相同** —— 别名生效且渲染输出零变化。
+- 变异：把别名的 `offset` 从 `0` 改成 `sizeof(::vsg::vec3)`（跳一个顶点）→ 证据 **FAIL**（证明别名真被读，不是悄悄走了回退路径）。
+- 新断言 `SceneBridgePipelineSharingTest.PositionBindingAliasesTheModelBuffer`：绑定数组的 `dataPointer()` 必须**等于**模型 buffer 的 `scalars().data()`，且必须是真 `vsg::vec3Array`（`test_vsg` 185 → **186**）。
+- 变异：关掉别名分支改回拷贝 → 该断言失败。渲染关口做不到这一点：拷贝渲染得逐字节相同，**只有指针同一性能区分**。
+
+**其余通道仍未做**：法线 / texcoords / 自定义通道 / 索引的别名。
+其中**推导量必须保持真数组**：白色 opacity 载体、零填充 texcoords、`makeNormals` / `makeIndexedNormals` 的推导法线。
+
 ## 注意
 
 - `Mesh` 的 buffer **永不为空指针**（构造时分配），所以访问器不必判空；代价是每个 mesh 3~4 次

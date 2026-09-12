@@ -1340,16 +1340,26 @@ mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::ou
 于是“复制还是共享”由**传什么**决定。`geometryFromShape()` 走共享，
 **所以 mesh 与 Geometry 读同一块分配，顶点不再翻倍**。
 
-**判据**：`test_graphics` **219 → 221**、`test_core` **82**、`test_vsg` **185**；
-`ninja` 零 error/零 warning；`vsg_selftest_evidence.sh` → PASS（**47 行逐字节相同**，后端零改动）；
+**判据**：`test_graphics` **219 → 221 → 222**、`test_core` **82**、`test_vsg` **185 → 186**；
+`ninja` 零 error/零 warning；`vsg_selftest_evidence.sh` → PASS（**47 行逐字节相同**）；
 `gfx_lavapipe_check.sh` → PASS（0 VUID）；`check_diagnostic_formats.py` → 0 suspicious。
 **判据里最有信息量的一条**：阶段 2（换存储）、3b（改走共享）、3c（钉死类型 + 合并 API）之后
 证据**都是**逐字节相同 —— 渲染输出一个字节没变，读的却已经是另一套存储。
+阶段 4 更进一步：后端**真的改了代码**（位置通道从拷贝改成别名），证据**仍然**逐字节相同 ——
+这才是“渲染侧读的是模型内存、而渲染结果零变化”的正证据。
 **变异验证**：`addVertex` 每次重建存储 → 3 条共享断言失败；`geometryFromShape()` 改回 repack →
 3 条指针同一性断言失败（分量/坐标/计数全过）；`AttributeBuffer` 加回快照 → 3 条增长断言失败；
-keepalive 换成空 lambda → `useCount()` 断言失败。
+keepalive 换成空 lambda → `useCount()` 断言失败；阶段 4：别名 offset 跳一个顶点 → **证据 FAIL**
+（证明别名真被读，不是悄悄走回退路径）；关掉别名分支改回拷贝 → 指针同一性断言失败
+（拷贝渲染得逐字节相同，**只有地址能区分**共享与复制）。
 
-**仍未做**：阶段 4（后端从 `bytes()` 上传，`SceneBridgeGeometry` 仍逐顶点拷进 vsg typed array）。
+**阶段 4（顶点别名）已落地**：位置通道不再逐顶点拷进 `vsg::vec3Array`，而是用
+`vsg::Array(storage, 0, sizeof(vsg::vec3), n)` **别名**一个持有模型 buffer 的 `Data`
+（`detail::VsgBufferView<float>`，只做存储那一半）。**踩过的坑：自己写 `vsg::Data` 子类当顶点数组会静默
+不画** —— 所有 properties 报得与同形状 `vec3Array` 一模一样、validation 干净，就是不出图；被绑定的**必须**
+是真 `vsg::Array` 类型，元素类型仍是数组的，所以 format/stride 仍自动推断（没有手写）。
+其余通道（法线 / texcoords / 自定义 / 索引）的别名**仍未做**；推导量（白色 opacity 载体、零填充 texcoords、
+`makeNormals` / `makeIndexedNormals`）必须保持真数组。
 索引已一并收掉（阶段 3d）：`Geometry::indices()` 返回 `std::span<const uint32_t>`，`setIndices` 亦只收
 buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ **索引也不再复制**。
 第一版被推翻的过程、setter 合名的理由、以及预测与实际破坏点清单的差异，

@@ -250,8 +250,8 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
     return vine::String();
 }
 
-::vsg::ref_ptr<::vsg::vec3Array> makeNormals(const vine::geometry::Vec3fArray& positions,
-                                             const vine::geometry::Vec3fArray& meshNormals)
+::vsg::ref_ptr<::vsg::vec3Array> makeNormals(std::span<const vine::math::Vec3f> positions,
+                                            std::span<const vine::math::Vec3f> meshNormals)
 {
     auto normals = ::vsg::vec3Array::create(static_cast<uint32_t>(positions.size()));
     if (meshNormals.size() == positions.size()) {
@@ -282,9 +282,9 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
     return normals;
 }
 
-::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(const vine::geometry::Vec3fArray& positions,
-                                                    const vine::geometry::Vec3fArray& meshNormals,
-                                                    const ::vsg::uintArray& indices)
+::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(std::span<const vine::math::Vec3f> positions,
+                                                   std::span<const vine::math::Vec3f> meshNormals,
+                                                   const ::vsg::uintArray& indices)
 {
     auto normals = ::vsg::vec3Array::create(static_cast<uint32_t>(positions.size()));
     if (meshNormals.size() == positions.size()) {

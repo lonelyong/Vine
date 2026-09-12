@@ -272,8 +272,8 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
  * @param meshNormals Optional mesh normals (may be empty).
  * @return Normal array, one vec3 per position.
  */
-::vsg::ref_ptr<::vsg::vec3Array> makeNormals(const vine::geometry::Vec3fArray& positions,
-                                             const vine::geometry::Vec3fArray& meshNormals);
+::vsg::ref_ptr<::vsg::vec3Array> makeNormals(std::span<const vine::math::Vec3f> positions,
+                                            std::span<const vine::math::Vec3f> meshNormals);
 
 /**
  * @brief Builds the per-vertex normal array of an indexed mesh.
@@ -288,9 +288,9 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
  * @param indices     Triangle indices (three per triangle).
  * @return Normal array, one vec3 per position.
  */
-::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(const vine::geometry::Vec3fArray& positions,
-                                                    const vine::geometry::Vec3fArray& meshNormals,
-                                                    const ::vsg::uintArray& indices);
+::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(std::span<const vine::math::Vec3f> positions,
+                                                   std::span<const vine::math::Vec3f> meshNormals,
+                                                   const ::vsg::uintArray& indices);
 
 /**
  * @brief Materialises a packed float channel into a typed per-vertex array.
