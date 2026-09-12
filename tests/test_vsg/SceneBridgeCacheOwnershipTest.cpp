@@ -28,7 +28,13 @@
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 
+#include <vsg/commands/Commands.h>
 #include <vsg/io/Options.h>
+#include <vsg/nodes/StateGroup.h>
+#include <vsg/state/BindDescriptorSet.h>
+#include <vsg/state/DescriptorImage.h>
+#include <vsg/state/DescriptorSet.h>
+#include <vsg/state/ImageInfo.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/utils/ShaderSet.h>
 
@@ -107,6 +113,66 @@ GeometryPtr makeTriangle(int index)
     normals.emplace_back(0.0f, 0.0f, 1.0f);
     geom->setNormals(packAttribute(normals));
     return geom;
+}
+
+
+/// @brief Finds the first sampled ImageInfo under a retained subtree.
+///
+/// This is how a test observes WHERE a texture's pixels came from: the descriptor the draw samples holds
+/// the ImageInfo the cache handed out, so two draws sharing one upload hold the very same pointer.
+vsg::ImageInfo* findSampledImageInfo(vsg::Node* node)
+{
+    if (node == nullptr) {
+        return nullptr;
+    }
+    // vsg's configurator binds one set at a time (BindDescriptorSet), but a hand-built graph may use the
+    // plural form, so both are walked.
+    auto imageInfoOf = [](const vsg::DescriptorSet* set) -> vsg::ImageInfo* {
+        if (set == nullptr) {
+            return nullptr;
+        }
+        for (const auto& descriptor : set->descriptors) {
+            auto image = descriptor ? descriptor->cast<vsg::DescriptorImage>() : nullptr;
+            if (image != nullptr && !image->imageInfoList.empty() && image->imageInfoList.front() != nullptr) {
+                return image->imageInfoList.front().get();
+            }
+        }
+        return nullptr;
+    };
+    if (auto bind = node->cast<vsg::BindDescriptorSet>()) {
+        if (auto* hit = imageInfoOf(bind->descriptorSet.get())) {
+            return hit;
+        }
+    }
+    if (auto binds = node->cast<vsg::BindDescriptorSets>()) {
+        for (const auto& set : binds->descriptorSets) {
+            if (auto* hit = imageInfoOf(set.get())) {
+                return hit;
+            }
+        }
+    }
+    if (auto group = node->cast<vsg::Group>()) {
+        for (const auto& child : group->children) {
+            if (auto* hit = findSampledImageInfo(child.get())) {
+                return hit;
+            }
+        }
+    }
+    if (auto commands = node->cast<vsg::Commands>()) {
+        for (const auto& child : commands->children) {
+            if (auto* hit = findSampledImageInfo(child.get())) {
+                return hit;
+            }
+        }
+    }
+    if (auto state_group = node->cast<vsg::StateGroup>()) {
+        for (const auto& command : state_group->stateCommands) {
+            if (auto* hit = findSampledImageInfo(command.get())) {
+                return hit;
+            }
+        }
+    }
+    return nullptr;
 }
 
 }  // namespace
@@ -433,4 +499,98 @@ TEST(SceneBridgeCacheOwnershipTest, ADroppedTextureIsReleasedByTheFrameSweep)
     EXPECT_EQ(bridge.textureCount(), 0u)
         << "the unreachable texture's resources must be released by the frame's sweep, not pinned until the "
            "FIFO cap or the slot teardown";
+}
+
+/**
+ * @brief Two slots handed the session's texture cache sample ONE uploaded image.
+ *
+ * A texture is uploaded once per cache entry, so a cache per slot means two slots that sample the same
+ * texture stage the same pixels twice and hold two device images for as long as either slot lives. The
+ * session's cache is what collapses that: the second slot finds the entry and samples the image the first
+ * one already uploaded.
+ *
+ * Asserted by IDENTITY of the sampled ImageInfo, not by the cache's count: a second entry would be visible
+ * in the count, but a bridge that quietly built its own cache would not be.
+ */
+TEST(SceneBridgeCacheOwnershipTest, TwoBridgesShareTheInjectedTextureCache)
+{
+    vine::vsg::VsgTextureCache session_cache;
+    vine::vsg::SceneBridge      a;
+    vine::vsg::SceneBridge      b;
+    for (vine::vsg::SceneBridge* bridge : { &a, &b }) {
+        bridge->setShaderSet(vsg::createPhongShaderSet());
+        bridge->setTextureCache(&session_cache);
+    }
+
+    auto texture =
+        vine::intrusive_ptr<Texture2D>(new Texture2D(4, 4, vine::imaging::PixelFormat::Rgba8Unorm));
+    texture->setImage(vine::intrusive_ptr<const vine::imaging::Image>(
+        new vine::imaging::Image(4, 4, vine::imaging::PixelFormat::Rgba8Unorm)));
+    auto material = MaterialPtr(new Material());
+    material->setTexture(texture);
+
+    auto geometry_a = makeTriangle(0);
+    auto geometry_b = makeTriangle(1);
+    auto root_a     = vsg::Group::create();
+    auto root_b     = vsg::Group::create();
+
+    std::vector<RenderCommand> commands_a;
+    commands_a.emplace_back(geometry_a, material, Mat4d());
+    std::vector<RenderCommand> commands_b;
+    commands_b.emplace_back(geometry_b, material, Mat4d());
+
+    a.syncRenderCommands(commands_a, root_a.get(), nullptr);
+    b.syncRenderCommands(commands_b, root_b.get(), nullptr);
+
+    EXPECT_EQ(session_cache.count(), 1u) << "one cache entry for the one texture, not one per slot";
+
+    const auto* info_a = findSampledImageInfo(root_a->children.front().get());
+    const auto* info_b = findSampledImageInfo(root_b->children.front().get());
+    ASSERT_NE(info_a, nullptr) << "the textured draw must sample an image";
+    ASSERT_NE(info_b, nullptr) << "the textured draw must sample an image";
+    EXPECT_EQ(info_a, info_b) << "both slots must sample the image the session's cache uploaded once";
+}
+
+/**
+ * @brief Without the injection each bridge uploads through its own cache.
+ *
+ * The control for the test above: sharing must be something the renderer INJECTS, not something that happens
+ * by accident. Two stand-alone bridges build two resources for the same texture.
+ */
+TEST(SceneBridgeCacheOwnershipTest, TwoBridgesWithoutInjectionUploadSeparately)
+{
+    vine::vsg::SceneBridge a;
+    vine::vsg::SceneBridge b;
+    for (vine::vsg::SceneBridge* bridge : { &a, &b }) {
+        bridge->setShaderSet(vsg::createPhongShaderSet());
+    }
+
+    auto texture =
+        vine::intrusive_ptr<Texture2D>(new Texture2D(4, 4, vine::imaging::PixelFormat::Rgba8Unorm));
+    texture->setImage(vine::intrusive_ptr<const vine::imaging::Image>(
+        new vine::imaging::Image(4, 4, vine::imaging::PixelFormat::Rgba8Unorm)));
+    auto material = MaterialPtr(new Material());
+    material->setTexture(texture);
+
+    auto geometry_a = makeTriangle(0);
+    auto geometry_b = makeTriangle(1);
+    auto root_a     = vsg::Group::create();
+    auto root_b     = vsg::Group::create();
+
+    std::vector<RenderCommand> commands_a;
+    commands_a.emplace_back(geometry_a, material, Mat4d());
+    std::vector<RenderCommand> commands_b;
+    commands_b.emplace_back(geometry_b, material, Mat4d());
+
+    a.syncRenderCommands(commands_a, root_a.get(), nullptr);
+    b.syncRenderCommands(commands_b, root_b.get(), nullptr);
+
+    EXPECT_EQ(a.textureCount(), 1u);
+    EXPECT_EQ(b.textureCount(), 1u);
+
+    const auto* info_a = findSampledImageInfo(root_a->children.front().get());
+    const auto* info_b = findSampledImageInfo(root_b->children.front().get());
+    ASSERT_NE(info_a, nullptr) << "the textured draw must sample an image";
+    ASSERT_NE(info_b, nullptr) << "the textured draw must sample an image";
+    EXPECT_NE(info_a, info_b) << "private caches upload the same texture twice";
 }

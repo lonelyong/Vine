@@ -289,6 +289,12 @@ bool VsgRenderer::initialize()
         return false;
     }
 
+    // The session's texture cache, created before any slot exists so every slot's bridge uploads through this
+    // ONE cache (see SceneBridge::setTextureCache): a texture sampled by several slots is staged once, not
+    // once per slot. Session-scoped: the images reference the session's device, so shutdown() drops them with
+    // it.
+    state.texture_cache = std::make_unique<vine::vsg::VsgTextureCache>();
+
     // Window-target shader sets shared by its content slots (embedded SPIR-V,
     // no runtime glslang): the depth-on set keeps depth test/write on; the
     // depth-off set disables it so the slot's content always draws on top of

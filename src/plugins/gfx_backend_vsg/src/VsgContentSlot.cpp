@@ -168,6 +168,9 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
         content.bridge.setShaderSet(set_ref);
     }
     content.bridge.setMaterialManager(&persistent.materialManager);
+    // Upload textures through the SESSION's cache: the same texture sampled by two
+    // slots would otherwise be staged (and held) twice, once per slot.
+    content.bridge.setTextureCache(state.texture_cache.get());
     // Route this slot's rejections through the renderer's diagnostics (trace,
     // counters, host sink): the slot is what actually discovers them.
     installDiagnosticRoute(diagnostics, content.bridge);

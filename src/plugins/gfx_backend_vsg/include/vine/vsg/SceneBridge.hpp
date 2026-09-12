@@ -72,6 +72,19 @@ class V_VSG_API SceneBridge {
      */
     void setMaterialManager(vine::raw_ptr<VsgMaterialManager> manager);
 
+    /** @brief Injects the texture-resource cache this bridge uploads through.
+     *
+     * Must outlive the bridge. The cache is keyed by the texture's ADDRESS and its entries OWN the
+     * texture, so handing every content slot of a session the session's cache (see
+     * `VsgRendererState::texture_cache`) means one texture sampled by N slots is staged ONCE and sampled
+     * from one image, instead of each slot staging its own copy of the same pixels.
+     *
+     * When unset, the bridge creates (and owns) its own cache and uploads stay per slot.
+     *
+     * @param cache Texture cache to use.
+     */
+    void setTextureCache(vine::raw_ptr<VsgTextureCache> cache);
+
     /** @brief Reconciles the retained scene under root against the commands.
      *
      * Each render command contributes one retained child (a vsg::MatrixTransform
@@ -247,10 +260,11 @@ class V_VSG_API SceneBridge {
 
     /** @brief Gets the number of textures with cached GPU resources.
      *
-     * The observable half of this bridge's texture sweep (see releaseAbandonedCaches): a texture the scene
-     * stopped sampling — or one whose last retained entry just left the frame — must drop out of this count,
-     * instead of keeping its GPU image until 256 later textures push it out of the FIFO or the slot is
-     * destroyed. It is what makes that sweep assertable without a device.
+     * The observable half of this bridge's texture cache (the session's when one was injected, see
+     * setTextureCache): a texture the scene stopped sampling — or one whose last retained entry just left
+     * the frame — must drop out of this count, instead of keeping its GPU image until 256 later textures
+     * push it out of the FIFO or the slot is destroyed. It is what makes that sweep assertable without a
+     * device.
      *
      * @return Number of cached textures (the shared white fallback is not counted).
      */
@@ -481,8 +495,11 @@ class V_VSG_API SceneBridge {
     vine::raw_ptr<VsgMaterialManager> material_manager_ = nullptr;
     // Default manager used when the renderer does not inject one.
     VsgMaterialManager default_manager_;
-    // Texture uploads, keyed by texture. Always the bridge's own: nothing injects one (unlike the
-    // material manager, whose interface the SDK owns), so there is no injection point yet.
+    // Texture uploads, keyed by texture. Injected from the session when there is one (setTextureCache):
+    // one texture sampled by several slots is then staged once instead of once per slot. Falls back to
+    // this bridge's own cache, so a bridge used stand-alone keeps working.
+    vine::raw_ptr<VsgTextureCache> texture_cache_ = nullptr;
+    // Used when the renderer does not inject one (see textureCache()).
     VsgTextureCache default_texture_cache_;
     // Retained per-geometry nodes, keyed by geometry pointer for O(1) lookup.
     //

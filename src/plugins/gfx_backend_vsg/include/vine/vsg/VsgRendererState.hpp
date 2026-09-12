@@ -37,6 +37,7 @@
 
 #include <cstddef>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <vector>
@@ -49,6 +50,8 @@
 #include <vsg/core/ref_ptr.h>
 #include <vsg/maths/vec4.h>
 #include <vsg/utils/ShaderSet.h>
+
+#include <vine/vsg/VsgTextureCache.hpp>
 
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/Light.hpp>
@@ -183,6 +186,11 @@ struct VsgRendererState {
     ::vsg::ref_ptr<::vsg::Window>       window;
     ::vsg::ref_ptr<::vsg::Viewer>       viewer;
     ::vsg::ref_ptr<::vsg::CommandGraph> command_graph;
+    // The session's texture-resource cache, injected into every content slot's bridge (see
+    // SceneBridge::setTextureCache): one texture sampled by several slots is staged ONCE instead of once per
+    // slot. Held through a pointer because the cache is not copyable and this state is assigned over
+    // wholesale by shutdown() — which is also what drops those resources with the device they belong to.
+    std::unique_ptr<VsgTextureCache> texture_cache;
     // Window-target shader sets shared by its content slots' bridges: one per
     // DepthMode (TestAndWrite / TestOnly / Disabled) so each slot bakes the
     // right depth test/write state. Per-geometry pipelines are compiled per

@@ -111,13 +111,19 @@ void SceneBridge::setTextureAnisotropy(float device_limit)
 
 std::size_t SceneBridge::textureCount() const noexcept
 {
-    // Straight at the member: the cache accessor is the non-const one the builders use.
-    return default_texture_cache_.count();
+    // The same choice textureCache() makes, spelled with the members so a const
+    // accessor does not need a const overload of the accessor itself.
+    return (texture_cache_ != nullptr ? *texture_cache_ : default_texture_cache_).count();
+}
+
+void SceneBridge::setTextureCache(vine::raw_ptr<VsgTextureCache> cache)
+{
+    texture_cache_ = cache;
 }
 
 VsgTextureCache& SceneBridge::textureCache()
 {
-    return default_texture_cache_;
+    return texture_cache_ != nullptr ? *texture_cache_ : default_texture_cache_;
 }
 
 
