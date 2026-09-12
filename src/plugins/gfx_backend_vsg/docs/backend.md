@@ -144,10 +144,14 @@ graph TB
   vsg 给顶点输入 binding 编号的方式是“按 `assignArray()` 成功的顺序递增”，所以**声明顺序必须与数组顺序逐位对齐**：漏声明一个名字或漏喂一个数组，
   后面全体错位，把下一个属性的数据喂给当前属性 —— 而 validation 不会报。这也是模块把前缀四个通道**永远都声明、永远都喂**（没有 UV 的网格喂零填充数组）的原因。
 - **内建路径的 location 是 vsg 自己的**（因为 ShaderSet 就是宿主传进来的 vsg set；实测 `vsg_shader_dump`：
-  `vsg_Vertex` 0 / `vsg_Normal` 1 / `vsg_TexCoord0..3` 2..5 / `vsg_Color` 6 —— 密集 0..6）。
+  `vsg_Vertex` 0 / `vsg_Normal` 1 / `vsg_TexCoord0..3` 2..5 / `vsg_Color` **6** / `vsg_Translation(_scaleDistance)` 7 /
+  `vsg_Rotation` **8** / `vsg_Scale` 9 / `vsg_JointIndices` 10 / `vsg_JointWeights` 11 —— flat/phong/pbr 三套完全一样，
+  也就是**密集占满 0..11**）。
 - **自定义 program 路径自建 ShaderSet**（`assembleProgramShaderSet`），location 用模块契约 0 / 1 / 2 / 8：
-  vsg 的 0..6 被它自家属性占满，而自定义通道**沿用自己的源 location**（转发范围 `L ≥ 3`）⇒ 照抄 vsg 编号必撞号
-  （放在 6 的自定义通道撞 `vsg_Color`）。所以颜色放在 2（< 3，落在自定义范围外）、texcoord 放在 8（落在范围内但是**保留槽**：`L == 8` 的通道不转发）。
+  canonical 槽必须避开自定义通道的范围（`L ≥ 3`，因为自定义通道沿用自己的源 location），而 `< 3` 只有 0/1/2 三个 ——
+  0/1 保持与 vsg 一致（让只读位置/法线的 shader 两条路径通用），颜色只能占 2；texcoords 只能去 `≥ 3` 里一个**保留**槽，
+  取 8 且 `L == 8` 的通道不转发（vsg 的 8 是 `vsg_Rotation`，借号不冲突：两套 set 永不同时存在）。
+  结果是模块这套是**稀疏**编号，把 `3..7`、`9..` 全留给自定义通道。
 - **别把 vsg 的“数组槽号”当成 location**：`Builder.cpp:97` / `tile.cpp:488` 的 `enableArray("vsg_TexCoord0", …, 8)` 里的 8 是**喂入槽号**，
   vsg 的 Phong set 里 texcoord 的 location 是 **2** —— 这两套编号 vsg 自己就是分开的。
 - 名字侧的守卫：`assignArray()` 失败且该名字**被管线声明**过 ⇒ 报一次 `ContentSkipped` Warning
