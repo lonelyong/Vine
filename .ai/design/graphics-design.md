@@ -207,7 +207,33 @@ using MaterialPtr = intrusive_ptr<Material>;
 
 > 说明：颜色使用浮点 `Colorf`（[0,1]），而非 8-bit 的 `Color`。
 > 材质采样的是 `graphics::Texture` **对象**，不再是路径字符串：
-> 路径字符串在 `src/` 里零调用，是个死 API。`Texture` 的 shape / 源图设计见 `.ai/design/imaging-design.md`。
+> 路径字符串在 `src/` 里零调用，是个死 API。源图（`imaging::Image`）的设计见 `.ai/design/imaging-design.md`；
+> 上传到 GPU 的接缝见 `.ai/design/vsg-texture-upload.md`。
+
+### 3.3b `Texture` 的形状层级
+
+`Texture` 是基类，构造 **protected** —— 形状是类型而非构造参数，所以具名类型携带的不变量无法被绕过：
+
+- `Texture2D` 不接受层索引：一个只能为 0 的索引是等着被写错的参数；
+- `CubeMap` 的面由构造保证为**正方形**（size 只说一次，而不是 width/height 两个可以互相矛盾的机会），
+  且按 Vulkan 的层序**命名**（`Face::PosX … NegZ`）—— 因为"4"这个数字的含义由层序定义，不该由调用方记。
+
+消费端只问一件事：`layerCount()` / `layer(i)`。这样「加形状」= 「加类型」，而不是在每个 switch 里加分支；
+`classifyTexture` 里那个**无 `default` 的穷举 switch** 就是这条规则的体现 —— 新增形状会成为**编译期**决定，
+而不是静默按单层上传。`Kind` 只用于诊断命名，**不是**消费端的分支依据；名字取 `Kind` 而非 `Shape`，
+是因为 cube 不是一种几何形状（它是六个二维面），旧名会让人以为在描述维度。
+
+**为什么不做成 `Texture2D` / `Texture3D` / `CubeMap` / `Texture2DArray` … 一族？**
+纹理的"形状"实际是 **维度 × 层数** 这个乘积空间（Vulkan 有 8 种 view type），每个组合一个类是组合爆炸；
+单类 + 轴作为数据只要 `Kind` + `layerCount()` 就能覆盖这个空间（`2DArray` 将来只是 `layerCount() = N`，
+零新类型）。更关键的是：**层级应跟随内容模型，而不是跟随 Vulkan 的枚举**。`CubeMap` 与 `D2` 是同一个
+内容模型（一组二维图像），只是打包方式不同；而 `Texture3D` 是另一个内容模型 —— 它在 `imaging::Image`
+能表达体数据之前**根本造不出来**（`Image` 无 depth/slice）。所以 `Texture3D` 缺席不是遗漏，而是
+**没有依据**：现在做它等于同时凭空发明 `Image3D` 的形状。
+
+真正该拆的信号是可判定的：**当某个方法只对部分形状有效时**（例如 3D 纹理的 `setVoxel`、数组的
+`setLayer`）—— 那时基类就得长出对另一些子类抛异常的接口，派生才真正划得来。目前不存在这样的方法：
+`setSource` / `source` / `complete` / `revision` / `format` / `mipCount` 对每种形状都成立。
 
 ### 3.4 `Scene`（场景）
 
