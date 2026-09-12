@@ -195,7 +195,7 @@ TextureReject classifyTexture(const vine::graphics::Texture* texture) noexcept
         return TextureReject::Absent;
     }
     if (texture->shape() != Texture::Shape::D2) {
-        return TextureReject::NotTwoDimensional;
+        return TextureReject::UnsupportedShape;
     }
     if (!texture->complete()) {
         return TextureReject::Incomplete;
@@ -215,7 +215,7 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
                                     u8"the material renders untextured",
                                     filledFaceCount(texture), texture.faceCount());
 
-        case TextureReject::NotTwoDimensional:
+        case TextureReject::UnsupportedShape:
             return formatDiagnostic(u8"texture shape '%s' is not uploaded yet (only '%s' is); "
                                     u8"the material renders untextured",
                                     vine::graphics::Texture::shapeName(texture.shape()),

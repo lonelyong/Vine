@@ -766,7 +766,7 @@ TEST(VsgSceneRulesTest, AShapeTheBackendDoesNotUploadYetOutranksTheFormat)
     // Cube is checked before the pixel layout, because a caller that asked for a cube needs to be told
     // about the SHAPE — a format report would send them looking at the wrong thing.
     auto cube = filledTexture(vine::graphics::Texture::Shape::Cube, vine::imaging::PixelFormat::Rgba8Unorm, 6);
-    EXPECT_EQ(classifyTexture(cube.get()), TextureReject::NotTwoDimensional);
+    EXPECT_EQ(classifyTexture(cube.get()), TextureReject::UnsupportedShape);
 }
 
 TEST(VsgSceneRulesTest, AThreeChannelTextureIsRefusedForHavingNoVulkanFormat)
@@ -788,7 +788,7 @@ TEST(VsgSceneRulesTest, EachRefusalSaysWhichCaseFired)
     auto three_channel = filledTexture(vine::graphics::Texture::Shape::D2, vine::imaging::PixelFormat::Rgb8Unorm, 1);
 
     const auto incomplete = textureRejectMessage(TextureReject::Incomplete, *unfilled);
-    const auto shape = textureRejectMessage(TextureReject::NotTwoDimensional, *cube);
+    const auto shape = textureRejectMessage(TextureReject::UnsupportedShape, *cube);
     const auto format = textureRejectMessage(TextureReject::UnsupportedFormat, *three_channel);
 
     EXPECT_FALSE(incomplete.empty());

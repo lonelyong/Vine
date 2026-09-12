@@ -222,7 +222,7 @@ enum class TextureReject
     Ok,                 ///< Usable: every face is filled and the format has a Vulkan counterpart.
     Absent,             ///< No texture at all (a material without one).
     Incomplete,         ///< Not every face has been filled yet.
-    NotTwoDimensional,  ///< A shape this backend does not upload yet (a cube map).
+    UnsupportedShape,   ///< A shape this backend does not upload yet (a cube map).
     UnsupportedFormat,  ///< The pixel layout has no Vulkan format (a three-channel layout).
 };
 
