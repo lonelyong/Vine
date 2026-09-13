@@ -1,4 +1,9 @@
-﻿> 2026-09-13 **P0.B1：SDK 显式属性 location 表**：新增 `sdk/vine/graphics/ShaderAbi.hpp`（`VertexAttribute{Position,Normal,Color,TexCoord0}`
+﻿> 2026-09-13 **P0.C1：L1 数据块布局（SDK）+ 命名定案**：L1 块统一命名 **`Vine<Role>Block`**（与既有 `VineLightsBlock` 一致；
+> `Block` 明示内存布局、与 `FrameContext`/`RenderCommand` 区分），草稿的 `VineFrame` 改成 **`VineViewBlock`**（per-view 语义，避开 `FrameContext`）。
+> `ShaderAbi.hpp` 新增 `VineViewBlock`(288B) / `VineDrawBlock`(80B)（16B 对齐、全 mat4/vec4 ⇒ std140 与 D3D cbuffer 同布局）+ `static_assert`；
+> `tests/test_graphics/ShaderAbiTest.cpp` 钉 sizeof/offsetof。口径：行为中性；test_graphics 236 → **239**。下一步 C2（vsg 标注 push ≡ 子集）。
+
+> 2026-09-13 **P0.B1：SDK 显式属性 location 表**：新增 `sdk/vine/graphics/ShaderAbi.hpp`（`VertexAttribute{Position,Normal,Color,TexCoord0}`
 > + `attributeLocation()`，值 **0/1/2/8**）；vsg 的 `buildVineShaderSet` / `assembleProgramShaderSet` 用它替代字面量。
 > 契约与 DX 映射写在 `.ai/design/graphics-shader.md` §11（L1/L2/L3 + B1..B4 分期）。
 > 口径：两条证据基线 47 行不变；test_graphics 235→**236**（+1：表值 ↔ shader 文本声明的 location 一致）；lavapipe PASS。

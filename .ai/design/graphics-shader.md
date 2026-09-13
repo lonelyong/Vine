@@ -71,8 +71,8 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 - **顶点属性**：`loc 0 = position`（唯一定死）；其余 loc 由用户按需声明消费（默认内置程序按
   约定 loc0/1/2 = pos/normal/color，自定义程序读自己绑的 loc）。
 - **每视图/每 draw 数据**（对外契约形态，避免 vsg 专属 push 泄漏）：
-  - per-view `VineFrame{ view; inv_view; proj; view_proj; cam_pos; frame(time/viewport) }`
-  - per-draw `VineDraw{ model; …用户参数… }`
+  - per-view `VineViewBlock{ view; inv_view; proj; view_proj; cam_pos; frame(time/viewport) }`
+  - per-draw `VineDrawBlock{ model; …用户参数… }`
   用户据此写 `gl_Position = view_proj * model * pos`。push constant 只允许作**后端内部优化**
   （须与上述契约可证等价），不是用户要写的接口。
 - 这些约定由后端用 `ShaderSet`（attributeBindings/descriptorBindings）**自描述**实现，
@@ -128,7 +128,7 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 
 1. SDK 第一准则：用户必须能写 GLSL；着色契约先于后端（vsg 可弃）。
 2. **薄接口**：不做重型契约/布局推导；接口最小化到"源 + 类型化参数 + 槽"。
-3. loc0=position 为唯一固定约定；per-view/per-draw 用 `VineFrame/VineDraw` 声明式块，push 仅内部。
+3. loc0=position 为唯一固定约定；per-view/per-draw 用 `VineViewBlock/VineDrawBlock` 声明式块，push 仅内部。
 4. 内置 ShaderPreset 与用户 Program 同一模型；默认 null=内置，用户可覆盖（Geometry/StateNode/pass）。
 5. 多 pass 意义 = pass 级 Program + 命名产出槽（复用现有 publish/resolve）。
 
@@ -161,7 +161,7 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 
 | 层 | 内容 | 位置 |
 | --- | --- | --- |
-| **L1 语义 ABI** | 属性角色表、数据块（`VineFrame`/`VineDraw`/`Material`/`Lights`）、参数表、命名槽 | SDK（本文档 + `ShaderAbi.hpp`） |
+| **L1 语义 ABI** | 属性角色表、数据块（`VineViewBlock`/`VineDrawBlock`/`VineMaterialBlock`/`VineLightsBlock`）、参数表、命名槽 | SDK（本文档 + `ShaderAbi.hpp`） |
 | **L2 现实化** | 角色 → 该 API 的绑定/语义；块 → push/cbuffer/root constants；块布局 packing 规则；矩阵序、Y 方向、深度约定 | 每后端一份薄 shim（vsg / DX / GL） |
 | **L3 着色体** | 同一份算法，GLSL 或 HLSL（写两份或从单源生成） | SDK（`src/viz/graphics/shaders/`）+ 用户 Program |
 
@@ -177,7 +177,9 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 | TexCoord0 | 8 | 可选（门控）；8 是保留槽，避开自定义通道 |
 | 自定义通道 | = 其**源 location**（>= 3，≠ 8） | 调用者给的通道直接复用为 shader location |
 
-**数据块（语义，机制由后端定）**：per-view `VineFrame`（view/inv_view/proj/view_proj/cam_pos/frame）；per-draw `VineDraw`（model + 参数表）；`Material`；`Lights`。**布局规则：全部 16 字节对齐、成员为 `mat4`/`vec4`** —— 这样 std140 与 D3D cbuffer packing 同时成立（`vec3` 紧跟 `float` 是唯一要避免的坑）。现有 `LightPushBlock`(128B)/`VineLightsBlock`(112B)/`MaterialBlock` 已满足。
+**数据块（语义，机制由后端定）**：per-view `VineViewBlock`（view/inv_view/proj/view_proj/cam_pos/frame）；per-draw `VineDrawBlock`（model + 参数表）；`VineMaterialBlock`；`VineLightsBlock`。
+命名约定 **`Vine<Role>Block`**（与既有 `VineLightsBlock`/`LightPushBlock`/GLSL `MaterialBlock` 一致；`Block` 明示"这是内存布局，不是引擎对象"，与 `FrameContext`/`RenderCommand`/`Camera` 区分）。
+**布局规则：全部 16 字节对齐、成员为 `mat4`/`vec4`** —— 这样 std140 与 D3D cbuffer packing 同时成立（`vec3` 紧跟 `float` 是唯一要避免的坑）。现有 `LightPushBlock`(128B)/`VineLightsBlock`(112B)/`MaterialBlock` 已满足；C1 落地的 `VineViewBlock`(288B)/`VineDrawBlock`(80B) 亦然。
 
 **参数表 / 槽表**：Program 声明类型化参数与消费的命名产出槽（`in_SceneColor`…）；布局由后端推导，用户不碰字节。
 
@@ -205,7 +207,7 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 | --- | --- | --- |
 | **B1（本次）** | SDK 显式属性 location 表 `ShaderAbi.hpp`；vsg 后端用它替代字面量；测试钉住 L1 value ↔ shader 文本 | 低（行为中性） |
 | B2 | `ShaderProgram` 参数表 + 命名槽声明；后端绑成 UBO/sampler | 中 |
-| B3 | `VineFrame`/`VineDraw` 声明式块（替换 `pc` + 块绑定）；先定"per-draw model 走 UBO vs vsg push 作内部优化"的口径 | 高（动 ABI/预算） |
+| B3 | `VineViewBlock`/`VineDrawBlock` 声明式块（替换 `pc` + 块绑定）；先定"per-draw model 走 UBO vs vsg push 作内部优化"的口径 | 高（动 ABI/预算） |
 | B4（可选） | 第二个后端（DX/GL）验证"只换文本 + L2 shim" | 视需求 |
 
 > B2/B3 的口径见 **§12**：B2 暂缓（无消费者），B3 采用**选项 C**（L1 声明式块 + push 作后端内部优化）。
@@ -223,7 +225,7 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 
 ## 12. B3 决策：per-view / per-draw 数据怎么给（2026-09-13）
 
-> 目的：在动 `VineFrame`/`VineDraw` 之前把口径钉死，否则会返工（动 push 预算、动两条证据基线）。
+> 目的：在动 `VineViewBlock`/`VineDrawBlock` 之前把口径钉死，否则会返工（动 push 预算、动两条证据基线）。
 
 ### 12.1 现状（= vsg 形状泄漏在 SDK shader 里的地方）
 
@@ -241,19 +243,19 @@ SDK shader 文本因此写死了 `layout(push_constant)` / `layout(set = 0, bind
 | --- | --- |
 | Vulkan push 保证 | **128 B**（本项目实测就是上限） |
 | vsg 矩阵栈 | **已占满 0..128**（前向每 drawable 都要投影/模型矩阵） |
-| L1 `VineFrame`（view / inv_view / proj / view_proj / cam_pos / frame） | 4×mat4 + 2×vec4 = **288 B** ⇒ **塞不进 push** |
+| L1 `VineViewBlock`（view / inv_view / proj / view_proj / cam_pos / frame） | 4×mat4 + 2×vec4 = **288 B** ⇒ **塞不进 push** |
 | D3D12 root constants | 256 B，且 D3D11 **没有** push 等价物（只能 cbuffer） |
 
-⇒ **只要 L1 承认 `VineFrame` 是一个"块"，per-view 数据就必须落 UBO/cbuffer；push 只能是后端内部优化。**
+⇒ **只要 L1 承认 `VineViewBlock` 是一个"块"，per-view 数据就必须落 UBO/cbuffer；push 只能是后端内部优化。**
 这与 §11.2.3 的原话一致（"push 仅内部优化，须与声明式块可证等价"）。
 
 ### 12.3 三个选项
 
 | 选项 | 做法 | 代价 | 换后端 |
 | --- | --- | --- | --- |
-| **A** 维持 push（现状） | SDK 不声明块，只承诺"有 view/proj/model"，后端自选载体 | 最省 | ❌ DX11 无 push；L1 无法表达完整 `VineFrame` |
-| **B** 全面 UBO | `VineFrame` per-view UBO + `VineDraw` per-draw（dynamic offset）UBO | 每 drawable 多一次 UBO/offset 绑定；model 从 push 移出 | ✅ 干净 |
-| **C** 混合（**推荐/采纳**） | L1 **声明** `VineFrame`/`VineDraw`；vsg 前向仍可把 L1 子集塞进 push 作**内部优化**（`VineFrame.proj` + `VineDraw.model` = 现在的 `pc`），并在后端注释/测试里记明这层等价；新后端用真 UBO/cbuffer | 需维护"push 实现 ≡ L1 子集"的对应；per-draw 参数（P10 opacity / 用户参数）一来仍需 per-draw UBO | ✅ 且不牺牲当下性能 |
+| **A** 维持 push（现状） | SDK 不声明块，只承诺"有 view/proj/model"，后端自选载体 | 最省 | ❌ DX11 无 push；L1 无法表达完整 `VineViewBlock` |
+| **B** 全面 UBO | `VineViewBlock` per-view UBO + `VineDrawBlock` per-draw（dynamic offset）UBO | 每 drawable 多一次 UBO/offset 绑定；model 从 push 移出 | ✅ 干净 |
+| **C** 混合（**推荐/采纳**） | L1 **声明** `VineViewBlock`/`VineDrawBlock`；vsg 前向仍可把 L1 子集塞进 push 作**内部优化**（`VineViewBlock.proj` + `VineDrawBlock.model` = 现在的 `pc`），并在后端注释/测试里记明这层等价；新后端用真 UBO/cbuffer | 需维护"push 实现 ≡ L1 子集"的对应；per-draw 参数（P10 opacity / 用户参数）一来仍需 per-draw UBO | ✅ 且不牺牲当下性能 |
 
 **采用 C**：对外声明式块，push 是 vsg 的实现细节。
 
@@ -261,8 +263,8 @@ SDK shader 文本因此写死了 `layout(push_constant)` / `layout(set = 0, bind
 
 | 步 | 内容 | 风险 |
 | --- | --- | --- |
-| C1 | SDK 定义 L1 块布局：`VineFrame` / `VineDraw`（16 B 对齐、成员 `mat4`/`vec4`；与 `LightPushBlock`/`VineLightsBlock`/`MaterialBlock` 同一"全 vec4 对齐"纪律） | 低（纯新增 + static_assert） |
-| C2 | vsg 后端把现有 push 标注为 C 的实现：`pc.projection ≡ VineFrame.proj`、`pc.modelView ≡ VineDraw.model`，并加测试钉住 push 范围/布局 | 低（行为中性） |
+| **C1（2026-09-13 落地）** | SDK `ShaderAbi.hpp` 定义 `VineViewBlock`(288B) / `VineDrawBlock`(80B)（16 B 对齐、成员 `mat4`/`vec4`，与 `LightPushBlock`/`VineLightsBlock`/`MaterialBlock` 同一"全 vec4 对齐"纪律）+ `static_assert`；`ShaderAbiTest` 钉住 sizeof/offsetof | 低（纯新增） |
+| C2 | vsg 后端把现有 push 标注为 C 的实现：`pc.projection ≡ VineViewBlock.proj`、`pc.modelView ≡ VineDrawBlock.model`，并加测试钉住 push 范围/布局 | 低（行为中性） |
 | C3 | 新后端（有第二个时）直接实现 UBO/cbuffer；`ShaderProgram` 参数表随首个消费者（P10 材质值/用户参数）一起落 | 中 |
 
 ### 12.5 L2 shim 何时做（结论：等第二个后端）

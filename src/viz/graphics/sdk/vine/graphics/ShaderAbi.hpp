@@ -1,6 +1,8 @@
 #pragma once
 #include "graphics_global.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 V_GRAPHICS_NS_BEGIN
@@ -49,5 +51,50 @@ constexpr std::uint32_t attributeLocation(VertexAttribute attribute) noexcept
     }
     return 0u;
 }
+
+/**
+ * @brief Per-view data block the built-in shading reads (L1 shape).
+ *
+ * The engine owns this SHAPE; a backend owns where it lives — a uniform / constant
+ * buffer, or (as the vsg forward path does today) the proj/model subset inside the
+ * 128-byte push range. Every member is a mat4/vec4 and the struct is 16-byte
+ * aligned, so std140, D3D cbuffer packing and root constants all agree (see
+ * .ai/design/graphics-shader.md §11/§12): a `vec3` followed by a `float` is the one
+ * packing trap this rule avoids.
+ *
+ * Matrices are column-major, matching the math module's convention; a backend
+ * whose shader language needs row-major translates when it fills the block.
+ */
+struct alignas(16) VineViewBlock
+{
+    std::array<float, 16> view{};      ///< World -> view (column-major mat4).
+    std::array<float, 16> inv_view{};  ///< View -> world (column-major mat4).
+    std::array<float, 16> proj{};      ///< View -> clip (column-major mat4).
+    std::array<float, 16> view_proj{}; ///< World -> clip (column-major mat4).
+    std::array<float, 4>  cam_pos{};   ///< World-space camera position; w reserved.
+    std::array<float, 4>  frame{};     ///< x = time (s), y/z = viewport size, w = flags.
+};
+
+/**
+ * @brief Per-draw data block the built-in shading reads (L1 shape).
+ *
+ * The user parameter slot is reserved for the per-drawable values (P10: material
+ * overrides / user parameters); until then it packs as zero.
+ */
+struct alignas(16) VineDrawBlock
+{
+    std::array<float, 16> model{};  ///< Object -> world (column-major mat4).
+    std::array<float, 4>  params{}; ///< User parameter slot (reserved).
+};
+
+// The structs ARE the shader ABI: a member added here without updating the GLSL
+// (or vice versa) must fail the build, not silently mis-read at run time.
+static_assert(sizeof(VineViewBlock) == 288u, "VineViewBlock must be 4 mat4 + 2 vec4");
+static_assert(alignof(VineViewBlock) == 16u, "VineViewBlock must stay std140 / D3D-cbuffer aligned");
+static_assert(offsetof(VineViewBlock, cam_pos) == 256u, "VineViewBlock std140 offset");
+static_assert(offsetof(VineViewBlock, frame) == 272u, "VineViewBlock std140 offset");
+static_assert(sizeof(VineDrawBlock) == 80u, "VineDrawBlock must be 1 mat4 + 1 vec4");
+static_assert(alignof(VineDrawBlock) == 16u, "VineDrawBlock must stay std140 / D3D-cbuffer aligned");
+static_assert(offsetof(VineDrawBlock, params) == 64u, "VineDrawBlock std140 offset");
 
 V_GRAPHICS_NS_END

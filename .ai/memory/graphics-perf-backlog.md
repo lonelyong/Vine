@@ -201,4 +201,8 @@
   （`VertexAttribute{Position,Normal,Color,TexCoord0}` + `attributeLocation()`，值 0/1/2/8）；vsg 两个 set 装配
   用它替代字面量。契约/分期（L1/L2/L3 + DX 映射 + B1..B4）见 `.ai/design/graphics-shader.md` §11。
   · 口径：两条证据基线 47 行不变；test_graphics 235→**236**；lavapipe PASS。下一步 B2：`ShaderProgram` 参数表 + 命名槽声明。
+- **P0.B3 口径 + C1 落地（2026-09-13）**：L1 块命名定案 **`Vine<Role>Block`**（`VineViewBlock`/`VineDrawBlock`/`VineMaterialBlock`/`VineLightsBlock`；
+  `Block` 明示内存布局，`VineFrame`→`VineViewBlock`）；B3 采用**选项 C**（L1 声明式块 + vsg push 作内部优化）。
+  · `ShaderAbi.hpp` 落 `VineViewBlock`(288B)/`VineDrawBlock`(80B) + `static_assert`；`ShaderAbiTest` 钉 sizeof/offsetof。
+  · 口径：行为中性（纯新增）；test_graphics 236→**239**。下一步 C2（vsg 标注 push ≡ 子集）。
 
