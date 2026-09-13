@@ -1845,14 +1845,14 @@ class MockBackend : public RenderBackend {
     int light_sets = 0;
     std::size_t last_light_count = 0;
     const Light* last_light = nullptr;
-    int content_program_sets = 0;
-    intrusive_ptr<const ShaderProgram> last_content_program;
+    int default_content_program_sets = 0;
+    intrusive_ptr<const ShaderProgram> last_default_content_program;
 
     bool initialize() override { ok = true; return true; }
-    void setContentProgram(intrusive_ptr<const ShaderProgram> program) override
+    void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program) override
     {
-        last_content_program = std::move(program);
-        ++content_program_sets;
+        last_default_content_program = std::move(program);
+        ++default_content_program_sets;
     }
     void shutdown() override { ok = false; }
     void beginFrame() override { ++begin_calls; }
@@ -2324,7 +2324,7 @@ TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
     EXPECT_EQ(original->contentCollectCount(), original_walks);
 }
 
-TEST(RenderEngineTest, ContentProgramForwardedToBackend)
+TEST(RenderEngineTest, DefaultContentProgramForwardedToBackend)
 {
     // The program program-less content is shaded with is held by the engine and forwarded to the
     // backend. There is no shading-model lookup: the engine's default is the NAMED forward program
@@ -2333,24 +2333,24 @@ TEST(RenderEngineTest, ContentProgramForwardedToBackend)
     // picture cannot disagree.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    ASSERT_NE(engine->contentProgram(), nullptr);
-    EXPECT_NE(engine->contentProgram(), nullptr);
+    ASSERT_NE(engine->defaultContentProgram(), nullptr);
+    EXPECT_NE(engine->defaultContentProgram(), nullptr);
 
     const auto flat = vine::graphics::flatForwardProgram();
-    engine->setContentProgram(flat);
-    EXPECT_EQ(engine->contentProgram(), flat);
+    engine->setDefaultContentProgram(flat);
+    EXPECT_EQ(engine->defaultContentProgram(), flat);
 
     engine->setBackend(backend);
     EXPECT_TRUE(engine->initialize());
-    EXPECT_EQ(backend->content_program_sets, 1);
-    EXPECT_EQ(backend->last_content_program, flat);
+    EXPECT_EQ(backend->default_content_program_sets, 1);
+    EXPECT_EQ(backend->last_default_content_program, flat);
 
     // A running session is told too (the backend rebuilds its shading side), and "none" is a legal
     // answer: content without its own program is then reported and skipped, not shaded with a guess.
-    engine->setContentProgram(nullptr);
-    EXPECT_EQ(backend->content_program_sets, 2);
-    EXPECT_EQ(backend->last_content_program, nullptr);
-    EXPECT_EQ(engine->contentProgram(), nullptr);
+    engine->setDefaultContentProgram(nullptr);
+    EXPECT_EQ(backend->default_content_program_sets, 2);
+    EXPECT_EQ(backend->last_default_content_program, nullptr);
+    EXPECT_EQ(engine->defaultContentProgram(), nullptr);
 }
 
 TEST(RenderEngineTest, RegisteredPassesRunInAscendingOrder)

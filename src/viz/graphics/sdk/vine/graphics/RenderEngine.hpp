@@ -180,10 +180,14 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     bool hasWindowPass(raw_ptr<Camera> camera) const;
 
-    /** @brief Sets the program that content naming no program of its own is shaded with.
+    /** @brief Sets the DEFAULT program for content: what a drawable naming none of its own gets.
+     *
+     * A default, not an override: a drawable's own program (RenderCommand::program,
+     * Geometry::setProgram, StateNode::setProgram) still wins. This is the answer for everything
+     * else, and the name says so — "setContentProgram" would read as "shade all content with this".
      *
      * Forwarded to the backend (before initialize() it is the session's decision; on a running
-     * session the backend re-bakes the shading side, see RenderBackend::setContentProgram).
+     * session the backend re-bakes the shading side, see RenderBackend::setDefaultContentProgram).
      *
      * The engine's default is forwardProgram(): a NAMED program, chosen once in the constructor, not
      * a lookup that hides which shading a scene gets. Hand it flatForwardProgram() to shade such
@@ -192,10 +196,10 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      *
      * @param program Program to use, or null for none.
      */
-    void setContentProgram(intrusive_ptr<const ShaderProgram> program);
+    void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program);
 
-    /** @brief Gets the program content without its own program is shaded with (null when declined). */
-    intrusive_ptr<const ShaderProgram> contentProgram() const;
+    /** @brief Gets the default content program (null when content without its own program is declined). */
+    intrusive_ptr<const ShaderProgram> defaultContentProgram() const;
 
     /** @brief Registers a scene render pass executed every frame.
      *
@@ -508,8 +512,8 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     // receives the host's diagnostics.
     DiagnosticSink                      diagnostic_sink_;
     // The shading a drawable that names no program gets. A named program, not an enum: set once in
-    // the constructor to forwardProgram(), replaced by setContentProgram(), and null means "decline".
-    intrusive_ptr<const ShaderProgram>  content_program_;
+    // the constructor to forwardProgram(), replaced by setDefaultContentProgram(), and null means "decline".
+    intrusive_ptr<const ShaderProgram>  default_content_program_;
     std::vector<Slot>                   slots_;         // uniform ordered draw registry
     FrameContext                        frame_ctx_;
     // Monotonic content-frame token, announced to every rendered scene each

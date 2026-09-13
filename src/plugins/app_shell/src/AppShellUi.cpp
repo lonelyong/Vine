@@ -1212,10 +1212,11 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
     // builder as transparent content, so the builder composites it depth-on
     // over the deferred-lit result.
     addDemoPipeline(render_control, overlay_scene);
-    // Dev switch: setting VINE_SHADER_PRESET names the FLAT program as the content program, exercising
+    // Dev switch: setting VINE_SHADER_PRESET names the FLAT program as the default content program,
+    // exercising
     // the whole engine/backend path (default = forwardProgram(), set by the engine).
     if (std::getenv("VINE_SHADER_PRESET") != nullptr) {
-        render_control->engine()->setContentProgram(vine::graphics::flatForwardProgram());
+        render_control->engine()->setDefaultContentProgram(vine::graphics::flatForwardProgram());
     }
     // Register the 3D view so other plugins (tests/editors) can reach the
     // render engine/scene without depending on app shell internals.

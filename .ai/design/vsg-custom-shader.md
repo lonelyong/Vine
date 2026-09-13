@@ -3,7 +3,7 @@
 > 状态：设计稿 v1（2026-09-03）
 > 2026-09-03 已落地：语义着色预置 `ShaderPreset` + 到 vsg 内建 set 的过渡映射，并完成像素验证（见 §8）。
 > **2026-09-13 变更（推翻 §8 的枚举）**：`ShaderPreset` **已删除**，着色只能**显式指定 program**，且**没有兜底**。
-> - 会话级入口：`RenderEngine::setContentProgram(intrusive_ptr<const ShaderProgram>)` / `contentProgram()`
+> - 会话级入口：`RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram>)` / `defaultContentProgram()`
 >   （引擎默认就是命名的 `forwardProgram()`，构造函数里定好，`initialize()` 前转发给后端；运行中设置立即转发）。
 > - 内建程序工厂（`BuiltinShaders.hpp`）：`forwardProgram()`（`vine_forward.*`）与 `flatForwardProgram()`
 >   （同一对 stage，片元源注入 `#define VINE_FLAT 1`）。原来的 `builtinProgram(preset)` 与
@@ -144,7 +144,7 @@ mat4  shadow_matrix;   // 仅 castShadow 有效
 > **读这一节前先看第 4 行起的变更说明**：8.1 的 `ShaderPreset` 枚举已经不存在。下面保留原文，
 > 因为它记录了“为什么当初这么设计”和一条**今天仍然成立**的事实：**slot 的 shader set 是建 slot
 > 时烘进去的**（程序 + 要喂哪个光源 + 读哪些 View features），所以运行中换着色必须重建着色侧。
-> 今天这个动作由 `VsgRenderer::setContentProgram(program)` 执行（原来是 `setShaderPreset`）。
+> 今天这个动作由 `VsgRenderer::setDefaultContentProgram(program)` 执行（原来是 `setShaderPreset`）。
 
 ### 8.1 语义枚举（graphics SDK，后端无关）—— 【已删除，见头部变更】
 `sdk/vine/graphics/ShaderPreset.hpp`：
@@ -159,16 +159,16 @@ enum class ShaderPreset { StandardPhong, FlatShaded, Pbr, ShadowedPhong };   // 
 - 归属：**渲染配置**（`RenderEngine` 持有，`setShaderPreset/shaderPreset`），初始化前转发后端
   （`RenderBackend::setShaderPreset` 默认 no-op）。**不放进 RenderPipelineBuilder**——preset 是
   "几何怎么着色"的着色轴，与 pass 拓扑（builder）正交；builder 仍是纯配方层。
-  → **2026-09-13**：同一句话里把“preset”换成 **program**，入口是 `setContentProgram/contentProgram`，
-  后端 `RenderBackend::setContentProgram` 默认 no-op，且**后端没有默认值**（null ⇒ 报 + 不画）。
+  → **2026-09-13**：同一句话里把“preset”换成 **program**，入口是 `setDefaultContentProgram/defaultContentProgram`，
+  后端 `RenderBackend::setDefaultContentProgram` 默认 no-op，且**后端没有默认值**（null ⇒ 报 + 不画）。
 - **会话中途切换（2026-09-13 落地）**：preset 不再只是"initialize 前的一次性决定"。一个 slot 的
   shader set 是**建 slot 时烘进去的**，而 set 带的不只是"哪个程序"：还有"这个 slot 要喂哪个光源"
   （`SceneBridge::hasOwnLightsBlock`）和该程序读哪些 View features。三者都无法事后打补丁，所以
-  `VsgRenderer::setContentProgram` 在已初始化的会话上做的是**重建着色侧**：重建 window 三套 set
+  `VsgRenderer::setDefaultContentProgram` 在已初始化的会话上做的是**重建着色侧**：重建 window 三套 set
   （on/testonly/off）+ 丢掉每个 target 的 `content_slots`（经 `detail::resetContentShaderSlots`，
   走 `detachSlotView` + `clearCache()`，带计数设备等待）并清掉 target 自己烘的 `depth_*_shader_set`。
   下一帧各 pass 的懒建 slot 就用新 program 重建。**attachments / pass graph / 深度历史不动**——
-  宿主看到的是"同一张图换了着色"，不是"会话重开"。像素门禁 `runLiveContentProgramSwitchPixelPhase`：
+  宿主看到的是"同一张图换了着色"，不是"会话重开"。像素门禁 `runLiveDefaultContentProgramSwitchPixelPhase`：
   同一个 target+slot 连画三次（forward 42 → 切 `flatForwardProgram()` 765 → 切回 forward 42），第三段把
   "只往前不回头"的实现钉死；关掉重建（变异验证）两段都报错。
 
@@ -567,7 +567,7 @@ binding 声明 —— 一个 ShaderSet 服务两种形状时，必须由阵列�
 
 ### 11.10 着色只能显式指定 program：删除 `ShaderPreset`，且不兜底（2026-09-13）
 
-**决定**："不要兜底，必须显示指定着色器"。`ShaderPreset` 枚举**删除**，`RenderEngine::setContentProgram`
+**决定**："不要兜底，必须显示指定着色器"。`ShaderPreset` 枚举**删除**，`RenderEngine::setDefaultContentProgram`
 成为唯一的会话级着色入口；后端**没有默认值**，没有可用 set 的 drawable **不画**并报出来。
 
 **为什么删掉枚举**：枚举和 program 本来就是同一个模型的两套入口，而枚举里
@@ -579,10 +579,11 @@ binding 声明 —— 一个 ShaderSet 服务两种形状时，必须由阵列�
 | 环节 | 落点 |
 | --- | --- |
 | SDK 工厂 | `BuiltinShaders.hpp/.cpp`：`builtinProgram(ShaderPreset)` → **`forwardProgram()`**（名字 `vine_forward`）与 **`flatForwardProgram()`**（名字 `vine_flat`，与 forward **同一对 stage**，片元源 `withDefine(frag, "#define VINE_FLAT 1")`）。文档同时写明：**程序是选择着色的唯一方式**，以及 **flat 不是 unlit**（老注释写错了，实测同一 quad 765 vs 42） |
-| 引擎 | `RenderEngine::setContentProgram(intrusive_ptr<const ShaderProgram>)` / `contentProgram()`；字段 `content_program_`，**构造函数里定成 `forwardProgram()`**（默认不是"没有"），`initialize()` 前转发，运行中设置**立即转发**（旧实现只在 initialize 前生效，之后再设是静默 no-op） |
-| 后端接口 | `RenderBackend::setContentProgram(...)` 默认 no-op（能加载 ≠ 必须实现着色）；`VsgRenderer::setContentProgram` 在活会话上做**重建着色侧**（window 三套 set + `detail::resetContentShaderSlots`），与 §8.1 里 `setShaderPreset` 的动作逐字相同 |
+| 引擎 | `RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram>)` / `defaultContentProgram()`；字段 `default_content_program_`，**构造函数里定成 `forwardProgram()`**（默认不是"没有"），`initialize()` 前转发，运行中设置**立即转发**（旧实现只在 initialize 前生效，之后再设是静默 no-op） |
+| 后端接口 | `RenderBackend::setDefaultContentProgram(...)` 默认 no-op（能加载 ≠ 必须实现着色）；`VsgRenderer::setDefaultContentProgram` 在活会话上做**重建着色侧**（window 三套 set + `detail::resetContentShaderSlots`），与 §8.1 里 `setShaderPreset` 的动作逐字相同 |
 | 后端（vsg） | `VsgPipelineFactory`：`buildVineShaderSet(program, …)` / `makeContentShaderSet(program, …)` / `compiledStages(program)`，缓存 map 的 key 是 `(program 指针, 变体 hash)`，value **拥有** 那个 program（`nullptr` 或"没有可用 stage"⇒ 返回 null）；`VsgContentSlot` 报一条会话级诊断（**每会话一次**）并且**不画**；`SceneBridgePipeline` 对没 set 的 slot 同样报 + 丢 |
 | 管线的占位预设 | 顺手补了同一类谎：`PipelinePreset::ForwardShadowed/DeferredShadowed` 今天装配的就是无阴影版本。现在 `RenderPipelineBuilder::build` 会报一条 `DiagnosticCategory::UnsupportedRequest`（新枚举值；为了让 builder 能走引擎的 sink，`RenderEngine::reportEngineProblem` 从 private 移到 public） |
-| selftest | 两个相位改名（`runProgramShadingPixelPhase` / `runLiveContentProgramSwitchPixelPhase`）；**启动时先 `backend->setContentProgram(forwardProgram())` 再 `initialize()`**（后端不再有默认；晚设会让起来后的那 30 帧无程序可画，而且会多报一串诊断） |
-| 单元门禁 | `ForwardShaderSetTest` 四处结构性改写（`OnlyProgramsWithUsableStagesGetASet`、`AProgramWithNoUsableStagesIsDeclinedNotSubstituted`、`EveryContentSetIsTheEnginesOwn`、`TheLightSourceFollowsTheSlotSetNotTheSession`、`TheFlatProgramReusesTheForwardStagesWithItsDefine`）；`GraphicsTest::ContentProgramForwardedToBackend`（含"运行中也要被告知"与"null 是合法答案"）；新增 `RenderPipelineBuilderTest::ShadowedPresetsReportThatTheyArePlaceholders` |
+| selftest | 两个相位改名（`runProgramShadingPixelPhase` / `runLiveDefaultContentProgramSwitchPixelPhase`）；**启动时先 `backend->setDefaultContentProgram(forwardProgram())` 再 `initialize()`**（后端不再有默认；晚设会让起来后的那 30 帧无程序可画，而且会多报一串诊断） |
+| 命名（同日） | 这一版最初叫 `setContentProgram` / `contentProgram()`。**同批改名**：`setDefaultContentProgram` / `defaultContentProgram()`——它设的是**默认值**（drawable 自己的 program 仍然优先），而 `setContentProgram` 读起来像"把所有内容都换成这个"，与事实相反（同批把 `RenderBackend` 的 `@brief` 里残留的 "Selects the shading-model preset" 也修掉了） |
+| 单元门禁 | `ForwardShaderSetTest` 四处结构性改写（`OnlyProgramsWithUsableStagesGetASet`、`AProgramWithNoUsableStagesIsDeclinedNotSubstituted`、`EveryContentSetIsTheEnginesOwn`、`TheLightSourceFollowsTheSlotSetNotTheSession`、`TheFlatProgramReusesTheForwardStagesWithItsDefine`）；`GraphicsTest::DefaultContentProgramForwardedToBackend`（含"运行中也要被告知"与"null 是合法答案"）；新增 `RenderPipelineBuilderTest::ShadowedPresetsReportThatTheyArePlaceholders` |
 | 判据 | 证据基线 53 行**逐字节不变，只改了 3 行的词**（`preset shading:` / `live preset switch:` → `program shading:` / `live program switch:`），**所有数字原样**：`42` / `765` / `(255,255,255)` / `(10,20,30)`——即画面完全没动；test_graphics 247 → **248**（+1，变异验证：关掉 `reportEngineProblem` 该测试必失败）；test_vsg **252 不变**（改写而非新增）；`vine_shader_check.sh` PASS；`check_diagnostic_formats.py` 0 suspicious；lavapipe PASS；ctest 仅 3 个既有失败（test_cppstd / test_runtime / test_system） |

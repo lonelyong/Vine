@@ -18,7 +18,7 @@
 > `ShaderProgram` 也可直接携带 SPIR-V（字节或 `.spv` 路径）。后端以 `ShaderSet.stages /
 > attributeBindings / descriptorBindings / defaultGraphicsPipelineStates` **自描述装配**用户
 > Program 并经 `GraphicsPipelineConfigurator` 成管线；**`program()==nullptr` 的 drawable 用会话的
-> 内容 program**（`RenderEngine::setContentProgram`，默认就是命名的 `forwardProgram()`；
+> 默认内容 program**（`RenderEngine::setDefaultContentProgram`，默认就是命名的 `forwardProgram()`；
 > 2026-09-13 之前这里写的是 "内置默认（ShaderPreset / vendored SPIR-V）"，且**后端自己有默认值**）。
 > 依赖注记：无 glslang 的本地 vsg 安装仅在
 > VINE_USE_FETCHCONTENT=OFF 分支使用（无运行期编译）。详见 §6/§7/§10。
@@ -58,7 +58,7 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 };
 ```
 
-**默认好用的关键**：`program()==nullptr` → 走**会话的内容 program**（`RenderEngine::setContentProgram`，
+**默认好用的关键**：`program()==nullptr` → 走**会话的默认内容 program**（`RenderEngine::setDefaultContentProgram`，
 出厂就是 `forwardProgram()`：内建前向着色，由材质 + 几何数据决定效果），一行 GLSL 不碰、零回归。
 后端**自己不带默认值**：没有任何可用的 set 就报一条诊断、不画（"不兜底"，见 `vsg-custom-shader.md` §11.10）。
 

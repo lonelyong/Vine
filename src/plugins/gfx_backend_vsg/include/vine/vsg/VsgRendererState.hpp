@@ -78,7 +78,7 @@ struct VsgRendererPersistent {
     // The program content without its own program is shaded with. NO default on purpose: the backend
     // never invents a shading, so a session that was never handed one draws no program-less content
     // (reported) instead of guessing. RenderEngine supplies forwardProgram() by default.
-    vine::intrusive_ptr<const vine::graphics::ShaderProgram> content_program;
+    vine::intrusive_ptr<const vine::graphics::ShaderProgram> default_content_program;
     void*                               bound_handle = nullptr;
 };
 
@@ -225,11 +225,11 @@ struct VsgRendererState {
     // right depth test/write state. Per-geometry pipelines are compiled per
     // view (vsg compiles per viewID), so every content slot carries its own
     // SceneBridge; off-screen targets bake their own per-size sets (see VsgRenderTargetEntry).
-    // Whether this session already told the host that it has no content program at all, so content
+    // Whether this session already told the host that it has no default content program at all, so content
     // that names none is not drawn (see VsgContentSlot): once per session, so telling the host once
     // is what makes "you named no program" visible without becoming per-slot noise. Session state,
     // so a re-init tells the new session's host as well.
-    bool                                no_content_program_reported = false;
+    bool                                no_default_default_content_program_reported = false;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_on_shader_set;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_testonly_shader_set;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_off_shader_set;

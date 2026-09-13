@@ -365,8 +365,8 @@ pipeline->resize(surface_w, surface_h);            // 同时管离屏 / 合成 t
 
 // 内容着色：必须**显式指定**程序。没有 shader preset 枚举，也没有兜底——
 // 引擎默认用的是命名的 forward 程序（flat 是它的同一对 stage + `#define VINE_FLAT 1`）：
-engine.setContentProgram(flatForwardProgram());   // 会话级：没写 program 的 drawable 用它
-engine.setContentProgram(forwardProgram());       // 回到默认前向着色
+engine.setDefaultContentProgram(flatForwardProgram());   // 会话默认：没写 program 的 drawable 用它
+engine.setDefaultContentProgram(forwardProgram());       // 回到默认前向着色
 
 // 离屏 + 画中画（内部就是 §3.3 的两个 pass）：
 builder.addOffscreenToScreen(u8"preview", 512, 288,
@@ -438,7 +438,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | | 内建路径 | 自定义 program 路径 |
 | --- | --- | --- |
 | 触发条件 | 该 draw 的 program 为空 | `RenderPass::setProgramOverride()` / `ScreenPass::setProgram()` 给了 program |
-| ShaderSet 谁提供 | 内容的**内容程序**（`RenderEngine::setContentProgram`，默认 `forwardProgram()`；后端把它编译成 set） | 后端按**这个 geometry 的通道布局**现建（`assembleProgramShaderSet`） |
+| ShaderSet 谁提供 | 内容的**默认 program**（`RenderEngine::setDefaultContentProgram`，默认 `forwardProgram()`；后端把它编译成 set） | 后端按**这个 geometry 的通道布局**现建（`assembleProgramShaderSet`） |
 | shader location 从哪来 | **vsg 自己的编号** | **通道 location 一一对应**（canonical 的 0/1/2/8 也是常量） |
 | 顶点数据从哪取 | 固定 `buffer(0)` / `buffer(1)` / `buffer(2)` / `buffer(8)` + 自定义通道 | **完全相同**（两条路径取的是同一批数据） |
 | 换路径时重建 | 只重建 state wrapper，数据节点复用 | 同左（唯一例外见下面的边角表） |

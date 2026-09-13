@@ -101,7 +101,7 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
     /** @brief Initializes the backend: device, surface, pipelines, caches.
      *
      * Called once per session, after the host announced the native window
-     * (setWindowHandle) and the content program (setContentProgram). A backend
+     * (setWindowHandle) and the default content program (setDefaultContentProgram). A backend
      * that is already initialized tears the previous session down first, so
      * this may be called again on a recreated surface.
      *
@@ -546,12 +546,12 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         return nullptr;
     }
 
-    /** @brief Selects the shading-model preset for scene geometry.
+    /** @brief Selects the DEFAULT program for content: what a drawable naming none of its own gets.
      *
-     * The ONE thing a drawable that names no program of its own is shaded with. There is no
-     * shading-model lookup and no fallback: the host names a program (the engine starts with
-     * forwardProgram(), see RenderEngine), or content without its own program is NOT drawn and the
-     * reason is reported.
+     * A default, not an override: a drawable's own program still wins, and so does a pass' program
+     * for the passes that take one. There is no shading-model enum and no fallback: the host names a
+     * program (the engine starts with forwardProgram(), see RenderEngine), or content without its own
+     * program is NOT drawn and the reason is reported.
      *
      * May be called before initialize(), where it is a session decision baked as the session starts,
      * or on a RUNNING session, where the backend re-bakes the shading side so the next frame draws
@@ -562,7 +562,7 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * @param program Program to shade program-less content with, or null for "none" (such content is
      *                then reported and skipped).
      */
-    virtual void setContentProgram(intrusive_ptr<const ShaderProgram> program)
+    virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program)
     {
         (void)program;
     }

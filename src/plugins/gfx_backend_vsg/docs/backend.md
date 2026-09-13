@@ -252,7 +252,7 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
 
 ### 3.2 会话与持久
 
-- `VsgRendererPersistent`（**跨会话**）：`cameraBridge`、`materialManager`、`content_program`（内容用哪个 program 着色；**没有默认值**，引擎自己持有并在 initialize 前转发）、绑定的窗口句柄。
+- `VsgRendererPersistent`（**跨会话**）：`cameraBridge`、`materialManager`、`default_content_program`（内容命名不了 program 时用的那个；**没有默认值**，引擎自己持有并在 initialize 前转发）、绑定的窗口句柄。
 - `VsgRendererState`（**单窗口会话**）：窗口、viewer、命令图、三个 depth 策略的 shader set、pass 请求状态机、
   `targets`（目标 + 附件 + 三张槽表）、录像顺序图、退役环、`pending_compile_views`、以及各种计数
   （`offscreen_build_count` / `program_slot_build_count`）。

@@ -165,21 +165,22 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
         if (set_ref == nullptr) {
             const bool depth_test  = depth_mode != vine::graphics::DepthMode::Disabled;
             const bool depth_write = depth_mode == vine::graphics::DepthMode::TestAndWrite;
-            set_ref = makeContentShaderSet(persistent.content_program,
+            set_ref = makeContentShaderSet(persistent.default_content_program,
                                            VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) },
                                            depth_test, depth_write,
                                            target->colorCount());
         }
         content.bridge.setShaderSet(set_ref);
     }
-    // A session with NO content program has no set to build a slot with: the slot's bridge reports it
+    // A session with NO default content program has no set to build a slot with: the slot's bridge
+    // reports it
     // (see buildStateGroup) and draws nothing. Said out loud here as well, ONCE per session, at the
     // level the host asked the question at: "you named no program, so program-less content will not be
     // drawn" — not a picture it did not ask for.
-    if (persistent.content_program == nullptr && !state.no_content_program_reported) {
-        state.no_content_program_reported = true;
+    if (persistent.default_content_program == nullptr && !state.no_default_default_content_program_reported) {
+        state.no_default_default_content_program_reported = true;
         diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
-                           u8"this session has no content program (setContentProgram(nullptr)), so content without a "
+                           u8"this session has no default content program (setDefaultContentProgram(nullptr)), so content without a "
                            u8"program of its own is NOT drawn (the engine never substitutes a shading nobody named)");
     }
     // Which light source this slot must feed follows the SET that draws it (see

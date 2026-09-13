@@ -375,12 +375,12 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * sets are rebuilt for @p program and every content slot is dropped so the next frame's passes
      * build theirs again — a slot's set, its light wiring and its View features are all decided at
      * slot build (see resetContentShaderSlots). Attachments, pass graphs and depth history are
-     * untouched. A null @p program means "no content program": program-less content is reported and
+     * untouched. A null @p program means "no default content program": program-less content is reported and
      * skipped rather than shaded with a guess.
      *
      * @param program Program to shade program-less content with, or null for none.
      */
-    void setContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program) override;
+    void setDefaultContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program) override;
 
     // ---- VSG convenience interface ----
 

@@ -19,7 +19,7 @@
 
 | 层 | 现状 | 本设计改向 |
 |---|---|---|
-| SDK 语义 | `ShaderProgram`（`forwardProgram()` / `flatForwardProgram()` + 用户自己写的），RenderEngine 持有并转发 `RenderBackend::setContentProgram`；**枚举 `ShaderPreset` 已删除** | 不变 |
+| SDK 语义 | `ShaderProgram`（`forwardProgram()` / `flatForwardProgram()` + 用户自己写的），RenderEngine 持有并转发 `RenderBackend::setDefaultContentProgram`；**枚举 `ShaderPreset` 已删除** | 不变 |
 | vsg 着色 | `VsgRenderer.cpp::buildShaderSet()` → `createPhongShaderSet()/createFlatShadedShaderSet()`（Pbr/Shadowed 回落 Phong） | 换 `buildVineShaderSet()`（自写 SPIR-V） |
 | 几何桥 | `SceneBridge::buildGeometry()`：每几何 `GraphicsPipelineConfigurator`；属性 `vsg_Vertex/Normal/Color`；描述符 `"material"`=`PhongMaterialValue`（`VsgMaterialManager` 缓存）；blend 常开；opacity 走 per-vertex alpha | 属性不变；描述符换 `"vine_material"`（我们的 UBO） |
 | 光源 | v4a：`RenderPass::execute→setLights`；vsg 每视图转 `vsg::Light` 节点 → VDS lightData | 改为每帧打包 `LightsUBO`（world space），不再建 vsg::Light 节点 / 不再依赖 VDS |

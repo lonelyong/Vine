@@ -189,7 +189,7 @@ struct V_VSG_API DrawBlockSetBinding : public ::vsg::Inherit<::vsg::CustomDescri
 /**
  * @brief Builds the shader set a content slot draws with when a drawable names no program.
  *
- * The single place that turns the host's content program into a set, and it always
+ * The single place that turns the session's default content program into a set, and it always
  * answers with an ENGINE-declared set (buildVineShaderSet): vsg's built-in sets are not used
  * at all, because a set of theirs carries their declarations, their attribute
  * locations and their light source — a second shading ABI to keep in step with

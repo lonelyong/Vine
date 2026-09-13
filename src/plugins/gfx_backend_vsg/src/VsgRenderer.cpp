@@ -314,9 +314,9 @@ bool VsgRenderer::initialize()
     // earlier content (HUD). Off-screen targets bake their own per-size sets
     // lazily.
     init_stage = "building window shader sets";
-    state.depth_on_shader_set        = makeContentShaderSet(persistent.content_program, state.window->extent2D(), true, true);
-    state.depth_testonly_shader_set  = makeContentShaderSet(persistent.content_program, state.window->extent2D(), true, false);
-    state.depth_off_shader_set       = makeContentShaderSet(persistent.content_program, state.window->extent2D(), false, false);
+    state.depth_on_shader_set        = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), true, true);
+    state.depth_testonly_shader_set  = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), true, false);
+    state.depth_off_shader_set       = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), false, false);
 
     // The primary window layer is created lazily on the first window render
     // (the first pass that clears and draws the scene into the backbuffer).
@@ -800,12 +800,12 @@ vine::raw_ptr<vine::graphics::MaterialManager> VsgRenderer::materialManager()
     return &persistent.materialManager;
 }
 
-void VsgRenderer::setContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program)
+void VsgRenderer::setDefaultContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program)
 {
-    if (persistent.content_program == program) {
+    if (persistent.default_content_program == program) {
         return;
     }
-    persistent.content_program = std::move(program);
+    persistent.default_content_program = std::move(program);
     if (state.window == nullptr) {
         // Not initialized yet: every slot is created after this, so initialize()
         // bakes the new program and there is nothing to drop.
@@ -820,9 +820,9 @@ void VsgRenderer::setContentProgram(vine::intrusive_ptr<const vine::graphics::Sh
     // attachments, the pass graphs and the depth history stay untouched, so the
     // content is shaded differently rather than the target starting over.
     const auto extent = state.window->extent2D();
-    state.depth_on_shader_set       = makeContentShaderSet(persistent.content_program, extent, true, true);
-    state.depth_testonly_shader_set = makeContentShaderSet(persistent.content_program, extent, true, false);
-    state.depth_off_shader_set      = makeContentShaderSet(persistent.content_program, extent, false, false);
+    state.depth_on_shader_set       = makeContentShaderSet(persistent.default_content_program, extent, true, true);
+    state.depth_testonly_shader_set = makeContentShaderSet(persistent.default_content_program, extent, true, false);
+    state.depth_off_shader_set      = makeContentShaderSet(persistent.default_content_program, extent, false, false);
     detail::resetContentShaderSlots(state);
 }
 

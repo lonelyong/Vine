@@ -1,19 +1,20 @@
 > 2026-09-13 **着色只能显式指定 program：删掉 `ShaderPreset`，不兜底**（用户口径："不要兜底，必须显示指定着色器"）
 > - **枚举删除**：`ShaderPreset` / `setShaderPreset` / `builtinProgram(preset)` 全没了；会话级入口是
->   `RenderEngine::setContentProgram(intrusive_ptr<const ShaderProgram>)` / `contentProgram()`，后端是
->   `RenderBackend::setContentProgram`（默认 no-op）。内建工厂：`forwardProgram()`（`vine_forward`）、
+>   `RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram>)` / `defaultContentProgram()`，后端是
+>   `RenderBackend::setDefaultContentProgram`（默认 no-op）。内建工厂：`forwardProgram()`（`vine_forward`）、
 >   `flatForwardProgram()`（`vine_flat`，与 forward **同一对 stage**，片元源 `withDefine("#define VINE_FLAT 1")`）。
-> - **引擎有默认，后端没有**：`RenderEngine` 构造时就把 `content_program_` 定为 `forwardProgram()`，`initialize()` 前转发，
->   运行中设置**立即转发**（旧实现 initialize 之后再设是静默 no-op，这个洞顺手补了）。后端 `persistent.content_program` **没有默认值**：
+> - **引擎有默认，后端没有**：`RenderEngine` 构造时就把 `default_content_program_` 定为 `forwardProgram()`，`initialize()` 前转发，
+>   运行中设置**立即转发**（旧实现 initialize 之后再设是静默 no-op，这个洞顺手补了）。后端 `persistent.default_content_program` **没有默认值**：
 >   null ⇒ `makeContentShaderSet` 返回 null ⇒ 每会话报一条 Error 且**什么都不画**（"declined, not substituted"）。
 > - **缓存与 key**：`VsgPipelineFactory::compiledStages(program)` 的缓存按 `(program 指针, 变体 hash)` 建 map，**value 拥有那个 program**（否则指针 key 会被宿主的临时 program 悬空）。
 > - **顺手补的同类谎**：`PipelinePreset::{Forward,Deferred}Shadowed` 今天装配的就是无阴影版本，现在 `RenderPipelineBuilder::build` 会报一条
 >   `DiagnosticCategory::UnsupportedRequest`（新枚举值）。为让 builder 走引擎的 sink，`RenderEngine::reportEngineProblem` 由 private 改 public（唯一的 API 扩大）。
-> - **selftest 启动顺序**：后端不再有默认 ⇒ 必须**先** `backend->setContentProgram(forwardProgram())` **再** `initialize()`。
+> - **selftest 启动顺序**：后端不再有默认 ⇒ 必须**先** `backend->setDefaultContentProgram(forwardProgram())` **再** `initialize()`。
 >   晚设的代价是实测出来的：起来后的 30 帧没有程序 ⇒ 多报 9 条诊断（1 条会话级 + 8 条每桥），`diagnostics` 相位
 >   `diagnosticCount() == rejected + fallbacks` 当场变红（10 != 2）。
 > - **判据（行为中性）**：证据基线 53 行**只改 3 行的词**（`preset shading:`/`live preset switch:` → `program shading:`/`live program switch:`），
 >   **数字全不变**：42 / 765 / (255,255,255) / (10,20,30) ⇒ 画面一个像素都没动。test_graphics 247 → **248**（+1 `ShadowedPresetsReportThatTheyArePlaceholders`，**变异验证**：关掉 `reportEngineProblem` 必红）；test_vsg **252 不变**（四处结构性改写，不是新增）；shader check PASS；`check_diagnostic_formats.py` 0 suspicious；lavapipe PASS；ctest 仅 3 个既有失败。
+> - **命名（同批）**：这一版最初叫 `setContentProgram` / `contentProgram()`，改名 `setDefaultContentProgram` / `defaultContentProgram()`：它设的是**默认值**（drawable 自己的 program、pass 自己的 program 都仍然优先），`setContentProgram` 读起来像"把内容全换成这个"。后端内部字段跟着改成 `default_content_program`（含 `no_default_content_program_reported` 与诊断文本）。行为中性：证据基线 53 行逐字节不变。
 > - **文档/词表**：`preset` 这个词只剩 **PipelinePreset** 用；"引擎自己的 preset" 全部改成 "引擎自己的 program"（后端注释 + 诊断文本一起扫）。
 
 ﻿> 2026-09-13 **canonical 属性 location 只有 ABI 一处定义**

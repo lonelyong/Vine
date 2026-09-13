@@ -5080,7 +5080,8 @@ bool runOpacityBlendPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
  * @brief Asserts that a named program draws LIT geometry, that an unusable one draws nothing, and
  *        that flat shading really is flat.
  *
- * A drawable that names no program is shaded with the session's content program (set here), and the
+ * A drawable that names no program is shaded with the session's default content program (set here), and
+ * the
  * slot has to be fed the light block THAT program reads. The decision therefore follows the SET the
  * program produces, not the session's forward switch. Getting it wrong draws (0,0,0): with no light
  * data every lit term is zero.
@@ -5100,7 +5101,7 @@ bool runOpacityBlendPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
  * Both halves are asserted on PIXELS: the wiring and the shader text are pinned by unit tests, but
  * only a read-back can tell "shaded" from "black" or from "nothing drew".
  *
- * @param renderer Renderer under test (its content program is switched per stretch and restored).
+ * @param renderer Renderer under test (its default content program is switched per stretch and restored).
  * @param camera   Camera the quads are drawn through.
  * @param frames   Frames to drive per stretch.
  * @return true when the named program drew lit geometry and flat outshone smooth.
@@ -5120,7 +5121,7 @@ bool runProgramShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraP
     auto sun = vine::graphics::LightPtr(vine::graphics::Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0)));
     sun->setName(u8"selftest-sun");
 
-    // One stretch per (content program, geometry), each into its OWN target: a slot bakes its shader
+    // One stretch per (default content program, geometry), each into its OWN target: a slot bakes its shader
     // set (and the light source that goes with it) when it is built, so the program has to be named
     // before the target's first frame.
     const auto measure = [&](const ShaderProgramPtr& program, float normal_z, PixelImage& image) {
@@ -5130,7 +5131,7 @@ bool runProgramShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraP
         target->attachDepth(RenderTarget::DepthFormat::D32);
         auto pass    = RenderPassPtr(new RenderPass());
         auto command = RenderCommand(makeVisibleQuad(0.4f, 1.0f, normal_z), opaque_material, Mat4d());
-        renderer.setContentProgram(program);
+        renderer.setDefaultContentProgram(program);
         for (int i = 0; i < frames; ++i) {
             FrameScope frame(renderer);
             PassScope  pass_scope(renderer, pass.get(), 0, target.get(), clear, true);
@@ -5164,7 +5165,7 @@ bool runProgramShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraP
     const bool flat_read = measure(vine::graphics::flatForwardProgram(), -1.0f, flat_image);
     // Back to the engine's default program: the phases after this one and the teardown must not see any
     // of the programs this phase exercised.
-    renderer.setContentProgram(vine::graphics::forwardProgram());
+    renderer.setDefaultContentProgram(vine::graphics::forwardProgram());
     if (!phong_read || !declined_read || !smooth_read || !flat_read) {
         std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused a program-shading target\n");
         return false;
@@ -5242,7 +5243,8 @@ bool runProgramShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraP
 /**
  * @brief Proves a content-program switch reaches a slot that is already drawing.
  *
- * The content program is not only read at initialize: VsgRenderer::setContentProgram has to take
+ * The default content program is not only read at initialize: VsgRenderer::setDefaultContentProgram has
+ * to take
  * effect on a LIVE session — a host that offers a shading toggle expects the picture to change, not
  * to wait for a restart. A slot bakes its shader set (and with it the program that shades it and the
  * light source it has to feed) when it is built, so this phase draws the SAME target, the SAME pass
@@ -5261,7 +5263,7 @@ bool runProgramShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraP
  * @param frames   Frames to drive per stretch.
  * @return true when the live switch changed the pixels and switching back restored them.
  */
-bool runLiveContentProgramSwitchPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+bool runLiveDefaultContentProgramSwitchPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
 {
     bool              ok = true;
     const vine::Color clear(10, 20, 30, 255);
@@ -5281,7 +5283,7 @@ bool runLiveContentProgramSwitchPixelPhase(vine::vsg::VsgRenderer& renderer, con
     auto command = RenderCommand(makeVisibleQuad(0.4f, 1.0f, -1.0f), opaque_material, Mat4d());
 
     const auto stretch = [&](const ShaderProgramPtr& program, PixelImage& image) {
-        renderer.setContentProgram(program);
+        renderer.setDefaultContentProgram(program);
         for (int i = 0; i < frames; ++i) {
             FrameScope frame(renderer);
             PassScope  pass_scope(renderer, pass.get(), 0, target.get(), clear, true);
@@ -5319,7 +5321,7 @@ bool runLiveContentProgramSwitchPixelPhase(vine::vsg::VsgRenderer& renderer, con
         std::fprintf(stderr,
                      "[selftest] FAIL: switching to the flat program on a live slot scored %d against the "
                      "forward program's %d — the switch did not reach the slot (a slot bakes its set when it is "
-                     "built, so setContentProgram has to drop it)\n",
+                     "built, so setDefaultContentProgram has to drop it)\n",
                      flat_sum, smooth_sum);
         ok = false;
     }
@@ -5346,12 +5348,13 @@ int main()
 
     auto backend = vine::intrusive_ptr<RenderBackend>(new vine::vsg::VsgRenderer());
     // The backend has NO shading of its own: a drawable that names no program is shaded with the
-    // session's content program, and a session that never sets one reports and draws nothing. This
+    // session's default content program, and a session that never sets one reports and draws nothing.
+    // This
     // has to be set BEFORE initialize() — the window's three depth-mode sets are baked while the
     // backend comes up (the engine does exactly this: it holds the program and forwards it at
     // initialize), so a session that sets it afterwards has already driven frames without it. The
     // phases below hold the backend to that rule.
-    backend->setContentProgram(vine::graphics::forwardProgram());
+    backend->setDefaultContentProgram(vine::graphics::forwardProgram());
     if (!backend->initialize()) {
         std::fprintf(stderr, "[selftest] backend initialize FAILED\n");
         std::fprintf(stderr,
@@ -5637,8 +5640,8 @@ int main()
     // program, so it must not run next to a phase whose numbers another line reports.
     contract_ok = runProgramShadingPixelPhase(*renderer, camera, 4) && contract_ok;
     // Last of the pixel phases: it keeps one target and one slot alive across the switch, so it
-    // also has to be the last one to touch the session's content program (it restores it itself).
-    contract_ok = runLiveContentProgramSwitchPixelPhase(*renderer, camera, 4) && contract_ok;
+    // also has to be the last one to touch the session's default content program (it restores it itself).
+    contract_ok = runLiveDefaultContentProgramSwitchPixelPhase(*renderer, camera, 4) && contract_ok;
     if (!contract_ok) {
         std::fprintf(stderr,
                      "[selftest] FAILED — a pass-lifecycle / depth-sharing / pixel-readback invariant was violated\n");
