@@ -159,6 +159,26 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 
 ## 8. 落地记录
 
+### 8.2 S2 进度（2026-09-13）：地基已落，绑定与像素门禁待做
+
+已完成（各自独立提交、门禁绿）：
+
+| 步 | 内容 | 判据 |
+| --- | --- | --- |
+| S2-1 | L1 阴影 ABI：`VineShadowBlock`（`ShaderAbi.hpp`）+ `RenderTarget::setProducerViewProjection()`（矩阵**只由产出者写一次**，消费者读） | `test_graphics` +1（size/align/offset）；证据不变 |
+| S2-2 | **pass 输入通道**：`resolvePassInputs()` 交回解析结果，引擎在 `beginPass()`/`execute()` 之间 `RenderBackend::setPassInputs()`（新虚函数，默认空） | `test_graphics` +1（声明两项 → 按序到达、未产出为 null） |
+| S2-3 | 延迟光照的**带阴影变体**：程序文本由 `deferred_light.frag` 的**两行标记**插出（不是 `#ifdef` —— 全屏 program 声明的绑定就是后端必须提供的），无阴影变体是"源去掉标记"，两者都不带脚手架 | `test_graphics` +1（标记 + binding **5/6**）；`vine_shader_check` 7 PASS |
+
+**下一步的精确清单**（机械执行，不需要再决策）：
+
+1. **后端绑定**（`gfx_backend_vsg`）：
+   - `makeFullscreenProgramNode`（`VsgPipelineFactory.cpp:~780`）加一个额外输入参数：`std::vector<std::pair<::vsg::ref_ptr<::vsg::ImageView>, bool>>`（视图 + 是否深度），**绑定号 = `color_count + 1 + i`**；`VineShadowBlock` 的 UBO 绑在 **`color_count + 2`**（规范 4 彩色 ⇒ 5 / 6）。`provided` 的白名单检查同步放宽，`declaredBindings()` 反射已经在做"声明即要求"。
+   - `drawScreenProgram`（`VsgOverlay.cpp:~470`）取 `state.request.inputs` 里**第一个非空**的 target，用与 `src` 相同的方式拿它的深度视图（要求 `depth_sampleable`），并填 `VineShadowBlock`：`viewToLight = target->producerViewProjection() * inverse(pass camera viewMatrix)`，`params = {1, bias(来自该光源 ShadowSettings), 1, 0}`。**矩阵一律从 target 读，不重算光相机**（§9 的决定）。
+2. **builder**（`RenderPipelineBuilder::buildDeferredPath`）：内容里有 `enabled && castShadow && Directional` 的灯时 —— 建光相机（正交、`Scene::boundingBox()` 取景）+ `resolution²` 的 **depth-only** target（`setDepthPromotion(true)` + `setProducerViewProjection(lightVP)`）+ `PipelineStage::Depth` 的 pass 画内容（`content_`）；光照 pass 用 `deferredLightProgram(true)` 并 `addInputTarget(shadow)`。**没有投影光时一字不改**（今天的程序与 pass 列表）。
+3. **像素门禁**：`vsg_selftest` 新增相位 —— 地面 + 立方体 + 投影的太阳，读回后断言**影内的地面像素明显暗于影外**；变异验证：把太阳的 `castShadow` 关掉 ⇒ 该相位必须红。证据基线行数 +1~2。
+
+**为什么停在这里**：1 与 2 必须与 3 一起提交 —— 只做 2 会让 `makeFullscreenProgramNode` 拒绝那个程序（声明了没人提供的绑定），于是"光照 pass 不画" + 一条 Error，比不做更糟；只做 1 则没有消费者可验。三件一起做完才是一个可判定的切片。
+
 ### 8.1 S1（2026-09-13）：形状与生命周期
 
 | 环节 | 落点 |
