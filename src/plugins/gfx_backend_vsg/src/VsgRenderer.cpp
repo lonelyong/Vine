@@ -396,6 +396,11 @@ void VsgRenderer::shutdown()
         // nulls the internal HWND so the destructor leaves Qt's window alone.
         state.window->releaseWindow();
     }
+    // The content slots are about to be dropped together with the counts they were handed
+    // (the counts are session state, inside the state being replaced below): a bridge must not
+    // be left pointing at memory the assignment frees, even though nothing dereferences it
+    // outside a sweep — this is the same lifetime rule the retired draw-block pool has.
+    clearRetainedShares();
     // Whole-session teardown: assigning over the session state drops the window,
     // viewer, command graph, per-target render graphs, content slots and every
     // compiled pipeline that references the old vsg::Device — in one step, so
