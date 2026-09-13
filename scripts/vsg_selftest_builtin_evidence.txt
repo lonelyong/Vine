@@ -45,5 +45,6 @@
 [selftest] texture: the quad sampled its texture by UV — left half (255,_,0) = the red half, right half (0,_,255) = the blue half, over a clear corner (25,_,45)
 [selftest] cube map: all six faces sampled in CubeMap::Face order (+X,-X,+Y,-Y,+Z,-Z), one pixel read back per face
 [selftest] opacity blend: opacity 0.5 turned the shaded centre (46,8,3) into (28,14,17) = 0.5*shaded + 0.5*clear, stored alpha 191 (not 255 = opacity dropped, not 128 = blend off)
-[selftest] preset fallback: Pbr (no Vine program, so the built-in phong set) drew a lit (46,8,3) over the clear, so that slot was fed the light source its set reads
+[selftest] preset shading: Pbr (no Vine program, so the built-in phong set) drew a lit (255,255,255) over the clear
+[selftest] preset shading: FlatShaded followed the face normal (281) against the smooth preset's authored-normal 0 over the same quad
 [selftest] done — no crash, no validation error expected

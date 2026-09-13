@@ -9,6 +9,33 @@ V_GRAPHICS_NS_BEGIN
 namespace
 {
 /**
+ * @brief Adds @p define to @p source just after its `#version` directive.
+ *
+ * NOT a plain prepend: GLSL requires the version directive to come first, so a `#define` put in
+ * front of it is a parse error — and a parse error here is quiet, because the backend treats
+ * "no compiled stage" as "this preset has no SDK program" and shades with its fallback instead.
+ * That is exactly how the flat preset first came out unlit-but-bright (vsg's flat set draws the
+ * material colour): the define never took effect.
+ *
+ * @param source GLSL source whose first line is the version directive.
+ * @param define Define to insert (without a trailing newline).
+ * @return The source with the define on its own line, after the version directive.
+ */
+std::u8string withDefine(std::u8string_view source, std::u8string_view define)
+{
+    const auto newline = source.find(u8'\n');
+    if (newline == std::u8string_view::npos) {
+        return std::u8string(source) + u8"\n" + std::u8string(define) + u8"\n";
+    }
+    std::u8string out(source.substr(0, newline));
+    out += u8"\n";
+    out += define;
+    out += u8"\n";
+    out += source.substr(newline + 1u);
+    return out;
+}
+
+/**
  * @brief Builds a two-stage (vertex + fragment) program from generated sources.
  *
  * @param name Program name, used by backend diagnostics.
@@ -40,6 +67,13 @@ intrusive_ptr<ShaderProgram> builtinProgram(ShaderPreset preset)
     case ShaderPreset::StandardPhong:
         return makeProgram(u8"vine_forward", shaders::kVineForwardVert, shaders::kVineForwardFrag);
     case ShaderPreset::FlatShaded:
+        // Flat shading is the SAME program with one define: the face normal comes from the
+        // screen-space derivatives of the view position instead of the interpolated vertex
+        // normal (see the fragment source). Injecting the define here keeps ONE lighting source
+        // for both presets — the alternative, a second copy of the lighting, is exactly the kind
+        // of duplication that drifts.
+        return makeProgram(u8"vine_flat", shaders::kVineForwardVert,
+                           withDefine(shaders::kVineForwardFrag, u8"#define VINE_FLAT 1"));
     case ShaderPreset::Pbr:
     case ShaderPreset::ShadowedPhong:
         break;

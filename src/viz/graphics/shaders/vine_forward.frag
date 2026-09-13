@@ -51,7 +51,20 @@ layout(set = 0, binding = 2, std140) uniform VineLightsBlock
 
 void main()
 {
+#ifdef VINE_FLAT
+    // Flat shading: the FACE normal, from the screen-space derivatives of the view position.
+    // One normal for the whole triangle — which is what "flat" means — and no per-vertex
+    // normals at all, so this preset reuses the same vertex stage as the smooth one (see
+    // builtinProgram).
+    //
+    // The cross order is the one that faces the VIEWER: Vulkan's framebuffer rows grow downward,
+    // so dFdy points the other way from the y-up convention these derivatives are usually written
+    // in, and dFdx x dFdy comes out pointing away from the camera (measured: the lit side of a
+    // surface facing the camera stayed at its ambient term until the operands were swapped).
+    vec3 n = normalize(cross(dFdy(v_view_pos), dFdx(v_view_pos)));
+#else
     vec3 n = normalize(v_view_normal);
+#endif
     vec3 view_dir = normalize(-v_view_pos);
     vec3 albedo = material.diffuse.rgb;
     // The drawable's opacity is a PER-DRAWABLE VALUE, not a per-vertex one: it

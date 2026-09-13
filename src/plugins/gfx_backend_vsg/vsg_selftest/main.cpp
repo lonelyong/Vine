@@ -131,12 +131,17 @@ GeometryPtr makeChannelTriangle()
  * (or exactly on the near plane) and occupy no pixels at all. That is why "no
  * validation error" could never notice a rendering regression.
  *
- * @param half Half extent on x and y (0.4 covers the middle of the target).
- * @param z    World z of the quad: the camera sits at z = 5, so a larger z is
- *             nearer, which is what the depth-order phase varies.
+ * @param half     Half extent on x and y (0.4 covers the middle of the target).
+ * @param z        World z of the quad: the camera sits at z = 5, so a larger z is
+ *                 nearer, which is what the depth-order phase varies.
+ * @param normal_z z of every vertex normal. +z is the FACE normal (the quad lies in
+ *                 the z = const plane and the camera looks down -z at it), which is
+ *                 what shading tests want; the flat-shading phase passes -z so the
+ *                 authored normals point AWAY from the light and the two presets
+ *                 cannot produce the same colour.
  * @return The quad geometry (two triangles, one normal).
  */
-GeometryPtr makeVisibleQuad(float half = 0.4f, float z = 0.0f)
+GeometryPtr makeVisibleQuad(float half = 0.4f, float z = 0.0f, float normal_z = 1.0f)
 {
     auto geom = GeometryPtr(new Geometry());
     vine::geometry::Vec3fArray positions;
@@ -148,7 +153,7 @@ GeometryPtr makeVisibleQuad(float half = 0.4f, float z = 0.0f)
     geom->setPositions(vine::graphics::packAttribute(positions));
     vine::geometry::Vec3fArray normals;
     for (int i = 0; i < 6; ++i) {
-        normals.emplace_back(0.0f, 0.0f, 1.0f);
+        normals.emplace_back(0.0f, 0.0f, normal_z);
     }
     geom->setNormals(vine::graphics::packAttribute(normals));
     return geom;
@@ -4817,27 +4822,33 @@ bool runOpacityBlendPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
 }
 
 /**
- * @brief Asserts a preset WITHOUT a Vine program still renders LIT geometry.
+ * @brief Asserts that every preset draws LIT geometry, and that FLAT shading really is flat.
  *
- * A preset this backend has no Vine program for (`Pbr` / `ShadowedPhong`, and the engine documents
- * that they "fall back to StandardPhong") is drawn by the BUILT-IN vsg phong set. That set shades
- * from vsg's view-dependent light data, which only exists if the slot builds vsg light nodes under
- * its view; our own forward set takes the slot's `vine_lights` block instead and deliberately
- * builds none. The decision therefore has to follow the SET, not the session's forward switch — and
- * the two disagree exactly here, because the forward switch is ON while a preset falls back.
+ * `Pbr` has no Vine program, so the engine's contract ("presets without a backend implementation
+ * fall back to StandardPhong") puts its slot on the BUILT-IN vsg phong set. That set shades from
+ * vsg's view-dependent light data, which only exists if the slot builds vsg light nodes under its
+ * view; our own forward set takes the slot's `vine_lights` block instead and deliberately builds
+ * none. The decision therefore has to follow the SET, not the session's forward switch — and the
+ * two disagree exactly here, because the forward switch is ON while a preset falls back. Getting it
+ * wrong draws (0,0,0): with no light data every lit term is zero.
  *
- * Getting it wrong draws the scene BLACK: with no light data every lit term is zero. That is why
- * this phase asserts on pixels rather than on the wiring.
+ * `FlatShaded` has a Vine program of its own (the forward stages with `VINE_FLAT`), so its slot
+ * must be fed OUR block — and its face normal has to come from the screen-space derivatives of the
+ * view position, which is what "flat" means. That half is asserted by contrast: the same quad is
+ * drawn as it is authored (normals pointing AWAY from the sun, so the smooth presets can only reach
+ * their ambient term) and flat, which must be plainly brighter because it shades the surface the
+ * camera actually sees. A flat preset that fell back to another set, or took the derivative normal
+ * with the wrong sign, fails one half or the other.
  *
- * `FlatShaded` deliberately does NOT exercise this: the built-in flat shader draws the material's
- * colour and reads no light at all, so it cannot tell the two wirings apart.
+ * Both halves are asserted on PIXELS: the wiring and the shader text are pinned by unit tests, but
+ * only a read-back can tell "shaded" from "black" or from "nothing drew".
  *
- * @param renderer Renderer under test (its preset is switched and restored here).
- * @param camera   Camera the quad is drawn through.
- * @param frames   Frames to drive.
- * @return true when the fallback preset drew a lit quad.
+ * @param renderer Renderer under test (its preset is switched per stretch and restored at the end).
+ * @param camera   Camera the quads are drawn through.
+ * @param frames   Frames to drive per stretch.
+ * @return true when the fallback drew lit geometry and flat outshone smooth.
  */
-bool runPresetFallbackPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+bool runPresetShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
 {
     bool              ok = true;
     const vine::Color clear(10, 20, 30, 255);
@@ -4847,65 +4858,106 @@ bool runPresetFallbackPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraP
 
     auto opaque_material = MaterialPtr(new Material());
     opaque_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));
+    // A headlight along the view direction, so "faces the camera" and "faces the light" agree and
+    // the normal that is shaded is the only variable between the stretches.
+    auto sun = vine::graphics::LightPtr(vine::graphics::Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0)));
+    sun->setName(u8"selftest-sun");
 
-    RenderCommand command(makeVisibleQuad(0.4f, 1.0f), opaque_material, Mat4d());
-
-    auto target = RenderTargetPtr(new RenderTarget());
-    target->setSize(256, 144);
-    target->attachColor(RenderTarget::ColorFormat::RGBA8);
-    target->attachDepth(RenderTarget::DepthFormat::D32);
-    auto pass = RenderPassPtr(new RenderPass());
-
-    // Pbr rather than FlatShaded: this is the one the engine documents as "falls back to
-    // StandardPhong", and the built-in phong set is the light-dependent one that exposes the
-    // wiring. The switch has to happen BEFORE the slot is built: the slot bakes its shader set
-    // (and the light source that goes with it) when it is created.
-    renderer.setShaderPreset(vine::graphics::ShaderPreset::Pbr);
-    for (int i = 0; i < frames; ++i) {
-        FrameScope frame(renderer);
-        PassScope  pass_scope(renderer, pass.get(), 0, target.get(), clear, true);
-        renderer.render(std::vector<RenderCommand>{ command }, camera.get());
-    }
-    PixelImage image;
-    const bool read_ok = readTarget(renderer, target.get(), image);
-    // Back to the shipped preset: the renderer only publishes a preset at initialize (see
-    // RenderEngine), so a session's default is what this restores — and the phases after this one
-    // (and the teardown) must see that, not the fallback this phase exercised.
-    renderer.setShaderPreset(vine::graphics::ShaderPreset::StandardPhong);
-    if (!read_ok) {
-        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the preset-fallback target\n");
+    // One stretch per (preset, geometry), each into its OWN target: a slot bakes its shader set
+    // (and the light source that goes with it) when it is built, so the preset has to be set before
+    // the target's first frame.
+    const auto measure = [&](vine::graphics::ShaderPreset preset, float normal_z, PixelImage& image) {
+        auto target = RenderTargetPtr(new RenderTarget());
+        target->setSize(256, 144);
+        target->attachColor(RenderTarget::ColorFormat::RGBA8);
+        target->attachDepth(RenderTarget::DepthFormat::D32);
+        auto pass    = RenderPassPtr(new RenderPass());
+        auto command = RenderCommand(makeVisibleQuad(0.4f, 1.0f, normal_z), opaque_material, Mat4d());
+        renderer.setShaderPreset(preset);
+        for (int i = 0; i < frames; ++i) {
+            FrameScope frame(renderer);
+            PassScope  pass_scope(renderer, pass.get(), 0, target.get(), clear, true);
+            // After the scope, which announces "no lights": this pass lights its content with the
+            // sun, so the NORMAL decides how bright it comes out.
+            renderer.setLights(std::vector<vine::raw_ptr<const vine::graphics::Light>>{ sun.get() });
+            renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+        }
+        const bool read_ok = readTarget(renderer, target.get(), image);
         renderer.releasePass(pass.get());
         renderer.releaseRenderTarget(target.get());
+        return read_ok;
+    };
+    const auto sum_of = [](const PixelImage& image) {
+        return image.at(128, 72, 0) + image.at(128, 72, 1) + image.at(128, 72, 2);
+    };
+
+    // The quad the way it is authored: face normal (+z), so the surface faces the sun.
+    PixelImage authored_image;
+    const bool authored_read = measure(vine::graphics::ShaderPreset::Pbr, 1.0f, authored_image);
+    // The same quad with normals pointing away from the sun: smooth shading can only reach the
+    // ambient term, flat shading sees the surface the camera sees.
+    PixelImage smooth_image;
+    const bool smooth_read = measure(vine::graphics::ShaderPreset::StandardPhong, -1.0f, smooth_image);
+    PixelImage flat_image;
+    const bool flat_read = measure(vine::graphics::ShaderPreset::FlatShaded, -1.0f, flat_image);
+    // Back to the shipped preset: a renderer only publishes a preset at initialize (see
+    // RenderEngine), so the session default is what this restores — the phases after this one and
+    // the teardown must not see any of the presets this phase exercised.
+    renderer.setShaderPreset(vine::graphics::ShaderPreset::StandardPhong);
+    if (!authored_read || !smooth_read || !flat_read) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused a preset-shading target\n");
         return false;
     }
 
-    const int centre_r = image.at(128, 72, 0);
-    const int centre_g = image.at(128, 72, 1);
-    const int centre_b = image.at(128, 72, 2);
-    // Two failures worth telling apart: nothing drew at all (the centre is still the clear), and
-    // drew-but-unlit (black — every lit term is zero without light data).
-    if (centre_r == clear_r && centre_g == clear_g && centre_b == clear_b) {
+    // Nothing drew at all (the centre is still the clear) and drew-but-unlit (black: every lit term
+    // is zero without light) are different failures, and the message has to say which.
+    const auto assert_lit = [&](const char* what, const PixelImage& image) {
+        const int r = image.at(128, 72, 0);
+        const int g = image.at(128, 72, 1);
+        const int b = image.at(128, 72, 2);
+        if (r == clear_r && g == clear_g && b == clear_b) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: %s left the centre at the clear colour (%d,%d,%d) — nothing was "
+                         "drawn\n",
+                         what, r, g, b);
+            ok = false;
+            return;
+        }
+        if (r + g + b < 24) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: %s drew (%d,%d,%d) — black means its set found no light, so this "
+                         "slot was not fed the light source its set reads\n",
+                         what, r, g, b);
+            ok = false;
+        }
+    };
+    assert_lit("Pbr (no Vine program, so the built-in phong set)", authored_image);
+    assert_lit("FlatShaded (its own SDK program)", flat_image);
+    if (ok) {
         std::fprintf(stderr,
-                     "[selftest] FAIL: the Pbr fallback left the centre at the clear colour "
-                     "(%d,%d,%d) — nothing was drawn for a preset without a Vine program\n",
-                     centre_r, centre_g, centre_b);
-        ok = false;
+                     "[selftest] preset shading: Pbr (no Vine program, so the built-in phong set) drew a lit "
+                     "(%d,%d,%d) over the clear\n",
+                     authored_image.at(128, 72, 0), authored_image.at(128, 72, 1), authored_image.at(128, 72, 2));
     }
-    else if (centre_r + centre_g + centre_b < 24) {
+
+    // The flat half: with the authored normals facing away from the sun, flat shading must follow
+    // the FACE normal and come out clearly brighter than the smooth preset's ambient-only result.
+    const int smooth_sum = sum_of(smooth_image);
+    const int flat_sum   = sum_of(flat_image);
+    if (flat_sum <= smooth_sum + 20) {
         std::fprintf(stderr,
-                     "[selftest] FAIL: the Pbr fallback drew (%d,%d,%d) — black means the built-in phong "
-                     "set found no light, so this slot was not given the vsg light nodes it shades from\n",
-                     centre_r, centre_g, centre_b);
+                     "[selftest] FAIL: FlatShaded scored %d against the smooth preset's %d on a quad whose "
+                     "authored normals face away from the sun — flat shading must shade the FACE normal "
+                     "(screen-space derivatives of the view position), not the interpolated one\n",
+                     flat_sum, smooth_sum);
         ok = false;
     }
     if (ok) {
         std::fprintf(stderr,
-                     "[selftest] preset fallback: Pbr (no Vine program, so the built-in phong set) drew a lit "
-                     "(%d,%d,%d) over the clear, so that slot was fed the light source its set reads\n",
-                     centre_r, centre_g, centre_b);
+                     "[selftest] preset shading: FlatShaded followed the face normal (%d) against the smooth "
+                     "preset's authored-normal %d over the same quad\n",
+                     flat_sum, smooth_sum);
     }
-    renderer.releasePass(pass.get());
-    renderer.releaseRenderTarget(target.get());
     return ok;
 }
 
@@ -5195,7 +5247,7 @@ int main()
     contract_ok = runOpacityBlendPixelPhase(*renderer, camera, 4) && contract_ok;
     // Also after every reporting phase, for the same reason: it switches the session's shading
     // preset, so it must not run next to a phase whose numbers another line reports.
-    contract_ok = runPresetFallbackPixelPhase(*renderer, camera, 4) && contract_ok;
+    contract_ok = runPresetShadingPixelPhase(*renderer, camera, 4) && contract_ok;
     if (!contract_ok) {
         std::fprintf(stderr,
                      "[selftest] FAILED — a pass-lifecycle / depth-sharing / pixel-readback invariant was violated\n");

@@ -1,4 +1,11 @@
-﻿> 2026-09-13 **修缺陷：灯源必须按 SET 决定，不是按会话**
+﻿> 2026-09-13 **FlatShaded 进 SDK（P1 第一步）+ 像素级钉住"平直"**
+> - `builtinProgram(FlatShaded)` 不再是 null：**同一对 stage**，片元源里注入 `#define VINE_FLAT 1`（`withDefine()`：**必须插在 `#version` 之后**——放前面是 GLSL 语法错，而编译失败会被"回落内建集"静默吃掉：第一版就这么画出了 vsg flat 的无光照材质色）。
+> - `vine_forward.frag` 增 `VINE_FLAT` 分支：法线用 `cross(dFdy(v_view_pos), dFdx(v_view_pos))`（面法线）。**叉乘顺序必须是这个**：Vulkan 帧缓冲行向下生长，`dFdx × dFdy` 得到的是背向相机的法线（实测：朝向相机的面一直停在大气项，换序后才是受光的）。
+> - 新相位 `runPresetShadingPixelPhase`（取代原 preset-fallback 相位）两半都断言：①Pbr 回落内建 phong 集 → 必须受光（按 set 决定灯源）；②同一块四边形用**背向光源的作者法线**：平滑 preset 只剩大气项（42），flat 必须明显更亮（765）——**这才真的钉住"平直"**（否则平面四边形上两者同值）。
+> - 着色门禁的 `VARIANT_DEFINES` 加 `VINE_FLAT`（7 shader × 8 组合全编）。
+> - 判据：两条基线 49 → **50 行**（第 48 行因相位改用平行光而变值，其余逐字节不变）；build 0/0；test_vsg 243 → **244**；test_graphics 240；`vine_shader_check` PASS。
+
+> 2026-09-13 **修缺陷：灯源必须按 SET 决定，不是按会话**
 > - `VsgContentSlot` 的 `vsg_lights = !vineForwardShaderEnabled()` 是**会话级**判断，而“哪个灯源”是 **set 的属性**：`buildVineShaderSet` 对没有 Vine program 的 preset 返回 null ⇒ 回落内建集，而内建 **phong** 集从 vsg 的 view-dependent lightData 取光 —— 可 forward 开关开着 ⇒ 不建 vsg 灯节点 ⇒ **该 slot 全黑**（实测 Pbr 回落画 (0,0,0)，修后 (46,8,3)，与内建基线同值）。
 > - 修法：`SceneBridge::hasOwnLightsBlock()`（“这个 set 读不读 `vine_lights`”）+ `ContentSlot::vsg_lights`（建槽时定一次，逐帧路径复用）。两份现有模式行为**逐字节不变**（都取同一条分枝）。副作用：用户 program 的 set 以前也拿不到灯，现在也有灯了。
 > - 新相位 `runPresetFallbackPixelPhase`：切到 **Pbr**（引擎文档明确写“回落 StandardPhong”）、画进新离屏目标、断言中心既非清屏色也非黑。**注意 FlatShaded 测不出来**：vsg 的 flat shader 本来就不读光（不黑）。

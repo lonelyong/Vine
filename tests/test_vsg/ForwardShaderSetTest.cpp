@@ -215,9 +215,43 @@ TEST(ForwardShaderSetTest, OnlyPresetsWithStagesGetASet)
 {
     // A preset without its own stages must be refused rather than shaded as phong:
     // a silently wrong shading model is worse than falling back to the built-in set.
-    EXPECT_EQ(buildVineShaderSet(vine::graphics::ShaderPreset::FlatShaded, VkExtent2D{ 640, 360 }, true, true, 1), nullptr);
+    EXPECT_NE(buildVineShaderSet(vine::graphics::ShaderPreset::FlatShaded, VkExtent2D{ 640, 360 }, true, true, 1), nullptr);
     EXPECT_EQ(buildVineShaderSet(vine::graphics::ShaderPreset::Pbr, VkExtent2D{ 640, 360 }, true, true, 1), nullptr);
+    EXPECT_EQ(buildVineShaderSet(vine::graphics::ShaderPreset::ShadowedPhong, VkExtent2D{ 640, 360 }, true, true, 1),
+              nullptr);
     EXPECT_NE(makeForwardSet(), nullptr);
+}
+
+TEST(ForwardShaderSetTest, TheFlatPresetReusesTheForwardStagesWithItsDefine)
+{
+    // Flat shading is the forward program with ONE define, and the define has to land AFTER the
+    // `#version` directive: GLSL requires the version first, and a source that fails to parse costs
+    // the preset its own set — the backend then shades it with its fallback, which is silent (the
+    // first cut of this shipped vsg's flat set, drawing the material colour with no lighting at
+    // all). Both halves are pinned here.
+    const auto phong = vine::graphics::builtinProgram(vine::graphics::ShaderPreset::StandardPhong);
+    const auto flat  = vine::graphics::builtinProgram(vine::graphics::ShaderPreset::FlatShaded);
+    ASSERT_NE(phong, nullptr);
+    ASSERT_NE(flat, nullptr);
+    ASSERT_EQ(phong->stageCount(), 2u);
+    ASSERT_EQ(flat->stageCount(), 2u);
+
+    const auto* phong_vs = phong->stage(0);
+    const auto* flat_vs  = flat->stage(0);
+    ASSERT_NE(phong_vs, nullptr);
+    ASSERT_NE(flat_vs, nullptr);
+    EXPECT_EQ(flat_vs->source.stdstr(), phong_vs->source.stdstr()); // same vertex stage
+
+    const auto* flat_fs = flat->stage(1);
+    ASSERT_NE(flat_fs, nullptr);
+    const std::string fragment = flat_fs->source.stdstr();
+    // A define BEFORE the version directive is not valid GLSL, so the order is the contract.
+    const auto version_at = fragment.find("#version");
+    const auto define_at  = fragment.find("#define VINE_FLAT");
+    ASSERT_NE(version_at, std::string::npos);
+    ASSERT_NE(define_at, std::string::npos);
+    EXPECT_LT(version_at, define_at);
+    EXPECT_NE(fragment.find("cross(dFdy(v_view_pos), dFdx(v_view_pos))"), std::string::npos);
 }
 
 TEST(ForwardShaderSetTest, DeclaresTheCanonicalAttributesWithTheirGates)
@@ -520,13 +554,16 @@ TEST(ForwardShaderSetTest, TheLightSourceFollowsTheSlotSetNotTheSession)
     bridge.setShaderSet(makeContentShaderSet(vine::graphics::ShaderPreset::StandardPhong, VkExtent2D{ 640, 360 }, true, true, 1));
     EXPECT_TRUE(bridge.hasOwnLightsBlock());
 
-    for (const auto preset : { vine::graphics::ShaderPreset::FlatShaded, vine::graphics::ShaderPreset::Pbr,
-                               vine::graphics::ShaderPreset::ShadowedPhong }) {
+    for (const auto preset : { vine::graphics::ShaderPreset::Pbr, vine::graphics::ShaderPreset::ShadowedPhong }) {
         const auto set = makeContentShaderSet(preset, VkExtent2D{ 640, 360 }, true, true, 1);
         ASSERT_NE(set, nullptr);
         bridge.setShaderSet(set);
         EXPECT_FALSE(bridge.hasOwnLightsBlock());
     }
+    // FlatShaded has a Vine program (the forward stages with VINE_FLAT), so it is one of OURS and
+    // reads our block — a preset that falls back is the exception, not the rule.
+    bridge.setShaderSet(makeContentShaderSet(vine::graphics::ShaderPreset::FlatShaded, VkExtent2D{ 640, 360 }, true, true, 1));
+    EXPECT_TRUE(bridge.hasOwnLightsBlock());
 }
 
 TEST(ForwardShaderSetTest, BuiltInSetKeepsTheFullCanonicalPrefix)

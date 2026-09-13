@@ -8,8 +8,8 @@
 #
 #   1. COMPILE  every shader under a shaders/ directory with glslangValidator,
 #               once per combination of the variant defines the backend may set
-#               (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP). A shader that uses
-#               `#ifdef VINE_VERTEX_COLOR` therefore has to compile in BOTH
+#               (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_FLAT). A shader that
+#               uses `#ifdef VINE_VERTEX_COLOR` therefore has to compile in BOTH
 #               variants in the same run, which is what the runtime does per
 #               drawable. Unused defines are inert in GLSL, so the matrix needs
 #               no manifest to stay in sync with the sources.
@@ -46,7 +46,7 @@ INVENTORY="$ROOT/cmake/VineShaders.cmake"
 # The variant defines the backend can set on a compiled stage. Keep in sync with
 # the define names used by the shaders themselves (the compile matrix below is
 # what catches a mismatch).
-VARIANT_DEFINES=(VINE_VERTEX_COLOR VINE_DIFFUSE_MAP)
+VARIANT_DEFINES=(VINE_VERTEX_COLOR VINE_DIFFUSE_MAP VINE_FLAT)
 
 FAILED=0
 

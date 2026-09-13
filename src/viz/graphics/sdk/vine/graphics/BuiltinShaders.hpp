@@ -28,6 +28,10 @@ V_GRAPHICS_NS_BEGIN
  * The preset axis is semantic: this function is the ShaderPreset -> program
  * mapping that replaces a backend-side preset switch, so a backend able to
  * materialise the program needs no knowledge of the shading itself.
+ * A preset WITHOUT a program here (Pbr, ShadowedPhong) is the caller's cue to
+ * keep its own fallback rather than guess. StandardPhong and FlatShaded are
+ * SDK-owned; flat shading is the same stages with `VINE_FLAT` defined, which
+ * picks one face normal per triangle.
  *
  * @param preset Preset to load.
  * @return The program, or null when this preset has no SDK-built shading yet
