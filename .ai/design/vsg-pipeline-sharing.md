@@ -70,7 +70,7 @@
 | `SceneBridge::program_shader_sets_` | `ShaderProgram*` | `ref_ptr<ShaderSet>`（L1） | bridge；`clearCache()` |
 | `SceneBridge::variant_cache_` | 变体内容哈希 | `unique_ptr<VariantEntry>`（L2） | bridge；`clearCache()` |
 | `shared_objects_` | —（内容去重） | pipeline/layout/DS | bridge；`clearCache()` + 析构 |
-| `VsgMaterialManager::cache` | `Material*` | `ref_ptr<PhongMaterialValue>` | 引擎注入（跨槽共享） |
+| `VsgMaterialManager::cache` | `Material*` | `ref_ptr<vsg::ubyteArray>`（`VineMaterialBlock` 的字节） | 引擎注入（跨槽共享） |
 
 - **per-view 约束**：vsg pipeline 按 viewID 编译；跨 view 共享已编译管线会崩
   （`setupContentSlot` 注释）。因此所有共享都在**单个 content slot 的 bridge** 内，
@@ -88,12 +88,14 @@
 - 几何重建（revision 变）→ 复用既有模板，不新增管线。
 - **透明度实时（P0，2026-09-08）**：默认路径的颜色数组标 `DYNAMIC_DATA`，改写 alpha 后
   `dirty()` —— vsg `TransferTask` 只在 dirty 时回传（`syncModifiedCounts`），未变化帧零拷贝；
-  由 `OpacityColorArrayIsDynamic` 回归守护（遍历保留节点的 BindVertexBuffers）。program 路径
+  由 `OpacityEditRebuildsNothing` 回归守护（不透明度改写不重建几何；以前那条“颜色数组必须是
+  DYNAMIC 载体”的断言随载体一起删了）。program 路径
   颜色数组保持静态（D8：program 拥有 opacity）。
 - **材质刷新（P2）**：每帧每个**去重材质**先比较后覆写（O(distinct materials)，D19 缓解）。
-- **材质属性热改（2026-09-08）**：`PhongMaterialValue` 数据标 `DYNAMIC_DATA`（VsgMaterialManager），
+- **材质属性热改（2026-09-08）**：material 块的数据标 `DYNAMIC_DATA`（VsgMaterialManager），
   确有写入时 `value->dirty()`（SceneBridge 尾部）——材质属性编辑在次帧 TransferTask 回传，未变零拷贝；
-  回归 `MaterialPhongValueIsDynamic`。
+  回归 `MaterialManagerTest` 的 DYNAMIC 断言（2026-09-13 起 payload 是 `VineMaterialBlock` 的字节，不再
+  是 `vsg::PhongMaterialValue`）。
 - **每帧至多一次全图编译**：`VsgRenderer` 把 created 触发的编译延迟到 `submitFrame()`
   （多槽一帧只编一次；setupContentSlot 的新 View 仍即时编译）。
 - **数据/状态解耦（2026-09-08）**：Item 子树改为 `MatrixTransform → state_node → data_node`。

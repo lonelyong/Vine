@@ -338,10 +338,10 @@ TEST(SceneBridgePipelineSharingTest, OpacityDoesNotRideTheVertexColour)
  */
 /**
  * @brief Live material hot-edits need a DYNAMIC material UBO: the shared
- * Phong value must be re-transferred after dirty() or later property edits
+ * block's bytes must be re-transferred after dirty() or later property edits
  * would never reach the GPU.
  */
-TEST(SceneBridgePipelineSharingTest, MaterialPhongValueIsDynamic)
+TEST(SceneBridgePipelineSharingTest, MaterialBlockIsDynamic)
 {
     vine::vsg::VsgMaterialManager manager;
     vine::vsg::SceneBridge        bridge;

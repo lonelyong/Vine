@@ -133,7 +133,6 @@ src/plugins/gfx_backend_vsg/
     VsgRenderBackendFactory.cpp   # 后端工厂注册
     GfxBackendVsgPlugin.cpp       # 插件外壳 + V_DECLARE_PLUGIN
   shaders/                        # 早期手工 flat shader（flat.vert/frag[.spv]，已不被构建使用）
-  vsg_shader_dump/  vsg_probe/    # 独立探查工具 main.cpp（不进插件构建）
   vsg_selftest/                   # 无窗口自检（lavapipe 下跑完整帧装配）
   docs/data-flow.md               # 数据映射专项文档（旧名 vine-to-vsg-data-flow.md）
   docs/backend.md                 # 后端运行时说明（生命周期 / 调用次数 / 更新策略）
@@ -169,7 +168,7 @@ CMake 里显式 `target_compile_definitions(... PRIVATE V_VSG_LIB)` 让 `V_VSG_A
 | `VsgRenderer` | 实现 `RenderBackend`：窗口/Viewer/RenderGraph、窗口层（主/顶部/HUD）、离屏、PiP、帧提交 | PIMPL(`Impl`)；绑 raw `Scene*`+`Camera*`；on-screen 层统一 `window_layers` |
 | `SceneBridge` | 把每帧命令流保留式 reconcile 到一棵 `vsg::Group`；按 `Geometry*` 缓存 Item | 每个 window 层 / 离屏 target 各一套（vsg 按 viewID 编管线） |
 | `CameraBridge` | `Camera`（eye/target/up + fov/ortho）→ `vsg::LookAt` + `vsg::Perspective/Orthographic`；`apply()` 原位同步 | vsg 相机不含 viewportState（渲染器补） |
-| `VsgMaterialManager` | `Material*` → 缓存 `vsg::PhongMaterialValue` | 实现 `graphics::MaterialManager` |
+| `VsgMaterialManager` | `Material*` → 缓存 `VineMaterialBlock` 的字节（`vsg::ubyteArray`） | 实现 `graphics::MaterialManager` |
 | `RenderStateMapper` | `ResolvedRenderState` → DepthStencil/Rasterization/ColorBlend/InputAssembly 四态 | header-only；含 reverse-Z 深度比较反转 |
 | `VsgUtils::detail::toVsg` | `Mat4d` → `vsg::dmat4`（列主序复制） | header-only |
 | `VsgRenderBackendFactory` | `create/info` + 静态 `Registrar` 自注册 | 插件加载也注册一次 |
@@ -283,8 +282,8 @@ sequenceDiagram
 | 变化 | vsg 动作 | 重建/编译 |
 |---|---|---|
 | 世界矩阵（`cmd.modelMatrix`） | 写 `MatrixTransform::matrix`（变了才写） | 无 |
-| 透明度 `cmd.opacity` | 覆写保留白色 `colors[].a`（变了才写） | 无 |
-| 同材质改颜色/光泽 | 原位覆写共享 `PhongMaterialValue`（每帧循环） | 无 |
+| 透明度 `cmd.opacity` | 写该 drawable 在 `vine_draw` 池里的槽（变了才写） | 无 |
+| 同材质改颜色/光泽 | 原位覆写共享的 `VineMaterialBlock` 字节（每帧循环） | 无 |
 | 顺序变化 | 重排 root children 匹配命令序 | 无 |
 | 隐藏/剔除缺席 | 摘下 root，Item 保留；>600 帧逐出 | 无 |
 | 首次出现 / revision / 换材质对象 / renderState / program 变 | 重建该 Item | 有（全图 compile） |
@@ -333,8 +332,9 @@ graph TD
   View** 加入（同一 render pass 内多 viewport），顶部层用 `depth_off_shader_set`（深度 test/write
   关）的 layer bridge 同步内容，再 compile。
 - 每帧（`renderWindowLayer`）：把该层相机 viewportState 设成对应 pass 的子矩形（无则全屏）→
-  `CameraBridge::apply` → `layer.bridge.syncRenderCommands` → created 非空则 compile；只有非
-  顶部层才 `setGroupLights(lights)`。
+  `CameraBridge::apply` → `layer.bridge.syncRenderCommands` → created 非空则 compile。
+  （每层不透明度/灯各自独立：不透明度走每 drawable 的 `vine_draw` 槽，灯走每槽的 `vine_lights` 块 ——
+  2026-09-13 起不再有 vsg 灯节点/`setGroupLights`。）
 - 移除见 §12；`RenderEngine::initialize` 会对已注册的 enabled 且**不清屏**的 pass **预热一次**
   （先建好、编译好，避免帧中途首见编译不可靠）。
 
@@ -371,11 +371,11 @@ graph TD
 
 ## 9. 材质管理（VsgMaterialManager）
 
-- `getOrCreate(Material*)`：以 `Material*` 为键缓存 `vsg::PhongMaterialValue`
+- `getOrCreate(Material*)`：以 `Material*` 为键缓存 `vsg::ubyteArray`（`VineMaterialBlock` 的字节，SDK ABI）
   （同一材质多几何共享一个 uniform 资源）；null → 默认灰。
 - 每帧 `syncRenderCommands` 尾部：对每条命令 `getOrCreate`（命中缓存）并把
   diffuse/specular/ambient/shininess **原位写进共享值** → 同材质改色即时生效、
-  零 rebuild；`diffuse.a` 恒 1（透明度走 per-vertex alpha）。
+  零 rebuild；`diffuse.w` 是材质自身的 alpha，物体不透明度走 `vine_draw` 槽的 `params.x`。
 - 抽象基类接口：`updateMaterial / releaseMaterial / clear / find / materialCount /
   hasMaterial / forEachMaterial`。
 - ⚠️ `updateMaterial/releaseMaterial` **全仓无调用点**（登记 D13）→ 缓存只增不减，
@@ -589,7 +589,6 @@ D9（失败上报）→ D13（引擎调 release/容量上限）→ D1（按 comp
 | `VINE_VSG_OFFSCREEN_MULTISLOT` | AppShell 把**同一个** 640x360 离屏 RT 烘两个内容槽（主场景 depth-on 槽0 + 异场景 on-top 槽1），ScreenPass 以 PiP 显示（验证 C6.4 离屏多槽；日志“off-screen content slot N added … now N slot view(s)”） | 演示/验证 |
 | 无 env | 主路径 = 绑宿主原生表面（Qt HWND / xcb），Qt 合成窗口 | 正式候选 |
 | 首 5 帧 | `[VsgRenderer][diag] main sync: ...` 打到 stderr | 诊断 |
-| `vsg_shader_dump` / `vsg_probe` | 独立工具：反序列化 vsg ShaderSet / 探针 | 工具 |
 
 ## 17. 支持 / 不支持矩阵（摘要，详见 data-flow §12）
 

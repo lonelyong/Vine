@@ -1,7 +1,8 @@
 ﻿# Vine 数据 → vsg 数据的映射流程
 
 > 模块：`src/plugins/gfx_backend_vsg`（vsg 后端）
-> 2026-09-04 依据本机 vsg 1.1.16 源码 / `vsg_shader_dump` 反序列化 / 后端代码核对。
+> 2026-09-04 依据本机 vsg 1.1.16 源码 /（当时的）ShaderSet 反序列化探针 / 后端代码核对。
+> 2026-09-13 收尾后，引擎不再使用 vsg 内建 set：下面提到 `vsg_*` / `PhongMaterialValue` / set1 编号等**描述 vsg 内建 set** 的段落只作历史参考（当前只有引擎自己的 ABI，见 `ShaderAbi.hpp`）。
 > 关联：`.ai/design/vsg-custom-shader.md`（自定义着色 ABI + §9 内建契约档案）、
 > `.ai/memory/graphics.md`。
 > 运行时的另外三件（生命周期 / 调用次数 / 更新策略）：[`backend.md`](backend.md)。
@@ -194,7 +195,7 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 ### 4.2 描述符 + push constant
 
 - set0（每 view 自动填）：`lightData` b0、`viewportData` b1、shadow b2..4
-- set1（每 drawable）：贴图（define-gated）+ **`material` b10 uniform `PhongMaterialValue`** + …
+- set1（每 drawable，引擎自己的 ABI）：贴图（define-gated）+ **`material` b0 uniform `VineMaterialBlock`** + **`vine_draw` b0（dynamic offset）** + …（下面这段描述的是 vsg 内建 set 的编号，只作历史参考）
 - `pc`：全 stage、offset 0、size 128 = `{ mat4 projection; mat4 modelView; }`
   （RecordTraversal 每 drawable 自动填；program 路径的 `addPushConstantRange("pc",…,0,128)` 即复刻它）
 
@@ -257,8 +258,8 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 
 1. 对应 = **location 号映射 + 后端硬编码 loc0/loc1 语义** + vsg 侧按名字查 ShaderSet 表。
 2. 顶点永远**模型空间原始数据**；世界变换走 `MatrixTransform::matrix`（每帧、懒写）。
-3. 透明度不重建几何：走 `vine_Color` per-vertex alpha，只在变化时覆写。
-4. 材质是共享纯色：`Material*` 键缓存 PhongMaterialValue + `shared_objects_` 共享管线/DS。
+3. 透明度不重建几何：写进 `vine_draw` 池的槽（一次量化写）。
+4. 材质是共享纯色：`Material*` 键缓存 `VineMaterialBlock` 的字节 + `shared_objects_` 共享管线/DS。
 5. 默认渲染"三角形"由管线默认拓扑决定，与数据无关；线/线框是 Topology vs PolygonMode 两个正交概念。
 
 ## 9. 对象生命周期与所有权
@@ -282,7 +283,7 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 | `SceneBridge::cache_` | `const Geometry*`（裸指针） | `unique_ptr<Item>`（vsg 子树，vsg `ref_ptr` 自持） | bridge |
 | `SceneBridge::program_shader_sets_` | `const ShaderProgram*`（L1） | `vsg::ref_ptr<ShaderSet>`（glslang 编译产物，失败=null） | bridge（`clearCache`） |
 | `SceneBridge::variant_cache_` | (program, material, ResolvedRenderState) 内容哈希（L2） | `unique_ptr<VariantEntry>`（共享 state 命令+base_binding） | bridge（`clearCache`） |
-| `VsgMaterialManager::cache` | `Material*`（裸指针） | `vsg::ref_ptr<PhongMaterialValue>` | manager |
+| `VsgMaterialManager::cache` | `Material*`（裸指针） | `vsg::ref_ptr<vsg::ubyteArray>`（`VineMaterialBlock` 的字节） | manager |
 | `shared_objects_` | —（内容级去重） | 共享 pipeline / layout / DS | bridge（`clearCache` + 析构） |
 
 - **生命周期契约**：缓存键（`Geometry*`/`Material*`）的存活由**场景树 / 调用方保证**。
@@ -381,10 +382,10 @@ sequenceDiagram
 |---|---|
 | 图元 | 三角形（默认 `TRIANGLE_LIST`）、`Topology::Points`（点云 demo）、`Topology::Lines`→`LINE_LIST`（映射 + 测试断言）、索引/非索引、法线推导（平滑/面） |
 | 状态 | 深度 test/write/compare（reverse-Z 反转）、`CullMode` None/Front/Back、`PolygonMode` Fill/Line/Point、混合**恒开** + `StateNode` 选因子、每几何独立拓扑 |
-| 材质 | diffuse/specular/ambient/shininess → `PhongMaterialValue`；默认灰；`Material*` 共享缓存；每帧就地刷新（编辑即时生效） |
-| 透明 | scene×node×叶 geometry opacity → `vine_Color` per-vertex alpha（不重建） |
-| 程序 | `Geometry::setProgram` / `StateNode::setProgram`：glslang 运行期编译 + 自建 ShaderSet(`pc`)；失败回退内建 |
-| 光照 | Scene 级 `Ambient/Directional` → 每 view 光组；默认 headlight；运行时换灯 |
+| 材质 | diffuse/specular/ambient/shininess → `VineMaterialBlock`；默认灰；`Material*` 共享缓存；每帧就地刷新（编辑即时生效） |
+| 透明 | scene×node×叶 geometry opacity → `vine_draw` 池的槽（每 drawable 一份，不重建几何） |
+| 程序 | `Geometry::setProgram` / `StateNode::setProgram`：glslang 运行期编译 + 自建 ShaderSet(`pc`)；编不了就**不画并报告**（无回落） |
+| 光照 | Scene 级 `Ambient/Directional` → 每槽 `vine_lights` 块（view space，ambient + 3 directional）；unlit 时补 ambient；公告灯装不下就报一次 |
 | 场景 | `MatrixTransform` 嵌套 + worldMatrix、Node visible/opacity、Vine 侧剔除（另有 no-cull 变体） |
 | 多 pass | 离屏 color±depth / depth-only（shadow RT 基础）、PiP screen pass、overlay、动态 sub-viewport |
 | 复用 | `shared_objects_` 内容级共享 pipeline/DS、**L1 program 缓存**、**L2 变体模板缓存**（跳过重复 configurator）、逐几何保留缓存、逐帧懒更新 |
@@ -496,7 +497,7 @@ sequenceDiagram
 
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|
-| D41 | **“公告的灯全部不可用”会清空视图默认光**：`setGroupLights` 只要 `lights` 非空就 `children.clear()`，而 `buildLightNode` 对禁用灯 / 未翻译灯类型返回 null —— 全部不可用时留下**空光根**，把槽的默认光（window presenting → headlight，其余 → ambient）也清掉 → 视图零光源 → vsg Phong 把整个 pass 照成黑，**无诊断**；且与全屏程序路径（`fillLightPushBlock` 无可用光补默认 ambient）不一致。**已修（2026-09-11，设计 graphics-lighting §8）**：先建节点、后替换；**产出 0 个可用灯就完全不动光根**（默认光保留），返回 `std::size_t` 供调用方**每段报一次**（`ChannelIgnored` Warning），可用灯恢复即重新武装 | `VsgPipelineFactory::setGroupLights` / `VsgRendererPasses::renderContentSlot` | 🟢 |
+| D41 | **“公告的灯全部不可用”会清空视图默认光**：`setGroupLights` 只要 `lights` 非空就 `children.clear()`，而 `buildLightNode` 对禁用灯 / 未翻译灯类型返回 null —— 全部不可用时留下**空光根**，把槽的默认光（window presenting → headlight，其余 → ambient）也清掉 → 视图零光源 → vsg Phong 把整个 pass 照成黑，**无诊断**；且与全屏程序路径（`fillLightPushBlock` 无可用光补默认 ambient）不一致。**已修（2026-09-11，设计 graphics-lighting §8）**：先建节点、后替换；**产出 0 个可用灯就完全不动光根**（默认光保留），返回 `std::size_t` 供调用方**每段报一次**（`ChannelIgnored` Warning），可用灯恢复即重新武装；**2026-09-13 收尾后整个 vsg 光节点路径连同 `setGroupLights` 一起删除**（灯只有 `vine_lights` 块一个来源），"装不下的灯"改由 `fillVineLightsBlock` 的返回值报出，本条只留作历史 | `VsgPipelineFactory::setGroupLights` / `VsgRendererPasses::renderContentSlot` | 🟢 |
 | D42 | **全屏程序槽的重建身份只含 program 指针，不含 revision**：`drawScreenProgram` 的 `stale` 谓词比较 `slot.program != program`，忽略 `ShaderProgram::revision()` —— 就地热重载延迟光照/后处理的全屏 program（`replaceStages` / `setStage`）**不生效**（旧 SPIR-V/节点继续画），而同一 program 走几何路径（`SceneBridge` 的 L1/L2、`Item::program_revision`，D10）会重建。另：`slot.program` 是不自持裸指针（D34 同类）。**已修（2026-09-11）**：`ProgramSlot` 持有 `intrusive_ptr<const ShaderProgram>`（地址不可复用）+ `program_revision`，`stale` 同时比较二者，重建时写入（`drawScreenProgram` 的更新点在 `VsgRenderer.hpp` / `VsgRendererOverlay.cpp`）；**设备级守卫**：`VsgRenderer::programSlotBuildCount()` + selftest 在 `runCompositingPixelPhase` 里对**同一对象** `replaceStages` 后断言“槽重建恰好 1 次 + 像素变为 (204,51,102)”；反证：去掉 revision 比较 → 两条断言同时红（旧色 140,153,166 / 重建 0 次） | `ProgramSlot` / `drawScreenProgram` | 🟢 |
 | D43 | **`clear()` 的 mixed 判定是死条件**：`t.clear_seen = true;` 写在 `if (t.clear_seen && t.clear_depth != clearDepth)` **之前**，守卫恒真 ⇒ 首次 `clear(c, false)` 也会把 `depth_policy_mixed` 置位（sticky、重建不重置）。当前被 `wantsDepthLoad()` 的 `!clear_depth` 掩盖、无可观测差异，但一旦 §28 的 pass 粒度重构改动谓词即成真缺陷。**已修（2026-09-11）**：先存 `seen_before`，只有“前一次已 clear 且策略不同”才标记 mixed；§28 第 3 步后该判定整体删除（每个 pass 自带 load-op） | `VsgRenderer::clear` | 🟢 |
 | D44 | **两处静默降级补口（2026-09-11）**（① 随 `drawScreenTexture` 于 2026-09-13 消失：附件由 program 的 sampler binding 命名，越界无从发生）：① `drawScreenTexture` 的 `attachment` 越界**静默**钳到最后一个附件；② `readDepthBuffer` 对**借用深度**的目标（`depth_image == nullptr`）静默返回 false，而 `hasDepth()` 对其为 true。两处均改为上报 `ChannelIgnored` Warning（“采样了最后一个附件” / “请读源目标”），并把“借深度经源读取”写进 `RenderBackend` / `VsgRenderer` 文档 | `VsgRendererOverlay` / `VsgRendererTargets` | 🟢 |

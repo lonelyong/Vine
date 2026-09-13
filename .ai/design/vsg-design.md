@@ -2,6 +2,12 @@
 
 > 状态：设计稿 v5（2026-09-02）
 >
+> **历史文档（2026-09-13 注）**：本文描述的是本后端**最初**的实现——着色走 vsg 内建 phong set、
+> 材质映射成 `vsg::PhongMaterialValue`、灯挂成 vsg 灯节点。这三样在 2026-09-13 的收尾里全部退出代码
+> （见 `vsg-custom-shader.md` §11.12：材质是 `VineMaterialBlock`、灯只有 `vine_lights` 块、属性只按
+> `vine_*` 名绑定）。读“今天怎么做”请看 `vsg-custom-shader.md` 与 `src/plugins/gfx_backend_vsg/docs/`；
+> 本文保留为“当时为什么这么做”的记录。
+>
 > **定位**：`gfx_backend_vsg` 是 `graphics` 模块的一个**渲染后端实现**，以
 > appfw **插件**形式存在。它实现 `vine::graphics::RenderBackend` 抽象接口，
 > 把 `graphics` 层的场景图、相机和渲染命令翻译成 VulkanSceneGraph（VSG）调用。

@@ -18,7 +18,8 @@ class Material;
  *
  * MaterialManager defines the lifecycle contract for translating a
  * platform-independent vine::graphics::Material (pure attributes) into
- * backend-specific rendering resources (e.g. a VSG PhongMaterialValue).
+ * backend-specific rendering resources (e.g. a uniform block the shading
+ * reads).
  * Concrete backends implement this interface and own their resource cache:
  * multiple drawables sharing one Material must reuse a single backend
  * resource.

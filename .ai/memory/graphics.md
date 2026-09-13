@@ -1,6 +1,15 @@
+> 2026-09-13 **收尾：vsg 内建着色在后端与测试里都不再出现**
+> - **材质**：`VineMaterialBlock` 进 SDK（`ShaderAbi.hpp`，与 `VineViewBlock/DrawBlock` 并列，带 sizeof/offsetof assert），`VsgMaterialManager` 的 payload 从 `vsg::PhongMaterialValue` 换成 `vsg::ubyteArray(sizeof(VineMaterialBlock))`；两侧 ShaderSet 的 `material` 声明同步。以前靠“字段次序恰好一致”在工作。
+> - **光照**：删 `buildLightNode` / `setGroupLights` / `makeAmbientLight` / 槽的 `light_group`·`headlight_seed`·`vsg_lights` / `seedSlotLight` / `SceneBridge::hasOwnLightsBlock`。灯**只有一个来源**：每槽的 `vine_lights` block。丢灯报告改由 `fillVineLightsBlock` 的**返回值**驱动（它知道 block 装下了几盏：禁用 / 非 ambient·directional / 第二盏 ambient / 第 4 盏 directional 都算没装下）。
+> - **属性名**：桥只按 `vine_*` 查（删掉 `vsg_*` 回退）；一组都不声明 ⇒ 报 Warning/ContentSkipped（“不是我们的 set”）。
+> - **不透明度载体**：顶点色 alpha 载体删除（`buildGeometryData` 不再有 `opacity_carrier`，桥的 `colors`/`last_opacity` 与逐帧改写循环删除）；loc2 作者色**原样绑定**，没作者色绑静态白。不透明度只走 `vine_draw` block。
+> - **测试**：89 处 `vsg::createPhongShaderSet()` → `tests/test_vsg/TestContentSet.hpp::testContentSet()`（我们的 forward set）。
+> - **工具**：`vsg_probe` / `vsg_shader_dump` 删除，`gfx_lavapipe_check.sh` 从 4 段降到 2 段（selftest + 证据 + app）。
+> - 判据：**证据基线 53 行逐字节不变**；test_graphics 248；test_vsg 251 → **247**；lavapipe PASS。
+
 > 2026-09-13 **命名：`vine_forward.*` → `std_forward.*`，着色器内不再用 `vsg_` 前缀**
 > - 前向着色的两段改名（同一个 program）：`src/viz/graphics/shaders/std_forward.{vert,frag}`，常量 `kStdForwardVert/frag`；program 名字 `std_forward` / `std_forward_flat`（原 `vine_forward` / `vine_flat`）。
-> - **着色器内标识符前缀统一 `vine_`**：`vine_Vertex` / `vine_Normal` / `vine_Color` / `vine_TexCoord0`（后端 `addAttributeBinding` / `assign_array` 的名字同步；测试按名字查绑定的一处也同步）。EXCEPT：`vsg_probe`（驱动 vsg 自己的 phong set，名字属于它）、以及描述 vsg 内建 set 的文档段落。
+> - **着色器内标识符前缀统一 `vine_`**：`vine_Vertex` / `vine_Normal` / `vine_Color` / `vine_TexCoord0`（后端 `addAttributeBinding` / `assign_array` 的名字同步；测试按名字查绑定的一处也同步）。这条当时还留了个尾：`vsg_probe`（已删）和“描述 vsg 内建 set”的段落。
 > - 判据：**行为中性** —— 证据基线 53 行逐字节不变（着色器文本只换标识符/文件名，位置与 ABI 不变）；`vine_shader_check` PASS（7）；test_graphics / test_vsg 不变；lavapipe PASS。
 
 > 2026-09-13 **全屏着色也归 SDK：`ScreenPass` 必须命名 program，后端不再有 shader**
@@ -42,7 +51,7 @@
 > 2026-09-13 **完全不使用 vsg 内建 shader set**
 > - `makeContentShaderSet` **只**调 `buildVineShaderSet`；删除 `buildShaderSet()` 与 `vineForwardShaderEnabled()`（`VINE_VSG_BUILTIN` 开关、两条基线的第二份、自检 `--builtin` 模式一起删）。
 > - **没有有效 shader 就不画**（2026-09-13 口径）：没有自己 program 的 preset ⇒ `makeContentShaderSet` 返回 **null**（无替补），建槽时每会话一条 **Error**；槽没被注入 set ⇒ `buildStateGroup` 每桥一条 Error + 该 drawable 不入图；用户 program 编译失败 ⇒ 报告后**不再回落**到槽的 set。`SceneBridge::baseShaderSet()` 也不再兜底造 set；`setShaderSet()` 会 invalidate 保留 state（旧 set 的管线/描述符）。
-> - `SceneBridge::baseShaderSet()` 无注入时建**我们的** forward set（原来 `createPhongShaderSet()`）；桥仍接受**外来** set（SDK 语义），`hasOwnLightsBlock()`/`vsg_lights` 那条路现在只服务外来 set。
+> - `SceneBridge::baseShaderSet()` 无注入时建**我们的** forward set（原来 `createPhongShaderSet()`）；桥仍接受**外来** set（SDK 语义）。当时留了 `hasOwnLightsBlock()`/`vsg_lights` 服务外来 set——**同日收尾已删**（外来 set 不是受支持的配置，现在会报一条 Warning）。
 > - 自检 preset 相位的 Pbr 段改成“与 StandardPhong 像素相同（±4）”——替补是引擎自己的模型，不是另一套着色。
 > - 判据：两条基线 → **一条 51 行**（只 rewrite 那一行）；test_vsg 249（`EveryContentSetIsTheEnginesOwn` 取代 `TheForwardSwitchIsOnByDefault`）；test_graphics 240；lavapipe PASS。
 
@@ -64,6 +73,7 @@
 > - `VsgContentSlot` 的 `vsg_lights = !vineForwardShaderEnabled()` 是**会话级**判断，而“哪个灯源”是 **set 的属性**：`buildVineShaderSet` 对没有 Vine program 的 preset 返回 null ⇒ 回落内建集，而内建 **phong** 集从 vsg 的 view-dependent lightData 取光 —— 可 forward 开关开着 ⇒ 不建 vsg 灯节点 ⇒ **该 slot 全黑**（实测 Pbr 回落画 (0,0,0)，修后 (46,8,3)，与内建基线同值）。
 > - 修法：`SceneBridge::hasOwnLightsBlock()`（“这个 set 读不读 `vine_lights`”）+ `ContentSlot::vsg_lights`（建槽时定一次，逐帧路径复用）。两份现有模式行为**逐字节不变**（都取同一条分枝）。副作用：用户 program 的 set 以前也拿不到灯，现在也有灯了。
 > - 新相位 `runPresetFallbackPixelPhase`：切到 **Pbr**（引擎文档明确写“回落 StandardPhong”）、画进新离屏目标、断言中心既非清屏色也非黑。**注意 FlatShaded 测不出来**：vsg 的 flat shader 本来就不读光（不黑）。
+> - **同日收尾后本条的两半都消失了**：没有“回落内建集”这回事（declined, not substituted），也就没有“一个 set 一个灯源”的问题——灯只有一个来源。（本条保留为“为什么当时要这么修”的记录。）
 > - mutation：把赋值改回会话级 ⇒ 相位红（(0,0,0)）✓ 证明门禁真咬。
 > - 判据：两条基线 **48 → 49 行**（只多这一行）；build 0/0；test_vsg 242 → **243**（+1 `TheLightSourceFollowsTheSlotSetNotTheSession`）；test_graphics 240；lavapipe PASS。
 

@@ -68,7 +68,7 @@
 
 | 缺口 | 现状 | 对策 |
 |---|---|---|
-| **材质属性热改** | 已修（值 DYNAMIC+dirty，2026-09-08） | 回归测试 `MaterialPhongValueIsDynamic` |
+| **材质属性热改** | 已修（值 DYNAMIC+dirty，2026-09-08） | 回归测试 `MaterialBlockIsDynamic` |
 | **D8**：program 路径 opacity | 颜色数组静态、program 拥有 opacity | 定版 ABI：由 program 的 per-draw uniform 提供；或回退内置路径 |
 | **D10**：改 `ShaderProgram` GLSL | **已修(2026-09-08)**：`ShaderProgram::revision()`（内容版本）+ `clearStages/replaceStages/setStage`；后端 L1(ProgramEntry)、Item(`program_revision`)、L2 哈希均纳入 revision → 改源次帧重建 state（数据复用）并出新变体 |
 | **D13**：`updateMaterial` 会换对象（使已绑 DS 失效） | **已修(2026-09-08)**：改为**就地刷新同一缓存对象 + `dirty()`**（抽出 `applyPhongMaterial`）；回归 `UpdateMaterialRefreshesInPlace` |

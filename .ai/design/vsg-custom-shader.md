@@ -1,10 +1,17 @@
 # vsg 后端自定义着色器设计（自写 shading ABI）
 
 > 状态：设计稿 v1（2026-09-03）
+> **2026-09-13 收尾（vsg 内建着色全部退出代码，本条最重要）：**
+> - **材质**：`VineMaterialBlock` 进 SDK（`ShaderAbi.hpp`），`VsgMaterialManager` 不再产出 `vsg::PhongMaterialValue`（改 `vsg::ubyteArray(sizeof(VineMaterialBlock))`）。
+> - **光照**：删 `setGroupLights` / `buildLightNode` / 槽的 `vsg_lights`，以及按 set 选灯源的 `SceneBridge::hasOwnLightsBlock()`。灯只有 `vine_lights` block 一个来源。
+> - **属性名**：桥只按 `vine_*` 查（`vsg_*` 回退删除）；声明不出一组我们的名字的 set 报 Warning（不是我们的 set）。
+> - **不透明度**：顶点色 alpha 载体删除，只走 `vine_draw` block；loc2 作者色原样绑定。
+> - **工具**：`vsg_probe` / `vsg_shader_dump` 删除；`gfx_lavapipe_check.sh` 不再有探针段。§8.2 的过渡映射与 §9 的档案**只作为历史**保留（当时靠它们对齐 vsg 的命名与布局，现在没有任何东西按 vsg 的名字绑定）。
+> - 对外结论：**vsg 不再参与着色**，只剩窗口/交换链/资源/命令/管线构建/录制；`graphics` 持有全部 shader 文本与全部 ABI。
 > 2026-09-03 已落地：语义着色预置 `ShaderPreset` + 到 vsg 内建 set 的过渡映射，并完成像素验证（见 §8）。
 > **2026-09-13 命名（本条）：** ① 前向着色的文件 `vine_forward.{vert,frag}` → **`std_forward.{vert,frag}`**（同一个 program 的两段；常量 `kStdForwardVert` / `kStdForwardFrag`）；
 > ② **着色器内不再使用 `vsg_` 前缀**：引擎提供的绑定名一律 `vine_`（`vine_Vertex` / `vine_Normal` / `vine_Color` / `vine_TexCoord0`），后端声明的 attributeBinding 名同步改；
->    **`vsg_probe` 除外**（它驱动的是 vsg 自己的 phong set，那套名字属于它），文档里 `vsg_*` 也只应出现在**描述 vsg 内建 set** 的地方（§9 参考档案、§8.2 过渡映射）。
+>    （当时写了“`vsg_probe` 除外”——该工具已在同日删除。）
 > **2026-09-13 变更（推翻 §8 的枚举）**：`ShaderPreset` **已删除**，着色只能**显式指定 program**，且**没有兜底**。
 > - 会话级入口：`RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram>)` / `defaultContentProgram()`
 >   （引擎默认就是命名的 `forwardProgram()`，构造函数里定好，`initialize()` 前转发给后端；运行中设置立即转发）。
@@ -294,7 +301,7 @@ RecordTraversal 每个 drawable 绘制前自动填 → 自定义 program 路径�
 | --- | --- |
 | 后缀即阶段：`.vert` / `.frag` / `.comp` / `.geom` / `.tesc` / `.tese` | 校验器据此判阶段，不需要额外清单 |
 | 每行 LF 结尾 | CR 会被读写两端各自归一化，嵌入文本就与文件不一致；生成器直接报错 |
-| 小 fixture（`app_shell` / `vsg_probe` / `vsg_selftest` / 测试探针）保持内联 | 它们不是产品 shader，放进清单反而多一层间接 |
+| 小 fixture（`app_shell` / `vsg_selftest` / 测试探针）保持内联 | 它们不是产品 shader，放进清单反而多一层间接 |
 | 常量名 = 文件名转大驼峰 + 阶段（`gbuffer_geometry.vert` → `kGbufferGeometryVert`） | 从文件名就能猜出常量名，拼错是编译错误而不是运行时回落 |
 
 ### 10.2 嵌入机制（构建期，不拷资源）
@@ -470,10 +477,10 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | --- | --- |
 | 选 set | `detail::makeContentShaderSet(preset, …)` **只**调 `buildVineShaderSet`，而且**没有替补**：没有自己 program 的 preset（Pbr / ShadowedPhong）返回 **null**，调用方上报并**什么都不画**（见下一行） |
 | 删除 | `detail::buildShaderSet()`、`detail::vineForwardShaderEnabled()`、`VINE_VSG_BUILTIN` 开关 |
-| 桥的兜底 | `SceneBridge::baseShaderSet()` 无注入时建**我们的** forward set（原为 `createPhongShaderSet()`）；桥本身仍接受**任何** set（SDK 允许后端被塞入外来的 set，测试就用 vsg 的 set 当这种“外来者”） |
+| 桥的兜底 | `SceneBridge::baseShaderSet()` 无注入时建**我们的** forward set（原为 `createPhongShaderSet()`）；桥本身仍接受**任何** set（SDK 允许后端被塞入外来的 set）——但按我们的属性名绑定：声明不出我们四个名字的 set 会报一条 Warning，恒不静默（§11.10 之前的口径是“按两套拼写找一个”，已删） |
 | 没有有效 shader ⇒ 不画（2026-09-13 口径） | 三条路都**报错并跳过 drawable/槽**，绝不用别的着色顶替：① preset 没有自己的 program ⇒ 建槽时每会话一条 Error（`ShaderFallback`，“本会话内容不会绘制”）；② 槽没有被注入 set（`SceneBridge::baseShaderSet()` 不再兜底造 set）⇒ `buildStateGroup` 每桥一条 Error + 返回空（该 drawable 不入图）；③ 用户 program 编译/装配失败 ⇒ 沿用既有的 per-(program,layout,revision) 报告，但**不再回落**到槽的 set。**判据**：`ABridgeWithNoShaderSetReportsAndDrawsNothing`（`root->children` 为空 + 恰好一条 Error + 注入 set 后重新武装）＋自检预设相位“Pbr 画的中心仍是清屏色，而 StandardPhong 画 (255,255,255)”。附带修正：`setShaderSet()` 现在会 invalidate 保留的 state wrapper（那些管线/描述符是旧 set 的）|
 | 门禁 | `vsg_selftest_evidence.sh --builtin` 与 `scripts/vsg_selftest_builtin_evidence.txt` **删除**（那条路径已不可能产生）；`gfx_lavapipe_check.sh` 的 3d 从“两条基线各比一遍”并成“一条基线比一遍” |
-| 单测 | `ForwardShaderSetTest.TheForwardSwitchIsOnByDefault` → **`EveryContentSetIsTheEnginesOwn`**：四个 preset 的 content set 都非空、都声明 `vine_lights`、stages 数一致；`TheLightSourceFollowsTheSlotSetNotTheSession` 改成“四个 preset 都是我们的” + 用 **vsg 的 set 当外来 set** 钉住 `vsg_lights` 那条老路径；管线状态奇偶校验不再拿 vsg 的 set 当参照，改成同程序的另一档深度变体 |
+| 单测 | `ForwardShaderSetTest.TheForwardSwitchIsOnByDefault` → **`EveryContentSetIsTheEnginesOwn`**：四个 preset 的 content set 都非空、都声明 `vine_lights`、stages 数一致；`TheLightSourceFollowsTheSlotSetNotTheSession` 当时改成“四个 preset 都是我们的” + 用 **vsg 的 set 当外来 set** 钉住 `vsg_lights` 那条老路径——**两条都已被 2026-09-13 的收尾重写/删除**（现在钉的是 `vine_lights` / `vine_draw` 的声明与“外来 set 会被报出来”）；管线状态奇偶校验不再拿 vsg 的 set 当参照，改成同程序的另一档深度变体 |
 | 自检相位 | preset 相位的 Pbr 那一段：从“内建回落画出了一点亮色”改成“**与 StandardPhong 同一四边形像素相同**（±4）”——替补必须是引擎自己的前向模型，而不是另一套库的着色（后者也会画出亮色，但值不同） |
 | 判据 | 证据基线 **51 行**，只有 preset 相位那一行改写；test_vsg **249**；test_graphics 240；`vine_shader_check` PASS；lavapipe PASS |
 
@@ -482,8 +489,25 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 的差异面随之消失；宿主拿到的着色一定可解释。
 
 **未完**：PBR / shadowed 的**真程序**（PbrMaterialValue + IBL / shadow map）仍未落地；2026-09-13 起它们
-**不再有名字**（枚举删除），宿主需要就在自己的 `ShaderProgram` 里写。vsg 的 `Light` / `ViewDependentState`
-现在只在**外来 set** 被注入时才需要（`SceneBridge::hasOwnLightsBlock()` 仍是每 set 的判断）。
+**不再有名字**（枚举删除），宿主需要就在自己的 `ShaderProgram` 里写。vsg 的 `Light` /
+`ViewDependentState` 已经**完全不在代码里**了（同日收尾删掉了“按 set 选灯源”那条路）：灯只有每槽的
+`vine_lights` block 一个来源，丢灯由 `fillVineLightsBlock` 的返回值报出来（§11.12）。
+
+### 11.12 收尾：vsg 内建着色退出代码（2026-09-13）
+
+前面几节把着色语义一条条收回到 SDK，但还有四处“vsg 自己的类型/名字”留在代码里。这一节把它们清掉：
+
+| 环节 | 以前 | 现在 |
+| --- | --- | --- |
+| 材质 UBO | `vsg::PhongMaterialValue`（形状与着色器里那份 GLSL **恰好**一致才工作） | `VineMaterialBlock`（SDK，带 `sizeof/offsetof` static_assert）+ `vsg::ubyteArray` payload |
+| 灯源 | 按 set 选：`SceneBridge::hasOwnLightsBlock()` ⇒ 我们的 block 或 vsg 的 view-dependent lightData（槽为此建 vsg 灯节点、每帧跑 `setGroupLights`） | 只有 block；`buildLightNode`/`setGroupLights`/`makeAmbientLight`/`slot.light_group`/`headlight_seed`/`vsg_lights` 全删；丢灯报告改由 `fillVineLightsBlock` 的返回值（= 真正装进 block 的公告灯数）驱动 |
+| 属性绑定 | 先按 `vine_*` 查，不中再按 `vsg_*` 查（为了让外来 set 也能收到数组） | 只按 `vine_*`；四个名字一个都没声明 ⇒ Warning/`ContentSkipped`（不是我们的 set），一次 build 报一次 |
+| 不透明度载体 | 顶点色 alpha（内建路径的白色 DYNAMIC carrier，桥逐帧改写） | 顶点色**不是**载体：loc2 作者色原样绑定，否则静态白；不透明度只走 `vine_draw` block（`buildGeometryData` 的 `opacity_carrier` 参数、桥的 `colors`/`last_opacity`、逐帧改写循环全删） |
+| 对比工具 | `vsg_probe`（用 vsg 的 phong/Builder 路径画图）、`vsg_shader_dump`（打印 vsg 内建 set 的声明） | 都删；§9 的档案是快照，§8.2 的过渡映射是历史 |
+
+判据：**自检证据基线 53 行逐字节不变**（这些地方改的是“值怎么到 GPU”，画面本来就已经走引擎自己的 set ⇒ 像素不该变，变了就是改错了）；`test_graphics` 248；`test_vsg` 251 → **247**；`vine_shader_check` PASS；lavapipe PASS（脚本从 4 段降到 2 段）。
+
+> 教训：`vsg::PhongMaterialValue` 那条路能工作，靠的是**两边字段次序恰好相同**——没有任何东西在检查它。同样地，`vsg_*` 名字回退让“外来 set”看起来被支持，而它连带要求“灯源按 set 选”，于是每个槽都要维护两套灯。**“能跑”和“说得出为什么能跑”的差距，就是这些地方。**
 
 > 注意：§11.3 / §11.5 / §11.6 里提到的 `--builtin`、内建基线、`vineForwardShaderEnabled()`、
 > `vsg_lights = !vineForwardShaderEnabled()` **都已删除/改写**（那几节记录的是当时的状态）。
