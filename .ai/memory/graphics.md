@@ -1,4 +1,11 @@
-﻿> 2026-09-13 **P0.C2：push 标注为 L1 的实现**：vsg `buildVineShaderSet` 的 push `pc` 在代码注释与头文档里写明
+﻿> 2026-09-13 **P10 前半：forward 路径透明度接通**：`vine_forward.frag` 在 `VINE_VERTEX_COLOR` 下加 `alpha *= v_color.a`（载体 alpha 由 SceneBridge 按 `cmd.opacity` 维护，与内建同机制）。
+> `buildStateGroup(..., opacity)`：`drop_color` 仅在 `opacity >= 1` 时成立（透明 drawable 必须绑载体）；opacity 跳 1 计入 state 身份（仅对自写 set，`shader_drops_derived_attributes_` 门控）。
+> 单测 +1（透明 → 4 条顶点绑定 + 片元文本含 `alpha *= v_color.a;`）；两条证据基线 47 行不变；test_vsg **239 → 240**、test_graphics 240；lavapipe PASS（churn 相位每 5 帧 opacity 1↔0.4，现在会重建 state wrapper）。
+> **未做（P10 后半）**：per-drawable 值改走 dynamic-offset UBO（省掉 per-vertex 重写，并让 `VineDrawBlock` 落地）。
+
+> 2026-09-13 **P0.S1：GLSL 块名对齐 L1**：`MaterialBlock`→`VineMaterialBlock`、`LightsBlock`→`VineLightsBlock`（gbuffer_geometry.frag / vine_forward.frag）；`ShaderAbiTest` +1 钉"契约名 == GLSL 块名"。行为中性；test_graphics 239 → **240**。
+
+> 2026-09-13 **P0.C2：push 标注为 L1 的实现**：vsg `buildVineShaderSet` 的 push `pc` 在代码注释与头文档里写明
 > `pc.projection ≡ VineViewBlock.proj`、`pc.modelView ≡ VineViewBlock.view * VineDrawBlock.model`（L2 实现，不是契约本身：`VineViewBlock` 288B > 128B push）。
 > `ForwardShaderSetTest` +1 钉住 shader 文本（`PushConstants` / `projection` / `modelView` / `} pc;`）与 `sizeof(VineViewBlock) > 128`。
 > 口径：行为中性；test_vsg 238 → **239**，两条证据基线不变。

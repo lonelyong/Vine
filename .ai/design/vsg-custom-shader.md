@@ -393,7 +393,7 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | --- | --- |
 | 转正（P0.3） | **已做（2026-09-13，§11.5 + §11.6）**：默认走自写 set，vsg `Light`/VDS 的 content 用法已去掉（`view->features` 收敛到 0），无作者色/UV 时不再喂白载体/零 UV |
 | 顶点色/贴图门控的收益 | **已做（2026-09-13，§11.6）**：forward set 在几何无作者色（且无作者 UV、材质无纹理）时**不 assign** 那两个数组 ⇒ define 关、少两条顶点绑定、少一次采样；白载体/零 UV 仍为内建/自定义 program 路径保留 |
-| opacity | 现在 `outColor.a = material.diffuse.a`（顶点色只调制 rgb）；P10 再决定材质值 + dynamic offset 的承载方式 |
+| opacity | **forward 已接（2026-09-13）**：`VINE_VERTEX_COLOR` 打开时 `alpha *= v_color.a`，载体 alpha 由 SceneBridge 按 `cmd.opacity` 维护（与内建路径同机制）；**完全不透明的 drawable 仍不绑该属性**（`drop_color` 仅在 `opacity >= 1` 时成立，opacity 跳 1 是 state 变化）。**剩余**：per-drawable 值改走 dynamic-offset UBO，届时连 per-vertex 重写也省掉 |
 | 阴影 / PBR / Flat | 仍走内建映射；§6 的 P1/P2 |
 | 自检相位命名 | **已做（P0.3）**：探针那两条改名 `variant 'default shading + …'`（它跑的是内容 set，不是某条固定路径），两条基线一起重生成 |
 
@@ -435,7 +435,7 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | 变体身份 | 是否丢属性会改变管线，故把 `(color_bound<<0)|(uv_bound<<1)` 并入 L2 variant 的 `layout` 哈希，避免同材质/状态但属性不同的几何复用同一条管线 |
 | 判据 | 两条证据基线 47 行**逐字节不变**（丢属性只省绑定/采样，画面等价：无作者色=白调制、白纹理=乘 1）；test_vsg **237**（+2：`ForwardSetDropsDerivedColourAndUvs` 断言 2 条顶点绑定 + 无采样器；`BuiltInSetKeepsTheFullCanonicalPrefix` 断言内建仍 4 条）；lavapipe 整体 PASS |
 
-**仍未做**：`opacity`（forward 只用 `material.diffuse.a`，顶点色 alpha 不再承载每 drawable 透明度 —— P10）；阴影 / PBR / Flat（§6 的 P1/P2）。
+**仍未做**：per-drawable 值改走 dynamic-offset UBO（P10 后半；opacity 已能工作，只是仍走 per-vertex 载体）；阴影 / PBR / Flat（§6 的 P1/P2）。
 
 
 ### 11.7 P0.A：内建前向着色归 SDK（2026-09-13）

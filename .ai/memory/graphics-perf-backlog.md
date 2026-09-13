@@ -206,4 +206,7 @@
   · `ShaderAbi.hpp` 落 `VineViewBlock`(288B)/`VineDrawBlock`(80B) + `static_assert`；`ShaderAbiTest` 钉 sizeof/offsetof。
   · 口径：行为中性（纯新增）；test_graphics 236→**239**。下一步 C2（vsg 标注 push ≡ 子集）。
   · **C2 落地（2026-09-13）**：vsg push `pc` 注释/头文档写明 `pc.projection ≡ VineViewBlock.proj`、`pc.modelView ≡ VineViewBlock.view * VineDrawBlock.model`；`ForwardShaderSetTest` +1 钉 shader 文本 + `sizeof(VineViewBlock) > 128`。行为中性；test_vsg 238→**239**。
+- **P0.S1 + P10 前半（2026-09-13）**：①GLSL 块名对齐 L1（`VineMaterialBlock`/`VineLightsBlock`，`ShaderAbiTest` 钉契约名==块名，test_graphics 240）；
+  ②**forward 路径透明度接通**：`alpha *= v_color.a` + `buildStateGroup(..., opacity)`（`drop_color` 仅 `opacity >= 1`；opacity 跳 1 计入 state 身份，仅对自写 set）⇒ 透明 drawable 绑载体，不透明的仍走门控变体。
+  · 口径：两条证据基线 47 行不变；test_vsg 239→**240**；lavapipe PASS（churn 相位 opacity 1↔0.4 现在会重建 wrapper）。未做：per-drawable dynamic-offset UBO。
 

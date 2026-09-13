@@ -191,19 +191,22 @@ bool pipelineSamplesATexture(const ::vsg::GraphicsPipeline& pipeline)
  *
  * @param shader_set Content set the bridge renders the triangle with.
  * @param root       Receives the retained root that keeps the built group alive.
+ * @param opacity    The drawable's effective opacity.
  * @return The pipeline bind the state group holds, or null.
  */
 const ::vsg::BindGraphicsPipeline* buildBareTriangleState(const ::vsg::ref_ptr<::vsg::ShaderSet>& shader_set,
-                                                          ::vsg::ref_ptr<::vsg::Group>&            root)
+                                                          ::vsg::ref_ptr<::vsg::Group>&            root,
+                                                          float                                    opacity = 1.0f)
 {
     vine::vsg::SceneBridge bridge;
     bridge.setShaderSet(shader_set);
     root          = ::vsg::Group::create();
     auto material = vine::graphics::MaterialPtr(new vine::graphics::Material());
 
-    std::vector<vine::graphics::RenderCommand> commands;
-    commands.emplace_back(makeBareTriangle(), material, vine::math::Mat4d());
-    std::vector<::vsg::ref_ptr<::vsg::Node>> created;
+    vine::graphics::RenderCommand command(makeBareTriangle(), material, vine::math::Mat4d());
+    command.opacity = opacity;
+    std::vector<vine::graphics::RenderCommand> commands{ std::move(command) };
+    std::vector<::vsg::ref_ptr<::vsg::Node>>   created;
     bridge.syncRenderCommands(commands, root.get(), &created);
     return findGraphicsPipeline(root.get());
 }
@@ -420,6 +423,34 @@ TEST(ForwardShaderSetTest, ForwardSetDropsDerivedColourAndUvs)
     ASSERT_NE(vertex_input, nullptr);
     EXPECT_EQ(vertex_input->vertexBindingDescriptions.size(), 2u); // positions + normals only
     EXPECT_FALSE(pipelineSamplesATexture(*bind->pipeline));
+}
+
+TEST(ForwardShaderSetTest, TranslucentDrawablesKeepTheOpacityCarrier)
+{
+    // The derived colour carrier holds the drawable's opacity in its alpha, so a
+    // translucent drawable must keep it bound even though the geometry authored no
+    // colour: dropping it would leave the fragment stage with nothing to scale alpha
+    // by. The texcoord stays bound too, because the colour's binding number (3) must
+    // keep matching the data node.
+    auto forward = makeForwardSet();
+    ASSERT_NE(forward, nullptr);
+
+    ::vsg::ref_ptr<::vsg::Group> root;
+    const auto*                  bind = buildBareTriangleState(forward, root, 0.5f);
+    ASSERT_NE(bind, nullptr);
+    ASSERT_NE(bind->pipeline, nullptr);
+    const auto* vertex_input = findVertexInputState(*bind->pipeline);
+    ASSERT_NE(vertex_input, nullptr);
+    EXPECT_EQ(vertex_input->vertexBindingDescriptions.size(), 4u);
+
+    // Binding the carrier only helps if the shader consumes its alpha; pin that the
+    // SDK's forward fragment stage does.
+    const auto program = vine::graphics::builtinProgram(vine::graphics::ShaderPreset::StandardPhong);
+    ASSERT_NE(program, nullptr);
+    ASSERT_EQ(program->stageCount(), 2u);
+    const auto* fs_stage = program->stage(1);
+    ASSERT_NE(fs_stage, nullptr);
+    EXPECT_NE(fs_stage->source.stdstr().find("alpha *= v_color.a;"), std::string::npos);
 }
 
 TEST(ForwardShaderSetTest, BuiltInSetKeepsTheFullCanonicalPrefix)

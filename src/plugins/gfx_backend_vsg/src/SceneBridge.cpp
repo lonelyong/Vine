@@ -83,6 +83,11 @@ SceneBridge::~SceneBridge() = default;
 void SceneBridge::setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet)
 {
     shader_set_ = shaderSet;
+    // Our own forward set declares the gated canonical attributes and marks itself with
+    // the vine_lights binding; the built-in and user-program sets declare the canonical
+    // attributes unconditionally, so nothing is ever dropped there.
+    shader_drops_derived_attributes_ =
+        shader_set_ != nullptr && static_cast<bool>(shader_set_->getDescriptorBinding("vine_lights"));
 }
 
 void SceneBridge::setMaterialManager(vine::raw_ptr<VsgMaterialManager> manager)
@@ -217,6 +222,11 @@ struct SceneBridge::Item {
     ::vsg::dmat4 last_matrix;
     bool matrix_valid = false;
     float last_opacity = -1.0f;  // sentinel forces the first write
+    // Whether the retained state wrapper was built for a FULLY OPAQUE drawable. The
+    // derived colour carrier carries the opacity in its alpha, so the wrapper keeps or
+    // drops that attribute depending on it: an opacity crossing 1 is a STATE change
+    // (the pipeline's vertex inputs change), not just a value write.
+    bool wrapper_opacity_opaque = true;
     // Consecutive frames this geometry was absent (hidden/culled/removed).
     std::uint32_t absent_frames = 0;
 };
@@ -517,22 +527,28 @@ bool SceneBridge::syncRenderCommands(
             !had_node || item->revision != geometry->revision() ||
             item->topology != state.topology ||
             (has_loc2 && (item->program.get() == nullptr) != (cmd.program.get() == nullptr));
+        // An opacity crossing 1 changes what the pipeline must bind only on the set that
+        // drops the derived colour carrier; every other set binds it always, so there an
+        // opacity edit stays a value write (the per-command carrier rewrite).
+        const bool opacity_changes_state =
+            shader_drops_derived_attributes_ && item->wrapper_opacity_opaque != (cmd.opacity >= 1.0f);
         const bool state_dirty = !had_node || item->material.get() != cmd.material.get() ||
                                  item->texture.get() != texture ||
                                  item->texture_revision != texture_revision ||
                                  item->render_state != state ||
                                  item->program.get() != cmd.program.get() ||
-                                 item->program_revision != program_rev;
+                                 item->program_revision != program_rev || opacity_changes_state;
         if (data_dirty || state_dirty) {
-            item->revision         = geometry->revision();
-            item->topology         = state.topology;
-            item->material         = cmd.material;
-            item->texture          = vine::intrusive_ptr<const vine::graphics::Texture>(texture);
-            item->texture_revision = texture_revision;
-            item->render_state     = state;
-            item->program          = cmd.program;
-            item->program_revision = program_rev;
-            changed                = true;
+            item->revision                = geometry->revision();
+            item->topology                = state.topology;
+            item->material                = cmd.material;
+            item->texture                 = vine::intrusive_ptr<const vine::graphics::Texture>(texture);
+            item->texture_revision        = texture_revision;
+            item->render_state            = state;
+            item->program                 = cmd.program;
+            item->program_revision        = program_rev;
+            item->wrapper_opacity_opaque  = cmd.opacity >= 1.0f;
+            changed                       = true;
         }
 
         // A data rebuild may have changed the forwarded custom-channel SET
@@ -736,7 +752,8 @@ bool SceneBridge::syncRenderCommands(
             retireNode(std::move(item->state_node));
             item->state_node = buildStateGroup(item->data_node, item->material.get(),
                                                item->texture.get(), item->render_state,
-                                               item->program.get(), item->extra_channels, &item->derived);
+                                               item->program.get(), item->extra_channels, &item->derived,
+                                               cmd.opacity);
             if (item->state_node == nullptr) {
                 cache_.erase(it);
                 continue;

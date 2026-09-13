@@ -353,7 +353,8 @@ namespace
     const vine::graphics::ResolvedRenderState& state,
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
     const std::vector<VertexChannel>& extra_channels,
-    const DerivedChannels* derived)
+    const DerivedChannels* derived,
+    float                  opacity)
 {
     if (data == nullptr) {
         return ::vsg::ref_ptr<::vsg::StateGroup>();
@@ -400,11 +401,15 @@ namespace
     // the sampler share `VINE_DIFFUSE_MAP`, so UVs go only when the texture is the white fallback, and only
     // together with the colour: dropping vsg_TexCoord0 alone would renumber vsg_Color's binding away from
     // the fixed canonical index the data node bound it at (see the assign order below).
+    //
+    // The colour is only droppable while the drawable is FULLY OPAQUE: the derived
+    // carrier holds the drawable's opacity in its alpha, so a translucent drawable
+    // needs the attribute the fragment stage scales its alpha by.
     auto arrays = boundArraysOf(data);
     const bool forward_set =
         program == nullptr && static_cast<bool>(shaderSet->getDescriptorBinding("vine_lights"));
     const bool drop_color = forward_set && derived != nullptr && arrays.size() > 3u && arrays[3] != nullptr &&
-                            arrays[3] == derived->white_colors;
+                            arrays[3] == derived->white_colors && opacity >= 1.0f;
     const bool drop_uv = drop_color && derived != nullptr && arrays.size() > 2u && arrays[2] != nullptr &&
                          arrays[2] == derived->zero_texcoords && texture_reason != detail::TextureReject::Ok;
     if (drop_color) {

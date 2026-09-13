@@ -47,10 +47,12 @@ void main()
     alpha *= texel.a;
 #endif
 #ifdef VINE_VERTEX_COLOR
-    // Authored vertex colour MODULATES the material (it is not the opacity
-    // carrier it used to be on the built-in path): tinting an object must not
-    // make it translucent.
+    // Vertex colour MODULATES the albedo, and its alpha is the per-drawable opacity:
+    // SceneBridge keeps the carrier's alpha in step with the drawable's opacity,
+    // exactly as the built-in path does. A fully opaque drawable does not bind this
+    // attribute at all (the set drops it), which is why both uses are gated.
     albedo *= v_color.rgb;
+    alpha *= v_color.a;
 #endif
     vec3 color = albedo * (lights.ambient.rgb * lights.ambient.a);
     float shininess = max(material.shininess, 1.0);

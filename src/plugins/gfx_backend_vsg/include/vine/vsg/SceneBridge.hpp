@@ -649,6 +649,9 @@ class V_VSG_API SceneBridge {
      *                       or null when the caller cannot say. Used only to decide whether OUR forward
      *                       set may take the variant WITHOUT a canonical attribute: a derived array (the
      *                       geometry authored none) is dropped, an authored one is never.
+     * @param opacity        The drawable's effective opacity. The derived colour carrier holds it in its
+     *                       alpha, so the carrier may only be dropped when @p opacity is 1: a translucent
+     *                       drawable needs the attribute the shader scales its alpha by.
      * @return State wrapper, or null when not buildable.
      */
     ::vsg::ref_ptr<::vsg::StateGroup> buildStateGroup(
@@ -658,7 +661,8 @@ class V_VSG_API SceneBridge {
         const vine::graphics::ResolvedRenderState& state,
         vine::raw_ptr<const vine::graphics::ShaderProgram> program,
         const std::vector<VertexChannel>& extra_channels,
-        const DerivedChannels* derived = nullptr);
+        const DerivedChannels* derived = nullptr,
+        float                  opacity = 1.0f);
 
     /** @brief Gets (and caches) the run-time compiled ShaderSet for a program.
      *
@@ -762,6 +766,11 @@ class V_VSG_API SceneBridge {
                                  const std::vector<vine::graphics::RenderCommand>& commands);
 
     ::vsg::ref_ptr<::vsg::ShaderSet> shader_set_;
+    // Whether shader_set_ is OUR forward set — the one that drops a DERIVED canonical
+    // attribute behind its define. Only there can a drawable's opacity change which
+    // vertex inputs the pipeline needs (the derived colour carrier holds the opacity),
+    // so only there is the opaque/translucent class part of the state identity.
+    bool shader_drops_derived_attributes_ = false;
     // Pass-level depth policy applied to commands that did not author depth
     // (see setContentDepthMode); part of the retained state identity, so
     // changing it invalidates the state wrappers.
