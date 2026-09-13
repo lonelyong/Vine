@@ -200,13 +200,13 @@ inline constexpr bool normalIsUsable(float length_sq) noexcept
 /**
  * @brief Builds the array the texcoord binding reads for a canonical texcoord channel.
  *
- * The slot carries a WIDTH, and for the ENGINE's own shading preset the width is what selects the sampler:
+ * The slot carries a WIDTH, and for the ENGINE's own forward program the width is what selects the sampler:
  *
  *   - TWO scalars per vertex: a UV pair for a 2-D map (`R32G32_SFLOAT`, `sampler2D`);
  *   - THREE scalars per vertex: a cube direction for a cube map (`R32G32B32_SFLOAT`, `samplerCube`).
  *
  * A program of its own may read the same three numbers as anything (a volume coordinate, a weight triple);
- * this array states the width, and the engine's preset is the layer that interprets it.
+ * this array states the width, and the engine's own program is the layer that interprets it.
  *
  * The array STATES its own format (@ref vsg::Data::Properties::format) rather than leaving that to
  * the binding declaration, because ONE ShaderSet declares this slot and serves both kinds: vsg takes
@@ -226,8 +226,8 @@ inline constexpr bool normalIsUsable(float length_sq) noexcept
  * @brief Whether a bound texcoord array is three scalars wide.
  *
  * The width is read back off the ARRAY the data node bound — the same object the pipeline takes its vertex
- * format from — so one statement of it cannot disagree with the data. The engine's own preset reads that
- * width as a cube direction (see texCoordArray).
+ * format from — so one statement of it cannot disagree with the data. The engine's own forward program
+ * reads that width as a cube direction (see texCoordArray).
  *
  * @param array Array bound at the texcoord binding.
  * @return true when it is an xyz array, false for an xy one.

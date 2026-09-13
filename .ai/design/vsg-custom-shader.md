@@ -2,6 +2,16 @@
 
 > 状态：设计稿 v1（2026-09-03）
 > 2026-09-03 已落地：语义着色预置 `ShaderPreset` + 到 vsg 内建 set 的过渡映射，并完成像素验证（见 §8）。
+> **2026-09-13 变更（推翻 §8 的枚举）**：`ShaderPreset` **已删除**，着色只能**显式指定 program**，且**没有兜底**。
+> - 会话级入口：`RenderEngine::setContentProgram(intrusive_ptr<const ShaderProgram>)` / `contentProgram()`
+>   （引擎默认就是命名的 `forwardProgram()`，构造函数里定好，`initialize()` 前转发给后端；运行中设置立即转发）。
+> - 内建程序工厂（`BuiltinShaders.hpp`）：`forwardProgram()`（`vine_forward.*`）与 `flatForwardProgram()`
+>   （同一对 stage，片元源注入 `#define VINE_FLAT 1`）。原来的 `builtinProgram(preset)` 与
+>   `Pbr` / `ShadowedPhong` 两个"保留项"一起消失——**没落地的着色不再有名字**。
+> - 后端**没有默认**：`makeContentShaderSet(program)` 在 `program == nullptr` 或它没有可编译的 stage 时
+>   返回 null，调用方报一条 diagnostic 并**不画**（"declined, not substituted"，见 §8.3）。
+> - `flat` 不等于 unlit：它仍然是光照着色，只是法线换成屏幕空间导数的**面法线**（§8 的老注释是错的）。
+> - 证据：`vsg_selftest_evidence.sh` 基线 53 行逐字节不变（除三条改词），两条像素门禁 42 / 765 / 255,255,255 数字不变。
 > 关联：`graphics-lighting.md`、`graphics-shadow.md`、`vsg-design.md`、`render-pipeline-builder.md`
 >
 > **一句话**：材质 / 光照 / 阴影 / 着色语义全部归 `graphics`（我们），vsg 只保留
@@ -51,9 +61,10 @@
 ## 4. Shader ABI 草案
 
 ### 4.1 管线构建
-`buildVineShaderSet(ShaderPreset preset, extent, depth_test)` 取代 `buildShaderSet()`：
-- `ShaderPreset`（graphics 语义枚举，见 §8）是**着色轴的选择键**；未来每个 preset 产出自己的
-  stages / bindings（Phong / Flat / PBR / Shadowed 变体）。
+`buildVineShaderSet(program, extent, depth_test)` 取代 `buildShaderSet()`：
+- **程序是着色轴的唯一选择键**（2026-09-13 起：没有 `ShaderPreset` 枚举）：每个 program 产出自己的
+  stages / bindings（内建 `forwardProgram()` / `flatForwardProgram()`，宿主也可以自己写）；
+  用不了的 program（null / 无可用 stage）产出 null ⇒ 调用方报一条 diagnostic 并**不画**。
 - 用 `ShaderCompiler` 编译自写 GLSL 450 VS/FS（运行时）；
 - 装配与现状相同的 default states（depth/raster/cull-none/blend/inputAssembly/multisample/viewport）；
 - 自写 binding 命名避免与 vsg view-dependent 名冲突（`vine_*` 前缀）。
@@ -128,30 +139,37 @@ mat4  shadow_matrix;   // 仅 castShadow 有效
   `graphics-shadow.md` §10）；blob phong 不可改。
 - ABI 后端无关，作为未来 Diligent / 自研 Vulkan 后端的接缝。
 
-## 8. ShaderPreset 语义与过渡映射（2026-09-03 已落地 + 像素验证）
+## 8. 着色语义与过渡映射（2026-09-03 落地；**2026-09-13 枚举已被删除**）
 
-### 8.1 语义枚举（graphics SDK，后端无关）
+> **读这一节前先看第 4 行起的变更说明**：8.1 的 `ShaderPreset` 枚举已经不存在。下面保留原文，
+> 因为它记录了“为什么当初这么设计”和一条**今天仍然成立**的事实：**slot 的 shader set 是建 slot
+> 时烘进去的**（程序 + 要喂哪个光源 + 读哪些 View features），所以运行中换着色必须重建着色侧。
+> 今天这个动作由 `VsgRenderer::setContentProgram(program)` 执行（原来是 `setShaderPreset`）。
+
+### 8.1 语义枚举（graphics SDK，后端无关）—— 【已删除，见头部变更】
 `sdk/vine/graphics/ShaderPreset.hpp`：
 
 ```cpp
-enum class ShaderPreset { StandardPhong, FlatShaded, Pbr, ShadowedPhong };
+enum class ShaderPreset { StandardPhong, FlatShaded, Pbr, ShadowedPhong };   // 现已删除
 ```
 
 - **StandardPhong**：lit Phong（diffuse/specular/ambient）——当前默认。
-- **FlatShaded**：unlit 平面着色（常量色）。
+- **FlatShaded**：lit + **面法线**（屏幕空间导数），**不是 unlit**（老注释写错了）。
 - **Pbr** / **ShadowedPhong**：**预留**，暂无后端实现（见下）。
 - 归属：**渲染配置**（`RenderEngine` 持有，`setShaderPreset/shaderPreset`），初始化前转发后端
   （`RenderBackend::setShaderPreset` 默认 no-op）。**不放进 RenderPipelineBuilder**——preset 是
   "几何怎么着色"的着色轴，与 pass 拓扑（builder）正交；builder 仍是纯配方层。
+  → **2026-09-13**：同一句话里把“preset”换成 **program**，入口是 `setContentProgram/contentProgram`，
+  后端 `RenderBackend::setContentProgram` 默认 no-op，且**后端没有默认值**（null ⇒ 报 + 不画）。
 - **会话中途切换（2026-09-13 落地）**：preset 不再只是"initialize 前的一次性决定"。一个 slot 的
   shader set 是**建 slot 时烘进去的**，而 set 带的不只是"哪个程序"：还有"这个 slot 要喂哪个光源"
   （`SceneBridge::hasOwnLightsBlock`）和该程序读哪些 View features。三者都无法事后打补丁，所以
-  `VsgRenderer::setShaderPreset` 在已初始化的会话上做的是**重建着色侧**：重建 window 三套 set
+  `VsgRenderer::setContentProgram` 在已初始化的会话上做的是**重建着色侧**：重建 window 三套 set
   （on/testonly/off）+ 丢掉每个 target 的 `content_slots`（经 `detail::resetContentShaderSlots`，
   走 `detachSlotView` + `clearCache()`，带计数设备等待）并清掉 target 自己烘的 `depth_*_shader_set`。
-  下一帧各 pass 的懒建 slot 就用新 preset 重建。**attachments / pass graph / 深度历史不动**——
-  宿主看到的是"同一张图换了着色"，不是"会话重开"。像素门禁 `runLivePresetSwitchPixelPhase`：
-  同一个 target+slot 连画三次（smooth 42 → 切 FlatShaded 765 → 切回 smooth 42），第三段把
+  下一帧各 pass 的懒建 slot 就用新 program 重建。**attachments / pass graph / 深度历史不动**——
+  宿主看到的是"同一张图换了着色"，不是"会话重开"。像素门禁 `runLiveContentProgramSwitchPixelPhase`：
+  同一个 target+slot 连画三次（forward 42 → 切 `flatForwardProgram()` 765 → 切回 forward 42），第三段把
   "只往前不回头"的实现钉死；关掉重建（变异验证）两段都报错。
 
 ### 8.2 过渡映射（vsg 内建 set，待 P0 自写替换）
@@ -177,9 +195,8 @@ enum class ShaderPreset { StandardPhong, FlatShaded, Pbr, ShadowedPhong };
 - 验证入口：`./build/bin/Vine`（非 install 副本），xwd 抓子窗口 + 自写 XWD→PNG 解码。
 
 ### 8.4 与 §4/§6 的关系
-- P0 自写 `buildVineShaderSet(ShaderPreset, ...)` 时，StandardPhong 须先复刻当前 phong 输出
-  （§6 P0 A/B 对照）；届时 FlatShaded/Pbr/ShadowedPhong 各自产出自写 stages/bindings，
-  过渡映射（8.2）退役。
+- P0 自写 `buildVineShaderSet(program, ...)` 时，`forwardProgram()` 须先复刻当前 phong 输出
+  （§6 P0 A/B 对照）；届时 flat / 其他独立 stages/bindings 各自产出，过渡映射（8.2）退役。
 
 ## 9. vsg 内建 ShaderSet 输入约定（参考档案）
 
@@ -265,7 +282,7 @@ RecordTraversal 每个 drawable 绘制前自动填 → 自定义 program 路径�
 
 | 归属 | 目录 | 生成的头文件 | 命名空间 | 谁在用 |
 | --- | --- | --- | --- | --- |
-| graphics SDK（内建 program） | `src/viz/graphics/shaders/` | `vine/graphics/EmbeddedShaders.hpp` | `vine::graphics::shaders` | `BuiltinShaders`（`builtinProgram(preset)` 前向着色 + gbuffer 几何 / 全屏光照）；`RenderPipelineBuilder` 是它的别名 |
+| graphics SDK（内建 program） | `src/viz/graphics/shaders/` | `vine/graphics/EmbeddedShaders.hpp` | `vine::graphics::shaders` | `BuiltinShaders`（`forwardProgram()` / `flatForwardProgram()` 前向着色 + gbuffer 几何 / 全屏光照）；`RenderPipelineBuilder` 是它的别名 |
 | vsg 后端（自有阶段） | `src/plugins/gfx_backend_vsg/shaders/` | `vine/vsg/EmbeddedShaders.hpp` | `vine::vsg::shaders` | `VsgPipelineFactory`（overlay / PiP 全屏三角形）。**前向着色已不在这里**（2026-09-13 起归 SDK，见 §11.7） |
 
 约定：
@@ -351,11 +368,13 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 ### 11.1 落地形态
 
 - 着色器：**SDK** `src/viz/graphics/shaders/vine_forward.{vert,frag}`（P0.A 起；后端经 `BuiltinShaders.hpp` 的
-  `builtinProgram(preset)` 取源并编译，见 §11.7；走 §10 的文件 + 嵌入机制；
-  `VINE_VERTEX_COLOR` / `VINE_DIFFUSE_MAP` 两个门控）。
-- 组装：`detail::buildVineShaderSet(preset, extent, depth_test, depth_write, color_count)`
-  （`VsgPipelineFactory.cpp`），只对 `StandardPhong` 返回非空 —— 其它 preset 宁可用内建 set，
-  也不要“被当成 phong 静默着色错”。
+  `forwardProgram()` / `flatForwardProgram()` 取源并编译，见 §11.7；走 §10 的文件 + 嵌入机制；
+  `VINE_VERTEX_COLOR` / `VINE_DIFFUSE_MAP` / `VINE_TEXCOORD_CUBE` / `VINE_FLAT` 四个门控）。
+- 组装：`detail::buildVineShaderSet(program, extent, depth_test, depth_write, color_count)`
+  （`VsgPipelineFactory.cpp`）：**有可用 stage 才返回非空**，否则 null ⇒ 调用方报一条 diagnostic
+  且**不画**（2026-09-13 起没有“回落到内建 set”这一说了）。
+- （历史）当时只对 `StandardPhong` 返回非空 —— 其它 preset 宁可用内建 set，也不要“被当成 phong 静默着色错”；
+  2026-09-13 把“宁可用内建 set”改成“宁可什么都不画并报出来”。
 - ABI（**取代 §4.2 草案的 set 布局**）：
 
 | 位置 | 内容 | 谁填 |
@@ -459,9 +478,9 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 “vsg 的”两套；灯源（`vine_lights` vs vsg 的 view-dependent lightData）、属性位置、`ViewFeatures`
 的差异面随之消失；宿主拿到的着色一定可解释。
 
-**未完**：Pbr / ShadowedPhong 的**真程序**（PbrMaterialValue + IBL / shadow map）仍未落地，在那之前
-它们是“前向模型 + 一条提示”。vsg 的 `Light` / `ViewDependentState` 现在只在**外来 set** 被注入时才
-需要（`SceneBridge::hasOwnLightsBlock()` 仍是每 set 的判断）。
+**未完**：PBR / shadowed 的**真程序**（PbrMaterialValue + IBL / shadow map）仍未落地；2026-09-13 起它们
+**不再有名字**（枚举删除），宿主需要就在自己的 `ShaderProgram` 里写。vsg 的 `Light` / `ViewDependentState`
+现在只在**外来 set** 被注入时才需要（`SceneBridge::hasOwnLightsBlock()` 仍是每 set 的判断）。
 
 > 注意：§11.3 / §11.5 / §11.6 里提到的 `--builtin`、内建基线、`vineForwardShaderEnabled()`、
 > `vsg_lights = !vineForwardShaderEnabled()` **都已删除/改写**（那几节记录的是当时的状态）。
@@ -502,11 +521,15 @@ texture/mesh cache 同一契约），桥的析构**不得**碰池。
 
 ### 11.7 P0.A：内建前向着色归 SDK（2026-09-13）
 
+> **2026-09-13 后续变更**：这一节里的 `builtinProgram(ShaderPreset)` 已被
+> `forwardProgram()` / `flatForwardProgram()` 取代（枚举删除），`VsgPipelineFactory::compiledStages(program)`
+> 现在按 **program 指针** 缓存（map 的 value **拥有** 那个 program）。下表保留当时的落点记录。
+
 | 环节 | 落点 |
 | --- | --- |
 | 文件搬家 | `vine_forward.{vert,frag}`：`src/plugins/gfx_backend_vsg/shaders/` → **`src/viz/graphics/shaders/`**；清单 `cmake/VineShaders.cmake` 两条随之移到 `vine/graphics/EmbeddedShaders.hpp`（嵌入数 3 → **5**，vsg 4 → **2**） |
-| SDK 入口 | 新增 `BuiltinShaders.hpp/.cpp`：`builtinProgram(ShaderPreset)`（preset → 内建 program，未实现的 preset 返回 null）+ `gbufferGeometryProgram()` / `deferredLightProgram()`（从 `RenderPipelineBuilder` 搬来；builder 的两个静态工厂改为**转发**，公开 API 不变） |
-| 后端 | `VsgPipelineFactory::compiledStages(preset)`：取 `builtinProgram(preset)` 的 stages 编译（**每 preset 缓存一次**，空则 decline）；`buildVineShaderSet` 不再自带 GLSL、不再用 `preset != StandardPhong` 硬判 |
+| SDK 入口 | 新增 `BuiltinShaders.hpp/.cpp`：`builtinProgram(ShaderPreset)`（preset → 内建 program，未实现的 preset 返回 null）→ **现为** `forwardProgram()` / `flatForwardProgram()`；另有 `gbufferGeometryProgram()` / `deferredLightProgram()`（从 `RenderPipelineBuilder` 搬来；builder 的两个静态工厂改为**转发**，公开 API 不变） |
+| 后端 | `VsgPipelineFactory::compiledStages(preset)`：取 `builtinProgram(preset)` 的 stages 编译（**每 preset 缓存一次**，空则 decline）；`buildVineShaderSet` 不再自带 GLSL、不再用 `preset != StandardPhong` 硬判 → **现为** `compiledStages(program)`，缓存键 `(program 指针, 变体 hash)` |
 | 判据 | **行为中性**：两条证据基线 47 行逐字节不变；`vine_shader_check.sh` PASS（7 shader）；test_graphics 234 → **235**（+1：`builtinProgram(StandardPhong)` 用嵌入源、Pbr/ShadowedPhong 返回 null）、test_vsg 237 → **238**（+1：vsg 表**不含** `vine_forward.*`，钉住归属边界）；lavapipe PASS |
 
 **边界**：SDK 拥有**着色文本**（L3）；后端拥有**编译 + ABI 绑定 + 管线**（L2）。`ShaderSet` 仍是 vsg 后端内部机制，不进 SDK。下一步（P0.B）：把 ABI 契约（属性角色 / `VineFrame`・`VineDraw` / 参数・槽表）也移到 SDK，为换后端铺路。
@@ -541,3 +564,25 @@ texture/mesh cache 同一契约），桥的析构**不得**碰池。
 `addBuffer(kTexCoordLocation, …)` 蒙过去）；③ `aliasArray()` 的注释声称格式由元素类型推断，
 实际 **vsg 的 `Array::assign` 只设 stride，format 保持 UNDEFINED**，pipeline 的顶点格式来自
 binding 声明 —— 一个 ShaderSet 服务两种形状时，必须由阵列陈述 `properties.format`。
+
+### 11.10 着色只能显式指定 program：删除 `ShaderPreset`，且不兜底（2026-09-13）
+
+**决定**："不要兜底，必须显示指定着色器"。`ShaderPreset` 枚举**删除**，`RenderEngine::setContentProgram`
+成为唯一的会话级着色入口；后端**没有默认值**，没有可用 set 的 drawable **不画**并报出来。
+
+**为什么删掉枚举**：枚举和 program 本来就是同一个模型的两套入口，而枚举里
+`Pbr` / `ShadowedPhong` 两个"保留项"其实**什么都不是**——后端对它们的回应是"没有程序"。
+留着这两个名字等于对宿主承诺了一种兜底语义（"没有实现的预设会回落到 StandardPhong"），
+而那条兜底恰恰是我们要禁掉的东西：宿主拿到一张自己没要、也认不出的画面，比拿到一张空的、
+带原因的画面更糟。宿主自己的着色用枚举根本表达不了，所以最终形态只剩一种：**命名一个 program**。
+
+| 环节 | 落点 |
+| --- | --- |
+| SDK 工厂 | `BuiltinShaders.hpp/.cpp`：`builtinProgram(ShaderPreset)` → **`forwardProgram()`**（名字 `vine_forward`）与 **`flatForwardProgram()`**（名字 `vine_flat`，与 forward **同一对 stage**，片元源 `withDefine(frag, "#define VINE_FLAT 1")`）。文档同时写明：**程序是选择着色的唯一方式**，以及 **flat 不是 unlit**（老注释写错了，实测同一 quad 765 vs 42） |
+| 引擎 | `RenderEngine::setContentProgram(intrusive_ptr<const ShaderProgram>)` / `contentProgram()`；字段 `content_program_`，**构造函数里定成 `forwardProgram()`**（默认不是"没有"），`initialize()` 前转发，运行中设置**立即转发**（旧实现只在 initialize 前生效，之后再设是静默 no-op） |
+| 后端接口 | `RenderBackend::setContentProgram(...)` 默认 no-op（能加载 ≠ 必须实现着色）；`VsgRenderer::setContentProgram` 在活会话上做**重建着色侧**（window 三套 set + `detail::resetContentShaderSlots`），与 §8.1 里 `setShaderPreset` 的动作逐字相同 |
+| 后端（vsg） | `VsgPipelineFactory`：`buildVineShaderSet(program, …)` / `makeContentShaderSet(program, …)` / `compiledStages(program)`，缓存 map 的 key 是 `(program 指针, 变体 hash)`，value **拥有** 那个 program（`nullptr` 或"没有可用 stage"⇒ 返回 null）；`VsgContentSlot` 报一条会话级诊断（**每会话一次**）并且**不画**；`SceneBridgePipeline` 对没 set 的 slot 同样报 + 丢 |
+| 管线的占位预设 | 顺手补了同一类谎：`PipelinePreset::ForwardShadowed/DeferredShadowed` 今天装配的就是无阴影版本。现在 `RenderPipelineBuilder::build` 会报一条 `DiagnosticCategory::UnsupportedRequest`（新枚举值；为了让 builder 能走引擎的 sink，`RenderEngine::reportEngineProblem` 从 private 移到 public） |
+| selftest | 两个相位改名（`runProgramShadingPixelPhase` / `runLiveContentProgramSwitchPixelPhase`）；**启动时先 `backend->setContentProgram(forwardProgram())` 再 `initialize()`**（后端不再有默认；晚设会让起来后的那 30 帧无程序可画，而且会多报一串诊断） |
+| 单元门禁 | `ForwardShaderSetTest` 四处结构性改写（`OnlyProgramsWithUsableStagesGetASet`、`AProgramWithNoUsableStagesIsDeclinedNotSubstituted`、`EveryContentSetIsTheEnginesOwn`、`TheLightSourceFollowsTheSlotSetNotTheSession`、`TheFlatProgramReusesTheForwardStagesWithItsDefine`）；`GraphicsTest::ContentProgramForwardedToBackend`（含"运行中也要被告知"与"null 是合法答案"）；新增 `RenderPipelineBuilderTest::ShadowedPresetsReportThatTheyArePlaceholders` |
+| 判据 | 证据基线 53 行**逐字节不变，只改了 3 行的词**（`preset shading:` / `live preset switch:` → `program shading:` / `live program switch:`），**所有数字原样**：`42` / `765` / `(255,255,255)` / `(10,20,30)`——即画面完全没动；test_graphics 247 → **248**（+1，变异验证：关掉 `reportEngineProblem` 该测试必失败）；test_vsg **252 不变**（改写而非新增）；`vine_shader_check.sh` PASS；`check_diagnostic_formats.py` 0 suspicious；lavapipe PASS；ctest 仅 3 个既有失败（test_cppstd / test_runtime / test_system） |

@@ -14,7 +14,7 @@
 
 #include "FrameContext.hpp"
 #include "RenderDiagnostic.hpp"
-#include "ShaderPreset.hpp"
+#include "BuiltinShaders.hpp"
 
 V_GRAPHICS_NS_BEGIN
 
@@ -117,6 +117,22 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     [[nodiscard]] std::size_t engineDiagnosticCount() const noexcept;
 
+    /** @brief Reports one problem the engine, or a helper acting for it, found.
+     *
+     * The engine owns the host's sink, so the message reaches the host whether or
+     * not a backend is set (a wiring problem exists before any backend draws).
+     * Counted in engineDiagnosticCount(). Public because the engine's own builders
+     * report through it too — RenderPipelineBuilder tells the host that a shadowed
+     * PipelinePreset is a placeholder and the pipeline it assembled is unshadowed.
+     *
+     * @param severity How bad the situation is.
+     * @param category What it is about.
+     * @param message  Human-readable detail, naming the pass and the slot.
+     */
+    void reportEngineProblem(vine::graphics::DiagnosticSeverity severity,
+                             vine::graphics::DiagnosticCategory category,
+                             const String&                message);
+
     /** @brief Initializes the backend.
      *
      * @return true when the backend initialized successfully.
@@ -164,20 +180,22 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     bool hasWindowPass(raw_ptr<Camera> camera) const;
 
-    /** @brief Sets the shading-model preset for scene geometry.
+    /** @brief Sets the program that content naming no program of its own is shaded with.
      *
-     * Forwarded to the backend. Set before initialize() it is the session's shading model; set
-     * on a running session the backend re-bakes the shading side and the next frame's passes
-     * draw with the new preset (RenderBackend::setShaderPreset documents what a live switch
-     * rebuilds). Presets without a backend implementation (Pbr / ShadowedPhong) fall back to
-     * StandardPhong until their slice lands. The default is StandardPhong.
+     * Forwarded to the backend (before initialize() it is the session's decision; on a running
+     * session the backend re-bakes the shading side, see RenderBackend::setContentProgram).
      *
-     * @param preset Shading-model preset.
+     * The engine's default is forwardProgram(): a NAMED program, chosen once in the constructor, not
+     * a lookup that hides which shading a scene gets. Hand it flatForwardProgram() to shade such
+     * content flat, or null to decline it outright — content without its own program is then reported
+     * and not drawn, never shaded with something the host did not name.
+     *
+     * @param program Program to use, or null for none.
      */
-    void setShaderPreset(ShaderPreset preset);
+    void setContentProgram(intrusive_ptr<const ShaderProgram> program);
 
-    /** @brief Gets the shading-model preset. */
-    ShaderPreset shaderPreset() const;
+    /** @brief Gets the program content without its own program is shaded with (null when declined). */
+    intrusive_ptr<const ShaderProgram> contentProgram() const;
 
     /** @brief Registers a scene render pass executed every frame.
      *
@@ -379,20 +397,6 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     void publishFrameOutput(const String& name, intrusive_ptr<RenderTarget> target);
 
-    /** @brief Reports one problem the engine found in the pass wiring.
-     *
-     * The engine owns the host's sink, so the message reaches the host whether
-     * or not a backend is set (a wiring problem exists before any backend
-     * draws). Counted in engineDiagnosticCount().
-     *
-     * @param severity How bad the situation is.
-     * @param category What it is about.
-     * @param message  Human-readable detail, naming the pass and the slot.
-     */
-    void reportEngineProblem(vine::graphics::DiagnosticSeverity severity,
-                             vine::graphics::DiagnosticCategory category,
-                             const String&                message);
-
     /** @brief One registered draw slot in the engine's ordered pass list.
      *
      * A slot draws its bound @p content each frame; content may be null (a
@@ -503,7 +507,9 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     // Stored by the engine (not only forwarded) so a backend set later still
     // receives the host's diagnostics.
     DiagnosticSink                      diagnostic_sink_;
-    ShaderPreset                        shader_preset_{ ShaderPreset::StandardPhong };
+    // The shading a drawable that names no program gets. A named program, not an enum: set once in
+    // the constructor to forwardProgram(), replaced by setContentProgram(), and null means "decline".
+    intrusive_ptr<const ShaderProgram>  content_program_;
     std::vector<Slot>                   slots_;         // uniform ordered draw registry
     FrameContext                        frame_ctx_;
     // Monotonic content-frame token, announced to every rendered scene each

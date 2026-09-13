@@ -363,8 +363,10 @@ auto pipeline = builder.build(PipelinePreset::Deferred, PipelineOptions{
 });
 pipeline->resize(surface_w, surface_h);            // 同时管离屏 / 合成 target 与 HUD 叠加
 
-// 场景 pass 可以带自己的 program（等价于手写的 setProgramOverride）：
-engine.setShaderPreset(ShaderPreset::FlatShaded);
+// 内容着色：必须**显式指定**程序。没有 shader preset 枚举，也没有兜底——
+// 引擎默认用的是命名的 forward 程序（flat 是它的同一对 stage + `#define VINE_FLAT 1`）：
+engine.setContentProgram(flatForwardProgram());   // 会话级：没写 program 的 drawable 用它
+engine.setContentProgram(forwardProgram());       // 回到默认前向着色
 
 // 离屏 + 画中画（内部就是 §3.3 的两个 pass）：
 builder.addOffscreenToScreen(u8"preview", 512, 288,
@@ -436,7 +438,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | | 内建路径 | 自定义 program 路径 |
 | --- | --- | --- |
 | 触发条件 | 该 draw 的 program 为空 | `RenderPass::setProgramOverride()` / `ScreenPass::setProgram()` 给了 program |
-| ShaderSet 谁提供 | 宿主传给桥的 vsg ShaderSet（如 `vsg::createPhongShaderSet()`） | 后端按**这个 geometry 的通道布局**现建（`assembleProgramShaderSet`） |
+| ShaderSet 谁提供 | 内容的**内容程序**（`RenderEngine::setContentProgram`，默认 `forwardProgram()`；后端把它编译成 set） | 后端按**这个 geometry 的通道布局**现建（`assembleProgramShaderSet`） |
 | shader location 从哪来 | **vsg 自己的编号** | **通道 location 一一对应**（canonical 的 0/1/2/8 也是常量） |
 | 顶点数据从哪取 | 固定 `buffer(0)` / `buffer(1)` / `buffer(2)` / `buffer(8)` + 自定义通道 | **完全相同**（两条路径取的是同一批数据） |
 | 换路径时重建 | 只重建 state wrapper，数据节点复用 | 同左（唯一例外见下面的边角表） |
@@ -452,14 +454,14 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | texcoord | **8** | **2** | **8** | 2 |
 | 自定义 | L ≥ 3 且 ≠ 8 | ——（内建 set 不声明它，喂了也不被读） | **L** | 4+i |
 
-> texcoord 槽在 SDK 侧只陈述**宽度**，**用途属于采样器**（`Geometry` 从不下结论）：`setTexcoords2`（2 分量）、`setTexcoords3`（3 分量）、`texcoordComponents()` 查宽度。唯一的解释者是**引擎自己的 forward preset**：
+> texcoord 槽在 SDK 侧只陈述**宽度**，**用途属于采样器**（`Geometry` 从不下结论）：`setTexcoords2`（2 分量）、`setTexcoords3`（3 分量）、`texcoordComponents()` 查宽度。唯一的解释者是**引擎自己的 forward 程序**（`forwardProgram()`）：
 >
-> | 槽宽度 | 内建 preset 的读法 | 采样器 |
+> | 槽宽度 | 内建 forward 程序的读法 | 采样器 |
 > | --- | --- | --- |
 > | 2 | UV 对 | `sampler2D`（材质纹理必须是 2D；否则**报一次** + 绑白色 2D） |
 > | 3 | cube **方向** | `samplerCube`（材质纹理必须是 cube；否则**报一次** + 绑白色 cube） |
 >
-> 所以"同一个 3 分量通道"配自定义 program 完全可以读成体积坐标（`sampler3D`）——引擎不拦；将来真加 volume，内建 preset 要改成**按纹理种类**选变体（宽度名照样成立）。
+> 所以"同一个 3 分量通道"配自定义 program 完全可以读成体积坐标（`sampler3D`）——引擎不拦；将来真加 volume，内建 forward 程序要改成**按纹理种类**选变体（宽度名照样成立）。
 
 > 两套编号**只有 0/1（位置、法线）一致**（实测 `vsg_shader_dump`）：`2` 在内建路径是 texcoord、在自定义路径是颜色。
 > 所以按 vsg 习惯写的 shader（texcoord 写 2、颜色写 6）拿到自定义 program 路径上：location 2 读到的是颜色（静默错值），
@@ -513,7 +515,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 | 情形 | 行为 |
 | --- | --- |
-| program 编译失败 / vsg 拒绝手工 Set | **回落内建 set**，并报一条 `ShaderFallback` Warning（不静默） |
+| program 编译失败 / 槽自己没有 set | **不画**（2026-09-13 起不再回落内建 set），并报一条 `ShaderFallback` Warning（不静默） |
 | geometry 带 loc2 颜色、切换路径 | **数据节点也要重建**：内建路径 binding 2 是后端白 **DYNAMIC** 载体（alpha 驱动 opacity），自定义路径绑作者的颜色原样 |
 | 自定义通道遇上**内建路径** | 照喂但没人声明 ⇒ `assignArray` 失败被跳过；它在尾部，不挤前缀四个 binding，也**不需要重新上传** |
 | 同一份 program 的多个布局 | 共享一次 glslang 编译，按布局各建一个 ShaderSet（缓存上界 64，FIFO 淘汰） |
@@ -525,7 +527,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 | 内容 | 位置 |
 | --- | --- |
-| 内建前向着色（preset 默认，`builtinProgram`） | `src/viz/graphics/shaders/vine_forward.*` |
+| 内建前向着色（引擎默认内容程序，`forwardProgram()` / `flatForwardProgram()`） | `src/viz/graphics/shaders/vine_forward.*` |
 | 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/`（真文件，构建期嵌入） |
 | 后端自己的 overlay / 全屏三角形阶段 | `src/plugins/gfx_backend_vsg/shaders/` |
 | 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-custom-shader.md`](../../../../.ai/design/vsg-custom-shader.md) §10 |
@@ -555,7 +557,7 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 | 环境变量 | 取值 | 作用 |
 | --- | --- | --- |
 | `VINE_PIPELINE` | `forward` / `deferred` / `forward_shadowed` / `deferred_shadowed` | 选主窗口预设。**默认 `deferred`** |
-| `VINE_SHADER_PRESET` | 任意值 | 切到 `FlatShaded` 预设（验证预设通路） |
+| `VINE_SHADER_PRESET` | 任意值 | 把内容程序换成 `flatForwardProgram()`（验证平直着色通路） |
 | `VINE_VSG_GBUFFER` | 任意值 | 加一个 G-buffer 彩色附件（albedo / normal / specular / view position）的 PiP 预览 |
 | `VINE_VSG_DEFERRED` | 任意值 | 加一条独立的"全屏延迟光照"pass（读 G-buffer 显示光照结果），用于 A/B 对照 |
 | `VINE_VSG_OFFSCREEN_MULTISLOT` | 任意值 | 把一个离屏 target 烘成两个内容槽（主场景 + 顶层叠加）并以 PiP 显示 |
@@ -568,13 +570,13 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 | --- | --- |
 | `Forward` | 一个 order 0 的窗口场景 pass 画内容（可选叠加场景是同窗口 pass 里带深度的第二笔）。 |
 | `Deferred` | order < 0 的 pass 把内容画进**规范 G-buffer**（4 张彩色：albedo RGBA8、view normal+shininess RGBA16F、specular RGBA8、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 order 0 的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现。 |
-| `ForwardShadowed` | **占位**：今天装配出来的与 `Forward` 完全相同。 |
-| `DeferredShadowed` | **占位**：今天装配出来的与 `Deferred` 完全相同。 |
+| `ForwardShadowed` | **占位**：今天装配出来的与 `Forward` 完全相同，并且会**报一条** `DiagnosticCategory::UnsupportedRequest`（宿主不会拿到以为自己拿到了阴影的画面）。 |
+| `DeferredShadowed` | **占位**：今天装配出来的与 `Deferred` 完全相同，同样报 `UnsupportedRequest`。 |
 
 阴影切片（order < 0 的深度 pass + 阴影光照）**尚未实现**；它的 API 已经就位 ——
 `Light::castShadow()` / `Light::shadow()`、`ShadowSettings{resolution, bias, filter}`、
-`ShadowFilter::{None, Hard, PCF}`，以及保留的 `ShaderPreset::ShadowedPhong`；计划见
-`.ai/design/graphics-shadow.md`。`ShaderPreset::Pbr` 同样是保留项。
+`ShadowFilter::{None, Hard, PCF}`；计划见 `.ai/design/graphics-shadow.md`。内容着色侧**没有保留项**：
+程序就是唯一入口（见 §3），未实现的着色需要宿主自己写一个 `ShaderProgram`。
 
 ```bash
 ./build/bin/Vine                                # deferred（默认）

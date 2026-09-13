@@ -45,7 +45,7 @@ struct V_GRAPHICS_API ShaderStage
  * engine's default program for the objects it is bound to. Parameters,
  * texture slots and pass-level inputs are layered on later (see
  * .ai/design/graphics-shader.md). A Geometry whose program() is null uses the
- * engine default program (ShaderPreset / material driven) — zero regression.
+ * engine default program (the content program / material driven) — zero regression.
  */
 class V_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderProgram> {
     V_OBJECT_META_DECL;

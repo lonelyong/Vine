@@ -10,7 +10,6 @@
 #include <vsg/lighting/Light.h>
 
 #include <vine/graphics/BuiltinShaders.hpp>
-#include <vine/graphics/ShaderPreset.hpp>
 
 #include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgContentSlot.hpp>
@@ -166,22 +165,22 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
         if (set_ref == nullptr) {
             const bool depth_test  = depth_mode != vine::graphics::DepthMode::Disabled;
             const bool depth_write = depth_mode == vine::graphics::DepthMode::TestAndWrite;
-            set_ref = makeContentShaderSet(persistent.shader_preset,
+            set_ref = makeContentShaderSet(persistent.content_program,
                                            VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) },
                                            depth_test, depth_write,
                                            target->colorCount());
         }
         content.bridge.setShaderSet(set_ref);
     }
-    // A preset the engine has no program of its own for yet (Pbr / ShadowedPhong) has NO set: the
-    // slot's bridge reports it (see buildStateGroup) and draws nothing. Said out loud here as well,
-    // ONCE per session, at the level the host asked the question at: "you asked for this preset,
-    // it has no program yet, nothing will be drawn" — not a picture it did not ask for.
-    if (vine::graphics::builtinProgram(persistent.shader_preset) == nullptr && !state.preset_substituted_reported) {
-        state.preset_substituted_reported = true;
+    // A session with NO content program has no set to build a slot with: the slot's bridge reports it
+    // (see buildStateGroup) and draws nothing. Said out loud here as well, ONCE per session, at the
+    // level the host asked the question at: "you named no program, so program-less content will not be
+    // drawn" — not a picture it did not ask for.
+    if (persistent.content_program == nullptr && !state.no_content_program_reported) {
+        state.no_content_program_reported = true;
         diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
-                           u8"the shading preset has no program of its own yet, so this session's content is NOT "
-                           u8"drawn (the built-in vsg shader sets are not used as a substitute)");
+                           u8"this session has no content program (setContentProgram(nullptr)), so content without a "
+                           u8"program of its own is NOT drawn (the engine never substitutes a shading nobody named)");
     }
     // Which light source this slot must feed follows the SET that draws it (see
     // SceneBridge::hasOwnLightsBlock): the engine's own sets read the slot's `vine_lights` block,

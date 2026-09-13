@@ -47,7 +47,7 @@
 [selftest] built-in sampling: the engine's own forward shader sampled a 2-D map by UV (left (31,_,0) = red, right (0,_,31) = blue)
 [selftest] built-in sampling: the engine's own forward shader sampled a cube map by direction — +X=(31,0,0), -X=(0,31,0), +Y=(0,0,31), -Y=(31,31,0), +Z=(31,0,31), -Z=(0,31,31)
 [selftest] opacity blend: opacity 0.5 turned the shaded centre (34,6,2) into (22,13,16) = 0.5*shaded + 0.5*clear, stored alpha 191 (not 255 = opacity dropped, not 128 = blend off)
-[selftest] preset shading: Pbr (no program of its own) drew nothing (the centre is still the clear (10,20,30)) where StandardPhong drew (255,255,255), so a preset without a program is declined and reported instead of substituted
-[selftest] preset shading: FlatShaded followed the face normal (765) against the smooth preset's authored-normal 42 over the same quad
-[selftest] live preset switch: the same slot drew 42 smooth, 765 flat after the switch, and 42 smooth again after switching back
+[selftest] program shading: a program with no stages drew nothing (the centre is still the clear (10,20,30)) where the forward program drew (255,255,255), so an unusable program is declined and reported instead of substituted
+[selftest] program shading: the flat program followed the face normal (765) against the forward program's authored-normal 42 over the same quad
+[selftest] live program switch: the same slot drew 42 forward, 765 flat after the switch, and 42 forward again after switching back
 [selftest] done — no crash, no validation error expected

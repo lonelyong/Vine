@@ -29,7 +29,6 @@
 
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderTarget.hpp>
-#include <vine/graphics/ShaderPreset.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/raw_ptr.hpp>
 
@@ -130,7 +129,9 @@ static_assert(sizeof(VineLightsBlock) == 112, "VineLightsBlock must match the GL
 static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-aligned");
 
 
-::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
+::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program,
+                                                     const VkExtent2D& extent, bool depth_test, bool depth_write,
+                                                     int color_count = 1);
 
 /**
  * @brief The per-draw block as a CUSTOM descriptor set (set 1), bound per drawable.
@@ -186,28 +187,29 @@ struct V_VSG_API DrawBlockSetBinding : public ::vsg::Inherit<::vsg::CustomDescri
 
 
 /**
- * @brief Builds the shader set a content slot of @p preset draws with.
+ * @brief Builds the shader set a content slot draws with when a drawable names no program.
  *
- * The single place that decides which content shading a slot gets, and it always
- * answers with an ENGINE set (buildVineShaderSet): vsg's built-in sets are not used
+ * The single place that turns the host's content program into a set, and it always
+ * answers with an ENGINE-declared set (buildVineShaderSet): vsg's built-in sets are not used
  * at all, because a set of theirs carries their declarations, their attribute
  * locations and their light source — a second shading ABI to keep in step with
  * ours, and one the engine cannot own the text of.
  *
- * A preset whose own program has not landed yet (Pbr / ShadowedPhong) yields NULL, and so does a
- * preset whose stages are unusable: the caller reports it and draws NOTHING. Substituting another
- * shading model would show the host a picture it did not ask for — and one it cannot tell apart
- * from the one it did.
+ * A program the backend cannot compile into a set (nothing at all, or nothing but unusable stages)
+ * yields NULL: the caller reports it and draws NOTHING. Substituting another shading model would
+ * show the host a picture it did not ask for — and one it cannot tell apart from the one it did.
  *
- * @param preset      Shading preset the slot was built for.
+ * @param program     Program to shade the slot's program-less content with (null yields null: the
+ *                    caller reports it and draws nothing rather than shading with a guess).
  * @param extent      Initial viewport the default pipeline states carry.
  * @param depth_test  Whether the pipeline tests depth.
  * @param depth_write Whether it writes depth.
  * @param color_count Colour attachments the pipeline renders (MRT passes > 1).
- * @return The set to draw the slot's content with (null when the engine's own
- *         stages are unusable, which the embedded-shader gate rules out).
+ * @return The set to draw the slot's content with (null when the program cannot be compiled).
  */
-::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
+::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program,
+                                                     const VkExtent2D& extent, bool depth_test, bool depth_write,
+                                                     int color_count = 1);
 
 /**
  * @brief Builds the colour(+depth) render pass ONE pass records into.

@@ -314,9 +314,9 @@ bool VsgRenderer::initialize()
     // earlier content (HUD). Off-screen targets bake their own per-size sets
     // lazily.
     init_stage = "building window shader sets";
-    state.depth_on_shader_set        = makeContentShaderSet(persistent.shader_preset, state.window->extent2D(), true, true);
-    state.depth_testonly_shader_set  = makeContentShaderSet(persistent.shader_preset, state.window->extent2D(), true, false);
-    state.depth_off_shader_set       = makeContentShaderSet(persistent.shader_preset, state.window->extent2D(), false, false);
+    state.depth_on_shader_set        = makeContentShaderSet(persistent.content_program, state.window->extent2D(), true, true);
+    state.depth_testonly_shader_set  = makeContentShaderSet(persistent.content_program, state.window->extent2D(), true, false);
+    state.depth_off_shader_set       = makeContentShaderSet(persistent.content_program, state.window->extent2D(), false, false);
 
     // The primary window layer is created lazily on the first window render
     // (the first pass that clears and draws the scene into the backbuffer).
@@ -800,29 +800,29 @@ vine::raw_ptr<vine::graphics::MaterialManager> VsgRenderer::materialManager()
     return &persistent.materialManager;
 }
 
-void VsgRenderer::setShaderPreset(vine::graphics::ShaderPreset preset)
+void VsgRenderer::setContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program)
 {
-    if (persistent.shader_preset == preset) {
+    if (persistent.content_program == program) {
         return;
     }
-    persistent.shader_preset = preset;
+    persistent.content_program = std::move(program);
     if (state.window == nullptr) {
         // Not initialized yet: every slot is created after this, so initialize()
-        // bakes the new preset and there is nothing to drop.
+        // bakes the new program and there is nothing to drop.
         return;
     }
-    // A live session. The preset is not a per-frame value: it selects which
+    // A live session. The program is not a per-frame value: it selects which
     // shader set a slot draws with, and the set is built once (initialize() for
     // the window sets, the slot's own build for an off-screen target). So the
     // switch is a REBUILD of the shading side: the window sets are remade, every
     // baked slot is dropped and every target forgets its per-size sets — the
-    // next frame's pass sync rebuilds them from the preset now recorded. The
+    // next frame's pass sync rebuilds them from the program now recorded. The
     // attachments, the pass graphs and the depth history stay untouched, so the
     // content is shaded differently rather than the target starting over.
     const auto extent = state.window->extent2D();
-    state.depth_on_shader_set       = makeContentShaderSet(persistent.shader_preset, extent, true, true);
-    state.depth_testonly_shader_set = makeContentShaderSet(persistent.shader_preset, extent, true, false);
-    state.depth_off_shader_set      = makeContentShaderSet(persistent.shader_preset, extent, false, false);
+    state.depth_on_shader_set       = makeContentShaderSet(persistent.content_program, extent, true, true);
+    state.depth_testonly_shader_set = makeContentShaderSet(persistent.content_program, extent, true, false);
+    state.depth_off_shader_set      = makeContentShaderSet(persistent.content_program, extent, false, false);
     detail::resetContentShaderSlots(state);
 }
 

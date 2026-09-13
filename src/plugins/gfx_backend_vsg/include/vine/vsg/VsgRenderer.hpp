@@ -368,19 +368,19 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void setDiagnosticSink(vine::graphics::DiagnosticSink sink) override;
 
-    /** @brief Sets the shading preset, before initialize() or on a running session.
+    /** @brief Sets the program content without its own program is shaded with.
      *
-     * The preset selects the content shader sets, and a set is built once (the window's at
-     * initialize, an off-screen target's with its first slot), so a switch on a running session
-     * re-bakes the shading side: the window sets are rebuilt and every content slot is dropped
-     * so the next frame's passes build theirs again — a slot's set, its light wiring and its
-     * View features are all decided at slot build (see resetContentShaderSlots). Attachments,
-     * pass graphs and depth history are untouched. Presets without a Vine program (Pbr /
-     * ShadowedPhong) fall back to the built-in set until their slice lands.
+     * A content set is built once per program (the window's with this call, an off-screen target's
+     * with its first slot), so a switch on a running session re-bakes the shading side: the window
+     * sets are rebuilt for @p program and every content slot is dropped so the next frame's passes
+     * build theirs again — a slot's set, its light wiring and its View features are all decided at
+     * slot build (see resetContentShaderSlots). Attachments, pass graphs and depth history are
+     * untouched. A null @p program means "no content program": program-less content is reported and
+     * skipped rather than shaded with a guess.
      *
-     * @param preset Shading-model preset.
+     * @param program Program to shade program-less content with, or null for none.
      */
-    void setShaderPreset(vine::graphics::ShaderPreset preset) override;
+    void setContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program) override;
 
     // ---- VSG convenience interface ----
 

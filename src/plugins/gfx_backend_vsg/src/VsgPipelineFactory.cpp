@@ -134,54 +134,67 @@ namespace
 {
 
 /**
- * @brief Compiles an SDK built-in program into vsg stages, once per preset.
+ * @brief Compiles a shading program into vsg stages, once per (program, revision).
  *
  * glslang is the expensive part of building the set, and every pass/depth-mode
  * variant of one program uses the same stages, so the compiled SPIR-V is shared
  * (the ShaderSet only adds interface declarations on top).
  *
- * The stages come from the SDK's built-in program (BuiltinShaders.hpp): the
- * engine owns the shading TEXT, this backend only compiles it and declares the
- * ABI it is bound through. A preset without an SDK program caches an empty list,
- * and buildVineShaderSet then declines it rather than shading it as phong.
+ * The stages come from the PROGRAM the caller named (the engine's own texts live in the SDK,
+ * BuiltinShaders.hpp): the SDK owns the shading TEXT, this backend only compiles it and declares the
+ * ABI it is bound through. A program with no stages — or one glslang refuses — caches an EMPTY list,
+ * and buildVineShaderSet then declines it: the caller reports it and nothing is drawn, rather than
+ * shading with a program the host did not name. A null program declines the same way.
  *
- * @param preset Preset whose SDK program to compile.
- * @return Compiled stages, or an empty list when unsupported / failed to compile.
+ * The cache OWNS the program it is keyed by, and keys on (program, revision): a key that was only an
+ * address could serve a dead program's stages to a new one allocated at the same address, and a
+ * program edited in place announces itself through its revision (the rule every cache here follows).
+ *
+ * @param program Program to compile (null yields an empty list).
+ * @return Compiled stages, or an empty list when the program cannot be used.
  */
-const ::vsg::ShaderStages& compiledStages(vine::graphics::ShaderPreset preset)
+const ::vsg::ShaderStages& compiledStages(const vine::intrusive_ptr<const vine::graphics::ShaderProgram>& program)
 {
-    static std::map<int, ::vsg::ShaderStages> cache;
-    const auto                                key = static_cast<int>(preset);
-    const auto                                it  = cache.find(key);
-    if (it != cache.end()) {
-        return it->second;
+    struct Entry
+    {
+        vine::intrusive_ptr<const vine::graphics::ShaderProgram> owner;
+        std::uint64_t                                            revision = 0;
+        ::vsg::ShaderStages                                      stages;
+    };
+    // Keyed by (address, revision) with the entry owning the program, and node-based so a reference
+    // handed out stays valid across later insertions.
+    static std::map<std::pair<const void*, std::uint64_t>, Entry> cache;
+
+    const auto revision = program != nullptr ? program->revision() : 0u;
+    const auto key      = std::make_pair(static_cast<const void*>(program.get()), revision);
+    if (const auto it = cache.find(key); it != cache.end()) {
+        return it->second.stages;
     }
 
     ::vsg::ShaderStages stages;
-    const auto          program  = vine::graphics::builtinProgram(preset);
-    auto                compiler = ::vsg::ShaderCompiler::create();
-    if (program != nullptr && compiler != nullptr && compiler->supported()) {
-        for (std::size_t i = 0; i < program->stageCount(); ++i) {
-            const auto* stage_spec = program->stage(i);
-            if (stage_spec == nullptr) {
-                stages.clear();
-                break;
+    if (program != nullptr) {
+        auto compiler = ::vsg::ShaderCompiler::create();
+        if (compiler != nullptr && compiler->supported()) {
+            for (std::size_t i = 0; i < program->stageCount(); ++i) {
+                const auto* stage_spec = program->stage(i);
+                if (stage_spec == nullptr) {
+                    stages.clear();
+                    break;
+                }
+                const auto flag = stage_spec->type == vine::graphics::ShaderStageType::Vertex
+                                      ? VK_SHADER_STAGE_VERTEX_BIT
+                                      : VK_SHADER_STAGE_FRAGMENT_BIT;
+                auto       stage = ::vsg::ShaderStage::create(flag, stage_spec->entryPoint.stdstr(),
+                                                              stage_spec->source.stdstr());
+                if (!compiler->compile(stage)) {
+                    stages.clear();
+                    break;
+                }
+                stages.push_back(stage);
             }
-            const auto flag = stage_spec->type == vine::graphics::ShaderStageType::Vertex
-                                  ? VK_SHADER_STAGE_VERTEX_BIT
-                                  : VK_SHADER_STAGE_FRAGMENT_BIT;
-            auto       stage = ::vsg::ShaderStage::create(flag, stage_spec->entryPoint.stdstr(),
-                                                          stage_spec->source.stdstr());
-            if (!compiler->compile(stage)) {
-                stages.clear();
-                break;
-            }
-            stages.push_back(stage);
         }
     }
-    // A reference into the map stays valid across later insertions (node-based),
-    // so callers can hold it while building their sets.
-    return cache.emplace(key, std::move(stages)).first->second;
+    return cache.emplace(key, Entry{ program, revision, std::move(stages) }).first->second.stages;
 }
 
 }  // namespace
@@ -218,13 +231,13 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     return {};
 }
 
-::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
+::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
 {
-    // The stages come from the SDK's built-in program for this preset (owned by
-    // the engine, see BuiltinShaders.hpp). A preset without one of its own is
-    // built from the forward program instead (see makeContentShaderSet), so a
-    // caller always gets a set it can draw with.
-    const auto& stages = compiledStages(preset);
+    // The stages come from the program the caller named (the engine's own texts live in the SDK,
+    // BuiltinShaders.hpp). A program that has no stages, or that glslang refuses, DECLINES here: the
+    // caller reports it and the drawable is not drawn — nothing is shaded with a program the host did
+    // not name, which is what makes the shading side free of hidden defaults.
+    const auto& stages = compiledStages(program);
     if (stages.empty()) {
         return {};
     }
@@ -294,7 +307,7 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     return shader_set;
 }
 
-::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
+::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
 {
     // EVERY content set this backend builds is ours. vsg's built-in sets
     // (createPhongShaderSet / createFlatShadedShaderSet) are deliberately not used
@@ -303,12 +316,11 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     // ABIs to keep in step — and the engine owns the shading text now
     // (BuiltinShaders.hpp).
     //
-    // A preset whose own program has not landed yet (Pbr / ShadowedPhong) is DECLINED — null, no
-    // substitution. The caller reports it and draws nothing: shading such a preset with another
-    // model (ours or a library's) shows the host a picture it did not ask for and cannot tell
-    // apart from the one it did, which is worse than an empty frame it can see the reason for.
-    // The SDK answers the same way (builtinProgram() is null for these presets).
-    return buildVineShaderSet(preset, extent, depth_test, depth_write, color_count);
+    // A program that cannot be used (none at all, no stages, a failed compile) is DECLINED — null, no
+    // substitution. The caller reports it and draws nothing: shading it with another program (ours or
+    // a library's) would show the host a picture it did not ask for and cannot tell apart from the one
+    // it did, which is worse than an empty frame it can see the reason for.
+    return buildVineShaderSet(std::move(program), extent, depth_test, depth_write, color_count);
 }
 
 VkFormat toColorFormat(vine::graphics::RenderTarget::ColorFormat f)

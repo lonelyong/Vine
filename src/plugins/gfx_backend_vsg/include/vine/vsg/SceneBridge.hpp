@@ -77,10 +77,10 @@ class V_VSG_API SceneBridge {
      *    view-dependent light data, which only exists if the slot puts vsg light nodes under
      *    its view.
      *
-     * The distinction matters exactly when a preset has no Vine program: the session's forward
-     * switch is on, but THIS slot's set is the built-in one (see makeContentShaderSet), so the
-     * slot must build the vsg lights after all — a session-level answer would leave that slot
-     * unlit.
+     * The distinction matters exactly when the engine has NO set of its own for a slot (a content
+     * program the backend cannot compile into one): the session's forward switch is on, but THIS
+     * slot has no set at all and draws nothing, so a session-level answer would be a promise the
+     * slot cannot keep.
      *
      * @return true when the set reads the slot's `vine_lights` block.
      */

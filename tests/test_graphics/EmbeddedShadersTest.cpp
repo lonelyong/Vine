@@ -126,12 +126,11 @@ TEST(EmbeddedShadersTest, TheDeferredProgramsUseTheEmbeddedSources)
     EXPECT_EQ(light_fs->source, vine::String(kDeferredLightFrag));
 }
 
-TEST(EmbeddedShadersTest, TheBuiltinForwardProgramUsesTheEmbeddedSources)
+TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
 {
-    // The preset-driven scene shading is now an SDK program like the deferred ones:
-    // its stages must be exactly the embedded forward GLSL, so the ShaderPreset path
-    // and the file on disk cannot drift apart.
-    const auto forward = builtinProgram(ShaderPreset::StandardPhong);
+    // Scene shading is an SDK program like the deferred ones: its stages must be exactly the embedded
+    // forward GLSL, so the program the engine hands out and the file on disk cannot drift apart.
+    const auto forward = forwardProgram();
     ASSERT_NE(forward, nullptr);
     ASSERT_EQ(forward->stageCount(), 2u);
     const ShaderStage* forward_vs = forward->stage(0);
@@ -143,10 +142,19 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramUsesTheEmbeddedSources)
     EXPECT_EQ(forward_vs->source, vine::String(kVineForwardVert));
     EXPECT_EQ(forward_fs->source, vine::String(kVineForwardFrag));
 
-    // A preset the SDK does not shade yet must answer null, so the backend can keep
-    // its own fallback instead of receiving a wrong program.
-    EXPECT_EQ(builtinProgram(ShaderPreset::Pbr), nullptr);
-    EXPECT_EQ(builtinProgram(ShaderPreset::ShadowedPhong), nullptr);
+    // The flat program is the SAME stages with one define injected into the fragment source — which is
+    // what makes it a different program (a different text), not a mode of another one. The vertex stage
+    // is the same object's text, so the two can only differ where the define is read.
+    const auto flat = flatForwardProgram();
+    ASSERT_NE(flat, nullptr);
+    ASSERT_EQ(flat->stageCount(), 2u);
+    const ShaderStage* flat_vs = flat->stage(0);
+    const ShaderStage* flat_fs = flat->stage(1);
+    ASSERT_NE(flat_vs, nullptr);
+    ASSERT_NE(flat_fs, nullptr);
+    EXPECT_EQ(flat_vs->source, vine::String(kVineForwardVert));
+    EXPECT_NE(flat_fs->source, vine::String(kVineForwardFrag));
+    EXPECT_NE(flat_fs->source.stdstr().find("#define VINE_FLAT 1"), std::string::npos);
 }
 
 /**

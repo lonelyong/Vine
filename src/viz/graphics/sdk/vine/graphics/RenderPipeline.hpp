@@ -23,13 +23,15 @@ class RenderTarget;
  * A preset is assembled by RenderPipelineBuilder::build(). The shadowed
  * variants are placeholders: the shadow slice (an order < 0 depth-only pass
  * plus shadowed lighting) is not implemented yet, so they currently assemble
- * the same pipeline as their unshadowed counterpart.
+ * the same pipeline as their unshadowed counterpart. Asking for one is not
+ * silent: the builder reports a DiagnosticCategory::UnsupportedRequest telling
+ * the host that the picture it gets is unshadowed.
  */
 enum class PipelinePreset {
     Forward,           ///< One window scene pass (order 0) drawing the content.
-    ForwardShadowed,   ///< Forward + shadow (placeholder: same as Forward).
+    ForwardShadowed,   ///< Forward + shadow (placeholder: builds Forward and reports it).
     Deferred,          ///< G-buffer (offscreen MRT) + fullscreen lighting.
-    DeferredShadowed,  ///< Deferred + shadow (placeholder: same as Deferred).
+    DeferredShadowed,  ///< Deferred + shadow (placeholder: builds Deferred and reports it).
 };
 
 /**

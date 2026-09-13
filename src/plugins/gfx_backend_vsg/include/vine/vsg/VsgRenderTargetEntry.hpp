@@ -122,8 +122,8 @@ struct ContentSlot {
     bool                          headlight_seed = false; // its default light is the headlight (presenting window slot)
     // This slot's shader set shades from VSG's view-dependent light data (not from our own
     // `vine_lights` block), so the slot builds vsg light nodes under its view and reports the
-    // pass' lights per frame. Per SET, not per session: a preset without a Vine program falls
-    // back to the built-in set while the session's forward switch is on (see
+    // pass' lights per frame. Per SET, not per session: a slot shaded with another library's set falls
+    // back to that library's light data while the session's forward switch is on (see
     // SceneBridge::hasOwnLightsBlock, which decides this at slot build).
     bool                          vsg_lights = false;
     ::vsg::ref_ptr<::vsg::Camera> vsg_camera;

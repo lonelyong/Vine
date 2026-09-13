@@ -36,6 +36,7 @@
 #include <vine/logging/Log.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/imaging/Image.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
@@ -137,7 +138,7 @@ GeometryPtr makeChannelTriangle()
  * @param normal_z z of every vertex normal. +z is the FACE normal (the quad lies in
  *                 the z = const plane and the camera looks down -z at it), which is
  *                 what shading tests want; the flat-shading phase passes -z so the
- *                 authored normals point AWAY from the light and the two presets
+ *                 authored normals point AWAY from the light and the two programs
  *                 cannot produce the same colour.
  * @return The quad geometry (two triangles, one normal).
  */
@@ -5076,33 +5077,35 @@ bool runOpacityBlendPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
 }
 
 /**
- * @brief Asserts that every preset draws LIT geometry, and that FLAT shading really is flat.
+ * @brief Asserts that a named program draws LIT geometry, that an unusable one draws nothing, and
+ *        that flat shading really is flat.
  *
- * `Pbr` has no Vine program, so the engine's contract ("presets without a backend implementation
- * fall back to StandardPhong") puts its slot on the BUILT-IN vsg phong set. That set shades from
- * vsg's view-dependent light data, which only exists if the slot builds vsg light nodes under its
- * view; our own forward set takes the slot's `vine_lights` block instead and deliberately builds
- * none. The decision therefore has to follow the SET, not the session's forward switch — and the
- * two disagree exactly here, because the forward switch is ON while a preset falls back. Getting it
- * wrong draws (0,0,0): with no light data every lit term is zero.
+ * A drawable that names no program is shaded with the session's content program (set here), and the
+ * slot has to be fed the light block THAT program reads. The decision therefore follows the SET the
+ * program produces, not the session's forward switch. Getting it wrong draws (0,0,0): with no light
+ * data every lit term is zero.
  *
- * `FlatShaded` has a Vine program of its own (the forward stages with `VINE_FLAT`), so its slot
- * must be fed OUR block — and its face normal has to come from the screen-space derivatives of the
- * view position, which is what "flat" means. That half is asserted by contrast: the same quad is
- * drawn as it is authored (normals pointing AWAY from the sun, so the smooth presets can only reach
- * their ambient term) and flat, which must be plainly brighter because it shades the surface the
- * camera actually sees. A flat preset that fell back to another set, or took the derivative normal
- * with the wrong sign, fails one half or the other.
+ * A program the backend cannot compile into a set (here: one with no stages at all) must draw
+ * NOTHING and say so. That half is a gate against "fall back to something reasonable", which would
+ * look like a shaded quad with values the host never asked for.
+ *
+ * The flat program (`vine_flat`) has the forward stages with `VINE_FLAT` and must be fed OUR block —
+ * and its face normal has to come from the screen-space derivatives of the view position, which is
+ * what "flat" means. That half is asserted by contrast: the same quad is drawn as it is authored
+ * (normals pointing AWAY from the sun, so the forward program can only reach its ambient term) and
+ * flat, which must be plainly brighter because it shades the surface the camera actually sees. A
+ * flat program that fell back to another set, or took the derivative normal with the wrong sign,
+ * fails one half or the other.
  *
  * Both halves are asserted on PIXELS: the wiring and the shader text are pinned by unit tests, but
  * only a read-back can tell "shaded" from "black" or from "nothing drew".
  *
- * @param renderer Renderer under test (its preset is switched per stretch and restored at the end).
+ * @param renderer Renderer under test (its content program is switched per stretch and restored).
  * @param camera   Camera the quads are drawn through.
  * @param frames   Frames to drive per stretch.
- * @return true when the fallback drew lit geometry and flat outshone smooth.
+ * @return true when the named program drew lit geometry and flat outshone smooth.
  */
-bool runPresetShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+bool runProgramShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
 {
     bool              ok = true;
     const vine::Color clear(10, 20, 30, 255);
@@ -5117,17 +5120,17 @@ bool runPresetShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPt
     auto sun = vine::graphics::LightPtr(vine::graphics::Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0)));
     sun->setName(u8"selftest-sun");
 
-    // One stretch per (preset, geometry), each into its OWN target: a slot bakes its shader set
-    // (and the light source that goes with it) when it is built, so the preset has to be set before
-    // the target's first frame.
-    const auto measure = [&](vine::graphics::ShaderPreset preset, float normal_z, PixelImage& image) {
+    // One stretch per (content program, geometry), each into its OWN target: a slot bakes its shader
+    // set (and the light source that goes with it) when it is built, so the program has to be named
+    // before the target's first frame.
+    const auto measure = [&](const ShaderProgramPtr& program, float normal_z, PixelImage& image) {
         auto target = RenderTargetPtr(new RenderTarget());
         target->setSize(256, 144);
         target->attachColor(RenderTarget::ColorFormat::RGBA8);
         target->attachDepth(RenderTarget::DepthFormat::D32);
         auto pass    = RenderPassPtr(new RenderPass());
         auto command = RenderCommand(makeVisibleQuad(0.4f, 1.0f, normal_z), opaque_material, Mat4d());
-        renderer.setShaderPreset(preset);
+        renderer.setContentProgram(program);
         for (int i = 0; i < frames; ++i) {
             FrameScope frame(renderer);
             PassScope  pass_scope(renderer, pass.get(), 0, target.get(), clear, true);
@@ -5147,24 +5150,23 @@ bool runPresetShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPt
 
     // The quad the way it is authored: face normal (+z), so the surface faces the sun.
     PixelImage phong_image;
-    const bool phong_read = measure(vine::graphics::ShaderPreset::StandardPhong, 1.0f, phong_image);
-    // The same quad through a preset the engine has no program of its own for: NOTHING is drawn (its
-    // set is declined, not substituted with a model the host did not ask for), and the reason is
-    // reported. The centre must be exactly the clear colour.
+    const bool phong_read = measure(vine::graphics::forwardProgram(), 1.0f, phong_image);
+    // The same quad through a program that CANNOT be used (no stages at all): NOTHING is drawn — its set
+    // is declined, not substituted with a shading the host did not name — and the reason is reported. The
+    // centre must be exactly the clear colour.
     PixelImage declined_image;
-    const bool declined_read = measure(vine::graphics::ShaderPreset::Pbr, 1.0f, declined_image);
-    // The same quad with normals pointing away from the sun: smooth shading can only reach the
-    // ambient term, flat shading sees the surface the camera sees.
+    const bool declined_read = measure(ShaderProgramPtr(new ShaderProgram()), 1.0f, declined_image);
+    // The same quad with normals pointing away from the sun: the forward program can only reach the
+    // ambient term, the flat program sees the surface the camera sees.
     PixelImage smooth_image;
-    const bool smooth_read = measure(vine::graphics::ShaderPreset::StandardPhong, -1.0f, smooth_image);
+    const bool smooth_read = measure(vine::graphics::forwardProgram(), -1.0f, smooth_image);
     PixelImage flat_image;
-    const bool flat_read = measure(vine::graphics::ShaderPreset::FlatShaded, -1.0f, flat_image);
-    // Back to the shipped preset: a renderer only publishes a preset at initialize (see
-    // RenderEngine), so the session default is what this restores — the phases after this one and
-    // the teardown must not see any of the presets this phase exercised.
-    renderer.setShaderPreset(vine::graphics::ShaderPreset::StandardPhong);
+    const bool flat_read = measure(vine::graphics::flatForwardProgram(), -1.0f, flat_image);
+    // Back to the engine's default program: the phases after this one and the teardown must not see any
+    // of the programs this phase exercised.
+    renderer.setContentProgram(vine::graphics::forwardProgram());
     if (!phong_read || !declined_read || !smooth_read || !flat_read) {
-        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused a preset-shading target\n");
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused a program-shading target\n");
         return false;
     }
 
@@ -5190,76 +5192,76 @@ bool runPresetShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPt
             ok = false;
         }
     };
-    assert_lit("StandardPhong", phong_image);
-    assert_lit("FlatShaded (its own SDK program)", flat_image);
-    // A preset without a program of its own draws NOTHING: the centre is the clear colour, i.e. the
-    // pixels the phase would see with no content at all. Asserted on pixels because the alternative
-    // this replaced (substituting another set, ours or a library's) also looked like "a quad was
-    // shaded" — with values nobody asked for.
+    assert_lit("the forward program", phong_image);
+    assert_lit("the flat program", flat_image);
+    // A program the backend cannot use (this one has no stages) draws NOTHING: the centre is the clear
+    // colour, i.e. the pixels the phase would see with no content at all. Asserted on pixels because the
+    // alternative this replaced (substituting another set, ours or a library's) also looked like "a quad
+    // was shaded" — with values nobody asked for.
     const int declined_r = declined_image.at(128, 72, 0);
     const int declined_g = declined_image.at(128, 72, 1);
     const int declined_b = declined_image.at(128, 72, 2);
     if (declined_r != clear_r || declined_g != clear_g || declined_b != clear_b) {
         std::fprintf(stderr,
-                     "[selftest] FAIL: Pbr (no program of its own) drew (%d,%d,%d) over the clear (%d,%d,%d) — a "
-                     "preset the engine has no program for must draw NOTHING and report it, not shade the quad "
-                     "with a model the host did not ask for\n",
+                     "[selftest] FAIL: a program with no stages drew (%d,%d,%d) over the clear (%d,%d,%d) — a "
+                     "program the backend cannot compile must draw NOTHING and report it, not shade the quad "
+                     "with a shading the host did not name\n",
                      declined_r, declined_g, declined_b, clear_r, clear_g, clear_b);
         ok = false;
     }
     if (ok) {
         std::fprintf(stderr,
-                     "[selftest] preset shading: Pbr (no program of its own) drew nothing (the centre is still "
-                     "the clear (%d,%d,%d)) where StandardPhong drew (%d,%d,%d), so a preset without a program "
+                     "[selftest] program shading: a program with no stages drew nothing (the centre is still "
+                     "the clear (%d,%d,%d)) where the forward program drew (%d,%d,%d), so an unusable program "
                      "is declined and reported instead of substituted\n",
                      declined_r, declined_g, declined_b, phong_image.at(128, 72, 0), phong_image.at(128, 72, 1),
                      phong_image.at(128, 72, 2));
     }
 
-    // The flat half: with the authored normals facing away from the sun, flat shading must follow
-    // the FACE normal and come out clearly brighter than the smooth preset's ambient-only result.
+    // The flat half: with the authored normals facing away from the sun, the flat program must follow
+    // the FACE normal and come out clearly brighter than the forward program's ambient-only result.
     const int smooth_sum = sum_of(smooth_image);
     const int flat_sum   = sum_of(flat_image);
     if (flat_sum <= smooth_sum + 20) {
         std::fprintf(stderr,
-                     "[selftest] FAIL: FlatShaded scored %d against the smooth preset's %d on a quad whose "
-                     "authored normals face away from the sun — flat shading must shade the FACE normal "
+                     "[selftest] FAIL: the flat program scored %d against the forward program's %d on a quad "
+                     "whose authored normals face away from the sun — flat shading must shade the FACE normal "
                      "(screen-space derivatives of the view position), not the interpolated one\n",
                      flat_sum, smooth_sum);
         ok = false;
     }
     if (ok) {
         std::fprintf(stderr,
-                     "[selftest] preset shading: FlatShaded followed the face normal (%d) against the smooth "
-                     "preset's authored-normal %d over the same quad\n",
+                     "[selftest] program shading: the flat program followed the face normal (%d) against the "
+                     "forward program's authored-normal %d over the same quad\n",
                      flat_sum, smooth_sum);
     }
     return ok;
 }
 
 /**
- * @brief Proves a preset switch reaches a slot that is already drawing.
+ * @brief Proves a content-program switch reaches a slot that is already drawing.
  *
- * The preset is not only read at initialize: the engine's RenderEngine::setShaderPreset has to
- * take effect on a LIVE session — a host that offers a shading-model toggle expects the picture
- * to change, not to wait for a restart. A slot bakes its shader set (and with it the program
- * that shades it and the light source it has to feed) when it is built, so this phase draws the
- * SAME target, the SAME pass and the SAME quad three times: smooth, then FlatShaded, then back
- * to smooth. The quad's authored normals face away from the sun, so a smooth preset can only
- * reach the ambient term while flat shading follows the face normal — the two presets differ by
- * a wide margin, which makes "the switch did nothing" and "the switch was not undone"
- * distinguishable rather than a matter of a few units.
+ * The content program is not only read at initialize: VsgRenderer::setContentProgram has to take
+ * effect on a LIVE session — a host that offers a shading toggle expects the picture to change, not
+ * to wait for a restart. A slot bakes its shader set (and with it the program that shades it and the
+ * light source it has to feed) when it is built, so this phase draws the SAME target, the SAME pass
+ * and the SAME quad three times: the forward program, then the flat one, then the forward one again.
+ * The quad's authored normals face away from the sun, so the forward program can only reach the
+ * ambient term while the flat program follows the face normal — the two differ by a wide margin,
+ * which makes "the switch did nothing" and "the switch was not undone" distinguishable rather than a
+ * matter of a few units.
  *
  * The third stretch is what makes this a gate rather than a demonstration: a rebuild that only
  * ever moved forward (or an implementation that dropped the slot without making the next frame
  * rebuild it) leaves the flat value in place, and the phase fails.
  *
- * @param renderer Renderer under test (the preset is changed mid-run and restored at the end).
+ * @param renderer Renderer under test (the program is changed mid-run and restored at the end).
  * @param camera   Camera the quad is drawn through.
  * @param frames   Frames to drive per stretch.
  * @return true when the live switch changed the pixels and switching back restored them.
  */
-bool runLivePresetSwitchPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+bool runLiveContentProgramSwitchPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
 {
     bool              ok = true;
     const vine::Color clear(10, 20, 30, 255);
@@ -5270,7 +5272,7 @@ bool runLivePresetSwitchPixelPhase(vine::vsg::VsgRenderer& renderer, const Camer
     sun->setName(u8"selftest-live-switch-sun");
 
     // One target and one pass for the whole phase: the point is that the slot outlives the
-    // switch (a fresh target per stretch would only re-test "the preset is read at slot build").
+    // switch (a fresh target per stretch would only re-test "the program is read at slot build").
     auto target = RenderTargetPtr(new RenderTarget());
     target->setSize(256, 144);
     target->attachColor(RenderTarget::ColorFormat::RGBA8);
@@ -5278,8 +5280,8 @@ bool runLivePresetSwitchPixelPhase(vine::vsg::VsgRenderer& renderer, const Camer
     auto pass    = RenderPassPtr(new RenderPass());
     auto command = RenderCommand(makeVisibleQuad(0.4f, 1.0f, -1.0f), opaque_material, Mat4d());
 
-    const auto stretch = [&](vine::graphics::ShaderPreset preset, PixelImage& image) {
-        renderer.setShaderPreset(preset);
+    const auto stretch = [&](const ShaderProgramPtr& program, PixelImage& image) {
+        renderer.setContentProgram(program);
         for (int i = 0; i < frames; ++i) {
             FrameScope frame(renderer);
             PassScope  pass_scope(renderer, pass.get(), 0, target.get(), clear, true);
@@ -5292,46 +5294,46 @@ bool runLivePresetSwitchPixelPhase(vine::vsg::VsgRenderer& renderer, const Camer
         return image.at(128, 72, 0) + image.at(128, 72, 1) + image.at(128, 72, 2);
     };
 
-    // The session's default preset, so the "before" stretch is the shipped state.
+    // The engine's default program, so the "before" stretch is the shipped state.
     PixelImage smooth_image;
-    const bool smooth_read = stretch(vine::graphics::ShaderPreset::StandardPhong, smooth_image);
+    const bool smooth_read = stretch(vine::graphics::forwardProgram(), smooth_image);
     PixelImage flat_image;
-    const bool flat_read = stretch(vine::graphics::ShaderPreset::FlatShaded, flat_image);
+    const bool flat_read = stretch(vine::graphics::flatForwardProgram(), flat_image);
     PixelImage back_image;
-    const bool back_read = stretch(vine::graphics::ShaderPreset::StandardPhong, back_image);
+    const bool back_read = stretch(vine::graphics::forwardProgram(), back_image);
     renderer.releasePass(pass.get());
     renderer.releaseRenderTarget(target.get());
     if (!smooth_read || !flat_read || !back_read) {
-        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused a live-preset-switch target\n");
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused a live-program-switch target\n");
         return false;
     }
 
     const int smooth_sum = sum_of(smooth_image);
     const int flat_sum   = sum_of(flat_image);
     const int back_sum   = sum_of(back_image);
-    // The quad's normals face away from the sun AND the light is fixed, so the two presets are
-    // far apart on this geometry: the smooth preset cannot light it, flat shading sees the face.
+    // The quad's normals face away from the sun AND the light is fixed, so the two programs are
+    // far apart on this geometry: the forward program cannot light it, the flat one sees the face.
     // The two halves are chained so one failure has one cause: a forward stretch that did nothing
     // is reported as such (the back stretch would trivially "pass" against an unchanged image).
     if (flat_sum <= smooth_sum + 20) {
         std::fprintf(stderr,
-                     "[selftest] FAIL: switching to FlatShaded on a live slot scored %d against the smooth "
-                     "preset's %d — the switch did not reach the slot (a slot bakes its set when it is built, "
-                     "so setShaderPreset has to drop it)\n",
+                     "[selftest] FAIL: switching to the flat program on a live slot scored %d against the "
+                     "forward program's %d — the switch did not reach the slot (a slot bakes its set when it is "
+                     "built, so setContentProgram has to drop it)\n",
                      flat_sum, smooth_sum);
         ok = false;
     }
     else if (back_sum > smooth_sum + 20) {
         std::fprintf(stderr,
-                     "[selftest] FAIL: switching back to the smooth preset left the slot at %d (flat was %d, "
-                     "smooth was %d) — the rebuild only moved forward\n",
+                     "[selftest] FAIL: switching back to the forward program left the slot at %d (flat was %d, "
+                     "forward was %d) — the rebuild only moved forward\n",
                      back_sum, flat_sum, smooth_sum);
         ok = false;
     }
     if (ok) {
         std::fprintf(stderr,
-                     "[selftest] live preset switch: the same slot drew %d smooth, %d flat after the switch, "
-                     "and %d smooth again after switching back\n",
+                     "[selftest] live program switch: the same slot drew %d forward, %d flat after the switch, "
+                     "and %d forward again after switching back\n",
                      smooth_sum, flat_sum, back_sum);
     }
     return ok;
@@ -5343,6 +5345,13 @@ int main()
         std::atoi(std::getenv("VINE_SELFTEST_FRAMES") != nullptr ? std::getenv("VINE_SELFTEST_FRAMES") : "30");
 
     auto backend = vine::intrusive_ptr<RenderBackend>(new vine::vsg::VsgRenderer());
+    // The backend has NO shading of its own: a drawable that names no program is shaded with the
+    // session's content program, and a session that never sets one reports and draws nothing. This
+    // has to be set BEFORE initialize() — the window's three depth-mode sets are baked while the
+    // backend comes up (the engine does exactly this: it holds the program and forwards it at
+    // initialize), so a session that sets it afterwards has already driven frames without it. The
+    // phases below hold the backend to that rule.
+    backend->setContentProgram(vine::graphics::forwardProgram());
     if (!backend->initialize()) {
         std::fprintf(stderr, "[selftest] backend initialize FAILED\n");
         std::fprintf(stderr,
@@ -5624,12 +5633,12 @@ int main()
     // the texture phase does (see above): it drives frames, and nothing it does
     // may move a number another phase reports.
     contract_ok = runOpacityBlendPixelPhase(*renderer, camera, 4) && contract_ok;
-    // Also after every reporting phase, for the same reason: it switches the session's shading
-    // preset, so it must not run next to a phase whose numbers another line reports.
-    contract_ok = runPresetShadingPixelPhase(*renderer, camera, 4) && contract_ok;
+    // Also after every reporting phase, for the same reason: it switches the session's content
+    // program, so it must not run next to a phase whose numbers another line reports.
+    contract_ok = runProgramShadingPixelPhase(*renderer, camera, 4) && contract_ok;
     // Last of the pixel phases: it keeps one target and one slot alive across the switch, so it
-    // also has to be the last one to touch the session's preset (it restores the default itself).
-    contract_ok = runLivePresetSwitchPixelPhase(*renderer, camera, 4) && contract_ok;
+    // also has to be the last one to touch the session's content program (it restores it itself).
+    contract_ok = runLiveContentProgramSwitchPixelPhase(*renderer, camera, 4) && contract_ok;
     if (!contract_ok) {
         std::fprintf(stderr,
                      "[selftest] FAILED — a pass-lifecycle / depth-sharing / pixel-readback invariant was violated\n");

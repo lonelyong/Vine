@@ -75,7 +75,10 @@ V_VSG_NS_BEGIN
 struct VsgRendererPersistent {
     CameraBridge                        cameraBridge;
     VsgMaterialManager                  materialManager;
-    vine::graphics::ShaderPreset        shader_preset{ vine::graphics::ShaderPreset::StandardPhong };
+    // The program content without its own program is shaded with. NO default on purpose: the backend
+    // never invents a shading, so a session that was never handed one draws no program-less content
+    // (reported) instead of guessing. RenderEngine supplies forwardProgram() by default.
+    vine::intrusive_ptr<const vine::graphics::ShaderProgram> content_program;
     void*                               bound_handle = nullptr;
 };
 
@@ -222,11 +225,11 @@ struct VsgRendererState {
     // right depth test/write state. Per-geometry pipelines are compiled per
     // view (vsg compiles per viewID), so every content slot carries its own
     // SceneBridge; off-screen targets bake their own per-size sets (see VsgRenderTargetEntry).
-    // Whether this session already told the host that its preset has no program of its own yet and
-    // is being shaded by the engine's forward program (see VsgContentSlot): once per session, so a
-    // substitution is visible without becoming per-slot noise. Session state, so a re-init tells
-    // the new session's host as well.
-    bool                                preset_substituted_reported = false;
+    // Whether this session already told the host that it has no content program at all, so content
+    // that names none is not drawn (see VsgContentSlot): once per session, so telling the host once
+    // is what makes "you named no program" visible without becoming per-slot noise. Session state,
+    // so a re-init tells the new session's host as well.
+    bool                                no_content_program_reported = false;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_on_shader_set;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_testonly_shader_set;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_off_shader_set;

@@ -34,6 +34,10 @@ V_OBJECT_META_IMPL(RenderEngine, vine::Object);
 
 RenderEngine::RenderEngine()
 {
+    // The ONE default in the shading path, and it is a named program: content with no program of its
+    // own is shaded with the engine's forward program until the host says otherwise. (Null would mean
+    // "draw such content not at all"; nothing is ever shaded with a program nobody named.)
+    content_program_ = forwardProgram();
     // No implicit pipeline: the engine starts empty. The caller registers the
     // scene passes explicitly (addPass()) or through a RenderPipelineBuilder;
     // the primary interactive view (camera + content + navigation) lives in a
@@ -100,8 +104,8 @@ bool RenderEngine::initialize()
     if (native_handle_ != nullptr) {
         backend_->setWindowHandle(native_handle_);
     }
-    // Forward the shading preset before the backend builds its shader sets.
-    backend_->setShaderPreset(shader_preset_);
+    // Forward the content program before the backend builds its shader sets.
+    backend_->setContentProgram(content_program_);
     initialized_ = backend_->initialize();
     if (initialized_) {
         // A size announced before initialization (a host sizes its widget before it has a backend)
@@ -1122,14 +1126,20 @@ void RenderEngine::unpublish(const String& name)
     unpublishable_host_names_.erase(name);
 }
 
-void RenderEngine::setShaderPreset(ShaderPreset preset)
+void RenderEngine::setContentProgram(intrusive_ptr<const ShaderProgram> program)
 {
-    shader_preset_ = preset;
+    content_program_ = std::move(program);
+    if (backend_ != nullptr) {
+        // Forwarded straight away: the backend treats a call before initialize() as the session
+        // decision and one after it as a live switch (rebuild the window sets, drop the slots), so
+        // the engine's accessor and the picture cannot disagree.
+        backend_->setContentProgram(content_program_);
+    }
 }
 
-ShaderPreset RenderEngine::shaderPreset() const
+intrusive_ptr<const ShaderProgram> RenderEngine::contentProgram() const
 {
-    return shader_preset_;
+    return content_program_;
 }
 
 void RenderEngine::resize(int width, int height)

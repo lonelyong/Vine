@@ -1845,14 +1845,14 @@ class MockBackend : public RenderBackend {
     int light_sets = 0;
     std::size_t last_light_count = 0;
     const Light* last_light = nullptr;
-    int preset_sets = 0;
-    ShaderPreset last_preset = ShaderPreset::StandardPhong;
+    int content_program_sets = 0;
+    intrusive_ptr<const ShaderProgram> last_content_program;
 
     bool initialize() override { ok = true; return true; }
-    void setShaderPreset(ShaderPreset preset) override
+    void setContentProgram(intrusive_ptr<const ShaderProgram> program) override
     {
-        last_preset = preset;
-        ++preset_sets;
+        last_content_program = std::move(program);
+        ++content_program_sets;
     }
     void shutdown() override { ok = false; }
     void beginFrame() override { ++begin_calls; }
@@ -2324,22 +2324,33 @@ TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
     EXPECT_EQ(original->contentCollectCount(), original_walks);
 }
 
-TEST(RenderEngineTest, ShaderPresetForwardedToBackend)
+TEST(RenderEngineTest, ContentProgramForwardedToBackend)
 {
-    // The shading preset is held by the engine (render config) and forwarded
-    // to the backend before initialize(); the backend maps it to its shader
-    // set (vsg: Phong vs flat).
+    // The program program-less content is shaded with is held by the engine and forwarded to the
+    // backend. There is no shading-model lookup: the engine's default is the NAMED forward program
+    // (chosen once in the constructor), and whatever the host sets is what the backend is told —
+    // both at initialize() and immediately on a running session, so the engine's accessor and the
+    // picture cannot disagree.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    EXPECT_EQ(engine->shaderPreset(), ShaderPreset::StandardPhong);
+    ASSERT_NE(engine->contentProgram(), nullptr);
+    EXPECT_NE(engine->contentProgram(), nullptr);
 
-    engine->setShaderPreset(ShaderPreset::FlatShaded);
-    EXPECT_EQ(engine->shaderPreset(), ShaderPreset::FlatShaded);
+    const auto flat = vine::graphics::flatForwardProgram();
+    engine->setContentProgram(flat);
+    EXPECT_EQ(engine->contentProgram(), flat);
 
     engine->setBackend(backend);
     EXPECT_TRUE(engine->initialize());
-    EXPECT_EQ(backend->preset_sets, 1);
-    EXPECT_EQ(backend->last_preset, ShaderPreset::FlatShaded);
+    EXPECT_EQ(backend->content_program_sets, 1);
+    EXPECT_EQ(backend->last_content_program, flat);
+
+    // A running session is told too (the backend rebuilds its shading side), and "none" is a legal
+    // answer: content without its own program is then reported and skipped, not shaded with a guess.
+    engine->setContentProgram(nullptr);
+    EXPECT_EQ(backend->content_program_sets, 2);
+    EXPECT_EQ(backend->last_content_program, nullptr);
+    EXPECT_EQ(engine->contentProgram(), nullptr);
 }
 
 TEST(RenderEngineTest, RegisteredPassesRunInAscendingOrder)
@@ -2935,6 +2946,49 @@ TEST(RenderPipelineBuilderTest, ForwardPresetBuildsWindowPass)
     EXPECT_TRUE(engine->hasWindowPass(cam.get()));
     EXPECT_EQ(engine->contentOf(pipeline->windowPass()), content.get());
     EXPECT_EQ(pipeline->offscreenTarget(), nullptr);
+}
+
+TEST(RenderPipelineBuilderTest, ShadowedPresetsReportThatTheyArePlaceholders)
+{
+    // A host that asks for shadows must not be handed an unshadowed picture in silence: the
+    // builder assembles the documented stand-in (see PipelinePreset) AND says so, once per build.
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+
+    std::vector<RenderDiagnostic> reported;
+    engine->setDiagnosticSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    RenderPipelineBuilder builder(engine.get());
+    builder.setCamera(cam.get());
+    builder.setContent(content);
+    auto forward = builder.build(PipelinePreset::ForwardShadowed);
+    ASSERT_NE(forward, nullptr);
+    ASSERT_EQ(reported.size(), 1u);
+    EXPECT_EQ(reported[0].severity, DiagnosticSeverity::Warning);
+    EXPECT_EQ(reported[0].category, DiagnosticCategory::UnsupportedRequest);
+    EXPECT_NE(reported[0].message.find(u8"ForwardShadowed"), vine::String::npos);
+    EXPECT_NE(reported[0].message.find(u8"unshadowed"), vine::String::npos);
+    // Unshadowed still means Forward: the report says the picture is not what was asked for, it does
+    // not pretend the preset was honoured.
+    EXPECT_NE(forward->windowPass(), nullptr);
+    EXPECT_EQ(forward->offscreenTarget(), nullptr);
+
+    reported.clear();
+    PipelineOptions opts;
+    opts.offscreen_width  = 64;
+    opts.offscreen_height = 64;
+    auto deferred         = builder.build(PipelinePreset::DeferredShadowed, opts);
+    ASSERT_NE(deferred, nullptr);
+    ASSERT_EQ(reported.size(), 1u);
+    EXPECT_EQ(reported[0].category, DiagnosticCategory::UnsupportedRequest);
+    EXPECT_NE(reported[0].message.find(u8"DeferredShadowed"), vine::String::npos);
+    EXPECT_NE(deferred->offscreenTarget(), nullptr);
+
+    // The unshadowed presets say nothing: there is nothing to report.
+    reported.clear();
+    EXPECT_NE(builder.build(PipelinePreset::Forward), nullptr);
+    EXPECT_TRUE(reported.empty());
 }
 
 TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)

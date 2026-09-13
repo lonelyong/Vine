@@ -266,7 +266,7 @@ void resetContentShaderSlots(VsgRendererState& state)
             slot_entry.second.bridge.clearCache();
         }
         t.content_slots.clear();
-        // The per-size sets a target bakes for its own slots follow the preset
+        // The per-size sets a target bakes for its own slots follow the program
         // too, so they are forgotten with the slots that used them.
         t.depth_on_shader_set       = {};
         t.depth_testonly_shader_set = {};

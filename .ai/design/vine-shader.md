@@ -2,10 +2,11 @@
 
 > 状态：设计稿 v1.1（2026-09-03）
 > **方向确认（SDK 第一准则）**：用户必须能写 GLSL；SDK 着色契约先于后端，vsg（乃至手写
-> Vulkan）只是可替换实现。内置 ShaderPreset 与用户 Program 走同一契约；多 pass 的意义依赖用户
+> Vulkan）只是可替换实现。**内置 program 与用户 Program 是同一个模型**（2026-09-13：枚举
+> `ShaderPreset` 已删除，详见 `vsg-custom-shader.md` §11.10）；多 pass 的意义依赖用户
 > 可编程着色（pass 级 Program + 命名产出槽）。契约草案见 **§11**。本稿 §4 push-constant 矩阵机制
 > 受其影响，已标注"待契约化修订"。
-> 上游：`vsg-custom-shader.md`（总纲 + ShaderPreset 过渡映射 §8 已落地）；
+> 上游：`vsg-custom-shader.md`（总纲 + 着色语义 §8 / 显式 program §11.10）；
 > `graphics-lighting.md`（v4a：Scene 级 Light + `RenderBackend::setLights`）；
 > `graphics-shadow.md`（v4b-1：depth-only RT 已落地；v4b-2 采样=本设计的 ShadowedPhong 切片）；
 > `graphics-render-pipeline.md`（v3：命名产出槽 publish/resolve）。
@@ -18,7 +19,7 @@
 
 | 层 | 现状 | 本设计改向 |
 |---|---|---|
-| SDK 语义 | `ShaderPreset{StandardPhong, FlatShaded, Pbr, ShadowedPhong}`（`ShaderPreset.hpp`），RenderEngine 持有并转发 `RenderBackend::setShaderPreset` | 不变 |
+| SDK 语义 | `ShaderProgram`（`forwardProgram()` / `flatForwardProgram()` + 用户自己写的），RenderEngine 持有并转发 `RenderBackend::setContentProgram`；**枚举 `ShaderPreset` 已删除** | 不变 |
 | vsg 着色 | `VsgRenderer.cpp::buildShaderSet()` → `createPhongShaderSet()/createFlatShadedShaderSet()`（Pbr/Shadowed 回落 Phong） | 换 `buildVineShaderSet()`（自写 SPIR-V） |
 | 几何桥 | `SceneBridge::buildGeometry()`：每几何 `GraphicsPipelineConfigurator`；属性 `vsg_Vertex/Normal/Color`；描述符 `"material"`=`PhongMaterialValue`（`VsgMaterialManager` 缓存）；blend 常开；opacity 走 per-vertex alpha | 属性不变；描述符换 `"vine_material"`（我们的 UBO） |
 | 光源 | v4a：`RenderPass::execute→setLights`；vsg 每视图转 `vsg::Light` 节点 → VDS lightData | 改为每帧打包 `LightsUBO`（world space），不再建 vsg::Light 节点 / 不再依赖 VDS |
@@ -333,8 +334,9 @@ void main()
 
 ### 11.3 与内置预设同构
 
-`ShaderPreset` 最终退化为"内置 Program 的别名"（默认快路径，同一契约）；用户 Program 是同一模型
-的一等公民：可覆盖几何（Drawable）或挂在 pass 上。不搞两套着色机制。
+`ShaderPreset` 当时被规划为"内置 Program 的别名"；**2026-09-13 实际落地时直接删掉了这个别名**
+（内置着色就是两个 Program 工厂：`forwardProgram()` / `flatForwardProgram()`）。用户 Program 是同一模型
+的一等公民：可覆盖几何（Drawable）或挂在 pass 上，也可作为会话的内容 program。不搞两套着色机制。
 
 ### 11.4 示例（供评审）
 

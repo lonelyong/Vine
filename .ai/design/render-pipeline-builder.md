@@ -130,7 +130,8 @@ class V_GRAPHICS_API RenderPipelineBuilder {
   - Forward（含 ForwardShadowed 占位）：order-0 窗口场景 pass（camera+content）。
   - Deferred（含 DeferredShadowed 占位）：order-3 gbuffer 场景 pass（MRT：albedo RGBA8 / view-normal+shininess RGBA16F / spec RGBA8 / view-pos RGBA16F + D24；发布 "GBuffer"；program override）→ order-0 全屏延迟光照 ScreenPass（采样 GBuffer、带 camera、绑 content 转发 scene 灯光）即窗口 pass → 使 hasWindowPass(camera)=true，SceneView/RenderControl 不再叠 forward。
   - Deferred **默认自带临时 shader**（builder 公共静态 `defaultGbufferGeometryProgram()`/`defaultDeferredLightProgram()`）与 **canonical G-buffer target**（公共静态 `defaultGbufferTarget(w,h)`，builder 与 A/B 预览共用），调用方零 GLSL；PipelineOptions 的 gbuffer/lighting program 为可选覆盖（自定义着色）。缺 camera/content → 返回 null 且不注册。
-  - 注：内置 GLSL 是**临时默认**（vsg-ABI 具体），后续应由 vsg 后端提供内置 deferred 着色集（对齐现有 ShaderPreset），届时 builder 默认改为向后端取、移除 SDK 内 GLSL。
+  - 注：内置 GLSL 是**临时默认**（vsg-ABI 具体），后续应由 vsg 后端提供内置 deferred 着色集，届时 builder 默认改为向后端取、移除 SDK 内 GLSL。
+  - **2026-09-13 校**：内容着色已改为**显式命名 program**（`forwardProgram()` / `flatForwardProgram()`；枚举 `ShaderPreset` 删除），且两个 shadowed 占位预设现在会报一条 `DiagnosticCategory::UnsupportedRequest`（见 `vsg-custom-shader.md` §11.10）。
   - G-buffer 尺寸：options.offscreen_* → engine surface → 640×360 兜底；`Pipeline::resize(w,h)` 由宿主维护（可挂 SceneView::addSurfaceLayout）。
 - SceneView::ensureWindowPass 改走同一 Forward preset（不再手搓 pass）：全仓主窗管线只有一套 recipe。内部持 `default_pipeline_`（intrusive_ptr<Pipeline>），dtor/setEngine 经 removeWindowPass() 移除。
 - 可配 gizmo overlay：`PipelineOptions::gizmo`（AxisGizmoOptions：source_camera(null=禁用)/pixel_ratio/box_size/axis_length/thickness/order）。build() 挂 AxisGizmo HUD pass；Pipeline::resize(w,h) 一并重锚 gizmo（一次 surface-layout 管 gbuffer+gizmo）。AppShell 默认（无 env）也经 builder Forward preset 装配，gizmo 随 options 配置。

@@ -207,7 +207,7 @@ void detachSlotView(VsgRendererState& state, VsgRenderTargetEntry& owner, vine::
  * A slot bakes its shader set at build time and the set carries more than one shading choice
  * with it: which program shades the slot, which light source the slot has to feed
  * (SceneBridge::hasOwnLightsBlock), and which View features that program reads. None of that
- * can be patched afterwards, so changing the shading preset mid-session means the slots have to
+ * can be patched afterwards, so changing the content program mid-session means the slots have to
  * be built again — this is that drop, and the existing lazy slot creation rebuilds them on the
  * next frame each pass renders.
  *

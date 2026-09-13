@@ -25,7 +25,7 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/graphics/ScreenPass.hpp>
-#include <vine/graphics/ShaderPreset.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -1212,10 +1212,10 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
     // builder as transparent content, so the builder composites it depth-on
     // over the deferred-lit result.
     addDemoPipeline(render_control, overlay_scene);
-    // Dev switch: setting VINE_SHADER_PRESET exercises the FlatShaded preset
-    // through the whole engine/backend path (default = StandardPhong).
+    // Dev switch: setting VINE_SHADER_PRESET names the FLAT program as the content program, exercising
+    // the whole engine/backend path (default = forwardProgram(), set by the engine).
     if (std::getenv("VINE_SHADER_PRESET") != nullptr) {
-        render_control->engine()->setShaderPreset(vine::graphics::ShaderPreset::FlatShaded);
+        render_control->engine()->setContentProgram(vine::graphics::flatForwardProgram());
     }
     // Register the 3D view so other plugins (tests/editors) can reach the
     // render engine/scene without depending on app shell internals.

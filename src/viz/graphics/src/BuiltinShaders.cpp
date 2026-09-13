@@ -60,26 +60,23 @@ intrusive_ptr<ShaderProgram> makeProgram(const char8_t* name, std::u8string_view
 }
 }  // namespace
 
-intrusive_ptr<ShaderProgram> builtinProgram(ShaderPreset preset)
+intrusive_ptr<ShaderProgram> forwardProgram()
 {
-    switch (preset)
-    {
-    case ShaderPreset::StandardPhong:
-        return makeProgram(u8"vine_forward", shaders::kVineForwardVert, shaders::kVineForwardFrag);
-    case ShaderPreset::FlatShaded:
-        // Flat shading is the SAME program with one define: the face normal comes from the
-        // screen-space derivatives of the view position instead of the interpolated vertex
-        // normal (see the fragment source). Injecting the define here keeps ONE lighting source
-        // for both presets — the alternative, a second copy of the lighting, is exactly the kind
-        // of duplication that drifts.
-        return makeProgram(u8"vine_flat", shaders::kVineForwardVert,
-                           withDefine(shaders::kVineForwardFrag, u8"#define VINE_FLAT 1"));
-    case ShaderPreset::Pbr:
-    case ShaderPreset::ShadowedPhong:
-        break;
-    }
-    // No SDK shading for this preset yet: the caller keeps its own fallback.
-    return {};
+    return makeProgram(u8"vine_forward", shaders::kVineForwardVert, shaders::kVineForwardFrag);
+}
+
+intrusive_ptr<ShaderProgram> flatForwardProgram()
+{
+    // Flat shading is the SAME program with one define: the face normal comes from the screen-space
+    // derivatives of the view position instead of the interpolated vertex normal (see the fragment
+    // source). Injecting the define here keeps ONE lighting source for both programs — the alternative,
+    // a second copy of the lighting, is exactly the kind of duplication that drifts.
+    //
+    // The define goes into the SOURCE (withDefine) rather than through a backend's compile settings:
+    // it is a different program text, which is what a program IS, and it keeps this program's identity
+    // independent of any backend's define plumbing.
+    return makeProgram(u8"vine_flat", shaders::kVineForwardVert,
+                       withDefine(shaders::kVineForwardFrag, u8"#define VINE_FLAT 1"));
 }
 
 intrusive_ptr<ShaderProgram> gbufferGeometryProgram()

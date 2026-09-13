@@ -399,7 +399,7 @@ sequenceDiagram
 | 顶点色 | 用户 loc6 会被 `SceneBridge` 白色覆盖（只认自己生成的 colors + opacity） |
 | 线/点 | 无 `LINE_STRIP`；`lineWidth>1` 需 `wideLines` 特性（未开）；无法调线宽/点大小 |
 | 阴影 | 深度 RT 通道已有；**shadowed Phong 采样（v4b-2）未完成** |
-| preset | `Pbr / ShadowedPhong` 预留无实现（仅 StandardPhong/FlatShaded 映射内建） |
+| preset | **没有 preset 枚举了（2026-09-13）**：内容着色只能显式命名 program（`forwardProgram()` / `flatForwardProgram()`，或宿主自己的）；没有可用 set 就报一条诊断且**不画**（不兜底） |
 | instancing | vsg loc7-11（billboard/instance/skinning）未向 Vine 暴露；注意这里说的是 **shader location**，与顶点数组下标（binding）无关 |
 | 固定项 | `frontFace` 固定 CCW、MRT/自定义 blend op/独立 mask 未做 |
 | 生命周期局限 | 缓存以裸指针为键，依赖场景树保活；几何删除后最多滞留 600 帧才释放 |
@@ -480,7 +480,7 @@ sequenceDiagram
 |---|---|---|---|
 | D24 | `intrusive_ptr` 成员析构需**完整类型**：头文件放成员就得 include 对应头 | 头文件纪律 | 🟢 |
 | D25 | `Mat4d()` 默认即单位阵（无 `::identity()`）；`Mat4d×Point3d` 需 include `Transform3.hpp` | SDK 使用 | 🟢 |
-| D26 | 阴影：深度 RT 有、shadowed Phong 采样（v4b-2）未完成；Pbr/ShadowedPhong preset 仅预留 | 路线 | 🟢 |
+| D26 | 阴影：深度 RT 有、shadowed Phong 采样（v4b-2）未完成；两个 shadowed **PipelinePreset** 是占位（现在会报 `UnsupportedRequest`） | 路线 | 🟢 |
 
 ### 13.7 优先处置建议（🔴）
 

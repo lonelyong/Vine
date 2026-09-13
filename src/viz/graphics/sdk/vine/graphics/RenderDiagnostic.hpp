@@ -43,6 +43,9 @@ enum class DiagnosticCategory : std::uint8_t
     PassProtocolViolation, ///< The host misused the pass protocol: the announced state did not apply
                            ///< (a nested / unpaired beginPass/endPass, or a target released while
                            ///< it was still announced).
+    UnsupportedRequest,    ///< The host asked for something that is not implemented yet: a documented
+                           ///< stand-in was assembled instead, so the picture is not what was asked
+                           ///< for.
 
     Count, ///< Number of categories (not a category itself; keeps count arrays sized).
 };

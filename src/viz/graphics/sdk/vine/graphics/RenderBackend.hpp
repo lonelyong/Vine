@@ -15,7 +15,7 @@
 
 #include "RenderDiagnostic.hpp"
 #include "RenderPass.hpp"
-#include "ShaderPreset.hpp"
+#include "ShaderProgram.hpp"
 
 V_GRAPHICS_NS_BEGIN
 
@@ -101,7 +101,7 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
     /** @brief Initializes the backend: device, surface, pipelines, caches.
      *
      * Called once per session, after the host announced the native window
-     * (setWindowHandle) and the shading preset (setShaderPreset). A backend
+     * (setWindowHandle) and the content program (setContentProgram). A backend
      * that is already initialized tears the previous session down first, so
      * this may be called again on a recreated surface.
      *
@@ -548,20 +548,23 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
 
     /** @brief Selects the shading-model preset for scene geometry.
      *
-     * May be called before initialize(), where it is a session decision baked as the session
-     * starts, or on a RUNNING session, where the backend re-bakes the shading side so the next
-     * frame draws with @p preset. A live switch rebuilds content shading only: the targets keep
-     * their attachments, their pass graphs and their depth history, so a host that offers a
-     * shading-model toggle gets a differently shaded picture rather than a restarted session.
-     * The backend maps the preset onto its shader/material pipeline (vsg: Phong vs flat
-     * ShaderSet). Presets without a backend implementation yet (Pbr / ShadowedPhong) fall back
-     * to StandardPhong. Default no-op.
+     * The ONE thing a drawable that names no program of its own is shaded with. There is no
+     * shading-model lookup and no fallback: the host names a program (the engine starts with
+     * forwardProgram(), see RenderEngine), or content without its own program is NOT drawn and the
+     * reason is reported.
      *
-     * @param preset Shading-model preset.
+     * May be called before initialize(), where it is a session decision baked as the session starts,
+     * or on a RUNNING session, where the backend re-bakes the shading side so the next frame draws
+     * with @p program. A live switch rebuilds content shading only: the targets keep their
+     * attachments, their pass graphs and their depth history, so a host that offers a shading toggle
+     * gets a differently shaded picture rather than a restarted session.
+     *
+     * @param program Program to shade program-less content with, or null for "none" (such content is
+     *                then reported and skipped).
      */
-    virtual void setShaderPreset(ShaderPreset preset)
+    virtual void setContentProgram(intrusive_ptr<const ShaderProgram> program)
     {
-        (void)preset;
+        (void)program;
     }
 
     /** @brief Binds a host native window the backend may render into.

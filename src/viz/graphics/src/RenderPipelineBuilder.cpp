@@ -4,6 +4,7 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
+#include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ScreenPass.hpp>
@@ -95,10 +96,19 @@ intrusive_ptr<Pipeline> RenderPipelineBuilder::build(PipelinePreset preset,
     // The shadowed variants are placeholders until the shadow slice lands
     // (an order < 0 depth-only pass plus shadowed lighting).
     PipelinePreset base = preset;
-    if (base == PipelinePreset::ForwardShadowed) {
-        base = PipelinePreset::Forward;
-    } else if (base == PipelinePreset::DeferredShadowed) {
-        base = PipelinePreset::Deferred;
+    if (base == PipelinePreset::ForwardShadowed || base == PipelinePreset::DeferredShadowed) {
+        const bool deferred = (base == PipelinePreset::DeferredShadowed);
+        base                = deferred ? PipelinePreset::Deferred : PipelinePreset::Forward;
+        // Assembling a pipeline is a host action, not a per-frame one, so this
+        // is reported per build rather than deduplicated: a host that asks for
+        // shadows has to learn that the picture it gets is unshadowed.
+        engine_->reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
+                                     vine::graphics::DiagnosticCategory::UnsupportedRequest,
+                                     deferred
+                                         ? String(u8"PipelinePreset::DeferredShadowed is a placeholder: no shadow pass is "
+                                                  u8"built, so this pipeline is PipelinePreset::Deferred and the picture is unshadowed")
+                                         : String(u8"PipelinePreset::ForwardShadowed is a placeholder: no shadow pass is "
+                                                  u8"built, so this pipeline is PipelinePreset::Forward and the picture is unshadowed"));
     }
 
     auto pipeline = make_intrusive<Pipeline>();

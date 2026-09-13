@@ -6,8 +6,9 @@
 > `graphics-render-pipeline.md`（pass 级 program + 命名产出槽）、`vsg-custom-shader.md`。
 >
 > **一句话**：SDK 第一准则——**用户必须能写 GLSL**；SDK 只给一个**薄着色接口**（源 + 类型化参数
-> + 纹理/输入槽），不搞重型"契约"；内置 `ShaderPreset` 与用户 Program 是**同一模型**；vsg（乃至
-> 自写 Vulkan/GL）只是把 Program 编译并装配成管线的可替换实现。
+> + 纹理/输入槽），不搞重型"契约"；**内置 program 与用户 Program 是同一个模型**（2026-09-13：
+> 连"内置"也只是一个 program——`forwardProgram()` / `flatForwardProgram()`，枚举 `ShaderPreset` 已删除）；
+> vsg（乃至自写 Vulkan/GL）只是把 Program 编译并装配成管线的可替换实现。
 >
 > ⚠ **编译能力（更新 2026-09-03）**：vsg 已**集成 glslang**——gfx_backend_vsg 在 VINE_USE_FETCHCONTENT
 > 分支**源码构建 vsg** 并链系统 glslang-dev（`VSG_SUPPORTS_ShaderCompiler 1`，`ShaderCompiler.cpp` 已
@@ -16,8 +17,10 @@
 > - (b) **离线/作者时**：`glslangValidator` 或 SDK 薄辅助 `compileGlslToSpirv()` 预编译（测试/工具链）。
 > `ShaderProgram` 也可直接携带 SPIR-V（字节或 `.spv` 路径）。后端以 `ShaderSet.stages /
 > attributeBindings / descriptorBindings / defaultGraphicsPipelineStates` **自描述装配**用户
-> Program 并经 `GraphicsPipelineConfigurator` 成管线；`program()==nullptr` → 内置默认
-> （ShaderPreset / vendored SPIR-V），零回归。依赖注记：无 glslang 的本地 vsg 安装仅在
+> Program 并经 `GraphicsPipelineConfigurator` 成管线；**`program()==nullptr` 的 drawable 用会话的
+> 内容 program**（`RenderEngine::setContentProgram`，默认就是命名的 `forwardProgram()`；
+> 2026-09-13 之前这里写的是 "内置默认（ShaderPreset / vendored SPIR-V）"，且**后端自己有默认值**）。
+> 依赖注记：无 glslang 的本地 vsg 安装仅在
 > VINE_USE_FETCHCONTENT=OFF 分支使用（无运行期编译）。详见 §6/§7/§10。
 >
 > 📋 评审（2026-09-03）：P1 SDK 侧已落地——`ShaderProgram/ShaderStage`、`Geometry::setProgram`、
@@ -55,8 +58,9 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 };
 ```
 
-**默认好用的关键**：`program()==nullptr` → 走引擎默认（内置程序由 ShaderPreset+材质+几何数据决定），
-一行 GLSL 不碰、零回归。
+**默认好用的关键**：`program()==nullptr` → 走**会话的内容 program**（`RenderEngine::setContentProgram`，
+出厂就是 `forwardProgram()`：内建前向着色，由材质 + 几何数据决定效果），一行 GLSL 不碰、零回归。
+后端**自己不带默认值**：没有任何可用的 set 就报一条诊断、不画（"不兜底"，见 `vsg-custom-shader.md` §11.10）。
 
 ## 2. 挂点与解析链
 
@@ -118,8 +122,11 @@ location 上”。改一个角色的 location ⇒ 两半一起动，且两处测
 
 ## 7. 与内置预设同构
 
-- `ShaderPreset{StandardPhong, FlatShaded, Pbr, ShadowedPhong}` 退化为**内置 Program 的别名**
-  （默认快路径，走同一 ShaderProgram 模型）；
+- **内置着色就是一个 Program**（`forwardProgram()` / `flatForwardProgram()`），与用户写的
+  `ShaderProgram` **完全同构**（同一 ShaderProgram 模型、同一装配路径）：
+  2026-09-13 之前这里还有一个 `ShaderPreset{StandardPhong, FlatShaded, Pbr, ShadowedPhong}` 枚举
+  在当"别名"，现在已删除——枚举既表达不了宿主的着色，又用两个空名字（Pbr/ShadowedPhong）
+  暗示了一种我们不给的兜底；
 - 不搞"内置一套机制、用户一套机制"。
 
 ## 8. 后端映射
@@ -143,7 +150,7 @@ location 上”。改一个角色的 location ⇒ 两半一起动，且两处测
 1. SDK 第一准则：用户必须能写 GLSL；着色契约先于后端（vsg 可弃）。
 2. **薄接口**：不做重型契约/布局推导；接口最小化到"源 + 类型化参数 + 槽"。
 3. loc0=position 为唯一固定约定；per-view/per-draw 用 `VineViewBlock/VineDrawBlock` 声明式块，push 仅内部。
-4. 内置 ShaderPreset 与用户 Program 同一模型；默认 null=内置，用户可覆盖（Geometry/StateNode/pass）。
+4. 内置 program 与用户 Program 同一模型（**2026-09-13：没有枚举，两者都是 Program**）；默认 null=会话内容 program，用户可覆盖（Geometry/StateNode/pass）。
 5. 多 pass 意义 = pass 级 Program + 命名产出槽（复用现有 publish/resolve）。
 
 6. **编译能力（2026-09-03，初稿→更新）**：初判"无 glslang → 仅离线"；随后**集成 glslang**
@@ -151,7 +158,8 @@ location 上”。改一个角色的 location ⇒ 两半一起动，且两处测
    最终：**运行期编译可用（默认）**，离线 `glslangValidator` / 直接 SPIR-V 为兜底；作者形态 = GLSL 源。
 7. **绑定契约自描述**：用户 Program 声明所需顶点属性（loc0=position 固定）与 uniform/纹理槽；
    后端按 `ShaderSet.attributeBindings/descriptorBindings` 自描述绑定数组与参数，SDK 不复制契约文档。
-8. **默认不变**：`program()==nullptr` → 内置（ShaderPreset / vendored SPIR-V），零回归。
+8. **默认不变**：`program()==nullptr` → 会话的内容 program（引擎构造时就是 `forwardProgram()`）；
+   **后端没有默认值**，也不替宿主挑着色（2026-09-13 前写的是"内置（ShaderPreset / vendored SPIR-V）"）。
 
 ## 11. 后端无关着色 ABI：L1/L2/L3（2026-09-13 设计）
 

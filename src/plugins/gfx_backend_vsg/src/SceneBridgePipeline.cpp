@@ -436,8 +436,9 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         if (shaderSet == nullptr && !no_shader_set_reported_) {
             no_shader_set_reported_ = true;
             report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
-                   u8"this slot has no shader set, so its content cannot be shaded and is NOT drawn (the engine "
-                   u8"builds one per slot from the shading preset; a preset with no program of its own has none)");
+                   u8"this slot has no shader set, so its content cannot be shaded and is NOT drawn (a slot's set "
+                   u8"is built from the shading program the session names; a program the backend cannot compile "
+                   u8"into one has none)");
         }
     }
     if (!shaderSet) {
@@ -492,7 +493,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         }
     }
     // The texcoord slot's WIDTH is what the data node bound there (see detail::texCoordArray): three scalars
-    // per vertex, or two. The engine's own preset reads three as a cube direction and compiles the
+    // per vertex, or two. The engine's own forward program reads three as a cube direction and compiles the
     // samplerCube variant for it, so the width selects the sampler here and belongs to the variant identity
     // for the same reason the drops above do.
     const bool three_scalar_texcoords =
@@ -513,7 +514,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         (texture == nullptr || texture->kind() != vine::graphics::Texture::Kind::Cube)) {
         texture_info = textureCache().whiteCubeFallback();
         report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
-               u8"the texcoord channel is three scalars wide (a cube direction for this preset) while the "
+               u8"the texcoord channel is three scalars wide (a cube direction for this program) while the "
                u8"material's texture is not a cube map; the white cube is sampled instead (the map is not used)");
     }
     else if (engine_picks_sampler && !three_scalar_texcoords && texture != nullptr &&

@@ -188,7 +188,7 @@ void Geometry::setTexcoords3(intrusive_ptr<const vine::Buffer<float>> texcoords)
 {
     // The SAME slot as setTexcoords2, with the other width: three scalars per vertex, which is what a cube
     // map is sampled by direction with. What the width MEANS stays the sampler's business (a user program
-    // may read these three as a volume coordinate); the engine's own preset reads it as a direction.
+    // may read these three as a volume coordinate); the engine's own program reads it as a direction.
     addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(texcoords), kVec3Components));
 }
 
