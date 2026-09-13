@@ -208,6 +208,8 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 | B3 | `VineFrame`/`VineDraw` 声明式块（替换 `pc` + 块绑定）；先定"per-draw model 走 UBO vs vsg push 作内部优化"的口径 | 高（动 ABI/预算） |
 | B4（可选） | 第二个后端（DX/GL）验证"只换文本 + L2 shim" | 视需求 |
 
+> B2/B3 的口径见 **§12**：B2 暂缓（无消费者），B3 采用**选项 C**（L1 声明式块 + push 作后端内部优化）。
+
 ### 11.7 B1：SDK 显式属性 location 表（2026-09-13 落地）
 
 - `sdk/vine/graphics/ShaderAbi.hpp`：`enum class VertexAttribute { Position, Normal, Color, TexCoord0 }` +
@@ -217,3 +219,62 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 - 测试：`test_graphics` 钉 `attributeLocation` 的值，且内置前向着色的嵌入文本确实以这些 location 声明
   （L1 ↔ L3 一致性；改表不改文本会红）。
 - 判据：行为中性 —— 两条证据基线 47 行不变；`vine_shader_check` PASS；相关单测 +1；lavapipe PASS。
+
+
+## 12. B3 决策：per-view / per-draw 数据怎么给（2026-09-13）
+
+> 目的：在动 `VineFrame`/`VineDraw` 之前把口径钉死，否则会返工（动 push 预算、动两条证据基线）。
+
+### 12.1 现状（= vsg 形状泄漏在 SDK shader 里的地方）
+
+| 数据 | 现在怎么给 | 谁决定 |
+| --- | --- | --- |
+| 相机矩阵（per-draw） | vsg 矩阵栈写 push 0..128：`pc{ mat4 projection; mat4 modelView; }` | 后端（SDK shader 只是"知道有 pc"） |
+| 光照（per-view） | 前向：`VineLightsBlock` UBO `set0/binding2`；延迟：`LightPushBlock` **push**（全屏不需要矩阵） | 后端 |
+| 材质 | `MaterialBlock` UBO `set0/binding0` | 后端 |
+
+SDK shader 文本因此写死了 `layout(push_constant)` / `layout(set = 0, binding = N, std140)` —— 这就是 DX 的拦路石。
+
+### 12.2 硬约束
+
+| 约束 | 事实 |
+| --- | --- |
+| Vulkan push 保证 | **128 B**（本项目实测就是上限） |
+| vsg 矩阵栈 | **已占满 0..128**（前向每 drawable 都要投影/模型矩阵） |
+| L1 `VineFrame`（view / inv_view / proj / view_proj / cam_pos / frame） | 4×mat4 + 2×vec4 = **288 B** ⇒ **塞不进 push** |
+| D3D12 root constants | 256 B，且 D3D11 **没有** push 等价物（只能 cbuffer） |
+
+⇒ **只要 L1 承认 `VineFrame` 是一个"块"，per-view 数据就必须落 UBO/cbuffer；push 只能是后端内部优化。**
+这与 §11.2.3 的原话一致（"push 仅内部优化，须与声明式块可证等价"）。
+
+### 12.3 三个选项
+
+| 选项 | 做法 | 代价 | 换后端 |
+| --- | --- | --- | --- |
+| **A** 维持 push（现状） | SDK 不声明块，只承诺"有 view/proj/model"，后端自选载体 | 最省 | ❌ DX11 无 push；L1 无法表达完整 `VineFrame` |
+| **B** 全面 UBO | `VineFrame` per-view UBO + `VineDraw` per-draw（dynamic offset）UBO | 每 drawable 多一次 UBO/offset 绑定；model 从 push 移出 | ✅ 干净 |
+| **C** 混合（**推荐/采纳**） | L1 **声明** `VineFrame`/`VineDraw`；vsg 前向仍可把 L1 子集塞进 push 作**内部优化**（`VineFrame.proj` + `VineDraw.model` = 现在的 `pc`），并在后端注释/测试里记明这层等价；新后端用真 UBO/cbuffer | 需维护"push 实现 ≡ L1 子集"的对应；per-draw 参数（P10 opacity / 用户参数）一来仍需 per-draw UBO | ✅ 且不牺牲当下性能 |
+
+**采用 C**：对外声明式块，push 是 vsg 的实现细节。
+
+### 12.4 落地顺序（C）
+
+| 步 | 内容 | 风险 |
+| --- | --- | --- |
+| C1 | SDK 定义 L1 块布局：`VineFrame` / `VineDraw`（16 B 对齐、成员 `mat4`/`vec4`；与 `LightPushBlock`/`VineLightsBlock`/`MaterialBlock` 同一"全 vec4 对齐"纪律） | 低（纯新增 + static_assert） |
+| C2 | vsg 后端把现有 push 标注为 C 的实现：`pc.projection ≡ VineFrame.proj`、`pc.modelView ≡ VineDraw.model`，并加测试钉住 push 范围/布局 | 低（行为中性） |
+| C3 | 新后端（有第二个时）直接实现 UBO/cbuffer；`ShaderProgram` 参数表随首个消费者（P10 材质值/用户参数）一起落 | 中 |
+
+### 12.5 L2 shim 何时做（结论：等第二个后端）
+
+把 SDK shader 里的 `layout(set = 0, binding = N)` 换成角色宏（L2 preamble）**只在有第二个后端时才有收益**：
+GLSL 与 HLSL 连**声明结构**都不同（`layout(binding = N)` vs `register(tN, spaceN)`），单后端下宏化只是把数字挪个位置。
+因此：**先钉 L1（§11）+ 保持块 vec4 对齐（§12.4 C1）；L2 shim 与第二个后端一起做。**
+
+### 12.6 B2 的前置（暂缓 `addParam`/`addInputSlot`）
+
+`ShaderProgram` 的参数表与命名槽**需要消费者**才落地，否则是死 API：
+- 命名槽（per-attachment）要先有引擎侧的**按附件命名**（现在槽模型是"整目标 publish，附件顺序 = binding 顺序"）；
+- 参数表的首个真实消费者是 P10 的材质/每 drawable 值（`Material` dynamic offset）与用户参数。
+
+⇒ **在这两个消费者出现之前，不引入 `addParam`/`addInputSlot`。**
