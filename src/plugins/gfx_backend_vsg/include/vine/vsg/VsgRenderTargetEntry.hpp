@@ -126,6 +126,17 @@ struct ContentSlot {
     // (which is always one of the engine's own). One block per SLOT because the lights are per view:
     // a shared one would light the HUD's ambient-only slot with the scene's sun.
     ::vsg::ref_ptr<::vsg::Data>   lights_data;
+    // This slot's shadow block (set 0 / binding 4), rewritten every frame from the PASS' own declared
+    // inputs: the map the pass declared as an input, or the block DISABLED (params.x = 0) when it
+    // declared none — the ABI's switch, which lets one shader text take both paths (ShaderAbi.hpp).
+    ::vsg::ref_ptr<::vsg::Data>   shadow_data;
+    // The map the slot's descriptor holds (set 0 / binding 3): the resolved map, or the session's
+    // white fallback while no shadow reaches this pass (never sampled then: the block is disabled).
+    // Kept so a CHANGE is detectable — a descriptor's image view cannot be re-pointed in place, so a
+    // change drops the cached variants.
+    ::vsg::ref_ptr<::vsg::ImageView> shadow_view;
+    ::vsg::ref_ptr<::vsg::Sampler>   shadow_sampler;
+    ::vsg::ref_ptr<::vsg::ImageInfo> shadow_placeholder;
     ::vsg::ref_ptr<::vsg::View>   view;
     SceneBridge                   bridge;      // per-view pipelines (vsg compiles per viewID; see VsgContentSlot.hpp on why the state registry must stay per slot)
     // D22: true once this slot's (window/framebuffer render pass + view)

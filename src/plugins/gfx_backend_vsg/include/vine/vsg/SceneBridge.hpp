@@ -191,6 +191,36 @@ class V_VSG_API SceneBridge {
      */
     void setLightsData(::vsg::ref_ptr<::vsg::Data> data);
 
+    /** @brief Sets the shadow map the pass' content set samples (set 0 / binding 3).
+     *
+     * Both this and @ref setShadowData are the shadow ABI (ShaderAbi.hpp). They are DECLARED by
+     * every content set this backend builds, because the set is shared per (target, depth mode)
+     * rather than per pass and the program is picked once for a session: the slot therefore always
+     * binds SOMETHING valid here — the real map when the pass declared a shadow input, and a
+     * stand-in with the block disabled when it did not (see VsgContentSlot), which is what keeps one
+     * shader text able to take both paths.
+     *
+     * A set that declares neither (an injected foreign set, e.g. another library's in a test) is left
+     * alone: the assignment is guarded by the declaration, so such a set keeps the pipeline it had.
+     *
+     * @param map      Image view + sampler for the map (null: bind nothing).
+     * @param declared Whether the pass really declared a shadow INPUT (the map came from a
+     *                 producer). False means @p map is the stand-in a pass without a shadow binds,
+     *                 and it is what keeps the "this program cannot shade the shadow" report about
+     *                 the passes that HAVE one.
+     */
+    void setShadowMap(::vsg::ref_ptr<::vsg::ImageInfo> map, bool declared);
+
+    /** @brief Sets the shadow block the pass' content set reads (set 0 / binding 4).
+     *
+     * Like the lights block: the slot owns the buffer and refreshes it per frame, the bridge only
+     * holds it for the descriptor sets it builds. `params.x == 0` means the block is disabled (no
+     * shadow reaches this pass), which the shader takes as "no shadow" without sampling the map.
+     *
+     * @param data Uniform block holding a VineShadowBlock, or null.
+     */
+    void setShadowData(::vsg::ref_ptr<::vsg::Data> data);
+
     /** @brief Reconciles the retained scene under root against the commands.
      *
      * Each render command contributes one retained child (a vsg::MatrixTransform
@@ -1007,6 +1037,12 @@ class V_VSG_API SceneBridge {
     // layout and descriptor set of the variants built from a ShaderSet that asks
     // for `vine_lights` (our forward set). Null while the built-in set draws.
     ::vsg::ref_ptr<::vsg::Data>         lights_data_;
+    // The slot's shadow pair (setShadowMap / setShadowData): declared in the pipeline layout and
+    // descriptor set of the variants built from a ShaderSet that asks for `shadow_map` /
+    // `vine_shadow` — every set this backend builds does (see buildVineShaderSet).
+    ::vsg::ref_ptr<::vsg::ImageInfo>    shadow_map_;
+    bool                                shadow_declared_ = false;
+    ::vsg::ref_ptr<::vsg::Data>         shadow_data_;
     // Retained per-geometry nodes, keyed by geometry pointer for O(1) lookup.
     //
     // The entry OWNS the geometry it is keyed by (OwnedCacheEntry), and that

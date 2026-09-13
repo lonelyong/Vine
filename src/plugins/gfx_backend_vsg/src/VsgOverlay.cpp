@@ -530,51 +530,14 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         // pipeline that built that camera wrote its view-projection once
         // (RenderTarget::setProducerViewProjection), and all that is missing here is the step from
         // view space (where the shading has the fragment) into light clip.
-        FullscreenShadowInput              shadow;
-        const vine::graphics::RenderTarget* shadow_source = nullptr;
-        for (const auto& input : state.request.inputs) {
-            if (input == nullptr) {
-                continue;
-            }
-            const auto input_it = state.targets.find(input);
-            if (input_it == state.targets.end() || input_it->second.depth_view == nullptr ||
-                !input_it->second.depth_sampleable) {
-                continue;   // declared but not produced/not sampleable: nothing to bind
-            }
-            shadow.map    = input_it->second.depth_view;
-            shadow_source = input;
-            break;
-        }
-        if (shadow.map != nullptr && shadow_source != nullptr && camera != nullptr) {
-            using vine::graphics::Light;
-            // The bias and the strength come from the light that casts it: the same ShadowSettings
-            // the pipeline framed its light camera with (a second, private bias per backend is
-            // exactly the kind of convention the L1 ABI exists to prevent). The first enabled
-            // shadow-casting light is the one the pipeline built the pass for.
-            float bias     = 0.002f;
-            float strength = 1.0f;
-            for (const auto* light : state.request.lights) {
-                if (light != nullptr && light->isEnabled() && light->castShadow()) {
-                    bias = static_cast<float>(light->shadowSettings().bias);
-                    break;
-                }
-            }
-            vine::graphics::VineShadowBlock block;
-            // view -> light clip = (light clip <- light world=light clip) * (light <- view):
-            // the producer's view-projection maps a view-space position into ITS clip space, and the
-            // fragment is in view space.
-            const vine::math::Mat4d view_to_light =
-                shadow_source->producerViewProjection() * camera->viewMatrix().inverted();
-            // Column-major, the way the GLSL block reads it (mat4 is four columns of vec4).
-            for (int column = 0; column < 4; ++column) {
-                for (int row = 0; row < 4; ++row) {
-                    block.view_to_light[static_cast<std::size_t>(column * 4 + row)] =
-                        static_cast<float>(view_to_light(row, column));
-                }
-            }
-            block.params = { 1.0f, bias, strength, 0.0f };
-            auto data    = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(block)));
-            std::memcpy(data->dataPointer(), &block, sizeof(block));
+        FullscreenShadowInput shadow;
+        const detail::ShadowInput resolved = detail::resolveShadowInput(state, camera, state.request.lights);
+        if (resolved.map != nullptr) {
+            shadow.map = resolved.map;
+            // The block is handed over as bytes because that is what a descriptor binding takes:
+            // the ABI struct's layout IS the binding's contract (asserted by test_graphics).
+            auto data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(resolved.block)));
+            std::memcpy(data->dataPointer(), &resolved.block, sizeof(resolved.block));
             data->properties.dataVariance = ::vsg::DYNAMIC_DATA;
             shadow.block                  = std::move(data);
         }

@@ -106,6 +106,60 @@ TEST(EmbeddedShadersTest, BookkeepingAgreesWithTheText)
 /** @brief Reinterprets UTF-8 shader text as a searchable byte string (defined below). */
 std::string asByteString(std::u8string_view text);
 
+/**
+ * @brief The two lines a shipped source marks the shadow ABI's insertion points with.
+ *
+ * @return The markers, as byte strings (the sources are char8_t).
+ */
+std::vector<std::string> shadow_markers()
+{
+    return { "// VINE_SHADOW_BINDINGS\n", "// VINE_SHADOW_TERM\n" };
+}
+
+/**
+ * @brief Asserts @p text is @p source with its marker LINES replaced by something.
+ *
+ * Every segment of the shipped file between the markers must survive verbatim and in order, which is
+ * what "the program is derived from the file" means when the inserted text is not this test's
+ * business. A segment that moved, was reworded, or was dropped fails here — the drift a duplicated
+ * expectation would not catch.
+ *
+ * @param text    Program text to check.
+ * @param source  Shipped source it must be derived from.
+ * @param markers Marker lines the source carries (each standing alone on its line).
+ */
+void expectDerivedFromSource(const std::string& text, const std::string& source,
+                             const std::vector<std::string>& markers)
+{
+    std::size_t              cursor = 0;   // how far into @p text the last segment ended
+    std::vector<std::size_t> cuts;
+    for (const std::string& marker : markers) {
+        const std::size_t at = source.find(marker);
+        ASSERT_NE(at, std::string::npos) << "the shipped source carries each insertion marker";
+        // The cut is the START OF THE MARKER'S LINE, not the marker itself: the insertion replaces
+        // the whole line, so its indentation goes with it and a segment that kept those spaces would
+        // never be found (the marker stands alone on its line precisely so this is well defined).
+        cuts.push_back(source.rfind('\n', at) + 1u);
+    }
+    std::sort(cuts.begin(), cuts.end());
+    std::size_t start = 0;
+    for (const std::size_t cut : cuts) {
+        const std::string segment = source.substr(start, cut - start);
+        const std::size_t found   = text.find(segment, cursor);
+        EXPECT_NE(found, std::string::npos) << "the program text must carry this segment of the file, which ends at\n  "
+                                           << segment.substr(segment.size() > 80u ? segment.size() - 80u : 0u);
+        if (found == std::string::npos) {
+            return;
+        }
+        cursor = found + segment.size();
+        // Skip the marker line itself: it is what the insertion replaced.
+        start = source.find('\n', cut) + 1u;
+    }
+    const std::string tail = source.substr(start);
+    EXPECT_NE(text.find(tail, cursor), std::string::npos)
+        << "the program text must carry the file's tail, which starts at\n  " << tail.substr(0, 80u);
+}
+
 TEST(EmbeddedShadersTest, TheDeferredProgramsUseTheEmbeddedSources)
 {
     const auto gbuffer = RenderPipelineBuilder::defaultGbufferGeometryProgram();
@@ -155,7 +209,13 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
     EXPECT_EQ(forward_vs->type, ShaderStageType::Vertex);
     EXPECT_EQ(forward_fs->type, ShaderStageType::Fragment);
     EXPECT_EQ(forward_vs->source, vine::String(kStdForwardVert));
-    EXPECT_EQ(forward_fs->source, vine::String(kStdForwardFrag));
+    // The fragment stage is that file with the shadow ABI inserted at its markers (the content set is
+    // shared per (target, depth mode), so the ABI is declared UNCONDITIONALLY and `shadow.params.x`
+    // is the runtime switch — see BuiltinShaders::forwardProgram). What this checks is that every
+    // SEGMENT of the shipped file survives verbatim and in order: the inserted text has its own test
+    // (TheForwardProgramDeclaresTheShadowAbiWhereTheContentSetBindsIt), and copying it here would be a
+    // second copy to keep in step — the drift this test exists to catch.
+    expectDerivedFromSource(forward_fs->source.stdstr(), asByteString(kStdForwardFrag), shadow_markers());
 
     // The flat program is the SAME stages with one define injected into the fragment source — which is
     // what makes it a different program (a different text), not a mode of another one. The vertex stage
@@ -170,6 +230,16 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
     EXPECT_EQ(flat_vs->source, vine::String(kStdForwardVert));
     EXPECT_NE(flat_fs->source, vine::String(kStdForwardFrag));
     EXPECT_NE(flat_fs->source.stdstr().find("#define VINE_FLAT 1"), std::string::npos);
+    // ...and it is that text with nothing else changed: the define goes in after the version directive,
+    // so dropping that one line has to give back the forward program EXACTLY. Two programs that share a
+    // lighting must share its text too — otherwise the flat preset is a second copy that drifts.
+    std::string       flat_without_define = flat_fs->source.stdstr();
+    const std::string define_line         = "#define VINE_FLAT 1\n";
+    const std::size_t define_at           = flat_without_define.find(define_line);
+    ASSERT_NE(define_at, std::string::npos);
+    flat_without_define.erase(define_at, define_line.size());
+    EXPECT_EQ(flat_without_define, forward_fs->source.stdstr())
+        << "the flat program is the forward text plus one define, not a second copy of the shading";
 }
 
 /**
@@ -240,6 +310,39 @@ TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceC
     EXPECT_EQ(shadowed_text.find("VINE_SHADOW_BINDINGS"), std::string::npos)
         << "the markers are scaffolding: the program text must not carry them";
     EXPECT_EQ(shadowed_text.find("VINE_SHADOW_TERM"), std::string::npos);
+}
+
+TEST(EmbeddedShadersTest, TheForwardProgramDeclaresTheShadowAbiWhereTheContentSetBindsIt)
+{
+    // The forward program carries the shadow ABI UNCONDITIONALLY (unlike the deferred lighting
+    // program's two variants) and at the CONTENT path's bindings: the content set is shared per
+    // (target, depth mode) and a session picks the content program once, so a shadowed variant would
+    // double that cache for every target and a host's own program would still have no shadowed twin to
+    // pick. One text, both paths, switched at runtime by `shadow.params.x` — which is what the ABI's
+    // params block is for (ShaderAbi.hpp).
+    //
+    // The bindings are pinned HERE, in the shipped text's own terms, because they are an ABI two
+    // layers have to agree on: the fragment program's layout qualifiers must name what
+    // buildVineShaderSet declares (set 0, the map at 3, the block at 4, after the material at 0, the
+    // optional diffuse map at 1 and the lights at 2). A number changed in one place only is a shader
+    // reading somebody else's binding.
+    const auto forward = forwardProgram();
+    ASSERT_NE(forward, nullptr);
+    ASSERT_EQ(forward->stageCount(), 2u);
+    const std::string text = forward->stage(1)->source.stdstr();
+    EXPECT_NE(text.find("layout(set = 0, binding = 3) uniform sampler2D shadow_map;"), std::string::npos);
+    EXPECT_NE(text.find("layout(set = 0, binding = 4, std140) uniform VineShadowBlock"), std::string::npos)
+        << "the block's GLSL type name is the L1 name (ShaderAbi.hpp)";
+    EXPECT_NE(text.find("shadow.viewToLight"), std::string::npos);
+    // Which switch the term reads, so the two paths cannot drift into different ABIs.
+    EXPECT_NE(text.find("shadow.params.x"), std::string::npos);
+    EXPECT_EQ(text.find("VINE_SHADOW_BINDINGS"), std::string::npos)
+        << "the markers are scaffolding: the program text must not carry them";
+    EXPECT_EQ(text.find("VINE_SHADOW_TERM"), std::string::npos);
+    // The term reads the fragment's view position by ONE name in both programs (the forward path has
+    // it as a varying, the deferred one reads it out of the G-buffer), which is what makes the term
+    // text shareable — so the alias has to be there.
+    EXPECT_NE(text.find("vec3 pos = v_view_pos;"), std::string::npos);
 }
 
 TEST(EmbeddedShadersTest, TheNamedConstantsAreInTheTable)

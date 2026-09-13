@@ -65,6 +65,15 @@ layout(set = 0, binding = 2, std140) uniform VineLightsBlock
     vec4 sun_color[3]; // rgb + intensity
 } lights;
 
+// The shadow this pass declared, if any: the map it named as an INPUT and the block that places a
+// fragment in it (ShaderAbi.hpp). DECLARED ALWAYS, unlike the deferred lighting program's two
+// variants: a content set is shared per (target, depth mode) and a session picks the content program
+// once, so a shadowed variant would double that cache for every target — and a host's own content
+// program would still have no shadowed twin to pick. One text, both paths, switched at RUNTIME by
+// `shadow.params.x` (0 = no shadow reached this pass), which is what the ABI's switch is for.
+// The line below IS the insertion point (BuiltinShaders::forwardProgram).
+// VINE_SHADOW_BINDINGS
+
 void main()
 {
 #ifdef VINE_FLAT
@@ -104,6 +113,10 @@ void main()
 #endif
     vec3 color = albedo * (lights.ambient.rgb * lights.ambient.a);
     float shininess = max(material.shininess, 1.0);
+    // The shadow term below is the SAME text the deferred lighting program inserts, and it reads the
+    // fragment's view position by one name in both programs: here it arrives as a varying, there it is
+    // read out of the G-buffer.
+    vec3 pos = v_view_pos;
     for (int i = 0; i < 3; ++i)
     {
         vec3 d = lights.sun_dir[i].xyz;
@@ -112,6 +125,10 @@ void main()
         float a = lights.sun_color[i].a;
         vec3 L = normalize(-d);
         float ndl = max(dot(n, L), 0.0);
+        // The shadow ABI's term goes here: it scales this light's ndl by whether the map found a
+        // caster in front of this fragment. The line below IS that insertion point, and it is the same
+        // text the deferred lighting program carries (so the two paths cannot drift).
+        // VINE_SHADOW_TERM
         color += albedo * c * a * ndl;
         // Specular is gated by ndl like the diffuse term: a face turned away
         // from the light must not receive a highlight (see deferred_light.frag

@@ -1,6 +1,7 @@
 #include <vine/vsg/VsgContentSlot.hpp>
 
 #include <cstdio>
+#include <cstdio>
 #include <cstring>
 #include <optional>
 #include <string>
@@ -202,6 +203,26 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     content.lights_data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(VineLightsBlock)));
     content.bridge.setLightsData(content.lights_data);
 
+    // This slot's shadow ABI, seeded before the first compile so both descriptors exist (a
+    // declared-but-unwritten descriptor is an invalid set, and the content set declares the pair
+    // unconditionally — see buildVineShaderSet):
+    //  - the block starts DISABLED;
+    //  - the map starts at the session's white fallback, and the shader never samples it while the
+    //    block is disabled (the stand-in needs no depth image of its own, and it is a valid
+    //    COMBINED_IMAGE_SAMPLER the whole time).
+    // The sampler is NEAREST: the shader compares exact depths, so filtering across texels would
+    // invent a depth nobody rasterised (see makeFullscreenProgramNode, which does the same for the
+    // fullscreen path).
+    content.shadow_data      = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(vine::graphics::VineShadowBlock)));
+    content.shadow_sampler   = ::vsg::Sampler::create();
+    content.shadow_sampler->magFilter  = VK_FILTER_NEAREST;
+    content.shadow_sampler->minFilter  = VK_FILTER_NEAREST;
+    content.shadow_sampler->mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    content.shadow_placeholder = state.texture_cache != nullptr ? state.texture_cache->whiteFallback()
+                                                                : ::vsg::ref_ptr<::vsg::ImageInfo>();
+    content.bridge.setShadowData(content.shadow_data);
+    content.bridge.setShadowMap(content.shadow_placeholder, /*declared*/ false);
+
     // features = 0: the set declares no view-dependent binding, so ViewDependentState has nothing to
     // collect and its lightData buffer stays at the 1-vec4 minimum instead of being sized for lights
     // the slot does not put under the view.
@@ -320,6 +341,27 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         attached_lights = fillVineLightsBlock(request.camera, *request.lights, block);
         std::memcpy(content.lights_data->dataPointer(), &block, sizeof(block));
         content.lights_data->dirty();
+    }
+
+    // This slot's shadow: resolved from the PASS' own declared inputs by the one rule every shadow
+    // consumer uses (detail::resolveShadowInput — the fullscreen lighting pass calls it too), so the
+    // forward content and the deferred lighting cannot disagree about which map they are reading.
+    if (content.shadow_data != nullptr && content.shadow_data->dataSize() >= sizeof(vine::graphics::VineShadowBlock)) {
+        const detail::ShadowInput shadow = detail::resolveShadowInput(state, request.camera, *request.lights);
+        std::memcpy(content.shadow_data->dataPointer(), &shadow.block, sizeof(shadow.block));
+        content.shadow_data->dirty();
+        if (content.shadow_view != shadow.map) {
+            // The descriptor's image view cannot be re-pointed in place, so the new map is a new
+            // descriptor: drop the cached variants and let the next build assign it. Seed-only
+            // changes are rare (a pass that starts or stops declaring a shadow, a resized map).
+            content.shadow_view = shadow.map;
+            content.bridge.setShadowMap(shadow.map != nullptr
+                                            ? ::vsg::ImageInfo::create(content.shadow_sampler, shadow.map,
+                                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                                            : content.shadow_placeholder,
+                                        /*declared*/ shadow.map != nullptr);
+            content.bridge.clearCache();
+        }
     }
 
     if (beginLightsDroppedEpisode(request.lights->size(), attached_lights, content.light_fallback_reported)) {

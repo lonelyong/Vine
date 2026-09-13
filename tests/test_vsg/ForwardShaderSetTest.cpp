@@ -34,6 +34,7 @@
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/StateGroup.h>
 #include <vsg/state/ColorBlendState.h>
+#include <vsg/state/ImageInfo.h>
 #include <vsg/state/DepthStencilState.h>
 #include <vsg/state/DescriptorSetLayout.h>
 #include <vsg/state/GraphicsPipeline.h>
@@ -163,24 +164,31 @@ const ::vsg::VertexInputState* findVertexInputState(const ::vsg::GraphicsPipelin
 }
 
 /**
- * @brief Whether any descriptor set layout of the pipeline binds a sampled image.
+ * @brief Whether the pipeline's layout binds a sampled image at @p set / @p binding.
+ *
+ * By BINDING, not "a texture somewhere": the content set declares the shadow ABI unconditionally
+ * (set 0 / binding 3 is the shadow map, compiled into every forward pipeline because the shadow term
+ * samples it under a runtime switch — see ShaderAbi.hpp), so "this pipeline has a sampler" is true of
+ * every variant now. A test about the DIFFUSE map (set 0 / binding 1, gated by the UV attribute) has to
+ * ask about that binding.
  *
  * @param pipeline Pipeline to inspect.
- * @return true when a combined image sampler is declared.
+ * @param set      Descriptor set to look in.
+ * @param binding  Binding within that set.
+ * @return true when that binding is a combined image sampler.
  */
-bool pipelineSamplesATexture(const ::vsg::GraphicsPipeline& pipeline)
+bool pipelineSamplesAt(const ::vsg::GraphicsPipeline& pipeline, std::uint32_t set, std::uint32_t binding)
 {
-    if (pipeline.layout == nullptr) {
+    if (pipeline.layout == nullptr || set >= pipeline.layout->setLayouts.size()) {
         return false;
     }
-    for (const auto& set_layout : pipeline.layout->setLayouts) {
-        if (set_layout == nullptr) {
-            continue;
-        }
-        for (const auto& binding : set_layout->bindings) {
-            if (binding.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
-                return true;
-            }
+    const auto& set_layout = pipeline.layout->setLayouts[set];
+    if (set_layout == nullptr) {
+        return false;
+    }
+    for (const auto& declared : set_layout->bindings) {
+        if (declared.binding == binding) {
+            return declared.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         }
     }
     return false;
@@ -519,7 +527,10 @@ TEST(ForwardShaderSetTest, ForwardSetDropsDerivedColourAndUvs)
     const auto* vertex_input = findVertexInputState(*bind->pipeline);
     ASSERT_NE(vertex_input, nullptr);
     EXPECT_EQ(vertex_input->vertexBindingDescriptions.size(), 2u); // positions + normals only
-    EXPECT_FALSE(pipelineSamplesATexture(*bind->pipeline));
+    EXPECT_FALSE(pipelineSamplesAt(*bind->pipeline, 0u, 1u)) << "the diffuse map's binding is the one the UV gate drops";
+    EXPECT_TRUE(pipelineSamplesAt(*bind->pipeline, 0u, 3u))
+        << "the shadow map is NOT gated: the content set declares it either way and the shader takes the "
+           "unshadowed path at runtime (ShaderAbi.hpp)";
 }
 
 TEST(ForwardShaderSetTest, OpacityIsNotPartOfTheVariantIdentity)
@@ -548,7 +559,7 @@ TEST(ForwardShaderSetTest, OpacityIsNotPartOfTheVariantIdentity)
     ASSERT_NE(half_input, nullptr);
     EXPECT_EQ(opaque_input->vertexBindingDescriptions.size(), 2u); // positions + normals only, both ways
     EXPECT_EQ(half_input->vertexBindingDescriptions.size(), 2u);
-    EXPECT_FALSE(pipelineSamplesATexture(*half_bind->pipeline));
+    EXPECT_FALSE(pipelineSamplesAt(*half_bind->pipeline, 0u, 1u));
 }
 
 TEST(ForwardShaderSetTest, TheFragmentStageScalesAlphaByTheDrawBlock)
@@ -665,6 +676,82 @@ TEST(ForwardShaderSetTest, ABridgeWithNoShaderSetReportsAndDrawsNothing)
     bridge.setShaderSet(nullptr);
     bridge.syncRenderCommands(commands, root.get(), nullptr);
     EXPECT_EQ(bridge.diagnosticCount(vine::graphics::DiagnosticCategory::ShaderFallback), 2u);
+}
+
+TEST(ForwardShaderSetTest, AProgramThatCannotShadeTheDeclaredShadowIsReported)
+{
+    // The content set declares the shadow ABI unconditionally (it is shared per (target, depth mode),
+    // so a shadowed variant would double that cache — see buildVineShaderSet), which means a program
+    // whose text never declares the map would be bound a map it never reads: shaded unshadowed, with
+    // nothing in the frame saying why. That is the same complaint the pipeline builder makes about a
+    // PATH that builds no shadow pass, one layer down, and this report is where a HOST's own content
+    // program gets it.
+    //
+    // Reported where a VARIANT is built, so the scene says it once (a built variant is reused).
+    std::vector<vine::graphics::RenderDiagnostic> reported;
+    vine::vsg::SceneBridge                       bridge;
+    bridge.setShaderSet(makeForwardSet());
+    bridge.setDiagnosticSink([&reported](const vine::graphics::RenderDiagnostic& diagnostic) {
+        reported.push_back(diagnostic);
+    });
+    // A shadow WAS declared for this slot (that is what the flag says): nothing here rasterises, so the
+    // map only has to be a real binding target and the block a real block.
+    bridge.setShadowMap(::vsg::ImageInfo::create(), /*declared*/ true);
+    bridge.setShadowData(::vsg::ubyteArray::create(static_cast<std::uint32_t>(sizeof(vine::graphics::VineShadowBlock))));
+
+    auto root     = ::vsg::Group::create();
+    auto geometry = makeBareTriangle();
+    auto material = vine::graphics::MaterialPtr(new vine::graphics::Material());
+
+    // A HOST program: two stages of its own, shading its own way, declaring no shadow_map (the engine's
+    // forward program does declare it, which the second half of this test checks). It has to compile —
+    // the backend compiles what a program names — so it is minimal rather than absent.
+    auto program = vine::intrusive_ptr<vine::graphics::ShaderProgram>(new vine::graphics::ShaderProgram());
+    program->setName(u8"content_without_shadow");
+    {
+        vine::graphics::ShaderStage vertex;
+        vertex.type   = vine::graphics::ShaderStageType::Vertex;
+        vertex.source = vine::String(u8"#version 450\n"
+                                     u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                                     u8"layout(location = 1) in vec3 vine_Normal;\n"
+                                     u8"layout(push_constant) uniform pc { mat4 projection; mat4 modelView; };\n"
+                                     u8"void main() { gl_Position = projection * modelView * vec4(vine_Vertex, 1.0); }\n");
+        program->addStage(vertex);
+        vine::graphics::ShaderStage fragment;
+        fragment.type   = vine::graphics::ShaderStageType::Fragment;
+        fragment.source = vine::String(u8"#version 450\n"
+                                       u8"layout(location = 0) out vec4 out_color;\n"
+                                       u8"void main() { out_color = vec4(1.0); }\n");
+        program->addStage(fragment);
+    }
+
+    std::vector<vine::graphics::RenderCommand> commands;
+    commands.emplace_back(geometry, material, vine::math::Mat4d());
+    commands.front().program = program;
+    for (int i = 0; i < 3; ++i) {   // several syncs: the variant is built once
+        bridge.syncRenderCommands(commands, root.get(), nullptr);
+    }
+    ASSERT_EQ(root->children.size(), 1u) << "the drawable is still drawn: this is a diagnostic, not a refusal";
+    ASSERT_EQ(reported.size(), 1u) << "once per built variant, not once per frame";
+    EXPECT_EQ(reported.front().severity, vine::graphics::DiagnosticSeverity::Warning);
+    EXPECT_EQ(reported.front().category, vine::graphics::DiagnosticCategory::UnsupportedRequest);
+    EXPECT_NE(reported.front().message.find(u8"shadow_map"), vine::String::npos);
+
+    // The engine's own forward program declares the map, so it says nothing: the report is about the
+    // program that cannot use what its pass handed it, not about every forward draw.
+    std::vector<vine::graphics::RenderDiagnostic> quiet;
+    vine::vsg::SceneBridge                       declaring;
+    declaring.setShaderSet(makeForwardSet());
+    declaring.setDiagnosticSink([&quiet](const vine::graphics::RenderDiagnostic& diagnostic) {
+        quiet.push_back(diagnostic);
+    });
+    declaring.setShadowMap(::vsg::ImageInfo::create(), /*declared*/ true);
+    declaring.setShadowData(::vsg::ubyteArray::create(static_cast<std::uint32_t>(sizeof(vine::graphics::VineShadowBlock))));
+    auto declaring_root = ::vsg::Group::create();
+    commands.front().program = vine::graphics::forwardProgram();
+    declaring.syncRenderCommands(commands, declaring_root.get(), nullptr);
+    EXPECT_EQ(declaring_root->children.size(), 1u);
+    EXPECT_TRUE(quiet.empty()) << "the engine's forward program declares the map its pass declared";
 }
 
 TEST(ForwardShaderSetTest, AForeignSetIsReportedInsteadOfQuietlyUnbound)

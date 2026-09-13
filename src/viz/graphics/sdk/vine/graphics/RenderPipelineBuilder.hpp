@@ -113,15 +113,21 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      *
      * SHADOWS ARE NOT A PRESET HERE: a shadow is requested by the light that
      * casts it (Light::castShadow, with its own resolution and bias in
-     * ShadowSettings). The deferred path HONOURS that request: it builds a
-     * depth-only pass at PipelineStage::Depth framing the content with one
-     * orthographic light camera (directionalShadowMatrix), states that camera's
-     * view-projection on the map, and has the lighting pass declare the map as
-     * an input so the backend binds it (see .ai/design/render-pipeline.md §9).
-     * The forward path builds none yet, and a host that supplied its own
-     * lighting program gets none either - both are REPORTED once per build
-     * (DiagnosticCategory::UnsupportedRequest) rather than silently handing
-     * back a picture without the shadow that was asked for.
+     * ShadowSettings), and BOTH paths honour that request through the one pass
+     * builder (buildShadowPass): a depth-only pass at PipelineStage::Depth
+     * framing the content with a single orthographic light camera
+     * (directionalShadowMatrix), whose view-projection is stated on the map, and
+     * which the pass that shades with it declares as an INPUT so the backend
+     * binds it (see .ai/design/render-pipeline.md §9). Deferred declares it on
+     * the fullscreen lighting pass, forward on the content pass itself.
+     *
+     * What a pipeline still cannot do is shade with a map it was given no
+     * program for: a host that supplied its own deferred lighting program gets no
+     * shadow pass (the shading is theirs), and THAT is reported once per build
+     * (DiagnosticCategory::UnsupportedRequest) rather than silently handing back
+     * a picture without the shadow that was asked for. The same complaint is made
+     * one layer down by the backend, for a content PROGRAM that declares no
+     * shadow_map while its pass declared a shadow.
      *
      * Deferred requires a content scene and a camera; when either is missing
      * nothing is registered and null is returned (no silent substitution, see
@@ -244,6 +250,20 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      * @return true when the passes were registered.
      */
     bool buildDeferredPath(Pipeline& pipeline, const PipelineOptions& options);
+
+    /** @brief Builds the depth-only shadow pass a castShadow light asks for.
+     *
+     * Both paths honour a shadow request through this ONE builder: the pass frames the content with
+     * directionalShadowMatrix, states that matrix on the map (RenderTarget::setProducerViewProjection)
+     * and draws the content at PipelineStage::Depth, so it runs before anything that samples it. The
+     * caller declares the map as an INPUT on the pass that shades with it, which is what makes the
+     * backend bind it (RenderEngine::resolvePassInputs -> RenderBackend::setPassInputs).
+     *
+     * @param pipeline      Pipeline the pass is registered on.
+     * @param shadow_light  The light that casts it (enabled, castShadow, directional).
+     * @return The map the pass renders into (never null on this path).
+     */
+    intrusive_ptr<RenderTarget> buildShadowPass(Pipeline& pipeline, const Light& shadow_light);
 
     /** @brief Adds the optional HUD overlays to @p pipeline.
      *

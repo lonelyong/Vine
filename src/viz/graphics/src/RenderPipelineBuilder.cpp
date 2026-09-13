@@ -210,16 +210,88 @@ void RenderPipelineBuilder::reportRequestedShadows() const
                                             u8"see .ai/design/render-pipeline.md §9): those lights cast nothing"));
 }
 
+namespace
+{
+
+/**
+ * @brief Finds the light a content scene asks a shadow for.
+ *
+ * Single directional light per content, as the shadow design fixes it (render-pipeline.md §9): the
+ * FIRST enabled, shadow-casting directional light is the one the pass is built for, and the rest
+ * are reported as unbuilt by reportRequestedShadows().
+ *
+ * @param content Content scene to scan (may be null).
+ * @return The light that casts the shadow, or null when the content asks for none.
+ */
+raw_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
+{
+    if (content == nullptr) {
+        return nullptr;
+    }
+    // Single directional light per content, as the shadow design fixes it (render-pipeline.md §9).
+    for (const auto& light : content->lights()) {
+        if (light != nullptr && light->isEnabled() && light->castShadow() &&
+            light->type() == LightType::Directional) {
+            return light.get();
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(Pipeline& pipeline, const Light& shadow_light)
+{
+    const int resolution = static_cast<int>(shadow_light.shadowSettings().resolution);
+    auto      shadow_map = make_intrusive<RenderTarget>();
+    shadow_map->setName(u8"shadow_map");
+    shadow_map->setSize(resolution > 0 ? resolution : 1024, resolution > 0 ? resolution : 1024);
+    shadow_map->attachDepth(RenderTarget::DepthFormat::D24);
+    // The shading samples it, so its depth must end in SHADER_READ_ONLY (a pass of it that
+    // PRESERVED depth would revoke that, which is why the shadow pass clears instead).
+    shadow_map->setDepthPromotion(true);
+
+    auto light_camera = make_intrusive<Camera>();
+    // ONE derivation of the light camera: the pass renders through this camera and the target
+    // STATES its view-projection, so the shading reads the same matrix instead of fitting a
+    // second ortho box of its own (see .ai/design/render-pipeline.md §9).
+    shadow_map->setProducerViewProjection(directionalShadowMatrix(shadow_light, content_->boundingBox(), *light_camera));
+
+    auto shadow_pass = make_intrusive<RenderPass>();
+    shadow_pass->setName(u8"shadow");
+    shadow_pass->setCamera(light_camera.get());
+    shadow_pass->setRenderTarget(shadow_map);
+    // Its only writer owns the hand-off: the pass that samples it declares this target as an input,
+    // and the engine answers that from the passes that DREW into it.
+    shadow_pass->setOutputTarget(shadow_map);
+    pipeline.addPass(shadow_pass, content_, pipelineStageOrder(PipelineStage::Depth));
+    // It is built: reportRequestedShadows() is about what this pipeline did NOT build.
+    ++shadows_built_;
+    return shadow_map;
+}
+
 bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
 {
     if (engine_ == nullptr || camera_ == nullptr) {
         return false;
+    }
+    // A shadow-casting light in the content is honoured on this path too, through the SAME pass the
+    // deferred path builds (one implementation, one light camera). The content pass then DECLARES
+    // the map as an input, and that declaration is the whole hand-off: the engine resolves it
+    // (RenderEngine::resolvePassInputs) and the backend binds it into the content set's shadow
+    // binding, where the forward program shades with it (ShadowAbi / ShaderAbi.hpp).
+    intrusive_ptr<RenderTarget> shadow_map;
+    if (raw_ptr<const Light> shadow_light = requestedShadowLight(content_.get()); shadow_light != nullptr) {
+        shadow_map = buildShadowPass(pipeline, *shadow_light);
     }
     // The forward content pass IS the lit result, so it lives at the shading
     // stage; there is no separate geometry pass to place.
     auto pass = make_intrusive<RenderPass>();
     pass->setName(u8"main");
     pass->setCamera(camera_);
+    if (shadow_map != nullptr) {
+        pass->addInputTarget(shadow_map);
+    }
     pipeline.addPass(pass, content_, pipelineStageOrder(PipelineStage::Shading));
     // Optional transparent content: a depth-on pass stacked right after the
     // main content in the SAME window render pass, so it occludes against the
@@ -248,14 +320,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     // (Light::castShadow, with its own resolution/bias in ShadowSettings), because a light outlives
     // any one pipeline and a scene may be drawn by several. Single directional light per content,
     // as the shadow design fixes it (graphics-shadow.md §8).
-    raw_ptr<const Light> shadow_light = nullptr;
-    for (const auto& light : content_->lights()) {
-        if (light != nullptr && light->isEnabled() && light->castShadow() &&
-            light->type() == LightType::Directional) {
-            shadow_light = light.get();
-            break;
-        }
-    }
+    raw_ptr<const Light> shadow_light = requestedShadowLight(content_.get());
 
     // Programs default to the built-in temporary shaders so the preset works
     // out of the box; explicit programs in the options override them.
@@ -282,43 +347,16 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
         height = 360;
     }
 
-    // The shadow map: the content rendered once from the light into a depth-only target, at
-    // PipelineStage::Depth so it runs before everything that samples it. A host that supplied its
-    // own lighting program gets NO shadow pass: the shading is theirs, so a shadow they do not
-    // shade would be a pass nobody reads. That gap is REPORTED — once, by reportRequestedShadows()
-    // at the end of build(), which is also what covers the forward path: reporting it here as well
-    // would say the same thing twice for one problem.
+    // A host that supplied its own lighting program gets NO shadow pass: the shading is theirs, so
+    // a shadow they do not shade would be a pass nobody reads. That gap is REPORTED — once, by
+    // reportRequestedShadows() at the end of build(), which is also what covers the forward path:
+    // reporting it here as well would say the same thing twice for one problem.
     intrusive_ptr<RenderTarget> shadow_map;
     if (shadow_light != nullptr && options.lighting_program != nullptr) {
         shadow_light = nullptr;
     }
     if (shadow_light != nullptr) {
-        const int resolution = static_cast<int>(shadow_light->shadowSettings().resolution);
-        shadow_map           = make_intrusive<RenderTarget>();
-        shadow_map->setName(u8"shadow_map");
-        shadow_map->setSize(resolution > 0 ? resolution : 1024, resolution > 0 ? resolution : 1024);
-        shadow_map->attachDepth(RenderTarget::DepthFormat::D24);
-        // The lighting pass samples it, so its depth must end in SHADER_READ_ONLY (a pass of it that
-        // PRESERVED depth would revoke that, which is why the shadow pass clears instead).
-        shadow_map->setDepthPromotion(true);
-
-        auto light_camera = make_intrusive<Camera>();
-        // ONE derivation of the light camera: the pass renders through this camera and the target
-        // STATES its view-projection, so the shading reads the same matrix instead of fitting a
-        // second ortho box of its own (see .ai/design/render-pipeline.md §9).
-        shadow_map->setProducerViewProjection(
-            directionalShadowMatrix(*shadow_light, content_->boundingBox(), *light_camera));
-
-        auto shadow_pass = make_intrusive<RenderPass>();
-        shadow_pass->setName(u8"shadow");
-        shadow_pass->setCamera(light_camera.get());
-        shadow_pass->setRenderTarget(shadow_map);
-        // Its only writer owns the hand-off: the lighting pass declares this target as an input, and
-        // the engine answers that from the passes that DREW into it.
-        shadow_pass->setOutputTarget(shadow_map);
-        pipeline.addPass(shadow_pass, content_, pipelineStageOrder(PipelineStage::Depth));
-        // It is built: the report below is about what this pipeline did NOT build.
-        ++shadows_built_;
+        shadow_map = buildShadowPass(pipeline, *shadow_light);
     }
 
     // Canonical G-buffer (shared factory): albedo (0), view normal +

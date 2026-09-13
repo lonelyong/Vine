@@ -150,6 +150,18 @@ void SceneBridge::setLightsData(::vsg::ref_ptr<::vsg::Data> data)
     lights_data_ = std::move(data);
 }
 
+void SceneBridge::setShadowMap(::vsg::ref_ptr<::vsg::ImageInfo> map, bool declared)
+{
+    shadow_map_      = std::move(map);
+    shadow_declared_ = declared;
+}
+
+void SceneBridge::setShadowData(::vsg::ref_ptr<::vsg::Data> data)
+{
+    // Same contract as the lights block: the slot owns it and rewrites it per frame.
+    shadow_data_ = std::move(data);
+}
+
 VsgMeshResourceCache& SceneBridge::meshResources()
 {
     return mesh_cache_ != nullptr ? *mesh_cache_ : default_mesh_cache_;

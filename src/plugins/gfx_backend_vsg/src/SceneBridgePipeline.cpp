@@ -1,4 +1,5 @@
 ﻿#include <vine/vsg/SceneBridge.hpp>
+#include <vine/vsg/VsgBackendUtility.hpp>
 #include <algorithm>
 #include <cstdint>
 #include <string>
@@ -649,6 +650,31 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // it must not get an unused descriptor in its layout (see .ai/design/vsg-custom-shader.md §11).
     if (lights_data_ != nullptr && shaderSet->getDescriptorBinding("vine_lights")) {
         config->assignDescriptor("vine_lights", lights_data_);
+    }
+
+    // The shadow ABI (ShaderAbi.hpp): the map the pass declared as an input, and the block that places
+    // this fragment in it. Both are declared by every set this backend builds (the content set is
+    // shared per (target, depth mode), see buildVineShaderSet) and the slot always provides VALID
+    // values for both — the real pair when the pass declared a shadow, a stand-in with the block
+    // disabled when it did not — because a declared-but-unwritten descriptor is an invalid set, not a
+    // harmless one. A set that declares neither (a foreign set) is left with the pipeline it had.
+    if (shadow_map_ != nullptr && shaderSet->getDescriptorBinding("shadow_map")) {
+        config->assignTexture("shadow_map", ::vsg::ImageInfoList{ shadow_map_ });
+    }
+    if (shadow_data_ != nullptr && shaderSet->getDescriptorBinding("vine_shadow")) {
+        config->assignDescriptor("vine_shadow", shadow_data_);
+    }
+    // The pass declared a shadow this PROGRAM cannot shade: the content set declares the shadow ABI
+    // unconditionally (it is shared per (target, depth mode), so a shadowed variant would double that
+    // cache) and the slot binds the real pair, but a program whose text never declares the map simply
+    // never reads it — the picture is unshadowed with nothing anywhere saying why. This is the same
+    // complaint the pipeline builder makes about a PATH that builds no shadow pass; here it is about
+    // the program that shades one drawable. Reported where a VARIANT is built, so it fires once per
+    // (program, layout, revision) instead of once per frame.
+    if (shadow_declared_ && program != nullptr && !detail::programDeclaresBinding(program, 0u, 3u)) {
+        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::UnsupportedRequest,
+               formatDiagnostic(u8"the program shading this drawable declares no shadow_map (set 0 / binding 3), so the "
+                                u8"shadow its pass declared does not reach it: that drawable is shaded unshadowed"));
     }
 
     // Assemble the pipeline from the geometry's effective render state. The

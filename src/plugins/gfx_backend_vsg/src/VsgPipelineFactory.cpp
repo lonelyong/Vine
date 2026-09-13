@@ -1,3 +1,4 @@
+#include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 
 // The definitions below are the moved bodies: their documentation and default
@@ -277,6 +278,19 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     // assigns nothing to it, which is why it is declared with an empty sample.
     shader_set->addDescriptorBinding("vine_lights", "", 0, 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
                                      VK_SHADER_STAGE_FRAGMENT_BIT, ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(VineLightsBlock))));
+    // The shadow ABI (ShaderAbi.hpp): the map the pass declared as an input, and the block that
+    // places its fragments in it. DECLARED ALWAYS, unlike the fullscreen path's per-pass variant:
+    // this set is shared per (target, depth mode) — the program is picked once for a session and a
+    // content slot reuses it — so a shadowed variant would double that cache for every target and a
+    // host program would still have no shadowed twin to pick. One text, switched at runtime by
+    // `params.x`: the slot binds the real pair when the pass declared a shadow input and a valid
+    // stand-in with the block disabled when it did not (see VsgContentSlot).
+    shader_set->addDescriptorBinding("shadow_map", "", 0, 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT, {});
+    shader_set->addDescriptorBinding("vine_shadow", "", 0, 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     ::vsg::ubyteArray::create(
+                                         static_cast<uint32_t>(sizeof(vine::graphics::VineShadowBlock))));
     // Per-DRAWABLE values (VineDrawBlock): one slot per drawn command, selected by a dynamic
     // offset from a buffer the whole scene shares. It is a CUSTOM set (1) rather than an ordinary
     // binding because the bind command is per drawable — see DrawBlockSetBinding — so this
@@ -722,42 +736,6 @@ const std::string& fullscreenVertexSource()
  * @param source GLSL source of one stage.
  * @return The declared (set, binding) pairs, in source order.
  */
-std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std::string& source)
-{
-    // Reads "<name> = <uint>" out of a qualifier's text, or @p fallback when the
-    // name is absent (i.e. the GLSL default applies).
-    const auto assignment = [](const std::string& text, const char* name, std::uint32_t fallback) {
-        const std::size_t at = text.find(name);
-        const std::size_t eq = at == std::string::npos ? std::string::npos : text.find('=', at);
-        if (eq == std::string::npos) {
-            return fallback;
-        }
-        std::size_t digit = eq + 1;
-        while (digit < text.size() && !std::isdigit(static_cast<unsigned char>(text[digit]))) {
-            ++digit;
-        }
-        return digit < text.size() ? static_cast<std::uint32_t>(std::strtoul(text.c_str() + digit, nullptr, 10))
-                                   : fallback;
-    };
-
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> bindings;
-    std::size_t                                          pos = 0;
-    while ((pos = source.find("layout", pos)) != std::string::npos) {
-        const std::size_t open = source.find('(', pos);
-        const std::size_t close = open == std::string::npos ? std::string::npos : source.find(')', open);
-        if (close == std::string::npos) {
-            break;
-        }
-        const std::string qualifier = source.substr(open + 1, close - open - 1);
-        pos                         = close + 1;
-        if (qualifier.find("binding") == std::string::npos) {
-            continue; // location / push_constant / ... qualifiers name no descriptor
-        }
-        bindings.emplace_back(assignment(qualifier, "set", 0u), assignment(qualifier, "binding", 0u));
-    }
-    return bindings;
-}
-
 bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> program, std::size_t color_count)
 {
     if (program == nullptr) {

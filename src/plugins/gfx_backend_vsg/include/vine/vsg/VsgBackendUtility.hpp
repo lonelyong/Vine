@@ -10,11 +10,24 @@
 #include <vsg/core/ref_ptr.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>
+#include <vsg/state/ImageView.h>
+
+#include <vine/raw_ptr.hpp>
+
+#include <vine/graphics/Camera.hpp>
+#include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Light.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <string>
+#include <utility>
 #include <vector>
 
 V_VSG_NS_BEGIN
+
+struct VsgRendererState;
 
 namespace detail
 {
@@ -61,6 +74,70 @@ std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count,
  * @param node  Child to detach (may be null).
  */
 void removeGraphChild(::vsg::Group* graph, const ::vsg::ref_ptr<::vsg::Node>& node);
+
+/**
+ * @brief Every (set, binding) a program's stages declare in their GLSL text.
+ *
+ * The declarations are what a program ASKS a pipeline layout for, read out of the source rather than
+ * from the compiled SPIR-V: the backend hands the text to glslang, so the text is the contract, and a
+ * shader that declares a binding its layout lacks fails at DRAW time with nothing saying why (see the
+ * fullscreen program path, which uses this to refuse such a pass instead).
+ *
+ * @param source GLSL stage source.
+ * @return The declared bindings, in the order they appear.
+ */
+std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std::string& source);
+
+/**
+ * @brief Whether any stage of @p program declares @p set / @p binding.
+ *
+ * @param program Program to inspect (null declares nothing).
+ * @param set     Descriptor set to look for.
+ * @param binding Binding within that set.
+ * @return true when a stage declares it.
+ */
+bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> program, std::uint32_t set,
+                            std::uint32_t binding);
+
+/**
+ * @brief The shadow a pass declared, resolved from that pass' own inputs.
+ *
+ * The pass announces its declared inputs (RenderBackend::setPassInputs) before it draws, and the
+ * shadow ABI says the map is the first DECLARED target whose depth is sampleable. The matrix comes
+ * from that target's STATED view-projection (RenderTarget::setProducerViewProjection) — the one
+ * derivation the pipeline wrote when it built the light camera — never from a second light camera
+ * fitted here, so the two cannot disagree about where the light was.
+ *
+ * `map` is null when the pass declared no shadow (or the depth it declared cannot be sampled), and
+ * `block.params.x` is 0 in that case: the ABI's switch is what lets one shader text take both
+ * paths (see ShaderAbi.hpp), which the content path needs because its shader set is shared per
+ * (target, depth mode) rather than per pass.
+ */
+struct ShadowInput
+{
+    ::vsg::ref_ptr<::vsg::ImageView> map;   ///< The map's depth view, or null when no shadow was declared.
+    vine::graphics::VineShadowBlock  block; ///< The block matching @ref map (params.x == 0 when none).
+};
+
+/**
+ * @brief Resolves the shadow @p camera's pass declared (see @ref ShadowInput).
+ *
+ * The ONE rule every consumer of a shadow uses — the fullscreen lighting pass and a content slot
+ * (forward shading) — so the two cannot drift. It reads the pass' announced inputs and the
+ * per-target table, so it must be called between setPassInputs() and the draw it belongs to.
+ *
+ * The lights are an ARGUMENT rather than read from the session: a content draw call CONSUMES the
+ * announced light list (VsgRenderer::render takes it), so by the time a slot resolves its shadow the
+ * session's list is empty and the only correct source is the list that draw call was given.
+ *
+ * @param state  Session holding the announced inputs and the targets they name.
+ * @param camera Camera the consuming pass draws through: the fragment is in ITS view space, which
+ *               is what the block's view-to-light matrix is composed for.
+ * @param lights Lights of the pass that declared the shadow (its bias comes from the casting one).
+ * @return The resolved shadow (a null @ref ShadowInput::map when there is none).
+ */
+ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<const vine::graphics::Camera> camera,
+                               const std::vector<const vine::graphics::Light*>& lights);
 
 /**
  * @brief Temporary test escape hatch: when VINE_VSG_OWN_WINDOW is set, the

@@ -134,7 +134,7 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 | 步 | 内容 | 判据 |
 | --- | --- | --- |
 | **S1** | §2/§3/§4 落地：`ShadingPath` 取代 `PipelinePreset`；`PipelineStage` 取代魔数；效果函数化（`buildPath` / `applyOverlays` / 阴影的"请求-报告"）；`Pipeline` RAII 注销 | **行为中性**：证据基线 **53 行逐字节不变**；`test_graphics` / `test_vsg` 计数；lavapipe PASS |
-| **S2** | 阴影：消费 `Light::castShadow`/`ShadowSettings`（已在 SDK 里躺着）；每个投影方向光一个 depth-only pass；forward / deferred 都接采样 | 新像素相位（立方体投到地面 + PCF）+ 无投影光时证据不变 |
+| **S2** ✅ | 阴影：消费 `Light::castShadow`/`ShadowSettings`（已在 SDK 里躺着）；每个投影方向光一个 depth-only pass；forward / deferred 都接采样 | 落地记录见 §8.2（延迟）与 §8.3（前向）：两条路径各一个像素相位 + 无投影光时证据逐字节不变 |
 | **S3** | SSAO：证明"效果槽"这个抽象本身；deferred 直接用 G-buffer 深度，forward 走深度 prepass | 新像素相位（角落变暗）+ 默认关 ⇒ 证据不变 |
 | **S4** | PBR：**不是 pipeline 步**，是 program + 材质 ABI（`VineMaterialBlock` 扩 metallic/roughness） | 材质块 `static_assert` + 图像对照 |
 
@@ -145,6 +145,10 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 - ❌ `PassContext` pull 重构（`graphics-render-pipeline.md` §11）：仍等"多 pass 完全成熟"。
 - ❌ `Pipeline::applyOptions()` 的 diff：等真有"运行中改结构"的消费者（今天是重建换手）。
 - ❌ `PipelineManager` / 全局管线注册表：§4.3。
+- ❌ **宿主自选离屏 target 的前向管线**：前向路径只 presenting 到窗口，而窗口读不回来
+  （`readColorBuffer` 拒绝 null target）——S2b 的像素门禁因此**重定向** window pass 才量到画面
+  （§8.3）。触发条件：出现"画面要渲进纹理"的消费者（预览、反射、录屏），那时给 `PipelineOptions`
+  或 `Pipeline` 一个离屏落点，并把门禁改回它自己声明的那种用法。
 
 ## 7. 决策记录
 
@@ -159,7 +163,50 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 
 ## 8. 落地记录
 
-### 8.2 S2 进度（2026-09-13）：S2a（延迟阴影）已落地，S2b（前向）待做
+### 8.3 S2b（前向阴影）（2026-09-13）：同一个 pass，另一条 hand-off
+
+**这一步要解决的是 S2a 留下的那个选择**（§9 的"分期"里写死的两难）：内容 set 是按
+`(target, 深度档)` 会话级共享的，所以"带阴影 / 不带阴影"不能是一套 set 的两种变体。
+
+| 决定 | 内容 | 理由 |
+| --- | --- | --- |
+| 内容 set **永远声明**阴影两槽（set 0 / binding 3 = `shadow_map`，4 = `vine_shadow`），程序文本也永远声明 | 一个 set 一份，不翻倍；宿主程序不需要"阴影孪生版"就能拿到这两个绑定 | 变体方案要给每个 target 再翻一倍缓存，而且**宿主自己的内容程序没有阴影变体可挑**——那条路只能靠"永远声明"兜住 |
+| 关闭时绑 **会话的白回退**（不是 1×1 深度图）+ 块 `params.x = 0` | 声明了的绑定必须**写进描述符**（未写入的 set 是非法的），而"白回退 + 关闭的块"是一次性资源、且 shader 永不采样它（`params.x` 就是那个开关，`ShaderAbi.hpp` 写着它存在的理由） | 少一件设备资源、少一条"占位图"约定 |
+| 前向的 hand-off = **内容 pass 自己声明输入** | 前向没有 G-buffer、没有全屏 program，map 只能作为**内容 pass 的输入**交给后端 | 引擎的 `resolvePassInputs` / `setPassInputs` 通路（S2a 建的）原样复用 |
+| 一个**解析规则**给两个消费者 | `detail::resolveShadowInput(state, camera, lights)`：`VsgOverlay`（延迟光照）与 `VsgContentSlot`（前向内容）都调它 | 两个消费者各推一遍"哪个输入是图、矩阵怎么乘"就是两份只在被改之前一致的约定 |
+
+**门禁（`runForwardShadowPixelPhase`）**：同一个场景、同两个采样点、同三级亮度（背景 15 /
+影内 31 / 阳光下 196），只把管线换成前向 —— 两条路径一比，差的就是**路径**。证据 **54 → 55 行**
+（只多这一行）。
+
+- **读回**：前向路径presenting 到窗口，而窗口读不回来（`readColorBuffer` 拒绝 null target），
+  所以相位**把 window pass 重定向**到自己的离屏 target。pass 列表、它依赖的阴影 pass、声明的输入、
+  着色全是 builder 的，只有落点变了。（宿主想自己渲到离屏目前**没有**支持的口子，已记进 §6 不做清单。）
+- **变异**：删掉 `buildForwardPath` 里那行 `addInputTarget(shadow_map)` ⇒ 影内读到 196（红）。
+  加上 S2a 的四个变异（关 `castShadow`、去掉 v 翻转、去掉 z 反转、相机改回裸指针），
+  这十数行着色文本与两处 hand-off 都各有一条会红的路径。
+- **结构门禁**：`ARequestedShadowIsBuiltOnTheForwardPathToo`（阴影 pass 先画、内容 pass 落到窗口、
+  矩阵 == 唯一推导、正交且非视图相机、输入被解析）；`TheForwardProgramDeclaresTheShadowAbiWhereTheContentSetBindsIt`
+  钉前向文本的 binding **0/3/4**（内容路径的号，不是全屏路径的 5/6）。
+- **新增的一条上报**（否则是静默无影）：宿主自己的**内容程序**若没有声明 `shadow_map`，
+  它就拿着一张自己不读的图 ⇒ 每 build 一次变体报一条 `UnsupportedRequest`（`programDeclaresBinding`
+  从全屏路径反射那套搬进共享工具，两个消费者同一条规则）。
+
+**顺带修的两个"说法与事实不符"**：
+
+1. `reportRequestedShadows()` 在 S2a 改成"只报没兑现的"之后，前向路径**也建了**阴影 pass ⇒ 那句
+   "本管线不建阴影 pass" 的对象现在只剩"宿主自带 lighting program"。测试随之改名
+   （`ARequestedShadowIsReportedAsUnbuilt` → `AShadowThisPipelineCannotShadeIsReported`）并改断言。
+2. `forwardProgram()` 与 `flatForwardProgram()` 现在都从**同一份**带 ABI 的片元文本派生
+   （flat 只是多一个 define）——原来是 flat 走**原始**文本，那会让 flat 预设静默丢掉阴影。
+   测试同时钉住这两件事（"flat 去掉 define 行 == forward 文本"）。
+
+**诚实的边界**：`buildVineShaderSet` 的声明是无条件的，所以**每一个**内容管线都多带
+一个采样器 + 一个 UBO（即使场景里没有投影光）；不投影时它们绑的是白回退 + 关闭的块，永远不会被采样，
+但布局确实变大了。这是"一份 set"换来的代价，写在 §9 的决定里。
+
+
+### 8.2 S2 进度（2026-09-13）：S2a（延迟阴影）落地（S2b 见 §8.3）
 
 已完成（各自独立提交、门禁绿）：
 
@@ -266,12 +313,16 @@ deferred 默认路径 —— 档位重排后 lavapipe 无 VUID/validation 错误
 | 步 | 内容 | 判据 |
 | --- | --- | --- |
 | **S2a（延迟）** ✅ | 全屏 program ABI 扩一条规则：**源自己的绑定之后**，接该 pass 声明的额外输入（纹理绑定）与 `VineShadowBlock`（UBO）；`deferred_light.frag` 加阴影项（**程序带标记插出的变体**，见下）。SSAO 将来走同一跳 | 新像素相位（墙在地面上的投影：影内的地面 (31,31,31) vs 阳光下 (196,196,196)）+ 无投影光时证据逐字节不变 → **证据 53 → 54 行**，`test_graphics` 250 → 255，lavapipe PASS（§8.2 有落地记录与它抓到的四个缺陷） |
-| **S2b（前向）** | 内容 set 声明 `vine_shadow`(UBO) + `shadow_map`(sampler2D)；槽从 pass 输入 target 填块 + 绑深度；`std_forward.frag` 同样的变体 | 同上（前向路径的像素相位）|
+| **S2b（前向）** ✅ | 内容 set **永远声明** `shadow_map`(set 0/3) + `vine_shadow`(set 0/4)；槽从 pass 输入 target 解析图与块（关掉时绑白回退 + `params.x = 0`）；`std_forward.frag` 用**同一段**标记插出的项，`forwardProgram()` 与 `flatForwardProgram()` 从同一份文本派生 | 前向像素相位（同场景同采样点：影内 31 / 阳光下 196）→ **证据 54 → 55 行**；`test_graphics` 255 → 257、`test_vsg` 247 → 248；变异：删掉输入声明 ⇒ 影内 196（红）。决定与代价见 §8.3 |
 
 **为什么先做延迟**（2026-09-13 修正：起初的判断反了）：**全屏 program 的 ShaderSet 是每个 pass 现建的**
 （`makeFullscreenProgramNode` 为这个程序建一套绑定，程序文本带 define 就能决定要不要声明阴影绑定），
 所以延迟路径**不需要动共享的 set**；而**内容 set 是按 (target, 深度档) 会话级共享的**
 （`state.depth_on_shader_set`），一个带阴影的 pass 和一个不带阴影的 pass 会要两套 set —— 前向那条要么多 6 套
 缓存 set（3 深度档 × 有/无阴影，窗口 + 每离屏目标），要么永远声明绑定并绑一张 1×1 深度占位。两条都做完，
-§2 的"阴影是效果"才算真的兑现。S2b 的门禁照 S2a 的做：同一个相位形状（前向管线 +
-斜射的 `castShadow` 太阳 + 同两个采样点），变异也照做。
+§2 的"阴影是效果"才算真的兑现。**两条路径都做完了**：前向那条选了"永远声明 + 运行时开关"
+（§8.3 记了为什么，以及它的代价：每个内容管线多带一个采样器 + 一个 UBO），门禁按 S2a 的形状
+做（同一个场景、同两个采样点、只换管线），变异也照做。
+
+阴影之后 S2 还剩一件事没做：**性能 / 画质那半**（分辨率与 PCF 的实际效果、`ShadowSettings::filter`），
+它们不改变 ABI，等有真实的画面需求再动。

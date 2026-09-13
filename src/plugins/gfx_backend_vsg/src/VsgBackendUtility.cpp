@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstdio>
+#include <cstring>
+
+#include <vine/vsg/VsgRendererState.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -64,6 +68,120 @@ void removeGraphChild(::vsg::Group* graph, const ::vsg::ref_ptr<::vsg::Node>& no
                        children.end(),
                        [&node](const ::vsg::ref_ptr<::vsg::Node>& child) { return child.get() == node.get(); }),
         children.end());
+}
+
+std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std::string& source)
+{
+    // Reads "<name> = <uint>" out of a qualifier's text, or @p fallback when the
+    // name is absent (i.e. the GLSL default applies).
+    const auto assignment = [](const std::string& text, const char* name, std::uint32_t fallback) {
+        const std::size_t at = text.find(name);
+        const std::size_t eq = at == std::string::npos ? std::string::npos : text.find('=', at);
+        if (eq == std::string::npos) {
+            return fallback;
+        }
+        std::size_t digit = eq + 1;
+        while (digit < text.size() && !std::isdigit(static_cast<unsigned char>(text[digit]))) {
+            ++digit;
+        }
+        return digit < text.size() ? static_cast<std::uint32_t>(std::strtoul(text.c_str() + digit, nullptr, 10))
+                                   : fallback;
+    };
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> bindings;
+    std::size_t                                          pos = 0;
+    while ((pos = source.find("layout", pos)) != std::string::npos) {
+        const std::size_t open = source.find('(', pos);
+        const std::size_t close = open == std::string::npos ? std::string::npos : source.find(')', open);
+        if (close == std::string::npos) {
+            break;
+        }
+        const std::string qualifier = source.substr(open + 1, close - open - 1);
+        pos                         = close + 1;
+        if (qualifier.find("binding") == std::string::npos) {
+            continue; // location / push_constant / ... qualifiers name no descriptor
+        }
+        bindings.emplace_back(assignment(qualifier, "set", 0u), assignment(qualifier, "binding", 0u));
+    }
+    return bindings;
+}
+
+
+bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> program, std::uint32_t set,
+                           std::uint32_t binding)
+{
+    if (program == nullptr) {
+        return false;   // no program: nothing of its own to declare anything
+    }
+    for (std::size_t i = 0; i < program->stageCount(); ++i) {
+        const auto* stage = program->stage(i);
+        if (stage == nullptr) {
+            continue;
+        }
+        for (const auto& [declared_set, declared_binding] : declaredBindings(stage->source.stdstr())) {
+            if (declared_set == set && declared_binding == binding) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<const vine::graphics::Camera> camera,
+                               const std::vector<const vine::graphics::Light*>& lights)
+{
+    ShadowInput resolved;
+    if (camera == nullptr) {
+        return resolved; // no view to map a fragment from: nothing can be shaded with a map
+    }
+    const vine::graphics::RenderTarget* source = nullptr;
+    for (const auto& input : state.request.inputs) {
+        if (input == nullptr) {
+            continue;
+        }
+        const auto entry = state.targets.find(input);
+        if (entry == state.targets.end() || entry->second.depth_view == nullptr ||
+            !entry->second.depth_sampleable) {
+            continue; // declared but not produced, or its depth is not sampleable: nothing to bind
+        }
+        resolved.map = entry->second.depth_view;
+        source       = input;
+        break;
+    }
+    if (source == nullptr) {
+        return resolved;
+    }
+    // The bias and the strength come from the light that casts it: the same ShadowSettings the
+    // pipeline framed its light camera with (a private per-backend bias is exactly the convention the
+    // L1 ABI exists to prevent). The first enabled shadow-casting light is the one whose pass was
+    // built; with none announced the block stays DISABLED, which is the honest answer for a map that
+    // arrived without the light it belongs to.
+    float bias     = 0.002f;
+    float strength = 1.0f;
+    bool  have_light = false;
+    for (const auto* light : lights) {
+        if (light != nullptr && light->isEnabled() && light->castShadow()) {
+            bias       = static_cast<float>(light->shadowSettings().bias);
+            have_light = true;
+            break;
+        }
+    }
+    if (!have_light) {
+        return resolved;
+    }
+    // view -> light clip = (producer: light clip <- light view) * (view <- world) * (world <- THIS
+    // view): the producer's view-projection maps ITS view-space position into light clip, and the
+    // fragment the shader has is in the consuming pass' view space.
+    const vine::math::Mat4d view_to_light = source->producerViewProjection() * camera->viewMatrix().inverted();
+    // Column-major, the way the GLSL block reads it (mat4 is four columns of vec4).
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            resolved.block.view_to_light[static_cast<std::size_t>(column * 4 + row)] =
+                static_cast<float>(view_to_light(row, column));
+        }
+    }
+    resolved.block.params = { 1.0f, bias, strength, 0.0f };
+    return resolved;
 }
 
 } // namespace detail
