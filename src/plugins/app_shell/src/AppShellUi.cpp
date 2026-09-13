@@ -1,8 +1,11 @@
 ﻿#include "AppShellUi.hpp"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 #include <utility>
 
 #include <QTimer>
@@ -28,9 +31,13 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
+#include <vine/graphics/Texture.hpp>
+#include <vine/imaging/Image.hpp>
+#include <vine/imageio/ImageCodec.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
+#include <vine/system/Process.hpp>
 
 #include <vine/appfw/gui/ConsolePanel.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
@@ -67,6 +74,259 @@ gui::RibbonButton* addCommandButton(gui::RibbonGroup* group, const String& text,
     button->setCommand(command);
     group->addButton(button);
     return button;
+}
+
+/**
+ * @brief The directory the demo's shipped assets are read from, or an empty path.
+ *
+ * The assets (test_data/) are staged BESIDE THE BINARIES by the build and installed beside them, so
+ * the lookup is relative to the EXECUTABLE rather than to the working directory: a debugger that
+ * launches from anywhere, a shortcut, and a copied build tree all resolve the same way. Two
+ * candidates, because the two trees differ:
+ *
+ *   <build>/bin/<exe>  + <build>/bin/test_data    -> exeDir / "test_data"
+ *   <prefix>/bin/<exe> + <prefix>/test_data       -> exeDir / ".." / "test_data"
+ *
+ * VINE_TEST_DATA_DIR overrides both, which is how a run points at the source tree (or any other copy)
+ * without rebuilding. The tests use the same name for the same meaning, so one variable moves both.
+ *
+ * @return The asset directory, or an empty path when no candidate exists.
+ */
+std::filesystem::path demoAssetDirectory()
+{
+    if (const char* override_dir = std::getenv("VINE_TEST_DATA_DIR"); override_dir != nullptr && *override_dir != '\0') {
+        return std::filesystem::path(override_dir);
+    }
+    const std::string exe = vine::system::Process::currentExecutablePath().stdstr();
+    if (exe.empty()) {
+        return {};
+    }
+    const std::filesystem::path exe_dir = std::filesystem::path(exe).parent_path();
+    for (const auto& candidate : { exe_dir / "test_data", exe_dir.parent_path() / "test_data" }) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(candidate, ec)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+/**
+ * @brief box-filters an RGBA8 image down to @p side texels square.
+ *
+ * The demo does not need the shipped 2048^2 faces: they are 100 MB of RGBA8 for the six of them, and
+ * the GPU upload of that is the largest cost in the demo's start-up (worst on the software rasteriser
+ * the gate runs on). An integer box filter keeps it honest - the texels are averages of the source,
+ * not skipped samples - and it is what makes the cube usable at all on a 0.45-unit box.
+ *
+ * @param source Source image (must be Rgba8Unorm; what loadImage() was asked for).
+ * @param side   Edge length of the result, in texels.
+ * @return The filtered image (the source itself when it is already that size or smaller).
+ */
+vine::intrusive_ptr<vine::imaging::Image> boxFilterRgba(const vine::imaging::Image& source, int side)
+{
+    if (source.width() <= side || source.height() <= side) {
+        return vine::intrusive_ptr<vine::imaging::Image>(const_cast<vine::imaging::Image*>(&source));
+    }
+    auto       filtered   = vine::make_intrusive<vine::imaging::Image>(side, side, vine::imaging::PixelFormat::Rgba8Unorm, 1);
+    const auto source_px  = source.mipData(0);
+    const auto filtered_px = filtered->mipData(0);
+    const int  step_x     = source.width() / side;
+    const int  step_y     = source.height() / side;
+    for (int y = 0; y < side; ++y) {
+        for (int x = 0; x < side; ++x) {
+            int sum[4] = { 0, 0, 0, 0 };
+            int count  = 0;
+            for (int sy = 0; sy < step_y; ++sy) {
+                for (int sx = 0; sx < step_x; ++sx) {
+                    const std::size_t at = (static_cast<std::size_t>(y * step_y + sy) * static_cast<std::size_t>(source.width()) +
+                                            static_cast<std::size_t>(x * step_x + sx)) *
+                                           4u;
+                    for (int c = 0; c < 4; ++c) {
+                        sum[c] += std::to_integer<int>(source_px[at + static_cast<std::size_t>(c)]);
+                    }
+                    ++count;
+                }
+            }
+            const std::size_t out_at = (static_cast<std::size_t>(y) * static_cast<std::size_t>(side) +
+                                        static_cast<std::size_t>(x)) *
+                                       4u;
+            for (int c = 0; c < 4; ++c) {
+                filtered_px[out_at + static_cast<std::size_t>(c)] = static_cast<std::byte>(sum[c] / count);
+            }
+        }
+    }
+    return filtered;
+}
+
+/**
+ * @brief Loads the demo's cube map from the shipped skybox faces, or null.
+ *
+ * The images live in test_data/images next to the binaries (see demoAssetDirectory). The FACE FILES
+ * are named, not ordered: "posx .. negz" maps to +X .. -Z one for one, and sorting a directory listing
+ * would give a different order entirely (the six names sort as -X before +X). The mapping is written
+ * out here for that reason, not derived.
+ *
+ * A missing/unreadable face is REPORTED and the box is skipped: a cube map with a white face would
+ * look like a shading bug, and the demo is the only place this asset is read, so saying which file
+ * failed is what makes it fixable.
+ *
+ * @param side Edge length, in texels, to box-filter the faces down to.
+ * @return The cube map, or null when the assets are absent (already reported).
+ */
+vine::intrusive_ptr<vine::graphics::CubeMap> loadDemoCubeMap(int side)
+{
+    const std::filesystem::path images = demoAssetDirectory() / "images";
+    if (!std::filesystem::is_directory(images)) {
+        std::fprintf(stderr,
+                     "[demo] cube map: no assets beside the executable (looked for 'images' under "
+                     "'%s' and its parent; set VINE_TEST_DATA_DIR to point at test_data) - the "
+                     "cube-mapped box is skipped\n",
+                     demoAssetDirectory().string().c_str());
+        return nullptr;
+    }
+
+    const struct
+    {
+        vine::graphics::CubeMap::Face face;
+        const char*                  file;
+    } faces[] = {
+        { vine::graphics::CubeMap::Face::PosX, "posx.jpg" }, { vine::graphics::CubeMap::Face::NegX, "negx.jpg" },
+        { vine::graphics::CubeMap::Face::PosY, "posy.jpg" }, { vine::graphics::CubeMap::Face::NegY, "negy.jpg" },
+        { vine::graphics::CubeMap::Face::PosZ, "posz.jpg" }, { vine::graphics::CubeMap::Face::NegZ, "negz.jpg" },
+    };
+
+    auto cube = vine::make_intrusive<vine::graphics::CubeMap>(side, vine::imaging::PixelFormat::Rgba8Unorm, 1);
+    for (const auto& entry : faces) {
+        const std::filesystem::path file = images / entry.file;
+        try {
+            cube->setFaceImage(entry.face,
+                               boxFilterRgba(*vine::imageio::loadImage(file, vine::imaging::PixelFormat::Rgba8Unorm), side));
+        }
+        catch (const std::exception& error) {
+            std::fprintf(stderr, "[demo] cube map: '%s' could not be read (%s) - the cube-mapped box is skipped\n",
+                         file.string().c_str(), error.what());
+            return nullptr;
+        }
+    }
+    std::fprintf(stderr,
+                 "[demo] cube map: six %dx%d faces of test_data/images loaded; box 'env_box' samples it by "
+                 "direction (3-component texcoords)\n",
+                 side, side);
+    return cube;
+}
+
+/**
+ * @brief Builds an axis-aligned box whose faces sample a CUBE MAP by direction.
+ *
+ * Same geometry as addBox, but the box also authors the TEXCOORD channel with THREE components: that
+ * width is what tells the engine's forward set to sample the material's texture as a cube map (a
+ * 2-component channel is a UV pair for a 2-D map - see Geometry::setTexcoords3). The direction per
+ * vertex is the corner's own direction from the box centre, so the environment WRAPS the box instead
+ * of being painted flat on each face.
+ *
+ * The direction is swizzled (y, z, x -> x, z, y): the demo's world is Z-up while the skybox images are
+ * authored with Y up, so without the swizzle the environment would appear rolled 90 degrees.
+ *
+ * @param root    Root group receiving the node.
+ * @param texture Cube map every face samples.
+ * @param name    Node and geometry name.
+ * @param centre  World-space centre of the box.
+ * @param half    Half extents along X / Y / Z.
+ * @return The created node (kept alive by the root group).
+ */
+vine::intrusive_ptr<vine::graphics::MatrixTransform>
+addCubeMappedBox(vine::graphics::Group* root, vine::intrusive_ptr<vine::graphics::Texture> texture, const vine::String& name,
+                 const vine::math::Vec3d& centre, const vine::math::Vec3d& half)
+{
+    using vine::math::Vec3f;
+
+    vine::geometry::Vec3fArray  positions;
+    vine::geometry::Vec3fArray  normals;
+    vine::geometry::Vec3fArray  directions;
+    vine::geometry::UInt32Array indices;
+
+    const int face_table[6][3] = {
+        { 0, 1, 2 }, { 1, 2, 0 }, { 2, 0, 1 }, { 0, 2, 1 }, { 1, 0, 2 }, { 2, 1, 0 },
+    };
+    auto axisVector = [](int axis) { return Vec3f(axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f); };
+
+    for (int f = 0; f < 6; ++f) {
+        const int  n_axis = face_table[f][0];
+        const int  u_axis = face_table[f][1];
+        const int  v_axis = face_table[f][2];
+        const bool neg    = f >= 3;
+
+        const Vec3f normal = neg ? -axisVector(n_axis) : axisVector(n_axis);
+        const Vec3f u      = axisVector(u_axis);
+        const Vec3f v      = axisVector(v_axis);
+
+        const std::uint32_t base  = static_cast<std::uint32_t>(positions.size());
+        const float         hs[3] = { static_cast<float>(half.x), static_cast<float>(half.y), static_cast<float>(half.z) };
+        const float         cu[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
+        const float         cv[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
+        for (int k = 0; k < 4; ++k) {
+            const Vec3f corner = normal * hs[n_axis] + u * (cu[k] * hs[u_axis]) + v * (cv[k] * hs[v_axis]);
+            positions.push_back(corner);
+            normals.push_back(normal);
+            const float length = std::sqrt(corner.x * corner.x + corner.y * corner.y + corner.z * corner.z);
+            // The swizzle: the skybox images are authored Y-up, the demo's world is Z-up.
+            directions.emplace_back(corner.x / length, corner.z / length, corner.y / length);
+        }
+        indices.push_back(base + 0);
+        indices.push_back(base + 1);
+        indices.push_back(base + 2);
+        indices.push_back(base + 0);
+        indices.push_back(base + 2);
+        indices.push_back(base + 3);
+    }
+
+    auto geometry = vine::make_intrusive<vine::graphics::Geometry>();
+    geometry->setName(name);
+    geometry->setPositions(vine::graphics::packAttribute(positions));
+    geometry->setNormals(vine::graphics::packAttribute(normals));
+    geometry->setTexcoords3(vine::graphics::packAttribute(directions));
+    geometry->setIndices(vine::graphics::packIndices(indices));
+
+    auto material = vine::make_intrusive<vine::graphics::Material>();
+    // White diffuse: the cube map IS the colour. The material's specular stays low like every other
+    // demo box, so the map is not washed out by a highlight.
+    material->setDiffuse(vine::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
+    material->setSpecular(vine::Colorf(0.12f, 0.12f, 0.12f, 1.0f));
+    material->setShininess(64.0f);
+    material->setTexture(std::move(texture));
+    geometry->setMaterial(material);
+
+    auto node = vine::make_intrusive<vine::graphics::MatrixTransform>();
+    node->setName(name);
+    node->setMatrix(vine::math::translate(centre));
+    node->addChild(geometry);
+    root->addChild(node);
+    return node;
+}
+
+/**
+ * @brief Adds the demo's cube-mapped box to a scene root, or nothing when the assets are absent.
+ *
+ * Both demos that show it share this: the forward preset's feature-showcase scene (addDemoCubes) and
+ * the DEFAULT Deferred demo's forward overlay scene (makeForwardOverlayScene). The overlay is the one
+ * that matters for the default demo, because the Deferred G-buffer geometry program writes the
+ * material's diffuse colour only and samples no texture: a cube-mapped box in the opaque scene would
+ * be drawn FLAT. The overlay is drawn as forward content over the deferred-lit result, which is what
+ * makes the map both visible in the default demo and depth-composited with the opaque stack.
+ *
+ * The asset is SHIPPED (test_data/images), so it is looked up beside the executable and the box is
+ * skipped - loudly - when the assets are not there: a white cube would read as a shading bug.
+ *
+ * @param root   Root group receiving the node.
+ * @param centre World-space centre of the box.
+ * @param half   Half extents along X / Y / Z.
+ */
+void addDemoCubeMappedBox(vine::graphics::Group* root, const vine::math::Vec3d& centre, const vine::math::Vec3d& half)
+{
+    if (auto cube = loadDemoCubeMap(/*side*/ 256)) {
+        addCubeMappedBox(root, std::move(cube), u8"env_box", centre, half);
+    }
 }
 
 /**
@@ -275,6 +535,13 @@ void addDemoCubes(vine::graphics::Scene* scene)
     addBox(root.get(), vine::Colorf(0.45f, 0.47f, 0.52f, 1.0f), u8"ground", Vec3d(0.0, 0.0, -0.05), Vec3d(3.0, 3.0, 0.05));
     addBox(root.get(), vine::Colorf(0.30f, 0.62f, 0.36f, 1.0f), u8"lit_box", Vec3d(0.0, 0.0, 0.4), Vec3d(0.5, 0.5, 0.4));
 
+    // --- Cube-mapped box: the material's texture is sampled BY DIRECTION ---
+    // Its texcoord channel carries THREE components (a direction, not a UV pair), which is what makes
+    // the engine's forward set sample the texture as a cube map - see Geometry::setTexcoords3. The box
+    // stands in the open, so the map is not half-hidden by another box's shadow; the shadow is shown
+    // by the stack on the ground instead.
+    addDemoCubeMappedBox(root.get(), Vec3d(1.5, 1.2, 0.5), Vec3d(0.5, 0.5, 0.5));
+
     // --- StateNode{ PolygonMode::Line }: wireframe box ----------------------
     // Each box is attached under ITS state node only (single parent).
     {
@@ -428,9 +695,11 @@ void addDemoCubes(vine::graphics::Scene* scene)
  * an elevated 3/4 angle. The off-screen/PiP validation renders the same
  * engine scene and camera, so the PiP matches the main view.
  *
- * Shadow mapping is deferred until the custom-shader / multi-pass slice is
- * mature: the demo sun never sets castShadow() yet, so no half-built shadow
- * path runs.
+ * The key sun CASTS (Light::castShadow), so the default demo shows a shadow: the engine builds one
+ * shadow pass per content from the first enabled shadow-casting directional light, and the demo's key
+ * sun is it. The fill deliberately does NOT cast - the design allows one shadowed directional light
+ * per content, and a second shadow would only muddy the first - and the ambient + fill keep the
+ * shadowed ground readable instead of black.
  *
  * @param render_control Render view whose engine receives the lights.
  */
@@ -454,6 +723,11 @@ void addDemoLighting(gui::RenderControl* render_control)
     auto sun = vine::graphics::Light::createDirectional(vine::math::Vec3d(-0.35, -0.35, -0.75));
     sun->setName(u8"scene_sun");
     sun->setIntensity(1.0f);
+    // The demo's shadow. Resolution and bias come from ShadowSettings (1024 / 0.002 by default): the
+    // light camera frames the whole content, so 1024 covers the 6x6 ground at ~120 texels per unit -
+    // enough for the 0.5-unit boxes to cast a readable shadow, and the default bias is well below a
+    // texel's worth of depth here (no acne, no peter-panning).
+    sun->setCastShadow(true);
     scene->addLight(sun);
 
     // Soft cool fill from the opposite (back) side so orbiting to the far
@@ -917,9 +1191,10 @@ vine::intrusive_ptr<vine::graphics::RenderTarget> makeGbufferTarget()
  * @brief Builds the forward-only overlay scene of the DEFAULT (Deferred) demo.
  *
  * The Deferred G-buffer pass only bakes opaque content through one geometry
- * program, so forward-only elements — the rainbow five-pointed star point
- * cloud and the alpha-blended translucent box — cannot live in the opaque
- * scene. This scene is handed to the pipeline builder as transparent content
+ * program that samples no texture, so forward-only elements — the rainbow
+ * five-pointed star point cloud, the alpha-blended translucent box and the
+ * cube-mapped box (whose map is a `samplerCube` variant of the forward
+ * program) — cannot live in the opaque scene. This scene is handed to the pipeline builder as transparent content
  * (RenderPipelineBuilder::setTransparentContent) and is composited depth-on
  * over the deferred-lit result: the translucent box is positioned overlapping
  * the opaque stack, so it is genuinely occluded / blended against the opaque
@@ -964,6 +1239,12 @@ vine::intrusive_ptr<vine::graphics::Scene> makeForwardOverlayScene()
         }
         overlay_root->addChild(state);
     }
+
+    // Cube-mapped box: forward content on purpose. The Deferred G-buffer geometry program samples no
+    // texture at all (it writes the material's diffuse), so a cube-mapped box in the OPAQUE scene would
+    // come out flat; drawn here it keeps its `samplerCube` variant and is still depth-composited with
+    // the opaque stack. Same placement and asset as the forward preset's showcase scene (addDemoCubes).
+    addDemoCubeMappedBox(overlay_root.get(), Vec3d(1.5, 1.2, 0.5), Vec3d(0.5, 0.5, 0.5));
 
     // Rainbow five-pointed star point cloud (custom point-sprite program).
     {
@@ -1019,9 +1300,11 @@ vine::intrusive_ptr<vine::graphics::Scene> makeForwardOverlayScene()
  * @brief Returns whether the demo should run the Deferred pipeline.
  *
  * The DEFAULT demo (no env) is now Deferred. VINE_PIPELINE=forward /
- * forward_shadowed selects the forward preset (which shows the forward
- * feature-showcase scene), deferred / deferred_shadowed forces Deferred, and
- * the legacy VINE_VSG_DEFERRED_FULL alias is subsumed by the deferred default.
+ * forward / forward_shadowed selects the forward preset (which shows the forward
+ * feature-showcase scene), deferred / deferred_shadowed forces Deferred, and the
+ * legacy VINE_VSG_DEFERRED_FULL alias is subsumed by the deferred default.
+ * Shadows are on in every mode now (the key sun casts - see addDemoLighting), so
+ * the *_shadowed names only name a path.
  */
 bool demoUsesDeferred()
 {
@@ -1067,12 +1350,13 @@ void addDeferredDemoCubes(vine::graphics::Scene* scene)
  * axis-gizmo HUD overlay (env VINE_PIPELINE).
  *
  * Values: forward | deferred | forward_shadowed | deferred_shadowed. The
- * shadowed variants are placeholders (the shadow slice is not implemented, so
- * they assemble the same pipeline as their unshadowed counterpart). With no
- * env var the DEFAULT is now the DEFERRED preset (the default demo also draws
- * the G-buffer's four colour attachments as small top-left previews); set
- * VINE_PIPELINE=forward to switch to the forward feature-showcase scene. The
- * legacy VINE_VSG_DEFERRED_FULL alias is subsumed by the deferred default.
+ * *_shadowed names are kept for scripts written before shadows became the demo's
+ * default (the key sun casts in every mode now) and select the same path as their
+ * unshadowed twin. With no env var the DEFAULT is the DEFERRED preset (the
+ * default demo also draws the G-buffer's four colour attachments as small
+ * top-left previews); set VINE_PIPELINE=forward to switch to the forward
+ * feature-showcase scene. The legacy VINE_VSG_DEFERRED_FULL alias is subsumed by
+ * the deferred default.
  *
  * An axis gizmo mirroring the view camera is always added (configurable via
  * PipelineOptions::gizmo) and - together with any Deferred G-buffer - is kept
@@ -1092,23 +1376,14 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
 
     using vine::graphics::ShadingPath;
     // Default demo path = Deferred (see demoUsesDeferred); VINE_PIPELINE keeps
-    // forward available for the forward feature-showcase scene. The *_shadowed
-    // modes do not pick a different pipeline: a shadow is ASKED FOR by the light
-    // that casts it (Light::castShadow), which is what those modes now set, and
-    // the builder reports that it builds no shadow pass yet (the demo then shows
-    // the unshadowed picture on purpose — see .ai/design/render-pipeline.md §2).
+    // forward available for the forward feature-showcase scene. Shadows are the demo's DEFAULT now
+    // (the key sun casts - see addDemoLighting), so the *_shadowed values only name a PATH: they stay
+    // accepted so scripts written against the older spelling keep working, and they select exactly what
+    // their unshadowed twin selects.
     ShadingPath path = demoUsesDeferred() ? ShadingPath::Deferred : ShadingPath::Forward;
     if (const char* mode = std::getenv("VINE_PIPELINE"); mode != nullptr) {
-        const bool shadowed = std::strcmp(mode, "forward_shadowed") == 0 || std::strcmp(mode, "deferred_shadowed") == 0;
         if (std::strcmp(mode, "deferred_shadowed") == 0) {
             path = ShadingPath::Deferred;
-        }
-        if (shadowed) {
-            for (const auto& light : view->scene()->lights()) {
-                if (light != nullptr && light->type() == vine::graphics::LightType::Directional) {
-                    light->setCastShadow(true);
-                }
-            }
         }
     }
 

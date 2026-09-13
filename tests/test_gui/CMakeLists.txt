@@ -12,9 +12,22 @@ set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/SARibbon
                                              ${CMAKE_SOURCE_DIR}/third_party/DockingPanes/inc)
 
+# vi::ImageIO / vi::System: the PluginLifecycleTest cases load the REAL app_shell
+# plugin, and a plugin installed OUTSIDE the application directory (which is exactly what
+# UserPluginSandbox copies into /tmp/vine_test_plugins) cannot use its own RUNPATH to find
+# anything: the loader only has the libraries the HOST process already loaded, and dlopen
+# reports the plugin itself as "missing dependency: app_shell" without naming the library.
+# app_shell decodes its demo cube map through the image codec and asks Process for the
+# executable's directory to find the shipped assets, so the host that loads it carries both
+# — the same rule that lets the plugin load in Vine, where the copy next to the executable
+# resolves the rest through the plugin directory's own RUNPATH (see
+# cmake/VinePluginHelper.cmake). Linking them explicitly keeps that a stated requirement
+# instead of an accident of what the framework happens to pull in.
 target_link_libraries(${TEST_NAME}
     vi::Appfw
     vi::Progress
+    vi::ImageIO
+    vi::System
     Qt6::Core Qt6::Gui Qt6::Widgets)
 
 # Plugins that a current host must refuse, to test the ABI guard end to end: one

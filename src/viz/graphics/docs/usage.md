@@ -572,13 +572,20 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 
 | 环境变量 | 取值 | 作用 |
 | --- | --- | --- |
-| `VINE_PIPELINE` | `forward` / `deferred` / `forward_shadowed` / `deferred_shadowed` | 选主窗口**路径**（`forward` / `deferred`）。**默认 `deferred`**；`*_shadowed` 不再选另一条管线，而是给场景里的方向光设 `castShadow` —— 于是 builder 报一条"无影"（阴影 pass 还没实现），演示的就是这条请求通路 |
+| `VINE_PIPELINE` | `forward` / `deferred` / `forward_shadowed` / `deferred_shadowed` | 选主窗口**路径**（`forward` / `deferred`）。**默认 `deferred`**；`*_shadowed` 两个取值只为兼容旧脚本保留，选的是与**同名无后缀**完全相同的那条路径 —— 阴影现在两条路径都会建（`addDemoLighting` 给主方向光设了 `castShadow`），后缀不再代表"另一条管线" |
 | `VINE_SHADER_PRESET` | 任意值 | 把内容程序换成 `flatForwardProgram()`（验证平直着色通路） |
 | `VINE_VSG_GBUFFER` | 任意值 | 加一个 G-buffer 彩色附件（albedo / normal / specular / view position）的 PiP 预览 |
 | `VINE_VSG_DEFERRED` | 任意值 | 加一条独立的"全屏延迟光照"pass（读 G-buffer 显示光照结果），用于 A/B 对照 |
 | `VINE_VSG_OFFSCREEN_MULTISLOT` | 任意值 | 把一个离屏 target 烘成两个内容槽（主场景 + 顶层叠加）并以 PiP 显示 |
 | `VINE_VSG_SLOT_DEMO` | 任意值 | 在主相机上再叠一个 (相机, 内容槽) 的 overlay pass，验证同视角多槽绘制 |
 | `VINE_VSG_OWN_WINDOW` | 任意值 | **临时逃生口**：后端自建窗口而非用宿主窗口（仅测试用；会忽略公告的表面尺寸） |
+| `VINE_TEST_DATA_DIR` | 目录 | demo 与各测试共用的**资产根目录**。不给时的查找顺序是 `<exe>/test_data` → `<exe>/../test_data`（源码树、build 树、安装树三种布局都覆盖）；demo 的 cube map 就从这里读，找不到时**跳过那只盒子并报一行**，而不是贴一张白图 |
+
+默认 demo（不给任何环境变量）的画面：不透明堆叠 + 主方向光投在 6×6 地面上的**阴影** + 一只**贴 cube map 的盒子** `env_box`。
+它的材质纹理按**方向**采样（texcoord 通道是 3 分量，引擎据此编译 `samplerCube` 变体，见 `Geometry::setTexcoords3()`），六张面图是
+`test_data/images/posx.jpg … negz.jpg`，读入后盒式滤波到 256²/面、再交给 `CubeMap::setFaceImage()` 的**具名**面（`posx` → `+X` … `negz` → `-Z`，
+不靠目录排序：六个名字排出来是 -X 在 +X 前面）。Deferred 默认下 G-buffer 的几何程序**只写材质颜色、不采样任何纹理**，所以贴图的盒子画在
+**前向叠加场景**里（`makeForwardOverlayScene`，与不透明内容做深度合成），而不是丢进不透明场景变成一只平色盒子。
 
 ### 4.3 两条路径各装配什么（阴影不是路径）
 
@@ -587,12 +594,15 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 | `ShadingPath::Forward` | 一个 `PipelineStage::Shading` 的窗口场景 pass 画内容（可选叠加场景是同一窗口 pass 里带深度的第二笔，`PipelineStage::Transparent`）。 |
 | `ShadingPath::Deferred` | `PipelineStage::Geometry` 的 pass 把内容画进**规范 G-buffer**（4 张彩色：albedo RGBA8、view normal+shininess RGBA16F、specular RGBA8、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 `Shading` 阶段的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现（`Transparent` → `Present`）。 |
 
-**阴影不是预设**：它由投影的那盏灯提出请求（`Light::castShadow()` +
-`ShadowSettings{resolution, bias, filter}` / `ShadowFilter::{None, Hard, PCF}`），
-当前 builder **还没有建阴影 pass**，所以会报一条 `DiagnosticCategory::UnsupportedRequest`
-说清"画面无影"，而不是让宿主自己猜。计划见 `.ai/design/graphics-shadow.md` §10 与
-`.ai/design/render-pipeline.md` §6。内容着色侧**没有保留项**：程序就是唯一入口（见 §3），
-未实现的着色需要宿主自己写一个 `ShaderProgram`。
+**阴影由投影的那盏灯提出请求**（`Light::castShadow()` + `ShadowSettings{resolution, bias, filter}` /
+`ShadowFilter::{None, Hard, PCF}`），**两条路径都会**为它建一条 depth-only 的阴影 pass
+（`PipelineStage::Depth`，默认 1024²，`RenderPipelineBuilder::directionalShadowMatrix()` 从光那一侧框住内容）。
+内容集合**无条件**声明阴影 ABI（set 0：map 在 3、块在 4；全屏的延迟光照程序用 5 / 6），`shadow.params.x` 是开关 ——
+没有可用阴影时程序一次都不采那张图。宿主自己的程序声明了 `shadow_map` 却没带上它时，会**按 drawable** 报一条
+`DiagnosticCategory::UnsupportedRequest`，而不是画出一张"没有阴影的阴影"。两个约定不同、且都写在 ABI 里：矩阵是
+**SDK 裁剪约定**（y 向上、z 0 近 → 1 远），纹理是**后端约定**（reverse-Z、near = 1 → far = 0、v = 0 是世界的"上"），
+着色器里各转一次。判据（三次像素断言 + 逐项变异）见 `.ai/design/render-pipeline.md` §8.2 / §8.3 / §9。内容着色侧
+**没有保留项**：程序就是唯一入口（见 §3），未实现的着色需要宿主自己写一个 `ShaderProgram`。
 
 ```bash
 ./build/bin/Vine                                # deferred（默认）
@@ -600,7 +610,7 @@ VINE_PIPELINE=forward  ./build/bin/Vine         # forward
 VINE_VSG_GBUFFER=1     ./build/bin/Vine         # + G-buffer 预览
 VINE_VSG_DEFERRED=1    ./build/bin/Vine         # + 独立延迟光照 pass
 VINE_VSG_OFFSCREEN_MULTISLOT=1 ./build/bin/Vine # 离屏 + PiP
-VINE_PIPELINE=forward_shadowed ./build/bin/Vine # 接受，但今天等同 forward
+VINE_PIPELINE=forward_shadowed ./build/bin/Vine # 接受；与 forward 完全相同（阴影已是默认）
 ```
 
 ### 4.4 无头验证（仓库门禁跑的就是这些）

@@ -61,6 +61,16 @@ function(v_add_plugin target_name_var short_name)
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+    # A plugin lives one level DEEPER than the app (<exe>/plugins/vine on Windows,
+    # <prefix>/plugins/vine on Linux), so the project-wide RPATH ($ORIGIN;$ORIGIN/../lib)
+    # names a directory that does not exist from there. The consequence is not a warning but a
+    # plugin that quietly fails to load: its dependencies are only found when the HOST happens to
+    # have loaded them already, so a plugin that links one more library than the app does (the
+    # app_shell demo's image codec was the first) fails at dlopen. The two levels up land on lib/
+    # in both trees (build/plugins/vine -> build/lib, <prefix>/plugins/vine -> <prefix>/lib).
+    set_target_properties(${target_name} PROPERTIES
+        INSTALL_RPATH "$ORIGIN;$ORIGIN/../..;$ORIGIN/../../lib")
+
     source_group(TREE ${sdk_dir} PREFIX sdk FILES ${sdk_file_list})
     source_group(TREE ${inc_dir} PREFIX headers FILES ${header_file_list})
     source_group(TREE ${src_dir} PREFIX src FILES ${src_file_list})
