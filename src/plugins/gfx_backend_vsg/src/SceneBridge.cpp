@@ -917,58 +917,97 @@ bool SceneBridge::syncRenderCommands(
         collectSweepShares(sweep_shares);
         shares = &sweep_shares;
     }
-    changed = ageAbsentItems(seen, *shares) || changed;
+    updateAbsentCandidates(seen);
+    if (frame_drawn_ != nullptr) {
+        // Report this slot's drawings to the frame; the session ages every slot by their UNION
+        // once per frame (VsgRenderer::submitFrame), so a geometry one pass draws is not absent
+        // for the others, and a pass that does not run at all still has its cache aged.
+        frame_drawn_->insert(seen.begin(), seen.end());
+    } else {
+        changed = ageAbsentItems(seen, *shares) || changed;
+    }
     publishRetainedChildren(*root, visible, commands);
     releaseAbandonedCaches(*shares);
     return changed;
 }
 
-bool SceneBridge::ageAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& seen,
-                                 const OwnedShareCounts& shares)
+void SceneBridge::updateAbsentCandidates(const std::unordered_set<const vine::graphics::Geometry*>& seen)
 {
-    bool changed = false;
-    // The absent geometries — the CANDIDATES — not the whole cache. A geometry missing from this
-    // frame is not dropped immediately: hiding a node / a frustum-culled object must stay cheap
-    // (its node is detached from the root and reused when it reappears, with no rebuild or
-    // recompile), so it joins the list below and only leaves the cache once the window is up.
+    // The geometries this slot has cached but did not draw in this sync: the eviction CANDIDATES.
+    // Walking the whole cache to find them (what the sweep used to do) cost O(entries ever seen)
+    // per frame per slot — a roaming camera fills the cache with the whole scene, so the frame got
+    // slower the more of the scene it had ever visited, for a list that is usually empty. The list
+    // is built from what the sync drew instead, so maintaining it costs O(drawn + absent).
     //
-    // Which geometries can be absent is already known: the ones this slot drew LAST time and did
-    // not draw now. Walking the whole cache instead (what this used to do) cost O(entries ever
-    // seen) PER FRAME per slot — a roaming camera fills the cache with the whole scene, so the
-    // frame got slower the more of the scene it had ever visited, for a list that is usually
-    // empty. The cost is now O(drawn + absent).
+    // Its two halves also ARE the keys of `cache_`: an entry is created by the sync that draws its
+    // geometry, dropped here when the window expires or by the app releasing the geometry, and
+    // cleared by clearCache(). That is what lets the ownership pass read the lists instead of the
+    // cache (see collectOwnedShares).
     //
-    // Rebuild the list: last sync's geometries minus this sync's, keeping the ones already absent.
-    std::vector<const vine::graphics::Geometry*> next;
-    next.reserve(absent_.size() + last_seen_.size());
+    // A geometry that comes back starts the window over: it measures CONSECUTIVE absence, so a
+    // scene that alternates would otherwise evict what it is still using.
     for (const auto* geometry : absent_) {
         if (seen.count(geometry) != 0) {
-            // Back in the frame: the window measures CONSECUTIVE absence, so it starts again from
-            // this sync instead of continuing from where the geometry left off.
             if (const auto it = cache_.find(geometry); it != cache_.end()) {
                 it->second.payload()->absent_frames = 0;
             }
-            continue;
         }
-        next.push_back(geometry); // still absent
+    }
+    std::vector<const vine::graphics::Geometry*> next;
+    next.reserve(absent_.size() + last_seen_.size());
+    for (const auto* geometry : absent_) {
+        if (seen.count(geometry) == 0) {
+            next.push_back(geometry); // still absent
+        }
     }
     for (const auto* geometry : last_seen_) {
         if (seen.count(geometry) == 0 && !absent_set_.count(geometry)) {
             next.push_back(geometry); // just became absent
         }
     }
-
-    constexpr std::uint32_t kAbsentEvictFrames = 600;
+    // A geometry that left this slot's frame gets its rejection record cleared: the record says
+    // "this drawable was refused", and a fix that bumps the revision must be re-evaluated on the
+    // next appearance instead of being skipped by a stale record.
     for (const auto* geometry : next) {
+        if (const auto it = cache_.find(geometry); it != cache_.end()) {
+            it->second.payload()->rejected = false;
+        }
+    }
+    absent_ = std::move(next);
+    absent_set_.clear();
+    absent_set_.insert(absent_.begin(), absent_.end());
+    last_seen_.assign(seen.begin(), seen.end());
+}
+
+bool SceneBridge::ageAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& drawn,
+                                 const OwnedShareCounts& shares)
+{
+    // Age the CANDIDATES (see updateAbsentCandidates), and judge "was it drawn?" by @p drawn: the
+    // SESSION hands the union of every slot's drawings once per frame, so a geometry any pass drew
+    // this frame is not absent — and a slot whose pass did not run at all still ages what it
+    // cached, instead of pinning it for the session.
+    //
+    // A bridge driven directly (a test, a driver that never opens a frame) ages in its own sync
+    // with what IT drew, which is what this looks like from one slot.
+    if (absent_.empty()) {
+        return false;
+    }
+    constexpr std::uint32_t kAbsentEvictFrames = 600;
+    bool                    changed = false;
+    std::vector<const vine::graphics::Geometry*> still_absent;
+    still_absent.reserve(absent_.size());
+    for (const auto* geometry : absent_) {
         const auto it = cache_.find(geometry);
         if (it == cache_.end()) {
-            continue; // its entry is already gone (evicted by the app releasing it)
+            continue; // its entry is already gone (the app released the geometry)
         }
         Item* item = it->second.payload().get();
-        // The geometry left the frame, so its rejection record no longer applies: a fix that
-        // bumps the revision is re-evaluated on the next appearance instead of being skipped by a
-        // stale record.
-        item->rejected = false;
+        if (drawn.count(geometry) != 0) {
+            // Drawn by some pass / by this slot again: the window starts over and the entry stays.
+            item->absent_frames = 0;
+            still_absent.push_back(geometry);
+            continue;
+        }
         // The entry owns the geometry, which is what makes the pointer key valid. Once the app
         // itself stops referencing it, nothing can ever look the entry up again, so release it —
         // and the geometry with it — right away instead of pinning both for the whole window.
@@ -980,21 +1019,15 @@ bool SceneBridge::ageAbsentItems(const std::unordered_set<const vine::graphics::
             // still bind the offset this drawable's wrapper recorded.
             releaseDrawSlot(item->draw_slot);
             item->draw_slot = {};
-            changed = true;
             cache_.erase(it);
+            changed = true;
+            continue; // the entry is gone, so it leaves the candidate list too
         }
+        still_absent.push_back(geometry);
     }
-    // The list this sync ages next time: the ones that are still absent (their entries may be gone
-    // already — the loop above drops those out) plus the geometries that just left.
-    absent_.clear();
+    absent_ = std::move(still_absent);
     absent_set_.clear();
-    for (const auto* geometry : next) {
-        if (cache_.count(geometry) != 0) {
-            absent_.push_back(geometry);
-            absent_set_.insert(geometry);
-        }
-    }
-    last_seen_.assign(seen.begin(), seen.end());
+    absent_set_.insert(absent_.begin(), absent_.end());
     return changed;
 }
 

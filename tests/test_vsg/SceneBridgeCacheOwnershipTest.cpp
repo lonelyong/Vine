@@ -39,6 +39,7 @@
 #include <vsg/utils/ShaderSet.h>
 
 #include <cstdio>
+#include <unordered_set>
 #include <vector>
 
 using namespace vine::graphics;
@@ -410,6 +411,53 @@ TEST(SceneBridgeCacheOwnershipTest, TheAbsenceWindowAgesTheGeometriesTheFrameSto
     EXPECT_EQ(bridge.retainedGeometryCount(), 1u)
         << "800 absent syncs in total, but only 400 in a row: the drawing in between must reset "
            "the window, or a scene that alternates would evict what it is still using";
+}
+
+/**
+ * @brief The window counts frames in which NO pass drew the geometry (P2).
+ *
+ * A slot's entry for a geometry another pass keeps drawing is not absent, and its window is not
+ * running: what the window measures is "the frame stopped using this geometry", not "this slot
+ * stopped drawing it". That is also what lets a slot whose pass does not run at all be aged — its
+ * cache is not pinned for the session just because nothing syncs it any more.
+ *
+ * The session hands the union of every slot's drawings (VsgRenderer::submitFrame does it once per
+ * frame); this drives that call directly with a set standing in for "another slot drew it", which
+ * is the whole difference between the two rules.
+ */
+TEST(SceneBridgeCacheOwnershipTest, TheAbsenceWindowCountsFramesNoPassDrewTheGeometry)
+{
+    vine::vsg::SceneBridge        bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto                 root     = vsg::Group::create();
+    auto                 geometry = makeTriangle(0);
+    MaterialPtr          material(new Material());
+    std::vector<RenderCommand> drawn{ RenderCommand(geometry, material, Mat4d()) };
+
+    bridge.syncRenderCommands(drawn, root.get(), nullptr);
+    bridge.syncRenderCommands({}, root.get(), nullptr); // it becomes an eviction candidate
+    ASSERT_EQ(bridge.retainedGeometryCount(), 1u);
+
+    vine::vsg::OwnedShareCounts shares;
+    bridge.collectOwnedShares(shares);
+
+    // Another pass drew it every frame: not absent, however many frames pass.
+    const std::unordered_set<const vine::graphics::Geometry*> drawn_by_another_show{ geometry.get() };
+    for (int i = 0; i < 700; ++i) {
+        bridge.ageAbsentItems(drawn_by_another_show, shares);
+    }
+    EXPECT_EQ(bridge.retainedGeometryCount(), 1u)
+        << "a geometry some pass draws every frame is not absent, however long this slot ignores it";
+
+    // And those frames restarted the window: with nothing drawing it any more, the window runs
+    // from zero rather than continuing from where the slot stopped.
+    const std::unordered_set<const vine::graphics::Geometry*> nothing;
+    for (int i = 0; i < 600; ++i) {
+        bridge.ageAbsentItems(nothing, shares);
+    }
+    EXPECT_EQ(bridge.retainedGeometryCount(), 1u) << "600 frames no pass drew it is the window's edge";
+    bridge.ageAbsentItems(nothing, shares);
+    EXPECT_EQ(bridge.retainedGeometryCount(), 0u) << "and the next frame evicts it";
 }
 
 /**

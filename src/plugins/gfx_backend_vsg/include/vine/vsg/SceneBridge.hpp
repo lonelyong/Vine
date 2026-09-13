@@ -149,6 +149,37 @@ class V_VSG_API SceneBridge {
      */
     void collectOwnedShares(OwnedShareCounts& shares) const;
 
+    /** @brief Ages the cached geometries that were not drawn and evicts the ones past the window.
+     *
+     * The CANDIDATES, not the whole cache: what can be absent is known — the geometries this slot
+     * drew earlier and did not draw since (see updateAbsentCandidates) — so this walks that list
+     * instead of every entry the slot has ever cached. See the notes in the .cpp for why that is
+     * the difference between O(entries ever seen) and O(drawn + absent) per frame.
+     *
+     * Called once per frame by the session with the UNION of every slot's drawings (a geometry any
+     * pass drew is not absent), and from syncRenderCommands with this slot's own drawings when no
+     * session is driving — a test, or a driver that never opens a frame.
+     *
+     * @param drawn  Geometries drawn this frame (the session's union, or this slot's own).
+     * @param shares Retained shares counted for the geometries this sweep judges.
+     * @return true when anything was evicted.
+     */
+    bool ageAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& drawn,
+                        const OwnedShareCounts& shares);
+
+    /** @brief Provides the set this bridge reports the geometries it draws into (frame-scoped).
+     *
+     * The session clears it at the start of a frame, every slot's sync adds what it drew, and the
+     * session then ages every slot by that union (ageAbsentItems). Set for the duration of one
+     * frame and cleared with it, like the share counts.
+     *
+     * @param drawn Set to report into, or null to age within this bridge's own syncs.
+     */
+    void setFrameGeometrySet(std::unordered_set<const vine::graphics::Geometry*>* drawn) noexcept
+    {
+        frame_drawn_ = drawn;
+    }
+
     /** @brief Provides the retained-share counts this bridge's sweep judges by.
      *
      * Set for the duration of one frame by the session that can count every slot's
@@ -874,19 +905,14 @@ class V_VSG_API SceneBridge {
     /** @brief Ring advances a released slot waits before the pool may hand it out again. */
     static constexpr std::uint32_t kDrawSlotRetireFrames = static_cast<std::uint32_t>(VsgRetireRing::kRetireRingDepth);
 
-    /** @brief Ages the geometries this sync did not draw and evicts the ones past the window.
+    /** @brief Rebuilds the absent candidate list from this sync's drawings.
      *
-     * The CANDIDATES, not the whole cache: what can be absent is known — the geometries this
-     * slot drew last sync and did not draw now (plus the ones already absent) — so this walks the
-     * absent list instead of every entry the slot has ever cached. See the notes in the .cpp for
-     * why that is the difference between O(entries ever seen) and O(drawn + absent) per frame.
+     * The list is what ageAbsentItems walks and (with last_seen_) the keys of the geometry cache,
+     * so it is maintained on every sync whether or not this bridge ages itself.
      *
-     * @param seen   Geometries drawn by this sync.
-     * @param shares Retained shares counted for the geometries this sweep judges.
-     * @return true when anything was evicted.
+     * @param seen Geometries drawn by this sync.
      */
-    bool ageAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& seen,
-                        const OwnedShareCounts& shares);
+    void updateAbsentCandidates(const std::unordered_set<const vine::graphics::Geometry*>& seen);
 
     /** @brief The share-aware half of releaseAbandonedCaches (see it for the rule).
      *
@@ -992,6 +1018,9 @@ class V_VSG_API SceneBridge {
     std::vector<const vine::graphics::Geometry*> absent_;
     std::unordered_set<const vine::graphics::Geometry*> absent_set_;
     std::vector<const vine::graphics::Geometry*> last_seen_;
+    // The frame's set of drawn geometries, injected for one frame (setFrameGeometrySet). Null when
+    // no session drives this bridge, which is when the syncs age it themselves.
+    std::unordered_set<const vine::graphics::Geometry*>* frame_drawn_ = nullptr;
     // The slot's per-view light block (setLightsData): declared in the pipeline
     // layout and descriptor set of the variants built from a ShaderSet that asks
     // for `vine_lights` (our forward set). Null while the built-in set draws.

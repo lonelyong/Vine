@@ -40,6 +40,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <unordered_set>
 #include <vector>
 
 #include <vsg/app/CommandGraph.h>
@@ -56,6 +57,7 @@
 #include <vine/vsg/VsgTextureCache.hpp>
 
 #include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -210,6 +212,11 @@ struct VsgRendererState {
     // that covers EVERY slot holding it: with two slots drawing one material, a bridge judging by
     // its own shares sees the other's and waits for it (the P11 mutual wait).
     OwnedShareCounts retained_shares;
+    // The geometries drawn by ANY pass this frame, collected from every content slot's sync and
+    // read once at the end of the frame: what a slot cached but no pass drew is what its absence
+    // window ages (SceneBridge::ageAbsentItems). Frame-scoped, like the counts next to it, and it
+    // is what makes the window measure the FRAME's use of a geometry instead of one slot's.
+    std::unordered_set<const vine::graphics::Geometry*> geometry_drawn_this_frame;
     // Window-target shader sets shared by its content slots' bridges: one per
     // DepthMode (TestAndWrite / TestOnly / Disabled) so each slot bakes the
     // right depth test/write state. Per-geometry pipelines are compiled per
