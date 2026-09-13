@@ -205,8 +205,8 @@ void detachSlotView(VsgRendererState& state, VsgRenderTargetEntry& owner, vine::
 /** @brief Drops every content slot's baked shader set so the next frame builds them again.
  *
  * A slot bakes its shader set at build time and the set carries more than one shading choice
- * with it: which program shades the slot, which light source the slot has to feed
- * (SceneBridge::hasOwnLightsBlock), and which View features that program reads. None of that
+ * with it: which program shades the slot, its attribute and descriptor ABI, and the pipeline
+ * states baked at the target's size and depth policy. None of that
  * can be patched afterwards, so changing the default content program mid-session means the slots have to
  * be built again — this is that drop, and the existing lazy slot creation rebuilds them on the
  * next frame each pass renders.

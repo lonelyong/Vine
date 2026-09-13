@@ -156,13 +156,6 @@ VsgMeshResourceCache& SceneBridge::meshResources()
     return mesh_cache_ != nullptr ? *mesh_cache_ : default_mesh_cache_;
 }
 
-bool SceneBridge::hasOwnLightsBlock() const noexcept
-{
-    // The declared binding is the answer: a set that reads `vine_lights` is fed by the slot's
-    // block, and one that does not needs vsg's light data (see the header).
-    return shader_set_ != nullptr && static_cast<bool>(shader_set_->getDescriptorBinding("vine_lights"));
-}
-
 void SceneBridge::setDrawBlockPool(vine::raw_ptr<VsgDrawBlockPool> pool)
 {
     draw_block_pool_ = pool;
@@ -447,7 +440,6 @@ void SceneBridge::swapRetainedChild(RetainedBinds& binds, std::size_t child, ::v
     }
     binds.commands->children[child] = replacement;
 }
-
 
 
 void SceneBridge::retireNode(::vsg::ref_ptr<::vsg::Node> node){

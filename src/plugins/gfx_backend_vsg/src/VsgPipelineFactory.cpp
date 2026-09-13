@@ -22,9 +22,6 @@
 #include <vsg/commands/PipelineBarrier.h>
 #include <vsg/commands/Draw.h>
 #include <vsg/commands/DrawIndexed.h>
-#include <vsg/lighting/AmbientLight.h>
-#include <vsg/lighting/DirectionalLight.h>
-#include <vsg/lighting/Light.h>
 #include <vsg/nodes/StateGroup.h>
 #include <vsg/nodes/VertexIndexDraw.h>
 #include <vsg/core/Array.h>
@@ -866,86 +863,6 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
         config->assignTexture("gbuffer_depth", ::vsg::ImageInfoList{ depth_info });
     }
     return makeOverlayStateGroup(config, push_data);
-}
-
-/**
- * @brief Builds a vsg light node from a Vine light.
- *
- * vsg lights are scene nodes collected per view into the phong "lightData"
- * uniform; colour comes in float [0,1] (vine::Colorf) and intensity is a
- * multiplier. Disabled lights produce no node.
- *
- * @param light Vine light to translate.
- * @return The vsg light node, or null for a disabled / unsupported light.
- */
-::vsg::ref_ptr<::vsg::Node> buildLightNode(const vine::graphics::Light* light)
-{
-    if (light == nullptr || !light->isEnabled()) {
-        return ::vsg::ref_ptr<::vsg::Node>();
-    }
-    const auto c = light->color();
-    switch (light->type()) {
-    case vine::graphics::LightType::Ambient:
-    {
-        auto ambient = ::vsg::AmbientLight::create();
-        ambient->color.set(c.r, c.g, c.b);
-        ambient->intensity = light->intensity();
-        return ambient;
-    }
-    case vine::graphics::LightType::Directional:
-    {
-        auto dir = ::vsg::DirectionalLight::create();
-        dir->color.set(c.r, c.g, c.b);
-        dir->intensity = light->intensity();
-        const auto v   = light->direction();
-        dir->direction.set(v.x, v.y, v.z);
-        // Shadow mapping is deferred until the custom-shader / multi-pass
-        // slice is mature: a directional Vine light maps to a plain vsg
-        // directional light for now. Light::castShadow() stays a reserved
-        // semantic flag for that future slice and is not consumed here.
-        return dir;
-    }
-    default:
-        // Point/Spot are not implemented yet.
-        return ::vsg::ref_ptr<::vsg::Node>();
-    }
-}
-
-std::size_t setGroupLights(::vsg::Group* group, const std::vector<const vine::graphics::Light*>& lights)
-{
-    if (group == nullptr || lights.empty()) {
-        return 0u;
-    }
-    // Build first, replace second: only a list that yields at least one usable
-    // light node may displace the view's seeded default. A list whose every
-    // entry is disabled / untranslatable means "no active light", and leaving
-    // the view with no light would shade the whole pass to black (see the
-    // header contract).
-    std::vector<::vsg::ref_ptr<::vsg::Node>> nodes;
-    nodes.reserve(lights.size());
-    for (const auto* light : lights) {
-        if (auto node = buildLightNode(light)) {
-            nodes.push_back(std::move(node));
-        }
-    }
-    if (nodes.empty()) {
-        return 0u;
-    }
-    const std::size_t attached = nodes.size();
-    group->children.clear();
-    for (auto& node : nodes) {
-        group->addChild(std::move(node));
-    }
-    return attached;
-}
-
-::vsg::ref_ptr<::vsg::Node> makeAmbientLight(const char* name)
-{
-    auto ambient  = ::vsg::AmbientLight::create();
-    ambient->name = name;
-    ambient->color.set(1.0f, 1.0f, 1.0f);
-    ambient->intensity = 1.0f;
-    return ambient;
 }
 
 } // namespace detail

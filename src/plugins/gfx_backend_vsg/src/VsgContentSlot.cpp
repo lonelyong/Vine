@@ -7,7 +7,6 @@
 
 #include <vsg/app/RenderGraph.h>
 #include <vsg/app/View.h>
-#include <vsg/lighting/Light.h>
 
 #include <vine/graphics/BuiltinShaders.hpp>
 
@@ -28,9 +27,9 @@ V_VSG_NS_BEGIN
 using namespace detail;
 
 // The content-slot helpers: each answers one question the draw path asks every frame (the
-// slot viewport, the seeded light, the "announced lights were all dropped" episode and the
-// env-gated TEMP diagnostics). They stay file-local: they take plain values, never the
-// session, so another unit has nothing to call.
+// slot viewport, the "announced lights were all dropped" episode and the env-gated TEMP
+// diagnostics). They stay file-local: they take plain values, never the session, so another
+// unit has nothing to call.
 namespace
 {
 
@@ -44,17 +43,6 @@ void updateSlotViewport(::vsg::Camera& camera, bool presenting, const std::optio
     }
     camera.viewportState =
         ::vsg::ViewportState::create(VkExtent2D{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) });
-}
-
-void seedSlotLight(::vsg::Group& light_group, bool want_headlight, bool presenting)
-{
-    light_group.children.clear();
-    if (want_headlight) {
-        light_group.addChild(::vsg::createHeadlight());
-    }
-    else {
-        light_group.addChild(makeAmbientLight(presenting ? "offscreen_ambient" : "content_ambient"));
-    }
 }
 
 void logContentSlotDiagnostics(const vine::graphics::RenderTarget* target, vine::graphics::DepthMode depth_mode,
@@ -183,12 +171,10 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
                            u8"this session has no default content program (setDefaultContentProgram(nullptr)), so content without a "
                            u8"program of its own is NOT drawn (the engine never substitutes a shading nobody named)");
     }
-    // Which light source this slot must feed follows the SET that draws it (see
-    // SceneBridge::hasOwnLightsBlock): the engine's own sets read the slot's `vine_lights` block,
-    // while a FOREIGN set (one a caller injected, e.g. another library's) shades from vsg's
-    // view-dependent light data — the slot has to build those light nodes for it, or such a slot
-    // draws unlit.
-    content.vsg_lights = !content.bridge.hasOwnLightsBlock();
+    // Which light source this slot feeds is not a choice: the slot's SET is always one of the
+    // engine's own (built from the program the host named), and every one of them reads the slot's
+    // `vine_lights` block. vsg's light-data path — light nodes under the view, collected per view
+    // at record time — existed only for the vsg shading sets the engine no longer uses at all.
     content.bridge.setMaterialManager(&persistent.materialManager);
     // Upload textures through the SESSION's cache: the same texture sampled by two
     // slots would otherwise be staged (and held) twice, once per slot.
@@ -208,46 +194,19 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // before the slot's first sync; a later change invalidates the state.
     content.bridge.setContentDepthMode(depth_mode);
     content.bridge.clearCache();
-    // Lights. Our forward set reads them from the per-slot block below, so the
-    // vsg light nodes — and the ViewDependentState collection that turns them
-    // into lightData — are built only for the slots whose set shades from them
-    // (see content.vsg_lights above). With our forward set the view carries no
-    // light nodes and records no view-dependent light data at all.
-    const bool vsg_lights = content.vsg_lights;
-    // Seed the slot's default light before the first compile. A slot whose
-    // scene carries no lights (checked per frame) keeps this seed: the
-    // window's presenting (full-target) slot gets vsg's default headlight,
-    // everything else an ambient fill — ambient keeps HUD / off-screen content
-    // readable from any angle (a directional headlight would shade the axis
-    // gizmo dark from diagonal views). When the content scene provides lights
-    // they replace this seed each frame, so the light source always reflects
-    // the scene, never the slot's depth style.
-    content.light_group = ::vsg::Group::create();
-    content.headlight_seed = (presenting && target == nullptr);
-    if (vsg_lights) {
-        if (content.headlight_seed) {
-            content.light_group->addChild(::vsg::createHeadlight());
-        }
-        else {
-            content.light_group->addChild(makeAmbientLight(presenting ? "offscreen_ambient" : "content_ambient"));
-        }
-    }
 
     // This slot's light block, written every frame from the pass' own lights and
-    // bound at set 0 / binding 2 of our forward shader set (unused otherwise).
+    // bound at set 0 / binding 2 of the forward shader set: the ONE light source a content slot
+    // has. Seeded here (so the descriptor exists before the first compile) and refilled per frame
+    // below.
     content.lights_data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(VineLightsBlock)));
     content.bridge.setLightsData(content.lights_data);
 
-    // features = 0 on the forward path: the set declares no view-dependent
-    // binding, so ViewDependentState has nothing to collect and its lightData
-    // buffer stays at the 1-vec4 minimum instead of being sized for the lights.
-    content.view = vsg_lights
-                       ? ::vsg::View::create(content.vsg_camera)
-                       : ::vsg::View::create(content.vsg_camera, ::vsg::ref_ptr<::vsg::Node>(),
-                                             static_cast<::vsg::ViewFeatures>(0));
-    if (vsg_lights) {
-        content.view->addChild(content.light_group);
-    }
+    // features = 0: the set declares no view-dependent binding, so ViewDependentState has nothing to
+    // collect and its lightData buffer stays at the 1-vec4 minimum instead of being sized for lights
+    // the slot does not put under the view.
+    content.view = ::vsg::View::create(content.vsg_camera, ::vsg::ref_ptr<::vsg::Node>(),
+                                      static_cast<::vsg::ViewFeatures>(0));
     content.view->addChild(content.root);
 
     // Position the slot's View in the target's render graph by its explicit
@@ -294,9 +253,6 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         return; // slot could not be built (e.g. camera bridge failed)
     }
     auto& content = it->second;
-    // Our forward set reads lights from the slot's own block; a slot whose set shades from
-    // vsg's light data is the one that builds / reports vsg light nodes (see setupContentSlot).
-    const bool vsg_lights = content.vsg_lights;
     // The graph this pass records into (see passGraph): the window's swapchain
     // graph, or this pass' own off-screen graph — created on the slot's first
     // render and reused every frame after.
@@ -340,14 +296,7 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         placeViewByOrder(state, graph, request.target, content.view, request.order);
     }
     if (content.presenting != request.presenting) {
-        content.presenting       = request.presenting;
-        const bool want_headlight = (request.presenting && request.target == nullptr);
-        if (content.headlight_seed != want_headlight) {
-            content.headlight_seed = want_headlight;
-            if (vsg_lights) {
-                seedSlotLight(*content.light_group, want_headlight, request.presenting);
-            }
-        }
+        content.presenting = request.presenting;
     }
 
     // Full target extent for this slot's viewport: the live swapchain size for
@@ -362,22 +311,13 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
 
     persistent.cameraBridge.apply(request.camera, content.vsg_camera);
 
-    // Lights come from the pass' content scene each frame (the scene is the source of
-    // truth); setGroupLights leaves the slot's seeded default light in place unless at
-    // least one announced light is usable (see beginLightsDroppedEpisode). Only the
-    // built-in path consumes vsg light nodes — our forward set reads the block below, so
-    // there is nothing to (re)build and nothing that can be reported as dropped.
-    const std::size_t attached_lights =
-        vsg_lights ? setGroupLights(content.light_group.get(), *request.lights) : request.lights->size();
-
-    // The same lights, packed for OUR forward shader set (view space, ambient +
-    // up to three directionals). Written every frame because the directions are
-    // view-space: a moving camera moves them. Cheap by construction — one call
-    // and a 112-byte copy per slot per frame — and inert while the built-in set
-    // draws this slot (nothing binds the block then).
+    // This slot's lights, packed for its shader set (view space, ambient + up to three
+    // directionals). Written every frame because the directions are view-space: a moving camera moves
+    // them. Cheap by construction — one call and a 112-byte copy per slot per frame.
+    std::size_t attached_lights = 0u;
     if (content.lights_data != nullptr && content.lights_data->dataSize() >= sizeof(VineLightsBlock)) {
         VineLightsBlock block;
-        fillVineLightsBlock(request.camera, *request.lights, block);
+        attached_lights = fillVineLightsBlock(request.camera, *request.lights, block);
         std::memcpy(content.lights_data->dataPointer(), &block, sizeof(block));
         content.lights_data->dirty();
     }
@@ -388,11 +328,12 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         // them is how a branch ends up printing the wrong number (§54).
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
                            attached_lights == 0u
-                               ? formatDiagnostic(u8"%zu announced light(s) are all disabled or of an unsupported "
-                                                  u8"kind; the pass keeps its default light",
+                               ? formatDiagnostic(u8"%zu announced light(s) are unusable (disabled, or a kind the light "
+                                                  u8"block does not carry); the pass is lit by the ambient fill",
                                                   announced)
-                               : formatDiagnostic(u8"%zu of %zu announced light(s) are disabled or of an unsupported "
-                                                  u8"kind and are not lit",
+                               : formatDiagnostic(u8"%zu of %zu announced light(s) are unusable (disabled, not ambient or "
+                                                  u8"directional, or beyond the block's three directional slots) and are "
+                                                  u8"not lit",
                                                   announced - attached_lights, announced));
     }
 

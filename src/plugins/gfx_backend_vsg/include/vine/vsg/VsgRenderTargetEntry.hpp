@@ -119,21 +119,12 @@ struct ContentSlot {
     int                           order  = 0;   // explicit pipeline order (stacking)
     vine::graphics::DepthMode     depth_mode = vine::graphics::DepthMode::TestAndWrite;
     bool                          presenting = false; // this slot cleared the target (full-target main pass)
-    bool                          headlight_seed = false; // its default light is the headlight (presenting window slot)
-    // This slot's shader set shades from VSG's view-dependent light data (not from our own
-    // `vine_lights` block), so the slot builds vsg light nodes under its view and reports the
-    // pass' lights per frame. Per SET, not per session: a slot shaded with another library's set falls
-    // back to that library's light data while the session's forward switch is on (see
-    // SceneBridge::hasOwnLightsBlock, which decides this at slot build).
-    bool                          vsg_lights = false;
     ::vsg::ref_ptr<::vsg::Camera> vsg_camera;
     ::vsg::ref_ptr<::vsg::Group>  root;        // retained content root
-    ::vsg::ref_ptr<::vsg::Group>  light_group; // lights under this slot's view
     // This slot's per-view light block, written from the pass' lights once per
-    // frame (see fillVineLightsBlock) and bound at set 0 / binding 2 of our own
-    // forward shader set. One block per SLOT because the lights are per view:
+    // frame (see fillVineLightsBlock) and bound at set 0 / binding 2 of the slot's shader set
+    // (which is always one of the engine's own). One block per SLOT because the lights are per view:
     // a shared one would light the HUD's ambient-only slot with the scene's sun.
-    // Unused (and never bound) while the built-in set draws this slot.
     ::vsg::ref_ptr<::vsg::Data>   lights_data;
     ::vsg::ref_ptr<::vsg::View>   view;
     SceneBridge                   bridge;      // per-view pipelines (vsg compiles per viewID; see VsgContentSlot.hpp on why the state registry must stay per slot)
@@ -150,10 +141,9 @@ struct ContentSlot {
     bool                          detached = false;
     bool                          ready = false;
     // True while this slot has reported that some announced light was unusable
-    // — all of them (it therefore keeps the seeded default light, see
-    // setGroupLights) or only some (the rest are lit). Re-armed once every
-    // announced light is attached again, so each episode reports once instead
-    // of every frame (see beginLightsDroppedEpisode).
+    // — all of them (it therefore draws under the ambient fill) or only some (the rest are lit).
+    // Re-armed once every announced light is represented in the block again, so each episode reports
+    // once instead of every frame (see beginLightsDroppedEpisode).
     bool                          light_fallback_reported = false;
 };
 

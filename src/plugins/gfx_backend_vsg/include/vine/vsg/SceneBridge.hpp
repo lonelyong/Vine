@@ -68,24 +68,6 @@ class V_VSG_API SceneBridge {
      */
     void setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet);
 
-    /** @brief Whether the bridge's shader set reads the slot's own light block.
-     *
-     * The lights a slot must FEED depend on the set that draws it, not on the session:
-     *  - our forward set takes the per-view `vine_lights` block the slot fills, so the slot
-     *    builds no vsg light nodes for it;
-     *  - every other set — the built-in vsg sets and user programs — shades from vsg's
-     *    view-dependent light data, which only exists if the slot puts vsg light nodes under
-     *    its view.
-     *
-     * The distinction matters exactly when the engine has NO set of its own for a slot (a content
-     * program the backend cannot compile into one): the session's forward switch is on, but THIS
-     * slot has no set at all and draws nothing, so a session-level answer would be a promise the
-     * slot cannot keep.
-     *
-     * @return true when the set reads the slot's `vine_lights` block.
-     */
-    bool hasOwnLightsBlock() const noexcept;
-
     /** @brief Sets the material manager used to obtain Phong resources.
      *
      * Must outlive the bridge. When unset, a default VsgMaterialManager is
@@ -826,7 +808,9 @@ class V_VSG_API SceneBridge {
      * descriptor ABI.
      *
      * A caller may INJECT any set (setShaderSet), including a foreign one: the bridge is generic on
-     * purpose, and only then does it ask for vsg's light data (see hasOwnLightsBlock).
+     * purpose and reads whatever that set declares. The ENGINE never does — every set it hands a slot
+     * is one of its own (see detail::makeContentShaderSet) — so a foreign set that shades from another
+     * library's own light data draws without the lights this bridge feeds.
      *
      * @return The base shader set, or null when even the engine's own stages are unusable (the
      *         embedded-shader gate rules that out).

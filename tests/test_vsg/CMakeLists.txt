@@ -10,7 +10,7 @@ set(SRC_FILE_LIST
 	CustomAttributeTest.cpp
 	PassProtocolTest.cpp
 	MaterialManagerTest.cpp
-	LightGroupTest.cpp
+	LightDropReportTest.cpp
 	PassObjectReleaseTest.cpp
 	TargetBookkeepingTest.cpp
 	PassRenderPassPlanTest.cpp

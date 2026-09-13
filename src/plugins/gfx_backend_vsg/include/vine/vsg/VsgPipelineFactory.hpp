@@ -492,40 +492,6 @@ const std::string& fullscreenVertexSource();
  */
 bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> program, std::size_t color_count);
 
-/**
- * @brief Replaces a view's light-group children with the given Vine lights.
- *
- * Light nodes carry no GPU resources (they are collected into the per-view
- * lightData uniform at record time), so rebuilding them each frame is cheap
- * and needs no recompile.
- *
- * A view must always be lit by SOMETHING: vsg's Phong accumulates the view's
- * light set, so a view with no light shades every surface to black, and a host
- * that disables a light is toggling it off, not asking for an unlit scene. The
- * group is therefore left untouched — the caller's seeded default light
- * survives — unless the announced list yields at least one usable light node.
- * "No usable node" covers an empty list, every entry disabled, and every entry
- * of a kind this backend does not translate.
- *
- * @param group  The view's light group (null is ignored).
- * @param lights Vine lights to attach (borrowed for the call).
- * @return Number of light nodes attached; 0 means the group was left as-is
- *         (the caller keeps its default light and may report the fallback).
- */
-std::size_t setGroupLights(::vsg::Group* group, const std::vector<const vine::graphics::Light*>& lights);
-
-/**
- * @brief Builds the flat white ambient light used to seed non-scene content
- * slots (HUD overlays and off-screen main slots).
- *
- * Ambient-only lighting makes Phong's colour independent of surface
- * orientation, which is what keeps HUD/axis content readable from any angle.
- *
- * @param name Node name (distinguishes the HUD seed from the off-screen one).
- * @return The ambient light node.
- */
-::vsg::ref_ptr<::vsg::Node> makeAmbientLight(const char* name);
-
 } // namespace detail
 
 V_VSG_NS_END

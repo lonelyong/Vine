@@ -179,15 +179,16 @@ namespace
  * @param ambient Receives rgb + intensity.
  * @param dirs    Receives up to three view-space directions (xyz, w = 0).
  * @param cols    Receives rgb + intensity per direction.
+ * @return How many of @p lights the packing represents (the caller reports the difference).
  */
-void collectViewSpaceLights(const vine::graphics::Camera*                    camera,
-                            const std::vector<const vine::graphics::Light*>& lights,
-                            std::array<float, 4>&                            ambient,
-                            std::array<std::array<float, 4>, 3>&             dirs,
-                            std::array<std::array<float, 4>, 3>&             cols)
+std::size_t collectViewSpaceLights(const vine::graphics::Camera*                    camera,
+                                   const std::vector<const vine::graphics::Light*>& lights,
+                                   std::array<float, 4>&                            ambient,
+                                   std::array<std::array<float, 4>, 3>&             dirs,
+                                   std::array<std::array<float, 4>, 3>&             cols)
 {
     if (camera == nullptr) {
-        return;
+        return 0u;
     }
     double r[3] = {}, u[3] = {}, f[3] = {};
     viewRotation(camera, r, u, f);
@@ -247,6 +248,9 @@ void collectViewSpaceLights(const vine::graphics::Camera*                    cam
         ambient[2] = 0.15f;
         ambient[3] = 1.0f;
     }
+    // The ambient FILL above is not an announced light, so it is not counted: the number has to be
+    // about what the host asked for, or the caller reports a drop that did not happen.
+    return static_cast<std::size_t>(dirlight) + (has_ambient ? 1u : 0u);
 }
 
 }  // namespace
@@ -273,14 +277,13 @@ void fillLightPushBlock(const vine::graphics::Camera*                           
     collectViewSpaceLights(camera, lights, block.ambient, block.dirs, block.cols);
 }
 
-void fillVineLightsBlock(const vine::graphics::Camera*                    camera,
-                         const std::vector<const vine::graphics::Light*>&  lights,
-                         VineLightsBlock&                                  block)
+std::size_t fillVineLightsBlock(const vine::graphics::Camera*                    camera,
+                                const std::vector<const vine::graphics::Light*>&  lights,
+                                VineLightsBlock&                                  block)
 {
     block = VineLightsBlock{};
-    collectViewSpaceLights(camera, lights, block.ambient, block.dirs, block.cols);
+    return collectViewSpaceLights(camera, lights, block.ambient, block.dirs, block.cols);
 }
-
 
 VsgOverlayDestination resolveOverlayDestination(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                                                 vine::graphics::RenderTarget* source, const SlotKey& key,

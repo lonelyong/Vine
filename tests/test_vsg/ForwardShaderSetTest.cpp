@@ -605,32 +605,23 @@ TEST(ForwardShaderSetTest, ThePerDrawBlockIsSetOneWithItsOwnBinding)
     EXPECT_EQ(layout->setLayouts.size(), 2u); // set 0 (material/lights) + set 1 (per draw)
 }
 
-TEST(ForwardShaderSetTest, TheLightSourceFollowsTheSlotSetNotTheSession)
+TEST(ForwardShaderSetTest, EveryProgramTheEngineBuildsReadsItsOwnLightBlock)
 {
-    // A slot must feed the light source its SHADER SET reads: our forward set takes the slot's
-    // `vine_lights` block, while a set that declares no such binding shades from vsg's
-    // view-dependent light data — which only exists if the slot puts vsg light nodes under its
-    // view. The question is per SET, not per session: a session-level answer leaves the slots that
-    // do not read our block unlit (measured when this was wrong: such a slot drew (0,0,0) where it
-    // had to draw (46,8,3)).
-    //
-    // The bridge stays generic on purpose — it takes whatever set it is handed, because the SDK
-    // allows a backend to be given a foreign one. What the ENGINE builds is always its own set, so
-    // every program the engine ships reads our block (pinned below); the foreign-set half is pinned
-    // with vsg's phong set, which is exactly such a set.
-    SceneBridge bridge;
+    // A slot feeds the light source its SHADER SET reads, so the set has to declare the block the slot
+    // fills. The engine builds a set for every program the host names (see makeContentShaderSet) and
+    // none of them may fall back to another library's light data: a slot whose set wants lights the
+    // slot never feeds draws UNLIT, with nothing to see in the frame that says so. Pinned on the two
+    // forward programs, checked the way the slot checks it — the declared binding.
     for (const auto& program :
          { vine::graphics::forwardProgram(), vine::graphics::flatForwardProgram() }) {
         const auto set = makeContentShaderSet(program, VkExtent2D{ 640, 360 }, true, true, 1);
         ASSERT_NE(set, nullptr) << "the engine's own programs get an engine set";
-        bridge.setShaderSet(set);
-        EXPECT_TRUE(bridge.hasOwnLightsBlock())
-            << "the engine never hands a slot a set of another library's";
+        const auto lights = set->getDescriptorBinding("vine_lights");
+        ASSERT_TRUE(static_cast<bool>(lights)) << "without the block the slot's lights reach nothing";
+        EXPECT_EQ(lights.set, 0u);
+        EXPECT_EQ(lights.binding, 2u);
+        EXPECT_EQ(lights.descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
     }
-
-    // A foreign set (not the engine's): the slot has to be told to feed vsg's light data instead.
-    bridge.setShaderSet(::vsg::createPhongShaderSet());
-    EXPECT_FALSE(bridge.hasOwnLightsBlock());
 }
 
 TEST(ForwardShaderSetTest, ABridgeWithNoShaderSetReportsAndDrawsNothing)

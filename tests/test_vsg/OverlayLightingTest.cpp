@@ -343,3 +343,36 @@ TEST(OverlayLightingTest, ForwardBlockSeedsAmbientSoASceneIsNeverBlack)
     EXPECT_GT(block.ambient[0], 0.0f);
 }
 
+TEST(OverlayLightingTest, ForwardBlockReportsHowManyAnnouncedLightsItCarries)
+{
+    // The block is a fixed-size carrier (one ambient + three directionals) and the slot reports the
+    // difference between what was announced and what it carries, so the return value has to be ABOUT
+    // the announced lights: the ambient FILL the block substitutes when nothing is lit is not one,
+    // and a light with nowhere to go is not counted.
+    Camera camera;
+    makeForwardCamera(camera);
+
+    const auto ambient = Light::createAmbient();
+    const auto second  = Light::createAmbient();
+    const auto sun     = Light::createDirectional(vine::math::Vec3d(0.0, 1.0, 0.0));
+    const auto off     = Light::createDirectional(vine::math::Vec3d(0.0, 1.0, 0.0));
+    off->setEnabled(false);
+
+    VineLightsBlock block;
+    EXPECT_EQ(fillVineLightsBlock(&camera, { ambient.get(), sun.get() }, block), 2u);
+    EXPECT_EQ(fillVineLightsBlock(&camera, { ambient.get(), off.get() }, block), 1u);
+    // A second ambient overwrites the first: the block carries ONE, so one is reported as dropped.
+    EXPECT_EQ(fillVineLightsBlock(&camera, { ambient.get(), second.get() }, block), 1u);
+    // The ambient fill is not an announced light...
+    EXPECT_EQ(fillVineLightsBlock(&camera, {}, block), 0u);
+    // ...and without a camera nothing can be expressed in view space, so every announced light is.
+    EXPECT_EQ(fillVineLightsBlock(nullptr, { ambient.get(), sun.get() }, block), 0u);
+
+    std::vector<LightPtr> owned;
+    for (int i = 0; i < 4; ++i) {
+        owned.push_back(Light::createDirectional(vine::math::Vec3d(0.0, 1.0, 0.0)));
+    }
+    const std::vector<const Light*> four{ owned[0].get(), owned[1].get(), owned[2].get(), owned[3].get() };
+    EXPECT_EQ(fillVineLightsBlock(&camera, four, block), 3u);
+}
+

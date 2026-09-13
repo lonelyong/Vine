@@ -133,12 +133,18 @@ void fillLightPushBlock(const vine::graphics::Camera* camera,
  * full-screen path owns: the forward path needs that range for the camera
  * matrices (see VineLightsBlock).
  *
+ * The count is what the CALLER has to be able to say out loud: a light that is disabled, is neither
+ * ambient nor directional, is a second ambient (the block carries ONE ambient, the last one
+ * announced), or is the fourth directional is not lit, and a pass that announces it draws a picture
+ * the host did not ask for unless it is told (see beginLightsDroppedEpisode).
+ *
  * @param camera Camera whose view transforms the lights (may be null).
  * @param lights Scene lights to bake (borrowed).
  * @param block  Receives the packed block (zeroed first).
+ * @return How many of the announced lights the block represents.
  */
-void fillVineLightsBlock(const vine::graphics::Camera* camera,
-                         const std::vector<const vine::graphics::Light*>& lights, VineLightsBlock& block);
+std::size_t fillVineLightsBlock(const vine::graphics::Camera* camera,
+                                const std::vector<const vine::graphics::Light*>& lights, VineLightsBlock& block);
 
 /** @brief Draws the host's fullscreen program over a sampled target.
  *
