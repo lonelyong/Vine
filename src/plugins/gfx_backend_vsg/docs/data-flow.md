@@ -136,21 +136,21 @@ struct AttributeChannel {
 4. **按名字喂给 configurator**：
 
 ```cpp
-config->assignArray(arrays, "vsg_Vertex", VERTEX, vertices);
-config->assignArray(arrays, "vsg_Normal", VERTEX, normals);
-config->assignArray(arrays, "vsg_Color",  VERTEX, colors);   // 默认路径白色 vec4
+config->assignArray(arrays, "vine_Vertex", VERTEX, vertices);
+config->assignArray(arrays, "vine_Normal", VERTEX, normals);
+config->assignArray(arrays, "vine_Color",  VERTEX, colors);   // 默认路径白色 vec4
 config->assignDescriptor("material", material_value);          // 默认路径
 ```
 
-- **默认路径**（无 program）：`vsg_Vertex + vsg_Normal + vsg_Color` + `material` 描述符
+- **默认路径**（无 program）：`vine_Vertex + vine_Normal + vine_Color` + `material` 描述符
   （内建 phong/flat）。
-- **program 路径**（用户 `ShaderProgram`）：只喂 `vsg_Vertex` + 自建 ShaderSet
+- **program 路径**（用户 `ShaderProgram`）：只喂 `vine_Vertex` + 自建 ShaderSet
   （`pc` push constant），跳过法线/颜色/材质——着色完全归用户 GLSL。
 
 ### 2.1 每帧的廉价更新（不重建几何/管线）
 
 - **世界摆放不进顶点**：`cmd.modelMatrix` 每帧写 `MatrixTransform::matrix`（矩阵没动就跳过）。
-- **透明度 = `vsg_Color` 的 alpha（loc6）**：保留白色 `colors` 数组，仅当
+- **透明度 = `vine_Color` 的 alpha（loc6）**：保留白色 `colors` 数组，仅当
   `cmd.opacity` 变化时整组 `color.a = opacity` 覆写（稳态帧无 O(V) 开销）。
 - 消失的几何不立即删：脱离 root 保留复用，超过 600 帧未出现才逐出。
 
@@ -181,10 +181,10 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 
 | 名字 | loc | format | GLSL | define |
 |---|---|---|---|---|
-| `vsg_Vertex` | 0 | R32G32B32_SFLOAT | vec3 | 恒开 |
-| `vsg_Normal` | 1 | R32G32B32_SFLOAT | vec3 | 恒开 |
-| `vsg_TexCoord0..3` | 2..5 | R32G32_SFLOAT | vec2 | VSG_TEXTURECOORD_n |
-| `vsg_Color` | 6 | R32G32B32A32_SFLOAT | vec4 | 恒开 |
+| `vine_Vertex` | 0 | R32G32B32_SFLOAT | vec3 | 恒开 |
+| `vine_Normal` | 1 | R32G32B32_SFLOAT | vec3 | 恒开 |
+| `vine_TexCoord0..3` | 2..5 | R32G32_SFLOAT | vec2 | VSG_TEXTURECOORD_n |
+| `vine_Color` | 6 | R32G32B32A32_SFLOAT | vec4 | 恒开 |
 | `vsg_Translation_scaleDistance` | 7 | … | vec4 | VSG_BILLBOARD |
 | `vsg_Translation` | 7 | … | vec3 | VSG_INSTANCE_TRANSLATION |
 | `vsg_Rotation` | 8 | … | vec4 | VSG_INSTANCE_ROTATION |
@@ -242,7 +242,7 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 ## 7. 第 4 个/自定义顶点通道：现状与待接线
 
 - **内建默认 shader 只认固定名字/location**。想加第 4 通道：
-  - 放 loc2..5（uv）：**已接线** —— `Geometry::setTexcoords2()` 走 loc8（`vsg_TexCoord0`）并由后端绑定、喂 `diffuseMap`。
+  - 放 loc2..5（uv）：**已接线** —— `Geometry::setTexcoords2()` 走 loc8（`vine_TexCoord0`）并由后端绑定、喂 `diffuseMap`。
   - 放 loc6（顶点色）：内建会消费，但 `SceneBridge` 现在**无视用户 loc6**（永远写白+opacity）。
   - 放其它位置：内建未声明 → 一律不支持。
 - **正确路径 = 自定义 program + 两步接线（✅ 已实现，2026-09-08）**：
@@ -257,7 +257,7 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 
 1. 对应 = **location 号映射 + 后端硬编码 loc0/loc1 语义** + vsg 侧按名字查 ShaderSet 表。
 2. 顶点永远**模型空间原始数据**；世界变换走 `MatrixTransform::matrix`（每帧、懒写）。
-3. 透明度不重建几何：走 `vsg_Color` per-vertex alpha，只在变化时覆写。
+3. 透明度不重建几何：走 `vine_Color` per-vertex alpha，只在变化时覆写。
 4. 材质是共享纯色：`Material*` 键缓存 PhongMaterialValue + `shared_objects_` 共享管线/DS。
 5. 默认渲染"三角形"由管线默认拓扑决定，与数据无关；线/线框是 Topology vs PolygonMode 两个正交概念。
 
@@ -382,7 +382,7 @@ sequenceDiagram
 | 图元 | 三角形（默认 `TRIANGLE_LIST`）、`Topology::Points`（点云 demo）、`Topology::Lines`→`LINE_LIST`（映射 + 测试断言）、索引/非索引、法线推导（平滑/面） |
 | 状态 | 深度 test/write/compare（reverse-Z 反转）、`CullMode` None/Front/Back、`PolygonMode` Fill/Line/Point、混合**恒开** + `StateNode` 选因子、每几何独立拓扑 |
 | 材质 | diffuse/specular/ambient/shininess → `PhongMaterialValue`；默认灰；`Material*` 共享缓存；每帧就地刷新（编辑即时生效） |
-| 透明 | scene×node×叶 geometry opacity → `vsg_Color` per-vertex alpha（不重建） |
+| 透明 | scene×node×叶 geometry opacity → `vine_Color` per-vertex alpha（不重建） |
 | 程序 | `Geometry::setProgram` / `StateNode::setProgram`：glslang 运行期编译 + 自建 ShaderSet(`pc`)；失败回退内建 |
 | 光照 | Scene 级 `Ambient/Directional` → 每 view 光组；默认 headlight；运行时换灯 |
 | 场景 | `MatrixTransform` 嵌套 + worldMatrix、Node visible/opacity、Vine 侧剔除（另有 no-cull 变体） |
@@ -393,7 +393,7 @@ sequenceDiagram
 
 | 面 | 限制 |
 |---|---|
-| 纹理/uv | **已接线（L0–L3）**：`Material::texture()` 的 face 0 上传为 vsg 图像（整条 mip 链）、建 sampler、进描述符集 set0/binding1；`Geometry::setTexcoords2()` 经 location 8 喂 `vsg_TexCoord0`。selftest 有像素断言钉住它（左右双色纹理按 UV 采样）。**引擎自己的 forward shader 也采样**：selftest 的 `built-in sampling` 相不设 program 画出同一张双色贴图 （2026-09-13 之前这条是断的 —— 源码缺 `#pragma import_defines`，见 `.ai/design/vsg-custom-shader.md` §11.9） |
+| 纹理/uv | **已接线（L0–L3）**：`Material::texture()` 的 face 0 上传为 vsg 图像（整条 mip 链）、建 sampler、进描述符集 set0/binding1；`Geometry::setTexcoords2()` 经 location 8 喂 `vine_TexCoord0`。selftest 有像素断言钉住它（左右双色纹理按 UV 采样）。**引擎自己的 forward shader 也采样**：selftest 的 `built-in sampling` 相不设 program 画出同一张双色贴图 （2026-09-13 之前这条是断的 —— 源码缺 `#pragma import_defines`，见 `.ai/design/vsg-custom-shader.md` §11.9） |
 | cube map | **已接线**：`CubeMap` 六面上传为 CUBE 视图；方向槽 = 同一 location 8 的**3 分量**形状（`Geometry::setTexcoords3()`），引擎据 `components` 选 `samplerCube` 变体，纹理会解析为 cube 图（种类不匹配时报一次并绑白色 cube 回退）。两条门禁：用户 program 的六面带相（各面颜色按 `CubeMap::Face` 顺序）+ `built-in sampling` 相的六方向相 |
 | 用户自定义通道 | loc≥2 的数据后端不消费；program 路径也不喂（需 §7 两步接线） |
 | 顶点色 | 用户 loc6 会被 `SceneBridge` 白色覆盖（只认自己生成的 colors + opacity） |

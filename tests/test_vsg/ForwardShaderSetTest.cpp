@@ -59,7 +59,7 @@ namespace
  * @brief Finds a declared attribute binding by name.
  *
  * @param shader_set Set to inspect.
- * @param name Attribute binding name, e.g. "vsg_Color".
+ * @param name Attribute binding name, e.g. "vine_Color".
  * @return Pointer to the binding, or null when the set does not declare it.
  */
 const ::vsg::AttributeBinding* findAttribute(const ::vsg::ShaderSet& shader_set, const std::string& name)
@@ -97,7 +97,7 @@ const ::vsg::DescriptorBinding* findDescriptor(const ::vsg::ShaderSet& shader_se
  * @brief Builds a triangle that authors only positions and normals.
  *
  * No loc2 colour and no UVs is exactly the geometry our forward set can shade with the variants that do not
- * declare vsg_Color / vsg_TexCoord0. The data builder still materialises the white opacity carrier and the
+ * declare vine_Color / vine_TexCoord0. The data builder still materialises the white opacity carrier and the
  * zero UVs for the built-in path, which is what these tests look past.
  *
  * @return New triangle geometry.
@@ -264,10 +264,10 @@ TEST(ForwardShaderSetTest, DeclaresTheCanonicalAttributesWithTheirGates)
 
     // Location AND binding order matter: locations are the custom-program contract,
     // and vsg numbers a vertex binding by the order assignArray() accepts them.
-    const auto* positions = findAttribute(*shader_set, "vsg_Vertex");
-    const auto* normals   = findAttribute(*shader_set, "vsg_Normal");
-    const auto* uv        = findAttribute(*shader_set, "vsg_TexCoord0");
-    const auto* color     = findAttribute(*shader_set, "vsg_Color");
+    const auto* positions = findAttribute(*shader_set, "vine_Vertex");
+    const auto* normals   = findAttribute(*shader_set, "vine_Normal");
+    const auto* uv        = findAttribute(*shader_set, "vine_TexCoord0");
+    const auto* color     = findAttribute(*shader_set, "vine_Color");
     ASSERT_NE(positions, nullptr);
     ASSERT_NE(normals, nullptr);
     ASSERT_NE(uv, nullptr);
@@ -505,7 +505,7 @@ TEST(ForwardShaderSetTest, EveryContentSetIsTheEnginesOwn)
 
 TEST(ForwardShaderSetTest, ForwardSetDropsDerivedColourAndUvs)
 {
-    // Our forward set declares vsg_Color / vsg_TexCoord0 behind defines, so a geometry that authors neither
+    // Our forward set declares vine_Color / vine_TexCoord0 behind defines, so a geometry that authors neither
     // and whose material samples no texture must take the variant WITHOUT them: the white opacity carrier and
     // the zero UVs the data node builds for the built-in path are simply not assigned. That is two fewer
     // vertex bindings and no diffuse sampler — the whole point of gating the attributes.

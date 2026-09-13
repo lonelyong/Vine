@@ -619,7 +619,7 @@ class V_GRAPHICS_API Geometry : public Node {
      * The VALUE is the shader ABI's (`attributeLocation(VertexAttribute::TexCoord0)`, see
      * ShaderAbi.hpp), not a number written here: the built-in shaders declare the attribute where the
      * ABI says, and this backend binds the array under the name vsg's Phong set advertises
-     * (`vsg_TexCoord0`). One definition, so the two sides cannot drift apart.
+     * (`vine_TexCoord0`). One definition, so the two sides cannot drift apart.
      *
      * The ABI reserves this slot (rather than taking the next free location) so it cannot collide
      * with a forwarded custom channel, which keeps its own source location. Positions, normals and

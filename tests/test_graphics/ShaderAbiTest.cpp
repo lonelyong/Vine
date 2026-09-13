@@ -103,7 +103,7 @@ TEST(ShaderAbiTest, TheShaderBlockNamesAreTheL1Names)
     // The L1 name and the GLSL block type are the same string, so the contract and the
     // source need no translation table; renaming one without the other is the drift
     // this pins.
-    const std::string forward_fs = asByteString(shaders::kVineForwardFrag);
+    const std::string forward_fs = asByteString(shaders::kStdForwardFrag);
     EXPECT_NE(forward_fs.find("uniform VineMaterialBlock"), std::string::npos);
     EXPECT_NE(forward_fs.find("uniform VineLightsBlock"), std::string::npos);
 

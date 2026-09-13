@@ -250,18 +250,18 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     auto shader_set = ::vsg::ShaderSet::create(stages);
     // Attributes: the canonical four, in the BINDING ORDER the data node binds
     // them (positions, normals, texcoords, colours).
-    shader_set->addAttributeBinding("vsg_Vertex", "", attributeLocation(VertexAttribute::Position),
+    shader_set->addAttributeBinding("vine_Vertex", "", attributeLocation(VertexAttribute::Position),
                                     VK_FORMAT_R32G32B32_SFLOAT, ::vsg::vec3Array::create(1));
-    shader_set->addAttributeBinding("vsg_Normal", "", attributeLocation(VertexAttribute::Normal),
+    shader_set->addAttributeBinding("vine_Normal", "", attributeLocation(VertexAttribute::Normal),
                                     VK_FORMAT_R32G32B32_SFLOAT, ::vsg::vec3Array::create(1));
     // The two optional attributes carry the define that gates them in the GLSL:
     // assigning an array enables the define (vsg's assignArray does that), which
     // selects the compiled variant that declares the attribute. Geometry without
-    // an authored colour therefore draws the variant without vsg_Color instead of
+    // an authored colour therefore draws the variant without vine_Color instead of
     // being padded with a white carrier.
-    shader_set->addAttributeBinding("vsg_TexCoord0", "VINE_DIFFUSE_MAP", attributeLocation(VertexAttribute::TexCoord0),
+    shader_set->addAttributeBinding("vine_TexCoord0", "VINE_DIFFUSE_MAP", attributeLocation(VertexAttribute::TexCoord0),
                                     VK_FORMAT_R32G32_SFLOAT, ::vsg::vec2Array::create(1));
-    shader_set->addAttributeBinding("vsg_Color", "VINE_VERTEX_COLOR", attributeLocation(VertexAttribute::Color),
+    shader_set->addAttributeBinding("vine_Color", "VINE_VERTEX_COLOR", attributeLocation(VertexAttribute::Color),
                                     VK_FORMAT_R32G32B32A32_SFLOAT, ::vsg::vec4Array::create(1));
     // Material: the same vsg::PhongMaterialValue the built-in path binds, which
     // is why the material manager and the deferred G-buffer stage need no change.

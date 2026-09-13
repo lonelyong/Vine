@@ -258,8 +258,8 @@ ShaderProgramPtr makeColoredProgram(bool blue)
     vine::graphics::ShaderStage vs;
     vs.type   = vine::graphics::ShaderStageType::Vertex;
     vs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
-                u8"void main() { gl_Position = vec4(vsg_Vertex, 1.0); }\n";
+                u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                u8"void main() { gl_Position = vec4(vine_Vertex, 1.0); }\n";
     program->addStage(vs);
     vine::graphics::ShaderStage fs;
     fs.type   = vine::graphics::ShaderStageType::Fragment;

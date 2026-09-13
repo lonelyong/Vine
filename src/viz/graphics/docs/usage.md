@@ -472,9 +472,9 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 > 所以按 vsg 习惯写的 shader（texcoord 写 2、颜色写 6）拿到自定义 program 路径上：location 2 读到的是颜色（静默错值），
 > location 6 要么没被声明（读到未定义值）、要么是某个 `L = 6` 的自定义通道 —— 反正不是颜色。想两边通用，就只用 0/1。
 
-自定义路径为什么不一样：vsg 的编号**密集占满 0..6**（`vsg_TexCoord0..3` 占 2..5、`vsg_Color` 占 6），而自定义通道**沿用自己的源 location**（转发范围 `L ≥ 3 且 L ≠ 8`）—— 照抄 vsg 编号，放在 3/4/5/6 的自定义通道就会与 vsg 的内建属性**撞号**。
+自定义路径为什么不一样：vsg 的编号**密集占满 0..6**（`vine_TexCoord0..3` 占 2..5、`vine_Color` 占 6），而自定义通道**沿用自己的源 location**（转发范围 `L ≥ 3 且 L ≠ 8`）—— 照抄 vsg 编号，放在 3/4/5/6 的自定义通道就会与 vsg 的内建属性**撞号**。
 
-> 另一个常见误记：`enableArray("vsg_TexCoord0", …, 8)` 里的 **8 是数组下标（喂入顺序里的位置，= Vulkan binding）**，不是 `layout(location=)`。vsg 自己的这两套编号就是分开的。
+> 另一个常见误记：`enableArray("vine_TexCoord0", …, 8)` 里的 **8 是数组下标（喂入顺序里的位置，= Vulkan binding）**，不是 `layout(location=)`。vsg 自己的这两套编号就是分开的。
 
 **四个 canonical location 为什么是 0 / 1 / 2 / 8**：自定义路径下“通道 location = shader location”，而自定义通道的转发范围是
 `L ≥ 3 且 L ≠ 8` —— 所以 canonical 只有 `0/1/2` 三个位置能用，texcoord 必须去 `≥ 3` 区里占一个**保留号**：
@@ -482,7 +482,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | 位置 | 给谁 | 为什么是这个号 |
 | --- | --- | --- |
 | 0 / 1 | 位置、法线 | 与 vsg 一致 ⇒ 只读位置/法线的 shader 两条路径通用 |
-| 2 | 颜色 | `< 3` 的最后一个空位（内建 set 里颜色是 6，而 2..6 被 `vsg_TexCoord0..3`(2..5) 与 `vsg_Color`(6) 占满） |
+| 2 | 颜色 | `< 3` 的最后一个空位（vsg 内建 set 里颜色在 **6**，2..6 被它自己的 `vsg_TexCoord0..3`(2..5) 与 `vsg_Color`(6) 占满；我们的 set 用 `vine_Color`(2) / `vine_TexCoord0`(8)，见 §3.8 的表） |
 | 8 | texcoord | `≥ 3` 里由模块**显式保留**：通道 location == 8 的通道**不转发**，用户占不掉它（`Geometry::kTexCoordLocation`） |
 | 3..7、9.. | 自定义通道 | 全留给你（vsg 的 8 是 `vsg_Rotation`；两套 set 永不同时存在，撞号无害） |
 
@@ -532,7 +532,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 | 内容 | 位置 |
 | --- | --- |
-| 内建前向着色（引擎默认内容程序，`forwardProgram()` / `flatForwardProgram()`） | `src/viz/graphics/shaders/vine_forward.*` |
+| 内建前向着色（引擎默认内容程序，`forwardProgram()` / `flatForwardProgram()`） | `src/viz/graphics/shaders/std_forward.*` |
 | 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/`（真文件，构建期嵌入） |
 | 全屏三角形顶点段 / 纯拷贝（`fullscreenVertexProgram()` / `screenCopyProgram()`） | `src/viz/graphics/shaders/` |
 

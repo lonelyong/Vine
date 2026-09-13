@@ -188,7 +188,7 @@ vine::intrusive_ptr<vine::graphics::ShaderProgram> makeStarPointProgram()
     vs.type   = ShaderStageType::Vertex;
     vs.source = u8"#version 450\n"
                 u8"layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
-                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
+                u8"layout(location = 0) in vec3 vine_Vertex;\n"
                 u8"layout(location = 0) out vec4 vColor;\n"
                 // Small HSV->RGB helper so each point can carry its own
                 // rainbow colour without a colour attribute.
@@ -199,15 +199,15 @@ vine::intrusive_ptr<vine::graphics::ShaderProgram> makeStarPointProgram()
                 u8"}\n"
                 u8"void main()\n"
                 u8"{\n"
-                u8"    gl_Position = pc.projection * pc.modelView * vec4(vsg_Vertex, 1.0);\n"
+                u8"    gl_Position = pc.projection * pc.modelView * vec4(vine_Vertex, 1.0);\n"
                 // A POINT_LIST pipeline must write gl_PointSize or it trips
                 // VUID-VkGraphicsPipelineCreateInfo-topology-08773. A large
                 // size leaves room for the procedural star shape in the FS.
                 u8"    gl_PointSize = 40.0;\n"
                 // Per-point colour: hue wraps around the point's angle,
                 // then shifts with height so stacked points differ.
-                u8"    float hue = 0.5 + 0.5 * atan(vsg_Vertex.z, vsg_Vertex.x) / 3.14159265;\n"
-                u8"    hue = fract(hue + vsg_Vertex.y * 0.35);\n"
+                u8"    float hue = 0.5 + 0.5 * atan(vine_Vertex.z, vine_Vertex.x) / 3.14159265;\n"
+                u8"    hue = fract(hue + vine_Vertex.y * 0.35);\n"
                 u8"    vColor = vec4(hsv2rgb(vec3(hue, 0.85, 0.95)), 1.0);\n"
                 u8"}\n";
     program->addStage(vs);
@@ -300,8 +300,8 @@ void addDemoCubes(vine::graphics::Scene* scene)
         vs.type   = ShaderStageType::Vertex;
         vs.source = u8"#version 450\n"
                     u8"layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
-                    u8"layout(location = 0) in vec3 vsg_Vertex;\n"
-                    u8"void main(){ gl_Position = pc.projection * pc.modelView * vec4(vsg_Vertex, 1.0); }\n";
+                    u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                    u8"void main(){ gl_Position = pc.projection * pc.modelView * vec4(vine_Vertex, 1.0); }\n";
         program->addStage(vs);
         ShaderStage fs;
         fs.type   = ShaderStageType::Fragment;
@@ -325,10 +325,10 @@ void addDemoCubes(vine::graphics::Scene* scene)
         vs.type   = ShaderStageType::Vertex;
         vs.source = u8"#version 450\n"
                     u8"layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
-                    u8"layout(location = 0) in vec3 vsg_Vertex;\n"
+                    u8"layout(location = 0) in vec3 vine_Vertex;\n"
                     // A POINT_LIST pipeline must write gl_PointSize or it trips
                     // VUID-VkGraphicsPipelineCreateInfo-topology-08773.
-                    u8"void main(){ gl_Position = pc.projection * pc.modelView * vec4(vsg_Vertex, 1.0); gl_PointSize = 3.0; }\n";
+                    u8"void main(){ gl_Position = pc.projection * pc.modelView * vec4(vine_Vertex, 1.0); gl_PointSize = 3.0; }\n";
         program->addStage(vs);
         ShaderStage fs;
         fs.type   = ShaderStageType::Fragment;

@@ -21,7 +21,7 @@
 |---|---|---|
 | SDK 语义 | `ShaderProgram`（`forwardProgram()` / `flatForwardProgram()` + 用户自己写的），RenderEngine 持有并转发 `RenderBackend::setDefaultContentProgram`；**枚举 `ShaderPreset` 已删除** | 不变 |
 | vsg 着色 | `VsgRenderer.cpp::buildShaderSet()` → `createPhongShaderSet()/createFlatShadedShaderSet()`（Pbr/Shadowed 回落 Phong） | 换 `buildVineShaderSet()`（自写 SPIR-V） |
-| 几何桥 | `SceneBridge::buildGeometry()`：每几何 `GraphicsPipelineConfigurator`；属性 `vsg_Vertex/Normal/Color`；描述符 `"material"`=`PhongMaterialValue`（`VsgMaterialManager` 缓存）；blend 常开；opacity 走 per-vertex alpha | 属性不变；描述符换 `"vine_material"`（我们的 UBO） |
+| 几何桥 | `SceneBridge::buildGeometry()`：每几何 `GraphicsPipelineConfigurator`；属性 `vine_Vertex/Normal/Color`；描述符 `"material"`=`PhongMaterialValue`（`VsgMaterialManager` 缓存）；blend 常开；opacity 走 per-vertex alpha | 属性不变；描述符换 `"vine_material"`（我们的 UBO） |
 | 光源 | v4a：`RenderPass::execute→setLights`；vsg 每视图转 `vsg::Light` 节点 → VDS lightData | 改为每帧打包 `LightsUBO`（world space），不再建 vsg::Light 节点 / 不再依赖 VDS |
 | 编译路径 | vendored phong = 内嵌 SPIR-V blob；无 glslang → 运行时 ShaderCompiler 不可用 | 自写 GLSL 离线预编译 `.spv`，生成 `VineShaders.cpp` 内嵌（同 vendored phong 模式） |
 | 已有痕迹 | `shaders/flat.vert/.frag` + 提交的 `.spv`（push-constant 矩阵机制的验证起点） | 收编进正式 shader 目录与 CMake |
@@ -38,7 +38,7 @@
 **非目标（本稿不落地）**
 - PBR（`Pbr` 预留）、阴影采样（`ShadowedPhong` = P1，消费 v4b-1 depth RT，§6 给 ABI 接缝）；
 - 纹理贴图**已落地（L0–L3）**：`Material::texture()` 的 face 0 上传为 vsg 图像、建 sampler、进描述符集（set0/binding1），
-  `Geometry::setTexcoords2()` 经 location 8 喂 `vsg_TexCoord0`；cube map 也已落地：六面作为 6 层上传（层数经 Data 的 `depth` 传给 vsg），按 `CubeMap::Face` 顺序采样有像素断言；未做的只剩各向异性过滤。多光（LightsUBO 数组已按 4 预留，但只验
+  `Geometry::setTexcoords2()` 经 location 8 喂 `vine_TexCoord0`；cube map 也已落地：六面作为 6 层上传（层数经 Data 的 `depth` 传给 vsg），按 `CubeMap::Face` 顺序采样有像素断言；未做的只剩各向异性过滤。多光（LightsUBO 数组已按 4 预留，但只验
   ambient + 单方向光）、材质 dynamic UBO（P2）。
 - 用户可编程 Program / pass 级自定义着色：**方向已确认**（§11，SDK 第一准则），P0 后实现；
   P0 内置 shader 须与它同契约，避免两套机制。
@@ -56,14 +56,14 @@
    （本设计最大单点风险）。
 2. **VDS 完全不介入**：只要 ShaderSet 不声明 `lightData/viewportData/shadowMaps` 名字，vsg 就不会
    BindViewDescriptorSets set0（`makeScreenTextureNode` 先例已验证）。我们因此独占 set0/set1 布局。
-3. **顶点属性名不变**：`vsg_Vertex(0,vec3) / vsg_Normal(1,vec3) / vsg_Color(2,vec4)` →
+3. **顶点属性名不变**：`vine_Vertex(0,vec3) / vine_Normal(1,vec3) / vine_Color(2,vec4)` →
    `SceneBridge::assignArray` 与顶点缓冲映射**零改动**。
 4. **无 glslang**：运行时 ShaderCompiler 不可依赖 → GLSL 离线编译成 `.spv` 提交 + CMake 内嵌
    （vendored phong 同款，工程已实测正确）。运行时若 `compiler->supported()` 为真可作调试加速，但
    不作为主路径。
-5. **材质 opacity 现状**：diffuse.a 恒为 1，有效透明度乘在 per-vertex `vsg_Color.a`（SceneBridge
-   逐帧只在该值变化时重写 O(V)）。因此自写 FS **必须保留 `final *= vsg_Color` 语义**，且 alpha 通道
-   取自 `vsg_Color.a × diffuse.a`，否则透明度/混合与 A/B 全崩。
+5. **材质 opacity 现状**：diffuse.a 恒为 1，有效透明度乘在 per-vertex `vine_Color.a`（SceneBridge
+   逐帧只在该值变化时重写 O(V)）。因此自写 FS **必须保留 `final *= vine_Color` 语义**，且 alpha 通道
+   取自 `vine_Color.a × diffuse.a`，否则透明度/混合与 A/B 全崩。
 
 ## 3. 光照坐标系决策
 
@@ -148,9 +148,9 @@ layout(set = 1, binding = 0) uniform MaterialUBO {
 
 ```glsl
 #version 450
-layout(location = 0) in vec3 vsg_Vertex;
-layout(location = 1) in vec3 vsg_Normal;
-layout(location = 2) in vec4 vsg_Color;
+layout(location = 0) in vec3 vine_Vertex;
+layout(location = 1) in vec3 vine_Normal;
+layout(location = 2) in vec4 vine_Color;
 
 layout(location = 0) out vec4 v_color;
 layout(location = 1) out vec3 v_normal_world;
@@ -161,12 +161,12 @@ layout(set = 0, binding = 0) uniform FrameUBO { /* 见 4.2 */ } vine_frame;
 
 void main()
 {
-    vec4 mv_pos = pc.modelView * vec4(vsg_Vertex, 1.0);
+    vec4 mv_pos = pc.modelView * vec4(vine_Vertex, 1.0);
     gl_Position = pc.projection * mv_pos;
     vec4 w = vine_frame.inv_view * mv_pos;
     v_pos_world = w.xyz / w.w;
-    v_normal_world = normalize(mat3(vine_frame.inv_view) * mat3(pc.modelView) * vsg_Normal);
-    v_color = vsg_Color;
+    v_normal_world = normalize(mat3(vine_frame.inv_view) * mat3(pc.modelView) * vine_Normal);
+    v_color = vine_Color;
 }
 ```
 
@@ -188,7 +188,7 @@ layout(set = 1, binding = 0) uniform MaterialUBO{ /* 见 4.2 */ } vine_material;
 
 void main()
 {
-    vec3 base = vine_material.base_color.rgb * v_color.rgb;   // 保 vsg_Color 乘法语义
+    vec3 base = vine_material.base_color.rgb * v_color.rgb;   // 保 vine_Color 乘法语义
     if ((uint(vine_frame.frame.w) & 1u) != 0u) {               // unlit(flat)，全局开关走 FrameUBO
         out_color = vec4(base, vine_material.base_color.a * v_color.a);
         return;
@@ -246,7 +246,7 @@ void main()
 ## 7. GLSL 仓库化与编译
 
 > ⚠ 本节已被 `vsg-custom-shader.md` §10 取代（真文件 + 构建期嵌入，**不**提交 `.spv`；SDK 侧
-> 2026-09-13 起含内建前向着色 `vine_forward.*`）。以下保留作历史记录。
+> 2026-09-13 起含内建前向着色 `std_forward.*`）。以下保留作历史记录。
 
 - 源：`src/plugins/gfx_backend_vsg/shaders/*.vert|.frag`（仓库提交；**该目录已于 2026-09-13 删除** —— 全屏三角形 / 屏幕拷贝归 SDK，见 `vsg-custom-shader.md` §11.11）；
 - 产物：同目录 `*.spv`（提交）；生成 `VineShaders.cpp`（内嵌字节数组，方式同 vendored phong 的
@@ -285,7 +285,7 @@ void main()
 8. **set0 逐几何自足绑定（P0）**：frame/lights 与 material 一样逐几何 assignDescriptor（引用
    per-bridge 共享 Data），复用仓库已验证的 Data 上传 / live-edit 路径；不做 view 根 StateGroup 跨
    管线 set0（P2 再评估）。
-5. **保留 `final *= vsg_Color` 与 per-vertex alpha opacity 机制**：动它 = 透明度/混合全崩。
+5. **保留 `final *= vine_Color` 与 per-vertex alpha opacity 机制**：动它 = 透明度/混合全崩。
 6. **材质描述符名 `vine_material`**：避免与 `"material"`（PhongMaterialValue 绑定）混淆导致
    `assignDescriptor` 名字不匹配。
 7. **FrameUBO 带 `inv_view` 而非每 draw model 矩阵**：模型矩阵仍由 vsg 经 modelView 提供，世界坐标

@@ -90,8 +90,8 @@ ShaderProgramPtr makeUserProgram()
     // "greater" depth test would reject every fragment (see the program
     // contract in SceneBridge and the variant probe below).
     vs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
-                u8"void main() { gl_Position = vec4(vsg_Vertex.xy, 0.5, 1.0); }\n";
+                u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                u8"void main() { gl_Position = vec4(vine_Vertex.xy, 0.5, 1.0); }\n";
     program->addStage(vs);
     vine::graphics::ShaderStage fs;
     fs.type   = vine::graphics::ShaderStageType::Fragment;
@@ -416,10 +416,10 @@ ShaderProgramPtr makeAttributeProgram()
     vine::graphics::ShaderStage vs;
     vs.type   = vine::graphics::ShaderStageType::Vertex;
     vs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
+                u8"layout(location = 0) in vec3 vine_Vertex;\n"
                 u8"layout(location = 3) in vec3 vine_Attribute3;\n"
                 u8"layout(location = 0) out vec3 vColor;\n"
-                u8"void main() { gl_Position = vec4(vsg_Vertex.xy, 0.5, 1.0); vColor = vine_Attribute3; }\n";
+                u8"void main() { gl_Position = vec4(vine_Vertex.xy, 0.5, 1.0); vColor = vine_Attribute3; }\n";
     program->addStage(vs);
     vine::graphics::ShaderStage fs;
     fs.type   = vine::graphics::ShaderStageType::Fragment;
@@ -446,8 +446,8 @@ ShaderProgramPtr makeMidDepthProgram()
     vine::graphics::ShaderStage vs;
     vs.type   = vine::graphics::ShaderStageType::Vertex;
     vs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
-                u8"void main() { gl_Position = vec4(vsg_Vertex.xy, 0.5, 1.0); }\n";
+                u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                u8"void main() { gl_Position = vec4(vine_Vertex.xy, 0.5, 1.0); }\n";
     program->addStage(vs);
     vine::graphics::ShaderStage fs;
     fs.type   = vine::graphics::ShaderStageType::Fragment;
@@ -520,7 +520,7 @@ GeometryPtr makeTexturedQuad()
 /**
  * @brief Builds a program that outputs the material's texture, sampled by UV.
  *
- * The locations are the program ABI, not a free choice: vsg_TexCoord0 is declared at location 8 and the
+ * The locations are the program ABI, not a free choice: the texcoord attribute is declared at location 8 and the
  * texture at set 0 binding 1 (see assembleProgramShaderSet). A fragment stage that samples a name the
  * ShaderSet does not declare is not an error at any layer — the assignment is silently dropped — so a
  * mismatch here would show up as an untextured quad rather than as a failure.
@@ -533,13 +533,13 @@ ShaderProgramPtr makeTextureSampleProgram()
     vine::graphics::ShaderStage vs;
     vs.type   = vine::graphics::ShaderStageType::Vertex;
     vs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
-                u8"layout(location = 8) in vec2 vsg_TexCoord0;\n"
+                u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                u8"layout(location = 8) in vec2 vine_TexCoord0;\n"
                 u8"layout(location = 0) out vec2 uv;\n"
                 u8"void main()\n"
                 u8"{\n"
-                u8"    uv = vsg_TexCoord0;\n"
-                u8"    gl_Position = vec4(vsg_Vertex.xy, 0.5, 1.0);\n"
+                u8"    uv = vine_TexCoord0;\n"
+                u8"    gl_Position = vec4(vine_Vertex.xy, 0.5, 1.0);\n"
                 u8"}\n";
     program->addStage(vs);
     vine::graphics::ShaderStage fs;
@@ -569,13 +569,13 @@ ShaderProgramPtr makeCubeSampleProgram()
     vine::graphics::ShaderStage vs;
     vs.type   = vine::graphics::ShaderStageType::Vertex;
     vs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
-                u8"layout(location = 8) in vec2 vsg_TexCoord0;\n"
+                u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                u8"layout(location = 8) in vec2 vine_TexCoord0;\n"
                 u8"layout(location = 0) out vec2 uv;\n"
                 u8"void main()\n"
                 u8"{\n"
-                u8"    uv = vsg_TexCoord0;\n"
-                u8"    gl_Position = vec4(vsg_Vertex.xy, 0.5, 1.0);\n"
+                u8"    uv = vine_TexCoord0;\n"
+                u8"    gl_Position = vec4(vine_Vertex.xy, 0.5, 1.0);\n"
                 u8"}\n";
     program->addStage(vs);
     vine::graphics::ShaderStage fs;
@@ -5093,7 +5093,7 @@ bool runOpacityBlendPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
  * NOTHING and say so. That half is a gate against "fall back to something reasonable", which would
  * look like a shaded quad with values the host never asked for.
  *
- * The flat program (`vine_flat`) has the forward stages with `VINE_FLAT` and must be fed OUR block —
+ * The flat program (`std_forward_flat`) has the forward stages with `VINE_FLAT` and must be fed OUR block —
  * and its face normal has to come from the screen-space derivatives of the view position, which is
  * what "flat" means. That half is asserted by contrast: the same quad is drawn as it is authored
  * (normals pointing AWAY from the sun, so the forward program can only reach its ambient term) and

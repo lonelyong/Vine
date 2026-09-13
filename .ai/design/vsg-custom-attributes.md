@@ -10,7 +10,7 @@
 - **索引流保真**：数据构建不再按三角形截断/拒绝索引；`DrawIndexed` count == 源索引数（仅越界索引拒绝）。
   法线推导仅 Triangles；Points/Lines 缺法线时用常量 `(0,0,1)`（topology 是数据身份输入）。
 - **loc2 最终语义**：内建路径恒用后端内部白 DYNAMIC carrier（改写用户 loc2 alpha 会污染共享 Geometry 数据），
-  authored loc2 忽略；自定义路径（程序自管 opacity）存在且有效的 loc2 绑定为 `vsg_Color`（保留 authored alpha），
+  authored loc2 忽略；自定义路径（程序自管 opacity）存在且有效的 loc2 绑定为 `vine_Color`（保留 authored alpha），
   否则白。携带 loc2 的 mesh 在 built-in/custom 间切换会重建数据节点。
 - **L1a/L1b 已实现**：`compileProgramStages`（按 program+revision 一次）+ `assembleProgramShaderSet`
   （按 program+revision+layout 装配）；诊断计数 `SceneBridge::programStageCompileCount()` 供测试断言。
@@ -23,7 +23,7 @@
 - 但后端消费端只用了 0/1：
   - `SceneBridge::buildGeometryData()` 只读 `buffer(0)`（位置）、`buffer(1)`（法线），其余 location 丢弃；
   - 顶点数据节点固定绑 3 个数组 `[vertices, normals, colors]`（`colors` 为内部白/opacity 载体）；
-  - `buildProgramShaderSet()` 只为自定义程序声明 `vsg_Vertex(0)/vsg_Normal(1)/vsg_Color(2)` 三个绑定，
+  - `buildProgramShaderSet()` 只为自定义程序声明 `vine_Vertex(0)/vine_Normal(1)/vine_Color(2)` 三个绑定，
     format 写死（0/1 恒 `R32G32B32`）；
   - `buildStateGroup()` 只按 `arrays[0..2]` 固定名 assign。
 - 结果：`ShaderProgram` 只携带 GLSL stages（`ShaderProgram.hpp` 无 attribute 声明概念），
@@ -31,7 +31,7 @@
 
 ## 2. 设计目标与约束
 
-1. **保持内建语义**：0=position、1=normal、2=color（`vsg_Vertex` / `vsg_Normal` / `vsg_Color`），
+1. **保持内建语义**：0=position、1=normal、2=color（`vine_Vertex` / `vine_Normal` / `vine_Color`），
    Phong/FlatShaded/动态 opacity 行为不变。
 2. **任意 location 可透传**：对自定义 `ShaderProgram`，几何的每个 attribute buffer 按
    (location, components) 生成 vsg 顶点数组并声明对应绑定。
@@ -55,9 +55,9 @@
 
 | location | 绑定名            | 来源                          |
 |----------|-------------------|-------------------------------|
-| 0        | `vsg_Vertex`      | 几何 loc0（强制，3/4 分量取 xyz）|
-| 1        | `vsg_Normal`      | 几何 loc1（可选，缺失则推导）   |
-| 2        | `vsg_Color`       | 内建路径=内部白 opacity 载体；自定义路径=几何 loc2（若有）否则白 |
+| 0        | `vine_Vertex`      | 几何 loc0（强制，3/4 分量取 xyz）|
+| 1        | `vine_Normal`      | 几何 loc1（可选，缺失则推导）   |
+| 2        | `vine_Color`       | 内建路径=内部白 opacity 载体；自定义路径=几何 loc2（若有）否则白 |
 | L≥3      | `vine_Attribute{L}` | 几何 loc L（按 components 映射 format）|
 
 components→Vulkan format：`1→R32_SFLOAT`、`2→R32G32_SFLOAT`、`3→R32G32B32_SFLOAT`、`4→R32G32B32A32_SFLOAT`。
@@ -98,10 +98,10 @@ components→Vulkan format：`1→R32_SFLOAT`、`2→R32G32_SFLOAT`、`3→R32G3
 
 ## 8. buildStateGroup 装配
 
-- 依据 `Item::attribute_locations`：`arrays[0]→vsg_Vertex`、`[1]→vsg_Normal`、`[2]→vsg_Color`，
+- 依据 `Item::attribute_locations`：`arrays[0]→vine_Vertex`、`[1]→vine_Normal`、`[2]→vine_Color`，
   第 i≥3 个数组 → `vine_Attribute{locations[i]}` 逐个 `assignArray`（仅当 ShaderSet 声明了对应名，
   否则跳过 —— 内建路径就是"只 assign 0/1/2"现状）。
-- `vsg_Color` 语义区分：
+- `vine_Color` 语义区分：
   - 内建/opacity 路径：`colors` 仍是内部白 DYNAMIC 载体（行为不变）；
   - 自定义路径：几何自带 loc2 时用其数据（静态），否则维持现内部白（程序拥有 opacity 时不用 carrier）。
 

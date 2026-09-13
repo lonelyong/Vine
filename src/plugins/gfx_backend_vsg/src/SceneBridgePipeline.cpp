@@ -152,7 +152,7 @@ namespace
  *
  * Wraps the program's compiled stages in a hand-built ShaderSet following the
  * official vsg contract (see vsgExamples/utils/vsgcustomshaderset): the
- * canonical vsg_Vertex/Normal/Color bindings (locations 0/1/2) plus one
+ * canonical vine_Vertex/Normal/Color bindings (locations 0/1/2) plus one
  * vine_Attribute{location} binding per forwarded custom channel, and the
  * "pc" push-constant range vsg fills per drawable with { mat4 projection;
  * mat4 modelView; }. Default pipeline states are borrowed from the built-in
@@ -193,25 +193,26 @@ namespace
     using vine::graphics::VertexAttribute;
 
     auto shader_set = ::vsg::ShaderSet::create(stages);
-    shader_set->addAttributeBinding("vsg_Vertex", "", attributeLocation(VertexAttribute::Position),
+    shader_set->addAttributeBinding("vine_Vertex", "", attributeLocation(VertexAttribute::Position),
                                     VK_FORMAT_R32G32B32_SFLOAT, ::vsg::vec3Array::create(1));
     // Normal / texcoord / colour carry the same SHADER LOCATIONS our built-in
     // contract uses (ShaderAbi.hpp). 8 is the reserved texcoord slot: it is
-    // deliberately not vsg's own number (vsg's Phong set declares vsg_TexCoord0
-    // at 2 and vsg_Color at 6), because a forwarded custom channel reuses its
-    // SOURCE location as its shader location, so adopting vsg's crowded 2..11
-    // range would let a custom channel collide with a canonical one (a custom
-    // channel at 6 would clash with vsg_Color).
+    // deliberately not the numbers vsg's own Phong set uses (it declares
+    // vsg_TexCoord0 at 2 and vsg_Color at 6 — those names are that set's, not
+    // ours), because a forwarded custom channel reuses its SOURCE location as
+    // its shader location, so adopting vsg's crowded 2..11 range would let a
+    // custom channel collide with a canonical one (a custom channel at 6 would
+    // clash with our vine_Color).
     //
     // What the two sets MUST agree on is the BINDING ORDER, not the locations:
     // vsg numbers a vertex input binding by the order assignArray() succeeds, so
     // a name either set does not declare would be skipped and shift every later
     // binding (see the canonical order in buildGeometryData).
-    shader_set->addAttributeBinding("vsg_Normal", "", attributeLocation(VertexAttribute::Normal),
+    shader_set->addAttributeBinding("vine_Normal", "", attributeLocation(VertexAttribute::Normal),
                                     VK_FORMAT_R32G32B32_SFLOAT, ::vsg::vec3Array::create(1));
-    shader_set->addAttributeBinding("vsg_TexCoord0", "", attributeLocation(VertexAttribute::TexCoord0),
+    shader_set->addAttributeBinding("vine_TexCoord0", "", attributeLocation(VertexAttribute::TexCoord0),
                                     VK_FORMAT_R32G32_SFLOAT, ::vsg::vec2Array::create(1));
-    shader_set->addAttributeBinding("vsg_Color", "", attributeLocation(VertexAttribute::Color),
+    shader_set->addAttributeBinding("vine_Color", "", attributeLocation(VertexAttribute::Color),
                                     VK_FORMAT_R32G32B32A32_SFLOAT, ::vsg::vec4Array::create(1));
     // Custom vertex channels: one vine_Attribute{location} binding per
     // forwarded channel, whose format follows its components. The channel set
@@ -467,12 +468,12 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     }
 
     // Which optional canonical attributes this variant feeds the pipeline. OUR forward set declares
-    // vsg_Color / vsg_TexCoord0 behind defines, so a geometry that authors neither can take the variant
+    // vine_Color / vine_TexCoord0 behind defines, so a geometry that authors neither can take the variant
     // WITHOUT those attributes: leaving the array unassigned keeps the define off, which drops one vertex
     // binding (and, with the texture, one sample). Only a DERIVED array may be dropped — the white colour
     // carrier / the zero UVs — because an authored channel carries the model's bytes. The UV attribute and
     // the sampler share `VINE_DIFFUSE_MAP`, so UVs go only when the texture is the white fallback, and only
-    // together with the colour: dropping vsg_TexCoord0 alone would renumber vsg_Color's binding away from
+    // together with the colour: dropping vine_TexCoord0 alone would renumber vine_Color's binding away from
     // the fixed canonical index the data node bound it at (see the assign order below).
     //
     // The decision does NOT depend on the drawable's opacity, on purpose: opacity is a
@@ -598,13 +599,26 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
                                         name.c_str(), index, arrays[index]->className()));
             }
         };
-        assign_array("vsg_Vertex", 0u);
-        assign_array("vsg_Normal", 1u);
+        // The canonical roles, each with the names a set may declare for it: OURS first (the engine
+        // prefixes what it provides with `vine_`, see BuiltinShaders / ShaderAbi), then the `vsg_*`
+        // spelling — a FOREIGN set (the SDK allows the bridge to be handed one, e.g. vsg's own phong
+        // set) declares vsg's names, and the array still has to reach it. The lookup is by NAME because
+        // that is how vsg matches, and a miss is reported above rather than passed on.
+        const auto assign_role = [&](std::initializer_list<const char*> names, std::size_t index) {
+            for (const char* name : names) {
+                if (declares_binding(name)) {
+                    assign_array(name, index);
+                    return;
+                }
+            }
+        };
+        assign_role({ "vine_Vertex", "vsg_Vertex" }, 0u);
+        assign_role({ "vine_Normal", "vsg_Normal" }, 1u);
         // The canonical order both shader sets share (see buildGeometryData). An entry is nulled above when
         // our forward set takes the variant WITHOUT that attribute (the geometry authored nothing); the
         // built-in and custom-program sets get the full list, where their shader declares both.
-        assign_array("vsg_TexCoord0", 2u);
-        assign_array("vsg_Color", 3u);
+        assign_role({ "vine_TexCoord0", "vsg_TexCoord0" }, 2u);
+        assign_role({ "vine_Color", "vsg_Color" }, 3u);
         // Custom channels: bind each forwarded array under its stable
         // vine_Attribute{location} name. Only a ShaderSet that declares the
         // name consumes it (the built-in set does not declare any, so extra

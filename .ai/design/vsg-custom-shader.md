@@ -2,10 +2,13 @@
 
 > 状态：设计稿 v1（2026-09-03）
 > 2026-09-03 已落地：语义着色预置 `ShaderPreset` + 到 vsg 内建 set 的过渡映射，并完成像素验证（见 §8）。
+> **2026-09-13 命名（本条）：** ① 前向着色的文件 `vine_forward.{vert,frag}` → **`std_forward.{vert,frag}`**（同一个 program 的两段；常量 `kStdForwardVert` / `kStdForwardFrag`）；
+> ② **着色器内不再使用 `vsg_` 前缀**：引擎提供的绑定名一律 `vine_`（`vine_Vertex` / `vine_Normal` / `vine_Color` / `vine_TexCoord0`），后端声明的 attributeBinding 名同步改；
+>    **`vsg_probe` 除外**（它驱动的是 vsg 自己的 phong set，那套名字属于它），文档里 `vsg_*` 也只应出现在**描述 vsg 内建 set** 的地方（§9 参考档案、§8.2 过渡映射）。
 > **2026-09-13 变更（推翻 §8 的枚举）**：`ShaderPreset` **已删除**，着色只能**显式指定 program**，且**没有兜底**。
 > - 会话级入口：`RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram>)` / `defaultContentProgram()`
 >   （引擎默认就是命名的 `forwardProgram()`，构造函数里定好，`initialize()` 前转发给后端；运行中设置立即转发）。
-> - 内建程序工厂（`BuiltinShaders.hpp`）：`forwardProgram()`（`vine_forward.*`）与 `flatForwardProgram()`
+> - 内建程序工厂（`BuiltinShaders.hpp`）：`forwardProgram()`（`std_forward.*`）与 `flatForwardProgram()`
 >   （同一对 stage，片元源注入 `#define VINE_FLAT 1`）。原来的 `builtinProgram(preset)` 与
 >   `Pbr` / `ShadowedPhong` 两个"保留项"一起消失——**没落地的着色不再有名字**。
 > - 后端**没有默认**：`makeContentShaderSet(program)` 在 `program == nullptr` 或它没有可编译的 stage 时
@@ -45,7 +48,7 @@
 - `RenderPass` / `Framebuffer`（主窗 + 离屏可采样 + depth-only）
 - `GraphicsPipelineConfigurator` + `ShaderSet`（装配**我们自己的** stages/bindings）
 - `ShaderCompiler`（GLSL→SPIR-V）、Buffer/Image/ImageView/Descriptor 等资源
-- 顶点数组映射不变：保留 `vsg_Vertex / vsg_Normal / vsg_Color` 属性名
+- 顶点数组映射不变：保留 `vine_Vertex / vine_Normal / vine_Color` 属性名（**2026-09-13 改名**：引擎提供的绑定名一律 `vine_` 前缀，见头部）
   → `SceneBridge::assignArray` 无需改动
 
 ## 3. 关键机制约束（来自 vendored vsg 源码核对）
@@ -95,7 +98,7 @@ mat4  shadow_matrix;   // 仅 castShadow 有效
 - 先用 Hard（PCF 后续）；bias 取自 `Light::ShadowSettings.bias` 默认 0.002。
 
 ### 4.3 VS/FS
-- VS：读 `vsg_Vertex/vsg_Normal/vsg_Color`；输出世界法线/位置（+ 未来 uv）；
+- VS：读 `vine_Vertex/vine_Normal/vine_Color`；输出世界法线/位置（+ 未来 uv）；
 - FS：材质 × 累加（ambient + N·L 方向光 + specular），有阴影则乘 shadow 项；
 - **interface 变量名必须与顶点/片元精确一致**（glslang 链接要求），沿用
   `makeScreenTextureNode` 的教训。
@@ -122,7 +125,7 @@ mat4  shadow_matrix;   // 仅 castShadow 有效
 
 - **P0 垂直切片**：`buildVineShaderSet` 平替 `buildShaderSet`，只用于主场景几何；
   先复刻当前 phong 光照（ambient+方向光）使画面与现有输出一致（主视图/PiP 对照 A/B）。
-  - **P0.1 shader + set（2026-09-13 已落地，见 §11）**：`vine_forward.*` + ABI + 门禁；默认路径未接线。
+  - **P0.1 shader + set（2026-09-13 已落地，见 §11）**：`std_forward.*` + ABI + 门禁；默认路径未接线。
   - **P0.2 接线（2026-09-13 已落地，见 §11.2/§11.3）**：槽级 lights UBO + 描述符集、`makeContentShaderSet` 单一入口、`VINE_VSG_FORWARD` 开关、forward 独立证据基线 + lavapipe 阶段 3d/4。
   - **P0.3 转正（2026-09-13，见 §11.5）**：默认走自写 set（`VINE_VSG_BUILTIN=1` 退回内建）、自检相位改名、两条基线重生成；**未完**：去掉 vsg `Light`/VDS 的 content 用法（`view->features` 收敛）、无作者色/UV 时不喂白载体/零 UV。
 - **P1 自写阴影**：绑定我们自己的 depth RT + `shadow_map` 采样，替换 vsg 内建。
@@ -352,10 +355,10 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 4. `cmake -S . -B build`（新文件要重新 configure），然后 `scripts/vine_shader_check.sh`。
 
 > 与 §4 的关系：§4 是 ABI（set / binding / push constant 长什么样），本节是**这些 ABI 的载体**。
-> P0 的 `vine_forward.*` 是第一个走新机制的**新** shader：顶点色用 `VINE_VERTEX_COLOR` 门控，
+> P0 的 `std_forward.*` 是第一个走新机制的**新** shader：顶点色用 `VINE_VERTEX_COLOR` 门控，
 > 材质 UBO 从一开始就用 dynamic offset（§4.4）。
 
-## 11. P0 第一步：`vine_forward` + `buildVineShaderSet`（2026-09-13 落地）
+## 11. P0 第一步：`std_forward` + `buildVineShaderSet`（2026-09-13 落地）
 
 §4 的 ABI 草案在实现时撞上一条硬约束，据此定型（**结论写在 §4.2 之前先读本节**）：
 
@@ -367,7 +370,7 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 
 ### 11.1 落地形态
 
-- 着色器：**SDK** `src/viz/graphics/shaders/vine_forward.{vert,frag}`（P0.A 起；后端经 `BuiltinShaders.hpp` 的
+- 着色器：**SDK** `src/viz/graphics/shaders/std_forward.{vert,frag}`（P0.A 起；后端经 `BuiltinShaders.hpp` 的
   `forwardProgram()` / `flatForwardProgram()` 取源并编译，见 §11.7；走 §10 的文件 + 嵌入机制；
   `VINE_VERTEX_COLOR` / `VINE_DIFFUSE_MAP` / `VINE_TEXCOORD_CUBE` / `VINE_FLAT` 四个门控）。
 - 组装：`detail::buildVineShaderSet(program, extent, depth_test, depth_write, color_count)`
@@ -379,9 +382,9 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 
 | 位置 | 内容 | 谁填 |
 | --- | --- | --- |
-| attribute 0 / 1 | `vsg_Vertex` / `vsg_Normal` | SceneBridge 的数据节点 |
-| attribute 2 | `vsg_Color`（define `VINE_VERTEX_COLOR`） | 同上（**作者颜色，调制而非不透明载体**） |
-| attribute 8 | `vsg_TexCoord0`（define `VINE_DIFFUSE_MAP`） | 同上 |
+| attribute 0 / 1 | `vine_Vertex` / `vine_Normal` | SceneBridge 的数据节点 |
+| attribute 2 | `vine_Color`（define `VINE_VERTEX_COLOR`） | 同上（**作者颜色，调制而非不透明载体**） |
+| attribute 8 | `vine_TexCoord0`（define `VINE_DIFFUSE_MAP`） | 同上 |
 | set0 / binding0 | `material`（std140，`PhongMaterialValue` 形状） | `VsgMaterialManager`（与内建/延迟路径同一个值） |
 | set0 / binding1 | `diffuseMap`（define `VINE_DIFFUSE_MAP`） | 纹理缓存（含白色回退） |
 | set0 / binding2 | `vine_lights`（`VineLightsBlock`，112 B） | **pass 的槽**，每视图一次 |
@@ -425,7 +428,7 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | --- | --- |
 | 转正（P0.3） | **已做（2026-09-13，§11.5 + §11.6）**：默认走自写 set，vsg `Light`/VDS 的 content 用法已去掉（`view->features` 收敛到 0），无作者色/UV 时不再喂白载体/零 UV |
 | 顶点色/贴图门控的收益 | **已做（2026-09-13，§11.6）**：forward set 在几何无作者色（且无作者 UV、材质无纹理）时**不 assign** 那两个数组 ⇒ define 关、少两条顶点绑定、少一次采样；白载体/零 UV 仍为内建/自定义 program 路径保留 |
-| opacity | **已接（forward，2026-09-13）**：`alpha = material.diffuse.a * draw.params.x`。不透明度是**每 drawable 的值**，走 `vine_draw` 块：每 drawable 在 `VsgDrawBlockPool` 里一个槽，块值写进 **HOST_VISIBLE|HOST_COHERENT 映射内存**（每帧 O(1)，无 transfer、无 staging、也不落后一帧），槽由 **dynamic offset** 在 set1 的**共享**描述符集上选中。不进 variant 身份（透明与不透明共用一条管线）。**剩余**：`params` 承载材质值（要 B2 槽表）；内建退回路径仍用顶点载体（vsg phong 读 `vsg_Color.a`） |
+| opacity | **已接（forward，2026-09-13）**：`alpha = material.diffuse.a * draw.params.x`。不透明度是**每 drawable 的值**，走 `vine_draw` 块：每 drawable 在 `VsgDrawBlockPool` 里一个槽，块值写进 **HOST_VISIBLE|HOST_COHERENT 映射内存**（每帧 O(1)，无 transfer、无 staging、也不落后一帧），槽由 **dynamic offset** 在 set1 的**共享**描述符集上选中。不进 variant 身份（透明与不透明共用一条管线）。**剩余**：`params` 承载材质值（要 B2 槽表）；内建退回路径仍用顶点载体（vsg phong 读 `vine_Color.a`） |
 | 阴影 / PBR / Flat | 仍走内建映射；§6 的 P1/P2 |
 | 自检相位命名 | **已做（P0.3）**：探针那两条改名 `variant 'default shading + …'`（它跑的是内容 set，不是某条固定路径），两条基线一起重生成 |
 
@@ -435,7 +438,7 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 
 | 门禁 | 覆盖 |
 | --- | --- |
-| `scripts/vine_shader_check.sh` | `vine_forward.*` 已进清单：4 种 define 组合全部过 glslangValidator + 嵌入副本与磁盘逐字节一致（7 个 shader） |
+| `scripts/vine_shader_check.sh` | `std_forward.*` 已进清单：4 种 define 组合全部过 glslangValidator + 嵌入副本与磁盘逐字节一致（7 个 shader） |
 | `tests/test_vsg/ForwardShaderSetTest.cpp` | 6 条：只给有 stage 的 preset 建 set / 四个属性的 location 与 define / material+diffuseMap+vine_lights 的 set·binding·类型·块大小 / push 范围 / 状态与内建 set 逐项同类 / **两个 stage 的门控必须一致**（否则链接出未定义输入，Vulkan 不报错）/ 两个 stage 真的编出 SPIR-V |
 | `tests/test_vsg/OverlayLightingTest.cpp` | +3 条：`fillVineLightsBlock` 与 push 块的光部分逐字段相同 / 无相机时全零 / 无光时种默认环境光 |
 | mutation | 四条各自咬住目标测试：改一个 stage 的 define 名（门控一致性红）、把 `vine_lights` 从 b2 挪到 b3（ABI 红）、把 depthWrite 写死 false（状态一致性红）、去掉默认环境光种（两条可见性测试红） |
@@ -491,11 +494,11 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | --- | --- |
 | vsg 灯只在退回路径 | `VsgContentSlot`：`vsg_lights = !vineForwardShaderEnabled()`。forward 时槽不建/不种 vsg 灯节点、view 不挂 `light_group`、每帧不跑 `setGroupLights`（也没有“灯全不可用”的诊断） |
 | VDS 收敛 | forward 时 content view 用 `View::create(camera, {}, static_cast<ViewFeatures>(0))` ⇒ `ViewDependentState` 不收集灯、`lightData` 缓冲停在 1 vec4 最小尺寸（内建退回路径仍是默认 `RECORD_ALL`） |
-| 不喂派生数组 | `SceneBridge::buildStateGroup(...)` 新增 `derived` 参数：forward set 且 `arrays[3] == derived->white_colors` 时把 `vsg_Color` 置空（define 关）；**仅当颜色也被丢**且 `arrays[2] == derived->zero_texcoords` 且解析到的纹理是白色回退时才把 `vsg_TexCoord0` 也置空、并跳过 `assignTexture("diffuseMap")`（两者共用 `VINE_DIFFUSE_MAP`）。理由：数据节点把颜色绑在固定 canonical index 3，单独丢 `vsg_TexCoord0` 会让 `vsg_Color` 的绑定号前移到 2 而与数据节点不符 |
+| 不喂派生数组 | `SceneBridge::buildStateGroup(...)` 新增 `derived` 参数：forward set 且 `arrays[3] == derived->white_colors` 时把 `vine_Color` 置空（define 关）；**仅当颜色也被丢**且 `arrays[2] == derived->zero_texcoords` 且解析到的纹理是白色回退时才把 `vine_TexCoord0` 也置空、并跳过 `assignTexture("diffuseMap")`（两者共用 `VINE_DIFFUSE_MAP`）。理由：数据节点把颜色绑在固定 canonical index 3，单独丢 `vine_TexCoord0` 会让 `vine_Color` 的绑定号前移到 2 而与数据节点不符 |
 | 变体身份 | 是否丢属性会改变管线，故把 `(color_bound<<0)|(uv_bound<<1)` 并入 L2 variant 的 `layout` 哈希，避免同材质/状态但属性不同的几何复用同一条管线 |
 | 判据 | 两条证据基线 47 行**逐字节不变**（丢属性只省绑定/采样，画面等价：无作者色=白调制、白纹理=乘 1）；test_vsg **237**（+2：`ForwardSetDropsDerivedColourAndUvs` 断言 2 条顶点绑定 + 无采样器；`BuiltInSetKeepsTheFullCanonicalPrefix` 断言内建仍 4 条）；lavapipe 整体 PASS |
 
-> **更正（见 §11.9）**：这一节把「define 关掉」当作变体机制在生效，但当时 `vine_forward.*` 的源码里**没有** `#pragma import_defines`，而 vsg 只对 pragma 列出的名字发 `#define` ⇒ `VINE_DIFFUSE_MAP` / `VINE_VERTEX_COLOR` **两个分支从未真正编译过**（丢属性确实省了绑定/采样，但采样分支本身也一直是关的）。本节其余结论（绑定前缀、variant 身份、基线与 47 行不变）仍然成立；「门控变体真正生效」这句在 §11.9 才成立。
+> **更正（见 §11.9）**：这一节把「define 关掉」当作变体机制在生效，但当时 `std_forward.*` 的源码里**没有** `#pragma import_defines`，而 vsg 只对 pragma 列出的名字发 `#define` ⇒ `VINE_DIFFUSE_MAP` / `VINE_VERTEX_COLOR` **两个分支从未真正编译过**（丢属性确实省了绑定/采样，但采样分支本身也一直是关的）。本节其余结论（绑定前缀、variant 身份、基线与 47 行不变）仍然成立；「门控变体真正生效」这句在 §11.9 才成立。
 
 **仍未做**：`params` 承载材质值与用户参数（要 B2 槽表，即第二个标量消费者）；槽池的分块调优（当前 64 槽/块）；阴影 / PBR / Flat（§6 的 P1/P2）。
 
@@ -527,16 +530,16 @@ texture/mesh cache 同一契约），桥的析构**不得**碰池。
 
 | 环节 | 落点 |
 | --- | --- |
-| 文件搬家 | `vine_forward.{vert,frag}`：`src/plugins/gfx_backend_vsg/shaders/` → **`src/viz/graphics/shaders/`**；清单 `cmake/VineShaders.cmake` 两条随之移到 `vine/graphics/EmbeddedShaders.hpp`（嵌入数 3 → **5**，vsg 4 → **2**） |
+| 文件搬家 | `std_forward.{vert,frag}`：`src/plugins/gfx_backend_vsg/shaders/` → **`src/viz/graphics/shaders/`**；清单 `cmake/VineShaders.cmake` 两条随之移到 `vine/graphics/EmbeddedShaders.hpp`（嵌入数 3 → **5**，vsg 4 → **2**） |
 | SDK 入口 | 新增 `BuiltinShaders.hpp/.cpp`：`builtinProgram(ShaderPreset)`（preset → 内建 program，未实现的 preset 返回 null）→ **现为** `forwardProgram()` / `flatForwardProgram()`；另有 `gbufferGeometryProgram()` / `deferredLightProgram()`（从 `RenderPipelineBuilder` 搬来；builder 的两个静态工厂改为**转发**，公开 API 不变） |
 | 后端 | `VsgPipelineFactory::compiledStages(preset)`：取 `builtinProgram(preset)` 的 stages 编译（**每 preset 缓存一次**，空则 decline）；`buildVineShaderSet` 不再自带 GLSL、不再用 `preset != StandardPhong` 硬判 → **现为** `compiledStages(program)`，缓存键 `(program 指针, 变体 hash)` |
-| 判据 | **行为中性**：两条证据基线 47 行逐字节不变；`vine_shader_check.sh` PASS（7 shader）；test_graphics 234 → **235**（+1：`builtinProgram(StandardPhong)` 用嵌入源、Pbr/ShadowedPhong 返回 null）、test_vsg 237 → **238**（+1：vsg 表**不含** `vine_forward.*`，钉住归属边界）；lavapipe PASS |
+| 判据 | **行为中性**：两条证据基线 47 行逐字节不变；`vine_shader_check.sh` PASS（7 shader）；test_graphics 234 → **235**（+1：`builtinProgram(StandardPhong)` 用嵌入源、Pbr/ShadowedPhong 返回 null）、test_vsg 237 → **238**（+1：vsg 表**不含** `std_forward.*`，钉住归属边界）；lavapipe PASS |
 
 **边界**：SDK 拥有**着色文本**（L3）；后端拥有**编译 + ABI 绑定 + 管线**（L2）。`ShaderSet` 仍是 vsg 后端内部机制，不进 SDK。下一步（P0.B）：把 ABI 契约（属性角色 / `VineFrame`・`VineDraw` / 参数・槽表）也移到 SDK，为换后端铺路。
 
 ### 11.9 门控变体真正生效 + cube 方向槽（2026-09-13）
 
-**发现（这是本轮最重要的一条）**：`vine_forward.{vert,frag}` 用了 `#ifdef VINE_DIFFUSE_MAP`
+**发现（这是本轮最重要的一条）**：`std_forward.{vert,frag}` 用了 `#ifdef VINE_DIFFUSE_MAP`
 / `VINE_VERTEX_COLOR`，但源码里没有 `#pragma import_defines`。vsg 的
 `ShaderCompiler::combineSourceAndDefines` **只对 pragma 列出的名字**发 `#define`，其余被**静默丢弃**：
 没有编译错误、没有 validation、没有诊断 —— 分支只是永远不编译。也就是说
@@ -578,7 +581,7 @@ binding 声明 —— 一个 ShaderSet 服务两种形状时，必须由阵列�
 
 | 环节 | 落点 |
 | --- | --- |
-| SDK 工厂 | `BuiltinShaders.hpp/.cpp`：`builtinProgram(ShaderPreset)` → **`forwardProgram()`**（名字 `vine_forward`）与 **`flatForwardProgram()`**（名字 `vine_flat`，与 forward **同一对 stage**，片元源 `withDefine(frag, "#define VINE_FLAT 1")`）。文档同时写明：**程序是选择着色的唯一方式**，以及 **flat 不是 unlit**（老注释写错了，实测同一 quad 765 vs 42） |
+| SDK 工厂 | `BuiltinShaders.hpp/.cpp`：`builtinProgram(ShaderPreset)` → **`forwardProgram()`**（名字 `std_forward`）与 **`flatForwardProgram()`**（名字 `std_forward_flat`，与 forward **同一对 stage**，片元源 `withDefine(frag, "#define VINE_FLAT 1")`）。文档同时写明：**程序是选择着色的唯一方式**，以及 **flat 不是 unlit**（老注释写错了，实测同一 quad 765 vs 42） |
 | 引擎 | `RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram>)` / `defaultContentProgram()`；字段 `default_content_program_`，**构造函数里定成 `forwardProgram()`**（默认不是"没有"），`initialize()` 前转发，运行中设置**立即转发**（旧实现只在 initialize 前生效，之后再设是静默 no-op） |
 | 后端接口 | `RenderBackend::setDefaultContentProgram(...)` 默认 no-op（能加载 ≠ 必须实现着色）；`VsgRenderer::setDefaultContentProgram` 在活会话上做**重建着色侧**（window 三套 set + `detail::resetContentShaderSlots`），与 §8.1 里 `setShaderPreset` 的动作逐字相同 |
 | 后端（vsg） | `VsgPipelineFactory`：`buildVineShaderSet(program, …)` / `makeContentShaderSet(program, …)` / `compiledStages(program)`，缓存 map 的 key 是 `(program 指针, 变体 hash)`，value **拥有** 那个 program（`nullptr` 或"没有可用 stage"⇒ 返回 null）；`VsgContentSlot` 报一条会话级诊断（**每会话一次**）并且**不画**；`SceneBridgePipeline` 对没 set 的 slot 同样报 + 丢 |
@@ -597,7 +600,7 @@ binding 声明 —— 一个 ShaderSet 服务两种形状时，必须由阵列�
 - 没有 program 的 `ScreenPass` 画的**就是**那段屏幕拷贝文本 —— 引擎的文档写着"纯拷贝"（`ScreenPass` 类注释、`setSourceAttachment`），而那段文本住在一个后端里；
 - 所有全屏 program（延迟光照、宿主后处理）都是照那个三角形写的，`v_uv` 的存在、范围和 Y 方向**只在后端的 GLSL 里**（SDK 只在 `ScreenPass::setProgram` 写了"后端提供全屏顶点段"），没有任何门禁能挡住它漂移。
 
-这与 `vine_forward` 当初归 SDK 是同一条判据：**引擎承诺的画面，其文本不能住在某一个后端里**。
+这与 `std_forward` 当初归 SDK 是同一条判据：**引擎承诺的画面，其文本不能住在某一个后端里**。
 
 | 环节 | 落点 |
 | --- | --- |

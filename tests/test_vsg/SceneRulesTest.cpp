@@ -358,9 +358,9 @@ TEST(SceneRulesTest, CustomAttributeNameIsStableAndDistinctFromTheBuiltIns)
     EXPECT_NE(customAttributeName(3u), customAttributeName(4u));
     for (std::uint32_t location : { 3u, 4u, 10u }) {
         const std::string name = customAttributeName(location);
-        EXPECT_NE(name, "vsg_Vertex");
-        EXPECT_NE(name, "vsg_Normal");
-        EXPECT_NE(name, "vsg_Color");
+        EXPECT_NE(name, "vine_Vertex");
+        EXPECT_NE(name, "vine_Normal");
+        EXPECT_NE(name, "vine_Color");
         EXPECT_NE(name, "material");
     }
 }

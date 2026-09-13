@@ -29,7 +29,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgContentSlot.cpp` | 内容槽的每帧驱动（视口、灯、诊断）；vsg 灯节点 + 每帧 `setGroupLights` 只在**内建退回路径**跑（forward 用自己的 `vine_lights` 块） |
 | `VsgOverlay.cpp` | PiP / 全屏 program overlay 的两种绘制 |
 | `shaders/`（**已删除，2026-09-13**） | 本后端曾自带两段 GLSL（全屏三角形 / 屏幕拷贝）。它们都在**引擎可见的画面**后面 —— 没有 program 的 `ScreenPass` 画的就是那段拷贝，所有全屏 program 也是照那个三角形写的 —— 而文本却住在一个后端里。现在两段都是 SDK program（`BuiltinShaders::fullscreenVertexProgram` / `screenCopyProgram`），本后端只决定**怎么编译和绑**（清单因此只剩一个 owner：`cmake/VineShaders.cmake`） |
-| `detail::buildVineShaderSet` / `makeContentShaderSet` | **自写前向着色**（替代 vsg 内建 phong 的 P0）：**GLSL 归 SDK**（`src/viz/graphics/shaders/vine_forward.*`，经 `BuiltinShaders.hpp` 的 `forwardProgram()` / `flatForwardProgram()` 取源——本后端只编译它并声明 ABI）。属性 0/1/2(色,define) / 8(uv,define)、set0 的 material(b0) / diffuseMap(b1) / **vine_lights(b2, 每槽 UBO)**、**set1/b0 `vine_draw`（`VineDrawBlock`，UNIFORM_BUFFER_DYNAMIC，每 drawable 一个槽）** + push `pc` 0..128（vsg 矩阵栈填）。**唯一路径（2026-09-13 起）**：`makeContentShaderSet` 总是返回引擎自己的 set，**完全不使用 vsg 内建 set**（`VINE_VSG_BUILTIN` 开关与内建基线已删除）。**不兜底**：`makeContentShaderSet(program)` 用不了就返回 null（`program == nullptr`，或它没有可编译的 stage）——调用方报一条 diagnostic 并**不画**，不会替你换成别的着色。证据基线一条（见该文档 §11） |
+| `detail::buildVineShaderSet` / `makeContentShaderSet` | **自写前向着色**（替代 vsg 内建 phong 的 P0）：**GLSL 归 SDK**（`src/viz/graphics/shaders/std_forward.*`，经 `BuiltinShaders.hpp` 的 `forwardProgram()` / `flatForwardProgram()` 取源——本后端只编译它并声明 ABI）。属性 0/1/2(色,define) / 8(uv,define)、set0 的 material(b0) / diffuseMap(b1) / **vine_lights(b2, 每槽 UBO)**、**set1/b0 `vine_draw`（`VineDrawBlock`，UNIFORM_BUFFER_DYNAMIC，每 drawable 一个槽）** + push `pc` 0..128（vsg 矩阵栈填）。**唯一路径（2026-09-13 起）**：`makeContentShaderSet` 总是返回引擎自己的 set，**完全不使用 vsg 内建 set**（`VINE_VSG_BUILTIN` 开关与内建基线已删除）。**不兜底**：`makeContentShaderSet(program)` 用不了就返回 null（`program == nullptr`，或它没有可编译的 stage）——调用方报一条 diagnostic 并**不画**，不会替你换成别的着色。证据基线一条（见该文档 §11） |
 | `VsgViewCompiler.cpp` | 增量编译（只编译新 view） |
 | `VsgTextureCache.cpp` / `VsgMaterialManager.cpp` | 纹理上传缓存 / 材质值缓存（都是**按地址键 + owner 持有**） |
 | `VsgRetireRing.cpp` | 退役环（停放被换下的对象，而不是停设备） |
@@ -137,7 +137,7 @@ graph TB
 | **通道 location**（= 源 location） | 通道在 Geometry 里的编号，是 `Geometry::attributes_` 这个 `std::map` 的键 | **调用者**：`setPositions` 固定 0、`setNormals` 固定 1、`setTexcoords2` 固定 8、`setIndices` 不是属性；`addBuffer(L, …)` 的自定义通道 L ≥ 3 且 ≠ 8 |
 | **shader location** | GLSL 里的 `layout(location = N) in …`；也就是 SPIR-V 的输入编号 | **写 shader 的人**。内建路径必须用 vsg 的编号；自定义 program 路径必须用模块契约（下表） |
 | **数组下标 = Vulkan binding** | 顶点输入数组在喂入列表里的位置：`VkVertexInputBindingDescription.binding` / `vkCmdBindVertexBuffers` 的 binding | **后端**（调用者既不写它，也影响不到前缀四个的编号；GLSL 里根本没有这个概念） |
-| **喂给的名字** | 后端与 ShaderSet 之间配对用的字符串：`vsg_Vertex` / `vsg_Normal` / `vsg_TexCoord0` / `vsg_Color` / `vine_Attribute{L}` | **后端**生成（`customAttributeName(L)`），调用者只在自定义通道的 L 上间接影响 `{L}` |
+| **喂给的名字** | 后端与 ShaderSet 之间配对用的字符串：`vine_Vertex` / `vine_Normal` / `vine_TexCoord0` / `vine_Color` / `vine_Attribute{L}` | **后端**生成（`customAttributeName(L)`），调用者只在自定义通道的 L 上间接影响 `{L}` |
 
 **走哪条路径由 draw command 上的 program 决定，不由 geometry 决定**（`buildStateGroup()` 里 `program != nullptr`，`SceneBridgePipeline.cpp:348-353`）：
 
@@ -157,10 +157,10 @@ graph TB
 
 | 数组下标（= binding） | 喂给的名字 | 内建路径的 shader location（vsg） | 自定义 program 的 shader location（模块） |
 | --- | --- | --- | --- |
-| 0 | `vsg_Vertex` | **0** | **0** |
-| 1 | `vsg_Normal` | **1** | **1** |
-| 2 | `vsg_TexCoord0` | **2** | **8** |
-| 3 | `vsg_Color` | **6** | **2** |
+| 0 | `vine_Vertex` | **0** | **0** |
+| 1 | `vine_Normal` | **1** | **1** |
+| 2 | `vine_TexCoord0` | **2** | **8** |
+| 3 | `vine_Color` | **6** | **2** |
 | 4+i | `vine_Attribute{L}` | —（内建不声明） | **L**（= 该通道的**源 location**） |
 
 举个具体的：几何体有位置(0)、法线(1)、颜色(2)、UV(8) 和一个 `L = 5` 的自定义通道 ——
@@ -177,7 +177,7 @@ graph TB
 
 > **模块契约的 location 值（内建前向与自定义 program 共用 0/1/2/8）现由 SDK `vine/graphics/ShaderAbi.hpp`
 > 定义**（`attributeLocation(VertexAttribute)`；契约见 `.ai/design/graphics-shader.md` §11）。后端只把角色
-> 映射成 vsg 的绑定别名（`vsg_Vertex` 等），编号不再由后端硬编码（2026-09-13，P0.B1）。
+> 映射成 vsg 的绑定别名（`vine_Vertex` 等），编号不再由后端硬编码（2026-09-13，P0.B1）。
 
 其余规则：
 
@@ -187,7 +187,7 @@ graph TB
 - vsg 给顶点输入 binding 编号的方式是“按 `assignArray()` 成功的顺序递增”，所以**ShaderSet 的声明顺序必须与 `arrays` 顺序逐位对齐**：漏声明一个名字或漏喂一个数组，
   后面全体错位，把下一个属性的数据喂给当前属性 —— 而 validation 不会报。这也是模块把前缀四个通道**永远都声明、永远都喂**（没有 UV 的网格喂零填充数组）的原因。
 - **内建路径的 shader location 是 vsg 自己的**（ShaderSet 就是宿主传进来的 vsg set；实测 `vsg_shader_dump`：
-  `vsg_Vertex` 0 / `vsg_Normal` 1 / `vsg_TexCoord0..3` 2..5 / `vsg_Color` **6** / `vsg_Translation(_scaleDistance)` 7 /
+  `vine_Vertex` 0 / `vine_Normal` 1 / `vine_TexCoord0..3` 2..5 / `vine_Color` **6** / `vsg_Translation(_scaleDistance)` 7 /
   `vsg_Rotation` **8** / `vsg_Scale` 9 / `vsg_JointIndices` 10 / `vsg_JointWeights` 11 —— flat/phong/pbr 三套完全一样，
   也就是**密集占满 0..11**）。
 - **自定义 program 路径自建 ShaderSet**（`assembleProgramShaderSet`），shader location 用模块契约 0 / 1 / 2 / 8。
@@ -196,12 +196,12 @@ graph TB
   | 契约位置 | 给谁 | 为什么是这个号 |
   | --- | --- | --- |
   | 0 / 1 | 位置、法线 | 与 vsg 一致 ⇒ 只读位置/法线的 shader 两条路径通用 |
-  | 2 | 颜色 | `< 3` 的最后一个空位；vsg 内建 set 里颜色是 6，而 2..6 被 `vsg_TexCoord0..3`(2..5) 与 `vsg_Color`(6) 占满 |
+  | 2 | 颜色 | `< 3` 的最后一个空位；vsg 内建 set 里颜色是 6，而 2..6 被 `vine_TexCoord0..3`(2..5) 与 `vine_Color`(6) 占满 |
   | 8 | texcoord | `≥ 3` 里由模块**显式保留**，且 `L == 8` 的通道不转发 ⇒ 用户占不掉（`Geometry::kTexCoordLocation`） |
   | 3..7、9.. | 自定义通道 | 全留给用户；vsg 的 8 是 `vsg_Rotation`，两套 set 永不同时存在，撞号无害 |
 
   结果是模块这套是**稀疏**编号（vsg 那套是密集的 0..11）。
-- **别把 vsg Builder 的数组下标当成 shader location**：`Builder.cpp:97` / `tile.cpp:488` 的 `enableArray("vsg_TexCoord0", …, 8)`
+- **别把 vsg Builder 的数组下标当成 shader location**：`Builder.cpp:97` / `tile.cpp:488` 的 `enableArray("vine_TexCoord0", …, 8)`
   里的 8 是 vsg 那边的**数组下标**，而它 Phong set 里 texcoord 的 shader location 是 **2** —— 这两套编号 vsg 自己就是分开的。
 - 名字侧的守卫：`assignArray()` 失败且该名字**被管线声明**过 ⇒ 报一次 `ContentSkipped` Warning
   （`vertex binding '%s' (array %zu, %s) was not matched by the pipeline; the shader reads an attribute the pipeline does not enable…`）。

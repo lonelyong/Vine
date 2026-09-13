@@ -228,8 +228,8 @@ flowchart LR
 
 重建调用 `buildGeometry`：读 loc0(位置)+可选 loc1(法线/推导)+索引 → 物化成
 `vsg::vec3Array / uintArray / vec4Array` → `GraphicsPipelineConfigurator` 按名字
-喂 `vsg_Vertex / vsg_Normal / vsg_Color` + `material` descriptor（默认路径），或
-`vsg_Vertex` + 自建 `pc` ShaderSet（program 路径）→ 按 `ResolvedRenderState` 装管线态
+喂 `vine_Vertex / vine_Normal / vine_Color` + `material` descriptor（默认路径），或
+`vine_Vertex` + 自建 `pc` ShaderSet（program 路径）→ 按 `ResolvedRenderState` 装管线态
 → `StateGroup` 挂 `BindVertexBuffers + BindIndexBuffer + DrawIndexed`。
 **顶点数据/世界变换/透明度、材质字段的完整映射与 ShaderSet 契约表**
 见 `docs/data-flow.md`。

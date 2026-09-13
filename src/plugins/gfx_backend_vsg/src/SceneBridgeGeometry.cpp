@@ -391,13 +391,13 @@ namespace
         derived.derived_normals = {};
     }
 
-    // vsg_Color (binding 2). On the built-in path this is ALWAYS the backend
+    // vine_Color (binding 2). On the built-in path this is ALWAYS the backend
     // white DYNAMIC carrier whose alpha drives per-drawable opacity: rewriting
     // an authored loc2 array would clobber its alpha for every drawable that
     // shares the geometry, so an authored loc2 colour is ignored there. On the
     // custom path the program owns opacity (D8, no carrier rewrite), so an
     // authored loc2 colour — when present and well-formed — is bound verbatim
-    // as vsg_Color; otherwise a static white fallback is bound.
+    // as vine_Color; otherwise a static white fallback is bound.
     ::vsg::ref_ptr<::vsg::vec4Array> colors;
     // Four components alias the model's bytes verbatim; three are packed, which is per-geometry work and
     // therefore not shared. On the built-in path binding 3 is the white carrier and never the model's.
@@ -460,7 +460,7 @@ namespace
     }
     // The bound vertex data follows the module's CANONICAL vertex binding order:
     //
-    //   0 = vsg_Vertex   1 = vsg_Normal   2 = vsg_TexCoord0   3 = vsg_Color   4+ = custom
+    //   0 = vine_Vertex   1 = vine_Normal   2 = vine_TexCoord0   3 = vine_Color   4+ = custom
     //
     // vsg numbers a vertex input binding by the order assignArray() succeeds (it
     // pushes the array and advances its binding counter), and a ShaderSet that

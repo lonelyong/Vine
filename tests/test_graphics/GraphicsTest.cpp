@@ -4110,7 +4110,7 @@ TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
 {
     // The number is part of the contract only in the sense that it must stay
     // stable and must not collide with the custom-channel range the backend
-    // forwards; the backend binds the array under vsg_TexCoord0 by name.
+    // forwards; the backend binds the array under vine_TexCoord0 by name.
     EXPECT_EQ(Geometry::kTexCoordLocation, 8u);
 
     Geometry geom;

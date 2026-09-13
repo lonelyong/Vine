@@ -37,6 +37,6 @@ v_declare_embedded_shaders(
         "${VINE_SDK_SHADER_DIR}/gbuffer_geometry.vert"
         "${VINE_SDK_SHADER_DIR}/gbuffer_geometry.frag"
         "${VINE_SDK_SHADER_DIR}/deferred_light.frag"
-        "${VINE_SDK_SHADER_DIR}/vine_forward.vert"
-        "${VINE_SDK_SHADER_DIR}/vine_forward.frag"
+        "${VINE_SDK_SHADER_DIR}/std_forward.vert"
+        "${VINE_SDK_SHADER_DIR}/std_forward.frag"
 )

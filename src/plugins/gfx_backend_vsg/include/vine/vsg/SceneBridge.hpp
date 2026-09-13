@@ -778,7 +778,7 @@ class V_VSG_API SceneBridge {
      * (program, vertex layout) instead of once per geometry: N geometry bound
      * to the same program AND carrying the same set of custom channels share a
      * single glslang compile and ShaderSet. Besides the canonical
-     * vsg_Vertex/Normal/Color bindings (locations 0/1/2), the set declares one
+     * vine_Vertex/Normal/Color bindings (locations 0/1/2), the set declares one
      * vine_Attribute{location} binding per forwarded custom channel, whose
      * format follows its components. A compile/assembly failure is cached too
      * (null), so later geometry does not retry the failed compile each time.

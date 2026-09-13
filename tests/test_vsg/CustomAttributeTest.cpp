@@ -61,8 +61,8 @@ ShaderProgramPtr makeProgram()
     vine::graphics::ShaderStage vs;
     vs.type   = vine::graphics::ShaderStageType::Vertex;
     vs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec3 vsg_Vertex;\n"
-                u8"void main() { gl_Position = vec4(vsg_Vertex, 1.0); }\n";
+                u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                u8"void main() { gl_Position = vec4(vine_Vertex, 1.0); }\n";
     program->addStage(vs);
     vine::graphics::ShaderStage fs;
     fs.type   = vine::graphics::ShaderStageType::Fragment;
@@ -337,7 +337,7 @@ TEST(CustomAttributeTest, MalformedCustomChannelIgnored)
 
 /**
  * @brief A user buffer at location 2 is not forwarded on the built-in path
- * (location 2 stays the internal opacity carrier / vsg_Color array), so the
+ * (location 2 stays the internal opacity carrier / vine_Color array), so the
  * data node keeps exactly the canonical three arrays.
  */
 TEST(CustomAttributeTest, LocationTwoRemainsCanonicalCarrier)
@@ -367,7 +367,7 @@ TEST(CustomAttributeTest, LocationTwoRemainsCanonicalCarrier)
 
 /**
  * @brief On the CUSTOM-program path an authored loc2 colour (vec4 per vertex)
- * is bound verbatim as vsg_Color: the program owns opacity (no carrier
+ * is bound verbatim as vine_Color: the program owns opacity (no carrier
  * rewrite), so the authored colour and alpha reach the shader unchanged.
  */
 TEST(CustomAttributeTest, CustomLoc2ColorIsBoundOnProgramPath)
@@ -389,7 +389,7 @@ TEST(CustomAttributeTest, CustomLoc2ColorIsBoundOnProgramPath)
 
     ASSERT_EQ(root->children.size(), 1u);
     ASSERT_NE(findBindVertexBuffers(root.get()), nullptr);
-    EXPECT_EQ(boundVertexBindingCount(root.get()), 4u); // 4 canonical; loc2 is vsg_Color, not an extra
+    EXPECT_EQ(boundVertexBindingCount(root.get()), 4u); // 4 canonical; loc2 is vine_Color, not an extra
     auto* c = boundData(root.get(), 3u)->cast<vsg::vec4Array>();
     ASSERT_NE(c, nullptr);
     ASSERT_EQ(c->size(), 3u);

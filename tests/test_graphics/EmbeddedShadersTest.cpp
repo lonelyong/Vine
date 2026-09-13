@@ -139,8 +139,8 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
     ASSERT_NE(forward_fs, nullptr);
     EXPECT_EQ(forward_vs->type, ShaderStageType::Vertex);
     EXPECT_EQ(forward_fs->type, ShaderStageType::Fragment);
-    EXPECT_EQ(forward_vs->source, vine::String(kVineForwardVert));
-    EXPECT_EQ(forward_fs->source, vine::String(kVineForwardFrag));
+    EXPECT_EQ(forward_vs->source, vine::String(kStdForwardVert));
+    EXPECT_EQ(forward_fs->source, vine::String(kStdForwardFrag));
 
     // The flat program is the SAME stages with one define injected into the fragment source — which is
     // what makes it a different program (a different text), not a mode of another one. The vertex stage
@@ -152,8 +152,8 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
     const ShaderStage* flat_fs = flat->stage(1);
     ASSERT_NE(flat_vs, nullptr);
     ASSERT_NE(flat_fs, nullptr);
-    EXPECT_EQ(flat_vs->source, vine::String(kVineForwardVert));
-    EXPECT_NE(flat_fs->source, vine::String(kVineForwardFrag));
+    EXPECT_EQ(flat_vs->source, vine::String(kStdForwardVert));
+    EXPECT_NE(flat_fs->source, vine::String(kStdForwardFrag));
     EXPECT_NE(flat_fs->source.stdstr().find("#define VINE_FLAT 1"), std::string::npos);
 }
 
@@ -189,7 +189,7 @@ TEST(EmbeddedShadersTest, TheAbiLocationsMatchTheShaderText)
     EXPECT_EQ(attributeLocation(VertexAttribute::Color), 2u);
     EXPECT_EQ(attributeLocation(VertexAttribute::TexCoord0), 8u);
 
-    const std::string forward_vs = asByteString(kVineForwardVert);
+    const std::string forward_vs = asByteString(kStdForwardVert);
     for (const auto role : { VertexAttribute::Position, VertexAttribute::Normal, VertexAttribute::Color,
                              VertexAttribute::TexCoord0 }) {
         EXPECT_NE(forward_vs.find(attributeLayout(attributeLocation(role))), std::string::npos)
@@ -199,13 +199,13 @@ TEST(EmbeddedShadersTest, TheAbiLocationsMatchTheShaderText)
 
 TEST(EmbeddedShadersTest, TheNamedConstantsAreInTheTable)
 {
-    ASSERT_NE(findEntry("vine_forward.vert"), nullptr);
-    ASSERT_NE(findEntry("vine_forward.frag"), nullptr);
+    ASSERT_NE(findEntry("std_forward.vert"), nullptr);
+    ASSERT_NE(findEntry("std_forward.frag"), nullptr);
     ASSERT_NE(findEntry("gbuffer_geometry.vert"), nullptr);
     ASSERT_NE(findEntry("gbuffer_geometry.frag"), nullptr);
     ASSERT_NE(findEntry("deferred_light.frag"), nullptr);
-    EXPECT_EQ(findEntry("vine_forward.vert")->source, kVineForwardVert);
-    EXPECT_EQ(findEntry("vine_forward.frag")->source, kVineForwardFrag);
+    EXPECT_EQ(findEntry("std_forward.vert")->source, kStdForwardVert);
+    EXPECT_EQ(findEntry("std_forward.frag")->source, kStdForwardFrag);
     EXPECT_EQ(findEntry("gbuffer_geometry.vert")->source, kGbufferGeometryVert);
     EXPECT_EQ(findEntry("gbuffer_geometry.frag")->source, kGbufferGeometryFrag);
     EXPECT_EQ(findEntry("deferred_light.frag")->source, kDeferredLightFrag);

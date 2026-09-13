@@ -111,7 +111,7 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
  * 0, binding 2) and refreshed when the view's lights or camera move.
  *
  * Layout matches the GLSL block declared by
- * src/viz/graphics/shaders/vine_forward.frag; the
+ * src/viz/graphics/shaders/std_forward.frag; the
  * light VALUES come from the same packing the full-screen path uses
  * (fillVineLightsBlock).
  */

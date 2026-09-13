@@ -431,7 +431,10 @@ VkFormat formatForComponents(std::uint32_t components);
 /**
  * @brief The stable binding name of a custom attribute location.
  *
- * Built-in locations 0/1/2 keep vsg_Vertex / vsg_Normal / vsg_Color; any forwarded channel is
+ * Built-in locations 0/1/2 keep vine_Vertex / vine_Normal / vine_Color (the names are the
+ * engine's: every identifier a shader declares for an ENGINE-provided binding carries the
+ * `vine_` prefix, never `vsg_` — vsg's own sets, e.g. the one vsg_probe drives, keep theirs); any
+ * forwarded channel is
  * named vine_Attribute{location}. The name is only a key between the ShaderSet binding and the
  * configurator's assignArray, and both ask here — a rename that updated only one call site would
  * silently leave the attribute unbound, with nothing to report.

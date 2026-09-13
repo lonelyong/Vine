@@ -62,7 +62,7 @@ intrusive_ptr<ShaderProgram> makeProgram(const char8_t* name, std::u8string_view
 
 intrusive_ptr<ShaderProgram> forwardProgram()
 {
-    return makeProgram(u8"vine_forward", shaders::kVineForwardVert, shaders::kVineForwardFrag);
+    return makeProgram(u8"std_forward", shaders::kStdForwardVert, shaders::kStdForwardFrag);
 }
 
 intrusive_ptr<ShaderProgram> flatForwardProgram()
@@ -75,8 +75,8 @@ intrusive_ptr<ShaderProgram> flatForwardProgram()
     // The define goes into the SOURCE (withDefine) rather than through a backend's compile settings:
     // it is a different program text, which is what a program IS, and it keeps this program's identity
     // independent of any backend's define plumbing.
-    return makeProgram(u8"vine_flat", shaders::kVineForwardVert,
-                       withDefine(shaders::kVineForwardFrag, u8"#define VINE_FLAT 1"));
+    return makeProgram(u8"std_forward_flat", shaders::kStdForwardVert,
+                       withDefine(shaders::kStdForwardFrag, u8"#define VINE_FLAT 1"));
 }
 
 intrusive_ptr<ShaderProgram> gbufferGeometryProgram()
