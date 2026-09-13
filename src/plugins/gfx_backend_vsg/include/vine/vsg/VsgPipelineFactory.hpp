@@ -469,10 +469,33 @@ const std::string& fullscreenVertexSource();
  * @param push_data  Per-frame push-constant bytes (mutated before each record).
  * @return The drawable state-group, or null when shader compilation failed.
  */
+/**
+ * @brief The shadow a fullscreen program declared, ready to bind.
+ *
+ * The shadow ABI (see .ai/design/render-pipeline.md §9): a fullscreen program's source occupies
+ * bindings 0..color_count-1, its source's depth takes color_count while that one is sampleable, and
+ * a program that shades a shadow declares its MAP at color_count+1 and its `VineShadowBlock` at
+ * color_count+2 — 5 and 6 for the canonical four-colour G-buffer the SDK's lighting program is
+ * written against. The order is fixed rather than "appended in declaration order" so that a shader
+ * text can name its bindings at all: a slot number that depends on how many other effects a
+ * pipeline happens to have cannot be written down.
+ *
+ * Both members are optional and both must be present together for a program that declares them:
+ * a manifest binding the node cannot fill is a pipeline that fails at DRAW time, one validation
+ * error per frame with nothing saying why, which is what the caller's declaration check refuses
+ * instead (see makeFullscreenProgramNode).
+ */
+struct FullscreenShadowInput
+{
+    ::vsg::ref_ptr<::vsg::ImageView> map;   ///< The shadow map's depth view (null: no shadow).
+    ::vsg::ref_ptr<::vsg::Data>      block; ///< The VineShadowBlock bytes matching the map.
+};
+
 ::vsg::ref_ptr<::vsg::Node> makeFullscreenProgramNode(
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
     const ::vsg::ImageViews&                          image_views,
     ::vsg::ref_ptr<::vsg::ImageView>                  depth_view,
+    const FullscreenShadowInput&                      shadow,
     const VkExtent2D&                                 extent,
     ::vsg::ref_ptr<::vsg::Data>                       push_data,
     ProgramNodeFailure*                               failure = nullptr);

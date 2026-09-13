@@ -5,6 +5,8 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/Light.hpp>
+#include <vine/math/Point3.hpp>
+#include <vine/math/Rect3.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -175,6 +177,50 @@ void RenderPipelineBuilder::reportRequestedShadows() const
                                             u8".ai/design/graphics-shadow.md §10): the picture is unshadowed"));
 }
 
+namespace
+{
+
+/**
+ * @brief The light camera a directional shadow is rendered with.
+ *
+ * Orthographic, looking along the light's direction, framing @p bounds: an eye pulled back past the
+ * box's far corner along the light, a window that covers the box's diagonal (a sphere of that radius
+ * fits every orientation, so the fit does not have to know which way the light comes from), and a
+ * depth range that reaches from in front of the box to well behind it.
+ *
+ * ONE derivation: the pass it renders and the matrix the shading is given both come from this
+ * camera (the pass renders through it, the target carries its view-projection), so the two cannot
+ * disagree about where the light was.
+ *
+ * @param direction Light direction (world space; the light shines ALONG it).
+ * @param bounds    Content bounds to cover.
+ * @param camera    Receives the light camera.
+ * @return The camera's projection * view matrix.
+ */
+vine::math::Mat4d makeDirectionalShadowMatrix(const vine::math::Vec3d& direction, const vine::math::Aabbd& bounds,
+                                             vine::graphics::Camera& camera)
+{
+    using vine::math::Vec3d;
+
+    const Vec3d extent = Vec3d(bounds.max().x - bounds.min().x, bounds.max().y - bounds.min().y,
+                               bounds.max().z - bounds.min().z);
+    const Vec3d centre = Vec3d(bounds.center().x, bounds.center().y, bounds.center().z);
+    // Every orientation of the box fits in this sphere, so the window does not shrink when the sun
+    // moves; the margin keeps a caster standing exactly on the border out of the depth clamp.
+    const double radius  = extent.length() * 0.5;
+    const double depth   = radius * 4.0 + 1.0;
+    const Vec3d  forward = direction.length() > 1e-9 ? direction.normalized() : Vec3d(0.0, 0.0, -1.0);
+    // Any up vector that is not parallel to the direction: the light is a direction, not a roll.
+    const Vec3d up = std::abs(forward.z) > 0.9 ? Vec3d(0.0, 1.0, 0.0) : Vec3d(0.0, 0.0, 1.0);
+    const Vec3d eye = centre - forward * (radius * 2.0 + 1.0);
+
+    camera.setViewMatrixAsLookAt(eye, eye + forward, up);
+    camera.setProjectionMatrixAsOrtho(-radius, radius, -radius, radius, 0.0, depth);
+    return camera.projectionMatrix() * camera.viewMatrix();
+}
+
+}  // namespace
+
 bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
 {
     if (engine_ == nullptr || camera_ == nullptr) {
@@ -209,6 +255,19 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     if (engine_ == nullptr || camera_ == nullptr || content_ == nullptr) {
         return false;
     }
+    // The light this pipeline must cast a shadow for, if any: the request lives on the LIGHT
+    // (Light::castShadow, with its own resolution/bias in ShadowSettings), because a light outlives
+    // any one pipeline and a scene may be drawn by several. Single directional light per content,
+    // as the shadow design fixes it (graphics-shadow.md §8).
+    raw_ptr<const Light> shadow_light = nullptr;
+    for (const auto& light : content_->lights()) {
+        if (light != nullptr && light->isEnabled() && light->castShadow() &&
+            light->type() == LightType::Directional) {
+            shadow_light = light.get();
+            break;
+        }
+    }
+
     // Programs default to the built-in temporary shaders so the preset works
     // out of the box; explicit programs in the options override them.
     intrusive_ptr<ShaderProgram> gbuf_program = options.gbuffer_program;
@@ -217,7 +276,9 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
         gbuf_program = defaultGbufferGeometryProgram();
     }
     if (light_program == nullptr) {
-        light_program = defaultDeferredLightProgram();
+        // A shadow changes the SHADING, so it changes which program the lighting pass draws with
+        // (the variant declares the map and its block; see BuiltinShaders::deferredLightProgram).
+        light_program = deferredLightProgram(/*with_shadow*/ shadow_light != nullptr);
     }
 
     // G-buffer at the requested / current surface / default size.
@@ -230,6 +291,45 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     if (width <= 0 || height <= 0) {
         width  = 640;
         height = 360;
+    }
+
+    // The shadow map: the content rendered once from the light into a depth-only target, at
+    // PipelineStage::Depth so it runs before everything that samples it. A host that supplied its
+    // own lighting program gets NO shadow pass: the shading is theirs, so a shadow they do not
+    // shade would be a pass nobody reads (and it is said out loud rather than drawn in vain).
+    intrusive_ptr<RenderTarget> shadow_map;
+    if (shadow_light != nullptr && options.lighting_program != nullptr) {
+        engine_->reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
+                                     vine::graphics::DiagnosticCategory::UnsupportedRequest,
+                                     String(u8"this pipeline was given its own lighting program, so it builds no shadow "
+                                            u8"pass: the picture is unshadowed unless that program shades the map"));
+        shadow_light = nullptr;
+    }
+    if (shadow_light != nullptr) {
+        const int resolution = static_cast<int>(shadow_light->shadowSettings().resolution);
+        shadow_map           = make_intrusive<RenderTarget>();
+        shadow_map->setName(u8"shadow_map");
+        shadow_map->setSize(resolution > 0 ? resolution : 1024, resolution > 0 ? resolution : 1024);
+        shadow_map->attachDepth(RenderTarget::DepthFormat::D24);
+        // The lighting pass samples it, so its depth must end in SHADER_READ_ONLY (a pass of it that
+        // PRESERVED depth would revoke that, which is why the shadow pass clears instead).
+        shadow_map->setDepthPromotion(true);
+
+        auto light_camera = make_intrusive<Camera>();
+        // ONE derivation of the light camera: the pass renders through this camera and the target
+        // STATES its view-projection, so the shading reads the same matrix instead of fitting a
+        // second ortho box of its own (see .ai/design/render-pipeline.md §9).
+        shadow_map->setProducerViewProjection(
+            makeDirectionalShadowMatrix(shadow_light->direction(), content_->boundingBox(), *light_camera));
+
+        auto shadow_pass = make_intrusive<RenderPass>();
+        shadow_pass->setName(u8"shadow");
+        shadow_pass->setCamera(light_camera.get());
+        shadow_pass->setRenderTarget(shadow_map);
+        // Its only writer owns the hand-off: the lighting pass declares this target as an input, and
+        // the engine answers that from the passes that DREW into it.
+        shadow_pass->setOutputTarget(shadow_map);
+        pipeline.addPass(shadow_pass, content_, pipelineStageOrder(PipelineStage::Depth));
     }
 
     // Canonical G-buffer (shared factory): albedo (0), view normal +
@@ -264,6 +364,11 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
         // source (plus its depth while that one is sampleable) and picks by binding, so the unit it
         // consumes is the target — one declaration instead of "name + attachment index".
         light->addInputTarget(gbuffer);
+        if (shadow_map != nullptr) {
+            // The pass' declared inputs are what the backend binds (RenderBackend::setPassInputs);
+            // the shadow ABI puts this one at binding 5 (see BuiltinShaders::deferredLightProgram).
+            light->addInputTarget(shadow_map);
+        }
         light->setProgram(std::move(light_program));
         pipeline.addPass(light, content_, pipelineStageOrder(PipelineStage::Shading));
 
@@ -294,6 +399,9 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     light->setRenderTarget(composite);
     light->addInputName(u8"GBuffer");
     light->addInputTarget(gbuffer);   // reads the whole G-buffer (see the comment on the program path)
+    if (shadow_map != nullptr) {
+        light->addInputTarget(shadow_map);
+    }
     light->setProgram(std::move(light_program));
     pipeline.addPass(light, content_, pipelineStageOrder(PipelineStage::Shading));
 

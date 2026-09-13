@@ -781,6 +781,7 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
     const ::vsg::ImageViews&                          image_views,
     ::vsg::ref_ptr<::vsg::ImageView>                  depth_view,
+    const FullscreenShadowInput&                      shadow,
     const VkExtent2D&                                 extent,
     ::vsg::ref_ptr<::vsg::Data>                       push_data,
     ProgramNodeFailure*                               failure)
@@ -822,9 +823,29 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
     // declares anything else would build a pipeline whose layout lacks that
     // binding and fail at DRAW time (a validation error per frame, with nothing
     // telling the host why), so refuse it here instead, before anything is built.
-    const std::uint32_t provided = static_cast<std::uint32_t>(image_views.size()) + (depth_view != nullptr ? 1u : 0u);
+    // What this node can fill, as a set: the source's colour attachments, its depth WHILE that one
+    // is sampleable, and the shadow's two slots while a shadow was handed over. A declaration
+    // outside it is refused here rather than left to fail per frame at draw time.
+    const std::uint32_t        color_count     = static_cast<std::uint32_t>(image_views.size());
+    const std::uint32_t        shadow_map_slot = color_count + 1u;
+    const std::uint32_t        shadow_block_slot = color_count + 2u;
+    const bool                 has_shadow      = shadow.map != nullptr && shadow.block != nullptr;
+    const std::vector<std::uint32_t> fillable  = [&] {
+        std::vector<std::uint32_t> slots;
+        for (std::uint32_t i = 0; i < color_count; ++i) {
+            slots.push_back(i);
+        }
+        if (depth_view != nullptr) {
+            slots.push_back(color_count);
+        }
+        if (has_shadow) {
+            slots.push_back(shadow_map_slot);
+            slots.push_back(shadow_block_slot);
+        }
+        return slots;
+    }();
     for (const auto& [set, binding] : declaredBindings(fs_spec->source.stdstr())) {
-        if (set != 0u || binding >= provided) {
+        if (set != 0u || std::find(fillable.begin(), fillable.end(), binding) == fillable.end()) {
             if (failure != nullptr) {
                 *failure = ProgramNodeFailure::MissingDescriptorBinding;
             }
@@ -841,6 +862,18 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
         shader_set->addDescriptorBinding("gbuffer_depth", "", 0, static_cast<uint32_t>(image_views.size()),
                                          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
                                          ::vsg::ref_ptr<::vsg::Data>());
+    }
+    if (has_shadow) {
+        // The map is a raw depth view (no compare sampler): the shader compares it itself, so the
+        // filter must not interpolate between casters — nearest keeps the value the rasteriser
+        // wrote.
+        shader_set->addDescriptorBinding("shadow_map", "", 0, shadow_map_slot,
+                                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+                                         ::vsg::ref_ptr<::vsg::Data>());
+        shader_set->addDescriptorBinding("shadow_block", "", 0, shadow_block_slot, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                                         VK_SHADER_STAGE_FRAGMENT_BIT,
+                                         ::vsg::ubyteArray::create(
+                                             static_cast<uint32_t>(sizeof(vine::graphics::VineShadowBlock))));
     }
     // Per-frame light/view parameters (LightPushBlock, the full 128-byte
     // range; its size is asserted against sizeof(LightPushBlock)).
@@ -861,6 +894,16 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
         depth_sampler->mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
         auto depth_info = ::vsg::ImageInfo::create(depth_sampler, depth_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         config->assignTexture("gbuffer_depth", ::vsg::ImageInfoList{ depth_info });
+    }
+    if (has_shadow) {
+        auto shadow_sampler        = ::vsg::Sampler::create();
+        shadow_sampler->magFilter  = VK_FILTER_NEAREST;
+        shadow_sampler->minFilter  = VK_FILTER_NEAREST;
+        shadow_sampler->mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        auto shadow_info =
+            ::vsg::ImageInfo::create(shadow_sampler, shadow.map, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        config->assignTexture("shadow_map", ::vsg::ImageInfoList{ shadow_info });
+        config->assignDescriptor("shadow_block", shadow.block);
     }
     return makeOverlayStateGroup(config, push_data);
 }
