@@ -135,6 +135,77 @@ TEST(AttributeChannelTest, SliceStatesTheSegmentInVertices)
     EXPECT_EQ(AttributeChannel::slice(buffer, 3u, 3u, 1u).vertexCount(), 1u);
 }
 
+TEST(AttributeChannelTest, TheWholeBufferAndTheSegmentSpellingsAgree)
+{
+    // Every canonical role states its data two ways: a whole buffer, or a segment of an arena. They are
+    // ONE door underneath (both end at addBuffer() + AttributeChannel::slice()), which this pins — a
+    // second implementation would let the two spellings drift apart silently, and the pixels would only
+    // show it as a geometry that draws the wrong vertices.
+    const auto arena  = arenaBuffer(2u);
+    const auto loc    = vine::graphics::attributeLocation(VertexAttribute::Position);
+    const auto uv_loc = Geometry::kTexCoordLocation;
+
+    auto whole = intrusive_ptr<Geometry>(new Geometry());
+    whole->setPositions(arena);
+    auto segment = intrusive_ptr<Geometry>(new Geometry());
+    segment->setPositions(arena, 0u, 6u); // the same data, stated as a segment of six vertices
+
+    const AttributeChannel* a = whole->buffer(loc);
+    const AttributeChannel* b = segment->buffer(loc);
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    EXPECT_EQ(a->values, b->values) << "the same buffer, read in place rather than copied";
+    EXPECT_EQ(a->offset, b->offset);
+    EXPECT_EQ(a->components, b->components);
+    EXPECT_EQ(a->floatCount(), b->floatCount()) << "the same coverage today";
+    // ... stated differently, and the difference is the point: "the whole buffer" is 0 = FOLLOW it, a
+    // segment is a fixed count. A buffer that grows is covered by the first and not by the second.
+    EXPECT_EQ(a->scalarCount, 0u) << "the whole-buffer spelling follows the buffer as it grows";
+    EXPECT_EQ(b->scalarCount, 18u) << "two segments of three vertices, stated in vertices";
+
+    // The same coverage, on both faces: a buffer that grows is still the whole channel, while the
+    // segment keeps the six vertices it stated.
+    arena->append(std::vector<float>{ 9.0f, 9.0f, 9.0f });
+    EXPECT_EQ(a->floatCount(), 21u) << "the whole-buffer channel followed the growth";
+    EXPECT_EQ(b->floatCount(), 18u) << "the segment stayed the segment";
+
+    // And it is the SAME channel the general door builds, byte for byte.
+    auto via_general = intrusive_ptr<Geometry>(new Geometry());
+    via_general->addBuffer(loc, AttributeChannel::slice(arena, 3u, 0u, 6u));
+    EXPECT_EQ(via_general->buffer(loc)->offset, b->offset);
+    EXPECT_EQ(via_general->buffer(loc)->scalarCount, b->scalarCount);
+
+    // The unit is VERTICES, not scalars: three vertices of a three-component channel are nine scalars, and
+    // the segment is what the geometry reports (count, bounds) — the arena tests cover the rest.
+    auto part = intrusive_ptr<Geometry>(new Geometry());
+    part->setPositions(arena, 3u, 3u);
+    EXPECT_EQ(part->positionCount(), 3u);
+    EXPECT_EQ(part->buffer(loc)->scalarCount, 9u);
+    EXPECT_TRUE(part->boundingBox().isValid());
+
+    // A count of 0 means "the rest of the buffer", NOT an empty channel: that is the growing-arena case,
+    // and it is the same rule the index stream and BufferSlice follow.
+    auto rest = intrusive_ptr<Geometry>(new Geometry());
+    rest->setPositions(arena, 3u, 0u);
+    EXPECT_EQ(rest->positionCount(), 4u)
+        << "from vertex 3 to the end of the buffer as it is now (seven vertices after the growth)";
+
+    // Each role keeps ITS OWN stride: a texcoord segment of three vertices is six scalars, not nine. A
+    // copy-pasted overload that reused the position stride would pass the test above and fail here.
+    auto uvs = intrusive_ptr<Geometry>(new Geometry());
+    uvs->setTexcoords(arena, 3u, 3u);
+    ASSERT_NE(uvs->buffer(uv_loc), nullptr);
+    EXPECT_EQ(uvs->buffer(uv_loc)->components, 2u);
+    EXPECT_EQ(uvs->buffer(uv_loc)->scalarCount, 6u);
+    EXPECT_EQ(uvs->texcoordCount(), 3u);
+
+    // Normals take a segment too (a geometry that authors them from an arena), with the same stride rule.
+    auto normals = intrusive_ptr<Geometry>(new Geometry());
+    normals->setNormals(arena, 0u, 3u);
+    ASSERT_NE(normals->buffer(vine::graphics::attributeLocation(VertexAttribute::Normal)), nullptr);
+    EXPECT_EQ(normals->normalCount(), 3u);
+}
+
 TEST(AttributeChannelTest, AChannelIsASegmentPlusAStride)
 {
     // The storage description is BufferSlice's, not the channel's own: a channel hands its segment out

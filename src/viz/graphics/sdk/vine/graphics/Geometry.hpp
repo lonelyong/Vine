@@ -344,16 +344,34 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * A caller that holds typed vertices and no buffer packs them first with packAttribute().
      *
-     * THIS SETTER STATES A WHOLE BUFFER (offset 0, no fixed count): it is the one-buffer-per-geometry
-     * case, and the channel follows the buffer as it grows. A SEGMENT — several geometries reading one
-     * arena — is a channel like any other, and goes through the general door:
-     * `addBuffer(attributeLocation(VertexAttribute::Position), AttributeChannel::slice(arena, 3u,
-     * first_vertex, vertex_count))`. There is deliberately no slice overload here: a second, narrower
-     * door for every role is how two spellings of one thing start to drift.
+     * THIS OVERLOAD STATES A WHOLE BUFFER (offset 0, no fixed count): the one-buffer-per-geometry case,
+     * and the channel follows the buffer as it grows. A SEGMENT — several geometries reading one ARENA —
+     * is the three-argument overload below.
      *
      * @param positions Vertex scalars to read (three floats per vertex), or null for an empty channel.
      */
     void setPositions(intrusive_ptr<const vine::Buffer<float>> positions);
+
+    /** @brief Sets the positions to a SEGMENT of a vertex buffer: @p vertex_count vertices from
+     *         @p first_vertex on.
+     *
+     * An ARENA (one buffer, several geometries, one segment each) states its segment here instead of
+     * unpacking a copy: the geometry reads the same bytes the arena holds.
+     *
+     * The units are VERTICES, not scalars — the stride is the role's, and a caller should not have to know
+     * it. A @p vertex_count of 0 means "the rest of @p positions from @p first_vertex" (the growing-arena
+     * case), NOT an empty channel: to clear the channel, pass a null buffer.
+     *
+     * This overload is the SAME door as the one above — it delegates to
+     * addBuffer(attributeLocation(VertexAttribute::Position), AttributeChannel::slice(...)) — so a segment
+     * cannot mean one thing here and another there.
+     *
+     * @param positions    Vertex scalars to read (three floats per vertex), or null for an empty channel.
+     * @param first_vertex First vertex of this geometry's segment.
+     * @param vertex_count Vertices in the segment, or 0 for the rest of @p positions from @p first_vertex.
+     */
+    void setPositions(intrusive_ptr<const vine::Buffer<float>> positions, std::size_t first_vertex,
+                      std::size_t vertex_count);
 
     /** @brief Returns whether positions (location 0) are present. */
     bool hasPositions() const;
@@ -365,12 +383,21 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * Optional either way: when unset the renderer derives normals from the positions.
      *
-     * States a WHOLE buffer, like setPositions(): a segment of an arena is attached through
-     * addBuffer(location, AttributeChannel::slice(...)), which is the general door for every role.
+     * States a WHOLE buffer; the segment overload below states a slice of an arena (see setPositions for
+     * what the two spellings share: one implementation path, and a count of 0 meaning "the rest").
      *
      * @param normals Normal scalars to read (three floats per vertex), or null for an empty channel.
      */
     void setNormals(intrusive_ptr<const vine::Buffer<float>> normals);
+
+    /** @brief Sets the normals to a SEGMENT of a vertex buffer (see setPositions for the units).
+     *
+     * @param normals      Normal scalars to read (three floats per vertex), or null for an empty channel.
+     * @param first_vertex First vertex of this geometry's segment.
+     * @param vertex_count Vertices in the segment, or 0 for the rest of @p normals from @p first_vertex.
+     */
+    void setNormals(intrusive_ptr<const vine::Buffer<float>> normals, std::size_t first_vertex,
+                    std::size_t vertex_count);
 
     /** @brief Returns whether normals (location 1) are present. */
     bool hasNormals() const;
@@ -383,12 +410,22 @@ class V_GRAPHICS_API Geometry : public Node {
      * Optional: a geometry without UVs still renders, but a material carrying a
      * texture has nothing to sample it with.
      *
-     * States a WHOLE buffer, like setPositions(): a segment of an arena is attached through
-     * addBuffer(location, AttributeChannel::slice(...)).
+     * States a WHOLE buffer; the segment overload below states a slice of an arena (see setPositions for
+     * what the two spellings share). The unit there is VERTICES, not scalar pairs, so a segment of three
+     * vertices is six scalars.
      *
      * @param texcoords Texcoord scalars to read (two floats per vertex), or null for an empty channel.
      */
     void setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords);
+
+    /** @brief Sets the texture coordinates to a SEGMENT of a vertex buffer (see setPositions for the units).
+     *
+     * @param texcoords    Texcoord scalars to read (two floats per vertex), or null for an empty channel.
+     * @param first_vertex First vertex of this geometry's segment.
+     * @param vertex_count Vertices in the segment, or 0 for the rest of @p texcoords from @p first_vertex.
+     */
+    void setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords, std::size_t first_vertex,
+                      std::size_t vertex_count);
 
     /** @brief Returns whether texture coordinates (location kTexCoordLocation) are present. */
     bool hasTexcoords() const;
@@ -409,11 +446,13 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * Replacing the buffer does NOT announce the change: report one with setRevision().
      *
-     * THIS SETTER CARRIES THE SLICE, unlike the attribute setters — because it is the index stream's ONLY
-     * door. The vertex side has two: the canonical convenience setters, which state a whole buffer, and
-     * addBuffer(), which states any channel including a segment. The index stream is one member, not a
-     * location-keyed map, so if these parameters were not here an index arena's segment would be
-     * unexpressible (and a shorter overload would only be a second spelling of the same thing).
+     * The slice lives IN THIS signature rather than in an overload, because the index stream has no
+     * defaults to protect: the two cases a caller has are the same two the attribute roles spell as
+     * overloads (a whole buffer, and a segment), and @p first_index / @p index_count state them here.
+     * A second, one-argument overload would be an ambiguous spelling of the same call.
+     *
+     * The units are INDICES (this stream's elements), not vertices, and an @p index_count of 0 means "the
+     * rest of @p indices from @p first_index" — the same convention the attribute segments follow.
      *
      * @param indices     Index scalars to read (three per triangle), or null for an empty index buffer.
      * @param first_index First index this geometry draws (0 = the buffer's start).

@@ -118,6 +118,16 @@ std::size_t Geometry::positionCount() const
     return positions != nullptr ? positions->vertexCount() : 0u;
 }
 
+void Geometry::setPositions(intrusive_ptr<const vine::Buffer<float>> positions, std::size_t first_vertex,
+                            std::size_t vertex_count)
+{
+    // ONE implementation path for both spellings: the segment overload is the general door
+    // (addBuffer + AttributeChannel::slice), so a segment cannot come to mean one thing here and
+    // another there. The stride is the role's, and slice() takes VERTICES.
+    addBuffer(attributeLocation(VertexAttribute::Position),
+              AttributeChannel::slice(std::move(positions), kVec3Components, first_vertex, vertex_count));
+}
+
 void Geometry::setNormals(intrusive_ptr<const vine::Buffer<float>> normals)
 {
     addBuffer(attributeLocation(VertexAttribute::Normal),
@@ -135,6 +145,13 @@ std::size_t Geometry::normalCount() const
     return normals != nullptr ? normals->vertexCount() : 0u;
 }
 
+void Geometry::setNormals(intrusive_ptr<const vine::Buffer<float>> normals, std::size_t first_vertex,
+                          std::size_t vertex_count)
+{
+    addBuffer(attributeLocation(VertexAttribute::Normal),
+              AttributeChannel::slice(std::move(normals), kVec3Components, first_vertex, vertex_count));
+}
+
 void Geometry::setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords)
 {
     addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(texcoords), kVec2Components));
@@ -149,6 +166,14 @@ std::size_t Geometry::texcoordCount() const
 {
     const AttributeChannel* texcoords = buffer(kTexCoordLocation);
     return texcoords != nullptr ? texcoords->vertexCount() : 0u;
+}
+
+void Geometry::setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords, std::size_t first_vertex,
+                           std::size_t vertex_count)
+{
+    // Two scalars per vertex here, and a caller states VERTICES: a segment of three vertices is six scalars.
+    addBuffer(kTexCoordLocation,
+              AttributeChannel::slice(std::move(texcoords), kVec2Components, first_vertex, vertex_count));
 }
 
 void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices, std::size_t first_index,

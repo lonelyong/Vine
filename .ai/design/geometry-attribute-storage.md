@@ -181,12 +181,13 @@ vec4 位置（stride 4）**有意不进别名**：它要的是 R32G32B32 绑定�
   first, count)` 就是建这个段。
 - **自定义流**（未来）：同一个 `BufferSlice<T>`，不需要第三种表示。
 
-**谁陈述切片（以及为什么两边的 setter 不对称）**：canonical 的便捷 setter
-（`setPositions` / `setNormals` / `setTexcoords`）**只陈述整块 buffer**（offset 0、无固定 count：跟随增长）；
-段的写法走通用门 —— `addBuffer(location, AttributeChannel::slice(arena, components, first_vertex,
-vertex_count))`。索引流只有一个成员（不是按 location 的 map），`setIndices(buffer, first_index,
-index_count)` **就是它唯一的门**，所以切片参数必须在它身上；给每个 canonical role 再加一个"带切片的便捷
-setter"只会让同一件事有两种写法，因此故意没有加。
+**谁陈述切片**：每个 canonical 角色有**两种拼写**，都通向同一个门（`addBuffer` + `AttributeChannel::slice`）：
+- 整块：`setPositions(buffer)` / `setNormals(buffer)` / `setTexcoords(buffer)`（offset 0、无固定 count ⇒ **跟随增长**）；
+- 段（arena）：`setPositions(buffer, first_vertex, vertex_count)` 等三个重载（`count == 0` 表示"到末尾"，**不是空**；要空就传 null）。
+
+索引流用**默认参**表达同样两种情形（`setIndices(buffer, first_index = 0, index_count = 0)`）——它只有一个成员、没有需要保护的既有声明，再加一个 1 参重载反而是同一个调用的歧义拼写。单位要分清：顶点侧是**顶点**（texcoord 段 3 顶点 = 6 scalar），索引侧是**索引元素**。
+
+`addBuffer(location, channel)` 仍是**非 canonical**（别的 location、vec4 位置、别的 stride）的门，也仍然是"段"的实现路径：三个新重载都是**一行委托**给它。守卫：`TheWholeBufferAndTheSegmentSpellingsAgree`（同一 buffer/offset/components、覆盖相同、整块侧跟随增长而段不跟随、以及每个角色各自的 stride —— 复制粘贴重载用错 stride 会在 texcoord 那条上红）。
 
 **为什么是组合而不是基类**：通道不是段，通道是"段 + 顶点 stride"的解释。若让 `AttributeChannel` 继承
 `BufferSlice<float>`，把通道按值传给一个要段的接口会**静默丢掉 stride**（也就丢掉"每个顶点从哪开始"），

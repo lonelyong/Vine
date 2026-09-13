@@ -1,6 +1,7 @@
 ﻿> 2026-09-13 **canonical 属性 location 只有 ABI 一处定义**
 > - 删掉所有硬编码：`Geometry::setPositions/setNormals/setTexcoords/hasPositions/…/localBounds`、`RayIntersection`、vsg 后端的几何构建（canonical 通道、派生通道、自定义通道过滤、loc→binding 映射）现在都问 `attributeLocation(VertexAttribute)`；`Geometry::kTexCoordLocation` 直接等于 `attributeLocation(TexCoord0)`。
 > - 新增 `isCanonicalAttributeLocation(location)`（ABI 拥有）取代后端里那句 `location <= 2u || location == kTexCoordLocation`——“这个 location 是引擎的还是转发的”只该有一个回答。
+> - **段的重载（同日）**：canonical 角色现在两种拼写都行 —— `setPositions(buffer)` 整块（跟随增长）与 `setPositions(buffer, first_vertex, vertex_count)` 段（`count == 0` = 到末尾，**不是空**）；`setNormals` / `setTexcoords` 同。三个新重载都是**一行委托**给 `addBuffer + AttributeChannel::slice`（一条实现路径，防漂移）；索引侧继续用默认参表达同样两种情形。守卫 `TheWholeBufferAndTheSegmentSpellingsAgree`（同 buffer/offset/components、覆盖相同、整块跟随增长而段不跟随、texcoord 段 3 顶点 = 6 scalar ⇒ 复制粘贴用错 stride 会红）。
 > - 测试：`ShaderAbiTest.TheCanonicalPredicateMatchesTheLocations` + `GeometryAttachesCanonicalChannelsWhereTheAbiSays`（setter 落在 ABI 的 location 上、`positionCount()` 读的就是同一个通道）；`SceneBridgePipelineSharingTest` 里两处读通道也改用 ABI；GLSL 那半原本就由 `EmbeddedShadersTest` 钉着。
 > - 判据：行为中性（值今天相同）——证据基线 51 行逐字节不变；test_graphics 240 → **242**；test_vsg 250；shader check PASS；lavapipe PASS。
 
