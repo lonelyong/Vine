@@ -33,6 +33,7 @@ using detail::makeIndexedNormals;
 using detail::makeNormals;
 using detail::makeWhiteColors;
 using detail::makeZeroTexcoords;
+using detail::texCoordArray;
 using detail::unpackXyz;
 using detail::XyzUnpack;
 
@@ -145,12 +146,14 @@ namespace
             return normals;
         }
         case vine::graphics::Geometry::kTexCoordLocation: {
+            // Both coordinate shapes are refreshable, because both are a verbatim alias of the model's
+            // scalars (see texCoordArray): a UV pair for a 2-D map, a direction for a cube map. Anything
+            // else answers null so the caller rebuilds the node, which is where it is reported.
             const auto* attr = geometry->buffer(location);
-            if (attr == nullptr || attr->empty() || attr->components != 2u ||
-                attr->floatCount() != vertex_count * 2u) {
+            if (attr == nullptr || attr->empty()) {
                 return {};
             }
-            return aliasArray<::vsg::vec2Array, float>(attr->values, vertex_count, attr->offset);
+            return texCoordArray(*attr, vertex_count);
         }
         case 2u: {
             const auto* attr = geometry->buffer(2);
@@ -427,35 +430,25 @@ namespace
     else {
         out_colors = ::vsg::ref_ptr<::vsg::vec4Array>();
     }
-    // Texture coordinates: two components per vertex, the shape vsg's Phong
-    // shader reads vsg_TexCoord0 as (the channel itself lives at the module's
-    // canonical source location, see Geometry::kTexCoordLocation). The array is
-    // ALWAYS emitted — like normals and colours — so the vertex binding order is
-    // fixed and the custom channels below keep their indices whether or not this
-    // mesh has UVs. A mesh without a UV channel binds zeros, which is what "no
-    // UVs" means: every fragment samples the same texel.
-    const auto pack_texcoords = [](const vine::graphics::AttributeChannel& attr,
-                                   std::size_t vertex_count) -> ::vsg::ref_ptr<::vsg::vec2Array> {
-        const auto comps = attr.components;
-        if (comps != 2u || attr.floatCount() != vertex_count * 2u) {
-            return {};
-        }
-        // Two components per vertex IS the layout the vsg_TexCoord0 binding reads: alias the (u, v)
-        // pairs verbatim.
-        return aliasArray<::vsg::vec2Array, float>(attr.values, vertex_count);
-    };
-    ::vsg::ref_ptr<::vsg::vec2Array> texcoords;
+    // Texture coordinates: the slot carries a UV pair (a 2-D map) or a direction (a cube map), and the
+    // array states which — see texCoordArray, which owns that decision for the builder and the in-place
+    // refresh alike. The channel itself lives at the module's canonical source location
+    // (Geometry::kTexCoordLocation). The array is ALWAYS emitted — like normals and colours — so the vertex
+    // binding order is fixed and the custom channels below keep their indices whether or not this mesh has
+    // UVs. A mesh without a usable channel binds zeros, which is what "no UVs" means: every fragment
+    // samples the same texel.
+    ::vsg::ref_ptr<::vsg::Data>             texcoords;
     const vine::graphics::AttributeChannel* aliased_texcoords = nullptr;
     if (const auto* uv_channel = geometry->buffer(vine::graphics::Geometry::kTexCoordLocation);
         uv_channel != nullptr && !uv_channel->empty()) {
-        texcoords = pack_texcoords(*uv_channel, vertex_count);
+        texcoords = texCoordArray(*uv_channel, vertex_count);
         if (texcoords != nullptr) {
             aliased_texcoords = uv_channel;
         }
         if (texcoords == nullptr) {
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
-                   u8"texture coordinate channel is unusable (exactly 2 components, "
-                   u8"one per vertex required); zero UVs are used instead");
+                   u8"texture coordinate channel is unusable (2 components for a 2-D map, 3 for a cube "
+                   u8"direction, one per vertex, required); zero UVs are used instead");
         }
     }
     if (texcoords == nullptr) {

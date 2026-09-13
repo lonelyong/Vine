@@ -476,6 +476,8 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | 变体身份 | 是否丢属性会改变管线，故把 `(color_bound<<0)|(uv_bound<<1)` 并入 L2 variant 的 `layout` 哈希，避免同材质/状态但属性不同的几何复用同一条管线 |
 | 判据 | 两条证据基线 47 行**逐字节不变**（丢属性只省绑定/采样，画面等价：无作者色=白调制、白纹理=乘 1）；test_vsg **237**（+2：`ForwardSetDropsDerivedColourAndUvs` 断言 2 条顶点绑定 + 无采样器；`BuiltInSetKeepsTheFullCanonicalPrefix` 断言内建仍 4 条）；lavapipe 整体 PASS |
 
+> **更正（见 §11.9）**：这一节把「define 关掉」当作变体机制在生效，但当时 `vine_forward.*` 的源码里**没有** `#pragma import_defines`，而 vsg 只对 pragma 列出的名字发 `#define` ⇒ `VINE_DIFFUSE_MAP` / `VINE_VERTEX_COLOR` **两个分支从未真正编译过**（丢属性确实省了绑定/采样，但采样分支本身也一直是关的）。本节其余结论（绑定前缀、variant 身份、基线与 47 行不变）仍然成立；「门控变体真正生效」这句在 §11.9 才成立。
+
 **仍未做**：`params` 承载材质值与用户参数（要 B2 槽表，即第二个标量消费者）；槽池的分块调优（当前 64 槽/块）；阴影 / PBR / Flat（§6 的 P1/P2）。
 
 ### 11.7 每 drawable 块：为什么是 set1 + dynamic offset（2026-09-13）
@@ -509,4 +511,33 @@ texture/mesh cache 同一契约），桥的析构**不得**碰池。
 
 **边界**：SDK 拥有**着色文本**（L3）；后端拥有**编译 + ABI 绑定 + 管线**（L2）。`ShaderSet` 仍是 vsg 后端内部机制，不进 SDK。下一步（P0.B）：把 ABI 契约（属性角色 / `VineFrame`・`VineDraw` / 参数・槽表）也移到 SDK，为换后端铺路。
 
+### 11.9 门控变体真正生效 + cube 方向槽（2026-09-13）
 
+**发现（这是本轮最重要的一条）**：`vine_forward.{vert,frag}` 用了 `#ifdef VINE_DIFFUSE_MAP`
+/ `VINE_VERTEX_COLOR`，但源码里没有 `#pragma import_defines`。vsg 的
+`ShaderCompiler::combineSourceAndDefines` **只对 pragma 列出的名字**发 `#define`，其余被**静默丢弃**：
+没有编译错误、没有 validation、没有诊断 —— 分支只是永远不编译。也就是说
+`buildVineShaderSet` 里那两个 define（attribute binding + descriptor binding 都声明了）自落地以来
+**从未产生过任何效果**：内建 forward 路径其实不采样纹理、不读顶点色。
+
+为什么没被发现：门禁全是**结构性**的（`ForwardShaderSetTest` 断言「define 名字出现在两个 stage 里」
+—— 名字确实在，pragma 里在不在它没问），唯二的像素门禁（texture / cube map）走的是**用户 program**
+路径（自带 GLSL、不需要 define）。这正是 `.ai/memory/graphics.md` 里那条教训的第二个实证：
+「结构性断言可以全绿而画面没动」。
+
+| 环节 | 落点 |
+| --- | --- |
+| 修复 | 两个 forward stage 源码加 `#pragma import_defines (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_TEXCOORD_CUBE)`（必须在 `#version` 之后那一行；vsg 把这两行搬进 header） |
+| 结构化门禁 | `ForwardShaderSetTest::TheForwardStagesAskForEveryDefineTheBackendCanSet`：**后端会设的每个 define 名字必须出现在 pragma 的括号列表里**（这条门禁本来就能挡住上面那个 bug） |
+| 像素门禁 | selftest 新增 `built-in sampling` 相：同一张双色纹理 + 同一个六色 cube，**不设 program**，即由引擎自己的 shader 采样。变异验证：去掉 pragma ⇒ 两行都 FAIL；只去掉 `VINE_TEXCOORD_CUBE` ⇒ 2D 行仍 PASS、cube 行 FAIL |
+| cube 方向槽 | 同一 location 8 的**第二种形状**：3 分量 = 方向。SDK 加 `Geometry::setCubeDirections()`（整块 + 段两种拼写，与其它角色同形）；后端 `detail::texCoordArray()` 按 `components` 建 `vec2Array`/`vec3Array` **并在阵列上陈述顶点格式**（`properties.format`），`SceneBridgePipeline` 由绑定的阵列读回形状：3 分量 ⇒ 给该 drawable 的编译设置插入 `VINE_TEXCOORD_CUBE`，shader 编译出 `samplerCube` + `vec3` 属性 |
+| 采样器种类 | 由**槽的形状**决定，两种不可混：`samplerCube` 绑 2D 视图（或反之）不是"白贴图"而是**非法描述符**。纹理种类不匹配时**报一次 + 绑该种类的白色回退**（`VsgTextureCache::whiteCubeFallback()`，1×1×6 面）。**只对引擎自己的 set 生效**：用户 program 自带 sampler 与坐标（cube 相就是拿 UV 通道自己算方向），替它的纹理是把画面换成它没要的那个 |
+| 变体身份 | 形状选择管线 ⇒ `(color_bound<<0)|(uv_bound<<1)|(cube<<2)` 并入 L2 variant 的 `layout` |
+| 判据 | 证据基线 51 → **53** 行（仅新增 2 行，其它数字逐字节不变）；`vine_shader_check.sh` 变体矩阵 3 → **4** 个 define（7 shader × 16 组合）PASS；test_vsg 250 → **252**；test_graphics 246 → **247**；lavapipe PASS（无 validation 错误，说明 cube 视图 ↔ `samplerCube`、`R32G32B32` 属性都合法） |
+
+**踩过的坑**：① 我第一版把「槽形状 ↔ 采样器种类」规则无差别应用到 program 路径，直接被现有
+`cube map` 相抓住（六条带全白）—— 用户 program 的 artifact 不是引擎可以替换的；② `Geometry::setTexcoords()`
+硬编码 2 分量，所以 3 分量的方向**没有 SDK 拼写**，必须新开 `setCubeDirections()`（不是用
+`addBuffer(kTexCoordLocation, …)` 蒙过去）；③ `aliasArray()` 的注释声称格式由元素类型推断，
+实际 **vsg 的 `Array::assign` 只设 stride，format 保持 UNDEFINED**，pipeline 的顶点格式来自
+binding 声明 —— 一个 ShaderSet 服务两种形状时，必须由阵列陈述 `properties.format`。

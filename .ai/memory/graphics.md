@@ -53,6 +53,8 @@
 > - 做法：`vine_forward.frag` 在 `VINE_VERTEX_COLOR` 下 `alpha *= v_color.a`，载体 alpha 由 SceneBridge 按 `cmd.opacity` 维护；`drop_color` 仅在 `opacity >= 1` 时成立；opacity 跳 1 计入 state 身份。
 > - **为什么被取代**：这条路在 forward 上根本没通（见上）。教训：**"CPU 侧写了正确的字节"不等于"着色器读到它"** —— 一个只看结构（绑了哪些属性、变体文本）的断言会全绿而画面纹丝不动；像素级差分才是判据。
 > - 单测 +1（透明 → 4 条顶点绑定）已被换成 `OpacityIsNotPartOfTheVariantIdentity`（透明 = 不透明，2 条绑定）。
+> - **同一条教训的第二次实证（同日，cube 方向槽）**：`vine_forward.*` 用了 `#ifdef VINE_DIFFUSE_MAP` / `VINE_VERTEX_COLOR`，但源码缺 `#pragma import_defines`，而 vsg 只对 pragma 列出的名字发 `#define` ⇒ 两个分支**从未编译过**（内建 forward 路径一直不采样、不读顶点色），而全部结构性门禁（断言 define 名字出现在 stage 里）**全绿**。修法：加 pragma（必须在 `#version` 之后）；新门禁两条 —— `ForwardShaderSetTest::TheForwardStagesAskForEveryDefineTheBackendCanSet`（后端会设的每个 define 必须在 pragma 列表里）+ selftest 的 `built-in sampling` 相（**不设 program**，由引擎自己的 shader 采样一张双色 2D 贴图和一个六色 cube；变异验证：删 pragma 两行都 FAIL，只删 `VINE_TEXCOORD_CUBE` 则只有 cube 行 FAIL）。
+> - **cube 方向 = texcoord 槽的第二种形状**：同一 location 8，2 分量 = UV，3 分量 = 方向；SDK 拼写 `Geometry::setCubeDirections()`，后端 `detail::texCoordArray()` 按 `components` 建阵列**并在阵列上陈述 `properties.format`**（vsg 的 `Array::assign` 只设 stride，format 留 UNDEFINED，pipeline 顶点格式默认取 binding 声明 —— 一个 ShaderSet 服务两种形状时必须由阵列陈述）。变体身份 `layout` 加一位 cube；采样器种类由槽形状决定，只对**引擎自己的 set** 生效（用户 program 可能拿 UV 通道自己算方向 —— 第一版无差别应用时被现有 `cube map` 相当场抓住）。判据：证据基线 51 → 53 行（其它数字不变）、`vine_shader_check` 变体矩阵 4 个 define、test_vsg 252、test_graphics 247、lavapipe PASS。
 
 > 2026-09-13 **P0.S1：GLSL 块名对齐 L1**：`MaterialBlock`→`VineMaterialBlock`、`LightsBlock`→`VineLightsBlock`（gbuffer_geometry.frag / vine_forward.frag）；`ShaderAbiTest` +1 钉"契约名 == GLSL 块名"。行为中性；test_graphics 239 → **240**。
 

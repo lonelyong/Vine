@@ -114,6 +114,30 @@ vine::math::Vec3f faceNormal(const vine::math::Vec3f& a, const vine::math::Vec3f
     return texcoords;
 }
 
+::vsg::ref_ptr<::vsg::Data> texCoordArray(const vine::graphics::AttributeChannel& attr, std::size_t vertex_count)
+{
+    const auto comps = attr.components;
+    if (attr.empty() || attr.floatCount() != vertex_count * comps) {
+        return {};
+    }
+    if (comps == 3u) {
+        auto directions                = aliasArray<::vsg::vec3Array, float>(attr.values, vertex_count, attr.offset);
+        directions->properties.format  = VK_FORMAT_R32G32B32_SFLOAT;
+        return directions;
+    }
+    if (comps == 2u) {
+        auto uv                = aliasArray<::vsg::vec2Array, float>(attr.values, vertex_count, attr.offset);
+        uv->properties.format  = VK_FORMAT_R32G32_SFLOAT;
+        return uv;
+    }
+    return {};
+}
+
+bool isCubeDirectionArray(const ::vsg::Data& array) noexcept
+{
+    return array.properties.format == VK_FORMAT_R32G32B32_SFLOAT;
+}
+
 VkFormat vkFormatFor(vine::imaging::PixelFormat format) noexcept
 {
     using vine::imaging::PixelFormat;

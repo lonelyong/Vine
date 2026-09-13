@@ -46,7 +46,7 @@ INVENTORY="$ROOT/cmake/VineShaders.cmake"
 # The variant defines the backend can set on a compiled stage. Keep in sync with
 # the define names used by the shaders themselves (the compile matrix below is
 # what catches a mismatch).
-VARIANT_DEFINES=(VINE_VERTEX_COLOR VINE_DIFFUSE_MAP VINE_FLAT)
+VARIANT_DEFINES=(VINE_VERTEX_COLOR VINE_DIFFUSE_MAP VINE_TEXCOORD_CUBE VINE_FLAT)
 
 FAILED=0
 

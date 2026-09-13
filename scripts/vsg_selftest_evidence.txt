@@ -44,6 +44,8 @@
 [selftest] variant 'custom mid-depth (z=0.5) constant-colour program': centre=(255,51,51) corner=(10,20,30) covered=5916/36864 diagnostics=0
 [selftest] texture: the quad sampled its texture by UV — left half (255,_,0) = the red half, right half (0,_,255) = the blue half, over a clear corner (25,_,45)
 [selftest] cube map: all six faces sampled in CubeMap::Face order (+X,-X,+Y,-Y,+Z,-Z), one pixel read back per face
+[selftest] built-in sampling: the engine's own forward shader sampled a 2-D map by UV (left (31,_,0) = red, right (0,_,31) = blue)
+[selftest] built-in sampling: the engine's own forward shader sampled a cube map by direction — +X=(31,0,0), -X=(0,31,0), +Y=(0,0,31), -Y=(31,31,0), +Z=(31,0,31), -Z=(0,31,31)
 [selftest] opacity blend: opacity 0.5 turned the shaded centre (34,6,2) into (22,13,16) = 0.5*shaded + 0.5*clear, stored alpha 191 (not 255 = opacity dropped, not 128 = blend off)
 [selftest] preset shading: Pbr (no program of its own) drew nothing (the centre is still the clear (10,20,30)) where StandardPhong drew (255,255,255), so a preset without a program is declined and reported instead of substituted
 [selftest] preset shading: FlatShaded followed the face normal (765) against the smooth preset's authored-normal 42 over the same quad

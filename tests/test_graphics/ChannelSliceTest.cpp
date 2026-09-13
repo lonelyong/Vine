@@ -273,6 +273,37 @@ TEST(GeometryTest, BoundingBoxCoversOnlyTheGeometrysSegment)
     EXPECT_EQ(geom->positionCount(), 3u);
 }
 
+TEST(GeometryTest, TheCubeDirectionsSpellTheTexcoordSlotWithAThirdComponent)
+{
+    // A cube map is sampled by DIRECTION: the texcoord slot carries three scalars per vertex instead of the
+    // two a 2-D map uses. Same location, same binding, ONE shader set — the shape is what the renderer reads
+    // to select the samplerCube variant, so it has to be the shape the setter states.
+    const auto directions = intrusive_ptr<vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1 }));
+
+    auto whole = intrusive_ptr<Geometry>(new Geometry());
+    whole->setCubeDirections(directions);
+    auto segment = intrusive_ptr<Geometry>(new Geometry());
+    segment->setCubeDirections(directions, 0u, 6u);
+
+    ASSERT_NE(whole->buffer(Geometry::kTexCoordLocation), nullptr);
+    EXPECT_EQ(whole->buffer(Geometry::kTexCoordLocation)->components, 3u);
+    EXPECT_TRUE(whole->hasTexcoords());
+    EXPECT_EQ(whole->texcoordCount(), 6u);
+    EXPECT_EQ(segment->texcoordCount(), 6u);
+    EXPECT_EQ(whole->buffer(Geometry::kTexCoordLocation)->vec3View().size(), 6u);
+
+    // The OTHER shape of the same slot — which is what keeps a mesh's UVs a UV pair, and what the renderer
+    // reads to pick the sampler2D variant instead.
+    const auto uv = intrusive_ptr<vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ 0.0f, 0.0f, 1.0f, 1.0f, 0.5f, 0.5f }));
+    auto uv_geometry = intrusive_ptr<Geometry>(new Geometry());
+    uv_geometry->setTexcoords(uv);
+    ASSERT_NE(uv_geometry->buffer(Geometry::kTexCoordLocation), nullptr);
+    EXPECT_EQ(uv_geometry->buffer(Geometry::kTexCoordLocation)->components, 2u);
+    EXPECT_EQ(uv_geometry->texcoordCount(), 3u);
+}
+
 TEST(GeometryTest, TheIndexStreamsTwoSpellingsShareOneSegment)
 {
     // The index stream states the same two cases as the vertex roles (a whole buffer, or a segment), and

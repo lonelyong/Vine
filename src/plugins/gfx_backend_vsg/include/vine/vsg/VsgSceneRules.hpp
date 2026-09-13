@@ -6,6 +6,8 @@
  * A SceneBridge mostly builds vsg objects, and that needs a device. What does NOT need one: how a
  * custom vertex channel is classified (and why it is rejected), how a forwarded channel becomes a
  * vsg vertex binding (its name, its Vulkan format and the sample data the binding must match),
+ * which coordinate shape the texcoord slot carries (a UV pair for a 2-D map or a cube direction)
+ * and the array that states it,
  * which Vulkan stage an SDK shader-stage kind maps to, how an xyz channel is unpacked at its
  * stride, the normals / default colour derived for a mesh that provides none, which colour
  * attachments a shader set declares, what a multi-attachment pipeline writes, and the three hash
@@ -196,6 +198,40 @@ inline constexpr bool normalIsUsable(float length_sq) noexcept
 ::vsg::ref_ptr<::vsg::vec2Array> makeZeroTexcoords(std::size_t count);
 
 /**
+ * @brief Builds the array the texcoord binding reads for a canonical texcoord channel.
+ *
+ * The slot carries ONE of two coordinate shapes, and which one it is decides both the sampler the
+ * shader compiles (`sampler2D` or `samplerCube`, see the forward shader) and the vertex format:
+ *
+ *   - TWO scalars per vertex: a UV pair for a 2-D map (`R32G32_SFLOAT`);
+ *   - THREE scalars per vertex: a DIRECTION for a cube map (`R32G32B32_SFLOAT`).
+ *
+ * The array STATES its own format (@ref vsg::Data::Properties::format) rather than leaving that to
+ * the binding declaration, because ONE ShaderSet declares this slot and serves both kinds: vsg takes
+ * the pipeline's attribute format from the array when it has one and falls back to the declared
+ * format only otherwise (ArrayConfigurator::assignArray). Without that the cube case would read an
+ * xyz direction as an xy pair — accepted at every layer, and wrong on screen — so the fact is stated
+ * by the object the GPU reads, once, here.
+ *
+ * @param attr         Channel at the texcoord location (Geometry::kTexCoordLocation).
+ * @param vertex_count Vertices the mesh has; the array must cover exactly those.
+ * @return The array to bind, or null when the channel is neither shape, is empty, or does not cover
+ *         @p vertex_count vertices (the caller reports it and binds zero UVs instead).
+ */
+::vsg::ref_ptr<::vsg::Data> texCoordArray(const vine::graphics::AttributeChannel& attr, std::size_t vertex_count);
+
+/**
+ * @brief Whether a bound texcoord array carries a cube DIRECTION.
+ *
+ * The kind is read back off the ARRAY the data node bound — the same object the pipeline takes its
+ * vertex format from — so one statement of the kind cannot disagree with the data.
+ *
+ * @param array Array bound at the texcoord binding.
+ * @return true when it is an xyz array (a direction), false for an xy one (a UV pair).
+ */
+bool isCubeDirectionArray(const ::vsg::Data& array) noexcept;
+
+/**
  * @brief Maps a pixel layout to the Vulkan format a texture of it uses.
  *
  * Kept here rather than inline in the upload path so the mapping is a rule a
@@ -303,9 +339,14 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
  * referenced, and the storage holds the buffer: the renderer keeps exactly the memory it reads
  * alive, even if the model dies first, and nothing is copied.
  *
- * Nothing about the binding is hand-written either: the Vulkan format and the stride keep being
- * inferred from @p Array's element type, so this cannot disagree with the binding declared from
- * @ref formatForComponents (which a mismatched pair would be accepted for, silently).
+ * Nothing about the binding is hand-written either: the STRIDE is inferred from @p Array's element
+ * type, and the vertex format comes from @p Array too — but only when the caller states it on the
+ * array (@ref vsg::Data::Properties::format). Otherwise vsg falls back to the format the ShaderSet
+ * declares for that binding (ArrayConfigurator::assignArray), and a pair that disagrees is accepted
+ * in silence — so whichever side states the format has to be the side that knows the layout. The
+ * canonical bindings declare it per role (@ref formatForComponents); the texcoord slot is the
+ * exception that states it per array, because ONE declaration serves its two coordinate shapes
+ * (@ref texCoordArray).
  *
  * The elements are read @p Array's element size apart, because that is the stride vsg indexes a bound
  * array by (the GPU binding uses the same number): a vec3 channel of floats is twelve bytes apart, not

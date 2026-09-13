@@ -393,7 +393,8 @@ sequenceDiagram
 
 | 面 | 限制 |
 |---|---|
-| 纹理/uv | **已接线（L0–L3）**：`Material::texture()` 的 face 0 上传为 vsg 图像（整条 mip 链）、建 sampler、进描述符集 set0/binding1；`Geometry::setTexcoords()` 经 location 8 喂 `vsg_TexCoord0`。selftest 有像素断言钉住它（左右双色纹理按 UV 采样） |
+| 纹理/uv | **已接线（L0–L3）**：`Material::texture()` 的 face 0 上传为 vsg 图像（整条 mip 链）、建 sampler、进描述符集 set0/binding1；`Geometry::setTexcoords()` 经 location 8 喂 `vsg_TexCoord0`。selftest 有像素断言钉住它（左右双色纹理按 UV 采样）。**引擎自己的 forward shader 也采样**：selftest 的 `built-in sampling` 相不设 program 画出同一张双色贴图 （2026-09-13 之前这条是断的 —— 源码缺 `#pragma import_defines`，见 `.ai/design/vsg-custom-shader.md` §11.9） |
+| cube map | **已接线**：`CubeMap` 六面上传为 CUBE 视图；方向槽 = 同一 location 8 的**3 分量**形状（`Geometry::setCubeDirections()`），引擎据 `components` 选 `samplerCube` 变体，纹理会解析为 cube 图（种类不匹配时报一次并绑白色 cube 回退）。两条门禁：用户 program 的六面带相（各面颜色按 `CubeMap::Face` 顺序）+ `built-in sampling` 相的六方向相 |
 | 用户自定义通道 | loc≥2 的数据后端不消费；program 路径也不喂（需 §7 两步接线） |
 | 顶点色 | 用户 loc6 会被 `SceneBridge` 白色覆盖（只认自己生成的 colors + opacity） |
 | 线/点 | 无 `LINE_STRIP`；`lineWidth>1` 需 `wideLines` 特性（未开）；无法调线宽/点大小 |

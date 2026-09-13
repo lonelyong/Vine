@@ -60,10 +60,14 @@ trap 'rm -f "$RAW" "$CURRENT"' EXIT
 
 "$SELFTEST" > "$RAW" 2>&1
 grep '^\[selftest\]' "$RAW" > "$CURRENT"
-LINES="$(wc -l < "$CURRENT" | tr -d ' ')"
+# NOT named LINES: bash's LINES/COLUMNS are the terminal height/width, and it re-reads them after every
+# external command — so a count kept in LINES is silently replaced by the terminal's row count (measured:
+# this reported "30 evidence line(s)" for a 53-line file in a 30-row terminal, in the very message a reader
+# uses to judge what the gate covered).
+EVIDENCE_LINES="$(wc -l < "$CURRENT" | tr -d ' ')"
 if [ "$UPDATE" = 1 ]; then
     cp "$CURRENT" "$BASELINE"
-    echo "vsg_selftest_evidence.sh: baseline updated ($LINES evidence line(s))"
+    echo "vsg_selftest_evidence.sh: baseline updated ($EVIDENCE_LINES evidence line(s))"
     exit 0
 fi
 
@@ -73,7 +77,7 @@ if [ ! -f "$BASELINE" ]; then
 fi
 
 if diff -q "$BASELINE" "$CURRENT" > /dev/null; then
-    echo "RESULT: PASS — $LINES self-test evidence line(s) identical to the baseline."
+    echo "RESULT: PASS — $EVIDENCE_LINES self-test evidence line(s) identical to the baseline."
     exit 0
 fi
 

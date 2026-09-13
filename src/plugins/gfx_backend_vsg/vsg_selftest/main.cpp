@@ -4592,6 +4592,260 @@ bool runTexturePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, 
 }
 
 /**
+ * @brief Builds a small texture whose left half is red and its right half blue.
+ *
+ * The same two tones the custom-program texture phase asserts with, so this file shows the SAME picture
+ * produced both ways: through a user program, and through the engine's own forward shader.
+ *
+ * @return The texture (one mip level).
+ */
+vine::intrusive_ptr<Texture> makeTwoToneTexture()
+{
+    constexpr int kSize = 8;
+    auto          colours = vine::intrusive_ptr<vine::imaging::Image>(
+        new vine::imaging::Image(kSize, kSize, vine::imaging::PixelFormat::Rgba8Unorm, 1));
+    auto* pixels = reinterpret_cast<std::uint8_t*>(colours->mipData(0).data());
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize; ++x) {
+            std::uint8_t* texel = pixels + (static_cast<std::size_t>(y) * kSize + static_cast<std::size_t>(x)) * 4u;
+            const bool    left  = x < kSize / 2;
+            texel[0]            = left ? 255u : 0u;
+            texel[1]            = 0u;
+            texel[2]            = left ? 0u : 255u;
+            texel[3]            = 255u;
+        }
+    }
+    vine::intrusive_ptr<Texture> texture(new Texture2D(kSize, kSize, vine::imaging::PixelFormat::Rgba8Unorm, 1));
+    texture->setSource(0, colours);
+    return texture;
+}
+
+/**
+ * @brief Builds a visible quad whose texcoord channel carries ONE direction for all six of its vertices.
+ *
+ * One direction per vertex, all equal, so the interpolated direction a fragment samples with IS that
+ * direction and the sampled face is decided by the data rather than by the rasteriser.
+ *
+ * @param direction Direction (in the shader's space) every vertex carries.
+ * @return The quad geometry.
+ */
+GeometryPtr makeDirectionQuad(const vine::math::Vec3f& direction)
+{
+    auto geom = makeVisibleQuad(0.4f, 0.0f);
+    vine::geometry::Vec3fArray directions;
+    for (int i = 0; i < 6; ++i) {
+        directions.push_back(direction);
+    }
+    geom->setCubeDirections(vine::graphics::packAttribute(directions));
+    return geom;
+}
+
+/**
+ * @brief How many channels lead in pixel (@p x, @p y) and by how much: true when every listed channel leads.
+ *
+ * @param image    Read-back image.
+ * @param x        Pixel column.
+ * @param y        Pixel row.
+ * @param leaders  Which of R/G/B must lead (1 = must lead, 0 = must trail).
+ * @param margin   How much a leading channel must exceed a trailing one by.
+ * @return true when the pattern holds.
+ */
+bool channelsLead(const PixelImage& image, int x, int y, const int leaders[3], int margin)
+{
+    const int value[3] = { image.at(x, y, 0), image.at(x, y, 1), image.at(x, y, 2) };
+    for (int leader = 0; leader < 3; ++leader) {
+        for (int trailer = 0; trailer < 3; ++trailer) {
+            if (leaders[leader] != 1 || leaders[trailer] != 0) {
+                continue;
+            }
+            if (value[leader] <= value[trailer] + margin) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Locates the run of pixels the quad covers on the middle row.
+ *
+ * The custom-program phases can hard-code their sample positions (their vertex stage passes the quad's
+ * positions through as clip coordinates). The engine's forward shader transforms them through the camera
+ * instead, so this phase finds what was drawn and samples INSIDE it — which also keeps the assertions
+ * independent of the target size and the projection.
+ *
+ * @param image Read-back image.
+ * @param first Receives the first drawn column.
+ * @param last  Receives the last drawn column.
+ * @return true when the row has a run of drawn pixels.
+ */
+bool drawnRunOnMiddleRow(const PixelImage& image, int& first, int& last)
+{
+    const int row   = image.height / 2;
+    first           = -1;
+    last            = -1;
+    for (int x = 0; x < image.width; ++x) {
+        const bool drawn = image.at(x, row, 0) != 25 || image.at(x, row, 1) != 25 || image.at(x, row, 2) != 45;
+        if (!drawn) {
+            continue;
+        }
+        if (first < 0) {
+            first = x;
+        }
+        last = x;
+    }
+    return first >= 0 && last > first;
+}
+
+/**
+ * @brief Asserts the engine's OWN forward shader samples a 2-D map by UV and a cube map by direction.
+ *
+ * Both branches were unreachable until the forward stage sources listed their defines in
+ * `#pragma import_defines`: vsg assembles the source it hands glslang and emits `#define <name>` ONLY for
+ * names that pragma lists, so the backend's compile settings were dropped in silence — the stages compiled,
+ * validation stayed quiet, and the picture was simply never textured. No structural assertion can tell that
+ * apart from the intended behaviour (the declarations look exactly right), so this phase draws the SAME two
+ * pictures the custom-program phases already draw — a two-tone texture by UV, and a six-colour cube map by
+ * direction — with NO program set, which makes the engine's shader the one that samples them.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quads are drawn through.
+ * @param frames   Frames to drive per picture.
+ * @return true when the built-in path sampled both maps as their contents describe.
+ */
+bool runBuiltinSamplingPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool ok = true;
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setName(u8"built-in sampling");
+    target->setSize(96, 54);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto pass = RenderPassPtr(new RenderPass());
+
+    const auto draw_and_read = [&](const RenderCommand& command, PixelImage& image) -> bool {
+        for (int i = 0; i < std::max(frames, 2); ++i) {
+            FrameScope frame(renderer);
+            PassScope  pass_scope(renderer, pass.get(), 0, target.get(), vine::Color(25, 25, 45, 255), true,
+                                  vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+        }
+        return readTarget(renderer, target.get(), image);
+    };
+
+    // The materials below are the engine's own defaults except for the specular term, which is switched OFF:
+    // the shaded colour of a white-lit surface is then a scalar multiple of the sampled texel, so what these
+    // assertions measure is the TEXTURE, not the scene's light levels.
+    const auto shaded_material = [](const vine::intrusive_ptr<Texture>& texture) {
+        auto material = MaterialPtr(new Material());
+        material->setTexture(texture);
+        material->setSpecular(vine::Colorf(0.0f, 0.0f, 0.0f, 0.0f));
+        return material;
+    };
+
+    // The 2-D map: the quad's u axis runs left to right, so its left half must sample the red half.
+    PixelImage uv_image;
+    if (!draw_and_read(RenderCommand(makeTexturedQuad(), shaded_material(makeTwoToneTexture()), Mat4d()), uv_image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the built-in sampling target\n");
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+    int uv_first = -1;
+    int uv_last  = -1;
+    if (!drawnRunOnMiddleRow(uv_image, uv_first, uv_last)) {
+        std::fprintf(stderr, "[selftest] FAIL: the built-in path drew nothing for a textured quad\n");
+        ok = false;
+    }
+    else {
+        const int row   = uv_image.height / 2;
+        const int left  = uv_first + (uv_last - uv_first) / 4;
+        const int right = uv_last - (uv_last - uv_first) / 4;
+        const int left_r  = uv_image.at(left, row, 0);
+        const int left_b  = uv_image.at(left, row, 2);
+        const int right_r = uv_image.at(right, row, 0);
+        const int right_b = uv_image.at(right, row, 2);
+        if (left_r <= left_b + 20) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the engine's forward shader sampled a 2-D map at u = 0.25 as "
+                         "(%d,_,%d), not the texture's RED — the diffuse-map branch did not compile, so the "
+                         "sampler never ran\n",
+                         left_r, left_b);
+            ok = false;
+        }
+        if (right_b <= right_r + 20) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the engine's forward shader sampled a 2-D map at u = 0.75 as "
+                         "(%d,_,%d), not the texture's BLUE — the UVs did not reach the shader\n",
+                         right_r, right_b);
+            ok = false;
+        }
+        if (ok) {
+            std::fprintf(stderr,
+                         "[selftest] built-in sampling: the engine's own forward shader sampled a 2-D map by "
+                         "UV (left (%d,_,%d) = red, right (%d,_,%d) = blue)\n",
+                         left_r, left_b, right_r, right_b);
+        }
+    }
+
+    // The cube map: one frame per face, the direction written into the texcoord channel. The face order is
+    // CubeMap::Face order (+X, -X, +Y, -Y, +Z, -Z) and the colours are makeSixColourCube()'s: red, green,
+    // blue, yellow, magenta, cyan — stated as "which channels lead", which a positive scalar shading cannot
+    // change, so the assertion is about WHICH FACE was sampled and not about the light levels.
+    auto cube_material = shaded_material(makeSixColourCube(8, 3));
+
+    const vine::math::Vec3f directions[6] = { { 1.0f, 0.0f, 0.0f },  { -1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f },
+                                             { 0.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f },  { 0.0f, 0.0f, -1.0f } };
+    const char* face_name[6] = { "+X", "-X", "+Y", "-Y", "+Z", "-Z" };
+    const int   leaders[6][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, { 1, 1, 0 }, { 1, 0, 1 }, { 0, 1, 1 } };
+    int         measured[6][3] = {};
+
+    for (int face = 0; face < 6 && ok; ++face) {
+        PixelImage image;
+        if (!draw_and_read(RenderCommand(makeDirectionQuad(directions[face]), cube_material, Mat4d()), image)) {
+            std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the cube sampling target\n");
+            ok = false;
+            break;
+        }
+        int first = -1;
+        int last  = -1;
+        if (!drawnRunOnMiddleRow(image, first, last)) {
+            std::fprintf(stderr, "[selftest] FAIL: the built-in path drew nothing for a %s direction quad\n",
+                         face_name[face]);
+            ok = false;
+            break;
+        }
+        const int row = image.height / 2;
+        const int x   = first + (last - first) / 2;
+        measured[face][0] = image.at(x, row, 0);
+        measured[face][1] = image.at(x, row, 1);
+        measured[face][2] = image.at(x, row, 2);
+        if (!channelsLead(image, x, row, leaders[face], 20)) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the direction %s sampled (%d,%d,%d), which is not the colour of "
+                         "face %s — the cube map was not sampled by direction\n",
+                         face_name[face], measured[face][0], measured[face][1], measured[face][2], face_name[face]);
+            ok = false;
+        }
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] built-in sampling: the engine's own forward shader sampled a cube map by "
+                     "direction — %s=(%d,%d,%d), %s=(%d,%d,%d), %s=(%d,%d,%d), %s=(%d,%d,%d), %s=(%d,%d,%d), "
+                     "%s=(%d,%d,%d)\n",
+                     face_name[0], measured[0][0], measured[0][1], measured[0][2], face_name[1], measured[1][0],
+                     measured[1][1], measured[1][2], face_name[2], measured[2][0], measured[2][1], measured[2][2],
+                     face_name[3], measured[3][0], measured[3][1], measured[3][2], face_name[4], measured[4][0],
+                     measured[4][1], measured[4][2], face_name[5], measured[5][0], measured[5][1], measured[5][2]);
+    }
+
+    renderer.releasePass(pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
+/**
  * @brief Asserts a cube map's six faces reach the sampler in the order they were named.
  *
  * This is the only thing that can prove the six-layer upload. Every other gate is blind to it: the byte count
@@ -5363,6 +5617,9 @@ int main()
     // line this phase exists to add, so the evidence stays readable as evidence.
     contract_ok = runTexturePhase(*renderer, camera, 3) && contract_ok;
     contract_ok = runCubeMapPhase(*renderer, camera, 3) && contract_ok;
+    // Both of these run through the ENGINE's shader rather than a program of their own, which is what makes
+    // them the gate for the define delivery the two phases above never touch (see the phase).
+    contract_ok = runBuiltinSamplingPhase(*renderer, camera, 3) && contract_ok;
     // The opacity phase also runs after every reporting phase, for the same reason
     // the texture phase does (see above): it drives frames, and nothing it does
     // may move a number another phase reports.

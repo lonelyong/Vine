@@ -410,6 +410,11 @@ class V_GRAPHICS_API Geometry : public Node {
      * Optional: a geometry without UVs still renders, but a material carrying a
      * texture has nothing to sample it with.
      *
+     * States a UV PAIR — two scalars per vertex — which is the shape a 2-D map is sampled with. A cube map
+     * is sampled BY DIRECTION instead: the SAME location carrying three scalars per vertex, spelled
+     * setCubeDirections(). The shape belongs to the channel, not to the location, and the renderer reads it
+     * from the array it binds.
+     *
      * States a WHOLE buffer; the segment overload below states a slice of an arena (see setPositions for
      * what the two spellings share). The unit there is VERTICES, not scalar pairs, so a segment of three
      * vertices is six scalars.
@@ -426,6 +431,31 @@ class V_GRAPHICS_API Geometry : public Node {
      */
     void setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords, std::size_t first_vertex,
                       std::size_t vertex_count);
+
+    /** @brief Sets the cube-map DIRECTIONS (location kTexCoordLocation) by SHARING a vertex buffer.
+     *
+     * A cube map is sampled by DIRECTION: the texcoord slot then carries three scalars per vertex (the vec3
+     * a fragment samples its face with) instead of the two a 2-D map uses. Same slot, same binding, same
+     * location — only the shape differs, which is what lets ONE shader set serve both (the renderer selects
+     * the samplerCube variant from this channel's shape; see the forward shader).
+     *
+     * The material's texture must be a cube map for the map to be sampled: with any other texture the engine
+     * reports it and samples the white cube instead, so a mismatched pair costs the map and not the drawable.
+     *
+     * States a WHOLE buffer; the segment overload below states a slice of an arena (see setPositions).
+     *
+     * @param directions Direction scalars to read (three floats per vertex), or null for an empty channel.
+     */
+    void setCubeDirections(intrusive_ptr<const vine::Buffer<float>> directions);
+
+    /** @brief Sets the cube-map directions to a SEGMENT of a vertex buffer (see setPositions for the units).
+     *
+     * @param directions   Direction scalars to read (three floats per vertex), or null for an empty channel.
+     * @param first_vertex First vertex of this geometry's segment.
+     * @param vertex_count Vertices in the segment, or 0 for the rest of @p directions from @p first_vertex.
+     */
+    void setCubeDirections(intrusive_ptr<const vine::Buffer<float>> directions, std::size_t first_vertex,
+                           std::size_t vertex_count);
 
     /** @brief Returns whether texture coordinates (location kTexCoordLocation) are present. */
     bool hasTexcoords() const;
@@ -579,7 +609,8 @@ class V_GRAPHICS_API Geometry : public Node {
 
     /** @brief The vertex attribute location that carries texture coordinates.
      *
-     * Two scalar components per vertex (`R32G32_SFLOAT`).
+     * TWO scalar components per vertex for a 2-D map (setTexcoords, `R32G32_SFLOAT`), THREE for a cube map
+     * (setCubeDirections, `R32G32B32_SFLOAT`): one location, and the channel's shape says which.
      *
      * The VALUE is the shader ABI's (`attributeLocation(VertexAttribute::TexCoord0)`, see
      * ShaderAbi.hpp), not a number written here: the built-in shaders declare the attribute where the

@@ -287,6 +287,7 @@ struct VsgTextureCache::Data
     Map                              cache;
     InsertionClock                   clock;
     ::vsg::ref_ptr<::vsg::ImageInfo> white;
+    ::vsg::ref_ptr<::vsg::ImageInfo> white_cube;
     // What the device offers (see setMaxAnisotropy); 1 is the safe answer for a cache that was never told.
     float max_anisotropy = 1.0f;
 };
@@ -342,6 +343,54 @@ void VsgTextureCache::setMaxAnisotropy(float device_limit) noexcept
     }
 
     return d->white;
+}
+
+::vsg::ref_ptr<::vsg::ImageInfo> VsgTextureCache::whiteCubeFallback()
+{
+    if (d->white_cube == nullptr) {
+        // Six 1x1 opaque white faces, staged and declared the way makeImage() uploads a real cube: the view
+        // type is stated on the DATA (properties.imageViewType — an ImageView's own viewType is overwritten
+        // from it), a six-layer Array3D carries the faces, and the mipmap layout names the single level.
+        //
+        // Built here rather than by driving a CubeMap through makeImage() so that this path cannot fail:
+        // every texture the cache accepts is filtered by classifyTexture() first, and a fallback that could
+        // itself be refused would leave the cube slot with nothing legal to bind at all.
+        constexpr std::uint32_t kFaceCount     = 6u;
+        constexpr std::uint32_t kBytesPerTexel = 4u;
+        auto                    white_bytes    = ::vsg::ubyteArray::create(kFaceCount * kBytesPerTexel);
+        for (std::size_t byte = 0; byte < white_bytes->size(); ++byte) {
+            white_bytes->data()[byte] = 0xFFu;
+        }
+
+        ::vsg::Data::Properties properties;
+        properties.format        = VK_FORMAT_R8G8B8A8_UNORM;
+        properties.mipLevels     = 1u;
+        properties.imageViewType = VK_IMAGE_VIEW_TYPE_CUBE;
+
+        auto layout    = ::vsg::MipmapLayout::create(1u);
+        layout->at(0u) = ::vsg::uivec4(1u, 1u, 1u, 0u);
+
+        // One array element per face: the row stride is one texel, which is what vsg steps the faces of a
+        // level by (see the padding note in makeMipmapLayout).
+        auto texels = ::vsg::uintArray3D::create(white_bytes, 0u, kBytesPerTexel, 1u, 1u, kFaceCount, properties,
+                                                layout.get());
+
+        auto image = ::vsg::Image::create();
+        image->data          = texels;
+        image->imageType     = VK_IMAGE_TYPE_2D;
+        image->format        = VK_FORMAT_R8G8B8A8_UNORM;
+        image->extent        = { 1u, 1u, 1u };
+        image->mipLevels     = 1u;
+        image->arrayLayers   = kFaceCount;
+        image->flags         = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+        image->usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        image->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        d->white_cube = ::vsg::ImageInfo::create(makeSampler(1u, d->max_anisotropy), ::vsg::ImageView::create(image),
+                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    return d->white_cube;
 }
 
 ::vsg::ref_ptr<::vsg::ImageInfo> VsgTextureCache::getOrCreate(
@@ -411,7 +460,8 @@ std::size_t VsgTextureCache::releaseAbandoned()
 void VsgTextureCache::clear()
 {
     d->cache.clear();
-    d->white = nullptr;
+    d->white      = nullptr;
+    d->white_cube = nullptr;
 }
 
 std::size_t VsgTextureCache::count() const

@@ -1,11 +1,20 @@
 #version 450
+// The backend toggles these per drawable through vsg's compile settings, and vsg delivers a define
+// ONLY when the source asks for it on this line: a name that is missing here is silently dropped (the
+// branch that tests it stays dead, with no error from any layer). Keep the list in sync with the
+// backend's variants — scripts/vine_shader_check.sh compiles every combination of these names.
+#pragma import_defines (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_TEXCOORD_CUBE)
 layout(location = 0) in vec3 v_view_pos;
 layout(location = 1) in vec3 v_view_normal;
 #ifdef VINE_VERTEX_COLOR
 layout(location = 2) in vec4 v_color;
 #endif
 #ifdef VINE_DIFFUSE_MAP
+#if defined(VINE_TEXCOORD_CUBE)
+layout(location = 3) in vec3 v_uv;
+#else
 layout(location = 3) in vec2 v_uv;
+#endif
 #endif
 layout(location = 0) out vec4 out_color;
 
@@ -23,7 +32,14 @@ layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 } material;
 
 #ifdef VINE_DIFFUSE_MAP
+// The sampler kind follows the coordinate the vertex stage declared: a cube map is sampled by
+// direction, a 2-D map by UV. Both branches bind set 0 / binding 1, and the texture the host
+// resolves must be the matching kind (the backend binds a white cube when it is not).
+#if defined(VINE_TEXCOORD_CUBE)
+layout(set = 0, binding = 1) uniform samplerCube diffuseMap;
+#else
 layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
+#endif
 #endif
 
 // Per-drawable values (VineDrawBlock): the model matrix and four scalars the host

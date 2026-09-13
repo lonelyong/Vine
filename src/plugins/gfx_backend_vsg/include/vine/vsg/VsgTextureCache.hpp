@@ -84,6 +84,18 @@ class V_VSG_API VsgTextureCache
     ::vsg::ref_ptr<::vsg::ImageInfo> whiteFallback();
 
     /**
+     * @brief Gets the 1x1 opaque white CUBE texture.
+     *
+     * The cube slot's counterpart of whiteFallback(): one white texel per face, in a cube view. A cube
+     * sampler cannot reuse the 2-D fallback — binding a 2-D view where the shader declares samplerCube is
+     * an invalid descriptor, not an untextured draw — so a cube drawable with no cube texture samples
+     * this instead, and the shader keeps ONE path per kind.
+     *
+     * @return The white cube's resources, never null.
+     */
+    ::vsg::ref_ptr<::vsg::ImageInfo> whiteCubeFallback();
+
+    /**
      * @brief Releases the resources of every texture the app has dropped.
      *
      * An entry is abandoned when the cache is the only owner left (the app released the texture): nothing

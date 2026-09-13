@@ -427,7 +427,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 
 | 词 | 是什么 | 谁决定 |
 | --- | --- | --- |
-| **通道 location** | 你在 Geometry 里填的编号，也就是 `Geometry::attributes_` 的键 | **你**：`setPositions` 0、`setNormals` 1、`setTexcoords` 8；自定义通道 `addBuffer(L, …)`，L ≥ 3 且 ≠ 8 |
+| **通道 location** | 你在 Geometry 里填的编号，也就是 `Geometry::attributes_` 的键 | **你**：`setPositions` 0、`setNormals` 1、`setTexcoords` 8（cube 方向是**同一个槽**的另一种形状：`setCubeDirections`）；自定义通道 `addBuffer(L, …)`，L ≥ 3 且 ≠ 8 |
 | **shader location** | shader 里的 `layout(location = N)` —— 下表比的就是它 | **写 shader 的人**：内建路径用 vsg 的编号，自定义 program 用模块契约 |
 | **数组下标 = Vulkan binding** | 喂入列表里的位置（`VkVertexInputBindingDescription.binding`） | **后端**；你既不写、也看不到，GLSL 里没有这个概念 |
 
@@ -451,6 +451,8 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | 颜色 | 2 | **6** | **2** | 3 |
 | texcoord | **8** | **2** | **8** | 2 |
 | 自定义 | L ≥ 3 且 ≠ 8 | ——（内建 set 不声明它，喂了也不被读） | **L** | 4+i |
+
+> texcoord 槽的**分量数**由通道自己陈述：**2** = UV（`setTexcoords`，`sampler2D`），**3** = cube 方向（`setCubeDirections`，`samplerCube`）。引擎自己的 forward shader 据此编两个变体（`VINE_TEXCOORD_CUBE`），并用该形状对应的采样器：材质纹理种类与槽不匹配时**报一次**并改绑**白色回退**（3 分量时是白色 cube），而不是绑一个非法描述符。用户 program 自带 sampler 与坐标，引擎不替它决定 —— 它的槽里放什么、怎么用，是它自己的事。
 
 > 两套编号**只有 0/1（位置、法线）一致**（实测 `vsg_shader_dump`）：`2` 在内建路径是 texcoord、在自定义路径是颜色。
 > 所以按 vsg 习惯写的 shader（texcoord 写 2、颜色写 6）拿到自定义 program 路径上：location 2 读到的是颜色（静默错值），

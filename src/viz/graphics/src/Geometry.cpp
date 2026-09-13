@@ -176,6 +176,21 @@ void Geometry::setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords, 
               AttributeChannel::slice(std::move(texcoords), kVec2Components, first_vertex, vertex_count));
 }
 
+void Geometry::setCubeDirections(intrusive_ptr<const vine::Buffer<float>> directions)
+{
+    // The SAME slot as setTexcoords, with the other shape: three scalars per vertex, because a cube map is
+    // sampled by direction. The renderer reads the shape off the channel and compiles the samplerCube variant
+    // for it, which is why this is a shape of the texcoord channel rather than a second location.
+    addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(directions), kVec3Components));
+}
+
+void Geometry::setCubeDirections(intrusive_ptr<const vine::Buffer<float>> directions, std::size_t first_vertex,
+                                 std::size_t vertex_count)
+{
+    addBuffer(kTexCoordLocation,
+              AttributeChannel::slice(std::move(directions), kVec3Components, first_vertex, vertex_count));
+}
+
 void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices)
 {
     // One implementation path for both spellings: the whole-buffer form IS the segment form with the

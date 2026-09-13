@@ -393,6 +393,46 @@ TEST(ForwardShaderSetTest, BothStagesGateTheSameInterfaceVariables)
     }
 }
 
+TEST(ForwardShaderSetTest, TheForwardStagesAskForEveryDefineTheBackendCanSet)
+{
+    // vsg assembles the source it hands glslang: it moves `#version` and every `#pragma import_defines` line
+    // into a header and emits `#define <name>` ONLY for the names that pragma lists (ShaderCompiler.cpp,
+    // combineSourceAndDefines). A define the compile settings carry but the source does not ask for is
+    // dropped in SILENCE — no error from vsg, from glslang or from validation — and the branch that tests it
+    // never compiles.
+    //
+    // That is not hypothetical: the texture and the vertex-colour branches of THIS shader were dead until the
+    // pragma was added, and every assertion in this file stayed green through it (the names appear in the
+    // source either way — see BothStagesGateTheSameInterfaceVariables above). The end-to-end proof is the
+    // self-test's "built-in sampling" phase, which draws a textured quad and a cube-mapped quad through this
+    // shader with NO program set.
+    //
+    // The names below are the ones the backend sets: VINE_VERTEX_COLOR / VINE_DIFFUSE_MAP through the set's
+    // attribute and descriptor bindings (VsgPipelineFactory), and VINE_TEXCOORD_CUBE as a per-drawable
+    // compile hint (SceneBridgePipeline).
+    const char* const kBackendDefines[] = { "VINE_VERTEX_COLOR", "VINE_DIFFUSE_MAP", "VINE_TEXCOORD_CUBE" };
+
+    for (auto preset : { vine::graphics::ShaderPreset::StandardPhong, vine::graphics::ShaderPreset::FlatShaded }) {
+        const auto program = vine::graphics::builtinProgram(preset);
+        ASSERT_NE(program, nullptr);
+        ASSERT_EQ(program->stageCount(), 2u);
+        for (std::size_t i = 0; i < program->stageCount(); ++i) {
+            const auto* stage = program->stage(i);
+            ASSERT_NE(stage, nullptr);
+            const std::string source = stage->source.stdstr();
+            const auto        pragma = source.find("#pragma import_defines");
+            ASSERT_NE(pragma, std::string::npos) << "stage " << i << " asks for no define at all";
+            const auto        close = source.find(')', pragma);
+            ASSERT_NE(close, std::string::npos);
+            const std::string asked = source.substr(pragma, close - pragma);
+            for (const char* define : kBackendDefines) {
+                EXPECT_NE(asked.find(define), std::string::npos)
+                    << define << " is set by the backend but not asked for in '" << asked << "'";
+            }
+        }
+    }
+}
+
 TEST(ForwardShaderSetTest, StagesCompileToSpirv)
 {
     // The set only exists when glslang accepted both stages; an empty stage list
