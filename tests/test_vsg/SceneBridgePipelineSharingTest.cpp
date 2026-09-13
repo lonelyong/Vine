@@ -281,6 +281,17 @@ ShaderProgramPtr makeColoredProgram(bool blue)
  * variants, NOT geometry count. N geometry with identical resolved state and
  * material must register ONE vsg::GraphicsPipeline.
  */
+namespace
+{
+
+/** @brief The material block an entry's uniform bytes carry (the engine's ABI, see ShaderAbi.hpp). */
+const vine::graphics::VineMaterialBlock& materialBlockOf(const ::vsg::ref_ptr<::vsg::ubyteArray>& data)
+{
+    return *reinterpret_cast<const vine::graphics::VineMaterialBlock*>(data->data());
+}
+
+}  // namespace
+
 TEST(SceneBridgePipelineSharingTest, IdenticalGeometryShareOnePipeline)
 {
     vine::vsg::SceneBridge bridge;
@@ -450,8 +461,8 @@ TEST(SceneBridgePipelineSharingTest, UpdateMaterialRefreshesInPlace)
     ASSERT_NE(after, nullptr);
     EXPECT_EQ(before.get(), after.get())
         << "updateMaterial must not replace the object bound by live descriptors";
-    EXPECT_NEAR(after->value().diffuse.x, 0.0f, 1e-6f);
-    EXPECT_NEAR(after->value().diffuse.y, 1.0f, 1e-6f);
+    EXPECT_NEAR(materialBlockOf(after).diffuse[0], 0.0f, 1e-6f);
+    EXPECT_NEAR(materialBlockOf(after).diffuse[1], 1.0f, 1e-6f);
     EXPECT_TRUE(after->dynamic());
 }
 
@@ -955,7 +966,7 @@ TEST(SceneBridgePipelineSharingTest, MaterialPropertyEditRewritesUboNoRebuild)
     ASSERT_EQ(created.size(), 1u);
     auto value = manager.find(material.get());
     ASSERT_NE(value, nullptr);
-    EXPECT_NEAR(value->value().diffuse.x, 1.0f, 1e-6f);
+    EXPECT_NEAR(materialBlockOf(value).diffuse[0], 1.0f, 1e-6f);
 
     // Hot-edit the material's diffuse; the graph structure is untouched.
     material->setDiffuse(vine::Colorf(0.0f, 1.0f, 0.0f, 1.0f));
@@ -963,8 +974,8 @@ TEST(SceneBridgePipelineSharingTest, MaterialPropertyEditRewritesUboNoRebuild)
     bridge.syncRenderCommands(commands, root.get(), &created);
     EXPECT_TRUE(created.empty()) << "property edit must not rebuild geometry";
     // The shared UBO now carries the edited colour (same object identity).
-    EXPECT_NEAR(value->value().diffuse.x, 0.0f, 1e-6f);
-    EXPECT_NEAR(value->value().diffuse.y, 1.0f, 1e-6f);
+    EXPECT_NEAR(materialBlockOf(value).diffuse[0], 0.0f, 1e-6f);
+    EXPECT_NEAR(materialBlockOf(value).diffuse[1], 1.0f, 1e-6f);
 }
 
 /**

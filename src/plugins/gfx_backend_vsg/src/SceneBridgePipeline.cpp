@@ -223,12 +223,13 @@ namespace
                                         formatForComponents(components),
                                         sampleVertexData(components));
     }
-    // Material: the same vsg::PhongMaterialValue uniform the default path
-    // binds (SceneBridge assigns the cached value), so a program can read the
-    // Vine material's diffuse/specular etc. Unused when the program does not
-    // read it; harmless in that case.
+    // Material: the ENGINE's block (ShaderAbi.hpp VineMaterialBlock) — the same bytes the default
+    // path binds, filled by the material manager — so a program can read the Vine material's
+    // diffuse/specular/etc. Unused when the program does not read it; harmless in that case.
     shader_set->addDescriptorBinding("material", "", 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
-                                     VK_SHADER_STAGE_FRAGMENT_BIT, ::vsg::PhongMaterialValue::create());
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     ::vsg::ubyteArray::create(
+                                         static_cast<uint32_t>(sizeof(vine::graphics::VineMaterialBlock))));
     // Texture: the optional sampler a program reads as `diffuseMap`.
     // This declaration is NOT optional, because assignTexture() silently does
     // nothing for a name the ShaderSet does not declare: it looks the binding up
@@ -563,13 +564,13 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         config->shaderHints->defines.insert("VINE_TEXCOORD_CUBE");
     }
 
-    // Material resources come from the material manager (converted + cached),
-    // never built ad-hoc here. The same attributes and the shared "material"
-    // uniform are registered on both paths; the actual vertex data is already
-    // bound by the retained data node, so only the bindings are re-declared.
+    // Material resources come from the material manager (filled + cached), never
+    // built ad-hoc here. The same attributes and the shared "material" block are
+    // registered on both paths; the actual vertex data is already bound by the
+    // retained data node, so only the bindings are re-declared.
     {
         auto& material_manager = materialManager();
-        auto  material_value   = material_manager.getOrCreate(material);
+        auto  material_data    = material_manager.getOrCreate(material);
         ::vsg::DataList scratch;
         // vsg matches an array against the ShaderSet's declared binding by NAME
         // and element type, and returns false when nothing matches. A miss is
@@ -626,7 +627,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         for (std::size_t i = 0; i < extra_channels.size(); ++i) {
             assign_array(customAttributeName(extra_channels[i].location), 4u + i);
         }
-        config->assignDescriptor("material", material_value);
+        config->assignDescriptor("material", material_data);
         // The diffuse texture: bound whenever the pipeline samples it. An untextured material resolves to
         // the shared white fallback, so the shader has ONE path (it always multiplies by a texture) —
         // unless the variant dropped the UV attribute, in which case the sampler is gated by the SAME

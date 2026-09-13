@@ -106,6 +106,28 @@ struct alignas(16) VineDrawBlock
     std::array<float, 4>  params{}; ///< User parameter slot (reserved).
 };
 
+/**
+ * @brief Per-material data block the built-in shading reads (L1 shape).
+ *
+ * The engine's material ABI: a backend fills this from vine::graphics::Material and binds it at the
+ * shader's material binding. Field order and std140 offsets are the contract (see the shader's
+ * `VineMaterialBlock`), so the two sides cannot drift: a member added here without the GLSL fails
+ * the static_asserts below or the structural test, never silently mis-reads.
+ *
+ * Transparency is NOT here: opacity is a per-drawable value (VineDrawBlock::params.x), because one
+ * material is shared by every drawable that uses it.
+ */
+struct alignas(16) VineMaterialBlock
+{
+    std::array<float, 4> ambient{};         ///< xyz = colour, w = 1.
+    std::array<float, 4> diffuse{};         ///< xyz = colour, w = the material's own alpha.
+    std::array<float, 4> specular{};        ///< xyz = colour, w = strength.
+    std::array<float, 4> emissive{};        ///< xyz = colour, w unused.
+    float                shininess{ 32.0f };
+    float                alpha_mask{ 1.0f };
+    float                alpha_mask_cutoff{ 0.5f };
+};
+
 // The structs ARE the shader ABI: a member added here without updating the GLSL
 // (or vice versa) must fail the build, not silently mis-read at run time.
 static_assert(sizeof(VineViewBlock) == 288u, "VineViewBlock must be 4 mat4 + 2 vec4");
@@ -115,5 +137,8 @@ static_assert(offsetof(VineViewBlock, frame) == 272u, "VineViewBlock std140 offs
 static_assert(sizeof(VineDrawBlock) == 80u, "VineDrawBlock must be 1 mat4 + 1 vec4");
 static_assert(alignof(VineDrawBlock) == 16u, "VineDrawBlock must stay std140 / D3D-cbuffer aligned");
 static_assert(offsetof(VineDrawBlock, params) == 64u, "VineDrawBlock std140 offset");
+static_assert(sizeof(VineMaterialBlock) == 80u, "VineMaterialBlock must be 4 vec4 + 3 floats (std140 pads it to 80)");
+static_assert(alignof(VineMaterialBlock) == 16u, "VineMaterialBlock must stay std140 / D3D-cbuffer aligned");
+static_assert(offsetof(VineMaterialBlock, shininess) == 64u, "VineMaterialBlock std140 offset");
 
 V_GRAPHICS_NS_END

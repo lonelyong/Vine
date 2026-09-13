@@ -68,6 +68,17 @@ std::vector<MaterialPtr> makeMaterials(std::size_t count)
  * reference must not be the end of it: without this sweep an entry would live
  * until shutdown, which is what made D13 leak.
  */
+namespace
+{
+
+/** @brief The material block an entry's uniform bytes carry (the engine's ABI, see ShaderAbi.hpp). */
+const vine::graphics::VineMaterialBlock& materialBlockOf(const ::vsg::ref_ptr<::vsg::ubyteArray>& data)
+{
+    return *reinterpret_cast<const vine::graphics::VineMaterialBlock*>(data->data());
+}
+
+}  // namespace
+
 TEST(MaterialManagerTest, AbandonedMaterialIsReleasedOnSweep)
 {
     vine::vsg::VsgMaterialManager manager;
@@ -187,9 +198,9 @@ TEST(MaterialManagerTest, UpdateMaterialRewritesOnlyOnChange)
 
     const auto value = manager.getOrCreate(material.get());
     ASSERT_NE(value, nullptr);
-    EXPECT_FLOAT_EQ(value->value().diffuse.x, 0.2f);
+    EXPECT_FLOAT_EQ(materialBlockOf(value).diffuse[0], 0.2f);
     // Opacity rides the per-vertex alpha, never the shared material.
-    EXPECT_FLOAT_EQ(value->value().diffuse.w, 1.0f);
+    EXPECT_FLOAT_EQ(materialBlockOf(value).diffuse[3], 1.0f);
 
     vsg::ModifiedCount snapshot;
     EXPECT_TRUE(value->getModifiedCount(snapshot)); // consumes the current count
@@ -203,7 +214,7 @@ TEST(MaterialManagerTest, UpdateMaterialRewritesOnlyOnChange)
     material->setDiffuse(vine::Colorf(0.9f, 0.1f, 0.1f, 1.0f));
     manager.updateMaterial(material.get());
     EXPECT_TRUE(value->differentModifiedCount(snapshot));
-    EXPECT_FLOAT_EQ(value->value().diffuse.x, 0.9f);
+    EXPECT_FLOAT_EQ(materialBlockOf(value).diffuse[0], 0.9f);
 
     // ... and then goes quiet again.
     vsg::ModifiedCount after;

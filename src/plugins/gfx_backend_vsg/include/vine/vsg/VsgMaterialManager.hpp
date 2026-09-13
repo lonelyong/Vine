@@ -6,9 +6,10 @@
 #include <memory>
 
 #include <vsg/core/ref_ptr.h>
-#include <vsg/state/material.h>
+#include <vsg/core/Array.h>
 
 #include <vine/graphics/MaterialManager.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 
 #include <vine/vsg/OwnedCache.hpp>
 #include <vine/raw_ptr.hpp>
@@ -21,13 +22,17 @@ class Material;
 V_VSG_NS_BEGIN
 
 /**
- * @brief VSG material manager: converts vine materials to Phong resources.
+ * @brief VSG material manager: turns Vine materials into the ENGINE's material block.
  *
- * Implements vine::graphics::MaterialManager by translating a
- * vine::graphics::Material (pure attributes) into a cached
- * vsg::PhongMaterialValue. Multiple drawables sharing the same Material
- * reuse a single Phong resource, avoiding redundant GPU data and pipeline
- * variants.
+ * Implements vine::graphics::MaterialManager by filling a
+ * vine::graphics::VineMaterialBlock (the L1 block the shaders declare, see ShaderAbi.hpp) from a
+ * vine::graphics::Material, and handing it to vsg as a uniform byte array — the same shape the
+ * per-view lights and the per-drawable block use. Multiple drawables sharing one Material reuse one
+ * block, so a property edit is one write rather than one per drawable.
+ *
+ * There is no vsg material TYPE in this path: the payload is our own block, so the engine's material
+ * ABI is the only one in the picture (a vsg::PhongMaterialValue would be a second definition of the
+ * same bytes — it is what this replaced).
  */
 class V_VSG_API VsgMaterialManager : public vine::graphics::MaterialManager {
   public:
@@ -46,23 +51,23 @@ class V_VSG_API VsgMaterialManager : public vine::graphics::MaterialManager {
     ~VsgMaterialManager() override;
 
   public:
-    /** @brief Gets (or creates) the Phong resource for a material.
+    /** @brief Gets (or creates) the material block resource for a material.
      *
-     * @param material Vine material (may be null → default grey).
-     * @return Cached Phong material value.
+     * @param material Vine material (may be null → the default grey).
+     * @return The uniform data to bind at the shader's material binding.
      */
-    ::vsg::ref_ptr<::vsg::PhongMaterialValue> getOrCreate(vine::raw_ptr<vine::graphics::Material> material);
+    ::vsg::ref_ptr<::vsg::ubyteArray> getOrCreate(vine::raw_ptr<vine::graphics::Material> material);
 
-    /** @brief Gets the cached Phong resource for a material without creating one.
+    /** @brief Gets the cached material block for a material without creating one.
      *
      * Non-mutating lookup of the backend resource registered for @p material;
      * unlike getOrCreate() it never builds a new resource.
      *
      * @param material Vine material to look up (by pointer).
-     * @return The cached Phong value, or null when the material is not
+     * @return The cached uniform data, or null when the material is not
      *         registered.
      */
-    ::vsg::ref_ptr<::vsg::PhongMaterialValue> find(vine::raw_ptr<vine::graphics::Material> material) const;
+    ::vsg::ref_ptr<::vsg::ubyteArray> find(vine::raw_ptr<vine::graphics::Material> material) const;
 
   public:
     /** @brief Releases the backend resources of every material the app has dropped.
@@ -109,10 +114,10 @@ class V_VSG_API VsgMaterialManager : public vine::graphics::MaterialManager {
     /** @brief Rebuilds the cached resource for a material.
      *
      * This is the single refresh path: it re-reads the material's parameters and
-     * writes them into the cached Phong value in place (descriptor sets already
-     * point at it) only when they actually changed, so a steady scene transfers
-     * nothing and a property edit shows up live. Callers that used to compare
-     * and write the value themselves (SceneBridge) now just call this.
+     * writes them into the cached block in place (descriptor sets already point
+     * at it) only when they actually changed, so a steady scene transfers nothing
+     * and a property edit shows up live. Callers that used to compare and write
+     * the value themselves (SceneBridge) now just call this.
      */
     void updateMaterial(vine::raw_ptr<vine::graphics::Material> material) override;
 
@@ -122,10 +127,10 @@ class V_VSG_API VsgMaterialManager : public vine::graphics::MaterialManager {
     /** @brief Releases all cached resources. */
     void clear() override;
 
-    /** @brief Gets the number of materials with a registered Phong resource. */
+    /** @brief Gets the number of materials with a registered material block. */
     std::size_t materialCount() const override;
 
-    /** @brief Whether a material has a registered Phong resource. */
+    /** @brief Whether a material has a registered material block. */
     bool hasMaterial(vine::raw_ptr<vine::graphics::Material> material) const override;
 
     /** @brief Invokes @p visitor for every registered material. */

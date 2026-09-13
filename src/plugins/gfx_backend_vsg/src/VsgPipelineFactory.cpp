@@ -263,10 +263,13 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
                                     VK_FORMAT_R32G32_SFLOAT, ::vsg::vec2Array::create(1));
     shader_set->addAttributeBinding("vine_Color", "VINE_VERTEX_COLOR", attributeLocation(VertexAttribute::Color),
                                     VK_FORMAT_R32G32B32A32_SFLOAT, ::vsg::vec4Array::create(1));
-    // Material: the same vsg::PhongMaterialValue the built-in path binds, which
-    // is why the material manager and the deferred G-buffer stage need no change.
+    // Material: the ENGINE's block (ShaderAbi.hpp VineMaterialBlock), declared with the bytes the
+    // material manager fills — our own ABI, not a vsg material type. The sample only states the size
+    // and layout vsg must expect, exactly as the lights / per-drawable bindings below do.
     shader_set->addDescriptorBinding("material", "", 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
-                                     VK_SHADER_STAGE_FRAGMENT_BIT, ::vsg::PhongMaterialValue::create());
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     ::vsg::ubyteArray::create(
+                                         static_cast<uint32_t>(sizeof(vine::graphics::VineMaterialBlock))));
     // Texture: the resolved diffuse map (the material's own, or the cache's white
     // fallback), gated so geometry without UVs compiles without the sampler.
     shader_set->addDescriptorBinding("diffuseMap", "VINE_DIFFUSE_MAP", 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
