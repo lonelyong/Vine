@@ -44,7 +44,7 @@ deferred 光照 pass 复刻当前 phong 产出（与现在画面一致 A/B）。
 ### 4.2 命名产出（engine）：保持 1 RT = 1 name，纹理在 RT 内
 - **不**为每个附件造独立 name（避免注册表双写/悬垂）。`outputs_[name] = RenderTarget*` 不变；
   一个 MRT RT（含 N 张纹理）以一个名字发布。
-- 消费端按需选附件：`ScreenPass::setSourceAttachment(int)`（默认 0）；未来 LightPass 绑
+- 消费端按需选附件：~~`ScreenPass::setSourceAttachment(int)`~~（**2026-09-13 删除**：附件就是 program 的 sampler binding，见 `vsg-custom-shader.md` §11.11）；未来 LightPass 绑
   att0/1/2。发布语义 = "这个 RT 画完了"，附件是 RT 的属性 → 多输出能力的承载点是 **RenderTarget**。
 
 ### 4.3 RenderBackend（采样附件）

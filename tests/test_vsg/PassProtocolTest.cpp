@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderPass.hpp>
@@ -233,7 +234,8 @@ TEST(PassProtocolTest, DrawingOnAReleasedTargetIsRefusedAndReportedOnce)
     // ...and the other entry points that draw into the announced target refuse it too.
     RenderTargetPtr source(new RenderTarget());
     renderer.clear(vine::Color(0, 0, 0, 255), true);
-    renderer.drawScreenTexture(source.get(), 0);
+    const auto copy_program = vine::graphics::screenCopyProgram();
+    renderer.drawScreenProgram(source.get(), copy_program.get(), nullptr);
     EXPECT_EQ(captured.items.size(), 1u);
 
     // Announcing a target again ends the episode: calls are served from here on.

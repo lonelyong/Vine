@@ -62,9 +62,51 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> flatForwardProgram();
 V_GRAPHICS_API intrusive_ptr<ShaderProgram> gbufferGeometryProgram();
 
 /**
+ * @brief The built-in fullscreen-triangle VERTEX program every fullscreen FRAGMENT stage is written against.
+ *
+ * This is the interface a fullscreen fragment stage compiles against, whether it is one of the SDK's
+ * (deferredLightProgram / screenCopyProgram) or the host's own:
+ *
+ *   * the fragment stage declares `layout(location = 0) in vec2 v_uv;`, spanning [0, 1] over the
+ *     destination rectangle with (0, 0) at the TOP-LEFT of the source image AS THE READ-BACK API
+ *     RETURNS IT — a copy samples it directly, with no Y flip;
+ *   * it declares its own outputs (`layout(location = 0) out vec4 out_color;`);
+ *   * source textures arrive at binding 0..N-1 (see ScreenPass::setProgram);
+ *   * there is no vertex buffer and no vertex-side push constant: the triangle is three vertices
+ *     generated from gl_VertexIndex.
+ *
+ * The engine owns this text (a full-screen triangle is what every fullscreen picture in the engine
+ * has been sampled through since long before it was written down here). A backend may use its own
+ * vertex stage instead, but it has to provide THIS interface — the fragment stages cannot tell.
+ *
+ * @return The vertex program (fresh per call; a backend composes it with a fragment stage).
+ */
+V_GRAPHICS_API intrusive_ptr<ShaderProgram> fullscreenVertexProgram();
+
+/**
+ * @brief The built-in plain screen copy: one colour attachment of the source, sampled 1:1.
+ *
+ * The text behind what a bare ScreenPass used to get implicitly — now a program the host NAMES, so a
+ * copy that wants different filtering, a colour transform or a tonemap is a different program rather
+ * than a backend setting (see ScreenPass::setProgram).
+ *
+ * The BINDING is the attachment: @p attachment is written into the fragment stage as its sampler's
+ * binding, which is how the fullscreen program ABI says "the source's attachment N". Use 0 for the
+ * common copy of a target's first colour attachment.
+ *
+ * @param attachment Colour attachment of the source to sample (binding index in the generated text).
+ * @return The fragment program (fresh per call; see fullscreenVertexProgram for the vertex stage).
+ */
+V_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0);
+
+/**
  * @brief The built-in fullscreen deferred-lighting program.
  *
- * @return The fragment program (a backend supplies its own fullscreen vertex stage).
+ * Reads a G-buffer's colour attachments by binding (albedo / normal+shininess / specular / view
+ * position) and the pass camera's lights; see fullscreenVertexProgram for the fragment-stage
+ * interface it shares with every other fullscreen program.
+ *
+ * @return The fragment program (see fullscreenVertexProgram for the vertex stage).
  */
 V_GRAPHICS_API intrusive_ptr<ShaderProgram> deferredLightProgram();
 

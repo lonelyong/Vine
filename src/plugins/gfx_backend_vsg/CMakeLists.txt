@@ -129,9 +129,8 @@ target_link_libraries(${GFX_BACKEND_VSG_TARGET} PRIVATE
     vi::Logging
     vsg::vsg)
 
-# The backend's own GLSL stages live in shaders/ and reach the plugin as the
-# generated vine/vsg/EmbeddedShaders.hpp (see cmake/VineShaders.cmake).
-v_use_embedded_shaders(${GFX_BACKEND_VSG_TARGET} OUTPUT vine/vsg/EmbeddedShaders.hpp SOURCES)
+# The backend has no GLSL of its own: every stage it compiles comes from the SDK
+# (vine/graphics/EmbeddedShaders.hpp, via BuiltinShaders). See cmake/VineShaders.cmake.
 
 # TEMP diagnostic: standalone minimal vsg executable that renders a red box
 # through vsg's own Builder/phong path, to isolate whether the vendored vsg
@@ -182,6 +181,4 @@ target_compile_definitions(vsg_backend_selftest PRIVATE V_VSG_LIB)
 target_include_directories(vsg_backend_selftest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(vsg_backend_selftest PRIVATE vi::Graphics vi::Logging vsg::vsg)
-# It compiles the plugin's own sources, so it needs the same embedded shaders.
-v_use_embedded_shaders(vsg_backend_selftest OUTPUT vine/vsg/EmbeddedShaders.hpp SOURCES)
 set_target_properties(vsg_backend_selftest PROPERTIES FOLDER third_party)

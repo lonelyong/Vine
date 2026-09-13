@@ -83,7 +83,6 @@ bool borrowNeedsRebuild(const VsgRendererState& state, const VsgRenderTargetEntr
 void resetTargetAttachments(VsgRenderTargetEntry& t)
 {
     t.content_slots.clear();
-    t.screen_slots.clear();
     t.program_slots.clear();
     t.color_images.clear();
     t.color_views.clear();
@@ -114,15 +113,6 @@ void dropConsumersSampling(VsgRendererState& state, const vine::graphics::Render
         auto& other = entry.second;
         if (entry.first == target || (!other.attachments_built && other.graph == nullptr)) {
             continue;
-        }
-        for (auto it = other.screen_slots.begin(); it != other.screen_slots.end();) {
-            if (it->second.source_target == target) {
-                detachSlotView(state, other, entry.first, it->first, it->second.view);
-                it = other.screen_slots.erase(it);
-            }
-            else {
-                ++it;
-            }
         }
         for (auto it = other.program_slots.begin(); it != other.program_slots.end();) {
             if (it->second.source_target == target) {

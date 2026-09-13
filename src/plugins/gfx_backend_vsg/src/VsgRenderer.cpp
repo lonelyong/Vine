@@ -884,16 +884,6 @@ void VsgRenderer::releaseWindowLayer(vine::raw_ptr<const vine::graphics::Camera>
     detail::releaseWindowLayer(state, camera, order);
 }
 
-void VsgRenderer::drawScreenTexture(vine::graphics::RenderTarget* source, int attachment)
-{
-    // Both screen paths draw into the CURRENT target (setRenderTarget), so a released
-    // announcement refuses them exactly as it refuses render().
-    if (refuseDeadTargetAnnouncement("drawScreenTexture()")) {
-        return;
-    }
-    detail::drawScreenTexture(state, diagnostics, source, attachment);
-}
-
 void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget* source,
                                     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
                                     vine::raw_ptr<const vine::graphics::Camera>        camera)

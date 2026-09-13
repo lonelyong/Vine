@@ -283,7 +283,7 @@ RecordTraversal 每个 drawable 绘制前自动填 → 自定义 program 路径�
 | 归属 | 目录 | 生成的头文件 | 命名空间 | 谁在用 |
 | --- | --- | --- | --- | --- |
 | graphics SDK（内建 program） | `src/viz/graphics/shaders/` | `vine/graphics/EmbeddedShaders.hpp` | `vine::graphics::shaders` | `BuiltinShaders`（`forwardProgram()` / `flatForwardProgram()` 前向着色 + gbuffer 几何 / 全屏光照）；`RenderPipelineBuilder` 是它的别名 |
-| vsg 后端（自有阶段） | `src/plugins/gfx_backend_vsg/shaders/` | `vine/vsg/EmbeddedShaders.hpp` | `vine::vsg::shaders` | `VsgPipelineFactory`（overlay / PiP 全屏三角形）。**前向着色已不在这里**（2026-09-13 起归 SDK，见 §11.7） |
+| vsg 后端（自有阶段）—— **已取消（2026-09-13，见 §11.11）** | ~~`src/plugins/gfx_backend_vsg/shaders/`~~ 目录已删除 | ~~`vine/vsg/EmbeddedShaders.hpp`~~ | ~~`vine::vsg::shaders`~~ | 全屏三角形与屏幕拷贝现在都是 SDK program（`BuiltinShaders::fullscreenVertexProgram` / `screenCopyProgram`）。**清单只剩一个 owner**：`vine/graphics/EmbeddedShaders.hpp` |
 
 约定：
 
@@ -587,3 +587,32 @@ binding 声明 —— 一个 ShaderSet 服务两种形状时，必须由阵列�
 | 命名（同日） | 这一版最初叫 `setContentProgram` / `contentProgram()`。**同批改名**：`setDefaultContentProgram` / `defaultContentProgram()`——它设的是**默认值**（drawable 自己的 program 仍然优先），而 `setContentProgram` 读起来像"把所有内容都换成这个"，与事实相反（同批把 `RenderBackend` 的 `@brief` 里残留的 "Selects the shading-model preset" 也修掉了） |
 | 单元门禁 | `ForwardShaderSetTest` 四处结构性改写（`OnlyProgramsWithUsableStagesGetASet`、`AProgramWithNoUsableStagesIsDeclinedNotSubstituted`、`EveryContentSetIsTheEnginesOwn`、`TheLightSourceFollowsTheSlotSetNotTheSession`、`TheFlatProgramReusesTheForwardStagesWithItsDefine`）；`GraphicsTest::DefaultContentProgramForwardedToBackend`（含"运行中也要被告知"与"null 是合法答案"）；新增 `RenderPipelineBuilderTest::ShadowedPresetsReportThatTheyArePlaceholders` |
 | 判据 | 证据基线 53 行**逐字节不变，只改了 3 行的词**（`preset shading:` / `live preset switch:` → `program shading:` / `live program switch:`），**所有数字原样**：`42` / `765` / `(255,255,255)` / `(10,20,30)`——即画面完全没动；test_graphics 247 → **248**（+1，变异验证：关掉 `reportEngineProblem` 该测试必失败）；test_vsg **252 不变**（改写而非新增）；`vine_shader_check.sh` PASS；`check_diagnostic_formats.py` 0 suspicious；lavapipe PASS；ctest 仅 3 个既有失败（test_cppstd / test_runtime / test_system） |
+
+### 11.11 全屏着色也归 SDK：ScreenPass 必须命名 program，后端不再有 shader（2026-09-13）
+
+**决定**（用户口径）："这个也要用户自己指定吧，screenpass 的着色器不应该是一样的" + "能复用的 shader 都放到 BuiltinShaders 里面去"。
+
+**为什么**：本后端曾经自带两段 GLSL（`shaders/fullscreen.vert`、`shaders/screen_texture.frag`），两段都在**引擎可见的画面**后面：
+
+- 没有 program 的 `ScreenPass` 画的**就是**那段屏幕拷贝文本 —— 引擎的文档写着"纯拷贝"（`ScreenPass` 类注释、`setSourceAttachment`），而那段文本住在一个后端里；
+- 所有全屏 program（延迟光照、宿主后处理）都是照那个三角形写的，`v_uv` 的存在、范围和 Y 方向**只在后端的 GLSL 里**（SDK 只在 `ScreenPass::setProgram` 写了"后端提供全屏顶点段"），没有任何门禁能挡住它漂移。
+
+这与 `vine_forward` 当初归 SDK 是同一条判据：**引擎承诺的画面，其文本不能住在某一个后端里**。
+
+| 环节 | 落点 |
+| --- | --- |
+| 文件搬家 | `src/plugins/gfx_backend_vsg/shaders/{fullscreen.vert,screen_texture.frag}` → **`src/viz/graphics/shaders/{fullscreen.vert,screen_copy.frag}`**；`cmake/VineShaders.cmake` 从"两个 owner"改成**一个**（`vine/graphics/EmbeddedShaders.hpp`，7 个源）；`vine/vsg/EmbeddedShaders.hpp` 与那三个 `v_use_embedded_shaders(... vine/vsg ...)` 一起删除 |
+| SDK 工厂 | 新增 **`fullscreenVertexProgram()`**（顶点段；把 v_uv 的 location / 范围 / 方向 / "无顶点缓冲、无顶点侧 push"写成 ABI 文档）与 **`screenCopyProgram(int attachment = 0)`**（片元段；**binding 就是附件**，`screenCopyProgram(N)` 把 `layout(binding = N)` 写进文本，N≠0 时替换那一行——脚本化的替换靠一条被单测钉住的 marker 行） |
+| 后端 | `VsgPipelineFactory::fullscreenVertexSource()` **直接读 SDK program 的 stage**（不再嵌入第二份）；删除 `makeScreenTextureNode`、`RenderBackend::drawScreenTexture`（两个重载）、`VsgRenderer::drawScreenTexture`、`detail::drawScreenTexture` —— **全屏只剩一条路径**（`drawScreenProgram`） |
+| `ScreenPass` | **program 必需**：删除 `setSourceAttachment`/`sourceAttachment`/`attachmentToSample()` 与 execute 里的拷贝分支；`setProgram` 的文档写明全屏 ABI（binding i = 附件 i、v_uv、相机必需）；没有 program 的 `ScreenPass` **不画**并报一次 |
+| 引擎接线 | `validateWiring` 的 phase 3 改成三问、按宿主必须的修复顺序 `continue`：① 没有 program（新）② 声明里没有任何输入 ③ 没有相机。**删除 phase 3b**（"无 program 的 ScreenPass 只能采一张彩色附件"）——那条规则随路径一起消失，原来被它报的"只声明深度"现在是**合法**的 |
+| 后端槽表 | 删除 `ScreenSlot` / `screen_slots` / `SlotKind::Screen` 及其顺序图、清理、重试逻辑（4 个文件）——PiP 与延迟光照现在是同一种槽 |
+| 调用方 | SDK 自己的配方也**命名**程序：`RenderPipelineBuilder::build` 的 `present`、`addOffscreenToScreen` 的 PiP（并补 `setCamera`）；AppShell 的 PiP / 4 张 G-buffer 预览各用 `screenCopyProgram(attachment)`；selftest 的直驱相位同样命名（并**把 pass 对象提到帧循环外**——见下） |
+| 判据 | **证据基线 53 行逐字节不变**（PiP / 合成 / 深度共享那些数字全不动，说明"同一段文本走另一条绑定路径"画面一致）；test_graphics **248**（删 1 加 1：`ScreenPassWithoutAProgramIsReportedAndDrawsNothing` 取代 `ScreenPassDeclaringOnlyDepthIsReportedNotSilentlySubstituted`）；test_vsg **252 → 251**（`EmbeddedShadersTest` 的 5 条换成 `OverlayStagesTest` 的 4 条：后端用 SDK 的顶点段、拷贝程序的 ABI、binding 即附件）；`vine_shader_check` PASS（7 shader，全部 SDK）；lavapipe PASS；ctest 仅 3 个既有失败 |
+
+**踩过的两个坑（都是门禁抓到的）**：
+
+1. **帧循环里 new 一个 pass = 每帧换一次槽身份**：我给 selftest 的直驱屏幕画补了 pass scope，却把 `RenderPassPtr` 建在循环里；后端按**pass 指针**做槽的身份，于是每帧都是新槽、旧槽的管线/图像在飞行中被释放 ⇒ lavapipe 报 `VUID-vkDestroyImage/Pipeline-*`（证据行仍然全绿！）。修法：pass 对象提到循环外（引擎本来就是这么做的：pass 活在槽表里）。
+2. **`vine_shader_check.sh` 用 glob 枚举生成头**：删掉 manifest 里的 owner 后，`build/generated/vine/vsg/EmbeddedShaders.hpp` 仍留在磁盘上，脚本继续检查一个**已经不存在的 owner**，于是报"screen_texture.frag: embedded but not found under src/"。修法：脚本改成**从 manifest 读 `OUTPUT` 行**（顺带让"验证清单里列出的每个 shader"这句话变成真的）。
+
+**顺带修的**：`RenderBackend::setDefaultContentProgram` 的 `@brief` 里还残留"Selects the shading-model preset"（上一个切片漏掉的）；以及 selftest 里屏幕画现在必须显式命名程序，所以 copy program 在相位里**只建一次**（后端按 program 对象缓存编译结果，每次调用新建 program = 每帧重新编译）。

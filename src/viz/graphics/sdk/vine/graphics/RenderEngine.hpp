@@ -588,12 +588,10 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     /// way; see validateWiring).
     std::set<raw_ptr<const RenderPass>> missing_inputs_reported_;
 
-    /// ScreenPasses (without a program) whose declared input images are ALL depth images: the
-    /// texture path copies one COLOUR attachment, so such a declaration cannot drive it — the pass
-    /// would sample the attachment it was left with (sourceAttachment(), 0 by default) while the
-    /// host declared the depth. Pruned the same way as the reports above, so a pass that declares a
-    /// colour image (or gains a program) is re-armed.
-    std::set<raw_ptr<const RenderPass>> unsampleable_screen_inputs_reported_;
+    /// ScreenPasses with NO program: there is no implicit shading for them (see
+    /// BuiltinShaders::screenCopyProgram), so such a pass draws nothing. Pruned the same way as the
+    /// reports above, so a pass that is given a program is re-armed.
+    std::set<raw_ptr<const RenderPass>> screen_passes_without_program_reported_;
 
     /// ScreenPasses that carry a fullscreen program but no camera: the program path builds the
     /// pass' view from the camera, so such a pass draws nothing at all. Pruned the same way, so a

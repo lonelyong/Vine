@@ -13,7 +13,9 @@
 > （`RenderBackendFactory/Registry::create()` 无参）；`Overlay` 类已删（顶部/HUD = 高 order 普通 pass，
 > 见 `.ai/design/graphics-overlay.md`）。后端维护单一 `targets[RenderTarget*]` 表（nullptr 键 = 窗口），
 > 窗口与离屏**同构为统一 `Target`**：每个 target = 一个 RenderGraph + 按 `(camera, pass order)`
-> 键的 `content_slots[]`（每槽 = 保留 View/root/SceneBridge）+ PiP `screen_slots[]`；窗口图 = 共享
+> 键的 `content_slots[]`（每槽 = 保留 View/root/SceneBridge）+ `program_slots[]`（全屏 program：延迟光照 /
+> PiP 拷贝 —— **2026-09-13 起只有这一种**，`screen_slots` / `drawScreenTexture` / 后端自身的
+> `shaders/` 目录都已删除，见 `.ai/design/vsg-custom-shader.md` §11.11）；窗口图 = 共享
 > swapchain 图，离屏 target 自持附件（image/view/render_pass/framebuffer）。主/顶(HUD) 由 `clear()`
 > 标记判定（清屏→depth-on 主槽，否则 depth-off+ambient 顶部槽）；同 target 多个不同 order 槽 = 各自
 > 独立保留 ContentSlot 顺序叠画（窗口与离屏同一套代码，`renderContentSlot`/`setupContentSlot` 单一

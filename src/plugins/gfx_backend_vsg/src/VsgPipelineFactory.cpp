@@ -67,7 +67,7 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/CameraBridge.hpp>
-#include <vine/vsg/EmbeddedShaders.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 #include <vine/vsg/VsgUtils.hpp>
@@ -611,7 +611,14 @@ bool passVariantIsStale(bool recorded_want_color_clear, bool recorded_want_depth
 
 const std::string& fullscreenVertexSource()
 {
-    static const std::string source(asShaderSource(shaders::kFullscreenVert));
+    // The SDK owns the text (BuiltinShaders::fullscreenVertexProgram); this backend only serves it
+    // in the shape vsg wants (a source string to fuse with a fragment stage). Reading the stage from
+    // the program — rather than embedding a second copy — is what makes it impossible for a
+    // full-screen program to be compiled against a triangle the engine did not state.
+    static const std::string source = [] {
+        const auto program = vine::graphics::fullscreenVertexProgram();
+        return program->stage(0)->source.stdstr();
+    }();
     return source;
 }
 
@@ -635,11 +642,10 @@ const std::string& fullscreenVertexSource()
 /**
  * @brief Compiles an overlay drawable's stages into a ShaderSet ready to configure.
  *
- * Both overlay drawables (the PiP screen triangle and the user fullscreen program)
- * are the same thing to the device: a fullscreen triangle drawn with depth test and
- * write off, blending off and the overlay's own viewport, its samples bound to set 0
- * and their shader modules compiled at run time. This is the half that does not
- * depend on WHAT is sampled; the caller adds the descriptor bindings and textures.
+ * A full-screen draw is a fullscreen triangle (the SDK's canonical vertex stage), depth test and
+ * write off, blending off, the pass' own viewport, its samples bound to set 0 and its shader
+ * modules compiled at run time. This is the half that does not depend on WHAT is sampled; the
+ * caller adds the descriptor bindings and textures.
  *
  * @param vertex_source   Vertex stage source (see fullscreenVertexSource).
  * @param fragment_source Fragment stage source.
@@ -679,8 +685,8 @@ const std::string& fullscreenVertexSource()
  * @brief Wraps a configured overlay pipeline into the drawable an overlay View records.
  *
  * @param config    Configured pipeline (its textures assigned; init() runs here).
- * @param push_data Per-frame push-constant bytes, or null for a drawable that reads
- *                  none (the PiP screen triangle).
+ * @param push_data Per-frame push-constant bytes (every full-screen draw reads the pass' view
+ *                  and lights; a program that uses neither still gets the block).
  * @return The state group holding the pipeline and the fullscreen triangle draw.
  */
 ::vsg::ref_ptr<::vsg::StateGroup> makeOverlayStateGroup(const ::vsg::ref_ptr<::vsg::GraphicsPipelineConfigurator>& config,
@@ -700,30 +706,6 @@ const std::string& fullscreenVertexSource()
     return state_group;
 }
 
-::vsg::ref_ptr<::vsg::Node> makeScreenTextureNode(::vsg::ref_ptr<::vsg::ImageView> image_view, const VkExtent2D& extent,
-                                                  ProgramNodeFailure* failure)
-{
-    // The caller owns the reporting (it knows which pass asked and which sink to
-    // use); this helper only says why it could not build the node.
-    if (failure != nullptr) {
-        *failure = ProgramNodeFailure::None;
-    }
-    const std::string vertex_source   = fullscreenVertexSource();
-    const std::string fragment_source(asShaderSource(shaders::kScreenTextureFrag));
-
-    auto shader_set = makeOverlayShaderSet(vertex_source, fragment_source, "main", extent, failure);
-    if (shader_set == nullptr) {
-        return {};
-    }
-    shader_set->addDescriptorBinding("screen_tex", "", 0, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
-                                     VK_SHADER_STAGE_FRAGMENT_BIT, {});
-
-    auto config     = ::vsg::GraphicsPipelineConfigurator::create(shader_set);
-    auto sampler    = ::vsg::Sampler::create();
-    auto image_info = ::vsg::ImageInfo::create(sampler, image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    config->assignTexture("screen_tex", ::vsg::ImageInfoList{ image_info });
-    return makeOverlayStateGroup(config, ::vsg::ref_ptr<::vsg::Data>());
-}
 
 /**
  * @brief Collects the descriptor bindings a GLSL source DECLARES.

@@ -417,12 +417,12 @@ bool passVariantIsStale(bool recorded_want_color_clear, bool recorded_want_depth
                         bool want_depth_clear);
 
 /**
- * @brief Vertex shader source shared by the full-screen overlay passes.
+ * @brief The SDK's canonical full-screen triangle, as GLSL source.
  *
- * Generates the full-screen triangle from gl_VertexIndex alone, so the draws
- * need no vertex buffers or camera matrices. Both overlay builders (PiP
- * screen sampling and fullscreen user-program lighting) use this identical
- * vertex stage.
+ * The text belongs to the SDK (BuiltinShaders::fullscreenVertexProgram): the engine owns the
+ * interface every full-screen fragment stage is written against, so a backend cannot change what a
+ * full-screen program sees by shipping a different triangle. This helper only serves that stage
+ * the way the device needs it — a string to fuse with a fragment stage into one ShaderSet.
  *
  * @return The GLSL vertex source.
  */
@@ -432,31 +432,14 @@ const std::string& fullscreenVertexSource();
  * @brief Builds the default pipeline states for the full-screen overlay
  * passes.
  *
- * Both overlay draws (PiP screen sampling, fullscreen program lighting)
- * composite over already-rendered content: depth test/write stay off and the
- * rasterizer culls nothing; blending stays at the opaque default because each
- * pass replaces the sub-viewport it owns.
+ * A full-screen program draw composites over already-rendered content: depth
+ * test/write stay off and the rasterizer culls nothing; blending stays at the
+ * opaque default because the pass replaces the sub-viewport it owns.
  *
  * @param extent Surface extent for the baked static viewport.
  * @return The default GraphicsPipelineStates.
  */
 ::vsg::GraphicsPipelineStates makeOverlayPipelineStates(const VkExtent2D& extent);
-
-/**
- * @brief Builds a state-group that draws a full-screen textured triangle
- * sampling @p image_view into the current target.
- *
- * The vertex shader generates the full-screen triangle from gl_VertexIndex
- * (no vertex buffers / camera matrices involved); the fragment shader samples
- * the passed image. Depth test/write are disabled so the textured triangle
- * composites over previously rendered content (used by the PiP screen pass).
- *
- * @param image_view Image to sample (the off-screen target's colour view).
- * @param extent     Surface extent for the baked static viewport.
- * @return The drawable state-group, or null when shader compilation failed.
- */
-::vsg::ref_ptr<::vsg::Node> makeScreenTextureNode(::vsg::ref_ptr<::vsg::ImageView> image_view, const VkExtent2D& extent,
-                                                  ProgramNodeFailure* failure = nullptr);
 
 /**
  * @brief Builds a full-screen textured node running a user fragment program.

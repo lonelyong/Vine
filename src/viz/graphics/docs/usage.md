@@ -87,10 +87,12 @@ engine.setBackend(backend);
   `shutdown()`。
 - `RenderPass` —— 相机 + 渲染目标 + 渲染状态 + 清屏/深度策略。**没有 renderTarget 的 pass 画进窗口**，
   order 决定先后。
-- `ScreenPass` —— `RenderPass` 子类，全屏 / 画中画：
-  - **没有 program** ⇒ 纯拷贝：采样解析出来的源 target 的第 `sourceAttachment()`（默认 0）张彩色图；
-  - **有 program** ⇒ 后处理 / 延迟光照：把源的**每一张**彩色附件按 binding 0..N-1 绑成采样纹理，用该
-    fragment program 画一个全屏三角形。**这条路径必须有相机**（否则什么都不画，引擎在接线期报一次）。
+- `ScreenPass` —— `RenderPass` 子类，全屏 / 画中画。**必须命名 program**（没有隐式着色，也没有
+  隐式拷贝）：
+  - 把源的**每一张**彩色附件按 binding 0..N-1 绑成采样纹理，用它画一个全屏三角形；想读哪张附件，
+    就在 program 里写 `layout(binding = N)`（`screenCopyProgram(N)` 就是这个）；
+  - **纯拷贝 = `BuiltinShaders::screenCopyProgram()`**（SDK 的命名程序，不是后端默认）；
+  - **必须有相机**（否则什么都不画，引擎在接线期报一次）；**没有 program 也不画**（同样接线期报一次）。
 - `RenderTarget` —— 若干彩色附件 + 可选深度：`attachColor(fmt)` / `attachDepth(fmt)` / `setSize(w,h)`，
   以及 `shareDepth(source)`（借用别人的深度）与 `setDepthPromotion(bool)`（深度是否变成可采样）。
 - `RenderPipelineBuilder` —— 配方层：`build(PipelinePreset::Forward | Deferred | …)`、
@@ -222,7 +224,8 @@ geometry->setRevision(geometry->revision() + 1);        // 公告：重建数据
 
 ### 3.3 例：纯手动 2 pass —— 离屏渲染 + 全屏合成到窗口
 
-不写任何 shader：`ScreenPass` 不带 program 就是"把一张彩色图拷到目标子视口"。
+不写任何 shader：`ScreenPass` 配 `BuiltinShaders::screenCopyProgram()` 就是"把一张彩色图拷到目标
+子视口"——**要显式命名**它（没有隐式拷贝），并且这条 pass 需要有相机。
 
 ```cpp
 // ① 离屏目标：一张 RGBA8 彩色 + D24 深度。
@@ -249,6 +252,7 @@ engine.addPass(scene_pass, scene, -1);                 // -1 < 0：排在主 pas
 auto compose = make_intrusive<ScreenPass>();
 compose->setName(u8"compose_to_window");
 compose->setCamera(camera.get());                      // 窗口 pass 的相机决定窗口视角
+compose->setProgram(screenCopyProgram());              // 画面是**命名**的：纯拷贝用 SDK 的这个程序
 compose->addInputName(u8"SceneColor");                 // 名字形式
 compose->addInputTarget(scene_rt);                     // 对象形式（两层在地址上汇合）
 compose->setSourceAttachment(0);                       // 采第 0 张彩色图
@@ -333,7 +337,7 @@ engine.addPass(present, 2);
 | ① | `gbuffer`（场景，program override） | `gbuffer`（MRT 4 色 + D24） | -3 | 是 | `TestAndWrite` | `GBuffer` |
 | ② | `deferred_light`（ScreenPass + program） | `composite` | 0 | 是 | 默认 | 读 `GBuffer`（整捆） |
 | ③ | `forward_transparent`（场景） | `composite`（借 gbuffer 深度） | 1 | **否** | `TestOnly` | `Composite` |
-| ④ | `present`（ScreenPass 拷贝） | 无（窗口） | 2 | 否 | 默认 | 读 `Composite`（整捆） |
+| ④ | `present`（ScreenPass + `screenCopyProgram()`） | 无（窗口） | 2 | 否 | 默认 | 读 `Composite`（整捆） |
 
 要点：
 
@@ -416,8 +420,9 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | --- | --- |
 | 同一张图被两个 pass 声明为输出 | 两个不同 pass 声明同一 (target, 附件)；同名不同 target 走名字侧 |
 | 消费者声明了输入，但本帧没人产出 | 该图没有生产者/生产者排在其后/生产者禁用 |
-| `ScreenPass` 完全没有可用输入 | 无 `program` 且没声明任何彩色图（只声明深度会被静默替换成彩色 0 ⇒ 报） |
-| `ScreenPass` 有 program 但没有相机 | 这条路径必须先建 view，否则一个像素都不画 |
+| `ScreenPass` 完全没有可用输入 | 没声明任何输入（图像 / target / 名字都没有，它没有东西可采样） |
+| `ScreenPass` 没有 program | 它的画面是**命名**的（没有隐式拷贝），所以没有 program 就永远不画 ⇒ 报一次 |
+| `ScreenPass` 有 program 但没有相机 | 全屏路径必须先建 view（光源也按这个 view 空间推），否则一个像素都不画 |
 | 承诺的是"这个 pass 并不画进去的 target" | 声明与 `renderTarget()` 对不上（报在真实的那条线上） |
 
 ### 3.8 自己写 shader：location 契约与绑定顺序
@@ -529,7 +534,9 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | --- | --- |
 | 内建前向着色（引擎默认内容程序，`forwardProgram()` / `flatForwardProgram()`） | `src/viz/graphics/shaders/vine_forward.*` |
 | 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/`（真文件，构建期嵌入） |
-| 后端自己的 overlay / 全屏三角形阶段 | `src/plugins/gfx_backend_vsg/shaders/` |
+| 全屏三角形顶点段 / 纯拷贝（`fullscreenVertexProgram()` / `screenCopyProgram()`） | `src/viz/graphics/shaders/` |
+
+**所有 GLSL 都归 SDK**：后端**没有**自己的 shader 目录（曾经有，2026-09-13 收回来了），它只决定怎么编译和绑。
 | 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-custom-shader.md`](../../../../.ai/design/vsg-custom-shader.md) §10 |
 
 > 这些 shader 是**真文件**（不是 C++ 字符串）：改了 `.glsl` 直接重编，`bash scripts/vine_shader_check.sh`

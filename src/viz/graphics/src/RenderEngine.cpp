@@ -604,6 +604,7 @@ void RenderEngine::validateWiring()
     std::set<OutputIdentity>              colliding_images;
     std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> mismatched_promises;
     std::set<raw_ptr<const RenderPass>>   input_less_passes;
+    std::set<raw_ptr<const RenderPass>>   program_less_screens;
     std::set<raw_ptr<const RenderPass>>   program_without_camera;
     std::set<raw_ptr<const ImageRef>>     unbound_declared_images;
     // image -> (first pass that declares it, whether as its OUTPUT) — reported in phase 4, after the
@@ -881,18 +882,39 @@ void RenderEngine::validateWiring()
         }
     }
 
-    // Phase 3: a ScreenPass that declares NO input at all (no image, no target, no name) can never
-    // draw — it samples one input and returns without it. Nothing else reports this: "no input" is
-    // not "an input that failed to resolve" (resolvePassInputs), nor "an input nobody fills"
-    // (phase 2).
+    // Phase 3: a ScreenPass that cannot draw what it declares. Every one of these is a property of
+    // the DECLARATION (nothing else can see them: the backend only ever sees "a pass with nothing to
+    // draw"), they are reported once per episode, and they are checked in the order a host has to fix
+    // them — each check `continue`s, because the next one is moot until this one is answered and one
+    // mistake should read as one message.
     for (const auto& slot : slots_) {
-        RenderPass* pass = slot.pass.get();
+        auto* pass = dynamic_cast<ScreenPass*>(slot.pass.get());
         if (pass == nullptr || !pass->enabled()) {
             continue;
         }
 
-        if (dynamic_cast<ScreenPass*>(pass) != nullptr && pass->inputs().empty() && pass->inputTargets().empty() &&
-            pass->inputNames().empty()) {
+        // 1. No program: the shading is a CHOICE the host makes (a ScreenPass has no implicit one —
+        // there is no "plain copy" a backend fills in), so a pass without a program draws nothing.
+        // This is the first thing to answer, and it is the one a host is most likely to hit: the
+        // picture a pass draws is exactly what it named.
+        if (pass->program() == nullptr) {
+            program_less_screens.insert(pass);
+            if (screen_passes_without_program_reported_.insert(pass).second) {
+                reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
+                                    vine::graphics::DiagnosticCategory::ContentSkipped,
+                                    String(u8"pass '") + reportedPassName(pass) +
+                                        String(u8"' is a ScreenPass with no program, so it can never draw: name one"
+                                               u8" (BuiltinShaders::screenCopyProgram() for a plain copy of the"
+                                               u8" source's colour attachment, deferredLightProgram() for deferred"
+                                               u8" lighting, or your own fragment stage)"));
+            }
+            continue;
+        }
+
+        // 2. No input at all (no image, no target, no name): it samples one input and returns without
+        // it. Not "an input that failed to resolve" (resolvePassInputs), nor "an input nobody fills"
+        // (phase 2).
+        if (pass->inputs().empty() && pass->inputTargets().empty() && pass->inputNames().empty()) {
             input_less_passes.insert(pass);
             if (missing_inputs_reported_.insert(pass).second) {
                 reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
@@ -901,83 +923,23 @@ void RenderEngine::validateWiring()
                                         String(u8"' is a ScreenPass that declares no input, so it can never draw"
                                                u8" (give it addInput / addInputName)"));
             }
+            continue;
         }
 
-        // A ScreenPass WITH a program draws through the fullscreen program path, which builds the
-        // pass' view from its camera and pushes the scene's lights through that view space: with no
-        // camera there is no view, so ScreenPass::execute returns before asking the backend for
-        // anything and the pass draws nothing at all. Reported at wiring time like the input-less
-        // case above: the fix is static (setCamera), and a host would otherwise see a post-process
-        // that never appears with no reason for it.
-        auto* screen = dynamic_cast<ScreenPass*>(pass);
-        if (screen != nullptr && screen->program() != nullptr && pass->camera() == nullptr) {
+        // 3. No camera: the fullscreen path builds the pass' view from it and pushes the scene's
+        // lights through that view space, so without one ScreenPass::execute returns before asking the
+        // backend for anything. The fix is static (setCamera), and a host would otherwise see a
+        // post-process that never appears with no reason for it.
+        if (pass->camera() == nullptr) {
             program_without_camera.insert(pass);
             if (program_without_camera_reported_.insert(pass).second) {
                 reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
                                     vine::graphics::DiagnosticCategory::ContentSkipped,
                                     String(u8"pass '") + reportedPassName(pass) +
                                         String(u8"' has a fullscreen program but no camera, so it can never draw: the"
-                                               u8" program path builds its view from the pass camera (and pushes the"
+                                               u8" fullscreen path builds its view from the pass camera (and pushes the"
                                                u8" scene's lights through it) — give the pass a camera (setCamera)"));
             }
-        }
-    }
-
-    // Phase 3b: a ScreenPass WITHOUT a program copies ONE COLOUR attachment (see attachmentToSample),
-    // so a declaration that names images but no colour image cannot drive it: the pass would sample
-    // the attachment it was left with (sourceAttachment(), 0 by default) while the host declared —
-    // typically — the depth. Nothing else reports this: the wire is fine (a producer exists), the
-    // declaration is simply not one this pass can sample. The program path is different
-    // (drawScreenProgram binds every colour attachment of the source plus its depth), so a pass with
-    // a program is left alone, and a coarse or name-only declaration is the documented fallback.
-    std::set<raw_ptr<const RenderPass>> unsampleable_screen_inputs;
-    for (const auto& slot : slots_) {
-        RenderPass* pass = slot.pass.get();
-        if (pass == nullptr || !pass->enabled() || pass->inputs().empty()) {
-            continue;
-        }
-        auto* screen = dynamic_cast<ScreenPass*>(pass);
-        if (screen == nullptr || screen->program() != nullptr) {
-            continue;
-        }
-        bool any_colour = false;
-        for (const auto& image : pass->inputs()) {
-            if (image != nullptr && image->kind() != ImageRef::Kind::Depth) {
-                any_colour = true;
-                break;
-            }
-        }
-        if (any_colour) {
-            continue;
-        }
-        // A depth declaration whose image the wiring already reported (the target HAS no depth) is
-        // the same declaration: the host gets the actionable message first, and this one only once
-        // the depth exists and the pass still cannot sample it — one mistake, one message.
-        bool already_reported = false;
-        for (const auto& image : pass->inputs()) {
-            if (image != nullptr &&
-                unusable_inputs.count(std::make_pair(raw_ptr<const RenderPass>(pass), OutputIdentity::of(*image))) != 0) {
-                already_reported = true;
-                break;
-            }
-        }
-        if (already_reported) {
-            continue;
-        }
-        unsampleable_screen_inputs.insert(pass);
-        if (unsampleable_screen_inputs_reported_.insert(pass).second) {
-            const String& declared = pass->inputs().front() != nullptr ? pass->inputs().front()->label()
-                                                                      : String(u8"(unnamed)");
-            reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                vine::graphics::DiagnosticCategory::ContentSkipped,
-                                String(u8"pass '") + reportedPassName(pass) +
-                                    String(u8"' declares the depth image '") + declared +
-                                    String(u8"' as its input, but a ScreenPass without a program samples ONE"
-                                           u8" COLOUR attachment of its source: it samples the attachment it was left"
-                                           u8" with (sourceAttachment(), 0 by default) instead — declare the colour"
-                                           u8" image you mean (an ImageRef bound to that attachment), or give the"
-                                           u8" pass a program (its path receives every colour attachment and the"
-                                           u8" depth of its source)"));
         }
     }
 
@@ -1013,7 +975,7 @@ void RenderEngine::validateWiring()
     mismatched_promises_reported_ = std::move(mismatched_promises);
     unusable_inputs_reported_    = std::move(unusable_inputs);
     missing_inputs_reported_     = std::move(input_less_passes);
-    unsampleable_screen_inputs_reported_ = std::move(unsampleable_screen_inputs);
+    screen_passes_without_program_reported_ = std::move(program_less_screens);
     program_without_camera_reported_     = std::move(program_without_camera);
     unbound_declared_images_reported_    = std::move(unbound_declared_images);
 }

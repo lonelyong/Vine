@@ -1,3 +1,12 @@
+> 2026-09-13 **全屏着色也归 SDK：`ScreenPass` 必须命名 program，后端不再有 shader**
+> - **删掉的东西**：`RenderBackend::drawScreenTexture`（两个重载）、`VsgRenderer::drawScreenTexture`、`detail::drawScreenTexture`、`makeScreenTextureNode`、`ScreenPass::{setSourceAttachment,sourceAttachment,attachmentToSample}`、后端槽表 `ScreenSlot`/`screen_slots`/`SlotKind::Screen`、以及**整个 `src/plugins/gfx_backend_vsg/shaders/`**。清单 `cmake/VineShaders.cmake` 从两个 owner 变成一个（7 个源全在 `vine/graphics/EmbeddedShaders.hpp`）。
+> - **新增**：`BuiltinShaders::fullscreenVertexProgram()`（顶点段 + v_uv 的 ABI 写成文档）与 `screenCopyProgram(int attachment = 0)`（片元段；**binding 就是附件**，N≠0 时替换 `layout(binding = 0)` 那一行，靠被单测钉住的 marker）。全屏只剩**一条**路径：`drawScreenProgram`。
+> - **规则**：`ScreenPass` 没有 program ⇒ 不画 + 接线期报一次（"no program"）；接线检查按修复顺序 `continue`：没有 program → 没有输入 → 没有相机。**phase 3b 删除**（"无 program 只能采一张彩色附件"）：原来被它报的"只声明深度"现在合法。
+> - **判据**：**证据基线 53 行逐字节不变**（PiP/合成/深度共享全不动 ⇒ 换绑定路径不改画面）；test_graphics 248；test_vsg 252 → **251**（`EmbeddedShadersTest` 5 条 → `OverlayStagesTest` 4 条）；`vine_shader_check` PASS（7，全 SDK）；lavapipe PASS。
+> - **坑 1（lavapipe 抓到，证据行却是绿的）**：给直驱屏幕画补 pass scope 时把 `RenderPassPtr` 建在帧循环里 ⇒ 每帧新身份 ⇒ 旧槽管线/图像在飞行中被释放 ⇒ `VUID-vkDestroyImage/Pipeline-*`。后端按 **pass 指针**认槽，pass 对象必须比帧活得久（引擎就是这么做的）。
+> - **坑 2（脚本自身的 bug）**：`vine_shader_check.sh` 用 glob 找生成头，删掉 owner 后磁盘上的旧头让脚本去检查一个不存在的 owner。现在它**从 manifest 读 OUTPUT 行**。
+> - **性能注意**：后端按 **program 对象**缓存编译结果，所以程序要建一次（相位/宿主持有），别每次 draw 新建。
+
 > 2026-09-13 **着色只能显式指定 program：删掉 `ShaderPreset`，不兜底**（用户口径："不要兜底，必须显示指定着色器"）
 > - **枚举删除**：`ShaderPreset` / `setShaderPreset` / `builtinProgram(preset)` 全没了；会话级入口是
 >   `RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram>)` / `defaultContentProgram()`，后端是

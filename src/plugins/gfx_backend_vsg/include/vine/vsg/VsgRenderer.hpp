@@ -161,26 +161,11 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     bool supportsRenderTargets() override;
 
-    /** @brief Draws a full-screen textured pass sampling a target's colour
-     * attachment.
+    /** @brief Draws a full-screen pass through a fragment program, sampling the source's attachments.
      *
-     * Samples colour attachment @p attachment of @p source (an off-screen
-     * target this backend rendered earlier in the same frame) through a
-     * full-screen textured triangle drawn into the CURRENT target (the one
-     * set by setRenderTarget(), nullptr = the window) within the sub-viewport
-     * set by setViewport() (picture-in-picture). A multi-attachment target
-     * (MRT / G-buffer) exposes each colour attachment as an independent
-     * sampleable texture. EXPERIMENTAL.
-     *
-     * @param source     Off-screen target whose colour texture to sample.
-     * @param attachment Colour attachment index to sample (0 = first).
-     */
-    void drawScreenTexture(vine::graphics::RenderTarget* source, int attachment) override;
-
-    /** @brief Draws a full-screen pass through a user fragment program,
-     * sampling every colour attachment of an MRT source (deferred lighting).
-     *
-     * See RenderBackend::drawScreenProgram for the contract. The backend
+     * This is the ONLY full-screen draw: a PiP copy, a deferred lighting pass and a host
+     * post-process are the same call with different programs (see RenderBackend::drawScreenProgram
+     * for the contract). The backend
      * compiles the program's fragment stage, binds each source colour
      * attachment as a sampled texture (binding 0..N-1) and pushes view-space
      * light parameters each frame.
@@ -191,8 +176,8 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * a depth-LOAD pass overrides promotion (§28), leaving the image in the
      * attachment layout so it cannot be sampled.
      *
-     * @param source  MRT target whose colour attachments are sampled.
-     * @param program User program supplying the fragment stage.
+     * @param source  Target whose colour attachments are sampled (binding i = attachment i).
+     * @param program Fragment-stage program to draw with (screenCopyProgram for a plain copy).
      * @param camera  Camera whose view transforms the pushed lights.
      */
     void drawScreenProgram(vine::graphics::RenderTarget*                       source,

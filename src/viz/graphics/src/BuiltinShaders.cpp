@@ -84,6 +84,46 @@ intrusive_ptr<ShaderProgram> gbufferGeometryProgram()
     return makeProgram(u8"gbuffer_geometry", shaders::kGbufferGeometryVert, shaders::kGbufferGeometryFrag);
 }
 
+intrusive_ptr<ShaderProgram> fullscreenVertexProgram()
+{
+    auto program = make_intrusive<ShaderProgram>();
+    program->setName(u8"fullscreen_triangle");
+    ShaderStage vertex;
+    vertex.type   = ShaderStageType::Vertex;
+    vertex.source = String(shaders::kFullscreenVert);
+    program->addStage(vertex);
+    return program;
+}
+
+intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment)
+{
+    // The attachment is the sampler's BINDING in the fragment text (see the header): rewrite the one
+    // line that states it. The marker below is asserted against the shipped source by
+    // EmbeddedShadersTest, so an edit to the .frag cannot silently turn every copy into a copy of
+    // attachment 0 — the failure mode this substitution would otherwise hide.
+    constexpr char8_t marker[] = u8"layout(binding = 0) uniform sampler2D screen_tex;";
+    std::u8string     source(shaders::kScreenCopyFrag);
+    // The integer goes in as ASCII digits; the digits are the same in char8_t.
+    const std::string digits   = std::to_string(attachment);
+    const std::u8string attachment_text(digits.begin(), digits.end());
+    if (attachment != 0) {
+        const std::size_t at = source.find(marker);
+        if (at != std::u8string::npos) {
+            const std::u8string line =
+                std::u8string(u8"layout(binding = ") + attachment_text + u8") uniform sampler2D screen_tex;";
+            source.replace(at, sizeof(marker) - 1u, line);
+        }
+    }
+
+    auto program = make_intrusive<ShaderProgram>();
+    program->setName(attachment == 0 ? String(u8"screen_copy") : String(u8"screen_copy_") + String(attachment_text));
+    ShaderStage fragment;
+    fragment.type   = ShaderStageType::Fragment;
+    fragment.source = String(source);
+    program->addStage(fragment);
+    return program;
+}
+
 intrusive_ptr<ShaderProgram> deferredLightProgram()
 {
     auto program = make_intrusive<ShaderProgram>();

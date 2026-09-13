@@ -42,7 +42,7 @@ struct RenderCommand;
  *        setPassOrder(order)      where the pass stacks in the target;
  *        setRenderTarget / setViewport / setLights / setDepthMode / clear
  *                                 optional per-pass state (see beginPass);
- *        render() | drawScreenTexture() | drawScreenProgram();
+ *        render() | drawScreenProgram();
  *        endPass();
  *   3. endFrame();
  *   4. swapBuffers();            once per frame — the only call that presents.
@@ -168,7 +168,7 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * The engine calls this once per enabled registered pass, immediately
      * before that pass's per-pass state (setRenderTarget / setViewport /
      * setLights / setDepthMode / clear / setPassOrder) and its draw call
-     * (render / drawScreenTexture / drawScreenProgram); endPass() follows
+     * (render / drawScreenProgram); endPass() follows
      * once the pass ran.
      *
      * WHAT THE SCOPE MEANS. The scope makes the pass explicit, so "which call
@@ -237,63 +237,30 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         return false;
     }
 
-    /** @brief Draws a full-screen textured pass sampling a target's colour
-     * attachment.
+    /** @brief Draws a full-screen pass through a fragment program, sampling the source's colour attachments.
      *
-     * Samples the colour attachment @p attachment of @p source (a target
-     * written earlier in the same frame, e.g. an off-screen render-to-texture
-     * pass) through a full-screen textured triangle drawn into the CURRENT
-     * target — the one set by the most recent setRenderTarget() (nullptr = the
-     * default framebuffer) — respecting any sub-viewport configured via
-     * setViewport(). This is the low-level primitive behind a screen/composite
-     * pass; the target to sample stays a logical RenderTarget and the backend
-     * resolves it to its own GPU texture. A multi-attachment target (MRT /
-     * G-buffer) exposes each colour attachment as an independent sampleable
-     * texture, so a consumer selects which one to read by index. The default
-     * no-op lets backends without texture-input support ignore the call.
+     * The ONE full-screen draw: a plain copy, a deferred lighting pass and a host post-process are
+     * all this call with different programs (see BuiltinShaders::screenCopyProgram /
+     * deferredLightProgram, and ScreenPass::setProgram for the contract the fragment stage
+     * compiles against).
      *
-     * @param source     Target whose colour texture to sample, or nullptr.
-     * @param attachment Colour attachment index in [0, source->colorCount()).
-     */
-    virtual void drawScreenTexture(vine::graphics::RenderTarget* source, int attachment)
-    {
-        (void)source;
-        (void)attachment;
-    }
-
-    /** @brief Draws a full-screen textured pass sampling a target's first
-     * colour attachment.
+     * Draws a full-screen triangle whose fragment stage is @p program's, written into the CURRENT
+     * target (see setRenderTarget, nullptr = the default framebuffer) within the sub-viewport set by
+     * setViewport(). Each colour attachment of @p source is bound as a sampled texture at
+     * descriptor binding 0..N-1 (so binding i reads attachment i), so a G-buffer producer's
+     * textures (albedo / normal / position) reach the pass in one draw. Lights set by the most
+     * recent setLights() and the pass camera are forwarded as per-frame push-constant parameters
+     * (the lights pre-transformed to the camera's view space). The default no-op lets backends
+     * without texture-input support ignore the call.
      *
-     * Convenience for the common single-texture case: samples colour
-     * attachment 0 of @p source (see drawScreenTexture(RenderTarget*, int)).
+     * @param source  Target whose colour attachments are sampled.
+     * @param program Fragment-stage program to draw with (vertex stage, if any, is ignored — the
+     *                backend provides the fullscreen vertex stage, BuiltinShaders::fullscreenVertexProgram).
+     * @param camera  Camera whose view transforms the pushed lights; also the key for the retained
+     *                fullscreen slot. Without one the draw is refused: there is no view to build.
      *
-     * @param source Target whose colour texture to sample, or nullptr.
-     */
-    virtual void drawScreenTexture(vine::graphics::RenderTarget* source)
-    {
-        drawScreenTexture(source, 0);
-    }
-
-    /** @brief Draws a full-screen pass through a user fragment program,
-     * sampling every colour attachment of an MRT source.
-     *
-     * Draws a full-screen triangle (the backend supplies the vertex stage)
-     * whose fragment shader is @p program's fragment stage, written into the
-     * CURRENT target (see setRenderTarget, nullptr = the default framebuffer)
-     * within the sub-viewport set by setViewport(). Each colour attachment of
-     * @p source is bound as a sampled texture at descriptor binding 0..N-1, so
-     * a G-buffer producer's textures (albedo / normal / position) reach the
-     * pass in one draw. Lights set by the most recent setLights() and the
-     * pass camera are forwarded as per-frame push-constant parameters (the
-     * lights pre-transformed to the camera's view space). The default no-op
-     * lets backends without texture-input support ignore the call.
-     *
-     * @param source  MRT target whose colour attachments are sampled.
-     * @param program User program supplying the fragment stage (vertex stage,
-     *                if any, is ignored — the backend provides the fullscreen
-     *                vertex shader).
-     * @param camera  Camera whose view transforms the pushed lights; also the
-     *                key for the retained fullscreen slot.
+     * A program that cannot be prepared (no fragment stage, a stage that fails to compile, a binding
+     * the source cannot provide) is reported and draws NOTHING — never a substituted picture.
      */
     virtual void drawScreenProgram(vine::graphics::RenderTarget*  source,
                                    vine::raw_ptr<const vine::graphics::ShaderProgram> program,

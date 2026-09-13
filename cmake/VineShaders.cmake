@@ -5,41 +5,38 @@
 # lets targets in unrelated directories (e.g. tests/test_vsg, which compiles the
 # vsg backend plugin's sources directly) depend on the same generated header.
 #
-# Two owners exist today:
-#   * vine/graphics/EmbeddedShaders.hpp — the SDK's own shading programs (the
-#     preset-driven scene shading plus the deferred recipe's stages), used by
-#     BuiltinShaders / RenderPipelineBuilder (src/viz/graphics/shaders/).
-#     The engine owns the shading TEXT; a backend owns how it is compiled and
-#     bound (its ABI).
-#   * vine/vsg/EmbeddedShaders.hpp — the vsg backend's own plumbing stages
-#     (fullscreen triangle / screen sampling), used by VsgPipelineFactory
-#     (src/plugins/gfx_backend_vsg/shaders/).
+# ONE owner: the SDK owns every GLSL source in the engine.
 #
-# Adding a shader: drop the .vert/.frag in the owning shaders/ directory, add it
-# to the SOURCES list below, include the generated header, and use the generated
-# constant named after the file (gbuffer_geometry.vert -> kGbufferGeometryVert).
+#   * vine/graphics/EmbeddedShaders.hpp — the engine's shading and compositing text, used by
+#     BuiltinShaders / RenderPipelineBuilder (src/viz/graphics/shaders/). The engine owns the
+#     TEXT; a backend owns how it is compiled and bound (its ABI).
+#
+# A backend has no shader directory of its own. It used to (src/plugins/gfx_backend_vsg/shaders/,
+# a full-screen triangle and a screen-copy fragment stage, generated into
+# vine/vsg/EmbeddedShaders.hpp): two stages behind engine-visible pictures — a ScreenPass with no
+# program drew the copy, and every full-screen program was written against that triangle — while
+# the text lived in one backend. Now both are SDK programs (BuiltinShaders::fullscreenVertexProgram
+# / screenCopyProgram) and a backend may only decide HOW to compile and bind them, or provide its
+# own stages behind the documented interface.
+#
+# Adding a shader: drop the .vert/.frag in src/viz/graphics/shaders/, add it to the SOURCES list
+# below, include the generated header, and use the generated constant named after the file
+# (gbuffer_geometry.vert -> kGbufferGeometryVert).
 # scripts/vine_shader_check.sh validates every shader listed here.
 
 include(VineShaderHelper)
 
 set(VINE_SDK_SHADER_DIR "${CMAKE_SOURCE_DIR}/src/viz/graphics/shaders")
-set(VINE_VSG_SHADER_DIR "${CMAKE_SOURCE_DIR}/src/plugins/gfx_backend_vsg/shaders")
 
 v_declare_embedded_shaders(
     OUTPUT vine/graphics/EmbeddedShaders.hpp
     NAMESPACE vine::graphics::shaders
     SOURCES
+        "${VINE_SDK_SHADER_DIR}/fullscreen.vert"
+        "${VINE_SDK_SHADER_DIR}/screen_copy.frag"
         "${VINE_SDK_SHADER_DIR}/gbuffer_geometry.vert"
         "${VINE_SDK_SHADER_DIR}/gbuffer_geometry.frag"
         "${VINE_SDK_SHADER_DIR}/deferred_light.frag"
         "${VINE_SDK_SHADER_DIR}/vine_forward.vert"
         "${VINE_SDK_SHADER_DIR}/vine_forward.frag"
-)
-
-v_declare_embedded_shaders(
-    OUTPUT vine/vsg/EmbeddedShaders.hpp
-    NAMESPACE vine::vsg::shaders
-    SOURCES
-        "${VINE_VSG_SHADER_DIR}/fullscreen.vert"
-        "${VINE_VSG_SHADER_DIR}/screen_texture.frag"
 )

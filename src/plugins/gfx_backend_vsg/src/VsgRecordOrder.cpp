@@ -29,9 +29,6 @@ void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan)
         if (const auto it = owner.content_slots.find(key); it != owner.content_slots.end()) {
             return !it->second.detached;
         }
-        if (const auto it = owner.screen_slots.find(key); it != owner.screen_slots.end()) {
-            return !it->second.detached;
-        }
         if (const auto it = owner.program_slots.find(key); it != owner.program_slots.end()) {
             return !it->second.detached;
         }
@@ -144,11 +141,6 @@ void orderRecordPlan(const VsgRendererState& state, RecordPlan& plan)
         // A slot's sampled target is a slot attribute (its key is the owning pass),
         // so the dependency edges come from the attribute. A retired (detached) slot
         // is not recorded, so it contributes no edge.
-        for (const auto& slot : target.screen_slots) {
-            if (!slot.second.detached) {
-                add_source(const_cast<vine::graphics::RenderTarget*>(slot.second.source_target));
-            }
-        }
         for (const auto& slot : target.program_slots) {
             if (!slot.second.detached) {
                 add_source(const_cast<vine::graphics::RenderTarget*>(slot.second.source_target));

@@ -25,16 +25,6 @@ raw_ptr<RenderTarget> ScreenPass::sourceTarget() const
     return source_;
 }
 
-int ScreenPass::sourceAttachment() const
-{
-    return source_attachment_;
-}
-
-void ScreenPass::setSourceAttachment(int attachment)
-{
-    source_attachment_ = attachment < 0 ? 0 : attachment;
-}
-
 raw_ptr<ShaderProgram> ScreenPass::program() const
 {
     return program_.get();
@@ -56,21 +46,6 @@ void ScreenPass::resolveInputTextures(const std::vector<raw_ptr<RenderTarget>>& 
     }
 }
 
-int ScreenPass::attachmentToSample() const
-{
-    // The DECLARATION wins when the pass made one: an input image says which attachment of which
-    // target it is (design §14), which is exactly what this needs to know — and it makes
-    // setSourceAttachment() unnecessary for a pass wired through ImageRef. A coarse declaration
-    // (addInputTarget) names the target, not one of its images, so the host-set index remains the way
-    // to say "the second attachment of it".
-    for (const auto& image : inputs()) {
-        if (image != nullptr && image->target() == source_ && image->kind() != ImageRef::Kind::Depth) {
-            return image->attachment();
-        }
-    }
-    return source_attachment_;
-}
-
 void ScreenPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
 {
     if (backend == nullptr || source_ == nullptr) {
@@ -85,13 +60,10 @@ void ScreenPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
     if (clearEnabled()) {
         backend->clear(clearColor(), shouldClearDepth());
     }
-    if (program_ == nullptr) {
-        // Plain screen-space copy of one colour attachment (see attachmentToSample).
-        backend->drawScreenTexture(source_, attachmentToSample());
+    if (program_ == nullptr || camera() == nullptr) {
+        // Nothing to draw with, or no view to build: the ENGINE reports both at wiring time (see
+        // RenderEngine::validateWiring), so this path stays silent and draws nothing.
         return;
-    }
-    if (camera() == nullptr) {
-        return; // the fullscreen program path needs a camera for its view
     }
     // Forward the content scene's lights so the backend can push them to the
     // fullscreen fragment program (mirrors how scene passes feed their lights).

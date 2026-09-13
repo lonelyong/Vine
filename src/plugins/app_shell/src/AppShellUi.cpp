@@ -765,6 +765,10 @@ void addOffscreenMultiSlotDemo(gui::RenderControl* render_control)
     }
     auto screen = vine::make_intrusive<vine::graphics::ScreenPass>();
     screen->setName(u8"multislot_pip");
+    // A ScreenPass names its program and carries the view camera: there is no implicit copy, and a
+    // fullscreen program is drawn through the pass' view (SDK copy program for the plain copy).
+    screen->setCamera(render_control->view()->camera());
+    screen->setProgram(vine::graphics::screenCopyProgram());
     screen->addInputName(u8"MultiColor");
     // The two bake passes above accumulate into one target, so neither of them owns the hand-off
     // (a promise is a claim about WHOSE content a consumer gets): the consumer reads the whole baked
@@ -825,9 +829,12 @@ void addGbufferDemo(gui::RenderControl* render_control)
     for (int attachment = 0; attachment < 4; ++attachment) {
         auto screen = vine::make_intrusive<vine::graphics::ScreenPass>();
         screen->setName(u8"gbuffer_preview");
+        screen->setCamera(render_control->view()->camera());
+        // One copy program PER attachment: which attachment a fullscreen program reads is its
+        // sampler binding (screenCopyProgram(n) writes binding n), and the declared image below says
+        // which target it is that binding of.
+        screen->setProgram(vine::graphics::screenCopyProgram(attachment));
         screen->addInputName(u8"GBuffer");
-        // No setSourceAttachment: the declared image already says which attachment this preview
-        // samples (the name above is the sugar, the image is the wire).
         auto image = vine::make_intrusive<vine::graphics::ImageRef>(preview_labels[attachment]);
         image->bind(target, attachment);
         screen->addInput(image);
@@ -1128,9 +1135,12 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
         for (int attachment = 0; attachment < 4; ++attachment) {
             auto preview = vine::make_intrusive<vine::graphics::ScreenPass>();
             preview->setName(u8"gbuffer_preview");
+            preview->setCamera(render_control->view()->camera());
+            // One copy program per attachment: the sampler binding IS the attachment (see
+            // BuiltinShaders::screenCopyProgram), which is what the declared image below is that of.
+            preview->setProgram(vine::graphics::screenCopyProgram(attachment));
             preview->addInputName(u8"GBuffer");
             if (gbuffer != nullptr) {
-                // The declared image carries the attachment, so the host does not repeat it.
                 auto image = vine::make_intrusive<vine::graphics::ImageRef>(u8"GBuffer.preview");
                 image->bind(vine::intrusive_ptr<vine::graphics::RenderTarget>(gbuffer), attachment);
                 preview->addInput(image);

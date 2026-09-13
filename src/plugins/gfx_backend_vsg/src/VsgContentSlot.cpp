@@ -454,11 +454,6 @@ void placeViewByOrder(VsgRendererState& state, ::vsg::ref_ptr<::vsg::RenderGraph
                 return kv.second.order;
             }
         }
-        for (const auto& kv : t.screen_slots) {
-            if (kv.second.ready && kv.second.view.get() == child.get()) {
-                return kv.second.order;
-            }
-        }
         return std::numeric_limits<int>::max();
     };
     auto it = children.begin();

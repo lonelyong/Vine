@@ -10,10 +10,10 @@
  *     (shared scene / shared camera / different target);
  *   - a window main pass, a HUD overlay sharing the same camera + target but
  *     a different pass order and a sub-viewport;
- *   - a picture-in-picture pass (drawScreenTexture) sampling the MRT's colour
- *     attachment 0 into the window;
- *   - a deferred-lighting pass (drawScreenProgram) running a user fragment
- *     program over the MRT's attachments;
+ *   - a picture-in-picture pass (drawScreenProgram with screenCopyProgram) sampling the MRT's
+ *     colour attachment 0 into the window;
+ *   - a deferred-lighting pass (drawScreenProgram) running a user fragment program over the
+ *     MRT's attachments;
  *   - per-frame hot edits: material property changes, per-drawable opacity,
  *     removing / re-adding a drawable from ONE slot, swapping a user program
  *     on one drawable, and reordering the command stream;
@@ -2266,6 +2266,9 @@ bool runCompositingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
     deferred_consumer->attachDepth(RenderTarget::DepthFormat::D24);
     auto deferred_pass    = RenderPassPtr(new RenderPass());
     auto deferred_program = makeDeferredProgram();   // writes (0.55, 0.6, 0.65)
+    // The PiP names the plain copy program (a screen draw has no implicit shading): held once, not per
+    // draw, because the backend keys its compiled stages on the program object.
+    auto copy_program = vine::graphics::screenCopyProgram();
 
     std::vector<vine::graphics::RenderDiagnostic> received;
     renderer.setDiagnosticSink([&received](const vine::graphics::RenderDiagnostic& diagnostic) {
@@ -2286,7 +2289,7 @@ bool runCompositingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
         {
             PassScope pass_scope(renderer, pip_pass.get(), 0, pip_consumer.get(), consumer_clear, true);
             renderer.setViewport(pip_x, pip_y, pip_w, pip_h);
-            renderer.drawScreenTexture(producer.get(), 0);
+            renderer.drawScreenProgram(producer.get(), copy_program.get(), camera.get());
         }
 
         // Deferred: a fragment program over the producer, full target.
@@ -5379,6 +5382,9 @@ int main()
     m_blue->setDiffuse(vine::Colorf(0.2f, 0.3f, 0.9f, 1.0f));
     auto user_program   = makeUserProgram();
     auto deferred_program = makeDeferredProgram();
+    // The screen draws below (PiP / post chain) name their program: the plain copy. Held once, not
+    // created per draw — the backend keys its compiled stages on the program object.
+    auto copy_program = vine::graphics::screenCopyProgram();
 
     // The SAME geometry + material objects feed the off-screen MRT producer,
     // the window main pass and (partly) the HUD — the shared-scene case.
@@ -5395,6 +5401,13 @@ int main()
 
     std::fprintf(stderr, "[selftest] targets: offscreen MRT %dx%d (%d color) + window\n",
                  mrt->width(), mrt->height(), mrt->colorCount());
+
+    // The two screen passes below are announced per frame (they are what tells the backend these are two
+    // slots sampling ONE source), so the pass OBJECTS live outside the loop: a fresh RenderPass each
+    // frame would be a fresh slot identity, and the backend keys its retained slot on the pass pointer
+    // (the engine keeps its passes alive for the same reason).
+    auto pip_pass      = RenderPassPtr(new RenderPass());
+    auto deferred_pass = RenderPassPtr(new RenderPass());
 
     for (int i = 0; i < frames; ++i) {
         // ---- per-frame hot edits -------------------------------------------
@@ -5445,13 +5458,26 @@ int main()
         backend->setPassOrder(1);
         backend->render(hud_commands, camera.get());
 
-        // (4) PiP: sample the MRT's colour attachment 0 into the window.
-        backend->setViewport(8, 560, 240, 135);
-        backend->drawScreenTexture(mrt.get(), 0);
+        // (4) PiP: sample the MRT's colour attachment 0 into the window. A screen draw is a program
+        // draw now, and both (4) and (5) sample ONE source into ONE destination — so each gets its own
+        // pass scope, which is what makes them two slots instead of one (the engine always opens one
+        // per pass; a direct driver has to say so).
+        {
+            backend->beginPass(pip_pass.get());
+            backend->setPassOrder(1);
+            backend->setViewport(8, 560, 240, 135);
+            backend->drawScreenProgram(mrt.get(), copy_program.get(), camera.get());
+            backend->endPass();
+        }
 
         // (5) Deferred-lighting fullscreen pass over the MRT attachments.
-        backend->setLights({});
-        backend->drawScreenProgram(mrt.get(), deferred_program.get(), camera.get());
+        {
+            backend->beginPass(deferred_pass.get());
+            backend->setPassOrder(2);
+            backend->setLights({});
+            backend->drawScreenProgram(mrt.get(), deferred_program.get(), camera.get());
+            backend->endPass();
+        }
 
         backend->endFrame();
         backend->swapBuffers();
@@ -5550,19 +5576,19 @@ int main()
             backend->setRenderTarget(mid.get());
             backend->setViewport(0, 0, mid->width(), mid->height());
             backend->setPassOrder(-50);
-            backend->drawScreenTexture(mrt.get(), 0);
+            backend->drawScreenProgram(mrt.get(), copy_program.get(), camera.get());
             // Step 2: sample B into the window.
             backend->setRenderTarget(nullptr);
             backend->setViewport(16, 16, 200, 112);
             backend->setPassOrder(-40);
-            backend->drawScreenTexture(mid.get(), 0);
+            backend->drawScreenProgram(mid.get(), copy_program.get(), camera.get());
             backend->endFrame();
             backend->swapBuffers();
         }
         // A is resized mid-chain: this REBUILDS producer A's graph +
         // attachments while consumer B (and the window PiP) already sample it.
         // The ordering fix must drop B's stale slot (it holds A's OLD image
-        // views) so the next drawScreenTexture reattaches to the NEW A, and
+        // views) so the next screen draw reattaches to the NEW A, and
         // re-order the command graph so A is still recorded before B — without
         // it, B would keep sampling a frozen, no-longer-drawn A image.
         mrt->setSize(480, 270);
@@ -5576,11 +5602,11 @@ int main()
             backend->setRenderTarget(mid.get());
             backend->setViewport(0, 0, mid->width(), mid->height());
             backend->setPassOrder(-50);
-            backend->drawScreenTexture(mrt.get(), 0);
+            backend->drawScreenProgram(mrt.get(), copy_program.get(), camera.get());
             backend->setRenderTarget(nullptr);
             backend->setViewport(16, 16, 200, 112);
             backend->setPassOrder(-40);
-            backend->drawScreenTexture(mid.get(), 0);
+            backend->drawScreenProgram(mid.get(), copy_program.get(), camera.get());
             backend->endFrame();
             backend->swapBuffers();
         }

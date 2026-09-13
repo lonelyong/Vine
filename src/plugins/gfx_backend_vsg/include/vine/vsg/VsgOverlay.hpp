@@ -72,7 +72,7 @@ namespace detail
  *
  * @param source Sampled target (also what the feedback loop is checked against).
  * @param key    Slot key of the draw (identifies the graph of an off-screen pass).
- * @param what   Draw name for the diagnostics ("drawScreenTexture" / "drawScreenProgram").
+ * @param what   Draw name for the diagnostics ("drawScreenProgram").
  * @return The destination; @c graph is null when the draw must not record.
  */
 VsgOverlayDestination resolveOverlayDestination(VsgRendererState& state, const VsgDiagnostics& diagnostics,
@@ -139,20 +139,6 @@ void fillLightPushBlock(const vine::graphics::Camera* camera,
  */
 void fillVineLightsBlock(const vine::graphics::Camera* camera,
                          const std::vector<const vine::graphics::Light*>& lights, VineLightsBlock& block);
-
-/** @brief Draws a sampled target's colour attachment as a picture-in-picture overlay.
- *
- * Selected by the pass' sub-viewport (setViewport) or auto-anchored bottom-right when that
- * rectangle does not fit the destination, drawing the source's requested colour attachment as a
- * full-screen textured triangle whose viewport clips it.
- *
- * @param state       Session the draw records into.
- * @param diagnostics Route a refused draw is reported on.
- * @param source      Target whose colour attachment is sampled.
- * @param attachment  Colour attachment index to sample (clamped, reported when out of range).
- */
-void drawScreenTexture(VsgRendererState& state, const VsgDiagnostics& diagnostics, vine::graphics::RenderTarget* source,
-                       int attachment);
 
 /** @brief Draws the host's fullscreen program over a sampled target.
  *

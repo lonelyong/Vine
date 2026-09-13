@@ -612,6 +612,7 @@ preview->addInput(normal);                                     // 一行：我�
 - **声明优先**：一个 pass 声明了图或捆 ⇒ 由声明决定它拿到什么（每条声明一个条目、按声明序），**名字不被查询**（同一根线说两遍不该解析两遍）；只声明名字的 pass 走原路径（名字是糖，向后兼容）。
 - **“谁填了”是事实**：本帧产出集按 **target** 记（一个 pass 画进它 ⇒ 它的全部图都新）；**承诺（promise）只是声明**，不是满足读的必要条件。
 - **无法再往下推的部分归后端**：一个 pass 读它自己画的 target 就是反馈环形态——是否真的是反馈环由后端判（vsg 后端会拒绝 `source == destination` 并报），两层都不抢话；**深度**（`Kind::Depth`）在**无深度**的 target 上读 ⇒ 接线期报（“没有深度可填”）。
+  > **2026-09-13 更正**：`ScreenPass` 不再有"没有 program 就纯拷贝"这条路，`setSourceAttachment` 已删除；附件由 **program 的 sampler binding** 命名（`BuiltinShaders::screenCopyProgram(N)`），声明只说"哪个 target 的哪张图"。见 `vsg-custom-shader.md` §11.11。
 - **细声明的附件直接驱动采样**：`ScreenPass` 采哪张图由声明决定（`ImageRef::attachment`），`setSourceAttachment` 退为**粗声明**下的选择（粗声明只说“这张 target”，不说哪张图）。
   **这条的边界（D64，2026-09-12）**："声明驱动采样"只在**声明里有彩色图**时成立。无 program 的 `ScreenPass` 走 texture 路径（`drawScreenTexture(source, attachment)`，只能采一张彩色图），因此：
   ①全部只声明**深度图** ⇒ 采样退回 `sourceAttachment()`（默认 0）——**报一次**（`ContentSkipped`，接线期，分集），并带上两条出路（声明你要的那张彩色图 / 给 pass 一个 program：program 路径会绑源的**每张**彩色图＋深度）；

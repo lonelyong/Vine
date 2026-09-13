@@ -1,3 +1,4 @@
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
@@ -1839,9 +1840,6 @@ class MockBackend : public RenderBackend {
     int last_viewport[4] = { 0, 0, 0, 0 };
     // Programs of the commands last passed to render() (per command).
     std::vector<const ShaderProgram*> last_programs;
-    int screen_draws = 0;
-    RenderTarget* last_screen_source = nullptr;
-    int last_screen_attachment = 0;
     int light_sets = 0;
     std::size_t last_light_count = 0;
     const Light* last_light = nullptr;
@@ -1876,12 +1874,6 @@ class MockBackend : public RenderBackend {
         ++light_sets;
         last_light_count = lights.size();
         last_light = lights.empty() ? nullptr : lights.front();
-    }
-    void drawScreenTexture(RenderTarget* source, int attachment) override
-    {
-        ++screen_draws;
-        last_screen_source = source;
-        last_screen_attachment = attachment;
     }
     int program_draws = 0;
     RenderTarget* last_program_source = nullptr;
@@ -2571,20 +2563,25 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     off->setOutputName(u8"SceneColor");
     engine->addPass(off, -2);
 
-    // Consumer: a ScreenPass declaring it wants the published "SceneColor".
-    auto screen = intrusive_ptr<ScreenPass>(new ScreenPass());
+    // Consumer: a ScreenPass declaring it wants the published "SceneColor", and NAMING the program it
+    // draws it with — a screen pass has no implicit shading (see ScreenPass).
+    auto copy_program = vine::graphics::screenCopyProgram();
+    auto screen       = intrusive_ptr<ScreenPass>(new ScreenPass());
+    screen->setCamera(cam.get());
+    screen->setProgram(copy_program);
     screen->addInputName(u8"SceneColor");
     // A screen pass composites over existing content, so it never clears.
     EXPECT_FALSE(screen->clearEnabled());
     engine->addPass(screen, 100);
 
-    const int before = backend->screen_draws;
+    const int before = backend->program_draws;
     engine->frame();
 
     // The ScreenPass resolved "SceneColor" to the off-screen target and asked
-    // the backend to composite it exactly once this frame.
-    EXPECT_EQ(backend->screen_draws - before, 1);
-    EXPECT_EQ(backend->last_screen_source, rt.get());
+    // the backend to composite it exactly once this frame, through its program.
+    EXPECT_EQ(backend->program_draws - before, 1);
+    EXPECT_EQ(backend->last_program_source, rt.get());
+    EXPECT_EQ(backend->last_program, copy_program.get());
     EXPECT_EQ(screen->sourceTarget(), rt.get());
     // The registry holds the off-screen target after the producer ran.
     EXPECT_EQ(engine->resolve(u8"SceneColor"), rt.get());
@@ -2595,11 +2592,30 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     engine2->setBackend(backend2);
     engine2->initialize();
     auto orphan = intrusive_ptr<ScreenPass>(new ScreenPass());
+    orphan->setCamera(cam.get());
+    orphan->setProgram(vine::graphics::screenCopyProgram());
     orphan->addInputName(u8"SceneColor");
     engine2->addPass(orphan, 100);
     engine2->frame();
-    EXPECT_EQ(backend2->screen_draws, 0);
+    EXPECT_EQ(backend2->program_draws, 0);
     EXPECT_EQ(orphan->sourceTarget(), nullptr);
+
+    // A ScreenPass with NO program is the other half of the same rule: it draws nothing, and the
+    // engine says so (once) instead of a backend picking a shading for it.
+    auto engine3  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend3 = intrusive_ptr<MockBackend>(new MockBackend());
+    engine3->setBackend(backend3);
+    engine3->initialize();
+    auto program_less = intrusive_ptr<ScreenPass>(new ScreenPass());
+    program_less->setCamera(cam.get());
+    program_less->addInputName(u8"SceneColor");
+    engine3->publish(u8"SceneColor", rt);
+    engine3->addPass(program_less, 100);
+    EXPECT_EQ(engine3->engineDiagnosticCount(), 0u);
+    engine3->frame();
+    EXPECT_EQ(backend3->program_draws, 0);
+    EXPECT_EQ(engine3->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(program_less->sourceTarget(), rt.get());   // it resolved the source, and still drew nothing
 }
 
 TEST(RenderEngineTest, ShutdownReleasesBackend)
@@ -2614,7 +2630,7 @@ TEST(RenderEngineTest, ShutdownReleasesBackend)
     EXPECT_FALSE(backend->ok);
 }
 
-TEST(RenderEngineTest, ScreenPassSamplesSelectedMrtAttachment)
+TEST(RenderEngineTest, ScreenPassProgramCarriesTheAttachmentItReads)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -2636,35 +2652,35 @@ TEST(RenderEngineTest, ScreenPassSamplesSelectedMrtAttachment)
     producer->setOutputName(u8"GBuffer");
     engine->addPass(producer, -2);
 
-    // Two consumers sampling different colour attachments of the same target.
+    // Two consumers reading different colour attachments of the same target: the ATTACHMENT is the
+    // program's sampler binding (the fullscreen program ABI — binding i reads attachment i), so the two
+    // passes differ by the program they name, not by a backend-side index.
+    auto albedo_program = vine::graphics::screenCopyProgram(0);
+    auto normal_program = vine::graphics::screenCopyProgram(1);
+    EXPECT_NE(albedo_program->name(), normal_program->name());
+
     auto albedo = intrusive_ptr<ScreenPass>(new ScreenPass());
+    albedo->setCamera(cam.get());
+    albedo->setProgram(albedo_program);
     albedo->addInputName(u8"GBuffer");
-    albedo->setSourceAttachment(0);
     engine->addPass(albedo, 100);
 
     auto normal = intrusive_ptr<ScreenPass>(new ScreenPass());
+    normal->setCamera(cam.get());
+    normal->setProgram(normal_program);
     normal->addInputName(u8"GBuffer");
-    normal->setSourceAttachment(1);
     engine->addPass(normal, 101);
 
-    // Negative selection clamps to attachment 0.
-    normal->setSourceAttachment(-3);
-    EXPECT_EQ(normal->sourceAttachment(), 0);
-    normal->setSourceAttachment(1);
-    EXPECT_EQ(normal->sourceAttachment(), 1);
-
-    const int before = backend->screen_draws;
+    const int before = backend->program_draws;
     engine->frame();
 
-    // Each ScreenPass asked the backend to sample the published target at the
-    // attachment it selected (the MRT target is resolved, not a copy).
+    // Both resolved the published target (the MRT target is handed over, not copied) and each drew
+    // through its own program.
     EXPECT_EQ(albedo->sourceTarget(), rt.get());
     EXPECT_EQ(normal->sourceTarget(), rt.get());
-    // Two screen draws happened this frame (deltas avoid warm-up coupling);
-    // the later pass sampled colour attachment 1.
-    EXPECT_EQ(backend->screen_draws, before + 2);
-    EXPECT_EQ(backend->last_screen_source, rt.get());
-    EXPECT_EQ(backend->last_screen_attachment, 1); // last draw sampled att 1
+    EXPECT_EQ(backend->program_draws, before + 2);
+    EXPECT_EQ(backend->last_program_source, rt.get());
+    EXPECT_EQ(backend->last_program, normal_program.get());   // the later pass read attachment 1
 }
 
 TEST(RenderEngineTest, ScreenPassProgramSamplesMrtForDeferredLighting)
@@ -2918,10 +2934,15 @@ TEST(RenderPipelineBuilderTest, OffscreenToScreenBuildsExpectedPipeline)
     // The recipe adds the off-screen (order < 0) + screen (order > 0) passes.
     EXPECT_EQ(engine->passCount(), 2u);
 
-    const int draws_before = backend->screen_draws;
+    // The recipe NAMES the copy program on the pass it just built (the SDK's own recipes do not get
+    // an implicit copy either — they pin the SDK program instead).
+    EXPECT_NE(screen->program(), nullptr);
+    EXPECT_EQ(screen->program()->name(), vine::graphics::screenCopyProgram()->name());
+
+    const int draws_before = backend->program_draws;
     engine->frame();
-    // The screen pass sampled the published off-screen target exactly once.
-    EXPECT_EQ(backend->screen_draws - draws_before, 1);
+    // The screen pass drew the published off-screen target exactly once, through that program.
+    EXPECT_EQ(backend->program_draws - draws_before, 1);
     EXPECT_EQ(screen->sourceTarget(), engine->resolve(u8"SceneColor"));
     ASSERT_NE(engine->resolve(u8"SceneColor"), nullptr);
     EXPECT_TRUE(engine->resolve(u8"SceneColor")->hasColor());
@@ -4921,6 +4942,9 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"light");
     consumer->setCamera(camera.get());
+    // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
+    // pass has to be valid apart from the one thing under test.
+    consumer->setProgram(vine::graphics::screenCopyProgram());
     consumer->addInputName(u8"GBuffer");
     engine->addPass(consumer, 0);
 
@@ -5524,6 +5548,9 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"light");
     consumer->setCamera(camera.get());
+    // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
+    // pass has to be valid apart from the one thing under test.
+    consumer->setProgram(vine::graphics::screenCopyProgram());
     consumer->addInput(image);
     engine->addPass(consumer, 0);
 
@@ -5586,6 +5613,9 @@ TEST(RenderEngineTest, InputImageProducedByALaterPassIsReported)
     auto consumer           = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"light");
     consumer->setCamera(camera.get());
+    // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
+    // pass has to be valid apart from the one thing under test.
+    consumer->setProgram(vine::graphics::screenCopyProgram());
     consumer->addInput(image);
     engine->addPass(consumer, 0);
 
@@ -5651,6 +5681,9 @@ TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
     auto pass = intrusive_ptr<ScreenPass>(new ScreenPass());
     pass->setName(u8"overlay");
     pass->setCamera(camera.get());
+    // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
+    // pass has to be valid apart from the one thing under test.
+    pass->setProgram(vine::graphics::screenCopyProgram());
     pass->setRenderTarget(target);   // it draws into the very target it reads
     pass->setOutput(image);
     pass->addInput(image);
@@ -5756,6 +5789,9 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"preview");
     consumer->setCamera(camera.get());
+    // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
+    // pass has to be valid apart from the one thing under test.
+    consumer->setProgram(vine::graphics::screenCopyProgram());
     consumer->addInput(sampled);
     engine->addPass(consumer, 10);
 
@@ -5791,6 +5827,9 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     auto light = intrusive_ptr<ScreenPass>(new ScreenPass());
     light->setName(u8"deferred_light");
     light->setCamera(camera.get());
+    // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
+    // pass has to be valid apart from the one thing under test.
+    light->setProgram(vine::graphics::screenCopyProgram());
     light->addInputTarget(orphan);
     engine->addPass(light, 0);
 
@@ -5855,6 +5894,9 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"reconstruct");
     consumer->setCamera(camera.get());
+    // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
+    // pass has to be valid apart from the one thing under test.
+    consumer->setProgram(vine::graphics::screenCopyProgram());
     consumer->addInput(depth_image);
     engine->addPass(consumer, 1);
 
@@ -5905,17 +5947,18 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"present");
     consumer->setCamera(camera.get());
+    consumer->setProgram(vine::graphics::screenCopyProgram());
     consumer->addInput(unbound);
     engine->addPass(consumer, 1);
 
-    const int draws_before = backend->screen_draws;
+    const int draws_before = backend->program_draws;
     engine->frame(0.016);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"SceneColor"), vine::String::npos);
     EXPECT_NE(received[0].message.find(u8"bind"), vine::String::npos);
     // What the report describes is what happens: the consumer resolves nothing and draws nothing.
-    EXPECT_EQ(backend->screen_draws - draws_before, 0);
+    EXPECT_EQ(backend->program_draws - draws_before, 0);
 
     // Same problem next frame: one episode, one message (the runtime path stays silent about it).
     engine->frame(0.016);
@@ -5925,20 +5968,24 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
     unbound->bind(target, 0);
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
-    EXPECT_EQ(backend->screen_draws - draws_before, 1);
-    EXPECT_EQ(backend->last_screen_source, target.get());
+    EXPECT_EQ(backend->program_draws - draws_before, 1);
+    EXPECT_EQ(backend->last_program_source, target.get());
 }
 
 /**
- * @brief A declaration a ScreenPass cannot sample is reported, not silently substituted.
+ * @brief A ScreenPass with no program is reported and draws nothing — and a depth-only declaration
+ *        is no longer a problem at all.
  *
- * A ScreenPass without a program copies ONE COLOUR attachment (see attachmentToSample), so a pass
- * that declares images and none of them is a colour image is asking for something the pass cannot
- * do: it would sample attachment 0 (or the index setSourceAttachment left) while the host declared
- * — typically — the depth. Reported once per episode; the program path is different and is left
- * alone (drawScreenProgram binds every colour attachment of the source plus its depth).
+ * A ScreenPass has no implicit shading: the program it names IS its picture, so a pass with none
+ * draws nothing, and the engine says so once per episode (the fix is one line).
+ *
+ * The rule this test replaced belonged to the deleted copy path: a program-less pass could only
+ * sample ONE COLOUR attachment, so declaring just the depth was a mistake it had to report. With a
+ * program named, what the pass can sample is the source's ABI (binding i = attachment i), so the
+ * same declaration is simply fine — which is the half of the rule worth pinning, because it is the
+ * half that would go unnoticed if the old check were kept around.
  */
-TEST(RenderEngineTest, ScreenPassDeclaringOnlyDepthIsReportedNotSilentlySubstituted)
+TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
 {
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
@@ -5952,7 +5999,8 @@ TEST(RenderEngineTest, ScreenPassDeclaringOnlyDepthIsReportedNotSilentlySubstitu
     auto camera = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*camera);
 
-    // A producer that fills a target WITH depth: the declaration below is the only problem.
+    // A producer that fills a target with a colour attachment AND depth: the declaration below is
+    // fine, the missing program is the only problem.
     auto target = RenderTargetPtr(new RenderTarget());
     target->setName(u8"composite");
     target->attachColor(RenderTarget::ColorFormat::RGBA8);
@@ -5976,20 +6024,25 @@ TEST(RenderEngineTest, ScreenPassDeclaringOnlyDepthIsReportedNotSilentlySubstitu
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"reconstruct"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"Composite.depth"), vine::String::npos);
-    // The substitution it warns about is what actually happened: colour attachment 0 was sampled.
-    EXPECT_EQ(backend->last_screen_attachment, 0);
+    EXPECT_NE(received[0].message.find(u8"program"), vine::String::npos);
+    // It resolved its source and still drew nothing: "no program" is not "no input".
+    EXPECT_EQ(consumer->sourceTarget(), target.get());
+    EXPECT_EQ(backend->program_draws, 0);
 
     // Same problem next frame: one episode, one message.
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(backend->program_draws, 0);
 
-    // Declaring the colour image the pass CAN sample ends the episode.
-    auto color_image = intrusive_ptr<ImageRef>(new ImageRef(u8"Composite.color"));
-    color_image->bind(target, 0);
-    consumer->addInput(color_image);
+    // Naming a program ends the episode, and the pass draws — depth-only declaration and all, which is
+    // what the deleted "a screen pass cannot sample that" rule used to refuse.
+    auto program = vine::graphics::screenCopyProgram();
+    consumer->setProgram(program);
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(backend->program_draws, 1);
+    EXPECT_EQ(backend->last_program_source, target.get());
+    EXPECT_EQ(backend->last_program, program.get());
 }
 
 /**
@@ -6097,9 +6150,9 @@ TEST(RenderEngineTest, WholeTargetPromiseCollidingWithAFineOneIsReported)
 /**
  * @brief A declared input image drives WHICH attachment the pass samples (no host-set index).
  *
- * The wire says "attachment 2 of the G-buffer", so the pass samples exactly that: the identity carries
- * the grain, and the host does not have to say the same thing again from the consumer side
- * (setSourceAttachment stays as the way to name one attachment of a COARSE declaration).
+ * The wire says "attachment 2 of the G-buffer" — which TARGET the pass reads — while the program says
+ * which ATTACHMENT of it (its sampler binding, see BuiltinShaders::screenCopyProgram): the declaration
+ * carries the target + image, the program carries the binding, and neither restates the other.
  */
 TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
 {
@@ -6127,28 +6180,33 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     producer->setOutputTarget(source);
     engine->addPass(producer, -3);
 
-    // Declares the third image and NOTHING else: no setSourceAttachment, no input name.
+    // Declares the third image and NOTHING else: no input name, no pass-side index. The DECLARATION
+    // carries which target (and which image of it the host means); the PROGRAM carries which attachment
+    // it reads, because in the fullscreen ABI that IS the sampler binding.
     auto sampled = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.specular"));
     sampled->bind(source, 2);
     auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
     preview->setName(u8"preview");
     preview->setCamera(camera.get());
+    preview->setProgram(vine::graphics::screenCopyProgram(2));
     preview->addInput(sampled);
     engine->addPass(preview, 10);
 
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
-    EXPECT_EQ(backend->last_screen_source, source.get());
-    EXPECT_EQ(backend->last_screen_attachment, 2);
+    EXPECT_EQ(preview->sourceTarget(), source.get());
+    EXPECT_EQ(backend->last_program_source, source.get());
 }
 
 /**
- * @brief A coarse declaration (a whole target) still lets the host pick one attachment.
+ * @brief A coarse declaration (a whole target) plus the program's binding names the attachment.
  *
- * The program path consumes the whole target, but a PiP over an accumulated target has no fine
- * declaration to carry the index, so setSourceAttachment stays the answer — and it must keep working.
+ * A coarse declaration says "the whole of this target" (the unit the program path consumes); with the
+ * copy path gone there is no pass-side attachment index any more, and none is needed: the program's
+ * sampler binding says which attachment it reads (screenCopyProgram(1) reads attachment 1), and the
+ * source has to provide it.
  */
-TEST(RenderEngineTest, CoarseDeclarationStillHonoursTheHostAttachment)
+TEST(RenderEngineTest, CoarseDeclarationAndTheProgramsBindingPickTheAttachment)
 {
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
@@ -6175,14 +6233,14 @@ TEST(RenderEngineTest, CoarseDeclarationStillHonoursTheHostAttachment)
     auto pip = intrusive_ptr<ScreenPass>(new ScreenPass());
     pip->setName(u8"pip");
     pip->setCamera(camera.get());
+    pip->setProgram(vine::graphics::screenCopyProgram(1));
     pip->addInputTarget(baked);
-    pip->setSourceAttachment(1);
     engine->addPass(pip, 100);
 
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
-    EXPECT_EQ(backend->last_screen_source, baked.get());
-    EXPECT_EQ(backend->last_screen_attachment, 1);
+    EXPECT_EQ(pip->sourceTarget(), baked.get());
+    EXPECT_EQ(backend->last_program_source, baked.get());
 }
 
 /**
@@ -6221,12 +6279,13 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
     preview->setName(u8"preview");
     preview->setCamera(camera.get());
+    preview->setProgram(vine::graphics::screenCopyProgram());
     preview->addInput(sampled);
     engine->addPass(preview, 10);
 
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 0u);   // wired and produced: silent
-    const int draws_before_pause = backend->screen_draws;
+    const int draws_before_pause = backend->program_draws;
 
     // The producer is paused (a legitimate runtime toggle, not a wiring mistake).
     producer->setEnabled(false);
@@ -6236,7 +6295,7 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"preview"), vine::String::npos);
     EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vine::String::npos);
-    EXPECT_EQ(backend->screen_draws, draws_before_pause);   // nothing to draw from
+    EXPECT_EQ(backend->program_draws, draws_before_pause);   // nothing to draw from
 
     // Still paused: one message for this episode, not one per frame.
     engine->frame(0.016);
@@ -6289,14 +6348,15 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
     auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
     preview->setName(u8"preview");
     preview->setCamera(camera.get());
+    preview->setProgram(vine::graphics::screenCopyProgram());
     preview->addInputName(u8"GBuffer");
     preview->addInput(sampled);
     engine->addPass(preview, 10);
 
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
-    EXPECT_EQ(backend->last_screen_source, source.get());
-    EXPECT_EQ(backend->last_screen_attachment, 0);
+    EXPECT_EQ(preview->sourceTarget(), source.get());
+    EXPECT_EQ(backend->last_program_source, source.get());
 }
 
 /**
@@ -6407,6 +6467,9 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     auto by_name = intrusive_ptr<ScreenPass>(new ScreenPass());
     by_name->setName(u8"by_name");
     by_name->setCamera(camera.get());
+    // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
+    // pass has to be valid apart from the one thing under test.
+    by_name->setProgram(vine::graphics::screenCopyProgram());
     by_name->addInputName(u8"External");
     engine->addPass(by_name, 0);
 
@@ -6417,6 +6480,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     auto by_object = intrusive_ptr<ScreenPass>(new ScreenPass());
     by_object->setName(u8"by_object");
     by_object->setCamera(camera.get());
+    by_object->setProgram(vine::graphics::screenCopyProgram());
     by_object->addInput(declared);
     engine->addPass(by_object, 1);
 
@@ -6425,7 +6489,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
         EXPECT_EQ(engine->engineDiagnosticCount(), 0u) << "frame " << frame_index;
     }
     EXPECT_EQ(engine->resolve(u8"External"), external.get());
-    EXPECT_EQ(backend->last_screen_source, external.get());
+    EXPECT_EQ(backend->last_program_source, external.get());
 
     // unpublish() is what ends a host binding.
     engine->unpublish(u8"External");
@@ -6523,6 +6587,9 @@ TEST(RenderEngineTest, ScreenPassWithoutAnyInputIsReportedOnce)
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"overlay");
     consumer->setCamera(camera.get());
+    // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
+    // pass has to be valid apart from the one thing under test.
+    consumer->setProgram(vine::graphics::screenCopyProgram());
     engine->addPass(consumer, 0);
 
     engine->frame(0.016);

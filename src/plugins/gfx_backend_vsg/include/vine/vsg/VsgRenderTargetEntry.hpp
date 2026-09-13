@@ -157,30 +157,6 @@ struct ContentSlot {
     bool                          light_fallback_reported = false;
 };
 
-/** @brief One picture-in-picture view sampling another target's colour
- * attachment.
- *
- * Owned by the pass that draws it (see SlotKey); the sampled source and
- * attachment are slot ATTRIBUTES compared each frame, so a pass that
- * switches its input or destination is rebuilt instead of silently
- * sampling the old texture. */
-struct ScreenSlot {
-    int                              order      = std::numeric_limits<int>::max(); // stacking order (engine pass order); PiP last by default
-    const vine::graphics::RenderTarget* source_target = nullptr; // sampled target the slot was built for
-    int                              attachment = 0;             // sampled colour attachment
-    ::vsg::ref_ptr<::vsg::Camera>    camera;      // carries the sub-rect viewport
-    ::vsg::ref_ptr<::vsg::View>      view;        // extra View of this target's render graph
-    ::vsg::ref_ptr<::vsg::ImageView> source_view; // keeps the sampled attachment alive
-    int                              source_w = 0;
-    int                              source_h = 0;
-    int                              dest_w   = 0; // destination surface the node was built for
-    int                              dest_h   = 0;
-    // See ContentSlot::detached: a retired slot keeps its node / pipeline
-    // so re-enabling the pass re-attaches instead of rebuilding.
-    bool                             detached = false;
-    bool                             ready    = false;
-};
-
 /** @brief One retained fullscreen-program view sampling another target's
  * colour attachments through a user fragment program (deferred lighting).
  *
@@ -237,7 +213,7 @@ struct ProgramSlot {
  *
  * Unified (C6.4 / C6.5): window and off-screen targets are the SAME
  * shape — a RenderGraph whose children are content-slot Views (per
- * (camera, pass order)) plus optional PiP views (screen_slots). The
+ * (camera, pass order)) plus fullscreen-program views (program_slots). The
  * window target's graph is the shared swapchain graph created in
  * initialize(); each off-screen target owns its
  * own graph + attachments (images / views / render pass / framebuffer)
@@ -398,7 +374,7 @@ struct VsgRenderTargetEntry {
      * owns a sampling edge (source_target + attachment). Most walks do not
      * care which kind they are looking at — see forEachSlot() / visitSlot().
      */
-    enum class SlotKind { Content, Screen, Program };
+    enum class SlotKind { Content, Program };
 
     /** @brief Visits every retained slot of this target, whatever its kind.
      *
@@ -408,9 +384,6 @@ struct VsgRenderTargetEntry {
     {
         for (auto& entry : content_slots) {
             visitor(entry.first, entry.second, SlotKind::Content);
-        }
-        for (auto& entry : screen_slots) {
-            visitor(entry.first, entry.second, SlotKind::Screen);
         }
         for (auto& entry : program_slots) {
             visitor(entry.first, entry.second, SlotKind::Program);
@@ -429,9 +402,6 @@ struct VsgRenderTargetEntry {
     {
         for (const auto& entry : content_slots) {
             visitor(entry.first, entry.second, SlotKind::Content);
-        }
-        for (const auto& entry : screen_slots) {
-            visitor(entry.first, entry.second, SlotKind::Screen);
         }
         for (const auto& entry : program_slots) {
             visitor(entry.first, entry.second, SlotKind::Program);
@@ -453,10 +423,6 @@ struct VsgRenderTargetEntry {
             visitor(it->second, SlotKind::Content);
             return true;
         }
-        if (const auto it = screen_slots.find(key); it != screen_slots.end()) {
-            visitor(it->second, SlotKind::Screen);
-            return true;
-        }
         if (const auto it = program_slots.find(key); it != program_slots.end()) {
             visitor(it->second, SlotKind::Program);
             return true;
@@ -475,7 +441,7 @@ struct VsgRenderTargetEntry {
      */
     [[nodiscard]] bool hasSlot(const SlotKey& key) const
     {
-        return content_slots.count(key) != 0u || screen_slots.count(key) != 0u || program_slots.count(key) != 0u;
+        return content_slots.count(key) != 0u || program_slots.count(key) != 0u;
     }
 
     /** @brief Erases the slot @p kind holds under @p key.
@@ -487,7 +453,6 @@ struct VsgRenderTargetEntry {
     {
         switch (kind) {
         case SlotKind::Content: content_slots.erase(key); return;
-        case SlotKind::Screen: screen_slots.erase(key); return;
         case SlotKind::Program: program_slots.erase(key); return;
         }
     }
@@ -603,7 +568,6 @@ struct VsgRenderTargetEntry {
     // ---- content slots (retained Views under graph), keyed by owning pass ----
     std::map<SlotKey, ContentSlot> content_slots;
     // ---- PiP views sampling other targets (drawn under this graph) ----
-    std::map<SlotKey, ScreenSlot> screen_slots;
     // ---- fullscreen-program views (deferred lighting), keyed by owning pass ----
     std::map<SlotKey, ProgramSlot> program_slots;
 

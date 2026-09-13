@@ -304,6 +304,10 @@ bool RenderPipelineBuilder::buildDeferred(Pipeline& pipeline,
     auto present = make_intrusive<ScreenPass>();
     present->setName(u8"present");
     present->setCamera(camera_);
+    // The recipe names the copy program: the SDK's own passes have no implicit shading either, so
+    // "present the baked target" is an SDK program (BuiltinShaders::screenCopyProgram) rather than a
+    // backend-side default (see ScreenPass::setProgram).
+    present->setProgram(screenCopyProgram());
     present->addInputName(u8"Composite");
     present->addInputTarget(composite);   // it presents the whole baked target
     engine_->addPass(present, 2);
@@ -352,9 +356,13 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     }
     passes_.push_back(offscreen);
 
-    // An order > 0 ScreenPass sampling the slot into the PiP sub-viewport.
+    // An order > 0 ScreenPass sampling the slot into the PiP sub-viewport. Its picture is the SDK's
+    // copy program, and it carries the view camera because a fullscreen program is drawn through the
+    // pass' view (see ScreenPass::setProgram).
     auto screen = make_intrusive<ScreenPass>();
     screen->setName(output_slot);
+    screen->setCamera(camera_);
+    screen->setProgram(screenCopyProgram());
     screen->addInputName(output_slot);
     screen->addInputTarget(target);   // samples the whole published target
     screen->setViewport(pip_x, pip_y, pip_w, pip_h);

@@ -283,8 +283,8 @@ void retargetPass(VsgRendererState& state, const vine::graphics::RenderPass* pas
  * A rebuild creates FRESH colour views, and a consumer's stale check only watches the
  * source's SIZE — which a same-size rebuild does not change — so a PiP / fullscreen-program
  * slot built against the old views would go on sampling an image nothing draws into any
- * more. Dropping the slot makes its owner's next drawScreenTexture / drawScreenProgram call
- * reattach against the new attachments.
+ * more. Dropping the slot makes its owner's next drawScreenProgram call reattach against the new
+ * attachments.
  *
  * Consumers are found by inspecting the slot ATTRIBUTE (source_target), because a slot's
  * key is the pass that OWNS it, not the target it samples.
