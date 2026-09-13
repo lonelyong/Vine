@@ -124,13 +124,68 @@ intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment)
     return program;
 }
 
-intrusive_ptr<ShaderProgram> deferredLightProgram()
+intrusive_ptr<ShaderProgram> deferredLightProgram(bool with_shadow)
 {
     auto program = make_intrusive<ShaderProgram>();
-    program->setName(u8"deferred_light");
+    program->setName(with_shadow ? u8"deferred_light_shadowed" : u8"deferred_light");
+    // The unshadowed variant inserts NOTHING where the shadowed one inserts its bindings and its
+    // term: both go through the same substitution, so neither program text carries scaffolding —
+    // and a source that lost a marker is refused for both instead of only for one.
+    // The shadowed variant differs in TWO places of the source, each marked by a comment the
+    // shipped text carries (see the .frag): the declarations, and the factor that scales the
+    // light's diffuse term. Both are ASSERTED against the source by EmbeddedShadersTest, so an
+    // edit to the .frag that moves or renames a marker fails a test instead of silently
+    // producing a program whose shadow terms are somebody else's code.
+    //
+    // The binding numbers are the shadow ABI (see .ai/design/render-pipeline.md §9): a fullscreen
+    // program's source occupies 0..color_count-1, its source's depth takes color_count when that
+    // one is sampleable, and the shadow map and its block follow at color_count+1 and +2 — 5 and
+    // 6 for the canonical 4-colour G-buffer this program is written against.
+    constexpr char8_t bindings[] =
+        u8"layout(binding = 5) uniform sampler2D shadow_map;\n"
+        u8"layout(binding = 6, std140) uniform VineShadowBlock\n"
+        u8"{\n"
+        u8"    mat4 viewToLight;   // view space -> light clip\n"
+        u8"    vec4 params;        // x = enabled, y = depth bias, z = strength\n"
+        u8"} shadow;";
+    constexpr char8_t term[] =
+        u8"        if (shadow.params.x > 0.5)\n"
+        u8"        {\n"
+        u8"            // Where this fragment lands in the LIGHT's clip space, and how deep the nearest\n"
+        u8"            // caster the map found is. Outside the light's frustum nothing casts, so the\n"
+        u8"            // fragment stays lit: the map only covers what the light camera framed.\n"
+        u8"            vec4 light_clip = shadow.viewToLight * vec4(pos, 1.0);\n"
+        u8"            vec3 light_uv   = light_clip.xyz / light_clip.w * 0.5 + 0.5;\n"
+        u8"            if (all(greaterThan(light_uv.xy, vec2(0.0))) && all(lessThan(light_uv.xy, vec2(1.0))))\n"
+        u8"            {\n"
+        u8"                float caster = texture(shadow_map, light_uv.xy).r;\n"
+        u8"                float lit    = (light_uv.z - shadow.params.y) <= caster ? 1.0 : 0.0;\n"
+        u8"                ndl *= mix(1.0, lit, clamp(shadow.params.z, 0.0, 1.0));\n"
+        u8"            }\n"
+        u8"        }";
+
+    constexpr char8_t bindings_marker[] = u8"// VINE_SHADOW_BINDINGS";
+    constexpr char8_t term_marker[]     = u8"// VINE_SHADOW_TERM";
+    std::u8string     source(shaders::kDeferredLightFrag);
+    const auto        replace_marker = [&source](std::u8string_view marker, std::u8string_view text) {
+        const std::size_t at = source.find(marker);
+        if (at == std::u8string::npos) {
+            return false;   // refused below: a program nobody can build is better than one that lies
+        }
+        // The marker line goes away with its text: it is a comment, but the program NAME and the
+        // program TEXT are what the host sees, and a program carrying scaffolding reads as one.
+        const std::size_t line_end = source.find(u8'\n', at);
+        source.replace(at, (line_end == std::u8string::npos ? source.size() : line_end + 1u) - at, text);
+        return true;
+    };
+    if (!replace_marker(bindings_marker, with_shadow ? bindings : std::u8string_view{}) ||
+        !replace_marker(term_marker, with_shadow ? term : std::u8string_view{})) {
+        return {};   // declined: the caller reports and draws nothing (no silent stand-in)
+    }
+
     ShaderStage fragment;
     fragment.type   = ShaderStageType::Fragment;
-    fragment.source = String(shaders::kDeferredLightFrag);
+    fragment.source = String(source);
     program->addStage(fragment);
     return program;
 }

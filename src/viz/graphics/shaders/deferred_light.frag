@@ -5,6 +5,10 @@ layout(binding = 0) uniform sampler2D albedo_tex;
 layout(binding = 1) uniform sampler2D normal_tex;
 layout(binding = 2) uniform sampler2D spec_tex;
 layout(binding = 3) uniform sampler2D pos_tex;
+// The shadowed variant of this program inserts its sampler and its VineShadowBlock here
+// (BuiltinShaders::deferredLightProgram); the unshadowed one declares neither, so the pass that
+// draws it must provide neither. The line below IS the insertion point.
+// VINE_SHADOW_BINDINGS
 layout(push_constant) uniform PushConstants
 {
     vec4 ambient;
@@ -39,6 +43,9 @@ void main()
         if (dot(d, d) < 1e-6) continue;
         vec3 L = normalize(-d);
         float ndl = max(dot(n, L), 0.0);
+        // The shadowed variant scales ndl by the map here; the unshadowed program has nothing to
+        // scale, and this line is the insertion point either way.
+        // VINE_SHADOW_TERM
         color += albedo * c * a * ndl;
         // Specular is gated by ndl like the diffuse term:
         // a face turned away from the light must not receive

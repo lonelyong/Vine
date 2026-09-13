@@ -44,7 +44,7 @@ intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultGbufferGeometryProgra
  */
 intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultDeferredLightProgram()
 {
-    return deferredLightProgram();
+    return deferredLightProgram(/*with_shadow*/ false);
 }
 
 intrusive_ptr<RenderTarget> RenderPipelineBuilder::defaultGbufferTarget(int width, int height)

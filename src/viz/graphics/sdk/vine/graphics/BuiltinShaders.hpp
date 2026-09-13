@@ -106,8 +106,14 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0
  * position) and the pass camera's lights; see fullscreenVertexProgram for the fragment-stage
  * interface it shares with every other fullscreen program.
  *
- * @return The fragment program (see fullscreenVertexProgram for the vertex stage).
+ * @param with_shadow True for the variant that also shades a shadow map: it declares the map at
+ *                    binding 5 and its `VineShadowBlock` at binding 6 (the shadow ABI; a pipeline
+ *                    that asks for it must declare that map as an input of the lighting pass), and
+ *                    scales each light's diffuse term by the map. False is the plain program, which
+ *                    declares neither — so the pass that draws it must provide neither.
+ * @return The fragment program (see fullscreenVertexProgram for the vertex stage), or null when the
+ *         source no longer carries the markers the shadowed variant is built from.
  */
-V_GRAPHICS_API intrusive_ptr<ShaderProgram> deferredLightProgram();
+V_GRAPHICS_API intrusive_ptr<ShaderProgram> deferredLightProgram(bool with_shadow);
 
 V_GRAPHICS_NS_END

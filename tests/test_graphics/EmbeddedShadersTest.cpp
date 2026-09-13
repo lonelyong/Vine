@@ -103,6 +103,9 @@ TEST(EmbeddedShadersTest, BookkeepingAgreesWithTheText)
     ASSERT_EQ(std::adjacent_find(names.begin(), names.end()), names.end());
 }
 
+/** @brief Reinterprets UTF-8 shader text as a searchable byte string (defined below). */
+std::string asByteString(std::u8string_view text);
+
 TEST(EmbeddedShadersTest, TheDeferredProgramsUseTheEmbeddedSources)
 {
     const auto gbuffer = RenderPipelineBuilder::defaultGbufferGeometryProgram();
@@ -123,7 +126,19 @@ TEST(EmbeddedShadersTest, TheDeferredProgramsUseTheEmbeddedSources)
     const ShaderStage* light_fs = light->stage(0);
     ASSERT_NE(light_fs, nullptr);
     EXPECT_EQ(light_fs->type, ShaderStageType::Fragment);
-    EXPECT_EQ(light_fs->source, vine::String(kDeferredLightFrag));
+    // The lighting program is the embedded source with its two insertion markers taken out (the
+    // shadowed variant is the same source with text put in their place): the FILE is what ships, and
+    // a program that is not derived from it is a second copy that drifts.
+    const std::string shipped  = asByteString(kDeferredLightFrag);
+    const std::string markers  = "// VINE_SHADOW_BINDINGS\n";
+    const std::string markers2 = "// VINE_SHADOW_TERM\n";
+    std::string       expected = shipped;
+    for (const std::string& marker : { markers, markers2 }) {
+        const std::size_t at = expected.find(marker);
+        ASSERT_NE(at, std::string::npos) << "the shipped source carries the insertion markers";
+        expected.erase(at, marker.size());
+    }
+    EXPECT_EQ(light_fs->source.stdstr(), expected);
 }
 
 TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
@@ -195,6 +210,36 @@ TEST(EmbeddedShadersTest, TheAbiLocationsMatchTheShaderText)
         EXPECT_NE(forward_vs.find(attributeLayout(attributeLocation(role))), std::string::npos)
             << "vertex attribute at location " << attributeLocation(role);
     }
+}
+
+TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceCarries)
+{
+    // The shadowed variant of the lighting program is the shipped source with two insertions, and
+    // its bindings are part of the shadow ABI (see BuiltinShaders::deferredLightProgram): the map
+    // at binding 5 and its block at 6, right after the canonical G-buffer's four colours and the
+    // depth slot. A source edit that moves or renames a marker must fail HERE — the alternative is
+    // a program that builds without complaint and whose shadow terms are whatever used to follow.
+    const std::string source = asByteString(kDeferredLightFrag);
+    EXPECT_NE(source.find("// VINE_SHADOW_BINDINGS"), std::string::npos) << "the declarations' marker";
+    EXPECT_NE(source.find("// VINE_SHADOW_TERM"), std::string::npos) << "the term's marker";
+
+    const auto plain = deferredLightProgram(/*with_shadow*/ false);
+    ASSERT_NE(plain, nullptr);
+    const std::string plain_text = plain->stage(0)->source.stdstr();
+    EXPECT_EQ(plain_text.find("VINE_SHADOW_"), std::string::npos)
+        << "the unshadowed program must ask the pass for no shadow binding at all";
+    EXPECT_EQ(plain_text.find("shadow_map"), std::string::npos);
+
+    const auto shadowed = deferredLightProgram(/*with_shadow*/ true);
+    ASSERT_NE(shadowed, nullptr);
+    const std::string shadowed_text = shadowed->stage(0)->source.stdstr();
+    EXPECT_NE(shadowed_text.find("layout(binding = 5) uniform sampler2D shadow_map;"), std::string::npos);
+    EXPECT_NE(shadowed_text.find("layout(binding = 6, std140) uniform VineShadowBlock"), std::string::npos)
+        << "the block's GLSL type name is the L1 name (ShaderAbi.hpp)";
+    EXPECT_NE(shadowed_text.find("shadow.viewToLight"), std::string::npos);
+    EXPECT_EQ(shadowed_text.find("VINE_SHADOW_BINDINGS"), std::string::npos)
+        << "the markers are scaffolding: the program text must not carry them";
+    EXPECT_EQ(shadowed_text.find("VINE_SHADOW_TERM"), std::string::npos);
 }
 
 TEST(EmbeddedShadersTest, TheNamedConstantsAreInTheTable)
