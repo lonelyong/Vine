@@ -270,8 +270,13 @@ addCubeMappedBox(vine::graphics::Group* root, vine::intrusive_ptr<vine::graphics
             positions.push_back(corner);
             normals.push_back(normal);
             const float length = std::sqrt(corner.x * corner.x + corner.y * corner.y + corner.z * corner.z);
-            // The swizzle: the skybox images are authored Y-up, the demo's world is Z-up.
-            directions.emplace_back(corner.x / length, corner.z / length, corner.y / length);
+            // The skybox images are authored Y-up and the demo's world is Z-up, so the direction is
+            // REORIENTED — by a ROTATION, never by a swap. Swapping y and z has determinant -1: it
+            // MIRRORS the environment, and a mirrored skybox on a box reads as looking INTO the box
+            // rather than at it (measured on the demo's own box, which is the only place this can show:
+            // the cube-map phase feeds map-space directions straight through, so it cannot see a
+            // world-to-map reorientation at all).
+            directions.emplace_back(corner.x / length, corner.z / length, -corner.y / length);
         }
         indices.push_back(base + 0);
         indices.push_back(base + 1);
@@ -289,9 +294,14 @@ addCubeMappedBox(vine::graphics::Group* root, vine::intrusive_ptr<vine::graphics
     geometry->setIndices(vine::graphics::packIndices(indices));
 
     auto material = vine::make_intrusive<vine::graphics::Material>();
-    // White diffuse: the cube map IS the colour. The material's specular stays low like every other
-    // demo box, so the map is not washed out by a highlight.
-    material->setDiffuse(vine::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
+    // The material is a mid grey, not white: the cube map is the ALBEDO here (the engine's forward set
+    // multiplies it by the material and then shades it), and a white albedo against the skybox's own
+    // bright sky made the sun's shading invisible — the box looked lit by nothing. A mid grey leaves the
+    // map's structure readable AND the lighting legible on it.
+    //
+    // Sampling by the fragment's REFLECTED view direction (a mirror) is a different shading rule and
+    // needs a program of its own; the engine's preset samples the direction the vertex stage supplies.
+    material->setDiffuse(vine::Colorf(0.45f, 0.45f, 0.45f, 1.0f));
     material->setSpecular(vine::Colorf(0.12f, 0.12f, 0.12f, 1.0f));
     material->setShininess(64.0f);
     material->setTexture(std::move(texture));
