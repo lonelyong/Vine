@@ -17,6 +17,7 @@
 #include <vsg/utils/ShaderSet.h>
 
 #include <cmath>
+#include "TestContentSet.hpp"
 
 using namespace vine::graphics;
 using vine::math::Mat4d;
@@ -148,7 +149,7 @@ std::vector<float> triangleFloats(float x = 0.0f)
 TEST(GeometrySafetyTest, OutOfRangeIndexRejectsGeometry)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -173,7 +174,7 @@ TEST(GeometrySafetyTest, OutOfRangeIndexRejectsGeometry)
 TEST(GeometrySafetyTest, NonTriangleMultipleIndexCountIsDrawnVerbatim)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -211,7 +212,7 @@ TEST(GeometrySafetyTest, NonTriangleMultipleIndexCountIsDrawnVerbatim)
 TEST(GeometrySafetyTest, ShortIndexBufferStillDrawsNoOp)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -237,7 +238,7 @@ TEST(GeometrySafetyTest, ShortIndexBufferStillDrawsNoOp)
 TEST(GeometrySafetyTest, Vec4PositionUsesXyzSkipsW)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -278,7 +279,7 @@ TEST(GeometrySafetyTest, Vec4PositionUsesXyzSkipsW)
 TEST(GeometrySafetyTest, ShortPositionComponentsRejectGeometry)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -298,7 +299,7 @@ TEST(GeometrySafetyTest, ShortPositionComponentsRejectGeometry)
 TEST(GeometrySafetyTest, UndivisiblePositionDataRejectsGeometry)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -319,7 +320,7 @@ TEST(GeometrySafetyTest, UndivisiblePositionDataRejectsGeometry)
 TEST(GeometrySafetyTest, Vec4NormalSkipsW)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -353,7 +354,7 @@ TEST(GeometrySafetyTest, Vec4NormalSkipsW)
 TEST(GeometrySafetyTest, MalformedOptionalNormalStillDraws)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -378,7 +379,7 @@ TEST(GeometrySafetyTest, MalformedOptionalNormalStillDraws)
 TEST(GeometrySafetyTest, ShortNormalChannelDerivesNormals)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -403,7 +404,7 @@ TEST(GeometrySafetyTest, ShortNormalChannelDerivesNormals)
 TEST(GeometrySafetyTest, FixedDataRevisionRebuildsRejectedGeometry)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -442,7 +443,7 @@ TEST(GeometrySafetyTest, FixedDataRevisionRebuildsRejectedGeometry)
 TEST(GeometrySafetyTest, IndexedPointsKeepAllIndices)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -470,7 +471,7 @@ TEST(GeometrySafetyTest, IndexedPointsKeepAllIndices)
 TEST(GeometrySafetyTest, IndexedLinesKeepAllIndices)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -532,7 +533,7 @@ class TrackedGeometry : public Geometry
 TEST(GeometrySafetyTest, RetainedCacheOwnsTheGeometryItIsKeyedBy)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -571,7 +572,7 @@ TEST(GeometrySafetyTest, RetainedCacheOwnsTheGeometryItIsKeyedBy)
 TEST(GeometrySafetyTest, ReplacedDataNodeIsParkedUntilTheRingAdvances)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -655,7 +656,7 @@ struct CapturedDiagnostics
 TEST(DiagnosticsTest, RejectedGeometryIsReportedOncePerRevision)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -709,7 +710,7 @@ TEST(DiagnosticsTest, RejectedGeometryIsReportedOncePerRevision)
 TEST(DiagnosticsTest, DroppedChannelWarnsButStillDraws)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -740,7 +741,7 @@ TEST(DiagnosticsTest, DroppedChannelWarnsButStillDraws)
 TEST(DiagnosticsTest, CleanFrameIsSilentAndSinkCanBeCleared)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 

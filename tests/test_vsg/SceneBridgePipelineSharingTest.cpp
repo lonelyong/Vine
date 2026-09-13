@@ -15,6 +15,7 @@
 #include <vsg/io/Options.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/utils/ShaderSet.h>
+#include "TestContentSet.hpp"
 
 using namespace vine::graphics;
 using vine::math::Mat4d;
@@ -112,50 +113,6 @@ vsg::BindIndexBuffer* findBindIndexBuffer(vsg::Node* node)
 }
 
 /**
- * @brief Walks a retained subtree looking for any DYNAMIC vertex-colour array.
- *
- * The per-drawable opacity carrier must be marked DYNAMIC so vsg's per-frame
- * TransferTask re-copies it after a dirty(); otherwise in-place alpha edits
- * after the first upload would never reach the GPU.
- *
- * @param node Root of the subtree to walk.
- * @return true when some bound vertex array carries dynamic data.
- */
-bool hasDynamicVertexData(vsg::Node* node)
-{
-    if (node == nullptr) {
-        return false;
-    }
-    if (auto bvb = node->cast<vsg::BindVertexBuffers>()) {
-        // Do NOT return false here: each channel has its own command (see SceneBridge::RetainedBinds), so the
-        // dynamic carrier may sit in a later command than this one.
-        for (const auto& buffer_info : bvb->arrays) {
-            if (buffer_info != nullptr && buffer_info->data != nullptr &&
-                buffer_info->data->dynamic()) {
-                return true;
-            }
-        }
-    }
-    if (auto group = node->cast<vsg::Group>()) {
-        for (const auto& child : group->children) {
-            if (hasDynamicVertexData(child.get())) {
-                return true;
-            }
-        }
-    }
-    // vsg::Commands is NOT a Group: it keeps its command children in its own
-    // list, so it must be walked separately to reach the BindVertexBuffers.
-    if (auto commands = node->cast<vsg::Commands>()) {
-        for (const auto& child : commands->children) {
-            if (hasDynamicVertexData(child.get())) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-/**
  * @brief Finds the vertex Data bound at binding @p binding under a retained subtree.
  *
  * The binding is resolved through each command's firstBinding, because a data node binds one channel per
@@ -187,50 +144,6 @@ vsg::Data* findBoundData(vsg::Node* node, std::size_t binding)
     if (auto group = node->cast<vsg::Group>()) {
         for (const auto& child : group->children) {
             if (auto* hit = findBoundData(child.get(), binding)) {
-                return hit;
-            }
-        }
-    }
-    return nullptr;
-}
-
-/**
- * @brief Finds the bound per-vertex colour array under a retained subtree.
- *
- * The default path always binds three arrays (vertex, normal, colour); the
- * colour array's alpha carries the per-drawable opacity, so tests read it to
- * assert opacity edits were applied in place.
- *
- * @param node Root of the subtree to walk.
- * @return The colour array, or null when none is bound.
- */
-vsg::vec4Array* findColorArray(vsg::Node* node)
-{
-    if (node == nullptr) {
-        return nullptr;
-    }
-    if (auto bvb = node->cast<vsg::BindVertexBuffers>()) {
-        // The colour array sits at binding index 3, after vertex (0), normal (1) and texcoord (2) — see
-        // buildGeometryData. Each channel has its own command now, so the index is resolved through
-        // firstBinding rather than by position in this command's array list.
-        constexpr std::size_t kColorBinding = 3u;
-        const std::size_t     first         = static_cast<std::size_t>(bvb->firstBinding);
-        if (kColorBinding >= first && kColorBinding - first < bvb->arrays.size()) {
-            const auto& info = bvb->arrays[kColorBinding - first];
-            return info != nullptr && info->data != nullptr ? info->data->cast<vsg::vec4Array>() : nullptr;
-        }
-        return nullptr;
-    }
-    if (auto group = node->cast<vsg::Group>()) {
-        for (const auto& child : group->children) {
-            if (auto* hit = findColorArray(child.get())) {
-                return hit;
-            }
-        }
-    }
-    if (auto commands = node->cast<vsg::Commands>()) {
-        for (const auto& child : commands->children) {
-            if (auto* hit = findColorArray(child.get())) {
                 return hit;
             }
         }
@@ -295,7 +208,7 @@ const vine::graphics::VineMaterialBlock& materialBlockOf(const ::vsg::ref_ptr<::
 TEST(SceneBridgePipelineSharingTest, IdenticalGeometryShareOnePipeline)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto  root   = vsg::Group::create();
     auto  material = MaterialPtr(new Material());
 
@@ -325,7 +238,7 @@ TEST(SceneBridgePipelineSharingTest, IdenticalGeometryShareOnePipeline)
 TEST(SceneBridgePipelineSharingTest, ManyMaterialsKeepOnePipeline)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto  root   = vsg::Group::create();
 
     constexpr int kCount = 200;
@@ -360,7 +273,7 @@ TEST(SceneBridgePipelineSharingTest, ManyMaterialsKeepOnePipeline)
 TEST(SceneBridgePipelineSharingTest, StateVariantsAddPipelines)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto  root   = vsg::Group::create();
     auto  material = MaterialPtr(new Material());
 
@@ -386,14 +299,22 @@ TEST(SceneBridgePipelineSharingTest, StateVariantsAddPipelines)
 }
 
 /**
- * @brief The per-vertex opacity carrier must reach the GPU after upload:
- * geometry built on the default (built-in) path binds a DYNAMIC colour array,
- * so live opacity edits are re-transferred on dirty() instead of being lost.
+ * @brief Per-drawable opacity is a per-draw BLOCK value, not a vertex-colour alpha.
+ *
+ * The carrier used to be a white vertex-colour array whose alpha the bridge rewrote on every opacity
+ * edit: an array per drawable, one entry per vertex, DYNAMIC so that a rewrite could be re-transferred —
+ * existing only because the shading had no per-drawable slot to put the value in. The engine's forward
+ * set HAS one (`vine_draw`, set 1, selected by a dynamic offset), so the colour array goes back to being
+ * what it says it is: the geometry's colour, static, or a static white fallback when none is authored.
  */
-TEST(SceneBridgePipelineSharingTest, OpacityColorArrayIsDynamic)
+TEST(SceneBridgePipelineSharingTest, OpacityDoesNotRideTheVertexColour)
 {
+    const auto set = testContentSet();
+    ASSERT_TRUE(static_cast<bool>(set->getDescriptorBinding("vine_draw")))
+        << "a per-drawable value needs a per-drawable block to ride";
+
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(set);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -401,10 +322,12 @@ TEST(SceneBridgePipelineSharingTest, OpacityColorArrayIsDynamic)
     commands.emplace_back(makeTriangle(0), material, Mat4d());
     std::vector<vsg::ref_ptr<vsg::Node>> created;
     bridge.syncRenderCommands(commands, root.get(), &created);
-    ASSERT_EQ(created.size(), 1u);
 
-    EXPECT_TRUE(hasDynamicVertexData(created[0].get()))
-        << "default-path geometry must bind a DYNAMIC colour array for live opacity";
+    ASSERT_EQ(created.size(), 1u);
+    auto* colors = findBoundData(created[0].get(), 3u);
+    ASSERT_NE(colors, nullptr) << "the canonical binding order is fixed: all four arrays are emitted";
+    EXPECT_FALSE(colors->dynamic())
+        << "a STATIC array is one no per-drawable edit can be riding — the block is where opacity goes";
 }
 
 /**
@@ -422,7 +345,7 @@ TEST(SceneBridgePipelineSharingTest, MaterialPhongValueIsDynamic)
 {
     vine::vsg::VsgMaterialManager manager;
     vine::vsg::SceneBridge        bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMaterialManager(&manager);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
@@ -469,7 +392,7 @@ TEST(SceneBridgePipelineSharingTest, UpdateMaterialRefreshesInPlace)
 TEST(SceneBridgePipelineSharingTest, StateOnlyRebuildReusesGeometryData)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material_a = MaterialPtr(new Material());
     auto material_b = MaterialPtr(new Material());
@@ -504,7 +427,7 @@ TEST(SceneBridgePipelineSharingTest, StateOnlyRebuildReusesGeometryData)
 TEST(SceneBridgePipelineSharingTest, ThousandGeometryStayOnePipeline)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -526,7 +449,7 @@ TEST(SceneBridgePipelineSharingTest, ThousandGeometryStayOnePipeline)
 TEST(SceneBridgePipelineSharingTest, SharedProgramCompiledOnceAndReused)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
 
     auto program = makeColoredProgram(false);
 
@@ -558,7 +481,7 @@ TEST(SceneBridgePipelineSharingTest, SharedProgramCompiledOnceAndReused)
 TEST(SceneBridgePipelineSharingTest, EditingProgramSourceRebuildsVariant)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -600,7 +523,7 @@ TEST(SceneBridgePipelineSharingTest, EditingProgramSourceRebuildsVariant)
 TEST(SceneBridgePipelineSharingTest, DataOnlyRebuildLeavesStateUntouched)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto  root   = vsg::Group::create();
     auto  material = MaterialPtr(new Material());
 
@@ -635,7 +558,7 @@ TEST(SceneBridgePipelineSharingTest, DataOnlyRebuildLeavesStateUntouched)
 TEST(SceneBridgePipelineSharingTest, ManuallyReportedRevisionRebuildsTheDataNode)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -679,7 +602,7 @@ TEST(SceneBridgePipelineSharingTest, ManuallyReportedRevisionRebuildsTheDataNode
 TEST(SceneBridgePipelineSharingTest, ReorderCommandsKeepsRetainedTransforms)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto g_a      = makeTriangle(0);
@@ -714,7 +637,7 @@ TEST(SceneBridgePipelineSharingTest, ReorderCommandsKeepsRetainedTransforms)
 TEST(SceneBridgePipelineSharingTest, HiddenGeometryReappearsThenEvictsAndRebuilds)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto geometry = makeTriangle(0);
@@ -766,7 +689,7 @@ TEST(SceneBridgePipelineSharingTest, HiddenGeometryReappearsThenEvictsAndRebuild
 TEST(SceneBridgePipelineSharingTest, StateEditRebuildsStateReusesData)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto geometry = makeTriangle(0);
@@ -826,7 +749,7 @@ TEST(SceneBridgePipelineSharingTest, StateEditRebuildsStateReusesData)
 TEST(SceneBridgePipelineSharingTest, ContentDepthModeAppliesAndRebuildsState)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto geometry = makeTriangle(0);
@@ -890,7 +813,7 @@ TEST(SceneBridgePipelineSharingTest, ContentDepthModeAppliesAndRebuildsState)
 TEST(SceneBridgePipelineSharingTest, ProgramSwapRebuildsStateReusesData)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root       = vsg::Group::create();
     auto material   = MaterialPtr(new Material());
     auto geometry   = makeTriangle(0);
@@ -953,7 +876,7 @@ TEST(SceneBridgePipelineSharingTest, MaterialPropertyEditRewritesUboNoRebuild)
 {
     vine::vsg::VsgMaterialManager manager;
     vine::vsg::SceneBridge        bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMaterialManager(&manager);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
@@ -987,7 +910,7 @@ TEST(SceneBridgePipelineSharingTest, MaterialPropertyEditRewritesUboNoRebuild)
 TEST(SceneBridgePipelineSharingTest, CombinedDataMaterialStateProgramEdit)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root       = vsg::Group::create();
     auto material_a = MaterialPtr(new Material());
     auto material_b = MaterialPtr(new Material());
@@ -1042,8 +965,8 @@ TEST(SceneBridgePipelineSharingTest, TwoBridgesSharingSceneStayIndependent)
     vine::vsg::VsgMaterialManager manager;
     vine::vsg::SceneBridge        bridge_a;
     vine::vsg::SceneBridge        bridge_b;
-    bridge_a.setShaderSet(vsg::createPhongShaderSet());
-    bridge_b.setShaderSet(vsg::createPhongShaderSet());
+    bridge_a.setShaderSet(testContentSet());
+    bridge_b.setShaderSet(testContentSet());
     bridge_a.setMaterialManager(&manager);
     bridge_b.setMaterialManager(&manager);
 
@@ -1076,14 +999,19 @@ TEST(SceneBridgePipelineSharingTest, TwoBridgesSharingSceneStayIndependent)
 }
 
 /**
- * @brief Opacity is a per-COMMAND (per-drawable) value riding the vertex-colour
- * alpha: several drawables keep independent opacity carriers, so changing one
- * drawable's opacity rewrites only its own array.
+ * @brief An opacity-only edit rebuilds no geometry and no pipeline.
+ *
+ * The opacity rides the per-drawable block, so changing it is a write into one slot: nothing in the
+ * retained subtree changes, which is what an empty @p created says. It used to rewrite a per-vertex
+ * colour array, so the cost of a "hot" edit was proportional to the mesh.
+ *
+ * What the write has to REACH is pinned where it can be seen: the pool's own test asserts the slot
+ * contents, and the live opacity phase asserts the blended pixel (vsg_selftest).
  */
-TEST(SceneBridgePipelineSharingTest, OpacityUpdatesArePerCommandIndependent)
+TEST(SceneBridgePipelineSharingTest, OpacityEditRebuildsNothing)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -1096,23 +1024,15 @@ TEST(SceneBridgePipelineSharingTest, OpacityUpdatesArePerCommandIndependent)
     std::vector<vsg::ref_ptr<vsg::Node>> created;
     bridge.syncRenderCommands(commands, root.get(), &created);
     ASSERT_EQ(created.size(), 2u);
-    auto* colors_0 = findColorArray(root->children[0].get());
-    auto* colors_1 = findColorArray(root->children[1].get());
-    ASSERT_NE(colors_0, nullptr);
-    ASSERT_NE(colors_1, nullptr);
-    ASSERT_FALSE(colors_0->empty());
-    ASSERT_FALSE(colors_1->empty());
-    EXPECT_NEAR(colors_0->at(0).a, 0.3f, 1e-6f);
-    EXPECT_NEAR(colors_1->at(0).a, 1.0f, 1e-6f);
+    const auto variants = bridge.pipelineVariantCount();
 
     // Change only the second drawable's opacity.
     commands[1].opacity = 0.5f;
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
-    EXPECT_TRUE(created.empty()) << "opacity edit must not rebuild geometry";
-    EXPECT_NEAR(colors_0->at(0).a, 0.3f, 1e-6f)
-        << "unchanged drawable's opacity must stay untouched";
-    EXPECT_NEAR(colors_1->at(0).a, 0.5f, 1e-6f);
+
+    EXPECT_TRUE(created.empty()) << "an opacity edit must not rebuild geometry";
+    EXPECT_EQ(bridge.pipelineVariantCount(), variants) << "nor a pipeline";
 }
 
 /**
@@ -1132,7 +1052,7 @@ TEST(SceneBridgePipelineSharingTest, OpacityUpdatesArePerCommandIndependent)
 TEST(SceneBridgePipelineSharingTest, PositionBindingAliasesTheModelBuffer)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto geometry = makeTriangle(0);
@@ -1182,7 +1102,7 @@ TEST(SceneBridgePipelineSharingTest, PositionBindingAliasesTheModelBuffer)
 TEST(SceneBridgePipelineSharingTest, IndexedGeometryAliasesItsTexcoordsAndIndexBuffer)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto geometry = GeometryPtr(new Geometry());

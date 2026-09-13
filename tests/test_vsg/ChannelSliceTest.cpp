@@ -39,6 +39,7 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
+#include "TestContentSet.hpp"
 
 using namespace vine::graphics;
 using vine::math::Mat4d;
@@ -230,7 +231,7 @@ void sync(vine::vsg::SceneBridge& bridge, vsg::Group& root, std::vector<RenderCo
 TEST(ChannelSliceTest, ASegmentIsBoundFromItsOwnOffset)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto buffer   = arena();
@@ -260,7 +261,7 @@ TEST(ChannelSliceTest, TwoSegmentsOfOneArenaDoNotShareABind)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
@@ -291,7 +292,7 @@ TEST(ChannelSliceTest, TwoSegmentsOfOneArenaDoNotShareABind)
 TEST(ChannelSliceTest, AChannelMovedToAnotherSegmentIsRefreshedFromThere)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto buffer   = arena();
@@ -321,7 +322,7 @@ TEST(ChannelSliceTest, AnIndexSliceIsDrawnAsFirstIndexAndCount)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
@@ -365,7 +366,7 @@ TEST(ChannelSliceTest, AnIndexSliceIsDrawnAsFirstIndexAndCount)
 TEST(ChannelSliceTest, AChangedIndexSpanRebuildsTheDrawCommand)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto buffer   = arena();
@@ -418,7 +419,7 @@ TEST(ChannelSliceTest, AChangedIndexSpanRebuildsTheDrawCommand)
 TEST(ChannelSliceTest, AnOutOfRangeIndexInTheSegmentIsRejected)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto buffer   = arena();
@@ -440,7 +441,7 @@ TEST(ChannelSliceTest, AnOutOfRangeIndexInTheSegmentIsRejected)
 TEST(ChannelSliceTest, DerivedNormalsFollowTheSegmentTheyWereDerivedFrom)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto buffer   = arena();

@@ -667,17 +667,32 @@ TEST(ForwardShaderSetTest, ABridgeWithNoShaderSetReportsAndDrawsNothing)
     EXPECT_EQ(bridge.diagnosticCount(vine::graphics::DiagnosticCategory::ShaderFallback), 2u);
 }
 
-TEST(ForwardShaderSetTest, BuiltInSetKeepsTheFullCanonicalPrefix)
+TEST(ForwardShaderSetTest, AForeignSetIsReportedInsteadOfQuietlyUnbound)
 {
-    // The built-in phong set declares the canonical attributes unconditionally, so the derived white carrier
-    // and zero UVs stay bound there: the dropping above must not leak into the fallback path.
-    ::vsg::ref_ptr<::vsg::Group> root;
-    const auto*                  bind = buildBareTriangleState(::vsg::createPhongShaderSet(), root);
-    ASSERT_NE(bind, nullptr);
-    ASSERT_NE(bind->pipeline, nullptr);
-    const auto* vertex_input = findVertexInputState(*bind->pipeline);
-    ASSERT_NE(vertex_input, nullptr);
-    EXPECT_EQ(vertex_input->vertexBindingDescriptions.size(), 4u);
+    // The engine's own sets declare `vine_Vertex` (and the other three canonical names), and the bridge
+    // binds every array by those names. It used to also try the `vsg_*` spelling, so a set of another
+    // library's could still receive the arrays; that path is gone — the engine never hands a slot a
+    // foreign set, and keeping a second spelling alive meant keeping two ABIs in step for a case the
+    // engine does not have. What that removes is a SUPPORTED input, so what replaces it is not silence:
+    // a set that declares none of the names gets no vertex data at all, and the drawable would
+    // degenerate (nothing drawn) while validation stays clean. Pinned with vsg's own phong set, which
+    // is exactly such a set.
+    std::vector<vine::graphics::RenderDiagnostic> reported;
+    vine::vsg::SceneBridge                       bridge;
+    bridge.setShaderSet(::vsg::createPhongShaderSet());
+    bridge.setDiagnosticSink([&reported](const vine::graphics::RenderDiagnostic& diagnostic) {
+        reported.push_back(diagnostic);
+    });
+
+    auto root     = ::vsg::Group::create();
+    auto material = vine::graphics::MaterialPtr(new vine::graphics::Material());
+    std::vector<vine::graphics::RenderCommand> commands;
+    commands.emplace_back(makeBareTriangle(), material, vine::math::Mat4d());
+    bridge.syncRenderCommands(commands, root.get(), nullptr);
+
+    ASSERT_EQ(reported.size(), 1u) << "a set that declares none of the engine's attribute names must say so";
+    EXPECT_EQ(reported.front().severity, vine::graphics::DiagnosticSeverity::Warning);
+    EXPECT_EQ(reported.front().category, vine::graphics::DiagnosticCategory::ContentSkipped);
 }
 
 }  // namespace

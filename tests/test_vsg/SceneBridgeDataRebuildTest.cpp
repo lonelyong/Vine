@@ -29,6 +29,7 @@
 
 #include <cstddef>
 #include <vector>
+#include "TestContentSet.hpp"
 
 using namespace vine::graphics;
 using vine::math::Mat4d;
@@ -206,7 +207,7 @@ void sync(vine::vsg::SceneBridge& bridge, vsg::Group& root, const std::vector<Re
 TEST(SceneBridgeDataRebuildTest, DerivedChannelsSurviveAnUnrelatedRebuild)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = triangle(0.0f);
     auto material = MaterialPtr(new Material());
@@ -246,7 +247,7 @@ TEST(SceneBridgeDataRebuildTest, DerivedChannelsSurviveAnUnrelatedRebuild)
 TEST(SceneBridgeDataRebuildTest, DerivedNormalsFollowThePositionsTheyWereComputedFrom)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = triangle(0.0f);
     auto material = MaterialPtr(new Material());
@@ -277,7 +278,7 @@ TEST(SceneBridgeDataRebuildTest, DerivedNormalsFollowThePositionsTheyWereCompute
 TEST(SceneBridgeDataRebuildTest, FallbackChannelsFollowTheVertexCount)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = triangle(0.0f);
     auto material = MaterialPtr(new Material());
@@ -317,7 +318,7 @@ TEST(SceneBridgeDataRebuildTest, FallbackChannelsFollowTheVertexCount)
 TEST(SceneBridgeDataRebuildTest, IndexOnlyEditReplacesTheIndexStreamAlone)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = indexedTriangle(0.0f);
     auto material = MaterialPtr(new Material());
@@ -361,7 +362,7 @@ TEST(SceneBridgeDataRebuildTest, IndexOnlyEditReplacesTheIndexStreamAlone)
 TEST(SceneBridgeDataRebuildTest, AVertexEditRefreshesThatChannelInPlace)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = triangle(0.0f);
     auto material = MaterialPtr(new Material());
@@ -405,7 +406,7 @@ TEST(SceneBridgeDataRebuildTest, AVertexEditRefreshesThatChannelInPlace)
 TEST(SceneBridgeDataRebuildTest, AVertexAndIndexEditRefreshesBothInPlace)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = indexedTriangle(0.0f);
     auto material = MaterialPtr(new Material());
@@ -447,7 +448,7 @@ TEST(SceneBridgeDataRebuildTest, AVertexAndIndexEditRefreshesBothInPlace)
 TEST(SceneBridgeDataRebuildTest, AnUnexplainedRevisionStillRebuildsTheNode)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = triangle(0.0f);
     auto material = MaterialPtr(new Material());
@@ -479,7 +480,7 @@ TEST(SceneBridgeDataRebuildTest, AnUnexplainedRevisionStillRebuildsTheNode)
 TEST(SceneBridgeDataRebuildTest, AnOutOfRangeIndexSwapIsRejectedInsteadOfUploaded)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = indexedTriangle(0.0f);
     auto material = MaterialPtr(new Material());
@@ -509,7 +510,7 @@ TEST(SceneBridgeDataRebuildTest, AnOutOfRangeIndexSwapIsRejectedInsteadOfUploade
 TEST(SceneBridgeDataRebuildTest, AuthoredChannelEditsRefreshOnlyThatChannel)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = triangle(0.0f);
     auto material = MaterialPtr(new Material());

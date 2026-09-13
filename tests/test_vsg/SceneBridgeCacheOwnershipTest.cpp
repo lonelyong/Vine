@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <unordered_set>
 #include <vector>
+#include "TestContentSet.hpp"
 
 using namespace vine::graphics;
 using vine::math::Mat4d;
@@ -191,7 +192,7 @@ vsg::ImageInfo* findSampledImageInfo(vsg::Node* node)
 TEST(SceneBridgeCacheOwnershipTest, RetainedBridgeOwnsTheUserProgram)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = makeTriangle(0);
     auto material = MaterialPtr(new Material());
@@ -228,7 +229,7 @@ TEST(SceneBridgeCacheOwnershipTest, RetainedBridgeOwnsTheUserProgram)
 TEST(SceneBridgeCacheOwnershipTest, RetainedBridgeOwnsTheMaterial)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto geometry = makeTriangle(0);
 
@@ -271,7 +272,7 @@ TEST(SceneBridgeCacheOwnershipTest, RetainedBridgeOwnsTheMaterial)
 TEST(SceneBridgeCacheOwnershipTest, ADroppedMaterialIsReleasedWithoutAnExplicitRelease)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     vine::vsg::VsgMaterialManager manager;
     bridge.setMaterialManager(&manager);
     auto root     = vsg::Group::create();
@@ -320,7 +321,7 @@ TEST(SceneBridgeCacheOwnershipTest, SessionSharesCountEverySlotAndABridgeCannot)
     vine::vsg::SceneBridge       first;
     vine::vsg::SceneBridge       second;
     for (auto* bridge : { &first, &second }) {
-        bridge->setShaderSet(vsg::createPhongShaderSet());
+        bridge->setShaderSet(testContentSet());
         bridge->setMaterialManager(&manager);
     }
     auto        root_first  = vsg::Group::create();
@@ -368,7 +369,7 @@ TEST(SceneBridgeCacheOwnershipTest, SessionSharesCountEverySlotAndABridgeCannot)
 TEST(SceneBridgeCacheOwnershipTest, TheAbsenceWindowAgesTheGeometriesTheFrameStoppedDrawing)
 {
     vine::vsg::SceneBridge        bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto                 root     = vsg::Group::create();
     auto                 geometry = makeTriangle(0);
     MaterialPtr          material(new Material());
@@ -428,7 +429,7 @@ TEST(SceneBridgeCacheOwnershipTest, TheAbsenceWindowAgesTheGeometriesTheFrameSto
 TEST(SceneBridgeCacheOwnershipTest, TheAbsenceWindowCountsFramesNoPassDrewTheGeometry)
 {
     vine::vsg::SceneBridge        bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto                 root     = vsg::Group::create();
     auto                 geometry = makeTriangle(0);
     MaterialPtr          material(new Material());
@@ -524,7 +525,7 @@ TEST(SceneBridgeCacheOwnershipTest, TheShareCountsForgetTheirValuesButKeepTheirK
 TEST(SceneBridgeCacheOwnershipTest, ProgramCacheTrimsOldestInsteadOfEverything)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -585,7 +586,7 @@ TEST(SceneBridgeCacheOwnershipTest, ProgramCacheTrimsOldestInsteadOfEverything)
 TEST(SceneBridgeCacheOwnershipTest, VariantTemplateKeepsItsProgramAddressUnique)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -661,7 +662,7 @@ TEST(SceneBridgeCacheOwnershipTest, VariantTemplateKeepsItsProgramAddressUnique)
 TEST(SceneBridgeCacheOwnershipTest, SharedObjectsTableIsPrunedOnEvictionFramesOnly)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto filler   = makeTriangle(0);
@@ -716,7 +717,7 @@ TEST(SceneBridgeCacheOwnershipTest, SharedObjectsTableIsPrunedOnEvictionFramesOn
 TEST(SceneBridgeCacheOwnershipTest, ADroppedTextureIsReleasedByTheFrameSweep)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     // The material manager is the RENDERER's (it sweeps it at the end of a submitted frame), and its entry
     // owns the Material — which holds the texture. Injecting one lets the test drive that step itself.
     vine::vsg::VsgMaterialManager manager;
@@ -780,7 +781,7 @@ TEST(SceneBridgeCacheOwnershipTest, TwoBridgesShareTheInjectedTextureCache)
     vine::vsg::SceneBridge      a;
     vine::vsg::SceneBridge      b;
     for (vine::vsg::SceneBridge* bridge : { &a, &b }) {
-        bridge->setShaderSet(vsg::createPhongShaderSet());
+        bridge->setShaderSet(testContentSet());
         bridge->setTextureCache(&session_cache);
     }
 
@@ -824,7 +825,7 @@ TEST(SceneBridgeCacheOwnershipTest, TwoBridgesWithoutInjectionUploadSeparately)
     vine::vsg::SceneBridge a;
     vine::vsg::SceneBridge b;
     for (vine::vsg::SceneBridge* bridge : { &a, &b }) {
-        bridge->setShaderSet(vsg::createPhongShaderSet());
+        bridge->setShaderSet(testContentSet());
     }
 
     auto texture =

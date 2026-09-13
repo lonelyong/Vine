@@ -15,6 +15,7 @@
 #include <vsg/io/Options.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/utils/ShaderSet.h>
+#include "TestContentSet.hpp"
 
 using namespace vine::graphics;
 using vine::math::Mat4d;
@@ -190,7 +191,7 @@ vsg::DrawIndexed* findDrawIndexed(vsg::Node* node)
 TEST(CustomAttributeTest, CustomChannelsAreForwardedAndTyped)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -236,7 +237,7 @@ TEST(CustomAttributeTest, CustomChannelsAreForwardedAndTyped)
 TEST(CustomAttributeTest, SameLayoutSharesVariant)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto program  = makeProgram();
@@ -263,7 +264,7 @@ TEST(CustomAttributeTest, SameLayoutSharesVariant)
 TEST(CustomAttributeTest, DifferentLayoutsAreSeparateVariants)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto program  = makeProgram();
@@ -293,7 +294,7 @@ TEST(CustomAttributeTest, DifferentLayoutsAreSeparateVariants)
 TEST(CustomAttributeTest, BuiltInPathCarriesChannelsAndDraws)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -318,7 +319,7 @@ TEST(CustomAttributeTest, BuiltInPathCarriesChannelsAndDraws)
 TEST(CustomAttributeTest, MalformedCustomChannelIgnored)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -336,14 +337,19 @@ TEST(CustomAttributeTest, MalformedCustomChannelIgnored)
 }
 
 /**
- * @brief A user buffer at location 2 is not forwarded on the built-in path
- * (location 2 stays the internal opacity carrier / vine_Color array), so the
- * data node keeps exactly the canonical three arrays.
+ * @brief An authored location-2 channel IS the canonical colour, not a forwarded custom one.
+ *
+ * Location 2 is `VertexAttribute::Color`'s shader location (ShaderAbi.hpp), so a geometry with a
+ * buffer there is authoring the colour the shading reads rather than asking for a custom attribute:
+ * it is bound verbatim at the canonical colour binding (index 3), rgb and alpha exactly as written.
+ * It used to be dropped in favour of a derived WHITE array, because that array was the built-in
+ * path's per-drawable opacity carrier; the carrier is gone — opacity rides the per-drawable block
+ * (see OpacityDoesNotRideTheVertexColour) — so nothing overrides the author any more.
  */
-TEST(CustomAttributeTest, LocationTwoRemainsCanonicalCarrier)
+TEST(CustomAttributeTest, LocationTwoIsTheCanonicalColourNotACustomChannel)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -356,13 +362,13 @@ TEST(CustomAttributeTest, LocationTwoRemainsCanonicalCarrier)
 
     ASSERT_EQ(root->children.size(), 1u);
     ASSERT_NE(findBindVertexBuffers(root.get()), nullptr);
-    EXPECT_EQ(boundVertexBindingCount(root.get()), 4u); // 4 canonical bindings; loc2 stays the carrier
-    // Built-in path ignores the authored loc2: index 3 is the white carrier.
+    EXPECT_EQ(boundVertexBindingCount(root.get()), 4u); // 4 canonical bindings; loc2 is one of them
     auto* c = boundData(root.get(), 3u)->cast<vsg::vec4Array>();
     ASSERT_NE(c, nullptr);
     ASSERT_EQ(c->size(), 3u);
-    EXPECT_FLOAT_EQ((*c)[0].x, 1.0f);
-    EXPECT_FLOAT_EQ((*c)[0].y, 1.0f);
+    EXPECT_FLOAT_EQ((*c)[0].x, 1.0f); // the author's red, verbatim...
+    EXPECT_FLOAT_EQ((*c)[0].y, 0.0f);
+    EXPECT_FLOAT_EQ((*c)[0].w, 1.0f);
 }
 
 /**
@@ -373,7 +379,7 @@ TEST(CustomAttributeTest, LocationTwoRemainsCanonicalCarrier)
 TEST(CustomAttributeTest, CustomLoc2ColorIsBoundOnProgramPath)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
 
@@ -409,7 +415,7 @@ TEST(CustomAttributeTest, CustomLoc2ColorIsBoundOnProgramPath)
 TEST(CustomAttributeTest, SameProgramMultipleLayoutsCompileStagesOnce)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto program  = makeProgram();
@@ -447,7 +453,7 @@ TEST(CustomAttributeTest, SameProgramMultipleLayoutsCompileStagesOnce)
 TEST(CustomAttributeTest, LiveChannelAddForcesStateRebuild)
 {
     vine::vsg::SceneBridge bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
     auto program  = makeProgram();

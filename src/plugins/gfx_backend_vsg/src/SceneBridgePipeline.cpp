@@ -174,8 +174,8 @@ namespace
  * @param stages         Compiled SPIR-V stages (non-empty).
  * @param base_states    Default pipeline states to inherit (viewport etc.).
  * @param extra_channels Custom channels (location, components) whose bindings
- *                       the set must declare, in binding order (empty for the
- *                       built-in-layout-only case).
+ *                       the set must declare, in binding order (empty when the
+ *                       geometry forwards none).
  * @return Shader set, or null when assembly failed.
  */
 ::vsg::ref_ptr<::vsg::ShaderSet> assembleProgramShaderSet(
@@ -187,16 +187,15 @@ namespace
         return ::vsg::ref_ptr<::vsg::ShaderSet>();
     }
 
-    // The canonical shader LOCATIONS are the SDK's ABI (ShaderAbi.hpp); the vsg_*
-    // names are only this backend's binding aliases.
+    // The canonical shader LOCATIONS are the SDK's ABI (ShaderAbi.hpp).
     using vine::graphics::attributeLocation;
     using vine::graphics::VertexAttribute;
 
     auto shader_set = ::vsg::ShaderSet::create(stages);
     shader_set->addAttributeBinding("vine_Vertex", "", attributeLocation(VertexAttribute::Position),
                                     VK_FORMAT_R32G32B32_SFLOAT, ::vsg::vec3Array::create(1));
-    // Normal / texcoord / colour carry the same SHADER LOCATIONS our built-in
-    // contract uses (ShaderAbi.hpp). 8 is the reserved texcoord slot: it is
+    // Normal / texcoord / colour carry the same SHADER LOCATIONS that ABI states.
+    // 8 is the reserved texcoord slot: it is
     // deliberately not the numbers vsg's own Phong set uses (it declares
     // vsg_TexCoord0 at 2 and vsg_Color at 6 — those names are that set's, not
     // ours), because a forwarded custom channel reuses its SOURCE location as
@@ -204,9 +203,9 @@ namespace
     // custom channel collide with a canonical one (a custom channel at 6 would
     // clash with our vine_Color).
     //
-    // What the two sets MUST agree on is the BINDING ORDER, not the locations:
+    // What the vertex input MUST keep is the BINDING ORDER, not the locations:
     // vsg numbers a vertex input binding by the order assignArray() succeeds, so
-    // a name either set does not declare would be skipped and shift every later
+    // a name the set does not declare is skipped and shifts every later
     // binding (see the canonical order in buildGeometryData).
     shader_set->addAttributeBinding("vine_Normal", "", attributeLocation(VertexAttribute::Normal),
                                     VK_FORMAT_R32G32B32_SFLOAT, ::vsg::vec3Array::create(1));
@@ -600,30 +599,33 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
                                         name.c_str(), index, arrays[index]->className()));
             }
         };
-        // The canonical roles, each with the names a set may declare for it: OURS first (the engine
-        // prefixes what it provides with `vine_`, see BuiltinShaders / ShaderAbi), then the `vsg_*`
-        // spelling — a FOREIGN set (the SDK allows the bridge to be handed one, e.g. vsg's own phong
-        // set) declares vsg's names, and the array still has to reach it. The lookup is by NAME because
-        // that is how vsg matches, and a miss is reported above rather than passed on.
-        const auto assign_role = [&](std::initializer_list<const char*> names, std::size_t index) {
-            for (const char* name : names) {
-                if (declares_binding(name)) {
-                    assign_array(name, index);
-                    return;
-                }
-            }
-        };
-        assign_role({ "vine_Vertex", "vsg_Vertex" }, 0u);
-        assign_role({ "vine_Normal", "vsg_Normal" }, 1u);
-        // The canonical order both shader sets share (see buildGeometryData). An entry is nulled above when
-        // our forward set takes the variant WITHOUT that attribute (the geometry authored nothing); the
-        // built-in and custom-program sets get the full list, where their shader declares both.
-        assign_role({ "vine_TexCoord0", "vsg_TexCoord0" }, 2u);
-        assign_role({ "vine_Color", "vsg_Color" }, 3u);
+        // The canonical roles, by the name our sets declare for them (the engine prefixes everything it
+        // provides with `vine_`, see BuiltinShaders / ShaderAbi). The lookup is by NAME because that is
+        // how vsg matches an array against a ShaderSet; a name the set does not declare is a silent
+        // no-op (assignArray returns false, and there was nothing to match), while a declared name the
+        // array could not match is reported above rather than passed on.
+        assign_array("vine_Vertex", 0u);
+        assign_array("vine_Normal", 1u);
+        // The canonical order the data node and the set share (see buildGeometryData). An entry is nulled
+        // above when our forward set takes the variant WITHOUT that attribute (the geometry authored
+        // nothing); a program that declares both gets the full list.
+        assign_array("vine_TexCoord0", 2u);
+        assign_array("vine_Color", 3u);
+        // The mirror of the per-array report above: a set that declares NONE of the canonical names is
+        // not a set this backend built — the SDK lets a caller inject one, and another library's set
+        // declares its own names — so every array above reached nothing and the same silent
+        // half-drawn drawable follows. It is a property of the SET rather than of one array, so it is
+        // said once per build.
+        if (!declares_binding("vine_Vertex") && !declares_binding("vine_Normal") && !declares_binding("vine_TexCoord0") &&
+            !declares_binding("vine_Color")) {
+            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+                   formatDiagnostic(u8"the shader set declares none of the engine's vertex attribute names "
+                                    u8"(vine_Vertex / vine_Normal / vine_TexCoord0 / vine_Color): no vertex data "
+                                    u8"reaches its program, so this drawable cannot render correctly"));
+        }
         // Custom channels: bind each forwarded array under its stable
-        // vine_Attribute{location} name. Only a ShaderSet that declares the
-        // name consumes it (the built-in set does not declare any, so extra
-        // arrays are simply unused vertex buffers for the built-in path).
+        // vine_Attribute{location} name. Only a set that declares the name
+        // consumes it, so an array no program reads is simply an unused vertex buffer.
         for (std::size_t i = 0; i < extra_channels.size(); ++i) {
             assign_array(customAttributeName(extra_channels[i].location), 4u + i);
         }
@@ -642,11 +644,9 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         }
     }
 
-    // Per-view lights: only OUR forward set declares the binding, and only the slot
-    // holds the block. Both conditions have to hold — a set without the binding
-    // would put an unused descriptor in its layout, and a block without a set is
-    // the built-in path, where lights arrive through vsg's light nodes instead
-    // (documented in .ai/design/vsg-custom-shader.md §11).
+    // Per-view lights: the slot holds the block and every set the engine builds declares the binding, so
+    // the two conditions coincide — but they are not the same statement, and a set that does NOT declare
+    // it must not get an unused descriptor in its layout (see .ai/design/vsg-custom-shader.md §11).
     if (lights_data_ != nullptr && shaderSet->getDescriptorBinding("vine_lights")) {
         config->assignDescriptor("vine_lights", lights_data_);
     }

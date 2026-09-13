@@ -41,6 +41,7 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
+#include "TestContentSet.hpp"
 
 using namespace vine::graphics;
 using vine::math::Mat4d;
@@ -215,7 +216,7 @@ TEST(MeshResourceCacheTest, TwoDrawablesReadingOneStreamShareOneBind)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root     = vsg::Group::create();
     auto positions = packedFloats(kTrianglePositions);
@@ -247,7 +248,7 @@ TEST(MeshResourceCacheTest, DifferentStreamsDoNotShareABind)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
@@ -276,7 +277,7 @@ TEST(MeshResourceCacheTest, BuiltChannelsAreNeverShared)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root      = vsg::Group::create();
     auto positions = packedFloats(kTrianglePositions);
@@ -313,7 +314,7 @@ TEST(MeshResourceCacheTest, TheIndexStreamSharesTheSameWay)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root       = vsg::Group::create();
     auto positions  = packedFloats(kTrianglePositions);
@@ -353,7 +354,7 @@ TEST(MeshResourceCacheTest, ARefilledStreamIsNeverServedTheStaleBind)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
@@ -400,7 +401,7 @@ TEST(MeshResourceCacheTest, ARefreshOfASharedStreamLeavesItsPeersAlone)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
@@ -450,7 +451,7 @@ TEST(MeshResourceCacheTest, ARevisionNoStreamExplainsTakesItsOwnBinds)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
@@ -489,7 +490,7 @@ TEST(MeshResourceCacheTest, AStreamNobodyReadsAnyMoreIsReleased)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
@@ -520,7 +521,7 @@ TEST(MeshResourceCacheTest, AnAliasedColourIsSharedButAPackedOneIsNot)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root      = vsg::Group::create();
     auto positions = packedFloats(kTrianglePositions);
@@ -579,11 +580,11 @@ TEST(MeshResourceCacheTest, TwoBridgesWithoutInjectionShareNothing)
     auto second_root = vsg::Group::create();
 
     vine::vsg::SceneBridge first_bridge;
-    first_bridge.setShaderSet(vsg::createPhongShaderSet());
+    first_bridge.setShaderSet(testContentSet());
     sync(first_bridge, *first_root, { RenderCommand(triangleReading(positions), material, Mat4d()) });
 
     vine::vsg::SceneBridge second_bridge;
-    second_bridge.setShaderSet(vsg::createPhongShaderSet());
+    second_bridge.setShaderSet(testContentSet());
     sync(second_bridge, *second_root, { RenderCommand(triangleReading(positions), material, Mat4d()) });
 
     auto* const first_bind  = findBoundBind(first_root.get(), kBindingPositions);
@@ -604,7 +605,7 @@ TEST(MeshResourceCacheTest, TheSharedTableStaysBounded)
 {
     vine::vsg::VsgMeshResourceCache cache;
     vine::vsg::SceneBridge           bridge;
-    bridge.setShaderSet(vsg::createPhongShaderSet());
+    bridge.setShaderSet(testContentSet());
     bridge.setMeshResourceCache(&cache);
     auto root     = vsg::Group::create();
     auto material = MaterialPtr(new Material());
