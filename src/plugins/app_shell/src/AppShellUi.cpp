@@ -739,19 +739,28 @@ void addDemoLighting(gui::RenderControl* render_control)
     ambient->setIntensity(0.35f);
     scene->addLight(ambient);
 
-    // Key sun from the camera side (front-right-top of the default elevated
-    // 3/4 view): it lights the box faces the camera actually sees. The world
-    // is Z-up (robotics convention), so "above" is +Z and the sun travels
-    // downward (negative z). Lights travel toward the given direction and
-    // both the deferred and forward shaders shade with the opposite ray, so
-    // the negative x / y / z here puts the source on the camera's side.
-    auto sun = vine::graphics::Light::createDirectional(vine::math::Vec3d(-0.35, -0.35, -0.75));
+    // Key sun: FIXED in the world, above the scene, looking down at it obliquely - not derived from
+    // where the camera happens to be. It used to be described as "from the camera side", which made the
+    // shadow a function of the viewpoint: with the camera free to orbit, "the shadow looks wrong" then
+    // has no expected answer to compare against. A fixed sun makes the expected picture a CONSTANT -
+    // the shadows fall towards -x/-y, away from the default camera - so a deviation is a bug rather
+    // than a matter of opinion.
+    //
+    // The world is Z-up (robotics convention), so "above" is +Z and the light travels downward: the
+    // source sits at +x/+y/+z, well above the 6x6 ground. Lights travel along the given direction (both
+    // the deferred and the forward shaders shade with the opposite ray).
+    auto sun = vine::graphics::Light::createDirectional(vine::math::Vec3d(-0.40, -0.50, -0.77));
     sun->setName(u8"scene_sun");
     sun->setIntensity(1.0f);
-    // The demo's shadow. Resolution and bias come from ShadowSettings (1024 / 0.002 by default): the
-    // light camera frames the whole content, so 1024 covers the 6x6 ground at ~120 texels per unit -
-    // enough for the 0.5-unit boxes to cast a readable shadow, and the default bias is well below a
-    // texel's worth of depth here (no acne, no peter-panning).
+    // The demo's shadow, STATED rather than defaulted, so the numbers can be checked against the
+    // geometry: the light camera frames the whole content, so 1024 texels cover the ~9-unit footprint at
+    // ~115 per unit - a box 0.5 units across spans ~57 texels, which is why the shadows read as shapes.
+    // The bias is the acne margin in the light's NORMALISED depth (its ortho range is 4 * radius + 1
+    // ~ 19 units here, so 0.005 is ~95 mm of world depth): comfortably above the ~8.7 mm a texel spans
+    // along the ground, and far below the ~0.4 units (10 texels) that could detach a shadow from its
+    // caster, so it can neither acne nor peter-pan at this scale.
+    sun->setShadowResolution(1024);
+    sun->setShadowBias(0.005f);
     sun->setCastShadow(true);
     scene->addLight(sun);
 
@@ -1309,7 +1318,7 @@ vine::intrusive_ptr<vine::graphics::Scene> makeForwardOverlayScene()
     overlay->addLight(ambient);
     // Same key + fill rig as the opaque scene (see addDemoLighting) so the
     // translucent box / star cloud shade consistently with the lit result.
-    auto sun = vine::graphics::Light::createDirectional(vine::math::Vec3d(-0.35, -0.35, -0.75));
+    auto sun = vine::graphics::Light::createDirectional(vine::math::Vec3d(-0.40, -0.50, -0.77));
     sun->setName(u8"overlay_sun");
     sun->setIntensity(1.0f);
     overlay->addLight(sun);
