@@ -198,8 +198,10 @@ enum class ShaderPreset { StandardPhong, FlatShaded, Pbr, ShadowedPhong };
 - **format 写死**：位置 vec3、颜色 vec4、uv vec2——喂错类型会拿错 location/stride。
 - `vsg_Vertex/Normal/Color` 无 define → 变体恒含（phong VS 明文：
   `layout(location=0) in vec3 vsg_Vertex; layout(location=1) in vec3 vsg_Normal;`）。
-- **per-vertex 透明度通道 = `vsg_Color` 的 alpha（loc 6 vec4）**——我们 SceneBridge
-  每帧重写 `color.a = cmd.opacity` 走的正是这个恒开槽位。
+- **per-vertex 透明度通道 = `vsg_Color` 的 alpha（loc 6 vec4）**——**内建退回路径**下
+  SceneBridge 每帧重写 `color.a = cmd.opacity` 走的正是这个恒开槽位。**我们自己的 forward
+  set 不再用它到这一步**：它把不透明度放进 `vine_draw` 块的 `params.x`（见 §11），
+  `vsg_Color` 在那里只承载**作者写的颜色**（且其 alpha 不参与 opacity）。
 
 ### 9.2 描述符（descriptorBindings，phong 为例）
 
@@ -354,6 +356,7 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | set0 / binding0 | `material`（std140，`PhongMaterialValue` 形状） | `VsgMaterialManager`（与内建/延迟路径同一个值） |
 | set0 / binding1 | `diffuseMap`（define `VINE_DIFFUSE_MAP`） | 纹理缓存（含白色回退） |
 | set0 / binding2 | `vine_lights`（`VineLightsBlock`，112 B） | **pass 的槽**，每视图一次 |
+| set0 / binding3 | `vine_draw`（`VineDrawBlock` = `mat4 model` + `vec4 params`，80 B） | **SceneBridge**，每 drawable 一个；`params.x` = 有效不透明度 |
 | push 0..128 | `{ mat4 projection; mat4 modelView; }` | vsg 矩阵栈（每 drawable） |
 
 > **属性 location 现由 SDK 定义**（`ShaderAbi.hpp` 的 `attributeLocation`，0/1/2/8；契约见
@@ -393,7 +396,7 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | --- | --- |
 | 转正（P0.3） | **已做（2026-09-13，§11.5 + §11.6）**：默认走自写 set，vsg `Light`/VDS 的 content 用法已去掉（`view->features` 收敛到 0），无作者色/UV 时不再喂白载体/零 UV |
 | 顶点色/贴图门控的收益 | **已做（2026-09-13，§11.6）**：forward set 在几何无作者色（且无作者 UV、材质无纹理）时**不 assign** 那两个数组 ⇒ define 关、少两条顶点绑定、少一次采样；白载体/零 UV 仍为内建/自定义 program 路径保留 |
-| opacity | **forward 已接（2026-09-13）**：`VINE_VERTEX_COLOR` 打开时 `alpha *= v_color.a`，载体 alpha 由 SceneBridge 按 `cmd.opacity` 维护（与内建路径同机制）；**完全不透明的 drawable 仍不绑该属性**（`drop_color` 仅在 `opacity >= 1` 时成立，opacity 跳 1 是 state 变化）。**剩余**：per-drawable 值改走 dynamic-offset UBO，届时连 per-vertex 重写也省掉 |
+| opacity | **已接（forward，2026-09-13）**：`alpha = material.diffuse.a * draw.params.x`。不透明度是**每 drawable 的值**，走 `vine_draw` 块（每帧原地改 4 个 float），不再走顶点载体；也不再进 variant 身份（透明与不透明共用一条管线，改 opacity 不重建 state）。**剩余**：把每 drawable 一块改成 **dynamic-offset** 共享大缓冲（当前是一 drawable 一个 UBO） |
 | 阴影 / PBR / Flat | 仍走内建映射；§6 的 P1/P2 |
 | 自检相位命名 | **已做（P0.3）**：探针那两条改名 `variant 'default shading + …'`（它跑的是内容 set，不是某条固定路径），两条基线一起重生成 |
 
@@ -435,7 +438,7 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | 变体身份 | 是否丢属性会改变管线，故把 `(color_bound<<0)|(uv_bound<<1)` 并入 L2 variant 的 `layout` 哈希，避免同材质/状态但属性不同的几何复用同一条管线 |
 | 判据 | 两条证据基线 47 行**逐字节不变**（丢属性只省绑定/采样，画面等价：无作者色=白调制、白纹理=乘 1）；test_vsg **237**（+2：`ForwardSetDropsDerivedColourAndUvs` 断言 2 条顶点绑定 + 无采样器；`BuiltInSetKeepsTheFullCanonicalPrefix` 断言内建仍 4 条）；lavapipe 整体 PASS |
 
-**仍未做**：per-drawable 值改走 dynamic-offset UBO（P10 后半；opacity 已能工作，只是仍走 per-vertex 载体）；阴影 / PBR / Flat（§6 的 P1/P2）。
+**仍未做**：`vine_draw` 改 **dynamic-offset** 共享缓冲（功能已完整，是内存/描述符数量与后端惯例的优化）；材质值进 `params`（槽表 B2）；阴影 / PBR / Flat（§6 的 P1/P2）。
 
 
 ### 11.7 P0.A：内建前向着色归 SDK（2026-09-13）

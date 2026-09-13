@@ -25,6 +25,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Node.hpp>
 #include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 #include <vine/vsg/VsgUtils.hpp>
@@ -83,11 +84,12 @@ SceneBridge::~SceneBridge() = default;
 void SceneBridge::setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet)
 {
     shader_set_ = shaderSet;
-    // Our own forward set declares the gated canonical attributes and marks itself with
-    // the vine_lights binding; the built-in and user-program sets declare the canonical
-    // attributes unconditionally, so nothing is ever dropped there.
-    shader_drops_derived_attributes_ =
-        shader_set_ != nullptr && static_cast<bool>(shader_set_->getDescriptorBinding("vine_lights"));
+    // Our own forward set is the only one that reads per-drawable values from a draw
+    // block (`vine_draw`) and drops a derived canonical attribute behind a define; the
+    // built-in and user-program sets do neither, so on those the colour array stays the
+    // built-in path's dynamic opacity carrier and no attribute is ever dropped.
+    forward_draw_block_ =
+        shader_set_ != nullptr && static_cast<bool>(shader_set_->getDescriptorBinding("vine_draw"));
 }
 
 void SceneBridge::setMaterialManager(vine::raw_ptr<VsgMaterialManager> manager)
@@ -187,9 +189,15 @@ struct SceneBridge::Item {
     // rebuilds so a material/state/program edit never re-materialises or
     // re-uploads the mesh data.
     ::vsg::ref_ptr<::vsg::Commands> data_node;
-    // Per-vertex color array; its alpha carries the effective per-drawable
-    // opacity and is rewritten only when the opacity actually changed.
+    // Per-vertex color array; on the BUILT-IN path its alpha carries the effective
+    // per-drawable opacity and is rewritten only when the opacity actually changed.
+    // Our forward path keeps this null and puts the opacity in @ref draw_block.
     ::vsg::ref_ptr<::vsg::vec4Array> colors;
+    // This drawable's per-draw values (VineDrawBlock: model + params), bound as
+    // `vine_draw`. It is what a translucent drawable costs per frame: four floats (plus
+    // the model matrix when the drawable moves) rewritten in place, instead of a pass
+    // over the vertices. Null on the sets that do not declare the binding.
+    ::vsg::ref_ptr<::vsg::floatArray> draw_block;
     // Identity of the streams the retained data node was built from, per vertex channel and for the index
     // stream (see ChannelKey). A data revision whose VERTEX channels are all unchanged needs only the index
     // stream replaced: a rebuild would re-materialise — and re-upload — every channel with it.
@@ -222,11 +230,10 @@ struct SceneBridge::Item {
     ::vsg::dmat4 last_matrix;
     bool matrix_valid = false;
     float last_opacity = -1.0f;  // sentinel forces the first write
-    // Whether the retained state wrapper was built for a FULLY OPAQUE drawable. The
-    // derived colour carrier carries the opacity in its alpha, so the wrapper keeps or
-    // drops that attribute depending on it: an opacity crossing 1 is a STATE change
-    // (the pipeline's vertex inputs change), not just a value write.
-    bool wrapper_opacity_opaque = true;
+    // Last opacity and world matrix written into @ref draw_block; the sentinel forces the
+    // first write. Separate from @ref last_opacity because the built-in path and the
+    // forward path carry the opacity in different places (the carrier's alpha vs the block).
+    float last_draw_opacity = -1.0f;
     // Consecutive frames this geometry was absent (hidden/culled/removed).
     std::uint32_t absent_frames = 0;
 };
@@ -527,17 +534,16 @@ bool SceneBridge::syncRenderCommands(
             !had_node || item->revision != geometry->revision() ||
             item->topology != state.topology ||
             (has_loc2 && (item->program.get() == nullptr) != (cmd.program.get() == nullptr));
-        // An opacity crossing 1 changes what the pipeline must bind only on the set that
-        // drops the derived colour carrier; every other set binds it always, so there an
-        // opacity edit stays a value write (the per-command carrier rewrite).
-        const bool opacity_changes_state =
-            shader_drops_derived_attributes_ && item->wrapper_opacity_opaque != (cmd.opacity >= 1.0f);
+        // Opacity is a per-drawable VALUE, never a state input: it rides the draw block
+        // on our forward set and the colour carrier's alpha on the built-in one, and
+        // neither changes which vertex inputs the pipeline feeds. An opacity edit is
+        // therefore always a value write, with no rebuild in between.
         const bool state_dirty = !had_node || item->material.get() != cmd.material.get() ||
                                  item->texture.get() != texture ||
                                  item->texture_revision != texture_revision ||
                                  item->render_state != state ||
                                  item->program.get() != cmd.program.get() ||
-                                 item->program_revision != program_rev || opacity_changes_state;
+                                 item->program_revision != program_rev;
         if (data_dirty || state_dirty) {
             item->revision                = geometry->revision();
             item->topology                = state.topology;
@@ -547,7 +553,6 @@ bool SceneBridge::syncRenderCommands(
             item->render_state            = state;
             item->program                 = cmd.program;
             item->program_revision        = program_rev;
-            item->wrapper_opacity_opaque  = cmd.opacity >= 1.0f;
             changed                       = true;
         }
 
@@ -720,7 +725,7 @@ bool SceneBridge::syncRenderCommands(
             // check above reads — hence the order.
             retireNode(std::move(item->data_node));
             item->binds     = RetainedBinds{};
-            item->data_node = buildGeometryData(geometry, item->program.get() == nullptr,
+            item->data_node = buildGeometryData(geometry, item->program.get() == nullptr && !forward_draw_block_,
                                                 state.topology, item->colors,
                                                 item->extra_channels, item->derived, item->binds,
                                                 streams_changed ? &meshResources() : nullptr);
@@ -746,6 +751,50 @@ bool SceneBridge::syncRenderCommands(
             }
         }
 
+        // World-space placement comes from the command stream; the transform write at the
+        // end of this iteration is skipped when the node did not move. Read here because
+        // the draw block below carries the same matrix.
+        const ::vsg::dmat4 world       = detail::toVsg(cmd.modelMatrix);
+        const bool        matrix_moved = !item->matrix_valid || item->last_matrix != world;
+
+        // Per-draw values (VineDrawBlock). Created once per drawable and rewritten IN
+        // PLACE when the drawable's opacity or placement changes: that is what a
+        // translucent drawable costs per frame (four floats, plus the matrix when it
+        // moves) instead of a pass over its vertices. The block is the SDK's L1 layout
+        // (ShaderAbi.hpp), written as raw floats so this backend never restates it —
+        // sizeof(VineDrawBlock) is the only authority on how the 20 floats are laid out.
+        //
+        // It must exist BEFORE the state wrapper below is built: the wrapper binds it, and a
+        // wrapper built without it would bind the ShaderSet's SAMPLE uniform instead — which
+        // the shader would then read as zeros forever, because nothing marks the state dirty
+        // again.
+        if (forward_draw_block_ && item->draw_block == nullptr) {
+            item->draw_block = ::vsg::floatArray::create(static_cast<std::uint32_t>(
+                sizeof(vine::graphics::VineDrawBlock) / sizeof(float)));
+            item->draw_block->properties.dataVariance = ::vsg::DYNAMIC_DATA;
+            item->last_draw_opacity                    = -1.0f; // sentinel forces the first write
+        }
+        if (item->draw_block != nullptr &&
+            (matrix_moved || item->last_draw_opacity != cmd.opacity)) {
+            static_assert(sizeof(vine::graphics::VineDrawBlock) == 20u * sizeof(float),
+                          "VineDrawBlock must be a mat4 followed by a vec4 for std140 and D3D cbuffer "
+                          "packing to agree");
+            auto* block = item->draw_block->data();
+            for (std::size_t column = 0u; column < 4u; ++column) {
+                for (std::size_t row = 0u; row < 4u; ++row) {
+                    block[column * 4u + row] = static_cast<float>(world(column, row));
+                }
+            }
+            block[16] = cmd.opacity; // VineDrawBlock::params.x
+            block[17] = 0.0f;
+            block[18] = 0.0f;
+            block[19] = 0.0f;
+            // DYNAMIC (see the create above): vsg's per-frame TransferTask re-copies the
+            // block this frame; an unchanged frame issues no transfer at all.
+            item->draw_block->dirty();
+            item->last_draw_opacity = cmd.opacity;
+        }
+
         if (state_dirty || item->state_node == nullptr || state_channels_changed) {
             // The replaced wrapper (and the pipeline it holds) may still be
             // referenced by an in-flight command buffer: park it.
@@ -753,7 +802,7 @@ bool SceneBridge::syncRenderCommands(
             item->state_node = buildStateGroup(item->data_node, item->material.get(),
                                                item->texture.get(), item->render_state,
                                                item->program.get(), item->extra_channels, &item->derived,
-                                               cmd.opacity);
+                                               item->draw_block);
             if (item->state_node == nullptr) {
                 cache_.erase(it);
                 continue;
@@ -783,10 +832,11 @@ bool SceneBridge::syncRenderCommands(
             created->emplace_back(item->transform);
         }
 
-        // Effective opacity (scene x nodes x leaf geometry) rides the
-        // per-vertex alpha. Rewriting O(vertices) only when it actually
-        // changed keeps the steady-state per-frame cost independent of mesh
-        // size, while opacity edits still apply live.
+        // Effective opacity (scene x nodes x leaf geometry) rides the per-vertex alpha on
+        // the BUILT-IN path only, whose shader reads the vertex colour's alpha (there is
+        // no draw block there). Rewriting O(vertices) only when it actually changed keeps
+        // the steady-state per-frame cost independent of mesh size, while opacity edits
+        // still apply live. Our forward path keeps `colors` null and uses the draw block.
         if (item->colors != nullptr && item->last_opacity != cmd.opacity) {
             const float opacity = cmd.opacity;
             for (auto& color : *item->colors) {
@@ -799,13 +849,10 @@ bool SceneBridge::syncRenderCommands(
             item->last_opacity = opacity;
         }
 
-        // World-space placement comes from the command stream; the matrix
-        // write is skipped when the node did not move this frame.
-        const ::vsg::dmat4 world = detail::toVsg(cmd.modelMatrix);
-        if (!item->matrix_valid || item->last_matrix != world) {
+        if (matrix_moved) {
             item->transform->matrix = world;
-            item->last_matrix = world;
-            item->matrix_valid = true;
+            item->last_matrix       = world;
+            item->matrix_valid      = true;
         }
         visible.emplace_back(item->transform);
     }

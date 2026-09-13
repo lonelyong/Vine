@@ -49,8 +49,9 @@
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgRenderer.hpp>
 
-#include <cstdio>
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -4673,6 +4674,148 @@ bool runCubeMapPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, 
     return ok;
 }
 
+/**
+ * @brief Asserts that a drawable's opacity reaches the FRAMEBUFFER — through the
+ *        blend equation — and not merely the alpha channel.
+ *
+ * This is the pixel-level half of the per-drawable opacity contract. Every other
+ * opacity assertion in this suite is structural (which vertex attributes the
+ * wrapper binds, which define the variant carries), and a structural assertion
+ * cannot see the failure mode that matters: a fragment stage that NEVER scales
+ * its alpha still renders, still passes validation, and still produces identical
+ * coverage — the drawable is simply opaque. That was a real defect on this
+ * backend's forward path (the carrier's alpha was written every frame and no
+ * stage read it), so it is pinned by pixels now.
+ *
+ * The check needs no knowledge of the shading: the same geometry + material +
+ * camera is drawn twice, once at opacity 1 and once at 0.5, into the same
+ * freshly cleared target. Every pipeline this backend builds for content blends
+ * with SrcAlpha / OneMinusSrcAlpha (see makeRenderStateObjects), so the second
+ * pass must land exactly halfway between the first pass' colour and the clear
+ * colour:
+ *
+ *     colour(opacity) = src * opacity + clear * (1 - opacity)
+ *
+ * and its stored alpha is the blend of its OWN alpha, `a*a + dst_a*(1-a)`, which
+ * is what distinguishes "0.5 reached the framebuffer" (0.75 -> 191) from "the
+ * fragment emitted 1.0" (1.0 -> 255, opacity dropped) and from "no blending
+ * happened at all" (0.5 -> 128).
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the quad is drawn through.
+ * @param frames   Frames to drive per stage (fixed by the caller so the evidence
+ *                 does not move with VINE_SELFTEST_FRAMES).
+ * @return true when both stages agreed with the blend equation.
+ */
+bool runOpacityBlendPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok = true;
+    const vine::Color clear(10, 20, 30, 255);
+    const int         clear_r = clear.r;
+    const int         clear_g = clear.g;
+    const int         clear_b = clear.b;
+    const float       opacity = 0.5f;
+
+    auto opaque_material = MaterialPtr(new Material());
+    opaque_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f)); // red, fully opaque diffuse
+
+    // One geometry, one material, one camera: the ONLY input that differs between
+    // the two stages is the command's opacity, so any pixel difference is
+    // attributable to it.
+    RenderCommand opaque_command(makeVisibleQuad(0.4f, 1.0f), opaque_material, Mat4d());
+    opaque_command.opacity  = 1.0f;
+    RenderCommand half_command = opaque_command;
+    half_command.opacity       = opacity;
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setSize(256, 144);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto pass = RenderPassPtr(new RenderPass());
+
+    const auto render_stage = [&](const RenderCommand& command, PixelImage& image) {
+        for (int i = 0; i < frames; ++i) {
+            FrameScope frame(renderer);
+            PassScope  pass_scope(renderer, pass.get(), 0, target.get(), clear, true);
+            renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+        }
+        return readTarget(renderer, target.get(), image);
+    };
+
+    PixelImage opaque_image;
+    if (!render_stage(opaque_command, opaque_image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the opaque stage's target\n");
+        return false;
+    }
+    const int opaque_r = opaque_image.at(128, 72, 0);
+    const int opaque_g = opaque_image.at(128, 72, 1);
+    const int opaque_b = opaque_image.at(128, 72, 2);
+
+    PixelImage half_image;
+    if (!render_stage(half_command, half_image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the half-opacity stage's target\n");
+        return false;
+    }
+    const int half_r = half_image.at(128, 72, 0);
+    const int half_g = half_image.at(128, 72, 1);
+    const int half_b = half_image.at(128, 72, 2);
+    const int half_a = half_image.at(128, 72, 3);
+
+    // The screen-space quad must actually cover the centre, or every comparison
+    // below would pass by comparing two clear colours.
+    if (opaque_r == clear_r && opaque_g == clear_g && opaque_b == clear_b) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the opaque quad left the centre at the clear colour (%d,%d,%d) — nothing "
+                     "was shaded, so the opacity comparison below would be vacuous\n",
+                     opaque_r, opaque_g, opaque_b);
+        return false;
+    }
+
+    const auto lerp = [](int src, int dst, float t) {
+        return static_cast<int>(std::lround(static_cast<double>(src) * t + static_cast<double>(dst) * (1.0f - t)));
+    };
+    const int blend_tolerance = 4; // one 8-bit round trip through the shader and the attachment
+    if (std::abs(half_r - lerp(opaque_r, clear_r, opacity)) > blend_tolerance ||
+        std::abs(half_g - lerp(opaque_g, clear_g, opacity)) > blend_tolerance ||
+        std::abs(half_b - lerp(opaque_b, clear_b, opacity)) > blend_tolerance) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: opacity %.1f produced (%d,%d,%d), expected %.1f*(%d,%d,%d) + %.1f*(%d,%d,%d) "
+                     "= (%d,%d,%d) — the drawable's opacity did not reach the framebuffer through the blend "
+                     "equation\n",
+                     static_cast<double>(opacity), half_r, half_g, half_b, static_cast<double>(opacity), opaque_r,
+                     opaque_g, opaque_b, static_cast<double>(1.0f - opacity), clear_r, clear_g, clear_b,
+                     lerp(opaque_r, clear_r, opacity), lerp(opaque_g, clear_g, opacity),
+                     lerp(opaque_b, clear_b, opacity));
+        ok = false;
+    }
+
+    // The stored alpha is the blend of the fragment's OWN alpha, a*a + dst_a*(1-a),
+    // so it separates the three behaviours this phase exists to tell apart:
+    //   0.5 emitted + blended -> 0.75 (191)
+    //   1.0 emitted (opacity dropped) + blended -> 1.0 (255)
+    //   0.5 emitted but never blended -> 0.5 (128)
+    const int emitted_alpha     = static_cast<int>(std::lround(255.0 * (opacity * opacity + (1.0f - opacity))));
+    const int emitted_tolerance = 4;
+    if (std::abs(half_a - emitted_alpha) > emitted_tolerance) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the half-opacity pass stored alpha %d, expected %d (the blend of a %.1f "
+                     "fragment alpha over the opaque clear) — 255 means the opacity never scaled the fragment "
+                     "alpha, 128 means the alpha blend did not run\n",
+                     half_a, emitted_alpha, static_cast<double>(opacity));
+        ok = false;
+    }
+
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] opacity blend: opacity 0.5 turned the shaded centre (%d,%d,%d) into (%d,%d,%d) = "
+                     "0.5*shaded + 0.5*clear, stored alpha %d (not 255 = opacity dropped, not 128 = blend off)\n",
+                     opaque_r, opaque_g, opaque_b, half_r, half_g, half_b, half_a);
+    }
+    renderer.releasePass(pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
 int main()
 {
     const int frames =
@@ -4953,6 +5096,10 @@ int main()
     // line this phase exists to add, so the evidence stays readable as evidence.
     contract_ok = runTexturePhase(*renderer, camera, 3) && contract_ok;
     contract_ok = runCubeMapPhase(*renderer, camera, 3) && contract_ok;
+    // The opacity phase also runs after every reporting phase, for the same reason
+    // the texture phase does (see above): it drives frames, and nothing it does
+    // may move a number another phase reports.
+    contract_ok = runOpacityBlendPixelPhase(*renderer, camera, 4) && contract_ok;
     if (!contract_ok) {
         std::fprintf(stderr,
                      "[selftest] FAILED — a pass-lifecycle / depth-sharing / pixel-readback invariant was violated\n");

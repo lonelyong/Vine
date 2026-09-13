@@ -26,6 +26,17 @@ layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
 #endif
 
+// Per-drawable values (VineDrawBlock): the model matrix and four scalars the host
+// rewrites once per drawn command instead of once per vertex. `params.x` is the
+// drawable's effective opacity (scene x node x geometry); the remaining components
+// are reserved. This is the L1 block itself, declared exactly as the SDK defines it
+// (see ShaderAbi.hpp), so a backend without a push range binds the same 80 bytes.
+layout(set = 0, binding = 3, std140) uniform VineDrawBlock
+{
+    mat4 model;
+    vec4 params;
+} draw;
+
 // Per-view lights, packed from the content scene each frame (VineLightsBlock):
 // one ambient plus up to three directional lights, all in VIEW space.
 layout(set = 0, binding = 2, std140) uniform VineLightsBlock
@@ -40,19 +51,24 @@ void main()
     vec3 n = normalize(v_view_normal);
     vec3 view_dir = normalize(-v_view_pos);
     vec3 albedo = material.diffuse.rgb;
-    float alpha = material.diffuse.a;
+    // The drawable's opacity is a PER-DRAWABLE VALUE, not a per-vertex one: it
+    // arrives in the draw block and is rewritten in place when the command's
+    // opacity changes, so a translucent drawable costs O(1) per frame instead of
+    // a pass over its vertices (and the vertex colour stream stays free to carry
+    // authored colours, which its alpha does not compete with).
+    float alpha = material.diffuse.a * draw.params.x;
 #ifdef VINE_DIFFUSE_MAP
     vec4 texel = texture(diffuseMap, v_uv);
     albedo *= texel.rgb;
     alpha *= texel.a;
 #endif
 #ifdef VINE_VERTEX_COLOR
-    // Vertex colour MODULATES the albedo, and its alpha is the per-drawable opacity:
-    // SceneBridge keeps the carrier's alpha in step with the drawable's opacity,
-    // exactly as the built-in path does. A fully opaque drawable does not bind this
-    // attribute at all (the set drops it), which is why both uses are gated.
+    // An AUTHORED vertex colour modulates the albedo only. Its alpha is
+    // deliberately NOT an opacity input: opacity belongs to the draw block, so
+    // one drawable's alpha cannot leak into another geometry that shares the
+    // same vertex stream, and a model's fourth colour component means what the
+    // model says it means.
     albedo *= v_color.rgb;
-    alpha *= v_color.a;
 #endif
     vec3 color = albedo * (lights.ambient.rgb * lights.ambient.a);
     float shininess = max(material.shininess, 1.0);

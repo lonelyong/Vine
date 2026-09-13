@@ -244,6 +244,15 @@ const ::vsg::ShaderStages& compiledStages(vine::graphics::ShaderPreset preset)
     // assigns nothing to it, which is why it is declared with an empty sample.
     shader_set->addDescriptorBinding("vine_lights", "", 0, 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
                                      VK_SHADER_STAGE_FRAGMENT_BIT, ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(VineLightsBlock))));
+    // Per-DRAWABLE values (VineDrawBlock): the model matrix plus four scalars, one
+    // small uniform per drawn command instead of one array element per vertex. Only
+    // the fragment stage reads it today (params.x is the opacity), so the binding is
+    // declared for that stage; it is declared with a sample of the block's size so
+    // the layout and the assigned data agree without a device present.
+    shader_set->addDescriptorBinding("vine_draw", "", 0, 3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     ::vsg::ubyteArray::create(
+                                         static_cast<uint32_t>(sizeof(vine::graphics::VineDrawBlock))));
     // Camera matrices. The L1 contract is the SDK's VineViewBlock/VineDrawBlock
     // (ShaderAbi.hpp); on this backend the 128-byte push range is their L2
     // realization:

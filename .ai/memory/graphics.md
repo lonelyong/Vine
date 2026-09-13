@@ -1,7 +1,15 @@
-﻿> 2026-09-13 **P10 前半：forward 路径透明度接通**：`vine_forward.frag` 在 `VINE_VERTEX_COLOR` 下加 `alpha *= v_color.a`（载体 alpha 由 SceneBridge 按 `cmd.opacity` 维护，与内建同机制）。
-> `buildStateGroup(..., opacity)`：`drop_color` 仅在 `opacity >= 1` 时成立（透明 drawable 必须绑载体）；opacity 跳 1 计入 state 身份（仅对自写 set，`shader_drops_derived_attributes_` 门控）。
-> 单测 +1（透明 → 4 条顶点绑定 + 片元文本含 `alpha *= v_color.a;`）；两条证据基线 47 行不变；test_vsg **239 → 240**、test_graphics 240；lavapipe PASS（churn 相位每 5 帧 opacity 1↔0.4，现在会重建 state wrapper）。
-> **未做（P10 后半）**：per-drawable 值改走 dynamic-offset UBO（省掉 per-vertex 重写，并让 `VineDrawBlock` 落地）。
+﻿> 2026-09-13 **P10：每 drawable 不透明度改走 `vine_draw` 块（修一个真缺口）**
+> - SDK L1 块的 L2 落点：set0/binding3 `vine_draw` = `VineDrawBlock`(80B: `mat4 model` + `vec4 params`)；SceneBridge 每 drawable 一个 `floatArray`(20 float, `DYNAMIC_DATA`)，写 `params.x` 后 `dirty()`；`vine_forward.frag` 改 `alpha = material.diffuse.a * draw.params.x`。
+> - **修缺口**：P10 前半的"顶点载体 alpha = opacity"在 forward 路径**从未到达帧缓冲**（新像素门禁 `runOpacityBlendPixelPhase` 抓到：opacity 0.5 与 1.0 的像素完全相同）。诊断靠对照：同阶段换 **material 对象**像素会变（描述符路径 ✓），换载体字节不变（顶点路径 ✗），内建路径变（它的 shader 读载体）。
+> - **踩坑（已修）**：`draw_block` 必须**在 buildStateGroup 之前**创建 —— 否则 wrapper 会绑 ShaderSet 的**样本** uniform（全 0），且之后再也不会重绑（state 不再 dirty），表现为"整场 content 全不可见"（alpha=0）。
+> - 想要的副作用：opacity 不再进 variant 身份（删 `opacity_changes_state`/`wrapper_opacity_opaque`）；forward 路径**不再维护动态顶点载体**（`opacity_carrier = program==nullptr && !forward_draw_block_`）⇒ 作者着色 geometry 不再为透明度付 O(V)/帧，透明 drawable 也享受"丢派生属性"的精简变体。
+> - 新门禁 `runOpacityBlendPixelPhase`：同一 quad 画 1.0 与 0.5，断言 `colour(0.5) == 0.5*colour(1.0) + 0.5*clear`（±4）且存储 alpha = 191（用来区分 255 = opacity 丢掉 / 128 = 混合没开）。两条证据基线 **47 → 48 行**：新增就是这一行，其余 47 行逐字节不变（含 forward/内建那 6 个着色数字）。
+> - 判据：build 0/0；`vine_shader_check` PASS（7）；test_vsg 240 → **241**；test_graphics 240；两条基线 PASS；lavapipe PASS。
+
+> 2026-09-13 **P10 前半：forward 路径接通透明度（已被上面取代，保留作教训）**
+> - 做法：`vine_forward.frag` 在 `VINE_VERTEX_COLOR` 下 `alpha *= v_color.a`，载体 alpha 由 SceneBridge 按 `cmd.opacity` 维护；`drop_color` 仅在 `opacity >= 1` 时成立；opacity 跳 1 计入 state 身份。
+> - **为什么被取代**：这条路在 forward 上根本没通（见上）。教训：**"CPU 侧写了正确的字节"不等于"着色器读到它"** —— 一个只看结构（绑了哪些属性、变体文本）的断言会全绿而画面纹丝不动；像素级差分才是判据。
+> - 单测 +1（透明 → 4 条顶点绑定）已被换成 `OpacityIsNotPartOfTheVariantIdentity`（透明 = 不透明，2 条绑定）。
 
 > 2026-09-13 **P0.S1：GLSL 块名对齐 L1**：`MaterialBlock`→`VineMaterialBlock`、`LightsBlock`→`VineLightsBlock`（gbuffer_geometry.frag / vine_forward.frag）；`ShaderAbiTest` +1 钉"契约名 == GLSL 块名"。行为中性；test_graphics 239 → **240**。
 

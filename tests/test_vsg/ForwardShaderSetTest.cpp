@@ -425,32 +425,52 @@ TEST(ForwardShaderSetTest, ForwardSetDropsDerivedColourAndUvs)
     EXPECT_FALSE(pipelineSamplesATexture(*bind->pipeline));
 }
 
-TEST(ForwardShaderSetTest, TranslucentDrawablesKeepTheOpacityCarrier)
+TEST(ForwardShaderSetTest, OpacityIsNotPartOfTheVariantIdentity)
 {
-    // The derived colour carrier holds the drawable's opacity in its alpha, so a
-    // translucent drawable must keep it bound even though the geometry authored no
-    // colour: dropping it would leave the fragment stage with nothing to scale alpha
-    // by. The texcoord stays bound too, because the colour's binding number (3) must
-    // keep matching the data node.
+    // Opacity is a per-drawable VALUE, delivered in the `vine_draw` block — so a
+    // translucent drawable takes exactly the same pipeline as an opaque one, and changing
+    // the opacity never rebuilds the state wrapper. Before this, the opacity rode the
+    // derived colour carrier's alpha, which forced a translucent drawable to keep that
+    // attribute bound (and a rebuild whenever the opacity crossed 1).
     auto forward = makeForwardSet();
     ASSERT_NE(forward, nullptr);
 
     ::vsg::ref_ptr<::vsg::Group> root;
-    const auto*                  bind = buildBareTriangleState(forward, root, 0.5f);
-    ASSERT_NE(bind, nullptr);
-    ASSERT_NE(bind->pipeline, nullptr);
-    const auto* vertex_input = findVertexInputState(*bind->pipeline);
-    ASSERT_NE(vertex_input, nullptr);
-    EXPECT_EQ(vertex_input->vertexBindingDescriptions.size(), 4u);
+    const auto* opaque_bind = buildBareTriangleState(forward, root, 1.0f);
+    ASSERT_NE(opaque_bind, nullptr);
+    ASSERT_NE(opaque_bind->pipeline, nullptr);
 
-    // Binding the carrier only helps if the shader consumes its alpha; pin that the
-    // SDK's forward fragment stage does.
+    ::vsg::ref_ptr<::vsg::Group> half_root;
+    const auto* half_bind = buildBareTriangleState(forward, half_root, 0.5f);
+    ASSERT_NE(half_bind, nullptr);
+    ASSERT_NE(half_bind->pipeline, nullptr);
+
+    const auto* opaque_input = findVertexInputState(*opaque_bind->pipeline);
+    const auto* half_input   = findVertexInputState(*half_bind->pipeline);
+    ASSERT_NE(opaque_input, nullptr);
+    ASSERT_NE(half_input, nullptr);
+    EXPECT_EQ(opaque_input->vertexBindingDescriptions.size(), 2u); // positions + normals only, both ways
+    EXPECT_EQ(half_input->vertexBindingDescriptions.size(), 2u);
+    EXPECT_FALSE(pipelineSamplesATexture(*half_bind->pipeline));
+}
+
+TEST(ForwardShaderSetTest, TheFragmentStageScalesAlphaByTheDrawBlock)
+{
+    // The other half of the contract above: the value has to be READ. The fragment stage
+    // multiplies the material's alpha by the block's params.x, and deliberately does NOT
+    // take an opacity from the vertex colour's alpha (that would make one drawable's
+    // opacity leak into every geometry sharing the vertex stream).
     const auto program = vine::graphics::builtinProgram(vine::graphics::ShaderPreset::StandardPhong);
     ASSERT_NE(program, nullptr);
     ASSERT_EQ(program->stageCount(), 2u);
     const auto* fs_stage = program->stage(1);
     ASSERT_NE(fs_stage, nullptr);
-    EXPECT_NE(fs_stage->source.stdstr().find("alpha *= v_color.a;"), std::string::npos);
+    const std::string fragment = fs_stage->source.stdstr();
+    EXPECT_NE(fragment.find("material.diffuse.a * draw.params.x"), std::string::npos);
+    EXPECT_EQ(fragment.find("alpha *= v_color.a;"), std::string::npos);
+    // The block itself is declared at the L1 binding the backend assigns.
+    EXPECT_NE(fragment.find("uniform VineDrawBlock"), std::string::npos);
+    EXPECT_NE(fragment.find("binding = 3"), std::string::npos);
 }
 
 TEST(ForwardShaderSetTest, BuiltInSetKeepsTheFullCanonicalPrefix)

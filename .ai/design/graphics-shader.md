@@ -266,6 +266,7 @@ SDK shader 文本因此写死了 `layout(push_constant)` / `layout(set = 0, bind
 | **C1（2026-09-13 落地）** | SDK `ShaderAbi.hpp` 定义 `VineViewBlock`(288B) / `VineDrawBlock`(80B)（16 B 对齐、成员 `mat4`/`vec4`，与 `LightPushBlock`/`VineLightsBlock`/`MaterialBlock` 同一"全 vec4 对齐"纪律）+ `static_assert`；`ShaderAbiTest` 钉住 sizeof/offsetof | 低（纯新增） |
 | **C2（2026-09-13 落地）** | vsg 后端把 push 标注为 C 的实现：`pc.projection ≡ VineViewBlock.proj`、`pc.modelView ≡ VineViewBlock.view * VineDrawBlock.model`（代码注释 + 头文档），并加测试钉住 shader 文本 / 范围 / `sizeof(VineViewBlock) > 128` | 低（行为中性） |
 | C3 | 新后端（有第二个时）直接实现 UBO/cbuffer；`ShaderProgram` 参数表随首个消费者（P10 材质值/用户参数）一起落 | 中 |
+| **C4（2026-09-13 落地）** | **`VineDrawBlock` 的第一个真消费者**：vsg 后端把 set0/binding3 声明为 `vine_draw`，SceneBridge 每 drawable 一个 80 B UBO（`DYNAMIC_DATA`），`params.x` = 有效不透明度，前向片元 `alpha = material.diffuse.a * draw.params.x`。同时**取消**“顶点色 alpha 当不透明度”的内建式做法 | 低（但踩到两个坑，见 `.ai/memory/graphics.md`：块必须在建 wrapper **之前**存在；“CPU 写对字节”≠“着色器读到”） |
 
 ### 12.5 L2 shim 何时做（结论：等第二个后端）
 
@@ -273,10 +274,12 @@ SDK shader 文本因此写死了 `layout(push_constant)` / `layout(set = 0, bind
 GLSL 与 HLSL 连**声明结构**都不同（`layout(binding = N)` vs `register(tN, spaceN)`），单后端下宏化只是把数字挪个位置。
 因此：**先钉 L1（§11）+ 保持块 vec4 对齐（§12.4 C1）；L2 shim 与第二个后端一起做。**
 
-### 12.6 B2 的前置（暂缓 `addParam`/`addInputSlot`）
+### 12.6 B2 的前置（`addParam`/`addInputSlot` 仍暂缓）
 
 `ShaderProgram` 的参数表与命名槽**需要消费者**才落地，否则是死 API：
 - 命名槽（per-attachment）要先有引擎侧的**按附件命名**（现在槽模型是"整目标 publish，附件顺序 = binding 顺序"）；
-- 参数表的首个真实消费者是 P10 的材质/每 drawable 值（`Material` dynamic offset）与用户参数。
+- 参数表的首个真实消费者是 P10 的每 drawable 值（材质值进 `VineDrawBlock.params`）与用户参数。
 
-⇒ **在这两个消费者出现之前，不引入 `addParam`/`addInputSlot`。**
+**C4 已经让 `VineDrawBlock` 有了真实消费者（opacity），但只是 `params.x` 一个标量**：
+参数表（“名字 → 槽位/偏移 + 类型”）要等**第二个标量**（材质值或用户参数）出现才值得引入，
+否则会把一个 `float` 包装成一整套 API。⇒ **维持暂缓，等那个消费者。**

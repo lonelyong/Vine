@@ -354,7 +354,7 @@ namespace
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
     const std::vector<VertexChannel>& extra_channels,
     const DerivedChannels* derived,
-    float                  opacity)
+    ::vsg::ref_ptr<::vsg::Data> draw_block)
 {
     if (data == nullptr) {
         return ::vsg::ref_ptr<::vsg::StateGroup>();
@@ -396,20 +396,21 @@ namespace
     // Which optional canonical attributes this variant feeds the pipeline. OUR forward set declares
     // vsg_Color / vsg_TexCoord0 behind defines, so a geometry that authors neither can take the variant
     // WITHOUT those attributes: leaving the array unassigned keeps the define off, which drops one vertex
-    // binding (and, with the texture, one sample). Only a DERIVED array may be dropped — the white opacity
+    // binding (and, with the texture, one sample). Only a DERIVED array may be dropped — the white colour
     // carrier / the zero UVs — because an authored channel carries the model's bytes. The UV attribute and
     // the sampler share `VINE_DIFFUSE_MAP`, so UVs go only when the texture is the white fallback, and only
     // together with the colour: dropping vsg_TexCoord0 alone would renumber vsg_Color's binding away from
     // the fixed canonical index the data node bound it at (see the assign order below).
     //
-    // The colour is only droppable while the drawable is FULLY OPAQUE: the derived
-    // carrier holds the drawable's opacity in its alpha, so a translucent drawable
-    // needs the attribute the fragment stage scales its alpha by.
+    // The decision does NOT depend on the drawable's opacity, on purpose: opacity is a
+    // per-drawable VALUE (the `vine_draw` block, params.x), so it never changes what the
+    // pipeline must feed — a translucent drawable takes exactly the same variant as an
+    // opaque one, and changing the opacity never rebuilds the state wrapper.
     auto arrays = boundArraysOf(data);
     const bool forward_set =
         program == nullptr && static_cast<bool>(shaderSet->getDescriptorBinding("vine_lights"));
     const bool drop_color = forward_set && derived != nullptr && arrays.size() > 3u && arrays[3] != nullptr &&
-                            arrays[3] == derived->white_colors && opacity >= 1.0f;
+                            arrays[3] == derived->white_colors;
     const bool drop_uv = drop_color && derived != nullptr && arrays.size() > 2u && arrays[2] != nullptr &&
                          arrays[2] == derived->zero_texcoords && texture_reason != detail::TextureReject::Ok;
     if (drop_color) {
@@ -516,6 +517,15 @@ namespace
     // (documented in .ai/design/vsg-custom-shader.md §11).
     if (lights_data_ != nullptr && shaderSet->getDescriptorBinding("vine_lights")) {
         config->assignDescriptor("vine_lights", lights_data_);
+    }
+
+    // Per-DRAWABLE values (VineDrawBlock). Same two conditions as the lights block:
+    // only the sets that declare `vine_draw` get the descriptor, and only a drawable
+    // that brought a block binds one. The block is what a translucent drawable costs
+    // per frame — four floats rewritten in place — instead of a pass over its
+    // vertices, so it cannot be part of the variant identity.
+    if (draw_block != nullptr && shaderSet->getDescriptorBinding("vine_draw")) {
+        config->assignDescriptor("vine_draw", draw_block);
     }
 
     // Assemble the pipeline from the geometry's effective render state. The

@@ -588,9 +588,11 @@ class V_VSG_API SceneBridge {
      * opacity edits after upload are re-transferred on dirty().
      *
      * @param geometry        Geometry to build.
-     * @param opacity_carrier True when the built-in path drives per-drawable
-     *                        opacity through the vertex-colour alpha (false
-     *                        when a user program owns opacity).
+     * @param opacity_carrier True when the caller drives per-drawable opacity through the vertex-colour
+     *                        alpha. That is the BUILT-IN path: its shader reads the vertex colour's alpha
+     *                        and there is no per-draw block to carry the opacity. Our forward set passes
+     *                        false — its `vine_draw` block holds the opacity, so its colour array is a
+     *                        static authored-or-white channel that is uploaded once.
      * @param topology        Primitive topology the geometry is drawn with:
      *                        automatic normal derivation runs for Triangles
      *                        only; Points / Lines fall back to authored
@@ -649,9 +651,10 @@ class V_VSG_API SceneBridge {
      *                       or null when the caller cannot say. Used only to decide whether OUR forward
      *                       set may take the variant WITHOUT a canonical attribute: a derived array (the
      *                       geometry authored none) is dropped, an authored one is never.
-     * @param opacity        The drawable's effective opacity. The derived colour carrier holds it in its
-     *                       alpha, so the carrier may only be dropped when @p opacity is 1: a translucent
-     *                       drawable needs the attribute the shader scales its alpha by.
+     * @param draw_block     This drawable's per-draw values (VineDrawBlock: model + params), or null when
+     *                       the caller has none. The block is bound as `vine_draw` on the sets that
+     *                       declare it; it is NOT an input to the variant identity, because the values
+     *                       live in a buffer that is rewritten in place rather than in the pipeline.
      * @return State wrapper, or null when not buildable.
      */
     ::vsg::ref_ptr<::vsg::StateGroup> buildStateGroup(
@@ -662,7 +665,7 @@ class V_VSG_API SceneBridge {
         vine::raw_ptr<const vine::graphics::ShaderProgram> program,
         const std::vector<VertexChannel>& extra_channels,
         const DerivedChannels* derived = nullptr,
-        float                  opacity = 1.0f);
+        ::vsg::ref_ptr<::vsg::Data> draw_block = {});
 
     /** @brief Gets (and caches) the run-time compiled ShaderSet for a program.
      *
@@ -766,11 +769,12 @@ class V_VSG_API SceneBridge {
                                  const std::vector<vine::graphics::RenderCommand>& commands);
 
     ::vsg::ref_ptr<::vsg::ShaderSet> shader_set_;
-    // Whether shader_set_ is OUR forward set — the one that drops a DERIVED canonical
-    // attribute behind its define. Only there can a drawable's opacity change which
-    // vertex inputs the pipeline needs (the derived colour carrier holds the opacity),
-    // so only there is the opaque/translucent class part of the state identity.
-    bool shader_drops_derived_attributes_ = false;
+    // Whether shader_set_ is OUR forward set (the one that drops a DERIVED canonical
+    // attribute behind its define and reads per-drawable values from `vine_draw`).
+    // Its per-drawable opacity rides the draw block, not the vertex colour: the colour
+    // array it builds is a static authored-or-white channel, so the bridge does not
+    // keep one to rewrite and the data builder is told not to make one dynamic.
+    bool forward_draw_block_ = false;
     // Pass-level depth policy applied to commands that did not author depth
     // (see setContentDepthMode); part of the retained state identity, so
     // changing it invalidates the state wrappers.

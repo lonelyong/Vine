@@ -48,7 +48,7 @@
 | **P8** | **纹理会话级全局化** + 接上 `releaseAbandoned()` 清扫 | 纹理缓存每 bridge 一份（同纹理 N 份 image + N 次上传）；`releaseAbandoned()` 无生产调用点，`clearCache()` 也不清它 | 会话级一份纹理资源；帧级 sweep 接上；注入点照 `materialManager` 的样子加 | 需给 `SceneBridge` 加注入点；设备重建要处理（建议**会话级**而非跨会话）；描述符集/管线仍在 per-bridge 表里 ⇒ 收益只一半（需 P4，而 P4 已否决） | **已完成（2026-09-13）** |
 | **P11** | 材质释放被**互持**卡住：材质管理器条目与桥的 variant 模板条目各自持有同一个 Material，而两边都用 `useCount() <= 1` 判定"只有我还持有它"⇒ 两边都不放手 | 二者都用 `OwnedCacheEntry` / `OwnedPairCacheEntry`（`OwnedCache.hpp:29,156`），实测：App 丢掉材质后 `useCount == 2`（两个缓存各一），`VsgMaterialManager::releaseAbandoned()` 与桥的 sweep 都返回 0 | 让"App 放手"能被可靠观察到（候选：variant 条目对 Material 持**弱**引用 + 显式失效事件；或让材质管理器成为唯一权威，桥订阅其释放） | 改成弱引用会动摇"条目拥有它的键"这条防悬空规则，必须连地址复用风险一起设计；且影响 `VsgMaterialManager` 的公有接口语义 | 待办 |
 | **P9** | 会话级 **`MeshResourceCache`**（网格资源共享，**承接 P4 的目标**） | 每几何体各自别名数组 + `BindVertexBuffers` + `BufferInfo` + 池区间 + 上传；同一 mesh 的 k 个实例 = k 份 + k 次上传 | 键 =(每通道 buffer 地址+components+数量, 索引 buffer+数量, **layout hash**) → 共享 `{arrays, BindVertexBuffers, BindIndexBuffer, DrawIndexed}`；条目**拥有** `vine::Buffer`；先只对"无 opacity 载体"（自定义 program 路径）开放 | 必须共享**承载 BufferInfo 的命令对象**，否则 vsg 每条命令各自 reserve；共享后 `clearCache()` 不再释放本槽资源 ⇒ 需全局 LRU/sweep（与 P1/P2 合并）；内建路径不可用（见 P10） | **已完成（2026-09-13）**：键 = `binding + components + Buffer 地址 + Buffer::revision() + 元素数`（**没带 layout hash**：键就是流，同一流在不同布局下也应是同一条 bind）；共享范围比原计划大（**内建路径也共享**，只有白载体/零 UV/派生法线/三分量色不共享） |
-| **P10** | 把 opacity 从顶点色移到 push constant / instance 属性 | 内建路径 binding 2 是**每 drawable 的白 DYNAMIC 载体** ⇒ data 节点无法共享 | 内建路径也能共享网格资源（解锁 P9） | 改变 opacity 承载方式，影响 shader 契约、既有测试与 selftest 证据行 | 待办 |
+| **P10** | 把 opacity 从顶点色移到**每 drawable 的值** | 内建路径 binding 2 是**每 drawable 的白 DYNAMIC 载体** ⇒ data 节点无法共享 | 内建路径也能共享网格资源（解锁 P9） | 改变 opacity 承载方式，影响 shader 契约、既有测试与 selftest 证据行 | **forward 侧已完成（2026-09-13）**：不透明度改走 set0/b3 `vine_draw` 的 `params.x`（每 drawable 一个 80 B UBO，`DYNAMIC_DATA`），forward 恢复"无动态载体"⇒ 白载体可静态、与 P9 的共享前提一致；**内建路径仍用载体**（它的 shader 读 `vsg_Color.a`），剩下的是 dynamic-offset 打包 |
 
 ### 已否决
 
@@ -206,7 +206,8 @@
   · `ShaderAbi.hpp` 落 `VineViewBlock`(288B)/`VineDrawBlock`(80B) + `static_assert`；`ShaderAbiTest` 钉 sizeof/offsetof。
   · 口径：行为中性（纯新增）；test_graphics 236→**239**。下一步 C2（vsg 标注 push ≡ 子集）。
   · **C2 落地（2026-09-13）**：vsg push `pc` 注释/头文档写明 `pc.projection ≡ VineViewBlock.proj`、`pc.modelView ≡ VineViewBlock.view * VineDrawBlock.model`；`ForwardShaderSetTest` +1 钉 shader 文本 + `sizeof(VineViewBlock) > 128`。行为中性；test_vsg 238→**239**。
-- **P0.S1 + P10 前半（2026-09-13）**：①GLSL 块名对齐 L1（`VineMaterialBlock`/`VineLightsBlock`，`ShaderAbiTest` 钉契约名==块名，test_graphics 240）；
-  ②**forward 路径透明度接通**：`alpha *= v_color.a` + `buildStateGroup(..., opacity)`（`drop_color` 仅 `opacity >= 1`；opacity 跳 1 计入 state 身份，仅对自写 set）⇒ 透明 drawable 绑载体，不透明的仍走门控变体。
-  · 口径：两条证据基线 47 行不变；test_vsg 239→**240**；lavapipe PASS（churn 相位 opacity 1↔0.4 现在会重建 wrapper）。未做：per-drawable dynamic-offset UBO。
+- **P0.S1 + P10（2026-09-13）**：①GLSL 块名对齐 L1（`VineMaterialBlock`/`VineLightsBlock`，`ShaderAbiTest` 钉契约名==块名，test_graphics 240）；
+  ②**每 drawable 不透明度改走 `vine_draw` 块**：`alpha = material.diffuse.a * draw.params.x`；每 drawable 一个 `floatArray`(20 float, DYNAMIC) 原地改 4 个 float（O(1)/帧，取代 O(V)/帧的顶点载体重写）；opacity **不再进 variant 身份**（删 `opacity_changes_state`）；forward 路径不再维护动态载体（`opacity_carrier=false`）⇒ 透明 drawable 也走"丢派生属性"精简变体。
+  · **修真缺口**：P10 前半的顶点载体方案在 forward 上**从未到达帧缓冲**（新像素门禁抓到）；教训 = 结构断言（绑了哪些属性/变体文本）会全绿而画面不动，**像素差分才是判据**。
+  · 口径：两条证据基线 **47 → 48 行**（只多这一行，其余逐字节不变）；test_vsg 240→**241**；`vine_shader_check` PASS（7）；lavapipe PASS。未做：dynamic-offset 打包（一 drawable 一 UBO）。
 
