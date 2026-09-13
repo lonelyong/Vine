@@ -25,9 +25,9 @@ namespace
 {
 
 /// Builds a channel that owns its packed floats.
-AttributeBuffer packedChannel(const std::vector<float>& floats, std::uint32_t components)
+AttributeChannel packedChannel(const std::vector<float>& floats, std::uint32_t components)
 {
-    return AttributeBuffer::packed(floats, components);
+    return AttributeChannel::packed(floats, components);
 }
 
 /**

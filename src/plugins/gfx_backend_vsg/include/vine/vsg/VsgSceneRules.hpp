@@ -76,7 +76,7 @@ enum class ChannelShape
  * @param vertex_count Vertices the mesh has (the channel must match it).
  * @return Ok when the channel can be materialised, else why it cannot.
  */
-ChannelShape channelShape(const vine::graphics::AttributeBuffer& attr, std::size_t vertex_count);
+ChannelShape channelShape(const vine::graphics::AttributeChannel& attr, std::size_t vertex_count);
 
 /**
  * @brief The "channel ignored" diagnostic for a rejected custom channel.
@@ -87,7 +87,7 @@ ChannelShape channelShape(const vine::graphics::AttributeBuffer& attr, std::size
  * @param shape        Why channelShape rejected it (never Ok).
  * @return The message to report.
  */
-vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics::AttributeBuffer& attr,
+vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics::AttributeChannel& attr,
                                    std::size_t vertex_count, ChannelShape shape);
 
 /**
@@ -107,7 +107,7 @@ enum class XyzUnpack
 /**
  * @brief Unpacks an attribute buffer's xyz using its component count as the stride.
  *
- * The AttributeBuffer contract allows 1-4 scalar components per vertex; position / normal
+ * The AttributeChannel contract allows 1-4 scalar components per vertex; position / normal
  * consumers need at least three and take the first three scalars of each vertex (a vec4 channel
  * keeps its xyz and skips the extra w). A channel whose component count is not a usable xyz
  * stride, or whose float count is not divisible by that stride, cannot be unpacked safely and is
@@ -119,7 +119,7 @@ enum class XyzUnpack
  *             rejected, because the rejection happens before anything is written).
  * @return Ok when unpacked, otherwise why the channel was rejected.
  */
-XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry::Vec3fArray& out);
+XyzUnpack unpackXyz(const vine::graphics::AttributeChannel& attr, vine::geometry::Vec3fArray& out);
 
 /**
  * @brief The diagnostic for an unusable loc1 normal channel.
@@ -133,7 +133,7 @@ XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry:
  * @param reason Why unpackXyz rejected it (never Ok).
  * @return The message to report.
  */
-vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeBuffer& attr, XyzUnpack reason);
+vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeChannel& attr, XyzUnpack reason);
 
 /**
  * @brief The raw (unnormalised) right-handed face normal of a triangle.
@@ -316,7 +316,7 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
  * @tparam Element Scalar element type of the buffer, which @p count is counted in.
  * @param buffer         Buffer to read; null yields an array over an empty view.
  * @param count          Elements to expose.
- * @param offset_scalars First scalar of the channel inside @p buffer (see AttributeBuffer::offset). It is
+ * @param offset_scalars First scalar of the channel inside @p buffer (see AttributeChannel::offset). It is
  *                       stated in the BUFFER's scalars, the unit the channel carries, and becomes the byte
  *                       offset vsg's array aliases from — so one arena buffer can feed many geometries, each
  *                       reading its own segment.
@@ -349,7 +349,7 @@ template <typename Array, typename Element>
  *                       channelShape has already rejected).
  * @param values         Packed per-vertex floats to read.
  * @param vertex_count   Vertices to expose.
- * @param offset_scalars First scalar of the channel inside @p values (see AttributeBuffer::offset), so a
+ * @param offset_scalars First scalar of the channel inside @p values (see AttributeChannel::offset), so a
  *                       custom channel can be a segment of an arena like every other channel.
  * @return Typed array reading @p values.
  */

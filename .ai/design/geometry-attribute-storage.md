@@ -37,7 +37,7 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 | | 组件 |
 | --- | --- |
 | 存储 | `core::Buffer<T>`：`RefCounted`，**内部组合** `std::vector<T>`（派生会被 `vector&` 传递切片掉引用计数） |
-| 通道 | `AttributeBuffer{ intrusive_ptr<const Buffer<float>> values; uint32_t components; size_t offset; size_t scalarCount; }`（`offset`/`scalarCount` 按**标量**计，`0` 长度 = 到缓冲末尾 ⇒ 可做 arena 切片） |
+| 通道 | `AttributeChannel{ intrusive_ptr<const Buffer<float>> values; uint32_t components; size_t offset; size_t scalarCount; }`（`offset`/`scalarCount` 按**标量**计，`0` 长度 = 到缓冲末尾 ⇒ 可做 arena 切片） |
 | 建模侧 | `Mesh` 存 `Buffer<float>`；`positions()` 等返回 `span<const Vec3f>`（同一批字节 reinterpret） |
 | 桥 | `geometryFromShape()` 传 `mesh->positionsBuffer()` —— 两侧读**同一块分配** |
 | 公告 | **一律手动**：`Buffer` 自己不 bump（它看不见每种写入，也不知道一次编辑何时结束）⇒ 写的人改完显式 `setRevision(revision()+1)`；`Mesh` 的 builder 在 `addVertex`/`addTriangle`/`clear` 里各公告一次（`Mesh::announceChange()`） |
@@ -64,7 +64,7 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
   允许的写路径只有**模型自己的 API**（`addVertex` / `clear` / setter；绕过它原地改 buffer 要自己补公告）。
   忘记公告不会报错：读者静默沿用旧字节（首次构建不受影响 —— 那是从零建，不看 revision）。
 - 因为通道**持的是 buffer 而不是快照**，即使源 buffer 增长，通道也不会悬空：长度与地址都现取。
-- **通道可以只是缓冲的一段（arena）**：`AttributeBuffer::slice(values, components, first_vertex, vertex_count)`
+- **通道可以只是缓冲的一段（arena）**：`AttributeChannel::slice(values, components, first_vertex, vertex_count)`
   用顶点说话，`shared(..., offset, scalar_count)` 用标量说话；`floatCount()/vertexCount()/scalars()/xyz()/vec3View()`
   全部只认**这一段**（越过末尾就是空，不会读到邻居）。索引侧用 `Geometry::setIndices(buffer, first_index, index_count)`
   表达切片，但**绑定的是整段缓冲**（切片在 draw 命令里：`firstIndex/indexCount`）⇒ 一个索引 arena 共享一次索引上传。
@@ -76,9 +76,9 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 | --- | --- | --- |
 | 1 | `core::Buffer<T>` + 单测（9 条） | ✅ `1adcd3b` / `72ee9cc` |
 | 2 | `Mesh` / `IndexedTriangleMesh` 改存 `Buffer`；访问器改 `span` | ✅ `eb9b5ea` |
-| 3a | `AttributeBuffer` 改为「视图 + keepalive」（当时是类型擦除版），行为不变 | ✅ `55204a1` |
+| 3a | `AttributeChannel` 改为「视图 + keepalive」（当时是类型擦除版），行为不变 | ✅ `55204a1` |
 | 3b | `geometryFromShape()` 走共享 ⇒ **内存不再翻倍** | ✅ `6e9acff` |
-| 3c | 元素钉死 float/uint32、`AttributeBuffer` 直接持 buffer（删掉擦除与快照）、setter 合一名 | ✅ 本批 |
+| 3c | 元素钉死 float/uint32、`AttributeChannel` 直接持 buffer（删掉擦除与快照）、setter 合一名 | ✅ 本批 |
 | 3d | 索引同样改成 `intrusive_ptr<const Buffer<uint32_t>>` + `packIndices()`；`Geometry::indices()` 改返回 `std::span` | ✅ 本批 |
 | 4 | 后端从 `bytes()` 上传；`SceneBridgeGeometry` 不再逐顶点拷进 vsg typed array | ⬜ |
 
@@ -100,8 +100,8 @@ use-after-free 引进了原本安全的路径，而换来的只是“省一半�
 | --- | --- |
 | `IndexedTriangleMesh::addVertex()` 改成每次重建存储（“复制而非共享”） | 恰好 3 条共享断言失败：`size()` 2≠3、两侧 `data()` 地址不同、`revision()` 0 vs 0 |
 | `geometryFromShape()` 改回 repack | 恰好 3 条指针同一性断言失败（positions/normals/texcoords），分量/坐标/计数断言全过 |
-| 给 `AttributeBuffer` 加回快照（裸指针 + 缓存长度） | 恰好 3 条增长断言失败：`floatCount()` 6≠9、`vertexCount()` 2≠3、`scalars().data()` 地址不同 |
-| `AttributeBuffer::shared()` 的 keepalive 换成空 lambda | 恰好 `useCount()` 断言失败（1≠2） |
+| 给 `AttributeChannel` 加回快照（裸指针 + 缓存长度） | 恰好 3 条增长断言失败：`floatCount()` 6≠9、`vertexCount()` 2≠3、`scalars().data()` 地址不同 |
+| `AttributeChannel::shared()` 的 keepalive 换成空 lambda | 恰好 `useCount()` 断言失败（1≠2） |
 | `geometryFromShape()` 的索引改回 `packIndices(indexed->indices())`（复制而非共享） | 恰好 3 条索引断言失败：两侧地址不同、增长后计数 3≠6、增长后仍不同 |
 | `Geometry::setRevision()` 改成空操作 | 恰好 2 条红：`ManuallyReportedRevisionRebuildsTheDataNode`（顶点数据没被刷新，变换节点与状态包装都在）与设备无关的 `GeometryTest.RevisionCanBeReportedByHand`（41 读成 1）—— 证明“公告”确实是唯一能触发重建的东西 |
 
@@ -167,3 +167,20 @@ vec4 位置（stride 4）**有意不进别名**：它要的是 R32G32B32 绑定�
 - 通道的 `size()` 是**标量数**，不是顶点数：顶点数用 `vertexCount()` 或 `positions().size()`。
 - `Vec3f` ↔ float 的 reinterpret 现在主要在 `Mesh` 内部（存取器），由 `static_assert` + 单测钉住。
 - 新增 `src/` 文件后必须 `cmake -S . -B build`（`v_add_library` 的 glob 无 `CONFIGURE_DEPENDS`）。
+
+## 流（stream）的统一表示（2026-09-13）
+
+一条**流** = 「哪个 buffer + 从哪开始 + 覆盖多少」，这个形状由核心的 `BufferSlice<Element>`
+（`src/base/core/sdk/vine/Buffer.hpp`）定义，三条规则只写一次：偏移越界**钳到末尾**、count == 0 表示
+**"到 buffer 末尾为止"**、长度按**当前** buffer 长度解析（buffer 会长大 —— arena 的尾段就靠这条）。
+
+- **属性通道**：`AttributeChannel`（原 `AttributeBuffer`，改名以对齐代码与文档里一直用的 "channel" 说法）
+  = **一个 `BufferSlice<float>`（以 scalar 计）+ 顶点 stride（components）**。`scalarSlice()` 把它的段
+  交出去，`fromSlice(slice, components)` 从段 + stride 建回来。
+- **索引流**：`Geometry::IndexStream = BufferSlice<std::uint32_t>`，元素计、无 stride；`setIndices(buffer,
+  first, count)` 就是建这个段。
+- **自定义流**（未来）：同一个 `BufferSlice<T>`，不需要第三种表示。
+
+**为什么是组合而不是基类**：通道不是段，通道是"段 + 顶点 stride"的解释。若让 `AttributeChannel` 继承
+`BufferSlice<float>`，把通道按值传给一个要段的接口会**静默丢掉 stride**（也就丢掉"每个顶点从哪开始"），
+而这类错误不会在任何地方报出来。段是通道**拥有并能交出去**的东西（见两个成员函数），不是它"是"的东西。

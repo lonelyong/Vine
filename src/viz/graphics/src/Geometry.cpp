@@ -63,7 +63,7 @@ constexpr std::uint32_t kVec2Components = vine::geometry::Mesh::kVec2Components;
 
 }  // namespace
 
-void Geometry::addBuffer(std::uint32_t location, const AttributeBuffer& buffer)
+void Geometry::addBuffer(std::uint32_t location, const AttributeChannel& buffer)
 {
     attributes_[location] = buffer;
 }
@@ -78,7 +78,7 @@ bool Geometry::hasBuffer(std::uint32_t location) const
     return attributes_.find(location) != attributes_.end();
 }
 
-const AttributeBuffer* Geometry::buffer(std::uint32_t location) const
+const AttributeChannel* Geometry::buffer(std::uint32_t location) const
 {
     const auto it = attributes_.find(location);
     return it != attributes_.end() ? &it->second : nullptr;
@@ -104,7 +104,7 @@ void Geometry::setPositions(intrusive_ptr<const vine::Buffer<float>> positions)
     // The location is the shader ABI's (ShaderAbi.hpp), never a number written here: the built-in
     // shaders declare the attribute where attributeLocation() says, so the two move together.
     addBuffer(attributeLocation(VertexAttribute::Position),
-              AttributeBuffer::shared(std::move(positions), kVec3Components));
+              AttributeChannel::shared(std::move(positions), kVec3Components));
 }
 
 bool Geometry::hasPositions() const
@@ -114,14 +114,14 @@ bool Geometry::hasPositions() const
 
 std::size_t Geometry::positionCount() const
 {
-    const AttributeBuffer* positions = buffer(attributeLocation(VertexAttribute::Position));
+    const AttributeChannel* positions = buffer(attributeLocation(VertexAttribute::Position));
     return positions != nullptr ? positions->vertexCount() : 0u;
 }
 
 void Geometry::setNormals(intrusive_ptr<const vine::Buffer<float>> normals)
 {
     addBuffer(attributeLocation(VertexAttribute::Normal),
-              AttributeBuffer::shared(std::move(normals), kVec3Components));
+              AttributeChannel::shared(std::move(normals), kVec3Components));
 }
 
 bool Geometry::hasNormals() const
@@ -131,13 +131,13 @@ bool Geometry::hasNormals() const
 
 std::size_t Geometry::normalCount() const
 {
-    const AttributeBuffer* normals = buffer(attributeLocation(VertexAttribute::Normal));
+    const AttributeChannel* normals = buffer(attributeLocation(VertexAttribute::Normal));
     return normals != nullptr ? normals->vertexCount() : 0u;
 }
 
 void Geometry::setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords)
 {
-    addBuffer(kTexCoordLocation, AttributeBuffer::shared(std::move(texcoords), kVec2Components));
+    addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(texcoords), kVec2Components));
 }
 
 bool Geometry::hasTexcoords() const
@@ -147,48 +147,43 @@ bool Geometry::hasTexcoords() const
 
 std::size_t Geometry::texcoordCount() const
 {
-    const AttributeBuffer* texcoords = buffer(kTexCoordLocation);
+    const AttributeChannel* texcoords = buffer(kTexCoordLocation);
     return texcoords != nullptr ? texcoords->vertexCount() : 0u;
 }
 
 void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices, std::size_t first_index,
                           std::size_t index_count)
 {
-    indices_first_ = first_index;
-    indices_count_ = index_count;
-    indices_       = std::move(indices);
+    // The index stream is a SEGMENT of a buffer, described by the same structure an attribute
+    // channel is (see BufferSlice): which buffer, where the segment starts, how much it covers —
+    // so "the rest of the arena", "clamp past the end" and "follow the buffer as it grows" have one
+    // definition for every stream a geometry reads, index or vertex, today or later.
+    indices_ = Geometry::IndexStream::slice(std::move(indices), first_index, index_count);
 }
 
 bool Geometry::hasIndices() const
 {
-    return !indices().empty();
+    return !indices_.empty();
 }
 
 std::span<const std::uint32_t> Geometry::indices() const
 {
-    if (indices_ == nullptr) {
-        return {};
-    }
-    // The slice is resolved against the buffer's CURRENT length, so a channel that draws "the rest of it"
-    // follows the buffer as it grows (the same rule an attribute channel with no fixed count follows).
-    const std::size_t begin     = std::min(indices_first_, indices_->size());
-    const std::size_t available = indices_->size() - begin;
-    return indices_->view().subspan(begin, indices_count_ == 0u ? available : std::min(indices_count_, available));
+    return indices_.span();
 }
 
 std::size_t Geometry::firstIndex() const
 {
-    return indices_ != nullptr ? std::min(indices_first_, indices_->size()) : 0u;
+    return indices_.begin();
 }
 
 std::size_t Geometry::indexCount() const
 {
-    return indices().size();
+    return indices_.size();
 }
 
 intrusive_ptr<const vine::Buffer<std::uint32_t>> Geometry::indicesBuffer() const
 {
-    return indices_;
+    return indices_.values;
 }
 
 std::uint64_t Geometry::revision() const
@@ -223,7 +218,7 @@ namespace
  */
 Aabbd localBounds(const Geometry* geometry)
 {
-    const AttributeBuffer* positions = geometry->buffer(attributeLocation(VertexAttribute::Position));
+    const AttributeChannel* positions = geometry->buffer(attributeLocation(VertexAttribute::Position));
     if (positions == nullptr || positions->empty() || positions->components < 3u) {
         return Aabbd::empty();
     }

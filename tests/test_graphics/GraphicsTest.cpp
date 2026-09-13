@@ -3978,9 +3978,9 @@ TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)
     const auto geom = geometryFromShape(*mesh);
     ASSERT_NE(geom.get(), nullptr);
 
-    const AttributeBuffer* positions = geom->buffer(0);
-    const AttributeBuffer* normals   = geom->buffer(1);
-    const AttributeBuffer* uvs       = geom->buffer(Geometry::kTexCoordLocation);
+    const AttributeChannel* positions = geom->buffer(0);
+    const AttributeChannel* normals   = geom->buffer(1);
+    const AttributeChannel* uvs       = geom->buffer(Geometry::kTexCoordLocation);
     ASSERT_NE(positions, nullptr);
     ASSERT_NE(normals, nullptr);
     ASSERT_NE(uvs, nullptr);
@@ -4050,7 +4050,7 @@ TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
     EXPECT_EQ(geom.texcoordCount(), 3u);
     EXPECT_EQ(geom.revision(), before) << "a channel write is not an announcement (see setRevision())";
 
-    const AttributeBuffer* channel = geom.buffer(Geometry::kTexCoordLocation);
+    const AttributeChannel* channel = geom.buffer(Geometry::kTexCoordLocation);
     ASSERT_NE(channel, nullptr);
     EXPECT_EQ(channel->components, 2u) << "a UV is two scalars per vertex, not three";
     EXPECT_EQ(channel->vertexCount(), 3u);
@@ -4080,7 +4080,7 @@ TEST(GeometryTest, ConverterSkipsTexcoordsThatDoNotMatchTheVertexCount)
     EXPECT_FALSE(geom->hasTexcoords());
 }
 
-TEST(GeometryTest, OpenAttributeBufferList)
+TEST(GeometryTest, OpenAttributeChannelList)
 {
     Geometry geom;
     EXPECT_EQ(geom.bufferCount(), 0u);
@@ -4088,10 +4088,10 @@ TEST(GeometryTest, OpenAttributeBufferList)
     const std::uint64_t base = geom.revision();
 
     // Any number of custom channels can be added at arbitrary locations.
-    const AttributeBuffer colour =
-        AttributeBuffer::packed({ 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f }, 4u);
+    const AttributeChannel colour =
+        AttributeChannel::packed({ 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f }, 4u);
     geom.addBuffer(2, colour);
-    const AttributeBuffer size = AttributeBuffer::packed({ 1.0f, 2.0f, 3.0f }, 1u);
+    const AttributeChannel size = AttributeChannel::packed({ 1.0f, 2.0f, 3.0f }, 1u);
     geom.addBuffer(4, size);
 
     EXPECT_EQ(geom.bufferCount(), 2u);
@@ -4106,7 +4106,7 @@ TEST(GeometryTest, OpenAttributeBufferList)
     EXPECT_EQ(geom.revision(), base) << "adding channels is not an announcement";
 
     // Replacing a location keeps the count stable — and, like every setter, reports nothing.
-    AttributeBuffer replaced = colour;
+    AttributeChannel replaced = colour;
     geom.addBuffer(2, replaced);
     EXPECT_EQ(geom.bufferCount(), 2u);
     EXPECT_EQ(geom.revision(), base);
@@ -4128,7 +4128,7 @@ namespace
  * @param points Triangle vertices; each is padded to four components with w=1.
  * @return Position buffer with components = 4.
  */
-AttributeBuffer makeVec4Positions(const std::vector<vine::math::Vec3f>& points)
+AttributeChannel makeVec4Positions(const std::vector<vine::math::Vec3f>& points)
 {
     std::vector<float> scalars;
     scalars.reserve(points.size() * 4u);
@@ -4138,14 +4138,14 @@ AttributeBuffer makeVec4Positions(const std::vector<vine::math::Vec3f>& points)
         scalars.push_back(p.z);
         scalars.push_back(1.0f);
     }
-    return AttributeBuffer::packed(std::move(scalars), 4u);
+    return AttributeChannel::packed(std::move(scalars), 4u);
 }
 
 }  // namespace
 
-TEST(GeometryTest, AttributeBufferStrideAccessors)
+TEST(GeometryTest, AttributeChannelStrideAccessors)
 {
-    AttributeBuffer buffer;
+    AttributeChannel buffer;
     EXPECT_EQ(buffer.stride(), 0u);
     EXPECT_EQ(buffer.vertexCount(), 0u);   // no data, no layout
 
@@ -4154,7 +4154,7 @@ TEST(GeometryTest, AttributeBufferStrideAccessors)
 
     // Two complete vec4 vertices plus a trailing partial vertex: the partial
     // one is not a vertex.
-    buffer = AttributeBuffer::packed(
+    buffer = AttributeChannel::packed(
         { 1.0f, 2.0f, 3.0f, 1.0f, 4.0f, 5.0f, 6.0f, 1.0f, 7.0f, 8.0f, 9.0f }, 4u);
     EXPECT_EQ(buffer.stride(), 4u);
     EXPECT_EQ(buffer.vertexCount(), 2u);
@@ -4173,7 +4173,7 @@ TEST(GeometryTest, AttributeBufferStrideAccessors)
     EXPECT_EQ(buffer.vertexCount(), 0u);
 }
 
-TEST(AttributeBufferTest, SharedChannelReadsTheBuffersOwnScalars)
+TEST(AttributeChannelTest, SharedChannelReadsTheBuffersOwnScalars)
 {
     // The sharing design rests on this: a Vec3f is three tightly packed floats and a Vec2f is two, so a run
     // of scalars IS a run of vertices (this is also static_asserted in Mesh.cpp).
@@ -4183,7 +4183,7 @@ TEST(AttributeBufferTest, SharedChannelReadsTheBuffersOwnScalars)
     auto buffer = intrusive_ptr<vine::Buffer<float>>(
         new vine::Buffer<float>(std::vector<float>{ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }));
 
-    const AttributeBuffer channel = AttributeBuffer::shared(buffer, 3u);
+    const AttributeChannel channel = AttributeChannel::shared(buffer, 3u);
     EXPECT_EQ(channel.components, 3u);
     EXPECT_EQ(channel.floatCount(), 6u);
     EXPECT_EQ(channel.vertexCount(), 2u);
@@ -4252,7 +4252,7 @@ TEST(GeometryTest, ZeroStrideBufferBoundsNothing)
 {
     Geometry geom;
     // A zero stride carries no usable layout for any vertex count.
-    const AttributeBuffer broken = AttributeBuffer::packed({ 1.0f, 2.0f, 3.0f }, 0u);
+    const AttributeChannel broken = AttributeChannel::packed({ 1.0f, 2.0f, 3.0f }, 0u);
     geom.addBuffer(0, broken);
 
     ASSERT_NE(geom.buffer(0), nullptr);
@@ -4267,7 +4267,7 @@ TEST(GeometryTest, SubThreeComponentChannelBoundsNothing)
 {
     Geometry geom;
     // Two floats per vertex cannot carry xyz.
-    const AttributeBuffer flat = AttributeBuffer::packed({ 1.0f, 2.0f, 3.0f, 4.0f }, 2u);
+    const AttributeChannel flat = AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f }, 2u);
     geom.addBuffer(0, flat);
 
     EXPECT_EQ(geom.positionCount(), 2u);   // two 2-component vertices

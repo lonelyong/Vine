@@ -211,7 +211,7 @@ TEST(SceneBridgeDataRebuildTest, DerivedChannelsSurviveAnUnrelatedRebuild)
     auto geometry = triangle(0.0f);
     auto material = MaterialPtr(new Material());
 
-    geometry->addBuffer(5u, AttributeBuffer::packed({ 1.0f, 0.0f, 0.0f }, 3u));
+    geometry->addBuffer(5u, AttributeChannel::packed({ 1.0f, 0.0f, 0.0f }, 3u));
     std::vector<RenderCommand> commands;
     commands.emplace_back(geometry, material, Mat4d());
     sync(bridge, *root, commands);
@@ -224,7 +224,7 @@ TEST(SceneBridgeDataRebuildTest, DerivedChannelsSurviveAnUnrelatedRebuild)
     ASSERT_NE(color_before, nullptr) << "a mesh without colour binds the white carrier";
 
     // Swap the custom channel (positions and indices untouched) and announce the change.
-    geometry->addBuffer(5u, AttributeBuffer::packed({ 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f }, 3u));
+    geometry->addBuffer(5u, AttributeChannel::packed({ 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f }, 3u));
     geometry->setRevision(geometry->revision() + 1u);
     sync(bridge, *root, commands);
 

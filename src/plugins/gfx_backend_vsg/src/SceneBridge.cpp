@@ -327,7 +327,7 @@ std::vector<SceneBridge::ChannelKey> SceneBridge::channelKeysOf(const vine::grap
 {
     std::vector<ChannelKey> keys;
     for (const std::uint32_t location : geometry.bufferLocations()) {
-        const vine::graphics::AttributeBuffer* const channel = geometry.buffer(location);
+        const vine::graphics::AttributeChannel* const channel = geometry.buffer(location);
         if (channel == nullptr) {
             continue;
         }
@@ -337,7 +337,7 @@ std::vector<SceneBridge::ChannelKey> SceneBridge::channelKeysOf(const vine::grap
         key.buffer     = channel->values.get();
         key.revision   = channel->values != nullptr ? channel->values->revision() : 0u;
         // The channel's OWN range, not the buffer's: an arena holds several geometries' vertices, so the
-        // slice is part of what identifies this stream (see AttributeBuffer::offset).
+        // slice is part of what identifies this stream (see AttributeChannel::offset).
         key.offset     = channel->offset;
         key.count      = channel->floatCount();
         keys.push_back(key);

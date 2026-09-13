@@ -18,8 +18,8 @@
 ## 1. 问题与现状
 
 - 数据模型（`Geometry`，`src/viz/graphics/sdk/vine/graphics/Geometry.hpp`）本已支持
-  **任意 location 的 open attribute 表**（`std::map<uint32_t, AttributeBuffer> attributes_`，
-  `AttributeBuffer{ components 1..4, data }`），文档明示"后端无关的自定义逐顶点通道"。
+  **任意 location 的 open attribute 表**（`std::map<uint32_t, AttributeChannel> attributes_`，
+  `AttributeChannel{ components 1..4, data }`），文档明示"后端无关的自定义逐顶点通道"。
 - 但后端消费端只用了 0/1：
   - `SceneBridge::buildGeometryData()` 只读 `buffer(0)`（位置）、`buffer(1)`（法线），其余 location 丢弃；
   - 顶点数据节点固定绑 3 个数组 `[vertices, normals, colors]`（`colors` 为内部白/opacity 载体）；

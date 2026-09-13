@@ -959,7 +959,7 @@
 > —— 场景图是树所以成立）、排序前算一次平方距离并排指针（保持 stable 语义）。另加
 > `Group::childrenRef()`（热路径 5 处不再拷贝 NodePtr 向量）。实测同一 debug 构建：3 层/1080 命令
 > 23.9→7.3 ms，5 层/9720 命令 375.7→83.9 ms（3.3~4.5x）。
-> **stride 缺陷（正确性）**：`AttributeBuffer::components` 就是 stride，但 `Geometry::localBounds/
+> **stride 缺陷（正确性）**：`AttributeChannel::components` 就是 stride，但 `Geometry::localBounds/
 > positionCount/normalCount` 与 `RayIntersection::meshOfGeometry` 都按每顶点 3 float 读 → vec4 位置通道
 > 的 AABB 错误（错剔除 / 错 fitToScreen）、计数错误、拾取失效；新增 `stride()/vertexCount()/xyz(i)`
 > 并全部改用它。回归测试：GraphicsTest 新增 12 个（含 `CountingGeometry/CountingGroup` 证明每叶子
@@ -1184,15 +1184,15 @@
 > 把变换收敛到 MatrixNode、Geometry 上树为叶子、顺势删 Drawable。新 .cpp 加入需重跑 cmake 配置
 > （glob 才拾取）。
 >
-> 2026-09-03 Geometry 重构为**开放属性列表**：单一 `location→AttributeBuffer`（打包 float +
+> 2026-09-03 Geometry 重构为**开放属性列表**：单一 `location→AttributeChannel`（打包 float +
 > components），`addBuffer(loc)` 为唯一写入口，数量不限（仅受后端 max-attribute）；不再有
 > positions_/normals_ 固定成员；`setPositions/setNormals` 降级为便捷（写 loc0/loc1），`positions()/
 > normals()` typed 访问器已移除 → `positionCount()/normalCount()`；约定 loc0=position（bbox/计数/
 > 拾取）。SceneBridge（物化 loc0/loc1）与 RayIntersection（GeometryMesh 物化 loc0）已适配；
-> `GeometryTest` 7/7、全仓 99 用例绿。索引仍独立一条（index buffer）。AttributeBuffer.data 与索引
+> `GeometryTest` 7/7、全仓 99 用例绿。索引仍独立一条（index buffer）。AttributeChannel.data 与索引
 > 均为 shared_ptr（可共享/按身份缓存）。
 >
-> 2026-09-03 Geometry 通用属性缓冲已落地：`AttributeBuffer{data(floats),components}` + `setBuffer(loc)`
+> 2026-09-03 Geometry 通用属性缓冲已落地：`AttributeChannel{data(floats),components}` + `setBuffer(loc)`
 > /clearBuffer/hasBuffer/buffer/bufferLocations（loc≥2 自定义通道，0/1 保留给类型化 positions/normals）；
 > 供点云色/尺寸等自定义 shader 通道的数据模型，CPU 可测（GeometryTest 7/7）。渲染消费仍后置。
 >
@@ -1454,7 +1454,7 @@ mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::ou
 就必须类型擦除（`Buffer<T>` 是模板、`RefCounted` 是 CRTP 无公共基类）；绕法是
 `shared_ptr<const void>` + 空 deleter **再配一份裸指针 + 长度的快照** —— 而那个快照留下了真实的
 悬空尖角（源 buffer 增长会让通道指向已释放内存）。正解是**把元素类型钉死**：属性就是 float
-（位置/法线 3 个、UV 2 个）、索引就是 uint32。不用泛型之后，`AttributeBuffer` 直接存
+（位置/法线 3 个、UV 2 个）、索引就是 uint32。不用泛型之后，`AttributeChannel` 直接存
 `intrusive_ptr<const Buffer<float>> values + uint32_t components`，**每次访问现取** ——
 擦除、快照、悬空尖角一起消失，没有新增 core 类型、没有 vptr。
 
@@ -1479,7 +1479,7 @@ mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::ou
 阶段 4 更进一步：后端**真的改了代码**（位置通道从拷贝改成别名），证据**仍然**逐字节相同 ——
 这才是“渲染侧读的是模型内存、而渲染结果零变化”的正证据。
 **变异验证**：`addVertex` 每次重建存储 → 3 条共享断言失败；`geometryFromShape()` 改回 repack →
-3 条指针同一性断言失败（分量/坐标/计数全过）；`AttributeBuffer` 加回快照 → 3 条增长断言失败；
+3 条指针同一性断言失败（分量/坐标/计数全过）；`AttributeChannel` 加回快照 → 3 条增长断言失败；
 keepalive 换成空 lambda → `useCount()` 断言失败；阶段 4：别名 offset 跳一个顶点 → **证据 FAIL**
 （证明别名真被读，不是悄悄走回退路径）；关掉别名分支改回拷贝 → 指针同一性断言失败
 （拷贝渲染得逐字节相同，**只有地址能区分**共享与复制）—— 改成“复制进自己的一份 buffer”的全局变异

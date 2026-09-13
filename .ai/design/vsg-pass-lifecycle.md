@@ -103,7 +103,7 @@ RenderBackend::releasePass(pass)    // 释放该 pass 的全部保留状态（�
 - C++：`const` 正确性（相机链全 const，去掉 `const_cast`）、`std::optional` 代替 flag+哨兵、
   `std::array` + `static_assert` 钉住 shader ABI、`[[nodiscard]]`/`noexcept`、
   小 concept 头（`DepthMode.hpp`，include-what-you-use）、请求结构体代替 12 参数长表；
-- **顶点属性按 `components` 解算**：`AttributeBuffer` 的 components 就是 stride，新增
+- **顶点属性按 `components` 解算**：`AttributeChannel` 的 components 就是 stride，新增
   `stride()`/`vertexCount()`/`xyz(i)`，`Geometry::localBounds/positionCount/normalCount` 与
   `RayIntersection` 的网格解析全部改用它（此前假设每顶点 3 个 float，vec4 位置通道会算错 AABB
   → 错误剔除 / 错误 `fitToScreen`，且拾取直接失效）。
@@ -166,7 +166,7 @@ RenderBackend::releasePass(pass)    // 释放该 pass 的全部保留状态（�
 - 已实施（2026-09-11）：删除 `Geometry::setShape(Shape)`，见 §6；`Geometry::buffer(location)` /
   `bufferLocations()` → `attribute(location)` / `attributeLocations()`：
   “buffer”在 3D 引擎里通常指 GPU 缓冲，而这里是**按 shader location 索引的顶点属性**
-  （`AttributeBuffer`）；现名易与索引缓冲/顶点缓冲混淆。
+  （`AttributeChannel`）；现名易与索引缓冲/顶点缓冲混淆。
 - `Geometry::setIndices(std::shared_ptr<UInt32Array>)`：以 `std::shared_ptr` 表达共享与
   `intrusive_ptr` 体系不一致（可选择统一到 `intrusive_ptr` 或文档化为何用 shared_ptr）。
 - `RenderEngine::drawScenePass` 为私有但命名像公共 API；`RenderBackend::releaseWindowLayer`

@@ -1,7 +1,7 @@
 /**
  * @brief Channels that read a SEGMENT of one buffer (the arena case, P7).
  *
- * "One big buffer, one segment per geometry" is what `AttributeBuffer::offset` / `scalarCount` express: a
+ * "One big buffer, one segment per geometry" is what `AttributeChannel::offset` / `scalarCount` express: a
  * geometry points a channel at its own scalars inside a buffer several geometries share, and nothing is
  * repacked. These tests pin the two things that make it work:
  *
@@ -78,7 +78,7 @@ vine::intrusive_ptr<const vine::Buffer<std::uint32_t>> packedIndices(std::vector
 GeometryPtr segment(vine::intrusive_ptr<const vine::Buffer<float>> buffer, std::size_t first_vertex)
 {
     auto geometry = GeometryPtr(new Geometry());
-    geometry->addBuffer(0u, AttributeBuffer::slice(std::move(buffer), 3u, first_vertex, 3u));
+    geometry->addBuffer(0u, AttributeChannel::slice(std::move(buffer), 3u, first_vertex, 3u));
     return geometry;
 }
 
@@ -301,7 +301,7 @@ TEST(ChannelSliceTest, AChannelMovedToAnotherSegmentIsRefreshedFromThere)
     ASSERT_NE(findBoundVec3(root.get(), kBindingPositions), nullptr);
     EXPECT_FLOAT_EQ(findBoundVec3(root.get(), kBindingPositions)->at(0).y, 0.0f);
 
-    geometry->addBuffer(0u, AttributeBuffer::slice(buffer, 3u, 3u, 3u));
+    geometry->addBuffer(0u, AttributeChannel::slice(buffer, 3u, 3u, 3u));
     geometry->setRevision(geometry->revision() + 1u);
 
     sync(bridge, *root, { RenderCommand(geometry, material, Mat4d()) });
@@ -451,7 +451,7 @@ TEST(ChannelSliceTest, DerivedNormalsFollowTheSegmentTheyWereDerivedFrom)
     ASSERT_NE(first_normals, nullptr);
     EXPECT_NEAR(first_normals->at(0).z, 1.0f, 1e-3f) << "a triangle in the xy plane faces +Z";
 
-    geometry->addBuffer(0u, AttributeBuffer::slice(buffer, 3u, 3u, 3u));
+    geometry->addBuffer(0u, AttributeChannel::slice(buffer, 3u, 3u, 3u));
     geometry->setRevision(geometry->revision() + 1u);
 
     sync(bridge, *root, { RenderCommand(geometry, material, Mat4d()) });

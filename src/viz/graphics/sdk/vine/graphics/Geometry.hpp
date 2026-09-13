@@ -40,6 +40,17 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  * though the scalars this channel reads ARE the vertex data. Holding the buffer instead lets a mesh and a
  * Geometry read ONE allocation.
  *
+ * A CHANNEL IS A SEGMENT PLUS A STRIDE. "Which buffer, where the segment starts, how much it covers" is
+ * not this type's own idea — it is BufferSlice (see Buffer.hpp), the same value the index stream and every
+ * stream added later are described by, and scalarSlice() hands a channel's own segment out as one. That is
+ * what keeps the slicing rules (an offset past the end clamps, a count of 0 is "the rest of the buffer",
+ * the length follows the buffer as it grows) in ONE place instead of once per stream kind.
+ *
+ * The relation is COMPOSITION, deliberately, not inheritance: a channel is not a segment — it is a segment
+ * INTERPRETED with a vertex stride, and a channel passed where a segment is expected would silently lose
+ * that stride (and with it where each vertex begins). A segment is something a channel HAS and can hand
+ * over (scalarSlice(), fromSlice()); the vertex-level view is what it adds.
+ *
  * The buffer is re-read on every access rather than snapshotted, which is what makes that safe: growing the
  * buffer cannot leave the channel pointing at freed memory, and the scalar count simply follows.
  *
@@ -54,7 +65,7 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  * vertexCount() / xyz() / stride() rather than assuming three floats per vertex), so a vec4 position
  * channel keeps its xyz and skips the trailing w.
  */
-struct V_GRAPHICS_API AttributeBuffer
+struct V_GRAPHICS_API AttributeChannel
 {
     /// The scalars, or null when the channel holds nothing. Not snapshotted: every accessor reads through it.
     intrusive_ptr<const vine::Buffer<float>> values;
@@ -75,9 +86,9 @@ struct V_GRAPHICS_API AttributeBuffer
      * @param components Scalar components per vertex.
      * @return The channel, owning that storage.
      */
-    [[nodiscard]] static AttributeBuffer packed(std::vector<float> values, std::uint32_t components)
+    [[nodiscard]] static AttributeChannel packed(std::vector<float> values, std::uint32_t components)
     {
-        AttributeBuffer out;
+        AttributeChannel out;
         out.values     = intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(std::move(values)));
         out.components = components;
         return out;
@@ -96,12 +107,12 @@ struct V_GRAPHICS_API AttributeBuffer
      * @param scalar_count Scalars to read, or 0 for the rest of @p values from @p offset.
      * @return The channel, reading that buffer's scalars.
      */
-    [[nodiscard]] static AttributeBuffer shared(intrusive_ptr<const vine::Buffer<float>> values,
+    [[nodiscard]] static AttributeChannel shared(intrusive_ptr<const vine::Buffer<float>> values,
                                                 std::uint32_t                          components,
                                                 std::size_t                            offset       = 0u,
                                                 std::size_t                            scalar_count = 0u)
     {
-        AttributeBuffer out;
+        AttributeChannel out;
         out.values      = std::move(values);
         out.components  = components;
         out.offset      = offset;
@@ -122,12 +133,33 @@ struct V_GRAPHICS_API AttributeBuffer
      * @param vertex_count Vertices in the segment (0 for the rest of the buffer from @p first_vertex).
      * @return The channel, reading that segment.
      */
-    [[nodiscard]] static AttributeBuffer slice(intrusive_ptr<const vine::Buffer<float>> values,
+    [[nodiscard]] static AttributeChannel slice(intrusive_ptr<const vine::Buffer<float>> values,
                                                std::uint32_t components, std::size_t first_vertex,
                                                std::size_t vertex_count)
     {
         return shared(std::move(values), components, first_vertex * components,
                       vertex_count == 0u ? 0u : vertex_count * components);
+    }
+
+    /**
+     * @brief Builds a channel reading @p slice with @p components scalars per vertex.
+     *
+     * The counterpart of scalarSlice(): for a caller that holds the segment (a device upload plan, a
+     * stream table, another channel's scalars) and the stride separately. The slice's own rules apply
+     * unchanged — a null buffer is an empty channel, a count of 0 is "the rest of it".
+     *
+     * @param slice      Segment of a float buffer this channel reads.
+     * @param components Scalar components per vertex (1..4); 0 makes the channel empty.
+     * @return The channel.
+     */
+    [[nodiscard]] static AttributeChannel fromSlice(BufferSlice<float> slice, std::uint32_t components)
+    {
+        AttributeChannel out;
+        out.values      = std::move(slice.values);
+        out.components  = components;
+        out.offset      = slice.first;
+        out.scalarCount = slice.count;
+        return out;
     }
 
     /** @brief Returns whether no scalar data is attached (or the slice lies past the end of its buffer). */
@@ -155,12 +187,28 @@ struct V_GRAPHICS_API AttributeBuffer
      */
     std::size_t floatCount() const
     {
-        if (values == nullptr) {
-            return 0u;
-        }
-        const std::size_t begin     = std::min(offset, values->size());
-        const std::size_t available = values->size() - begin;
-        return scalarCount == 0u ? available : std::min(scalarCount, available);
+        // The slicing rule itself lives in ONE place (BufferSlice): an offset past the end clamps
+        // and a count of 0 means "the rest of the buffer". A channel is the same shape as the
+        // index stream and as any stream added later — see scalarSlice().
+        return BufferSlice<float>::resolvedLength(values != nullptr ? values->size() : 0u, offset, scalarCount);
+    }
+
+    /**
+     * @brief Returns this channel as a plain segment of its buffer, in SCALARS.
+     *
+     * The bridge that makes a channel and every other stream one kind of thing: a consumer that
+     * only needs "which buffer, from where, how much" (a device upload, a copy, an aliasing check)
+     * reads this instead of the channel's vertex-level view, and the slicing rules it gets are the
+     * same ones the index stream and a future custom stream follow (see BufferSlice).
+     *
+     * The vertex layout (components) is NOT part of it: a segment counts scalars, and how they
+     * group into vertices is the channel's business.
+     *
+     * @return The channel's scalars as a segment.
+     */
+    [[nodiscard]] BufferSlice<float> scalarSlice() const
+    {
+        return BufferSlice<float>::slice(values, offset, scalarCount);
     }
 
     /** @brief Returns the stride (scalar floats per vertex).
@@ -261,7 +309,7 @@ class V_GRAPHICS_API Geometry : public Node {
      * @param location Shader attribute location (0 = positions).
      * @param buffer   Packed per-vertex data.
      */
-    void addBuffer(std::uint32_t location, const AttributeBuffer& buffer);
+    void addBuffer(std::uint32_t location, const AttributeChannel& buffer);
 
     /** @brief Removes the attribute buffer at @p location (if present).
      *
@@ -275,7 +323,7 @@ class V_GRAPHICS_API Geometry : public Node {
     bool hasBuffer(std::uint32_t location) const;
 
     /** @brief Gets the attribute buffer at @p location, or null when unset. */
-    const AttributeBuffer* buffer(std::uint32_t location) const;
+    const AttributeChannel* buffer(std::uint32_t location) const;
 
     /** @brief Gets the number of distinct attribute buffers present. */
     std::size_t bufferCount() const;
@@ -448,6 +496,14 @@ class V_GRAPHICS_API Geometry : public Node {
     Aabbd boundingBox() const override;
 
   public:
+    /** @brief The index stream's type: a segment of an index buffer.
+     *
+     * The SAME structure an attribute channel is described by, minus the stride — an index run is a run
+     * of elements, not of vertices — which is what lets a consumer treat a geometry's streams alike and
+     * lets a future custom stream be added without inventing another representation.
+     */
+    using IndexStream = BufferSlice<std::uint32_t>;
+
     /** @brief The vertex attribute location that carries texture coordinates.
      *
      * Two scalar components per vertex (`R32G32_SFLOAT`).
@@ -466,12 +522,12 @@ class V_GRAPHICS_API Geometry : public Node {
     static constexpr std::uint32_t kTexCoordLocation = attributeLocation(VertexAttribute::TexCoord0);
 
   private:
-    std::map<std::uint32_t, AttributeBuffer> attributes_;
-    intrusive_ptr<const vine::Buffer<std::uint32_t>> indices_;
-    /// First index of this geometry's slice inside @ref indices_ (0 = the buffer's start).
-    std::size_t                                     indices_first_ = 0;
-    /// Indices this geometry draws, or 0 for "the rest of @ref indices_ from @ref indices_first_".
-    std::size_t                                     indices_count_ = 0;
+    std::map<std::uint32_t, AttributeChannel> attributes_;
+    /// The index stream: a SEGMENT of a buffer, described the same way an attribute channel is
+    /// (see BufferSlice). One structure for every stream means the slicing rules — an offset past the
+    /// end clamps, a count of 0 is "the rest", the length follows the buffer as it grows — live in
+    /// one place instead of once per stream kind.
+    IndexStream                                     indices_;
     std::uint64_t                                   revision_ = 0;
     intrusive_ptr<Material> material_;
     intrusive_ptr<ShaderProgram> program_;

@@ -20,7 +20,7 @@
 #include <vine/vsg/RenderStateMapper.hpp>
 #include <vine/vsg/VsgSceneRules.hpp>
 
-using vine::graphics::AttributeBuffer;
+using vine::graphics::AttributeChannel;
 using vine::graphics::BlendFactor;
 using vine::graphics::CompareOp;
 using vine::graphics::CullMode;
@@ -65,15 +65,15 @@ struct TestChannel
 };
 
 /** @brief A channel whose payload holds @p floats and declares @p components per vertex. */
-AttributeBuffer channel(std::uint32_t components, std::size_t floats)
+AttributeChannel channel(std::uint32_t components, std::size_t floats)
 {
-    return AttributeBuffer::packed(std::vector<float>(floats, 1.0f), components);
+    return AttributeChannel::packed(std::vector<float>(floats, 1.0f), components);
 }
 
 /** @brief A buffer whose packed floats are @p values at @p components per vertex. */
-AttributeBuffer packed(std::uint32_t components, std::vector<float> values)
+AttributeChannel packed(std::uint32_t components, std::vector<float> values)
 {
-    return AttributeBuffer::packed(std::move(values), components);
+    return AttributeChannel::packed(std::move(values), components);
 }
 
 /** @brief A shader set carrying one colour blend state with @p attachments entries. */

@@ -49,7 +49,7 @@ namespace
  * @param vertex_count Vertices the mesh has.
  * @return The array to bind, or null when the channel is unusable.
  */
-::vsg::ref_ptr<::vsg::vec4Array> packColor4(const vine::graphics::AttributeBuffer& attr,
+::vsg::ref_ptr<::vsg::vec4Array> packColor4(const vine::graphics::AttributeChannel& attr,
                                            std::size_t                        vertex_count)
 {
     const auto                   comps = attr.components;
@@ -200,7 +200,7 @@ namespace
     vine::geometry::Vec3fArray        unpacked_positions;
     // Set only when the bound array IS the model's bytes (the case a shared bind may serve); the unpacked
     // path below builds a private array instead.
-    const vine::graphics::AttributeBuffer* aliased_positions = nullptr;
+    const vine::graphics::AttributeChannel* aliased_positions = nullptr;
 
     ::vsg::ref_ptr<::vsg::Data> vertices;
     std::size_t                 vertex_count = 0;
@@ -263,7 +263,7 @@ namespace
     // Set only when the channel already IS the layout loc1 binds (three components per vertex): that is
     // the case the binding can alias instead of copying. A vec4 channel is unpacked above and used from
     // that copy, since aliasing it would need a stride the array's element type does not have.
-    const vine::graphics::AttributeBuffer* authored_normals = nullptr;
+    const vine::graphics::AttributeChannel* authored_normals = nullptr;
     if (const auto* normal_attr = geometry->buffer(attributeLocation(vine::graphics::VertexAttribute::Normal));
         normal_attr != nullptr && !normal_attr->empty()) {
         const std::span<const vine::math::Vec3f> authored = normal_attr->vec3View();
@@ -336,7 +336,7 @@ namespace
     // else is derived (Triangles) or defaulted (Points / Lines, which have no surface to derive from).
     ::vsg::ref_ptr<::vsg::vec3Array> normals;
     // Set only when the bound array IS the model's bytes (the case a shared bind may serve).
-    const vine::graphics::AttributeBuffer* aliased_normals = nullptr;
+    const vine::graphics::AttributeChannel* aliased_normals = nullptr;
     if (authored_normals != nullptr) {
         normals = aliasArray<::vsg::vec3Array, float>(authored_normals->values, vertex_count,
                                                       authored_normals->offset);
@@ -398,7 +398,7 @@ namespace
     ::vsg::ref_ptr<::vsg::vec4Array> colors;
     // Four components alias the model's bytes verbatim; three are packed, which is per-geometry work and
     // therefore not shared. On the built-in path binding 3 is the white carrier and never the model's.
-    const vine::graphics::AttributeBuffer* aliased_colors = nullptr;
+    const vine::graphics::AttributeChannel* aliased_colors = nullptr;
     if (!opacity_carrier) {
         if (const auto* loc2 = geometry->buffer(2); loc2 != nullptr && !loc2->empty()) {
             colors = packColor4(*loc2, vertex_count);
@@ -434,7 +434,7 @@ namespace
     // fixed and the custom channels below keep their indices whether or not this
     // mesh has UVs. A mesh without a UV channel binds zeros, which is what "no
     // UVs" means: every fragment samples the same texel.
-    const auto pack_texcoords = [](const vine::graphics::AttributeBuffer& attr,
+    const auto pack_texcoords = [](const vine::graphics::AttributeChannel& attr,
                                    std::size_t vertex_count) -> ::vsg::ref_ptr<::vsg::vec2Array> {
         const auto comps = attr.components;
         if (comps != 2u || attr.floatCount() != vertex_count * 2u) {
@@ -445,7 +445,7 @@ namespace
         return aliasArray<::vsg::vec2Array, float>(attr.values, vertex_count);
     };
     ::vsg::ref_ptr<::vsg::vec2Array> texcoords;
-    const vine::graphics::AttributeBuffer* aliased_texcoords = nullptr;
+    const vine::graphics::AttributeChannel* aliased_texcoords = nullptr;
     if (const auto* uv_channel = geometry->buffer(vine::graphics::Geometry::kTexCoordLocation);
         uv_channel != nullptr && !uv_channel->empty()) {
         texcoords = pack_texcoords(*uv_channel, vertex_count);
@@ -523,7 +523,7 @@ namespace
     // nature: the carrier even carries this drawable's opacity, so it can never be shared.
     const auto bind_channel = [&](std::size_t                            canonical_index,
                                   ::vsg::ref_ptr<::vsg::Data>            array,
-                                  const vine::graphics::AttributeBuffer* aliased) {
+                                  const vine::graphics::AttributeChannel* aliased) {
         const auto binding = static_cast<std::uint32_t>(canonical_index);
         if (mesh_cache != nullptr && aliased != nullptr && aliased->values != nullptr) {
             VsgMeshResourceCache::ChannelKey key;

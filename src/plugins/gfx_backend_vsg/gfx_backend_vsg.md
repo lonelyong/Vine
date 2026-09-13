@@ -523,7 +523,7 @@ deviceWaitIdle
 
 | ID | 风险 | 位置 |
 |---|---|---|
-| UB-6 | loc0/loc1 读取**写死 `i+=3`**，`AttributeBuffer.components` 未当 stride → vec4/非 3 分量通道**交错读错**（越界/错位，不报错） | `SceneBridge::buildGeometry`（= D1） |
+| UB-6 | loc0/loc1 读取**写死 `i+=3`**，`AttributeChannel.components` 未当 stride → vec4/非 3 分量通道**交错读错**（越界/错位，不报错） | `SceneBridge::buildGeometry`（= D1） |
 | UB-7 | 各属性 buffer 顶点数不校验（假定全等 loc0）→ 错位 / 潜在越界 | `buildGeometry`（= D4） |
 | UB-8 | 退化三角形推导法线 → NaN / 垃圾法线 | `makeNormals/makeIndexedNormals`（= D7） |
 

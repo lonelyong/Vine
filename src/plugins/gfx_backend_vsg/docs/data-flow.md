@@ -16,7 +16,7 @@
 > ⚠️ **2026-09-08 复核（批次 A 之后）——本文部分段落已过期，以本注 + 代码为准**。
 > 权威来源：`SceneBridge.cpp` / `VsgRenderer.cpp`（本次核对版本）；契约见
 > `.ai/design/vsg-custom-attributes.md`（已实现）。已变更的要点：
-> - loc0/loc1 已按 **AttributeBuffer.components 作 stride** 解包（3/4 分量取 xyz，
+> - loc0/loc1 已按 **AttributeChannel.components 作 stride** 解包（3/4 分量取 xyz，
 >   跳过 w），不再是写死 `i+=3`（下文 §6 坑① 已过期）。
 > - **loc≥3 自定义通道已接线**：数据超集绑定 + `vine_Attribute{L}` 绑定名（§7
 >   两步接线已落地）；loc2 语义 = 内建白 opacity carrier / custom 透传 authored
@@ -38,7 +38,7 @@
 ```mermaid
 flowchart LR
     subgraph Vine[Vine SDK]
-        G[Geometry<br/>map&lt;loc, AttributeBuffer&gt;<br/>loc0=position loc1=normal<br/>+ optional indices]
+        G[Geometry<br/>map&lt;loc, AttributeChannel&gt;<br/>loc0=position loc1=normal<br/>+ optional indices]
         M[Material<br/>Colorf 纯色(无透明度)]
         N[Node/Scene<br/>opacity]
         SC[Scene::collectRenderCommands<br/>→ RenderCommand{geometry, material,<br/>program, modelMatrix, opacity,<br/>resolvedRenderState}]
@@ -76,16 +76,16 @@ flowchart LR
 `src/viz/graphics/sdk/vine/graphics/Geometry.hpp`
 
 ```cpp
-struct AttributeBuffer {
+struct AttributeChannel {
     intrusive_ptr<const vine::Buffer<float>> values;      // 标量就存在这个 buffer 里（元素类型钉死为 float）
     std::uint32_t                            components;  // 每顶点标量数 1..4（即 stride）
 };
-// Geometry 内部：std::map<uint32_t, AttributeBuffer> attributes_;
+// Geometry 内部：std::map<uint32_t, AttributeChannel> attributes_;
 //           + intrusive_ptr<const Buffer<uint32_t>> indices_
 ```
 
 - **通道直接持 buffer，不是持快照**：属性元素类型钉死为 float，所以不需要类型擦除，
-  `AttributeBuffer` 就直接存 `intrusive_ptr<const Buffer<float>>`；**每次访问现取**，
+  `AttributeChannel` 就直接存 `intrusive_ptr<const Buffer<float>>`；**每次访问现取**，
   buffer 之后再增长也不会悬空（快照式裸指针会）。
 - **属性 setter 每个通道只留一个名字**：`setPositions` / `setNormals` / `setTexcoords` / `setIndices`
   各收一个 buffer 句柄（不重载）；持有类型化数据的调用方先 `packAttribute(span<const Vec3f|Vec2f>)` /
@@ -229,7 +229,7 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 | 索引 | `hasIndices()` 决定 indexed（平滑法线）/ 非 indexed（面法线） | 二选一 |
 | 重建 | `Geometry*` + `revision()` + material + program 变化才重建 | 自动 |
 
-**坑①**：`AttributeBuffer.components` 没被当 stride 用。后端读 loc0/loc1 一律
+**坑①**：`AttributeChannel.components` 没被当 stride 用。后端读 loc0/loc1 一律
 `i += 3`，`components` 只当 ">=3" 门槛。若 `addBuffer(0, {vec4 数据, components=4})`
 会交错读错（v0.xyz 后接 v0.w+v1.xy…）。
 **✅ 已于 2026-09-08 修复**：读端按 `components` 跳步（3/4 分量取 xyz 跳过 w）；
@@ -251,7 +251,7 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
   2. `buildGeometryData()` 遍历 `geometry->bufferLocations()`，把 loc≥3 自定义通道
      物化后追加绑定；`buildStateGroup` 按 `vine_Attribute{N}` 逐个 `assignArray`。
   （早期"两步接线尚未做 / 现在只读 loc0/loc1"的描述已过时。）
-- `AttributeBuffer` 的设计初衷正是"后端无关的自定义逐顶点通道"（点云色/尺寸/任意属性）。
+- `AttributeChannel` 的设计初衷正是"后端无关的自定义逐顶点通道"（点云色/尺寸/任意属性）。
 
 ## 8. 关键结论备忘
 

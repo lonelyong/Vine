@@ -23,7 +23,7 @@ V_VSG_NS_BEGIN
 namespace detail
 {
 
-ChannelShape channelShape(const vine::graphics::AttributeBuffer& attr, std::size_t vertex_count)
+ChannelShape channelShape(const vine::graphics::AttributeChannel& attr, std::size_t vertex_count)
 {
     if (attr.components < 1u || attr.components > 4u) {
         return ChannelShape::Components;
@@ -37,7 +37,7 @@ ChannelShape channelShape(const vine::graphics::AttributeBuffer& attr, std::size
     return ChannelShape::Ok;
 }
 
-vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics::AttributeBuffer& attr,
+vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics::AttributeChannel& attr,
                                    std::size_t vertex_count, ChannelShape shape)
 {
     switch (shape) {
@@ -59,7 +59,7 @@ vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics:
     return vine::String();
 }
 
-XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry::Vec3fArray& out)
+XyzUnpack unpackXyz(const vine::graphics::AttributeChannel& attr, vine::geometry::Vec3fArray& out)
 {
     const auto             comps = attr.components;
     const std::span<const float> data = attr.scalars();
@@ -79,7 +79,7 @@ XyzUnpack unpackXyz(const vine::graphics::AttributeBuffer& attr, vine::geometry:
     return XyzUnpack::Ok;
 }
 
-vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeBuffer& attr, XyzUnpack reason)
+vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeChannel& attr, XyzUnpack reason)
 {
     if (reason == XyzUnpack::NotXyzStride) {
         return formatDiagnostic(u8"loc1 normal has components=%u (3 or 4 required); "

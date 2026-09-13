@@ -72,7 +72,7 @@
 | **D8**：program 路径 opacity | 颜色数组静态、program 拥有 opacity | 定版 ABI：由 program 的 per-draw uniform 提供；或回退内置路径 |
 | **D10**：改 `ShaderProgram` GLSL | **已修(2026-09-08)**：`ShaderProgram::revision()`（内容版本）+ `clearStages/replaceStages/setStage`；后端 L1(ProgramEntry)、Item(`program_revision`)、L2 哈希均纳入 revision → 改源次帧重建 state（数据复用）并出新变体 |
 | **D13**：`updateMaterial` 会换对象（使已绑 DS 失效） | **已修(2026-09-08)**：改为**就地刷新同一缓存对象 + `dirty()`**（抽出 `applyPhongMaterial`）；回归 `UpdateMaterialRefreshesInPlace` |
-| 顶点数据热改整份重物化/重传 | 数据/状态解耦已避免“状态变即重传”，但 revision 变仍整份 | 后续：按 `AttributeBuffer` 身份共享 GPU 顶点缓冲 + 局部子集上传（STEP 元素级改动的底座） |
+| 顶点数据热改整份重物化/重传 | 数据/状态解耦已避免“状态变即重传”，但 revision 变仍整份 | 后续：按 `AttributeChannel` 身份共享 GPU 顶点缓冲 + 局部子集上传（STEP 元素级改动的底座） |
 | **D16**：槽内缓存只增不减 | **已修(2026-09-08)**：`variant_cache_`(L2) 上限 256、`program_shader_sets_`(L1) 上限 64，超限即清（只失快路径，不失正确性）+ teardown `clearCache()` |
 | 静默失败（坏 program/坏网格） | 回退内置/null，无诊断 | 错误上报 + 降级可见 |
 | 真机行为未在 CI 验证 | headless 单测只覆盖 CPU 路径 | 真实 demo 复验 + env 逃生口（见 §5） |

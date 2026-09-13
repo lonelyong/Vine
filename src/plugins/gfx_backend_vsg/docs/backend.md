@@ -206,8 +206,8 @@ graph TB
 - 名字侧的守卫：`assignArray()` 失败且该名字**被管线声明**过 ⇒ 报一次 `ContentSkipped` Warning
   （`vertex binding '%s' (array %zu, %s) was not matched by the pipeline; the shader reads an attribute the pipeline does not enable…`）。
   反方向（shader 声明了几何体没有的 shader location）**没有任何诊断** —— ShaderSet 是按几何体的通道布局建的，没声明的就是没喂。
-- **通道可以是缓冲里的一段（arena 切片，P7）**：`AttributeBuffer::offset`（scalar 计）+ `scalarCount`，配合
-  `AttributeBuffer::slice(values, components, first_vertex, vertex_count)` 表达"一个大缓冲、每 geometry 一段"。
+- **通道可以是缓冲里的一段（arena 切片，P7）**：`AttributeChannel::offset`（scalar 计）+ `scalarCount`，配合
+  `AttributeChannel::slice(values, components, first_vertex, vertex_count)` 表达"一个大缓冲、每 geometry 一段"。
   后端全链路按**这一段**走：
 
   | 环节 | 行为 |
@@ -363,7 +363,7 @@ vsg 的重传粒度是**一条 `BindVertexBuffers` 命令**：命令里任一阵
 
 `BufferInfo` **是命令自己拥有的**，而 vsg 把 `BufferInfo` 变成一个设备缓冲（`BindVertexBuffers::compile()` →
 `createBufferAndTransferData` → 池 reserve + 拷字节）。所以"k 个 drawable 读同一份顶点/索引"在 P9 之前是 k 条 bind、
-k 份设备内存、k 次上传 —— CPU 侧本来就是**同一段内存**（`AttributeBuffer` 借 `vine::Buffer`），GPU 侧却复制成 k 份。
+k 份设备内存、k 次上传 —— CPU 侧本来就是**同一段内存**（`AttributeChannel` 借 `vine::Buffer`），GPU 侧却复制成 k 份。
 `VsgMeshResourceCache` 把这类流收敛成**一条 bind**，于是它们共享同一个设备缓冲。
 
 **哪些通道能共享**（判据只有一条：**这条数组是不是模型字节的原样视图**）：

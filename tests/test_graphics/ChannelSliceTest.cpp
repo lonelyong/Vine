@@ -1,7 +1,7 @@
 /**
  * @brief Channels that read a SEGMENT of one buffer: "one arena, one segment per geometry" (P7).
  *
- * `AttributeBuffer::offset` / `scalarCount` are what make an arena expressible — several geometries share one
+ * `AttributeChannel::offset` / `scalarCount` are what make an arena expressible — several geometries share one
  * buffer and each reads its own scalars — and the geometry's INDEX stream takes a span the same way
  * (`Geometry::setIndices(buffer, first_index, index_count)`).
  *
@@ -70,17 +70,17 @@ intrusive_ptr<Geometry> segmentGeometry(const intrusive_ptr<const vine::Buffer<f
                                        std::size_t                                     first_vertex)
 {
     auto geom = intrusive_ptr<Geometry>(new Geometry());
-    geom->addBuffer(0u, AttributeBuffer::slice(arena, 3u, first_vertex, 3u));
+    geom->addBuffer(0u, AttributeChannel::slice(arena, 3u, first_vertex, 3u));
     return geom;
 }
 
 }  // namespace
 
-TEST(AttributeBufferTest, AChannelReadsOnlyItsOwnSlice)
+TEST(AttributeChannelTest, AChannelReadsOnlyItsOwnSlice)
 {
     // The second segment of a two-segment arena: vertex 3, which is scalar 9 of a three-component channel.
     const auto buffer = arenaBuffer(2u);
-    const auto sliced = AttributeBuffer::slice(buffer, 3u, 3u, 2u);
+    const auto sliced = AttributeChannel::slice(buffer, 3u, 3u, 2u);
 
     EXPECT_EQ(sliced.offset, 9u) << "vertex 3 of a three-component channel is scalar 9";
     EXPECT_EQ(sliced.floatCount(), 6u) << "the slice's scalars, not the buffer's eighteen";
@@ -97,14 +97,14 @@ TEST(AttributeBufferTest, AChannelReadsOnlyItsOwnSlice)
     EXPECT_FLOAT_EQ(sliced.vec3View()[0].y, 10.0f);
 }
 
-TEST(AttributeBufferTest, ASliceMayHaveNoFixedLengthAndNeverRunsPastTheBuffer)
+TEST(AttributeChannelTest, ASliceMayHaveNoFixedLengthAndNeverRunsPastTheBuffer)
 {
     const auto buffer = arenaBuffer(2u);
 
     // The sentinel every channel used before slices existed: "whatever the buffer holds from offset on" —
     // which is what keeps a channel following a buffer that grows under it.
-    EXPECT_EQ(AttributeBuffer::shared(buffer, 3u).floatCount(), buffer->size());
-    const auto from_second = AttributeBuffer::shared(buffer, 3u, 9u);
+    EXPECT_EQ(AttributeChannel::shared(buffer, 3u).floatCount(), buffer->size());
+    const auto from_second = AttributeChannel::shared(buffer, 3u, 9u);
     EXPECT_EQ(from_second.vertexCount(), 3u);
     EXPECT_EQ(from_second.floatCount(), buffer->size() - 9u);
 
@@ -115,24 +115,79 @@ TEST(AttributeBufferTest, ASliceMayHaveNoFixedLengthAndNeverRunsPastTheBuffer)
     EXPECT_EQ(from_second.floatCount(), buffer->size() - 9u) << "no fixed length: it follows the buffer";
 
     // A fixed length truncates; an offset past the end is empty rather than out of range.
-    EXPECT_EQ(AttributeBuffer::shared(buffer, 3u, 9u, 3u).vertexCount(), 1u);
-    EXPECT_TRUE(AttributeBuffer::shared(buffer, 3u, buffer->size() + 100u).empty());
-    EXPECT_GT(AttributeBuffer::shared(buffer, 3u, 9u, 0u).floatCount(), 0u) << "0 means the rest, not empty";
+    EXPECT_EQ(AttributeChannel::shared(buffer, 3u, 9u, 3u).vertexCount(), 1u);
+    EXPECT_TRUE(AttributeChannel::shared(buffer, 3u, buffer->size() + 100u).empty());
+    EXPECT_GT(AttributeChannel::shared(buffer, 3u, 9u, 0u).floatCount(), 0u) << "0 means the rest, not empty";
 }
 
-TEST(AttributeBufferTest, SliceStatesTheSegmentInVertices)
+TEST(AttributeChannelTest, SliceStatesTheSegmentInVertices)
 {
     // What a caller has in hand is a vertex, and the multiplication by the stride is the part that is easy to
     // get wrong, so the factory does it.
     const auto buffer = arenaBuffer(2u);
-    const auto sliced = AttributeBuffer::slice(buffer, 3u, 3u, 0u);
+    const auto sliced = AttributeChannel::slice(buffer, 3u, 3u, 0u);
 
     EXPECT_EQ(sliced.offset, 9u) << "vertex 3 of a three-component channel is scalar 9";
     EXPECT_EQ(sliced.vertexCount(), 3u) << "0 vertices means the rest of the buffer";
     EXPECT_FLOAT_EQ(sliced.xyz(0u)[1], 10.0f);
 
     // A fixed count truncates, in the same unit.
-    EXPECT_EQ(AttributeBuffer::slice(buffer, 3u, 3u, 1u).vertexCount(), 1u);
+    EXPECT_EQ(AttributeChannel::slice(buffer, 3u, 3u, 1u).vertexCount(), 1u);
+}
+
+TEST(AttributeChannelTest, AChannelIsASegmentPlusAStride)
+{
+    // The storage description is BufferSlice's, not the channel's own: a channel hands its segment out
+    // (scalarSlice()) and can be built from one (fromSlice()). That is the base concept every stream
+    // shares — an attribute channel, the index stream, whatever comes next — and the relation is
+    // COMPOSITION on purpose: a channel is a segment INTERPRETED with a stride, so one passed where a
+    // segment is expected (by value) would silently lose where each vertex begins.
+    const auto buffer  = arenaBuffer(2u);
+    const auto channel = AttributeChannel::slice(buffer, 3u, 3u, 2u);
+
+    const vine::BufferSlice<float> segment = channel.scalarSlice();
+    EXPECT_EQ(segment.values, buffer);
+    EXPECT_EQ(segment.first, channel.offset);
+    EXPECT_EQ(segment.count, channel.scalarCount);
+    EXPECT_EQ(segment.size(), channel.floatCount()) << "one length, whichever face you read it from";
+
+    // ... and back: the same channel, rebuilt from its own segment plus the stride.
+    const AttributeChannel rebuilt = AttributeChannel::fromSlice(segment, 3u);
+    EXPECT_EQ(rebuilt.vertexCount(), channel.vertexCount());
+    ASSERT_EQ(rebuilt.scalars().size(), channel.scalars().size());
+    EXPECT_FLOAT_EQ(rebuilt.scalars()[1], channel.scalars()[1]);
+
+    // The stride is what the segment cannot carry, and it is not optional: without it the same bytes are
+    // not vertices. A segment built from a channel and no stride describes an empty channel, not a
+    // silently different one.
+    EXPECT_EQ(AttributeChannel::fromSlice(segment, 0u).vertexCount(), 0u);
+}
+
+TEST(GeometryTest, TheIndexStreamIsTheSameKindOfSegment)
+{
+    // The index run and an attribute channel are the same KIND of thing (BufferSlice): "the rest of the
+    // buffer" and "an offset past the end" mean the same for both, resolved by the same function, so a
+    // consumer that walks a geometry's streams has no per-stream arithmetic to get wrong. IndexSliceExposes
+    // ItsSpan pins the numbers; this pins that the numbers come from the shared rule and the shared type.
+    const auto indices = intrusive_ptr<const vine::Buffer<std::uint32_t>>(
+        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
+    auto geometry = intrusive_ptr<Geometry>(new Geometry());
+
+    geometry->setIndices(indices, 4u, 0u); // "the rest of the arena"
+    EXPECT_EQ(geometry->indexCount(), 2u);
+    EXPECT_EQ(geometry->firstIndex(), 4u);
+    geometry->setIndices(indices, 6u, 0u); // past the end clamps to empty
+    EXPECT_FALSE(geometry->hasIndices());
+    EXPECT_EQ(geometry->firstIndex(), 6u) << "the clamped start, not the unclamped one";
+
+    // The same inputs, the same rule: an element slice and a scalar channel resolve their length with one
+    // function, so "the rest" cannot come out as two different numbers for two streams of one geometry.
+    const auto arena = arenaBuffer(2u); // two segments of three vertices = eighteen scalars
+    EXPECT_EQ(Geometry::IndexStream::resolvedLength(indices->size(), 4u, 0u), 2u) << "six indices from 4";
+    EXPECT_EQ(vine::BufferSlice<float>::resolvedLength(arena->size(), 8u, 0u), 10u) << "eighteen from 8";
+    EXPECT_EQ(AttributeChannel::shared(arena, 3u, 8u, 0u).floatCount(), 10u)
+        << "a channel with the same offset and no count reads the same rest of its buffer";
+    EXPECT_EQ(AttributeChannel::shared(arena, 3u, 18u, 0u).floatCount(), 0u) << "starting past the end is empty";
 }
 
 TEST(GeometryTest, BoundingBoxCoversOnlyTheGeometrysSegment)

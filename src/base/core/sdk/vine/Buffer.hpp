@@ -278,4 +278,120 @@ class Buffer : public RefCounted<Buffer<T>> {
     std::uint64_t  revision_ = 0;
 };
 
+/**
+ * @brief A SEGMENT of a shared buffer: which buffer, where the segment starts, how much it covers.
+ *
+ * WHY IT EXISTS. A consumer that reads part of a buffer used to carry the parts as loose members —
+ * a buffer pointer plus a first index plus a count — and every such consumer re-derived the same
+ * three rules (an offset past the end clamps, a count of 0 means "the rest of the buffer", and the
+ * length is resolved against the buffer as it is NOW, not as it was when the segment was named).
+ * Four copies of that arithmetic is four chances to disagree, and the disagreements are silent: a
+ * stream that reads one element too few still draws.
+ *
+ * So the segment is a value: a buffer, a first element and an element count, with ONE definition
+ * of what it covers. A vertex attribute channel, an index stream and any stream added later are
+ * the same shape, which is what lets a consumer walk a geometry's streams without a special case
+ * for the index one.
+ *
+ * THE BUFFER IS RE-READ, NEVER SNAPSHOTTED. The buffer may grow (a modelling API appends), and a
+ * segment that follows it is what makes "the whole buffer" usable as an arena's growing tail. A
+ * consumer that cached the bytes compares `Buffer::revision()` before reusing them, exactly as it
+ * does for a whole buffer.
+ *
+ * @tparam Element Element type of the buffer's run.
+ */
+template <typename Element>
+struct BufferSlice
+{
+    /// The buffer, or null when the segment holds nothing. Not snapshotted: every accessor reads through it.
+    intrusive_ptr<const Buffer<Element>> values;
+    /// First element of the segment (0 = the buffer's start). Past the end clamps to the end.
+    std::size_t first{ 0 };
+    /// Elements the segment covers, or 0 for "the rest of @p values from @p first" (the growing case).
+    std::size_t count{ 0 };
+
+    /**
+     * @brief The ONE definition of how many elements a segment covers.
+     *
+     * @param buffer_size Elements in the buffer.
+     * @param first       First element of the segment.
+     * @param count       Elements the segment states, or 0 for the rest.
+     * @return Elements readable from @p first (0 when @p first is at or past the end).
+     */
+    [[nodiscard]] static std::size_t resolvedLength(std::size_t buffer_size, std::size_t first,
+                                                    std::size_t count) noexcept
+    {
+        const std::size_t begin     = first > buffer_size ? buffer_size : first;
+        const std::size_t available = buffer_size - begin;
+        return count == 0u ? available : (count > available ? available : count);
+    }
+
+    /**
+     * @brief A segment covering all of @p buffer.
+     *
+     * @param buffer Buffer to read, or null for an empty segment.
+     * @return The segment.
+     */
+    [[nodiscard]] static BufferSlice whole(intrusive_ptr<const Buffer<Element>> buffer)
+    {
+        BufferSlice out;
+        out.values = std::move(buffer);
+        return out;
+    }
+
+    /**
+     * @brief A segment of @p buffer starting at @p first, covering @p count elements.
+     *
+     * The entry point for an ARENA: one buffer holds several consumers' elements, and each states
+     * the segment it reads in the unit it authors them in (vertices, indices, elements).
+     *
+     * @param buffer Buffer to read, or null for an empty segment.
+     * @param first  First element of the segment.
+     * @param count  Elements the segment covers, or 0 for the rest of @p buffer from @p first.
+     * @return The segment.
+     */
+    [[nodiscard]] static BufferSlice slice(intrusive_ptr<const Buffer<Element>> buffer, std::size_t first,
+                                           std::size_t count)
+    {
+        BufferSlice out;
+        out.values = std::move(buffer);
+        out.first  = first;
+        out.count  = count;
+        return out;
+    }
+
+    /** @brief Returns the buffer's element count (0 when the segment holds nothing). */
+    [[nodiscard]] std::size_t bufferSize() const noexcept { return values != nullptr ? values->size() : 0u; }
+
+    /** @brief Returns the first element this segment reads, clamped to the buffer's current end. */
+    [[nodiscard]] std::size_t begin() const noexcept
+    {
+        const std::size_t size = bufferSize();
+        return first > size ? size : first;
+    }
+
+    /** @brief Returns how many elements this segment covers (see resolvedLength). */
+    [[nodiscard]] std::size_t size() const noexcept
+    {
+        return resolvedLength(bufferSize(), first, count);
+    }
+
+    /** @brief Returns whether the segment covers no elements (a null buffer counts as empty). */
+    [[nodiscard]] bool empty() const noexcept { return size() == 0u; }
+
+    /**
+     * @brief Returns the segment as a view over the buffer.
+     *
+     * @return The segment's elements, empty when it holds none. It is a view over the buffer, so it
+     *         must not outlive it.
+     */
+    [[nodiscard]] std::span<const Element> span() const
+    {
+        if (values == nullptr) {
+            return {};
+        }
+        return values->view().subspan(begin(), size());
+    }
+};
+
 V_CORE_NS_END

@@ -538,8 +538,8 @@ TEST(MeshResourceCacheTest, AnAliasedColourIsSharedButAPackedOneIsNot)
     auto colors4 = packedFloats({ 1.0f, 0.0f, 0.0f, 0.5f, 0.0f, 1.0f, 0.0f, 0.5f, 0.0f, 0.0f, 1.0f, 0.5f });
     auto first   = triangleReading(positions);
     auto second  = triangleReading(positions);
-    first->addBuffer(2u, AttributeBuffer::shared(colors4, 4u));
-    second->addBuffer(2u, AttributeBuffer::shared(colors4, 4u));
+    first->addBuffer(2u, AttributeChannel::shared(colors4, 4u));
+    second->addBuffer(2u, AttributeChannel::shared(colors4, 4u));
 
     draw(first);
     auto* const aliased_colors = findBoundBind(root.get(), kBindingColors);
@@ -552,8 +552,8 @@ TEST(MeshResourceCacheTest, AnAliasedColourIsSharedButAPackedOneIsNot)
     auto colors3 = packedFloats({ 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f });
     auto third   = triangleReading(positions);
     auto fourth  = triangleReading(positions);
-    third->addBuffer(2u, AttributeBuffer::shared(colors3, 3u));
-    fourth->addBuffer(2u, AttributeBuffer::shared(colors3, 3u));
+    third->addBuffer(2u, AttributeChannel::shared(colors3, 3u));
+    fourth->addBuffer(2u, AttributeChannel::shared(colors3, 3u));
 
     draw(third);
     auto* const packed_colors = findBoundBind(root.get(), kBindingColors);

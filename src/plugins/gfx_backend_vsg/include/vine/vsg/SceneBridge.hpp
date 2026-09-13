@@ -411,7 +411,7 @@ class V_VSG_API SceneBridge {
      *
      * Describes an extra per-vertex attribute carried past the canonical
      * 0=position / 1=normal / 2=colour arrays: its geometry location and its
-     * AttributeBuffer components (the stride its packed floats use). */
+     * AttributeChannel components (the stride its packed floats use). */
     struct VertexChannel
     {
         std::uint32_t location = 0;
@@ -486,7 +486,7 @@ class V_VSG_API SceneBridge {
      * A rebuild has to know WHICH stream changed, not just that something did: a channel whose buffer, byte
      * revision, location, component count and SLICE are the same IS the same data, so the array the retained
      * node holds for it is still correct. The slice matters because one arena buffer may hold several
-     * geometries' vertices (see AttributeBuffer::offset): two segments of it are two streams. The revision is
+     * geometries' vertices (see AttributeChannel::offset): two segments of it are two streams. The revision is
      * `vine::Buffer::revision()` — the contract a consumer that cached bytes compares against (the same rule
      * Texture and ShaderProgram follow).
      */
