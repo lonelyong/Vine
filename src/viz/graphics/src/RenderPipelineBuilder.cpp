@@ -1,8 +1,8 @@
 ﻿#include <vine/graphics/RenderPipelineBuilder.hpp>
 
 #include <vine/graphics/AxisGizmo.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
-#include <vine/graphics/EmbeddedShaders.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -13,32 +13,19 @@ V_GRAPHICS_NS_BEGIN
 
 /** @brief Builds the default G-buffer geometry program (scene -> MRT).
  *
- * One traversal writes the canonical four outputs the Deferred preset's
- * G-buffer declares: albedo (0), view-space normal + shininess (1), specular
- * (2) and view-space position (3). It matches the backend's per-material
- * block and view-space light ABI.
+ * The canonical four outputs the Deferred preset's G-buffer declares: albedo (0),
+ * view-space normal + shininess (1), specular (2) and view-space position (3). It
+ * matches the backend's per-material block and view-space light ABI.
  *
- * The GLSL lives in shaders/gbuffer_geometry.vert + .frag, embedded at build time (see cmake/VineShaders.cmake).
- *
- * Temporary default: this GLSL is backend-ABI specific and will eventually be
- * owned by the render backend; callers may override it through
- * PipelineOptions::gbuffer_program.
+ * The program — and the GLSL it is built from — is owned by the SDK (see
+ * BuiltinShaders.hpp); this is RenderPipelineBuilder's alias for it. Callers may
+ * still override it through PipelineOptions::gbuffer_program.
  *
  * @return The geometry program.
  */
 intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultGbufferGeometryProgram()
 {
-    auto program = make_intrusive<ShaderProgram>();
-    program->setName(u8"gbuffer_geometry");
-    ShaderStage vs;
-    vs.type   = ShaderStageType::Vertex;
-    vs.source = String(shaders::kGbufferGeometryVert);
-    program->addStage(vs);
-    ShaderStage fs;
-    fs.type   = ShaderStageType::Fragment;
-    fs.source = String(shaders::kGbufferGeometryFrag);
-    program->addStage(fs);
-    return program;
+    return gbufferGeometryProgram();
 }
 
 /** @brief Builds the default deferred-lighting fragment program (fullscreen).
@@ -47,24 +34,15 @@ intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultGbufferGeometryProgra
  * attachments (binding 0..3) and shades ambient + up to three directional
  * lights whose parameters arrive in the backend's view-space push block.
  *
- * The GLSL lives in shaders/deferred_light.frag, embedded at build time
- * (see cmake/VineShaders.cmake).
- *
- * Temporary default: this GLSL is backend-ABI specific and will eventually be
- * owned by the render backend; callers may override it through
- * PipelineOptions::lighting_program.
+ * The program — and the GLSL it is built from — is owned by the SDK (see
+ * BuiltinShaders.hpp); this is RenderPipelineBuilder's alias for it. Callers may
+ * still override it through PipelineOptions::lighting_program.
  *
  * @return The lighting program (fragment stage only).
  */
 intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultDeferredLightProgram()
 {
-    auto program = make_intrusive<ShaderProgram>();
-    program->setName(u8"deferred_light");
-    ShaderStage fs;
-    fs.type   = ShaderStageType::Fragment;
-    fs.source = String(shaders::kDeferredLightFrag);
-    program->addStage(fs);
-    return program;
+    return deferredLightProgram();
 }
 
 intrusive_ptr<RenderTarget> RenderPipelineBuilder::defaultGbufferTarget(int width, int height)

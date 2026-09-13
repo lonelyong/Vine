@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -53,6 +54,7 @@
 #include <vsg/vk/Framebuffer.h>
 #include <vsg/vk/RenderPass.h>
 #include <vsg/vk/ResourceRequirements.h>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
@@ -143,41 +145,65 @@ namespace
 {
 
 /**
- * @brief Compiles the embedded forward stages once per process.
+ * @brief Compiles an SDK built-in program into vsg stages, once per preset.
  *
  * glslang is the expensive part of building the set, and every pass/depth-mode
- * variant of it uses the same two stages, so the compiled SPIR-V is shared
+ * variant of one program uses the same stages, so the compiled SPIR-V is shared
  * (the ShaderSet only adds interface declarations on top).
  *
+ * The stages come from the SDK's built-in program (BuiltinShaders.hpp): the
+ * engine owns the shading TEXT, this backend only compiles it and declares the
+ * ABI it is bound through. A preset without an SDK program caches an empty list,
+ * and buildVineShaderSet then declines it rather than shading it as phong.
+ *
+ * @param preset Preset whose SDK program to compile.
  * @return Compiled stages, or an empty list when unsupported / failed to compile.
  */
-::vsg::ShaderStages compileForwardStages()
+const ::vsg::ShaderStages& compiledStages(vine::graphics::ShaderPreset preset)
 {
-    auto compiler = ::vsg::ShaderCompiler::create();
-    if (compiler == nullptr || !compiler->supported()) {
-        return ::vsg::ShaderStages();
+    static std::map<int, ::vsg::ShaderStages> cache;
+    const auto                                key = static_cast<int>(preset);
+    const auto                                it  = cache.find(key);
+    if (it != cache.end()) {
+        return it->second;
     }
-    auto vs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_VERTEX_BIT, "main",
-                                         std::string(asShaderSource(shaders::kVineForwardVert)));
-    auto fs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, "main",
-                                         std::string(asShaderSource(shaders::kVineForwardFrag)));
-    if (!compiler->compile(vs) || !compiler->compile(fs)) {
-        return ::vsg::ShaderStages();
+
+    ::vsg::ShaderStages stages;
+    const auto          program  = vine::graphics::builtinProgram(preset);
+    auto                compiler = ::vsg::ShaderCompiler::create();
+    if (program != nullptr && compiler != nullptr && compiler->supported()) {
+        for (std::size_t i = 0; i < program->stageCount(); ++i) {
+            const auto* stage_spec = program->stage(i);
+            if (stage_spec == nullptr) {
+                stages.clear();
+                break;
+            }
+            const auto flag = stage_spec->type == vine::graphics::ShaderStageType::Vertex
+                                  ? VK_SHADER_STAGE_VERTEX_BIT
+                                  : VK_SHADER_STAGE_FRAGMENT_BIT;
+            auto       stage = ::vsg::ShaderStage::create(flag, stage_spec->entryPoint.stdstr(),
+                                                          stage_spec->source.stdstr());
+            if (!compiler->compile(stage)) {
+                stages.clear();
+                break;
+            }
+            stages.push_back(stage);
+        }
     }
-    return ::vsg::ShaderStages{ vs, fs };
+    // A reference into the map stays valid across later insertions (node-based),
+    // so callers can hold it while building their sets.
+    return cache.emplace(key, std::move(stages)).first->second;
 }
 
 }  // namespace
 
 ::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
 {
-    // One Vine implementation so far: the lit forward path. The other presets
-    // keep the built-in mapping (see buildShaderSet) until they get their own
-    // stages, because a set that shaded them as phong would be silently wrong.
-    if (preset != vine::graphics::ShaderPreset::StandardPhong) {
-        return {};
-    }
-    static const ::vsg::ShaderStages stages = compileForwardStages();
+    // The stages come from the SDK's built-in program for this preset (owned by
+    // the engine, see BuiltinShaders.hpp); a preset without one is declined so
+    // the caller keeps the built-in mapping (buildShaderSet) instead of shading
+    // it as phong, which would be silently wrong.
+    const auto& stages = compiledStages(preset);
     if (stages.empty()) {
         return {};
     }

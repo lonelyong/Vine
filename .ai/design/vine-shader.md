@@ -244,6 +244,9 @@ void main()
 
 ## 7. GLSL 仓库化与编译
 
+> ⚠ 本节已被 `vsg-custom-shader.md` §10 取代（真文件 + 构建期嵌入，**不**提交 `.spv`；SDK 侧
+> 2026-09-13 起含内建前向着色 `vine_forward.*`）。以下保留作历史记录。
+
 - 源：`src/plugins/gfx_backend_vsg/shaders/*.vert|.frag`（仓库提交）；
 - 产物：同目录 `*.spv`（提交）；生成 `VineShaders.cpp`（内嵌字节数组，方式同 vendored phong 的
   `phong_ShaderSet.cpp`），运行时 `vsg::ShaderStage::create(stage,"main",code,size)`；

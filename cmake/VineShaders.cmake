@@ -6,10 +6,14 @@
 # vsg backend plugin's sources directly) depend on the same generated header.
 #
 # Two owners exist today:
-#   * vine/graphics/EmbeddedShaders.hpp — the SDK's deferred-shading programs,
-#     used by RenderPipelineBuilder (src/viz/graphics/shaders/).
-#   * vine/vsg/EmbeddedShaders.hpp — the vsg backend's own stages, used by
-#     VsgPipelineFactory (src/plugins/gfx_backend_vsg/shaders/).
+#   * vine/graphics/EmbeddedShaders.hpp — the SDK's own shading programs (the
+#     preset-driven scene shading plus the deferred recipe's stages), used by
+#     BuiltinShaders / RenderPipelineBuilder (src/viz/graphics/shaders/).
+#     The engine owns the shading TEXT; a backend owns how it is compiled and
+#     bound (its ABI).
+#   * vine/vsg/EmbeddedShaders.hpp — the vsg backend's own plumbing stages
+#     (fullscreen triangle / screen sampling), used by VsgPipelineFactory
+#     (src/plugins/gfx_backend_vsg/shaders/).
 #
 # Adding a shader: drop the .vert/.frag in the owning shaders/ directory, add it
 # to the SOURCES list below, include the generated header, and use the generated
@@ -28,6 +32,8 @@ v_declare_embedded_shaders(
         "${VINE_SDK_SHADER_DIR}/gbuffer_geometry.vert"
         "${VINE_SDK_SHADER_DIR}/gbuffer_geometry.frag"
         "${VINE_SDK_SHADER_DIR}/deferred_light.frag"
+        "${VINE_SDK_SHADER_DIR}/vine_forward.vert"
+        "${VINE_SDK_SHADER_DIR}/vine_forward.frag"
 )
 
 v_declare_embedded_shaders(
@@ -36,6 +42,4 @@ v_declare_embedded_shaders(
     SOURCES
         "${VINE_VSG_SHADER_DIR}/fullscreen.vert"
         "${VINE_VSG_SHADER_DIR}/screen_texture.frag"
-        "${VINE_VSG_SHADER_DIR}/vine_forward.vert"
-        "${VINE_VSG_SHADER_DIR}/vine_forward.frag"
 )

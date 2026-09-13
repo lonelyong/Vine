@@ -253,8 +253,8 @@ RecordTraversal 每个 drawable 绘制前自动填 → 自定义 program 路径�
 
 | 归属 | 目录 | 生成的头文件 | 命名空间 | 谁在用 |
 | --- | --- | --- | --- | --- |
-| graphics SDK（延迟管线） | `src/viz/graphics/shaders/` | `vine/graphics/EmbeddedShaders.hpp` | `vine::graphics::shaders` | `RenderPipelineBuilder`（gbuffer 几何 / 全屏光照） |
-| vsg 后端（自有阶段） | `src/plugins/gfx_backend_vsg/shaders/` | `vine/vsg/EmbeddedShaders.hpp` | `vine::vsg::shaders` | `VsgPipelineFactory`（overlay / PiP 全屏三角形，未来 `vine_forward.*`） |
+| graphics SDK（内建 program） | `src/viz/graphics/shaders/` | `vine/graphics/EmbeddedShaders.hpp` | `vine::graphics::shaders` | `BuiltinShaders`（`builtinProgram(preset)` 前向着色 + gbuffer 几何 / 全屏光照）；`RenderPipelineBuilder` 是它的别名 |
+| vsg 后端（自有阶段） | `src/plugins/gfx_backend_vsg/shaders/` | `vine/vsg/EmbeddedShaders.hpp` | `vine::vsg::shaders` | `VsgPipelineFactory`（overlay / PiP 全屏三角形）。**前向着色已不在这里**（2026-09-13 起归 SDK，见 §11.7） |
 
 约定：
 
@@ -338,7 +338,8 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 
 ### 11.1 落地形态
 
-- 着色器：`src/plugins/gfx_backend_vsg/shaders/vine_forward.{vert,frag}`（走 §10 的文件 + 嵌入机制；
+- 着色器：**SDK** `src/viz/graphics/shaders/vine_forward.{vert,frag}`（P0.A 起；后端经 `BuiltinShaders.hpp` 的
+  `builtinProgram(preset)` 取源并编译，见 §11.7；走 §10 的文件 + 嵌入机制；
   `VINE_VERTEX_COLOR` / `VINE_DIFFUSE_MAP` 两个门控）。
 - 组装：`detail::buildVineShaderSet(preset, extent, depth_test, depth_write, color_count)`
   （`VsgPipelineFactory.cpp`），只对 `StandardPhong` 返回非空 —— 其它 preset 宁可用内建 set，
@@ -432,5 +433,17 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | 判据 | 两条证据基线 47 行**逐字节不变**（丢属性只省绑定/采样，画面等价：无作者色=白调制、白纹理=乘 1）；test_vsg **237**（+2：`ForwardSetDropsDerivedColourAndUvs` 断言 2 条顶点绑定 + 无采样器；`BuiltInSetKeepsTheFullCanonicalPrefix` 断言内建仍 4 条）；lavapipe 整体 PASS |
 
 **仍未做**：`opacity`（forward 只用 `material.diffuse.a`，顶点色 alpha 不再承载每 drawable 透明度 —— P10）；阴影 / PBR / Flat（§6 的 P1/P2）。
+
+
+### 11.7 P0.A：内建前向着色归 SDK（2026-09-13）
+
+| 环节 | 落点 |
+| --- | --- |
+| 文件搬家 | `vine_forward.{vert,frag}`：`src/plugins/gfx_backend_vsg/shaders/` → **`src/viz/graphics/shaders/`**；清单 `cmake/VineShaders.cmake` 两条随之移到 `vine/graphics/EmbeddedShaders.hpp`（嵌入数 3 → **5**，vsg 4 → **2**） |
+| SDK 入口 | 新增 `BuiltinShaders.hpp/.cpp`：`builtinProgram(ShaderPreset)`（preset → 内建 program，未实现的 preset 返回 null）+ `gbufferGeometryProgram()` / `deferredLightProgram()`（从 `RenderPipelineBuilder` 搬来；builder 的两个静态工厂改为**转发**，公开 API 不变） |
+| 后端 | `VsgPipelineFactory::compiledStages(preset)`：取 `builtinProgram(preset)` 的 stages 编译（**每 preset 缓存一次**，空则 decline）；`buildVineShaderSet` 不再自带 GLSL、不再用 `preset != StandardPhong` 硬判 |
+| 判据 | **行为中性**：两条证据基线 47 行逐字节不变；`vine_shader_check.sh` PASS（7 shader）；test_graphics 234 → **235**（+1：`builtinProgram(StandardPhong)` 用嵌入源、Pbr/ShadowedPhong 返回 null）、test_vsg 237 → **238**（+1：vsg 表**不含** `vine_forward.*`，钉住归属边界）；lavapipe PASS |
+
+**边界**：SDK 拥有**着色文本**（L3）；后端拥有**编译 + ABI 绑定 + 管线**（L2）。`ShaderSet` 仍是 vsg 后端内部机制，不进 SDK。下一步（P0.B）：把 ABI 契约（属性角色 / `VineFrame`・`VineDraw` / 参数・槽表）也移到 SDK，为换后端铺路。
 
 

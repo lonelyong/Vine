@@ -10,8 +10,9 @@
  *    truncated or line-ending-mangled copy;
  *  * the bookkeeping (name / hash / byte count) agrees with the text, so a corrupt
  *    embedding cannot pass unnoticed;
- *  * the default G-buffer and deferred-light programs compile from exactly these
- *    constants, which is what makes editing the .glsl file the only way to change them.
+ *  * the default forward / G-buffer / deferred-light programs compile from exactly
+ *    these constants, which is what makes editing the .glsl file the only way to
+ *    change them.
  *
  * scripts/vine_shader_check.sh adds the two things a unit test cannot do: it compiles
  * every shader with glslangValidator and verifies the embedded hashes against the
@@ -20,6 +21,7 @@
 
 #include <gtest/gtest.h>
 
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/EmbeddedShaders.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -122,11 +124,38 @@ TEST(EmbeddedShadersTest, TheDeferredProgramsUseTheEmbeddedSources)
     EXPECT_EQ(light_fs->source, vine::String(kDeferredLightFrag));
 }
 
+TEST(EmbeddedShadersTest, TheBuiltinForwardProgramUsesTheEmbeddedSources)
+{
+    // The preset-driven scene shading is now an SDK program like the deferred ones:
+    // its stages must be exactly the embedded forward GLSL, so the ShaderPreset path
+    // and the file on disk cannot drift apart.
+    const auto forward = builtinProgram(ShaderPreset::StandardPhong);
+    ASSERT_NE(forward, nullptr);
+    ASSERT_EQ(forward->stageCount(), 2u);
+    const ShaderStage* forward_vs = forward->stage(0);
+    const ShaderStage* forward_fs = forward->stage(1);
+    ASSERT_NE(forward_vs, nullptr);
+    ASSERT_NE(forward_fs, nullptr);
+    EXPECT_EQ(forward_vs->type, ShaderStageType::Vertex);
+    EXPECT_EQ(forward_fs->type, ShaderStageType::Fragment);
+    EXPECT_EQ(forward_vs->source, vine::String(kVineForwardVert));
+    EXPECT_EQ(forward_fs->source, vine::String(kVineForwardFrag));
+
+    // A preset the SDK does not shade yet must answer null, so the backend can keep
+    // its own fallback instead of receiving a wrong program.
+    EXPECT_EQ(builtinProgram(ShaderPreset::Pbr), nullptr);
+    EXPECT_EQ(builtinProgram(ShaderPreset::ShadowedPhong), nullptr);
+}
+
 TEST(EmbeddedShadersTest, TheNamedConstantsAreInTheTable)
 {
+    ASSERT_NE(findEntry("vine_forward.vert"), nullptr);
+    ASSERT_NE(findEntry("vine_forward.frag"), nullptr);
     ASSERT_NE(findEntry("gbuffer_geometry.vert"), nullptr);
     ASSERT_NE(findEntry("gbuffer_geometry.frag"), nullptr);
     ASSERT_NE(findEntry("deferred_light.frag"), nullptr);
+    EXPECT_EQ(findEntry("vine_forward.vert")->source, kVineForwardVert);
+    EXPECT_EQ(findEntry("vine_forward.frag")->source, kVineForwardFrag);
     EXPECT_EQ(findEntry("gbuffer_geometry.vert")->source, kGbufferGeometryVert);
     EXPECT_EQ(findEntry("gbuffer_geometry.frag")->source, kGbufferGeometryFrag);
     EXPECT_EQ(findEntry("deferred_light.frag")->source, kDeferredLightFrag);

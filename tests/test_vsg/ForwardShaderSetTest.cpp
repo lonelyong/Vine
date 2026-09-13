@@ -21,11 +21,11 @@
 
 #include <gtest/gtest.h>
 
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/ShaderPreset.hpp>
-#include <vine/vsg/EmbeddedShaders.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 
@@ -310,13 +310,22 @@ TEST(ForwardShaderSetTest, InheritsTheScenePipelineStates)
 
 TEST(ForwardShaderSetTest, BothStagesGateTheSameInterfaceVariables)
 {
-    const std::u8string_view vs = shaders::kVineForwardVert;
-    const std::u8string_view fs = shaders::kVineForwardFrag;
-    for (const char8_t* define : { u8"VINE_VERTEX_COLOR", u8"VINE_DIFFUSE_MAP" }) {
-        const bool in_vs = vs.find(define) != std::u8string_view::npos;
-        const bool in_fs = fs.find(define) != std::u8string_view::npos;
-        EXPECT_TRUE(in_vs) << reinterpret_cast<const char*>(define);
-        EXPECT_EQ(in_vs, in_fs) << reinterpret_cast<const char*>(define);
+    // The stages are the SDK's built-in program for the preset (BuiltinShaders.hpp):
+    // this checks the engine's own shader text, not a backend copy of it.
+    const auto program = vine::graphics::builtinProgram(vine::graphics::ShaderPreset::StandardPhong);
+    ASSERT_NE(program, nullptr);
+    ASSERT_EQ(program->stageCount(), 2u);
+    const auto* vs_stage = program->stage(0);
+    const auto* fs_stage = program->stage(1);
+    ASSERT_NE(vs_stage, nullptr);
+    ASSERT_NE(fs_stage, nullptr);
+    const std::string vs = vs_stage->source.stdstr();
+    const std::string fs = fs_stage->source.stdstr();
+    for (const char* define : { "VINE_VERTEX_COLOR", "VINE_DIFFUSE_MAP" }) {
+        const bool in_vs = vs.find(define) != std::string::npos;
+        const bool in_fs = fs.find(define) != std::string::npos;
+        EXPECT_TRUE(in_vs) << define;
+        EXPECT_EQ(in_vs, in_fs) << define;
     }
 }
 

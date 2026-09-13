@@ -193,4 +193,8 @@
   · 口径：build 0 error/0 warning；test_vsg 235、test_graphics 234；两条证据基线 PASS；lavapipe 整体 PASS。
   · 收尾（同日）：content 不走 vsg 灯/VDS（forward 时 view `features=0`、不建灯节点、不跑 `setGroupLights`）；`buildStateGroup` 在几何无作者色（且无 UV/无纹理）时不 assign vsg_Color/vsg_TexCoord0（define 关），属性是否在位并入 L2 variant 的 layout 哈希。
   · 口径：test_vsg 235 → **237**（+2 断言丢属性）；两条证据基线 47 行不变；lavapipe PASS。
+- **P0.A 内建前向着色归 SDK（2026-09-13，行为中性）**：`vine_forward.*` 移到 `src/viz/graphics/shaders/`；新增 SDK
+  `BuiltinShaders`（`builtinProgram(ShaderPreset)` + 两个延迟 program 工厂，`RenderPipelineBuilder` 改转发）；后端
+  `compiledStages(preset)` 编译 SDK program（每 preset 缓存）。SDK 拥有**着色文本**，后端拥有编译+ABI+管线。
+  · 口径：两条证据基线 47 行不变；`vine_shader_check` PASS（7）；test_graphics 235、test_vsg 238；lavapipe PASS。
 

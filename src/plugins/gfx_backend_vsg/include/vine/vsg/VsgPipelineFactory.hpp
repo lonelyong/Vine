@@ -111,7 +111,8 @@ static_assert(alignof(LightPushBlock) == 16, "LightPushBlock must stay std140-al
  * BUFFER. This struct is that block: it is bound once per view (descriptor set
  * 0, binding 2) and refreshed when the view's lights or camera move.
  *
- * Layout matches the GLSL block declared by shaders/vine_forward.frag; the
+ * Layout matches the GLSL block declared by
+ * src/viz/graphics/shaders/vine_forward.frag; the
  * light VALUES come from the same packing the full-screen path uses
  * (fillVineLightsBlock).
  */
@@ -160,10 +161,11 @@ static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-
 /**
  * @brief Builds our OWN shader set for the given preset (the forward path).
  *
- * Replaces the vendored vsg phong set for scene geometry: the stages are the
- * repository's own GLSL (shaders/vine_forward.vert + .frag, embedded at build
- * time), compiled once per process and shared by every set this function
- * returns.
+ * Replaces the vendored vsg phong set for scene geometry: the stages come from
+ * the SDK's built-in program for @p preset (vine/graphics/BuiltinShaders.hpp —
+ * the GLSL itself lives in src/viz/graphics/shaders/), compiled once per preset
+ * and shared by every set this function returns. The engine owns the shading
+ * TEXT; this backend only compiles it and declares the ABI below.
  *
  * The declared interface is the whole ABI:
  *
@@ -193,9 +195,9 @@ static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-
  * deferred path's push block), so the shader never needs the world matrix and
  * the model matrix stays the only per-drawable data in the pipeline.
  *
- * @param preset      Shading preset; only StandardPhong has a Vine
- *                    implementation so far (null is returned for the others, and
- *                    the caller keeps the built-in set).
+ * @param preset      Shading preset whose SDK built-in program this set
+ *                    materialises. A preset without one yields null, and the
+ *                    caller keeps the built-in set.
  * @param extent      Target extent for the baked static viewport.
  * @param depth_test  When false, depth test/write are disabled (HUD overlays).
  * @param depth_write Depth write enable for this pass.

@@ -1,4 +1,12 @@
-﻿> 2026-09-13 **P0.3 默认转正：自写前向着色成为 shipped 默认**：`vineForwardShaderEnabled()` 改返回 `getenv("VINE_VSG_BUILTIN") == nullptr`
+﻿> 2026-09-13 **P0.A：内建前向着色归 SDK（行为中性）**：`vine_forward.{vert,frag}` 从 `gfx_backend_vsg/shaders/` 搬到
+> `src/viz/graphics/shaders/`，清单随之移动（嵌入数 graphics 3→5、vsg 4→2）。新增 SDK `BuiltinShaders.hpp/.cpp`：
+> `builtinProgram(ShaderPreset)`（preset→内建 program，未实现返回 null）+ `gbufferGeometryProgram`/`deferredLightProgram`
+> （从 `RenderPipelineBuilder` 搬来，builder 的两个静态工厂改转发，公开 API 不变）。
+> 后端 `VsgPipelineFactory::compiledStages(preset)` 取 SDK program 编译（每 preset 缓存一次），`buildVineShaderSet` 不再自带 GLSL。
+> 口径：两条证据基线 47 行逐字节不变；`vine_shader_check` PASS（7 shader）；test_graphics 234→**235**、test_vsg 237→**238**；lavapipe PASS。
+> 边界：SDK 拥有**着色文本**（L3），后端拥有**编译 + ABI + 管线**（L2）；`ShaderSet` 仍只属 vsg 后端。下一步 P0.B（ABI 契约移入 SDK）。
+
+> 2026-09-13 **P0.3 默认转正：自写前向着色成为 shipped 默认**：`vineForwardShaderEnabled()` 改返回 `getenv("VINE_VSG_BUILTIN") == nullptr`
 > ⇒ 默认走自写 set，`VINE_VSG_BUILTIN=1` 退回内建（无 Vine stages 的 preset 仍自动回退）。自检 variant 探针的
 > `'built-in Phong + …'` 改名 `'default shading + …'`（它跑的是内容 set，不是固定路径）。
 > **两条证据基线语义对调 + 重命名**：`scripts/vsg_selftest_evidence.txt` = 默认（自写 set，centre 34,6,2）；

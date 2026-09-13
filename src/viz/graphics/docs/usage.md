@@ -516,6 +516,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 | 内容 | 位置 |
 | --- | --- |
+| 内建前向着色（preset 默认，`builtinProgram`） | `src/viz/graphics/shaders/vine_forward.*` |
 | 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/`（真文件，构建期嵌入） |
 | 后端自己的 overlay / 全屏三角形阶段 | `src/plugins/gfx_backend_vsg/shaders/` |
 | 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-custom-shader.md`](../../../../.ai/design/vsg-custom-shader.md) §10 |

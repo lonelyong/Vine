@@ -114,4 +114,13 @@ TEST(EmbeddedShadersTest, TheScreenTextureStageDeclaresTheOverlayAbi)
     EXPECT_NE(text.find(u8"texture(screen_tex, v_uv)"), std::u8string_view::npos);
 }
 
+TEST(EmbeddedShadersTest, TheForwardShadingIsNotABackendStage)
+{
+    // The built-in forward shading is the SDK's (BuiltinShaders.hpp): this table holds
+    // only the backend's own plumbing stages, so the engine's shader cannot be
+    // silently forked by a backend copy.
+    EXPECT_EQ(findEntry("vine_forward.vert"), nullptr);
+    EXPECT_EQ(findEntry("vine_forward.frag"), nullptr);
+}
+
 }  // namespace
