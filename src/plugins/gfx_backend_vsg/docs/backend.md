@@ -29,7 +29,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgContentSlot.cpp` | 内容槽的每帧驱动（视口、灯、诊断）；vsg 灯节点 + 每帧 `setGroupLights` 只在**内建退回路径**跑（forward 用自己的 `vine_lights` 块） |
 | `VsgOverlay.cpp` | PiP / 全屏 program overlay 的两种绘制 |
 | `shaders/`（`fullscreen.vert` / `screen_texture.frag`） | 本后端自己的 GLSL：构建期嵌入成 `vine/vsg/EmbeddedShaders.hpp`（清单 `cmake/VineShaders.cmake`，机制见 [`.ai/design/vsg-custom-shader.md`](../../../../.ai/design/vsg-custom-shader.md) §10） |
-| `detail::buildVineShaderSet` / `makeContentShaderSet` | **自写前向着色**（替代 vsg 内建 phong 的 P0）：**GLSL 归 SDK**（`src/viz/graphics/shaders/vine_forward.*`，经 `BuiltinShaders.hpp` 的 `builtinProgram(preset)` 取源——本后端只编译它并声明 ABI）。属性 0/1/2(色,define) / 8(uv,define)、set0 的 material(b0) / diffuseMap(b1) / **vine_lights(b2, 每槽 UBO)** / **vine_draw(b3, 每 drawable `VineDrawBlock`，`params.x` = 不透明度)** + push `pc` 0..128（vsg 矩阵栈填）。**P0.3 起默认开启**；`VINE_VSG_BUILTIN=1` 退回内建 phong（无 SDK program 的 preset 仍回退）。两条路径各有独立 **48 行**证据基线（ABI/门禁见该文档 §11） |
+| `detail::buildVineShaderSet` / `makeContentShaderSet` | **自写前向着色**（替代 vsg 内建 phong 的 P0）：**GLSL 归 SDK**（`src/viz/graphics/shaders/vine_forward.*`，经 `BuiltinShaders.hpp` 的 `builtinProgram(preset)` 取源——本后端只编译它并声明 ABI）。属性 0/1/2(色,define) / 8(uv,define)、set0 的 material(b0) / diffuseMap(b1) / **vine_lights(b2, 每槽 UBO)**、**set1/b0 `vine_draw`（`VineDrawBlock`，UNIFORM_BUFFER_DYNAMIC，每 drawable 一个槽）** + push `pc` 0..128（vsg 矩阵栈填）。**P0.3 起默认开启**；`VINE_VSG_BUILTIN=1` 退回内建 phong（无 SDK program 的 preset 仍回退）。两条路径各有独立 **48 行**证据基线（ABI/门禁见该文档 §11） |
 | `VsgViewCompiler.cpp` | 增量编译（只编译新 view） |
 | `VsgTextureCache.cpp` / `VsgMaterialManager.cpp` | 纹理上传缓存 / 材质值缓存（都是**按地址键 + owner 持有**） |
 | `VsgRetireRing.cpp` | 退役环（停放被换下的对象，而不是停设备） |

@@ -163,6 +163,7 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgMaterialManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgTextureCache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgMeshResourceCache.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgDrawBlockPool.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgSceneRules.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgDiagnostics.cpp

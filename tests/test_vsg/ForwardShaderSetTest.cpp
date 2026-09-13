@@ -468,9 +468,44 @@ TEST(ForwardShaderSetTest, TheFragmentStageScalesAlphaByTheDrawBlock)
     const std::string fragment = fs_stage->source.stdstr();
     EXPECT_NE(fragment.find("material.diffuse.a * draw.params.x"), std::string::npos);
     EXPECT_EQ(fragment.find("alpha *= v_color.a;"), std::string::npos);
-    // The block itself is declared at the L1 binding the backend assigns.
+    // The block itself is declared in its OWN set, because it is bound per drawable with a
+    // dynamic offset (the scene shares one buffer and one descriptor set).
     EXPECT_NE(fragment.find("uniform VineDrawBlock"), std::string::npos);
-    EXPECT_NE(fragment.find("binding = 3"), std::string::npos);
+    EXPECT_NE(fragment.find("layout(set = 1, binding = 0"), std::string::npos);
+}
+
+TEST(ForwardShaderSetTest, ThePerDrawBlockIsSetOneWithItsOwnBinding)
+{
+    // Set 1 is the per-draw block's, and it has to be declarable WITHOUT a device: the layout
+    // comes from a custom descriptor-set binding (the bridge binds it per drawable, so the
+    // bind command cannot be one shared command per variant), while the set RANGE comes from
+    // the descriptor declaration vsg derives it from. Both are pinned here, because a shader
+    // declaring a set the pipeline layout does not have is an invalid pipeline — and that is a
+    // driver fault, not a diagnostic.
+    const auto set = makeForwardSet();
+    ASSERT_NE(set, nullptr);
+
+    ASSERT_EQ(set->customDescriptorSetBindings.size(), 1u);
+    const auto& custom = set->customDescriptorSetBindings.front();
+    ASSERT_NE(custom, nullptr);
+    EXPECT_EQ(custom->set, 1u);
+    const auto draw_layout = custom->createDescriptorSetLayout();
+    ASSERT_NE(draw_layout, nullptr);
+    ASSERT_EQ(draw_layout->bindings.size(), 1u);
+    EXPECT_EQ(draw_layout->bindings.front().binding, 0u);
+    EXPECT_EQ(draw_layout->bindings.front().descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
+    // The declaration that carries the range must describe the same set, or the layout the
+    // configurator builds for set 1 would disagree with the one the pipeline layout gets.
+    const auto declared = set->getDescriptorBinding("vine_draw");
+    ASSERT_TRUE(static_cast<bool>(declared));
+    EXPECT_EQ(declared.set, 1u);
+    EXPECT_EQ(declared.binding, 0u);
+    EXPECT_EQ(declared.descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
+    EXPECT_EQ(declared.descriptorCount, 1u);
+
+    const auto layout = set->createPipelineLayout({});
+    ASSERT_NE(layout, nullptr);
+    EXPECT_EQ(layout->setLayouts.size(), 2u); // set 0 (material/lights) + set 1 (per draw)
 }
 
 TEST(ForwardShaderSetTest, BuiltInSetKeepsTheFullCanonicalPrefix)

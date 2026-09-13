@@ -42,6 +42,11 @@ struct SceneBridge::VariantEntry {
     ::vsg::StateCommands state_commands;
     ::vsg::ref_ptr<::vsg::ArrayState> prototype_array_state;
     std::uint32_t base_binding = 0;
+    // The variant's pipeline layout. Kept because the PER-DRAWABLE bind of set 1 is built
+    // per drawable (it carries the drawable's dynamic offset) while the layout is per
+    // variant: a cache hit has no configurator to ask, and this is the same object the
+    // variant's pipeline was created against.
+    ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout;
 };
 
 V_VSG_NS_END

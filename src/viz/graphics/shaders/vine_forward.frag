@@ -31,7 +31,10 @@ layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
 // drawable's effective opacity (scene x node x geometry); the remaining components
 // are reserved. This is the L1 block itself, declared exactly as the SDK defines it
 // (see ShaderAbi.hpp), so a backend without a push range binds the same 80 bytes.
-layout(set = 0, binding = 3, std140) uniform VineDrawBlock
+//
+// It lives in its OWN set (1) because it is bound PER DRAWABLE with a dynamic offset:
+// the scene shares one buffer and one descriptor set, and each draw selects its slot.
+layout(set = 1, binding = 0, std140) uniform VineDrawBlock
 {
     mat4 model;
     vec4 params;

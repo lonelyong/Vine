@@ -1,4 +1,11 @@
-﻿> 2026-09-13 **P10：每 drawable 不透明度改走 `vine_draw` 块（修一个真缺口）**
+﻿> 2026-09-13 **P10 收尾：`vine_draw` 改 per-drawable 槽 + dynamic offset（②`model` 不写）**
+> - 新 `VsgDrawBlockPool`（session 级，随其他设备缓存创建/注入）：块 = `stride`(块大小按 `minUniformBufferOffsetAlignment` 向上取整) 的槽，一块(chunk)默认 64 槽；缓冲 + `DeviceMemory`(HOST_VISIBLE|HOST_COHERENT) + `MappedData<ubyteArray>`，**直接写映射内存**（每改一次不透明度 = 4 B，无 transfer task、不落后一帧）；`reserve/release` 带自由表，`descriptorSet(slot, layout)` 每 (chunk, layout) 一个 set。
+> - set 从 s0/b3 移到 **s1/b0** 并用 `CustomDescriptorSetBinding`：它只给 **layout**，bind 由 `SceneBridge::appendDrawBlockBind` 按 drawable 追加（带 dynamic offset），模板命令仍共享。set1 的“范围”必须在 `descriptorBindings` 里另声明一行（vsg 的 `descriptorSetRange()` 只扫那里）。
+> - 槽生命周期 = drawable：Item 保留时 `reserve()`，淘汰/`clearCache()` 时经 `advanceRetireRing` 延后释放（飞行中的帧可能还绑着那个偏移，release 时会清零该槽 params）。
+> - **三个坑**（都真踩了）：① range 没声明 ⇒ pipeline layout 少一个 set、SPIR-V 引用不存在的 set ⇒ **lavapipe 段错误**（不是 VUID）；② 内建 phong 集自带 set1（材质）⇒ 往它绑我们的动态 set 也段错误，所以按 **layout 形状**（唯一 DYNAMIC binding@0）判定“是不是我们的 set”，并且只有 `forward_draw_block_` 的桥才领槽；③ 池必须**比桥活得久**：`shutdown()` 是整体赋值 state，池（声明靠前）会先死，桥的析构碰它就是 UAF ⇒ 析构**不碰池**（`flushDrawSlots` 只由 `advanceRetireRing` 调）。
+> - 判据：两条证据基线 **48 行逐字节不变**（含 opacity 门禁那一行！）；build 0/0；test_vsg 241 → **242**（新增 `ThePerDrawBlockIsSetOneWithItsOwnBinding`）；test_graphics 240；`vine_shader_check` PASS（7）；**lavapipe PASS**。
+
+> 2026-09-13 **P10：每 drawable 不透明度改走 `vine_draw` 块（修一个真缺口）**
 > - SDK L1 块的 L2 落点：set0/binding3 `vine_draw` = `VineDrawBlock`(80B: `mat4 model` + `vec4 params`)；SceneBridge 每 drawable 一个 `floatArray`(20 float, `DYNAMIC_DATA`)，写 `params.x` 后 `dirty()`；`vine_forward.frag` 改 `alpha = material.diffuse.a * draw.params.x`。
 > - **修缺口**：P10 前半的"顶点载体 alpha = opacity"在 forward 路径**从未到达帧缓冲**（新像素门禁 `runOpacityBlendPixelPhase` 抓到：opacity 0.5 与 1.0 的像素完全相同）。诊断靠对照：同阶段换 **material 对象**像素会变（描述符路径 ✓），换载体字节不变（顶点路径 ✗），内建路径变（它的 shader 读载体）。
 > - **踩坑（已修）**：`draw_block` 必须**在 buildStateGroup 之前**创建 —— 否则 wrapper 会绑 ShaderSet 的**样本** uniform（全 0），且之后再也不会重绑（state 不再 dirty），表现为"整场 content 全不可见"（alpha=0）。

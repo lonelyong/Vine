@@ -27,6 +27,7 @@
 #include <vine/vsg/OwnedCache.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 #include <vine/vsg/VsgRetireRing.hpp>
+#include <vine/vsg/VsgDrawBlockPool.hpp>
 #include <vine/vsg/VsgMeshResourceCache.hpp>
 #include <vine/vsg/VsgTextureCache.hpp>
 
@@ -101,6 +102,23 @@ class V_VSG_API SceneBridge {
      * @param cache Mesh-resource cache to use.
      */
     void setMeshResourceCache(vine::raw_ptr<VsgMeshResourceCache> cache);
+
+    /** @brief Injects the session's pool of per-draw uniform slots (see VsgDrawBlockPool).
+     *
+     * Must outlive the bridge. Our forward set reads per-drawable values (`VineDrawBlock`:
+     * the opacity today) from set 1, and the slots they live in come from this ONE pool, so
+     * a scene's drawables share a handful of buffers and descriptor sets instead of owning
+     * one each. Every slot's lifetime is the drawable's: the bridge reserves one when it
+     * retains a geometry and returns it — deferred past the retire ring, because a frame in
+     * flight may still bind the offset — when the geometry is evicted.
+     *
+     * Left unset, the bridge's drawables get NO per-draw block: our forward set would then
+     * read the block's zeroed memory and draw nothing, so a caller that uses that set must
+     * inject the pool (the session creates it next to its other device-backed caches).
+     *
+     * @param pool Slot pool to use.
+     */
+    void setDrawBlockPool(vine::raw_ptr<VsgDrawBlockPool> pool);
 
     /** @brief Injects the per-view light block this bridge binds for its own forward shader set.
      *
@@ -651,10 +669,10 @@ class V_VSG_API SceneBridge {
      *                       or null when the caller cannot say. Used only to decide whether OUR forward
      *                       set may take the variant WITHOUT a canonical attribute: a derived array (the
      *                       geometry authored none) is dropped, an authored one is never.
-     * @param draw_block     This drawable's per-draw values (VineDrawBlock: model + params), or null when
-     *                       the caller has none. The block is bound as `vine_draw` on the sets that
-     *                       declare it; it is NOT an input to the variant identity, because the values
-     *                       live in a buffer that is rewritten in place rather than in the pipeline.
+     * @param draw_slot      The drawable's slot in the per-draw block pool, or an invalid Slot when it has
+     *                       none. The slot is NOT part of the variant identity (its values are rewritten in
+     *                       place), so what the wrapper records is the slot's OFFSET: one shared
+     *                       descriptor set per pool chunk, bound with this drawable's dynamic offset.
      * @return State wrapper, or null when not buildable.
      */
     ::vsg::ref_ptr<::vsg::StateGroup> buildStateGroup(
@@ -665,7 +683,7 @@ class V_VSG_API SceneBridge {
         vine::raw_ptr<const vine::graphics::ShaderProgram> program,
         const std::vector<VertexChannel>& extra_channels,
         const DerivedChannels* derived = nullptr,
-        ::vsg::ref_ptr<::vsg::Data> draw_block = {});
+        VsgDrawBlockPool::Slot draw_slot = {});
 
     /** @brief Gets (and caches) the run-time compiled ShaderSet for a program.
      *
@@ -705,6 +723,12 @@ class V_VSG_API SceneBridge {
 
     /** @brief Gets the mesh-resource cache in use (the injected one, or this bridge's own). */
     VsgMeshResourceCache& meshResources();
+
+    /** @brief Gets the slot pool per-drawable values are written to (see setDrawBlockPool).
+     *
+     * @return The injected pool, or null when the caller injected none.
+     */
+    VsgDrawBlockPool* drawBlockPool();
 
     /** @brief Gets the slot's base shader set (the built-in default when unset).
      *
@@ -749,6 +773,44 @@ class V_VSG_API SceneBridge {
      * @param seen Geometries drawn this frame.
      * @return true when anything was evicted.
      */
+    /**
+     * @brief Parks @p slot for release once the frames that could bind it are accounted for.
+     *
+     * @param slot Slot whose drawable is gone (an invalid slot or a bridge without a pool
+     *             is a no-op).
+     */
+    /**
+     * @brief Appends the drawable's per-draw bind of set 1 (see VsgDrawBlockPool).
+     *
+     * The variant's shared commands cannot carry it: the bind names the drawable's slot as a
+     * dynamic offset, so it is per drawable while the descriptor set it selects from is one per
+     * (pool chunk, set layout). Called for both the fresh-build and the cached-template path.
+     *
+     * @param state_group     Wrapper being assembled (the bind is appended last).
+     * @param pipeline_layout The variant's pipeline layout (null or set-less for the sets that
+     *                        declare no per-draw block: nothing is appended then).
+     * @param draw_slot       The drawable's slot (an invalid slot appends nothing).
+     */
+    void appendDrawBlockBind(::vsg::StateGroup& state_group,
+                             ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout,
+                             VsgDrawBlockPool::Slot draw_slot);
+
+    void releaseDrawSlot(VsgDrawBlockPool::Slot slot);
+
+    /**
+     * @brief Returns the parked slots whose ring advances have elapsed to the pool.
+     *
+     * Called once per submitted frame, next to the retire ring's own advance. Nothing here
+     * runs from the destructor: the pool is session-scoped and injected, so it OUTLIVES the
+     * bridge (the same contract the texture / mesh caches have), and a bridge whose slot is
+     * torn down has already returned its slots through clearCache() — which is why the
+     * destructor must not touch the pool at all.
+     */
+    void flushDrawSlots();
+
+    /** @brief Ring advances a released slot waits before the pool may hand it out again. */
+    static constexpr std::uint32_t kDrawSlotRetireFrames = static_cast<std::uint32_t>(VsgRetireRing::kRetireRingDepth);
+
     bool evictAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& seen);
 
     /** @brief Republishes the retained children in command order and refreshes
@@ -813,6 +875,19 @@ class V_VSG_API SceneBridge {
     // bytes are the model's own are then bound once for the whole session. Owned privately otherwise.
     vine::raw_ptr<VsgMeshResourceCache> mesh_cache_ = nullptr;
     VsgMeshResourceCache                default_mesh_cache_;
+    // Per-draw block slots (see setDrawBlockPool). Injected from the session: the slots' buffers belong to
+    // the session's device, so a bridge that owned them would hold device memory past the slot that drew
+    // with it. Null when the caller injected none (the drawables then get no per-draw block at all).
+    vine::raw_ptr<VsgDrawBlockPool> draw_block_pool_ = nullptr;
+    // Slots whose drawable is gone but whose offset a frame in flight may still bind. A slot is returned to
+    // the pool only after the retire ring has advanced past the release, which is the same rule the
+    // replaced state wrappers / data nodes follow (see retireNode / advanceRetireRing).
+    struct PendingDrawSlot
+    {
+        VsgDrawBlockPool::Slot slot;
+        std::uint32_t          frames_remaining = 0; ///< Ring advances to wait before the slot is free.
+    };
+    std::vector<PendingDrawSlot> pending_draw_slots_;
     // The slot's per-view light block (setLightsData): declared in the pipeline
     // layout and descriptor set of the variants built from a ShaderSet that asks
     // for `vine_lights` (our forward set). Null while the built-in set draws.

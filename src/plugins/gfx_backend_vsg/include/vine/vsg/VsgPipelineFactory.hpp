@@ -177,6 +177,7 @@ static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-
  * | set 0 / binding 0 | `material` (std140, PhongMaterialValue) | VsgMaterialManager |
  * | set 0 / binding 1 | `diffuseMap` (define `VINE_DIFFUSE_MAP`) | texture cache |
  * | set 0 / binding 2 | `vine_lights` (VineLightsBlock) | the pass' slot, per view |
+ * | set 1 / binding 0 | `vine_draw` (VineDrawBlock, UNIFORM_BUFFER_DYNAMIC) | SceneBridge, per drawable (see DrawBlockSetBinding) |
  * | push constant 0..128 | `{ mat4 projection; mat4 modelView; }` | vsg (matrix stacks) |
  *
  * The push range is the L2 realization of the SDK's L1 camera blocks (ShaderAbi.hpp):
@@ -211,6 +212,58 @@ static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-
  *         stages could not be compiled (no compiler / bad GLSL).
  */
 ::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
+
+/**
+ * @brief The per-draw block as a CUSTOM descriptor set (set 1), bound per drawable.
+ *
+ * The block is one uniform buffer per drawable in spirit, but not in the pipeline: the
+ * bridge binds ONE buffer holding many slots and selects the drawable's slot with a
+ * DYNAMIC OFFSET (see VsgDrawBlockPool). That choice is why set 1 is declared here as a
+ * custom binding instead of an ordinary descriptor binding:
+ *
+ *  - the layout must be the dynamic-uniform-buffer one, and
+ *  - the state command must be PER DRAWABLE (it carries the offset), so a shared command
+ *    built once per variant — which is what vsg does for an ordinary binding — cannot
+ *    express it.
+ *
+ * This binding therefore contributes the LAYOUT only (so the pipeline layout has set 1 at
+ * all, and `createStateCommand` returns nothing) while the bridge owns the bind command
+ * and appends it to each drawable's state wrapper. `ShaderSet::createDescriptorSetLayout`
+ * returns a custom binding's layout INSTEAD of building one from `descriptorBindings`, so
+ * this type is the single place that says what set 1 is.
+ */
+struct V_VSG_API DrawBlockSetBinding : public ::vsg::Inherit<::vsg::CustomDescriptorSetBinding, DrawBlockSetBinding>
+{
+    /** @brief Creates the set-1 binding. */
+    DrawBlockSetBinding();
+
+    /**
+     * @brief Whether @p dsl is the layout this binding declares.
+     *
+     * Used by vsg to decide whether a shared pipeline layout can be reused: a layout that
+     * is not this one must not be accepted, or a pipeline would be created against a set 1
+     * it does not match.
+     *
+     * @param dsl Layout to compare.
+     * @return true when @p dsl is the per-draw layout.
+     */
+    bool compatibleDescriptorSetLayout(const ::vsg::DescriptorSetLayout& dsl) const override;
+
+    /**
+     * @brief Creates the per-draw set layout (one dynamic uniform buffer at binding 0).
+     *
+     * @return The layout (never null).
+     */
+    ::vsg::ref_ptr<::vsg::DescriptorSetLayout> createDescriptorSetLayout() override;
+
+    /**
+     * @brief Contributes no state command: the bridge binds set 1 itself, per drawable.
+     *
+     * @param layout Pipeline layout the set belongs to (unused).
+     * @return Nothing, so the configurator records no bind for this set.
+     */
+    ::vsg::ref_ptr<::vsg::StateCommand> createStateCommand(::vsg::ref_ptr<::vsg::PipelineLayout> layout) override;
+};
 
 /**
  * @brief Whether scene content should be drawn with our own forward shader.

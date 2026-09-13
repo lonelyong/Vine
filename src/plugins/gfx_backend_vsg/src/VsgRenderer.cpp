@@ -301,6 +301,13 @@ bool VsgRenderer::initialize()
     // belong to the session's device, so shutdown() drops them with it.
     state.mesh_cache = std::make_unique<vine::vsg::VsgMeshResourceCache>();
 
+    // The session's per-draw uniform slots, created next to them for the same reason: our forward
+    // set reads each drawable's opacity from set 1, and every drawable takes its slot from this
+    // ONE pool, so the blocks live in a few mapped buffers instead of one buffer and one
+    // descriptor set per drawable (see VsgDrawBlockPool). It needs the device, so it is created
+    // here rather than with the other caches, and its memory goes away with the session.
+    state.draw_block_pool = std::make_unique<vine::vsg::VsgDrawBlockPool>(state.window->getOrCreateDevice());
+
     // Window-target shader sets shared by its content slots (embedded SPIR-V,
     // no runtime glslang): the depth-on set keeps depth test/write on; the
     // depth-off set disables it so the slot's content always draws on top of

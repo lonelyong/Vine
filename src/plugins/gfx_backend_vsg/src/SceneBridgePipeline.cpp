@@ -243,7 +243,52 @@ namespace
     return shader_set;
 }
 
+/** @brief Whether @p layout is the per-draw block layout this bridge binds itself.
+ *
+ * The check is by SHAPE, not by pointer: the layout is created by DrawBlockSetBinding (one
+ * dynamic uniform buffer at binding 0) for every forward set, and a variant from another set
+ * (the built-in vsg phong set declares its own set 1 — the per-material descriptors) must not
+ * have our dynamic set bound into it: the descriptor would not match the pipeline's layout, and
+ * a driver faults on that rather than reporting it.
+ *
+ * @param layout Set-1 layout of the variant's pipeline layout.
+ * @return true when the set is the per-draw block's.
+ */
+bool isPerDrawSetLayout(const ::vsg::DescriptorSetLayout& layout)
+{
+    if (layout.bindings.size() != 1u) {
+        return false;
+    }
+    const auto& binding = layout.bindings.front();
+    return binding.binding == 0u && binding.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC &&
+           binding.descriptorCount == 1u;
+}
+
 }  // namespace
+
+void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
+                                      ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout,
+                                      VsgDrawBlockPool::Slot draw_slot)
+{
+    // Nothing to bind when the drawable has no slot, the bridge has no pool, or the variant's
+    // set is not the per-draw one (the built-in set declares its own set 1, and a user program's
+    // set may have fewer sets than that).
+    if (!draw_slot.valid() || draw_block_pool_ == nullptr || pipeline_layout == nullptr ||
+        pipeline_layout->setLayouts.size() < 2u || pipeline_layout->setLayouts[1] == nullptr ||
+        !isPerDrawSetLayout(*pipeline_layout->setLayouts[1])) {
+        return;
+    }
+    // The set is per (pool chunk, layout) and the BIND is per drawable: this is where the
+    // drawable's slot becomes a dynamic offset, so every drawable sharing the chunk reuses one
+    // descriptor set while reading its own block.
+    auto descriptor_set = draw_block_pool_->descriptorSet(draw_slot, pipeline_layout->setLayouts[1]);
+    if (descriptor_set == nullptr) {
+        return;
+    }
+    auto bind = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1u, descriptor_set);
+    bind->dynamicOffsets.push_back(draw_block_pool_->offset(draw_slot));
+    state_group.stateCommands.push_back(bind);
+}
 
 ::vsg::ref_ptr<::vsg::ShaderSet> SceneBridge::getProgramShaderSet(
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
@@ -354,7 +399,7 @@ namespace
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
     const std::vector<VertexChannel>& extra_channels,
     const DerivedChannels* derived,
-    ::vsg::ref_ptr<::vsg::Data> draw_block)
+    VsgDrawBlockPool::Slot draw_slot)
 {
     if (data == nullptr) {
         return ::vsg::ref_ptr<::vsg::StateGroup>();
@@ -440,6 +485,8 @@ namespace
             stateGroup->stateCommands.push_back(sc);
         }
         stateGroup->prototypeArrayState = variant_it->second.payload()->prototype_array_state;
+        // The template is shared, the drawable's own per-draw bind is not (see below).
+        appendDrawBlockBind(*stateGroup, variant_it->second.payload()->pipeline_layout, draw_slot);
         return stateGroup;
     }
 
@@ -519,15 +566,6 @@ namespace
         config->assignDescriptor("vine_lights", lights_data_);
     }
 
-    // Per-DRAWABLE values (VineDrawBlock). Same two conditions as the lights block:
-    // only the sets that declare `vine_draw` get the descriptor, and only a drawable
-    // that brought a block binds one. The block is what a translucent drawable costs
-    // per frame — four floats rewritten in place — instead of a pass over its
-    // vertices, so it cannot be part of the variant identity.
-    if (draw_block != nullptr && shaderSet->getDescriptorBinding("vine_draw")) {
-        config->assignDescriptor("vine_draw", draw_block);
-    }
-
     // Assemble the pipeline from the geometry's effective render state. The
     // mapped color blend keeps alpha blending enabled on every pipeline (the
     // per-vertex opacity alpha may drop below 1 at any time without a rebuild);
@@ -569,6 +607,13 @@ namespace
         ++pipeline_variants_;
     }
 
+    // The drawable's per-draw values (VineDrawBlock) live in a pool slot, and the slot's OFFSET
+    // is what the wrapper binds, so set 1 is bound HERE — after the shared template commands
+    // (the pipeline and the set-0 binds) and per drawable. It is the one state command a variant
+    // cannot share: the offset differs per drawable while the descriptor set it selects from is
+    // one per pool chunk.
+    appendDrawBlockBind(*stateGroup, config->layout, draw_slot);
+
     // Cache this variant's reusable pieces for later identical geometry. A
     // hash collision with a different variant simply overwrites the entry —
     // the displaced variant rebuilds fresh on its next appearance (still
@@ -580,6 +625,7 @@ namespace
         entry->state_commands        = stateGroup->stateCommands;
         entry->prototype_array_state = stateGroup->prototypeArrayState;
         entry->base_binding          = config->baseAttributeBinding;
+        entry->pipeline_layout       = config->layout;
         // The entry owns BOTH key objects (see OwnedPairCacheEntry): a released
         // program or material must not be replaceable at the same address while
         // the template is cached, or the equality check above would report a hit

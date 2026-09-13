@@ -177,6 +177,10 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // Route mesh streams through the SESSION's cache as well: the same model read by two slots (or by two
     // drawables in one slot) would otherwise upload its vertices once per drawable.
     content.bridge.setMeshResourceCache(state.mesh_cache.get());
+    // Route per-draw values through the SESSION's slot pool: the blocks' buffers and descriptor
+    // sets are shared by every drawable of every slot, so a scene costs slots instead of one
+    // buffer + one descriptor set per drawable.
+    content.bridge.setDrawBlockPool(state.draw_block_pool.get());
     // Route this slot's rejections through the renderer's diagnostics (trace,
     // counters, host sink): the slot is what actually discovers them.
     installDiagnosticRoute(diagnostics, content.bridge);

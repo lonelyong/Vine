@@ -198,6 +198,38 @@ const ::vsg::ShaderStages& compiledStages(vine::graphics::ShaderPreset preset)
 
 }  // namespace
 
+DrawBlockSetBinding::DrawBlockSetBinding() :
+    Inherit(1u) // set 1
+{
+}
+
+bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorSetLayout& dsl) const
+{
+    // Exactly one dynamic uniform buffer at binding 0: anything else is a different set 1,
+    // so the caller must not reuse a pipeline layout built against it.
+    if (dsl.bindings.size() != 1u) {
+        return false;
+    }
+    const auto& binding = dsl.bindings.front();
+    return binding.binding == 0u && binding.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC &&
+           binding.descriptorCount == 1u;
+}
+
+::vsg::ref_ptr<::vsg::DescriptorSetLayout> DrawBlockSetBinding::createDescriptorSetLayout()
+{
+    auto layout = ::vsg::DescriptorSetLayout::create();
+    // The draw block is read by the FRAGMENT stage (the opacity scales the fragment alpha).
+    layout->addBinding(0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1u, VK_SHADER_STAGE_FRAGMENT_BIT);
+    return layout;
+}
+
+::vsg::ref_ptr<::vsg::StateCommand> DrawBlockSetBinding::createStateCommand(::vsg::ref_ptr<::vsg::PipelineLayout>)
+{
+    // Deliberately empty: the bind command carries a per-drawable dynamic offset, so it
+    // cannot be one shared command per variant (see the header).
+    return {};
+}
+
 ::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
 {
     // The stages come from the SDK's built-in program for this preset (owned by
@@ -244,15 +276,22 @@ const ::vsg::ShaderStages& compiledStages(vine::graphics::ShaderPreset preset)
     // assigns nothing to it, which is why it is declared with an empty sample.
     shader_set->addDescriptorBinding("vine_lights", "", 0, 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
                                      VK_SHADER_STAGE_FRAGMENT_BIT, ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(VineLightsBlock))));
-    // Per-DRAWABLE values (VineDrawBlock): the model matrix plus four scalars, one
-    // small uniform per drawn command instead of one array element per vertex. Only
-    // the fragment stage reads it today (params.x is the opacity), so the binding is
-    // declared for that stage; it is declared with a sample of the block's size so
-    // the layout and the assigned data agree without a device present.
-    shader_set->addDescriptorBinding("vine_draw", "", 0, 3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+    // Per-DRAWABLE values (VineDrawBlock): one slot per drawn command, selected by a dynamic
+    // offset from a buffer the whole scene shares. It is a CUSTOM set (1) rather than an ordinary
+    // binding because the bind command is per drawable — see DrawBlockSetBinding — so this
+    // contributes the layout and the bridge binds it.
+    //
+    // The declaration below it is what puts set 1 in the pipeline layout AT ALL: vsg derives the
+    // range of sets from `descriptorBindings` (ShaderSet::descriptorSetRange), and a shader that
+    // declares a set the layout does not have is an invalid pipeline — the driver resolves a set
+    // layout that does not exist. The declaration is never assigned a descriptor, because
+    // DescriptorConfigurator::assignDefaults skips a set a custom binding owns (that is what
+    // makes the two agree: the custom binding owns set 1's LAYOUT, this owns its RANGE).
+    shader_set->addDescriptorBinding("vine_draw", "", 1, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1,
                                      VK_SHADER_STAGE_FRAGMENT_BIT,
                                      ::vsg::ubyteArray::create(
                                          static_cast<uint32_t>(sizeof(vine::graphics::VineDrawBlock))));
+    shader_set->customDescriptorSetBindings.push_back(DrawBlockSetBinding::create());
     // Camera matrices. The L1 contract is the SDK's VineViewBlock/VineDrawBlock
     // (ShaderAbi.hpp); on this backend the 128-byte push range is their L2
     // realization:

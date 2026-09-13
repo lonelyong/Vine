@@ -51,6 +51,7 @@
 #include <vsg/maths/vec4.h>
 #include <vsg/utils/ShaderSet.h>
 
+#include <vine/vsg/VsgDrawBlockPool.hpp>
 #include <vine/vsg/VsgMeshResourceCache.hpp>
 #include <vine/vsg/VsgTextureCache.hpp>
 
@@ -197,6 +198,12 @@ struct VsgRendererState {
     // mesh share one bind — and therefore one device buffer and one upload. Session-scoped for the same
     // reason: the buffers belong to the session's device.
     std::unique_ptr<VsgMeshResourceCache> mesh_cache;
+    // The session's pool of per-draw uniform slots, injected the same way (see
+    // SceneBridge::setDrawBlockPool): our forward set reads each drawable's opacity from set 1, and
+    // the slots those blocks live in are shared by the whole session, so a scene's drawables own
+    // slots in a handful of buffers instead of one buffer and one descriptor set each.
+    // Session-scoped because the slots' memory belongs to the session's device.
+    std::unique_ptr<VsgDrawBlockPool> draw_block_pool;
     // Window-target shader sets shared by its content slots' bridges: one per
     // DepthMode (TestAndWrite / TestOnly / Disabled) so each slot bakes the
     // right depth test/write state. Per-geometry pipelines are compiled per

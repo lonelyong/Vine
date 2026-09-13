@@ -79,6 +79,7 @@ SceneBridge::SceneBridge()
     shared_objects_ = ::vsg::SharedObjects::create();
 }
 
+// Deliberately default: the destructor must NOT touch the injected caches (see flushDrawSlots).
 SceneBridge::~SceneBridge() = default;
 
 void SceneBridge::setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet)
@@ -145,6 +146,45 @@ VsgMeshResourceCache& SceneBridge::meshResources()
     return mesh_cache_ != nullptr ? *mesh_cache_ : default_mesh_cache_;
 }
 
+void SceneBridge::setDrawBlockPool(vine::raw_ptr<VsgDrawBlockPool> pool)
+{
+    draw_block_pool_ = pool;
+}
+
+VsgDrawBlockPool* SceneBridge::drawBlockPool()
+{
+    return draw_block_pool_;
+}
+
+void SceneBridge::releaseDrawSlot(VsgDrawBlockPool::Slot slot)
+{
+    if (draw_block_pool_ == nullptr || !slot.valid()) {
+        return;
+    }
+    // Deferred by one ring depth: the frames in flight may still bind this slot's offset,
+    // so it must not be handed to another drawable until the retire ring has advanced past
+    // them (the same rule retireNode follows for the nodes that bound it).
+    pending_draw_slots_.push_back(PendingDrawSlot{ slot, kDrawSlotRetireFrames });
+}
+
+void SceneBridge::flushDrawSlots()
+{
+    if (draw_block_pool_ == nullptr || pending_draw_slots_.empty()) {
+        pending_draw_slots_.clear();
+        return;
+    }
+    const auto remaining = std::remove_if(pending_draw_slots_.begin(), pending_draw_slots_.end(),
+                                          [this](PendingDrawSlot& pending) {
+                                              if (pending.frames_remaining > 0u) {
+                                                  --pending.frames_remaining;
+                                                  return false;
+                                              }
+                                              draw_block_pool_->release(pending.slot);
+                                              return true;
+                                          });
+    pending_draw_slots_.erase(remaining, pending_draw_slots_.end());
+}
+
 VsgTextureCache& SceneBridge::textureCache()
 {
     return texture_cache_ != nullptr ? *texture_cache_ : default_texture_cache_;
@@ -191,13 +231,13 @@ struct SceneBridge::Item {
     ::vsg::ref_ptr<::vsg::Commands> data_node;
     // Per-vertex color array; on the BUILT-IN path its alpha carries the effective
     // per-drawable opacity and is rewritten only when the opacity actually changed.
-    // Our forward path keeps this null and puts the opacity in @ref draw_block.
+    // Our forward path keeps this null and puts the opacity in @ref draw_slot.
     ::vsg::ref_ptr<::vsg::vec4Array> colors;
-    // This drawable's per-draw values (VineDrawBlock: model + params), bound as
-    // `vine_draw`. It is what a translucent drawable costs per frame: four floats (plus
-    // the model matrix when the drawable moves) rewritten in place, instead of a pass
-    // over the vertices. Null on the sets that do not declare the binding.
-    ::vsg::ref_ptr<::vsg::floatArray> draw_block;
+    // This drawable's slot in the session's per-draw block pool (see setDrawBlockPool), or an
+    // invalid slot when the bridge has no pool or the reserve failed. The slot's VALUES are
+    // what a translucent drawable costs per frame — four floats written in place instead of a
+    // pass over its vertices — and the slot's OFFSET is what its state wrapper binds.
+    VsgDrawBlockPool::Slot draw_slot;
     // Identity of the streams the retained data node was built from, per vertex channel and for the index
     // stream (see ChannelKey). A data revision whose VERTEX channels are all unchanged needs only the index
     // stream replaced: a rebuild would re-materialise — and re-upload — every channel with it.
@@ -230,10 +270,10 @@ struct SceneBridge::Item {
     ::vsg::dmat4 last_matrix;
     bool matrix_valid = false;
     float last_opacity = -1.0f;  // sentinel forces the first write
-    // Last opacity and world matrix written into @ref draw_block; the sentinel forces the
-    // first write. Separate from @ref last_opacity because the built-in path and the
-    // forward path carry the opacity in different places (the carrier's alpha vs the block).
-    float last_draw_opacity = -1.0f;
+    // Last opacity written into @ref draw_slot (the sentinel forces the first write). Separate
+    // from @ref last_opacity because the built-in path and the forward path carry the opacity in
+    // different places (the carrier's alpha vs the pooled block).
+    float last_slot_opacity = -1.0f;
     // Consecutive frames this geometry was absent (hidden/culled/removed).
     std::uint32_t absent_frames = 0;
 };
@@ -407,10 +447,21 @@ void SceneBridge::advanceRetireRing()
     // re-recorded since (start() waits on the slot's fence before re-recording it) and the GPU
     // no longer executes them.
     retire_ring_.advance();
+    // Same one-per-submit bookkeeping for the per-draw slots whose drawable is gone: their
+    // offset may still be bound by the frames the ring just accounted for.
+    flushDrawSlots();
 }
 
 void SceneBridge::clearCache()
 {
+    // Every retained item goes, so every per-draw slot it held goes with it (deferred: the
+    // wrappers that bound those offsets are being dropped in the same breath).
+    for (auto& entry : cache_) {
+        if (Item* item = entry.second.payload().get()) {
+            releaseDrawSlot(item->draw_slot);
+            item->draw_slot = {};
+        }
+    }
     cache_.clear();
     program_shader_sets_.clear();
     program_stages_.clear();
@@ -493,6 +544,24 @@ bool SceneBridge::syncRenderCommands(
                                         std::move(entry), 0u))
                      .first;
             changed = true;
+            // The drawable's per-draw block slot is reserved here, with the item: the
+            // wrapper built below binds its offset, so it has to exist first. Only OUR
+            // forward set reads the block — the built-in fallback carries opacity in the
+            // vertex colour — so only that set takes a slot. A pool that cannot provide one
+            // is an OUT-OF-MEMORY failure, and drawing without a block would read zeros (the
+            // shader would scale the fragment alpha by 0 and the drawable would silently
+            // vanish), so it is reported and the drawable skipped.
+            if (forward_draw_block_ && !item->draw_slot.valid() && draw_block_pool_ != nullptr) {
+                item->draw_slot = draw_block_pool_->reserve();
+                if (!item->draw_slot.valid()) {
+                    report(vine::graphics::DiagnosticSeverity::Error,
+                           vine::graphics::DiagnosticCategory::ContentSkipped,
+                           u8"the per-draw block pool could not provide a slot (out of device memory); the "
+                           u8"drawable is dropped this frame");
+                    cache_.erase(it);
+                    continue;
+                }
+            }
         }
         item = it->second.payload().get();
         if (item->rejected) {
@@ -752,48 +821,9 @@ bool SceneBridge::syncRenderCommands(
         }
 
         // World-space placement comes from the command stream; the transform write at the
-        // end of this iteration is skipped when the node did not move. Read here because
-        // the draw block below carries the same matrix.
+        // end of this iteration is skipped when the node did not move.
         const ::vsg::dmat4 world       = detail::toVsg(cmd.modelMatrix);
         const bool        matrix_moved = !item->matrix_valid || item->last_matrix != world;
-
-        // Per-draw values (VineDrawBlock). Created once per drawable and rewritten IN
-        // PLACE when the drawable's opacity or placement changes: that is what a
-        // translucent drawable costs per frame (four floats, plus the matrix when it
-        // moves) instead of a pass over its vertices. The block is the SDK's L1 layout
-        // (ShaderAbi.hpp), written as raw floats so this backend never restates it —
-        // sizeof(VineDrawBlock) is the only authority on how the 20 floats are laid out.
-        //
-        // It must exist BEFORE the state wrapper below is built: the wrapper binds it, and a
-        // wrapper built without it would bind the ShaderSet's SAMPLE uniform instead — which
-        // the shader would then read as zeros forever, because nothing marks the state dirty
-        // again.
-        if (forward_draw_block_ && item->draw_block == nullptr) {
-            item->draw_block = ::vsg::floatArray::create(static_cast<std::uint32_t>(
-                sizeof(vine::graphics::VineDrawBlock) / sizeof(float)));
-            item->draw_block->properties.dataVariance = ::vsg::DYNAMIC_DATA;
-            item->last_draw_opacity                    = -1.0f; // sentinel forces the first write
-        }
-        if (item->draw_block != nullptr &&
-            (matrix_moved || item->last_draw_opacity != cmd.opacity)) {
-            static_assert(sizeof(vine::graphics::VineDrawBlock) == 20u * sizeof(float),
-                          "VineDrawBlock must be a mat4 followed by a vec4 for std140 and D3D cbuffer "
-                          "packing to agree");
-            auto* block = item->draw_block->data();
-            for (std::size_t column = 0u; column < 4u; ++column) {
-                for (std::size_t row = 0u; row < 4u; ++row) {
-                    block[column * 4u + row] = static_cast<float>(world(column, row));
-                }
-            }
-            block[16] = cmd.opacity; // VineDrawBlock::params.x
-            block[17] = 0.0f;
-            block[18] = 0.0f;
-            block[19] = 0.0f;
-            // DYNAMIC (see the create above): vsg's per-frame TransferTask re-copies the
-            // block this frame; an unchanged frame issues no transfer at all.
-            item->draw_block->dirty();
-            item->last_draw_opacity = cmd.opacity;
-        }
 
         if (state_dirty || item->state_node == nullptr || state_channels_changed) {
             // The replaced wrapper (and the pipeline it holds) may still be
@@ -802,7 +832,7 @@ bool SceneBridge::syncRenderCommands(
             item->state_node = buildStateGroup(item->data_node, item->material.get(),
                                                item->texture.get(), item->render_state,
                                                item->program.get(), item->extra_channels, &item->derived,
-                                               item->draw_block);
+                                               item->draw_slot);
             if (item->state_node == nullptr) {
                 cache_.erase(it);
                 continue;
@@ -832,11 +862,20 @@ bool SceneBridge::syncRenderCommands(
             created->emplace_back(item->transform);
         }
 
+        // Effective per-drawable opacity. On our forward set it is a PER-DRAWABLE VALUE held in
+        // the pooled block: four bytes written through the pool's mapping, so a translucent
+        // drawable costs one store per frame instead of a pass over its vertices — and the
+        // value is in the buffer the frame records FROM rather than one frame behind it.
+        if (item->draw_slot.valid() && item->last_slot_opacity != cmd.opacity) {
+            draw_block_pool_->writeOpacity(item->draw_slot, cmd.opacity);
+            item->last_slot_opacity = cmd.opacity;
+        }
+
         // Effective opacity (scene x nodes x leaf geometry) rides the per-vertex alpha on
         // the BUILT-IN path only, whose shader reads the vertex colour's alpha (there is
         // no draw block there). Rewriting O(vertices) only when it actually changed keeps
         // the steady-state per-frame cost independent of mesh size, while opacity edits
-        // still apply live. Our forward path keeps `colors` null and uses the draw block.
+        // still apply live. Our forward path keeps `colors` null and uses the pooled block.
         if (item->colors != nullptr && item->last_opacity != cmd.opacity) {
             const float opacity = cmd.opacity;
             for (auto& color : *item->colors) {
@@ -891,6 +930,10 @@ bool SceneBridge::evictAbsentItems(const std::unordered_set<const vine::graphics
             // The retained subtree may still be referenced by an in-flight
             // command buffer, so park it instead of destroying it here.
             retireNode(std::move(item->transform));
+            // The draw block's slot goes with it — also deferred, because a frame in flight
+            // may still bind the offset this drawable's wrapper recorded.
+            releaseDrawSlot(item->draw_slot);
+            item->draw_slot = {};
             changed = true;
             it = cache_.erase(it);
         } else {
