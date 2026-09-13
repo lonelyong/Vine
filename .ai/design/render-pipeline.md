@@ -203,9 +203,12 @@ deferred 默认路径 —— 档位重排后 lavapipe 无 VUID/validation 错误
 
 | 步 | 内容 | 判据 |
 | --- | --- | --- |
-| **S2a（前向）** | 内容 set 声明 `vine_shadow`(UBO, set0 b3) + `shadow_map`(sampler2D, set0 b4)；槽从 pass 输入 target 填块 + 绑深度；`std_forward.frag` 加 `VINE_SHADOW_MAP` 门控的阴影项 | 新像素相位（立方体在地面上的投影：影内的地面像素明显暗于影外）+ 无投影光时证据逐字节不变 |
-| **S2b（延迟）** | 全屏 program ABI 扩一条规则：**源自己的绑定之后**，接该 pass 声明的额外输入（纹理绑定）与 `VineShadowBlock`（UBO）；`deferred_light.frag` 同样的门控阴影项。SSAO 将来走同一跳 | 同上（延迟路径的像素相位）|
+| **S2a（延迟）** | 全屏 program ABI 扩一条规则：**源自己的绑定之后**，接该 pass 声明的额外输入（纹理绑定）与 `VineShadowBlock`（UBO）；`deferred_light.frag` 加阴影项（**程序带 define 的变体**，见下）。SSAO 将来走同一跳 | 新像素相位（立方体在地面上的投影：影内的地面像素明显暗于影外）+ 无投影光时证据逐字节不变 |
+| **S2b（前向）** | 内容 set 声明 `vine_shadow`(UBO) + `shadow_map`(sampler2D)；槽从 pass 输入 target 填块 + 绑深度；`std_forward.frag` 同样的变体 | 同上（前向路径的像素相位）|
 
-**为什么先做前向**：前向的消费者是内容槽，块与采样器都走已有的 `vine_lights` / `diffuseMap` 绑定模式，
-不需要动全屏 ABI；延迟那条要先扩全屏 ABI（源绑定之后怎么排），是更大的一刀。两条都做完，§2 的
-"阴影是效果"才算真的兑现。
+**为什么先做延迟**（2026-09-13 修正：起初的判断反了）：**全屏 program 的 ShaderSet 是每个 pass 现建的**
+（`makeFullscreenProgramNode` 为这个程序建一套绑定，程序文本带 define 就能决定要不要声明阴影绑定），
+所以延迟路径**不需要动共享的 set**；而**内容 set 是按 (target, 深度档) 会话级共享的**
+（`state.depth_on_shader_set`），一个带阴影的 pass 和一个不带阴影的 pass 会要两套 set —— 前向那条要么多 6 套
+缓存 set（3 深度档 × 有/无阴影，窗口 + 每离屏目标），要么永远声明绑定并绑一张 1×1 深度占位。两条都做完，
+§2 的"阴影是效果"才算真的兑现。
