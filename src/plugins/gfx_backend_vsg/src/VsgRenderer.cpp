@@ -423,6 +423,36 @@ void VsgRenderer::beginFrame()
     }
     state.viewer->advanceToNextFrame();
     state.viewer->handleEvents();
+    refreshRetainedShares();
+}
+
+void VsgRenderer::refreshRetainedShares()
+{
+    // The frame's ownership picture, built once for every cache that sweeps during it (P11): how
+    // many retained entries hold each object, across the material manager and every content slot
+    // of every target. A cache judging by its own shares alone sees the other holders and waits
+    // for them, so this count is what lets "the app let go" be observed at all — and it has to
+    // include the slots that are NOT drawing this frame: their entries hold the objects too.
+    //
+    // The map is a state member and only ever filled in place (never reallocated away from the
+    // bridges' pointers), and the bridges are handed a pointer that this frame's end clears.
+    state.retained_shares.clear();
+    persistent.materialManager.collectOwnedShares(state.retained_shares);
+    for (auto& target_entry : state.targets) {
+        for (auto& slot_entry : target_entry.second.content_slots) {
+            slot_entry.second.bridge.collectOwnedShares(state.retained_shares);
+            slot_entry.second.bridge.setRetainedShares(&state.retained_shares);
+        }
+    }
+}
+
+void VsgRenderer::clearRetainedShares()
+{
+    for (auto& target_entry : state.targets) {
+        for (auto& slot_entry : target_entry.second.content_slots) {
+            slot_entry.second.bridge.setRetainedShares(nullptr);
+        }
+    }
 }
 
 void VsgRenderer::endFrame()
@@ -658,7 +688,13 @@ void VsgRenderer::submitFrame()
     // Same point in the frame: release the material resources of materials the app has dropped.
     // Their entries own the Material (that is what keeps the pointer key valid), so this is what
     // stops a live scene's material churn from pinning every material it has ever seen (D13).
-    persistent.materialManager.releaseAbandoned();
+    // Judged by the frame's counts (refreshRetainedShares): a material is also held by the variant
+    // template of every slot that draws it, so this cache's own shares alone never say "the app
+    // dropped it" — that is the mutual wait the counts break (P11).
+    persistent.materialManager.releaseAbandoned(state.retained_shares);
+    // The counts are the frame's: a bridge that kept the pointer past it would read counts nothing
+    // refreshes (and, after a session teardown, memory that is gone).
+    clearRetainedShares();
 }
 
 void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)

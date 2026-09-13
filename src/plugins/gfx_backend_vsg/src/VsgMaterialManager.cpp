@@ -153,7 +153,25 @@ VsgMaterialManager::~VsgMaterialManager() = default;
 
 std::size_t VsgMaterialManager::releaseAbandoned()
 {
-    return eraseAbandoned(d->cache);
+    // This cache's own shares only: with several caches holding one material, only the session's
+    // counts can tell "the app let go" from "another cache still holds it" (see the declaration
+    // and P11). Called without them, this is the conservative answer — an entry held by a variant
+    // template is kept, which is what a caller driving one manager on its own expects.
+    OwnedShareCounts local;
+    collectOwnedShares(local);
+    return eraseAbandoned(d->cache, local);
+}
+
+std::size_t VsgMaterialManager::releaseAbandoned(const OwnedShareCounts& shares)
+{
+    return eraseAbandoned(d->cache, shares);
+}
+
+void VsgMaterialManager::collectOwnedShares(OwnedShareCounts& shares) const
+{
+    for (const auto& entry : d->cache) {
+        shares.add(entry.first);
+    }
 }
 
 void VsgMaterialManager::updateMaterial(vine::raw_ptr<vine::graphics::Material> material)

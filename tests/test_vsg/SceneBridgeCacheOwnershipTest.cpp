@@ -38,6 +38,7 @@
 #include <vsg/nodes/Group.h>
 #include <vsg/utils/ShaderSet.h>
 
+#include <cstdio>
 #include <vector>
 
 using namespace vine::graphics;
@@ -248,6 +249,105 @@ TEST(SceneBridgeCacheOwnershipTest, RetainedBridgeOwnsTheMaterial)
     EXPECT_EQ(TrackedMaterial::alive, 1);
     MaterialPtr fresh(new TrackedMaterial());
     EXPECT_NE(fresh.get(), released);
+}
+
+/**
+ * @brief A material the app dropped is released by the frame's sweeps (P11).
+ *
+ * Two caches hold a bound material: the material manager's entry and the bridge's
+ * variant template. Each judges by "nothing but the retained entries references it", and
+ * each used to answer that question with "am I the only reference left?" — which is never
+ * true while the OTHER cache holds it. Both waited for the other, so a material (and its
+ * Phong value, its descriptor set and the template's cached bind commands) stayed alive
+ * until a capacity trim happened to push one of the two out.
+ *
+ * The tie is broken by a count: an object is released when the only references left to it
+ * are the retained entries that hold it, so the entries' own shares are what the sweeps
+ * subtract. This asserts the OUTCOME, which is what makes it a regression test: the
+ * tracked material is destroyed by the frame's two sweeps, in one frame, without the
+ * SDK's explicit releaseMaterial() and without any FIFO push.
+ */
+TEST(SceneBridgeCacheOwnershipTest, ADroppedMaterialIsReleasedWithoutAnExplicitRelease)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    vine::vsg::VsgMaterialManager manager;
+    bridge.setMaterialManager(&manager);
+    auto root     = vsg::Group::create();
+    auto geometry = makeTriangle(0);
+
+    TrackedMaterial::alive = 0;
+    {
+        MaterialPtr material(new TrackedMaterial());
+        material->setDiffuse(vine::Colorf(0.25f, 0.5f, 0.75f, 1.0f));
+
+        std::vector<RenderCommand> commands;
+        commands.emplace_back(geometry, material, Mat4d());
+        bridge.syncRenderCommands(commands, root.get(), nullptr);
+        ASSERT_EQ(TrackedMaterial::alive, 1);
+    }
+
+    // The app's reference is gone — the geometry's too, so this frame evicts the retained item
+    // that holds the material for its identity (`Item::material`, which is a holder the sweep has
+    // to see go first: the retained node still binds that material's Phong value). What is left
+    // is the pair the defect was about: the manager's entry and the bridge's variant template.
+    geometry.reset();
+    std::vector<RenderCommand> no_commands;
+    bridge.syncRenderCommands(no_commands, root.get(), nullptr);
+    EXPECT_EQ(manager.releaseAbandoned(), 1u)
+        << "the manager's entry must be released in the same frame the app let go, not when a "
+           "capacity trim happens to push it out";
+    EXPECT_EQ(TrackedMaterial::alive, 0)
+        << "the material must not survive its own release through the entry that owned it";
+}
+
+/**
+ * @brief The session's counts see what one bridge cannot (P11, why the count is session-wide).
+ *
+ * The number of retained shares of an object is data dependent, and the part that matters here is
+ * the one a single bridge cannot know: what the OTHER slots hold. A bridge counting what it can
+ * see finds its own caches plus the manager's entry, and then reads the second slot's share as an
+ * outside owner — so both slots judge "the app still holds it" and neither lets go.
+ *
+ * This pins the counts themselves, which is where the design decision lives: the session's count of
+ * a material two slots draw is strictly larger than the count one bridge can build, and it is the
+ * larger number the sweeps are handed (VsgRenderer::refreshRetainedShares).
+ */
+TEST(SceneBridgeCacheOwnershipTest, SessionSharesCountEverySlotAndABridgeCannot)
+{
+    vine::vsg::VsgMaterialManager manager;
+    vine::vsg::SceneBridge       first;
+    vine::vsg::SceneBridge       second;
+    for (auto* bridge : { &first, &second }) {
+        bridge->setShaderSet(vsg::createPhongShaderSet());
+        bridge->setMaterialManager(&manager);
+    }
+    auto        root_first  = vsg::Group::create();
+    auto        root_second = vsg::Group::create();
+    MaterialPtr material(new Material());
+    auto        geometry = makeTriangle(0);
+    auto        command  = RenderCommand(geometry, material, Mat4d());
+
+    std::vector<RenderCommand> commands{ command };
+    first.syncRenderCommands(commands, root_first.get(), nullptr);
+    second.syncRenderCommands(commands, root_second.get(), nullptr);
+
+    // What one bridge can count: its own caches and the manager's entry.
+    vine::vsg::OwnedShareCounts one_bridge;
+    manager.collectOwnedShares(one_bridge);
+    first.collectOwnedShares(one_bridge);
+    // What the session counts: every slot's shares as well.
+    vine::vsg::OwnedShareCounts session;
+    manager.collectOwnedShares(session);
+    first.collectOwnedShares(session);
+    second.collectOwnedShares(session);
+
+    EXPECT_GE(one_bridge.of(material.get()), 2u)
+        << "the manager's entry and this bridge's variant template both hold it";
+    EXPECT_GT(session.of(material.get()), one_bridge.of(material.get()))
+        << "the second slot's variant template holds the same material, and a per-bridge count "
+           "cannot see it — which is what made the two caches wait for each other";
+    EXPECT_GE(session.of(geometry.get()), 2u) << "both slots' items own the same geometry";
 }
 
 /**

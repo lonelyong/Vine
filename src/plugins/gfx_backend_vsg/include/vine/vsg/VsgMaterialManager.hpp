@@ -9,6 +9,8 @@
 #include <vsg/state/material.h>
 
 #include <vine/graphics/MaterialManager.hpp>
+
+#include <vine/vsg/OwnedCache.hpp>
 #include <vine/raw_ptr.hpp>
 
 namespace vine::graphics
@@ -72,12 +74,36 @@ class V_VSG_API VsgMaterialManager : public vine::graphics::MaterialManager {
      * look its entry up again, so this releases it — and the material with it —
      * immediately instead of letting it sit until the session ends.
      *
-     * The renderer calls this once per submitted frame. Materials the app still
-     * holds are kept (their entries may be reused by a hidden or culled object).
+     * A material is ALSO held by the variant template of every slot that draws
+     * it, so this only counts this cache's own shares: "the app let go" needs the
+     * session's counts (see releaseAbandoned(const OwnedShareCounts&) and P11).
+     *
+     * The renderer calls this once per submitted frame.
      *
      * @return Number of released entries.
      */
     std::size_t releaseAbandoned();
+
+    /** @brief Releases every entry whose material the session's counts say the app has dropped.
+     *
+     * The exact form of the rule above: a material is released when the only
+     * references left to it are the retained entries that hold it, counted across
+     * every cache that sweeps with this one (OwnedShareCounts). Without that count
+     * the two caches that hold one material wait for each other for ever: each sees
+     * the other's share and judges by "nothing but me references it" (P11).
+     *
+     * @param shares Retained shares counted for the materials this sweep judges.
+     * @return Number of released entries.
+     */
+    std::size_t releaseAbandoned(const OwnedShareCounts& shares);
+
+    /** @brief Counts one retained share per material this manager holds.
+     *
+     * Feeds the session's OwnedShareCounts (see releaseAbandoned).
+     *
+     * @param shares Counts to add to.
+     */
+    void collectOwnedShares(OwnedShareCounts& shares) const;
 
   public:
     /** @brief Rebuilds the cached resource for a material.

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 
 #include <vine/intrusive_ptr.hpp>
@@ -12,21 +13,97 @@
 V_VSG_NS_BEGIN
 
 /**
- * @brief Returns whether a cache-owned key object has no owner left but the cache.
+ * @brief How many retained entries hold each key object, counted across the caches
+ * that sweep together.
  *
- * A null object counts as released: there is nothing to keep alive, which is
- * how a default resource (a null program or material) behaves. This is the
- * single definition of "the app has let go of it", shared by every entry kind
- * so a cache can never disagree with another about what "abandoned" means.
+ * "The app has let go of this object" cannot be read off the object's reference count
+alone: when
+ * several caches own the same object (the material manager and a bridge's variant
+template own one
+ * Material; a bridge's stage cache, its ShaderSet cache and its variant templates o
+wn one
+ * ShaderProgram), each entry sees the OTHERS' shares and, judging by "no owner left b
+ut me",
+ * waits for the others to let go first — for ever, since they wait for it in turn. 
+That is the P11
+ * defect: a material the app dropped stayed alive with its variant template until a
+ capacity trim
+ * happened to push one of the two out.
+ *
+ * The count is what breaks the tie: an object is released when the only references l
+eft to it are
+ * the RETAINED ENTRIES that hold it, i.e. `useCount() <= shares`. The number of sha
+res is data
+ * dependent (a material bound by two slots with two programs is held by three entri
+es), so it is
+ * counted, never assumed: collectOwnedShares() walks every cache that sweeps together
+, and the
+ * sweep then judges by that number.
+ *
+ * Counted entries are exactly the ones an entry's `abandoned()` is evaluated for, so
+ over-counting
+ * would release too early and under-counting only keeps an entry a sweep longer — the
+ collection
+ * walks the same caches as the sweep it feeds.
+ */
+class OwnedShareCounts
+{
+  public:
+    /** @brief Counts one retained share of @p object.
+     *
+     * @param object Key object held by a retained entry (null is ignored: a null key
+ is not owned).
+     */
+    void add(const void* object)
+    {
+        if (object != nullptr) {
+            ++shares_[object];
+        }
+    }
+
+    /** @brief Drops every count, so the collection can be filled again for the next frame. */
+    void clear() noexcept { shares_.clear(); }
+
+    /** @brief Gets the number of retained shares counted for @p object.
+     *
+     * @param object Key object to look up (null counts as none).
+     * @return Retained shares holding @p object, 0 when no entry holds it.
+     */
+    [[nodiscard]] std::uint32_t of(const void* object) const
+    {
+        const auto it = shares_.find(object);
+        return it == shares_.end() ? 0u : it->second;
+    }
+
+  private:
+    std::unordered_map<const void*, std::uint32_t> shares_;
+};
+
+/**
+ * @brief Returns whether a cache-owned key object has no owner left but the retain
+ed entries.
+ *
+ * A null object counts as released: there is nothing to keep alive, which is how a de
+fault resource
+ * (a null program or material) behaves. This is the single definition of "the app has
+ let go of it",
+ * shared by every entry kind so a cache can never disagree with another about what 
+"abandoned"
+ * means.
  *
  * @tparam Object Key object type (held by const reference).
  * @param object  Object the cache owns an entry for.
+ * @param shares  Retained shares counted for the objects of this sweep (see OwnedSh
+areCounts).
  * @return true when the app released @p object (or it is null).
  */
 template <class Object>
-bool keyReleased(const vine::intrusive_ptr<const Object>& object) noexcept
+bool keyReleased(const vine::intrusive_ptr<const Object>& object, const OwnedShareCounts& shares) noexcept
 {
-    return object == nullptr || object->useCount() <= 1u;
+    // `useCount()` counts references: the app's own references, plus one share per retained
+    // entry. Equal to the retained shares means every remaining reference IS a retained entry,
+    // i.e. nothing outside the caches holds the object any more.
+    return object == nullptr || static_cast<std::uint32_t>(object->useCount()) <= shares.of(object.get());
 }
 
 /**
@@ -75,14 +152,18 @@ class OwnedCacheEntry
     /** @brief Gets the key object (null for a default entry). */
     const Object* key() const noexcept { return object_.get(); }
 
-    /** @brief Returns whether the cache is the only owner left.
+    /** @brief Returns whether the app released the object this entry owns.
      *
-     * True means the app has released the object: no later lookup for it is
-     * possible, so the entry (and the object) can be freed now.
+     * True means no later lookup for it is possible, so the entry (and the
+     * object) can be freed now.
      *
-     * @return true when nothing but this cache still references the object.
+     * @param shares Retained shares this sweep counted for that object.
+     * @return true when nothing but retained entries still reference the object.
      */
-    bool abandoned() const noexcept { return object_ != nullptr && keyReleased(object_); }
+    bool abandoned(const OwnedShareCounts& shares) const noexcept
+    {
+        return object_ != nullptr && keyReleased(object_, shares);
+    }
 
     /** @brief Gets the insertion sequence (FIFO order for capacity trims). */
     std::uint64_t sequence() const noexcept { return sequence_; }
@@ -149,11 +230,13 @@ class OwnedPairCacheEntry
 
     /** @brief Returns whether the app released every object this entry owns.
      *
-     * @return true when nothing but this cache still references any of them.
+     * @param shares Retained shares this sweep counted for those objects.
+     * @return true when nothing but retained entries still reference any of them.
      */
-    bool abandoned() const noexcept
+    bool abandoned(const OwnedShareCounts& shares) const noexcept
     {
-        return (first_ != nullptr || second_ != nullptr) && keyReleased(first_) && keyReleased(second_);
+        return (first_ != nullptr || second_ != nullptr) && keyReleased(first_, shares) &&
+               keyReleased(second_, shares);
     }
 
     /** @brief Gets the insertion sequence (FIFO order for capacity trims). */
@@ -173,7 +256,7 @@ class OwnedPairCacheEntry
 };
 
 /**
- * @brief Erases every entry whose object the app has released.
+ * @brief Erases every entry whose objects the app has released.
  *
  * The prompt half of the ownership bargain: an abandoned entry can never be
  * looked up again, so holding it would only pin the object and its GPU state.
@@ -182,15 +265,18 @@ class OwnedPairCacheEntry
  * their state may be expensive.
  *
  * @tparam Map  Map from object pointer to OwnedCacheEntry.
- * @param cache Cache to sweep.
+ * @param cache  Cache to sweep.
+ * @param shares Retained shares counted for the objects the sweep judges (see
+ *               OwnedShareCounts; it must have been collected from every cache that holds
+ *               any of them, or two caches wait for each other).
  * @return Number of erased entries.
  */
 template <class Map>
-std::size_t eraseAbandoned(Map& cache)
+std::size_t eraseAbandoned(Map& cache, const OwnedShareCounts& shares)
 {
     std::size_t erased = 0;
     for (auto it = cache.begin(); it != cache.end();) {
-        if (it->second.abandoned()) {
+        if (it->second.abandoned(shares)) {
             it = cache.erase(it);
             ++erased;
         }

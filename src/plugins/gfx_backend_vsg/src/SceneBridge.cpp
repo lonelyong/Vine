@@ -903,13 +903,23 @@ bool SceneBridge::syncRenderCommands(
         visible.emplace_back(item->transform);
     }
 
-    changed = evictAbsentItems(seen) || changed;
+    // One share count for both sweeps of this sync (P11): the geometry sweep judges "the app let
+    // go of this geometry" by it and the cache sweep judges its programs and materials by it, so
+    // building it once keeps the two from disagreeing about what the scene still holds.
+    OwnedShareCounts sweep_shares;
+    const OwnedShareCounts* shares = retained_shares_;
+    if (shares == nullptr) {
+        collectSweepShares(sweep_shares);
+        shares = &sweep_shares;
+    }
+    changed = evictAbsentItems(seen, *shares) || changed;
     publishRetainedChildren(*root, visible, commands);
-    releaseAbandonedCaches();
+    releaseAbandonedCaches(*shares);
     return changed;
 }
 
-bool SceneBridge::evictAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& seen)
+bool SceneBridge::evictAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& seen,
+                                   const OwnedShareCounts& shares)
 {
     bool changed = false;
     // A geometry missing from the frame is not dropped immediately: hiding a
@@ -933,7 +943,7 @@ bool SceneBridge::evictAbsentItems(const std::unordered_set<const vine::graphics
         // valid. Once the app itself stops referencing it, nothing can ever
         // look the entry up again, so release it — and the geometry with it —
         // right away instead of pinning both for the whole reuse window.
-        if (it->second.abandoned() || ++item->absent_frames > kAbsentEvictFrames) {
+        if (it->second.abandoned(shares) || ++item->absent_frames > kAbsentEvictFrames) {
             // The retained subtree may still be referenced by an in-flight
             // command buffer, so park it instead of destroying it here.
             retireNode(std::move(item->transform));
@@ -994,14 +1004,56 @@ void SceneBridge::publishRetainedChildren(
     }
 }
 
+void SceneBridge::collectOwnedShares(OwnedShareCounts& shares) const
+{
+    // One share per entry of every cache that holds a key object: a program is held by the stage
+    // cache, the per-layout ShaderSet cache and one variant template per (program, material) pair
+    // this slot draws, so the same program can be held any number of times — the count is what the
+    // sweep needs, and assuming a number instead is what left the caches waiting for each other.
+    // The two program caches are keyed by a content HASH, so the object they own comes from the
+    // entry itself; the geometry and variant caches are keyed by the object.
+    for (const auto& entry : cache_) {
+        shares.add(entry.first);
+    }
+    for (const auto& entry : program_stages_) {
+        shares.add(entry.second.key());
+    }
+    for (const auto& entry : program_shader_sets_) {
+        shares.add(entry.second.key());
+    }
+    for (const auto& entry : variant_cache_) {
+        shares.add(entry.second.firstKey());
+        shares.add(entry.second.secondKey());
+    }
+}
+
+void SceneBridge::collectSweepShares(OwnedShareCounts& shares)
+{
+    materialManager().collectOwnedShares(shares);
+    collectOwnedShares(shares);
+}
+
 std::size_t SceneBridge::releaseAbandonedCaches()
+{
+    // No session counts, so judge by what this bridge can see (see collectSweepShares). The
+    // session's counts are the exact answer when several slots hold the same objects.
+    if (retained_shares_ != nullptr) {
+        return releaseAbandonedCaches(*retained_shares_);
+    }
+    OwnedShareCounts local;
+    collectSweepShares(local);
+    return releaseAbandonedCaches(local);
+}
+
+std::size_t SceneBridge::releaseAbandonedCaches(const OwnedShareCounts& shares)
 {
     // Capacity trims happen on insert (the FIFO half of the bargain), which is
     // what bounds the chain of caches sharing one program; this is the prompt
     // half, shared by every program-keyed cache through OwnedCache.hpp so the
     // three of them cannot drift apart.
-    const std::size_t erased = eraseAbandoned(program_stages_) + eraseAbandoned(program_shader_sets_) +
-                               eraseAbandoned(variant_cache_);
+    const std::size_t erased = eraseAbandoned(program_stages_, shares) +
+                               eraseAbandoned(program_shader_sets_, shares) +
+                               eraseAbandoned(variant_cache_, shares);
     // Textures are swept here too, and this is the sweep's ONLY caller:
     // VsgTextureCache::releaseAbandoned() had an implementation and a unit test but no production caller,
     // so a texture the scene stopped sampling kept its GPU image until 256 later textures pushed it out of

@@ -204,6 +204,12 @@ struct VsgRendererState {
     // slots in a handful of buffers instead of one buffer and one descriptor set each.
     // Session-scoped because the slots' memory belongs to the session's device.
     std::unique_ptr<VsgDrawBlockPool> draw_block_pool;
+    // Retained shares of every cache that sweeps this frame, counted once at the start of the
+    // frame and read by each content slot's sweep (SceneBridge::setRetainedShares). It lives
+    // here, not in a bridge, because "the app dropped this material" can only be told by a count
+    // that covers EVERY slot holding it: with two slots drawing one material, a bridge judging by
+    // its own shares sees the other's and waits for it (the P11 mutual wait).
+    OwnedShareCounts retained_shares;
     // Window-target shader sets shared by its content slots' bridges: one per
     // DepthMode (TestAndWrite / TestOnly / Disabled) so each slot bakes the
     // right depth test/write state. Per-geometry pipelines are compiled per

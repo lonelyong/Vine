@@ -399,7 +399,13 @@ void VsgTextureCache::setMaxAnisotropy(float device_limit) noexcept
 
 std::size_t VsgTextureCache::releaseAbandoned()
 {
-    return eraseAbandoned(d->cache);
+    // This cache is the only retained holder of a texture (it is the session's), so its own
+    // entries ARE the retained shares: no other cache waits for it and it waits for none.
+    OwnedShareCounts shares;
+    for (const auto& entry : d->cache) {
+        shares.add(entry.first);
+    }
+    return eraseAbandoned(d->cache, shares);
 }
 
 void VsgTextureCache::clear()

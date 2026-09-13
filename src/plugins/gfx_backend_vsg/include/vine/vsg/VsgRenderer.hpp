@@ -548,6 +548,21 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void settleSubmittedFrame();
 
+    /** @brief Counts the frame's retained shares and hands them to every content slot's bridge.
+     *
+     * A cache can only tell "the app has let go of this object" from "another cache still holds
+     * it" by counting every retained entry that holds it, so the session counts them once per
+     * frame (see OwnedShareCounts and SceneBridge::releaseAbandonedCaches).
+     */
+    void refreshRetainedShares();
+
+    /** @brief Drops the frame's share counts from every content slot's bridge.
+     *
+     * The counts live on the session state, so a bridge must not keep the pointer past the frame
+     * that filled it (see setRetainedShares).
+     */
+    void clearRetainedShares();
+
     /** @brief Drops the per-pass request (scope attributes included).
      *
      * Called when a pass scope opens (so a scope never inherits the previous pass'

@@ -138,6 +138,29 @@ class V_VSG_API SceneBridge {
      */
     void setDrawBlockPool(vine::raw_ptr<VsgDrawBlockPool> pool);
 
+    /** @brief Counts one retained share per cache entry this bridge holds.
+     *
+     * Feeds the session's OwnedShareCounts (see releaseAbandonedCaches): a program
+     * is held by up to three of this bridge's caches and a material by a variant
+     * template of EVERY slot that draws it, so the number of retained shares is
+     * data dependent and has to be counted rather than assumed.
+     *
+     * @param shares Counts to add to.
+     */
+    void collectOwnedShares(OwnedShareCounts& shares) const;
+
+    /** @brief Provides the retained-share counts this bridge's sweep judges by.
+     *
+     * Set for the duration of one frame by the session that can count every slot's
+     * shares, and cleared again before the frame returns, so the pointer never
+     * outlives its counts. Unset (the default, and what a caller driving one bridge
+     * directly gets) means the bridge counts what it can see itself — see
+     * releaseAbandonedCaches.
+     *
+     * @param shares Session's counts, or null to count locally.
+     */
+    void setRetainedShares(const OwnedShareCounts* shares) noexcept { retained_shares_ = shares; }
+
     /** @brief Injects the per-view light block this bridge binds for its own forward shader set.
      *
      * Must outlive the bridge. The block is the slot's (not the session's): the
@@ -768,10 +791,19 @@ class V_VSG_API SceneBridge {
      * program's SPIR-V, its assembled ShaderSet and the cached bind commands for
      * the rest of the session. Because several caches may share one program
      * (the stage cache, the per-layout ShaderSet cache and a variant template),
-     * "abandoned" is only observed once the OTHER caches have let go as well —
-     * this sweep releases the tail of that chain, and the FIFO caps bound what
-     * the chain can hold in the meantime. The per-geometry cache has its own
-     * sweep inline (it also applies the reuse window), so it is not part of this.
+     * an entry may only go when the ONLY references left to its key are the
+     * retained entries that hold it — which is a number, not a guess: see
+     * OwnedShareCounts and P11.
+     *
+     * Judging happens by the shares the sweep was handed (setRetainedShares), or
+     * by the shares this bridge can count itself when the renderer handed none:
+     * its own caches plus the material manager's, which is complete for a bridge
+     * whose objects no other slot also holds. A SESSION handed
+     * collectOwnedShares() over every slot is what makes the judgement exact
+     * when two slots draw the same material.
+     *
+     * The per-geometry cache has its own sweep inline (it also applies the reuse
+     * window), so it is not part of this.
      *
      * The TEXTURE cache is swept here as well: it is this sweep's only caller, and a texture the scene
      * stopped sampling — or one whose last retained entry just left the frame — must not keep its GPU image
@@ -830,7 +862,31 @@ class V_VSG_API SceneBridge {
     /** @brief Ring advances a released slot waits before the pool may hand it out again. */
     static constexpr std::uint32_t kDrawSlotRetireFrames = static_cast<std::uint32_t>(VsgRetireRing::kRetireRingDepth);
 
-    bool evictAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& seen);
+    /** @brief Evicts retained items the frame no longer draws (see the declaration above).
+     *
+     * @param seen   Geometries drawn this frame.
+     * @param shares Retained shares counted for the geometries this sweep judges.
+     * @return true when anything was evicted.
+     */
+    bool evictAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& seen,
+                          const OwnedShareCounts& shares);
+
+    /** @brief The share-aware half of releaseAbandonedCaches (see it for the rule).
+     *
+     * @param shares Retained shares counted for the objects this sweep judges.
+     * @return Number of erased entries.
+     */
+    std::size_t releaseAbandonedCaches(const OwnedShareCounts& shares);
+
+    /** @brief Counts this bridge's own shares PLUS the material manager's.
+     *
+     * What a bridge can say on its own: the caches it holds, and the manager it draws through. It
+     * is the complete picture only while no OTHER slot holds the same objects, which is why a
+     * session hands its counts in instead (see setRetainedShares).
+     *
+     * @param shares Counts to fill.
+     */
+    void collectSweepShares(OwnedShareCounts& shares);
 
     /** @brief Republishes the retained children in command order and refreshes
      * the materials the frame drew.
@@ -907,6 +963,10 @@ class V_VSG_API SceneBridge {
         std::uint32_t          frames_remaining = 0; ///< Ring advances to wait before the slot is free.
     };
     std::vector<PendingDrawSlot> pending_draw_slots_;
+    // Retained-share counts the sweep judges by, set for the duration of one frame by the session
+    // (setRetainedShares). Only ever dereferenced inside this bridge's sweep, so the pointer is
+    // live exactly while the session's counts are.
+    const OwnedShareCounts* retained_shares_ = nullptr;
     // The slot's per-view light block (setLightsData): declared in the pipeline
     // layout and descriptor set of the variants built from a ShaderSet that asks
     // for `vine_lights` (our forward set). Null while the built-in set draws.
