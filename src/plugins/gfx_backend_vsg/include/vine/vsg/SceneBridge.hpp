@@ -645,6 +645,10 @@ class V_VSG_API SceneBridge {
      *                       default.
      * @param extra_channels Custom channels carried by @p data (locations >= 3),
      *                       in binding order after the canonical arrays.
+     * @param derived        Channels the data builder DERIVED (the white colour carrier, the zero UVs),
+     *                       or null when the caller cannot say. Used only to decide whether OUR forward
+     *                       set may take the variant WITHOUT a canonical attribute: a derived array (the
+     *                       geometry authored none) is dropped, an authored one is never.
      * @return State wrapper, or null when not buildable.
      */
     ::vsg::ref_ptr<::vsg::StateGroup> buildStateGroup(
@@ -653,7 +657,8 @@ class V_VSG_API SceneBridge {
         vine::raw_ptr<const vine::graphics::Texture> texture,
         const vine::graphics::ResolvedRenderState& state,
         vine::raw_ptr<const vine::graphics::ShaderProgram> program,
-        const std::vector<VertexChannel>& extra_channels);
+        const std::vector<VertexChannel>& extra_channels,
+        const DerivedChannels* derived = nullptr);
 
     /** @brief Gets (and caches) the run-time compiled ShaderSet for a program.
      *

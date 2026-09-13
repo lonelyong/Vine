@@ -26,7 +26,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgPassMaterialiser.cpp` | pass → `RenderGraph`/framebuffer：变体决策（清屏/深度提升）、稳态复用、发布 |
 | `VsgRecordOrder.cpp` | 录制顺序：采样边 + 深度借用边 + 稳定拓扑排序 |
 | `VsgTargetBookkeeping.cpp` | 目标装配/注销：附件创建、深度借用解析、重建与释放 |
-| `VsgContentSlot.cpp` | 内容槽的每帧驱动（视口、灯、诊断） |
+| `VsgContentSlot.cpp` | 内容槽的每帧驱动（视口、灯、诊断）；vsg 灯节点 + 每帧 `setGroupLights` 只在**内建退回路径**跑（forward 用自己的 `vine_lights` 块） |
 | `VsgOverlay.cpp` | PiP / 全屏 program overlay 的两种绘制 |
 | `shaders/`（`fullscreen.vert` / `screen_texture.frag`） | 本后端自己的 GLSL：构建期嵌入成 `vine/vsg/EmbeddedShaders.hpp`（清单 `cmake/VineShaders.cmake`，机制见 [`.ai/design/vsg-custom-shader.md`](../../../../.ai/design/vsg-custom-shader.md) §10） |
 | `shaders/vine_forward.{vert,frag}` + `detail::buildVineShaderSet` / `makeContentShaderSet` | **自写前向着色**（替代 vsg 内建 phong 的 P0）：属性 0/1/2(色,define)/8(uv,define)、set0 的 material(b0) / diffuseMap(b1) / **vine_lights(b2, 每槽 UBO)** + push `pc` 0..128（vsg 矩阵栈填）。**P0.3 起默认开启**；`VINE_VSG_BUILTIN=1` 退回内建 phong（无 Vine stages 的 preset 仍回退）。两条路径各有独立 47 行证据基线（ABI/门禁见该文档 §11） |
@@ -343,7 +343,7 @@ vsg 的重传粒度是**一条 `BindVertexBuffers` 命令**：命令里任一阵
 
 | 条件 | 做法 |
 | --- | --- |
-| 每个 canonical 通道有自己的命令 | `buildGeometryData()` 发 5 条 bind：0 位置、1 法线、2 texcoord、3 loc2 颜色、4+ 自定义（自定义共用一条，集合变就是布局变） |
+| 每个 canonical 通道有自己的命令 | `buildGeometryData()` 发 5 条 bind：0 位置、1 法线、2 texcoord、3 loc2 颜色、4+ 自定义（自定义共用一条，集合变就是布局变）。**forward set 在几何无作者色（且无 UV/无纹理）时不 assign 2/3** ⇒ 数据节点仍绑着那两条，但管线不声明、define 关（§11.6） |
 | 知道"变的是哪一路" | `SceneBridge::ChannelKey` = `位置/分量/缓冲指针/Buffer::revision()/元素数`；快照存在 `Item` 里，`shapesMatch()` 比形状（位置/分量/数量），逐键比字节身份 |
 
 于是数据 revision 分两档：**形状不变**（通道集合、分量、元素数一致，位置 0 仍是可别名布局）且快照解释了变化 ⇒ 只把变化

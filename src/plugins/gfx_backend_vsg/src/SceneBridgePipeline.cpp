@@ -346,7 +346,8 @@ namespace
     vine::raw_ptr<const vine::graphics::Texture> texture,
     const vine::graphics::ResolvedRenderState& state,
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
-    const std::vector<VertexChannel>& extra_channels)
+    const std::vector<VertexChannel>& extra_channels,
+    const DerivedChannels* derived)
 {
     if (data == nullptr) {
         return ::vsg::ref_ptr<::vsg::StateGroup>();
@@ -369,7 +370,7 @@ namespace
     // The forwarded custom channels define the geometry's vertex layout, which
     // is part of the L2 variant identity: geometry with a different binding
     // set must never reuse another geometry's template.
-    const std::uint64_t layout = vertexLayoutHash(extra_channels);
+    std::uint64_t layout = vertexLayoutHash(extra_channels);
 
     // The material's texture resolves BEFORE the variant key is computed, because what the descriptor
     // will bind is the RESOLVED resource, not the texture object: two materials can share one Phong value
@@ -384,6 +385,31 @@ namespace
         report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
                detail::textureRejectMessage(texture_reason, *texture));
     }
+
+    // Which optional canonical attributes this variant feeds the pipeline. OUR forward set declares
+    // vsg_Color / vsg_TexCoord0 behind defines, so a geometry that authors neither can take the variant
+    // WITHOUT those attributes: leaving the array unassigned keeps the define off, which drops one vertex
+    // binding (and, with the texture, one sample). Only a DERIVED array may be dropped — the white opacity
+    // carrier / the zero UVs — because an authored channel carries the model's bytes. The UV attribute and
+    // the sampler share `VINE_DIFFUSE_MAP`, so UVs go only when the texture is the white fallback, and only
+    // together with the colour: dropping vsg_TexCoord0 alone would renumber vsg_Color's binding away from
+    // the fixed canonical index the data node bound it at (see the assign order below).
+    auto arrays = boundArraysOf(data);
+    const bool forward_set =
+        program == nullptr && static_cast<bool>(shaderSet->getDescriptorBinding("vine_lights"));
+    const bool drop_color = forward_set && derived != nullptr && arrays.size() > 3u && arrays[3] != nullptr &&
+                            arrays[3] == derived->white_colors;
+    const bool drop_uv = drop_color && derived != nullptr && arrays.size() > 2u && arrays[2] != nullptr &&
+                         arrays[2] == derived->zero_texcoords && texture_reason != detail::TextureReject::Ok;
+    if (drop_color) {
+        arrays[3] = {};
+        if (drop_uv) {
+            arrays[2] = {};
+        }
+    }
+    // The decision changes the pipeline, so it belongs to the variant identity: two geometries that differ
+    // only in which canonical attributes they carry must never share one.
+    layout = hashCombine(layout, (drop_color ? 0u : 1u) | (drop_uv ? 0u : 2u));
 
     // L2 variant reuse: an identical (program, material, resolved-state,
     // vertex-layout) variant built earlier contributes its reusable bind
@@ -414,7 +440,6 @@ namespace
     {
         auto& material_manager = materialManager();
         auto  material_value   = material_manager.getOrCreate(material);
-        const auto arrays      = boundArraysOf(data);
         ::vsg::DataList scratch;
         // vsg matches an array against the ShaderSet's declared binding by NAME
         // and element type, and returns false when nothing matches. A miss is
@@ -446,11 +471,9 @@ namespace
         };
         assign_array("vsg_Vertex", 0u);
         assign_array("vsg_Normal", 1u);
-        // The canonical order both shader sets share (see buildGeometryData).
-        // The texcoord array is always present in the data node (zeros when the
-        // mesh has no UVs); on the built-in path vsg's Phong shader advertises
-        // this binding and gates its attribute on a shader define, which
-        // assignArray() activates.
+        // The canonical order both shader sets share (see buildGeometryData). An entry is nulled above when
+        // our forward set takes the variant WITHOUT that attribute (the geometry authored nothing); the
+        // built-in and custom-program sets get the full list, where their shader declares both.
         assign_array("vsg_TexCoord0", 2u);
         assign_array("vsg_Color", 3u);
         // Custom channels: bind each forwarded array under its stable
@@ -461,14 +484,18 @@ namespace
             assign_array(customAttributeName(extra_channels[i].location), 4u + i);
         }
         config->assignDescriptor("material", material_value);
-        // The diffuse texture: always bound, because an untextured material resolves to the shared white
-        // fallback — the shader then has ONE path (it always multiplies by a texture) instead of a branch
-        // that would have to be kept in step with this binding.
+        // The diffuse texture: bound whenever the pipeline samples it. An untextured material resolves to
+        // the shared white fallback, so the shader has ONE path (it always multiplies by a texture) —
+        // unless the variant dropped the UV attribute, in which case the sampler is gated by the SAME
+        // define: assigning it would turn the define back on and leave the shader reading an attribute the
+        // pipeline never enabled.
         //
         // Wrapped in an ImageInfoList: assignTexture also has a (textureData, sampler) overload taking a
         // ref_ptr<Data>, and a bare ImageInfo matches that one instead — which fails to compile with a
         // pointer-type mismatch rather than doing anything sensible.
-        config->assignTexture("diffuseMap", ::vsg::ImageInfoList{ texture_info });
+        if (!drop_uv) {
+            config->assignTexture("diffuseMap", ::vsg::ImageInfoList{ texture_info });
+        }
     }
 
     // Per-view lights: only OUR forward set declares the binding, and only the slot

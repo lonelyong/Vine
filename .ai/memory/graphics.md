@@ -5,7 +5,10 @@
 > `scripts/vsg_selftest_builtin_evidence.txt` = 内建退回（centre 46,8,3）。`vsg_selftest_evidence.sh [--builtin]`；
 > lavapipe 3c 跑默认、3d 跑内建并把两条基线都比一遍。两基线差异仍只有 **6 个着色数字**（覆盖/深度/清屏/诊断计数全同）。
 > 口径：build 0 error 0 warning；test_vsg **235**、test_graphics **234**；两条证据基线 PASS；lavapipe 整体 PASS（test_cppstd/test_runtime/test_system 为环境相关旧红，与本次无关）。
-> 未完：去掉 vsg `Light`/VDS 的 content 用法（`view->features` 收敛）；无作者色/UV 时不喂白载体/零 UV。
+> 收尾（同日）：vsg `Light`/VDS 的 content 用法已去掉（forward 时槽不建灯节点、view `features=0`、不跑每帧 `setGroupLights`）；
+> `SceneBridge::buildStateGroup` 新增 `derived` 参数，在几何无作者色（且无 UV、材质无纹理）时**不 assign** vsg_Color/vsg_TexCoord0
+> （define 关、少两条顶点绑定 + 一次采样；单独丢 texcoord 会把 vsg_Color 绑定号前移，故只在颜色也丢时一起丢），
+> 属性在位与否并入 L2 variant 的 layout 哈希。两条证据基线 47 行不变；test_vsg **235 → 237**；lavapipe PASS。仍未做：opacity（P10）。
 
 > 2026-09-13 **P0.2：自写前向着色接线（`VINE_VSG_FORWARD=1`）**：`makeContentShaderSet` 做唯一入口（窗口三档深度 + 每个离屏目标都走它），
 > 槽级 `ContentSlot::lights_data`（112B）+ `SceneBridge::setLightsData` 注入 + 每帧 `fillVineLightsBlock`+`dirty()`，`buildStateGroup` 里

@@ -387,8 +387,8 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 
 | 项 | 说明 |
 | --- | --- |
-| 转正（P0.3） | **默认已改走自写 set（2026-09-13，见 §11.5）**，口径 = 两条基线的 6 个着色数字差异（光照公式差异，不是 bug）；**剩余**：去掉 vsg `Light`/VDS 在 content 上的用法（`view->features` 收敛） |
-| 顶点色/贴图门控的收益 | 现在仍照旧喂白载体与零 UV（两条路径的 define 都开着）；等 P0.3 后让 SceneBridge 在几何无作者色/UV 时**不喂**那两个数组，就自动得到不含该属性的变体（省一条绑定命令 + 一次采样） |
+| 转正（P0.3） | **已做（2026-09-13，§11.5 + §11.6）**：默认走自写 set，vsg `Light`/VDS 的 content 用法已去掉（`view->features` 收敛到 0），无作者色/UV 时不再喂白载体/零 UV |
+| 顶点色/贴图门控的收益 | **已做（2026-09-13，§11.6）**：forward set 在几何无作者色（且无作者 UV、材质无纹理）时**不 assign** 那两个数组 ⇒ define 关、少两条顶点绑定、少一次采样；白载体/零 UV 仍为内建/自定义 program 路径保留 |
 | opacity | 现在 `outColor.a = material.diffuse.a`（顶点色只调制 rgb）；P10 再决定材质值 + dynamic offset 的承载方式 |
 | 阴影 / PBR / Flat | 仍走内建映射；§6 的 P1/P2 |
 | 自检相位命名 | **已做（P0.3）**：探针那两条改名 `variant 'default shading + …'`（它跑的是内容 set，不是某条固定路径），两条基线一起重生成 |
@@ -418,6 +418,19 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 
 口径：两条基线的差异仍只有 6 个着色数字（centre 34,6,2 vs 46,8,3；共享深度 4,31,8 vs 5,41,10；clear-flip/testonly/MRT 同源），覆盖数/深度/清屏/诊断计数全同 ⇒ 差异是**光照公式**差异，可接受。
 
-**未完（P0.3 剩余）**：去掉 vsg `Light`/VDS 在 content 上的用法（`view->features` 收敛）；无作者色/UV 时不喂白载体/零 UV（靠 define 变体省一条绑定与一次采样）。
+**已补齐（§11.6）**：vsg `Light`/VDS 的 content 用法已去掉；无作者色/UV 时不再喂白载体/零 UV。
+
+
+### 11.6 P0.3 收尾：content 不再走 vsg 灯/VDS + 门控变体真正生效（2026-09-13）
+
+| 环节 | 落点 |
+| --- | --- |
+| vsg 灯只在退回路径 | `VsgContentSlot`：`vsg_lights = !vineForwardShaderEnabled()`。forward 时槽不建/不种 vsg 灯节点、view 不挂 `light_group`、每帧不跑 `setGroupLights`（也没有“灯全不可用”的诊断） |
+| VDS 收敛 | forward 时 content view 用 `View::create(camera, {}, static_cast<ViewFeatures>(0))` ⇒ `ViewDependentState` 不收集灯、`lightData` 缓冲停在 1 vec4 最小尺寸（内建退回路径仍是默认 `RECORD_ALL`） |
+| 不喂派生数组 | `SceneBridge::buildStateGroup(...)` 新增 `derived` 参数：forward set 且 `arrays[3] == derived->white_colors` 时把 `vsg_Color` 置空（define 关）；**仅当颜色也被丢**且 `arrays[2] == derived->zero_texcoords` 且解析到的纹理是白色回退时才把 `vsg_TexCoord0` 也置空、并跳过 `assignTexture("diffuseMap")`（两者共用 `VINE_DIFFUSE_MAP`）。理由：数据节点把颜色绑在固定 canonical index 3，单独丢 `vsg_TexCoord0` 会让 `vsg_Color` 的绑定号前移到 2 而与数据节点不符 |
+| 变体身份 | 是否丢属性会改变管线，故把 `(color_bound<<0)|(uv_bound<<1)` 并入 L2 variant 的 `layout` 哈希，避免同材质/状态但属性不同的几何复用同一条管线 |
+| 判据 | 两条证据基线 47 行**逐字节不变**（丢属性只省绑定/采样，画面等价：无作者色=白调制、白纹理=乘 1）；test_vsg **237**（+2：`ForwardSetDropsDerivedColourAndUvs` 断言 2 条顶点绑定 + 无采样器；`BuiltInSetKeepsTheFullCanonicalPrefix` 断言内建仍 4 条）；lavapipe 整体 PASS |
+
+**仍未做**：`opacity`（forward 只用 `material.diffuse.a`，顶点色 alpha 不再承载每 drawable 透明度 —— P10）；阴影 / PBR / Flat（§6 的 P1/P2）。
 
 

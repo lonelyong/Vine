@@ -21,13 +21,23 @@
 
 #include <gtest/gtest.h>
 
+#include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/Material.hpp>
+#include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/ShaderPreset.hpp>
 #include <vine/vsg/EmbeddedShaders.hpp>
+#include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 
 #include <vsg/core/Data.h>
+#include <vsg/nodes/Group.h>
+#include <vsg/nodes/StateGroup.h>
 #include <vsg/state/ColorBlendState.h>
 #include <vsg/state/DepthStencilState.h>
+#include <vsg/state/DescriptorSetLayout.h>
+#include <vsg/state/GraphicsPipeline.h>
+#include <vsg/state/PipelineLayout.h>
+#include <vsg/state/VertexInputState.h>
 #include <vsg/state/ViewportState.h>
 #include <vsg/utils/ShaderSet.h>
 
@@ -80,6 +90,121 @@ const ::vsg::DescriptorBinding* findDescriptor(const ::vsg::ShaderSet& shader_se
 ::vsg::ref_ptr<::vsg::ShaderSet> makeForwardSet()
 {
     return buildVineShaderSet(vine::graphics::ShaderPreset::StandardPhong, VkExtent2D{ 640, 360 }, true, true, 1);
+}
+
+/**
+ * @brief Builds a triangle that authors only positions and normals.
+ *
+ * No loc2 colour and no UVs is exactly the geometry our forward set can shade with the variants that do not
+ * declare vsg_Color / vsg_TexCoord0. The data builder still materialises the white opacity carrier and the
+ * zero UVs for the built-in path, which is what these tests look past.
+ *
+ * @return New triangle geometry.
+ */
+vine::graphics::GeometryPtr makeBareTriangle()
+{
+    auto geometry = vine::graphics::GeometryPtr(new vine::graphics::Geometry());
+    vine::geometry::Vec3fArray positions;
+    positions.emplace_back(0.0f, 0.0f, 0.0f);
+    positions.emplace_back(1.0f, 0.0f, 0.0f);
+    positions.emplace_back(0.0f, 1.0f, 0.0f);
+    geometry->setPositions(vine::graphics::packAttribute(positions));
+    vine::geometry::Vec3fArray normals;
+    normals.emplace_back(0.0f, 0.0f, 1.0f);
+    normals.emplace_back(0.0f, 0.0f, 1.0f);
+    normals.emplace_back(0.0f, 0.0f, 1.0f);
+    geometry->setNormals(vine::graphics::packAttribute(normals));
+    return geometry;
+}
+
+/**
+ * @brief Finds the graphics-pipeline bind a retained subtree holds.
+ *
+ * @param node Root of the subtree to walk.
+ * @return The bind command, or null when the subtree holds none.
+ */
+const ::vsg::BindGraphicsPipeline* findGraphicsPipeline(const ::vsg::Node* node)
+{
+    if (node == nullptr) {
+        return nullptr;
+    }
+    if (const auto* state_group = node->cast<::vsg::StateGroup>()) {
+        for (const auto& command : state_group->stateCommands) {
+            if (const auto* bind = command->cast<::vsg::BindGraphicsPipeline>()) {
+                return bind;
+            }
+        }
+    }
+    if (const auto* group = node->cast<::vsg::Group>()) {
+        for (const auto& child : group->children) {
+            if (const auto* hit = findGraphicsPipeline(child.get())) {
+                return hit;
+            }
+        }
+    }
+    return nullptr;
+}
+
+/**
+ * @brief The pipeline's vertex input state, or null when it has none.
+ *
+ * @param pipeline Pipeline to inspect.
+ * @return The vertex input state, or null.
+ */
+const ::vsg::VertexInputState* findVertexInputState(const ::vsg::GraphicsPipeline& pipeline)
+{
+    for (const auto& state : pipeline.pipelineStates) {
+        if (const auto* vertex_input = state->cast<::vsg::VertexInputState>()) {
+            return vertex_input;
+        }
+    }
+    return nullptr;
+}
+
+/**
+ * @brief Whether any descriptor set layout of the pipeline binds a sampled image.
+ *
+ * @param pipeline Pipeline to inspect.
+ * @return true when a combined image sampler is declared.
+ */
+bool pipelineSamplesATexture(const ::vsg::GraphicsPipeline& pipeline)
+{
+    if (pipeline.layout == nullptr) {
+        return false;
+    }
+    for (const auto& set_layout : pipeline.layout->setLayouts) {
+        if (set_layout == nullptr) {
+            continue;
+        }
+        for (const auto& binding : set_layout->bindings) {
+            if (binding.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Builds a retained state group for one bare triangle through @p shader_set.
+ *
+ * @param shader_set Content set the bridge renders the triangle with.
+ * @param root       Receives the retained root that keeps the built group alive.
+ * @return The pipeline bind the state group holds, or null.
+ */
+const ::vsg::BindGraphicsPipeline* buildBareTriangleState(const ::vsg::ref_ptr<::vsg::ShaderSet>& shader_set,
+                                                          ::vsg::ref_ptr<::vsg::Group>&            root)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(shader_set);
+    root          = ::vsg::Group::create();
+    auto material = vine::graphics::MaterialPtr(new vine::graphics::Material());
+
+    std::vector<vine::graphics::RenderCommand> commands;
+    commands.emplace_back(makeBareTriangle(), material, vine::math::Mat4d());
+    std::vector<::vsg::ref_ptr<::vsg::Node>> created;
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    return findGraphicsPipeline(root.get());
 }
 
 TEST(ForwardShaderSetTest, OnlyPresetsWithStagesGetASet)
@@ -243,6 +368,38 @@ TEST(ForwardShaderSetTest, TheForwardSwitchIsOnByDefault)
     ASSERT_NE(set, nullptr);
     // getDescriptorBinding reports "not declared" through its bool conversion.
     EXPECT_TRUE(static_cast<bool>(set->getDescriptorBinding("vine_lights")));
+}
+
+TEST(ForwardShaderSetTest, ForwardSetDropsDerivedColourAndUvs)
+{
+    // Our forward set declares vsg_Color / vsg_TexCoord0 behind defines, so a geometry that authors neither
+    // and whose material samples no texture must take the variant WITHOUT them: the white opacity carrier and
+    // the zero UVs the data node builds for the built-in path are simply not assigned. That is two fewer
+    // vertex bindings and no diffuse sampler — the whole point of gating the attributes.
+    auto forward = makeForwardSet();
+    ASSERT_NE(forward, nullptr);
+
+    ::vsg::ref_ptr<::vsg::Group> root;
+    const auto*                  bind = buildBareTriangleState(forward, root);
+    ASSERT_NE(bind, nullptr);
+    ASSERT_NE(bind->pipeline, nullptr);
+    const auto* vertex_input = findVertexInputState(*bind->pipeline);
+    ASSERT_NE(vertex_input, nullptr);
+    EXPECT_EQ(vertex_input->vertexBindingDescriptions.size(), 2u); // positions + normals only
+    EXPECT_FALSE(pipelineSamplesATexture(*bind->pipeline));
+}
+
+TEST(ForwardShaderSetTest, BuiltInSetKeepsTheFullCanonicalPrefix)
+{
+    // The built-in phong set declares the canonical attributes unconditionally, so the derived white carrier
+    // and zero UVs stay bound there: the dropping above must not leak into the fallback path.
+    ::vsg::ref_ptr<::vsg::Group> root;
+    const auto*                  bind = buildBareTriangleState(::vsg::createPhongShaderSet(), root);
+    ASSERT_NE(bind, nullptr);
+    ASSERT_NE(bind->pipeline, nullptr);
+    const auto* vertex_input = findVertexInputState(*bind->pipeline);
+    ASSERT_NE(vertex_input, nullptr);
+    EXPECT_EQ(vertex_input->vertexBindingDescriptions.size(), 4u);
 }
 
 }  // namespace

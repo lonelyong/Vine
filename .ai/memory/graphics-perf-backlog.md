@@ -191,4 +191,6 @@
   · 自检 `variant 'built-in Phong + …'` → `'default shading + …'`；基线文件语义对调 + 重命名：`vsg_selftest_evidence.txt` = 默认（自写 set），`vsg_selftest_builtin_evidence.txt` = 内建。
   · 脚本：`vsg_selftest_evidence.sh [--builtin]`；lavapipe 3c 跑默认、3d 跑内建 + 两条基线各比一遍。
   · 口径：build 0 error/0 warning；test_vsg 235、test_graphics 234；两条证据基线 PASS；lavapipe 整体 PASS。
+  · 收尾（同日）：content 不走 vsg 灯/VDS（forward 时 view `features=0`、不建灯节点、不跑 `setGroupLights`）；`buildStateGroup` 在几何无作者色（且无 UV/无纹理）时不 assign vsg_Color/vsg_TexCoord0（define 关），属性是否在位并入 L2 variant 的 layout 哈希。
+  · 口径：test_vsg 235 → **237**（+2 断言丢属性）；两条证据基线 47 行不变；lavapipe PASS。
 

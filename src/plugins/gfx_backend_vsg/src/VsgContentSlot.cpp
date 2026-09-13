@@ -14,6 +14,7 @@
 #include <vine/vsg/VsgDiagnostics.hpp>
 #include <vine/vsg/VsgOverlay.hpp>
 #include <vine/vsg/VsgPassMaterialiser.hpp>
+#include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgRecordOrder.hpp>
 #include <vine/vsg/VsgRendererState.hpp>
 #include <vine/vsg/VsgUtils.hpp>
@@ -184,7 +185,12 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // before the slot's first sync; a later change invalidates the state.
     content.bridge.setContentDepthMode(depth_mode);
     content.bridge.clearCache();
-
+    // Lights. Our forward set reads them from the per-slot block below, so the
+    // vsg light nodes — and the ViewDependentState collection that turns them
+    // into lightData — are built only for the built-in fallback path. With the
+    // forward set the view carries no light nodes and records no view-dependent
+    // light data at all (VINE_VSG_BUILTIN=1 restores the built-in behaviour).
+    const bool vsg_lights = !vineForwardShaderEnabled();
     // Seed the slot's default light before the first compile. A slot whose
     // scene carries no lights (checked per frame) keeps this seed: the
     // window's presenting (full-target) slot gets vsg's default headlight,
@@ -195,11 +201,13 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // the scene, never the slot's depth style.
     content.light_group = ::vsg::Group::create();
     content.headlight_seed = (presenting && target == nullptr);
-    if (content.headlight_seed) {
-        content.light_group->addChild(::vsg::createHeadlight());
-    }
-    else {
-        content.light_group->addChild(makeAmbientLight(presenting ? "offscreen_ambient" : "content_ambient"));
+    if (vsg_lights) {
+        if (content.headlight_seed) {
+            content.light_group->addChild(::vsg::createHeadlight());
+        }
+        else {
+            content.light_group->addChild(makeAmbientLight(presenting ? "offscreen_ambient" : "content_ambient"));
+        }
     }
 
     // This slot's light block, written every frame from the pass' own lights and
@@ -207,8 +215,16 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     content.lights_data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(VineLightsBlock)));
     content.bridge.setLightsData(content.lights_data);
 
-    content.view = ::vsg::View::create(content.vsg_camera);
-    content.view->addChild(content.light_group);
+    // features = 0 on the forward path: the set declares no view-dependent
+    // binding, so ViewDependentState has nothing to collect and its lightData
+    // buffer stays at the 1-vec4 minimum instead of being sized for the lights.
+    content.view = vsg_lights
+                       ? ::vsg::View::create(content.vsg_camera)
+                       : ::vsg::View::create(content.vsg_camera, ::vsg::ref_ptr<::vsg::Node>(),
+                                             static_cast<::vsg::ViewFeatures>(0));
+    if (vsg_lights) {
+        content.view->addChild(content.light_group);
+    }
     content.view->addChild(content.root);
 
     // Position the slot's View in the target's render graph by its explicit
@@ -255,6 +271,9 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         return; // slot could not be built (e.g. camera bridge failed)
     }
     auto& content = it->second;
+    // Our forward set reads lights from the slot's own block; only the built-in
+    // fallback path builds / reports vsg light nodes (see setupContentSlot).
+    const bool vsg_lights = !vineForwardShaderEnabled();
     // The graph this pass records into (see passGraph): the window's swapchain
     // graph, or this pass' own off-screen graph — created on the slot's first
     // render and reused every frame after.
@@ -302,7 +321,9 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         const bool want_headlight = (request.presenting && request.target == nullptr);
         if (content.headlight_seed != want_headlight) {
             content.headlight_seed = want_headlight;
-            seedSlotLight(*content.light_group, want_headlight, request.presenting);
+            if (vsg_lights) {
+                seedSlotLight(*content.light_group, want_headlight, request.presenting);
+            }
         }
     }
 
@@ -320,8 +341,11 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
 
     // Lights come from the pass' content scene each frame (the scene is the source of
     // truth); setGroupLights leaves the slot's seeded default light in place unless at
-    // least one announced light is usable (see beginLightsDroppedEpisode).
-    const std::size_t attached_lights = setGroupLights(content.light_group.get(), *request.lights);
+    // least one announced light is usable (see beginLightsDroppedEpisode). Only the
+    // built-in path consumes vsg light nodes — our forward set reads the block below, so
+    // there is nothing to (re)build and nothing that can be reported as dropped.
+    const std::size_t attached_lights =
+        vsg_lights ? setGroupLights(content.light_group.get(), *request.lights) : request.lights->size();
 
     // The same lights, packed for OUR forward shader set (view space, ambient +
     // up to three directionals). Written every frame because the directions are

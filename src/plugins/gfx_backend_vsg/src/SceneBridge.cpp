@@ -736,7 +736,7 @@ bool SceneBridge::syncRenderCommands(
             retireNode(std::move(item->state_node));
             item->state_node = buildStateGroup(item->data_node, item->material.get(),
                                                item->texture.get(), item->render_state,
-                                               item->program.get(), item->extra_channels);
+                                               item->program.get(), item->extra_channels, &item->derived);
             if (item->state_node == nullptr) {
                 cache_.erase(it);
                 continue;
