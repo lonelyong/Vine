@@ -176,6 +176,13 @@ void Geometry::setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords, 
               AttributeChannel::slice(std::move(texcoords), kVec2Components, first_vertex, vertex_count));
 }
 
+void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices)
+{
+    // One implementation path for both spellings: the whole-buffer form IS the segment form with the
+    // whole range stated, so the two cannot drift apart.
+    setIndices(std::move(indices), 0u, 0u);
+}
+
 void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices, std::size_t first_index,
                           std::size_t index_count)
 {

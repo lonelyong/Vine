@@ -433,33 +433,39 @@ class V_GRAPHICS_API Geometry : public Node {
     /** @brief Gets the number of texture coordinates (location kTexCoordLocation). */
     std::size_t texcoordCount() const;
 
-    /** @brief Sets the optional index buffer by SHARING a buffer of indices, optionally a slice of it.
+    /** @brief Sets the optional index buffer by SHARING a whole buffer of indices.
      *
      * The same rule as the attribute setters: the geometry reads the buffer instead of copying it, so a mesh
      * hands its own index buffer over and both sides read ONE allocation. A caller that holds a plain index
      * array packs it first with packIndices().
      *
-     * An INDEX ARENA works the same way as a vertex one: several geometries share one index buffer and each
-     * states its own slice with @p first_index / @p index_count. The indices are relative to this geometry's
-     * OWN vertices (index 0 is the first vertex its position channel reads), which is what keeps a vertex
-     * slice and an index slice consistent with each other.
-     *
      * Replacing the buffer does NOT announce the change: report one with setRevision().
      *
-     * The slice lives IN THIS signature rather than in an overload, because the index stream has no
-     * defaults to protect: the two cases a caller has are the same two the attribute roles spell as
-     * overloads (a whole buffer, and a segment), and @p first_index / @p index_count state them here.
-     * A second, one-argument overload would be an ambiguous spelling of the same call.
+     * THIS OVERLOAD STATES A WHOLE BUFFER (first index 0, no fixed count): the one-buffer-per-geometry case,
+     * following the buffer as it grows. A SEGMENT — an INDEX ARENA's slice — is the three-argument overload
+     * below. The units are INDICES (this stream's elements), never vertices.
      *
-     * The units are INDICES (this stream's elements), not vertices, and an @p index_count of 0 means "the
-     * rest of @p indices from @p first_index" — the same convention the attribute segments follow.
+     * @param indices Index scalars to read (three per triangle), or null for an empty index buffer.
+     */
+    void setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices);
+
+    /** @brief Sets the index buffer to a SEGMENT: @p index_count indices from @p first_index on.
+     *
+     * An INDEX ARENA works the same way as a vertex one: several geometries share one index buffer and each
+     * states its own segment here. The indices are relative to this geometry's OWN vertices (index 0 is the
+     * first vertex its position channel reads), which is what keeps a vertex segment and an index segment
+     * consistent with each other.
+     *
+     * An @p index_count of 0 means "the rest of @p indices from @p first_index" (the growing-arena case),
+     * NOT an empty range — to clear the stream, pass a null buffer. A first index at or past the end of the
+     * buffer clamps to the end, so such a segment draws nothing.
      *
      * @param indices     Index scalars to read (three per triangle), or null for an empty index buffer.
      * @param first_index First index this geometry draws (0 = the buffer's start).
      * @param index_count Indices this geometry draws, or 0 for the rest of @p indices from @p first_index.
      */
-    void setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices, std::size_t first_index = 0u,
-                    std::size_t index_count = 0u);
+    void setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices, std::size_t first_index,
+                    std::size_t index_count);
 
     /** @brief Returns whether a non-empty index range is attached. */
     bool hasIndices() const;
@@ -560,9 +566,14 @@ class V_GRAPHICS_API Geometry : public Node {
   public:
     /** @brief The index stream's type: a segment of an index buffer.
      *
-     * The SAME structure an attribute channel is described by, minus the stride — an index run is a run
-     * of elements, not of vertices — which is what lets a consumer treat a geometry's streams alike and
-     * lets a future custom stream be added without inventing another representation.
+     * The SAME structure an attribute channel is described by, minus the stride — an index run is a run of
+     * elements, not of vertices — which is what lets a consumer treat a geometry's streams alike. It is NOT a
+     * channel: a channel is a shader INPUT (per-vertex, with a stride), while this is the TOPOLOGY the
+     * vertex fetch is indexed by, which no shader ever sees.
+     *
+     * The draw's own numbers are read off that one segment: indices() is its span(), firstIndex() its
+     * begin(), indexCount() its size() and indicesBuffer() its buffer — one segment, four views, no second
+     * state to keep in step.
      */
     using IndexStream = BufferSlice<std::uint32_t>;
 

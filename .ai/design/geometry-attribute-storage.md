@@ -181,11 +181,11 @@ vec4 位置（stride 4）**有意不进别名**：它要的是 R32G32B32 绑定�
   first, count)` 就是建这个段。
 - **自定义流**（未来）：同一个 `BufferSlice<T>`，不需要第三种表示。
 
-**谁陈述切片**：每个 canonical 角色有**两种拼写**，都通向同一个门（`addBuffer` + `AttributeChannel::slice`）：
-- 整块：`setPositions(buffer)` / `setNormals(buffer)` / `setTexcoords(buffer)`（offset 0、无固定 count ⇒ **跟随增长**）；
-- 段（arena）：`setPositions(buffer, first_vertex, vertex_count)` 等三个重载（`count == 0` 表示"到末尾"，**不是空**；要空就传 null）。
+**谁陈述切片**：**四个角色、两种拼写**，都只有一条实现路径。整块 = `count` 0 ⇒ **跟随增长**；段 = 固定 count（`count == 0` 是"到末尾"，**不是空**；要空就传 null）。
+- 顶点侧：`setPositions/setNormals/setTexcoords(buffer)` 与 `...(buffer, first_vertex, vertex_count)`，实现是 `addBuffer(location, AttributeChannel::slice(...))`；
+- 索引侧：`setIndices(buffer)` 与 `setIndices(buffer, first_index, index_count)`，实现是 `IndexStream::slice(...)`；1 参重载就是"整段"，`Geometry.cpp` 里只是一行转调，所以两种拼写不会漂。
 
-索引流用**默认参**表达同样两种情形（`setIndices(buffer, first_index = 0, index_count = 0)`）——它只有一个成员、没有需要保护的既有声明，再加一个 1 参重载反而是同一个调用的歧义拼写。单位要分清：顶点侧是**顶点**（texcoord 段 3 顶点 = 6 scalar），索引侧是**索引元素**。
+**索引流不是 channel**：channel = 着色器**输入**（per-vertex、有 stride、按 location 绑定），索引流 = **拓扑**（顶点装配按它取属性，着色器看不到，元素是 `uint32`、无 stride）。两者共享的只是**表示**（`BufferSlice`）。`Geometry::IndexStream` 就是 `BufferSlice<std::uint32_t>` 的别名；`indices()/firstIndex()/indexCount()/indicesBuffer()` 是它同一个段的四个视图（没有第二份状态）。单位要分清：顶点侧是**顶点**（texcoord 段 3 顶点 = 6 scalar），索引侧是**索引元素**。
 
 `addBuffer(location, channel)` 仍是**非 canonical**（别的 location、vec4 位置、别的 stride）的门，也仍然是"段"的实现路径：三个新重载都是**一行委托**给它。守卫：`TheWholeBufferAndTheSegmentSpellingsAgree`（同一 buffer/offset/components、覆盖相同、整块侧跟随增长而段不跟随、以及每个角色各自的 stride —— 复制粘贴重载用错 stride 会在 texcoord 那条上红）。
 

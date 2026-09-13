@@ -273,6 +273,40 @@ TEST(GeometryTest, BoundingBoxCoversOnlyTheGeometrysSegment)
     EXPECT_EQ(geom->positionCount(), 3u);
 }
 
+TEST(GeometryTest, TheIndexStreamsTwoSpellingsShareOneSegment)
+{
+    // The index stream states the same two cases as the vertex roles (a whole buffer, or a segment), and
+    // the views the draw uses read that ONE segment: nothing here can disagree with anything else.
+    const auto arena = intrusive_ptr<vine::Buffer<std::uint32_t>>(
+        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 1u, 0u }));
+
+    auto whole = intrusive_ptr<Geometry>(new Geometry());
+    whole->setIndices(arena);
+    auto segment = intrusive_ptr<Geometry>(new Geometry());
+    segment->setIndices(arena, 0u, 6u); // the same range, stated as a segment
+
+    EXPECT_EQ(whole->indicesBuffer(), arena);
+    EXPECT_EQ(segment->indicesBuffer(), arena);
+    EXPECT_EQ(whole->firstIndex(), 0u);
+    EXPECT_EQ(segment->firstIndex(), 0u);
+    EXPECT_EQ(whole->indexCount(), 6u);
+    EXPECT_EQ(segment->indexCount(), 6u);
+    EXPECT_EQ(whole->indices().size(), segment->indices().size());
+
+    // The difference between the two spellings is the same as on the channel side: a whole buffer is
+    // "follow it", a segment keeps the count it stated.
+    arena->append(std::vector<std::uint32_t>{ 0u, 1u, 2u });
+    EXPECT_EQ(whole->indexCount(), 9u) << "the whole-buffer spelling followed the buffer";
+    EXPECT_EQ(segment->indexCount(), 6u) << "the segment stayed the segment";
+
+    // And a geometry that states no buffer at all has an empty stream, whichever view is asked.
+    auto none = intrusive_ptr<Geometry>(new Geometry());
+    EXPECT_FALSE(none->hasIndices());
+    EXPECT_TRUE(none->indices().empty());
+    EXPECT_EQ(none->indexCount(), 0u);
+    EXPECT_EQ(none->firstIndex(), 0u);
+}
+
 TEST(GeometryTest, IndexSliceExposesItsSpan)
 {
     const auto indices = intrusive_ptr<const vine::Buffer<std::uint32_t>>(
