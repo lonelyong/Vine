@@ -222,11 +222,23 @@ vine::intrusive_ptr<vine::graphics::CubeMap> loadDemoCubeMap(int side)
  * Same geometry as addBox, but the box also authors the TEXCOORD channel with THREE components: that
  * width is what tells the engine's forward set to sample the material's texture as a cube map (a
  * 2-component channel is a UV pair for a 2-D map - see Geometry::setTexcoords3). The direction per
- * vertex is the corner's own direction from the box centre, so the environment WRAPS the box instead
- * of being painted flat on each face.
+ * vertex is the corner's own direction FROM THE BOX CENTRE, which is the direction a cube map is
+ * sampled by: each vertex carries the vector that its corner points along.
  *
- * The direction is swizzled (y, z, x -> x, z, y): the demo's world is Z-up while the skybox images are
- * authored with Y up, so without the swizzle the environment would appear rolled 90 degrees.
+ * WHAT THAT LOOK IS, and is not (a decision, not a defect - the demo keeps this path on purpose):
+ *
+ *   - The direction is a VERTEX value, so the hardware INTERPOLATES it across each face. The sampled
+ *     direction is therefore not "from the box centre to this fragment" but the interpolation of the
+ *     face's four corner directions, and the environment reads as a PROJECTION onto the box: stretched
+ *     towards the face centres and joined by straight seams along the box's edges. That is the look the
+ *     demo's cube-mapped box has, and it is the reason it can read as "seeing into" the box.
+ *   - A per-fragment lookup (reflect(view_dir, n) - the mirror rule) is what removes the seams, and it
+ *     is a DIFFERENT shading rule: the engine's set samples the direction the vertex stage supplies, so
+ *     a mirror needs a program of its own.
+ *   - The map is the ALBEDO here, and these skybox photographs are bright (their sky is white), which is
+ *     why the sun's shading is faint on the box - see the material comment below.
+ *
+ * The direction is re-expressed in the MAP's frame (see the swizzle note at the assignment).
  *
  * @param root    Root group receiving the node.
  * @param texture Cube map every face samples.
@@ -270,12 +282,13 @@ addCubeMappedBox(vine::graphics::Group* root, vine::intrusive_ptr<vine::graphics
             positions.push_back(corner);
             normals.push_back(normal);
             const float length = std::sqrt(corner.x * corner.x + corner.y * corner.y + corner.z * corner.z);
-            // The skybox images are authored Y-up and the demo's world is Z-up, so the direction is
-            // REORIENTED — by a ROTATION, never by a swap. Swapping y and z has determinant -1: it
-            // MIRRORS the environment, and a mirrored skybox on a box reads as looking INTO the box
-            // rather than at it (measured on the demo's own box, which is the only place this can show:
-            // the cube-map phase feeds map-space directions straight through, so it cannot see a
-            // world-to-map reorientation at all).
+            // The centre-to-corner vector, re-expressed in the MAP's frame: the skybox images are
+            // authored Y-up while the demo's world is Z-up, so the direction is REORIENTED - by a
+            // ROTATION, never by a swap. Swapping y and z has determinant -1: it MIRRORS the environment,
+            // and a mirrored skybox on a box reads as looking INTO the box rather than at it (measured on
+            // the demo's own box, which is the only place this can show: the cube-map phase feeds
+            // map-space directions straight through, so it cannot see a world-to-map reorientation at
+            // all).
             directions.emplace_back(corner.x / length, corner.z / length, -corner.y / length);
         }
         indices.push_back(base + 0);
@@ -296,8 +309,10 @@ addCubeMappedBox(vine::graphics::Group* root, vine::intrusive_ptr<vine::graphics
     auto material = vine::make_intrusive<vine::graphics::Material>();
     // The material is a mid grey, not white: the cube map is the ALBEDO here (the engine's forward set
     // multiplies it by the material and then shades it), and a white albedo against the skybox's own
-    // bright sky made the sun's shading invisible — the box looked lit by nothing. A mid grey leaves the
-    // map's structure readable AND the lighting legible on it.
+    // bright sky made the sun's shading invisible - the box looked lit by nothing. A mid grey leaves the
+    // map's structure readable AND the lighting legible on it. With the sky still partly white, the
+    // shading on the box stays subtle by nature: it is a photograph of a bright environment, not a
+    // surface with its own colour.
     //
     // Sampling by the fragment's REFLECTED view direction (a mirror) is a different shading rule and
     // needs a program of its own; the engine's preset samples the direction the vertex stage supplies.
