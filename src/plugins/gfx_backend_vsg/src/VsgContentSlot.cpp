@@ -170,6 +170,12 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
         }
         content.bridge.setShaderSet(set_ref);
     }
+    // Which light source this slot must feed follows the SET that draws it, not the session's
+    // forward switch (see SceneBridge::hasOwnLightsBlock): a preset without a Vine program falls
+    // back to the built-in set while that switch is on, and the built-in shading reads vsg's
+    // view-dependent light data — the slot has to build those light nodes for it, or the
+    // fallback draws unlit.
+    content.vsg_lights = !content.bridge.hasOwnLightsBlock();
     content.bridge.setMaterialManager(&persistent.materialManager);
     // Upload textures through the SESSION's cache: the same texture sampled by two
     // slots would otherwise be staged (and held) twice, once per slot.
@@ -191,10 +197,10 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     content.bridge.clearCache();
     // Lights. Our forward set reads them from the per-slot block below, so the
     // vsg light nodes — and the ViewDependentState collection that turns them
-    // into lightData — are built only for the built-in fallback path. With the
-    // forward set the view carries no light nodes and records no view-dependent
-    // light data at all (VINE_VSG_BUILTIN=1 restores the built-in behaviour).
-    const bool vsg_lights = !vineForwardShaderEnabled();
+    // into lightData — are built only for the slots whose set shades from them
+    // (see content.vsg_lights above). With our forward set the view carries no
+    // light nodes and records no view-dependent light data at all.
+    const bool vsg_lights = content.vsg_lights;
     // Seed the slot's default light before the first compile. A slot whose
     // scene carries no lights (checked per frame) keeps this seed: the
     // window's presenting (full-target) slot gets vsg's default headlight,
@@ -275,9 +281,9 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         return; // slot could not be built (e.g. camera bridge failed)
     }
     auto& content = it->second;
-    // Our forward set reads lights from the slot's own block; only the built-in
-    // fallback path builds / reports vsg light nodes (see setupContentSlot).
-    const bool vsg_lights = !vineForwardShaderEnabled();
+    // Our forward set reads lights from the slot's own block; a slot whose set shades from
+    // vsg's light data is the one that builds / reports vsg light nodes (see setupContentSlot).
+    const bool vsg_lights = content.vsg_lights;
     // The graph this pass records into (see passGraph): the window's swapchain
     // graph, or this pass' own off-screen graph — created on the slot's first
     // render and reused every frame after.

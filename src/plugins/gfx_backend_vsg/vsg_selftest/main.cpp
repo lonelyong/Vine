@@ -4816,6 +4816,99 @@ bool runOpacityBlendPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
     return ok;
 }
 
+/**
+ * @brief Asserts a preset WITHOUT a Vine program still renders LIT geometry.
+ *
+ * A preset this backend has no Vine program for (`Pbr` / `ShadowedPhong`, and the engine documents
+ * that they "fall back to StandardPhong") is drawn by the BUILT-IN vsg phong set. That set shades
+ * from vsg's view-dependent light data, which only exists if the slot builds vsg light nodes under
+ * its view; our own forward set takes the slot's `vine_lights` block instead and deliberately
+ * builds none. The decision therefore has to follow the SET, not the session's forward switch — and
+ * the two disagree exactly here, because the forward switch is ON while a preset falls back.
+ *
+ * Getting it wrong draws the scene BLACK: with no light data every lit term is zero. That is why
+ * this phase asserts on pixels rather than on the wiring.
+ *
+ * `FlatShaded` deliberately does NOT exercise this: the built-in flat shader draws the material's
+ * colour and reads no light at all, so it cannot tell the two wirings apart.
+ *
+ * @param renderer Renderer under test (its preset is switched and restored here).
+ * @param camera   Camera the quad is drawn through.
+ * @param frames   Frames to drive.
+ * @return true when the fallback preset drew a lit quad.
+ */
+bool runPresetFallbackPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok = true;
+    const vine::Color clear(10, 20, 30, 255);
+    const int         clear_r = clear.r;
+    const int         clear_g = clear.g;
+    const int         clear_b = clear.b;
+
+    auto opaque_material = MaterialPtr(new Material());
+    opaque_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));
+
+    RenderCommand command(makeVisibleQuad(0.4f, 1.0f), opaque_material, Mat4d());
+
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setSize(256, 144);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto pass = RenderPassPtr(new RenderPass());
+
+    // Pbr rather than FlatShaded: this is the one the engine documents as "falls back to
+    // StandardPhong", and the built-in phong set is the light-dependent one that exposes the
+    // wiring. The switch has to happen BEFORE the slot is built: the slot bakes its shader set
+    // (and the light source that goes with it) when it is created.
+    renderer.setShaderPreset(vine::graphics::ShaderPreset::Pbr);
+    for (int i = 0; i < frames; ++i) {
+        FrameScope frame(renderer);
+        PassScope  pass_scope(renderer, pass.get(), 0, target.get(), clear, true);
+        renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+    }
+    PixelImage image;
+    const bool read_ok = readTarget(renderer, target.get(), image);
+    // Back to the shipped preset: the renderer only publishes a preset at initialize (see
+    // RenderEngine), so a session's default is what this restores — and the phases after this one
+    // (and the teardown) must see that, not the fallback this phase exercised.
+    renderer.setShaderPreset(vine::graphics::ShaderPreset::StandardPhong);
+    if (!read_ok) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the preset-fallback target\n");
+        renderer.releasePass(pass.get());
+        renderer.releaseRenderTarget(target.get());
+        return false;
+    }
+
+    const int centre_r = image.at(128, 72, 0);
+    const int centre_g = image.at(128, 72, 1);
+    const int centre_b = image.at(128, 72, 2);
+    // Two failures worth telling apart: nothing drew at all (the centre is still the clear), and
+    // drew-but-unlit (black — every lit term is zero without light data).
+    if (centre_r == clear_r && centre_g == clear_g && centre_b == clear_b) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the Pbr fallback left the centre at the clear colour "
+                     "(%d,%d,%d) — nothing was drawn for a preset without a Vine program\n",
+                     centre_r, centre_g, centre_b);
+        ok = false;
+    }
+    else if (centre_r + centre_g + centre_b < 24) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the Pbr fallback drew (%d,%d,%d) — black means the built-in phong "
+                     "set found no light, so this slot was not given the vsg light nodes it shades from\n",
+                     centre_r, centre_g, centre_b);
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] preset fallback: Pbr (no Vine program, so the built-in phong set) drew a lit "
+                     "(%d,%d,%d) over the clear, so that slot was fed the light source its set reads\n",
+                     centre_r, centre_g, centre_b);
+    }
+    renderer.releasePass(pass.get());
+    renderer.releaseRenderTarget(target.get());
+    return ok;
+}
+
 int main()
 {
     const int frames =
@@ -5100,6 +5193,9 @@ int main()
     // the texture phase does (see above): it drives frames, and nothing it does
     // may move a number another phase reports.
     contract_ok = runOpacityBlendPixelPhase(*renderer, camera, 4) && contract_ok;
+    // Also after every reporting phase, for the same reason: it switches the session's shading
+    // preset, so it must not run next to a phase whose numbers another line reports.
+    contract_ok = runPresetFallbackPixelPhase(*renderer, camera, 4) && contract_ok;
     if (!contract_ok) {
         std::fprintf(stderr,
                      "[selftest] FAILED — a pass-lifecycle / depth-sharing / pixel-readback invariant was violated\n");

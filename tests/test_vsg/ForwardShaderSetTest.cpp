@@ -508,6 +508,27 @@ TEST(ForwardShaderSetTest, ThePerDrawBlockIsSetOneWithItsOwnBinding)
     EXPECT_EQ(layout->setLayouts.size(), 2u); // set 0 (material/lights) + set 1 (per draw)
 }
 
+TEST(ForwardShaderSetTest, TheLightSourceFollowsTheSlotSetNotTheSession)
+{
+    // A slot must feed the light source its SHADER SET reads: our forward set takes the slot's
+    // `vine_lights` block, while the built-in sets (and user programs) shade from vsg's
+    // view-dependent light data — which only exists if the slot puts vsg light nodes under its
+    // view. The question is per SET, because a preset this backend has no Vine program for falls
+    // back to the built-in set while the session's forward switch is on; a session-level answer
+    // leaves those slots unlit (measured: the Pbr fallback drew (0,0,0) instead of (46,8,3)).
+    SceneBridge bridge;
+    bridge.setShaderSet(makeContentShaderSet(vine::graphics::ShaderPreset::StandardPhong, VkExtent2D{ 640, 360 }, true, true, 1));
+    EXPECT_TRUE(bridge.hasOwnLightsBlock());
+
+    for (const auto preset : { vine::graphics::ShaderPreset::FlatShaded, vine::graphics::ShaderPreset::Pbr,
+                               vine::graphics::ShaderPreset::ShadowedPhong }) {
+        const auto set = makeContentShaderSet(preset, VkExtent2D{ 640, 360 }, true, true, 1);
+        ASSERT_NE(set, nullptr);
+        bridge.setShaderSet(set);
+        EXPECT_FALSE(bridge.hasOwnLightsBlock());
+    }
+}
+
 TEST(ForwardShaderSetTest, BuiltInSetKeepsTheFullCanonicalPrefix)
 {
     // The built-in phong set declares the canonical attributes unconditionally, so the derived white carrier

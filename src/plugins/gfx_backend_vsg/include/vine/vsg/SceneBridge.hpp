@@ -68,6 +68,24 @@ class V_VSG_API SceneBridge {
      */
     void setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet);
 
+    /** @brief Whether the bridge's shader set reads the slot's own light block.
+     *
+     * The lights a slot must FEED depend on the set that draws it, not on the session:
+     *  - our forward set takes the per-view `vine_lights` block the slot fills, so the slot
+     *    builds no vsg light nodes for it;
+     *  - every other set — the built-in vsg sets and user programs — shades from vsg's
+     *    view-dependent light data, which only exists if the slot puts vsg light nodes under
+     *    its view.
+     *
+     * The distinction matters exactly when a preset has no Vine program: the session's forward
+     * switch is on, but THIS slot's set is the built-in one (see makeContentShaderSet), so the
+     * slot must build the vsg lights after all — a session-level answer would leave that slot
+     * unlit.
+     *
+     * @return true when the set reads the slot's `vine_lights` block.
+     */
+    bool hasOwnLightsBlock() const noexcept;
+
     /** @brief Sets the material manager used to obtain Phong resources.
      *
      * Must outlive the bridge. When unset, a default VsgMaterialManager is
@@ -741,6 +759,7 @@ class V_VSG_API SceneBridge {
      * @return The base shader set (always non-null).
      */
     ::vsg::ref_ptr<::vsg::ShaderSet> baseShaderSet();
+
 
     /** @brief Drops retained cache entries nothing but their own cache holds.
      *

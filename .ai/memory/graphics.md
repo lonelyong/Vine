@@ -1,4 +1,11 @@
-﻿> 2026-09-13 **P10 收尾：`vine_draw` 改 per-drawable 槽 + dynamic offset（②`model` 不写）**
+﻿> 2026-09-13 **修缺陷：灯源必须按 SET 决定，不是按会话**
+> - `VsgContentSlot` 的 `vsg_lights = !vineForwardShaderEnabled()` 是**会话级**判断，而“哪个灯源”是 **set 的属性**：`buildVineShaderSet` 对没有 Vine program 的 preset 返回 null ⇒ 回落内建集，而内建 **phong** 集从 vsg 的 view-dependent lightData 取光 —— 可 forward 开关开着 ⇒ 不建 vsg 灯节点 ⇒ **该 slot 全黑**（实测 Pbr 回落画 (0,0,0)，修后 (46,8,3)，与内建基线同值）。
+> - 修法：`SceneBridge::hasOwnLightsBlock()`（“这个 set 读不读 `vine_lights`”）+ `ContentSlot::vsg_lights`（建槽时定一次，逐帧路径复用）。两份现有模式行为**逐字节不变**（都取同一条分枝）。副作用：用户 program 的 set 以前也拿不到灯，现在也有灯了。
+> - 新相位 `runPresetFallbackPixelPhase`：切到 **Pbr**（引擎文档明确写“回落 StandardPhong”）、画进新离屏目标、断言中心既非清屏色也非黑。**注意 FlatShaded 测不出来**：vsg 的 flat shader 本来就不读光（不黑）。
+> - mutation：把赋值改回会话级 ⇒ 相位红（(0,0,0)）✓ 证明门禁真咬。
+> - 判据：两条基线 **48 → 49 行**（只多这一行）；build 0/0；test_vsg 242 → **243**（+1 `TheLightSourceFollowsTheSlotSetNotTheSession`）；test_graphics 240；lavapipe PASS。
+
+> 2026-09-13 **P10 收尾：`vine_draw` 改 per-drawable 槽 + dynamic offset（②`model` 不写）**
 > - 新 `VsgDrawBlockPool`（session 级，随其他设备缓存创建/注入）：块 = `stride`(块大小按 `minUniformBufferOffsetAlignment` 向上取整) 的槽，一块(chunk)默认 64 槽；缓冲 + `DeviceMemory`(HOST_VISIBLE|HOST_COHERENT) + `MappedData<ubyteArray>`，**直接写映射内存**（每改一次不透明度 = 4 B，无 transfer task、不落后一帧）；`reserve/release` 带自由表，`descriptorSet(slot, layout)` 每 (chunk, layout) 一个 set。
 > - set 从 s0/b3 移到 **s1/b0** 并用 `CustomDescriptorSetBinding`：它只给 **layout**，bind 由 `SceneBridge::appendDrawBlockBind` 按 drawable 追加（带 dynamic offset），模板命令仍共享。set1 的“范围”必须在 `descriptorBindings` 里另声明一行（vsg 的 `descriptorSetRange()` 只扫那里）。
 > - 槽生命周期 = drawable：Item 保留时 `reserve()`，淘汰/`clearCache()` 时经 `advanceRetireRing` 延后释放（飞行中的帧可能还绑着那个偏移，release 时会清零该槽 params）。
