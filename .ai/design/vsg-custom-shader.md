@@ -446,10 +446,10 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 
 | 环节 | 落点 |
 | --- | --- |
-| 选 set | `detail::makeContentShaderSet(preset, …)` **只**调 `buildVineShaderSet`；没有自己 program 的 preset（Pbr / ShadowedPhong）用 **StandardPhong 的前向程序**代替（`buildVineShaderSet` 对这类 preset 仍返回 null——那是对 preset 的诚实回答，替换是渲染器的策略） |
+| 选 set | `detail::makeContentShaderSet(preset, …)` **只**调 `buildVineShaderSet`，而且**没有替补**：没有自己 program 的 preset（Pbr / ShadowedPhong）返回 **null**，调用方上报并**什么都不画**（见下一行） |
 | 删除 | `detail::buildShaderSet()`、`detail::vineForwardShaderEnabled()`、`VINE_VSG_BUILTIN` 开关 |
 | 桥的兜底 | `SceneBridge::baseShaderSet()` 无注入时建**我们的** forward set（原为 `createPhongShaderSet()`）；桥本身仍接受**任何** set（SDK 允许后端被塞入外来的 set，测试就用 vsg 的 set 当这种“外来者”） |
-| 可见性 | 建槽时若 `builtinProgram(preset) == nullptr`，每会话报**一条** Warning（`ShaderFallback`）：“该 preset 还没有自己的程序，由引擎的前向程序着色（不再使用 vsg 内建 set）”。**不静默换库**是这一步的重点 |
+| 没有有效 shader ⇒ 不画（2026-09-13 口径） | 三条路都**报错并跳过 drawable/槽**，绝不用别的着色顶替：① preset 没有自己的 program ⇒ 建槽时每会话一条 Error（`ShaderFallback`，“本会话内容不会绘制”）；② 槽没有被注入 set（`SceneBridge::baseShaderSet()` 不再兜底造 set）⇒ `buildStateGroup` 每桥一条 Error + 返回空（该 drawable 不入图）；③ 用户 program 编译/装配失败 ⇒ 沿用既有的 per-(program,layout,revision) 报告，但**不再回落**到槽的 set。**判据**：`ABridgeWithNoShaderSetReportsAndDrawsNothing`（`root->children` 为空 + 恰好一条 Error + 注入 set 后重新武装）＋自检预设相位“Pbr 画的中心仍是清屏色，而 StandardPhong 画 (255,255,255)”。附带修正：`setShaderSet()` 现在会 invalidate 保留的 state wrapper（那些管线/描述符是旧 set 的）|
 | 门禁 | `vsg_selftest_evidence.sh --builtin` 与 `scripts/vsg_selftest_builtin_evidence.txt` **删除**（那条路径已不可能产生）；`gfx_lavapipe_check.sh` 的 3d 从“两条基线各比一遍”并成“一条基线比一遍” |
 | 单测 | `ForwardShaderSetTest.TheForwardSwitchIsOnByDefault` → **`EveryContentSetIsTheEnginesOwn`**：四个 preset 的 content set 都非空、都声明 `vine_lights`、stages 数一致；`TheLightSourceFollowsTheSlotSetNotTheSession` 改成“四个 preset 都是我们的” + 用 **vsg 的 set 当外来 set** 钉住 `vsg_lights` 那条老路径；管线状态奇偶校验不再拿 vsg 的 set 当参照，改成同程序的另一档深度变体 |
 | 自检相位 | preset 相位的 Pbr 那一段：从“内建回落画出了一点亮色”改成“**与 StandardPhong 同一四边形像素相同**（±4）”——替补必须是引擎自己的前向模型，而不是另一套库的着色（后者也会画出亮色，但值不同） |

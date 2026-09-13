@@ -45,7 +45,7 @@
 [selftest] texture: the quad sampled its texture by UV — left half (255,_,0) = the red half, right half (0,_,255) = the blue half, over a clear corner (25,_,45)
 [selftest] cube map: all six faces sampled in CubeMap::Face order (+X,-X,+Y,-Y,+Z,-Z), one pixel read back per face
 [selftest] opacity blend: opacity 0.5 turned the shaded centre (34,6,2) into (22,13,16) = 0.5*shaded + 0.5*clear, stored alpha 191 (not 255 = opacity dropped, not 128 = blend off)
-[selftest] preset shading: Pbr (no program of its own) drew the same (255,255,255) as StandardPhong over the same quad, so a preset without a program is shaded by the engine's own set
+[selftest] preset shading: Pbr (no program of its own) drew nothing (the centre is still the clear (10,20,30)) where StandardPhong drew (255,255,255), so a preset without a program is declined and reported instead of substituted
 [selftest] preset shading: FlatShaded followed the face normal (765) against the smooth preset's authored-normal 42 over the same quad
 [selftest] live preset switch: the same slot drew 42 smooth, 765 flat after the switch, and 42 smooth again after switching back
 [selftest] done — no crash, no validation error expected

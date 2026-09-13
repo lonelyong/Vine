@@ -194,11 +194,10 @@ struct V_VSG_API DrawBlockSetBinding : public ::vsg::Inherit<::vsg::CustomDescri
  * locations and their light source — a second shading ABI to keep in step with
  * ours, and one the engine cannot own the text of.
  *
- * A preset whose own program has not landed yet (Pbr / ShadowedPhong) is shaded by
- * the forward program rather than left unshaded or handed to another library; the
- * slot reports that substitution once per session (see VsgContentSlot), so a host
- * that asked for a preset it does not get is told rather than shown a picture it
- * cannot explain.
+ * A preset whose own program has not landed yet (Pbr / ShadowedPhong) yields NULL, and so does a
+ * preset whose stages are unusable: the caller reports it and draws NOTHING. Substituting another
+ * shading model would show the host a picture it did not ask for — and one it cannot tell apart
+ * from the one it did.
  *
  * @param preset      Shading preset the slot was built for.
  * @param extent      Initial viewport the default pipeline states carry.

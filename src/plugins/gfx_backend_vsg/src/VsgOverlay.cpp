@@ -570,7 +570,15 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
                        vine::raw_ptr<const vine::graphics::ShaderProgram> program,
                        vine::raw_ptr<const vine::graphics::Camera>        camera)
 {
-    if (!state.initialized || state.viewer == nullptr || state.window == nullptr || source == nullptr || program == nullptr) {
+    if (!state.initialized || state.viewer == nullptr || state.window == nullptr || source == nullptr) {
+        return;
+    }
+    if (program == nullptr) {
+        // Asked to draw through a program and given none: say so instead of drawing nothing quietly
+        // (a pass that reaches here without a program is a host bug, and an empty frame with no
+        // reason is exactly what this backend refuses to produce).
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+                           u8"drawScreenProgram: no program was given: the pass draws nothing");
         return;
     }
 

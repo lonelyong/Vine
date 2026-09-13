@@ -350,7 +350,21 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         }
         sit = program_stages_.find(program);
     }
-    const auto base_states = baseShaderSet()->defaultGraphicsPipelineStates;
+    const auto base_set = baseShaderSet();
+    if (base_set == nullptr) {
+        // A program's set is assembled ON the slot's (its default pipeline states are the viewport /
+        // depth policy the pass asked for), so without one there is nothing to build on: reported
+        // once per bridge, and the drawable is dropped (see buildStateGroup).
+        if (!no_shader_set_reported_) {
+            no_shader_set_reported_ = true;
+            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
+                   formatDiagnostic(u8"program '%s' cannot be assembled: this slot has no shader set to build it "
+                                    u8"on, so its content is NOT drawn",
+                                    program->name().empty() ? "(unnamed)" : program->name().stdstr().c_str()));
+        }
+        return {};
+    }
+    const auto base_states = base_set->defaultGraphicsPipelineStates;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> extra;
     extra.reserve(extra_channels.size());
     for (const auto& ch : extra_channels) {
@@ -405,18 +419,31 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         return ::vsg::ref_ptr<::vsg::StateGroup>();
     }
 
-    // A user program replaces the built-in pipeline: compile its stages and
-    // assemble a custom ShaderSet following the official vsg contract
-    // (vsg_Vertex + "pc" projection/modelView push constant). The compiled set
-    // is cached per (program, vertex layout) — L1 — so N geometry bound to one
-    // program share a single glslang compile per layout. On any failure fall
-    // back to the built-in default so a bad program cannot break a scene.
+    // The set this drawable is shaded with: the user program's own (compiled per (program, vertex
+    // layout) — L1 — so N geometry bound to one program share a single glslang compile per layout),
+    // else the slot's set.
+    //
+    // NOTHING is shaded without a usable set. A program that fails to compile, a program that
+    // cannot be assembled, and a slot that was never given a set all end the same way: the reason
+    // is reported (once per program/layout/revision, or once per bridge) and the drawable is
+    // DROPPED from the frame rather than drawn with something the host did not ask for.
     ::vsg::ref_ptr<::vsg::ShaderSet> shaderSet;
     if (program != nullptr) {
         shaderSet = getProgramShaderSet(program, extra_channels);
     }
     if (!shaderSet) {
         shaderSet = baseShaderSet();
+        if (shaderSet == nullptr && !no_shader_set_reported_) {
+            no_shader_set_reported_ = true;
+            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
+                   u8"this slot has no shader set, so its content cannot be shaded and is NOT drawn (the engine "
+                   u8"builds one per slot from the shading preset; a preset with no program of its own has none)");
+        }
+    }
+    if (!shaderSet) {
+        // No set, no draw: shading it with some other program would put a picture on screen that the
+        // host did not ask for and cannot tell apart from the one it did (see the declaration).
+        return ::vsg::ref_ptr<::vsg::StateGroup>();
     }
 
     // The forwarded custom channels define the geometry's vertex layout, which

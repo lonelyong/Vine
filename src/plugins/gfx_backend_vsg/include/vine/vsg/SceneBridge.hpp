@@ -1025,6 +1025,10 @@ class V_VSG_API SceneBridge {
     // The frame's set of drawn geometries, injected for one frame (setFrameGeometrySet). Null when
     // no session drives this bridge, which is when the syncs age it themselves.
     std::unordered_set<const vine::graphics::Geometry*>* frame_drawn_ = nullptr;
+    // Whether this bridge already reported that it has no shader set to shade with (see
+    // setShaderSet / buildStateGroup). Once per set: injecting one re-arms the report, so a slot
+    // that loses its set again says so again instead of going quiet.
+    bool no_shader_set_reported_ = false;
     // The slot's per-view light block (setLightsData): declared in the pipeline
     // layout and descriptor set of the variants built from a ShaderSet that asks
     // for `vine_lights` (our forward set). Null while the built-in set draws.

@@ -1,6 +1,6 @@
 ﻿> 2026-09-13 **完全不使用 vsg 内建 shader set**
 > - `makeContentShaderSet` **只**调 `buildVineShaderSet`；删除 `buildShaderSet()` 与 `vineForwardShaderEnabled()`（`VINE_VSG_BUILTIN` 开关、两条基线的第二份、自检 `--builtin` 模式一起删）。
-> - 没有自己 program 的 preset（Pbr/ShadowedPhong）→ 用 **StandardPhong 的前向程序**代替，并在建槽时**每会话报一条 Warning**（不再静默换成别的库的 set）。
+> - **没有有效 shader 就不画**（2026-09-13 口径）：没有自己 program 的 preset ⇒ `makeContentShaderSet` 返回 **null**（无替补），建槽时每会话一条 **Error**；槽没被注入 set ⇒ `buildStateGroup` 每桥一条 Error + 该 drawable 不入图；用户 program 编译失败 ⇒ 报告后**不再回落**到槽的 set。`SceneBridge::baseShaderSet()` 也不再兜底造 set；`setShaderSet()` 会 invalidate 保留 state（旧 set 的管线/描述符）。
 > - `SceneBridge::baseShaderSet()` 无注入时建**我们的** forward set（原来 `createPhongShaderSet()`）；桥仍接受**外来** set（SDK 语义），`hasOwnLightsBlock()`/`vsg_lights` 那条路现在只服务外来 set。
 > - 自检 preset 相位的 Pbr 段改成“与 StandardPhong 像素相同（±4）”——替补是引擎自己的模型，不是另一套着色。
 > - 判据：两条基线 → **一条 51 行**（只 rewrite 那一行）；test_vsg 249（`EveryContentSetIsTheEnginesOwn` 取代 `TheForwardSwitchIsOnByDefault`）；test_graphics 240；lavapipe PASS。

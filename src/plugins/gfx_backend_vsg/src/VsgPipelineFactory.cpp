@@ -303,16 +303,12 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     // ABIs to keep in step — and the engine owns the shading text now
     // (BuiltinShaders.hpp).
     //
-    // A preset whose program has not landed yet (Pbr / ShadowedPhong) is shaded by
-    // the engine's forward program for now, i.e. the same stages StandardPhong
-    // uses: it must never be left unshaded, and it must never silently become a
-    // different library's shading model. buildVineShaderSet() still declines such a
-    // preset (that answer is about the preset, not about this policy), so the
-    // substitution happens here and the caller can report it (see VsgContentSlot).
-    if (auto own_set = buildVineShaderSet(preset, extent, depth_test, depth_write, color_count)) {
-        return own_set;
-    }
-    return buildVineShaderSet(vine::graphics::ShaderPreset::StandardPhong, extent, depth_test, depth_write, color_count);
+    // A preset whose own program has not landed yet (Pbr / ShadowedPhong) is DECLINED — null, no
+    // substitution. The caller reports it and draws nothing: shading such a preset with another
+    // model (ours or a library's) shows the host a picture it did not ask for and cannot tell
+    // apart from the one it did, which is worse than an empty frame it can see the reason for.
+    // The SDK answers the same way (builtinProgram() is null for these presets).
+    return buildVineShaderSet(preset, extent, depth_test, depth_write, color_count);
 }
 
 VkFormat toColorFormat(vine::graphics::RenderTarget::ColorFormat f)

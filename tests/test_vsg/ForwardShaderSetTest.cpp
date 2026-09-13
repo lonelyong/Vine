@@ -407,21 +407,32 @@ TEST(ForwardShaderSetTest, StagesCompileToSpirv)
     }
 }
 
-TEST(ForwardShaderSetTest, ContentSetsAreNeverUnshaded)
+TEST(ForwardShaderSetTest, APresetWithoutItsOwnProgramIsDeclinedNotSubstituted)
 {
-    // makeContentShaderSet is the one entry point every content set is built from
-    // (the window's three depth-mode sets and each off-screen target's). Whatever
-    // the switch says, EVERY preset must come back with a usable set: a null here
-    // would leave a pass with no pipeline at all.
+    // makeContentShaderSet is the one entry point every content set is built from (the window's
+    // three depth-mode sets and each off-screen target's), and it answers with the engine's own
+    // set — or with NOTHING.
+    //
+    // A preset whose own program has not landed yet (Pbr / ShadowedPhong) is declined rather than
+    // substituted: the caller reports it and draws nothing. Shading it with another model (ours as
+    // StandardPhong, or a library's phong set) would show the host a picture it did not ask for and
+    // cannot tell apart from the one it did — which is worse than an empty frame whose reason it
+    // can read.
     const VkExtent2D extent{ 640, 360 };
-    for (const auto preset : { vine::graphics::ShaderPreset::StandardPhong, vine::graphics::ShaderPreset::FlatShaded,
-                               vine::graphics::ShaderPreset::Pbr, vine::graphics::ShaderPreset::ShadowedPhong }) {
-        for (const bool depth_test : { true, false }) {
-            for (const bool depth_write : { true, false }) {
-                for (const int color_count : { 0, 1, 3 }) {
-                    EXPECT_NE(makeContentShaderSet(preset, extent, depth_test, depth_write, color_count), nullptr)
-                        << "preset " << static_cast<int>(preset) << " depth_test " << depth_test << " color_count "
+    for (const bool depth_test : { true, false }) {
+        for (const bool depth_write : { true, false }) {
+            for (const int color_count : { 0, 1, 3 }) {
+                for (const auto built : { vine::graphics::ShaderPreset::StandardPhong,
+                                           vine::graphics::ShaderPreset::FlatShaded }) {
+                    EXPECT_NE(makeContentShaderSet(built, extent, depth_test, depth_write, color_count), nullptr)
+                        << "preset " << static_cast<int>(built) << " depth_test " << depth_test << " color_count "
                         << color_count;
+                }
+                for (const auto reserved : { vine::graphics::ShaderPreset::Pbr,
+                                              vine::graphics::ShaderPreset::ShadowedPhong }) {
+                    EXPECT_EQ(makeContentShaderSet(reserved, extent, depth_test, depth_write, color_count), nullptr)
+                        << "preset " << static_cast<int>(reserved) << " has no program of its own, so it must be "
+                        << "declined (the caller reports it and draws nothing)";
                 }
             }
         }
@@ -440,15 +451,12 @@ TEST(ForwardShaderSetTest, EveryContentSetIsTheEnginesOwn)
     // getDescriptorBinding reports "not declared" through its bool conversion.
     EXPECT_TRUE(static_cast<bool>(set->getDescriptorBinding("vine_lights")));
 
-    // A reserved preset is substituted, not declined and not handed to another library: it gets
-    // the forward program's set (the same declarations), which is what keeps a host that asks for
-    // Pbr shaded instead of unshaded.
+    // A preset without a program of its own is DECLINED, so a caller that only checks for null --
+    // and draws nothing when it sees one -- never puts an unexplained picture on screen. That a
+    // slot actually reports and skips is pinned in SceneBridgeCacheOwnershipTest.
     for (const auto preset : { vine::graphics::ShaderPreset::Pbr, vine::graphics::ShaderPreset::ShadowedPhong }) {
-        const auto substituted = makeContentShaderSet(preset, VkExtent2D{ 640, 360 }, true, true, 1);
-        ASSERT_NE(substituted, nullptr) << "a preset without its own program must still be shaded";
-        EXPECT_TRUE(static_cast<bool>(substituted->getDescriptorBinding("vine_lights")))
-            << "the substitute is an ENGINE set (vsg's built-in sets are no longer used at all)";
-        EXPECT_EQ(substituted->stages.size(), set->stages.size());
+        EXPECT_EQ(makeContentShaderSet(preset, VkExtent2D{ 640, 360 }, true, true, 1), nullptr)
+            << "no program of its own yet means no set, not somebody else's";
     }
 }
 
@@ -568,10 +576,9 @@ TEST(ForwardShaderSetTest, TheLightSourceFollowsTheSlotSetNotTheSession)
     // every preset the engine can be asked for reads our block (pinned below); the foreign-set half
     // is pinned with vsg's phong set, which is exactly such a set.
     SceneBridge bridge;
-    for (const auto preset : { vine::graphics::ShaderPreset::StandardPhong, vine::graphics::ShaderPreset::FlatShaded,
-                               vine::graphics::ShaderPreset::Pbr, vine::graphics::ShaderPreset::ShadowedPhong }) {
+    for (const auto preset : { vine::graphics::ShaderPreset::StandardPhong, vine::graphics::ShaderPreset::FlatShaded }) {
         const auto set = makeContentShaderSet(preset, VkExtent2D{ 640, 360 }, true, true, 1);
-        ASSERT_NE(set, nullptr) << "every preset must be shaded by an engine set";
+        ASSERT_NE(set, nullptr) << "the presets the engine has programs for get an engine set";
         bridge.setShaderSet(set);
         EXPECT_TRUE(bridge.hasOwnLightsBlock())
             << "the engine never hands a slot a set of another library's";
@@ -580,6 +587,48 @@ TEST(ForwardShaderSetTest, TheLightSourceFollowsTheSlotSetNotTheSession)
     // A foreign set (not the engine's): the slot has to be told to feed vsg's light data instead.
     bridge.setShaderSet(::vsg::createPhongShaderSet());
     EXPECT_FALSE(bridge.hasOwnLightsBlock());
+}
+
+TEST(ForwardShaderSetTest, ABridgeWithNoShaderSetReportsAndDrawsNothing)
+{
+    // A slot that was never given a set — and therefore also a slot whose preset has no program of
+    // its own, which is declined (see makeContentShaderSet) — draws NOTHING and says why. The
+    // alternative (inventing a default, or borrowing another library's set) puts a picture on screen
+    // that nobody can explain, and it hides the actual problem: the shading the host asked for does
+    // not exist yet.
+    SceneBridge bridge; // no setShaderSet() on purpose
+    std::vector<vine::graphics::RenderDiagnostic> reported;
+    bridge.setDiagnosticSink([&reported](const vine::graphics::RenderDiagnostic& diagnostic) {
+        reported.push_back(diagnostic);
+    });
+
+    auto root     = vsg::Group::create();
+    auto geometry = makeBareTriangle();
+    auto material = vine::graphics::MaterialPtr(new vine::graphics::Material());
+    std::vector<vine::graphics::RenderCommand> commands;
+    for (int i = 0; i < 3; ++i) { // several drawables and several syncs: one report, not one per loop
+        commands.clear();
+        commands.emplace_back(geometry, material, vine::math::Mat4d());
+        bridge.syncRenderCommands(commands, root.get(), nullptr);
+    }
+
+    EXPECT_TRUE(root->children.empty()) << "no set means nothing is drawn, not something shaded";
+    ASSERT_EQ(reported.size(), 1u) << "the reason is reported once, not once per drawable or frame";
+    EXPECT_EQ(reported.front().category, vine::graphics::DiagnosticCategory::ShaderFallback);
+    EXPECT_EQ(reported.front().severity, vine::graphics::DiagnosticSeverity::Error);
+    EXPECT_EQ(bridge.diagnosticCount(vine::graphics::DiagnosticCategory::ShaderFallback), 1u);
+
+    // Injecting a set re-arms the report: a slot that loses its set again must say so again instead
+    // of going quiet (the report is per SET, not per session).
+    bridge.setShaderSet(makeForwardSet());
+    commands.clear();
+    commands.emplace_back(geometry, material, vine::math::Mat4d());
+    bridge.syncRenderCommands(commands, root.get(), nullptr);
+    EXPECT_EQ(root->children.size(), 1u) << "with a set the drawable is back";
+
+    bridge.setShaderSet(nullptr);
+    bridge.syncRenderCommands(commands, root.get(), nullptr);
+    EXPECT_EQ(bridge.diagnosticCount(vine::graphics::DiagnosticCategory::ShaderFallback), 2u);
 }
 
 TEST(ForwardShaderSetTest, BuiltInSetKeepsTheFullCanonicalPrefix)

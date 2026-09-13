@@ -173,16 +173,15 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
         }
         content.bridge.setShaderSet(set_ref);
     }
-    // A preset the engine has no program of its own for yet (Pbr / ShadowedPhong) is shaded by the
-    // forward program (see makeContentShaderSet). Said out loud ONCE per session: a host that asked
-    // for a preset it does not get must be told, not shown a picture it cannot explain — and the
-    // alternative this replaced (silently falling back to another library's shader set) is exactly
-    // what this backend no longer does.
+    // A preset the engine has no program of its own for yet (Pbr / ShadowedPhong) has NO set: the
+    // slot's bridge reports it (see buildStateGroup) and draws nothing. Said out loud here as well,
+    // ONCE per session, at the level the host asked the question at: "you asked for this preset,
+    // it has no program yet, nothing will be drawn" — not a picture it did not ask for.
     if (vine::graphics::builtinProgram(persistent.shader_preset) == nullptr && !state.preset_substituted_reported) {
         state.preset_substituted_reported = true;
-        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ShaderFallback,
-                           formatDiagnostic(u8"the shading preset has no program of its own yet; the engine's forward "
-                                            u8"program shades it (vsg's built-in shader sets are not used at all)"));
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
+                           u8"the shading preset has no program of its own yet, so this session's content is NOT "
+                           u8"drawn (the built-in vsg shader sets are not used as a substitute)");
     }
     // Which light source this slot must feed follows the SET that draws it (see
     // SceneBridge::hasOwnLightsBlock): the engine's own sets read the slot's `vine_lights` block,

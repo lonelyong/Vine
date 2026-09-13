@@ -92,6 +92,14 @@ void SceneBridge::setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet)
     // built-in path's dynamic opacity carrier and no attribute is ever dropped.
     forward_draw_block_ =
         shader_set_ != nullptr && static_cast<bool>(shader_set_->getDescriptorBinding("vine_draw"));
+    // A new set re-arms the "I have nothing to shade with" report (see buildStateGroup): a slot
+    // given one again must not stay silent if it loses it a second time.
+    no_shader_set_reported_ = false;
+    // The retained STATE wrappers were built against the OLD set (their pipelines, descriptor sets
+    // and attribute bindings are the old set's), so they have to go: the next sync rebuilds them
+    // from the new one. The vertex data is untouched — a set change costs pipelines, not uploads
+    // (see invalidateState).
+    invalidateState();
 }
 
 void SceneBridge::setMaterialManager(vine::raw_ptr<VsgMaterialManager> manager)
@@ -106,14 +114,10 @@ VsgMaterialManager& SceneBridge::materialManager()
 
 ::vsg::ref_ptr<::vsg::ShaderSet> SceneBridge::baseShaderSet()
 {
-    if (shader_set_ == nullptr) {
-        // No set was injected, so this bridge has to answer for itself: build the ENGINE's
-        // forward set rather than reaching for a library's. The engine always injects one per
-        // slot (VsgContentSlot), so this is the path a bridge driven directly takes — a test,
-        // or a caller assembling its own slot.
-        shader_set_ = detail::makeContentShaderSet(vine::graphics::ShaderPreset::StandardPhong,
-                                           VkExtent2D{ 1u, 1u }, true, true);
-    }
+    // Whatever was injected, and NOTHING else. A bridge with no set cannot shade: it reports that
+    // once (see buildStateGroup) and draws no content, instead of inventing a default — the set
+    // carries the declarations, the attribute locations and the light source a slot's content is
+    // drawn with, so guessing one is guessing what the picture means.
     return shader_set_;
 }
 
