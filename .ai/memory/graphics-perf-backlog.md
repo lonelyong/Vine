@@ -205,4 +205,5 @@
   `Block` 明示内存布局，`VineFrame`→`VineViewBlock`）；B3 采用**选项 C**（L1 声明式块 + vsg push 作内部优化）。
   · `ShaderAbi.hpp` 落 `VineViewBlock`(288B)/`VineDrawBlock`(80B) + `static_assert`；`ShaderAbiTest` 钉 sizeof/offsetof。
   · 口径：行为中性（纯新增）；test_graphics 236→**239**。下一步 C2（vsg 标注 push ≡ 子集）。
+  · **C2 落地（2026-09-13）**：vsg push `pc` 注释/头文档写明 `pc.projection ≡ VineViewBlock.proj`、`pc.modelView ≡ VineViewBlock.view * VineDrawBlock.model`；`ForwardShaderSetTest` +1 钉 shader 文本 + `sizeof(VineViewBlock) > 128`。行为中性；test_vsg 238→**239**。
 

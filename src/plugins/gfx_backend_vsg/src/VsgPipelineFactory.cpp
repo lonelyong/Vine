@@ -244,6 +244,15 @@ const ::vsg::ShaderStages& compiledStages(vine::graphics::ShaderPreset preset)
     // assigns nothing to it, which is why it is declared with an empty sample.
     shader_set->addDescriptorBinding("vine_lights", "", 0, 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
                                      VK_SHADER_STAGE_FRAGMENT_BIT, ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(VineLightsBlock))));
+    // Camera matrices. The L1 contract is the SDK's VineViewBlock/VineDrawBlock
+    // (ShaderAbi.hpp); on this backend the 128-byte push range is their L2
+    // realization:
+    //   pc.projection == VineViewBlock.proj
+    //   pc.modelView  == VineViewBlock.view * VineDrawBlock.model
+    // vsg fills it from its own matrix stacks (the name "pc" and this range are its
+    // convention). VineViewBlock is far larger than the range, so the push is an
+    // IMPLEMENTATION of the L1 pair, not the contract itself: a backend without a
+    // push range binds the blocks.
     shader_set->addPushConstantRange("pc", "", VK_SHADER_STAGE_VERTEX_BIT, 0, 128);
     shader_set->defaultGraphicsPipelineStates = makeScenePipelineStates(extent, depth_test, depth_write, color_count);
     return shader_set;

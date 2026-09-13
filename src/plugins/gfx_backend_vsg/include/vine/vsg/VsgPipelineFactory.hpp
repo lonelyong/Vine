@@ -179,6 +179,11 @@ static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-
  * | set 0 / binding 2 | `vine_lights` (VineLightsBlock) | the pass' slot, per view |
  * | push constant 0..128 | `{ mat4 projection; mat4 modelView; }` | vsg (matrix stacks) |
  *
+ * The push range is the L2 realization of the SDK's L1 camera blocks (ShaderAbi.hpp):
+ * `pc.projection` is `VineViewBlock.proj` and `pc.modelView` is
+ * `VineViewBlock.view * VineDrawBlock.model`. The full `VineViewBlock` is larger than
+ * the range, so this is an IMPLEMENTATION of the L1 pair, not the contract itself.
+ *
  * The attribute LOCATIONS are the custom-program contract's (colour 2, texcoord
  * 8), not vsg's crowded 2..6 range, and the BINDING ORDER (positions, normals,
  * texcoords, colours, then custom channels) is what it must share with the data

@@ -1,4 +1,9 @@
-﻿> 2026-09-13 **P0.C1：L1 数据块布局（SDK）+ 命名定案**：L1 块统一命名 **`Vine<Role>Block`**（与既有 `VineLightsBlock` 一致；
+﻿> 2026-09-13 **P0.C2：push 标注为 L1 的实现**：vsg `buildVineShaderSet` 的 push `pc` 在代码注释与头文档里写明
+> `pc.projection ≡ VineViewBlock.proj`、`pc.modelView ≡ VineViewBlock.view * VineDrawBlock.model`（L2 实现，不是契约本身：`VineViewBlock` 288B > 128B push）。
+> `ForwardShaderSetTest` +1 钉住 shader 文本（`PushConstants` / `projection` / `modelView` / `} pc;`）与 `sizeof(VineViewBlock) > 128`。
+> 口径：行为中性；test_vsg 238 → **239**，两条证据基线不变。
+
+> 2026-09-13 **P0.C1：L1 数据块布局（SDK）+ 命名定案**：L1 块统一命名 **`Vine<Role>Block`**（与既有 `VineLightsBlock` 一致；
 > `Block` 明示内存布局、与 `FrameContext`/`RenderCommand` 区分），草稿的 `VineFrame` 改成 **`VineViewBlock`**（per-view 语义，避开 `FrameContext`）。
 > `ShaderAbi.hpp` 新增 `VineViewBlock`(288B) / `VineDrawBlock`(80B)（16B 对齐、全 mat4/vec4 ⇒ std140 与 D3D cbuffer 同布局）+ `static_assert`；
 > `tests/test_graphics/ShaderAbiTest.cpp` 钉 sizeof/offsetof。口径：行为中性；test_graphics 236 → **239**。下一步 C2（vsg 标注 push ≡ 子集）。

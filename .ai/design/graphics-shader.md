@@ -264,7 +264,7 @@ SDK shader 文本因此写死了 `layout(push_constant)` / `layout(set = 0, bind
 | 步 | 内容 | 风险 |
 | --- | --- | --- |
 | **C1（2026-09-13 落地）** | SDK `ShaderAbi.hpp` 定义 `VineViewBlock`(288B) / `VineDrawBlock`(80B)（16 B 对齐、成员 `mat4`/`vec4`，与 `LightPushBlock`/`VineLightsBlock`/`MaterialBlock` 同一"全 vec4 对齐"纪律）+ `static_assert`；`ShaderAbiTest` 钉住 sizeof/offsetof | 低（纯新增） |
-| C2 | vsg 后端把现有 push 标注为 C 的实现：`pc.projection ≡ VineViewBlock.proj`、`pc.modelView ≡ VineDrawBlock.model`，并加测试钉住 push 范围/布局 | 低（行为中性） |
+| **C2（2026-09-13 落地）** | vsg 后端把 push 标注为 C 的实现：`pc.projection ≡ VineViewBlock.proj`、`pc.modelView ≡ VineViewBlock.view * VineDrawBlock.model`（代码注释 + 头文档），并加测试钉住 shader 文本 / 范围 / `sizeof(VineViewBlock) > 128` | 低（行为中性） |
 | C3 | 新后端（有第二个时）直接实现 UBO/cbuffer；`ShaderProgram` 参数表随首个消费者（P10 材质值/用户参数）一起落 | 中 |
 
 ### 12.5 L2 shim 何时做（结论：等第二个后端）

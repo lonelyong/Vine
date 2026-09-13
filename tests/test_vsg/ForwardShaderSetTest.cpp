@@ -25,6 +25,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderPreset.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
@@ -276,6 +277,29 @@ TEST(ForwardShaderSetTest, DeclaresMaterialLightsAndTheColourMatrixPushRange)
     EXPECT_EQ(push.range.stageFlags, VK_SHADER_STAGE_VERTEX_BIT);
     EXPECT_EQ(push.range.offset, 0u);
     EXPECT_EQ(push.range.size, 128u);
+}
+
+TEST(ForwardShaderSetTest, ThePushRangeRealizesTheL1ViewAndDrawBlocks)
+{
+    // The vsg backend's push is the L2 realization of the SDK's L1 camera blocks
+    // (ShaderAbi.hpp): it carries VineViewBlock.proj and
+    // VineViewBlock.view * VineDrawBlock.model. The full view block is larger than the
+    // push range, which is why the push is an IMPLEMENTATION of the L1 pair rather
+    // than the contract itself.
+    EXPECT_GT(sizeof(vine::graphics::VineViewBlock), 128u);
+
+    const auto program = vine::graphics::builtinProgram(vine::graphics::ShaderPreset::StandardPhong);
+    ASSERT_NE(program, nullptr);
+    ASSERT_EQ(program->stageCount(), 2u);
+    const auto* vs_stage = program->stage(0);
+    ASSERT_NE(vs_stage, nullptr);
+    const std::string vs = vs_stage->source.stdstr();
+    // The block instance is named "pc" because that is the name vsg's matrix stacks
+    // fill; the two members are the L1 subset named above.
+    EXPECT_NE(vs.find("layout(push_constant) uniform PushConstants"), std::string::npos);
+    EXPECT_NE(vs.find("mat4 projection;"), std::string::npos);
+    EXPECT_NE(vs.find("mat4 modelView;"), std::string::npos);
+    EXPECT_NE(vs.find("} pc;"), std::string::npos);
 }
 
 TEST(ForwardShaderSetTest, InheritsTheScenePipelineStates)
