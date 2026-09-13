@@ -9,6 +9,9 @@
 #include <vsg/app/View.h>
 #include <vsg/lighting/Light.h>
 
+#include <vine/graphics/BuiltinShaders.hpp>
+#include <vine/graphics/ShaderPreset.hpp>
+
 #include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgContentSlot.hpp>
 #include <vine/vsg/VsgDiagnostics.hpp>
@@ -170,11 +173,22 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
         }
         content.bridge.setShaderSet(set_ref);
     }
-    // Which light source this slot must feed follows the SET that draws it, not the session's
-    // forward switch (see SceneBridge::hasOwnLightsBlock): a preset without a Vine program falls
-    // back to the built-in set while that switch is on, and the built-in shading reads vsg's
-    // view-dependent light data — the slot has to build those light nodes for it, or the
-    // fallback draws unlit.
+    // A preset the engine has no program of its own for yet (Pbr / ShadowedPhong) is shaded by the
+    // forward program (see makeContentShaderSet). Said out loud ONCE per session: a host that asked
+    // for a preset it does not get must be told, not shown a picture it cannot explain — and the
+    // alternative this replaced (silently falling back to another library's shader set) is exactly
+    // what this backend no longer does.
+    if (vine::graphics::builtinProgram(persistent.shader_preset) == nullptr && !state.preset_substituted_reported) {
+        state.preset_substituted_reported = true;
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ShaderFallback,
+                           formatDiagnostic(u8"the shading preset has no program of its own yet; the engine's forward "
+                                            u8"program shades it (vsg's built-in shader sets are not used at all)"));
+    }
+    // Which light source this slot must feed follows the SET that draws it (see
+    // SceneBridge::hasOwnLightsBlock): the engine's own sets read the slot's `vine_lights` block,
+    // while a FOREIGN set (one a caller injected, e.g. another library's) shades from vsg's
+    // view-dependent light data — the slot has to build those light nodes for it, or such a slot
+    // draws unlit.
     content.vsg_lights = !content.bridge.hasOwnLightsBlock();
     content.bridge.setMaterialManager(&persistent.materialManager);
     // Upload textures through the SESSION's cache: the same texture sampled by two

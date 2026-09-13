@@ -129,88 +129,7 @@ struct alignas(16) VineLightsBlock
 static_assert(sizeof(VineLightsBlock) == 112, "VineLightsBlock must match the GLSL VineLightsBlock layout");
 static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-aligned");
 
-/**
- * @brief Builds the shader set for the given shading preset with complete
- * pipeline states.
- *
- * vsg's built-in shader sets (createPhongShaderSet / createFlatShadedShaderSet)
- * arrive without default pipeline states, so pipelines built by
- * GraphicsPipelineConfigurator would lack a ViewportState and nothing would
- * rasterize. Declare the canonical states here so every SceneBridge-built
- * geometry pipeline is complete. The baked viewport matches the window size at
- * attach; when the window drives a dynamic viewport it is overridden at record
- * time anyway. Both Phong and flat presets bind a "material" descriptor of
- * type vsg::PhongMaterialValue, so the shared Vine material path (SceneBridge
- * assigns that value) works unchanged for either.
- *
- * @param preset      Shading-model preset to build for.
- * @param extent      Window extent for the baked static viewport.
- * @param depth_test  When false, depth test/write are disabled so the geometry
- *                    always draws on top of previously rendered content (used
- *                    for HUD overlays such as the axis gizmo).
- * @param color_count Colour attachment count of the target this set renders
- *                    into. Vulkan requires the pipeline's color-blend
- *                    attachment count to equal the subpass's colour count, so
- *                    MRT targets (color_count > 1) get a matching default
- *                    ColorBlendState; single-colour targets keep one (the
- *                    default).
- * @return Configured shader set.
- */
-::vsg::ref_ptr<::vsg::ShaderSet> buildShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
 
-/**
- * @brief Builds our OWN shader set for the given preset (the forward path).
- *
- * Replaces the vendored vsg phong set for scene geometry: the stages come from
- * the SDK's built-in program for @p preset (vine/graphics/BuiltinShaders.hpp —
- * the GLSL itself lives in src/viz/graphics/shaders/), compiled once per preset
- * and shared by every set this function returns. The engine owns the shading
- * TEXT; this backend only compiles it and declares the ABI below.
- *
- * The declared interface is the whole ABI:
- *
- * | where | what | who fills it |
- * | --- | --- | --- |
- * | attribute 0 / 1 | `vsg_Vertex` / `vsg_Normal` | SceneBridge's data node |
- * | attribute 2 | `vsg_Color` (define `VINE_VERTEX_COLOR`) | same |
- * | attribute 8 | `vsg_TexCoord0` (define `VINE_DIFFUSE_MAP`) | same |
- * | set 0 / binding 0 | `material` (std140, PhongMaterialValue) | VsgMaterialManager |
- * | set 0 / binding 1 | `diffuseMap` (define `VINE_DIFFUSE_MAP`) | texture cache |
- * | set 0 / binding 2 | `vine_lights` (VineLightsBlock) | the pass' slot, per view |
- * | set 1 / binding 0 | `vine_draw` (VineDrawBlock, UNIFORM_BUFFER_DYNAMIC) | SceneBridge, per drawable (see DrawBlockSetBinding) |
- * | push constant 0..128 | `{ mat4 projection; mat4 modelView; }` | vsg (matrix stacks) |
- *
- * The push range is the L2 realization of the SDK's L1 camera blocks (ShaderAbi.hpp):
- * `pc.projection` is `VineViewBlock.proj` and `pc.modelView` is
- * `VineViewBlock.view * VineDrawBlock.model`. The full `VineViewBlock` is larger than
- * the range, so this is an IMPLEMENTATION of the L1 pair, not the contract itself.
- *
- * The attribute LOCATIONS are the custom-program contract's (colour 2, texcoord
- * 8), not vsg's crowded 2..6 range, and the BINDING ORDER (positions, normals,
- * texcoords, colours, then custom channels) is what it must share with the data
- * node: vsg numbers a vertex binding by the order assignArray() accepts, so a
- * name this set does not declare shifts every later binding.
- *
- * The optional attributes carry a DEFINE: `assignArray` enables the define when
- * an array is assigned for the binding, and the define selects which compiled
- * stage variant the ShaderSet returns (see ShaderSet::getShaderStages). A caller
- * that supplies no colour therefore gets the variant without the attribute
- * instead of a white carrier it does not want.
- *
- * Lighting is done in VIEW space (the lights block is view-space, like the
- * deferred path's push block), so the shader never needs the world matrix and
- * the model matrix stays the only per-drawable data in the pipeline.
- *
- * @param preset      Shading preset whose SDK built-in program this set
- *                    materialises. A preset without one yields null, and the
- *                    caller keeps the built-in set.
- * @param extent      Target extent for the baked static viewport.
- * @param depth_test  When false, depth test/write are disabled (HUD overlays).
- * @param depth_write Depth write enable for this pass.
- * @param color_count Colour attachment count (0 for a depth-only pass).
- * @return The shader set, or null when this preset has no Vine set or the
- *         stages could not be compiled (no compiler / bad GLSL).
- */
 ::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
 
 /**
@@ -265,35 +184,29 @@ struct V_VSG_API DrawBlockSetBinding : public ::vsg::Inherit<::vsg::CustomDescri
     ::vsg::ref_ptr<::vsg::StateCommand> createStateCommand(::vsg::ref_ptr<::vsg::PipelineLayout> layout) override;
 };
 
-/**
- * @brief Whether scene content should be drawn with our own forward shader.
- *
- * On by default since P0.3: the custom forward set is the shipped content
- * shading, and a preset without Vine stages still falls back to the built-in set
- * (see buildVineShaderSet). `VINE_VSG_BUILTIN=1` forces the built-in vsg phong
- * set for the whole session — the switch the built-in evidence baseline is
- * measured with (see .ai/design/vsg-custom-shader.md §11), the same env-switch
- * idiom the other temporary backend toggles use.
- *
- * @return true when the session should build its content sets from our stages.
- */
-bool vineForwardShaderEnabled();
 
 /**
- * @brief Builds the shader set a pass' scene content renders through.
+ * @brief Builds the shader set a content slot of @p preset draws with.
  *
- * Ours (buildVineShaderSet) when vineForwardShaderEnabled() and the preset has
- * Vine stages, otherwise the built-in set (buildShaderSet). One entry point, so
- * every place that bakes a content set — the window's three depth-mode sets and
- * each off-screen target's — switches together instead of one of them silently
- * keeping the old shader.
+ * The single place that decides which content shading a slot gets, and it always
+ * answers with an ENGINE set (buildVineShaderSet): vsg's built-in sets are not used
+ * at all, because a set of theirs carries their declarations, their attribute
+ * locations and their light source — a second shading ABI to keep in step with
+ * ours, and one the engine cannot own the text of.
  *
- * @param preset      Shading preset the engine asked for.
- * @param extent      Target extent for the baked static viewport.
- * @param depth_test  Enable depth test.
- * @param depth_write Enable depth write.
- * @param color_count Colour attachment count (0 for a depth-only pass).
- * @return The set to render content with (never null for a valid preset).
+ * A preset whose own program has not landed yet (Pbr / ShadowedPhong) is shaded by
+ * the forward program rather than left unshaded or handed to another library; the
+ * slot reports that substitution once per session (see VsgContentSlot), so a host
+ * that asked for a preset it does not get is told rather than shown a picture it
+ * cannot explain.
+ *
+ * @param preset      Shading preset the slot was built for.
+ * @param extent      Initial viewport the default pipeline states carry.
+ * @param depth_test  Whether the pipeline tests depth.
+ * @param depth_write Whether it writes depth.
+ * @param color_count Colour attachments the pipeline renders (MRT passes > 1).
+ * @return The set to draw the slot's content with (null when the engine's own
+ *         stages are unusable, which the embedded-shader gate rules out).
  */
 ::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count = 1);
 

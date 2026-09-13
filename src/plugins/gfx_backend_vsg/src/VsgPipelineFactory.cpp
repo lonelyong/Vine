@@ -80,10 +80,9 @@ namespace detail
 /**
  * @brief Builds the default pipeline states every scene pipeline shares.
  *
- * Split out of buildShaderSet so our own forward shader set (buildVineShaderSet)
- * gets IDENTICAL depth/raster/blend/input-assembly/multisample/viewport states:
- * the two sets must be interchangeable per pass, and any difference in the
- * states would show up as a different picture rather than as an error.
+ * Every content set this backend builds carries the same list, so a pass can
+ * switch between them freely: any difference in the states would show up as a
+ * different picture rather than as an error.
  *
  * @param extent      Target extent for the baked static viewport.
  * @param depth_test  Enable depth test.
@@ -128,17 +127,6 @@ namespace detail
         ::vsg::MultisampleState::create(),
         ::vsg::ViewportState::create(extent),
     };
-}
-
-::vsg::ref_ptr<::vsg::ShaderSet> buildShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
-{
-    // Pbr / ShadowedPhong are reserved presets without a backend mapping yet
-    // (Pbr needs its own PbrMaterialValue; shadow comes last in the roadmap),
-    // so they fall back to the Phong shader set for now.
-    ::vsg::ref_ptr<::vsg::ShaderSet> shaderSet =
-        (preset == vine::graphics::ShaderPreset::FlatShaded) ? ::vsg::createFlatShadedShaderSet() : ::vsg::createPhongShaderSet();
-    shaderSet->defaultGraphicsPipelineStates = makeScenePipelineStates(extent, depth_test, depth_write, color_count);
-    return shaderSet;
 }
 
 
@@ -233,9 +221,9 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
 ::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
 {
     // The stages come from the SDK's built-in program for this preset (owned by
-    // the engine, see BuiltinShaders.hpp); a preset without one is declined so
-    // the caller keeps the built-in mapping (buildShaderSet) instead of shading
-    // it as phong, which would be silently wrong.
+    // the engine, see BuiltinShaders.hpp). A preset without one of its own is
+    // built from the forward program instead (see makeContentShaderSet), so a
+    // caller always gets a set it can draw with.
     const auto& stages = compiledStages(preset);
     if (stages.empty()) {
         return {};
@@ -306,29 +294,25 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     return shader_set;
 }
 
-bool vineForwardShaderEnabled()
-{
-    // Default ON since P0.3: our own forward set is the shipped content shading,
-    // and the built-in vsg phong set is reached only for presets without Vine
-    // stages (see buildVineShaderSet). VINE_VSG_BUILTIN=1 forces the built-in set
-    // for the whole session, which is what the built-in evidence baseline is
-    // measured against (.ai/design/vsg-custom-shader.md §11).
-    // Read once: the answer is a session decision (it selects which sets get
-    // built at initialize), not something to re-check per frame.
-    static const bool enabled = std::getenv("VINE_VSG_BUILTIN") == nullptr;
-    return enabled;
-}
-
 ::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::graphics::ShaderPreset preset, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
 {
-    if (vineForwardShaderEnabled()) {
-        // A preset without Vine stages yields null here and falls through to the
-        // built-in mapping: switching the path must never leave a preset unshaded.
-        if (auto vine_set = buildVineShaderSet(preset, extent, depth_test, depth_write, color_count)) {
-            return vine_set;
-        }
+    // EVERY content set this backend builds is ours. vsg's built-in sets
+    // (createPhongShaderSet / createFlatShadedShaderSet) are deliberately not used
+    // at all: a set of theirs carries their declarations, their attribute
+    // locations and their light source, so mixing the two would mean two shading
+    // ABIs to keep in step — and the engine owns the shading text now
+    // (BuiltinShaders.hpp).
+    //
+    // A preset whose program has not landed yet (Pbr / ShadowedPhong) is shaded by
+    // the engine's forward program for now, i.e. the same stages StandardPhong
+    // uses: it must never be left unshaded, and it must never silently become a
+    // different library's shading model. buildVineShaderSet() still declines such a
+    // preset (that answer is about the preset, not about this policy), so the
+    // substitution happens here and the caller can report it (see VsgContentSlot).
+    if (auto own_set = buildVineShaderSet(preset, extent, depth_test, depth_write, color_count)) {
+        return own_set;
     }
-    return buildShaderSet(preset, extent, depth_test, depth_write, color_count);
+    return buildVineShaderSet(vine::graphics::ShaderPreset::StandardPhong, extent, depth_test, depth_write, color_count);
 }
 
 VkFormat toColorFormat(vine::graphics::RenderTarget::ColorFormat f)

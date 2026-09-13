@@ -10,10 +10,8 @@
 #      no validation-layer errors.
 #   3. vsg_backend_selftest — the off-screen/MRT/PiP/deferred/multi-pass phases,
 #      with its `[selftest]` evidence compared byte-for-byte (vsg_selftest_evidence.sh).
-#   3d. The byte-exact evidence baselines of BOTH content-shading paths: the
-#      shipped forward set (the P0.3 default, exercised by 3c) and the built-in
-#      vsg phong fallback (VINE_VSG_BUILTIN=1), see
-#      .ai/design/vsg-custom-shader.md §11.
+#   3d. The byte-exact evidence baseline of the content-shading path (the engine's
+#      own sets, exercised by 3c), see .ai/design/vsg-custom-shader.md §11.
 #   4. Vine app (default demo).
 #
 # The RenderStateMapper unit mapping (incl. the non-default StateNode path) is
@@ -236,55 +234,22 @@ else
     fi
 fi
 
-# 3d/4: the byte-exact evidence baselines of BOTH content-shading paths. Our own
-# forward set is the shipped default since P0.3 (stage 3c runs it); the built-in
-# vsg phong set is the opt-out fallback reached by presets without Vine stages
-# (VINE_VSG_BUILTIN=1, see .ai/design/vsg-custom-shader.md §11). Each path must
-# render the same phases (same coverage / depth / clear colours) with its own
-# shading, stay validation-clean, and match its own byte-exact baseline — a
-# change in either shading shows up here as a colour diff.
-echo "== 3d/4 vsg_backend_selftest (evidence: shipped forward + built-in fallback) =="
-SELF_BUILTIN_BASELINE="$ROOT/scripts/vsg_selftest_builtin_evidence.txt"
+# 3d/4: the byte-exact evidence baseline of the content-shading path. The engine's own sets are the
+# only sets this backend builds (vsg's built-in sets are not used at all anymore, see
+# makeContentShaderSet), so there is one baseline to match: a change in the shading shows up here as
+# a colour diff.
+echo "== 3d/4 vsg_backend_selftest (evidence: the engine's own content shading) =="
 if [ ! -x "$SELF" ]; then
     echo "[FAIL] vsg_backend_selftest not built"
     FAILED=1
 else
-    log="$TMP/selftest_builtin.log"
-    (cd "$BUILD" && VINE_SELFTEST_FRAMES="${VINE_SELFTEST_FRAMES:-15}" VINE_VSG_BUILTIN=1 \
-        timeout "$SECONDS_V" ./bin/vsg_backend_selftest) >"$log" 2>&1
-    rc=$?
-    echo "    (exit=$rc; 124 = still running when the timeout fired, i.e. OK)"
-    grep "^\[selftest\] pixels:" "$log" | sed 's/^/    /' || true
-    if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
-        echo "[FAIL] built-in fallback self-test exited early with $rc"
-        tail -30 "$log"
-        FAILED=1
-    elif grep -q "\[selftest\] FAIL" "$log"; then
-        echo "[FAIL] built-in fallback self-test reported a pixel/invariant failure"
-        grep "\[selftest\] FAIL" "$log" | head -10
-        FAILED=1
-    else
-        report "vsg_backend_selftest (built-in fallback)" "$log"
-    fi
-    # The byte-exact comparison is delegated to the evidence script (which owns
-    # the baselines and runs the self-test with its own fixed frame count: the
-    # frame count is part of the evidence lines, so comparing a 15-frame run
-    # against a 30-frame baseline could never match).
-    if [ ! -f "$SELF_BUILTIN_BASELINE" ]; then
-        echo "[FAIL] no built-in baseline at $SELF_BUILTIN_BASELINE (run vsg_selftest_evidence.sh --builtin --update)"
-        FAILED=1
-    else
-        if "$SCRIPT_DIR/vsg_selftest_evidence.sh" --builtin "$BUILD" 2>&1 | sed 's/^/    /'; then
-            echo "[PASS] built-in fallback evidence matches its baseline"
-        else
-            echo "[FAIL] built-in fallback evidence differs from its baseline"
-            FAILED=1
-        fi
-    fi
+    # The byte-exact comparison is delegated to the evidence script (which owns the baseline and runs
+    # the self-test with its own fixed frame count: the frame count is part of the evidence lines, so
+    # comparing a 15-frame run against a 30-frame baseline could never match).
     if "$SCRIPT_DIR/vsg_selftest_evidence.sh" "$BUILD" 2>&1 | sed 's/^/    /'; then
-        echo "[PASS] shipped forward evidence matches its baseline"
+        echo "[PASS] content-shading evidence matches its baseline"
     else
-        echo "[FAIL] shipped forward evidence differs from its baseline"
+        echo "[FAIL] content-shading evidence differs from its baseline"
         FAILED=1
     fi
 fi

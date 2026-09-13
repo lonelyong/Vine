@@ -814,15 +814,19 @@ class V_VSG_API SceneBridge {
      */
     VsgDrawBlockPool* drawBlockPool();
 
-    /** @brief Gets the slot's base shader set (the built-in default when unset).
+    /** @brief Gets the slot's base shader set (the engine's forward set when unset).
      *
-     * The built-in Phong set is created lazily on first use and cached, so
-     * the bridge never pays for a fresh createPhongShaderSet() per geometry.
-     * A user program path builds on top of this set's default pipeline states
-     * (the baked viewport / blending), keeping both paths on one material
+     * The ENGINE's own set is built lazily on first use and cached, so a bridge never pays for a
+     * fresh build per geometry — and never reaches for another library's set (see
+     * detail::makeContentShaderSet). A user program path builds on top of this set's default
+     * pipeline states (the baked viewport / blending), keeping both paths on one material
      * descriptor ABI.
      *
-     * @return The base shader set (always non-null).
+     * A caller may INJECT any set (setShaderSet), including a foreign one: the bridge is generic on
+     * purpose, and only then does it ask for vsg's light data (see hasOwnLightsBlock).
+     *
+     * @return The base shader set, or null when even the engine's own stages are unusable (the
+     *         embedded-shader gate rules that out).
      */
     ::vsg::ref_ptr<::vsg::ShaderSet> baseShaderSet();
 

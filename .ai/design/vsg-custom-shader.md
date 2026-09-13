@@ -438,6 +438,34 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 **已补齐（§11.6）**：vsg `Light`/VDS 的 content 用法已去掉；无作者色/UV 时不再喂白载体/零 UV。
 
 
+### 11.7 完全不使用 vsg 内建 ShaderSet（2026-09-13）
+
+拍板：**内容着色只有一条路径 —— 引擎自己的 set**。`vsg::createPhongShaderSet()` /
+`createFlatShadedShaderSet()` 不再出现在任何渲染路径里（`vsg_shader_dump` / `vsg_probe`
+这两个**对比工具**除外，它们存在的意义就是拿 vsg 的 set 来对照）。
+
+| 环节 | 落点 |
+| --- | --- |
+| 选 set | `detail::makeContentShaderSet(preset, …)` **只**调 `buildVineShaderSet`；没有自己 program 的 preset（Pbr / ShadowedPhong）用 **StandardPhong 的前向程序**代替（`buildVineShaderSet` 对这类 preset 仍返回 null——那是对 preset 的诚实回答，替换是渲染器的策略） |
+| 删除 | `detail::buildShaderSet()`、`detail::vineForwardShaderEnabled()`、`VINE_VSG_BUILTIN` 开关 |
+| 桥的兜底 | `SceneBridge::baseShaderSet()` 无注入时建**我们的** forward set（原为 `createPhongShaderSet()`）；桥本身仍接受**任何** set（SDK 允许后端被塞入外来的 set，测试就用 vsg 的 set 当这种“外来者”） |
+| 可见性 | 建槽时若 `builtinProgram(preset) == nullptr`，每会话报**一条** Warning（`ShaderFallback`）：“该 preset 还没有自己的程序，由引擎的前向程序着色（不再使用 vsg 内建 set）”。**不静默换库**是这一步的重点 |
+| 门禁 | `vsg_selftest_evidence.sh --builtin` 与 `scripts/vsg_selftest_builtin_evidence.txt` **删除**（那条路径已不可能产生）；`gfx_lavapipe_check.sh` 的 3d 从“两条基线各比一遍”并成“一条基线比一遍” |
+| 单测 | `ForwardShaderSetTest.TheForwardSwitchIsOnByDefault` → **`EveryContentSetIsTheEnginesOwn`**：四个 preset 的 content set 都非空、都声明 `vine_lights`、stages 数一致；`TheLightSourceFollowsTheSlotSetNotTheSession` 改成“四个 preset 都是我们的” + 用 **vsg 的 set 当外来 set** 钉住 `vsg_lights` 那条老路径；管线状态奇偶校验不再拿 vsg 的 set 当参照，改成同程序的另一档深度变体 |
+| 自检相位 | preset 相位的 Pbr 那一段：从“内建回落画出了一点亮色”改成“**与 StandardPhong 同一四边形像素相同**（±4）”——替补必须是引擎自己的前向模型，而不是另一套库的着色（后者也会画出亮色，但值不同） |
+| 判据 | 证据基线 **51 行**，只有 preset 相位那一行改写；test_vsg **249**；test_graphics 240；`vine_shader_check` PASS；lavapipe PASS |
+
+为什么这么做：一套 ABI（我们声明属性位置 / 描述符 / 推常量范围），不再同时维护“我们的”和
+“vsg 的”两套；灯源（`vine_lights` vs vsg 的 view-dependent lightData）、属性位置、`ViewFeatures`
+的差异面随之消失；宿主拿到的着色一定可解释。
+
+**未完**：Pbr / ShadowedPhong 的**真程序**（PbrMaterialValue + IBL / shadow map）仍未落地，在那之前
+它们是“前向模型 + 一条提示”。vsg 的 `Light` / `ViewDependentState` 现在只在**外来 set** 被注入时才
+需要（`SceneBridge::hasOwnLightsBlock()` 仍是每 set 的判断）。
+
+> 注意：§11.3 / §11.5 / §11.6 里提到的 `--builtin`、内建基线、`vineForwardShaderEnabled()`、
+> `vsg_lights = !vineForwardShaderEnabled()` **都已删除/改写**（那几节记录的是当时的状态）。
+
 ### 11.6 P0.3 收尾：content 不再走 vsg 灯/VDS + 门控变体真正生效（2026-09-13）
 
 | 环节 | 落点 |

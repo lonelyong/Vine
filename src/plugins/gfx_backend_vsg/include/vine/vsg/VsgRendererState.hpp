@@ -222,6 +222,11 @@ struct VsgRendererState {
     // right depth test/write state. Per-geometry pipelines are compiled per
     // view (vsg compiles per viewID), so every content slot carries its own
     // SceneBridge; off-screen targets bake their own per-size sets (see VsgRenderTargetEntry).
+    // Whether this session already told the host that its preset has no program of its own yet and
+    // is being shaded by the engine's forward program (see VsgContentSlot): once per session, so a
+    // substitution is visible without becoming per-slot noise. Session state, so a re-init tells
+    // the new session's host as well.
+    bool                                preset_substituted_reported = false;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_on_shader_set;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_testonly_shader_set;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_off_shader_set;

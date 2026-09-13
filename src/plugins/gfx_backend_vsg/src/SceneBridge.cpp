@@ -1,4 +1,5 @@
 ﻿#include <vine/vsg/SceneBridge.hpp>
+#include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/SceneBridgeInternals.hpp>
 #include <algorithm>
 #include <cmath>
@@ -106,7 +107,12 @@ VsgMaterialManager& SceneBridge::materialManager()
 ::vsg::ref_ptr<::vsg::ShaderSet> SceneBridge::baseShaderSet()
 {
     if (shader_set_ == nullptr) {
-        shader_set_ = ::vsg::createPhongShaderSet();
+        // No set was injected, so this bridge has to answer for itself: build the ENGINE's
+        // forward set rather than reaching for a library's. The engine always injects one per
+        // slot (VsgContentSlot), so this is the path a bridge driven directly takes — a test,
+        // or a caller assembling its own slot.
+        shader_set_ = detail::makeContentShaderSet(vine::graphics::ShaderPreset::StandardPhong,
+                                           VkExtent2D{ 1u, 1u }, true, true);
     }
     return shader_set_;
 }

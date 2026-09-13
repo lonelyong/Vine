@@ -80,7 +80,7 @@ gizmo->setEnabled(false);                   // 需要时隐藏
   从不光栅化。正确做法 = **主 RenderGraph 里的额外 `vsg::View`**（官方多视口范式，同一 render pass）；
   顶部层相机 `viewportState` 每帧设为子矩形 → 内容被裁剪/映射到该子区并画在主场景之上。
 - 每窗口层用**独立 `SceneBridge`** + 顶部层用关深度测试/写入的 `on_top_shader_set`
-  （`buildShaderSet(extent, depth_test=false)`）→ 轴永远在最上层，不被场景几何遮挡。
+  （`makeContentShaderSet(..., depth_test=false)`）→ 轴永远在最上层，不被场景几何遮挡。
 - 顶部层视图只放一个 `AmbientLight`（intensity 1），**不要**用定向头灯——定向光方向固定，
   镜像相机转到对角线（如 (1,1,1)）时面法线·光为负 → 轴发黑。环境光下 phong
   `ambientColor = diffuse*ambient*ambient.a`，与面朝向无关 → 恒纯色。

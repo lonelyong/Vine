@@ -4892,8 +4892,13 @@ bool runPresetShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPt
     };
 
     // The quad the way it is authored: face normal (+z), so the surface faces the sun.
-    PixelImage authored_image;
-    const bool authored_read = measure(vine::graphics::ShaderPreset::Pbr, 1.0f, authored_image);
+    PixelImage phong_image;
+    const bool phong_read = measure(vine::graphics::ShaderPreset::StandardPhong, 1.0f, phong_image);
+    // The same quad through a preset the engine has no program of its own for: it must be shaded by
+    // the engine's forward model (not left unshaded, and not another library's set), so the picture
+    // has to be the SAME one.
+    PixelImage substituted_image;
+    const bool substituted_read = measure(vine::graphics::ShaderPreset::Pbr, 1.0f, substituted_image);
     // The same quad with normals pointing away from the sun: smooth shading can only reach the
     // ambient term, flat shading sees the surface the camera sees.
     PixelImage smooth_image;
@@ -4904,7 +4909,7 @@ bool runPresetShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPt
     // RenderEngine), so the session default is what this restores — the phases after this one and
     // the teardown must not see any of the presets this phase exercised.
     renderer.setShaderPreset(vine::graphics::ShaderPreset::StandardPhong);
-    if (!authored_read || !smooth_read || !flat_read) {
+    if (!phong_read || !substituted_read || !smooth_read || !flat_read) {
         std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused a preset-shading target\n");
         return false;
     }
@@ -4931,13 +4936,37 @@ bool runPresetShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPt
             ok = false;
         }
     };
-    assert_lit("Pbr (no Vine program, so the built-in phong set)", authored_image);
+    assert_lit("StandardPhong", phong_image);
     assert_lit("FlatShaded (its own SDK program)", flat_image);
+    // A preset without a program of its own is shaded by the engine's forward model: the SAME pixels
+    // as StandardPhong over the same quad. Pixels, not a declaration, because the alternative this
+    // replaced (another library's set, with its own attribute locations and light source) also drew
+    // a lit quad — with different values.
+    bool substituted_matches = true;
+    for (int channel = 0; channel < 3; ++channel) {
+        const int phong_value = phong_image.at(128, 72, channel);
+        const int substituted = substituted_image.at(128, 72, channel);
+        if (std::abs(phong_value - substituted) > 4) {
+            substituted_matches = false;
+        }
+        (void)phong_value;
+        (void)substituted;
+    }
+    if (!substituted_matches) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: Pbr (no program of its own) drew (%d,%d,%d) where StandardPhong drew "
+                     "(%d,%d,%d) — a preset the engine has no program for must be shaded by the engine's own "
+                     "forward model, not left unshaded and not handed to another library's shader set\n",
+                     substituted_image.at(128, 72, 0), substituted_image.at(128, 72, 1), substituted_image.at(128, 72, 2),
+                     phong_image.at(128, 72, 0), phong_image.at(128, 72, 1), phong_image.at(128, 72, 2));
+        ok = false;
+    }
     if (ok) {
         std::fprintf(stderr,
-                     "[selftest] preset shading: Pbr (no Vine program, so the built-in phong set) drew a lit "
-                     "(%d,%d,%d) over the clear\n",
-                     authored_image.at(128, 72, 0), authored_image.at(128, 72, 1), authored_image.at(128, 72, 2));
+                     "[selftest] preset shading: Pbr (no program of its own) drew the same (%d,%d,%d) as "
+                     "StandardPhong over the same quad, so a preset without a program is shaded by the "
+                     "engine's own set\n",
+                     substituted_image.at(128, 72, 0), substituted_image.at(128, 72, 1), substituted_image.at(128, 72, 2));
     }
 
     // The flat half: with the authored normals facing away from the sun, flat shading must follow

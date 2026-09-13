@@ -1,4 +1,11 @@
-﻿> 2026-09-13 **preset 会话中途生效（重建着色侧，不重建 target）**
+﻿> 2026-09-13 **完全不使用 vsg 内建 shader set**
+> - `makeContentShaderSet` **只**调 `buildVineShaderSet`；删除 `buildShaderSet()` 与 `vineForwardShaderEnabled()`（`VINE_VSG_BUILTIN` 开关、两条基线的第二份、自检 `--builtin` 模式一起删）。
+> - 没有自己 program 的 preset（Pbr/ShadowedPhong）→ 用 **StandardPhong 的前向程序**代替，并在建槽时**每会话报一条 Warning**（不再静默换成别的库的 set）。
+> - `SceneBridge::baseShaderSet()` 无注入时建**我们的** forward set（原来 `createPhongShaderSet()`）；桥仍接受**外来** set（SDK 语义），`hasOwnLightsBlock()`/`vsg_lights` 那条路现在只服务外来 set。
+> - 自检 preset 相位的 Pbr 段改成“与 StandardPhong 像素相同（±4）”——替补是引擎自己的模型，不是另一套着色。
+> - 判据：两条基线 → **一条 51 行**（只 rewrite 那一行）；test_vsg 249（`EveryContentSetIsTheEnginesOwn` 取代 `TheForwardSwitchIsOnByDefault`）；test_graphics 240；lavapipe PASS。
+
+> 2026-09-13 **preset 会话中途生效（重建着色侧，不重建 target）**
 > - 症状：`RenderEngine::setShaderPreset` 以前只写 `persistent.shader_preset`，而 set 是**建 slot 时烘的**（程序 + "喂哪个光源" + View features 三者都在里面），所以运行中切换画不出来。
 > - 做法：`VsgRenderer::setShaderPreset` 在已初始化会话上重建 window 三套 set + 走新 `detail::resetContentShaderSlots(state)`：每个 target 的 content slot 逐个 `detachSlotView`（**不 detach 就还在画旧 set**）→ 一次计数设备等待（`clearCache` 会释放共享对象注册表）→ 清 `content_slots` → 清 `depth_*_shader_set`（target 自烘的也要跟着忘）。**attachments / pass graph / 深度历史不清**——下一帧懒建 slot 用新 preset 重建。
 > - 门禁 `runLivePresetSwitchPixelPhase`：**同一个** target+pass+slot 连画三段（背向光源的四边形）smooth 42 → 切 FlatShaded 765 → 切回 smooth 42；第三段专治"只往前不回头"。**变异验证过**：把重建短接掉（只写 preset）→ 两段都 FAIL。

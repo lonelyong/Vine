@@ -52,6 +52,7 @@
 | **P10** | 把 opacity 从顶点色移到**每 drawable 的值** | 内建路径 binding 2 是**每 drawable 的白 DYNAMIC 载体** ⇒ data 节点无法共享 | 内建路径也能共享网格资源（解锁 P9） | 改变 opacity 承载方式，影响 shader 契约、既有测试与 selftest 证据行 | **forward 侧已完成（2026-09-13）**：set1/b0 的 `vine_draw` + `VsgDrawBlockPool`（共享缓冲 + **dynamic offset**，每 drawable 一个 80 B 槽，直接写映射内存 ⇒ 改一次 opacity = 4 B、无 transfer）；`model` 不写（走 push）。**内建路径仍用载体**（vsg phong 读 `vsg_Color.a`）。剩余：`params` 承载材质值（B2） |
 | **P12** | preset 中途切换要**重建着色侧**（不是重开会话） | `setShaderPreset` 以前只写 `persistent.shader_preset`；而 set 是建 slot 时烘的（程序 + 喂哪个光源 + View features） | 宿主给个着色模型开关，画面当场变 | 丢 slot 必须逐个 `detachSlotView`（否则旧 view 还在画旧 set）；`clearCache()` 前要一次计数设备等待；target 自烘的 `depth_*_shader_set` 也要清 | **已完成（2026-09-13）**：`detail::resetContentShaderSlots` + window 三套 set 重建；门禁 `runLivePresetSwitchPixelPhase`（同一 slot 三段 42 → 765 → 42，**变异验证过**）；attachments / pass graph / 深度历史不动 |
 
+| **P14** | 内容着色**双路径**（我们的 set + vsg 内建 set 回落） | `makeContentShaderSet` 两条腿 + `VINE_VSG_BUILTIN` 开关；两套 ABI（属性位置/灯源/VDS/ViewFeatures）要对齐；两条证据基线 | 一套 ABI、一条路径、一条基线 | 删内建基线等于少一个回归面（用自检相位“Pbr == StandardPhong 像素”补上语义） | **已完成（2026-09-13）**：删除 `buildShaderSet()` / `vineForwardShaderEnabled()` / `VINE_VSG_BUILTIN` / `vsg_selftest_builtin_evidence.txt` / `--builtin`；没有自己 program 的 preset 用前向程序代替 + **每会话一条 Warning**；`baseShaderSet()` 无注入时建我们的 set；见 `.ai/design/vsg-custom-shader.md` §11.7 |
 ### 已否决
 
 | 想法 | 否决理由 |

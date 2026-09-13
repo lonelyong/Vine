@@ -357,14 +357,17 @@ TEST(ForwardShaderSetTest, InheritsTheScenePipelineStates)
     EXPECT_EQ(static_cast<const ::vsg::DepthStencilState*>(depth->get())->depthTestEnable, VK_TRUE);
     EXPECT_EQ(static_cast<const ::vsg::DepthStencilState*>(depth->get())->depthWriteEnable, VK_TRUE);
 
-    const auto built_in = buildShaderSet(vine::graphics::ShaderPreset::StandardPhong, VkExtent2D{ 640, 360 }, true, true, 1);
-    ASSERT_NE(built_in, nullptr);
-    EXPECT_EQ(states.size(), built_in->defaultGraphicsPipelineStates.size());
+    // The same parity check, against the engine's OTHER depth variant of the same
+    // program: the two variants must carry the same state list (their difference is
+    // the depth policy alone).
+    const auto sibling = makeContentShaderSet(vine::graphics::ShaderPreset::StandardPhong, VkExtent2D{ 640, 360 }, true, false, 1);
+    ASSERT_NE(sibling, nullptr);
+    EXPECT_EQ(states.size(), sibling->defaultGraphicsPipelineStates.size());
     for (std::size_t i = 0; i < states.size(); ++i) {
         // Captured first: typeid on a dereferenced expression evaluates it, and the
         // compiler warns when that expression may have side effects.
         const auto* mine   = states[i].get();
-        const auto* theirs = built_in->defaultGraphicsPipelineStates[i].get();
+        const auto* theirs = sibling->defaultGraphicsPipelineStates[i].get();
         EXPECT_EQ(typeid(*mine).hash_code(), typeid(*theirs).hash_code()) << i;
     }
 }
@@ -425,19 +428,28 @@ TEST(ForwardShaderSetTest, ContentSetsAreNeverUnshaded)
     }
 }
 
-TEST(ForwardShaderSetTest, TheForwardSwitchIsOnByDefault)
+TEST(ForwardShaderSetTest, EveryContentSetIsTheEnginesOwn)
 {
-    // VINE_VSG_BUILTIN is a session decision read once; with it unset (the case in
-    // this process, and in the shipped configuration) content must go through our
-    // own forward set, whose layout declares the vine_lights binding. If this ever
-    // flips back, the self-test evidence baseline changes with it — this test says
-    // the flip was not accidental.
-    ASSERT_EQ(std::getenv("VINE_VSG_BUILTIN"), nullptr);
-    EXPECT_TRUE(vineForwardShaderEnabled());
+    // There is no switch: content shading is always the engine's own set, whose layout declares
+    // the vine_lights binding (vsg's built-in sets are not used at all — a set of theirs carries
+    // their declarations, attribute locations and light source, a second shading ABI to keep in
+    // step). The substitute for a preset whose program has not landed is the engine's forward
+    // program, so every preset must still answer with a usable set of ours.
     const auto set = makeContentShaderSet(vine::graphics::ShaderPreset::StandardPhong, VkExtent2D{ 640, 360 }, true, true, 1);
     ASSERT_NE(set, nullptr);
     // getDescriptorBinding reports "not declared" through its bool conversion.
     EXPECT_TRUE(static_cast<bool>(set->getDescriptorBinding("vine_lights")));
+
+    // A reserved preset is substituted, not declined and not handed to another library: it gets
+    // the forward program's set (the same declarations), which is what keeps a host that asks for
+    // Pbr shaded instead of unshaded.
+    for (const auto preset : { vine::graphics::ShaderPreset::Pbr, vine::graphics::ShaderPreset::ShadowedPhong }) {
+        const auto substituted = makeContentShaderSet(preset, VkExtent2D{ 640, 360 }, true, true, 1);
+        ASSERT_NE(substituted, nullptr) << "a preset without its own program must still be shaded";
+        EXPECT_TRUE(static_cast<bool>(substituted->getDescriptorBinding("vine_lights")))
+            << "the substitute is an ENGINE set (vsg's built-in sets are no longer used at all)";
+        EXPECT_EQ(substituted->stages.size(), set->stages.size());
+    }
 }
 
 TEST(ForwardShaderSetTest, ForwardSetDropsDerivedColourAndUvs)
@@ -545,25 +557,29 @@ TEST(ForwardShaderSetTest, ThePerDrawBlockIsSetOneWithItsOwnBinding)
 TEST(ForwardShaderSetTest, TheLightSourceFollowsTheSlotSetNotTheSession)
 {
     // A slot must feed the light source its SHADER SET reads: our forward set takes the slot's
-    // `vine_lights` block, while the built-in sets (and user programs) shade from vsg's
+    // `vine_lights` block, while a set that declares no such binding shades from vsg's
     // view-dependent light data — which only exists if the slot puts vsg light nodes under its
-    // view. The question is per SET, because a preset this backend has no Vine program for falls
-    // back to the built-in set while the session's forward switch is on; a session-level answer
-    // leaves those slots unlit (measured: the Pbr fallback drew (0,0,0) instead of (46,8,3)).
+    // view. The question is per SET, not per session: a session-level answer leaves the slots that
+    // do not read our block unlit (measured when this was wrong: such a slot drew (0,0,0) where it
+    // had to draw (46,8,3)).
+    //
+    // The bridge stays generic on purpose — it takes whatever set it is handed, because the SDK
+    // allows a backend to be given a foreign one. What the ENGINE builds is always its own set, so
+    // every preset the engine can be asked for reads our block (pinned below); the foreign-set half
+    // is pinned with vsg's phong set, which is exactly such a set.
     SceneBridge bridge;
-    bridge.setShaderSet(makeContentShaderSet(vine::graphics::ShaderPreset::StandardPhong, VkExtent2D{ 640, 360 }, true, true, 1));
-    EXPECT_TRUE(bridge.hasOwnLightsBlock());
-
-    for (const auto preset : { vine::graphics::ShaderPreset::Pbr, vine::graphics::ShaderPreset::ShadowedPhong }) {
+    for (const auto preset : { vine::graphics::ShaderPreset::StandardPhong, vine::graphics::ShaderPreset::FlatShaded,
+                               vine::graphics::ShaderPreset::Pbr, vine::graphics::ShaderPreset::ShadowedPhong }) {
         const auto set = makeContentShaderSet(preset, VkExtent2D{ 640, 360 }, true, true, 1);
-        ASSERT_NE(set, nullptr);
+        ASSERT_NE(set, nullptr) << "every preset must be shaded by an engine set";
         bridge.setShaderSet(set);
-        EXPECT_FALSE(bridge.hasOwnLightsBlock());
+        EXPECT_TRUE(bridge.hasOwnLightsBlock())
+            << "the engine never hands a slot a set of another library's";
     }
-    // FlatShaded has a Vine program (the forward stages with VINE_FLAT), so it is one of OURS and
-    // reads our block — a preset that falls back is the exception, not the rule.
-    bridge.setShaderSet(makeContentShaderSet(vine::graphics::ShaderPreset::FlatShaded, VkExtent2D{ 640, 360 }, true, true, 1));
-    EXPECT_TRUE(bridge.hasOwnLightsBlock());
+
+    // A foreign set (not the engine's): the slot has to be told to feed vsg's light data instead.
+    bridge.setShaderSet(::vsg::createPhongShaderSet());
+    EXPECT_FALSE(bridge.hasOwnLightsBlock());
 }
 
 TEST(ForwardShaderSetTest, BuiltInSetKeepsTheFullCanonicalPrefix)
