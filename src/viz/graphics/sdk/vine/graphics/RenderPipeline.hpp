@@ -14,25 +14,83 @@ V_GRAPHICS_NS_BEGIN
 class AxisGizmo;
 class Camera;
 class FpsOverlay;
+class RenderEngine;
 class RenderPass;
 class RenderTarget;
+class Scene;
 
 /**
- * @brief Named presets for the main-window pipeline of a view.
+ * @brief How a pipeline shades its opaque content.
  *
- * A preset is assembled by RenderPipelineBuilder::build(). The shadowed
- * variants are placeholders: the shadow slice (an order < 0 depth-only pass
- * plus shadowed lighting) is not implemented yet, so they currently assemble
- * the same pipeline as their unshadowed counterpart. Asking for one is not
- * silent: the builder reports a DiagnosticCategory::UnsupportedRequest telling
- * the host that the picture it gets is unshadowed.
+ * The ONE structural choice a pipeline makes: a forward path draws the content
+ * straight into the lit image (one scene pass), a deferred path first writes a
+ * G-buffer off-screen and then shades it fullscreen.
+ *
+ * It is an OPTION rather than a type because the two carry the same behaviour —
+ * a list of passes — and differ only in that data; and because the other things
+ * a host wants (shadows, screen-space effects) are ORTHOGONAL to it: they add
+ * passes and inputs to whichever path is chosen (see PipelineStage), so making
+ * the path a type would need one subclass per combination.
  */
-enum class PipelinePreset {
-    Forward,           ///< One window scene pass (order 0) drawing the content.
-    ForwardShadowed,   ///< Forward + shadow (placeholder: builds Forward and reports it).
-    Deferred,          ///< G-buffer (offscreen MRT) + fullscreen lighting.
-    DeferredShadowed,  ///< Deferred + shadow (placeholder: builds Deferred and reports it).
+enum class ShadingPath {
+    Forward,  ///< One window scene pass drawing the content.
+    Deferred, ///< A G-buffer pass (offscreen MRT) + a fullscreen lighting pass.
 };
+
+/**
+ * @brief Where a pass enters the frame's order.
+ *
+ * A pipeline is a list of passes the engine runs in ascending order, and a pass
+ * an EFFECT adds has to enter at the right place without knowing the numbers
+ * the passes around it happened to use: a shadow maps belongs before every pass
+ * that samples it, a screen-space effect between the geometry that produced its
+ * inputs and the shading that consumes them. A stage names that place by
+ * intent — pipelineStageOrder() turns it into the number the engine sorts by,
+ * and passes inside one stage run in the order they were planned (the engine
+ * resolves equal orders by registration order).
+ *
+ * The scale is documented rather than private so a host that registers its own
+ * pass (RenderEngine::addPass) can place it by intent too, instead of guessing
+ * where the gaps are.
+ */
+enum class PipelineStage {
+    Depth,       ///< Produces depth for later sampling: shadow maps, depth prepasses.
+    Geometry,    ///< Opaque scene content (the G-buffer pass on a deferred path).
+    Effect,      ///< Screen-space effects reading Geometry's outputs (e.g. SSAO).
+    Shading,     ///< The lit result: the forward content pass, or the deferred lighting pass.
+    Transparent, ///< Forward-only content composited over the shaded result.
+    Present,     ///< Presents a baked result to the window (deferred + forward content).
+    Overlay,     ///< HUD passes drawn over everything the pipeline shaded.
+    Preview,     ///< Host / debug preview screens (PiP, attachment previews), above the HUD.
+};
+
+/**
+ * @brief The order the engine sorts a pass of @p stage by.
+ *
+ * Effects state where they belong relative to the stage they serve, and this
+ * table is the one place that turns intent into the engine's sort key. The
+ * bands are spaced so a stage can gain passes later without renumbering any
+ * other; a pass inside one stage runs by registration order, so a stage needs
+ * exactly one number.
+ *
+ * @param stage Stage to place.
+ * @return The pass order of @p stage.
+ */
+constexpr int pipelineStageOrder(PipelineStage stage) noexcept
+{
+    switch (stage)
+    {
+    case PipelineStage::Depth: return -100;
+    case PipelineStage::Geometry: return -40;
+    case PipelineStage::Effect: return -20;
+    case PipelineStage::Shading: return 0;
+    case PipelineStage::Transparent: return 20;
+    case PipelineStage::Present: return 40;
+    case PipelineStage::Overlay: return 60;
+    case PipelineStage::Preview: return 100;
+    }
+    return 0;
+}
 
 /**
  * @brief Optional HUD overlay: a world-orientation axis gizmo.
@@ -63,7 +121,12 @@ struct V_GRAPHICS_API AxisGizmoOptions {
     /** @brief Stick cross-section half extent in world units (default 0.09). */
     double thickness = 0.09;
 
-    /** @brief Draw order, above the order-0 window pass (default 10). */
+    /** @brief Stacking offset inside the HUD stage (default 10).
+     *
+     * Relative to the other HUD overlay, not to the scene: the pipeline places
+     * every overlay at PipelineStage::Overlay and adds this offset, so the HUD
+     * stays above the passes it annotates no matter what orders they took.
+     */
     int order = 10;
 };
 
@@ -92,15 +155,25 @@ struct V_GRAPHICS_API FpsOverlayOptions {
     /** @brief Readout box height in device pixels (default 36). */
     int height_px = 36;
 
-    /** @brief Draw order, above the gizmo and window pass (default 30). */
+    /** @brief Stacking offset inside the HUD stage (default 30, above the gizmo). */
     int order = 30;
 };
 
 /**
  * @brief Options controlling RenderPipelineBuilder::build().
+ *
+ * The description of a pipeline: the ONE structural choice (@ref path) plus the
+ * per-pass options of the passes the path and the overlays need. Shadows are
+ * NOT here — a shadow is requested by the LIGHT that casts it
+ * (Light::castShadow) and honoured by the pipeline that draws that light's
+ * content, because a light outlives any one pipeline and a scene may be drawn by
+ * several (see PipelineStage::Depth and .ai/design/render-pipeline.md §2).
  */
 struct V_GRAPHICS_API PipelineOptions {
-    /** @brief Off-screen G-buffer size in pixels for the Deferred presets.
+    /** @brief How the opaque content is shaded (the structural choice). */
+    ShadingPath path = ShadingPath::Forward;
+
+    /** @brief Off-screen G-buffer size in pixels for the Deferred path.
      *
      * 0 (the default) uses the engine's current surface size, falling back to
      * a fixed 640 x 360 when the surface is not known yet. The host keeps the
@@ -144,20 +217,38 @@ struct V_GRAPHICS_API PipelineOptions {
 /**
  * @brief The main-window pipeline produced by RenderPipelineBuilder::build().
  *
- * Owns the passes and targets it created (the target engine also references
- * the passes, so they stay alive either way). Exposes the window-presenting
- * pass and - for deferred pipelines - the off-screen G-buffer, whose size is
- * maintained by its owner through resize() (the backend rebuilds the off-
- * screen attachments whenever the target size changes between frames).
+ * Owns the passes it created AND their registration: it registers them on the
+ * engine as they are planned and unregisters them when it dies, so dropping the
+ * handle takes the passes out of the frame instead of leaving them to run with
+ * nobody holding them (RenderEngine::addPass keeps its own reference, so a
+ * reference alone would keep a dropped pipeline's passes alive and drawing).
+ *
+ * It also keeps the engine ALIVE (a strong reference, not a borrow): the
+ * passes live in that engine's list, so "this pipeline is still alive" is
+ * exactly "its engine must still be". There is no cycle — the engine does not
+ * know its pipelines.
+ *
+ * Exposes the window-presenting pass, and for deferred paths the off-screen
+ * G-buffer, whose size its owner maintains through resize() (the backend
+ * rebuilds the off-screen attachments whenever the target size changes between
+ * frames).
  */
 class V_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     friend class RenderPipelineBuilder;
 
   public:
-    /** @brief Constructs an empty pipeline (nothing registered). */
-    Pipeline();
+    /** @brief Constructs a pipeline that registers its passes on @p engine.
+     *
+     * The engine is a constructor argument rather than a setter because a
+     * pipeline without one could not do the ONE thing this class does with a
+     * pass (register it, and later take it back).
+     *
+     * @param engine Engine the pipeline's passes are registered on (held
+     *               strongly; must not be null).
+     */
+    explicit Pipeline(intrusive_ptr<RenderEngine> engine);
 
-    /** @brief Destroys the pipeline, releasing its passes and target. */
+    /** @brief Destroys the pipeline, unregistering its passes from the engine. */
     ~Pipeline();
 
   public:
@@ -211,13 +302,22 @@ class V_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     void resize(int width, int height);
 
   private:
-    /** @brief Records a produced pass so the pipeline keeps it alive. */
-    void retainPass(intrusive_ptr<RenderPass> pass);
+    /** @brief Registers a pass on the engine and remembers it.
+     *
+     * The two halves are one call on purpose: a pass registered without being
+     * remembered is a pass nothing will ever unregister (the defect this
+     * method exists to make impossible).
+     *
+     * @param pass    Pass to register (the pipeline keeps it alive).
+     * @param content Content scene the pass draws, or null for none.
+     * @param order   Pass order (see pipelineStageOrder).
+     */
+    void addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order);
 
     /** @brief Sets the window-presenting pass. */
     void setWindowPass(intrusive_ptr<RenderPass> pass);
 
-    /** @brief Sets the off-screen G-buffer (Deferred presets). */
+    /** @brief Sets the off-screen G-buffer (Deferred path). */
     void setOffscreenTarget(intrusive_ptr<RenderTarget> target);
 
     /** @brief Sets the off-screen composite target (Deferred + transparent
@@ -230,6 +330,12 @@ class V_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     /** @brief Sets the frame-rate overlay (optional). */
     void setFpsOverlay(intrusive_ptr<FpsOverlay> fps);
 
+    // The engine the passes were registered on, held strongly (see the class
+    // comment). Declared with a forward declaration and destroyed by the
+    // out-of-line destructor, so this header does not pull RenderEngine.hpp in.
+    intrusive_ptr<RenderEngine> engine_;
+    // A handle, not just a reference: the pipeline owns the registration of
+    // every pass here (see addPass) and tears them all down in its destructor.
     std::vector<intrusive_ptr<RenderPass>> passes_;
     intrusive_ptr<RenderPass> window_pass_;
     intrusive_ptr<RenderTarget> offscreen_target_;

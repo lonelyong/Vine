@@ -95,10 +95,15 @@ engine.setBackend(backend);
   - **必须有相机**（否则什么都不画，引擎在接线期报一次）；**没有 program 也不画**（同样接线期报一次）。
 - `RenderTarget` —— 若干彩色附件 + 可选深度：`attachColor(fmt)` / `attachDepth(fmt)` / `setSize(w,h)`，
   以及 `shareDepth(source)`（借用别人的深度）与 `setDepthPromotion(bool)`（深度是否变成可采样）。
-- `RenderPipelineBuilder` —— 配方层：`build(PipelinePreset::Forward | Deferred | …)`、
+- `RenderPipelineBuilder` —— 配方层：`build(const PipelineOptions&)`（结构选择只有一个：
+  `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/render-pipeline.md`）、
   `addOffscreenToScreen(...)`（离屏 + PiP），并暴露延迟所需的公有件（`defaultGbufferTarget()`、
   `defaultGbufferGeometryProgram()`、`defaultDeferredLightProgram()`）。它装配出来的就是**你手写也会写的
-  那些对象**，返回值 `Pipeline` 句柄持有它们（`windowPass()`、`offscreenTarget()`、`resize(w,h)`）。
+  那些对象**，返回值 `Pipeline` 句柄持有它们（`windowPass()`、`offscreenTarget()`、`resize(w,h)`），
+  **并持有它们的注册**：丢掉句柄 = 那些 pass 从帧里撤下来（`RenderEngine::addPass` 自己另持引用，
+  只持有引用会让被丢掉的 pass 继续每帧执行）。
+- **顺序用阶段说**（`PipelineStage` + `pipelineStageOrder`）：阴影深度、几何、效果、着色、透明、
+  呈现、HUD、预览各占一个档位，效果按"我在谁之前"进入，不去抢别人的魔数。
 - `RenderBackend` —— 设备边界（窗口层、逐 pass `render()`、回读、诊断）。`RenderBackendRegistry` /
   `RenderBackendFactory` 让插件自注册、宿主按名字创建。
 
@@ -202,7 +207,8 @@ if (!engine.initialize()) { return false; }
 
 RenderPipelineBuilder builder(&engine);
 builder.setContent(scene).setCamera(camera.get());
-auto pipeline = builder.build(PipelinePreset::Forward);   // 或 Deferred
+PipelineOptions options;                      // 默认 = forward 路径
+auto pipeline = builder.build(options);      // 或 options.path = ShadingPath::Deferred
 if (pipeline == nullptr) { return false; }
 
 // ⑤ 帧循环。
@@ -358,13 +364,15 @@ builder 只是把 §3.3 / §3.4 的装配收起来，配上默认 program；它�
 RenderPipelineBuilder builder(&engine);
 builder.setContent(scene).setCamera(camera.get());
 
-// 预设：forward / deferred（+ 两个占位的 shadowed 变体，见 §4.3）
-auto pipeline = builder.build(PipelinePreset::Deferred, PipelineOptions{
-    /* .offscreen_width  */ 0,          // 0 = 用当前 surface 尺寸，未知时回退 640x360
-    /* .offscreen_height */ 0,
-    /* .gbuffer_program  */ nullptr,    // 空 = 用内置的临时 G-buffer 几何 program
-    /* .lighting_program */ nullptr,    // 空 = 用内置的临时延迟光照 program
-});
+// 结构只有两选：forward / deferred。阴影不是预设——它由"投影的那盏灯"提出请求
+// （Light::castShadow），当前还没有阴影 pass，所以 builder 会报一条"画面无影"。
+PipelineOptions options;
+options.path = ShadingPath::Deferred;
+options.offscreen_width  = 0;          // 0 = 用当前 surface 尺寸，未知时回退 640x360
+options.offscreen_height = 0;
+options.gbuffer_program  = nullptr;    // 空 = 用内置的临时 G-buffer 几何 program
+options.lighting_program = nullptr;    // 空 = 用内置的临时延迟光照 program
+auto pipeline = builder.build(options);
 pipeline->resize(surface_w, surface_h);            // 同时管离屏 / 合成 target 与 HUD 叠加
 
 // 内容着色：必须**显式指定**程序。没有 shader preset 枚举，也没有兜底——
@@ -564,7 +572,7 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 
 | 环境变量 | 取值 | 作用 |
 | --- | --- | --- |
-| `VINE_PIPELINE` | `forward` / `deferred` / `forward_shadowed` / `deferred_shadowed` | 选主窗口预设。**默认 `deferred`** |
+| `VINE_PIPELINE` | `forward` / `deferred` / `forward_shadowed` / `deferred_shadowed` | 选主窗口**路径**（`forward` / `deferred`）。**默认 `deferred`**；`*_shadowed` 不再选另一条管线，而是给场景里的方向光设 `castShadow` —— 于是 builder 报一条"无影"（阴影 pass 还没实现），演示的就是这条请求通路 |
 | `VINE_SHADER_PRESET` | 任意值 | 把内容程序换成 `flatForwardProgram()`（验证平直着色通路） |
 | `VINE_VSG_GBUFFER` | 任意值 | 加一个 G-buffer 彩色附件（albedo / normal / specular / view position）的 PiP 预览 |
 | `VINE_VSG_DEFERRED` | 任意值 | 加一条独立的"全屏延迟光照"pass（读 G-buffer 显示光照结果），用于 A/B 对照 |
@@ -572,19 +580,19 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 | `VINE_VSG_SLOT_DEMO` | 任意值 | 在主相机上再叠一个 (相机, 内容槽) 的 overlay pass，验证同视角多槽绘制 |
 | `VINE_VSG_OWN_WINDOW` | 任意值 | **临时逃生口**：后端自建窗口而非用宿主窗口（仅测试用；会忽略公告的表面尺寸） |
 
-### 4.3 forward / deferred / shadowed 各自装配什么
+### 4.3 两条路径各装配什么（阴影不是路径）
 
-| 预设 | 装配内容 |
+| 路径 | 装配内容 |
 | --- | --- |
-| `Forward` | 一个 order 0 的窗口场景 pass 画内容（可选叠加场景是同窗口 pass 里带深度的第二笔）。 |
-| `Deferred` | order < 0 的 pass 把内容画进**规范 G-buffer**（4 张彩色：albedo RGBA8、view normal+shininess RGBA16F、specular RGBA8、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 order 0 的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现。 |
-| `ForwardShadowed` | **占位**：今天装配出来的与 `Forward` 完全相同，并且会**报一条** `DiagnosticCategory::UnsupportedRequest`（宿主不会拿到以为自己拿到了阴影的画面）。 |
-| `DeferredShadowed` | **占位**：今天装配出来的与 `Deferred` 完全相同，同样报 `UnsupportedRequest`。 |
+| `ShadingPath::Forward` | 一个 `PipelineStage::Shading` 的窗口场景 pass 画内容（可选叠加场景是同一窗口 pass 里带深度的第二笔，`PipelineStage::Transparent`）。 |
+| `ShadingPath::Deferred` | `PipelineStage::Geometry` 的 pass 把内容画进**规范 G-buffer**（4 张彩色：albedo RGBA8、view normal+shininess RGBA16F、specular RGBA8、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 `Shading` 阶段的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现（`Transparent` → `Present`）。 |
 
-阴影切片（order < 0 的深度 pass + 阴影光照）**尚未实现**；它的 API 已经就位 ——
-`Light::castShadow()` / `Light::shadow()`、`ShadowSettings{resolution, bias, filter}`、
-`ShadowFilter::{None, Hard, PCF}`；计划见 `.ai/design/graphics-shadow.md`。内容着色侧**没有保留项**：
-程序就是唯一入口（见 §3），未实现的着色需要宿主自己写一个 `ShaderProgram`。
+**阴影不是预设**：它由投影的那盏灯提出请求（`Light::castShadow()` +
+`ShadowSettings{resolution, bias, filter}` / `ShadowFilter::{None, Hard, PCF}`），
+当前 builder **还没有建阴影 pass**，所以会报一条 `DiagnosticCategory::UnsupportedRequest`
+说清"画面无影"，而不是让宿主自己猜。计划见 `.ai/design/graphics-shadow.md` §10 与
+`.ai/design/render-pipeline.md` §6。内容着色侧**没有保留项**：程序就是唯一入口（见 §3），
+未实现的着色需要宿主自己写一个 `ShaderProgram`。
 
 ```bash
 ./build/bin/Vine                                # deferred（默认）

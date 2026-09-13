@@ -85,36 +85,44 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      */
     RenderPipelineBuilder& setCamera(raw_ptr<Camera> camera);
 
-    /** @brief Assembles a main-window pipeline preset.
+    /** @brief Assembles a pipeline from @p options.
      *
-     * Registers the passes for @p preset on the target engine immediately and
-     * returns a Pipeline handle that owns them:
+     * Registers the passes on the target engine immediately and returns a
+     * Pipeline handle that owns them: dropping the handle unregisters them
+     * (see Pipeline). Passes are placed by PipelineStage rather than by hand-
+     * picked order numbers, so an effect added later enters relative to the
+     * passes it serves instead of competing for a number with them.
      *
-     * - Forward (and the ForwardShadowed placeholder) builds a single order-0
-     *   window scene pass drawing this builder's content through its camera;
-     * - Deferred (and the DeferredShadowed placeholder) additionally builds an
-     *   order < 0 G-buffer pass into an off-screen MRT target (published as
-     *   "GBuffer") and uses a fullscreen lighting ScreenPass at order 0 as
-     *   the window pass, so the view camera is presented to the window and
-     *   RenderControl / SceneView do not add a second forward pass.
+     * The forward path builds one window scene pass drawing this builder's
+     * content through its camera (PipelineStage::Shading). The deferred path
+     * additionally builds the canonical G-buffer (offscreen MRT, published as
+     * "GBuffer") at PipelineStage::Geometry and uses a fullscreen lighting
+     * ScreenPass at PipelineStage::Shading as the window pass, so the view
+     * camera is presented to the window and RenderControl / SceneView do not
+     * add a second forward pass.
      *
-     * The shadowed presets are placeholders: the shadow slice (an order < 0
-     * depth-only pass plus shadowed lighting) is not implemented yet, so they
-     * currently assemble the same pipeline as their unshadowed counterpart.
+     * A transparent scene (see setTransparentContent) is composited over the
+     * lit opaque content at PipelineStage::Transparent - off-screen through a
+     * target that shares the G-buffer's depth, so forward-only content is
+     * occluded by the opaque depth instead of being drawn depth-less on top.
+     * The HUD overlays stack at PipelineStage::Overlay.
      *
-     * Deferred requires a content scene and a camera. Its two shader programs
-     * (G-buffer geometry + fullscreen lighting) default to built-in temporary
-     * programs the builder supplies (matching the canonical G-buffer and the
-     * backend's lighting ABI), so the preset works out of the box; provide
-     * your own through @p options only when you need custom shading. When the
-     * required scene or camera is missing, nothing is registered and null is
-     * returned.
+     * SHADOWS ARE NOT A PRESET HERE: a shadow is requested by the light that
+     * casts it (Light::castShadow) and this builder builds no shadow pass yet,
+     * so a content scene that declares one is REPORTED
+     * (DiagnosticCategory::UnsupportedRequest) - the host learns that the
+     * picture it gets is unshadowed instead of being left to wonder why nothing
+     * changed. Building the passes themselves is the next slice (see
+     * .ai/design/graphics-shadow.md §10 and .ai/design/render-pipeline.md §6).
      *
-     * @param preset  Preset to assemble.
-     * @param options Sizing and program options (see PipelineOptions).
-     * @return The built pipeline, or null when the preset could not be built.
+     * Deferred requires a content scene and a camera; when either is missing
+     * nothing is registered and null is returned (no silent substitution, see
+     * .ai/design/vsg-custom-shader.md §11.7).
+     *
+     * @param options The pipeline's description (see PipelineOptions).
+     * @return The built pipeline, or null when the requested path cannot be built.
      */
-    intrusive_ptr<Pipeline> build(PipelinePreset preset, const PipelineOptions& options = {});
+    intrusive_ptr<Pipeline> build(const PipelineOptions& options);
 
     /** @brief Creates the built-in temporary G-buffer geometry program.
      *
@@ -191,18 +199,46 @@ class V_GRAPHICS_API RenderPipelineBuilder {
     void addPass(intrusive_ptr<RenderPass> pass, int order);
 
   private:
-    /** @brief Builds the Forward preset into @p pipeline. */
-    bool buildForward(Pipeline& pipeline);
+    /** @brief Builds the forward path's window pass into @p pipeline.
+     *
+     * @param pipeline Pipeline the pass is registered on.
+     * @return true when the pass was registered.
+     */
+    bool buildForwardPath(Pipeline& pipeline);
 
-    /** @brief Builds the Deferred preset into @p pipeline. */
-    bool buildDeferred(Pipeline& pipeline, const PipelineOptions& options);
+    /** @brief Builds the deferred path (G-buffer + lighting) into @p pipeline.
+     *
+     * @param pipeline Pipeline the passes are registered on.
+     * @param options  Options the path reads (G-buffer size, programs).
+     * @return true when the passes were registered.
+     */
+    bool buildDeferredPath(Pipeline& pipeline, const PipelineOptions& options);
+
+    /** @brief Adds the optional HUD overlays to @p pipeline.
+     *
+     * @param pipeline Pipeline the overlays are registered on.
+     * @param options  Options naming which overlays to add.
+     * @return true when every requested overlay was added.
+     */
+    bool applyOverlays(Pipeline& pipeline, const PipelineOptions& options);
+
+    /** @brief Reports shadow-casting lights this builder cannot honour yet.
+     *
+     * The request lives on the light (Light::castShadow), so the check walks
+     * the content scenes this builder binds: a host that asked for shadows gets
+     * one report (per build) saying the picture is unshadowed, rather than a
+     * frame that quietly differs from the one it asked for.
+     */
+    void reportRequestedShadows() const;
 
     raw_ptr<RenderEngine>      engine_;
     raw_ptr<Camera>            camera_      = nullptr;
     intrusive_ptr<Scene>       content_;
     intrusive_ptr<Scene>       transparent_; // optional forward-only / overlay scene
     // References kept by the builder for as long as it lives; the engine also
-    // holds its own references after each add*() call.
+    // holds its own references after each add*() call. Records the passes the
+    // ONE-SHOT recipes register outside a Pipeline handle (see
+    // addOffscreenToScreen); a build() pipeline owns its own.
     std::vector<intrusive_ptr<RenderPass>> passes_;
 };
 

@@ -124,6 +124,12 @@ class V_GRAPHICS_API RenderPipelineBuilder {
 - 待做：`shadowedScene` 配方（与 v4b-2 采样落地后一起接线）；必要时 sceneOnly 等其余配方。
 
 
+> **2026-09-13：`PipelinePreset` 枚举已被 `.ai/design/render-pipeline.md` 取代。**
+> 那条轴（forward / deferred）现在是 `PipelineOptions::path`（`ShadingPath`），而
+> `*Shadowed` 变体**不再存在**——阴影由灯提出请求（`Light::castShadow`），
+> 顺序由 `PipelineStage` 表达。下面这一节（Design C）保留为历史记录：它描述的是
+> "主窗管线预设"那一代，读"今天怎么做"请看 `render-pipeline.md`。
+
 ## Design C 更新（2026-09-08）：主窗管线预设 + SceneView 默认统一
 - ⚠ Design B/C 后：引擎无 masterCamera/setScene、无内置默认管线；主窗“默认 viewer”由 SceneView 引导（ensureWindowPass，hasWindowPass(camera) 抑制重复）。本设计此前“sceneOnly=engine.setScene/setMasterCamera + RenderControl 默认 pass”已过时。
 - 落地：`RenderPipelineBuilder::build(PipelinePreset, PipelineOptions)` → `intrusive_ptr<Pipeline>`（新 RenderPipeline.hpp/.cpp）。

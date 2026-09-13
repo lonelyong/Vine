@@ -1090,12 +1090,26 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
         return;
     }
 
-    using vine::graphics::PipelinePreset;
-    // Default demo preset = Deferred (see demoUsesDeferred); VINE_PIPELINE
-    // keeps forward available for the forward feature-showcase scene.
-    PipelinePreset preset = demoUsesDeferred() ? PipelinePreset::Deferred : PipelinePreset::Forward;
-    if (const char* override_mode = std::getenv("VINE_PIPELINE"); override_mode != nullptr && std::strcmp(override_mode, "forward_shadowed") == 0) {
-        preset = PipelinePreset::ForwardShadowed;
+    using vine::graphics::ShadingPath;
+    // Default demo path = Deferred (see demoUsesDeferred); VINE_PIPELINE keeps
+    // forward available for the forward feature-showcase scene. The *_shadowed
+    // modes do not pick a different pipeline: a shadow is ASKED FOR by the light
+    // that casts it (Light::castShadow), which is what those modes now set, and
+    // the builder reports that it builds no shadow pass yet (the demo then shows
+    // the unshadowed picture on purpose — see .ai/design/render-pipeline.md §2).
+    ShadingPath path = demoUsesDeferred() ? ShadingPath::Deferred : ShadingPath::Forward;
+    if (const char* mode = std::getenv("VINE_PIPELINE"); mode != nullptr) {
+        const bool shadowed = std::strcmp(mode, "forward_shadowed") == 0 || std::strcmp(mode, "deferred_shadowed") == 0;
+        if (std::strcmp(mode, "deferred_shadowed") == 0) {
+            path = ShadingPath::Deferred;
+        }
+        if (shadowed) {
+            for (const auto& light : view->scene()->lights()) {
+                if (light != nullptr && light->type() == vine::graphics::LightType::Directional) {
+                    light->setCastShadow(true);
+                }
+            }
+        }
     }
 
     vine::graphics::RenderPipelineBuilder builder(engine);
@@ -1108,6 +1122,7 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
         builder.setTransparentContent(std::move(transparent));
     }
     vine::graphics::PipelineOptions options;
+    options.path = path;
     // Axis-gizmo HUD overlay: mirrors the view camera in the bottom-left.
     options.gizmo.source_camera = view->camera();
     options.gizmo.pixel_ratio   = render_control->devicePixelRatio();
@@ -1115,7 +1130,7 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
     // demo; set options.fps.enabled = false to turn it off.
     options.fps.enabled         = true;
     options.fps.pixel_ratio     = render_control->devicePixelRatio();
-    auto pipeline               = builder.build(preset, options);
+    auto pipeline               = builder.build(options);
     if (pipeline == nullptr) {
         return;
     }
@@ -1124,7 +1139,7 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
     // as "GBuffer". Draw each colour attachment as a small top-left preview so
     // the default demo shows the G-buffer alongside the lit window result
     // (0 = albedo, 1 = view normal + shininess, 2 = specular, 3 = view pos).
-    if (preset == PipelinePreset::Deferred) {
+    if (path == ShadingPath::Deferred) {
         const double dpr   = render_control->devicePixelRatio();
         const int    pip_w = static_cast<int>(160.0 * dpr);
         const int    pip_h = static_cast<int>(90.0 * dpr);

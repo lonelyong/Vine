@@ -2948,7 +2948,7 @@ TEST(RenderPipelineBuilderTest, OffscreenToScreenBuildsExpectedPipeline)
     EXPECT_TRUE(engine->resolve(u8"SceneColor")->hasColor());
 }
 
-TEST(RenderPipelineBuilderTest, ForwardPresetBuildsWindowPass)
+TEST(RenderPipelineBuilderTest, ForwardPathBuildsWindowPass)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -2957,22 +2957,72 @@ TEST(RenderPipelineBuilderTest, ForwardPresetBuildsWindowPass)
     RenderPipelineBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    auto pipeline = builder.build(PipelinePreset::Forward);
+    auto pipeline = builder.build(PipelineOptions{});
 
     ASSERT_NE(pipeline, nullptr);
     ASSERT_NE(pipeline->windowPass(), nullptr);
     EXPECT_EQ(engine->passCount(), 1u);
-    // The single order-0 window pass presents the view camera and draws the
-    // bound content, exactly like the SceneView default viewer.
+    // The single window pass presents the view camera and draws the bound
+    // content, exactly like the SceneView default viewer.
     EXPECT_TRUE(engine->hasWindowPass(cam.get()));
     EXPECT_EQ(engine->contentOf(pipeline->windowPass()), content.get());
     EXPECT_EQ(pipeline->offscreenTarget(), nullptr);
 }
 
-TEST(RenderPipelineBuilderTest, ShadowedPresetsReportThatTheyArePlaceholders)
+/**
+ * @brief A pipeline every pass of which is placed by a STAGE, not by a hand-picked number.
+ *
+ * The stage table is what lets an effect enter relative to the passes it serves; it is only worth
+ * anything if the assembled passes actually land in the order the stages state.
+ */
+TEST(RenderPipelineBuilderTest, StagesOrderThePasses)
 {
-    // A host that asks for shadows must not be handed an unshadowed picture in silence: the
-    // builder assembles the documented stand-in (see PipelinePreset) AND says so, once per build.
+    EXPECT_LT(pipelineStageOrder(PipelineStage::Depth), pipelineStageOrder(PipelineStage::Geometry));
+    EXPECT_LT(pipelineStageOrder(PipelineStage::Geometry), pipelineStageOrder(PipelineStage::Effect));
+    EXPECT_LT(pipelineStageOrder(PipelineStage::Effect), pipelineStageOrder(PipelineStage::Shading));
+    EXPECT_LT(pipelineStageOrder(PipelineStage::Shading), pipelineStageOrder(PipelineStage::Transparent));
+    EXPECT_LT(pipelineStageOrder(PipelineStage::Transparent), pipelineStageOrder(PipelineStage::Present));
+    EXPECT_LT(pipelineStageOrder(PipelineStage::Present), pipelineStageOrder(PipelineStage::Overlay));
+    EXPECT_LT(pipelineStageOrder(PipelineStage::Overlay), pipelineStageOrder(PipelineStage::Preview));
+}
+
+/**
+ * @brief Dropping the pipeline handle takes its passes out of the frame.
+ *
+ * The engine keeps its own reference to every registered pass, so a handle that only held
+ * references would leave its passes running with nobody able to name them (the defect the
+ * pipeline's ownership exists to close). Removing the passes is the handle's job, and the count
+ * going back to zero is what says it happened.
+ */
+TEST(RenderPipelineBuilderTest, DroppingThePipelineUnregistersItsPasses)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+
+    RenderPipelineBuilder builder(engine.get());
+    builder.setCamera(cam.get());
+    builder.setContent(content);
+    {
+        PipelineOptions opts;
+        opts.path = ShadingPath::Deferred;
+        opts.offscreen_width  = 64;
+        opts.offscreen_height = 64;
+        auto pipeline         = builder.build(opts);
+        ASSERT_NE(pipeline, nullptr);
+        EXPECT_EQ(engine->passCount(), 2u); // G-buffer + lighting
+        EXPECT_TRUE(engine->hasWindowPass(cam.get()));
+    }
+    EXPECT_EQ(engine->passCount(), 0u) << "a dropped pipeline must not leave its passes registered";
+    EXPECT_FALSE(engine->hasWindowPass(cam.get()));
+}
+
+TEST(RenderPipelineBuilderTest, ARequestedShadowIsReportedAsUnbuilt)
+{
+    // A shadow is asked for by the LIGHT that casts it (Light::castShadow) rather than by a preset
+    // name, because the light outlives any one pipeline and a scene may be drawn by several. The
+    // builder builds no shadow pass yet, so a host that declared one must not be handed an
+    // unshadowed picture in silence: it is told, once per build.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
@@ -2983,32 +3033,43 @@ TEST(RenderPipelineBuilderTest, ShadowedPresetsReportThatTheyArePlaceholders)
     RenderPipelineBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    auto forward = builder.build(PipelinePreset::ForwardShadowed);
+
+    // Nothing asked for: nothing to report.
+    ASSERT_NE(builder.build(PipelineOptions{}), nullptr);
+    EXPECT_TRUE(reported.empty());
+
+    content->addLight(Light::createDirectional());
+    ASSERT_NE(builder.build(PipelineOptions{}), nullptr);
+    EXPECT_TRUE(reported.empty()) << "a light that casts no shadow asks for nothing";
+
+    content->lights().front()->setCastShadow(true);
+    auto forward = builder.build(PipelineOptions{});
     ASSERT_NE(forward, nullptr);
     ASSERT_EQ(reported.size(), 1u);
     EXPECT_EQ(reported[0].severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(reported[0].category, DiagnosticCategory::UnsupportedRequest);
-    EXPECT_NE(reported[0].message.find(u8"ForwardShadowed"), vine::String::npos);
     EXPECT_NE(reported[0].message.find(u8"unshadowed"), vine::String::npos);
-    // Unshadowed still means Forward: the report says the picture is not what was asked for, it does
-    // not pretend the preset was honoured.
+    // The report says the picture is not the one that was asked for; it does not pretend the
+    // request was honoured, and it does not refuse to draw.
     EXPECT_NE(forward->windowPass(), nullptr);
     EXPECT_EQ(forward->offscreenTarget(), nullptr);
 
+    // The same request on the deferred path is reported the same way, and the pipeline is built.
     reported.clear();
     PipelineOptions opts;
+    opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 64;
     opts.offscreen_height = 64;
-    auto deferred         = builder.build(PipelinePreset::DeferredShadowed, opts);
+    auto deferred         = builder.build(opts);
     ASSERT_NE(deferred, nullptr);
     ASSERT_EQ(reported.size(), 1u);
     EXPECT_EQ(reported[0].category, DiagnosticCategory::UnsupportedRequest);
-    EXPECT_NE(reported[0].message.find(u8"DeferredShadowed"), vine::String::npos);
     EXPECT_NE(deferred->offscreenTarget(), nullptr);
 
-    // The unshadowed presets say nothing: there is nothing to report.
+    // A disabled light asks for nothing, even with the flag still set.
     reported.clear();
-    EXPECT_NE(builder.build(PipelinePreset::Forward), nullptr);
+    content->lights().front()->setEnabled(false);
+    ASSERT_NE(builder.build(PipelineOptions{}), nullptr);
     EXPECT_TRUE(reported.empty());
 }
 
@@ -3021,6 +3082,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
     auto light_prog = intrusive_ptr<ShaderProgram>(new ShaderProgram());
 
     PipelineOptions opts;
+    opts.path = ShadingPath::Deferred;
     opts.offscreen_width   = 640;
     opts.offscreen_height  = 360;
     opts.gbuffer_program   = gbuf_prog;
@@ -3029,7 +3091,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
     RenderPipelineBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    auto pipeline = builder.build(PipelinePreset::Deferred, opts);
+    auto pipeline = builder.build(opts);
 
     ASSERT_NE(pipeline, nullptr);
     // G-buffer (order < 0) + fullscreen lighting window pass (order 0).
@@ -3065,13 +3127,14 @@ TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
     // No programs supplied: the builder supplies its built-in temporary
     // G-buffer geometry + deferred-lighting programs.
     PipelineOptions opts;
+    opts.path = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
 
     RenderPipelineBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    auto pipeline = builder.build(PipelinePreset::Deferred, opts);
+    auto pipeline = builder.build(opts);
 
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 2u);
@@ -3082,7 +3145,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
     EXPECT_NE(light->program(), nullptr);
 }
 
-TEST(RenderPipelineBuilderTest, DeferredPresetRefusesWithoutContent)
+TEST(RenderPipelineBuilderTest, DeferredPathRefusesWithoutContent)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto cam    = intrusive_ptr<Camera>(new Camera());
@@ -3090,7 +3153,9 @@ TEST(RenderPipelineBuilderTest, DeferredPresetRefusesWithoutContent)
     // A Deferred main pass needs a content scene to fill its G-buffer.
     RenderPipelineBuilder builder(engine.get());
     builder.setCamera(cam.get());
-    auto pipeline = builder.build(PipelinePreset::Deferred);
+    PipelineOptions opts;
+    opts.path     = ShadingPath::Deferred;
+    auto pipeline = builder.build(opts);
 
     EXPECT_EQ(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 0u);
@@ -3104,6 +3169,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
     PipelineOptions opts;
+    opts.path = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
 
@@ -3111,7 +3177,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     builder.setCamera(cam.get());
     builder.setContent(content);
     builder.setTransparentContent(overlay);
-    auto pipeline = builder.build(PipelinePreset::Deferred, opts);
+    auto pipeline = builder.build(opts);
 
     ASSERT_NE(pipeline, nullptr);
     // G-buffer + lighting INTO the composite + forward transparent + present:
@@ -3164,7 +3230,7 @@ TEST(RenderPipelineBuilderTest, ForwardPresetWithTransparentContentStacksDepthOn
     builder.setCamera(cam.get());
     builder.setContent(content);
     builder.setTransparentContent(overlay);
-    auto pipeline = builder.build(PipelinePreset::Forward);
+    auto pipeline = builder.build(PipelineOptions{});
 
     ASSERT_NE(pipeline, nullptr);
     // Main order-0 window content pass + order-1 transparent content pass.
@@ -3228,7 +3294,7 @@ TEST(RenderPipelineBuilderTest, GizmoOverlayConfiguredOnPreset)
     RenderPipelineBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    auto pipeline = builder.build(PipelinePreset::Forward, opts);
+    auto pipeline = builder.build(opts);
 
     ASSERT_NE(pipeline, nullptr);
     ASSERT_NE(pipeline->gizmo(), nullptr);

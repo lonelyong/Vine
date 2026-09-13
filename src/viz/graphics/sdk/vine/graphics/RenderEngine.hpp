@@ -122,8 +122,9 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      * The engine owns the host's sink, so the message reaches the host whether or
      * not a backend is set (a wiring problem exists before any backend draws).
      * Counted in engineDiagnosticCount(). Public because the engine's own builders
-     * report through it too — RenderPipelineBuilder tells the host that a shadowed
-     * PipelinePreset is a placeholder and the pipeline it assembled is unshadowed.
+     * report through it too — RenderPipelineBuilder tells the host that the content
+     * it was given asks for shadows (Light::castShadow) while no shadow pass is
+     * built yet, so the picture is unshadowed.
      *
      * @param severity How bad the situation is.
      * @param category What it is about.

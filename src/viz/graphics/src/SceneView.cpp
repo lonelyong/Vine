@@ -22,8 +22,10 @@ SceneView::SceneView()
 
 SceneView::~SceneView()
 {
-    // Remove the window pass this view registered while the engine is still
-    // alive (the host owns the engine and destroys the view before it).
+    // Drop the window pass this view registered. Dropping the handle is all it
+    // takes: the pipeline unregisters every pass it registered, and it holds the
+    // engine strongly, so the engine is still there to be unregistered from even
+    // if the host released it first (see Pipeline).
     removeWindowPass();
 }
 
@@ -52,22 +54,18 @@ void SceneView::ensureWindowPass()
     if (engine_->hasWindowPass(camera_.get())) {
         return;
     }
-    // The default viewer is the shared Forward preset: assembled by the same
+    // The default viewer is the shared forward path: assembled by the same
     // recipe RenderPipelineBuilder exposes, so the view default and an
     // application's explicit main pipeline stay one code path.
     RenderPipelineBuilder builder(engine_);
     builder.setCamera(camera_.get());
     builder.setContent(scene_);
-    default_pipeline_ = builder.build(PipelinePreset::Forward);
+    default_pipeline_ = builder.build(PipelineOptions{});
 }
 
 void SceneView::removeWindowPass()
 {
-    if (engine_ != nullptr && default_pipeline_ != nullptr) {
-        if (RenderPass* window = default_pipeline_->windowPass(); window != nullptr) {
-            engine_->removePass(window);
-        }
-    }
+    // The handle owns its passes' registration; letting it go is the removal.
     default_pipeline_ = nullptr;
 }
 
