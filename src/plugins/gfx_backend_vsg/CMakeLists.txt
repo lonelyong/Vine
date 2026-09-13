@@ -132,19 +132,6 @@ target_link_libraries(${GFX_BACKEND_VSG_TARGET} PRIVATE
 # The backend has no GLSL of its own: every stage it compiles comes from the SDK
 # (vine/graphics/EmbeddedShaders.hpp, via BuiltinShaders). See cmake/VineShaders.cmake.
 
-# TEMP diagnostic: standalone minimal vsg executable that renders a red box
-# through vsg's own Builder/phong path, to isolate whether the vendored vsg
-# renders correct colors independent of Vine. Remove after diagnosis.
-add_executable(vsg_color_probe ${CMAKE_CURRENT_SOURCE_DIR}/vsg_probe/main.cpp)
-target_link_libraries(vsg_color_probe PRIVATE vsg::vsg)
-set_target_properties(vsg_color_probe PROPERTIES FOLDER third_party)
-
-# TEMP diagnostic: dump the embedded phong ShaderSet SPIR-V for inspection.
-# Remove after diagnosis.
-add_executable(vsg_shader_dump ${CMAKE_CURRENT_SOURCE_DIR}/vsg_shader_dump/main.cpp)
-target_link_libraries(vsg_shader_dump PRIVATE vsg::vsg)
-set_target_properties(vsg_shader_dump PROPERTIES FOLDER third_party)
-
 # GPU-free (lavapipe) end-to-end self-test of the vsg backend GPU paths that
 # device-free unit tests cannot reach: off-screen MRT targets, PiP sampling,
 # deferred fullscreen programs, multi-pass sharing of camera/target/scene/

@@ -3,16 +3,17 @@
 # lavapipe (Mesa software) Vulkan driver with the Khronos validation layer.
 #
 # This is the GPU-free end-to-end validation for vsg-backend changes. It runs:
-#   1. vsg_color_probe in its raw-Phong and Builder-box modes — proves vsg
-#      pipelines compile, record and present on a Vulkan device.
-#   2. The Vine app (app_shell demo, 5 boxes) — proves the SceneBridge path
-#      (default RenderStateMapper mapping) syncs and renders every frame with
-#      no validation-layer errors.
-#   3. vsg_backend_selftest — the off-screen/MRT/PiP/deferred/multi-pass phases,
+#   1. vsg_backend_selftest — the off-screen/MRT/PiP/deferred/multi-pass phases,
 #      with its `[selftest]` evidence compared byte-for-byte (vsg_selftest_evidence.sh).
-#   3d. The byte-exact evidence baseline of the content-shading path (the engine's
-#      own sets, exercised by 3c), see .ai/design/vsg-custom-shader.md §11.
-#   4. Vine app (default demo).
+#   1b. The byte-exact evidence baseline of the content-shading path (the engine's
+#      own sets, exercised by 1), see .ai/design/vsg-custom-shader.md §11.
+#   2. Vine app (default demo).
+#
+# It used to open with vsg_color_probe — a standalone vsg executable rendering a
+# box through vsg's OWN Builder/phong path, to isolate the vendored vsg's
+# behaviour from Vine's. The engine no longer has anything that runs through
+# vsg's built-in shading (see detail::makeContentShaderSet), so a probe of that
+# path validates a code path the engine cannot reach; it was deleted with it.
 #
 # The RenderStateMapper unit mapping (incl. the non-default StateNode path) is
 # pinned by tests/test_vsg/RenderStateMapperTest, which needs no device; the
@@ -30,7 +31,6 @@
 #   VINE_CHECK_FRAMES       Frames per probe run   (default 20)
 #   VINE_CHECK_SECONDS      Seconds to run Vine    (default 12)
 #   VINE_SKIP_APP=1         Skip the Vine app run.
-#   VINE_PROBE_MODE_EXTRA   Extra vsg_color_probe modes to run (space list).
 #   VINE_VSG_DEBUG_LAYER    Existing value wins; defaults to ON when the
 #                           Khronos validation layer is installed (0 disables).
 #
@@ -50,7 +50,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD="${1:-$ROOT/build}"
 
-PROBE="$BUILD/bin/vsg_color_probe"
 VINE_BIN="$BUILD/bin/Vine"
 
 FRAMES="${VINE_CHECK_FRAMES:-20}"
@@ -117,42 +116,12 @@ report() { # name  file  [ok_exit_codes...]
     fi
 }
 
-run_probe() { # mode  frames
-    local mode="$1" frames="$2"
-    local log="$TMP/probe_$mode.log"
-    if [ "$mode" = "raw" ]; then
-        (cd "$BUILD" && VINE_PROBE_FRAMES="$frames" ./bin/vsg_color_probe) >"$log" 2>&1
-        rc=$?
-    else
-        (cd "$BUILD" && VINE_PROBE_MODE="$mode" VINE_PROBE_FRAMES="$frames" ./bin/vsg_color_probe) >"$log" 2>&1
-        rc=$?
-    fi
-    echo "    (exit=$rc)"
-    report "vsg_color_probe [$mode]" "$log" 0
-    if [ "$rc" -ne 0 ]; then FAILED=1; fi
-}
-
-echo "== 1/4 vsg_color_probe raw-Phong =="
-run_probe raw "$FRAMES"
-
-echo "== 2/4 vsg_color_probe Builder box =="
-run_probe box "$FRAMES"
-
-# Runtime-compiled user program (glslang) -> hand-built ShaderSet -> pipeline.
-echo "== 3/4 vsg_color_probe custom user shader =="
-run_probe custom "$FRAMES"
-
-for extra in ${VINE_PROBE_MODE_EXTRA:-}; do
-    echo "== 3b/4 vsg_color_probe [$extra] =="
-    run_probe "$extra" "$FRAMES"
-done
-
 # vsg_backend_selftest: drives the real vsg RenderBackend over many frames to
 # exercise the GPU paths unit tests cannot reach — off-screen MRT targets,
 # PiP sampling (drawScreenTexture), deferred fullscreen programs
 # (drawScreenProgram), multi-pass sharing of camera/target/scene/viewport,
 # per-frame hot edits and resource-release teardown.
-echo "== 3c/4 vsg_backend_selftest (offscreen/MRT/PiP/deferred/multi-pass) =="
+echo "== 1/2 vsg_backend_selftest (offscreen/MRT/PiP/deferred/multi-pass) =="
 SELF="$BUILD/bin/vsg_backend_selftest"
 if [ ! -x "$SELF" ]; then
     echo "[FAIL] vsg_backend_selftest not built"
@@ -234,11 +203,11 @@ else
     fi
 fi
 
-# 3d/4: the byte-exact evidence baseline of the content-shading path. The engine's own sets are the
+# 1b/2: the byte-exact evidence baseline of the content-shading path. The engine's own sets are the
 # only sets this backend builds (vsg's built-in sets are not used at all anymore, see
 # makeContentShaderSet), so there is one baseline to match: a change in the shading shows up here as
 # a colour diff.
-echo "== 3d/4 vsg_backend_selftest (evidence: the engine's own content shading) =="
+echo "== 2/2 vsg_backend_selftest (evidence: the engine's own content shading) =="
 if [ ! -x "$SELF" ]; then
     echo "[FAIL] vsg_backend_selftest not built"
     FAILED=1
@@ -254,7 +223,7 @@ else
     fi
 fi
 
-echo "== 4/4 Vine app (default demo) =="
+echo "== [app] Vine app (default demo) =="
 if [ "${VINE_SKIP_APP:-0}" = "1" ]; then
     echo "    (skipped, VINE_SKIP_APP=1)"
 else
