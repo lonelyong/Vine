@@ -515,7 +515,7 @@ TEST(SceneBridgeDataRebuildTest, AuthoredChannelEditsRefreshOnlyThatChannel)
     auto material = MaterialPtr(new Material());
 
     geometry->setNormals(packed({ 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f }));
-    geometry->setTexcoords(packed({ 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f }));
+    geometry->setTexcoords2(packed({ 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f }));
 
     std::vector<RenderCommand>           commands;
     std::vector<vsg::ref_ptr<vsg::Node>> created;
@@ -530,7 +530,7 @@ TEST(SceneBridgeDataRebuildTest, AuthoredChannelEditsRefreshOnlyThatChannel)
     ASSERT_NE(texcoord_before, nullptr);
 
     // UVs only.
-    geometry->setTexcoords(packed({ 0.0f, 1.0f, 1.0f, 1.0f, 0.5f, 0.0f }));
+    geometry->setTexcoords2(packed({ 0.0f, 1.0f, 1.0f, 1.0f, 0.5f, 0.0f }));
     geometry->setRevision(geometry->revision() + 1u);
     bridge.syncRenderCommands(commands, root.get(), &created);
 

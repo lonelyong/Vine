@@ -530,14 +530,14 @@ texture/mesh cache 同一契约），桥的析构**不得**碰池。
 | 修复 | 两个 forward stage 源码加 `#pragma import_defines (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_TEXCOORD_CUBE)`（必须在 `#version` 之后那一行；vsg 把这两行搬进 header） |
 | 结构化门禁 | `ForwardShaderSetTest::TheForwardStagesAskForEveryDefineTheBackendCanSet`：**后端会设的每个 define 名字必须出现在 pragma 的括号列表里**（这条门禁本来就能挡住上面那个 bug） |
 | 像素门禁 | selftest 新增 `built-in sampling` 相：同一张双色纹理 + 同一个六色 cube，**不设 program**，即由引擎自己的 shader 采样。变异验证：去掉 pragma ⇒ 两行都 FAIL；只去掉 `VINE_TEXCOORD_CUBE` ⇒ 2D 行仍 PASS、cube 行 FAIL |
-| cube 方向槽 | 同一 location 8 的**第二种形状**：3 分量 = 方向。SDK 加 `Geometry::setCubeDirections()`（整块 + 段两种拼写，与其它角色同形）；后端 `detail::texCoordArray()` 按 `components` 建 `vec2Array`/`vec3Array` **并在阵列上陈述顶点格式**（`properties.format`），`SceneBridgePipeline` 由绑定的阵列读回形状：3 分量 ⇒ 给该 drawable 的编译设置插入 `VINE_TEXCOORD_CUBE`，shader 编译出 `samplerCube` + `vec3` 属性 |
+| cube 方向槽 | 同一 location 8 的**第二种宽度**：3 分量。SDK 加 `Geometry::setTexcoords3()`（整块 + 段两种拼写，与其它角色同形）；命名定为**宽度制**（`setTexcoords2`/`setTexcoords3` + `texcoordComponents()`）而不是 `setCubeDirections`：SDK 只陈述数据宽度，用途属于采样器（同一个 3 分量通道配自定义 program 可以是 volume 坐标）；后端 `detail::texCoordArray()` 按 `components` 建 `vec2Array`/`vec3Array` **并在阵列上陈述顶点格式**（`properties.format`），`SceneBridgePipeline` 由绑定的阵列读回**宽度**（`isThreeScalarTexcoord`）：3 分量 ⇒ 给该 drawable 的编译设置插入 `VINE_TEXCOORD_CUBE`，shader 编译出 `samplerCube` + `vec3` 属性 |
 | 采样器种类 | 由**槽的形状**决定，两种不可混：`samplerCube` 绑 2D 视图（或反之）不是"白贴图"而是**非法描述符**。纹理种类不匹配时**报一次 + 绑该种类的白色回退**（`VsgTextureCache::whiteCubeFallback()`，1×1×6 面）。**只对引擎自己的 set 生效**：用户 program 自带 sampler 与坐标（cube 相就是拿 UV 通道自己算方向），替它的纹理是把画面换成它没要的那个 |
 | 变体身份 | 形状选择管线 ⇒ `(color_bound<<0)|(uv_bound<<1)|(cube<<2)` 并入 L2 variant 的 `layout` |
 | 判据 | 证据基线 51 → **53** 行（仅新增 2 行，其它数字逐字节不变）；`vine_shader_check.sh` 变体矩阵 3 → **4** 个 define（7 shader × 16 组合）PASS；test_vsg 250 → **252**；test_graphics 246 → **247**；lavapipe PASS（无 validation 错误，说明 cube 视图 ↔ `samplerCube`、`R32G32B32` 属性都合法） |
 
 **踩过的坑**：① 我第一版把「槽形状 ↔ 采样器种类」规则无差别应用到 program 路径，直接被现有
-`cube map` 相抓住（六条带全白）—— 用户 program 的 artifact 不是引擎可以替换的；② `Geometry::setTexcoords()`
-硬编码 2 分量，所以 3 分量的方向**没有 SDK 拼写**，必须新开 `setCubeDirections()`（不是用
+`cube map` 相抓住（六条带全白）—— 用户 program 的 artifact 不是引擎可以替换的；② `Geometry::setTexcoords2()`
+硬编码 2 分量，所以 3 分量的方向**没有 SDK 拼写**，必须新开一种拼写（落地为 `setTexcoords3()`，不是用
 `addBuffer(kTexCoordLocation, …)` 蒙过去）；③ `aliasArray()` 的注释声称格式由元素类型推断，
 实际 **vsg 的 `Array::assign` 只设 stride，format 保持 UNDEFINED**，pipeline 的顶点格式来自
 binding 声明 —— 一个 ShaderSet 服务两种形状时，必须由阵列陈述 `properties.format`。

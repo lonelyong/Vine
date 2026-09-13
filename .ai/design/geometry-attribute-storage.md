@@ -43,7 +43,7 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 | 公告 | **一律手动**：`Buffer` 自己不 bump（它看不见每种写入，也不知道一次编辑何时结束）⇒ 写的人改完显式 `setRevision(revision()+1)`；`Mesh` 的 builder 在 `addVertex`/`addTriangle`/`clear` 里各公告一次（`Mesh::announceChange()`） |
 | 打包 | `packAttribute(span<const Vec3f\|Vec2f>)` —— 给“有类型化顶点、没有 buffer”的调用方 |
 
-**属性 setter 每个通道只留一个**：`setPositions` / `setNormals` / `setTexcoords` 各收一个
+**属性 setter 每个通道只留一个**：`setPositions` / `setNormals` / `setTexcoords2`（2 分量）/ `setTexcoords3`（3 分量）各收一个
 `intrusive_ptr<const Buffer<float>>`，不重载。原先并存的 `setPositionsBuffer` 是同一件事的第二个名字
 （还有为花括号调用保留的数组重载），都已删除；借用形式的入口改为 `packAttribute(...)` 工厂。
 于是“这次是复制还是共享”由**传什么**决定，而不是由**调哪个名字**决定。
@@ -182,7 +182,7 @@ vec4 位置（stride 4）**有意不进别名**：它要的是 R32G32B32 绑定�
 - **自定义流**（未来）：同一个 `BufferSlice<T>`，不需要第三种表示。
 
 **谁陈述切片**：**四个角色、两种拼写**，都只有一条实现路径。整块 = `count` 0 ⇒ **跟随增长**；段 = 固定 count（`count == 0` 是"到末尾"，**不是空**；要空就传 null）。
-- 顶点侧：`setPositions/setNormals/setTexcoords(buffer)` 与 `...(buffer, first_vertex, vertex_count)`，实现是 `addBuffer(location, AttributeChannel::slice(...))`；
+- 顶点侧：`setPositions/setNormals/setTexcoords2/setTexcoords3(buffer)` 与 `...(buffer, first_vertex, vertex_count)`，实现是 `addBuffer(location, AttributeChannel::slice(...))`；
 - 索引侧：`setIndices(buffer)` 与 `setIndices(buffer, first_index, index_count)`，实现是 `IndexStream::slice(...)`；1 参重载就是"整段"，`Geometry.cpp` 里只是一行转调，所以两种拼写不会漂。
 
 **索引流不是 channel**：channel = 着色器**输入**（per-vertex、有 stride、按 location 绑定），索引流 = **拓扑**（顶点装配按它取属性，着色器看不到，元素是 `uint32`、无 stride）。两者共享的只是**表示**（`BufferSlice`）。`Geometry::IndexStream` 就是 `BufferSlice<std::uint32_t>` 的别名；`indices()/firstIndex()/indexCount()/indicesBuffer()` 是它同一个段的四个视图（没有第二份状态）。单位要分清：顶点侧是**顶点**（texcoord 段 3 顶点 = 6 scalar），索引侧是**索引元素**。

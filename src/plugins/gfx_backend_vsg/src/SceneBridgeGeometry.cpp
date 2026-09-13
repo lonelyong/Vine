@@ -447,8 +447,8 @@ namespace
         }
         if (texcoords == nullptr) {
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
-                   u8"texture coordinate channel is unusable (2 components for a 2-D map, 3 for a cube "
-                   u8"direction, one per vertex, required); zero UVs are used instead");
+                   u8"texture coordinate channel is unusable (2 or 3 components per vertex, covering every "
+                   u8"vertex, required); zero UVs are used instead");
         }
     }
     if (texcoords == nullptr) {

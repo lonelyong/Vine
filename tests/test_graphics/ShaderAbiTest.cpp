@@ -66,7 +66,7 @@ TEST(ShaderAbiTest, GeometryAttachesCanonicalChannelsWhereTheAbiSays)
     auto geometry = GeometryPtr(new Geometry());
     geometry->setPositions(packAttribute(std::vector<vine::math::Vec3f>{ { 0.0f, 0.0f, 0.0f } }));
     geometry->setNormals(packAttribute(std::vector<vine::math::Vec3f>{ { 0.0f, 0.0f, 1.0f } }));
-    geometry->setTexcoords(packAttribute(std::vector<vine::math::Vec2f>{ { 0.0f, 0.0f } }));
+    geometry->setTexcoords2(packAttribute(std::vector<vine::math::Vec2f>{ { 0.0f, 0.0f } }));
 
     EXPECT_TRUE(geometry->hasBuffer(attributeLocation(VertexAttribute::Position)));
     EXPECT_TRUE(geometry->hasBuffer(attributeLocation(VertexAttribute::Normal)));

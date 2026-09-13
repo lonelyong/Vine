@@ -512,7 +512,7 @@ GeometryPtr makeTexturedQuad()
     for (const auto& corner : corners) {
         texcoords.emplace_back(corner[0], corner[1]);
     }
-    geom->setTexcoords(vine::graphics::packAttribute(texcoords));
+    geom->setTexcoords2(vine::graphics::packAttribute(texcoords));
     return geom;
 }
 
@@ -4636,7 +4636,7 @@ GeometryPtr makeDirectionQuad(const vine::math::Vec3f& direction)
     for (int i = 0; i < 6; ++i) {
         directions.push_back(direction);
     }
-    geom->setCubeDirections(vine::graphics::packAttribute(directions));
+    geom->setTexcoords3(vine::graphics::packAttribute(directions));
     return geom;
 }
 

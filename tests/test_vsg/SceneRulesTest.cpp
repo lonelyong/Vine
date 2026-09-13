@@ -98,7 +98,7 @@ std::uint64_t variantHash(const ResolvedRenderState& state, std::uint64_t layout
 // Custom vertex channels: the rule that decides whether a channel may be built.
 // ---------------------------------------------------------------------------
 
-TEST(SceneRulesTest, TheTexCoordSlotCarriesOneOfTwoCoordinateShapes)
+TEST(SceneRulesTest, TheTexcoordSlotCarriesOneOfTwoWidths)
 {
     // ONE ShaderSet declares the texcoord slot and serves both coordinate kinds, so the ARRAY has to state
     // which one it is: vsg takes the pipeline's vertex format from the array when the array states one, and
@@ -110,7 +110,7 @@ TEST(SceneRulesTest, TheTexCoordSlotCarriesOneOfTwoCoordinateShapes)
     EXPECT_EQ(uv_array->valueCount(), 3u);
     EXPECT_EQ(uv_array->properties.stride, 8u);
     EXPECT_EQ(uv_array->properties.format, VK_FORMAT_R32G32_SFLOAT);
-    EXPECT_FALSE(vine::vsg::detail::isCubeDirectionArray(*uv_array));
+    EXPECT_FALSE(vine::vsg::detail::isThreeScalarTexcoord(*uv_array));
 
     const auto directions      = AttributeChannel::packed({ 1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f }, 3u);
     auto       direction_array = vine::vsg::detail::texCoordArray(directions, 3u);
@@ -118,7 +118,7 @@ TEST(SceneRulesTest, TheTexCoordSlotCarriesOneOfTwoCoordinateShapes)
     EXPECT_EQ(direction_array->valueCount(), 3u);
     EXPECT_EQ(direction_array->properties.stride, 12u);
     EXPECT_EQ(direction_array->properties.format, VK_FORMAT_R32G32B32_SFLOAT);
-    EXPECT_TRUE(vine::vsg::detail::isCubeDirectionArray(*direction_array));
+    EXPECT_TRUE(vine::vsg::detail::isThreeScalarTexcoord(*direction_array));
 
     // Neither shape, and a shape that does not cover the mesh's vertices, are refused: the caller reports
     // them and binds zero UVs, which is what keeps a bad optional channel from rejecting a drawable.

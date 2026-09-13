@@ -152,7 +152,7 @@ void Geometry::setNormals(intrusive_ptr<const vine::Buffer<float>> normals, std:
               AttributeChannel::slice(std::move(normals), kVec3Components, first_vertex, vertex_count));
 }
 
-void Geometry::setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords)
+void Geometry::setTexcoords2(intrusive_ptr<const vine::Buffer<float>> texcoords)
 {
     addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(texcoords), kVec2Components));
 }
@@ -168,27 +168,35 @@ std::size_t Geometry::texcoordCount() const
     return texcoords != nullptr ? texcoords->vertexCount() : 0u;
 }
 
-void Geometry::setTexcoords(intrusive_ptr<const vine::Buffer<float>> texcoords, std::size_t first_vertex,
-                           std::size_t vertex_count)
+std::uint32_t Geometry::texcoordComponents() const
+{
+    // The width of the slot, straight off the channel: 2 (setTexcoords2), 3 (setTexcoords3) or 0 when the
+    // slot is empty. It is what a consumer reads to know which sampler the data is shaped for.
+    const AttributeChannel* texcoords = buffer(kTexCoordLocation);
+    return texcoords != nullptr ? texcoords->components : 0u;
+}
+
+void Geometry::setTexcoords2(intrusive_ptr<const vine::Buffer<float>> texcoords, std::size_t first_vertex,
+                             std::size_t vertex_count)
 {
     // Two scalars per vertex here, and a caller states VERTICES: a segment of three vertices is six scalars.
     addBuffer(kTexCoordLocation,
               AttributeChannel::slice(std::move(texcoords), kVec2Components, first_vertex, vertex_count));
 }
 
-void Geometry::setCubeDirections(intrusive_ptr<const vine::Buffer<float>> directions)
+void Geometry::setTexcoords3(intrusive_ptr<const vine::Buffer<float>> texcoords)
 {
-    // The SAME slot as setTexcoords, with the other shape: three scalars per vertex, because a cube map is
-    // sampled by direction. The renderer reads the shape off the channel and compiles the samplerCube variant
-    // for it, which is why this is a shape of the texcoord channel rather than a second location.
-    addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(directions), kVec3Components));
+    // The SAME slot as setTexcoords2, with the other width: three scalars per vertex, which is what a cube
+    // map is sampled by direction with. What the width MEANS stays the sampler's business (a user program
+    // may read these three as a volume coordinate); the engine's own preset reads it as a direction.
+    addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(texcoords), kVec3Components));
 }
 
-void Geometry::setCubeDirections(intrusive_ptr<const vine::Buffer<float>> directions, std::size_t first_vertex,
-                                 std::size_t vertex_count)
+void Geometry::setTexcoords3(intrusive_ptr<const vine::Buffer<float>> texcoords, std::size_t first_vertex,
+                             std::size_t vertex_count)
 {
     addBuffer(kTexCoordLocation,
-              AttributeChannel::slice(std::move(directions), kVec3Components, first_vertex, vertex_count));
+              AttributeChannel::slice(std::move(texcoords), kVec3Components, first_vertex, vertex_count));
 }
 
 void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices)
@@ -353,7 +361,7 @@ GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
         geometry->setNormals(mesh->normalsBuffer());
     }
     if (texcoords.size() == positions.size()) {
-        geometry->setTexcoords(mesh->texcoordsBuffer());
+        geometry->setTexcoords2(mesh->texcoordsBuffer());
     }
     if (const auto* indexed =
             dynamic_cast<const vine::geometry::IndexedTriangleMesh*>(&shape)) {

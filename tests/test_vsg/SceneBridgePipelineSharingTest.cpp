@@ -1185,7 +1185,7 @@ TEST(SceneBridgePipelineSharingTest, IndexedGeometryAliasesItsTexcoordsAndIndexB
     uvs.emplace_back(0.0f, 0.0f);
     uvs.emplace_back(1.0f, 0.0f);
     uvs.emplace_back(0.0f, 1.0f);
-    geometry->setTexcoords(packAttribute(uvs));
+    geometry->setTexcoords2(packAttribute(uvs));
     geometry->setIndices(packIndices(std::vector<std::uint32_t>{ 0u, 1u, 2u }));
 
     std::vector<RenderCommand> commands;

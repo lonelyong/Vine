@@ -200,11 +200,13 @@ inline constexpr bool normalIsUsable(float length_sq) noexcept
 /**
  * @brief Builds the array the texcoord binding reads for a canonical texcoord channel.
  *
- * The slot carries ONE of two coordinate shapes, and which one it is decides both the sampler the
- * shader compiles (`sampler2D` or `samplerCube`, see the forward shader) and the vertex format:
+ * The slot carries a WIDTH, and for the ENGINE's own shading preset the width is what selects the sampler:
  *
- *   - TWO scalars per vertex: a UV pair for a 2-D map (`R32G32_SFLOAT`);
- *   - THREE scalars per vertex: a DIRECTION for a cube map (`R32G32B32_SFLOAT`).
+ *   - TWO scalars per vertex: a UV pair for a 2-D map (`R32G32_SFLOAT`, `sampler2D`);
+ *   - THREE scalars per vertex: a cube direction for a cube map (`R32G32B32_SFLOAT`, `samplerCube`).
+ *
+ * A program of its own may read the same three numbers as anything (a volume coordinate, a weight triple);
+ * this array states the width, and the engine's preset is the layer that interprets it.
  *
  * The array STATES its own format (@ref vsg::Data::Properties::format) rather than leaving that to
  * the binding declaration, because ONE ShaderSet declares this slot and serves both kinds: vsg takes
@@ -221,15 +223,16 @@ inline constexpr bool normalIsUsable(float length_sq) noexcept
 ::vsg::ref_ptr<::vsg::Data> texCoordArray(const vine::graphics::AttributeChannel& attr, std::size_t vertex_count);
 
 /**
- * @brief Whether a bound texcoord array carries a cube DIRECTION.
+ * @brief Whether a bound texcoord array is three scalars wide.
  *
- * The kind is read back off the ARRAY the data node bound — the same object the pipeline takes its
- * vertex format from — so one statement of the kind cannot disagree with the data.
+ * The width is read back off the ARRAY the data node bound — the same object the pipeline takes its vertex
+ * format from — so one statement of it cannot disagree with the data. The engine's own preset reads that
+ * width as a cube direction (see texCoordArray).
  *
  * @param array Array bound at the texcoord binding.
- * @return true when it is an xyz array (a direction), false for an xy one (a UV pair).
+ * @return true when it is an xyz array, false for an xy one.
  */
-bool isCubeDirectionArray(const ::vsg::Data& array) noexcept;
+bool isThreeScalarTexcoord(const ::vsg::Data& array) noexcept;
 
 /**
  * @brief Maps a pixel layout to the Vulkan format a texture of it uses.

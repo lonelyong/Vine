@@ -491,11 +491,12 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
             arrays[2] = {};
         }
     }
-    // The texcoord slot's KIND is the shape the data node bound there (see detail::texCoordArray): an xyz
-    // array is a cube direction, an xy array a UV pair. It selects the sampler the shader compiles, so it
-    // belongs to the variant identity for the same reason the drops above do.
-    const bool cube_texcoords =
-        arrays.size() > 2u && arrays[2] != nullptr && detail::isCubeDirectionArray(*arrays[2]);
+    // The texcoord slot's WIDTH is what the data node bound there (see detail::texCoordArray): three scalars
+    // per vertex, or two. The engine's own preset reads three as a cube direction and compiles the
+    // samplerCube variant for it, so the width selects the sampler here and belongs to the variant identity
+    // for the same reason the drops above do.
+    const bool three_scalar_texcoords =
+        arrays.size() > 2u && arrays[2] != nullptr && detail::isThreeScalarTexcoord(*arrays[2]);
 
     // The kind picks the SAMPLER kind, and the two can never mix: a samplerCube bound a 2-D view (or the
     // other way round) is not a white texel but an invalid descriptor. A texture of the other kind is
@@ -508,25 +509,25 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // the direction itself, and substituting the white texture there would replace the program's picture with
     // one it never asked for.
     const bool engine_picks_sampler = program == nullptr;
-    if (engine_picks_sampler && cube_texcoords &&
+    if (engine_picks_sampler && three_scalar_texcoords &&
         (texture == nullptr || texture->kind() != vine::graphics::Texture::Kind::Cube)) {
         texture_info = textureCache().whiteCubeFallback();
         report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
-               u8"the texcoord channel carries a cube direction while the material's texture is not a cube map; "
-               u8"the white cube is sampled instead (the map is not used)");
+               u8"the texcoord channel is three scalars wide (a cube direction for this preset) while the "
+               u8"material's texture is not a cube map; the white cube is sampled instead (the map is not used)");
     }
-    else if (engine_picks_sampler && !cube_texcoords && texture != nullptr &&
+    else if (engine_picks_sampler && !three_scalar_texcoords && texture != nullptr &&
              texture->kind() == vine::graphics::Texture::Kind::Cube) {
         detail::TextureReject white_reason = detail::TextureReject::Absent;
         texture_info                       = textureCache().getOrCreate(nullptr, white_reason);
         report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
-               u8"the material's texture is a cube map while the texcoord channel is a UV pair; the white "
-               u8"texture is sampled instead (the map is not used)");
+               u8"the material's texture is a cube map while the texcoord channel is two scalars wide; the "
+               u8"white texture is sampled instead (the map is not used)");
     }
 
     // The decision changes the pipeline, so it belongs to the variant identity: two geometries that differ
     // only in which canonical attributes they carry, or in the texcoord kind, must never share one.
-    layout = hashCombine(layout, (drop_color ? 0u : 1u) | (drop_uv ? 0u : 2u) | (cube_texcoords ? 4u : 0u));
+    layout = hashCombine(layout, (drop_color ? 0u : 1u) | (drop_uv ? 0u : 2u) | (three_scalar_texcoords ? 4u : 0u));
 
     // L2 variant reuse: an identical (program, material, resolved-state,
     // vertex-layout) variant built earlier contributes its reusable bind
@@ -556,7 +557,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // variant is selected through vsg's compile settings here. vsg only delivers a define the source asks
     // for in its `#pragma import_defines` line — a name missing from that list is dropped silently, with no
     // error from any layer — which is why the forward stage sources list this one.
-    if (cube_texcoords) {
+    if (three_scalar_texcoords) {
         config->shaderHints->defines.insert("VINE_TEXCOORD_CUBE");
     }
 

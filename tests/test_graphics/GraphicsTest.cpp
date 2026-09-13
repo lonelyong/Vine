@@ -4043,7 +4043,7 @@ TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
     EXPECT_EQ(geom.texcoordCount(), 0u);
     const std::uint64_t before = geom.revision();
 
-    geom.setTexcoords(packAttribute(vine::geometry::Vec2fArray{ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 0.0f),
+    geom.setTexcoords2(packAttribute(vine::geometry::Vec2fArray{ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 0.0f),
                                                                 vine::math::Vec2f(0.0f, 1.0f) }));
 
     EXPECT_TRUE(geom.hasTexcoords());

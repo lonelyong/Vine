@@ -133,7 +133,7 @@ vine::math::Vec3f faceNormal(const vine::math::Vec3f& a, const vine::math::Vec3f
     return {};
 }
 
-bool isCubeDirectionArray(const ::vsg::Data& array) noexcept
+bool isThreeScalarTexcoord(const ::vsg::Data& array) noexcept
 {
     return array.properties.format == VK_FORMAT_R32G32B32_SFLOAT;
 }

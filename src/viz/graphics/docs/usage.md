@@ -51,7 +51,7 @@ engine.setBackend(backend);
 | `Group` | 聚合子节点 | `addChild()` / `removeChild()` 会维护 parent 链 |
 | `MatrixTransform` | `Group` + **场景图里唯一持有变换的地方**（`matrix()` / `setMatrix()`） | 嵌套变换沿 root→leaf 相乘 |
 | `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先 |
-| `Geometry` | 叶子：**借用**的属性缓冲 + 可选索引 | `setPositions/setNormals/setTexcoords/setIndices`、`addBuffer` 加自定义通道、`setRevision()` |
+| `Geometry` | 叶子：**借用**的属性缓冲 + 可选索引 | `setPositions/setNormals/setTexcoords2/setIndices`、`addBuffer` 加自定义通道、`setRevision()` |
 | `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)` |
 
 ### 2.2 属性沿树折叠的规则
@@ -135,7 +135,7 @@ engine.setBackend(backend);
 
 | 想要 | 写法 |
 | --- | --- |
-| 整块缓冲就是通道 | `setPositions / setNormals / setTexcoords`（= `AttributeChannel::shared(values, components)`） |
+| 整块缓冲就是通道 | `setPositions / setNormals / setTexcoords2`（= `AttributeChannel::shared(values, components)`） |
 | 缓冲里的一段 | `addBuffer(0, AttributeChannel::slice(arena, 3, first_vertex, vertex_count))`（自定义通道、法线、UV 同理） |
 | 索引也是缓冲的一段 | `setIndices(index_arena, first_index, index_count)`（`index_count == 0` 表示"到缓冲末尾"） |
 
@@ -427,7 +427,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 
 | 词 | 是什么 | 谁决定 |
 | --- | --- | --- |
-| **通道 location** | 你在 Geometry 里填的编号，也就是 `Geometry::attributes_` 的键 | **你**：`setPositions` 0、`setNormals` 1、`setTexcoords` 8（cube 方向是**同一个槽**的另一种形状：`setCubeDirections`）；自定义通道 `addBuffer(L, …)`，L ≥ 3 且 ≠ 8 |
+| **通道 location** | 你在 Geometry 里填的编号，也就是 `Geometry::attributes_` 的键 | **你**：`setPositions` 0、`setNormals` 1、`setTexcoords2`/`setTexcoords3` 8（**同一个槽的两种宽度**）；自定义通道 `addBuffer(L, …)`，L ≥ 3 且 ≠ 8 |
 | **shader location** | shader 里的 `layout(location = N)` —— 下表比的就是它 | **写 shader 的人**：内建路径用 vsg 的编号，自定义 program 用模块契约 |
 | **数组下标 = Vulkan binding** | 喂入列表里的位置（`VkVertexInputBindingDescription.binding`） | **后端**；你既不写、也看不到，GLSL 里没有这个概念 |
 
@@ -452,7 +452,14 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | texcoord | **8** | **2** | **8** | 2 |
 | 自定义 | L ≥ 3 且 ≠ 8 | ——（内建 set 不声明它，喂了也不被读） | **L** | 4+i |
 
-> texcoord 槽的**分量数**由通道自己陈述：**2** = UV（`setTexcoords`，`sampler2D`），**3** = cube 方向（`setCubeDirections`，`samplerCube`）。引擎自己的 forward shader 据此编两个变体（`VINE_TEXCOORD_CUBE`），并用该形状对应的采样器：材质纹理种类与槽不匹配时**报一次**并改绑**白色回退**（3 分量时是白色 cube），而不是绑一个非法描述符。用户 program 自带 sampler 与坐标，引擎不替它决定 —— 它的槽里放什么、怎么用，是它自己的事。
+> texcoord 槽在 SDK 侧只陈述**宽度**，**用途属于采样器**（`Geometry` 从不下结论）：`setTexcoords2`（2 分量）、`setTexcoords3`（3 分量）、`texcoordComponents()` 查宽度。唯一的解释者是**引擎自己的 forward preset**：
+>
+> | 槽宽度 | 内建 preset 的读法 | 采样器 |
+> | --- | --- | --- |
+> | 2 | UV 对 | `sampler2D`（材质纹理必须是 2D；否则**报一次** + 绑白色 2D） |
+> | 3 | cube **方向** | `samplerCube`（材质纹理必须是 cube；否则**报一次** + 绑白色 cube） |
+>
+> 所以"同一个 3 分量通道"配自定义 program 完全可以读成体积坐标（`sampler3D`）——引擎不拦；将来真加 volume，内建 preset 要改成**按纹理种类**选变体（宽度名照样成立）。
 
 > 两套编号**只有 0/1（位置、法线）一致**（实测 `vsg_shader_dump`）：`2` 在内建路径是 texcoord、在自定义路径是颜色。
 > 所以按 vsg 习惯写的 shader（texcoord 写 2、颜色写 6）拿到自定义 program 路径上：location 2 读到的是颜色（静默错值），

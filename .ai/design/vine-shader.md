@@ -37,7 +37,7 @@
 **非目标（本稿不落地）**
 - PBR（`Pbr` 预留）、阴影采样（`ShadowedPhong` = P1，消费 v4b-1 depth RT，§6 给 ABI 接缝）；
 - 纹理贴图**已落地（L0–L3）**：`Material::texture()` 的 face 0 上传为 vsg 图像、建 sampler、进描述符集（set0/binding1），
-  `Geometry::setTexcoords()` 经 location 8 喂 `vsg_TexCoord0`；cube map 也已落地：六面作为 6 层上传（层数经 Data 的 `depth` 传给 vsg），按 `CubeMap::Face` 顺序采样有像素断言；未做的只剩各向异性过滤。多光（LightsUBO 数组已按 4 预留，但只验
+  `Geometry::setTexcoords2()` 经 location 8 喂 `vsg_TexCoord0`；cube map 也已落地：六面作为 6 层上传（层数经 Data 的 `depth` 传给 vsg），按 `CubeMap::Face` 顺序采样有像素断言；未做的只剩各向异性过滤。多光（LightsUBO 数组已按 4 预留，但只验
   ambient + 单方向光）、材质 dynamic UBO（P2）。
 - 用户可编程 Program / pass 级自定义着色：**方向已确认**（§11，SDK 第一准则），P0 后实现；
   P0 内置 shader 须与它同契约，避免两套机制。

@@ -98,7 +98,7 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 转发进来的自定义通道”的**唯一回答**（不要写 `location <= 2`：保留的 texcoord 槽正是范围判断会判错的
 那个值）。
 
-读它的一方：`Geometry` 的 setter/getter（`setPositions` / `setNormals` / `setTexcoords` 等以及
+读它的一方：`Geometry` 的 setter/getter（`setPositions` / `setNormals` / `setTexcoords2` 等以及
 `localBounds`）、`RayIntersection`、vsg 后端的几何构建（canonical 通道、派生通道、自定义通道过滤、
 loc→binding 映射）。`Geometry::kTexCoordLocation` 本身就等于 `attributeLocation(TexCoord0)`（不再写字面
 量 8）；GLSL 侧由 `EmbeddedShadersTest` 钉“每个 canonical 属性声明在 `attributeLocation(role)`”，
@@ -188,7 +188,7 @@ location 上”。改一个角色的 location ⇒ 两半一起动，且两处测
 | Position | 0 | 唯一必需 |
 | Normal | 1 | 着色必需（可派生） |
 | Color | 2 | 可选（门控） |
-| TexCoord0 | 8 | 可选（门控）；8 是保留槽，避开自定义通道。**同一槽两种形状**：2 分量 = UV（`setTexcoords`，`sampler2D`），3 分量 = cube 方向（`setCubeDirections`，`samplerCube`）——形状由通道的 `components` 陈述，后端据此选 shader 变体 |
+| TexCoord0 | 8 | 可选（门控）；8 是保留槽，避开自定义通道。**同一槽两种形状**：2 分量 = UV（`setTexcoords2`，`sampler2D`），3 分量 = cube 方向（`setTexcoords3`，`samplerCube`）——形状由通道的 `components` 陈述，后端据此选 shader 变体 |
 | 自定义通道 | = 其**源 location**（>= 3，≠ 8） | 调用者给的通道直接复用为 shader location |
 
 **数据块（语义，机制由后端定）**：per-view `VineViewBlock`（view/inv_view/proj/view_proj/cam_pos/frame）；per-draw `VineDrawBlock`（model + 参数表）；`VineMaterialBlock`；`VineLightsBlock`。
