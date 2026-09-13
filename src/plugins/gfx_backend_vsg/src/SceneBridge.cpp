@@ -87,9 +87,8 @@ void SceneBridge::setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet)
 {
     shader_set_ = shaderSet;
     // Our own forward set is the only one that reads per-drawable values from a draw
-    // block (`vine_draw`) and drops a derived canonical attribute behind a define; the
-    // built-in and user-program sets do neither, so on those the colour array stays the
-    // built-in path's dynamic opacity carrier and no attribute is ever dropped.
+    // block (`vine_draw`); a set without one has no per-drawable slot at all, so the
+    // slot is only reserved, bound and written for the set that reads it.
     forward_draw_block_ =
         shader_set_ != nullptr && static_cast<bool>(shader_set_->getDescriptorBinding("vine_draw"));
     // A new set re-arms the "I have nothing to shade with" report (see buildStateGroup): a slot
@@ -239,10 +238,6 @@ struct SceneBridge::Item {
     // rebuilds so a material/state/program edit never re-materialises or
     // re-uploads the mesh data.
     ::vsg::ref_ptr<::vsg::Commands> data_node;
-    // Per-vertex color array; on the BUILT-IN path its alpha carries the effective
-    // per-drawable opacity and is rewritten only when the opacity actually changed.
-    // Our forward path keeps this null and puts the opacity in @ref draw_slot.
-    ::vsg::ref_ptr<::vsg::vec4Array> colors;
     // This drawable's slot in the session's per-draw block pool (see setDrawBlockPool), or an
     // invalid slot when the bridge has no pool or the reserve failed. The slot's VALUES are
     // what a translucent drawable costs per frame — four floats written in place instead of a
@@ -262,7 +257,7 @@ struct SceneBridge::Item {
     // per-layout ShaderSet / variant identity for state-only rebuilds (a
     // program / material edit reuses this without re-uploading the mesh).
     std::vector<VertexChannel> extra_channels;
-    // The channels this geometry's data builder DERIVES (white colour carrier, zero UVs, normals derived
+    // The channels this geometry's data builder DERIVES (white colour fallback, zero UVs, normals derived
     // from the positions): the rebuild reuses them when the inputs they were derived from did not change,
     // so an unrelated edit does not pay a pass over the vertices for them again (see DerivedChannels).
     DerivedChannels derived;
@@ -279,10 +274,7 @@ struct SceneBridge::Item {
     // Cached write state so steady-state frames skip redundant work.
     ::vsg::dmat4 last_matrix;
     bool matrix_valid = false;
-    float last_opacity = -1.0f;  // sentinel forces the first write
-    // Last opacity written into @ref draw_slot (the sentinel forces the first write). Separate
-    // from @ref last_opacity because the built-in path and the forward path carry the opacity in
-    // different places (the carrier's alpha vs the pooled block).
+    // Last opacity written into @ref draw_slot (the sentinel forces the first write).
     float last_slot_opacity = -1.0f;
     // Consecutive frames this geometry was absent (hidden/culled/removed).
     std::uint32_t absent_frames = 0;
@@ -723,12 +715,6 @@ bool SceneBridge::syncRenderCommands(
                         (before == nullptr || after == nullptr || *before == *after)) {
                         continue; // absent both times, or byte-for-byte the same stream
                     }
-                    // The built-in path IGNORES an authored loc2 colour: binding 3 carries its own white
-                    // opacity carrier there, whose bytes depend on the vertex count alone (unchanged), so a
-                    // change to the authored channel is a no-op rather than a refresh or a rebuild.
-                    if (location == 2u && item->colors != nullptr) {
-                        continue;
-                    }
                     auto array =
                         refreshCanonicalChannel(geometry, location, vertex_count, state.topology, item->derived);
                     if (array == nullptr) {
@@ -813,10 +799,8 @@ bool SceneBridge::syncRenderCommands(
             // check above reads — hence the order.
             retireNode(std::move(item->data_node));
             item->binds     = RetainedBinds{};
-            item->data_node = buildGeometryData(geometry, item->program.get() == nullptr && !forward_draw_block_,
-                                                state.topology, item->colors,
-                                                item->extra_channels, item->derived, item->binds,
-                                                streams_changed ? &meshResources() : nullptr);
+            item->data_node = buildGeometryData(geometry, state.topology, item->extra_channels, item->derived,
+                                                item->binds, streams_changed ? &meshResources() : nullptr);
             if (item->data_node == nullptr) {
                 // Unsupported shape / malformed vertex data (unusable attribute
                 // strides, out-of-range indices, ...): nothing drawable. The
@@ -832,7 +816,6 @@ bool SceneBridge::syncRenderCommands(
             }
             state_channels_changed = item->state_channels != item->extra_channels;
             item->matrix_valid     = false;
-            item->last_opacity     = -1.0f;
             // Remember what this node was built from, so the next revision can tell which streams changed.
             item->channel_keys = std::move(keys_now);
             item->index_key    = index_now;
@@ -881,30 +864,13 @@ bool SceneBridge::syncRenderCommands(
             created->emplace_back(item->transform);
         }
 
-        // Effective per-drawable opacity. On our forward set it is a PER-DRAWABLE VALUE held in
-        // the pooled block: four bytes written through the pool's mapping, so a translucent
-        // drawable costs one store per frame instead of a pass over its vertices — and the
-        // value is in the buffer the frame records FROM rather than one frame behind it.
+        // Effective per-drawable opacity: a PER-DRAWABLE VALUE held in the pooled block — four bytes
+        // written through the pool's mapping, so a translucent drawable costs one store per frame
+        // instead of a pass over its vertices, and the value is in the buffer the frame records FROM
+        // rather than one frame behind it.
         if (item->draw_slot.valid() && item->last_slot_opacity != cmd.opacity) {
             draw_block_pool_->writeOpacity(item->draw_slot, cmd.opacity);
             item->last_slot_opacity = cmd.opacity;
-        }
-
-        // Effective opacity (scene x nodes x leaf geometry) rides the per-vertex alpha on
-        // the BUILT-IN path only, whose shader reads the vertex colour's alpha (there is
-        // no draw block there). Rewriting O(vertices) only when it actually changed keeps
-        // the steady-state per-frame cost independent of mesh size, while opacity edits
-        // still apply live. Our forward path keeps `colors` null and uses the pooled block.
-        if (item->colors != nullptr && item->last_opacity != cmd.opacity) {
-            const float opacity = cmd.opacity;
-            for (auto& color : *item->colors) {
-                color.a = opacity;
-            }
-            // The colour array is DYNAMIC (see buildGeometry): mark it dirty so
-            // vsg's per-frame TransferTask re-copies it this frame; unchanged
-            // frames issue no transfer.
-            item->colors->dirty();
-            item->last_opacity = opacity;
         }
 
         if (matrix_moved) {

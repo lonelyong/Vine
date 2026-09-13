@@ -169,9 +169,7 @@ namespace
 
 ::vsg::ref_ptr<::vsg::Commands> SceneBridge::buildGeometryData(
     vine::raw_ptr<const vine::graphics::Geometry> geometry,
-    bool opacity_carrier,
     vine::graphics::Topology topology,
-    ::vsg::ref_ptr<::vsg::vec4Array>& out_colors,
     std::vector<VertexChannel>& extra_channels,
     DerivedChannels& derived,
     RetainedBinds& out_binds,
@@ -391,44 +389,35 @@ namespace
         derived.derived_normals = {};
     }
 
-    // vine_Color (binding 2). On the built-in path this is ALWAYS the backend
-    // white DYNAMIC carrier whose alpha drives per-drawable opacity: rewriting
-    // an authored loc2 array would clobber its alpha for every drawable that
-    // shares the geometry, so an authored loc2 colour is ignored there. On the
-    // custom path the program owns opacity (D8, no carrier rewrite), so an
-    // authored loc2 colour — when present and well-formed — is bound verbatim
-    // as vine_Color; otherwise a static white fallback is bound.
+    // vine_Color (binding 3). An authored loc2 channel — when present and well-formed — is bound VERBATIM
+    // as vine_Color; nothing overrides it, because nothing else carries opacity: a per-drawable value rides
+    // the `vine_draw` block (the shader reads the fragment opacity from set 1), so an authored colour is
+    // colour. A mesh that authors none binds a static white fallback, built once per vertex count.
+    //
+    // The array is emitted either way: the canonical binding ORDER is what the custom channels after it
+    // depend on (see buildGeometryData's contract).
     ::vsg::ref_ptr<::vsg::vec4Array> colors;
     // Four components alias the model's bytes verbatim; three are packed, which is per-geometry work and
-    // therefore not shared. On the built-in path binding 3 is the white carrier and never the model's.
+    // therefore not shared.
     const vine::graphics::AttributeChannel* aliased_colors = nullptr;
-    if (!opacity_carrier) {
-        if (const auto* loc2 = geometry->buffer(2); loc2 != nullptr && !loc2->empty()) {
-            colors = packColor4(*loc2, vertex_count);
-            if (colors != nullptr && loc2->components == 4u) {
-                aliased_colors = loc2;
-            }
-            if (colors == nullptr) {
-                report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
-                       u8"loc2 colour channel is unusable (3/4 components, one per "
-                       u8"vertex required); falling back to white");
-            }
+    if (const auto* loc2 = geometry->buffer(2); loc2 != nullptr && !loc2->empty()) {
+        colors = packColor4(*loc2, vertex_count);
+        if (colors != nullptr && loc2->components == 4u) {
+            aliased_colors = loc2;
+        }
+        if (colors == nullptr) {
+            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
+                   u8"loc2 colour channel is unusable (3/4 components, one per "
+                   u8"vertex required); falling back to white");
         }
     }
     if (colors == nullptr) {
-        // Nothing authored: the white carrier. Built once per vertex count instead of once per rebuild —
-        // its bytes are a function of the count, and the built-in path rewrites only the alpha later.
+        // Nothing authored: the white fallback. Built once per vertex count instead of once per rebuild —
+        // its bytes are a function of the count alone.
         if (derived.white_colors == nullptr) {
             derived.white_colors = makeWhiteColors(vertex_count);
         }
         colors = derived.white_colors;
-    }
-    if (opacity_carrier) {
-        colors->properties.dataVariance = ::vsg::DYNAMIC_DATA;
-        out_colors = colors;
-    }
-    else {
-        out_colors = ::vsg::ref_ptr<::vsg::vec4Array>();
     }
     // Texture coordinates: the slot carries a UV pair (a 2-D map) or a direction (a cube map), and the
     // array states which — see texCoordArray, which owns that decision for the builder and the in-place

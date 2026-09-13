@@ -583,13 +583,13 @@ class V_VSG_API SceneBridge {
 
     /** @brief The BUILD vertex channels a data rebuild reuses instead of recomputing.
      *
-     * A rebuild re-materialises the whole data node, but three of its channels do not come from the model:
-     * the white colour carrier (the built-in path's opacity carrier), the zero UV array a mesh without UVs
-     * binds, and the normals DERIVED when the geometry authors none. Each costs a pass over the vertices
-     * (plus a fresh allocation) on every rebuild — even a rebuild that changed none of its inputs. This
-     * remembers them per retained item, keyed by exactly the inputs they were derived from:
+     * A rebuild re-materialises the whole data node, but two of its channels do not come from the model:
+     * the zero UV array a mesh without UVs binds, and the normals DERIVED when the geometry authors none.
+     * Each costs a pass over the vertices (plus a fresh allocation) on every rebuild — even a rebuild that
+     * changed none of its inputs. This remembers them per retained item, keyed by exactly the inputs they
+     * were derived from:
      *
-     *   * white colours / zero UVs: the vertex count alone;
+     *   * zero UVs: the vertex count alone;
      *   * derived normals: the positions and index streams they were read from — buffer, revision and slice
      *     (`vine::Buffer::revision()` is the contract a consumer that cached derived bytes compares against,
      *     the same rule Texture and ShaderProgram follow; the slice is what makes two segments of one arena
@@ -606,8 +606,8 @@ class V_VSG_API SceneBridge {
         /** @brief Sentinel for "no revision remembered yet". */
         static constexpr std::uint64_t kUnsetRevision = ~std::uint64_t{ 0 };
 
-        // White colour carrier and zero UVs: a function of the vertex count alone, so a count change drops
-        // both rather than letting either be reused at the wrong size.
+        // White fallback colour and zero UVs: a function of the vertex count alone, so a count change
+        // drops both rather than letting either be reused at the wrong size.
         std::size_t                      count = kUnsetCount;
         ::vsg::ref_ptr<::vsg::vec4Array> white_colors;
         ::vsg::ref_ptr<::vsg::vec2Array> zero_texcoords;
@@ -669,28 +669,17 @@ class V_VSG_API SceneBridge {
      * program changes (only the state wrapper is rebuilt then), and it stays
      * stable so a later geometry-only edit never re-uploads unchanged meshes.
      * The index stream is kept verbatim (bounds-checked, never truncated):
-     * primitive assembly is the topology's job, not the data builder's. When
-     * @p opacity_carrier is true (built-in path), the per-vertex colour array
-     * is marked DYNAMIC and returned via @p out_colors so per-drawable
-     * opacity edits after upload are re-transferred on dirty().
+     * primitive assembly is the topology's job, not the data builder's.
      *
      * @param geometry        Geometry to build.
-     * @param opacity_carrier True when the caller drives per-drawable opacity through the vertex-colour
-     *                        alpha. That is the BUILT-IN path: its shader reads the vertex colour's alpha
-     *                        and there is no per-draw block to carry the opacity. Our forward set passes
-     *                        false — its `vine_draw` block holds the opacity, so its colour array is a
-     *                        static authored-or-white channel that is uploaded once.
      * @param topology        Primitive topology the geometry is drawn with:
      *                        automatic normal derivation runs for Triangles
      *                        only; Points / Lines fall back to authored
      *                        normals or a constant default.
-     * @param out_colors      Receives the per-vertex colour array the caller
-     *                        keeps to drive opacity each frame (null when
-     *                        @p opacity_carrier is false).
      * @param extra_channels  Receives one entry per forwarded custom channel
      *                        (location >= 3), in binding order after the three
      *                        canonical arrays (ascending location).
-     * @param derived         Cache of the channels this builder DERIVES (white colour carrier, zero UVs,
+     * @param derived         Cache of the channels this builder DERIVES (white colour fallback, zero UVs,
      *                        derived normals): reused when the inputs they were derived from did not
      *                        change, so an unrelated edit does not pay for them again. See DerivedChannels.
      * @param out_index_bind  Receives the index bind command the node holds, so a later index-only edit can
@@ -707,9 +696,7 @@ class V_VSG_API SceneBridge {
      */
     ::vsg::ref_ptr<::vsg::Commands> buildGeometryData(
         vine::raw_ptr<const vine::graphics::Geometry> geometry,
-        bool opacity_carrier,
         vine::graphics::Topology topology,
-        ::vsg::ref_ptr<::vsg::vec4Array>& out_colors,
         std::vector<VertexChannel>& extra_channels,
         DerivedChannels& derived,
         RetainedBinds& out_binds,
