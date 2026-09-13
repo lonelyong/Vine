@@ -7,7 +7,11 @@
 #      with its `[selftest]` evidence compared byte-for-byte (vsg_selftest_evidence.sh).
 #   1b. The byte-exact evidence baseline of the content-shading path (the engine's
 #      own sets, exercised by 1), see .ai/design/vsg-custom-shader.md §11.
-#   2. Vine app (default demo).
+#   2. Vine app (default demo), which has to show its own evidence too: the
+#      app_shell plugin loaded, the cube map loaded from the shipped assets and
+#      the shadow pass built. A run that stays validation-clean while the demo
+#      builds nothing is a FAIL — that is precisely how a plugin that stopped
+#      loading once read as a pass (see require_evidence below).
 #
 # It used to open with vsg_color_probe — a standalone vsg executable rendering a
 # box through vsg's OWN Builder/phong path, to isolate the vendored vsg's
@@ -116,6 +120,23 @@ report() { # name  file  [ok_exit_codes...]
     fi
 }
 
+# require_evidence <pattern> <minimum> <label>
+#
+# Counts lines matching <pattern> in the log the CURRENT stage captured (the
+# caller's `$log`) and fails the run when there are fewer than <minimum>. It is
+# what makes a stage's PASS mean "the thing under test reported that it ran",
+# not "the process did not complain": a stage whose assertions were removed, or
+# whose subject never got built, otherwise reads as green — the app stage did
+# exactly that while app_shell was failing to load.
+require_evidence() { # pattern minimum label
+    local found
+    found=$(grep -c "$1" "$log" || true)
+    if [ "${found:-0}" -lt "$2" ]; then
+        echo "[FAIL] ${STAGE}: ${found:-0} '$3' line(s), expected at least $2"
+        FAILED=1
+    fi
+}
+
 # vsg_backend_selftest: drives the real vsg RenderBackend over many frames to
 # exercise the GPU paths unit tests cannot reach — off-screen MRT targets,
 # PiP sampling (drawScreenTexture), deferred fullscreen programs
@@ -153,14 +174,8 @@ else
     grep "^\[selftest\] MRT " "$log" | sed 's/^/    /' || true
     # Each assertion group must report itself: a stage whose assertions were
     # removed (or silently stopped running) must not read as a pass.
-    require_evidence() { # pattern minimum label
-        local found
-        found=$(grep -c "$1" "$log" || true)
-        if [ "${found:-0}" -lt "$2" ]; then
-            echo "[FAIL] vsg_backend_selftest reported ${found:-0} '$3' line(s), expected at least $2"
-            FAILED=1
-        fi
-    }
+    stage_before=$FAILED
+    STAGE="vsg_backend_selftest"
     require_evidence "^\[selftest\] pixels:" 4 "pixel assertion"
     require_evidence "^\[selftest\] program hotspot:" 1 "fullscreen program hot-edit assertion"
     require_evidence "^\[selftest\] depth:" 1 "depth assertion"
@@ -199,7 +214,13 @@ else
             grep "\[selftest\] FAIL" "$log" | head -10
             FAILED=1
         fi
-        report "vsg_backend_selftest" "$log"
+        # `report` prints the PASS line, so it only gets to speak when this stage's own checks
+        # (the requires above) also passed: a missing assertion is not a pass.
+        if [ "$FAILED" -eq "$stage_before" ]; then
+            report "vsg_backend_selftest" "$log"
+        else
+            echo "[FAIL] vsg_backend_selftest (see the checks above)"
+        fi
     fi
 fi
 
@@ -235,14 +256,30 @@ else
         (cd "$BUILD" && timeout "$SECONDS_V" ./bin/Vine) >"$log" 2>&1
         rc=$?
         echo "    (exit=$rc; 124 = still running when the timeout fired, i.e. OK)"
+        # The default demo has to have DONE something. The stage used to accept any run that stayed
+        # validation-clean, which is exactly what it did while app_shell was failing to load: the run
+        # drew no demo at all and still passed. So the demo's own evidence is required — the plugin
+        # that owns the scene, the cube map it loads from the shipped assets, and the shadow pass it
+        # asks the builder for. (The picture itself is asserted by the self-test's phases, which read
+        # pixels back; the app presents to a window that cannot be read.)
+        grep "Plugin 'app_shell' loaded" "$log" | sed 's/^/    /' || true
+        grep "^\[demo\]" "$log" | sed 's/^/    /' || true
+        grep "off-screen target 'shadow_map'" "$log" | sed 's/^/    /' || true
+        stage_before=$FAILED
+        STAGE="Vine (default demo)"
+        require_evidence "Plugin 'app_shell' loaded" 1 "app_shell plugin load (without it no demo scene exists)"
+        require_evidence "^\[demo\] cube map: six" 1 "cube map load from the shipped assets"
+        require_evidence "off-screen target 'shadow_map'" 1 "shadow pass target for the demo's casting light"
         # Vine is a GUI app: it runs until killed. A timeout (124) is success;
         # any other non-zero exit indicates a startup crash.
         if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
             echo "[FAIL] Vine exited early with $rc"
             tail -30 "$log"
             FAILED=1
-        else
+        elif [ "$FAILED" -eq "$stage_before" ]; then
             report "Vine app (default demo)" "$log"
+        else
+            echo "[FAIL] Vine app (default demo) (see the checks above)"
         fi
     fi
 fi

@@ -620,7 +620,9 @@ VINE_PIPELINE=forward_shadowed ./build/bin/Vine # 接受；与 forward 完全相
 ./build/bin/test_vsg                 # 后端契约（桥 / pass / 查表）
 ./build/bin/test_core                # buffer、math、io
 
-bash scripts/gfx_lavapipe_check.sh    # 真帧 + lavapipe：期望 0 VUID / 0 validation error
+bash scripts/gfx_lavapipe_check.sh    # 真帧 + lavapipe：0 VUID / 0 validation error，**并且** app 阶段要看到 demo
+                                      # 自己的证据行（app_shell 加载 / cube map 从素材装载 / shadow_map 建立）——
+                                      # "没报错"不算过：demo 没建起来、或素材不在，这条门禁必须红
 bash scripts/vsg_selftest_evidence.sh           # 后端自检，与基线逐字节比对（自写前向着色 = 唯一路径）
 bash scripts/vine_shader_check.sh     # 每个 shader × define 变体过 glslangValidator + 嵌入副本同步
 ctest --test-dir build                # CTest 视角
