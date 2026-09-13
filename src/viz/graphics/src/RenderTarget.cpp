@@ -37,6 +37,16 @@ void RenderTarget::setDepthPromotion(bool promote)
     depth_promotion_ = promote;
 }
 
+void RenderTarget::setProducerViewProjection(const Mat4d& view_projection)
+{
+    producer_view_projection_ = view_projection;
+}
+
+const Mat4d& RenderTarget::producerViewProjection() const
+{
+    return producer_view_projection_;
+}
+
 raw_ptr<RenderTarget> RenderTarget::depthSource() const
 {
     return depth_source_.get();

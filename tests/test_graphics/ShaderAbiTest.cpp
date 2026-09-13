@@ -98,6 +98,19 @@ TEST(ShaderAbiTest, DrawBlockIsOneMatrixPlusTheParameterSlot)
     EXPECT_EQ(offsetof(VineDrawBlock, params), 64u);
 }
 
+TEST(ShaderAbiTest, ShadowBlockIsTheViewToLightMatrixPlusItsParameters)
+{
+    // A shadow is sampled by mapping the shaded fragment into the LIGHT's clip space, and the
+    // shading already has the fragment's VIEW position (a varying in the forward stage, a G-buffer
+    // attachment in the deferred one). So the matrix that block carries is view -> light clip, and
+    // its parameters ride in the slot that follows it — the same shape as the draw block, which is
+    // what makes it fit a backend that binds only one such block per pass.
+    EXPECT_EQ(sizeof(VineShadowBlock), 80u);
+    EXPECT_EQ(alignof(VineShadowBlock), 16u);
+    EXPECT_EQ(offsetof(VineShadowBlock, view_to_light), 0u);
+    EXPECT_EQ(offsetof(VineShadowBlock, params), 64u);
+}
+
 TEST(ShaderAbiTest, TheShaderBlockNamesAreTheL1Names)
 {
     // The L1 name and the GLSL block type are the same string, so the contract and the

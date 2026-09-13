@@ -5,11 +5,14 @@
 #include <vector>
 
 #include <vine/intrusive_ptr.hpp>
+#include <vine/math/Matrix4x4.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 
 V_GRAPHICS_NS_BEGIN
+
+using vine::math::Mat4d;
 
 /**
  * @brief Render target managing color and depth buffers.
@@ -197,6 +200,31 @@ class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarge
      */
     std::vector<float> readDepthBuffer() const;
 
+    /** @brief States the view-projection this target's producer rendered with.
+     *
+     * A target is not only an image: when a pass renders it from a CAMERA whose
+     * space a later consumer must map its own fragments into, the matrix that
+     * does it belongs to the producer's statement, not to the consumer's guess.
+     * The shadow map is the working example — the shading samples it by
+     * projecting the fragment through `light_vp * inverse(view)` — and stating it
+     * here keeps the ONE derivation (the pipeline that built the light camera)
+     * as the only one, whether the consumer is a fullscreen pass or a content
+     * slot that has to fill a block (see ShaderAbi.hpp VineShadowBlock).
+     *
+     * Left as the identity when nobody states one, which is what "this target is
+     * not a projected image" means: a consumer reading it gets the identity,
+     * not a plausible-looking wrong matrix.
+     *
+     * @param view_projection The producer's projection * view matrix.
+     */
+    void setProducerViewProjection(const vine::math::Mat4d& view_projection);
+
+    /** @brief Gets the view-projection this target's producer rendered with.
+     *
+     * @return The producer's projection * view matrix (identity when unset).
+     */
+    const Mat4d& producerViewProjection() const;
+
   private:
     // Optional identity label for diagnostics and logs (see setName()).
     String name_;
@@ -206,6 +234,9 @@ class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarge
     bool has_depth_ = false;
     bool depth_promotion_ = true;            // depth ends sampleable (SHADER_READ_ONLY)
     intrusive_ptr<RenderTarget> depth_source_; // borrowed depth (null = own)
+    // The view-projection the producer rendered this target with (see
+    // setProducerViewProjection); identity until someone states one.
+    Mat4d producer_view_projection_;
     int width_ = 1;
     int height_ = 1;
 };

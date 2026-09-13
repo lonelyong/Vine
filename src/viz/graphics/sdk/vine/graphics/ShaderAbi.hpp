@@ -128,6 +128,29 @@ struct alignas(16) VineMaterialBlock
     float                alpha_mask_cutoff{ 0.5f };
 };
 
+/**
+ * @brief Per-pass shadow data block the shading reads (L1 shape).
+ *
+ * A shadow-casting light is sampled by mapping the shaded fragment into the LIGHT's clip space, so
+ * the shading needs the matrix that takes a VIEW-space position there — `light_vp * inverse(view)`
+ * — which is why this block carries a matrix and not just a bias: the shading already has the view
+ * position (a varying in the forward stage, a G-buffer attachment in the deferred one) and nothing
+ * else about the light camera.
+ *
+ * It is a PASS-level block, not a per-view one: the pipeline that builds a shadow pass owns the
+ * light camera that produced its map, and a pass that samples no shadow declares no such binding at
+ * all (the shader's stage is gated by a define, see std_forward.frag).
+ *
+ * `params.x` is 1 while a map is bound (a shader must be able to take the unshadowed path with the
+ * same text) and 0 otherwise; `y` is the depth bias applied at the comparison; `z` is the shadow
+ * strength (0 disables the darkening without unbinding anything); `w` is reserved.
+ */
+struct alignas(16) VineShadowBlock
+{
+    std::array<float, 16> view_to_light{}; ///< View space -> light clip (column-major mat4).
+    std::array<float, 4>  params{};        ///< x = enabled, y = bias, z = strength, w = reserved.
+};
+
 // The structs ARE the shader ABI: a member added here without updating the GLSL
 // (or vice versa) must fail the build, not silently mis-read at run time.
 static_assert(sizeof(VineViewBlock) == 288u, "VineViewBlock must be 4 mat4 + 2 vec4");
@@ -140,5 +163,8 @@ static_assert(offsetof(VineDrawBlock, params) == 64u, "VineDrawBlock std140 offs
 static_assert(sizeof(VineMaterialBlock) == 80u, "VineMaterialBlock must be 4 vec4 + 3 floats (std140 pads it to 80)");
 static_assert(alignof(VineMaterialBlock) == 16u, "VineMaterialBlock must stay std140 / D3D-cbuffer aligned");
 static_assert(offsetof(VineMaterialBlock, shininess) == 64u, "VineMaterialBlock std140 offset");
+static_assert(sizeof(VineShadowBlock) == 80u, "VineShadowBlock must be 1 mat4 + 1 vec4");
+static_assert(alignof(VineShadowBlock) == 16u, "VineShadowBlock must stay std140 / D3D-cbuffer aligned");
+static_assert(offsetof(VineShadowBlock, params) == 64u, "VineShadowBlock std140 offset");
 
 V_GRAPHICS_NS_END

@@ -179,3 +179,33 @@ deferred 默认路径 —— 档位重排后 lavapipe 无 VUID/validation 错误
 **诚实的遗留**：`addOffscreenToScreen`（PiP 配方）仍直接向 engine 注册并返回裸 `ScreenPass*`，
 那两条 pass 没有句柄负责注销 —— 与 S1 修的是同一个缺陷。它改成返回 `Pipeline` 需要同时给宿主
 一个"稍后锚定这个 ScreenPass"的路径，等第二个消费者出现时一起做（触发条件已写进 §6 不做清单）。
+## 9. S2 阴影：三个 ABI 决定（2026-09-13）
+
+阴影要跨过三样东西：**深度图**、**光空间的矩阵**、**每 pass 的参数**。每一件都要先决定走哪条路，
+否则实现会退化成"某个后端的私有约定"。
+
+| 问题 | 决定 | 理由 / 先例 |
+| --- | --- | --- |
+| 光空间矩阵怎么到着色器 | **`VineShadowBlock`**（`ShaderAbi.hpp`，view→light clip 的 mat4 + `params`），**走 UBO 不走 push** | push 只保证 128 B，`LightPushBlock` 已经正好占满 128（先例：灯走 UBO 就是这个原因）。矩阵用 view→light 而不是 world→light，是因为两条路径手上都有**片元的 view 位置**（前向是 varying，延迟是 G-buffer 附件） |
+| 矩阵由谁算 | **产出者算一次**：建光相机的 pipeline `RenderTarget::setProducerViewProjection(lightVP)`；消费者（前向的槽、延迟的着色）从**输入 target** 读 | 否则"建相机的地方"和"填块的地方"各推一遍同样的正交取景，两者一旦有差就是画面错而 validation 干净。放在 target 上也说得通：投影过的图**本来就**带着它的投影 |
+| 深度图怎么到着色器 | pass **声明输入**（已有 `RenderPass::addInput` / `ImageRef`），后端在两个消费者处绑定 | 这是 §5 承诺的"效果声明输入"，不是新机制；缺的是"解析后的输入怎么告诉后端"这一跳 |
+| 那一跳 | **`RenderBackend::setPassInputs(const std::vector<RenderTarget*>&)`**，默认 no-op，引擎在 `execute()` 前调用 | 照 `setLights` / `setDefaultContentProgram` 的先例：新增虚函数带默认空实现，既有实现者不受影响 |
+
+**不改的**：`getPassInputs` 不做（pass 输入不是查询对象）；**超 128 B 的 push 不做**（保证之外）；
+**多投影光源不做**（`graphics-shadow.md` §8 已拍板单方向光/内容）；**级联/PCSS 不做**（
+`ShadowSettings::filter` 先只兑现 `Hard` 与 `PCF`）。
+
+**光相机**：正交；eye 沿 `-direction` 退到内容包围盒（`Scene::boundingBox()`）之外，center 取盒心，
+正交窗口 = 盒在该光空间的范围 + 余量；由 `ShadowSettings::resolution` 定方图尺寸的 depth-only target
+（`setDepthPromotion(true)`，后端已有 depth-only render pass 与深度采样路径）。
+
+**分期**：
+
+| 步 | 内容 | 判据 |
+| --- | --- | --- |
+| **S2a（前向）** | 内容 set 声明 `vine_shadow`(UBO, set0 b3) + `shadow_map`(sampler2D, set0 b4)；槽从 pass 输入 target 填块 + 绑深度；`std_forward.frag` 加 `VINE_SHADOW_MAP` 门控的阴影项 | 新像素相位（立方体在地面上的投影：影内的地面像素明显暗于影外）+ 无投影光时证据逐字节不变 |
+| **S2b（延迟）** | 全屏 program ABI 扩一条规则：**源自己的绑定之后**，接该 pass 声明的额外输入（纹理绑定）与 `VineShadowBlock`（UBO）；`deferred_light.frag` 同样的门控阴影项。SSAO 将来走同一跳 | 同上（延迟路径的像素相位）|
+
+**为什么先做前向**：前向的消费者是内容槽，块与采样器都走已有的 `vine_lights` / `diffuseMap` 绑定模式，
+不需要动全屏 ABI；延迟那条要先扩全屏 ABI（源绑定之后怎么排），是更大的一刀。两条都做完，§2 的
+"阴影是效果"才算真的兑现。
