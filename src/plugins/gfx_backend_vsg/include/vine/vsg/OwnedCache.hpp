@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <type_traits>
 #include <unordered_map>
+#include <vector>
 #include <utility>
 
 #include <vine/intrusive_ptr.hpp>
@@ -45,6 +46,18 @@ es), so it is
  * would release too early and under-counting only keeps an entry a sweep longer — the
  collection
  * walks the same caches as the sweep it feeds.
+ *
+ * The counts are rebuilt every frame (an object's shares change as slots come and go),
+ * so the
+ * rebuild reuses the table's nodes instead of clearing it: a frame that finds the same
+ * objects
+ * inserts into keys that are already there, which keeps the pass to hashing and makes
+it
+ * allocation-free in steady state — the cost this adds to a frame must stay below the
+ per-frame
+ * sweeps it feeds. Keys whose count returns to zero are kept (the map only GROWS past
+ * twice the number of keys seen in a frame when the frame really uses that many), and
+ * `of()` answers 0 for them, so a stale key is never mistaken for a held object.
  */
 class OwnedShareCounts
 {
@@ -56,13 +69,39 @@ class OwnedShareCounts
      */
     void add(const void* object)
     {
-        if (object != nullptr) {
-            ++shares_[object];
+        if (object == nullptr) {
+            return;
         }
+        const auto [it, inserted] = shares_.try_emplace(object, 0u);
+        if (inserted) {
+            touched_.push_back(object);
+        }
+        ++it->second;
     }
 
-    /** @brief Drops every count, so the collection can be filled again for the next frame. */
-    void clear() noexcept { shares_.clear(); }
+    /** @brief Drops every count, so the collection can be filled again for the next fr
+ame.
+     *
+     * Zeroes the keys this frame touched instead of destroying the table: the next fram
+e's
+     * collection then reuses those nodes (see the class notes). A table that has grown
+ well past
+     * what a frame uses — the keys of objects that have since died — is dropped whole,
+ so a long
+     * session with material churn does not keep one node per object it has ever seen.
+     */
+    void clear()
+    {
+        if (shares_.size() > touched_.size() * 4u + 64u) {
+            shares_.clear();
+            touched_.clear();
+            return;
+        }
+        for (const void* object : touched_) {
+            shares_.at(object) = 0u;
+        }
+        touched_.clear();
+    }
 
     /** @brief Gets the number of retained shares counted for @p object.
      *
@@ -75,8 +114,19 @@ class OwnedShareCounts
         return it == shares_.end() ? 0u : it->second;
     }
 
+    /** @brief Gets how many keys the counts remember.
+     *
+     * The node count `clear()` deliberately keeps across frames (see the class notes), s
+o a test can
+     * tell a rebuild that reuses the table from one that re-allocates it every frame.
+     *
+     * @return Number of remembered keys.
+     */
+    [[nodiscard]] std::size_t trackedCount() const noexcept { return shares_.size(); }
+
   private:
     std::unordered_map<const void*, std::uint32_t> shares_;
+    std::vector<const void*>                       touched_;
 };
 
 /**

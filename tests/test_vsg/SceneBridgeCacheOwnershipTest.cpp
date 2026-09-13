@@ -351,6 +351,58 @@ TEST(SceneBridgeCacheOwnershipTest, SessionSharesCountEverySlotAndABridgeCannot)
 }
 
 /**
+ * @brief The share counts answer per FRAME, and rebuilding them reuses their table.
+ *
+ * The counts are collected once per frame, so what they must not do is carry last frame's
+ * attention into this one: a key the app has since released must read 0, and counting an object
+ * again must start from 0 rather than adding to a total nobody cleared. The table itself is
+ * reused across frames — a rebuild that re-allocated every key would put allocator traffic on the
+ * frame's critical path for no reason — but only while a frame really uses that many keys: a table
+ * that has grown well past the frame's use (the keys of objects that died) is dropped whole.
+ */
+TEST(SceneBridgeCacheOwnershipTest, TheShareCountsForgetTheirValuesButKeepTheirKeys)
+{
+    Material first;
+    Material second;
+
+    vine::vsg::OwnedShareCounts counts;
+    counts.add(&first);
+    counts.add(&first);
+    counts.add(&second);
+    counts.add(nullptr); // a null key is never owned
+    EXPECT_EQ(counts.of(&first), 2u) << "two entries hold it";
+    EXPECT_EQ(counts.of(&second), 1u);
+    EXPECT_EQ(counts.of(nullptr), 0u);
+
+    const std::size_t remembered = counts.trackedCount();
+    EXPECT_EQ(remembered, 2u) << "one key per counted object, the null one ignored";
+
+    counts.clear();
+    EXPECT_EQ(counts.of(&first), 0u) << "a cleared key must read 0, not last frame's count";
+    EXPECT_EQ(counts.of(&second), 0u);
+    EXPECT_EQ(counts.trackedCount(), remembered)
+        << "the keys stay, so the next frame's collection allocates nothing";
+
+    counts.add(&first);
+    EXPECT_EQ(counts.of(&first), 1u) << "counting again after a clear starts from 0";
+
+    // A frame that touches few keys must drop a table that has grown far past it, or a long
+    // session with material churn keeps one node per object it has ever seen.
+    std::vector<std::unique_ptr<Material>> many;
+    many.reserve(200);
+    for (int i = 0; i < 200; ++i) {
+        many.push_back(std::make_unique<Material>());
+        counts.add(many.back().get());
+    }
+    EXPECT_EQ(counts.trackedCount(), remembered + 200u);
+    counts.clear(); // touched 200 keys, so this table is still what a frame uses
+    counts.add(many.front().get());
+    counts.clear(); // ... but a frame that touches one key is not
+    EXPECT_EQ(counts.trackedCount(), 0u)
+        << "the table is dropped when it has grown well past what a frame counting one key uses";
+}
+
+/**
  * @brief Program capacity is a FIFO trim, not "clear the whole table" (D16).
  *
  * A slot that never releases its programs used to lose EVERY compiled stage at
