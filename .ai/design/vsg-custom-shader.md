@@ -143,6 +143,16 @@ enum class ShaderPreset { StandardPhong, FlatShaded, Pbr, ShadowedPhong };
 - 归属：**渲染配置**（`RenderEngine` 持有，`setShaderPreset/shaderPreset`），初始化前转发后端
   （`RenderBackend::setShaderPreset` 默认 no-op）。**不放进 RenderPipelineBuilder**——preset 是
   "几何怎么着色"的着色轴，与 pass 拓扑（builder）正交；builder 仍是纯配方层。
+- **会话中途切换（2026-09-13 落地）**：preset 不再只是"initialize 前的一次性决定"。一个 slot 的
+  shader set 是**建 slot 时烘进去的**，而 set 带的不只是"哪个程序"：还有"这个 slot 要喂哪个光源"
+  （`SceneBridge::hasOwnLightsBlock`）和该程序读哪些 View features。三者都无法事后打补丁，所以
+  `VsgRenderer::setShaderPreset` 在已初始化的会话上做的是**重建着色侧**：重建 window 三套 set
+  （on/testonly/off）+ 丢掉每个 target 的 `content_slots`（经 `detail::resetContentShaderSlots`，
+  走 `detachSlotView` + `clearCache()`，带计数设备等待）并清掉 target 自己烘的 `depth_*_shader_set`。
+  下一帧各 pass 的懒建 slot 就用新 preset 重建。**attachments / pass graph / 深度历史不动**——
+  宿主看到的是"同一张图换了着色"，不是"会话重开"。像素门禁 `runLivePresetSwitchPixelPhase`：
+  同一个 target+slot 连画三次（smooth 42 → 切 FlatShaded 765 → 切回 smooth 42），第三段把
+  "只往前不回头"的实现钉死；关掉重建（变异验证）两段都报错。
 
 ### 8.2 过渡映射（vsg 内建 set，待 P0 自写替换）
 

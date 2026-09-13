@@ -741,7 +741,28 @@ vine::raw_ptr<vine::graphics::MaterialManager> VsgRenderer::materialManager()
 
 void VsgRenderer::setShaderPreset(vine::graphics::ShaderPreset preset)
 {
+    if (persistent.shader_preset == preset) {
+        return;
+    }
     persistent.shader_preset = preset;
+    if (state.window == nullptr) {
+        // Not initialized yet: every slot is created after this, so initialize()
+        // bakes the new preset and there is nothing to drop.
+        return;
+    }
+    // A live session. The preset is not a per-frame value: it selects which
+    // shader set a slot draws with, and the set is built once (initialize() for
+    // the window sets, the slot's own build for an off-screen target). So the
+    // switch is a REBUILD of the shading side: the window sets are remade, every
+    // baked slot is dropped and every target forgets its per-size sets — the
+    // next frame's pass sync rebuilds them from the preset now recorded. The
+    // attachments, the pass graphs and the depth history stay untouched, so the
+    // content is shaded differently rather than the target starting over.
+    const auto extent = state.window->extent2D();
+    state.depth_on_shader_set       = makeContentShaderSet(persistent.shader_preset, extent, true, true);
+    state.depth_testonly_shader_set = makeContentShaderSet(persistent.shader_preset, extent, true, false);
+    state.depth_off_shader_set      = makeContentShaderSet(persistent.shader_preset, extent, false, false);
+    detail::resetContentShaderSlots(state);
 }
 
 void VsgRenderer::setWindowHandle(void* native_handle)

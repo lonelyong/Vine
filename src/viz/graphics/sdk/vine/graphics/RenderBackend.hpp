@@ -548,10 +548,14 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
 
     /** @brief Selects the shading-model preset for scene geometry.
      *
-     * Must be called before initialize(); the backend maps the preset onto its
-     * shader/material pipeline (vsg: Phong vs flat ShaderSet). Presets without
-     * a backend implementation yet (Pbr / ShadowedPhong) fall back to
-     * StandardPhong. Default no-op.
+     * May be called before initialize(), where it is a session decision baked as the session
+     * starts, or on a RUNNING session, where the backend re-bakes the shading side so the next
+     * frame draws with @p preset. A live switch rebuilds content shading only: the targets keep
+     * their attachments, their pass graphs and their depth history, so a host that offers a
+     * shading-model toggle gets a differently shaded picture rather than a restarted session.
+     * The backend maps the preset onto its shader/material pipeline (vsg: Phong vs flat
+     * ShaderSet). Presets without a backend implementation yet (Pbr / ShadowedPhong) fall back
+     * to StandardPhong. Default no-op.
      *
      * @param preset Shading-model preset.
      */

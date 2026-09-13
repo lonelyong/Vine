@@ -4961,6 +4961,106 @@ bool runPresetShadingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPt
     return ok;
 }
 
+/**
+ * @brief Proves a preset switch reaches a slot that is already drawing.
+ *
+ * The preset is not only read at initialize: the engine's RenderEngine::setShaderPreset has to
+ * take effect on a LIVE session — a host that offers a shading-model toggle expects the picture
+ * to change, not to wait for a restart. A slot bakes its shader set (and with it the program
+ * that shades it and the light source it has to feed) when it is built, so this phase draws the
+ * SAME target, the SAME pass and the SAME quad three times: smooth, then FlatShaded, then back
+ * to smooth. The quad's authored normals face away from the sun, so a smooth preset can only
+ * reach the ambient term while flat shading follows the face normal — the two presets differ by
+ * a wide margin, which makes "the switch did nothing" and "the switch was not undone"
+ * distinguishable rather than a matter of a few units.
+ *
+ * The third stretch is what makes this a gate rather than a demonstration: a rebuild that only
+ * ever moved forward (or an implementation that dropped the slot without making the next frame
+ * rebuild it) leaves the flat value in place, and the phase fails.
+ *
+ * @param renderer Renderer under test (the preset is changed mid-run and restored at the end).
+ * @param camera   Camera the quad is drawn through.
+ * @param frames   Frames to drive per stretch.
+ * @return true when the live switch changed the pixels and switching back restored them.
+ */
+bool runLivePresetSwitchPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
+{
+    bool              ok = true;
+    const vine::Color clear(10, 20, 30, 255);
+
+    auto opaque_material = MaterialPtr(new Material());
+    opaque_material->setDiffuse(vine::Colorf(0.9f, 0.15f, 0.05f, 1.0f));
+    auto sun = vine::graphics::LightPtr(vine::graphics::Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0)));
+    sun->setName(u8"selftest-live-switch-sun");
+
+    // One target and one pass for the whole phase: the point is that the slot outlives the
+    // switch (a fresh target per stretch would only re-test "the preset is read at slot build").
+    auto target = RenderTargetPtr(new RenderTarget());
+    target->setSize(256, 144);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32);
+    auto pass    = RenderPassPtr(new RenderPass());
+    auto command = RenderCommand(makeVisibleQuad(0.4f, 1.0f, -1.0f), opaque_material, Mat4d());
+
+    const auto stretch = [&](vine::graphics::ShaderPreset preset, PixelImage& image) {
+        renderer.setShaderPreset(preset);
+        for (int i = 0; i < frames; ++i) {
+            FrameScope frame(renderer);
+            PassScope  pass_scope(renderer, pass.get(), 0, target.get(), clear, true);
+            renderer.setLights(std::vector<vine::raw_ptr<const vine::graphics::Light>>{ sun.get() });
+            renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+        }
+        return readTarget(renderer, target.get(), image);
+    };
+    const auto sum_of = [](const PixelImage& image) {
+        return image.at(128, 72, 0) + image.at(128, 72, 1) + image.at(128, 72, 2);
+    };
+
+    // The session's default preset, so the "before" stretch is the shipped state.
+    PixelImage smooth_image;
+    const bool smooth_read = stretch(vine::graphics::ShaderPreset::StandardPhong, smooth_image);
+    PixelImage flat_image;
+    const bool flat_read = stretch(vine::graphics::ShaderPreset::FlatShaded, flat_image);
+    PixelImage back_image;
+    const bool back_read = stretch(vine::graphics::ShaderPreset::StandardPhong, back_image);
+    renderer.releasePass(pass.get());
+    renderer.releaseRenderTarget(target.get());
+    if (!smooth_read || !flat_read || !back_read) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused a live-preset-switch target\n");
+        return false;
+    }
+
+    const int smooth_sum = sum_of(smooth_image);
+    const int flat_sum   = sum_of(flat_image);
+    const int back_sum   = sum_of(back_image);
+    // The quad's normals face away from the sun AND the light is fixed, so the two presets are
+    // far apart on this geometry: the smooth preset cannot light it, flat shading sees the face.
+    // The two halves are chained so one failure has one cause: a forward stretch that did nothing
+    // is reported as such (the back stretch would trivially "pass" against an unchanged image).
+    if (flat_sum <= smooth_sum + 20) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: switching to FlatShaded on a live slot scored %d against the smooth "
+                     "preset's %d — the switch did not reach the slot (a slot bakes its set when it is built, "
+                     "so setShaderPreset has to drop it)\n",
+                     flat_sum, smooth_sum);
+        ok = false;
+    }
+    else if (back_sum > smooth_sum + 20) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: switching back to the smooth preset left the slot at %d (flat was %d, "
+                     "smooth was %d) — the rebuild only moved forward\n",
+                     back_sum, flat_sum, smooth_sum);
+        ok = false;
+    }
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] live preset switch: the same slot drew %d smooth, %d flat after the switch, "
+                     "and %d smooth again after switching back\n",
+                     smooth_sum, flat_sum, back_sum);
+    }
+    return ok;
+}
+
 int main()
 {
     const int frames =
@@ -5248,6 +5348,9 @@ int main()
     // Also after every reporting phase, for the same reason: it switches the session's shading
     // preset, so it must not run next to a phase whose numbers another line reports.
     contract_ok = runPresetShadingPixelPhase(*renderer, camera, 4) && contract_ok;
+    // Last of the pixel phases: it keeps one target and one slot alive across the switch, so it
+    // also has to be the last one to touch the session's preset (it restores the default itself).
+    contract_ok = runLivePresetSwitchPixelPhase(*renderer, camera, 4) && contract_ok;
     if (!contract_ok) {
         std::fprintf(stderr,
                      "[selftest] FAILED — a pass-lifecycle / depth-sharing / pixel-readback invariant was violated\n");

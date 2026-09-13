@@ -368,11 +368,15 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void setDiagnosticSink(vine::graphics::DiagnosticSink sink) override;
 
-    /** @brief Selects the shading-model preset for scene geometry.
+    /** @brief Sets the shading preset, before initialize() or on a running session.
      *
-     * Forwarded by the engine before initialize(); maps onto vsg's Phong or
-     * flat ShaderSet. Reserved presets (Pbr / ShadowedPhong) fall back to
-     * Phong until implemented.
+     * The preset selects the content shader sets, and a set is built once (the window's at
+     * initialize, an off-screen target's with its first slot), so a switch on a running session
+     * re-bakes the shading side: the window sets are rebuilt and every content slot is dropped
+     * so the next frame's passes build theirs again — a slot's set, its light wiring and its
+     * View features are all decided at slot build (see resetContentShaderSlots). Attachments,
+     * pass graphs and depth history are untouched. Presets without a Vine program (Pbr /
+     * ShadowedPhong) fall back to the built-in set until their slice lands.
      *
      * @param preset Shading-model preset.
      */

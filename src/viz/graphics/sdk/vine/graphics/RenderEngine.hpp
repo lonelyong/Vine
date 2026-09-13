@@ -166,9 +166,11 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
 
     /** @brief Sets the shading-model preset for scene geometry.
      *
-     * Forwarded to the backend before initialize(). Presets without a backend
-     * implementation (Pbr / ShadowedPhong) fall back to StandardPhong until
-     * their slice lands. The default is StandardPhong.
+     * Forwarded to the backend. Set before initialize() it is the session's shading model; set
+     * on a running session the backend re-bakes the shading side and the next frame's passes
+     * draw with the new preset (RenderBackend::setShaderPreset documents what a live switch
+     * rebuilds). Presets without a backend implementation (Pbr / ShadowedPhong) fall back to
+     * StandardPhong until their slice lands. The default is StandardPhong.
      *
      * @param preset Shading-model preset.
      */

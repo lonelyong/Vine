@@ -1,4 +1,11 @@
-﻿> 2026-09-13 **FlatShaded 进 SDK（P1 第一步）+ 像素级钉住"平直"**
+﻿> 2026-09-13 **preset 会话中途生效（重建着色侧，不重建 target）**
+> - 症状：`RenderEngine::setShaderPreset` 以前只写 `persistent.shader_preset`，而 set 是**建 slot 时烘的**（程序 + "喂哪个光源" + View features 三者都在里面），所以运行中切换画不出来。
+> - 做法：`VsgRenderer::setShaderPreset` 在已初始化会话上重建 window 三套 set + 走新 `detail::resetContentShaderSlots(state)`：每个 target 的 content slot 逐个 `detachSlotView`（**不 detach 就还在画旧 set**）→ 一次计数设备等待（`clearCache` 会释放共享对象注册表）→ 清 `content_slots` → 清 `depth_*_shader_set`（target 自烘的也要跟着忘）。**attachments / pass graph / 深度历史不清**——下一帧懒建 slot 用新 preset 重建。
+> - 门禁 `runLivePresetSwitchPixelPhase`：**同一个** target+pass+slot 连画三段（背向光源的四边形）smooth 42 → 切 FlatShaded 765 → 切回 smooth 42；第三段专治"只往前不回头"。**变异验证过**：把重建短接掉（只写 preset）→ 两段都 FAIL。
+> - 判据：两条基线 49 → **51 行**（新增 live-switch 行；`preset shading: FlatShaded` 行是 B 带来的）；build 0/0；test_vsg 244；test_graphics 240；shader check PASS；lavapipe PASS。
+> - 坑：编辑时把 `runPresetShadingPixelPhase` 末尾的 `if (ok) fprintf(...)` 一起替掉了，于是那条证据行**静默消失**、基线行数不变（50 而不是 51）——基线行数不变而新增相位多打一行，就是"我删掉了别的行"的信号，要对 `git diff` 看增删两侧。
+
+> 2026-09-13 **FlatShaded 进 SDK（P1 第一步）+ 像素级钉住"平直"**
 > - `builtinProgram(FlatShaded)` 不再是 null：**同一对 stage**，片元源里注入 `#define VINE_FLAT 1`（`withDefine()`：**必须插在 `#version` 之后**——放前面是 GLSL 语法错，而编译失败会被"回落内建集"静默吃掉：第一版就这么画出了 vsg flat 的无光照材质色）。
 > - `vine_forward.frag` 增 `VINE_FLAT` 分支：法线用 `cross(dFdy(v_view_pos), dFdx(v_view_pos))`（面法线）。**叉乘顺序必须是这个**：Vulkan 帧缓冲行向下生长，`dFdx × dFdy` 得到的是背向相机的法线（实测：朝向相机的面一直停在大气项，换序后才是受光的）。
 > - 新相位 `runPresetShadingPixelPhase`（取代原 preset-fallback 相位）两半都断言：①Pbr 回落内建 phong 集 → 必须受光（按 set 决定灯源）；②同一块四边形用**背向光源的作者法线**：平滑 preset 只剩大气项（42），flat 必须明显更亮（765）——**这才真的钉住"平直"**（否则平面四边形上两者同值）。

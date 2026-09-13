@@ -250,6 +250,30 @@ void detachSlotView(VsgRendererState& state, VsgRenderTargetEntry& owner, vine::
     queue.erase(std::remove(queue.begin(), queue.end(), view), queue.end());
 }
 
+void resetContentShaderSlots(VsgRendererState& state)
+{
+    // One wait for every drop below: the slots' bridges are destroyed here and
+    // their caches release the shared object registry, which is the counted
+    // device wait (see unhookTargetPasses) rather than a park.
+    state.retireRing.waitForIdle(state.viewer);
+    for (auto& entry : state.targets) {
+        auto& t = entry.second;
+        for (auto& slot_entry : t.content_slots) {
+            // Through detachSlotView so the view stops being recorded: a slot
+            // whose view is still attached to its pass graph keeps drawing with
+            // the set it was built with, which is exactly what this replaces.
+            detachSlotView(state, t, entry.first, slot_entry.first, slot_entry.second.view);
+            slot_entry.second.bridge.clearCache();
+        }
+        t.content_slots.clear();
+        // The per-size sets a target bakes for its own slots follow the preset
+        // too, so they are forgotten with the slots that used them.
+        t.depth_on_shader_set       = {};
+        t.depth_testonly_shader_set = {};
+        t.depth_off_shader_set      = {};
+    }
+}
+
 bool resolveDepthBorrow(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                         vine::graphics::RenderTarget& target, uint32_t w, uint32_t h)
 {

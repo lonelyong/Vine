@@ -47,4 +47,5 @@
 [selftest] opacity blend: opacity 0.5 turned the shaded centre (34,6,2) into (22,13,16) = 0.5*shaded + 0.5*clear, stored alpha 191 (not 255 = opacity dropped, not 128 = blend off)
 [selftest] preset shading: Pbr (no Vine program, so the built-in phong set) drew a lit (255,255,255) over the clear
 [selftest] preset shading: FlatShaded followed the face normal (765) against the smooth preset's authored-normal 42 over the same quad
+[selftest] live preset switch: the same slot drew 42 smooth, 765 flat after the switch, and 42 smooth again after switching back
 [selftest] done — no crash, no validation error expected

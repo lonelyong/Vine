@@ -202,6 +202,25 @@ void unhookTargetPasses(VsgRendererState& state, VsgRenderTargetEntry& t);
 void detachSlotView(VsgRendererState& state, VsgRenderTargetEntry& owner, vine::graphics::RenderTarget* owner_key,
                     const SlotKey& key, const ::vsg::ref_ptr<::vsg::View>& view);
 
+/** @brief Drops every content slot's baked shader set so the next frame builds them again.
+ *
+ * A slot bakes its shader set at build time and the set carries more than one shading choice
+ * with it: which program shades the slot, which light source the slot has to feed
+ * (SceneBridge::hasOwnLightsBlock), and which View features that program reads. None of that
+ * can be patched afterwards, so changing the shading preset mid-session means the slots have to
+ * be built again — this is that drop, and the existing lazy slot creation rebuilds them on the
+ * next frame each pass renders.
+ *
+ * Only the SLOTS are dropped, never the target's attachments or pass graphs: the pixels the
+ * host sees still come from the same framebuffer, so a switch does not reset a target's depth
+ * or its history. Every dropped slot goes through detachSlotView (a view left attached to a
+ * graph keeps drawing with its old set) and keeps the COUNTED device wait for the same reason
+ * unhookTargetPasses does.
+ *
+ * @param state Session whose content slots stop being recorded.
+ */
+void resetContentShaderSlots(VsgRendererState& state);
+
 /** @brief Whether a build attempt whose target has no size has to be reported now.
  *
  * An off-screen target with a zero width or height cannot be built: the passes drawing into
