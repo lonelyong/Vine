@@ -112,12 +112,16 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      * The HUD overlays stack at PipelineStage::Overlay.
      *
      * SHADOWS ARE NOT A PRESET HERE: a shadow is requested by the light that
-     * casts it (Light::castShadow) and this builder builds no shadow pass yet,
-     * so a content scene that declares one is REPORTED
-     * (DiagnosticCategory::UnsupportedRequest) - the host learns that the
-     * picture it gets is unshadowed instead of being left to wonder why nothing
-     * changed. Building the passes themselves is the next slice (see
-     * .ai/design/graphics-shadow.md §10 and .ai/design/render-pipeline.md §6).
+     * casts it (Light::castShadow, with its own resolution and bias in
+     * ShadowSettings). The deferred path HONOURS that request: it builds a
+     * depth-only pass at PipelineStage::Depth framing the content with one
+     * orthographic light camera (directionalShadowMatrix), states that camera's
+     * view-projection on the map, and has the lighting pass declare the map as
+     * an input so the backend binds it (see .ai/design/render-pipeline.md §9).
+     * The forward path builds none yet, and a host that supplied its own
+     * lighting program gets none either - both are REPORTED once per build
+     * (DiagnosticCategory::UnsupportedRequest) rather than silently handing
+     * back a picture without the shadow that was asked for.
      *
      * Deferred requires a content scene and a camera; when either is missing
      * nothing is registered and null is returned (no silent substitution, see
@@ -249,12 +253,13 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      */
     bool applyOverlays(Pipeline& pipeline, const PipelineOptions& options);
 
-    /** @brief Reports shadow-casting lights this builder cannot honour yet.
+    /** @brief Reports the shadow-casting lights this build did NOT honour.
      *
      * The request lives on the light (Light::castShadow), so the check walks
-     * the content scenes this builder binds: a host that asked for shadows gets
-     * one report (per build) saying the picture is unshadowed, rather than a
-     * frame that quietly differs from the one it asked for.
+     * the content scenes this builder binds: a host that asked for a shadow the
+     * pipeline did not build gets one report (per build) naming how many, rather
+     * than a frame that quietly differs from the one it asked for. A shadow the
+     * pipeline DID build is not reported — the count above is what it built.
      */
     void reportRequestedShadows() const;
 
@@ -262,6 +267,9 @@ class V_GRAPHICS_API RenderPipelineBuilder {
     raw_ptr<Camera>            camera_      = nullptr;
     intrusive_ptr<Scene>       content_;
     intrusive_ptr<Scene>       transparent_; // optional forward-only / overlay scene
+    /// Shadow passes THIS build created: a requested shadow that WAS built is not a gap to report
+    /// (see reportRequestedShadows).
+    std::size_t shadows_built_ = 0;
     // References kept by the builder for as long as it lives; the engine also
     // holds its own references after each add*() call. Records the passes the
     // ONE-SHOT recipes register outside a Pipeline handle (see

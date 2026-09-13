@@ -127,6 +127,8 @@ intrusive_ptr<Pipeline> RenderPipelineBuilder::build(const PipelineOptions& opti
     // The pipeline holds the engine STRONGLY (its passes live in that engine's
     // list): adopt the borrowed handle into an owning one.
     auto pipeline = make_intrusive<Pipeline>(intrusive_ptr<RenderEngine>(engine_));
+    // A builder is reusable in principle, and the report is about THIS build.
+    shadows_built_ = 0;
     const bool ok = (options.path == ShadingPath::Forward) ? buildForwardPath(*pipeline)
                                                            : buildDeferredPath(*pipeline, options);
     if (!ok) {
@@ -175,9 +177,13 @@ bool RenderPipelineBuilder::applyOverlays(Pipeline& pipeline, const PipelineOpti
 void RenderPipelineBuilder::reportRequestedShadows() const
 {
     // A shadow is asked for by the LIGHT (Light::castShadow + ShadowSettings) —
-    // that is where the request lives, and it outlives any one pipeline. This
-    // builder builds no shadow pass yet, so a scene that declares one would
-    // silently draw an unshadowed picture: say which one, once per build.
+    // that is where the request lives, and it outlives any one pipeline. What
+    // this reports is the request the pipeline did NOT honour: a forward path
+    // builds no shadow at all yet (S2b), and a deferred path asked to shade with
+    // the host's own program builds none either (it said so where it decided).
+    // A report that fires whenever a request EXISTS — what this did while the
+    // deferred path already built the pass — tells the host its picture is
+    // unshadowed while it is shadowed, which is worse than saying nothing.
     std::size_t requesting = 0;
     for (const Scene* scene : { content_.get(), transparent_.get() }) {
         if (scene == nullptr) {
@@ -189,17 +195,19 @@ void RenderPipelineBuilder::reportRequestedShadows() const
             }
         }
     }
-    if (requesting == 0u) {
+    if (requesting <= shadows_built_) {
         return;
     }
+    const std::size_t unbuilt = requesting - shadows_built_;
     // The integer goes in as ASCII digits, like every other message in the SDK.
-    const std::string   digits = std::to_string(requesting);
+    const std::string   digits = std::to_string(unbuilt);
     const std::u8string count_text(digits.begin(), digits.end());
     engine_->reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
                                  vine::graphics::DiagnosticCategory::UnsupportedRequest,
-                                 String(u8"this pipeline builds no shadow pass yet, but ") + String(count_text) +
-                                     String(u8" shadow-casting light(s) are in its content (see "
-                                            u8".ai/design/graphics-shadow.md §10): the picture is unshadowed"));
+                                 String(count_text) +
+                                     String(u8" shadow-casting light(s) in this pipeline's content have no shadow "
+                                            u8"pass (its path builds none, or its lighting program is the host's; "
+                                            u8"see .ai/design/render-pipeline.md §9): those lights cast nothing"));
 }
 
 bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
@@ -277,13 +285,11 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     // The shadow map: the content rendered once from the light into a depth-only target, at
     // PipelineStage::Depth so it runs before everything that samples it. A host that supplied its
     // own lighting program gets NO shadow pass: the shading is theirs, so a shadow they do not
-    // shade would be a pass nobody reads (and it is said out loud rather than drawn in vain).
+    // shade would be a pass nobody reads. That gap is REPORTED — once, by reportRequestedShadows()
+    // at the end of build(), which is also what covers the forward path: reporting it here as well
+    // would say the same thing twice for one problem.
     intrusive_ptr<RenderTarget> shadow_map;
     if (shadow_light != nullptr && options.lighting_program != nullptr) {
-        engine_->reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                     vine::graphics::DiagnosticCategory::UnsupportedRequest,
-                                     String(u8"this pipeline was given its own lighting program, so it builds no shadow "
-                                            u8"pass: the picture is unshadowed unless that program shades the map"));
         shadow_light = nullptr;
     }
     if (shadow_light != nullptr) {
@@ -311,6 +317,8 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
         // the engine answers that from the passes that DREW into it.
         shadow_pass->setOutputTarget(shadow_map);
         pipeline.addPass(shadow_pass, content_, pipelineStageOrder(PipelineStage::Depth));
+        // It is built: the report below is about what this pipeline did NOT build.
+        ++shadows_built_;
     }
 
     // Canonical G-buffer (shared factory): albedo (0), view normal +

@@ -144,10 +144,21 @@ struct alignas(16) VineMaterialBlock
  * `params.x` is 1 while a map is bound (a shader must be able to take the unshadowed path with the
  * same text) and 0 otherwise; `y` is the depth bias applied at the comparison; `z` is the shadow
  * strength (0 disables the darkening without unbinding anything); `w` is reserved.
+ *
+ * THE MATRIX IS IN THE SDK'S CLIP CONVENTION, THE MAP IS NOT: `view_to_light` maps a view-space
+ * position to x right / y up, z = 0 at the light's near plane and 1 at its far one — this SDK's own
+ * projection convention, so the matrix means the same thing on every backend. The MAP it is compared
+ * against is a GPU image the backend rasterised, and its two axes are the backend's business: the
+ * vsg backend renders reverse-Z (near = 1, far = 0) into a top-down image (v = 0 is world up, the
+ * same fact that makes its G-buffer upright). A shader therefore converts x/y by `xy * vec2(0.5,
+ * -0.5) + 0.5` and z by `1 - (z * 0.5 + 0.5)` before comparing, and getting either sign wrong is
+ * invisible: the picture loses its sun, or samples a mirrored texel. Both were measured, one at a
+ * time, by vsg_backend_selftest's deferred shadow phase.
  */
 struct alignas(16) VineShadowBlock
 {
-    std::array<float, 16> view_to_light{}; ///< View space -> light clip (column-major mat4).
+    std::array<float, 16> view_to_light{}; ///< View space -> the SDK's light clip, column-major (see
+                                           ///< the conventions above before sampling a map with it).
     std::array<float, 4>  params{};        ///< x = enabled, y = bias, z = strength, w = reserved.
 };
 

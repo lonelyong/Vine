@@ -159,7 +159,7 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 
 ## 8. 落地记录
 
-### 8.2 S2 进度（2026-09-13）：地基已落，绑定与像素门禁待做
+### 8.2 S2 进度（2026-09-13）：S2a（延迟阴影）已落地，S2b（前向）待做
 
 已完成（各自独立提交、门禁绿）：
 
@@ -168,23 +168,50 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 | S2-1 | L1 阴影 ABI：`VineShadowBlock`（`ShaderAbi.hpp`）+ `RenderTarget::setProducerViewProjection()`（矩阵**只由产出者写一次**，消费者读） | `test_graphics` +1（size/align/offset）；证据不变 |
 | S2-2 | **pass 输入通道**：`resolvePassInputs()` 交回解析结果，引擎在 `beginPass()`/`execute()` 之间 `RenderBackend::setPassInputs()`（新虚函数，默认空） | `test_graphics` +1（声明两项 → 按序到达、未产出为 null） |
 | S2-3 | 延迟光照的**带阴影变体**：程序文本由 `deferred_light.frag` 的**两行标记**插出（不是 `#ifdef` —— 全屏 program 声明的绑定就是后端必须提供的），无阴影变体是"源去掉标记"，两者都不带脚手架 | `test_graphics` +1（标记 + binding **5/6**）；`vine_shader_check` 7 PASS |
+| S2-4 | 后端绑定 + builder：`FullscreenShadowInput`（图 + 块）；**可填槽位成为集合**（源彩色 / 可采样源深度 / 阴影两槽），集合外声明在建任何东西之前就被拒；`PipelineStage::Depth` 的 depth-only 图；光照 pass 声明该图。矩阵 = `target->producerViewProjection() × camera->viewMatrix().inverted()`，**不重算光相机** | 证据逐字节不变（无投影光时一字不改）；`test_graphics` +1（输入按序到达） |
+| S2-5 | **光相机的唯一推导成为 SDK 公开静态**（`directionalShadowMatrix`）：pass 用它、target 记它、着色用它，**相位也必须用它**——复制一份就是"两份只在被改之前一致"的推导 | `test_graphics` +1（盒角全落在正交窗口内 + eye 在光源一侧；两次变异皆红） |
+| S2-6 | **像素门禁**：`vsg_selftest` 的新相位 `runDeferredShadowPixelPhase`（引擎驱动 builder 的 deferred 配方：阴影 pass → G-buffer → 光照 → 合成），读回 composite 的像素 | 证据 **53 → 54 行**（只有新行是新增的）；变异 4/4 全红 |
+| S2-7 | **结构门禁**：`ARequestedShadowIsBuiltOnTheDeferredPath` 钉阴影 pass 的形状（depth-only、灯要的分辨率、`depthPromotion`、正交光相机、stated 矩阵 == 唯一推导、光照 pass 的输入被解析） | `test_graphics` +1 |
 
-**下一步的精确清单**（机械执行，不需要再决策）：
+**像素门禁怎么做的**（`runDeferredShadowPixelPhase`）：
 
-1. ✅ **后端绑定**（`gfx_backend_vsg`）：已落地。`FullscreenShadowInput`（图 + 块）+ `makeFullscreenProgramNode` 的新参数；可填槽位变成**集合**（源彩色 / 可采样源深度 / 阴影两槽），集合外声明在建任何东西之前就被拒；矩阵 = `target->producerViewProjection() × camera->viewMatrix().inverted()`；bias 取自投影那盏灯的 `ShadowSettings`。
-2. ✅ **builder**：已落地。`makeDirectionalShadowMatrix()`（**唯一一份**光相机推导）+ `PipelineStage::Depth` 的 depth-only 图；光照 pass 用 `deferredLightProgram(castShadow != nullptr)` 并声明该图；宿主自带 lighting program ⇒ 不建阴影 pass 并报一条。
-3. ⬜ **像素门禁（下一步，唯一剩下的）**：`vsg_selftest` 新相位，照 `runProgramShadingPixelPhase`（`main.cpp:5112`）的骨架 —— `FrameScope`/`PassScope` + `renderer.render(commands, camera)` + `readTarget(renderer, target, &image)` + `PixelImage::at(x,y,ch)`；场景 = 地面大四边形 + 悬空立方体 + 斜射的 `castShadow` 太阳；断言**影内的地面像素明显暗于影外**。**变异验证**：把 `sun->setCastShadow(false)` ⇒ 该相位必须红。证据基线行数 +1~2（`vsg_selftest_evidence.txt` 用 `--update` 重生成，并逐条核对只有新行是新增的）。
+- **必须走 builder**，所以这一个相位（也只有这一个）把 renderer 交给一个 `RenderEngine`：它验的是
+  builder 的**配方**（`castShadow` 的灯 → `PipelineStage::Depth` 的 depth-only pass → target 记下矩阵 →
+  光照 pass 声明该图 → 引擎 `resolvePassInputs`/`setPassInputs` → 后端的绑定），手工搭一份只能证明
+  "后端会绑一张图"，证不了配方本身。
+- 相位跑在原直驱 teardown **之后**（`backend->shutdown()` 之后）：引擎的 `initialize()` 建自己的一份 session，
+  结束时 `engine->shutdown()`，两份 slot 账本从不同时活着。
+- 场景：地面大四边形（y=0，法线 +y，**镜面黑**：影子只乘漫反射项）+ 立在它上面的墙（y∈[0,2]，z=0）+
+  斜射的 `castShadow` 太阳（沿 (0.6,-1,0.4)）+ 一台俯视的相机（自检的平视相机看见的地面是一条线）。
+- **读回 composite**：窗口读不回来（`readColorBuffer` 拒绝 null target），而 deferred 路径只有在**有前向内容
+  要合成**时才把受光结果烘到离屏 target。所以相位给一个**空的** transparent 场景：那条前向 pass 什么都不画，
+  composite 因此正好是受光的不透明明面。窗口之外的第二个好处：合成路径的两个分支都被走到。
+- **两个采样点**：同 world z=0.4、x 镜像（+0.3 在影内 / −1.0 在阳光下）——同一行（相机无 roll，两点 y、z 相同），
+  像元列号由这台相机的投影**算一次**写死（`343/240`），不在运行期"找最暗的像素"（那正是错位的影子也满足的判据）。
+- **三级亮度让判据无歧义**：背景（程序写死的 0.06 灰 ≈ 15）、影内地面（只有环境填充：0.8 反照率 × 0.15 ≈ **31**）、
+  阳光下地面（≈ **196**）。断言：阳光下 > 300 总和；影内**每通道落在 [20,45]**（既是"画了"，又是"只有环境项"）；
+  影内比影外至少暗 200。最后一条把"两边都没画"和"画了但没光照"都挡在外面。
 
-**注意**：相位用 builder（需要 `RenderEngine`）还是手工搭（要用到只存在于 builder 里的光相机推导，会**复制**那唯一一份推导）——**必须选前者**，否则门禁本身就违反了 §9 的决定。若 `RenderEngine` 与该相位的直驱 `VsgRenderer` 混用有冲突（引擎与直驱各有一份 slot 账本），就在该相位里单独建一个 `RenderEngine` 包住同一个 renderer，并在相位结束时 `engine.shutdown()`。
+**门禁抓到了四个缺陷**（都是先复现、再修、再用同一条门禁证明修好的；每个都单独变异验证过）：
 
-**原第 1 条的细节（已实现，保留为记录）**：
+| # | 症状 | 根因 | 修法 |
+| --- | --- | --- | --- |
+| 1 | 宿主被告知"本管线不建阴影 pass"——**而延迟路径已经建了** | `reportRequestedShadows()` 只看"有没有请求"，不看"建没建" | builder 记 `shadows_built_`，只报**没兑现**的那部分（前向路径、宿主自带 lighting program） |
+| 2 | 阴影深度图**全空**（着色器读到 `caster = 0`） | pass **不持有**相机（`RenderPass::camera_` 是 `raw_ptr`），而 builder 的光相机是 `buildDeferredPath` 的局部变量——build 一结束就释放，阴影 pass 从此透过**已释放的内存**绘制 | pass 强持相机（与它强持 render target 一致）；`setCamera()` 的签名不变 |
+| 3 | 整幅画面只剩环境光：**太阳"不见了"** | 块里的矩阵是 SDK 的裁剪约定（近 0 / 远 1），图里存的是后端的**反向 Z**（近 1 / 远 0）：空图（clear = 远平面 = 0）对任何片元都判"更深" | 取样前换算：`frag = 1 - (z*0.5+0.5)`，比较方向与 bias 同向翻转（ABI 说明写进 `ShaderAbi.hpp`） |
+| 4 | 太阳回来了，但影子落在**别处**（采到了镜像的 texel） | SDK 的裁剪空间 y 向上，而后端的图 `v = 0` 在世界**上**方（同一个把 G-buffer 摆正的事实） | `map_uv = light_uv.xy * vec2(0.5,-0.5) + 0.5`（同上，写进 `ShaderAbi.hpp`） |
 
-   - `makeFullscreenProgramNode`（`VsgPipelineFactory.cpp:~780`）加一个额外输入参数：`std::vector<std::pair<::vsg::ref_ptr<::vsg::ImageView>, bool>>`（视图 + 是否深度），**绑定号 = `color_count + 1 + i`**；`VineShadowBlock` 的 UBO 绑在 **`color_count + 2`**（规范 4 彩色 ⇒ 5 / 6）。`provided` 的白名单检查同步放宽，`declaredBindings()` 反射已经在做"声明即要求"。
-   - `drawScreenProgram`（`VsgOverlay.cpp:~470`）取 `state.request.inputs` 里**第一个非空**的 target，用与 `src` 相同的方式拿它的深度视图（要求 `depth_sampleable`），并填 `VineShadowBlock`：`viewToLight = target->producerViewProjection() * inverse(pass camera viewMatrix)`，`params = {1, bias(来自该光源 ShadowSettings), 1, 0}`。**矩阵一律从 target 读，不重算光相机**（§9 的决定）。
-2. **builder**（`RenderPipelineBuilder::buildDeferredPath`）：内容里有 `enabled && castShadow && Directional` 的灯时 —— 建光相机（正交、`Scene::boundingBox()` 取景）+ `resolution²` 的 **depth-only** target（`setDepthPromotion(true)` + `setProducerViewProjection(lightVP)`）+ `PipelineStage::Depth` 的 pass 画内容（`content_`）；光照 pass 用 `deferredLightProgram(true)` 并 `addInputTarget(shadow)`。**没有投影光时一字不改**（今天的程序与 pass 列表）。
-3. **像素门禁**：`vsg_selftest` 新增相位 —— 地面 + 立方体 + 投影的太阳，读回后断言**影内的地面像素明显暗于影外**；变异验证：把太阳的 `castShadow` 关掉 ⇒ 该相位必须红。证据基线行数 +1~2。
+**变异验证（4/4 全红，每次都单独 build + 跑）**：`sun->setCastShadow(false)` ⇒
+"影内的地面读到 (196,196,196)"；去掉 v 翻转 ⇒ "影外的地面读到 (31,31,31)"（影外的像素被判成影内，正是镜像
+texel 的样子）；去掉 z 反转 ⇒ 影内 196；把 pass 的相机改回裸指针 ⇒ 影内 196（深度图又空了）。
 
-**为什么停在这里**：1 与 2 必须与 3 一起提交 —— 只做 2 会让 `makeFullscreenProgramNode` 拒绝那个程序（声明了没人提供的绑定），于是"光照 pass 不画" + 一条 Error，比不做更糟；只做 1 则没有消费者可验。三件一起做完才是一个可判定的切片。
+**诚实的边界**：
+
+- 门禁量的是**画面**，不是图：`readDepthBuffer` 拒绝 `D24_UNORM_S8_UINT`（既有能力边界，见自检的
+  "packed D24 honestly unsupported"），而 builder 的阴影图正是 D24。要直接看图就得上 D32——那是另一件事。
+- 投影物是一张**没有厚度**的墙：它证明的是"光相机取景 + 反向 Z + v 轴 + 绑定 + 比较"这条链，不是体积阴影；
+  自阴影（地面自己投在自己身上）由 `ShadowSettings::bias` 挡住，不在这条判据里。
+- 采样像元是这台相机投影的**手算结果**；换场景/换相机就要重算（相位里写着这几行是怎么来的）。
 
 ### 8.1 S1（2026-09-13）：形状与生命周期
 
@@ -222,6 +249,14 @@ deferred 默认路径 —— 档位重排后 lavapipe 无 VUID/validation 错误
 **多投影光源不做**（`graphics-shadow.md` §8 已拍板单方向光/内容）；**级联/PCSS 不做**（
 `ShadowSettings::filter` 先只兑现 `Hard` 与 `PCF`）。
 
+第五条决定是**像素门禁逼出来的**（§8.2 的缺陷 3 / 4），因为它不属于"矩阵怎么来"，而属于"矩阵
+和图各自活在什么坐标系里"：
+
+| 问题 | 决定 | 理由 |
+| --- | --- | --- |
+| 块里的矩阵是什么约定 | **SDK 的裁剪约定**：x 向右、y 向上、z 近 0 远 1（`Camera::projectionMatrix()` 本来就产出这个，于是矩阵在哪个后端都同义） | 让"产出者算一次"名副其实：矩阵是**数学**，后端只管它自己的光栅化约定 |
+| 图里存的是什么 | **后端的约定**：vsg 后端是反向 Z（近 1 远 0）+ 自上而下的图（v=0 在世界**上**方） | 这是后端的事实，SDK 改不了也不该假装没有；`ShaderAbi.hpp` 里把这**两个轴都要换算**写成了 ABI 说明（`xy * vec2(0.5,-0.5) + 0.5`、`1 - (z*0.5+0.5)`），因为两个符号写错的后果都不是报错而是画面（一个丢太阳、一个采到镜像 texel），只有像素门禁看得见 |
+
 **光相机**：正交；eye 沿 `-direction` 退到内容包围盒（`Scene::boundingBox()`）之外，center 取盒心，
 正交窗口 = 盒在该光空间的范围 + 余量；由 `ShadowSettings::resolution` 定方图尺寸的 depth-only target
 （`setDepthPromotion(true)`，后端已有 depth-only render pass 与深度采样路径）。
@@ -230,7 +265,7 @@ deferred 默认路径 —— 档位重排后 lavapipe 无 VUID/validation 错误
 
 | 步 | 内容 | 判据 |
 | --- | --- | --- |
-| **S2a（延迟）** | 全屏 program ABI 扩一条规则：**源自己的绑定之后**，接该 pass 声明的额外输入（纹理绑定）与 `VineShadowBlock`（UBO）；`deferred_light.frag` 加阴影项（**程序带 define 的变体**，见下）。SSAO 将来走同一跳 | 新像素相位（立方体在地面上的投影：影内的地面像素明显暗于影外）+ 无投影光时证据逐字节不变 |
+| **S2a（延迟）** ✅ | 全屏 program ABI 扩一条规则：**源自己的绑定之后**，接该 pass 声明的额外输入（纹理绑定）与 `VineShadowBlock`（UBO）；`deferred_light.frag` 加阴影项（**程序带标记插出的变体**，见下）。SSAO 将来走同一跳 | 新像素相位（墙在地面上的投影：影内的地面 (31,31,31) vs 阳光下 (196,196,196)）+ 无投影光时证据逐字节不变 → **证据 53 → 54 行**，`test_graphics` 250 → 255，lavapipe PASS（§8.2 有落地记录与它抓到的四个缺陷） |
 | **S2b（前向）** | 内容 set 声明 `vine_shadow`(UBO) + `shadow_map`(sampler2D)；槽从 pass 输入 target 填块 + 绑深度；`std_forward.frag` 同样的变体 | 同上（前向路径的像素相位）|
 
 **为什么先做延迟**（2026-09-13 修正：起初的判断反了）：**全屏 program 的 ShaderSet 是每个 pass 现建的**
@@ -238,4 +273,5 @@ deferred 默认路径 —— 档位重排后 lavapipe 无 VUID/validation 错误
 所以延迟路径**不需要动共享的 set**；而**内容 set 是按 (target, 深度档) 会话级共享的**
 （`state.depth_on_shader_set`），一个带阴影的 pass 和一个不带阴影的 pass 会要两套 set —— 前向那条要么多 6 套
 缓存 set（3 深度档 × 有/无阴影，窗口 + 每离屏目标），要么永远声明绑定并绑一张 1×1 深度占位。两条都做完，
-§2 的"阴影是效果"才算真的兑现。
+§2 的"阴影是效果"才算真的兑现。S2b 的门禁照 S2a 的做：同一个相位形状（前向管线 +
+斜射的 `castShadow` 太阳 + 同两个采样点），变异也照做。

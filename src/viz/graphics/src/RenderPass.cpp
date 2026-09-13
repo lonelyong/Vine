@@ -37,7 +37,7 @@ void RenderPass::setRenderTarget(intrusive_ptr<RenderTarget> target)
 
 raw_ptr<Camera> RenderPass::camera() const
 {
-    return camera_;
+    return camera_.get();
 }
 
 void RenderPass::setCamera(raw_ptr<Camera> camera)
@@ -243,7 +243,7 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
     // how it is lit (the content scene decides the lights). Forwarded so the
     // backend's render() picks the right content-slot depth state.
     backend->setDepthMode(depth_mode_);
-    std::vector<RenderCommand> commands = scene->collectRenderCommands(camera_);
+    std::vector<RenderCommand> commands = scene->collectRenderCommands(camera_.get());
     // Pass-level global program override: replace every command's effective
     // (per-geometry / StateNode) program so the whole content renders with one
     // program (see setProgramOverride).
@@ -261,7 +261,7 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
             light_ptrs.push_back(light.get());
         }
         backend->setLights(light_ptrs);
-        backend->render(commands, camera_);
+        backend->render(commands, camera_.get());
     }
 }
 

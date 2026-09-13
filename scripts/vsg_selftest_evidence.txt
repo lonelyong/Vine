@@ -50,4 +50,5 @@
 [selftest] program shading: a program with no stages drew nothing (the centre is still the clear (10,20,30)) where the forward program drew (255,255,255), so an unusable program is declined and reported instead of substituted
 [selftest] program shading: the flat program followed the face normal (765) against the forward program's authored-normal 42 over the same quad
 [selftest] live program switch: the same slot drew 42 forward, 765 flat after the switch, and 42 forward again after switching back
+[selftest] deferred shadow: the ground in the sun's shadow read (31,31,31) against (196,196,196) beside it in the sun (columns 343/240 of row 196), so the built shadow pass reached the lighting
 [selftest] done — no crash, no validation error expected

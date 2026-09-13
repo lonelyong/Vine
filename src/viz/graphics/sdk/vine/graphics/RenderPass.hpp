@@ -65,7 +65,19 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
     /** @brief Gets the camera used by this pass. */
     raw_ptr<Camera> camera() const;
 
-    /** @brief Sets the camera used by this pass. */
+    /** @brief Sets the camera used by this pass.
+     *
+     * The pass KEEPS the camera alive, like it keeps its render target: every
+     * frame it draws through this camera, so a caller that builds one for it —
+     * the pipeline builder derives the shadow pass' light camera on the fly —
+     * must not be able to leave the pass rendering through freed memory by
+     * dropping its own handle. That is not hypothetical: while this stored a
+     * borrowed pointer, the shadow pass drew through the freed light camera and
+     * its map came back empty (found by vsg_backend_selftest's deferred shadow
+     * phase). A host camera outliving its pass is unaffected.
+     *
+     * @param camera Camera to draw through (may be null).
+     */
     void setCamera(raw_ptr<Camera> camera);
 
     /** @brief Gets the clear color. */
@@ -395,7 +407,7 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
     std::vector<intrusive_ptr<RenderTarget>> input_targets_;   // coarse input declarations (design §14)
     ShaderProgramPtr program_override_;   // null = per-geometry programs
     intrusive_ptr<RenderTarget> render_target_;
-    raw_ptr<Camera> camera_ = nullptr;
+    intrusive_ptr<Camera> camera_;
     Color clear_color_{ 51, 51, 51, 255 };
     bool clear_depth_ = true;
     bool clear_enabled_ = true;

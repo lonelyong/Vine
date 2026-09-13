@@ -1837,6 +1837,8 @@ class MockBackend : public RenderBackend {
     int clear_calls = 0;
     int viewport_sets = 0;
     const Camera* last_camera = nullptr;
+    /// Camera of every render() call, in call order (a pass' own camera, not just the last one).
+    std::vector<const Camera*> render_cameras;
     int last_viewport[4] = { 0, 0, 0, 0 };
     // Programs of the commands last passed to render() (per command).
     std::vector<const ShaderProgram*> last_programs;
@@ -1898,6 +1900,7 @@ class MockBackend : public RenderBackend {
     {
         ++render_calls;
         last_camera = camera;
+        render_cameras.push_back(camera);
         last_programs.clear();
         last_programs.reserve(commands.size());
         for (const auto& command : commands) {
@@ -3028,9 +3031,9 @@ TEST(RenderPipelineBuilderTest, DroppingThePipelineUnregistersItsPasses)
 TEST(RenderPipelineBuilderTest, ARequestedShadowIsReportedAsUnbuilt)
 {
     // A shadow is asked for by the LIGHT that casts it (Light::castShadow) rather than by a preset
-    // name, because the light outlives any one pipeline and a scene may be drawn by several. The
-    // builder builds no shadow pass yet, so a host that declared one must not be handed an
-    // unshadowed picture in silence: it is told, once per build.
+    // name, because the light outlives any one pipeline and a scene may be drawn by several. What
+    // the builder reports is the request it did NOT honour — the forward path builds no shadow yet
+    // (S2b) — so a host is never handed a picture that quietly differs from the one it asked for.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
@@ -3056,13 +3059,17 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsReportedAsUnbuilt)
     ASSERT_EQ(reported.size(), 1u);
     EXPECT_EQ(reported[0].severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(reported[0].category, DiagnosticCategory::UnsupportedRequest);
-    EXPECT_NE(reported[0].message.find(u8"unshadowed"), vine::String::npos);
+    EXPECT_NE(reported[0].message.find(u8"no shadow pass"), vine::String::npos);
     // The report says the picture is not the one that was asked for; it does not pretend the
     // request was honoured, and it does not refuse to draw.
     EXPECT_NE(forward->windowPass(), nullptr);
     EXPECT_EQ(forward->offscreenTarget(), nullptr);
 
-    // The same request on the deferred path is reported the same way, and the pipeline is built.
+    // The SAME request on the deferred path is HONOURED: the pass is built, so there is nothing to
+    // report. A report here — which the unconditional report this replaced produced — tells the host
+    // its picture is unshadowed while it is shadowed, i.e. the one thing a diagnostic must not do.
+    // (vsg_backend_selftest's deferred shadow phase is what caught it: the map was bound and empty
+    // while the host had been told the shadow was not built at all.)
     reported.clear();
     PipelineOptions opts;
     opts.path             = ShadingPath::Deferred;
@@ -3070,15 +3077,101 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsReportedAsUnbuilt)
     opts.offscreen_height = 64;
     auto deferred         = builder.build(opts);
     ASSERT_NE(deferred, nullptr);
+    EXPECT_TRUE(reported.empty()) << "the deferred path built the shadow, so it has nothing to report";
+    EXPECT_NE(deferred->offscreenTarget(), nullptr);
+
+    // A host-supplied lighting program is the other side of it: the shading is theirs, so the shadow
+    // map they would not read is not built, and that IS reported.
+    reported.clear();
+    opts.lighting_program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    ASSERT_NE(builder.build(opts), nullptr);
     ASSERT_EQ(reported.size(), 1u);
     EXPECT_EQ(reported[0].category, DiagnosticCategory::UnsupportedRequest);
-    EXPECT_NE(deferred->offscreenTarget(), nullptr);
+    EXPECT_NE(reported[0].message.find(u8"lighting program"), vine::String::npos);
 
     // A disabled light asks for nothing, even with the flag still set.
     reported.clear();
     content->lights().front()->setEnabled(false);
     ASSERT_NE(builder.build(PipelineOptions{}), nullptr);
     EXPECT_TRUE(reported.empty());
+}
+
+/**
+ * @brief The deferred path BUILDS the shadow a castShadow light asks for.
+ *
+ * The pixel proof lives in vsg_backend_selftest (only a GPU can tell a shadow from a dark pixel),
+ * so this one pins the STRUCTURE the pixels then depend on: the frame opens with a pass drawing
+ * into a depth-only target at the light's resolution, whose depth stays sampleable, which states
+ * the SDK's ONE light-camera derivation for that light and that content, and which is drawn
+ * through an ORTHOGRAPHIC camera that is not the view camera. A shadow pass that renders through
+ * the view camera, or that leaves its matrix to the identity, looks exactly like this one until
+ * the picture is examined.
+ *
+ * It also pins that the lighting pass' declared input is RESOLVED (the engine reports a pass that
+ * reads what no pass produced), which is the wire the map travels on.
+ */
+TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->initialize();
+
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+    cam->setViewMatrixAsLookAt(Vec3d(0.0, 0.0, 5.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
+    auto sun = LightPtr(Light::createDirectional(Vec3d(0.0, -1.0, 0.0)));
+    sun->setCastShadow(true);
+    sun->setShadowResolution(64);
+    content->addLight(sun);
+
+    PipelineOptions opts;
+    opts.path             = ShadingPath::Deferred;
+    opts.offscreen_width  = 32;
+    opts.offscreen_height = 32;
+    RenderPipelineBuilder builder(engine.get());
+    builder.setCamera(cam.get());
+    builder.setContent(content);
+    // The handle is HELD: dropping it unregisters its passes (Pipeline's RAII), so a test that
+    // measured a dropped pipeline would measure an empty frame.
+    auto pipeline = builder.build(opts);
+    ASSERT_NE(pipeline, nullptr);
+    ASSERT_EQ(engine->passCount(), 3u) << "shadow + G-buffer + lighting (which IS the window pass "
+                                          "while nothing is composited over it)";
+
+    backend->target_history.clear();
+    backend->render_cameras.clear();
+    const std::size_t problems_before = engine->engineDiagnosticCount();
+    engine->frame();
+
+    ASSERT_GE(backend->target_history.size(), 2u);
+    RenderTarget* shadow = backend->target_history.front();
+    ASSERT_NE(shadow, nullptr);
+    EXPECT_TRUE(shadow->hasDepth());
+    EXPECT_FALSE(shadow->hasColor()) << "a shadow map carries depth, not a picture";
+    EXPECT_EQ(shadow->width(), 64) << "the map is the side length the light asked for";
+    EXPECT_EQ(shadow->height(), 64);
+    EXPECT_TRUE(shadow->depthPromotion()) << "the lighting samples this depth, so the pass may not preserve it";
+
+    // The stated matrix IS the one derivation, for this light and this content.
+    auto         light_camera = intrusive_ptr<Camera>(new Camera());
+    const Mat4d  expected     = RenderPipelineBuilder::directionalShadowMatrix(*sun, content->boundingBox(), *light_camera);
+    const Mat4d  stated       = shadow->producerViewProjection();
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            EXPECT_DOUBLE_EQ(stated(r, c), expected(r, c)) << "at (" << r << ", " << c << ")";
+        }
+    }
+
+    // ...and the pass drew the content through an orthographic camera that is not the view camera.
+    ASSERT_FALSE(backend->render_cameras.empty());
+    const Camera* shadow_camera = backend->render_cameras.front();
+    ASSERT_NE(shadow_camera, nullptr);
+    EXPECT_NE(shadow_camera, cam.get()) << "the shadow pass looks along the light, not through the view";
+    EXPECT_EQ(shadow_camera->projectionType(), Camera::ProjectionType::Orthographic);
+
+    // The map reached the lighting: a declared input nothing produced is reported by the engine.
+    EXPECT_EQ(engine->engineDiagnosticCount(), problems_before);
 }
 
 TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)

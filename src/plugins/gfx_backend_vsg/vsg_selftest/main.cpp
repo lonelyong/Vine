@@ -35,15 +35,22 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/logging/Log.hpp>
 #include <vine/math/Matrix4x4.hpp>
+#include <vine/math/Transform3.hpp>
 #include <vine/imaging/Image.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
+#include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/RenderPipeline.hpp>
+#include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/Texture.hpp>
@@ -5344,6 +5351,211 @@ bool runLiveDefaultContentProgramSwitchPixelPhase(vine::vsg::VsgRenderer& render
     return ok;
 }
 
+/** @brief Builds a horizontal quad in the XZ plane whose normal faces up. */
+GeometryPtr makeGroundQuad(float half)
+{
+    auto geom = GeometryPtr(new Geometry());
+    vine::geometry::Vec3fArray positions;
+    const float corners[6][2] = { { -half, -half }, { half, -half }, { half, half },
+                                 { -half, -half }, { half, half },  { -half, half } };
+    for (const auto& corner : corners) {
+        positions.emplace_back(corner[0], 0.0f, corner[1]);
+    }
+    geom->setPositions(vine::graphics::packAttribute(positions));
+    vine::geometry::Vec3fArray normals;
+    for (int i = 0; i < 6; ++i) {
+        normals.emplace_back(0.0f, 1.0f, 0.0f);
+    }
+    geom->setNormals(vine::graphics::packAttribute(normals));
+    return geom;
+}
+
+/**
+ * @brief Asserts the shadow the DEFERRED path builds actually darkens the ground.
+ *
+ * Every phase above drives the renderer directly; this one drives the ENGINE, because what is
+ * under test is the builder's RECIPE for a shadow (a castShadow sun in the content scene -> a
+ * depth-only pass at PipelineStage::Depth, its view-projection stated on the target, the lighting
+ * pass declaring that target as an input) and the engine's plumbing of it (resolvePassInputs ->
+ * setPassInputs -> the backend's bindings). A phase that built those passes by hand would prove
+ * the backend can bind a map; it would not notice the recipe building the wrong one, aiming the
+ * light camera the wrong way, or declaring the input on the wrong pass.
+ *
+ * The engine brings the renderer up itself (RenderEngine::initialize forwards the default content
+ * program and initializes the backend), so this phase runs AFTER the direct-driver teardown at the
+ * end of main(): one session, one owner, no doubt about which slot ledger is live.
+ *
+ * The picture is read back from the pipeline's COMPOSITE target. The deferred path bakes the lit
+ * image off-screen only when it has forward content to composite, so the phase hands it an EMPTY
+ * transparent scene: the forward pass then draws nothing and the composite holds exactly the lit
+ * opaque image. The window cannot be used — readColorBuffer refuses a null target.
+ *
+ * The two pixels are ground points at the SAME world z (0.4) and mirrored x, so they project onto
+ * one row: the sun is slanted along +x, which makes x = +0.3 the wall's shadow and x = -1.0 the
+ * same surface in the sun. Sharing a row means the measurement cannot be an artefact of two rows
+ * (the sun's light is the only difference between the two pixels), and their columns are the
+ * projection of those points through this phase's camera, computed once below rather than searched
+ * for at run time — a search for the darkest pixel finds one wherever the shadow landed.
+ *
+ * The picture is three levels: the background (the lighting program's own 0.06 grey), the ground in
+ * the shadow (the ambient fill only - no ambient light is announced, so the backend's 0.15 fill
+ * times the 0.8 albedo, ~31 per channel) and the ground in the sun (~196). That is what makes the
+ * measurement unambiguous: "went dark" cannot be confused with "was never drawn", and each of the
+ * four bugs this phase found showed up as one of those levels being wrong.
+ *
+ * Mutations checked, each on its own build: the sun's castShadow off (the shadow is gone: the
+ * shadowed pixel reads the lit value); the map's v axis not flipped and its depth not inverted (one
+ * at a time: the lit pixel reads the shadowed value, or the sun vanishes entirely); and the shadow
+ * pass' camera borrowed instead of owned (the map comes back empty - the pass draws through freed
+ * memory).
+ *
+ * @param backend Backend under test (the engine initializes it: it must be down when called).
+ * @param frames  Frames to drive.
+ * @return true when the shadowed ground is measurably darker than the lit ground.
+ */
+bool runDeferredShadowPixelPhase(const vine::intrusive_ptr<RenderBackend>& backend, int frames)
+{
+    bool ok = true;
+
+    // Ground + a wall standing on it, lit by one slanted sun that asks for a shadow. The ground is
+    // bright and its specular is BLACK: the shadow scales the light's diffuse term, and a highlight
+    // would put a shadow-independent term into the pixels this phase measures.
+    auto content = vine::intrusive_ptr<Scene>(new Scene());
+    auto root    = vine::intrusive_ptr<Group>(new Group());
+
+    auto ground_material = MaterialPtr(new Material());
+    ground_material->setDiffuse(vine::Colorf(0.8f, 0.8f, 0.8f, 1.0f));
+    ground_material->setSpecular(vine::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+    auto ground = makeGroundQuad(3.0f);
+    ground->setMaterial(ground_material);
+    ground->setName(u8"shadow-ground");
+    root->addChild(ground);
+
+    // The caster: a wall whose bottom edge lies ON the ground (y = 0..2), so the shadow starts at
+    // the wall and falls onto the ground the camera sees.
+    auto wall_material = MaterialPtr(new Material());
+    wall_material->setDiffuse(vine::Colorf(0.9f, 0.9f, 0.9f, 1.0f));
+    auto wall = makeVisibleQuad(1.0f, 0.0f, 1.0f);
+    wall->setMaterial(wall_material);
+    wall->setName(u8"shadow-caster");
+    auto wall_place = vine::intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    wall_place->setMatrix(vine::math::translate(vine::math::Vec3d(0.0, 1.0, 0.0)));
+    wall_place->addChild(wall);
+    root->addChild(wall_place);
+
+    content->setRoot(root);
+
+    // The sun travels along (0.6, -1, 0.4): down, and toward +x / +z. Its shadow therefore falls on
+    // the ground on the +x side of the wall, which is where the sampled pixel below sits.
+    auto sun = LightPtr(Light::createDirectional(vine::math::Vec3d(0.6, -1.0, 0.4)));
+    sun->setName(u8"shadow-sun");
+    sun->setCastShadow(true);
+    content->addLight(sun);
+
+    // A camera looking down at the ground from the front: the self-test's flat camera sees the world
+    // y = 0 plane edge-on, i.e. as a line of pixels.
+    auto camera = CameraPtr(new Camera());
+    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 3.0, 5.0), vine::math::Vec3d(0.0, 0.0, 0.0),
+                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setProjectionMatrixAsPerspective(45.0, 640.0 / 360.0, 0.1, 1000.0);
+
+    // An EMPTY forward scene only to make the deferred path bake its lit image off-screen (see the
+    // phase docs): the pass it adds draws nothing, so the composite is the lit opaque image.
+    auto forward_placeholder = vine::intrusive_ptr<Scene>(new Scene());
+
+    auto engine = vine::intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    if (!engine->initialize()) {
+        std::fprintf(stderr, "[selftest] FAIL: the shadow phase's engine could not bring the backend up\n");
+        return false;
+    }
+
+    PipelineOptions options;
+    options.path            = ShadingPath::Deferred;
+    options.offscreen_width = 640;
+    options.offscreen_height = 360;
+
+    RenderPipelineBuilder builder(engine.get());
+    builder.setContent(content);
+    builder.setCamera(camera.get());
+    builder.setTransparentContent(forward_placeholder);
+    auto pipeline = builder.build(options);
+    if (pipeline == nullptr || pipeline->compositeTarget() == nullptr) {
+        std::fprintf(stderr, "[selftest] FAIL: the deferred pipeline did not build (no composite target)\n");
+        engine->shutdown();
+        return false;
+    }
+
+    for (int i = 0; i < frames; ++i) {
+        engine->frame(1.0 / 60.0);
+    }
+
+    PixelImage image;
+    const bool read_ok = backend->readColorBuffer(pipeline->compositeTarget(), 0, image.pixels);
+    if (read_ok) {
+        image.width  = pipeline->compositeTarget()->width();
+        image.height = pipeline->compositeTarget()->height();
+    }
+    if (!read_ok || image.width != 640 || image.height != 360) {
+        std::fprintf(stderr, "[selftest] FAIL: the deferred shadow phase could not read its composite (%dx%d)\n",
+                     image.width, image.height);
+        engine->shutdown();
+        return false;
+    }
+
+    // The two sample pixels: the projection of (0.3, 0, 0.4) and (-1.0, 0, 0.4) through the camera
+    // above. One row, because both points are at one z on a plane parallel to the view's up axis
+    // (the camera has no roll): the sun is the only difference between them.
+    const int shadow_col = 343;
+    const int lit_col    = 240;
+    const int row        = 196;
+
+    const int shadow_sum = image.at(shadow_col, row, 0) + image.at(shadow_col, row, 1) + image.at(shadow_col, row, 2);
+    const int lit_sum    = image.at(lit_col, row, 0) + image.at(lit_col, row, 1) + image.at(lit_col, row, 2);
+    const int shadow_r   = image.at(shadow_col, row, 0);
+    const int lit_r      = image.at(lit_col, row, 0);
+
+    // The lit ground must be plainly lit: without this half, a picture that drew nothing (or drew the
+    // background everywhere) would "pass" the darker-in-shadow comparison below with two dark pixels.
+    if (lit_sum < 300) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the ground beside the wall read (%d,%d,%d) at column %d — the sun did not reach the "
+                     "ground, so the shadow comparison below would be between two unlit pixels\n",
+                     image.at(lit_col, row, 0), image.at(lit_col, row, 1), image.at(lit_col, row, 2), lit_col);
+        ok = false;
+    }
+    // ...and the shadowed ground must show the AMBIENT term only, not the background (the lighting
+    // program writes a 0.06 grey where nothing was drawn) and not the lit surface: 0.8 albedo * the
+    // 0.15 ambient fill the backend keeps when no ambient light is announced is ~31.
+    else if (shadow_r < 20 || shadow_r > 45) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the ground in the shadow read (%d,%d,%d) at column %d — expected the ambient-only "
+                     "surface (~31 per channel: 0.8 albedo * the 0.15 ambient fill), not the background (15) and not a lit "
+                     "surface (%d)\n",
+                     shadow_r, image.at(shadow_col, row, 1), image.at(shadow_col, row, 2), shadow_col, lit_r);
+        ok = false;
+    }
+    else if (shadow_sum + 200 > lit_sum) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the ground in the shadow read %d against %d in the sun (columns %d/%d, row %d) — the "
+                     "castShadow sun did not darken the ground it is blocked from\n",
+                     shadow_sum, lit_sum, shadow_col, lit_col, row);
+        ok = false;
+    }
+
+    if (ok) {
+        std::fprintf(stderr,
+                     "[selftest] deferred shadow: the ground in the sun's shadow read (%d,%d,%d) against (%d,%d,%d) beside it "
+                     "in the sun (columns %d/%d of row %d), so the built shadow pass reached the lighting\n",
+                     shadow_r, image.at(shadow_col, row, 1), image.at(shadow_col, row, 2), lit_r,
+                     image.at(lit_col, row, 1), image.at(lit_col, row, 2), shadow_col, lit_col, row);
+    }
+
+    pipeline = nullptr;   // unregisters its passes from the engine before the session goes down
+    engine->shutdown();
+    return ok;
+}
+
 int main()
 {
     const int frames =
@@ -5688,6 +5900,15 @@ int main()
         backend->swapBuffers();
     }
     backend->shutdown();
+
+    // ---- Deferred shadow (engine-driven phase, its own session) --------------
+    // LAST, because it is the only phase that hands the renderer to a RenderEngine: the engine
+    // builds its own session, and everything above has already proven the direct-driver session
+    // tears down cleanly. The evidence it prints is the line before "done".
+    if (!runDeferredShadowPixelPhase(backend, 3)) {
+        std::fprintf(stderr, "[selftest] FAILED — the deferred shadow phase did not hold\n");
+        return 1;
+    }
 
     std::fprintf(stderr, "[selftest] done — no crash, no validation error expected\n");
     return 0;
