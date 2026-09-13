@@ -43,7 +43,7 @@
 [selftest] variant 'custom loc3-attribute program + normals + loc3 channel': centre=(230,38,13) corner=(10,20,30) covered=5916/36864 diagnostics=0
 [selftest] variant 'custom mid-depth (z=0.5) constant-colour program': centre=(255,51,51) corner=(10,20,30) covered=5916/36864 diagnostics=0
 [selftest] texture: the quad sampled its texture by UV — left half (255,_,0) = the red half, right half (0,_,255) = the blue half, over a clear corner (25,_,45)
-[selftest] cube map: all six faces sampled in CubeMap::Face order (+X,-X,+Y,-Y,+Z,-Z), one pixel read back per face
+[selftest] cube map: all six faces sampled in CubeMap::Face order (+X,-X,+Y,-Y,+Z,-Z), one pixel read back per face (256x256 faces, 3 levels)
 [selftest] built-in sampling: the engine's own forward shader sampled a 2-D map by UV (left (31,_,0) = red, right (0,_,31) = blue)
 [selftest] built-in sampling: the engine's own forward shader sampled a cube map by direction — +X=(31,0,0), -X=(0,31,0), +Y=(0,0,31), -Y=(31,31,0), +Z=(31,0,31), -Z=(0,31,31)
 [selftest] opacity blend: opacity 0.5 turned the shaded centre (34,6,2) into (22,13,16) = 0.5*shaded + 0.5*clear, stored alpha 191 (not 255 = opacity dropped, not 128 = blend off)

@@ -54,7 +54,7 @@ namespace
  * @param width   Base level width in pixels.
  * @param height  Base level height in pixels.
  * @param layers  Layer count; also the depth a multi-layer array declares.
- * @param stride  Base level row stride in bytes.
+ * @param stride  One element's width in bytes (see the contract above) — NOT a row stride.
  * @param properties Format / mip count / view type the array is declared with.
  * @param bytes_per_texel Texel width in bytes.
  * @return The array over @p storage, or null when no vsg type is that wide.
@@ -119,13 +119,15 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
  * layers of that level itself, by stepping a whole "face" (see the padding note below), so a table with an
  * entry per (level, layer) would make level 1 read level 0's second entry: wrong extents and wrong offsets.
  *
- * The offsets are NOT the sum of the levels' byte sizes, because vsg's step between the layers of a level is
- * `properties.stride * level_width * level_height` and its `properties.stride` is the ROW stride (Array2D
- * and Array3D both overwrite the caller's properties with the stride they are constructed with). One layer
- * therefore occupies more room than its texels need, and each level's base has to leave that room for every
- * layer, or the second layer of a level lands somewhere the copy region never looks.
- *
- * For a single layer the padding is exactly zero and this is the plain contiguous chain.
+ * The offsets ARE the plain running sum of the levels' byte sizes: vsg's step between the layers of a level
+ * is `properties.stride * level_width * level_height`, and the stride the array is constructed with is ONE
+ * TEXEL (`bytes_per_texel`, see makeTexelArray). That product is therefore exactly one layer's byte size and
+ * the chain is contiguous — which is the only layout the staging buffer can hold: TransferTask sizes it by
+ * VALUE COUNT (`bytes_per_texel * valueCount`), so a per-layer step that is larger than a layer runs off the
+ * end of it. Declaring the row stride (width * bytes_per_texel) as the element size made the step `width`
+ * times too large: the copy regions still stayed inside the IMAGE, so nothing failed loudly, and the single
+ * level of a 2-D texture hid it entirely — a 16 MiB minimum staging buffer is what kept the self-test's 8x8
+ * faces inside theirs.
  *
  * @param texture Texture whose levels are described.
  * @return One entry per level: texel width, texel height, depth 1, byte offset.
@@ -135,7 +137,7 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
     const auto bytes_per_texel = static_cast<std::size_t>(vine::imaging::bytesPerPixel(texture.format()));
     const auto level_count     = static_cast<std::size_t>(texture.mipCount());
     const auto layer_count     = static_cast<std::size_t>(texture.layerCount());
-    const auto row_stride      = static_cast<std::size_t>(texture.width()) * bytes_per_texel;
+    const auto value_stride    = bytes_per_texel;
 
     auto layout = ::vsg::MipmapLayout::create(level_count);
 
@@ -145,7 +147,7 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
         const auto height = levelExtent(texture.height(), level);
 
         layout->at(level) = ::vsg::uivec4(width, height, 1u, static_cast<std::uint32_t>(offset));
-        offset += layer_count * row_stride * static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+        offset += layer_count * value_stride * static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
     }
 
     return layout;
@@ -182,12 +184,12 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
     auto layout = makeMipmapLayout(texture);
 
     // vsg's step between the layers of one level, which is what the layout's per-level base leaves room for.
-    const std::size_t row_stride = static_cast<std::size_t>(width) * bytes_per_texel;
-    std::size_t       total      = 0;
+    const std::size_t value_stride = bytes_per_texel;
+    std::size_t       total        = 0;
     for (std::uint32_t level = 0; level < mip_levels; ++level) {
         const auto entry = layout->at(level);
-        total = static_cast<std::size_t>(entry.w) + row_stride * static_cast<std::size_t>(entry.x) *
-                                                         static_cast<std::size_t>(entry.y) * layer_count;
+        total = static_cast<std::size_t>(entry.w) + value_stride * static_cast<std::size_t>(entry.x) *
+                                                          static_cast<std::size_t>(entry.y) * layer_count;
     }
 
     auto  storage = ::vsg::ubyteArray::create(static_cast<std::uint32_t>(total));
@@ -197,7 +199,7 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
     // padding cannot drift out of step with what is written.
     for (std::uint32_t level = 0; level < mip_levels; ++level) {
         const auto entry      = layout->at(level);
-        const auto layer_span = row_stride * static_cast<std::size_t>(entry.x) * static_cast<std::size_t>(entry.y);
+        const auto layer_span = value_stride * static_cast<std::size_t>(entry.x) * static_cast<std::size_t>(entry.y);
         for (std::uint32_t layer = 0; layer < layer_count; ++layer) {
             const auto level_bytes = texture.layer(static_cast<int>(layer))->mipData(static_cast<int>(level));
             std::memcpy(staged + entry.w + static_cast<std::size_t>(layer) * layer_span, level_bytes.data(),
@@ -208,9 +210,9 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
     ::vsg::Data::Properties properties;
     properties.format    = format;
     properties.mipLevels = static_cast<std::uint8_t>(mip_levels);
-    // properties.stride is not set here: Array2D/Array3D::assign() overwrites it with the row stride the
-    // array is constructed with, and that IS the number vsg uses as `valueSize` below — which is why the
-    // layout above has to leave a whole row's worth of room per texel of every layer.
+    // properties.stride is not set here: Array2D/Array3D::assign() overwrites it with the stride the array is
+    // constructed with, and that IS the `valueSize` vsg's copy regions step by — one TEXEL, so that the step
+    // is exactly one layer (see makeMipmapLayout).
     if (is_cube) {
         // The view type is taken from the DATA, not from the ImageView: ImageView's constructors read
         // properties.imageViewType and fall back to a type derived from the image extent whenever it is
@@ -219,8 +221,8 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
         properties.imageViewType = VK_IMAGE_VIEW_TYPE_CUBE;
     }
 
-    auto texels = makeTexelArray(storage, layout, width, height, layer_count, width * bytes_per_texel,
-                                 properties, bytes_per_texel);
+    auto texels = makeTexelArray(storage, layout, width, height, layer_count, bytes_per_texel, properties,
+                                 bytes_per_texel);
     if (texels == nullptr) {
         return {};
     }

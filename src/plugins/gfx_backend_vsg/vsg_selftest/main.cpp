@@ -4879,7 +4879,14 @@ bool runCubeMapPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, 
 
     // Three levels, so the interleave runs for more than one level: a repack that only got the base level
     // right would still upload something that looks valid at level 0.
-    constexpr int kSize   = 8;
+    //
+    // The face size is 256 for the same reason it is not 8 any more: the bytes were once staged with a
+    // per-layer step of `row stride * width * height` (width TIMES too far, because vsg multiplies the
+    // element size by texel counts), and at 8x8 the 16 MiB minimum staging buffer absorbed that step
+    // completely. The step only runs off the buffer once a layer is big enough to matter — so the phase has
+    // to run at a size like this, which is also the size the demo loads, or it cannot see the defect it is
+    // here for.
+    constexpr int kSize   = 256;
     constexpr int kLevels = 3;
     auto          cube    = makeSixColourCube(kSize, kLevels);
 
@@ -4936,7 +4943,8 @@ bool runCubeMapPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, 
     if (ok) {
         std::fprintf(stderr,
                      "[selftest] cube map: all six faces sampled in CubeMap::Face order (+X,-X,+Y,-Y,+Z,-Z), "
-                     "one pixel read back per face\n");
+                     "one pixel read back per face (%dx%d faces, %d levels)\n",
+                     kSize, kSize, kLevels);
     }
 
     renderer.releasePass(pass.get());

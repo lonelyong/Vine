@@ -395,7 +395,7 @@ sequenceDiagram
 | 面 | 限制 |
 |---|---|
 | 纹理/uv | **已接线（L0–L3）**：`Material::texture()` 的 face 0 上传为 vsg 图像（整条 mip 链）、建 sampler、进描述符集 set0/binding1；`Geometry::setTexcoords2()` 经 location 8 喂 `vine_TexCoord0`。selftest 有像素断言钉住它（左右双色纹理按 UV 采样）。**引擎自己的 forward shader 也采样**：selftest 的 `built-in sampling` 相不设 program 画出同一张双色贴图 （2026-09-13 之前这条是断的 —— 源码缺 `#pragma import_defines`，见 `.ai/design/vsg-custom-shader.md` §11.9） |
-| cube map | **已接线**：`CubeMap` 六面上传为 CUBE 视图；方向槽 = 同一 location 8 的**3 分量**形状（`Geometry::setTexcoords3()`），引擎据 `components` 选 `samplerCube` 变体，纹理会解析为 cube 图（种类不匹配时报一次并绑白色 cube 回退）。两条门禁：用户 program 的六面带相（各面颜色按 `CubeMap::Face` 顺序）+ `built-in sampling` 相的六方向相 |
+| cube map | **已接线**：`CubeMap` 六面上传为 CUBE 视图；方向槽 = 同一 location 8 的**3 分量**形状（`Geometry::setTexcoords3()`），引擎据 `components` 选 `samplerCube` 变体，纹理会解析为 cube 图（种类不匹配时报一次并绑白色 cube 回退）。两条门禁：用户 program 的六面带相（各面颜色按 `CubeMap::Face` 顺序）+ `built-in sampling` 相的六方向相 | 上传侧的暂存链是**紧排**的：每层一步 = 一层（`bytes_per_texel * w * h`），因为 vsg 的拷贝区域按 `properties.stride * w * h` 步进，而 `stride` 是**一个纹素的宽度**（见 `makeTexelArray` 的契约）。若把 `stride` 声明成**行**跨距，每层就会多走 `w` 倍：区域仍在**图像**内（所以校验层不出声），但暂存 buffer 是按**纹素数**分配的，拷贝会走出它 —— 8×8 的面当初被 16 MiB 的最小暂存缓冲兜住了，256² 的兜不住。`vsg_backend_selftest` 的 cube 相因此按 256×256 / 3 级跑（改回旧布局会当场 SIGSEGV）。 |
 | 用户自定义通道 | loc≥2 的数据后端不消费；program 路径也不喂（需 §7 两步接线） |
 | 顶点色 | 用户 loc6 会被 `SceneBridge` 白色覆盖（只认自己生成的 colors + opacity） |
 | 线/点 | 无 `LINE_STRIP`；`lineWidth>1` 需 `wideLines` 特性（未开）；无法调线宽/点大小 |
