@@ -126,7 +126,7 @@ struct alignas(16) VineLightsBlock
 // Same reasoning as LightPushBlock: the struct IS the shader ABI, so a field
 // added here without updating the GLSL (or vice versa) must fail the build.
 
-static_assert(sizeof(VineLightsBlock) == 112, "VineLightsBlock must match the GLSL LightsBlock layout");
+static_assert(sizeof(VineLightsBlock) == 112, "VineLightsBlock must match the GLSL VineLightsBlock layout");
 static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-aligned");
 
 /**

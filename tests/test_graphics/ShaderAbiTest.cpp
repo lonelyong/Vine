@@ -9,14 +9,27 @@
 
 #include <gtest/gtest.h>
 
+#include <vine/graphics/EmbeddedShaders.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 
 #include <cstddef>
+#include <string>
 
 using namespace vine::graphics;
 
 namespace
 {
+
+/**
+ * @brief Reinterprets UTF-8 shader text as a searchable byte string.
+ *
+ * @param text Shader source.
+ * @return The same bytes as a std::string.
+ */
+std::string asByteString(std::u8string_view text)
+{
+    return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+}
 
 TEST(ShaderAbiTest, AttributeLocationsAreTheCanonicalValues)
 {
@@ -49,6 +62,19 @@ TEST(ShaderAbiTest, DrawBlockIsOneMatrixPlusTheParameterSlot)
     EXPECT_EQ(alignof(VineDrawBlock), 16u);
     EXPECT_EQ(offsetof(VineDrawBlock, model), 0u);
     EXPECT_EQ(offsetof(VineDrawBlock, params), 64u);
+}
+
+TEST(ShaderAbiTest, TheShaderBlockNamesAreTheL1Names)
+{
+    // The L1 name and the GLSL block type are the same string, so the contract and the
+    // source need no translation table; renaming one without the other is the drift
+    // this pins.
+    const std::string forward_fs = asByteString(shaders::kVineForwardFrag);
+    EXPECT_NE(forward_fs.find("uniform VineMaterialBlock"), std::string::npos);
+    EXPECT_NE(forward_fs.find("uniform VineLightsBlock"), std::string::npos);
+
+    const std::string gbuffer_fs = asByteString(shaders::kGbufferGeometryFrag);
+    EXPECT_NE(gbuffer_fs.find("uniform VineMaterialBlock"), std::string::npos);
 }
 
 }  // namespace

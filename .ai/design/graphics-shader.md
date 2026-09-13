@@ -178,8 +178,8 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 | 自定义通道 | = 其**源 location**（>= 3，≠ 8） | 调用者给的通道直接复用为 shader location |
 
 **数据块（语义，机制由后端定）**：per-view `VineViewBlock`（view/inv_view/proj/view_proj/cam_pos/frame）；per-draw `VineDrawBlock`（model + 参数表）；`VineMaterialBlock`；`VineLightsBlock`。
-命名约定 **`Vine<Role>Block`**（与既有 `VineLightsBlock`/`LightPushBlock`/GLSL `MaterialBlock` 一致；`Block` 明示"这是内存布局，不是引擎对象"，与 `FrameContext`/`RenderCommand`/`Camera` 区分）。
-**布局规则：全部 16 字节对齐、成员为 `mat4`/`vec4`** —— 这样 std140 与 D3D cbuffer packing 同时成立（`vec3` 紧跟 `float` 是唯一要避免的坑）。现有 `LightPushBlock`(128B)/`VineLightsBlock`(112B)/`MaterialBlock` 已满足；C1 落地的 `VineViewBlock`(288B)/`VineDrawBlock`(80B) 亦然。
+命名约定 **`Vine<Role>Block`**（与既有 `VineLightsBlock`/`LightPushBlock` 一致；`Block` 明示"这是内存布局，不是引擎对象"，与 `FrameContext`/`RenderCommand`/`Camera` 区分）。**GLSL 块类型名与 L1 名逐字相同**（2026-09-13 起：`VineMaterialBlock`/`VineLightsBlock`），从契约到源码无需对照表。
+**布局规则：全部 16 字节对齐、成员为 `mat4`/`vec4`** —— 这样 std140 与 D3D cbuffer packing 同时成立（`vec3` 紧跟 `float` 是唯一要避免的坑）。现有 `LightPushBlock`(128B)/`VineLightsBlock`(112B)/`VineMaterialBlock` 已满足；C1 落地的 `VineViewBlock`(288B)/`VineDrawBlock`(80B) 亦然。
 
 **参数表 / 槽表**：Program 声明类型化参数与消费的命名产出槽（`in_SceneColor`…）；布局由后端推导，用户不碰字节。
 
@@ -197,7 +197,7 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 ### 11.5 现状差距（诚实）
 
 - 已一致：属性 location 表（隐式）、块布局（vec16 对齐）。
-- **未做**：SDK shader 文本仍用 `layout(set=…, binding=…)` 与 push `pc`、`MaterialBlock`/`LightsBlock`（vsg 形状）；
+- **未做**：SDK shader 文本仍用 `layout(set=…, binding=…)` 与 push `pc`（vsg 形状）；块类型名已对齐（§11.3）；
   `ShaderProgram` 只有 stages，**没有参数表/槽声明**（`addParam`/`addTextureSlot` 不存在）。
 - 因此今天换 DX **还不能**"只换文本"：要先把 L1 显式化、把编号从产品 shader 里拿掉。
 
@@ -233,7 +233,7 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 | --- | --- | --- |
 | 相机矩阵（per-draw） | vsg 矩阵栈写 push 0..128：`pc{ mat4 projection; mat4 modelView; }` | 后端（SDK shader 只是"知道有 pc"） |
 | 光照（per-view） | 前向：`VineLightsBlock` UBO `set0/binding2`；延迟：`LightPushBlock` **push**（全屏不需要矩阵） | 后端 |
-| 材质 | `MaterialBlock` UBO `set0/binding0` | 后端 |
+| 材质 | `VineMaterialBlock` UBO `set0/binding0` | 后端 |
 
 SDK shader 文本因此写死了 `layout(push_constant)` / `layout(set = 0, binding = N, std140)` —— 这就是 DX 的拦路石。
 

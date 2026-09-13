@@ -5,7 +5,7 @@ layout(location = 0) out vec4 out_albedo;
 layout(location = 1) out vec4 out_normal;
 layout(location = 2) out vec4 out_specular;
 layout(location = 3) out vec4 out_position;
-layout(set = 0, binding = 0, std140) uniform MaterialBlock
+layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 {
     vec4 ambient;
     vec4 diffuse;

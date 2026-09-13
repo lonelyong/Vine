@@ -11,7 +11,7 @@ layout(location = 0) out vec4 out_color;
 
 // The material the host assigned (the same std140 block the deferred path's
 // G-buffer stage declares, so one Vine material value feeds both).
-layout(set = 0, binding = 0, std140) uniform MaterialBlock
+layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 {
     vec4 ambient;
     vec4 diffuse;
@@ -28,7 +28,7 @@ layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
 
 // Per-view lights, packed from the content scene each frame (VineLightsBlock):
 // one ambient plus up to three directional lights, all in VIEW space.
-layout(set = 0, binding = 2, std140) uniform LightsBlock
+layout(set = 0, binding = 2, std140) uniform VineLightsBlock
 {
     vec4 ambient;      // rgb + intensity
     vec4 sun_dir[3];   // view-space direction, w unused
