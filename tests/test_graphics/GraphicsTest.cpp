@@ -3127,6 +3127,45 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
 }
 
 /**
+ * @brief The light camera frames the content, and there is exactly one derivation of it.
+ *
+ * The shadow pass renders through this camera and the target STATES its view-projection, so the two
+ * cannot disagree about where the light was — which is why the function is public rather than a
+ * private helper the shadow pass happens to share: a host (or a test) that builds its own shadow
+ * pass has to get the SAME camera, and re-deriving one is the failure mode this pins.
+ */
+TEST(RenderPipelineBuilderTest, TheDirectionalShadowCameraFramesTheContentFromTheLightSide)
+{
+    auto sun = LightPtr(Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0)));
+    sun->setName(u8"sun");
+
+    // A box that is not at the origin: the window has to follow the content, not the world.
+    const vine::math::Rect3<double> bounds(vine::math::Point3<double>(4.0, 2.0, 0.0),
+                                          vine::math::Point3<double>(6.0, 4.0, 2.0));
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    const vine::math::Mat4d view_projection = RenderPipelineBuilder::directionalShadowMatrix(*sun, bounds, *camera);
+
+    // Every corner of the box lands inside the clip volume (the map has to cover the casters), and it
+    // is the ORTHO window that puts it there — the shading maps fragments through this same matrix.
+    for (const auto& corner : { vine::math::Point3<double>(4.0, 2.0, 0.0), vine::math::Point3<double>(4.0, 4.0, 2.0),
+                                vine::math::Point3<double>(6.0, 2.0, 2.0), vine::math::Point3<double>(6.0, 4.0, 0.0) }) {
+        const vine::math::Point3<double> ndc = view_projection * corner;
+        EXPECT_GE(ndc.x, -1.0);
+        EXPECT_LE(ndc.x, 1.0);
+        EXPECT_GE(ndc.y, -1.0);
+        EXPECT_LE(ndc.y, 1.0);
+        EXPECT_GE(ndc.z, -1.0) << "the content sits inside the depth range, not clipped away";
+        EXPECT_LE(ndc.z, 1.0);
+    }
+    // ...and the eye sits on the side the light comes FROM (the light shines along its direction).
+    const vine::math::Vec3d eye = camera->eye();
+    EXPECT_NEAR(eye.x, 5.0, 1e-9) << "the eye is centred on the content, so the window is symmetric";
+    EXPECT_NEAR(eye.y, 3.0, 1e-9);
+    EXPECT_GT(eye.z, 2.0) << "with a -z sun the light camera looks from +z";
+}
+
+/**
  * @brief A pass' declared inputs reach the backend, resolved and in declaration order.
  *
  * This is the wire an effect reads what an earlier pass wrote through (a shadow map, a screen-space

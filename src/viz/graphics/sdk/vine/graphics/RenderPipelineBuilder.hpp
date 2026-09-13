@@ -3,6 +3,9 @@
 
 #include <vector>
 
+#include <vine/math/Matrix4x4.hpp>
+#include <vine/math/Point3.hpp>
+#include <vine/math/Rect3.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/intrusive_ptr.hpp>
 
@@ -13,6 +16,7 @@
 V_GRAPHICS_NS_BEGIN
 
 class Camera;
+class Light;
 class RenderEngine;
 class Scene;
 class ScreenPass;
@@ -123,6 +127,29 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      * @return The built pipeline, or null when the requested path cannot be built.
      */
     intrusive_ptr<Pipeline> build(const PipelineOptions& options);
+
+    /** @brief The light camera a directional shadow is rendered with.
+     *
+     * Orthographic, looking along @p light's direction, framing @p bounds: the eye is pulled back
+     * past the box along the light, the window covers the box's diagonal (a sphere of that radius
+     * fits every orientation, so the fit does not have to know which way the light comes from), and
+     * the depth range reaches from in front of the box to well behind it.
+     *
+     * It is PUBLIC because it has to be the only one: the pass that renders the map draws through
+     * this camera, the target STATES its view-projection (RenderTarget::setProducerViewProjection),
+     * and the shading maps its fragments through that matrix. A second derivation anywhere — in a
+     * test, in a host, in a backend — is a second light camera that agrees only until one of them
+     * is touched, and a mismatch shows up as a shadow in the wrong place, not as an error.
+     *
+     * @param light  Directional light the map is rendered along (the light shines ALONG its
+     *               direction, so the eye is pulled back against it).
+     * @param bounds Content bounds the map must cover (a box with an inverted axis maps a unit
+     *               sphere at the origin instead).
+     * @param camera Receives the light camera (also usable as the shadow pass' camera).
+     * @return The light camera's projection * view matrix.
+     */
+    static vine::math::Mat4d directionalShadowMatrix(const Light& light, const vine::math::Aabbd& bounds,
+                                                    Camera& camera);
 
     /** @brief Creates the built-in temporary G-buffer geometry program.
      *

@@ -49,6 +49,31 @@ intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultDeferredLightProgram(
     return deferredLightProgram(/*with_shadow*/ false);
 }
 
+Mat4d RenderPipelineBuilder::directionalShadowMatrix(const Light& light, const vine::math::Aabbd& bounds,
+                                                        Camera& camera)
+{
+    using vine::math::Vec3d;
+
+    const bool   valid   = bounds.max().x >= bounds.min().x && bounds.max().y >= bounds.min().y &&
+                         bounds.max().z >= bounds.min().z;
+    const Vec3d  extent  = valid ? Vec3d(bounds.max().x - bounds.min().x, bounds.max().y - bounds.min().y,
+                                        bounds.max().z - bounds.min().z)
+                                 : Vec3d(2.0, 2.0, 2.0);
+    const Vec3d  centre  = valid ? Vec3d(bounds.center().x, bounds.center().y, bounds.center().z) : Vec3d(0.0, 0.0, 0.0);
+    // Every orientation of the box fits in this sphere, so the window does not shrink when the sun
+    // moves; the margin keeps a caster standing exactly on the border out of the depth clamp.
+    const double radius  = extent.length() * 0.5;
+    const double depth   = radius * 4.0 + 1.0;
+    const Vec3d  forward = light.direction().length() > 1e-9 ? light.direction().normalized() : Vec3d(0.0, 0.0, -1.0);
+    // Any up vector that is not parallel to the direction: a light is a direction, not a roll.
+    const Vec3d up  = std::abs(forward.z) > 0.9 ? Vec3d(0.0, 1.0, 0.0) : Vec3d(0.0, 0.0, 1.0);
+    const Vec3d eye = centre - forward * (radius * 2.0 + 1.0);
+
+    camera.setViewMatrixAsLookAt(eye, eye + forward, up);
+    camera.setProjectionMatrixAsOrtho(-radius, radius, -radius, radius, 0.0, depth);
+    return camera.projectionMatrix() * camera.viewMatrix();
+}
+
 intrusive_ptr<RenderTarget> RenderPipelineBuilder::defaultGbufferTarget(int width, int height)
 {
     if (width <= 0) {
@@ -177,50 +202,6 @@ void RenderPipelineBuilder::reportRequestedShadows() const
                                             u8".ai/design/graphics-shadow.md §10): the picture is unshadowed"));
 }
 
-namespace
-{
-
-/**
- * @brief The light camera a directional shadow is rendered with.
- *
- * Orthographic, looking along the light's direction, framing @p bounds: an eye pulled back past the
- * box's far corner along the light, a window that covers the box's diagonal (a sphere of that radius
- * fits every orientation, so the fit does not have to know which way the light comes from), and a
- * depth range that reaches from in front of the box to well behind it.
- *
- * ONE derivation: the pass it renders and the matrix the shading is given both come from this
- * camera (the pass renders through it, the target carries its view-projection), so the two cannot
- * disagree about where the light was.
- *
- * @param direction Light direction (world space; the light shines ALONG it).
- * @param bounds    Content bounds to cover.
- * @param camera    Receives the light camera.
- * @return The camera's projection * view matrix.
- */
-vine::math::Mat4d makeDirectionalShadowMatrix(const vine::math::Vec3d& direction, const vine::math::Aabbd& bounds,
-                                             vine::graphics::Camera& camera)
-{
-    using vine::math::Vec3d;
-
-    const Vec3d extent = Vec3d(bounds.max().x - bounds.min().x, bounds.max().y - bounds.min().y,
-                               bounds.max().z - bounds.min().z);
-    const Vec3d centre = Vec3d(bounds.center().x, bounds.center().y, bounds.center().z);
-    // Every orientation of the box fits in this sphere, so the window does not shrink when the sun
-    // moves; the margin keeps a caster standing exactly on the border out of the depth clamp.
-    const double radius  = extent.length() * 0.5;
-    const double depth   = radius * 4.0 + 1.0;
-    const Vec3d  forward = direction.length() > 1e-9 ? direction.normalized() : Vec3d(0.0, 0.0, -1.0);
-    // Any up vector that is not parallel to the direction: the light is a direction, not a roll.
-    const Vec3d up = std::abs(forward.z) > 0.9 ? Vec3d(0.0, 1.0, 0.0) : Vec3d(0.0, 0.0, 1.0);
-    const Vec3d eye = centre - forward * (radius * 2.0 + 1.0);
-
-    camera.setViewMatrixAsLookAt(eye, eye + forward, up);
-    camera.setProjectionMatrixAsOrtho(-radius, radius, -radius, radius, 0.0, depth);
-    return camera.projectionMatrix() * camera.viewMatrix();
-}
-
-}  // namespace
-
 bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
 {
     if (engine_ == nullptr || camera_ == nullptr) {
@@ -320,7 +301,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
         // STATES its view-projection, so the shading reads the same matrix instead of fitting a
         // second ortho box of its own (see .ai/design/render-pipeline.md §9).
         shadow_map->setProducerViewProjection(
-            makeDirectionalShadowMatrix(shadow_light->direction(), content_->boundingBox(), *light_camera));
+            directionalShadowMatrix(*shadow_light, content_->boundingBox(), *light_camera));
 
         auto shadow_pass = make_intrusive<RenderPass>();
         shadow_pass->setName(u8"shadow");
