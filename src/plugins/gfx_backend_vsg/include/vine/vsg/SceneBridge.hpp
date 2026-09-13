@@ -438,12 +438,15 @@ class V_VSG_API SceneBridge {
         /** @brief Canonical binding index of @p location, or kNoBinding when it is not a canonical one. */
         static std::size_t canonicalBindingOf(std::uint32_t location) noexcept
         {
+            // The CASES are the shader ABI's locations (ShaderAbi.hpp), the VALUES are this backend's
+            // binding numbers — vsg's own order for its canonical arrays (texcoords at 2, colour at 3),
+            // which is a spelling of the ABI here, not a definition of it.
             switch (location)
             {
-                case 0u: return 0u;                                                                     // positions
-                case 1u: return 1u;                                                                     // normals
-                case vine::graphics::Geometry::kTexCoordLocation: return 2u;                             // texcoords
-                case 2u: return 3u;                                                                     // loc2 colour
+                case vine::graphics::attributeLocation(vine::graphics::VertexAttribute::Position): return 0u;
+                case vine::graphics::attributeLocation(vine::graphics::VertexAttribute::Normal): return 1u;
+                case vine::graphics::attributeLocation(vine::graphics::VertexAttribute::TexCoord0): return 2u;
+                case vine::graphics::attributeLocation(vine::graphics::VertexAttribute::Color): return 3u;
                 default: return kNoBinding;
             }
         }

@@ -10,9 +10,11 @@
 #include <gtest/gtest.h>
 
 #include <vine/graphics/EmbeddedShaders.hpp>
+#include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 
 #include <cstddef>
+#include <vector>
 #include <string>
 
 using namespace vine::graphics;
@@ -40,6 +42,38 @@ TEST(ShaderAbiTest, AttributeLocationsAreTheCanonicalValues)
     EXPECT_EQ(attributeLocation(VertexAttribute::Normal), 1u);
     EXPECT_EQ(attributeLocation(VertexAttribute::Color), 2u);
     EXPECT_EQ(attributeLocation(VertexAttribute::TexCoord0), 8u);
+}
+
+TEST(ShaderAbiTest, TheCanonicalPredicateMatchesTheLocations)
+{
+    // "Is this one of the engine's own channels, or a forwarded custom one?" is asked by every
+    // consumer that walks a geometry's channels, so it is answered by the ABI (and not by a range
+    // test: the reserved texcoord slot is exactly the value a range test gets wrong).
+    for (const auto attribute : { VertexAttribute::Position, VertexAttribute::Normal, VertexAttribute::Color,
+                                  VertexAttribute::TexCoord0 }) {
+        EXPECT_TRUE(isCanonicalAttributeLocation(attributeLocation(attribute)));
+    }
+    EXPECT_FALSE(isCanonicalAttributeLocation(3u)) << "3 upward is the custom-channel range";
+    EXPECT_FALSE(isCanonicalAttributeLocation(7u)) << "the texcoord slot's neighbours are not canonical";
+}
+
+TEST(ShaderAbiTest, GeometryAttachesCanonicalChannelsWhereTheAbiSays)
+{
+    // The geometry setters must not carry their own copy of the locations: they attach (and look up)
+    // a canonical channel AT the ABI's location, which is what this pins. A setter with a literal in
+    // it fails the moment the ABI moves that role — and it fails HERE rather than as a geometry that
+    // silently loses its normals in a backend.
+    auto geometry = GeometryPtr(new Geometry());
+    geometry->setPositions(packAttribute(std::vector<vine::math::Vec3f>{ { 0.0f, 0.0f, 0.0f } }));
+    geometry->setNormals(packAttribute(std::vector<vine::math::Vec3f>{ { 0.0f, 0.0f, 1.0f } }));
+    geometry->setTexcoords(packAttribute(std::vector<vine::math::Vec2f>{ { 0.0f, 0.0f } }));
+
+    EXPECT_TRUE(geometry->hasBuffer(attributeLocation(VertexAttribute::Position)));
+    EXPECT_TRUE(geometry->hasBuffer(attributeLocation(VertexAttribute::Normal)));
+    EXPECT_TRUE(geometry->hasBuffer(attributeLocation(VertexAttribute::TexCoord0)));
+    EXPECT_EQ(geometry->buffer(attributeLocation(VertexAttribute::Position)), geometry->buffer(0))
+        << "positionCount() and the backend must be reading the SAME channel";
+    EXPECT_EQ(Geometry::kTexCoordLocation, attributeLocation(VertexAttribute::TexCoord0));
 }
 
 TEST(ShaderAbiTest, ViewBlockIsFourMatricesAndTwoVec4)

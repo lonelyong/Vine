@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <vine/graphics/Material.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/Mesh.hpp>
@@ -100,33 +101,37 @@ std::vector<std::uint32_t> Geometry::bufferLocations() const
 
 void Geometry::setPositions(intrusive_ptr<const vine::Buffer<float>> positions)
 {
-    addBuffer(0, AttributeBuffer::shared(std::move(positions), kVec3Components));
+    // The location is the shader ABI's (ShaderAbi.hpp), never a number written here: the built-in
+    // shaders declare the attribute where attributeLocation() says, so the two move together.
+    addBuffer(attributeLocation(VertexAttribute::Position),
+              AttributeBuffer::shared(std::move(positions), kVec3Components));
 }
 
 bool Geometry::hasPositions() const
 {
-    return hasBuffer(0);
+    return hasBuffer(attributeLocation(VertexAttribute::Position));
 }
 
 std::size_t Geometry::positionCount() const
 {
-    const AttributeBuffer* positions = buffer(0);
+    const AttributeBuffer* positions = buffer(attributeLocation(VertexAttribute::Position));
     return positions != nullptr ? positions->vertexCount() : 0u;
 }
 
 void Geometry::setNormals(intrusive_ptr<const vine::Buffer<float>> normals)
 {
-    addBuffer(1, AttributeBuffer::shared(std::move(normals), kVec3Components));
+    addBuffer(attributeLocation(VertexAttribute::Normal),
+              AttributeBuffer::shared(std::move(normals), kVec3Components));
 }
 
 bool Geometry::hasNormals() const
 {
-    return hasBuffer(1);
+    return hasBuffer(attributeLocation(VertexAttribute::Normal));
 }
 
 std::size_t Geometry::normalCount() const
 {
-    const AttributeBuffer* normals = buffer(1);
+    const AttributeBuffer* normals = buffer(attributeLocation(VertexAttribute::Normal));
     return normals != nullptr ? normals->vertexCount() : 0u;
 }
 
@@ -218,7 +223,7 @@ namespace
  */
 Aabbd localBounds(const Geometry* geometry)
 {
-    const AttributeBuffer* positions = geometry->buffer(0);
+    const AttributeBuffer* positions = geometry->buffer(attributeLocation(VertexAttribute::Position));
     if (positions == nullptr || positions->empty() || positions->components < 3u) {
         return Aabbd::empty();
     }

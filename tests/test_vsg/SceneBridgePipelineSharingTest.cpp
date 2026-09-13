@@ -1140,7 +1140,8 @@ TEST(SceneBridgePipelineSharingTest, PositionBindingAliasesTheModelBuffer)
     EXPECT_NE(bvb->arrays[0]->data->cast<vsg::vec3Array>(), nullptr)
         << "loc0 must be bound through a real vsg::vec3Array";
 
-    const auto* positions = geometry->buffer(0);
+    const auto* positions = geometry->buffer(vine::graphics::attributeLocation(
+        vine::graphics::VertexAttribute::Position));
     ASSERT_NE(positions, nullptr);
     ASSERT_FALSE(positions->scalars().empty());
     EXPECT_EQ(bvb->arrays[0]->data->dataPointer(),
@@ -1150,7 +1151,8 @@ TEST(SceneBridgePipelineSharingTest, PositionBindingAliasesTheModelBuffer)
 
     // Every channel whose layout already matches its binding goes through the same helper: this geometry
     // authors normals, so loc1 reads the model's floats as well.
-    const auto* normals = geometry->buffer(1);
+    const auto* normals = geometry->buffer(vine::graphics::attributeLocation(
+        vine::graphics::VertexAttribute::Normal));
     ASSERT_NE(normals, nullptr);
     ASSERT_FALSE(normals->scalars().empty());
     auto* normal_binding = findBoundData(created[0].get(), 1u);

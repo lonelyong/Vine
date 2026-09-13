@@ -91,6 +91,20 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 - `ScreenPass::execute` 由固定全屏拷贝改为"跑用户 Program 的全屏三角形"（v1 先只支持全屏 +
   少量输入槽，不做透视变换）。
 
+### 5.1 属性 location 只有一处定义（2026-09-13）
+
+`attributeLocation(VertexAttribute)`（`ShaderAbi.hpp`）是**位置、法线、颜色、texcoord** 这些 canonical
+通道 location 的唯一定义；`isCanonicalAttributeLocation(location)` 是“这个 location 是引擎自己的还是
+转发进来的自定义通道”的**唯一回答**（不要写 `location <= 2`：保留的 texcoord 槽正是范围判断会判错的
+那个值）。
+
+读它的一方：`Geometry` 的 setter/getter（`setPositions` / `setNormals` / `setTexcoords` 等以及
+`localBounds`）、`RayIntersection`、vsg 后端的几何构建（canonical 通道、派生通道、自定义通道过滤、
+loc→binding 映射）。`Geometry::kTexCoordLocation` 本身就等于 `attributeLocation(TexCoord0)`（不再写字面
+量 8）；GLSL 侧由 `EmbeddedShadersTest` 钉“每个 canonical 属性声明在 `attributeLocation(role)`”，
+引擎侧由 `ShaderAbiTest.GeometryAttachesCanonicalChannelsWhereTheAbiSays` 钉“setter 落在 ABI 说的
+location 上”。改一个角色的 location ⇒ 两半一起动，且两处测试都会红。
+
 ## 6. 编译 / 排错 / 热更（能力更新 2026-09-03，见顶部 ⚠）
 
 - **交付形态**：`ShaderProgram` 作者用 **GLSL 源**；后端可**运行期编译**（vsg ShaderCompiler，glslang

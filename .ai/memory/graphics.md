@@ -1,4 +1,10 @@
-﻿> 2026-09-13 **完全不使用 vsg 内建 shader set**
+﻿> 2026-09-13 **canonical 属性 location 只有 ABI 一处定义**
+> - 删掉所有硬编码：`Geometry::setPositions/setNormals/setTexcoords/hasPositions/…/localBounds`、`RayIntersection`、vsg 后端的几何构建（canonical 通道、派生通道、自定义通道过滤、loc→binding 映射）现在都问 `attributeLocation(VertexAttribute)`；`Geometry::kTexCoordLocation` 直接等于 `attributeLocation(TexCoord0)`。
+> - 新增 `isCanonicalAttributeLocation(location)`（ABI 拥有）取代后端里那句 `location <= 2u || location == kTexCoordLocation`——“这个 location 是引擎的还是转发的”只该有一个回答。
+> - 测试：`ShaderAbiTest.TheCanonicalPredicateMatchesTheLocations` + `GeometryAttachesCanonicalChannelsWhereTheAbiSays`（setter 落在 ABI 的 location 上、`positionCount()` 读的就是同一个通道）；`SceneBridgePipelineSharingTest` 里两处读通道也改用 ABI；GLSL 那半原本就由 `EmbeddedShadersTest` 钉着。
+> - 判据：行为中性（值今天相同）——证据基线 51 行逐字节不变；test_graphics 240 → **242**；test_vsg 250；shader check PASS；lavapipe PASS。
+
+> 2026-09-13 **完全不使用 vsg 内建 shader set**
 > - `makeContentShaderSet` **只**调 `buildVineShaderSet`；删除 `buildShaderSet()` 与 `vineForwardShaderEnabled()`（`VINE_VSG_BUILTIN` 开关、两条基线的第二份、自检 `--builtin` 模式一起删）。
 > - **没有有效 shader 就不画**（2026-09-13 口径）：没有自己 program 的 preset ⇒ `makeContentShaderSet` 返回 **null**（无替补），建槽时每会话一条 **Error**；槽没被注入 set ⇒ `buildStateGroup` 每桥一条 Error + 该 drawable 不入图；用户 program 编译失败 ⇒ 报告后**不再回落**到槽的 set。`SceneBridge::baseShaderSet()` 也不再兜底造 set；`setShaderSet()` 会 invalidate 保留 state（旧 set 的管线/描述符）。
 > - `SceneBridge::baseShaderSet()` 无注入时建**我们的** forward set（原来 `createPhongShaderSet()`）；桥仍接受**外来** set（SDK 语义），`hasOwnLightsBlock()`/`vsg_lights` 那条路现在只服务外来 set。

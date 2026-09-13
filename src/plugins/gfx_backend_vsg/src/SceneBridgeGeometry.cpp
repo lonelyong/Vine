@@ -10,6 +10,7 @@
 #include <vsg/maths/vec4.h>
 #include <vsg/nodes/Geometry.h>
 #include <vsg/state/material.h>
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/vsg/SceneBridgeInternals.hpp>
 #include <vine/vsg/VsgSceneRules.hpp>
@@ -86,15 +87,15 @@ namespace
     // rebuilds the node, which is also where those cases are reported.
     switch (location)
     {
-        case 0u: {
-            const auto* attr = geometry->buffer(0);
+        case attributeLocation(vine::graphics::VertexAttribute::Position): {
+            const auto* attr = geometry->buffer(attributeLocation(vine::graphics::VertexAttribute::Position));
             if (attr == nullptr || attr->components != 3u || attr->floatCount() % 3u != 0u) {
                 return {};
             }
             return aliasArray<::vsg::vec3Array, float>(attr->values, attr->vertexCount(), attr->offset);
         }
-        case 1u: {
-            const auto* attr = geometry->buffer(1);
+        case attributeLocation(vine::graphics::VertexAttribute::Normal): {
+            const auto* attr = geometry->buffer(attributeLocation(vine::graphics::VertexAttribute::Normal));
             if (attr != nullptr && !attr->empty()) {
                 if (attr->components != 3u || attr->vec3View().size() != vertex_count) {
                     return {}; // the builder would unpack it or ignore it
@@ -107,7 +108,8 @@ namespace
             // The bound normals were DERIVED from the positions, so new positions invalidate them: re-derive
             // here and keep the derived-channel cache in step, so a later unrelated rebuild cannot reuse the
             // stale ones.
-            const auto* position_attr = geometry->buffer(0);
+            const auto* position_attr =
+                geometry->buffer(attributeLocation(vine::graphics::VertexAttribute::Position));
             const auto  positions     = position_attr != nullptr ? position_attr->vec3View()
                                                                  : std::span<const vine::math::Vec3f>{};
             if (positions.size() != vertex_count) {
@@ -181,10 +183,11 @@ namespace
     // already IS what vsg's loc0 binding reads, so the binding views the model's own memory instead of a
     // copy of it; any other stride (a vec4 position, a non-divisible length) keeps the unpacking path, which
     // is where the xyz/w handling and the diagnostics for those cases live.
-    const auto* position_attr = geometry->buffer(0);
+    const auto* position_attr = geometry->buffer(attributeLocation(vine::graphics::VertexAttribute::Position));
     if (position_attr == nullptr || position_attr->empty()) {
         report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
-               u8"geometry has no loc0 position attribute; not drawn");
+               formatDiagnostic(u8"geometry has no position attribute (location %u); not drawn",
+                                attributeLocation(vine::graphics::VertexAttribute::Position)));
         return ::vsg::ref_ptr<::vsg::Commands>();
     }
 
@@ -261,7 +264,7 @@ namespace
     // the case the binding can alias instead of copying. A vec4 channel is unpacked above and used from
     // that copy, since aliasing it would need a stride the array's element type does not have.
     const vine::graphics::AttributeBuffer* authored_normals = nullptr;
-    if (const auto* normal_attr = geometry->buffer(1);
+    if (const auto* normal_attr = geometry->buffer(attributeLocation(vine::graphics::VertexAttribute::Normal));
         normal_attr != nullptr && !normal_attr->empty()) {
         const std::span<const vine::math::Vec3f> authored = normal_attr->vec3View();
         if (authored.size() == vertex_count) {
@@ -480,7 +483,7 @@ namespace
     // payload) is reported and skipped — it must not misread or reject the mesh.
     ::vsg::DataList custom_arrays;
     for (const std::uint32_t location : geometry->bufferLocations()) {
-        if (location <= 2u || location == vine::graphics::Geometry::kTexCoordLocation) {
+        if (vine::graphics::isCanonicalAttributeLocation(location)) {
             continue; // canonical position / normal / colour / texcoord handled above
         }
         const auto* attr = geometry->buffer(location);

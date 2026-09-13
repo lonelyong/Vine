@@ -53,6 +53,25 @@ constexpr std::uint32_t attributeLocation(VertexAttribute attribute) noexcept
 }
 
 /**
+ * @brief Whether @p location is one of the canonical attributes.
+ *
+ * The check every consumer needs when it walks a geometry's channels and asks "is this one of the
+ * engine's own, or a forwarded custom one?". Asking it HERE is what keeps the answer in step with
+ * attributeLocation(): a range test (`location <= 2`) or a list of literals would be a second copy
+ * of the ABI, and the reserved texcoord slot is exactly the value a range test gets wrong.
+ *
+ * @param location Shader location to classify.
+ * @return true when it is a canonical attribute's location.
+ */
+constexpr bool isCanonicalAttributeLocation(std::uint32_t location) noexcept
+{
+    return location == attributeLocation(VertexAttribute::Position) ||
+           location == attributeLocation(VertexAttribute::Normal) ||
+           location == attributeLocation(VertexAttribute::Color) ||
+           location == attributeLocation(VertexAttribute::TexCoord0);
+}
+
+/**
  * @brief Per-view data block the built-in shading reads (L1 shape).
  *
  * The engine owns this SHAPE; a backend owns where it lives — a uniform / constant

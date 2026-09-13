@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <utility>
 
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Node.hpp>
@@ -201,7 +202,7 @@ GeometryMesh meshOfGeometry(const Geometry* geometry)
 {
     GeometryMesh mesh;
     if (geometry != nullptr) {
-        if (const auto* position_attr = geometry->buffer(0);
+        if (const auto* position_attr = geometry->buffer(attributeLocation(VertexAttribute::Position));
             position_attr != nullptr && !position_attr->empty() &&
             position_attr->components >= 3u) {
             // The declared components are the stride: a vec4 position channel

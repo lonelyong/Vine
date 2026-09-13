@@ -665,7 +665,8 @@ bool SceneBridge::syncRenderCommands(
             // bounds check needs is a different number), and every index has to be in range, because an
             // out-of-range index reads OOB on the GPU and the builder's rejection (reported once per
             // revision) is what tells the caller. A stream that fails either takes the rebuild.
-            const auto* const position_channel = geometry->buffer(0);
+            const auto* const position_channel =
+                geometry->buffer(attributeLocation(vine::graphics::VertexAttribute::Position));
             const bool        layout_is_aliased =
                 position_channel != nullptr && !position_channel->empty() && position_channel->components == 3u;
             bool indices_in_range = false;
@@ -709,7 +710,11 @@ bool SceneBridge::syncRenderCommands(
                 const ChannelKey* const positions_after  = keyAt(keys_now, 0u);
                 const bool positions_changed =
                     positions_before != nullptr && positions_after != nullptr && !(*positions_before == *positions_after);
-                for (const std::uint32_t location : { 0u, 1u, vine::graphics::Geometry::kTexCoordLocation, 2u })
+                for (const std::uint32_t location :
+                     { attributeLocation(vine::graphics::VertexAttribute::Position),
+                       attributeLocation(vine::graphics::VertexAttribute::Normal),
+                       attributeLocation(vine::graphics::VertexAttribute::Color),
+                       attributeLocation(vine::graphics::VertexAttribute::TexCoord0) })
                 {
                     const std::size_t binding = RetainedBinds::canonicalBindingOf(location);
                     if (binding == RetainedBinds::kNoBinding || item->binds.canonical[binding] == nullptr) {

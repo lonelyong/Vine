@@ -16,6 +16,7 @@
 #include <vine/geometry/Shape.hpp>
 
 #include "Node.hpp"
+#include "ShaderAbi.hpp"
 
 V_GRAPHICS_NS_BEGIN
 
@@ -29,9 +30,10 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  * @brief A per-vertex channel bound to a shader attribute location.
  *
  * WHAT IT IS. A read-only VIEW of per-vertex scalars — `components` of them per vertex — plus the buffer
- * holding them. It is generic and backend-agnostic: location 0 carries positions, location 1 may carry
- * normals, location 8 texture coordinates (see Geometry::kTexCoordLocation), and any other location carries a
- * custom channel a shader reads. Convention: use Geometry::addBuffer() to attach channels.
+ * holding them. It is generic and backend-agnostic: a canonical channel sits where the shader ABI says
+ * (attributeLocation(), see ShaderAbi.hpp — positions, normals, colour, and the reserved texcoord slot),
+ * and any other location carries a custom channel a shader reads. Convention: use Geometry::addBuffer() to
+ * attach channels.
  *
  * WHY IT HOLDS THE BUFFER AND NOT AN OWNED ARRAY. A channel used to BE its storage, so attaching a mesh's
  * vertices to a Geometry meant repacking them into a second array — every vertex in memory twice, even
@@ -450,18 +452,18 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * Two scalar components per vertex (`R32G32_SFLOAT`).
      *
-     * This is VINE's own convention, not vsg's: the backend reads the UVs from
-     * here and binds the array under the name vsg's Phong shader advertises
-     * (`vsg_TexCoord0`), which the shader itself declares at its own location —
-     * so the number chosen here is free and only has to stay stable.
-     * 8 (rather than 2, where vsg's shader happens to declare it) keeps the low
-     * locations in one block and leaves room for a future texcoord set 1..3.
+     * The VALUE is the shader ABI's (`attributeLocation(VertexAttribute::TexCoord0)`, see
+     * ShaderAbi.hpp), not a number written here: the built-in shaders declare the attribute where the
+     * ABI says, and this backend binds the array under the name vsg's Phong set advertises
+     * (`vsg_TexCoord0`). One definition, so the two sides cannot drift apart.
      *
-     * Locations 0 and 1 stay positions and normals (see AttributeBuffer), and
-     * the backend forwards custom channels as `vine_Attribute{location}` from
-     * location 3 upward — so a custom channel must NOT use 8.
+     * The ABI reserves this slot (rather than taking the next free location) so it cannot collide
+     * with a forwarded custom channel, which keeps its own source location. Positions, normals and
+     * colour are the ABI's as well, and the backend forwards custom channels as
+     * `vine_Attribute{location}` from location 3 upward — so a custom channel must NOT use a
+     * canonical location.
      */
-    static constexpr std::uint32_t kTexCoordLocation = 8u;
+    static constexpr std::uint32_t kTexCoordLocation = attributeLocation(VertexAttribute::TexCoord0);
 
   private:
     std::map<std::uint32_t, AttributeBuffer> attributes_;
