@@ -127,6 +127,10 @@ struct V_GRAPHICS_API AttributeChannel
      * the segment it reads in the unit it authors vertices in. The conversion to the scalar offset the
      * channel stores happens here, so a caller cannot get the stride wrong.
      *
+     * It is ALSO the only way a CANONICAL channel states a segment: the convenience setters
+     * (setPositions / setNormals / setTexcoords) state a whole buffer, and a slice is attached through the
+     * general door — geometry->addBuffer(location, AttributeChannel::slice(...)).
+     *
      * @param values       Buffer to read (the arena), or null for an empty channel.
      * @param components   Scalar components per vertex.
      * @param first_vertex First vertex of this channel's segment.
@@ -340,6 +344,13 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * A caller that holds typed vertices and no buffer packs them first with packAttribute().
      *
+     * THIS SETTER STATES A WHOLE BUFFER (offset 0, no fixed count): it is the one-buffer-per-geometry
+     * case, and the channel follows the buffer as it grows. A SEGMENT — several geometries reading one
+     * arena — is a channel like any other, and goes through the general door:
+     * `addBuffer(attributeLocation(VertexAttribute::Position), AttributeChannel::slice(arena, 3u,
+     * first_vertex, vertex_count))`. There is deliberately no slice overload here: a second, narrower
+     * door for every role is how two spellings of one thing start to drift.
+     *
      * @param positions Vertex scalars to read (three floats per vertex), or null for an empty channel.
      */
     void setPositions(intrusive_ptr<const vine::Buffer<float>> positions);
@@ -353,6 +364,9 @@ class V_GRAPHICS_API Geometry : public Node {
     /** @brief Sets the normals (location 1) by SHARING a vertex buffer.
      *
      * Optional either way: when unset the renderer derives normals from the positions.
+     *
+     * States a WHOLE buffer, like setPositions(): a segment of an arena is attached through
+     * addBuffer(location, AttributeChannel::slice(...)), which is the general door for every role.
      *
      * @param normals Normal scalars to read (three floats per vertex), or null for an empty channel.
      */
@@ -368,6 +382,9 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * Optional: a geometry without UVs still renders, but a material carrying a
      * texture has nothing to sample it with.
+     *
+     * States a WHOLE buffer, like setPositions(): a segment of an arena is attached through
+     * addBuffer(location, AttributeChannel::slice(...)).
      *
      * @param texcoords Texcoord scalars to read (two floats per vertex), or null for an empty channel.
      */
@@ -391,6 +408,12 @@ class V_GRAPHICS_API Geometry : public Node {
      * slice and an index slice consistent with each other.
      *
      * Replacing the buffer does NOT announce the change: report one with setRevision().
+     *
+     * THIS SETTER CARRIES THE SLICE, unlike the attribute setters — because it is the index stream's ONLY
+     * door. The vertex side has two: the canonical convenience setters, which state a whole buffer, and
+     * addBuffer(), which states any channel including a segment. The index stream is one member, not a
+     * location-keyed map, so if these parameters were not here an index arena's segment would be
+     * unexpressible (and a shorter overload would only be a second spelling of the same thing).
      *
      * @param indices     Index scalars to read (three per triangle), or null for an empty index buffer.
      * @param first_index First index this geometry draws (0 = the buffer's start).

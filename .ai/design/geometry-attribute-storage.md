@@ -181,6 +181,13 @@ vec4 位置（stride 4）**有意不进别名**：它要的是 R32G32B32 绑定�
   first, count)` 就是建这个段。
 - **自定义流**（未来）：同一个 `BufferSlice<T>`，不需要第三种表示。
 
+**谁陈述切片（以及为什么两边的 setter 不对称）**：canonical 的便捷 setter
+（`setPositions` / `setNormals` / `setTexcoords`）**只陈述整块 buffer**（offset 0、无固定 count：跟随增长）；
+段的写法走通用门 —— `addBuffer(location, AttributeChannel::slice(arena, components, first_vertex,
+vertex_count))`。索引流只有一个成员（不是按 location 的 map），`setIndices(buffer, first_index,
+index_count)` **就是它唯一的门**，所以切片参数必须在它身上；给每个 canonical role 再加一个"带切片的便捷
+setter"只会让同一件事有两种写法，因此故意没有加。
+
 **为什么是组合而不是基类**：通道不是段，通道是"段 + 顶点 stride"的解释。若让 `AttributeChannel` 继承
 `BufferSlice<float>`，把通道按值传给一个要段的接口会**静默丢掉 stride**（也就丢掉"每个顶点从哪开始"），
 而这类错误不会在任何地方报出来。段是通道**拥有并能交出去**的东西（见两个成员函数），不是它"是"的东西。
