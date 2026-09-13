@@ -171,7 +171,14 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 
 **下一步的精确清单**（机械执行，不需要再决策）：
 
-1. **后端绑定**（`gfx_backend_vsg`）：
+1. ✅ **后端绑定**（`gfx_backend_vsg`）：已落地。`FullscreenShadowInput`（图 + 块）+ `makeFullscreenProgramNode` 的新参数；可填槽位变成**集合**（源彩色 / 可采样源深度 / 阴影两槽），集合外声明在建任何东西之前就被拒；矩阵 = `target->producerViewProjection() × camera->viewMatrix().inverted()`；bias 取自投影那盏灯的 `ShadowSettings`。
+2. ✅ **builder**：已落地。`makeDirectionalShadowMatrix()`（**唯一一份**光相机推导）+ `PipelineStage::Depth` 的 depth-only 图；光照 pass 用 `deferredLightProgram(castShadow != nullptr)` 并声明该图；宿主自带 lighting program ⇒ 不建阴影 pass 并报一条。
+3. ⬜ **像素门禁（下一步，唯一剩下的）**：`vsg_selftest` 新相位，照 `runProgramShadingPixelPhase`（`main.cpp:5112`）的骨架 —— `FrameScope`/`PassScope` + `renderer.render(commands, camera)` + `readTarget(renderer, target, &image)` + `PixelImage::at(x,y,ch)`；场景 = 地面大四边形 + 悬空立方体 + 斜射的 `castShadow` 太阳；断言**影内的地面像素明显暗于影外**。**变异验证**：把 `sun->setCastShadow(false)` ⇒ 该相位必须红。证据基线行数 +1~2（`vsg_selftest_evidence.txt` 用 `--update` 重生成，并逐条核对只有新行是新增的）。
+
+**注意**：相位用 builder（需要 `RenderEngine`）还是手工搭（要用到只存在于 builder 里的光相机推导，会**复制**那唯一一份推导）——**必须选前者**，否则门禁本身就违反了 §9 的决定。若 `RenderEngine` 与该相位的直驱 `VsgRenderer` 混用有冲突（引擎与直驱各有一份 slot 账本），就在该相位里单独建一个 `RenderEngine` 包住同一个 renderer，并在相位结束时 `engine.shutdown()`。
+
+**原第 1 条的细节（已实现，保留为记录）**：
+
    - `makeFullscreenProgramNode`（`VsgPipelineFactory.cpp:~780`）加一个额外输入参数：`std::vector<std::pair<::vsg::ref_ptr<::vsg::ImageView>, bool>>`（视图 + 是否深度），**绑定号 = `color_count + 1 + i`**；`VineShadowBlock` 的 UBO 绑在 **`color_count + 2`**（规范 4 彩色 ⇒ 5 / 6）。`provided` 的白名单检查同步放宽，`declaredBindings()` 反射已经在做"声明即要求"。
    - `drawScreenProgram`（`VsgOverlay.cpp:~470`）取 `state.request.inputs` 里**第一个非空**的 target，用与 `src` 相同的方式拿它的深度视图（要求 `depth_sampleable`），并填 `VineShadowBlock`：`viewToLight = target->producerViewProjection() * inverse(pass camera viewMatrix)`，`params = {1, bias(来自该光源 ShadowSettings), 1, 0}`。**矩阵一律从 target 读，不重算光相机**（§9 的决定）。
 2. **builder**（`RenderPipelineBuilder::buildDeferredPath`）：内容里有 `enabled && castShadow && Directional` 的灯时 —— 建光相机（正交、`Scene::boundingBox()` 取景）+ `resolution²` 的 **depth-only** target（`setDepthPromotion(true)` + `setProducerViewProjection(lightVP)`）+ `PipelineStage::Depth` 的 pass 画内容（`content_`）；光照 pass 用 `deferredLightProgram(true)` 并 `addInputTarget(shadow)`。**没有投影光时一字不改**（今天的程序与 pass 列表）。
