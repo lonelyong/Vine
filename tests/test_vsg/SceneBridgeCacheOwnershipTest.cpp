@@ -351,6 +351,68 @@ TEST(SceneBridgeCacheOwnershipTest, SessionSharesCountEverySlotAndABridgeCannot)
 }
 
 /**
+ * @brief The reuse window measures CONSECUTIVE absence, and the sweep only visits candidates.
+ *
+ * A geometry the frame stops drawing keeps its retained node (hiding a node or culling it must
+ * stay cheap to undo), and it is dropped only after a long absence — so the frame's sweep has to
+ * age exactly the geometries it cached and did not draw, and nothing else. That is what the
+ * candidate list is for: it is built from this sync's drawings, so a geometry that comes back
+ * leaves the list (and its window restarts), and an entry the list somehow missed would never be
+ * evicted at all — a cache that grows for the life of the session.
+ *
+ * Both halves are asserted through the variant-template REUSE counter, which is the observable
+ * difference: coming back inside the window hits the retained template, coming back after it was
+ * evicted rebuilds.
+ */
+TEST(SceneBridgeCacheOwnershipTest, TheAbsenceWindowAgesTheGeometriesTheFrameStoppedDrawing)
+{
+    vine::vsg::SceneBridge        bridge;
+    bridge.setShaderSet(vsg::createPhongShaderSet());
+    auto                 root     = vsg::Group::create();
+    auto                 geometry = makeTriangle(0);
+    MaterialPtr          material(new Material());
+    std::vector<RenderCommand> drawn{ RenderCommand(geometry, material, Mat4d()) };
+    std::vector<RenderCommand> none;
+
+    bridge.syncRenderCommands(drawn, root.get(), nullptr);
+    ASSERT_EQ(bridge.retainedGeometryCount(), 1u) << "the first sync caches it";
+
+    // A few absent syncs, then back: inside the window, so the retained node is still there.
+    for (int i = 0; i < 3; ++i) {
+        bridge.syncRenderCommands(none, root.get(), nullptr);
+        EXPECT_EQ(bridge.retainedGeometryCount(), 1u) << "an absent geometry is kept (the window)";
+    }
+    bridge.syncRenderCommands(drawn, root.get(), nullptr);
+    EXPECT_EQ(bridge.retainedGeometryCount(), 1u)
+        << "coming back inside the window keeps the SAME entry (nothing was rebuilt)";
+
+    // Absent for longer than the window: the entry goes. An entry the sweep never visits would stay
+    // cached for the whole session, which is exactly what this count would then show.
+    for (int i = 0; i < 620; ++i) {
+        bridge.syncRenderCommands(none, root.get(), nullptr);
+    }
+    EXPECT_EQ(bridge.retainedGeometryCount(), 0u)
+        << "620 absent syncs is past the 600-sync window, and the sweep visits exactly the "
+           "geometries this slot cached and stopped drawing";
+
+    // The window measures CONSECUTIVE absence, so a redraw in between starts it again: 400 + 400
+    // absent syncs with a drawing in the middle is not 800 consecutive ones.
+    bridge.syncRenderCommands(drawn, root.get(), nullptr);
+    EXPECT_EQ(bridge.retainedGeometryCount(), 1u) << "the entry is rebuilt after the window";
+    for (int i = 0; i < 400; ++i) {
+        bridge.syncRenderCommands(none, root.get(), nullptr);
+    }
+    EXPECT_EQ(bridge.retainedGeometryCount(), 1u);
+    bridge.syncRenderCommands(drawn, root.get(), nullptr);
+    for (int i = 0; i < 400; ++i) {
+        bridge.syncRenderCommands(none, root.get(), nullptr);
+    }
+    EXPECT_EQ(bridge.retainedGeometryCount(), 1u)
+        << "800 absent syncs in total, but only 400 in a row: the drawing in between must reset "
+           "the window, or a scene that alternates would evict what it is still using";
+}
+
+/**
  * @brief The share counts answer per FRAME, and rebuilding them reuses their table.
  *
  * The counts are collected once per frame, so what they must not do is carry last frame's

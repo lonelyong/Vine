@@ -14,7 +14,7 @@
 | 剔除是 CPU 侧节点级 AABB（p-vertex 测试），无 GPU 剔除/无遮挡剔除 | `Scene.cpp:59-113`、`Scene.cpp:207-213` | 根容器罩全场 ⇒ 所有子节点都要先算盒再判掉 |
 | 剔除掉的几何体不在命令里；后端无法区分"被剔除"与"已移除"，但 `abandoned()`（App 释放引用）免费覆盖后者 | `SceneBridge.cpp:474-508`、`OwnedCache.hpp:29` | 缺席 = 保留节点从 root 摘下，不销毁、不重传；缺席 > 600 次同步才淘汰 |
 | 缺席计数器是**每内容槽**（每 bridge）一份，不是每帧全局 | `VsgContentSlot.cpp:325`、`SceneBridge.cpp:179` | 600 帧 = 6 s @100 fps = 0.6 s @1000 fps；与渲染帧率耦合 |
-| `evictAbsentItems()` **每帧无条件扫整个 cache**，每条目一次原子 `useCount()` | `SceneBridge.cpp:474-508` | 每帧 O(曾经出现过的 geometry 数)；漫游会把 cache 撑到全场景 ⇒ 正反馈 |
+| `evictAbsentItems()` **每帧无条件扫整个 cache**，每条目一次原子 `useCount()` | `SceneBridge.cpp:474-508` | 每帧 O(曾经出现过的 geometry 数)；漫游会把 cache 撑到全场景 ⇒ 正反馈。**已改（2026-09-13）**：改走候选表 `absent_`（见 P2），正反馈消除 |
 | 声明数据/状态**解耦**：`data_dirty` 只看 geometry revision / topology / loc2 路径；`state_dirty` 只看 material/texture/state/program —— **两者都没有相机项** | `SceneBridge.cpp:347-359` | 相机移动**不触发**任何重建 |
 | 每个内容槽一个 `SceneBridge`，`shared_objects_` 也是每 bridge 一份 | `SceneBridge.cpp:78`、`VsgContentSlot.cpp:325` | 多槽 ⇒ 保留节点/VkBuffer/上传各一套，管线与描述符也不共享 |
 | 重建时**派生通道每次重算**：无法线 ⇒ `makeNormals/makeIndexedNormals`（O(V+F)）；无 loc2 颜色 ⇒ `makeWhiteColors(V)`（16 B/顶点）；无 UV ⇒ `makeZeroTexcoords(V)`（8 B/顶点） | `SceneBridgeGeometry.cpp:186-271`、`VsgSceneRules.cpp` | 改一个通道 = 整个几何体的账（全通道重传 + 派生重算） |
@@ -40,7 +40,7 @@
 | --- | --- | --- | --- | --- | --- |
 | **P1** | 保留策略：**容量 LRU** + 缺席窗口可配置（帧或秒） | 淘汰只看"缺席 600 次同步"，与帧率耦合，且不是内存上限 | 内存真正封顶；"仍在场景但长期不可见"的条目有归宿；与帧率解耦 | 需选 LRU 键（条目数/字节）；窗口单位要兼顾确定性测试 | 待办 |
 | **P2** | sweep 改**候选表**并提到**帧级一次**（本帧所有 pass 的并集都没收集到才计缺席） | 每槽每帧无条件扫整个 cache | 每帧 O(缺席数)；语义变成"这一帧没有任何 pass 画它" | 需要 `VsgRendererState` 级别的帧级 seen 登记（各 bridge 汇报）；要定义"某槽本帧没画"的语义 | 待办 |
-| **P13** | P11 修好后的**每帧份额收集**（`VsgRenderer::refreshRetainedShares` 走 manager + 每槽的三个缓存） | 每帧 O(所有条目)，与 P2 里那条"每槽每帧无条件扫整个 cache"同一量级 ⇒ **把一个已知缺陷的量级翻了倍** | 先做到**稳定态零分配**（`OwnedShareCounts` 保留哈希节点、只清值；表涨到远超本帧用量才整表丢弃），把代价从"分配 + 哈希"降到"纯哈希"；真正的候选表与帧级一次留给 P2 | 份额必须覆盖**所有**槽（跨槽互持就是 P11 本身），所以不能只收集本槽可见的；新槽在帧中途建立时它的份额不在本帧计数里 ⇒ 该槽退化成本地份额（保守：晚一帧释放，不会早放） | **已完成（2026-09-13，第一步）**：节点复用 + 冷表整表丢弃 + `trackedCount()` 可断言；test_vsg `TheShareCountsForgetTheirValuesButKeepTheirKeys`；两条证据基线 51 行不变。**剩余**：与 P2 合并成一次帧级遍历 |
+| **P13** | P11 修好后的**每帧份额收集**（`VsgRenderer::refreshRetainedShares` 走 manager + 每槽的三个缓存） | 每帧 O(所有条目)；**几何那部分**已随 P2 的候选表去掉（份额改读 `last_seen_ ∪ absent_`，不再走 cache），剩下的是 manager 的材质条目 + 每槽有界的 program 缓存（64/64/256） | 先做到**稳定态零分配**（`OwnedShareCounts` 保留哈希节点、只清值；表涨到远超本帧用量才整表丢弃），把代价从"分配 + 哈希"降到"纯哈希"；真正的候选表与帧级一次留给 P2 | 份额必须覆盖**所有**槽（跨槽互持就是 P11 本身），所以不能只收集本槽可见的；新槽在帧中途建立时它的份额不在本帧计数里 ⇒ 该槽退化成本地份额（保守：晚一帧释放，不会早放） | **已完成（2026-09-13，第一步）**：节点复用 + 冷表整表丢弃 + `trackedCount()` 可断言；test_vsg `TheShareCountsForgetTheirValuesButKeepTheirKeys`；两条证据基线 51 行不变。**剩余**：与 P2 合并成一次帧级遍历 |
 | **P3** | **局部 AABB 缓存**（键 = positions buffer 地址 + revision） | 每个 geometry 每帧重扫全部顶点算局部盒 | 收集侧 O(顶点)/帧 → O(1)/帧 | 缓存失效依赖"调用者改数据就 bump revision"的既有契约（`Geometry` 与 `Buffer` 都是公告一律手动） | 待办 |
 | **P4** | ~~`shared_objects_` 提到 session 级~~ | 每槽一套管线/描述符 | — | — | **已否决（有实测证据，见下）** |
 | **P5** | **派生通道缓存**：法线 / 白 / 零 UV 跨重建保留 | 每次数据重建都重算重分配（36 B/顶点） | 重建时省 O(V) 计算与分配 | 键：白/零 UV = 顶点数；派生法线 = positions 与 indices 的**缓冲区指针 + revision** | **已完成（2026-09-13）** |
