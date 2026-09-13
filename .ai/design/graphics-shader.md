@@ -138,3 +138,82 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 7. **绑定契约自描述**：用户 Program 声明所需顶点属性（loc0=position 固定）与 uniform/纹理槽；
    后端按 `ShaderSet.attributeBindings/descriptorBindings` 自描述绑定数组与参数，SDK 不复制契约文档。
 8. **默认不变**：`program()==nullptr` → 内置（ShaderPreset / vendored SPIR-V），零回归。
+
+## 11. 后端无关着色 ABI：L1/L2/L3（2026-09-13 设计）
+
+> 动机：`ShaderProgram` 统一之后，**换后端（vsg → DX/GL）应只换/生成 shader 文本**，ABI 与着色语义不改。
+> 这要求把"角色/块/槽"与"别名的具体编号"分开。P0.A（内建前向着色归 SDK）已落地，见
+> `vsg-custom-shader.md` §11.7。
+
+### 11.1 能复用 / 不能复用
+
+| 层 | 归属 | 换后端复用? |
+| --- | --- | --- |
+| 着色语义（GLSL/HLSL 文本里的**算法**） | **SDK** | ✅ 语义照搬，文本换方言 |
+| ABI 契约（属性角色、数据块、参数、槽） | **SDK** | ✅ 契约照搬 |
+| 编译（SPIR-V / DXIL） | 后端 | ❌ |
+| 绑定编号（set·binding / register·space）、管线/PSO、root signature | 后端 | ❌ |
+| 渲染图 / pass / MRT / 深度策略 / 资源绑定 | 后端 | ❌ |
+
+**铁律**：产品 shader 文本里**不出现** `set=` / `binding=` / `register` / `vsg_*`。那些属于每后端的 L2 shim。
+
+### 11.2 三层
+
+| 层 | 内容 | 位置 |
+| --- | --- | --- |
+| **L1 语义 ABI** | 属性角色表、数据块（`VineFrame`/`VineDraw`/`Material`/`Lights`）、参数表、命名槽 | SDK（本文档 + `ShaderAbi.hpp`） |
+| **L2 现实化** | 角色 → 该 API 的绑定/语义；块 → push/cbuffer/root constants；块布局 packing 规则；矩阵序、Y 方向、深度约定 | 每后端一份薄 shim（vsg / DX / GL） |
+| **L3 着色体** | 同一份算法，GLSL 或 HLSL（写两份或从单源生成） | SDK（`src/viz/graphics/shaders/`）+ 用户 Program |
+
+### 11.3 L1 契约（当前值 = 既有事实，暂不改编号）
+
+**属性角色 → shader location**（`ShaderAbi.hpp`；`vsg_*` 只是 vsg 侧的绑定别名）：
+
+| 角色 | location | 说明 |
+| --- | --- | --- |
+| Position | 0 | 唯一必需 |
+| Normal | 1 | 着色必需（可派生） |
+| Color | 2 | 可选（门控） |
+| TexCoord0 | 8 | 可选（门控）；8 是保留槽，避开自定义通道 |
+| 自定义通道 | = 其**源 location**（>= 3，≠ 8） | 调用者给的通道直接复用为 shader location |
+
+**数据块（语义，机制由后端定）**：per-view `VineFrame`（view/inv_view/proj/view_proj/cam_pos/frame）；per-draw `VineDraw`（model + 参数表）；`Material`；`Lights`。**布局规则：全部 16 字节对齐、成员为 `mat4`/`vec4`** —— 这样 std140 与 D3D cbuffer packing 同时成立（`vec3` 紧跟 `float` 是唯一要避免的坑）。现有 `LightPushBlock`(128B)/`VineLightsBlock`(112B)/`MaterialBlock` 已满足。
+
+**参数表 / 槽表**：Program 声明类型化参数与消费的命名产出槽（`in_SceneColor`…）；布局由后端推导，用户不碰字节。
+
+### 11.4 L2 对照（同一 L1，三种现实化）
+
+| L1 | vsg (Vulkan) | D3D12 | D3D11 / GL |
+| --- | --- | --- | --- |
+| 属性 location | `addAttributeBinding(name, define, location, …)` + `assignArray` 编号 | InputLayout + HLSL 语义（`POSITION`/`NORMAL`/`COLOR`/`TEXCOORD0`） | 同 D3D12 / `glVertexAttribPointer` |
+| 数据块 | push constant / UBO（`VineLightsBlock` 走 s0b2 即此） | root constants / root CBV / cbuffer | cbuffer / uniform |
+| 采样槽 | `layout(set,binding)` | `register(tN, spaceN)` | `register(tN)` / 纹理单元 |
+| 编译 | glslang → SPIR-V | DXC → DXIL | FXC→DXBC / GLSL |
+| 管线 | `ShaderSet` + `GraphicsPipelineConfigurator` | PSO + root signature | PSO / GL program |
+| 管线变体 | `ShaderSet` 的 define 变体 | 多份 PSO / 动态状态 | 多 program / `#define` |
+
+### 11.5 现状差距（诚实）
+
+- 已一致：属性 location 表（隐式）、块布局（vec16 对齐）。
+- **未做**：SDK shader 文本仍用 `layout(set=…, binding=…)` 与 push `pc`、`MaterialBlock`/`LightsBlock`（vsg 形状）；
+  `ShaderProgram` 只有 stages，**没有参数表/槽声明**（`addParam`/`addTextureSlot` 不存在）。
+- 因此今天换 DX **还不能**"只换文本"：要先把 L1 显式化、把编号从产品 shader 里拿掉。
+
+### 11.6 分期（每步保持两条证据基线 + lavapipe 绿）
+
+| 步 | 内容 | 风险 |
+| --- | --- | --- |
+| **B1（本次）** | SDK 显式属性 location 表 `ShaderAbi.hpp`；vsg 后端用它替代字面量；测试钉住 L1 value ↔ shader 文本 | 低（行为中性） |
+| B2 | `ShaderProgram` 参数表 + 命名槽声明；后端绑成 UBO/sampler | 中 |
+| B3 | `VineFrame`/`VineDraw` 声明式块（替换 `pc` + 块绑定）；先定"per-draw model 走 UBO vs vsg push 作内部优化"的口径 | 高（动 ABI/预算） |
+| B4（可选） | 第二个后端（DX/GL）验证"只换文本 + L2 shim" | 视需求 |
+
+### 11.7 B1：SDK 显式属性 location 表（2026-09-13 落地）
+
+- `sdk/vine/graphics/ShaderAbi.hpp`：`enum class VertexAttribute { Position, Normal, Color, TexCoord0 }` +
+  `constexpr std::uint32_t attributeLocation(VertexAttribute)`（值 = 11.3 表）。
+- vsg 侧 `buildVineShaderSet` / `assembleProgramShaderSet` 的 `addAttributeBinding(..., location, ...)`
+  改用 `attributeLocation(...)`，字面量 0/1/2/8 从后端消失。
+- 测试：`test_graphics` 钉 `attributeLocation` 的值，且内置前向着色的嵌入文本确实以这些 location 声明
+  （L1 ↔ L3 一致性；改表不改文本会红）。
+- 判据：行为中性 —— 两条证据基线 47 行不变；`vine_shader_check` PASS；相关单测 +1；lavapipe PASS。

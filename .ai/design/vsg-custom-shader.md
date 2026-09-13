@@ -356,6 +356,9 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | set0 / binding2 | `vine_lights`（`VineLightsBlock`，112 B） | **pass 的槽**，每视图一次 |
 | push 0..128 | `{ mat4 projection; mat4 modelView; }` | vsg 矩阵栈（每 drawable） |
 
+> **属性 location 现由 SDK 定义**（`ShaderAbi.hpp` 的 `attributeLocation`，0/1/2/8；契约见
+> `graphics-shader.md` §11）：本节表格是 vsg 后端把角色映射成绑定别名的落点。
+
 - 光照在**视图空间**做（与延迟路径同一约定），所以前向 shader 不需要 world 矩阵，
   **每 drawable 的唯一数据仍是 vsg 自动推的 modelView** ⇒ §4.4 的 dynamic UBO 不是 P0 的前置条件。
 - 光的打包复用延迟路径那份实现（`collectViewSpaceLights`，`fillLightPushBlock` /

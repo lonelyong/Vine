@@ -175,6 +175,10 @@ graph TB
 
 注意最后一行与第三行的对照：**数组下标与 shader location 是两回事**（UV 的 binding 是 2 而 location 是 8）。
 
+> **模块契约的 location 值（内建前向与自定义 program 共用 0/1/2/8）现由 SDK `vine/graphics/ShaderAbi.hpp`
+> 定义**（`attributeLocation(VertexAttribute)`；契约见 `.ai/design/graphics-shader.md` §11）。后端只把角色
+> 映射成 vsg 的绑定别名（`vsg_Vertex` 等），编号不再由后端硬编码（2026-09-13，P0.B1）。
+
 其余规则：
 
 - **数组下标由 `SceneBridgeGeometry.cpp` 的 `arrays` 列表顺序决定**（位置 → 法线 → texcoords → 颜色 → 自定义通道按 location 升序），

@@ -1,4 +1,10 @@
-﻿> 2026-09-13 **P0.A：内建前向着色归 SDK（行为中性）**：`vine_forward.{vert,frag}` 从 `gfx_backend_vsg/shaders/` 搬到
+﻿> 2026-09-13 **P0.B1：SDK 显式属性 location 表**：新增 `sdk/vine/graphics/ShaderAbi.hpp`（`VertexAttribute{Position,Normal,Color,TexCoord0}`
+> + `attributeLocation()`，值 **0/1/2/8**）；vsg 的 `buildVineShaderSet` / `assembleProgramShaderSet` 用它替代字面量。
+> 契约与 DX 映射写在 `.ai/design/graphics-shader.md` §11（L1/L2/L3 + B1..B4 分期）。
+> 口径：两条证据基线 47 行不变；test_graphics 235→**236**（+1：表值 ↔ shader 文本声明的 location 一致）；lavapipe PASS。
+> 下一步 B2：`ShaderProgram` 参数表 + 命名槽声明。
+
+> 2026-09-13 **P0.A：内建前向着色归 SDK（行为中性）**：`vine_forward.{vert,frag}` 从 `gfx_backend_vsg/shaders/` 搬到
 > `src/viz/graphics/shaders/`，清单随之移动（嵌入数 graphics 3→5、vsg 4→2）。新增 SDK `BuiltinShaders.hpp/.cpp`：
 > `builtinProgram(ShaderPreset)`（preset→内建 program，未实现返回 null）+ `gbufferGeometryProgram`/`deferredLightProgram`
 > （从 `RenderPipelineBuilder` 搬来，builder 的两个静态工厂改转发，公开 API 不变）。

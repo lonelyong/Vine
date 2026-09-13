@@ -16,6 +16,7 @@
 #include <vsg/utils/ShaderSet.h>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Node.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/RenderStateMapper.hpp>
 #include <vine/vsg/SceneBridgeInternals.hpp>
@@ -186,27 +187,32 @@ namespace
         return ::vsg::ref_ptr<::vsg::ShaderSet>();
     }
 
+    // The canonical shader LOCATIONS are the SDK's ABI (ShaderAbi.hpp); the vsg_*
+    // names are only this backend's binding aliases.
+    using vine::graphics::attributeLocation;
+    using vine::graphics::VertexAttribute;
+
     auto shader_set = ::vsg::ShaderSet::create(stages);
-    shader_set->addAttributeBinding("vsg_Vertex", "", 0, VK_FORMAT_R32G32B32_SFLOAT,
-                                    ::vsg::vec3Array::create(1));
+    shader_set->addAttributeBinding("vsg_Vertex", "", attributeLocation(VertexAttribute::Position),
+                                    VK_FORMAT_R32G32B32_SFLOAT, ::vsg::vec3Array::create(1));
     // Normal / texcoord / colour carry the same SHADER LOCATIONS our built-in
-    // contract uses (0 / 1 / 8 / 2). 8 is the module's reserved texcoord slot:
-    // it is deliberately not vsg's own number (vsg's Phong set declares
-    // vsg_TexCoord0 at 2 and vsg_Color at 6), because a forwarded custom channel
-    // reuses its SOURCE location as its shader location, so adopting vsg's
-    // crowded 2..11 range would let a custom channel collide with a canonical
-    // one (a custom channel at 6 would clash with vsg_Color).
+    // contract uses (ShaderAbi.hpp). 8 is the reserved texcoord slot: it is
+    // deliberately not vsg's own number (vsg's Phong set declares vsg_TexCoord0
+    // at 2 and vsg_Color at 6), because a forwarded custom channel reuses its
+    // SOURCE location as its shader location, so adopting vsg's crowded 2..11
+    // range would let a custom channel collide with a canonical one (a custom
+    // channel at 6 would clash with vsg_Color).
     //
     // What the two sets MUST agree on is the BINDING ORDER, not the locations:
     // vsg numbers a vertex input binding by the order assignArray() succeeds, so
     // a name either set does not declare would be skipped and shift every later
     // binding (see the canonical order in buildGeometryData).
-    shader_set->addAttributeBinding("vsg_Normal", "", 1, VK_FORMAT_R32G32B32_SFLOAT,
-                                    ::vsg::vec3Array::create(1));
-    shader_set->addAttributeBinding("vsg_TexCoord0", "", 8, VK_FORMAT_R32G32_SFLOAT,
-                                    ::vsg::vec2Array::create(1));
-    shader_set->addAttributeBinding("vsg_Color", "", 2, VK_FORMAT_R32G32B32A32_SFLOAT,
-                                    ::vsg::vec4Array::create(1));
+    shader_set->addAttributeBinding("vsg_Normal", "", attributeLocation(VertexAttribute::Normal),
+                                    VK_FORMAT_R32G32B32_SFLOAT, ::vsg::vec3Array::create(1));
+    shader_set->addAttributeBinding("vsg_TexCoord0", "", attributeLocation(VertexAttribute::TexCoord0),
+                                    VK_FORMAT_R32G32_SFLOAT, ::vsg::vec2Array::create(1));
+    shader_set->addAttributeBinding("vsg_Color", "", attributeLocation(VertexAttribute::Color),
+                                    VK_FORMAT_R32G32B32A32_SFLOAT, ::vsg::vec4Array::create(1));
     // Custom vertex channels: one vine_Attribute{location} binding per
     // forwarded channel, whose format follows its components. The channel set
     // is part of the ShaderSet cache key (getProgramShaderSet), so each

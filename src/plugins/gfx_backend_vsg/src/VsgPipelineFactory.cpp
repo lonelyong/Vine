@@ -64,6 +64,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/CameraBridge.hpp>
 #include <vine/vsg/EmbeddedShaders.hpp>
@@ -208,23 +209,27 @@ const ::vsg::ShaderStages& compiledStages(vine::graphics::ShaderPreset preset)
         return {};
     }
 
+    // The canonical shader LOCATIONS are the SDK's ABI (ShaderAbi.hpp), not a
+    // backend choice; the vsg_* names are only this backend's binding aliases.
+    using vine::graphics::attributeLocation;
+    using vine::graphics::VertexAttribute;
+
     auto shader_set = ::vsg::ShaderSet::create(stages);
     // Attributes: the canonical four, in the BINDING ORDER the data node binds
-    // them (positions, normals, texcoords, colours), with the custom-program
-    // LOCATIONS (colour 2, texcoord 8) rather than vsg's own numbering.
-    shader_set->addAttributeBinding("vsg_Vertex", "", 0, VK_FORMAT_R32G32B32_SFLOAT,
-                                    ::vsg::vec3Array::create(1));
-    shader_set->addAttributeBinding("vsg_Normal", "", 1, VK_FORMAT_R32G32B32_SFLOAT,
-                                    ::vsg::vec3Array::create(1));
+    // them (positions, normals, texcoords, colours).
+    shader_set->addAttributeBinding("vsg_Vertex", "", attributeLocation(VertexAttribute::Position),
+                                    VK_FORMAT_R32G32B32_SFLOAT, ::vsg::vec3Array::create(1));
+    shader_set->addAttributeBinding("vsg_Normal", "", attributeLocation(VertexAttribute::Normal),
+                                    VK_FORMAT_R32G32B32_SFLOAT, ::vsg::vec3Array::create(1));
     // The two optional attributes carry the define that gates them in the GLSL:
     // assigning an array enables the define (vsg's assignArray does that), which
     // selects the compiled variant that declares the attribute. Geometry without
     // an authored colour therefore draws the variant without vsg_Color instead of
     // being padded with a white carrier.
-    shader_set->addAttributeBinding("vsg_TexCoord0", "VINE_DIFFUSE_MAP", 8, VK_FORMAT_R32G32_SFLOAT,
-                                    ::vsg::vec2Array::create(1));
-    shader_set->addAttributeBinding("vsg_Color", "VINE_VERTEX_COLOR", 2, VK_FORMAT_R32G32B32A32_SFLOAT,
-                                    ::vsg::vec4Array::create(1));
+    shader_set->addAttributeBinding("vsg_TexCoord0", "VINE_DIFFUSE_MAP", attributeLocation(VertexAttribute::TexCoord0),
+                                    VK_FORMAT_R32G32_SFLOAT, ::vsg::vec2Array::create(1));
+    shader_set->addAttributeBinding("vsg_Color", "VINE_VERTEX_COLOR", attributeLocation(VertexAttribute::Color),
+                                    VK_FORMAT_R32G32B32A32_SFLOAT, ::vsg::vec4Array::create(1));
     // Material: the same vsg::PhongMaterialValue the built-in path binds, which
     // is why the material manager and the deferred G-buffer stage need no change.
     shader_set->addDescriptorBinding("material", "", 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,

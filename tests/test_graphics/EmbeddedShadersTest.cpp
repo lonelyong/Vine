@@ -24,10 +24,12 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/EmbeddedShaders.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <string_view>
@@ -145,6 +147,46 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramUsesTheEmbeddedSources)
     // its own fallback instead of receiving a wrong program.
     EXPECT_EQ(builtinProgram(ShaderPreset::Pbr), nullptr);
     EXPECT_EQ(builtinProgram(ShaderPreset::ShadowedPhong), nullptr);
+}
+
+/**
+ * @brief The "layout(location = N) in" text an attribute declaration starts with.
+ *
+ * @param location Shader location.
+ * @return The declaration prefix.
+ */
+std::string attributeLayout(std::uint32_t location)
+{
+    return "layout(location = " + std::to_string(location) + ") in";
+}
+
+/**
+ * @brief Reinterprets UTF-8 shader text as a searchable byte string.
+ *
+ * @param text Shader source.
+ * @return The same bytes as a std::string.
+ */
+std::string asByteString(std::u8string_view text)
+{
+    return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+}
+
+TEST(EmbeddedShadersTest, TheAbiLocationsMatchTheShaderText)
+{
+    // The attribute location table is the engine's ABI (ShaderAbi.hpp); the shader
+    // text must declare each role where the table says. A location changed in one
+    // place only is exactly the drift this pins.
+    EXPECT_EQ(attributeLocation(VertexAttribute::Position), 0u);
+    EXPECT_EQ(attributeLocation(VertexAttribute::Normal), 1u);
+    EXPECT_EQ(attributeLocation(VertexAttribute::Color), 2u);
+    EXPECT_EQ(attributeLocation(VertexAttribute::TexCoord0), 8u);
+
+    const std::string forward_vs = asByteString(kVineForwardVert);
+    for (const auto role : { VertexAttribute::Position, VertexAttribute::Normal, VertexAttribute::Color,
+                             VertexAttribute::TexCoord0 }) {
+        EXPECT_NE(forward_vs.find(attributeLayout(attributeLocation(role))), std::string::npos)
+            << "vertex attribute at location " << attributeLocation(role);
+    }
 }
 
 TEST(EmbeddedShadersTest, TheNamedConstantsAreInTheTable)

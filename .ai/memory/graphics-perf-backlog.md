@@ -197,4 +197,8 @@
   `BuiltinShaders`（`builtinProgram(ShaderPreset)` + 两个延迟 program 工厂，`RenderPipelineBuilder` 改转发）；后端
   `compiledStages(preset)` 编译 SDK program（每 preset 缓存）。SDK 拥有**着色文本**，后端拥有编译+ABI+管线。
   · 口径：两条证据基线 47 行不变；`vine_shader_check` PASS（7）；test_graphics 235、test_vsg 238；lavapipe PASS。
+- **P0.B1 SDK 显式属性 location 表（2026-09-13，行为中性）**：新增 `sdk/vine/graphics/ShaderAbi.hpp`
+  （`VertexAttribute{Position,Normal,Color,TexCoord0}` + `attributeLocation()`，值 0/1/2/8）；vsg 两个 set 装配
+  用它替代字面量。契约/分期（L1/L2/L3 + DX 映射 + B1..B4）见 `.ai/design/graphics-shader.md` §11。
+  · 口径：两条证据基线 47 行不变；test_graphics 235→**236**；lavapipe PASS。下一步 B2：`ShaderProgram` 参数表 + 命名槽声明。
 
