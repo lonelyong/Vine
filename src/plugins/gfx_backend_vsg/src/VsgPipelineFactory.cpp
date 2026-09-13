@@ -220,9 +220,14 @@ namespace
 
 bool vineForwardShaderEnabled()
 {
+    // Default ON since P0.3: our own forward set is the shipped content shading,
+    // and the built-in vsg phong set is reached only for presets without Vine
+    // stages (see buildVineShaderSet). VINE_VSG_BUILTIN=1 forces the built-in set
+    // for the whole session, which is what the built-in evidence baseline is
+    // measured against (.ai/design/vsg-custom-shader.md §11).
     // Read once: the answer is a session decision (it selects which sets get
     // built at initialize), not something to re-check per frame.
-    static const bool enabled = std::getenv("VINE_VSG_FORWARD") != nullptr;
+    static const bool enabled = std::getenv("VINE_VSG_BUILTIN") == nullptr;
     return enabled;
 }
 

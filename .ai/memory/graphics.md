@@ -1,4 +1,13 @@
-﻿> 2026-09-13 **P0.2：自写前向着色接线（`VINE_VSG_FORWARD=1`）**：`makeContentShaderSet` 做唯一入口（窗口三档深度 + 每个离屏目标都走它），
+﻿> 2026-09-13 **P0.3 默认转正：自写前向着色成为 shipped 默认**：`vineForwardShaderEnabled()` 改返回 `getenv("VINE_VSG_BUILTIN") == nullptr`
+> ⇒ 默认走自写 set，`VINE_VSG_BUILTIN=1` 退回内建（无 Vine stages 的 preset 仍自动回退）。自检 variant 探针的
+> `'built-in Phong + …'` 改名 `'default shading + …'`（它跑的是内容 set，不是固定路径）。
+> **两条证据基线语义对调 + 重命名**：`scripts/vsg_selftest_evidence.txt` = 默认（自写 set，centre 34,6,2）；
+> `scripts/vsg_selftest_builtin_evidence.txt` = 内建退回（centre 46,8,3）。`vsg_selftest_evidence.sh [--builtin]`；
+> lavapipe 3c 跑默认、3d 跑内建并把两条基线都比一遍。两基线差异仍只有 **6 个着色数字**（覆盖/深度/清屏/诊断计数全同）。
+> 口径：build 0 error 0 warning；test_vsg **235**、test_graphics **234**；两条证据基线 PASS；lavapipe 整体 PASS（test_cppstd/test_runtime/test_system 为环境相关旧红，与本次无关）。
+> 未完：去掉 vsg `Light`/VDS 的 content 用法（`view->features` 收敛）；无作者色/UV 时不喂白载体/零 UV。
+
+> 2026-09-13 **P0.2：自写前向着色接线（`VINE_VSG_FORWARD=1`）**：`makeContentShaderSet` 做唯一入口（窗口三档深度 + 每个离屏目标都走它），
 > 槽级 `ContentSlot::lights_data`（112B）+ `SceneBridge::setLightsData` 注入 + 每帧 `fillVineLightsBlock`+`dirty()`，`buildStateGroup` 里
 > “有块 **且** set 声明了 `vine_lights`”才挂描述符 ⇒ 内建/自定义 program 路径零影响（默认 47 行基线逐字节不变）。
 > **两个证据基线**：`vsg_selftest_evidence.sh [--forward]`；两者差异只有 **6 个着色数字**（46,8,3→34,6,2 等），覆盖数/深度/清屏/诊断计数全同

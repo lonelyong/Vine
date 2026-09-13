@@ -186,5 +186,9 @@
   · lavapipe 新阶段 3d/4 跑 forward 自检（0 VUID + 无 `[selftest] FAIL` + 证据比自己的基线）；帧数由证据脚本统一（15 帧跑 vs 30 帧基线会假红）。
   · mutation 两条：跳过每帧光块 ⇒ forward 基线红（画面变黑）；开关默认改 true ⇒ 内建基线红。
   · 口径：test_vsg 233 → **235**（+2：`makeContentShaderSet` 对全部 preset/深度/色彩数永不为空；开关关闭时拿到内建 set）；lavapipe 整体 PASS。
-  · 未做（P0.3）：默认转正 + 去掉 vsg Light/VDS 的 content 用法；几何无作者色/UV 时不喂那两个数组（拿掉白载体、省一条绑定与一次采样）。
+  · 未做（P0.3 剩余）：去掉 vsg Light/VDS 的 content 用法；几何无作者色/UV 时不喂那两个数组（拿掉白载体、省一条绑定与一次采样）。
+- **P0.3 默认转正（2026-09-13）**：`vineForwardShaderEnabled()` 默认返回 true，`VINE_VSG_BUILTIN=1` 退回内建。
+  · 自检 `variant 'built-in Phong + …'` → `'default shading + …'`；基线文件语义对调 + 重命名：`vsg_selftest_evidence.txt` = 默认（自写 set），`vsg_selftest_builtin_evidence.txt` = 内建。
+  · 脚本：`vsg_selftest_evidence.sh [--builtin]`；lavapipe 3c 跑默认、3d 跑内建 + 两条基线各比一遍。
+  · 口径：build 0 error/0 warning；test_vsg 235、test_graphics 234；两条证据基线 PASS；lavapipe 整体 PASS。
 

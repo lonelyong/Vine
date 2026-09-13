@@ -113,7 +113,7 @@ mat4  shadow_matrix;   // 仅 castShadow 有效
   先复刻当前 phong 光照（ambient+方向光）使画面与现有输出一致（主视图/PiP 对照 A/B）。
   - **P0.1 shader + set（2026-09-13 已落地，见 §11）**：`vine_forward.*` + ABI + 门禁；默认路径未接线。
   - **P0.2 接线（2026-09-13 已落地，见 §11.2/§11.3）**：槽级 lights UBO + 描述符集、`makeContentShaderSet` 单一入口、`VINE_VSG_FORWARD` 开关、forward 独立证据基线 + lavapipe 阶段 3d/4。
-  - **P0.3 转正**：默认走自写 set，去掉 vsg `Light`/VDS 的 content 用法（`view->features` 收敛）。
+  - **P0.3 转正（2026-09-13，见 §11.5）**：默认走自写 set（`VINE_VSG_BUILTIN=1` 退回内建）、自检相位改名、两条基线重生成；**未完**：去掉 vsg `Light`/VDS 的 content 用法（`view->features` 收敛）、无作者色/UV 时不喂白载体/零 UV。
 - **P1 自写阴影**：绑定我们自己的 depth RT + `shadow_map` 采样，替换 vsg 内建。
 - **P2**：材质 dynamic 化 / 多光 / overlay 迁移（overlay 可暂留 vsg phong 作内部特例）。
 - 每阶段 GraphicsTest 不依赖后端，保持不变；用 lavapipe 截图 A/B + 真机 validation 验证。
@@ -365,7 +365,7 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 
 | 环节 | 落点 |
 | --- | --- |
-| 开关 | `detail::vineForwardShaderEnabled()`：`VINE_VSG_FORWARD` 存在即开，**进程内只读一次**（这是会话级决策，不是每帧问题） |
+| 开关 | `detail::vineForwardShaderEnabled()`：P0.2 用 `VINE_VSG_FORWARD` 存在即开；**P0.3 起默认开**，`VINE_VSG_BUILTIN` 存在即退回内建。**进程内只读一次**（这是会话级决策，不是每帧问题） |
 | 选 set | `detail::makeContentShaderSet(preset, extent, depth_test, depth_write, color_count)`：开关开且该 preset 有 Vine stages 就用我们的 set，否则回内建；**所有** content set（窗口三档深度 + 各离屏目标）都走这一个入口，避免“一半换成新 shader” |
 | 槽级光块 | `ContentSlot::lights_data`（`ubyteArray(sizeof(VineLightsBlock))`），`setupContentSlot` 建、注入桥（`SceneBridge::setLightsData`，照 `setTextureCache` 的样子） |
 | 每帧填 | `renderContentSlot`：`fillVineLightsBlock(request.camera, *request.lights, block)` + memcpy + `dirty()`（方向是视图空间的，相机一动就得刷；112 B/槽/帧） |
@@ -377,8 +377,8 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 
 | 门禁 | 覆盖 |
 | --- | --- |
-| `vsg_selftest_evidence.sh --forward` | 用 `VINE_VSG_FORWARD=1` 跑同一份自检，与**独立基线** `scripts/vsg_selftest_forward_evidence.txt` 逐字节比对。两条基线的差异**只有 6 个着色数字**（如 centre 46,8,3 → 34,6,2；共享深度相位 5,41,10 → 4,31,8），**覆盖数、深度值、清屏色、诊断计数一律相同** ⇒ 证明“同一份几何、换了一套着色”，而不是“画错了/少画了” |
-| `gfx_lavapipe_check.sh` 新阶段 3d/4 | 跑 `VINE_VSG_FORWARD=1` 的自检：0 VUID、无 `[selftest] FAIL`、证据与 forward 基线一致（帧数由证据脚本统一，避免“15 帧跑 vs 30 帧基线”的假红） |
+| `vsg_selftest_evidence.sh` | 跑同一份自检。**默认模式 = 自写前向 set**，比 `scripts/vsg_selftest_evidence.txt`；`--builtin` 用 `VINE_VSG_BUILTIN=1` 跑内建 set，比 `scripts/vsg_selftest_builtin_evidence.txt`。两条基线的差异**只有 6 个着色数字**（如 centre 34,6,2 vs 46,8,3；共享深度相位 4,31,8 vs 5,41,10），**覆盖数、深度值、清屏色、诊断计数一律相同** ⇒ 证明“同一份几何、换了一套着色”，而不是“画错了/少画了” |
+| `gfx_lavapipe_check.sh` 阶段 3c/3d | 3c 跑默认（自写 set）自检：0 VUID、无 `[selftest] FAIL`、并报告像素；3d 跑 `VINE_VSG_BUILTIN=1` 的内建自检，再把**两条**证据基线逐字节各比一遍（帧数由证据脚本统一，避免“15 帧跑 vs 30 帧基线”的假红） |
 | mutation | ① 跳过每帧光块填充 ⇒ forward 基线红（画面变黑）；② 开关默认改 `true` ⇒ 内建基线红 |
 | 单测 | `ForwardShaderSetTest` +2：`makeContentShaderSet` 对**四个 preset × 深度组合 × 色彩数**永不为空（没有任何一个 pass 会没管线）；开关关闭时 content set 是内建 set（其布局里没有 `vine_lights`） |
 | 口径 | 两边 47 行都不丢相位；test_vsg 233 → **235**；ninja 0 error 0 warning；lavapipe 整体 PASS |
@@ -387,11 +387,11 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 
 | 项 | 说明 |
 | --- | --- |
-| 转正（P0.3） | 默认改走自写 set：要先定“画面差异可接受”的口径（当前 34,6,2 vs 46,8,3 是光照公式差异，不是 bug），然后去掉 vsg `Light`/VDS 在 content 上的用法（`view->features` 收敛） |
+| 转正（P0.3） | **默认已改走自写 set（2026-09-13，见 §11.5）**，口径 = 两条基线的 6 个着色数字差异（光照公式差异，不是 bug）；**剩余**：去掉 vsg `Light`/VDS 在 content 上的用法（`view->features` 收敛） |
 | 顶点色/贴图门控的收益 | 现在仍照旧喂白载体与零 UV（两条路径的 define 都开着）；等 P0.3 后让 SceneBridge 在几何无作者色/UV 时**不喂**那两个数组，就自动得到不含该属性的变体（省一条绑定命令 + 一次采样） |
 | opacity | 现在 `outColor.a = material.diffuse.a`（顶点色只调制 rgb）；P10 再决定材质值 + dynamic offset 的承载方式 |
 | 阴影 / PBR / Flat | 仍走内建映射；§6 的 P1/P2 |
-| 自检相位命名 | 自检里那两条 `variant 'built-in Phong + …'` 的名字在 forward 模式下已名不副实（跑的是我们的 set）；改名字会让两条基线同时变，留到 P0.3 一起做 |
+| 自检相位命名 | **已做（P0.3）**：探针那两条改名 `variant 'default shading + …'`（它跑的是内容 set，不是某条固定路径），两条基线一起重生成 |
 
 
 
@@ -404,5 +404,20 @@ const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils
 | `tests/test_vsg/OverlayLightingTest.cpp` | +3 条：`fillVineLightsBlock` 与 push 块的光部分逐字段相同 / 无相机时全零 / 无光时种默认环境光 |
 | mutation | 四条各自咬住目标测试：改一个 stage 的 define 名（门控一致性红）、把 `vine_lights` 从 b2 挪到 b3（ABI 红）、把 depthWrite 写死 false（状态一致性红）、去掉默认环境光种（两条可见性测试红） |
 | 回归 | test_graphics 234、test_vsg 220 → **233**、test_core 82；selftest 证据 47 行逐字节相同（默认路径未接线）；lavapipe 0 VUID |
+
+
+### 11.5 P0.3 默认转正（2026-09-13）
+
+| 环节 | 落点 |
+| --- | --- |
+| 默认值 | `detail::vineForwardShaderEnabled()` 返回 `std::getenv("VINE_VSG_BUILTIN") == nullptr` ⇒ **自写 set 是 shipped 默认**；`VINE_VSG_BUILTIN=1` 退回内建（仍是进程内只读一次） |
+| 相位改名 | 自检 variant 探针的 `'built-in Phong + …'` → `'default shading + …'`（探针跑的是内容 set，不再是某条固定路径） |
+| 基线 | `scripts/vsg_selftest_evidence.txt` = **默认（自写 set）**；`scripts/vsg_selftest_builtin_evidence.txt` = 内建退回（原 `vsg_selftest_forward_evidence.txt` 与 `vsg_selftest_evidence.txt` 的语义对调 + 重命名）。两条都是 47 行，差异只有 6 个着色数字 |
+| 门禁 | `vsg_selftest_evidence.sh`（默认）/ `--builtin`；`gfx_lavapipe_check.sh` 阶段 3c 跑默认、3d 跑内建并把两条基线都比一遍 |
+| 单测 | `ForwardShaderSetTest.TheForwardSwitchIsOnByDefault`（原 `…IsOffByDefault`）：无 `VINE_VSG_BUILTIN` 时开关为真、content set 声明 `vine_lights` |
+
+口径：两条基线的差异仍只有 6 个着色数字（centre 34,6,2 vs 46,8,3；共享深度 4,31,8 vs 5,41,10；clear-flip/testonly/MRT 同源），覆盖数/深度/清屏/诊断计数全同 ⇒ 差异是**光照公式**差异，可接受。
+
+**未完（P0.3 剩余）**：去掉 vsg `Light`/VDS 在 content 上的用法（`view->features` 收敛）；无作者色/UV 时不喂白载体/零 UV（靠 define 变体省一条绑定与一次采样）。
 
 

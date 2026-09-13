@@ -22,15 +22,16 @@
 # Usage:
 #   scripts/vsg_selftest_evidence.sh [BUILD_DIR]   BUILD_DIR defaults to <root>/build
 #   scripts/vsg_selftest_evidence.sh --update      Rewrite the baseline from this build
-#   scripts/vsg_selftest_evidence.sh --forward     Check the CUSTOM forward shader path
-#                                                  (runs with VINE_VSG_FORWARD=1 against
-#                                                   vsg_selftest_forward_evidence.txt)
+#   scripts/vsg_selftest_evidence.sh --builtin     Check the BUILT-IN vsg phong path
+#                                                  (runs with VINE_VSG_BUILTIN=1 against
+#                                                   vsg_selftest_builtin_evidence.txt)
 #
-# Two baselines because the two paths legitimately draw different pictures: the
-# built-in vsg phong set and our own forward set shade differently (measured, see
+# Two baselines because the two paths legitimately draw different pictures: our
+# own forward set is the SHIPPED default since P0.3, and the built-in vsg phong
+# set is the opt-out fallback; they shade differently (measured, see
 # .ai/design/vsg-custom-shader.md §11), so one baseline cannot cover both — and
-# without the second one a change to the custom path (or to the wiring that feeds
-# it) would be invisible to this gate.
+# without the second one a change to the built-in fallback (or to the wiring that
+# feeds it) would be invisible to this gate.
 #
 # Exit code 0 when the evidence matches the baseline, 1 otherwise.
 
@@ -45,15 +46,15 @@ POSITIONAL=()
 for arg in "$@"; do
     case "$arg" in
         --update) UPDATE=1 ;;
-        --forward) MODE=forward ;;
+        --builtin) MODE=builtin ;;
         *) POSITIONAL+=("$arg") ;;
     esac
 done
 BUILD="${POSITIONAL[0]:-$ROOT/build}"
 
-if [ "$MODE" = forward ]; then
-    BASELINE="$SCRIPT_DIR/vsg_selftest_forward_evidence.txt"
-    export VINE_VSG_FORWARD=1
+if [ "$MODE" = builtin ]; then
+    BASELINE="$SCRIPT_DIR/vsg_selftest_builtin_evidence.txt"
+    export VINE_VSG_BUILTIN=1
 else
     BASELINE="$SCRIPT_DIR/vsg_selftest_evidence.txt"
 fi

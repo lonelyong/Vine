@@ -230,19 +230,19 @@ TEST(ForwardShaderSetTest, ContentSetsAreNeverUnshaded)
     }
 }
 
-TEST(ForwardShaderSetTest, TheForwardSwitchIsOffByDefault)
+TEST(ForwardShaderSetTest, TheForwardSwitchIsOnByDefault)
 {
-    // VINE_VSG_FORWARD is a session decision read once; with it unset (the case in
-    // this process, and in the shipped configuration) content must go through the
-    // built-in set, whose layout has no vine_lights binding at all. If this ever
-    // flips, the self-test evidence baseline changes with it — this test says the
-    // flip was not accidental.
-    ASSERT_EQ(std::getenv("VINE_VSG_FORWARD"), nullptr);
-    EXPECT_FALSE(vineForwardShaderEnabled());
+    // VINE_VSG_BUILTIN is a session decision read once; with it unset (the case in
+    // this process, and in the shipped configuration) content must go through our
+    // own forward set, whose layout declares the vine_lights binding. If this ever
+    // flips back, the self-test evidence baseline changes with it — this test says
+    // the flip was not accidental.
+    ASSERT_EQ(std::getenv("VINE_VSG_BUILTIN"), nullptr);
+    EXPECT_TRUE(vineForwardShaderEnabled());
     const auto set = makeContentShaderSet(vine::graphics::ShaderPreset::StandardPhong, VkExtent2D{ 640, 360 }, true, true, 1);
     ASSERT_NE(set, nullptr);
     // getDescriptorBinding reports "not declared" through its bool conversion.
-    EXPECT_FALSE(static_cast<bool>(set->getDescriptorBinding("vine_lights")));
+    EXPECT_TRUE(static_cast<bool>(set->getDescriptorBinding("vine_lights")));
 }
 
 }  // namespace

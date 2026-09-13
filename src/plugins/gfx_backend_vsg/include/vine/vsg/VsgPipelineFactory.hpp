@@ -208,10 +208,12 @@ static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-
 /**
  * @brief Whether scene content should be drawn with our own forward shader.
  *
- * Off by default: the built-in vsg phong path stays the shipped behaviour until
- * the custom path has passed the same end-to-end gates (see
- * .ai/design/vsg-custom-shader.md §11). `VINE_VSG_FORWARD=1` turns it on, the
- * same env-switch idiom the other temporary backend toggles use.
+ * On by default since P0.3: the custom forward set is the shipped content
+ * shading, and a preset without Vine stages still falls back to the built-in set
+ * (see buildVineShaderSet). `VINE_VSG_BUILTIN=1` forces the built-in vsg phong
+ * set for the whole session — the switch the built-in evidence baseline is
+ * measured with (see .ai/design/vsg-custom-shader.md §11), the same env-switch
+ * idiom the other temporary backend toggles use.
  *
  * @return true when the session should build its content sets from our stages.
  */

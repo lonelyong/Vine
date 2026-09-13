@@ -583,8 +583,8 @@ VINE_PIPELINE=forward_shadowed ./build/bin/Vine # 接受，但今天等同 forwa
 ./build/bin/test_core                # buffer、math、io
 
 bash scripts/gfx_lavapipe_check.sh    # 真帧 + lavapipe：期望 0 VUID / 0 validation error
-bash scripts/vsg_selftest_evidence.sh # 后端自检，与基线逐字节比对
-bash scripts/vsg_selftest_evidence.sh --forward  # 同一自检走自写前向着色（VINE_VSG_FORWARD=1），比自己的基线
+bash scripts/vsg_selftest_evidence.sh           # 后端自检，与基线逐字节比对（P0.3 起默认 = 自写前向着色）
+bash scripts/vsg_selftest_evidence.sh --builtin # 退回内建 vsg phong（VINE_VSG_BUILTIN=1），比内建基线
 bash scripts/vine_shader_check.sh     # 每个 shader × define 变体过 glslangValidator + 嵌入副本同步
 ctest --test-dir build                # CTest 视角
 ```

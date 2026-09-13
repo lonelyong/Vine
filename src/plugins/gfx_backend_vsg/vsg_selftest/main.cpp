@@ -2127,13 +2127,13 @@ bool runContentVariantProbe(vine::vsg::VsgRenderer& renderer, const CameraPtr& c
     struct Variant
     {
         const char* name;
-        int         program_kind;   // 0 = built-in Phong, 1 = loc3 attribute, 2 = constant colour
+        int         program_kind;   // 0 = the content shader set, 1 = loc3 attribute, 2 = constant colour
         bool        normals;
         bool        channel;
     };
     const Variant variants[] = {
-        { "built-in Phong + normals", 0, true, false },
-        { "built-in Phong + loc3 channel", 0, true, true },
+        { "default shading + normals", 0, true, false },
+        { "default shading + loc3 channel", 0, true, true },
         { "custom constant-colour program + normals", 2, true, false },
         { "custom constant-colour program + loc3 channel", 2, true, true },
         { "custom loc3-attribute program + normals + loc3 channel", 1, true, true },
