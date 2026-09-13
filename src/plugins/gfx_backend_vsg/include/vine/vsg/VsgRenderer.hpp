@@ -277,6 +277,8 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *
      * @param lights Lights of the content scene, or empty for the default.
      */
+    void setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::RenderTarget>>& inputs) override;
+
     void setLights(const std::vector<vine::raw_ptr<const vine::graphics::Light>>& lights) override;
 
     /** @brief Sets the clear color and depth-clear state. */

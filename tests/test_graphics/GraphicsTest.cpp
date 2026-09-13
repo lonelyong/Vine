@@ -1869,6 +1869,14 @@ class MockBackend : public RenderBackend {
         target_history.push_back(target);
     }
     std::vector<RenderTarget*> target_history;
+    void setPassInputs(const std::vector<vine::raw_ptr<RenderTarget>>& inputs) override
+    {
+        ++pass_input_sets;
+        last_pass_inputs.assign(inputs.begin(), inputs.end());
+    }
+    int                     pass_input_sets = 0;
+    std::vector<RenderTarget*> last_pass_inputs;
+
     void setLights(const std::vector<vine::raw_ptr<const Light>>& lights) override
     {
         ++light_sets;
@@ -3116,6 +3124,53 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
     pipeline->resize(1280, 720);
     EXPECT_EQ(gbuffer->width(), 1280);
     EXPECT_EQ(gbuffer->height(), 720);
+}
+
+/**
+ * @brief A pass' declared inputs reach the backend, resolved and in declaration order.
+ *
+ * This is the wire an effect reads what an earlier pass wrote through (a shadow map, a screen-space
+ * occlusion buffer): the pass states WHAT it reads and the engine hands the resolved targets to the
+ * backend, which binds them where its shader's ABI says. A pass that declares nothing announces an
+ * empty list rather than skipping the call, so a backend can never keep a stale one from the pass
+ * before.
+ */
+TEST(RenderPipelineBuilderTest, DeclaredPassInputsReachTheBackend)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize()) << "a frame runs nothing until the engine is initialized";
+
+    RenderPipelineBuilder builder(engine.get());
+    builder.setCamera(cam.get());
+    builder.setContent(content);
+    ASSERT_NE(builder.build(PipelineOptions{}), nullptr);
+
+    // The G-buffer of a deferred pipeline is a target a later pass can declare; here it stands in
+    // for any producer's output.
+    auto produced = intrusive_ptr<RenderTarget>(new RenderTarget());
+    produced->setName(u8"Produced");
+    produced->setSize(64, 64);
+    engine->publish(u8"Produced", produced);
+
+    auto consumer = intrusive_ptr<RenderPass>(new RenderPass());
+    consumer->setCamera(cam.get());
+    consumer->addInputName(u8"Produced");
+    consumer->addInputName(u8"NothingPublishesThis");
+    engine->addPass(consumer, 1);
+
+    engine->frame(0.016);
+
+    ASSERT_GE(backend->pass_input_sets, 1);
+    ASSERT_NE(backend->last_pass_inputs.size(), 0u) << "the last pass declared two inputs";
+    // Resolved in declaration order, null where nothing produced them: a pass learns what is
+    // missing from the same list it reads what is there.
+    ASSERT_EQ(backend->last_pass_inputs.size(), 2u);
+    EXPECT_EQ(backend->last_pass_inputs[0], produced.get());
+    EXPECT_EQ(backend->last_pass_inputs[1], nullptr);
 }
 
 TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)

@@ -127,6 +127,10 @@ struct VsgPassRequest
     /// slot's current/default lights (RenderBackend::clearLights() drops
     /// them), so an announcement and an empty announcement are equivalent.
     std::vector<const vine::graphics::Light*> lights;
+    // The pass' resolved input targets, in its declaration order (RenderBackend::setPassInputs).
+    // A content slot reads them when it builds/updates its state: the shadow map is an input, and
+    // the slot is what binds it (see VsgContentSlot).
+    std::vector<vine::raw_ptr<vine::graphics::RenderTarget>> inputs;
     /// Draw calls (render / drawScreen*) this request served (diagnostic).
     std::size_t draws = 0;
     /// The announced target was released while it was still announced

@@ -368,7 +368,15 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      *
      * @param pass Pass whose inputs to resolve.
      */
-    void resolvePassInputs(raw_ptr<RenderPass> pass);
+    /** @brief Resolves a pass' declared inputs for this frame and hands them to the pass.
+     *
+     * @param pass Pass whose declarations are resolved.
+     * @return The resolved targets, in the pass' declaration order (null where nothing
+     *         produced one). The caller announces them to the backend — the pass' inputs are
+     *         what an effect reads, and a backend binds them itself (see
+     *         RenderBackend::setPassInputs).
+     */
+    std::vector<raw_ptr<RenderTarget>> resolvePassInputs(raw_ptr<RenderPass> pass);
 
     /** @brief Reports the structural wiring problems the pass declarations themselves carry.
      *

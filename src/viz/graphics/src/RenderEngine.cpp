@@ -214,7 +214,9 @@ void RenderEngine::frame(double dt)
         // pass did not consume cannot leak into the next pass.
         backend_->beginPass(pass);
         backend_->setPassOrder(slot.order);
-        resolvePassInputs(pass);
+        // The pass' inputs are announced before it draws: they are a property of the pass, so
+        // every draw call in it sees the same list (and a pass that declared none announces none).
+        backend_->setPassInputs(resolvePassInputs(pass));
         drawScenePass(pass, content);
         // What it just drew into is produced for the rest of the frame: this is the fact, where a
         // promise is only the claim (a pass may promise a target it draws into — the normal case —
@@ -445,10 +447,10 @@ void RenderEngine::reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputI
                                    u8" (check the producer's order and its enabled state)"));
 }
 
-void RenderEngine::resolvePassInputs(raw_ptr<RenderPass> pass)
+std::vector<raw_ptr<RenderTarget>> RenderEngine::resolvePassInputs(raw_ptr<RenderPass> pass)
 {
     if (pass == nullptr) {
-        return;
+        return {};
     }
 
     // The object-typed declarations ARE the wiring; a name is the sugar over it (design §14.3). When
@@ -465,12 +467,12 @@ void RenderEngine::resolvePassInputs(raw_ptr<RenderPass> pass)
             resolved.push_back(target != nullptr ? resolveDeclaredTarget(pass, target.get()) : nullptr);
         }
         pass->resolveInputTextures(resolved);
-        return;
+        return resolved;
     }
 
     const auto& names = pass->inputNames();
     if (names.empty()) {
-        return;
+        return {};
     }
     std::vector<raw_ptr<RenderTarget>> resolved;
     resolved.reserve(names.size());
@@ -490,7 +492,7 @@ void RenderEngine::resolvePassInputs(raw_ptr<RenderPass> pass)
     if (any_resolved) {
         // Re-arm: if this pass loses its producer later, that is a new problem.
         unresolved_inputs_reported_.erase(pass);
-        return;
+        return resolved;
     }
     if (unresolved_inputs_reported_.insert(pass).second) {
         // The frontend has no printf-style helper of its own: the message is
@@ -502,6 +504,9 @@ void RenderEngine::resolvePassInputs(raw_ptr<RenderPass> pass)
                                 String(u8"' but no pass published it this frame; the pass draws nothing"
                                        u8" (check the producer's order, its enabled state and its output name)"));
     }
+    // The pass still gets the list it asked for (with the nulls in it): the caller announces it to
+    // the backend, and "nothing produced this input" is part of what the pass must be able to see.
+    return resolved;
 }
 
 RenderEngine::OutputIdentity RenderEngine::OutputIdentity::of(const ImageRef& image) noexcept

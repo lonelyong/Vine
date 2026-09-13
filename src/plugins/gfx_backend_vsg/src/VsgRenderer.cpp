@@ -497,6 +497,13 @@ void VsgRenderer::resetPassRequest()
     state.request = VsgPassRequest{};
 }
 
+void VsgRenderer::setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::RenderTarget>>& inputs)
+{
+    // Hold them for the drawing call that follows, like the lights: the slot binds them when it
+    // (re)builds its retained state (see VsgContentSlot::setupContentSlot / renderContentSlot).
+    state.request.inputs = inputs;
+}
+
 void VsgRenderer::setLights(const std::vector<vine::raw_ptr<const vine::graphics::Light>>& lights)
 {
     // Queue the lights for the next render() call (mirrors setViewport()): the

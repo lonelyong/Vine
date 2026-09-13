@@ -444,6 +444,32 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         (void)lights;
     }
 
+    /** @brief Sets the resolved input targets for the NEXT drawing call of this pass scope.
+     *
+     * The pass' declared inputs (RenderPass::addInput / addInputTarget / addInputName), resolved
+     * for THIS frame — null where nothing produced one — in the pass' declaration order. This is
+     * how an effect that reads what an earlier pass wrote reaches the shading: a shadow map, a
+     * screen-space occlusion buffer, a baked image. The pass states WHAT it reads and the backend
+     * binds each entry where its shader's ABI says it goes; the order is the pass' own.
+     *
+     * Called by the engine between beginPass() and the pass' execute(), after the declared inputs
+     * were resolved, so every draw call of that pass sees the same list (a pass is one draw of the
+     * scene, and its inputs are a property of the pass, not of one drawable).
+     *
+     * An input a backend cannot consume is not an error it may paper over: the pass declared it, so
+     * silently ignoring it means the picture differs from the one the pass asked for. A backend
+     * either binds it or reports (see the diagnostic sink).
+     *
+     * Default: nothing — a backend that consumes no pass inputs needs no code for them, and the
+     * engine's call is a no-op for it.
+     *
+     * @param inputs Resolved input targets, in the pass' declaration order.
+     */
+    virtual void setPassInputs(const std::vector<raw_ptr<RenderTarget>>& inputs)
+    {
+        (void)inputs;
+    }
+
     /** @brief Sets how the upcoming render()'s content handles the target's
      * current depth.
      *
