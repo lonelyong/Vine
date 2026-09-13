@@ -214,7 +214,7 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 | --- | --- | --- |
 | S2-1 | L1 阴影 ABI：`VineShadowBlock`（`ShaderAbi.hpp`）+ `RenderTarget::setProducerViewProjection()`（矩阵**只由产出者写一次**，消费者读） | `test_graphics` +1（size/align/offset）；证据不变 |
 | S2-2 | **pass 输入通道**：`resolvePassInputs()` 交回解析结果，引擎在 `beginPass()`/`execute()` 之间 `RenderBackend::setPassInputs()`（新虚函数，默认空） | `test_graphics` +1（声明两项 → 按序到达、未产出为 null） |
-| S2-3 | 延迟光照的**带阴影变体**：程序文本由 `deferred_light.frag` 的**两行标记**插出（不是 `#ifdef` —— 全屏 program 声明的绑定就是后端必须提供的），无阴影变体是"源去掉标记"，两者都不带脚手架 | `test_graphics` +1（标记 + binding **5/6**）；`vine_shader_check` 7 PASS |
+| S2-3 | 延迟光照的**带阴影变体**：程序文本由 `builtin_deferred_lighting.frag`（当时叫 `deferred_light.frag`，见 `.ai/design/vsg-custom-shader.md` 顶部命名规则）的**两行标记**插出（不是 `#ifdef` —— 全屏 program 声明的绑定就是后端必须提供的），无阴影变体是"源去掉标记"，两者都不带脚手架 | `test_graphics` +1（标记 + binding **5/6**）；`vine_shader_check` 7 PASS |
 | S2-4 | 后端绑定 + builder：`FullscreenShadowInput`（图 + 块）；**可填槽位成为集合**（源彩色 / 可采样源深度 / 阴影两槽），集合外声明在建任何东西之前就被拒；`PipelineStage::Depth` 的 depth-only 图；光照 pass 声明该图。矩阵 = `target->producerViewProjection() × camera->viewMatrix().inverted()`，**不重算光相机** | 证据逐字节不变（无投影光时一字不改）；`test_graphics` +1（输入按序到达） |
 | S2-5 | **光相机的唯一推导成为 SDK 公开静态**（`directionalShadowMatrix`）：pass 用它、target 记它、着色用它，**相位也必须用它**——复制一份就是"两份只在被改之前一致"的推导 | `test_graphics` +1（盒角全落在正交窗口内 + eye 在光源一侧；两次变异皆红） |
 | S2-6 | **像素门禁**：`vsg_selftest` 的新相位 `runDeferredShadowPixelPhase`（引擎驱动 builder 的 deferred 配方：阴影 pass → G-buffer → 光照 → 合成），读回 composite 的像素 | 证据 **53 → 54 行**（只有新行是新增的）；变异 4/4 全红 |
@@ -312,8 +312,8 @@ deferred 默认路径 —— 档位重排后 lavapipe 无 VUID/validation 错误
 
 | 步 | 内容 | 判据 |
 | --- | --- | --- |
-| **S2a（延迟）** ✅ | 全屏 program ABI 扩一条规则：**源自己的绑定之后**，接该 pass 声明的额外输入（纹理绑定）与 `VineShadowBlock`（UBO）；`deferred_light.frag` 加阴影项（**程序带标记插出的变体**，见下）。SSAO 将来走同一跳 | 新像素相位（墙在地面上的投影：影内的地面 (31,31,31) vs 阳光下 (196,196,196)）+ 无投影光时证据逐字节不变 → **证据 53 → 54 行**，`test_graphics` 250 → 255，lavapipe PASS（§8.2 有落地记录与它抓到的四个缺陷） |
-| **S2b（前向）** ✅ | 内容 set **永远声明** `shadow_map`(set 0/3) + `vine_shadow`(set 0/4)；槽从 pass 输入 target 解析图与块（关掉时绑白回退 + `params.x = 0`）；`std_forward.frag` 用**同一段**标记插出的项，`forwardProgram()` 与 `flatForwardProgram()` 从同一份文本派生 | 前向像素相位（同场景同采样点：影内 31 / 阳光下 196）→ **证据 54 → 55 行**；`test_graphics` 255 → 257、`test_vsg` 247 → 248；变异：删掉输入声明 ⇒ 影内 196（红）。决定与代价见 §8.3 |
+| **S2a（延迟）** ✅ | 全屏 program ABI 扩一条规则：**源自己的绑定之后**，接该 pass 声明的额外输入（纹理绑定）与 `VineShadowBlock`（UBO）；`builtin_deferred_lighting.frag`（当时叫 `deferred_light.frag`）加阴影项（**程序带标记插出的变体**，见下）。SSAO 将来走同一跳 | 新像素相位（墙在地面上的投影：影内的地面 (31,31,31) vs 阳光下 (196,196,196)）+ 无投影光时证据逐字节不变 → **证据 53 → 54 行**，`test_graphics` 250 → 255，lavapipe PASS（§8.2 有落地记录与它抓到的四个缺陷） |
+| **S2b（前向）** ✅ | 内容 set **永远声明** `shadow_map`(set 0/3) + `vine_shadow`(set 0/4)；槽从 pass 输入 target 解析图与块（关掉时绑白回退 + `params.x = 0`）；`builtin_forward.frag`（当时叫 `std_forward.frag`）用**同一段**标记插出的项，`forwardProgram()` 与 `flatForwardProgram()` 从同一份文本派生 | 前向像素相位（同场景同采样点：影内 31 / 阳光下 196）→ **证据 54 → 55 行**；`test_graphics` 255 → 257、`test_vsg` 247 → 248；变异：删掉输入声明 ⇒ 影内 196（红）。决定与代价见 §8.3 |
 
 **为什么先做延迟**（2026-09-13 修正：起初的判断反了）：**全屏 program 的 ShaderSet 是每个 pass 现建的**
 （`makeFullscreenProgramNode` 为这个程序建一套绑定，程序文本带 define 就能决定要不要声明阴影绑定），

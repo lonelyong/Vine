@@ -1,3 +1,16 @@
+> 2026-09-13 **shader 文件命名规则：目录里每个文件都是 `builtin_<角色>.<阶段>`**（本条覆盖此前两次取名）
+> - 现名：`src/viz/graphics/shaders/` 下 `builtin_forward.{vert,frag}`（原 `std_forward.*`，更早 `vine_forward.*`）、
+>   `builtin_gbuffer.{vert,frag}`（原 `gbuffer_geometry.*`）、`builtin_deferred_lighting.frag`（原 `deferred_light.frag`）、
+>   `builtin_skybox.{vert,frag}`、`builtin_screen_copy.frag`、`builtin_fullscreen.vert`。
+> - 规则：`builtin_` 划分归属（引擎文本 vs 宿主 shader）；角色是**渲染器**的词，不重复阶段或目标（`gbuffer` 不必写 `_geometry`）
+>   且不带产品名或 C++ 的词（`std_forward` 读起来是 `std::forward`，弃用）；常量按文件名推导
+>   （`kBuiltinForwardVert`）；**program 名 = 文件名去后缀**（`builtin_forward` / `builtin_gbuffer` / `builtin_deferred_lighting`，
+>   多 program 加后缀 `_flat` / `_shadowed` / `_<N>`）；**pass 名不带前缀**（`gbuffer` / `deferred_lighting`，
+>   因为 pass 画的是宿主可以替换的 program，见 `RenderPipelineBuilder` 的 `gbuffer_program` / `lighting_program`）。
+> - 门禁：`test_graphics::EmbeddedShadersTest.EveryShaderNameFollowsTheInventorysRule`（规则 + 反例都测）。
+> - 行为中性：证据基线 55 行逐字节不变，`vine_shader_check.sh` 9 shader PASS，test_graphics 258 → **259**。
+> - 历史章节沿用当时的名字。
+
 > 2026-09-13 **收尾：vsg 内建着色在后端与测试里都不再出现**
 > - **材质**：`VineMaterialBlock` 进 SDK（`ShaderAbi.hpp`，与 `VineViewBlock/DrawBlock` 并列，带 sizeof/offsetof assert），`VsgMaterialManager` 的 payload 从 `vsg::PhongMaterialValue` 换成 `vsg::ubyteArray(sizeof(VineMaterialBlock))`；两侧 ShaderSet 的 `material` 声明同步。以前靠“字段次序恰好一致”在工作。
 > - **光照**：删 `buildLightNode` / `setGroupLights` / `makeAmbientLight` / 槽的 `light_group`·`headlight_seed`·`vsg_lights` / `seedSlotLight` / `SceneBridge::hasOwnLightsBlock`。灯**只有一个来源**：每槽的 `vine_lights` block。丢灯报告改由 `fillVineLightsBlock` 的**返回值**驱动（它知道 block 装下了几盏：禁用 / 非 ambient·directional / 第二盏 ambient / 第 4 盏 directional 都算没装下）。

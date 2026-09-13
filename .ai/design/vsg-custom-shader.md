@@ -1,6 +1,24 @@
 # vsg 后端自定义着色器设计（自写 shading ABI）
 
 > 状态：设计稿 v1（2026-09-03）
+> **2026-09-13 shader 文件命名规则（本条覆盖此前所有取名）：** `src/viz/graphics/shaders/` 里每个文件都是
+> **`builtin_<角色>.<阶段>`** —— `builtin_forward.{vert,frag}`、`builtin_gbuffer.{vert,frag}`、
+> `builtin_deferred_lighting.frag`、`builtin_skybox.{vert,frag}`、`builtin_screen_copy.frag`、`builtin_fullscreen.vert`。
+> - `builtin_` 说明这段文本归**引擎**（宿主自己的 shader 不进这个目录，所以这个名字一眼能分辨归属）；角色用**渲染器**的词，
+>   不重复阶段或目标（`gbuffer` 不必再写 `_geometry`；`deferred_light` → **`deferred_lighting`**，因为延迟渲染里
+>   "a deferred light"指的是**灯**本身，这趟 pass 是**光照**）；不带产品名、也不带 C++ 的词
+>   （`vine_forward.*` / `std_forward.*` 都已弃用 —— 后者在 C++ 仓库里读起来就是 `std::forward`）。
+> - 生成常量仍由文件名推导（`builtin_forward.vert` → `kBuiltinForwardVert`）；**program 名 = 文件名去掉后缀**
+>   （`builtin_forward`、`builtin_gbuffer`、`builtin_deferred_lighting`），同一份文件出多个 program 时加后缀
+>   （`builtin_forward_flat`、`builtin_deferred_lighting_shadowed`、`builtin_screen_copy_<N>`）—— 报出 program 名的
+>   diagnostic 因此直接指出该去读哪个文件。
+> - **pass 名不带 `builtin_`**：默认管线的 `gbuffer` / `deferred_lighting`（`RenderPipelineBuilder`；后者原名
+>   `deferred_light`，demo 与测试里同名的那两处一并改）只用角色词，因为一个 pass 画的是宿主经
+>   `PipelineOptions::gbuffer_program` / `lighting_program` 给的 program，管它叫"内建"是假的。
+> - 新增门禁 `EmbeddedShadersTest::EveryShaderNameFollowsTheInventorysRule`（`test_graphics`）把规则钉住，
+>   并连"哪些名字会被拒"一起测（`std_forward.vert` / `vine_forward.frag` / `builtin_gbuffer_geometry.frag` /
+>   大写 / 缺后缀 / 双下划线）。
+> - 本文件其它章节是历史记录，沿用**当时**的名字：`vine_forward.*` →（同日稍早）`std_forward.*` →（本条）`builtin_forward.*`。
 > **2026-09-13 收尾（vsg 内建着色全部退出代码，本条最重要）：**
 > - **材质**：`VineMaterialBlock` 进 SDK（`ShaderAbi.hpp`），`VsgMaterialManager` 不再产出 `vsg::PhongMaterialValue`（改 `vsg::ubyteArray(sizeof(VineMaterialBlock))`）。
 > - **光照**：删 `setGroupLights` / `buildLightNode` / 槽的 `vsg_lights`，以及按 set 选灯源的 `SceneBridge::hasOwnLightsBlock()`。灯只有 `vine_lights` block 一个来源。
@@ -302,7 +320,9 @@ RecordTraversal 每个 drawable 绘制前自动填 → 自定义 program 路径�
 | 后缀即阶段：`.vert` / `.frag` / `.comp` / `.geom` / `.tesc` / `.tese` | 校验器据此判阶段，不需要额外清单 |
 | 每行 LF 结尾 | CR 会被读写两端各自归一化，嵌入文本就与文件不一致；生成器直接报错 |
 | 小 fixture（`app_shell` / `vsg_selftest` / 测试探针）保持内联 | 它们不是产品 shader，放进清单反而多一层间接 |
-| 常量名 = 文件名转大驼峰 + 阶段（`gbuffer_geometry.vert` → `kGbufferGeometryVert`） | 从文件名就能猜出常量名，拼错是编译错误而不是运行时回落 |
+| 文件名 = `builtin_<角色>.<阶段>`（角色用渲染器的词，不重复阶段或目标，不带产品名或 C++ 的词） | 见文件顶部 2026-09-13 命名规则：`builtin_` 划分归属，角色与默认管线的 pass 名同一个词 |
+| 常量名 = 文件名转大驼峰 + 阶段（`builtin_forward.vert` → `kBuiltinForwardVert`） | 从文件名就能猜出常量名，拼错是编译错误而不是运行时回落 |
+| program 名 = 文件名去后缀（同一份文件出多个 program 时加后缀） | diagnostic 里报出的 program 名直接指明该读哪个文件 |
 
 ### 10.2 嵌入机制（构建期，不拷资源）
 
@@ -331,10 +351,10 @@ RecordTraversal 每个 drawable 绘制前自动填 → 自定义 program 路径�
 
 ```cpp
 // SDK 侧（RenderPipelineBuilder.cpp）：ShaderStage::source 是 vine::String
-vs.source = String(shaders::kGbufferGeometryVert);
+vs.source = String(shaders::kBuiltinGbufferVert);
 
 // vsg 侧（VsgPipelineFactory.cpp）：vsg::ShaderStage::source 是 std::string
-const std::string source(asShaderSource(shaders::kFullscreenVert));  // VsgUtils.hpp
+const std::string source(asShaderSource(shaders::kBuiltinFullscreenVert));  // VsgUtils.hpp
 ```
 
 | 类型 | 值 | 转换 |

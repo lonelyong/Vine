@@ -246,7 +246,8 @@ void main()
 ## 7. GLSL 仓库化与编译
 
 > ⚠ 本节已被 `vsg-custom-shader.md` §10 取代（真文件 + 构建期嵌入，**不**提交 `.spv`；SDK 侧
-> 2026-09-13 起含内建前向着色 `std_forward.*`）。以下保留作历史记录。
+> 2026-09-13 起含内建前向着色 `builtin_forward.*`——同日先后叫过 `std_forward.*` / `vine_forward.*`，
+> 改名理由见 `.ai/design/vsg-custom-shader.md` 顶部 2026-09-13 命名规则）。以下保留作历史记录。
 
 - 源：`src/plugins/gfx_backend_vsg/shaders/*.vert|.frag`（仓库提交；**该目录已于 2026-09-13 删除** —— 全屏三角形 / 屏幕拷贝归 SDK，见 `vsg-custom-shader.md` §11.11）；
 - 产物：同目录 `*.spv`（提交）；生成 `VineShaders.cpp`（内嵌字节数组，方式同 vendored phong 的

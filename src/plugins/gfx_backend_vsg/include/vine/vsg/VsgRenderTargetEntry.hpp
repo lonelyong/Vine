@@ -191,6 +191,13 @@ struct ProgramSlot {
     ::vsg::ref_ptr<::vsg::Group>     dest_graph;
     ::vsg::ref_ptr<::vsg::Node>      node;       // the fullscreen program drawable
     ::vsg::ref_ptr<::vsg::Data>      push_data;  // per-frame push-constant bytes
+    // The shadow this slot's program shades: the map its descriptor was built for, and the
+    // VineShadowBlock bytes the node binds. A DIFFERENT map is a different descriptor (an image view
+    // cannot be re-pointed in place), so it is part of the rebuild identity; the block is rewritten
+    // EVERY frame, because it carries the step from this pass' view space into light clip and that
+    // step is a function of the live camera — see drawScreenProgram.
+    ::vsg::ref_ptr<::vsg::ImageView> shadow_view;
+    ::vsg::ref_ptr<::vsg::Data>      shadow_block;
     // The program the node was compiled from, HELD (not merely compared):
     // the address is the slot's identity, so a released program replaced at
     // the same address must not read as "unchanged" (the ownership rule

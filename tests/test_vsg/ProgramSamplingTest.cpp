@@ -21,8 +21,10 @@
 
 #include <vine/graphics/ShaderProgram.hpp>
 
+#include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 
+using vine::vsg::detail::programImportsDefine;
 using vine::vsg::detail::programSamplesDepth;
 
 namespace
@@ -89,4 +91,32 @@ TEST(ProgramSamplingTest, OnlyTheFragmentStageDecides)
 TEST(ProgramSamplingTest, NoProgramBindsNoDepth)
 {
     EXPECT_FALSE(programSamplesDepth(nullptr, /*color_count*/ 1));
+}
+
+TEST(ProgramDefineImportTest, ThePragmaListDecidesWhichDefinesAProgramAsksFor)
+{
+    // The backend only sets a define a source NAMES on its import line (vsg drops the rest silently), so
+    // "does this program opt into the texcoord-width sampler rule (and its kind guard)" is a question
+    // about this list - and a wrong answer would either skip the guard (an invalid descriptor) or apply
+    // it to a program that declares its own sampler (its picture replaced with a texture it never asked
+    // for).
+    const auto asks_cube = [](const char8_t* source) {
+        return programImportsDefine(makeProgram(vine::graphics::ShaderStageType::Vertex, source).get(),
+                                    "VINE_TEXCOORD_CUBE");
+    };
+
+    EXPECT_TRUE(asks_cube(u8"#version 450\n#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_CUBE)\nvoid main(){}\n"));
+    EXPECT_TRUE(asks_cube(u8"#version 450\n#pragma import_defines (VINE_TEXCOORD_CUBE)\nvoid main(){}\n"));
+    // A whole ENTRY has to match: a longer name containing the define is a different define.
+    EXPECT_FALSE(asks_cube(u8"#version 450\n#pragma import_defines (VINE_TEXCOORD_CUBE_EXTRA)\nvoid main(){}\n"));
+    EXPECT_FALSE(asks_cube(u8"#version 450\n#pragma import_defines (VINE_DIFFUSE_MAP)\nvoid main(){}\n"));
+    EXPECT_FALSE(asks_cube(u8"#version 450\nvoid main(){}\n"));
+
+    // Any stage counts (the pragma is per stage, and the backend looks at them all), and neither a null
+    // program nor an empty name matches anything.
+    const auto fragment = makeProgram(vine::graphics::ShaderStageType::Fragment,
+                                      u8"#version 450\n#pragma import_defines (VINE_DIFFUSE_MAP)\nvoid main(){}\n");
+    EXPECT_TRUE(programImportsDefine(fragment.get(), "VINE_DIFFUSE_MAP"));
+    EXPECT_FALSE(programImportsDefine(nullptr, "VINE_DIFFUSE_MAP"));
+    EXPECT_FALSE(programImportsDefine(fragment.get(), ""));
 }

@@ -310,7 +310,7 @@ composite->shareDepth(gbuffer);                  // 借深度
 // ④ 全屏延迟光照（带 program）：读 G-buffer 的全部彩色附件，写进 composite。
 auto light_program = RenderPipelineBuilder::defaultDeferredLightProgram();
 auto light = make_intrusive<ScreenPass>();
-light->setName(u8"deferred_light");
+light->setName(u8"deferred_lighting");
 light->setCamera(camera.get());                  // program 路径**必须**有相机
 light->setRenderTarget(composite);
 light->addInputName(u8"GBuffer");
@@ -341,7 +341,7 @@ engine.addPass(present, 2);
 | # | pass | renderTarget | order | 清屏 | 深度 | 输出 → 输入 |
 | --- | --- | --- | --- | --- | --- | --- |
 | ① | `gbuffer`（场景，program override） | `gbuffer`（MRT 4 色 + D24） | -3 | 是 | `TestAndWrite` | `GBuffer` |
-| ② | `deferred_light`（ScreenPass + program） | `composite` | 0 | 是 | 默认 | 读 `GBuffer`（整捆） |
+| ② | `deferred_lighting`（ScreenPass + program） | `composite` | 0 | 是 | 默认 | 读 `GBuffer`（整捆） |
 | ③ | `forward_transparent`（场景） | `composite`（借 gbuffer 深度） | 1 | **否** | `TestOnly` | `Composite` |
 | ④ | `present`（ScreenPass + `screenCopyProgram()`） | 无（窗口） | 2 | 否 | 默认 | 读 `Composite`（整捆） |
 
@@ -541,9 +541,20 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 | 内容 | 位置 |
 | --- | --- |
-| 内建前向着色（引擎默认内容程序，`forwardProgram()` / `flatForwardProgram()`） | `src/viz/graphics/shaders/std_forward.*` |
-| 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/`（真文件，构建期嵌入） |
-| 全屏三角形顶点段 / 纯拷贝（`fullscreenVertexProgram()` / `screenCopyProgram()`） | `src/viz/graphics/shaders/` |
+| 内建前向着色（引擎默认内容程序，`forwardProgram()` / `flatForwardProgram()`） | `src/viz/graphics/shaders/builtin_forward.*` |
+| 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/builtin_gbuffer.*` / `builtin_deferred_lighting.frag` |
+| 天空盒（`skyboxProgram()`，无光照 cube map 方向采样） | `src/viz/graphics/shaders/builtin_skybox.*` |
+| 全屏三角形顶点段 / 纯拷贝（`fullscreenVertexProgram()` / `screenCopyProgram()`） | `src/viz/graphics/shaders/builtin_fullscreen.vert` / `builtin_screen_copy.frag` |
+
+**命名规则**：`builtin_<角色>.<阶段>`，例如 `builtin_deferred_lighting.frag`。`builtin_` 前缀是"这段文本归引擎"
+（宿主自己的 shader 永远不会出现在这个目录里），角色是**渲染器**的词（`forward` / `gbuffer` / `deferred_lighting` /
+`skybox` / `screen_copy` / `fullscreen`，也是别的引擎里同一个位置会有的词），阶段就是后缀 —— 角色里不重复阶段或
+目标（`gbuffer` 已经说了它写 G-buffer，不必再写 `_geometry`），也不带产品名或 C++ 的词（`vine_` / `vsg_` /
+`std_forward` 都试过并改掉了：后者读起来是 `std::forward`）。生成常量按同一条规则推导
+（`builtin_forward.vert` → `kBuiltinForwardVert`），**内建 program 也叫这个名字**（`builtin_forward`，同一份文件
+出多个 program 时加后缀：`builtin_forward_flat`、`builtin_deferred_lighting_shadowed`），所以一条报出 program
+名的 diagnostic 直接告诉你去读哪个文件。默认管线的 pass 用**角色词**（`gbuffer` / `deferred_lighting`，见
+`RenderPipelineBuilder`）而不带前缀：一个 pass 画的是**宿主给它的** program，管它叫"内建"是错的。
 
 **所有 GLSL 都归 SDK**：后端**没有**自己的 shader 目录（曾经有，2026-09-13 收回来了），它只决定怎么编译和绑。
 | 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-custom-shader.md`](../../../../.ai/design/vsg-custom-shader.md) §10 |
@@ -584,10 +595,42 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 默认 demo（不给任何环境变量）的画面：不透明堆叠 + 主方向光投在 6×6 地面上的**阴影** + 一只**贴 cube map 的盒子** `env_box`。
 它的材质纹理按**方向**采样（texcoord 通道是 3 分量，引擎据此编译 `samplerCube` 变体，见 `Geometry::setTexcoords3()`），六张面图是
 `test_data/images/posx.jpg … negz.jpg`，读入后盒式滤波到 256²/面、再交给 `CubeMap::setFaceImage()` 的**具名**面（`posx` → `+X` … `negz` → `-Z`，
-不靠目录排序：六个名字排出来是 -X 在 +X 前面）。Deferred 默认下 G-buffer 的几何程序**只写材质颜色、不采样任何纹理**，所以贴图的盒子画在
-**前向叠加场景**里（`makeForwardOverlayScene`，与不透明内容做深度合成），而不是丢进不透明场景变成一只平色盒子。
+不靠目录排序：六个名字排出来是 -X 在 +X 前面）。盒子放在**不透明场景**里：G-buffer 的几何阶段现在和
+前向阶段一样**采样材质的纹理**（2D 或 cube，按 texcoord 通道宽度选 sampler kind，见 `builtin_gbuffer.frag`），
+所以带贴图的盒子可以画在**写深度**的那一趟里、自己遮挡住背面。**纹理采样由 `VINE_DIFFUSE_MAP` 门控，而后端只在该材质
+真有可用纹理时才发这个 define** ⇒ 无纹理的不透明内容（demo 整堆盒子）连 sampler 都不声明、也没有纹理取样，
+和加这个能力之前一样便宜。
 
-那只盒子看起来是"**把环境投影在盒子上**"，**不是**镜面反射 —— 这是有意保留的行为：方向是**逐顶点**的值，会被硬件在面上插值（面心被拉伸、棱上出现直缝，容易被读成"看到盒子里面"），而且 cube map 在这里当 albedo 用、照片本身的天空是白的，所以太阳的明暗在它身上很淡。引擎的 set 就是"按顶点给的方向采样"这一条规则；想要 `reflect(view_dir, n)` 那种镜面观感，需要给这只盒子自己的 `ShaderProgram`（见 `addCubeMappedBox` 的注释）。
+那只盒子是**立方体探针（cube probe）**的样子，**不是**镜面反射：texcoord 通道里装的是"盒心 → 该片元"的**向量**（在面图
+自己的坐标系里），逐片元插值后由 `samplerCube` 归一化 —— 于是每个面都是正确的探针投影，环境看起来像"贴/投在盒子上"（也
+就是容易被读成"看到盒子里面"的那种观感）。这是 cube probe 的定义，不是缺陷；想要 `reflect(view_dir, n)` 的镜面观感需要
+另一条着色规则，即给这只盒子自己的 `ShaderProgram`（引擎的 set 只有"按顶点给的方向采样"这一条规则，见 `addCubeMappedBox`
+的注释）。另外 cube map 在这里当 albedo 用、照片本身的天空是白的，所以太阳的明暗在它身上很淡。
+
+叠加场景（`makeForwardOverlayScene`）现在只放**会混合**的内容：半透明盒子和星点 sprite。它的那趟**不写深度**
+（`DepthMode::TestOnly`，半透明内容的规则），因此 pass 内的 drawable **无法自遮挡** —— 一只不透明的封闭盒子放进去会
+透出自己的背面（看起来像挖了个洞、能看穿进去）。需要不透明封闭体就放进不透明场景（写深度）。
+
+**天空盒**（`skyboxProgram()` + 第二组 cube map）。默认 demo 的背景是一个**天空盒**：一个**相机站在里面**的大盒子
+（`kSkyRadius = 400`），材质纹理是**另一组** cube map（`test_data/images/right/left/top/bottom/front/back.jpg`，
+月夜海面与群山），程序是 SDK 的内建 `skyboxProgram()`（**无光照**，就是 `texture(samplerCube, dir)`：天空不是被太阳
+照的表面，太阳在它里面）。方向仍然走那唯一的规则 —— texcoord 通道装"盒心 → 该片元"的向量，`samplerCube` 归一化
+（`makeDirectionBox`，与 `env_box` 同一段代码）。
+
+两个面向使用者的要点：
+
+- **画在哪**：`PipelineStage::Transparent` 那趟（叠加场景），也就是**不透明结果之后**、测深度但不写深度的 pass。
+  天空的片元都很远 ⇒ 只在"还没人画过"的背景像素上通过深度测试，别处全部失败 —— 这正是"天空在所有东西后面"。
+  它也顺带避开两件事：pass 级 program override（延迟 G-buffer）会盖掉它自己的程序；阴影 pass 的光相机按内容
+  包围盒取景，这么大的盒子会把 shadow map 分辨率摊薄成几百个单位一格。**前向预设**同样把它放在自己的
+  sky-only 叠加场景里（`makeSkyOverlayScene`），理由相同。
+- **尺寸是静态的**：盒子固定在原点。跟随相机需要每帧回调（demo 没有），按**视方向**采样需要 view 旋转
+  （内容 push constant ABI 不带），所以飞得离原点很远时会看到盒子的外面。demo 的轨道相机从 ~10 单位的距离
+  乘性缩放，要飞出去得很远。
+
+shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.frag`，构建期嵌入，`vine_shader_check.sh` 逐 define
+组合编译），`BuiltinShaders::skyboxProgram()` 只是它的命名入口 —— 和 `forwardProgram()` / `gbufferGeometryProgram()`
+同一条路。
 
 ### 4.3 两条路径各装配什么（阴影不是路径）
 

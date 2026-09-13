@@ -131,7 +131,7 @@ void main()
         // VINE_SHADOW_TERM
         color += albedo * c * a * ndl;
         // Specular is gated by ndl like the diffuse term: a face turned away
-        // from the light must not receive a highlight (see deferred_light.frag
+        // from the light must not receive a highlight (see builtin_deferred_lighting.frag
         // for the full reasoning).
         if (ndl > 0.0)
         {

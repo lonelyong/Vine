@@ -6148,7 +6148,7 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     orphan->attachColor(RenderTarget::ColorFormat::RGBA8);
 
     auto light = intrusive_ptr<ScreenPass>(new ScreenPass());
-    light->setName(u8"deferred_light");
+    light->setName(u8"deferred_lighting");
     light->setCamera(camera.get());
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
@@ -6160,7 +6160,7 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"deferred_light"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"deferred_lighting"), vine::String::npos);
     EXPECT_NE(received[0].message.find(u8"never_written"), vine::String::npos);
 
     engine->frame(0.016);

@@ -100,6 +100,20 @@ bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> p
                             std::uint32_t binding);
 
 /**
+ * @brief Whether any stage of @p program asks for @p define in its `#pragma import_defines` list.
+ *
+ * This is how a program opts into a define the BACKEND decides (vsg only delivers a define a source
+ * names on that line, so "asks for it" is a fact of the source text). The same scan shape as
+ * declaredBindings, and for the same reason: the text is the contract the compiler sees, and a program
+ * that gates a branch on a define it never asked for has a dead branch, silently.
+ *
+ * @param program Program to inspect (null asks for nothing).
+ * @param define  Define name to look for.
+ * @return true when at least one stage lists it.
+ */
+bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> program, const std::string& define);
+
+/**
  * @brief The shadow a pass declared, resolved from that pass' own inputs.
  *
  * The pass announces its declared inputs (RenderBackend::setPassInputs) before it draws, and the

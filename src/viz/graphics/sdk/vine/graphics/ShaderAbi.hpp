@@ -139,7 +139,7 @@ struct alignas(16) VineMaterialBlock
  *
  * It is a PASS-level block, not a per-view one: the pipeline that builds a shadow pass owns the
  * light camera that produced its map, and a pass that samples no shadow declares no such binding at
- * all (the shader's stage is gated by a define, see std_forward.frag).
+ * all (the shader's stage is gated by a define, see builtin_forward.frag).
  *
  * `params.x` is 1 while a map is bound (a shader must be able to take the unshadowed path with the
  * same text) and 0 otherwise; `y` is the depth bias applied at the comparison; `z` is the shadow

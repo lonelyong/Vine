@@ -93,7 +93,7 @@ foreach(_source IN LISTS _sources)
             "v_embed_shaders: ${_file_name} contains '${_opener}'; pick another delimiter in v_embed_shaders.cmake")
     endif()
 
-    # Constant name: gbuffer_geometry.vert -> kGbufferGeometryVert.
+    # Constant name: builtin_forward.vert -> kBuiltinForwardVert.
     string(REPLACE "_" ";" _words "${_stem}")
     set(_camel "")
     foreach(_word IN LISTS _words)

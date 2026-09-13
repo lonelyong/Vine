@@ -506,12 +506,17 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // therefore reported and the kind's own white fallback is sampled instead — the same answer a material
     // with no texture gets, so a mismatched map costs the map and not the drawable.
     //
-    // This holds for the ENGINE's own forward shader, which derives its sampler from the slot. A user program
-    // declares its own sampler AND its own coordinates, so what its geometry carries in the texcoord channel
-    // is its business: the custom-program cube phase binds a CubeMap through a UV-pair channel and derives
-    // the direction itself, and substituting the white texture there would replace the program's picture with
-    // one it never asked for.
-    const bool engine_picks_sampler = program == nullptr;
+    // WHO GETS THE RULE: the ENGINE's own content sets derive their sampler from the slot, and so does a
+    // program that ASKS for the same treatment by naming VINE_TEXCOORD_CUBE in its import pragma — the
+    // SDK's G-buffer geometry stage does exactly that, because its sampler kind has to follow the texcoord
+    // width like the forward stage's. Leaving such a program out would hand it a descriptor the shader's
+    // sampler type does not match, which is an invalid descriptor rather than a wrong picture. A program
+    // that does NOT name the define declares its own sampler AND its own coordinates, so what its geometry
+    // carries in the texcoord channel is its business: the custom-program cube phase binds a CubeMap
+    // through a UV-pair channel and derives the direction itself, and substituting the white texture there
+    // would replace the program's picture with one it never asked for.
+    const bool engine_picks_sampler =
+        program == nullptr || detail::programImportsDefine(program, "VINE_TEXCOORD_CUBE");
     if (engine_picks_sampler && three_scalar_texcoords &&
         (texture == nullptr || texture->kind() != vine::graphics::Texture::Kind::Cube)) {
         texture_info = textureCache().whiteCubeFallback();
@@ -562,6 +567,23 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // error from any layer — which is why the forward stage sources list this one.
     if (three_scalar_texcoords) {
         config->shaderHints->defines.insert("VINE_TEXCOORD_CUBE");
+    }
+
+    // Whether this drawable SAMPLES its material's texture. The engine's forward set gets this define from
+    // vsg's own binding gate (its UV attribute and its sampler are declared with it), so the define turns
+    // on exactly when the texture is assigned. A PROGRAM's ShaderSet declares those two bindings ungated,
+    // so the define never arrives from there and a program that gates its sampler on it — the SDK's
+    // G-buffer geometry stage does — has to be told here.
+    //
+    // Only a material with a REAL texture sets it: an untextured drawable then takes the variant with no
+    // sampler and no texture fetch at all, which is what keeps a deferred scene of untextured content
+    // (the demo's whole opaque stack) exactly as cheap as it was before the G-buffer stage could sample.
+    //
+    // This is also what keeps the sampler kind honest for that program: with the texture absent there is
+    // no sample to get wrong, and with it present the kind check above ran against it (the program opted
+    // into that rule by naming VINE_TEXCOORD_CUBE).
+    if (program != nullptr && texture_reason == detail::TextureReject::Ok) {
+        config->shaderHints->defines.insert("VINE_DIFFUSE_MAP");
     }
 
     // Material resources come from the material manager (filled + cached), never

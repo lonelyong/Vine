@@ -9,10 +9,10 @@
 #
 #   # Once, at the top level (the repository root, whose scope covers both src/
 #   # and tests/):
-#   v_declare_embedded_shaders(OUTPUT vine/vsg/EmbeddedShaders.hpp
-#                              NAMESPACE vine::vsg::shaders
-#                              SOURCES src/plugins/gfx_backend_vsg/shaders/fullscreen.vert
-#                                      src/plugins/gfx_backend_vsg/shaders/screen_texture.frag)
+#   v_declare_embedded_shaders(OUTPUT vine/graphics/EmbeddedShaders.hpp
+#                              NAMESPACE vine::graphics::shaders
+#                              SOURCES src/viz/graphics/shaders/builtin_forward.vert
+#                                      src/viz/graphics/shaders/builtin_forward.frag)
 #
 #   # In any directory, for every target that compiles a TU including the header:
 #   v_use_embedded_shaders(<target> OUTPUT vine/vsg/EmbeddedShaders.hpp)
@@ -22,8 +22,8 @@
 # the owning plugin would make it invisible to tests/, and the test build could
 # race the header's generation.
 #
-# Constant names are derived from the file name (gbuffer_geometry.vert ->
-# kGbufferGeometryVert) so the C++ side is predictable, and the include path is
+# Constant names are derived from the file name (builtin_gbuffer.vert ->
+# kBuiltinGbufferVert) so the C++ side is predictable, and the include path is
 # <vine/...> below the build tree's generated/ directory.
 
 include_guard(GLOBAL)

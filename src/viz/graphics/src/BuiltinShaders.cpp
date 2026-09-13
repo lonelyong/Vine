@@ -190,7 +190,7 @@ bool insertShadowAbi(std::u8string& source, std::u8string_view declarations, std
  */
 std::u8string forwardFragmentSource()
 {
-    std::u8string source(shaders::kStdForwardFrag);
+    std::u8string source(shaders::kBuiltinForwardFrag);
     insertShadowAbi(source, shadowBindings(0u, 3u, /*qualify_set*/ true), std::u8string_view(shadow_term));
     return source;
 }
@@ -202,7 +202,7 @@ intrusive_ptr<ShaderProgram> forwardProgram()
     // shadowed variant would double that cache for every target and a host's own program would still
     // have no shadowed twin to pick). `shadow.params.x` is the switch the one text takes both paths
     // with, which is what the ABI's params block is for (ShaderAbi.hpp).
-    return makeProgram(u8"std_forward", shaders::kStdForwardVert, forwardFragmentSource());
+    return makeProgram(u8"builtin_forward", shaders::kBuiltinForwardVert, forwardFragmentSource());
 }
 
 intrusive_ptr<ShaderProgram> flatForwardProgram()
@@ -215,22 +215,27 @@ intrusive_ptr<ShaderProgram> flatForwardProgram()
     // The define goes into the SOURCE (withDefine) rather than through a backend's compile settings:
     // it is a different program text, which is what a program IS, and it keeps this program's identity
     // independent of any backend's define plumbing.
-    return makeProgram(u8"std_forward_flat", shaders::kStdForwardVert,
+    return makeProgram(u8"builtin_forward_flat", shaders::kBuiltinForwardVert,
                        withDefine(forwardFragmentSource(), u8"#define VINE_FLAT 1"));
 }
 
 intrusive_ptr<ShaderProgram> gbufferGeometryProgram()
 {
-    return makeProgram(u8"gbuffer_geometry", shaders::kGbufferGeometryVert, shaders::kGbufferGeometryFrag);
+    return makeProgram(u8"builtin_gbuffer", shaders::kBuiltinGbufferVert, shaders::kBuiltinGbufferFrag);
+}
+
+intrusive_ptr<ShaderProgram> skyboxProgram()
+{
+    return makeProgram(u8"builtin_skybox", shaders::kBuiltinSkyboxVert, shaders::kBuiltinSkyboxFrag);
 }
 
 intrusive_ptr<ShaderProgram> fullscreenVertexProgram()
 {
     auto program = make_intrusive<ShaderProgram>();
-    program->setName(u8"fullscreen_triangle");
+    program->setName(u8"builtin_fullscreen");
     ShaderStage vertex;
     vertex.type   = ShaderStageType::Vertex;
-    vertex.source = String(shaders::kFullscreenVert);
+    vertex.source = String(shaders::kBuiltinFullscreenVert);
     program->addStage(vertex);
     return program;
 }
@@ -242,7 +247,7 @@ intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment)
     // EmbeddedShadersTest, so an edit to the .frag cannot silently turn every copy into a copy of
     // attachment 0 — the failure mode this substitution would otherwise hide.
     constexpr char8_t marker[] = u8"layout(binding = 0) uniform sampler2D screen_tex;";
-    std::u8string     source(shaders::kScreenCopyFrag);
+    std::u8string     source(shaders::kBuiltinScreenCopyFrag);
     // The integer goes in as ASCII digits; the digits are the same in char8_t.
     const std::string digits   = std::to_string(attachment);
     const std::u8string attachment_text(digits.begin(), digits.end());
@@ -256,7 +261,8 @@ intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment)
     }
 
     auto program = make_intrusive<ShaderProgram>();
-    program->setName(attachment == 0 ? String(u8"screen_copy") : String(u8"screen_copy_") + String(attachment_text));
+    program->setName(attachment == 0 ? String(u8"builtin_screen_copy")
+                                     : String(u8"builtin_screen_copy_") + String(attachment_text));
     ShaderStage fragment;
     fragment.type   = ShaderStageType::Fragment;
     fragment.source = String(source);
@@ -267,7 +273,7 @@ intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment)
 intrusive_ptr<ShaderProgram> deferredLightProgram(bool with_shadow)
 {
     auto program = make_intrusive<ShaderProgram>();
-    program->setName(with_shadow ? u8"deferred_light_shadowed" : u8"deferred_light");
+    program->setName(with_shadow ? u8"builtin_deferred_lighting_shadowed" : u8"builtin_deferred_lighting");
     // The unshadowed variant inserts NOTHING where the shadowed one inserts its bindings and its
     // term: both go through the same substitution, so neither program text carries scaffolding —
     // and a source that lost a marker is refused for both instead of only for one.
@@ -281,7 +287,7 @@ intrusive_ptr<ShaderProgram> deferredLightProgram(bool with_shadow)
     // program's source occupies 0..color_count-1, its source's depth takes color_count when that
     // one is sampleable, and the shadow map and its block follow at color_count+1 and +2 — 5 and
     // 6 for the canonical 4-colour G-buffer this program is written against.
-    std::u8string     source(shaders::kDeferredLightFrag);
+    std::u8string     source(shaders::kBuiltinDeferredLightingFrag);
     const std::u8string declarations = with_shadow ? shadowBindings(0u, 5u, /*qualify_set*/ false) : std::u8string{};
     if (!insertShadowAbi(source, declarations, with_shadow ? std::u8string_view(shadow_term) : std::u8string_view{})) {
         return {};   // declined: the caller reports and draws nothing (no silent stand-in)

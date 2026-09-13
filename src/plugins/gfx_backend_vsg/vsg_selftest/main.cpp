@@ -5108,7 +5108,7 @@ bool runOpacityBlendPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
  * NOTHING and say so. That half is a gate against "fall back to something reasonable", which would
  * look like a shaded quad with values the host never asked for.
  *
- * The flat program (`std_forward_flat`) has the forward stages with `VINE_FLAT` and must be fed OUR block —
+ * The flat program (`builtin_forward_flat`) has the forward stages with `VINE_FLAT` and must be fed OUR block —
  * and its face normal has to come from the screen-space derivatives of the view position, which is
  * what "flat" means. That half is asserted by contrast: the same quad is drawn as it is authored
  * (normals pointing AWAY from the sun, so the forward program can only reach its ambient term) and
@@ -5475,6 +5475,39 @@ ShadowPixelScene makeShadowPixelScene()
     wall_place->addChild(wall);
     root->addChild(wall_place);
 
+    // A TEXTURED patch on the ground, well left of the two sampled ground points. It is what lets these
+    // phases see whether the path under test SAMPLES the material's texture at all: the forward stage
+    // always has, the deferred G-buffer stage gained it when it learned to bind the material's map (behind
+    // VINE_DIFFUSE_MAP, so untextured content pays nothing). A stage that quietly stopped binding the
+    // sampler would leave the patch WHITE - the material's colour - and every other assertion here would
+    // still hold, because nothing else in the scene carries a texture.
+    //
+    // The material is white with a BLACK specular, so the map is the only colour on the patch and no
+    // highlight can wash the hue out; the map is the two-tone one (red half / blue half) with UVs spanning
+    // it, so both hues have to appear.
+    auto patch_material = MaterialPtr(new Material());
+    patch_material->setDiffuse(vine::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
+    patch_material->setSpecular(vine::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+    patch_material->setTexture(makeTwoToneTexture());
+    auto patch = makeGroundQuad(0.45f);
+    {
+        // makeGroundQuad's corner order, matching makeTexturedQuad's UV walk (v = 0 at the far edge).
+        const float uvs[6][2] = { { 0.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f },
+                                  { 0.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f } };
+        vine::geometry::Vec2fArray texcoords;
+        for (const auto& uv : uvs) {
+            texcoords.emplace_back(uv[0], uv[1]);
+        }
+        patch->setTexcoords2(vine::graphics::packAttribute(texcoords));
+    }
+    patch->setMaterial(patch_material);
+    patch->setName(u8"shadow-textured");
+    auto patch_place = vine::intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    // Just above the ground: coplanar geometry would z-fight in the shadow map and the G-buffer alike.
+    patch_place->setMatrix(vine::math::translate(vine::math::Vec3d(-2.4, 0.01, 0.3)));
+    patch_place->addChild(patch);
+    root->addChild(patch_place);
+
     scene.content->setRoot(root);
 
     scene.sun = LightPtr(Light::createDirectional(vine::math::Vec3d(0.6, -1.0, 0.4)));
@@ -5500,6 +5533,11 @@ ShadowPixelScene makeShadowPixelScene()
  * ~15), the ground in the shadow (the ambient fill only - no ambient light is announced, so the
  * backend's 0.15 fill times the 0.8 albedo, ~31 per channel) and the ground in the sun (~196). That
  * is what makes the measurement unambiguous: "went dark" cannot be confused with "was never drawn".
+ *
+ * It also asserts the TEXTURED patch (see makeShadowPixelScene): both halves of its two-tone map have
+ * to appear, which is the only thing here that can tell a path that samples the material's texture from
+ * one that does not - a path that skipped the sampler would draw the patch in its white material colour
+ * and pass every other check in this function.
  *
  * @param image What to read (a 640x360 picture).
  * @param scene Scene whose sample columns the assertions use.
@@ -5550,6 +5588,29 @@ bool assertShadowPicture(const PixelImage& image, const ShadowPixelScene& scene,
                      what, shadow_sum, lit_sum, scene.shadow_col, scene.lit_col, scene.row);
         ok = false;
     }
+
+    // The textured patch's two halves: red and blue can ONLY come from the map (everything else in this
+    // scene is grey or white), so finding one of each is the assertion that the path under test sampled
+    // the material's texture. A path that did not would draw the patch in the material's white and fail
+    // here - which is the whole reason the patch is in the scene.
+    bool red_seen  = false;
+    bool blue_seen = false;
+    for (int y = 0; y < image.height && !(red_seen && blue_seen); ++y) {
+        for (int x = 0; x < image.width; ++x) {
+            const int r = image.at(x, y, 0);
+            const int g = image.at(x, y, 1);
+            const int b = image.at(x, y, 2);
+            red_seen  = red_seen || (r > g + 40 && r > b + 40);
+            blue_seen = blue_seen || (b > g + 40 && b > r + 40);
+        }
+    }
+    if (!red_seen || !blue_seen) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: %s: the textured patch showed no %s half of its two-tone map (red %s, blue %s) - "
+                     "the path under test did not sample the material's texture\n",
+                     what, !red_seen ? "red" : "blue", red_seen ? "found" : "missing", blue_seen ? "found" : "missing");
+        ok = false;
+    }
     return ok;
 }
 
@@ -5575,8 +5636,12 @@ bool assertShadowPicture(const PixelImage& image, const ShadowPixelScene& scene,
  *
  * Mutations checked, each on its own build: the sun's castShadow off (the shadow is gone: the shadowed
  * pixel reads the lit value); the map's v axis not flipped and its depth not inverted (one at a time:
- * the lit pixel reads the shadowed value, or the sun vanishes entirely); and the shadow pass' camera
- * borrowed instead of owned (the map comes back empty - the pass draws through freed memory).
+ * the lit pixel reads the shadowed value, or the sun vanishes entirely); the shadow pass' camera
+ * borrowed instead of owned (the map comes back empty - the pass draws through freed memory); and the
+ * fullscreen shadow block written only when the slot is built instead of every frame (the camera is
+ * then moved after the slot exists, and the shadow - fixed in the world - comes out aimed where the
+ * BUILD camera was: the sampled ground reads lit). That last one is why this phase moves the camera:
+ * no other phase changes the camera after a slot exists.
  *
  * @param backend Backend under test (the engine initializes it: it must be down when called).
  * @param frames  Frames to drive.
@@ -5608,6 +5673,20 @@ bool runDeferredShadowPixelPhase(const vine::intrusive_ptr<RenderBackend>& backe
         engine->shutdown();
         return false;
     }
+
+    // Build the fullscreen slot through a DIFFERENT camera, then move to the measured one. The sun is
+    // fixed in the world, so the picture at the measured camera must not depend on where the camera
+    // stood when the slot was built. What makes that a real test is the shadow block: it steps from
+    // the PASS' view space into light clip, so it is a per-frame value that has to be rewritten as
+    // the camera moves. A block written only when the slot is built freezes that step at the build
+    // camera, and the shadow then slides with the viewpoint (and the ground, its own caster under the
+    // thus-wrong lookup, reads self-shadowed across the whole map). No other phase moves the camera
+    // after a slot exists, which is why this is the only place that class of bug can show.
+    scene.camera->setViewMatrixAsLookAt(vine::math::Vec3d(3.5, 2.2, 4.0), vine::math::Vec3d(0.0, 0.3, 0.0),
+                                        vine::math::Vec3d(0.0, 1.0, 0.0));
+    engine->frame(1.0 / 60.0);   // the lighting pass' first render: its slot is built through THIS camera
+    scene.camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 3.0, 5.0), vine::math::Vec3d(0.0, 0.0, 0.0),
+                                        vine::math::Vec3d(0.0, 1.0, 0.0));
 
     for (int i = 0; i < frames; ++i) {
         engine->frame(1.0 / 60.0);

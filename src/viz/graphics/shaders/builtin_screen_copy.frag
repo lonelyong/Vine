@@ -1,6 +1,6 @@
 #version 450
 // The plain screen copy: one colour attachment of the source target, sampled 1:1 through the
-// canonical full-screen triangle (see fullscreen.vert). This is the text behind what a bare
+// canonical full-screen triangle (see builtin_fullscreen.vert). This is the text behind what a bare
 // ScreenPass used to get implicitly — now it is a PROGRAM the host names, so a copy that wants
 // different filtering, a colour transform or a tonemap is a different program, not a backend
 // setting.

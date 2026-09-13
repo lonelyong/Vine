@@ -384,7 +384,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     // off-screen, so the same program shades into a composite target instead.
     if (transparent_ == nullptr) {
         auto light = make_intrusive<ScreenPass>();
-        light->setName(u8"deferred_light");
+        light->setName(u8"deferred_lighting");
         light->setCamera(camera_);
         light->addInputName(u8"GBuffer");
         // It reads the WHOLE G-buffer: a fullscreen program receives every colour attachment of its
@@ -421,7 +421,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     // Fullscreen deferred lighting (order 0) INTO the composite: a depth-off
     // program that overwrites every pixel with the lit opaque result.
     auto light = make_intrusive<ScreenPass>();
-    light->setName(u8"deferred_light");
+    light->setName(u8"deferred_lighting");
     light->setCamera(camera_);
     light->setRenderTarget(composite);
     light->addInputName(u8"GBuffer");

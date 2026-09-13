@@ -26,6 +26,13 @@ V_GRAPHICS_NS_BEGIN
  * A backend materialises whatever program it is handed; the SDK never compiles.
  * A program is returned fresh per call, like the other SDK factories; the caller
  * caches whatever it compiles, keyed by the program's revision.
+ *
+ * A program is NAMED AFTER THE FILE IT IS BUILT FROM: `builtin_forward.vert` /
+ * `builtin_forward.frag` make the program `builtin_forward`, and a file that
+ * serves more than one program adds the difference as a suffix
+ * (`builtin_forward_flat`, `builtin_deferred_lighting_shadowed`). A diagnostic
+ * that names a program therefore names the GLSL to go and read, and the name
+ * rule is the same one the files follow (see cmake/VineShaders.cmake).
  */
 
 /**
@@ -60,6 +67,26 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> flatForwardProgram();
  * @return The vertex + fragment program.
  */
 V_GRAPHICS_API intrusive_ptr<ShaderProgram> gbufferGeometryProgram();
+
+/**
+ * @brief The built-in SKY BOX program: an UNLIT cube-map lookup by direction.
+ *
+ * Draw a large box the camera stands inside, with a texcoord channel that carries a direction per
+ * vertex (see Geometry::setTexcoords3), and the material's texture as the map: every ray then leaves
+ * through exactly one face and samples the sky in the direction it is heading. Nothing is lit - a sky
+ * is not a surface the scene's sun lights, it is the thing the sun is in - so this program declares no
+ * material or lights block and the map IS the colour.
+ *
+ * The sampler KIND follows the texcoord channel's width, exactly like the engine's own content stages
+ * (three scalars: a cube map; two: a 2-D map), which is what keeps a material of the wrong kind from
+ * becoming an unbindable descriptor. The returned program therefore names VINE_TEXCOORD_CUBE in its
+ * import pragma; a backend that hands the sampler kind to the texcoord width (which is what the vsg
+ * backend's rule does) keeps it honest, and one that does not still gets a program whose sampler
+ * matches the coordinates its data carries.
+ *
+ * @return The vertex + fragment program (fresh per call).
+ */
+V_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
 
 /**
  * @brief The built-in fullscreen-triangle VERTEX program every fullscreen FRAGMENT stage is written against.

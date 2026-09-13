@@ -8,10 +8,11 @@
 #   1b. The byte-exact evidence baseline of the content-shading path (the engine's
 #      own sets, exercised by 1), see .ai/design/vsg-custom-shader.md §11.
 #   2. Vine app (default demo), which has to show its own evidence too: the
-#      app_shell plugin loaded, the cube map loaded from the shipped assets and
-#      the shadow pass built. A run that stays validation-clean while the demo
-#      builds nothing is a FAIL — that is precisely how a plugin that stopped
-#      loading once read as a pass (see require_evidence below).
+#      app_shell plugin loaded, the cube maps loaded from the shipped assets
+#      (the box's map and the sky's second one) and the shadow pass built. A
+#      run that stays validation-clean while the demo builds nothing is a FAIL
+#      — that is precisely how a plugin that stopped loading once read as a
+#      pass (see require_evidence below).
 #
 # It used to open with vsg_color_probe — a standalone vsg executable rendering a
 # box through vsg's OWN Builder/phong path, to isolate the vendored vsg's
@@ -259,9 +260,10 @@ else
         # The default demo has to have DONE something. The stage used to accept any run that stayed
         # validation-clean, which is exactly what it did while app_shell was failing to load: the run
         # drew no demo at all and still passed. So the demo's own evidence is required — the plugin
-        # that owns the scene, the cube map it loads from the shipped assets, and the shadow pass it
-        # asks the builder for. (The picture itself is asserted by the self-test's phases, which read
-        # pixels back; the app presents to a window that cannot be read.)
+        # that owns the scene, the cube maps it loads from the shipped assets (the box's map AND the
+        # sky's second one), and the shadow pass it asks the builder for. (The picture itself is
+        # asserted by the self-test's phases, which read pixels back; the app presents to a window
+        # that cannot be read.)
         grep "Plugin 'app_shell' loaded" "$log" | sed 's/^/    /' || true
         grep "^\[demo\]" "$log" | sed 's/^/    /' || true
         grep "off-screen target 'shadow_map'" "$log" | sed 's/^/    /' || true
@@ -269,6 +271,7 @@ else
         STAGE="Vine (default demo)"
         require_evidence "Plugin 'app_shell' loaded" 1 "app_shell plugin load (without it no demo scene exists)"
         require_evidence "^\[demo\] cube map: six" 1 "cube map load from the shipped assets"
+        require_evidence "sky box 'sky_box' samples it by direction" 1 "sky cube map load (the default demo's sky box)"
         require_evidence "off-screen target 'shadow_map'" 1 "shadow pass target for the demo's casting light"
         # Vine is a GUI app: it runs until killed. A timeout (124) is success;
         # any other non-zero exit indicates a startup crash.

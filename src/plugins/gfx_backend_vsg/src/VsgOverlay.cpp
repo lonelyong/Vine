@@ -477,16 +477,31 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         return;
     }
 
+    // The shadow this pass declared (if any), resolved ONCE PER FRAME and used twice: the map is
+    // part of the rebuild identity below (a different map is a different descriptor, which cannot
+    // be re-pointed in place), and the block's bytes are rewritten further down. Resolving it here
+    // rather than only when the slot is rebuilt is what keeps a world-fixed shadow fixed: the block
+    // says how to step from THIS pass' view space into light clip, and that step is a function of
+    // the live camera, so a block frozen at slot-build time slides across the ground as the camera
+    // moves (that is the demo's original "the shadow follows the camera" symptom).
+    const detail::ShadowInput resolved_shadow = detail::resolveShadowInput(state, camera, state.request.lights);
+
     // (Re)build the retained slot when it is missing, the sampled source
     // changed (or was resized: its colour views were rebuilt), the DESTINATION
-    // was resized, the program changed, or the source's depth stopped being
-    // sampleable (a pass of the source that preserves depth revokes the
+    // was resized, the program changed, a DIFFERENT shadow map arrived, or the source's depth
+    // stopped being sampleable (a pass of the source that preserves depth revokes the
     // promotion, so the depth binding has to go with it).
+    //
+    // The map only forces a rebuild when there IS one: the map is a descriptor's image view, which
+    // cannot be re-pointed in place, but a map that DISAPPEARS is answered in the per-frame refresh
+    // below by writing a disabled block — rebuilding for it would make a program that declares the
+    // shadow ABI refuse to build (and so draw nothing) over a shadow it can simply skip.
     const std::uint64_t program_revision = program->revision();
     const bool stale = !slot.ready || slot.source_target != source ||
                        slot.source_w != src.width || slot.source_h != src.height ||
                        slot.dest_w != surf_w || slot.dest_h != surf_h ||
                        slot.source_depth_sampleable != src.depth_sampleable ||
+                       (resolved_shadow.map != nullptr && slot.shadow_view != resolved_shadow.map) ||
                        slot.program.get() != program || slot.program_revision != program_revision;
     if (stale) {
         if (dest_graph != nullptr) {
@@ -531,13 +546,14 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         // (RenderTarget::setProducerViewProjection), and all that is missing here is the step from
         // view space (where the shading has the fragment) into light clip.
         FullscreenShadowInput shadow;
-        const detail::ShadowInput resolved = detail::resolveShadowInput(state, camera, state.request.lights);
-        if (resolved.map != nullptr) {
-            shadow.map = resolved.map;
+        if (resolved_shadow.map != nullptr) {
+            shadow.map = resolved_shadow.map;
             // The block is handed over as bytes because that is what a descriptor binding takes:
-            // the ABI struct's layout IS the binding's contract (asserted by test_graphics).
-            auto data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(resolved.block)));
-            std::memcpy(data->dataPointer(), &resolved.block, sizeof(resolved.block));
+            // the ABI struct's layout IS the binding's contract (asserted by test_graphics). The
+            // bytes are only the initial value; the slot keeps the object and rewrites it every
+            // frame (see the refresh after this block).
+            auto data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(resolved_shadow.block)));
+            std::memcpy(data->dataPointer(), &resolved_shadow.block, sizeof(resolved_shadow.block));
             data->properties.dataVariance = ::vsg::DYNAMIC_DATA;
             shadow.block                  = std::move(data);
         }
@@ -580,6 +596,11 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         slot.program          = vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program);
         slot.program_revision = program_revision;
         slot.node             = node;
+        // Keep the shadow the node bound: its map is the rebuild identity (see `stale` above) and
+        // its block is the object the per-frame refresh rewrites (it is the same object the
+        // descriptor was assigned, so mutating its bytes + dirty() is what reaches the GPU).
+        slot.shadow_view  = resolved_shadow.map;
+        slot.shadow_block = shadow.block;
 
         // Create + compile the fullscreen view against this target's render pass
         // (inserted provisionally at the front so the compile sees it), then move
@@ -595,6 +616,19 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         ++state.program_slot_build_count;
         V_LOGI("[VsgRenderer] EXPERIMENTAL deferred fullscreen program {}x{} -> {} {},{},{}x{} attached", src.width,
                src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
+    }
+
+    // Rewrite the shadow block's bytes EVERY frame, next to the view-space light block taken just
+    // below and for the same reason: the block's matrix steps from this pass' view space into light
+    // clip, so it is recomputed from the live camera. The slot rebuild above only covers the
+    // DESCRIPTOR (which map is bound); the matrix inside the block is a per-frame value. Writing it
+    // only during a rebuild froze it at the camera the slot was built with, which makes a
+    // world-fixed shadow slide with the camera. The write is unconditional, including when the map
+    // is gone: resolveShadowInput then hands back a DISABLED block (params.x = 0), so the stale map
+    // still bound to the descriptor is never sampled.
+    if (slot.shadow_block != nullptr) {
+        std::memcpy(slot.shadow_block->dataPointer(), &resolved_shadow.block, sizeof(resolved_shadow.block));
+        slot.shadow_block->dirty();
     }
 
     // Take the lights announced for this draw call (from the pass's content

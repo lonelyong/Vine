@@ -1,6 +1,7 @@
 #include <vine/vsg/VsgBackendUtility.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -120,6 +121,46 @@ bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> p
         }
         for (const auto& [declared_set, declared_binding] : declaredBindings(stage->source.stdstr())) {
             if (declared_set == set && declared_binding == binding) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> program, const std::string& define)
+{
+    if (program == nullptr || define.empty()) {
+        return false;   // no program: nothing of its own to ask for
+    }
+    for (std::size_t i = 0; i < program->stageCount(); ++i) {
+        const auto* stage = program->stage(i);
+        if (stage == nullptr) {
+            continue;
+        }
+        const std::string source = stage->source.stdstr();
+        const std::size_t pragma = source.find("import_defines");
+        if (pragma == std::string::npos) {
+            continue;
+        }
+        const std::size_t open = source.find('(', pragma);
+        const std::size_t close = open == std::string::npos ? std::string::npos : source.find(')', open);
+        if (open == std::string::npos || close == std::string::npos) {
+            continue;
+        }
+        // The list is comma-separated: the name has to match a whole entry, or "VINE_A" would be found
+        // inside "VINE_AB" and a program would be credited with an opt-in it never wrote.
+        const std::string list = source.substr(open + 1, close - open - 1);
+        std::size_t       at   = 0;
+        while (at < list.size()) {
+            while (at < list.size() && !std::isalnum(static_cast<unsigned char>(list[at])) && list[at] != '_') {
+                ++at;
+            }
+            const std::size_t begin = at;
+            while (at < list.size() && (std::isalnum(static_cast<unsigned char>(list[at])) || list[at] == '_')) {
+                ++at;
+            }
+            if (at > begin && list.compare(begin, at - begin, define) == 0) {
                 return true;
             }
         }
