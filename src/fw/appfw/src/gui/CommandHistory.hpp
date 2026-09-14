@@ -1,11 +1,12 @@
 ﻿#pragma once
 
 #include <vine/appfw/appfw_global.hpp>
-#include <vine/String.hpp>
 
 #include <cstddef>
 #include <utility>
 #include <vector>
+
+#include <vine/String.hpp>
 
 V_APPFWGUI_NS_BEGIN
 

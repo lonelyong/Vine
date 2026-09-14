@@ -1,10 +1,10 @@
 ﻿#pragma once
 
+#include <vector>
+
 #include "Control.hpp"
 #include "Gui.hpp"
 #include "Icon.hpp"
-
-#include <vector>
 
 V_APPFWGUI_NS_BEGIN
 

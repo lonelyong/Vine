@@ -1,10 +1,10 @@
 ﻿#pragma once
 
-#include <vine/appfw/gui/ConsolePanel.hpp>
-
 #include <algorithm>
 #include <utility>
 #include <vector>
+
+#include <vine/appfw/gui/ConsolePanel.hpp>
 
 V_APPFWGUI_NS_BEGIN
 

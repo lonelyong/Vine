@@ -1,7 +1,6 @@
 #pragma once
 
 #include "imaging_global.hpp"
-#include "PixelFormat.hpp"
 
 #include <cstddef>
 #include <span>
@@ -9,6 +8,8 @@
 
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
+
+#include "PixelFormat.hpp"
 
 V_IMAGING_NS_BEGIN
 

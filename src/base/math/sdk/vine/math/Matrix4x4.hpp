@@ -1,10 +1,10 @@
 ﻿#pragma once
 
-#include "Types.hpp"
 #include "math_global.hpp"
 
 #include <cstring>
 
+#include "Types.hpp"
 #include "Vector4.hpp"
 
 V_MATH_NS_BEGIN

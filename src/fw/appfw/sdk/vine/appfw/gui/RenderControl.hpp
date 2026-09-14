@@ -1,8 +1,8 @@
 ﻿#pragma once
 
-#include "Control.hpp"
-
 #include <vine/intrusive_ptr.hpp>
+
+#include "Control.hpp"
 
 namespace vine::graphics
 {

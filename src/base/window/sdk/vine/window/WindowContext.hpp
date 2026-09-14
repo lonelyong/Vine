@@ -2,14 +2,14 @@
 
 #include "window_global.hpp"
 
-#include "InputEvent.hpp"
-#include "WindowEvent.hpp"
-
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/Signal.hpp>
 #include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
+
+#include "InputEvent.hpp"
+#include "WindowEvent.hpp"
 
 V_WINDOW_NS_BEGIN
 

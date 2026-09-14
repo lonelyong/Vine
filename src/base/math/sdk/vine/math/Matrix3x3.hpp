@@ -1,11 +1,11 @@
 ﻿#pragma once
 
-#include "Types.hpp"
 #include "math_global.hpp"
 
 #include <cstring>
 
 #include "Math.hpp"
+#include "Types.hpp"
 #include "Vector2.hpp"
 #include "Vector3.hpp"
 

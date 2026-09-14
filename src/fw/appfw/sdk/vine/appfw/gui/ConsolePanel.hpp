@@ -1,11 +1,11 @@
 ﻿#pragma once
 
-#include "ConsoleTheme.hpp"
-#include "Control.hpp"
+#include <vector>
 
 #include <vine/Signal.hpp>
 
-#include <vector>
+#include "ConsoleTheme.hpp"
+#include "Control.hpp"
 
 class QWidget;
 

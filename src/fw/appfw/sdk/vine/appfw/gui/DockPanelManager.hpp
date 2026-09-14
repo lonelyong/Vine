@@ -1,11 +1,12 @@
 ﻿#pragma once
 
-#include <vine/raw_ptr.hpp>
-#include <vine/String.hpp>
 #include <vine/appfw/appfw_global.hpp>
 
 #include <memory>
 #include <vector>
+
+#include <vine/String.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "Gui.hpp"
 

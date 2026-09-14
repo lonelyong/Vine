@@ -1,10 +1,10 @@
 ﻿#pragma once
 
-#include "CommandManager.hpp"
-
 #include <functional>
 #include <utility>
 #include <vector>
+
+#include "CommandManager.hpp"
 
 /**
  * @brief Binds a symbol to the module that defines it.

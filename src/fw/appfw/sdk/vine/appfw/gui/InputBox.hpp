@@ -1,10 +1,10 @@
 #pragma once
 
-#include <vine/appfw/gui/Window.hpp>
-
 #include <limits>
 #include <optional>
 #include <vector>
+
+#include <vine/appfw/gui/Window.hpp>
 
 class QWidget;
 

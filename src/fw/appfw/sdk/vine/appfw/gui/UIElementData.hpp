@@ -1,9 +1,10 @@
 ﻿#pragma once
 
 #include <vine/appfw/appfw_global.hpp>
-#include <vine/String.hpp>
 
 #include <QObject>
+
+#include <vine/String.hpp>
 
 V_APPFWGUI_NS_BEGIN
 

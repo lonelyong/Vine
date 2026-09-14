@@ -1,11 +1,12 @@
 ﻿#pragma once
 
-#include <vine/Events.hpp>
-#include <vine/String.hpp>
 #include <vine/appfw/appfw_global.hpp>
 
 #include <memory>
 #include <vector>
+
+#include <vine/Events.hpp>
+#include <vine/String.hpp>
 
 V_APPFW_NS_BEGIN
 
