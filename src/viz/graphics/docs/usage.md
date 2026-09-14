@@ -607,7 +607,7 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 另一条着色规则，即给这只盒子自己的 `ShaderProgram`（引擎的 set 只有"按顶点给的方向采样"这一条规则，见 `addCubeMappedBox`
 的注释）。另外 cube map 在这里当 albedo 用、照片本身的天空是白的，所以太阳的明暗在它身上很淡。
 
-叠加场景（`makeForwardOverlayScene`）现在只放**会混合**的内容：半透明盒子和星点 sprite。它的那趟**不写深度**
+叠加场景（延迟路径 `AppShellDemo::buildScene()` 的覆盖层）现在只放**会混合**的内容：半透明盒子和星点 sprite。它的那趟**不写深度**
 （`DepthMode::TestOnly`，半透明内容的规则），因此 pass 内的 drawable **无法自遮挡** —— 一只不透明的封闭盒子放进去会
 透出自己的背面（看起来像挖了个洞、能看穿进去）。需要不透明封闭体就放进不透明场景（写深度）。
 
@@ -623,7 +623,7 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
   天空的片元都很远 ⇒ 只在"还没人画过"的背景像素上通过深度测试，别处全部失败 —— 这正是"天空在所有东西后面"。
   它也顺带避开两件事：pass 级 program override（延迟 G-buffer）会盖掉它自己的程序；阴影 pass 的光相机按内容
   包围盒取景，这么大的盒子会把 shadow map 分辨率摊薄成几百个单位一格。**前向预设**同样把它放在自己的
-  sky-only 叠加场景里（`makeSkyOverlayScene`），理由相同。
+  sky-only 叠加场景里（前向路径的覆盖层只装天空），理由相同。
 - **尺寸是静态的**：盒子固定在原点。跟随相机需要每帧回调（demo 没有），按**视方向**采样需要 view 旋转
   （内容 push constant ABI 不带），所以飞得离原点很远时会看到盒子的外面。demo 的轨道相机从 ~10 单位的距离
   乘性缩放，要飞出去得很远。
@@ -638,6 +638,21 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 | --- | --- |
 | `ShadingPath::Forward` | 一个 `PipelineStage::Shading` 的窗口场景 pass 画内容（可选叠加场景是同一窗口 pass 里带深度的第二笔，`PipelineStage::Transparent`）。 |
 | `ShadingPath::Deferred` | `PipelineStage::Geometry` 的 pass 把内容画进**规范 G-buffer**（4 张彩色：albedo RGBA8、view normal+shininess RGBA16F、specular RGBA8、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 `Shading` 阶段的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现（`Transparent` → `Present`）。 |
+
+**demo 的内容是一套词汇表、两条装配线。** 两个示例（forward / deferred）画同一批**切片**，各自只加自己确实画得对的
+那些（规则写在 `AppShellDemo::buildScene()` 一处，见 `src/plugins/app_shell/src/AppShellDemo.hpp`）：
+
+| 切片 | forward | deferred |
+| --- | --- | --- |
+| 不透明底（地面 + 绿盒 + `env_box`） | 主场景 | 主场景 |
+| 额外不透明盒子（颜色/深度/遮挡样本） | —— | 主场景 |
+| 特性展示（线框 / 背面剔除 / 自写程序 / 点云 / 嵌套变换） | 主场景 | —— |
+| 会混合的一对（半透明盒 + 星点云） | 主场景 | 叠加场景 |
+| 天空盒 | 叠加场景 | 叠加场景 |
+
+延迟路径画不了会混合的一对（G-buffer 那趟没有可混合的目标，它写的是 albedo/normal/…，不是合成结果），也画不了特性展示
+（几何阶段会替换每个 drawable 自己的程序），所以那对走叠加场景；前向路径则在一个场景里画完，只要一个 sky-only 的覆盖层。
+结论：**一个 `Scene` 对象无法同时服务两条路径，但“词汇表”可以** —— 共享的部分只写一次，路径差异只有一处表达。
 
 **阴影由投影的那盏灯提出请求**（`Light::castShadow()` + `ShadowSettings{resolution, bias, filter}` /
 `ShadowFilter::{None, Hard, PCF}`），**两条路径都会**为它建一条 depth-only 的阴影 pass
