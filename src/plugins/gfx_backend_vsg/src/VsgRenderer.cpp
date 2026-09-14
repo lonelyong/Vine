@@ -447,14 +447,12 @@ void VsgRenderer::refreshFrameOwnership()
     // Both are state members and only ever filled in place (never reallocated away from the
     // bridges' pointers), and the bridges are handed pointers that the frame's end clears.
     state.retained_shares.clear();
-    state.geometry_drawn_this_frame.clear();
     persistent.materialManager.collectOwnedShares(state.retained_shares);
     for (auto& target_entry : state.targets) {
         for (auto& slot_entry : target_entry.second.content_slots) {
             auto& bridge = slot_entry.second.bridge;
             bridge.collectOwnedShares(state.retained_shares);
             bridge.setRetainedShares(&state.retained_shares);
-            bridge.setFrameGeometrySet(&state.geometry_drawn_this_frame);
         }
     }
 }
@@ -464,9 +462,8 @@ void VsgRenderer::clearFrameOwnership()
     for (auto& target_entry : state.targets) {
         for (auto& slot_entry : target_entry.second.content_slots) {
             // A slot built mid-frame never got the pointers, which is exactly the state a bridge
-            // has to be left in (see setRetainedShares / setFrameGeometrySet).
+            // has to be left in (see setRetainedShares).
             slot_entry.second.bridge.setRetainedShares(nullptr);
-            slot_entry.second.bridge.setFrameGeometrySet(nullptr);
         }
     }
 }
@@ -708,13 +705,13 @@ void VsgRenderer::submitFrame()
     state.viewer->present();
     settleSubmittedFrame();
 
-    // Age every slot's cached-but-undrawn geometries by what the FRAME drew (P2). Every slot has
-    // synced by now, so the drawn set is complete, and a slot whose pass did not run this frame
-    // ages here as well — before, its counters froze with it and its content was pinned until the
-    // session ended.
+    // Release the geometries the app has let go of, for EVERY slot — including the slots whose
+    // pass did not run this frame, whose caches no sync of theirs swept. Every slot has synced by
+    // now (or did not run at all), so this is the pass that leaves no slot's cache holding a
+    // geometry nothing outside the caches references any more.
     for (auto& target_entry : state.targets) {
         for (auto& slot_entry : target_entry.second.content_slots) {
-            slot_entry.second.bridge.ageAbsentItems(state.geometry_drawn_this_frame, state.retained_shares);
+            slot_entry.second.bridge.releaseAbandonedGeometries(state.retained_shares);
         }
     }
     // Same point in the frame: release the material resources of materials the app has dropped.

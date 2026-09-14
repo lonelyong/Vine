@@ -630,11 +630,14 @@ TEST(SceneBridgePipelineSharingTest, ReorderCommandsKeepsRetainedTransforms)
 }
 
 /**
- * @brief A geometry hidden from the frame is detached from the root but kept
- * (compiled node reused on reappearance with no rebuild); only a long absence
- * evicts it, after which reappearance rebuilds from scratch.
+ * @brief A geometry the frame stops drawing is detached from the root and kept.
+ *
+ * Hiding a node, culling it or moving it away ends the DRAWING, not the object: the retained
+ * subtree is detached from the root (so the frame stops drawing it) but kept, however long the
+ * absence lasts — the geometry is still held outside the bridge's caches, and that is the only
+ * thing that decides whether an entry may go.
  */
-TEST(SceneBridgePipelineSharingTest, HiddenGeometryReappearsThenEvictsAndRebuilds)
+TEST(SceneBridgePipelineSharingTest, HiddenGeometryIsKeptAndReappearsWithoutRebuilding)
 {
     vine::vsg::SceneBridge bridge;
     bridge.setShaderSet(testContentSet());
@@ -654,24 +657,19 @@ TEST(SceneBridgePipelineSharingTest, HiddenGeometryReappearsThenEvictsAndRebuild
     created.clear();
     bridge.syncRenderCommands(empty, root.get(), &created);
     EXPECT_TRUE(root->children.empty());
-    // ...and reappearing within the grace period reuses the retained node
-    // (no rebuild, no recompile).
-    created.clear();
-    bridge.syncRenderCommands(commands, root.get(), &created);
-    EXPECT_TRUE(created.empty()) << "reappear within grace must not rebuild";
-    ASSERT_EQ(root->children.size(), 1u);
-    EXPECT_EQ(root->children[0].get(), first_transform);
 
-    // A long absence (drawable truly removed) evicts the retained node.
+    // ...and reappearing reuses the retained node — no rebuild, no recompile — even after an
+    // absence far longer than the grace period this cache used to have, because a geometry the app
+    // still holds is never evicted.
     for (int i = 0; i < 601; ++i) {
         bridge.syncRenderCommands(empty, root.get(), &created);
     }
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
-    ASSERT_EQ(created.size(), 1u) << "evicted geometry must rebuild on return";
-    EXPECT_NE(root->children[0].get(), first_transform);
-    // The rebuild reuses the still-cached pipeline template, so no new
-    // variant is registered.
+    EXPECT_TRUE(created.empty()) << "a hidden / culled geometry must not be rebuilt on return";
+    ASSERT_EQ(root->children.size(), 1u);
+    EXPECT_EQ(root->children[0].get(), first_transform) << "still the SAME retained transform";
+    // Nothing was rebuilt, so nothing new was registered either.
     EXPECT_EQ(bridge.pipelineVariantCount(), 1u);
 }
 

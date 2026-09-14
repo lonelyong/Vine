@@ -445,20 +445,21 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
   `makeColorDepthRenderPass()` 把依赖块收成一处置，就是为了让这条从约定变成结构性。
 - 一次性变体（bootstrap / 需要特定初始布局）**提交之后**才换回稳态。
 
-### 5.5 剔除与缺席（culled / hidden）
+### 5.5 剔除与离场（culled / hidden / moved away）
 
 命令列表已经是**视锥剔除后**的（`Scene::collectRenderCommands`：`isVisible()` 是硬门、`Frustum::isOutside()` 用
 p-vertex 测试整棵子树剪掉，每节点世界盒经 `BoundsCache` 只算一次），所以“被剔除”在后端就表现为**该几何体不在本帧命令里**。
-`syncRenderCommands()` 只遍历命令，因此它这一帧什么都不做；下列行为由 `evictAbsentItems()` / `publishRetainedChildren()` 决定：
+`syncRenderCommands()` 只遍历命令，因此它这一帧什么都不做；下列行为由 `updateUndrawnCandidates()` / `releaseAbandonedGeometries()` / `publishRetainedChildren()` 决定：
 
 | 方面 | 行为 | 依据 |
 | --- | --- | --- |
 | 绘制 | 保留节点的 transform 不再挂到 slot root（只有本帧 visible 的按命令顺序挂上）⇒ 不提交、不画 | `publishRetainedChildren` |
 | 数据 / 状态 | **不重建、不重编译、不重上传**；`cache_` 条目（transform / state / data）原样留着 | `Item` |
-| 计数 | `absent_frames++`；同时清掉 `rejected` 记录，下次回来重新评估 | `evictAbsentItems` |
-| 重新出现 | 缺席 ≤ **600 帧**（`kAbsentEvictFrames`）直接复用：只重挂；回来那一帧才比对 revision / material / texture+revision / state / program ⇒ 缺席期间攒的改动一次结算 | 同上 |
-| 缺席 > 600 帧，或 App 已释放该几何体 | 条目删除；子树进**退役环**（环深 4）而不是立刻析构 —— 在飞的 command buffer 可能还引用它 | `retireNode` |
-| 每帧成本 | 一次扫 `cache_`（O(条目数)），与几何体复杂度无关 | 同上 |
+| 候选 | 上次画过、这次没画 ⇒ 进候选表；同时清掉 `rejected` 记录，下次回来重新评估 | `updateUndrawnCandidates` |
+| 重新出现 | 直接复用：只重挂；回来那一帧才比对 revision / material / texture+revision / state / program ⇒ 未画期间攒的改动一次结算 | `Item` |
+| 释放判据（**唯一一条**） | 缓存之外还有没有人持有该几何（`useCount() <= shares`）。被剔除 / 隐藏 / 移动 / 暂存复用的对象都由场景树或调用方持有 ⇒ **不因“没画”而逐出**，离开多久都一样 | `releaseAbandonedGeometries` |
+| App 放手（外侧无人持有） | 条目删除；子树进**退役环**（环深 4）而不是立刻析构 —— 在飞的 command buffer 可能还引用它 | `retireNode` |
+| 每帧成本 | 只走候选表：O(本帧画过的 + 仍未画的)，与“见过的几何总数”无关 | `updateUndrawnCandidates` |
 
 容易踩的点：
 
@@ -467,9 +468,10 @@ p-vertex 测试整棵子树剪掉，每节点世界盒经 `BoundsCache` 只算�
 | 只有 CPU 侧视锥剔除 | 模块不用 vsg 的 `CullGroup`（也没用 `ComputeBounds`），更无遮挡剔除；视锥内的对象一律提交，片元级省略只有光栅化的背面剔除（`CullMode`，默认 `None`） |
 | 首帧就被剔除的几何体 | 从未建过 ⇒ 第一次进入视锥那一帧才建 + 编译（走增量编译队列 `pending_compile_views`），会有一帧抖动，不是提前建好 |
 | 包围盒只会“多画” | 节点级 AABB 保守：相交就保留；反面是 Group 被剪掉时里面其实可见的子节点也一起没了 |
-| 缺席 ≠ 改动被丢弃 | 缺席期间 bump 的 `Geometry::revision()` 不会被消费（`Item::revision` 不更新），回来那一帧才重建 |
-| 每槽各自记账 | `syncRenderCommands()` 是**每个内容槽每帧**调一次，`seen` / `absent_frames` 也随之按槽走：同一几何体在 A 槽可见、B 槽被剔除时，B 那边照计缺席 |
-| 剔除 vs 隐藏 | 在后端两者长得一样（都是“缺席”），不区分 |
+| 未画 ≠ 改动被丢弃 | 未画期间 bump 的 `Geometry::revision()` 不会被消费（`Item::revision` 不更新），回来那一帧才重建 |
+| 候选按槽走，判据是对象级 | `syncRenderCommands()` 是**每个内容槽每帧**调一次，候选表也随之按槽走：同一几何体在 A 槽可见、B 槽被剔除时，B 那边它是候选。但释放判据读的是**整个会话的份额**（`refreshRetainedShares`），A 槽的条目持有它 ⇒ 哪个槽都不会误删 |
+| 剔除 / 隐藏 / 移走，后端看不出区别 | 三者都表现为“这一帧没有它的命令”，所以后端**不能**拿“没画”当删除信号 —— 这正是释放判据改成“外侧是否仍持有”的原因 |
+| 内存上界 | 条目数 = 曾经画过、且缓存之外仍有人持有的几何数；释放途径是**从场景摘掉并丢掉句柄**（或 `clearCache()`），不是等时间 |
 
 ## 6. 诊断与验证
 

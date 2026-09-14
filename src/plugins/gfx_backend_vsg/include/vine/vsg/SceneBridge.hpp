@@ -131,36 +131,32 @@ class V_VSG_API SceneBridge {
      */
     void collectOwnedShares(OwnedShareCounts& shares) const;
 
-    /** @brief Ages the cached geometries that were not drawn and evicts the ones past the window.
+    /** @brief Releases the cached geometries the app has let go of.
      *
-     * The CANDIDATES, not the whole cache: what can be absent is known — the geometries this slot
-     * drew earlier and did not draw since (see updateAbsentCandidates) — so this walks that list
-     * instead of every entry the slot has ever cached. See the notes in the .cpp for why that is
-     * the difference between O(entries ever seen) and O(drawn + absent) per frame.
+     * WHAT RELEASES AN ENTRY IS THE APP RELEASING THE OBJECT, not how long ago it was last drawn.
+     * The entry OWNS the geometry it is keyed by, so `useCount() <= shares` means every reference
+     * left IS one of this bridge's entries — nothing outside the caches holds it any more.
      *
-     * Called once per frame by the session with the UNION of every slot's drawings (a geometry any
-     * pass drew is not absent), and from syncRenderCommands with this slot's own drawings when no
-     * session is driving — a test, or a driver that never opens a frame.
+     * That is what tells a removed object from merely an invisible one, and it is why a geometry a
+     * tree still holds is KEPT however long it goes undrawn: culled, hidden and moved are all
+     * "still held", and the scene graph's own child references are the outside holders that make
+     * them read that way in useCount(). A culled object is not a removed one — that is the whole
+     * point of this cache (see the reuse note in the .cpp).
      *
-     * @param drawn  Geometries drawn this frame (the session's union, or this slot's own).
+     * The CANDIDATES, not the whole cache: only a geometry this slot did not draw in its last sync
+     * can have lost its last outside holder (one that still has a holder is drawn by it, or sits in
+     * a parked tree), so this walks that list instead of every entry the slot has ever cached. See
+     * the notes in the .cpp for why that is the difference between O(entries ever seen) and
+     * O(drawn + undrawn) per frame.
+     *
+     * Called once per frame by the session for EVERY slot — including the slots whose pass did not
+     * run, so a disabled pass still releases what it kept — and from syncRenderCommands with this
+     * slot's own counts when no session drives (a test, or a driver that never opens a frame).
+     *
      * @param shares Retained shares counted for the geometries this sweep judges.
-     * @return true when anything was evicted.
+     * @return true when anything was released.
      */
-    bool ageAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& drawn,
-                        const OwnedShareCounts& shares);
-
-    /** @brief Provides the set this bridge reports the geometries it draws into (frame-scoped).
-     *
-     * The session clears it at the start of a frame, every slot's sync adds what it drew, and the
-     * session then ages every slot by that union (ageAbsentItems). Set for the duration of one
-     * frame and cleared with it, like the share counts.
-     *
-     * @param drawn Set to report into, or null to age within this bridge's own syncs.
-     */
-    void setFrameGeometrySet(std::unordered_set<const vine::graphics::Geometry*>* drawn) noexcept
-    {
-        frame_drawn_ = drawn;
-    }
+    bool releaseAbandonedGeometries(const OwnedShareCounts& shares);
 
     /** @brief Provides the retained-share counts this bridge's sweep judges by.
      *
@@ -864,23 +860,6 @@ class V_VSG_API SceneBridge {
      */
     std::size_t releaseAbandonedCaches();
 
-    /** @brief Evicts retained items the frame no longer draws.
-     *
-     * The tail half of syncRenderCommands(): hiding a node / frustum culling
-     * stays cheap (the retained node is detached from the root and reused when
-     * it reappears), while an entry the app itself released — or one absent
-     * past the reuse window — is dropped, its subtree parked on the retire ring
-     * because an in-flight command buffer may still reference it.
-     *
-     * @param seen Geometries drawn this frame.
-     * @return true when anything was evicted.
-     */
-    /**
-     * @brief Parks @p slot for release once the frames that could bind it are accounted for.
-     *
-     * @param slot Slot whose drawable is gone (an invalid slot or a bridge without a pool
-     *             is a no-op).
-     */
     /**
      * @brief Appends the drawable's per-draw bind of set 1 (see VsgDrawBlockPool).
      *
@@ -897,6 +876,11 @@ class V_VSG_API SceneBridge {
                              ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout,
                              VsgDrawBlockPool::Slot draw_slot);
 
+    /** @brief Parks @p slot for release once the frames that could bind it are accounted for.
+     *
+     * @param slot Slot whose drawable is gone (an invalid slot or a bridge without a pool
+     *             is a no-op).
+     */
     void releaseDrawSlot(VsgDrawBlockPool::Slot slot);
 
     /**
@@ -913,14 +897,14 @@ class V_VSG_API SceneBridge {
     /** @brief Ring advances a released slot waits before the pool may hand it out again. */
     static constexpr std::uint32_t kDrawSlotRetireFrames = static_cast<std::uint32_t>(VsgRetireRing::kRetireRingDepth);
 
-    /** @brief Rebuilds the absent candidate list from this sync's drawings.
+    /** @brief Rebuilds the undrawn candidate list from this sync's drawings.
      *
-     * The list is what ageAbsentItems walks and (with last_seen_) the keys of the geometry cache,
-     * so it is maintained on every sync whether or not this bridge ages itself.
+     * The list is what releaseAbandonedGeometries walks and (with drawn_) the keys of the geometry
+     * cache, so it is maintained on every sync whether or not this bridge sweeps itself.
      *
      * @param seen Geometries drawn by this sync.
      */
-    void updateAbsentCandidates(const std::unordered_set<const vine::graphics::Geometry*>& seen);
+    void updateUndrawnCandidates(const std::unordered_set<const vine::graphics::Geometry*>& seen);
 
     /** @brief The share-aware half of releaseAbandonedCaches (see it for the rule).
      *
@@ -1018,17 +1002,15 @@ class V_VSG_API SceneBridge {
     // (setRetainedShares). Only ever dereferenced inside this bridge's sweep, so the pointer is
     // live exactly while the session's counts are.
     const OwnedShareCounts* retained_shares_ = nullptr;
-    // The geometries this slot has cached but did not draw in its LAST sync (the eviction
-    // candidates; see ageAbsentItems), and the geometries it drew in that sync. Together they are
-    // the keys of `cache_` — every entry was created by a sync that drew its geometry and is
-    // dropped when the window expires or the bridge is cleared — which is what lets a frame find
-    // the absent ones without walking the cache.
-    std::vector<const vine::graphics::Geometry*> absent_;
-    std::unordered_set<const vine::graphics::Geometry*> absent_set_;
-    std::vector<const vine::graphics::Geometry*> last_seen_;
-    // The frame's set of drawn geometries, injected for one frame (setFrameGeometrySet). Null when
-    // no session drives this bridge, which is when the syncs age it themselves.
-    std::unordered_set<const vine::graphics::Geometry*>* frame_drawn_ = nullptr;
+    // The geometries this slot has cached but did not draw in its LAST sync (the sweep's
+    // candidates; see releaseAbandonedGeometries), and the geometries it drew in that sync.
+    // Together they are the keys of `cache_` — every entry was created by a sync that drew its
+    // geometry and is dropped when nothing outside the caches holds the geometry any more, or when
+    // the bridge is cleared — which is what lets a frame find the candidates without walking the
+    // cache.
+    std::vector<const vine::graphics::Geometry*> undrawn_;
+    std::unordered_set<const vine::graphics::Geometry*> undrawn_set_;
+    std::vector<const vine::graphics::Geometry*> drawn_;
     // Whether this bridge already reported that it has no shader set to shade with (see
     // setShaderSet / buildStateGroup). Once per set: injecting one re-arms the report, so a slot
     // that loses its set again says so again instead of going quiet.

@@ -221,7 +221,7 @@ flowchart LR
 - 判据变化才**重建该几何的子树**：`geometry->revision()` / 材质对象指针 /
   `resolvedRenderState` / program 指针任一不同。
 - 稳态每帧只做廉价操作（见 §6 表）。
-- 不在本帧的几何：从 root 摘下但**保留 Item**，`absent_frames` 超 600 才逐出。
+- 不在本帧的几何：从 root 摘下但**保留 Item**；只有缓存之外没有人持有它（App 放手）那一帧才逐出 —— 剔除 / 隐藏 / 移动都不算删除。
 - 根 children 顺序跟随（已排序的）命令流，顺序变了才重排 → opaque/透明 painter 序
   由命令序承载。
 
@@ -285,7 +285,7 @@ sequenceDiagram
 | 透明度 `cmd.opacity` | 写该 drawable 在 `vine_draw` 池里的槽（变了才写） | 无 |
 | 同材质改颜色/光泽 | 原位覆写共享的 `VineMaterialBlock` 字节（每帧循环） | 无 |
 | 顺序变化 | 重排 root children 匹配命令序 | 无 |
-| 隐藏/剔除缺席 | 摘下 root，Item 保留；>600 帧逐出 | 无 |
+| 隐藏/剔除离场 | 摘下 root，Item 保留；只有外侧放手才逐出（无时间窗） | 无 |
 | 首次出现 / revision / 换材质对象 / renderState / program 变 | 重建该 Item | 有（全图 compile） |
 
 **要点**：稳态帧成本 ≈ 每几何几次指针/浮点比较 + 材质 uniform 覆写；**不重建节点、
@@ -403,7 +403,7 @@ graph TD
 |---|---|---|---|
 | Vine `Scene/Node/Geometry/Material/Camera/Light/ShaderProgram` | 场景树/调用方（`intrusive_ptr`，RefCounted） | 后端只存 **raw 指针**，不延长生命 | 悬垂（见 §14） |
 | `VsgRenderer` 绑定的 `Scene* / Camera*` | 调用方 | **必须活得比渲染器久**（构造文档明示） | initialize/render/frame 解引用 UB |
-| `SceneBridge::cache_` key `Geometry*` | 场景树 | 键存活由场景树保证；几何真删除后最多滞留 600 帧 | 地址复用错配（§14-1） |
+| `SceneBridge::cache_` key `Geometry*` | 场景树 / 调用方 | 条目自持键；外侧放手那一帧即释放 | 地址复用错配（§14-1） |
 | `VsgMaterialManager::cache` key `Material*` | 同上 | 同上；无逐出 | 同上 + 只增不减留存 |
 | `SceneBridge::material_manager_` | `raw_ptr<VsgMaterialManager>` | **manager 必须活得比 bridge 久**（接口约定） | bridge 析构若触碰则悬垂（当前析构为空，无碍） |
 | vsg `ref_ptr<Window/Viewer/Graph/Camera/Node/Image/...>` | vsg 引用计数 | `Impl` 成员；shutdown 显式置空 | 引用未清 → 撞 `VSG_MAX_DEVICES==1` / 资源滞留 |
@@ -445,7 +445,7 @@ graph TD
 
 | 场景 | 动作 | 入口 |
 |---|---|---|
-| 几何逐出 | `absent_frames>600` → erase，释放该几何 vsg 子树 | `SceneBridge::syncRenderCommands` |
+| 几何逐出 | 外侧无人持有（`abandoned(shares)`）→ erase，释放该几何 vsg 子树 | `SceneBridge::releaseAbandonedGeometries`（sync 内 + 帧末） |
 | Material 增删改 | `updateMaterial/releaseMaterial/clear`（无调用点） | `VsgMaterialManager` |
 | 离屏 resize | 摘 graph → deviceWaitIdle → clearCache+置空附件 → 新尺寸重建 | `renderOffscreenTarget` |
 | 移除 RenderTarget | 摘 offscreen graph + 摘 PiP view → deviceWaitIdle → clearCache + erase | `releaseRenderTarget` |
@@ -504,7 +504,7 @@ deviceWaitIdle
 
 | ID | 风险 | 触发条件 | 说明 |
 |---|---|---|---|
-| UB-1 | `SceneBridge::cache_`（key `Geometry*`）与 `VsgMaterialManager::cache`（key `Material*`）**裸指针键悬垂 + 地址复用错配** | 调用方在几何逐出（600 帧）前已释放对象，且新对象复用了同一地址 | 新几何 `find` 命中旧 Item（内容校验可能过不了 revision/material 而触发**重建**；重建 `buildGeometry` 会解引用缓存的 `material` 指针）→ 若旧 `Material*` 已释放则**解引用悬垂 = UB** |
+| UB-1 | `SceneBridge::cache_`（key `Geometry*`）与 `VsgMaterialManager::cache`（key `Material*`）**裸指针键悬垂 + 地址复用错配** | 调用方先释放对象、缓存条目后引用（**Geometry 侧已不可能**：条目自持键，外侧放手则当帧回收） | 新几何 `find` 命中旧 Item（内容校验可能过不了 revision/material 而触发**重建**；重建 `buildGeometry` 会解引用缓存的 `material` 指针）→ 若旧 `Material*` 已释放则**解引用悬垂 = UB** |
 | UB-2 | 渲染器绑定 `Scene*/Camera*` 悬垂 | 场景/相机先于渲染器销毁 | `initialize/render/frame/frame()` 解引用 → UB（构造文档明示契约） |
 | UB-3 | `window_layers` key `Camera*`、`offscreen/screen_slots` key `RenderTarget*` 悬垂 | 引擎没调 `releaseWindowLayer/releaseRenderTarget` 就销毁对象 | map 残留旧 key；新对象同址 → 错配旧 slot（GPU 资源被张冠李戴） |
 | UB-4 | `active_target / pending_lights / pending_viewport` 跨调用暂存 | 同一帧内 `setRenderTarget/setLights/setViewport` 后 `render` 前对象被改/销毁 | 引擎同步逐 pass 调用，正常窗口内安全；外部滥用接口时序则有悬垂 |
@@ -571,7 +571,7 @@ deviceWaitIdle
 | D9 | program 编译失败**静默回退内建**，无诊断 | 🔴 |
 | D10 | `ShaderProgram` 无 revision/变更通知 → 改 shader 不生效 | 🔴 |
 | D13 | `MaterialManager` 缓存无逐出（release/update 零调用点）→ 只增不减 | 🔴 最像泄漏 |
-| D14 | 裸指针缓存键 + 600 帧滞留窗（UB-1） | 🟡 |
+| D14 | 裸指针缓存键 + 600 帧滞留窗（UB-1）——**Geometry 侧滞留窗已删（2026-09-14）**，Material 侧见 D13 | 🟢 |
 | D17 | shutdown 顺序错 → 撞 `VSG_MAX_DEVICES==1`；漏 `releaseWindow` → Destroy Qt 窗口 | 🟡 |
 | D20 | 验证只在 lavapipe + `debugLayer=false`；真机驱动差异未覆盖 | 🟡 |
 | D22 | 运行期结构变化触发全图 compile（非增量） | 🟡 |

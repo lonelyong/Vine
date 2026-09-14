@@ -227,8 +227,8 @@ recordAndSubmit。
   写矩阵（变了才写）、写逐顶点 alpha（有效透明度变了才写）、必要时重建/新几何。
 - **结构变化**（几何首次出现 / shape / 换材质对象 / 真移除）才重建 + `viewer->compile()`
   （目前全量；增量 compile 见 §9 Phase3）。
-- 隐藏/剔除导致的**缺席不立即删**：Item 保留已编译节点、只从渲染根摘下，
-  `absent_frames` 超过阈值（600）才 evict。
+- 隐藏/剔除/移动导致的**未画不立即删**：Item 保留已编译节点、只从渲染根摘下；
+  只有**缓存之外无人持有**（`abandoned(shares)`，即宿主放手）才 evict —— **无时间窗**（2026-09-14 删）。
 - 死代码 `VsgRenderer::update()` 已删除（不再按 scene 整体 rebuild）。
 
 ## 5. 已解决问题记录
@@ -313,8 +313,8 @@ gfx_backend_vsg（MODULE 插件，v_add_plugin）
 ### 取舍与待办
 - **blending 常开 + 逐顶点 alpha**：透明度任意跨越 1.0 都实时、零 rebuild，代价是
   opaque 物体也走混合（GPU 开销很小）。
-- **evict 阈值 `kAbsentEvictFrames=600`**：区分“临时缺席（隐藏/剔除）”与“真移除”；
-  可调。
+- ~~**evict 阈值 `kAbsentEvictFrames=600`**~~ **已删（2026-09-14）**：阈值区分不了“临时离开”与“真移除”
+  （移动中的节点同样不在帧里，600 帧后误删 ⇒ 回到视锥要重建重传）；改用持有判据 `abandoned(shares)`。
 - **Phase 2（未做，待明确负载）**：vine 端脏场景图——`Node` 缓存 world 矩阵/世界
   AABB、沿父链失效；后端不需要（只吃命令流，结构判据=指针比较）。
 - **Phase 3（未做）**：结构变化只对新增子树做增量 `viewer->compile()`，或合并到帧边界。

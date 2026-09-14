@@ -153,7 +153,7 @@ config->assignDescriptor("material", material_value);          // 默认路径
 - **世界摆放不进顶点**：`cmd.modelMatrix` 每帧写 `MatrixTransform::matrix`（矩阵没动就跳过）。
 - **透明度 = `vine_Color` 的 alpha（loc6）**：保留白色 `colors` 数组，仅当
   `cmd.opacity` 变化时整组 `color.a = opacity` 覆写（稳态帧无 O(V) 开销）。
-- 消失的几何不立即删：脱离 root 保留复用，超过 600 帧未出现才逐出。
+- 消失的几何不立即删：脱离 root 保留复用；只有**缓存之外无人持有**（App 从树上摘掉且丢掉句柄）那一帧才逐出，与离开多久无关。
 
 ## 3. GPU 上传 / 管线编译
 
@@ -288,9 +288,9 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 
 - **生命周期契约**：缓存键（`Geometry*`/`Material*`）的存活由**场景树 / 调用方保证**。
   后端不持有 Vine 对象的强引用，只在缓存键存活期间使用。
-- 从场景删除的几何：命令流不再引用 → `absent_frames` 递增 → **600 帧后逐出**（释放
-  vsg 子树）。逐出窗口内若调用方已把 `Geometry` 全释放，理论上 key 会悬垂
-  （应用实际让场景树持有节点，见 §12 局限）。
+- 从场景删除的几何：命令流不再引用 → 进候选表；等到**缓存之外无人持有**（已从树上摘掉、句柄也丢了）那一帧的 sweep 才逐出（释放
+  vsg 子树）。条目自持所索引的几何 ⇒ “外侧持有”与“外侧放手”的差别就是 `useCount() - shares`，既没有悬垂窗口也没有时间窗：隐藏 / 剔除 / 移动中的
+  对象一直被树（或调用方）持有，永不误删。
 
 ### 9.4 材料管理器必须先于 bridge 存活
 
@@ -310,7 +310,7 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 
 | 场景 | 做了什么 | 代码位置 |
 |---|---|---|
-| 几何逐出 | `absent_frames > 600` → erase，释放该几何的 vsg 子树 | `syncRenderCommands` |
+| 几何逐出 | 外侧无人持有（`abandoned(shares)`，即 `useCount() <= shares`）→ erase，释放该几何的 vsg 子树 | `SceneBridge::releaseAbandonedGeometries`（sync 内 + 帧末对未跑 pass 的槽） |
 | Material 增删改 | `getOrCreate / updateMaterial / releaseMaterial / clear` | `VsgMaterialManager` |
 | 离屏 resize | 摘 graph → `deviceWaitIdle` → `clearCache` + 置空 image/view/RP/framebuffer → 按新尺寸重建 | `renderOffscreenTarget` |
 | 移除 RenderTarget | 摘 offscreen graph + 摘 PiP view → `deviceWaitIdle` → `clearCache` + erase | `releaseRenderTarget` |
@@ -403,7 +403,7 @@ sequenceDiagram
 | preset | **没有 preset 枚举了（2026-09-13）**：内容着色只能显式命名 program（`forwardProgram()` / `flatForwardProgram()`，或宿主自己的）；没有可用 set 就报一条诊断且**不画**（不兜底） |
 | instancing | vsg loc7-11（billboard/instance/skinning）未向 Vine 暴露；注意这里说的是 **shader location**，与顶点数组下标（binding）无关 |
 | 固定项 | `frontFace` 固定 CCW、MRT/自定义 blend op/独立 mask 未做 |
-| 生命周期局限 | 缓存以裸指针为键，依赖场景树保活；几何删除后最多滞留 600 帧才释放 |
+| 生命周期局限 | 缓存以裸指针为键，靠**条目自持键 + 外侧持有判据**保活；曾被画过且仍被持有的几何会一直留在 `cache_`（复用承诺的代价） |
 
 ## 13. 已知缺陷清单（2026-09-04 登记）
 
@@ -444,8 +444,8 @@ sequenceDiagram
 | ID | 缺陷 | 位置 | 严重度 |
 |---|---|---|---|
 | D13 | `VsgMaterialManager::cache` **无逐出**、且按裸指针索引不自持（同地址新材质复用旧 Phong 值/descriptor）。**已修（2026-09-11，设计 §12）**：条目自持 `Material`（地址不可复用）+ `releaseAbandoned()`（app 放弃即立即回收，渲染器每帧调）+ `kMaxEntries` FIFO 上限 + null 键默认条目不动 | `VsgMaterialManager` | 🟢 |
-| D14 | 裸指针缓存键 + 600 帧滞留窗：Geometry/Material 删除后、逐出前有悬垂窗口（安全依赖场景树保活）。**Geometry 部分已修（2026-09-11，设计 §8.1）**：`Item` 自持所索引的几何 → 不再有悬垂窗口；**Material 部分仍见 D13** | `SceneBridge::cache_` | 🟡 |
-| D15 | `SceneBridge::cache_` 删除几何 600 帧后才释放（延迟释放）。**已改（2026-09-11，§8.1）**：仅剩缓存持有时（`useCount()==1`，app 已放弃）**立即驱逐**；仍被引用（隐藏/剔除/临时离场）才走 600 帧复用窗 | `syncRenderCommands` | 🟢 |
+| D14 | 裸指针缓存键 + 600 帧滞留窗：Geometry/Material 删除后、逐出前有悬垂窗口（安全依赖场景树保活）。**Geometry 部分已修（2026-09-11，设计 §8.1）**：`Item` 自持所索引的几何 → 不再有悬垂窗口；**滞留窗已删（2026-09-14，见 D15）** → 也不再有“已放手但还留着”的窗口；**Material 部分仍见 D13** | `SceneBridge::cache_` | 🟢 |
+| D15 | `SceneBridge::cache_` 删除几何 600 帧后才释放（延迟释放）。**已闭环（2026-09-14）**：时间窗整个删除——释放判据只剩一条“缓存之外无人持有”（`abandoned(shares)`）；被剔除 / 隐藏 / 移动的对象一律保留（树或调用方持有它们），App 放手则**当帧**回收，候选表退化为成本过滤。守卫：`AnUndrawnGeometryIsKeptHoweverLongItStaysUndrawn`（未画 1000 次 sync 仍保留；变异“进候选即删”⇒ 红）+ `ADroppedGeometryIsReleasedByTheFrameSweep`（放手当帧回收；变异“永不释放”⇒ 红）+ `HiddenGeometryIsKeptAndReappearsWithoutRebuilding`（隐藏 601 帧后回来仍是同一棵保留子树） | `SceneBridge::releaseAbandonedGeometries` | 🟢 |
 | D16 | 共享/变体缓存只增不减（随"历史见过的不同变体数"增长）；2026-09-08 起 `clearCache()`（槽 teardown/resize/release）同时清 `shared_objects_`/`program_shader_sets_`/`variant_cache_`，**槽内活跃期间仍不修剪**。**已修（2026-09-11，设计 §20）**：三个 program 缓存迁到既有缓存骨架（`OwnedCache.hpp`）——容量用同一套 FIFO `trimToCapacity`（64 / 64 / 256），插入时修剪；"超限整表清空"删除（它会把当前场景正在绘制的程序一并丢掉）；每帧 `releaseAbandonedCaches()` 回收链条尾部的条目 | `SceneBridge` | 🟢 |
 | D17 | shutdown 顺序错 → 撞 `VSG_MAX_DEVICES==1`；`releaseWindow()` 漏调会 Destroy Qt 宿主窗口 | `VsgRenderer::shutdown` | 🟡 |
 | D18 | resize / release / 离屏 resize 走 `deviceWaitIdle` 全停（简单但会整帧卡顿） | `VsgRenderer` | 🟢 |
@@ -505,7 +505,7 @@ sequenceDiagram
 
 | D46 | **两个缓存互持卡死（P11）**：材质管理器条目与桥的 variant 模板条目各自持有同一个 `Material`，而两边都用 `useCount() <= 1` 判"只有我还持有它" ⇒ 两边都不放手（App 丢掉后 `useCount == 2`，两侧 sweep 都返回 0；只在 FIFO trim 偶然挤掉一个时才释放）——同一个缺陷也适用于 program（本桥 3 个缓存互持）。**已修（2026-09-13）**：判据改成"对象上只剩**保留条目**在持有" ⇒ `useCount() <= 保留份额数`（`OwnedCache.hpp` 的 `OwnedShareCounts` + `keyReleased(object, shares)` / `abandoned(shares)` / `eraseAbandoned(cache, shares)`）。份额是**数据相关**的（一个材质被两个槽画 = 管理器 1 + 各槽模板 1；一个几何被两个槽持 = 2），所以是数出来的：`collectOwnedShares()` 走遍一起清扫的缓存；会话每帧数一次（`VsgRenderer::refreshRetainedShares` → 逐槽 `SceneBridge::setRetainedShares`，**只在该帧有效**，帧尾 `clearRetainedShares()`）→ 帧尾 `materialManager.releaseAbandoned(shares)`。单桥自己驱动（测试）退化为"本桥可见份额 = 自己的缓存 + 材质管理器"（`collectSweepShares`）；`releaseAbandoned()` 无参版退化为保守语义（只算自己条目），既有 `MaterialManagerTest` 不变。**陷阱（测量出来的）**：`Item::material`（身份比较）自己也是持有者 ⇒ "App 丢掉材质"只有在保留条目被淘汰后才成立；且**必须先装份额再 sync 各槽**（渲染器的帧序），否则先 sync 的槽只看到自己的份额、留下自己的 Item/模板。守卫：test_vsg `ADroppedMaterialIsReleasedWithoutAnExplicitRelease`（App 丢掉后一帧内材质真的析构）+ `SessionSharesCountEverySlotAndABridgeCannot`（会话份额 > 单桥份额）；反证：判据换回 `<= 1` ⇒ 红；两条证据基线 51 行逐字节不变（行为中性） | `OwnedCache.hpp` / `SceneBridge` / `VsgMaterialManager` / `VsgRenderer` | 🟢 |
 
-| D47 | **几何淘汰每帧无条件扫整个 cache**：`evictAbsentItems()` 遍历 `cache_` 全部条目（每条目一次原子 `useCount()`）⇒ 每帧 O(曾见过的 geometry 数)；`Scene::collectRenderCommands` 的 memo 键含相机，相机一动每帧必 miss ⇒ 漫游把 cache 撑到全场景 ⇒ **正反馈**（越跑越慢）。**已修（2026-09-13）**：改走**候选表**——每槽维护 `absent_`（缓存了但上一次 sync 没画 = 候选）与 `last_seen_`（上一次 sync 画的），`ageAbsentItems()` 只走候选表 ⇒ 每帧 O(drawn + absent)；两张表的并集就是 `cache_` 的键集（条目由"画过"创建、窗口到期 / App 放手时删除、`clearCache()` 清空），所以 P11 的份额收集也改读两张表，不再遍历 cache。窗口语义不变（每槽计数、**连续**缺席 600 次），"回来了就重置"做进列表维护。守卫：test_vsg `TheAbsenceWindowAgesTheGeometriesTheFrameStoppedDrawing`（窗口内保留 / 超窗口淘汰 / 400 缺席→画一次→400 缺席不得淘汰）+ 新可观察量 `SceneBridge::retainedGeometryCount()`；**两条变异都验证过**（不加新缺席到候选 ⇒ 永不淘汰；回来不重置 ⇒ 累计淘汰）。**注意**：`variantReuseCount()` 不能用来观察几何条目是否还在——变体模板缓存按 (program, material, state) 建，与几何条目无关。**帧级并集（同日补全）**：每槽 sync 把画的几何报进 `VsgRendererState::geometry_drawn_this_frame`，`submitFrame()` 在所有槽 sync 完后用**并集**给每个槽调一次 `ageAbsentItems()` ⇒"本帧没有任何 pass 画它"才算缺席；某槽的 pass 本帧没跑（被禁用）也会老化，不再把内容钉到会话结束。单桥直驱时无并集指针 ⇒ 退化为按本槽自己的绘制在 sync 内老化（同一函数）。守卫：`TheAbsenceWindowCountsFramesNoPassDrewTheGeometry`（别的 pass 一直画 ⇒ 不计缺席，且重置窗口）+ 变异（老化用本槽而非并集 ⇒ 红）。全部收口 | `SceneBridge` / `VsgRendererState` | 🟢 |
+| D47 | **几何淘汰每帧无条件扫整个 cache**：`evictAbsentItems()` 遍历 `cache_` 全部条目（每条目一次原子 `useCount()`）⇒ 每帧 O(曾见过的 geometry 数)；`Scene::collectRenderCommands` 的 memo 键含相机，相机一动每帧必 miss ⇒ 漫游把 cache 撑到全场景 ⇒ **正反馈**（越跑越慢）。**已修（2026-09-13）**：改走**候选表**——每槽维护 `absent_`（缓存了但上一次 sync 没画 = 候选）与 `last_seen_`（上一次 sync 画的），`ageAbsentItems()` 只走候选表 ⇒ 每帧 O(drawn + absent)；两张表的并集就是 `cache_` 的键集（条目由"画过"创建、窗口到期 / App 放手时删除、`clearCache()` 清空），所以 P11 的份额收集也改读两张表，不再遍历 cache。窗口语义不变（每槽计数、**连续**缺席 600 次），"回来了就重置"做进列表维护。守卫：test_vsg `TheAbsenceWindowAgesTheGeometriesTheFrameStoppedDrawing`（窗口内保留 / 超窗口淘汰 / 400 缺席→画一次→400 缺席不得淘汰）+ 新可观察量 `SceneBridge::retainedGeometryCount()`；**两条变异都验证过**（不加新缺席到候选 ⇒ 永不淘汰；回来不重置 ⇒ 累计淘汰）。**注意**：`variantReuseCount()` 不能用来观察几何条目是否还在——变体模板缓存按 (program, material, state) 建，与几何条目无关。**帧级并集（同日补全）**：每槽 sync 把画的几何报进 `VsgRendererState::geometry_drawn_this_frame`，`submitFrame()` 在所有槽 sync 完后用**并集**给每个槽调一次 `ageAbsentItems()` ⇒"本帧没有任何 pass 画它"才算缺席；某槽的 pass 本帧没跑（被禁用）也会老化，不再把内容钉到会话结束。单桥直驱时无并集指针 ⇒ 退化为按本槽自己的绘制在 sync 内老化（同一函数）。守卫：`TheAbsenceWindowCountsFramesNoPassDrewTheGeometry`（别的 pass 一直画 ⇒ 不计缺席，且重置窗口）+ 变异（老化用本槽而非并集 ⇒ 红）。全部收口。**2026-09-14 更正**：本行里的“窗口”已整个删除（见 D15）——`ageAbsentItems()` → `releaseAbandonedGeometries()`，不再计数、不再看“本帧有没有 pass 画过”，所以**帧级并集也随之删除**（`VsgRendererState::geometry_drawn_this_frame` / `setFrameGeometrySet()`）：释放判据是对象级的（外侧是否仍持有），与其他槽这帧画没画无关，而帧末对每个槽各扫一次已有的职责保留（覆盖本帧没跑 pass 的槽）。上述两个窗口守卫随机制一并删除/重写（现已换成 D15 里那三条）。候选表（`undrawn_` / `drawn_`）保留，但只剩成本过滤的作用。 | `SceneBridge` / `VsgRendererState` | 🟢 |
 
 ### 13.9 性能 / 启动层（2026-09-11 补充登记，设计见 `.ai/design/vsg-pass-lifecycle.md` §9）
 

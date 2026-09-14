@@ -896,7 +896,7 @@
 > 256 蓝像素）。harness 现在要求 `depth load:` ≥1 与 `shared depth pixels:` ≥1 行证据。
 
 > 2026-09-11 **缓存收口：一套骨架、四种缓存（设计 §20，D16 / D34）**：`SceneBridge` 的四个
-> 缓存不再各写一套语义 —— 几何缓存（自持 + 600 帧窗，**无容量上限**）、`program_stages_`
+> 缓存不再各写一套语义 —— 几何缓存（自持 + 外侧放手即逐出，**无容量上限**；2026-09-14 起无时间窗）、`program_stages_`
 > （64 FIFO）、`program_shader_sets_`（64 FIFO）、`variant_cache_`（256 FIFO，**两个键都自持**）
 > 都走 `OwnedCache.hpp`（`OwnedCacheEntry` / 新增 `OwnedPairCacheEntry` + `keyReleased()` 唯一
 > 定义处）；"超限整表清空"删除（D16），改为插入时 FIFO 修剪 + 每帧 `releaseAbandonedCaches()`。
@@ -980,7 +980,7 @@
 - **声明的 `ImageRef` 必须 `bind` 到一张 target**：未绑定的身份**没有地址** ⇒ 消费者解析不到、承诺校验也无从比较（旧注释写着"接线期已报"其实没报）⇒ 整根线静默。现按**每张图**报一次（分集），且**已被冲突报过的不再报**（一个错误一条消息）。
 - **失败**：接口内不抛异常；`false` ≠ 部分生效；**`initialize()` 返回 false 必须自己收拾残局**
   （引擎只在 initialize 成功后才调 `shutdown()`，见 `RenderEngine::shutdown`）。
-- **保留预算**（本后端数字）：退役环 4（提交帧）、几何复用窗 600 帧、材质 256 条、
+- **保留预算**（本后端数字）：退役环 4（提交帧）、几何条目按“外侧是否仍持有”回收（无时间窗，2026-09-14 删）、材质 256 条、
   变体/ShaderSet 超限整表清空、pass/target 槽靠 `releasePass`/`releaseRenderTarget`。
 
 > 2026-09-11 **后端模块拆分（结构，行为零变更）**：`VsgRenderer.cpp` 3603 -> 901 行，
@@ -1029,8 +1029,8 @@
 > (1) **保留缓存的键必须指向活对象**：`SceneBridge` 的 `cache_`/`rejected_`/`program_stages_`
 > 原按裸指针索引且不自持 → 对象销毁后地址复用会把死条目的保留状态（旧网格 / 旧 SPIR-V /
 > 旧拒绝记录）喂给新对象（静默错误）。现条目**自持**所索引的几何/program，并把拒绝记录
-> 合并进 `Item`；几何被 app 放弃（`useCount()==1`）时立即回收，仍被引用才走 600 帧复用
-> 窗口。(2) **退役环**：活路径上被替换的保留节点（数据/状态包装/条目驱逐）先进
+> 合并进 `Item`；几何**缓存之外无人持有时**（`abandoned(shares)`）当帧回收，仍被引用则一直保留
+> （2026-09-14 起无 600 帧窗）。(2) **退役环**：活路径上被替换的保留节点（数据/状态包装/条目驱逐）先进
 > `SceneBridge::retireNode()`，由 `advanceRetireRing()` 在每个**已提交**帧后推进，环深 4
 > （=命令槽 3+1）→ 可能的槽已重新录制（其 fence 已等）后才能销毁，避免
 > `VUID-vkDestroyPipeline-00765`/`vkDestroyBuffer-*` 类的在飞销毁。(3) **`Group::addChild`
@@ -1326,7 +1326,7 @@
 > `RenderBackend::releaseOverlay/releaseRenderTarget`(默认空实现) +
 > `RenderEngine` 删除点接线(removeOverlay/clearOverlays/removePass/clearPasses/shadow 剪枝) +
 > `VsgRenderer` 摘除 overlay View / offscreen graph / PiP slot 并 deviceWaitIdle。
-> 遗留：Material 缓存释放未接线、Scene 几何靠 600 帧懒驱逐、Object 销毁钩子(自动兜底)未做。
+> 遗留：Material 缓存释放未接线、Scene 几何曾经靠 600 帧懒驱逐（**2026-09-14 已改为“外侧放手即回收”**）、Object 销毁钩子(自动兜底)未做。
 > 测试：GraphicsTest 82 全绿（17 套件）。
 >
 > 2026-09-03 二更（Design B）：RenderEngine **不再有 main pass**，也不再自动建 scene/camera/pass。

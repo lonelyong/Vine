@@ -25,7 +25,7 @@
 | 变换（`MatrixTransform`/worldMatrix） | 矩阵比较 | `transform.matrix`（就地写） |
 | `StateNode` 折叠（深度/剔除/多边形/拓扑/blend） | `ResolvedRenderState` | state_node（变体模板） |
 | `Geometry` 顶点/索引（revision） | `geometry->revision()` | data_node |
-| 增/删 drawable | 命令流增删 | data(+state) / 600 帧逐出 |
+| 增/删 drawable | 命令流增删 | data(+state) / 外侧放手即逐出 |
 | `ShaderProgram` GLSL 源 | **无（D10）** | —（缺口） |
 | `Light` 增删改 | 每帧 light_group 替换 | 无 GPU 编译（record 期 uniform） |
 | `Camera`/视角/视口 | 每帧 apply | 无（动态 viewport） |
@@ -38,13 +38,13 @@
 |---|---|---|---|---|---|---|
 | 1 | 改 `Material` 某属性值（如 `setDiffuse`） | 每帧去重后比较；变则 UBO 就地写 + `value->dirty()` | 无 | 无 | 次帧 TransferTask | **已修(2026-09-08)**：Phong 值标 `DYNAMIC_DATA`（见 VsgMaterialManager）；未变零拷贝 |
 | 2 | 换绑到另一个 `Material` 对象 | state_dirty → 重建 state（新 DS；管线共享） | state_node | D22 增量（新 DS/变体） | 次帧 | data_node **复用，不重传网格** |
-| 3 | `Material` 不再被引用 | 命令缺失 → 600 帧后逐出；teardown 时 `clearCache()` | — | — | 延迟 | 裸指针键依赖场景保活（D14） |
+| 3 | `Material` 不再被引用 | 命令缺失 → 进候选；**外侧放手那一帧**逐出；teardown 时 `clearCache()` | — | — | 当帧 | 条目自持键（D13/D14） |
 | 4 | 透明度（scene×node×leaf） | 颜色数组 alpha 就地写 + `dirty()` | 无 | 无 | 次帧 | 颜色数组 `DYNAMIC`；程序路径 opacity 无效（D8） |
-| 5 | 隐藏 / 视锥剔除 | 该几何不在命令流 → 摘子节点、Item 保留 | 无 | 无 | 当帧 | absent<600 帧复用，不重编 |
+| 5 | 隐藏 / 视锥剔除 / 移走 | 该几何不在命令流 → 摘子节点、Item 保留 | 无 | 无 | 当帧 | 宿主仍持有就永不逐出（2026-09-14 起无窗口），不重编 |
 | 6 | 移动 / 旋转 / 缩放 | `item->last_matrix != world` 时写 `transform.matrix` | 无 | 无 | 当帧 | 懒比较，稳态零写 |
 | 7 | 改 StateNode（深度/剔除/线框/blend/拓扑） | `ResolvedRenderState` 变 → state-only（L2 变体模板命中则跳过 configurator） | state_node | 仅新变体 D22 增量 | 次帧 | 拓扑变化=新管线变体（Vulkan 属性） |
 | 8 | 改顶点/索引数据（revision） | data-only：重建 data_node（物化+上传） | data_node | D22 增量（上传） | 次帧 | state_node 原样复用；仍整份重物化（见 §4） |
-| 9 | 新增 drawable / 删 drawable | 新建 Item / 600 帧逐出 | 按需 | D22 增量 | 次帧 | 新几何加入即编译 |
+| 9 | 新增 drawable / 删 drawable | 新建 Item / 外侧放手即逐出 | 按需 | D22 增量 | 次帧 | 新几何加入即编译 |
 | 10 | 改 `ShaderProgram` GLSL（同对象，源变） | revision 变 → state-only（L1/L2 含 revision）；**全屏程序槽同样按 revision 重建节点**（2026-09-11 补，此前只比指针，热重载不生效） | state_node / 全屏槽 node | D22 增量（新变体） | 次帧 | **已修(2026-09-08)**：`ShaderProgram::revision()`；数据节点复用；几何路径与全屏路径现同口径 |
 | 11 | 灯光的增/删/改 | 每帧替换 light_group 子节点；**公告的灯全部不可用（禁用 / 未翻译类型）时不动光根，默认光保留**（2026-09-11 补） | 无 | 无（record 期收进 lightData uniform） | 当帧 | 无需重编译；零光源会把整个 pass 照黑 |
 | 12 | Camera 变换 / 视口 / 窗口尺寸变化 | 每帧 apply；动态 viewport | 无（几何管线与尺寸解耦） | 无 | 当帧 | vsg `DYNAMIC_VIEWPORTSTATE` 默认开 |

@@ -288,8 +288,6 @@ struct SceneBridge::Item {
     bool matrix_valid = false;
     // Last opacity written into @ref draw_slot (the sentinel forces the first write).
     float last_slot_opacity = -1.0f;
-    // Consecutive frames this geometry was absent (hidden/culled/removed).
-    std::uint32_t absent_frames = 0;
 };
 
 
@@ -478,9 +476,9 @@ void SceneBridge::clearCache()
     cache_.clear();
     // The candidate lists describe that cache (the keys it holds), so they go with it: a list left
     // behind would keep raw geometry addresses alive-looking for a cache that no longer has them.
-    absent_.clear();
-    absent_set_.clear();
-    last_seen_.clear();
+    undrawn_.clear();
+    undrawn_set_.clear();
+    drawn_.clear();
     program_shader_sets_.clear();
     program_stages_.clear();
     variant_cache_.clear();
@@ -902,52 +900,39 @@ bool SceneBridge::syncRenderCommands(
         collectSweepShares(sweep_shares);
         shares = &sweep_shares;
     }
-    updateAbsentCandidates(seen);
-    if (frame_drawn_ != nullptr) {
-        // Report this slot's drawings to the frame; the session ages every slot by their UNION
-        // once per frame (VsgRenderer::submitFrame), so a geometry one pass draws is not absent
-        // for the others, and a pass that does not run at all still has its cache aged.
-        frame_drawn_->insert(seen.begin(), seen.end());
-    } else {
-        changed = ageAbsentItems(seen, *shares) || changed;
-    }
+    updateUndrawnCandidates(seen);
+    // The sweep runs here for session-driven slots too: its predicate is the app's own reference
+    // count (see releaseAbandonedGeometries), so it does not have to wait for the other slots to
+    // have synced, and the session sweeps every slot again at the frame's end — which is what
+    // covers the slots whose pass did not run at all this frame.
+    changed = releaseAbandonedGeometries(*shares) || changed;
     publishRetainedChildren(*root, visible, commands);
     releaseAbandonedCaches(*shares);
     return changed;
 }
 
-void SceneBridge::updateAbsentCandidates(const std::unordered_set<const vine::graphics::Geometry*>& seen)
+void SceneBridge::updateUndrawnCandidates(const std::unordered_set<const vine::graphics::Geometry*>& seen)
 {
-    // The geometries this slot has cached but did not draw in this sync: the eviction CANDIDATES.
+    // The geometries this slot has cached but did not draw in this sync: the sweep's CANDIDATES.
     // Walking the whole cache to find them (what the sweep used to do) cost O(entries ever seen)
     // per frame per slot — a roaming camera fills the cache with the whole scene, so the frame got
     // slower the more of the scene it had ever visited, for a list that is usually empty. The list
-    // is built from what the sync drew instead, so maintaining it costs O(drawn + absent).
+    // is built from what the sync drew instead, so maintaining it costs O(drawn + undrawn).
     //
     // Its two halves also ARE the keys of `cache_`: an entry is created by the sync that draws its
-    // geometry, dropped here when the window expires or by the app releasing the geometry, and
-    // cleared by clearCache(). That is what lets the ownership pass read the lists instead of the
-    // cache (see collectOwnedShares).
-    //
-    // A geometry that comes back starts the window over: it measures CONSECUTIVE absence, so a
-    // scene that alternates would otherwise evict what it is still using.
-    for (const auto* geometry : absent_) {
-        if (seen.count(geometry) != 0) {
-            if (const auto it = cache_.find(geometry); it != cache_.end()) {
-                it->second.payload()->absent_frames = 0;
-            }
-        }
-    }
+    // geometry, dropped when nothing outside the caches holds the geometry any more, or cleared by
+    // clearCache(). That is what lets the ownership pass read the lists instead of the cache (see
+    // collectOwnedShares).
     std::vector<const vine::graphics::Geometry*> next;
-    next.reserve(absent_.size() + last_seen_.size());
-    for (const auto* geometry : absent_) {
+    next.reserve(undrawn_.size() + drawn_.size());
+    for (const auto* geometry : undrawn_) {
         if (seen.count(geometry) == 0) {
-            next.push_back(geometry); // still absent
+            next.push_back(geometry); // still undrawn
         }
     }
-    for (const auto* geometry : last_seen_) {
-        if (seen.count(geometry) == 0 && !absent_set_.count(geometry)) {
-            next.push_back(geometry); // just became absent
+    for (const auto* geometry : drawn_) {
+        if (seen.count(geometry) == 0 && !undrawn_set_.count(geometry)) {
+            next.push_back(geometry); // just stopped being drawn
         }
     }
     // A geometry that left this slot's frame gets its rejection record cleared: the record says
@@ -958,61 +943,53 @@ void SceneBridge::updateAbsentCandidates(const std::unordered_set<const vine::gr
             it->second.payload()->rejected = false;
         }
     }
-    absent_ = std::move(next);
-    absent_set_.clear();
-    absent_set_.insert(absent_.begin(), absent_.end());
-    last_seen_.assign(seen.begin(), seen.end());
+    undrawn_ = std::move(next);
+    undrawn_set_.clear();
+    undrawn_set_.insert(undrawn_.begin(), undrawn_.end());
+    drawn_.assign(seen.begin(), seen.end());
 }
 
-bool SceneBridge::ageAbsentItems(const std::unordered_set<const vine::graphics::Geometry*>& drawn,
-                                 const OwnedShareCounts& shares)
+bool SceneBridge::releaseAbandonedGeometries(const OwnedShareCounts& shares)
 {
-    // Age the CANDIDATES (see updateAbsentCandidates), and judge "was it drawn?" by @p drawn: the
-    // SESSION hands the union of every slot's drawings once per frame, so a geometry any pass drew
-    // this frame is not absent — and a slot whose pass did not run at all still ages what it
-    // cached, instead of pinning it for the session.
+    // Judge the CANDIDATES (see updateUndrawnCandidates) by ONE rule: does anything outside the
+    // caches still hold this geometry? An entry OWNS its key, so `useCount() <= shares` means every
+    // remaining reference IS a retained entry — the app let go.
     //
-    // A bridge driven directly (a test, a driver that never opens a frame) ages in its own sync
-    // with what IT drew, which is what this looks like from one slot.
-    if (absent_.empty()) {
+    // Nothing else releases an entry: how long a geometry has gone undrawn says nothing about
+    // whether it is still wanted. A culled, hidden or moved object is still held by its tree, a
+    // subtree parked for reuse is still held by whoever parked it, and every one of those holders
+    // is an OUTSIDE holder — which is exactly what useCount() counts and the shares do not. That is
+    // what makes this cache's promise (a culled object stays cheap to bring back) true instead of
+    // self-defeating, and it is why "the window expired" is not a reason to drop anything.
+    if (undrawn_.empty()) {
         return false;
     }
-    constexpr std::uint32_t kAbsentEvictFrames = 600;
-    bool                    changed = false;
-    std::vector<const vine::graphics::Geometry*> still_absent;
-    still_absent.reserve(absent_.size());
-    for (const auto* geometry : absent_) {
+    bool                                         changed = false;
+    std::vector<const vine::graphics::Geometry*> still_undrawn;
+    still_undrawn.reserve(undrawn_.size());
+    for (const auto* geometry : undrawn_) {
         const auto it = cache_.find(geometry);
         if (it == cache_.end()) {
-            continue; // its entry is already gone (the app released the geometry)
+            continue; // its entry is already gone (the bridge was cleared)
         }
-        Item* item = it->second.payload().get();
-        if (drawn.count(geometry) != 0) {
-            // Drawn by some pass / by this slot again: the window starts over and the entry stays.
-            item->absent_frames = 0;
-            still_absent.push_back(geometry);
+        if (!it->second.abandoned(shares)) {
+            still_undrawn.push_back(geometry); // still held outside the caches
             continue;
         }
-        // The entry owns the geometry, which is what makes the pointer key valid. Once the app
-        // itself stops referencing it, nothing can ever look the entry up again, so release it —
-        // and the geometry with it — right away instead of pinning both for the whole window.
-        if (it->second.abandoned(shares) || ++item->absent_frames > kAbsentEvictFrames) {
-            // The retained subtree may still be referenced by an in-flight command buffer, so park
-            // it instead of destroying it here.
-            retireNode(std::move(item->transform));
-            // The draw block's slot goes with it — also deferred, because a frame in flight may
-            // still bind the offset this drawable's wrapper recorded.
-            releaseDrawSlot(item->draw_slot);
-            item->draw_slot = {};
-            cache_.erase(it);
-            changed = true;
-            continue; // the entry is gone, so it leaves the candidate list too
-        }
-        still_absent.push_back(geometry);
+        Item* item = it->second.payload().get();
+        // The retained subtree may still be referenced by an in-flight command buffer, so park it
+        // instead of destroying it here.
+        retireNode(std::move(item->transform));
+        // The draw block's slot goes with it — also deferred, because a frame in flight may still
+        // bind the offset this drawable's wrapper recorded.
+        releaseDrawSlot(item->draw_slot);
+        item->draw_slot = {};
+        cache_.erase(it);
+        changed = true;
     }
-    absent_ = std::move(still_absent);
-    absent_set_.clear();
-    absent_set_.insert(absent_.begin(), absent_.end());
+    undrawn_ = std::move(still_undrawn);
+    undrawn_set_.clear();
+    undrawn_set_.insert(undrawn_.begin(), undrawn_.end());
     return changed;
 }
 
@@ -1067,12 +1044,13 @@ void SceneBridge::collectOwnedShares(OwnedShareCounts& shares) const
     // this slot draws, so the same program can be held any number of times — the count is what the
     // sweep needs, and assuming a number instead is what left the caches waiting for each other.
     // The geometries with an entry are exactly the ones this slot drew in its last sync or has
-    // been keeping absent since (see absent_ / last_seen_), so the count does not walk the cache:
-    // the frame's ownership pass must not cost more than the frame itself (see ageAbsentItems).
-    for (const auto* geometry : last_seen_) {
+    // been keeping undrawn since (see drawn_ / undrawn_), so the count does not walk the cache:
+    // the frame's ownership pass must not cost more than the frame itself (see
+    // releaseAbandonedGeometries).
+    for (const auto* geometry : drawn_) {
         shares.add(geometry);
     }
-    for (const auto* geometry : absent_) {
+    for (const auto* geometry : undrawn_) {
         shares.add(geometry);
     }
     // The two program caches are keyed by a content HASH, so the object they own comes from the
@@ -1120,8 +1098,8 @@ std::size_t SceneBridge::releaseAbandonedCaches(const OwnedShareCounts& shares)
     // VsgTextureCache::releaseAbandoned() had an implementation and a unit test but no production caller,
     // so a texture the scene stopped sampling kept its GPU image until 256 later textures pushed it out of
     // the FIFO (or the slot was destroyed). Its entry owns the texture it is keyed by, so "the app dropped
-    // it and no retained entry holds it any more" is observable exactly here — evictAbsentItems() ran
-    // earlier in this same sync, so the geometry that just left the frame has already let go of the
+    // it and no retained entry holds it any more" is observable exactly here — releaseAbandonedGeometries()
+    // ran earlier in this same sync, so the geometry that just left the frame has already let go of the
     // texture its entry held.
     //
     // Deliberately NOT part of the eviction gate below: the shared-object table registers pipelines /

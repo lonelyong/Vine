@@ -353,20 +353,19 @@ TEST(SceneBridgeCacheOwnershipTest, SessionSharesCountEverySlotAndABridgeCannot)
 }
 
 /**
- * @brief The reuse window measures CONSECUTIVE absence, and the sweep only visits candidates.
+ * @brief Being undrawn is not being removed: what releases an entry is the app letting it go.
  *
- * A geometry the frame stops drawing keeps its retained node (hiding a node or culling it must
- * stay cheap to undo), and it is dropped only after a long absence — so the frame's sweep has to
- * age exactly the geometries it cached and did not draw, and nothing else. That is what the
- * candidate list is for: it is built from this sync's drawings, so a geometry that comes back
- * leaves the list (and its window restarts), and an entry the list somehow missed would never be
- * evicted at all — a cache that grows for the life of the session.
+ * A geometry the frame stops drawing keeps its retained node — hiding a node, culling it, moving
+ * it to another parent and parking its subtree for reuse are all "still held by the app or by a
+ * tree", and every one of them must stay cheap to undo. So the sweep has no time rule at all: it
+ * releases an entry only when nothing outside the caches holds that geometry any more, which is
+ * what the share counts read (an entry OWNS its key, so `useCount() <= shares` says exactly that).
  *
- * Both halves are asserted through the variant-template REUSE counter, which is the observable
- * difference: coming back inside the window hits the retained template, coming back after it was
- * evicted rebuilds.
+ * This is the case a time window got wrong: it measured "the frame stopped drawing it" and evicted
+ * a culled object after a long enough absence, so every camera that looked away and came back paid
+ * for a full rebuild.
  */
-TEST(SceneBridgeCacheOwnershipTest, TheAbsenceWindowAgesTheGeometriesTheFrameStoppedDrawing)
+TEST(SceneBridgeCacheOwnershipTest, AnUndrawnGeometryIsKeptHoweverLongItStaysUndrawn)
 {
     vine::vsg::SceneBridge        bridge;
     bridge.setShaderSet(testContentSet());
@@ -379,86 +378,47 @@ TEST(SceneBridgeCacheOwnershipTest, TheAbsenceWindowAgesTheGeometriesTheFrameSto
     bridge.syncRenderCommands(drawn, root.get(), nullptr);
     ASSERT_EQ(bridge.retainedGeometryCount(), 1u) << "the first sync caches it";
 
-    // A few absent syncs, then back: inside the window, so the retained node is still there.
-    for (int i = 0; i < 3; ++i) {
+    // Undrawn for far longer than the window this cache used to have, while the geometry is still
+    // held (the handle above, and the command vector that names it): the entry stays.
+    for (int i = 0; i < 1000; ++i) {
         bridge.syncRenderCommands(none, root.get(), nullptr);
-        EXPECT_EQ(bridge.retainedGeometryCount(), 1u) << "an absent geometry is kept (the window)";
     }
-    bridge.syncRenderCommands(drawn, root.get(), nullptr);
     EXPECT_EQ(bridge.retainedGeometryCount(), 1u)
-        << "coming back inside the window keeps the SAME entry (nothing was rebuilt)";
+        << "an undrawn geometry that something outside the caches still holds is kept, however "
+           "long it stays undrawn: a culled, hidden or moved object is not a removed one";
 
-    // Absent for longer than the window: the entry goes. An entry the sweep never visits would stay
-    // cached for the whole session, which is exactly what this count would then show.
-    for (int i = 0; i < 620; ++i) {
-        bridge.syncRenderCommands(none, root.get(), nullptr);
-    }
-    EXPECT_EQ(bridge.retainedGeometryCount(), 0u)
-        << "620 absent syncs is past the 600-sync window, and the sweep visits exactly the "
-           "geometries this slot cached and stopped drawing";
-
-    // The window measures CONSECUTIVE absence, so a redraw in between starts it again: 400 + 400
-    // absent syncs with a drawing in the middle is not 800 consecutive ones.
+    // And coming back is a hit on the entry that never left.
     bridge.syncRenderCommands(drawn, root.get(), nullptr);
-    EXPECT_EQ(bridge.retainedGeometryCount(), 1u) << "the entry is rebuilt after the window";
-    for (int i = 0; i < 400; ++i) {
-        bridge.syncRenderCommands(none, root.get(), nullptr);
-    }
     EXPECT_EQ(bridge.retainedGeometryCount(), 1u);
-    bridge.syncRenderCommands(drawn, root.get(), nullptr);
-    for (int i = 0; i < 400; ++i) {
-        bridge.syncRenderCommands(none, root.get(), nullptr);
-    }
-    EXPECT_EQ(bridge.retainedGeometryCount(), 1u)
-        << "800 absent syncs in total, but only 400 in a row: the drawing in between must reset "
-           "the window, or a scene that alternates would evict what it is still using";
 }
 
 /**
- * @brief The window counts frames in which NO pass drew the geometry (P2).
+ * @brief What releases an entry is the app dropping the geometry — in that frame's sweep.
  *
- * A slot's entry for a geometry another pass keeps drawing is not absent, and its window is not
- * running: what the window measures is "the frame stopped using this geometry", not "this slot
- * stopped drawing it". That is also what lets a slot whose pass does not run at all be aged — its
- * cache is not pinned for the session just because nothing syncs it any more.
- *
- * The session hands the union of every slot's drawings (VsgRenderer::submitFrame does it once per
- * frame); this drives that call directly with a set standing in for "another slot drew it", which
- * is the whole difference between the two rules.
+ * The other half of the rule, and the one a host sees: let go of the geometry (no handle, and no
+ * command naming it) and the next sweep releases the entry, its retained subtree and its draw
+ * block slot. After ONE sync, not after a few hundred frames of being undrawn — and the released
+ * geometry leaves the candidate list too, so the sweep does not visit it again.
  */
-TEST(SceneBridgeCacheOwnershipTest, TheAbsenceWindowCountsFramesNoPassDrewTheGeometry)
+TEST(SceneBridgeCacheOwnershipTest, ADroppedGeometryIsReleasedByTheFrameSweep)
 {
-    vine::vsg::SceneBridge        bridge;
+    vine::vsg::SceneBridge bridge;
     bridge.setShaderSet(testContentSet());
-    auto                 root     = vsg::Group::create();
-    auto                 geometry = makeTriangle(0);
-    MaterialPtr          material(new Material());
-    std::vector<RenderCommand> drawn{ RenderCommand(geometry, material, Mat4d()) };
+    auto root = vsg::Group::create();
 
-    bridge.syncRenderCommands(drawn, root.get(), nullptr);
-    bridge.syncRenderCommands({}, root.get(), nullptr); // it becomes an eviction candidate
-    ASSERT_EQ(bridge.retainedGeometryCount(), 1u);
+    {
+        auto                       geometry = makeTriangle(0);
+        MaterialPtr                material(new Material());
+        std::vector<RenderCommand> commands{ RenderCommand(geometry, material, Mat4d()) };
+        bridge.syncRenderCommands(commands, root.get(), nullptr);
+        ASSERT_EQ(bridge.retainedGeometryCount(), 1u) << "the sync caches it";
+    } // the handle AND the command that held the geometry go here
 
-    vine::vsg::OwnedShareCounts shares;
-    bridge.collectOwnedShares(shares);
-
-    // Another pass drew it every frame: not absent, however many frames pass.
-    const std::unordered_set<const vine::graphics::Geometry*> drawn_by_another_show{ geometry.get() };
-    for (int i = 0; i < 700; ++i) {
-        bridge.ageAbsentItems(drawn_by_another_show, shares);
-    }
-    EXPECT_EQ(bridge.retainedGeometryCount(), 1u)
-        << "a geometry some pass draws every frame is not absent, however long this slot ignores it";
-
-    // And those frames restarted the window: with nothing drawing it any more, the window runs
-    // from zero rather than continuing from where the slot stopped.
-    const std::unordered_set<const vine::graphics::Geometry*> nothing;
-    for (int i = 0; i < 600; ++i) {
-        bridge.ageAbsentItems(nothing, shares);
-    }
-    EXPECT_EQ(bridge.retainedGeometryCount(), 1u) << "600 frames no pass drew it is the window's edge";
-    bridge.ageAbsentItems(nothing, shares);
-    EXPECT_EQ(bridge.retainedGeometryCount(), 0u) << "and the next frame evicts it";
+    std::vector<RenderCommand> no_commands;
+    bridge.syncRenderCommands(no_commands, root.get(), nullptr);
+    EXPECT_EQ(bridge.retainedGeometryCount(), 0u)
+        << "the sweep releases a geometry nothing outside the caches holds any more, in the frame "
+           "the app let go — the entry owns the geometry, so this is also what ends its lifetime";
 }
 
 /**
@@ -710,8 +670,8 @@ TEST(SceneBridgeCacheOwnershipTest, SharedObjectsTableIsPrunedOnEvictionFramesOn
  * image until 256 later textures pushed it out of the FIFO — or until the whole
  * slot was destroyed. The sweep belongs to the frame, because that is when the
  * question becomes answerable: a retained entry HOLDS the texture it was built
- * for, and evictAbsentItems() runs before the sweep in the same sync, so the
- * frame a geometry leaves the scene is the frame its texture becomes
+ * for, and releaseAbandonedGeometries() runs before the sweep in the same sync,
+ * so the frame a geometry leaves the scene is the frame its texture becomes
  * releasable.
  */
 TEST(SceneBridgeCacheOwnershipTest, ADroppedTextureIsReleasedByTheFrameSweep)

@@ -102,10 +102,15 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     /** @brief Ends a frame (viewer update). */
     void endFrame() override;
 
-    /** @brief Sets the render target.
+    /** @brief Sets the render target for the pass scope (a scope attribute).
      *
-     * Off-screen targets are not yet supported; only the default framebuffer
-     * (nullptr) is valid.
+     * nullptr is the window: the shared swapchain graph built in initialize().
+     * A non-null target is supported (see supportsRenderTargets) and the
+     * backend owns its GPU attachments, which it creates on the target's first
+     * bind and rebuilds whenever the target's size changes — the RenderTarget
+     * itself stays a logical description. A pass whose off-screen target cannot
+     * be drawn (no camera on the pass, an invalid target, or one with neither a
+     * colour nor a depth attachment) draws nothing.
      *
      * @param target Render target, or nullptr for the default framebuffer.
      */
@@ -535,20 +540,20 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void settleSubmittedFrame();
 
-    /** @brief Starts a frame's ownership picture: the retained shares, and the drawn-geometry set.
+    /** @brief Starts a frame's ownership picture: the retained shares every cache sweeps by.
      *
      * A cache can only tell "the app has let go of this object" from "another cache still holds
      * it" by counting every retained entry that holds it, so the session counts them once per
-     * frame (see OwnedShareCounts and SceneBridge::releaseAbandonedCaches). The same pass starts
-     * the set every slot's sync reports its drawings into, which the end of the frame ages the
-     * caches by (SceneBridge::ageAbsentItems).
+     * frame (see OwnedShareCounts and SceneBridge::releaseAbandonedCaches). The same counts are
+     * what the end of the frame releases the abandoned geometries by, for every slot
+     * (SceneBridge::releaseAbandonedGeometries).
      */
     void refreshFrameOwnership();
 
     /** @brief Drops the frame's ownership pointers from every content slot's bridge.
      *
-     * Both live on the session state, so a bridge must not keep them past the frame that filled
-     * them (see setRetainedShares and setFrameGeometrySet).
+     * The counts live on the session state, so a bridge must not keep the pointer past the frame
+     * that filled it (see setRetainedShares).
      */
     void clearFrameOwnership();
 
@@ -564,17 +569,12 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     /** @brief Records and presents the frame (once, when swapBuffers is called). */
     void submitFrame();
 
-    /** @brief Consumes the sub-viewport queued by setViewport() for one pass.
+    /** @brief Takes the sub-viewport queued for the next draw call.
      *
      * Every draw path (main scene, PiP screen, fullscreen program) reads the
      * same pending rectangle and clears it, so the consume is factored here.
      * A pass that never queued a viewport gets std::nullopt and the caller
      * substitutes the full target.
-     *
-     * @return The queued rectangle, or std::nullopt when the pass queued none
-     *         (it then draws the full target).
-     */
-    /** @brief Takes the sub-viewport queued for the next draw call.
      *
      * @return The queued viewport, or empty when the caller announced none.
      */

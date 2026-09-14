@@ -66,7 +66,7 @@
 
 | 缓存 | 键 | 值 | 谁持有 / 何时释放 |
 |---|---|---|---|
-| `SceneBridge::cache_` | `Geometry*` | `unique_ptr<Item>`（矩阵变换+顶点数据） | bridge；缺失 600 帧逐出 |
+| `SceneBridge::cache_` | `Geometry*` | `unique_ptr<Item>`（矩阵变换+顶点数据） | bridge；外侧无人持有（`abandoned(shares)`）即逐出（2026-09-14 起无时间窗） |
 | `SceneBridge::program_shader_sets_` | `ShaderProgram*` | `ref_ptr<ShaderSet>`（L1） | bridge；`clearCache()` |
 | `SceneBridge::variant_cache_` | 变体内容哈希 | `unique_ptr<VariantEntry>`（L2） | bridge；`clearCache()` |
 | `shared_objects_` | —（内容去重） | pipeline/layout/DS | bridge；`clearCache()` + 析构 |

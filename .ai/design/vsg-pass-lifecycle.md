@@ -197,9 +197,10 @@ RenderBackend::releasePass(pass)    // 释放该 pass 的全部保留状态（�
 `Item`（一次哈希查找、一次扫描，且拒绝记录随条目一起被正确回收）。驱逐策略：
 
 - 几何**离开帧**时先清拒绝记录（保留“修好数据后重新评估”的语义）；
-- 条目**唯一持有者只剩缓存自身**（`useCount() == 1`，即 app 已放弃它）→ **立即**回收
-  几何与条目，不占满 600 帧复用窗口（这是“持有键”方案的代价补偿：不长期钉住对象）；
-- 仍持有（隐藏/剔除/临时离场）→ 沿用 600 帧窗口，重现时零重建（保持原快速路径）。
+- 条目**缓存之外无人持有**（`abandoned(shares)`，即 app 已放手）→ **当帧**回收
+  几何与条目（这是“持有键”方案的代价补偿：宿主放手就不再钉住对象）；
+- 仍持有（隐藏 / 剔除 / 移动 / 暂存复用）→ 条目保留，重现时零重建（保持原快速路径）。
+  **无时间窗（2026-09-14 删）**：阈值区分不了“临时离开”和“真移除”。
 
 测试：`GeometrySafetyTest.RetainedCacheOwnsTheGeometryItIsKeyedBy`（子类计数：
 app 释放后对象仍存活 → 空帧后立即被回收）。
@@ -587,7 +588,7 @@ class InsertionClock;                                            // 每缓存一
 
 把本轮 §8.1 在几何缓存上手工实现的“**条目自持键对象 + `useCount()==1` 即回收**”规则抽成可复用、
 只写一次的不变量，并把两半分开说明：自持解决“地址被复用”，回收解决“自持变泄漏”；而“仍被
-app 持有但不绘制”的对象如何处置留给各自策略（几何用 600 帧复用窗，材质不需要窗口——见下）。
+app 持有但不绘制”的对象如何处置留给各自策略（几何：宿主仍持有就保留；材质：条目自持 + 放手即回收；两者都不需要时间窗——见下）。
 
 **D13 材质缓存（红项）**：`VsgMaterialManager::cache` 改为
 `unordered_map<Material*, OwnedCacheEntry<Material, Entry>>`：
@@ -708,7 +709,7 @@ MODULE）。
 | 保留项 | 上限 | 何时释放 |
 | --- | --- | --- |
 | 在飞几何/数据节点（退役环） | `kRetireRingDepth = 4`（= 命令槽 3 + 1） | 每提交帧推进一格，格子里的旧节点才销毁 |
-| 几何缓存条目（未再出现的） | `kAbsentEvictFrames = 600` 帧 | 连续 600 帧未出现即回收 |
+| 几何缓存条目（外侧已放手） | 当帧（无阈值） | sync 内 + 帧末各扫一次候选（覆盖本帧没跑 pass 的槽） |
 | 材质缓存 | `kMaxEntries = 256` 条 | app 放弃即回收（每提交帧 sweep）+ FIFO 兜底 |
 | 变体 / ShaderSet 缓存 | 超限整表清空（D16） | 只丢模板；已建管线仍被保留状态组持有 |
 | pass / target 的槽与目标 | 无寿命上限 | 显式 `releasePass` / `releaseRenderTarget` |
@@ -970,7 +971,7 @@ FIFO `trimToCapacity`），但 `SceneBridge` 的四个缓存各自一套：几�
 
 | 缓存 | 键 | 自持 | 容量 | 放弃 |
 | --- | --- | --- | --- | --- |
-| `cache_`（几何 → 保留节点） | 几何地址 | 是 | **无上限**（600 帧复用窗是它的策略，不是容量） | `abandoned()` → 立即逐出，否则等窗 |
+| `cache_`（几何 → 保留节点） | 几何地址 | 是 | **无上限**（外侧持有是保留的唯一理由，不是容量） | `abandoned()` → 当帧逐出，否则一直保留（2026-09-14 起无窗） |
 | `program_stages_`（program → SPIR-V） | program 地址 | 是 | 64（FIFO） | `eraseAbandoned` |
 | `program_shader_sets_`（(program, layout) → ShaderSet） | 内容哈希 | 是 | 64（FIFO） | `eraseAbandoned` |
 | `variant_cache_`（(program, material, state, layout) → 可复用绑定命令） | 内容哈希 | **两个键都持** | 256（FIFO） | `eraseAbandoned`（两个键都放手） |
@@ -1536,7 +1537,7 @@ cp -f build/lib/*.so* dist/lib/ && cp -f build/plugins/vine/*.so dist/plugins/vi
      barrier 插在**源最后一张 graph 之后**。
 2. **`SceneBridge::syncRenderCommands` 拆分**（256 行 → "缓存决策 / 节点替换 / 收尾"三个函数，
    纯搬运）：判据是 72 + 157 全绿 + gate PASS，无新行为。
-   **已部分落地（2026-09-11）**：收尾两段抽出为 `evictAbsentItems`（37 行）与
+   **已部分落地（2026-09-11）**：收尾两段抽出为 `evictAbsentItems`（今 `releaseAbandonedGeometries`，37 行）与
    `publishRetainedChildren`（44 行），`syncRenderCommands` 降到 **191 行**（纯搬运，gate PASS）。
    命令循环体（~150 行）仍需抽出为 `reconcileCommand`；它整段位于 `for` 内（8 空格缩进），
    抽取必须整体重排缩进，属高风险纯格式改动，留待单独一次提交（无行为收益）。
