@@ -8,8 +8,10 @@
 #
 #   1. COMPILE  every shader under a shaders/ directory with glslangValidator,
 #               once per combination of the variant defines the backend may set
-#               (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_FLAT). A shader that
-#               uses `#ifdef VINE_VERTEX_COLOR` therefore has to compile in BOTH
+#               (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_FLAT) crossed with
+#               each texcoord kind (VINE_TEXCOORD_UV / VINE_TEXCOORD_CUBE, of
+#               which the backend sets exactly one). A shader that uses
+#               `#ifdef VINE_VERTEX_COLOR` therefore has to compile in BOTH
 #               variants in the same run, which is what the runtime does per
 #               drawable. Unused defines are inert in GLSL, so the matrix needs
 #               no manifest to stay in sync with the sources.
@@ -46,7 +48,14 @@ INVENTORY="$ROOT/cmake/VineShaders.cmake"
 # The variant defines the backend can set on a compiled stage. Keep in sync with
 # the define names used by the shaders themselves (the compile matrix below is
 # what catches a mismatch).
-VARIANT_DEFINES=(VINE_VERTEX_COLOR VINE_DIFFUSE_MAP VINE_TEXCOORD_CUBE VINE_FLAT)
+VARIANT_DEFINES=(VINE_VERTEX_COLOR VINE_DIFFUSE_MAP VINE_FLAT)
+# The texcoord KIND is not an on/off flag: the backend sets EXACTLY ONE of these
+# on every content variant (the geometry's texcoord width decides which), and the
+# shaders reject a sampled slot whose kind is unstated (#error) rather than
+# defaulting to one. The matrix therefore runs every flag combination once per
+# kind — the shapes a real variant can have — instead of the full cross product,
+# which would keep generating states the sources now refuse on purpose.
+VARIANT_KINDS=(VINE_TEXCOORD_UV VINE_TEXCOORD_CUBE)
 
 FAILED=0
 
@@ -74,27 +83,32 @@ trap 'rm -rf "$WORK"' EXIT
 # ---- 1. Compile every shader for every define combination -------------------
 for shader in "${SHADERS[@]}"; do
     rel="${shader#"$ROOT"/}"
-    # Bit combinations of the variant defines: 0 = none, 1 = ...COMBOS binaries.
+    # Bit combinations of the on/off defines: 0 = none, 1 = ...COMBOS binaries.
     count=$((1 << ${#VARIANT_DEFINES[@]}))
     for ((mask = 0; mask < count; ++mask)); do
-        args=()
+        flags=()
         names=""
         for ((bit = 0; bit < ${#VARIANT_DEFINES[@]}; ++bit)); do
             if ((mask & (1 << bit))); then
-                args+=("-D${VARIANT_DEFINES[$bit]}=1")
+                flags+=("-D${VARIANT_DEFINES[$bit]}=1")
                 names="${names:+$names,}${VARIANT_DEFINES[$bit]}"
             fi
         done
-        log="$WORK/$(basename "$shader").$mask.log"
-        # -o keeps the validator's .spv output in the temp dir: without it, glslang
-        # writes vert.spv / frag.spv into the CURRENT directory.
-        if "$VALIDATOR" -V --target-env "$TARGET_ENV" "${args[@]}" -o "$WORK/stage.$mask.spv" "$shader" >"$log" 2>&1; then
-            echo "[PASS] $rel ${names:+[$names]}"
-        else
-            echo "[FAIL] $rel ${names:+[$names]}"
-            sed 's/^/       /' "$log"
-            FAILED=1
-        fi
+        # Exactly one texcoord kind, always: that is what a variant carries.
+        for kind in "${VARIANT_KINDS[@]}"; do
+            args=("${flags[@]}" "-D${kind}=1")
+            variant="${names:+$names,}$kind"
+            log="$WORK/$(basename "$shader").$mask.$kind.log"
+            # -o keeps the validator's .spv output in the temp dir: without it, glslang
+            # writes vert.spv / frag.spv into the CURRENT directory.
+            if "$VALIDATOR" -V --target-env "$TARGET_ENV" "${args[@]}" -o "$WORK/stage.$mask.$kind.spv" "$shader" >"$log" 2>&1; then
+                echo "[PASS] $rel [$variant]"
+            else
+                echo "[FAIL] $rel [$variant]"
+                sed 's/^/       /' "$log"
+                FAILED=1
+            fi
+        done
     done
 done
 

@@ -1,3 +1,33 @@
+> 2026-09-14 **着色器内的插值变量前缀 `v_` → `vine_`**（补上 2026-09-13「着色器内标识符前缀统一 `vine_`」的尾巴）
+> - `src/viz/graphics/shaders/` 下 9 个源文件全改：`v_uv` → `vine_uv`、`v_view_pos` → `vine_view_pos`、
+>   `v_view_normal` → `vine_view_normal`、`v_color` → `vine_color`、`v_texcoord` → `vine_texcoord`、`v_dir` → `vine_dir`。
+>   顶点输入本来就是 `vine_Vertex` / `vine_Normal` / `vine_Color` / `vine_TexCoord0`，现在着色器里的标识符
+>   不分输入 / 输出 / 插值，一律 `vine_`。
+> - 同步改：**ABI 文档**（`BuiltinShaders::fullscreenVertexProgram`、`ScreenPass::setProgram`、
+>   `VsgPipelineFactory` 的用户 program 段）与**钉住成品文本的门禁**（`EmbeddedShadersTest`、
+>   `ForwardShaderSetTest`、`OverlayStagesTest`，以及 `GraphicsTest` 里照全屏 ABI 写的宿主 program 样例）。
+> - **行为中性**：只换标识符，location / 绑定 / 取值范围 / Y 方向一个不动 ⇒ 画面不变（任何 shading 的 ABI 都没变）；
+>   `vine_shader_check.sh` 9 shader × 各 define 组合照旧全编。
+> - 教训：**插值名虽然只在顶点/片元两段之间可见，仍是 ABI 的一部分**——文档与单测都会钉住它，改名要一起改；
+>   漏改一处不是编译错，而是某个门禁按旧名 find 不到（前者喧哗，后者难查）。
+
+> 2026-09-14 **texcoord 的 kind 显式化：`VINE_TEXCOORD_CUBE`（缺省 = UV）→ `VINE_TEXCOORD_UV` / `VINE_TEXCOORD_CUBE`**（用户口径：“不要隐式，要显式”）
+> - **两个轴，别再混**：`VINE_DIFFUSE_MAP` 是**门**（有没有贴图要采）——它由 vsg 的赋值门控置位（`ArrayConfigurator::assignArray`：一赋数组/描述符就置位），
+>   并且决定 pipeline layout 里那个属性/描述符**存不存在**（`ShaderSet::createDescriptorSetLayout` 按 `defines.count(binding.define)` 过滤）。**kind** 是“槽是哪一种”，
+>   由后端按**数据宽度**手插（三标量 ⇒ CUBE，否则 UV）。一个 binding 只能挂一个 define、`getAttributeBinding` 是首个匹配 ⇒ 门不可能被 kind 名取代。
+> - 四个内容 shader（forward / gbuffer 两对）的 kind 链改成 `#if CUBE / #elif UV / #else #error`：**采样了槽却没说 kind 的变体现在编译不过**，
+>   不再静默当 UV。
+> - 后端 `SceneBridgePipeline`：**每个 variant 一定插恰好一个 kind**；自定义 program 的 opt-in 判据改成“问它被给的那个 kind”（SDK 的 gbuffer 两个名字都声明）。
+>   原来只问 `VINE_TEXCOORD_CUBE`，于是“声明 CUBE”的程序在 2-wide 槽上也套用了槽规则——现在按 kind 分别生效。
+> - **天空盒例外**：`builtin_skybox.*` 没有门，而 `VsgPipelineFactory` 的**程序级编译是零 define**（`compiledProgramStages`；variant 由 `ShaderSet::getShaderStages(scs)` 按 defines 重编）
+>   ⇒ 对它“没有 kind”是真实构建状态，`#error` 会把整个 skybox program 变成 declined。所以它保留“配对”分支，并在注释里点名 `VINE_TEXCOORD_UV`。
+> - 为什么不反过来（采样器 → 坐标）：顶点侧宽度只能由**数据**决定（vsg 取数组自己的 format 建顶点输入，Vulkan 要求 `in` 类型与之兼容），
+>   不一致时只能让**纹理**让步（白 fallback + 报告）；让数据让步就得更凭空造分量。反方向还要两个 define（采样器 kind + 通道宽度），名字更多。
+> - 门禁：`vine_shader_check.sh` 矩阵 = on/off define 组合 × **恰好一个 kind**（每 shader 16 组）；`ForwardShaderSetTest.ASampledTexcoordSlotMustStateItsKind`
+>   用 glslang 直接钉（带门无 kind ⇒ 必须失败；UV / CUBE / 零 define ⇒ 必须过）；`ProgramSamplingTest` 钉 per-kind opt-in。
+> - 判据：build 0 error（仅 `OverlayStagesTest` 两条**既有**的 `const const` 警告）；`vine_shader_check.sh` PASS（9 shader × 16 组合 + 嵌入字节一致）；
+>   test_vsg **250**、test_graphics 259 全过；`gfx_lavapipe_check.sh` PASS —— selftest 证据基线 **55 行逐字节不变** + app 阶段 validation clean（只换分支名，画面没动）。
+
 > 2026-09-13 **shader 文件命名规则：目录里每个文件都是 `builtin_<角色>.<阶段>`**（本条覆盖此前两次取名）
 > - 现名：`src/viz/graphics/shaders/` 下 `builtin_forward.{vert,frag}`（原 `std_forward.*`，更早 `vine_forward.*`）、
 >   `builtin_gbuffer.{vert,frag}`（原 `gbuffer_geometry.*`）、`builtin_deferred_lighting.frag`（原 `deferred_light.frag`）、

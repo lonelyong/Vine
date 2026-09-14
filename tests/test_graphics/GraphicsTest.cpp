@@ -2722,9 +2722,9 @@ TEST(RenderEngineTest, ScreenPassProgramSamplesMrtForDeferredLighting)
     ShaderStage fs;
     fs.type = ShaderStageType::Fragment;
     fs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec2 v_uv;\n"
+                u8"layout(location = 0) in vec2 vine_uv;\n"
                 u8"layout(location = 0) out vec4 out_color;\n"
-                u8"void main() { out_color = vec4(v_uv, 0.0, 1.0); }\n";
+                u8"void main() { out_color = vec4(vine_uv, 0.0, 1.0); }\n";
     program->addStage(fs);
 
     auto light = intrusive_ptr<ScreenPass>(new ScreenPass());

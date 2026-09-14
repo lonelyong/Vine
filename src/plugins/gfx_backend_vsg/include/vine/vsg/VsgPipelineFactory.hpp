@@ -455,7 +455,7 @@ const std::string& fullscreenVertexSource();
  * so it composites over previously rendered content.
  *
  * Fragment-shader ABI the user program must follow:
- *   layout(location = 0) in vec2 v_uv;
+ *   layout(location = 0) in vec2 vine_uv;
  *   layout(binding = i) uniform sampler2D <any>;   // i-th source colour attachment
  *   layout(binding = N) uniform sampler2D depth;    // source depth (N = colour count)
  *   layout(push_constant) uniform PushConstants { vec4 ... } pc;  // LightPushBlock

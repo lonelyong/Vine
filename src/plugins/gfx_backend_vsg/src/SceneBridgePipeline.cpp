@@ -506,17 +506,23 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // therefore reported and the kind's own white fallback is sampled instead — the same answer a material
     // with no texture gets, so a mismatched map costs the map and not the drawable.
     //
+    // The kind is NAMED, never defaulted: exactly one of the two names is set on every variant (below),
+    // and a shader that samples the slot without stating its kind fails to compile instead of quietly
+    // taking one. The DATA states which name that is — the width the data node bound is the width the
+    // vertex stage declares — because a texture cannot state it FOR the data: a 2-wide channel with a cube
+    // map is a mismatch the TEXTURE gives way on, not the vertex data.
+    const char* const kind_define = three_scalar_texcoords ? "VINE_TEXCOORD_CUBE" : "VINE_TEXCOORD_UV";
+
     // WHO GETS THE RULE: the ENGINE's own content sets derive their sampler from the slot, and so does a
-    // program that ASKS for the same treatment by naming VINE_TEXCOORD_CUBE in its import pragma — the
-    // SDK's G-buffer geometry stage does exactly that, because its sampler kind has to follow the texcoord
-    // width like the forward stage's. Leaving such a program out would hand it a descriptor the shader's
-    // sampler type does not match, which is an invalid descriptor rather than a wrong picture. A program
-    // that does NOT name the define declares its own sampler AND its own coordinates, so what its geometry
-    // carries in the texcoord channel is its business: the custom-program cube phase binds a CubeMap
-    // through a UV-pair channel and derives the direction itself, and substituting the white texture there
-    // would replace the program's picture with one it never asked for.
-    const bool engine_picks_sampler =
-        program == nullptr || detail::programImportsDefine(program, "VINE_TEXCOORD_CUBE");
+    // program that ASKS for the same treatment by naming the kind it is given in its import pragma — the
+    // SDK's G-buffer geometry stage names both, because its sampler kind has to follow the texcoord width
+    // like the forward stage's. Leaving such a program out would hand it a descriptor the shader's sampler
+    // type does not match, which is an invalid descriptor rather than a wrong picture. A program that does
+    // NOT name that kind declares its own sampler AND its own coordinates, so what its geometry carries in
+    // the texcoord channel is its business: the custom-program cube phase binds a CubeMap through a UV-pair
+    // channel and derives the direction itself, and substituting the white texture there would replace the
+    // program's picture with one it never asked for.
+    const bool engine_picks_sampler = program == nullptr || detail::programImportsDefine(program, kind_define);
     if (engine_picks_sampler && three_scalar_texcoords &&
         (texture == nullptr || texture->kind() != vine::graphics::Texture::Kind::Cube)) {
         texture_info = textureCache().whiteCubeFallback();
@@ -561,13 +567,12 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
 
     auto config = ::vsg::GraphicsPipelineConfigurator::create(shaderSet);
 
-    // The one thing the DATA cannot state for itself: the sampler type is baked into the SPIR-V, so the cube
-    // variant is selected through vsg's compile settings here. vsg only delivers a define the source asks
-    // for in its `#pragma import_defines` line — a name missing from that list is dropped silently, with no
-    // error from any layer — which is why the forward stage sources list this one.
-    if (three_scalar_texcoords) {
-        config->shaderHints->defines.insert("VINE_TEXCOORD_CUBE");
-    }
+    // The one thing the DATA cannot state for itself: the sampler type is baked into the SPIR-V, so the kind
+    // is selected through vsg's compile settings here — ALWAYS, both kinds, because a shader that samples
+    // the slot without a kind fails to compile rather than taking a default. vsg only delivers a define the
+    // source asks for in its `#pragma import_defines` line — a name missing from that list is dropped
+    // silently, with no error from any layer — which is why the content stage sources list both names.
+    config->shaderHints->defines.insert(kind_define);
 
     // Whether this drawable SAMPLES its material's texture. The engine's forward set gets this define from
     // vsg's own binding gate (its UV attribute and its sampler are declared with it), so the define turns

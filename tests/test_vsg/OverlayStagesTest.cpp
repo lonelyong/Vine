@@ -11,7 +11,7 @@
  * What a device-free test can still pin, and does here:
  *  * `detail::fullscreenVertexSource()` serves the SDK's program stage, so the two cannot drift and
  *    a full-screen picture cannot be sampled through a triangle the engine did not state;
- *  * that stage is the interface every fragment stage is written against (v_uv in, its range and
+ *  * that stage is the interface every fragment stage is written against (vine_uv in, its range and
  *    orientation, no vertex buffer / push constant);
  *  * the copy program declares the ABI the node builder wires, and its BINDING is the attachment.
  */
@@ -57,7 +57,7 @@ TEST(OverlayStagesTest, TheTriangleDeclaresTheInterfaceFragmentStagesWriteAgains
 {
     const std::string source = stageSource(vine::graphics::fullscreenVertexProgram());
     ASSERT_FALSE(source.empty());
-    EXPECT_NE(source.find("layout(location = 0) out vec2 v_uv;"), std::string_view::npos);
+    EXPECT_NE(source.find("layout(location = 0) out vec2 vine_uv;"), std::string_view::npos);
     // Generated from gl_VertexIndex: no vertex buffer, no push constant, no camera matrices.
     EXPECT_NE(source.find("gl_VertexIndex"), std::string_view::npos);
     EXPECT_EQ(source.find("layout(location = 0) in "), std::string_view::npos);
@@ -70,11 +70,11 @@ TEST(OverlayStagesTest, TheCopyProgramDeclaresTheOverlayAbi)
     const std::string text = stageSource(program);
     ASSERT_FALSE(text.empty());
     // The node builder binds the pass input as "screen_tex" at binding 0 and the
-    // fullscreen vertex stage writes v_uv as location 0.
+    // fullscreen vertex stage writes vine_uv as location 0.
     EXPECT_NE(text.find("layout(binding = 0) uniform sampler2D screen_tex;"), std::string_view::npos);
-    EXPECT_NE(text.find("layout(location = 0) in vec2 v_uv;"), std::string_view::npos);
+    EXPECT_NE(text.find("layout(location = 0) in vec2 vine_uv;"), std::string_view::npos);
     EXPECT_NE(text.find("layout(location = 0) out vec4 out_color;"), std::string_view::npos);
-    EXPECT_NE(text.find("texture(screen_tex, v_uv)"), std::string_view::npos);
+    EXPECT_NE(text.find("texture(screen_tex, vine_uv)"), std::string_view::npos);
     // A copy is NOT a lights pass: it declares no push block, so it shades the same with or without
     // a camera (the pass still needs one — the backend builds its view from it).
     EXPECT_EQ(text.find("push_constant"), std::string_view::npos);

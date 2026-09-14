@@ -39,13 +39,16 @@
 #include <vsg/state/DescriptorSetLayout.h>
 #include <vsg/state/GraphicsPipeline.h>
 #include <vsg/state/PipelineLayout.h>
+#include <vsg/state/ShaderStage.h>
 #include <vsg/state/VertexInputState.h>
 #include <vsg/state/ViewportState.h>
+#include <vsg/utils/ShaderCompiler.h>
 #include <vsg/utils/ShaderSet.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -262,7 +265,7 @@ TEST(ForwardShaderSetTest, TheFlatProgramReusesTheForwardStagesWithItsDefine)
     ASSERT_NE(version_at, std::string::npos);
     ASSERT_NE(define_at, std::string::npos);
     EXPECT_LT(version_at, define_at);
-    EXPECT_NE(fragment.find("cross(dFdy(v_view_pos), dFdx(v_view_pos))"), std::string::npos);
+    EXPECT_NE(fragment.find("cross(dFdy(vine_view_pos), dFdx(vine_view_pos))"), std::string::npos);
 }
 
 TEST(ForwardShaderSetTest, DeclaresTheCanonicalAttributesWithTheirGates)
@@ -419,9 +422,10 @@ TEST(ForwardShaderSetTest, TheForwardStagesAskForEveryDefineTheBackendCanSet)
     // shader with NO program set.
     //
     // The names below are the ones the backend sets: VINE_VERTEX_COLOR / VINE_DIFFUSE_MAP through the set's
-    // attribute and descriptor bindings (VsgPipelineFactory), and VINE_TEXCOORD_CUBE as a per-drawable
-    // compile hint (SceneBridgePipeline).
-    const char* const kBackendDefines[] = { "VINE_VERTEX_COLOR", "VINE_DIFFUSE_MAP", "VINE_TEXCOORD_CUBE" };
+    // attribute and descriptor bindings (VsgPipelineFactory), and the texcoord KIND as a per-drawable
+    // compile hint (SceneBridgePipeline) - exactly one of the two names, never neither.
+    const char* const kBackendDefines[] = { "VINE_VERTEX_COLOR", "VINE_DIFFUSE_MAP", "VINE_TEXCOORD_UV",
+                                            "VINE_TEXCOORD_CUBE" };
 
     for (const auto& program : { vine::graphics::forwardProgram(), vine::graphics::flatForwardProgram() }) {
         ASSERT_NE(program, nullptr);
@@ -440,6 +444,53 @@ TEST(ForwardShaderSetTest, TheForwardStagesAskForEveryDefineTheBackendCanSet)
                     << define << " is set by the backend but not asked for in '" << asked << "'";
             }
         }
+    }
+}
+
+TEST(ForwardShaderSetTest, ASampledTexcoordSlotMustStateItsKind)
+{
+    // The kind is NAMED, never defaulted: both stages fork on VINE_TEXCOORD_UV / VINE_TEXCOORD_CUBE, and the
+    // sampled branch has no `#else` that quietly means one of them. A variant that samples the slot without
+    // stating its kind is a build nobody asked for - the backend sets exactly one on every variant (see
+    // SceneBridgePipeline) - so it has to FAIL instead of picking a sampler type on its own. glslang is the
+    // only reader that can answer that, and it answers here.
+    //
+    // The no-define case is pinned too, and it is not decoration: VsgPipelineFactory compiles a program's
+    // stages ONCE with no defines, before any drawable states its variant, so a source that cannot be built
+    // that way would take the whole program (and every drawable using it) down with it.
+    vsg::ShaderCompiler probe;
+    if (!probe.supported()) GTEST_SKIP() << "this build has no glslang (see GlslCompileTest)";
+
+    const auto program = vine::graphics::forwardProgram();
+    ASSERT_NE(program, nullptr);
+    ASSERT_EQ(program->stageCount(), 2u);
+
+    const auto compiles = [](const std::string& stage_source, VkShaderStageFlagBits flag,
+                             std::initializer_list<const char*> defines) {
+        vsg::ShaderCompiler compiler;
+        auto                 stage = vsg::ShaderStage::create(flag, "main", stage_source);
+        // The defines travel on the stage's compile settings, and `create(flags, entry, source)` leaves
+        // them UNSET (a null pointer, which the compiler replaces with its own defaults) — so they are
+        // made here rather than assumed.
+        if (stage->module->hints == nullptr) {
+            stage->module->hints = vsg::ShaderCompileSettings::create();
+        }
+        for (const char* define : defines) {
+            stage->module->hints->defines.insert(define);
+        }
+        return compiler.compile(stage);
+    };
+
+    for (std::size_t i = 0; i < program->stageCount(); ++i) {
+        const auto* stage = program->stage(i);
+        ASSERT_NE(stage, nullptr);
+        const std::string source = stage->source.stdstr();
+        const auto        flag   = (i == 0u) ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_FRAGMENT_BIT;
+        EXPECT_FALSE(compiles(source, flag, { "VINE_DIFFUSE_MAP" }))
+            << "stage " << i << " samples a slot whose kind is unstated";
+        EXPECT_TRUE(compiles(source, flag, { "VINE_DIFFUSE_MAP", "VINE_TEXCOORD_UV" })) << "stage " << i;
+        EXPECT_TRUE(compiles(source, flag, { "VINE_DIFFUSE_MAP", "VINE_TEXCOORD_CUBE" })) << "stage " << i;
+        EXPECT_TRUE(compiles(source, flag, {})) << "stage " << i << " is the program-level compile";
     }
 }
 
@@ -575,7 +626,7 @@ TEST(ForwardShaderSetTest, TheFragmentStageScalesAlphaByTheDrawBlock)
     ASSERT_NE(fs_stage, nullptr);
     const std::string fragment = fs_stage->source.stdstr();
     EXPECT_NE(fragment.find("material.diffuse.a * draw.params.x"), std::string::npos);
-    EXPECT_EQ(fragment.find("alpha *= v_color.a;"), std::string::npos);
+    EXPECT_EQ(fragment.find("alpha *= vine_color.a;"), std::string::npos);
     // The block itself is declared in its OWN set, because it is bound per drawable with a
     // dynamic offset (the scene shares one buffer and one descriptor set).
     EXPECT_NE(fragment.find("uniform VineDrawBlock"), std::string::npos);

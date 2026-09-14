@@ -50,7 +50,7 @@ class V_GRAPHICS_API ScreenPass : public RenderPass {
     /** @brief Names the fragment program the pass draws through — the ONE way its picture is chosen.
      *
      * The fragment stage compiles against the full-screen ABI (see
-     * BuiltinShaders::fullscreenVertexProgram): `v_uv` arrives at location 0 spanning [0, 1] with the
+     * BuiltinShaders::fullscreenVertexProgram): `vine_uv` arrives at location 0 spanning [0, 1] with the
      * top row first, it writes its own `layout(location = 0) out vec4` colour, and the resolved
      * source's colour attachments are bound as sampled textures at binding 0..N-1 — so binding i
      * reads attachment i, and a program that wants one specific attachment declares that binding

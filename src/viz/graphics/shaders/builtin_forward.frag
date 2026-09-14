@@ -3,17 +3,19 @@
 // ONLY when the source asks for it on this line: a name that is missing here is silently dropped (the
 // branch that tests it stays dead, with no error from any layer). Keep the list in sync with the
 // backend's variants — scripts/vine_shader_check.sh compiles every combination of these names.
-#pragma import_defines (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_TEXCOORD_CUBE)
-layout(location = 0) in vec3 v_view_pos;
-layout(location = 1) in vec3 v_view_normal;
+#pragma import_defines (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)
+layout(location = 0) in vec3 vine_view_pos;
+layout(location = 1) in vec3 vine_view_normal;
 #ifdef VINE_VERTEX_COLOR
-layout(location = 2) in vec4 v_color;
+layout(location = 2) in vec4 vine_color;
 #endif
 #ifdef VINE_DIFFUSE_MAP
 #if defined(VINE_TEXCOORD_CUBE)
-layout(location = 3) in vec3 v_uv;
+layout(location = 3) in vec3 vine_uv;
+#elif defined(VINE_TEXCOORD_UV)
+layout(location = 3) in vec2 vine_uv;
 #else
-layout(location = 3) in vec2 v_uv;
+#error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE
 #endif
 #endif
 layout(location = 0) out vec4 out_color;
@@ -37,8 +39,10 @@ layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 // resolves must be the matching kind (the backend binds a white cube when it is not).
 #if defined(VINE_TEXCOORD_CUBE)
 layout(set = 0, binding = 1) uniform samplerCube diffuseMap;
-#else
+#elif defined(VINE_TEXCOORD_UV)
 layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
+#else
+#error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE
 #endif
 #endif
 
@@ -86,11 +90,11 @@ void main()
     // so dFdy points the other way from the y-up convention these derivatives are usually written
     // in, and dFdx x dFdy comes out pointing away from the camera (measured: the lit side of a
     // surface facing the camera stayed at its ambient term until the operands were swapped).
-    vec3 n = normalize(cross(dFdy(v_view_pos), dFdx(v_view_pos)));
+    vec3 n = normalize(cross(dFdy(vine_view_pos), dFdx(vine_view_pos)));
 #else
-    vec3 n = normalize(v_view_normal);
+    vec3 n = normalize(vine_view_normal);
 #endif
-    vec3 view_dir = normalize(-v_view_pos);
+    vec3 view_dir = normalize(-vine_view_pos);
     vec3 albedo = material.diffuse.rgb;
     // The drawable's opacity is a PER-DRAWABLE VALUE, not a per-vertex one: it
     // arrives in the draw block and is rewritten in place when the command's
@@ -99,7 +103,7 @@ void main()
     // authored colours, which its alpha does not compete with).
     float alpha = material.diffuse.a * draw.params.x;
 #ifdef VINE_DIFFUSE_MAP
-    vec4 texel = texture(diffuseMap, v_uv);
+    vec4 texel = texture(diffuseMap, vine_uv);
     albedo *= texel.rgb;
     alpha *= texel.a;
 #endif
@@ -109,14 +113,14 @@ void main()
     // one drawable's alpha cannot leak into another geometry that shares the
     // same vertex stream, and a model's fourth colour component means what the
     // model says it means.
-    albedo *= v_color.rgb;
+    albedo *= vine_color.rgb;
 #endif
     vec3 color = albedo * (lights.ambient.rgb * lights.ambient.a);
     float shininess = max(material.shininess, 1.0);
     // The shadow term below is the SAME text the deferred lighting program inserts, and it reads the
     // fragment's view position by one name in both programs: here it arrives as a varying, there it is
     // read out of the G-buffer.
-    vec3 pos = v_view_pos;
+    vec3 pos = vine_view_pos;
     for (int i = 0; i < 3; ++i)
     {
         vec3 d = lights.sun_dir[i].xyz;

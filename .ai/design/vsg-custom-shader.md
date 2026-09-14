@@ -30,6 +30,14 @@
 > **2026-09-13 命名（本条）：** ① 前向着色的文件 `vine_forward.{vert,frag}` → **`std_forward.{vert,frag}`**（同一个 program 的两段；常量 `kStdForwardVert` / `kStdForwardFrag`）；
 > ② **着色器内不再使用 `vsg_` 前缀**：引擎提供的绑定名一律 `vine_`（`vine_Vertex` / `vine_Normal` / `vine_Color` / `vine_TexCoord0`），后端声明的 attributeBinding 名同步改；
 >    （当时写了“`vsg_probe` 除外”——该工具已在同日删除。）
+> **2026-09-14 命名（接上条）**：着色器内**插值变量**的前缀也从 `v_` 改成 `vine_`（`v_uv` → `vine_uv`、`v_view_pos` → `vine_view_pos`、
+>   `v_view_normal` → `vine_view_normal`、`v_color` → `vine_color`、`v_texcoord` → `vine_texcoord`、`v_dir` → `vine_dir`）：着色器里的标识符不分顶点输入 / 插值 / 片元输出，一律 `vine_`。
+>   location、绑定与取值范围不变，所以**不改任何 ABI**；改的是文本里读起来像 vsg 风格的那一层。
+> **2026-09-14 同一批：texcoord 的 kind 显式化** —— `VINE_DIFFUSE_MAP` 与“槽是哪一种”是**两个轴**：前者是“有没有贴图要采”的**门**
+>   （决定 pipeline layout 里那个属性/描述符**存不存在**），后者是 kind。kind 原来是**缺省即 UV** 的，现在两个名字都写出来：
+>   `VINE_TEXCOORD_UV` / `VINE_TEXCOORD_CUBE`，采样了槽却没说 kind 的变体**编译不过**（`#error`），后端每个 variant 一定插恰好一个。
+>   为什么不反过来（由采样器类型推断坐标类型）：顶点侧的宽度只能由**数据**决定（Vulkan 要求 `in` 的类型与顶点格式兼容，
+>   而宽度由 vsg 取数组自己的格式），不一致时只能让**纹理**让步（白 fallback + 报告），让数据让步就得凭空造分量。
 > **2026-09-13 变更（推翻 §8 的枚举）**：`ShaderPreset` **已删除**，着色只能**显式指定 program**，且**没有兜底**。
 > - 会话级入口：`RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram>)` / `defaultContentProgram()`
 >   （引擎默认就是命名的 `forwardProgram()`，构造函数里定好，`initialize()` 前转发给后端；运行中设置立即转发）。

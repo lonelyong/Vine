@@ -1,5 +1,5 @@
 #version 450
-layout(location = 0) in vec2 v_uv;
+layout(location = 0) in vec2 vine_uv;
 layout(location = 0) out vec4 out_color;
 layout(binding = 0) uniform sampler2D albedo_tex;
 layout(binding = 1) uniform sampler2D normal_tex;
@@ -19,9 +19,9 @@ layout(push_constant) uniform PushConstants
 void main()
 {
     // vsg projects world-up to the top G-buffer row (reverse-Y
-    // perspective) and v_uv.y == 0 is the top of the screen,
-    // so v_uv samples the buffers upright (no Y flip).
-    vec2 uv = v_uv;
+    // perspective) and vine_uv.y == 0 is the top of the screen,
+    // so vine_uv samples the buffers upright (no Y flip).
+    vec2 uv = vine_uv;
     vec3 albedo = texture(albedo_tex, uv).rgb;
     vec4 n4 = texture(normal_tex, uv);
     vec3 n = n4.xyz;

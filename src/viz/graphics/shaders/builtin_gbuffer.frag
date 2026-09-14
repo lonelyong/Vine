@@ -3,14 +3,16 @@
 // source asks for it on this line: a name missing here is silently dropped and the branch that tests it
 // stays dead. Keep the list in sync with the backend's variants - scripts/vine_shader_check.sh compiles
 // every combination of these names.
-#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_CUBE)
-layout(location = 0) in vec3 v_view_pos;
-layout(location = 1) in vec3 v_view_normal;
+#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)
+layout(location = 0) in vec3 vine_view_pos;
+layout(location = 1) in vec3 vine_view_normal;
 #ifdef VINE_DIFFUSE_MAP
 #if defined(VINE_TEXCOORD_CUBE)
-layout(location = 2) in vec3 v_texcoord;
+layout(location = 2) in vec3 vine_texcoord;
+#elif defined(VINE_TEXCOORD_UV)
+layout(location = 2) in vec2 vine_texcoord;
 #else
-layout(location = 2) in vec2 v_texcoord;
+#error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE
 #endif
 #endif
 layout(location = 0) out vec4 out_albedo;
@@ -32,8 +34,10 @@ layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 // follows the coordinate the vertex stage declared (see its comment), so the two must be kept paired.
 #if defined(VINE_TEXCOORD_CUBE)
 layout(set = 0, binding = 1) uniform samplerCube diffuseMap;
-#else
+#elif defined(VINE_TEXCOORD_UV)
 layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
+#else
+#error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE
 #endif
 #endif
 void main()
@@ -49,10 +53,10 @@ void main()
     // rule cannot self-occlude).
     vec3 albedo = material.diffuse.rgb;
 #ifdef VINE_DIFFUSE_MAP
-    albedo *= texture(diffuseMap, v_texcoord).rgb;
+    albedo *= texture(diffuseMap, vine_texcoord).rgb;
 #endif
     out_albedo = vec4(albedo, 1.0);
-    out_normal = vec4(normalize(v_view_normal), clamp(material.shininess / 256.0, 0.0, 1.0));
+    out_normal = vec4(normalize(vine_view_normal), clamp(material.shininess / 256.0, 0.0, 1.0));
     out_specular = vec4(clamp(material.specular.rgb, 0.0, 1.0), 1.0);
-    out_position = vec4(v_view_pos, 1.0);
+    out_position = vec4(vine_view_pos, 1.0);
 }

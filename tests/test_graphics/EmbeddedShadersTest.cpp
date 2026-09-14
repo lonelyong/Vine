@@ -342,7 +342,7 @@ TEST(EmbeddedShadersTest, TheForwardProgramDeclaresTheShadowAbiWhereTheContentSe
     // The term reads the fragment's view position by ONE name in both programs (the forward path has
     // it as a varying, the deferred one reads it out of the G-buffer), which is what makes the term
     // text shareable — so the alias has to be there.
-    EXPECT_NE(text.find("vec3 pos = v_view_pos;"), std::string::npos);
+    EXPECT_NE(text.find("vec3 pos = vine_view_pos;"), std::string::npos);
 }
 
 TEST(EmbeddedShadersTest, TheSkyboxProgramUsesTheEmbeddedSources)
@@ -362,10 +362,14 @@ TEST(EmbeddedShadersTest, TheSkyboxProgramUsesTheEmbeddedSources)
     EXPECT_EQ(skybox_vs->source, vine::String(kBuiltinSkyboxVert));
     EXPECT_EQ(skybox_fs->source, vine::String(kBuiltinSkyboxFrag));
     // Its sampler kind follows the texcoord width, which is the contract the backend's kind check keys
-    // on (see the header): both branches have to be there, in the stages that declare them.
+    // on (see the header): both kinds and both branches have to be there, in the stages that declare
+    // them. The names must be in the PRAGMA too - a define a source does not ask for is dropped in
+    // silence - so a sky that never named the UV kind could not be built as a UV pair at all.
     EXPECT_NE(skybox_vs->source.stdstr().find("VINE_TEXCOORD_CUBE"), std::string::npos)
         << "the vertex stage must name the define it branches on (a program that does not ask for it is "
            "never given it)";
+    EXPECT_NE(skybox_vs->source.stdstr().find("VINE_TEXCOORD_UV"), std::string::npos);
+    EXPECT_NE(skybox_fs->source.stdstr().find("VINE_TEXCOORD_UV"), std::string::npos);
     EXPECT_NE(skybox_fs->source.stdstr().find("samplerCube skyMap"), std::string::npos);
     EXPECT_NE(skybox_fs->source.stdstr().find("sampler2D skyMap"), std::string::npos);
 }

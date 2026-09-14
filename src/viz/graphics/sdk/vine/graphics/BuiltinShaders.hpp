@@ -79,10 +79,13 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> gbufferGeometryProgram();
  *
  * The sampler KIND follows the texcoord channel's width, exactly like the engine's own content stages
  * (three scalars: a cube map; two: a 2-D map), which is what keeps a material of the wrong kind from
- * becoming an unbindable descriptor. The returned program therefore names VINE_TEXCOORD_CUBE in its
- * import pragma; a backend that hands the sampler kind to the texcoord width (which is what the vsg
- * backend's rule does) keeps it honest, and one that does not still gets a program whose sampler
- * matches the coordinates its data carries.
+ * becoming an unbindable descriptor. The returned program therefore names BOTH kinds in its import
+ * pragma (VINE_TEXCOORD_UV / VINE_TEXCOORD_CUBE) and samples the pair when neither is set — which is the
+ * shape its PROGRAM-LEVEL compile gets (a stage set is built once with no defines, see
+ * VsgPipelineFactory) and the shape a mis-widthed channel takes. A backend that hands the sampler kind to
+ * the texcoord width (which is what the vsg backend's rule does) keeps it honest by setting exactly one
+ * of the two, and one that sets neither still gets a program whose sampler matches the coordinates its
+ * data carries.
  *
  * @return The vertex + fragment program (fresh per call).
  */
@@ -94,7 +97,7 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
  * This is the interface a fullscreen fragment stage compiles against, whether it is one of the SDK's
  * (deferredLightProgram / screenCopyProgram) or the host's own:
  *
- *   * the fragment stage declares `layout(location = 0) in vec2 v_uv;`, spanning [0, 1] over the
+ *   * the fragment stage declares `layout(location = 0) in vec2 vine_uv;`, spanning [0, 1] over the
  *     destination rectangle with (0, 0) at the TOP-LEFT of the source image AS THE READ-BACK API
  *     RETURNS IT — a copy samples it directly, with no Y flip;
  *   * it declares its own outputs (`layout(location = 0) out vec4 out_color;`);

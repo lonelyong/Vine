@@ -96,21 +96,33 @@ TEST(ProgramSamplingTest, NoProgramBindsNoDepth)
 TEST(ProgramDefineImportTest, ThePragmaListDecidesWhichDefinesAProgramAsksFor)
 {
     // The backend only sets a define a source NAMES on its import line (vsg drops the rest silently), so
-    // "does this program opt into the texcoord-width sampler rule (and its kind guard)" is a question
-    // about this list - and a wrong answer would either skip the guard (an invalid descriptor) or apply
-    // it to a program that declares its own sampler (its picture replaced with a texture it never asked
-    // for).
-    const auto asks_cube = [](const char8_t* source) {
-        return programImportsDefine(makeProgram(vine::graphics::ShaderStageType::Vertex, source).get(),
-                                    "VINE_TEXCOORD_CUBE");
+    // "does this program opt into the slot-derived sampler rule, and for WHICH kind" is a question about
+    // this list - and a wrong answer would either skip the guard (an invalid descriptor) or apply it to a
+    // program that declares its own sampler (its picture replaced with a texture it never asked for).
+    //
+    // The kind is asked for BY NAME: the backend queries the one it is about to set (SceneBridgePipeline),
+    // so a program that handles only cube coordinates answers yes to VINE_TEXCOORD_CUBE and no to
+    // VINE_TEXCOORD_UV - which is what keeps the guard off a slot the program never said it can read.
+    const auto asks = [](const char8_t* source, const char* define) {
+        return programImportsDefine(makeProgram(vine::graphics::ShaderStageType::Vertex, source).get(), define);
     };
 
-    EXPECT_TRUE(asks_cube(u8"#version 450\n#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_CUBE)\nvoid main(){}\n"));
-    EXPECT_TRUE(asks_cube(u8"#version 450\n#pragma import_defines (VINE_TEXCOORD_CUBE)\nvoid main(){}\n"));
+    const char8_t* const both_kinds =
+        u8"#version 450\n#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\nvoid main(){}\n";
+    EXPECT_TRUE(asks(both_kinds, "VINE_TEXCOORD_UV"));
+    EXPECT_TRUE(asks(both_kinds, "VINE_TEXCOORD_CUBE"));
+    EXPECT_TRUE(asks(both_kinds, "VINE_DIFFUSE_MAP"));
+
+    const char8_t* const cube_only = u8"#version 450\n#pragma import_defines (VINE_TEXCOORD_CUBE)\nvoid main(){}\n";
+    EXPECT_TRUE(asks(cube_only, "VINE_TEXCOORD_CUBE"));
+    EXPECT_FALSE(asks(cube_only, "VINE_TEXCOORD_UV"));
+
     // A whole ENTRY has to match: a longer name containing the define is a different define.
-    EXPECT_FALSE(asks_cube(u8"#version 450\n#pragma import_defines (VINE_TEXCOORD_CUBE_EXTRA)\nvoid main(){}\n"));
-    EXPECT_FALSE(asks_cube(u8"#version 450\n#pragma import_defines (VINE_DIFFUSE_MAP)\nvoid main(){}\n"));
-    EXPECT_FALSE(asks_cube(u8"#version 450\nvoid main(){}\n"));
+    EXPECT_FALSE(asks(u8"#version 450\n#pragma import_defines (VINE_TEXCOORD_CUBE_EXTRA)\nvoid main(){}\n",
+                      "VINE_TEXCOORD_CUBE"));
+    EXPECT_FALSE(asks(u8"#version 450\n#pragma import_defines (VINE_DIFFUSE_MAP)\nvoid main(){}\n",
+                      "VINE_TEXCOORD_UV"));
+    EXPECT_FALSE(asks(u8"#version 450\nvoid main(){}\n", "VINE_TEXCOORD_CUBE"));
 
     // Any stage counts (the pragma is per stage, and the backend looks at them all), and neither a null
     // program nor an empty name matches anything.
