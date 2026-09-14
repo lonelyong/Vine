@@ -121,14 +121,6 @@ bool RenderPass::hasViewport() const
     return has_viewport_;
 }
 
-void RenderPass::getViewport(int& x, int& y, int& width, int& height) const
-{
-    x = viewport_.x;
-    y = viewport_.y;
-    width = viewport_.width;
-    height = viewport_.height;
-}
-
 Viewport RenderPass::viewport() const
 {
     return viewport_;

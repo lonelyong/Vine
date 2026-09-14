@@ -84,8 +84,8 @@ TEST(OverlayStagesTest, TheCopyProgramsBindingIsTheAttachment)
 {
     // Binding i reads the source's colour attachment i (the full-screen program ABI), so asking for
     // another attachment is a different program text — not a backend setting.
-    const const std::string zero = stageSource(vine::graphics::screenCopyProgram(0));
-    const const std::string two  = stageSource(vine::graphics::screenCopyProgram(2));
+    const std::string zero = stageSource(vine::graphics::screenCopyProgram(0));
+    const std::string two  = stageSource(vine::graphics::screenCopyProgram(2));
     ASSERT_FALSE(zero.empty());
     ASSERT_FALSE(two.empty());
     EXPECT_NE(zero.find("layout(binding = 0)"), std::string_view::npos);

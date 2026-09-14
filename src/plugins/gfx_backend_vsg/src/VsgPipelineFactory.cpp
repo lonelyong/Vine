@@ -65,7 +65,6 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/CameraBridge.hpp>
-#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 #include <vine/vsg/VsgUtils.hpp>

@@ -83,14 +83,14 @@ std::size_t RenderEngine::diagnosticCount() const
 
 std::size_t RenderEngine::engineDiagnosticCount() const noexcept
 {
-    return engine_diagnostic_count_;
+    return wiring_.engine_diagnostic_count_;
 }
 
 void RenderEngine::reportEngineProblem(vine::graphics::DiagnosticSeverity severity,
                                        vine::graphics::DiagnosticCategory category,
                                        const String&                message)
 {
-    ++engine_diagnostic_count_;
+    ++wiring_.engine_diagnostic_count_;
     if (diagnostic_sink_) {
         diagnostic_sink_(vine::graphics::RenderDiagnostic{ severity, category, message });
     }
@@ -171,22 +171,11 @@ void RenderEngine::frame(double dt)
         }
     }
 
-    // Fresh named-output registry per frame: every producer publishes during
-    // the ordered pass run, so a consumer only ever samples this frame's
-    // output and stale entries from removed producers disappear automatically.
-    outputs_.clear();
-    duplicate_outputs_seen_this_frame_.clear();
-    unpublishable_passes_seen_this_frame_.clear();
-    // What this frame produces is per TARGET, not per name: a pass that runs fills the target it
-    // draws into (all of its images), and that is what a declared input is answered from. A host
-    // binding is available every frame, so it seeds the set.
-    produced_targets_.clear();
-    for (const auto& binding : host_outputs_) {
-        if (binding.second != nullptr) {
-            produced_targets_.insert(binding.second.get());
-        }
-    }
-    unproduced_inputs_seen_this_frame_.clear();
+    // A frame starts from an empty registry and a fresh episode check (see
+    // WiringState::beginFrame): every producer publishes again during the ordered
+    // pass run, so a consumer only ever samples this frame's output and stale
+    // entries from removed producers disappear automatically.
+    wiring_.beginFrame();
 
     // Structural wiring problems are visible from the DECLARATIONS, so they are reported before
     // anything runs — not left to show up as "the pass drew nothing" (design §14.4).
@@ -222,23 +211,53 @@ void RenderEngine::frame(double dt)
         // promise is only the claim (a pass may promise a target it draws into — the normal case —
         // and what a consumer reads is what actually ran).
         if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
-            produced_targets_.insert(drawn_into);
+            wiring_.produced_targets_.insert(drawn_into);
         }
         publishPassOutput(pass);
         backend_->endPass();
     }
 
-    // A collision that did NOT happen this frame is over: re-arm its report, so a name that breaks
-    // again later is reported again (the same episode rule the unresolved inputs follow).
-    duplicate_outputs_reported_ = duplicate_outputs_seen_this_frame_;
-    unpublishable_passes_reported_ = unpublishable_passes_seen_this_frame_;
-
-    // Same for the declared inputs nothing produced this frame: what was broken stays reported (one
-    // message), what recovered drops out of the set, so a wire that breaks again is reported again.
-    unproduced_inputs_reported_ = std::move(unproduced_inputs_seen_this_frame_);
+    // Each "seen this frame" set becomes the reported set: an episode that did not
+    // happen this frame is over, so the same problem breaking again is reported
+    // again (see WiringState::endFrame).
+    wiring_.endFrame();
 
     backend_->endFrame();
     backend_->swapBuffers();
+}
+
+void RenderEngine::WiringState::beginFrame()
+{
+    // Fresh named-output registry: every producer publishes during the ordered pass
+    // run, so a consumer only ever samples this frame's output and stale entries from
+    // removed producers disappear automatically.
+    outputs_.clear();
+    duplicate_outputs_seen_this_frame_.clear();
+    unpublishable_passes_seen_this_frame_.clear();
+    unproduced_inputs_seen_this_frame_.clear();
+
+    // What this frame produces is per TARGET, not per name: a pass that runs fills the
+    // target it draws into (all of its images), and that is what a declared input is
+    // answered from. A host binding is available every frame, so it seeds the set —
+    // that is also how an object-typed input addressing a host binding gets answered.
+    produced_targets_.clear();
+    for (const auto& binding : host_outputs_) {
+        if (binding.second != nullptr) {
+            produced_targets_.insert(binding.second.get());
+        }
+    }
+}
+
+void RenderEngine::WiringState::endFrame()
+{
+    // A collision / unpublishable declaration that did NOT happen this frame is over:
+    // re-arm its report, so it is reported again if it breaks again.
+    duplicate_outputs_reported_ = duplicate_outputs_seen_this_frame_;
+    unpublishable_passes_reported_ = unpublishable_passes_seen_this_frame_;
+
+    // Same for the declared inputs nothing produced this frame: what was broken stays
+    // reported (one message), what recovered drops out of the set.
+    unproduced_inputs_reported_ = std::move(unproduced_inputs_seen_this_frame_);
 }
 
 const FrameContext& RenderEngine::frameContext() const
@@ -300,7 +319,7 @@ void RenderEngine::removePass(raw_ptr<RenderPass> pass)
                  slots_.end());
     // A pass that leaves the list cannot be reported through again: an address
     // kept here would be reused by a NEW pass and silence its first report.
-    unresolved_inputs_reported_.erase(pass);
+    wiring_.unresolved_inputs_reported_.erase(pass);
 
     // A pass is registered at most once, so any removal drops its only user:
     // release the backend state it retained — keyed by the pass itself (the
@@ -331,9 +350,9 @@ void RenderEngine::clearPasses()
     }
 
     slots_.clear();
-    unresolved_inputs_reported_.clear();
-    duplicate_outputs_seen_this_frame_.clear();
-    duplicate_outputs_reported_.clear();
+    wiring_.unresolved_inputs_reported_.clear();
+    wiring_.duplicate_outputs_seen_this_frame_.clear();
+    wiring_.duplicate_outputs_reported_.clear();
 
     if (backend_ != nullptr) {
         for (const auto& entry : removed) {
@@ -388,7 +407,7 @@ void RenderEngine::drawScenePass(raw_ptr<RenderPass> pass, raw_ptr<Scene> conten
 
 raw_ptr<RenderTarget> RenderEngine::resolveDeclaredTarget(raw_ptr<RenderPass> pass, raw_ptr<RenderTarget> target)
 {
-    if (produced_targets_.count(target) != 0) {
+    if (wiring_.produced_targets_.count(target) != 0) {
         return target;
     }
     // A pass reading what it draws into is the feedback pattern, and whether the actual draw call is
@@ -414,7 +433,7 @@ raw_ptr<RenderTarget> RenderEngine::resolveDeclaredImage(raw_ptr<RenderPass> pas
         return nullptr;
     }
     const bool depth_usable = (image.kind() != ImageRef::Kind::Depth) || target->hasDepth();
-    if (depth_usable && produced_targets_.count(target) != 0) {
+    if (depth_usable && wiring_.produced_targets_.count(target) != 0) {
         return target;
     }
     // Same as above: a pass that reads the target it draws into is the feedback pattern, judged by
@@ -433,11 +452,11 @@ void RenderEngine::reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputI
     // A wire the structural check already reported (no producer at all, or one registered too late)
     // is ONE problem: the runtime does not repeat it in frame terms.
     const auto key = std::make_pair(raw_ptr<const RenderPass>(pass), identity);
-    unproduced_inputs_seen_this_frame_.insert(key);
-    if (unusable_inputs_reported_.count(key) != 0) {
+    wiring_.unproduced_inputs_seen_this_frame_.insert(key);
+    if (wiring_.unusable_inputs_reported_.count(key) != 0) {
         return;
     }
-    if (unproduced_inputs_reported_.count(key) != 0) {
+    if (wiring_.unproduced_inputs_reported_.count(key) != 0) {
         return;   // the same input, still not produced: one message for this episode
     }
     reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
@@ -491,10 +510,10 @@ std::vector<raw_ptr<RenderTarget>> RenderEngine::resolvePassInputs(raw_ptr<Rende
                                           [](raw_ptr<RenderTarget> target) { return target != nullptr; });
     if (any_resolved) {
         // Re-arm: if this pass loses its producer later, that is a new problem.
-        unresolved_inputs_reported_.erase(pass);
+        wiring_.unresolved_inputs_reported_.erase(pass);
         return resolved;
     }
-    if (unresolved_inputs_reported_.insert(pass).second) {
+    if (wiring_.unresolved_inputs_reported_.insert(pass).second) {
         // The frontend has no printf-style helper of its own: the message is
         // assembled from String pieces (a formatting utility is the backend's).
         reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
@@ -624,7 +643,7 @@ void RenderEngine::validateWiring()
     // A host binding (publish) is filled by the HOST: it is there from the start of the frame and no
     // pass owns its hand-off, so a declared input addressing it is answered like one addressing a
     // pass' target.
-    for (const auto& binding : host_outputs_) {
+    for (const auto& binding : wiring_.host_outputs_) {
         if (binding.second != nullptr) {
             filled.emplace(binding.second.get(), Declaration{ nullptr, binding.second.get(), nullptr, 0 });
         }
@@ -657,7 +676,7 @@ void RenderEngine::validateWiring()
             if (pass->renderTarget() != promised) {
                 const OutputIdentity identity = OutputIdentity::targetOf(*promised);
                 mismatched_promises.emplace(pass, identity);
-                if (mismatched_promises_reported_.count(std::make_pair(raw_ptr<const RenderPass>(pass), identity)) == 0) {
+                if (wiring_.mismatched_promises_reported_.count(std::make_pair(raw_ptr<const RenderPass>(pass), identity)) == 0) {
                     reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
                                         vine::graphics::DiagnosticCategory::ContentSkipped,
                                         String(u8"pass '") + reportedPassName(pass) + String(u8"' promises target '") +
@@ -688,7 +707,7 @@ void RenderEngine::validateWiring()
                     continue;   // one pass claiming twice is one claim
                 }
                 colliding_images.insert(identity);
-                if (output_collisions_reported_.insert(identity).second) {
+                if (wiring_.output_collisions_reported_.insert(identity).second) {
                     reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
                                         vine::graphics::DiagnosticCategory::ContentSkipped,
                                         String(u8"two passes ('") + reportedPassName(entry->second.pass) +
@@ -721,7 +740,7 @@ void RenderEngine::validateWiring()
             if (promised_target != nullptr && pass->renderTarget() != promised_target) {
                 const OutputIdentity identity = OutputIdentity::of(*output);
                 mismatched_promises.emplace(pass, identity);
-                if (mismatched_promises_reported_.count(std::make_pair(raw_ptr<const RenderPass>(pass), identity)) == 0) {
+                if (wiring_.mismatched_promises_reported_.count(std::make_pair(raw_ptr<const RenderPass>(pass), identity)) == 0) {
                     reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
                                         vine::graphics::DiagnosticCategory::ContentSkipped,
                                         String(u8"pass '") + reportedPassName(pass) + String(u8"' promises the image '") +
@@ -737,7 +756,7 @@ void RenderEngine::validateWiring()
             }
             else if (entry->second.pass != pass) {
                 colliding_images.insert(identity);
-                if (output_collisions_reported_.insert(identity).second) {
+                if (wiring_.output_collisions_reported_.insert(identity).second) {
                     const String first  = reportedPassName(entry->second.pass);
                     const String second = reportedPassName(pass);
                     // One format string per branch: the cases do not print the same thing (one image
@@ -794,7 +813,7 @@ void RenderEngine::validateWiring()
                 continue;   // filled before this pass draws
             }
             unusable_inputs.emplace(pass, identity);
-            if (unusable_inputs_reported_.emplace(pass, identity).second) {
+            if (wiring_.unusable_inputs_reported_.emplace(pass, identity).second) {
                 const String consumer = reportedPassName(pass);
                 // One format string per branch: "nobody writes it" and "its producer runs too late"
                 // are different problems with different fixes.
@@ -862,7 +881,7 @@ void RenderEngine::validateWiring()
             }
 
             unusable_inputs.emplace(pass, identity);
-            if (unusable_inputs_reported_.emplace(pass, identity).second) {
+            if (wiring_.unusable_inputs_reported_.emplace(pass, identity).second) {
                 const String consumer = reportedPassName(pass);
                 // One format string per branch: "nobody declares it", "the target has no depth" and
                 // "the producer runs too late" are different problems with different fixes.
@@ -904,7 +923,7 @@ void RenderEngine::validateWiring()
         // picture a pass draws is exactly what it named.
         if (pass->program() == nullptr) {
             program_less_screens.insert(pass);
-            if (screen_passes_without_program_reported_.insert(pass).second) {
+            if (wiring_.screen_passes_without_program_reported_.insert(pass).second) {
                 reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
                                     vine::graphics::DiagnosticCategory::ContentSkipped,
                                     String(u8"pass '") + reportedPassName(pass) +
@@ -921,7 +940,7 @@ void RenderEngine::validateWiring()
         // (phase 2).
         if (pass->inputs().empty() && pass->inputTargets().empty() && pass->inputNames().empty()) {
             input_less_passes.insert(pass);
-            if (missing_inputs_reported_.insert(pass).second) {
+            if (wiring_.missing_inputs_reported_.insert(pass).second) {
                 reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
                                     vine::graphics::DiagnosticCategory::ContentSkipped,
                                     String(u8"pass '") + reportedPassName(pass) +
@@ -937,7 +956,7 @@ void RenderEngine::validateWiring()
         // post-process that never appears with no reason for it.
         if (pass->camera() == nullptr) {
             program_without_camera.insert(pass);
-            if (program_without_camera_reported_.insert(pass).second) {
+            if (wiring_.program_without_camera_reported_.insert(pass).second) {
                 reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
                                     vine::graphics::DiagnosticCategory::ContentSkipped,
                                     String(u8"pass '") + reportedPassName(pass) +
@@ -958,7 +977,7 @@ void RenderEngine::validateWiring()
         if (colliding_images.count(OutputIdentity::of(*image)) != 0) {
             continue;
         }
-        if (!unbound_declared_images_reported_.insert(image).second) {
+        if (!wiring_.unbound_declared_images_reported_.insert(image).second) {
             continue;   // already reported for this episode
         }
         const auto& [pass, as_output] = declarer;
@@ -976,13 +995,13 @@ void RenderEngine::validateWiring()
                                              u8" bind it (ImageRef::bind(target, attachment))"));
     }
 
-    output_collisions_reported_  = std::move(colliding_images);
-    mismatched_promises_reported_ = std::move(mismatched_promises);
-    unusable_inputs_reported_    = std::move(unusable_inputs);
-    missing_inputs_reported_     = std::move(input_less_passes);
-    screen_passes_without_program_reported_ = std::move(program_less_screens);
-    program_without_camera_reported_     = std::move(program_without_camera);
-    unbound_declared_images_reported_    = std::move(unbound_declared_images);
+    wiring_.output_collisions_reported_  = std::move(colliding_images);
+    wiring_.mismatched_promises_reported_ = std::move(mismatched_promises);
+    wiring_.unusable_inputs_reported_    = std::move(unusable_inputs);
+    wiring_.missing_inputs_reported_     = std::move(input_less_passes);
+    wiring_.screen_passes_without_program_reported_ = std::move(program_less_screens);
+    wiring_.program_without_camera_reported_     = std::move(program_without_camera);
+    wiring_.unbound_declared_images_reported_    = std::move(unbound_declared_images);
 }
 
 void RenderEngine::publishPassOutput(raw_ptr<RenderPass> pass)
@@ -1000,8 +1019,8 @@ void RenderEngine::publishPassOutput(raw_ptr<RenderPass> pass)
         // Reported once per episode instead of dropping the declaration: a consumer of that name
         // would otherwise be told "nothing produced it this frame", pointing at the consumer for the
         // producer's mistake.
-        unpublishable_passes_seen_this_frame_.insert(pass);
-        if (unpublishable_passes_reported_.insert(pass).second) {
+        wiring_.unpublishable_passes_seen_this_frame_.insert(pass);
+        if (wiring_.unpublishable_passes_reported_.insert(pass).second) {
             reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
                                 vine::graphics::DiagnosticCategory::ContentSkipped,
                                 String(u8"pass '") + reportedPassName(pass) +
@@ -1021,14 +1040,14 @@ void RenderEngine::publishFrameOutput(const String& name, intrusive_ptr<RenderTa
     if (name.empty() || target == nullptr) {
         return;
     }
-    const auto existing = outputs_.find(name);
-    if (existing != outputs_.end() && existing->second.get() != target.get()) {
+    const auto existing = wiring_.outputs_.find(name);
+    if (existing != wiring_.outputs_.end() && existing->second.get() != target.get()) {
         // Two passes published DIFFERENT targets under one name: every consumer of that name
         // silently gets whichever pass ran last, and only the engine can see the collision (each
         // pass is individually valid). Reported once per episode — a scene that keeps the wiring
         // bug must not produce one message per frame.
-        duplicate_outputs_seen_this_frame_.insert(name);
-        if (duplicate_outputs_reported_.insert(name).second) {
+        wiring_.duplicate_outputs_seen_this_frame_.insert(name);
+        if (wiring_.duplicate_outputs_reported_.insert(name).second) {
             const String first  = (existing->second != nullptr && !existing->second->name().empty())
                                       ? existing->second->name()
                                       : String(u8"(unnamed)");
@@ -1041,7 +1060,7 @@ void RenderEngine::publishFrameOutput(const String& name, intrusive_ptr<RenderTa
                                     String(u8"' samples whichever pass ran last"));
         }
     }
-    outputs_[name] = std::move(target);
+    wiring_.outputs_[name] = std::move(target);
 }
 
 void RenderEngine::publish(const String& name, intrusive_ptr<RenderTarget> target)
@@ -1054,7 +1073,7 @@ void RenderEngine::publish(const String& name, intrusive_ptr<RenderTarget> targe
         // and a null one means there is nothing to hand out. The episode is the NAME: it ends when a
         // publish() hands over a real target (or unpublish() withdraws it), because a host has no
         // frame to re-publish from.
-        if (unpublishable_host_names_.insert(name).second) {
+        if (wiring_.unpublishable_host_names_.insert(name).second) {
             reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
                                 vine::graphics::DiagnosticCategory::ContentSkipped,
                                 String(u8"publish('") + name +
@@ -1064,33 +1083,33 @@ void RenderEngine::publish(const String& name, intrusive_ptr<RenderTarget> targe
         }
         return;
     }
-    unpublishable_host_names_.erase(name);
+    wiring_.unpublishable_host_names_.erase(name);
     // A HOST binding, not a pass publication: it keeps until unpublish() removes it (or another
     // publish replaces it), because a host has no per-frame hook to re-publish from — tying it to a
     // frame is what made this documented capability unusable (the registry is cleared per frame, so
     // the binding died before any consumer could resolve it). Publishing twice under one name is a
     // host swapping what it offers, not the collision two PASSES produce.
-    host_outputs_[name] = std::move(target);
+    wiring_.host_outputs_[name] = std::move(target);
 }
 
 raw_ptr<RenderTarget> RenderEngine::resolve(const String& name) const
 {
     // This frame's pass publication wins: that pass ran, so its content is this frame's.
-    const auto published = outputs_.find(name);
-    if (published != outputs_.end()) {
+    const auto published = wiring_.outputs_.find(name);
+    if (published != wiring_.outputs_.end()) {
         return published->second.get();
     }
-    const auto bound = host_outputs_.find(name);
-    return (bound != host_outputs_.end()) ? bound->second.get() : nullptr;
+    const auto bound = wiring_.host_outputs_.find(name);
+    return (bound != wiring_.host_outputs_.end()) ? bound->second.get() : nullptr;
 }
 
 void RenderEngine::unpublish(const String& name)
 {
-    outputs_.erase(name);
-    host_outputs_.erase(name);
+    wiring_.outputs_.erase(name);
+    wiring_.host_outputs_.erase(name);
     // Withdrawing the name ends the "cannot serve it" episode: publishing it again with no target is
     // a new mistake, not the same one.
-    unpublishable_host_names_.erase(name);
+    wiring_.unpublishable_host_names_.erase(name);
 }
 
 void RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program)

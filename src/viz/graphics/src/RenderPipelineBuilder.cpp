@@ -501,8 +501,10 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     offscreen->setRenderTarget(target);
     offscreen->setOutputName(output_slot);
     offscreen->setOutputTarget(target);   // its only writer: it owns the hand-off
+    // Registered on the engine, NOT through a Pipeline handle: the engine keeps
+    // this pass alive and no Pipeline owns it, so it is only addressable through
+    // clearPasses() — see addOffscreenToScreen's ownership note.
     engine_->addPass(offscreen, content_, pipelineStageOrder(PipelineStage::Geometry));
-    passes_.push_back(offscreen);
 
     // An order > 0 ScreenPass sampling the slot into the PiP sub-viewport. Its picture is the SDK's
     // copy program, and it carries the view camera because a fullscreen program is drawn through the
@@ -515,7 +517,6 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     screen->addInputTarget(target);   // samples the whole published target
     screen->setViewport(pip_x, pip_y, pip_w, pip_h);
     engine_->addPass(screen, pipelineStageOrder(PipelineStage::Preview));
-    passes_.push_back(screen);
 
     return screen.get();
 }

@@ -18,12 +18,12 @@ void Light::setName(const String& name)
 
 LightPtr Light::createAmbient()
 {
-    return LightPtr(new Light());
+    return make_intrusive<Light>();
 }
 
 LightPtr Light::createDirectional(const vine::math::Vec3d& direction)
 {
-    auto light = LightPtr(new Light());
+    auto light = make_intrusive<Light>();
     light->type_ = LightType::Directional;
     light->direction_ = direction;
     return light;

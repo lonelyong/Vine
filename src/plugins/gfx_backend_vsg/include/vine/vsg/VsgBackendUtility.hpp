@@ -6,24 +6,23 @@
 // Split out of VsgRenderer.cpp together with the object factories (see
 // VsgPipelineFactory.hpp for why). Not installed.
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <vsg/app/Viewer.h>
 #include <vsg/core/ref_ptr.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>
 #include <vsg/state/ImageView.h>
 
-#include <vine/raw_ptr.hpp>
-
 #include <vine/graphics/Camera.hpp>
-#include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
-
-#include <cstddef>
-#include <cstdint>
-#include <string>
-#include <utility>
-#include <vector>
+#include <vine/graphics/ShaderProgram.hpp>
+#include <vine/raw_ptr.hpp>
 
 V_VSG_NS_BEGIN
 

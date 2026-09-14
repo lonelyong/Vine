@@ -26,7 +26,6 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
-#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 

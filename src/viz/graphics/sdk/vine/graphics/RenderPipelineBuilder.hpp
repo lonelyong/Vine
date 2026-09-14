@@ -1,8 +1,6 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
-#include <vector>
-
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Rect3.hpp>
@@ -209,9 +207,19 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      *     RenderTarget (publishing its colour as @p output_slot), and
      *   - an order > 0 ScreenPass that samples @p output_slot into the
      *     @p pip_... sub-viewport.
-     * Both are added to the engine immediately; the returned ScreenPass lets
-     * the caller re-anchor the PiP viewport once the surface size is known
-     * (see RenderPass::setViewport). The pass keeps the target alive.
+     *
+     * OWNERSHIP: both passes are registered on the engine IMMEDIATELY and the
+     * engine keeps them alive — they are NOT part of any Pipeline handle, so a
+     * Pipeline built by this builder does not own them and dropping it leaves
+     * them running (that RAII covers the passes build() planned; see Pipeline).
+     * Only this ScreenPass is handed back: the off-screen pass it samples is
+     * not addressable through this API, so a host that wants the recipe gone
+     * calls RenderEngine::clearPasses() (removePass(screen) alone would leave
+     * the off-screen pass drawing into a target nobody samples). The builder
+     * keeps no state of its own: it may be destroyed at once (the demo builds
+     * one, wires a PiP and drops it).
+     * The returned ScreenPass lets the caller re-anchor the PiP viewport once
+     * the surface size is known (see RenderPass::setViewport).
      *
      * @param output_slot Name the off-screen target is published under and
      *                    the screen pass resolves.
@@ -290,11 +298,6 @@ class V_GRAPHICS_API RenderPipelineBuilder {
     /// Shadow passes THIS build created: a requested shadow that WAS built is not a gap to report
     /// (see reportRequestedShadows).
     std::size_t shadows_built_ = 0;
-    // References kept by the builder for as long as it lives; the engine also
-    // holds its own references after each add*() call. Records the passes the
-    // ONE-SHOT recipes register outside a Pipeline handle (see
-    // addOffscreenToScreen); a build() pipeline owns its own.
-    std::vector<intrusive_ptr<RenderPass>> passes_;
 };
 
 V_GRAPHICS_NS_END

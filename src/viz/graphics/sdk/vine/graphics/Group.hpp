@@ -1,9 +1,10 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <vector>
+
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
-#include <vector>
 
 #include "Node.hpp"
 

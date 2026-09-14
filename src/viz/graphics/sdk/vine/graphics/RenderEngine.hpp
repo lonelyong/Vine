@@ -360,14 +360,6 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     /** @brief Executes a scene pass against the given content scene. */
     void drawScenePass(raw_ptr<RenderPass> pass, raw_ptr<Scene> content);
 
-    /** @brief Resolves a pass's declared inputs from the named-output registry.
-     *
-     * Called just before executing a pass: for every name in
-     * pass->inputNames() the matching published target is handed to
-     * pass->resolveInputTextures() (missing names resolve to nullptr).
-     *
-     * @param pass Pass whose inputs to resolve.
-     */
     /** @brief Resolves a pass' declared inputs for this frame and hands them to the pass.
      *
      * @param pass Pass whose declarations are resolved.
@@ -534,85 +526,118 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     void*                               native_handle_      = nullptr;
     bool                                initialized_        = false;
 
-    /// This frame's pass publications: slot name -> published target. Cleared at
-    /// the start of every frame and rebuilt as the ordered passes publish (a pass
-    /// that stops running stops publishing).
-    std::map<String, intrusive_ptr<RenderTarget>> outputs_;
-    /// Standing host bindings (RenderEngine::publish): they have no producer to re-publish them each
-    /// frame, so they survive the per-frame clear until unpublish() removes them. Seeded into the
-    /// frame's produced targets, so an object-typed input addressing one is answered as well.
-    std::map<String, intrusive_ptr<RenderTarget>> host_outputs_;
+    /**
+     * @brief Everything the wiring checks own: this frame's registry, and what they have reported.
+     *
+     * The wiring logic (design §14.4) is about pass DECLARATIONS, and its reports are EPISODES
+     * rather than per-frame streams: a problem that stops happening must re-arm, so "what was
+     * reported" is pruned to "what this frame still sees". That rule is stated once — in
+     * beginFrame()/endFrame() — and every set it works on lives here, so "what the engine draws"
+     * (slots_) and "what it has said about the wiring" do not read as one pile of state.
+     *
+     * Kept as a nested struct rather than a separate type because the sets are keyed by the
+     * engine's own declarations (OutputIdentity, the pass objects it registered); nothing outside
+     * this class can interpret them.
+     */
+    struct WiringState {
+        /// This frame's pass publications: slot name -> published target. Cleared at
+        /// the start of every frame and rebuilt as the ordered passes publish (a pass
+        /// that stops running stops publishing).
+        std::map<String, intrusive_ptr<RenderTarget>> outputs_;
+        /// Standing host bindings (RenderEngine::publish): they have no producer to re-publish them each
+        /// frame, so they survive the per-frame clear until unpublish() removes them. Seeded into the
+        /// frame's produced targets, so an object-typed input addressing one is answered as well.
+        std::map<String, intrusive_ptr<RenderTarget>> host_outputs_;
 
-    /// Output names TWO passes published with DIFFERENT targets this frame (a collision: every
-    /// consumer resolving the name silently gets whichever pass ran last). Rebuilt per frame and
-    /// copied into the reported set below, which is what makes the message an episode instead of
-    /// a per-frame stream.
-    std::set<String> duplicate_outputs_seen_this_frame_;
-    /// Output names whose collision has already been reported: pruned to the names that are still
-    /// colliding, so a name that breaks again after a clean frame is reported again.
-    std::set<String> duplicate_outputs_reported_;
+        /// Output names TWO passes published with DIFFERENT targets this frame (a collision: every
+        /// consumer resolving the name silently gets whichever pass ran last). Rebuilt per frame and
+        /// copied into the reported set below, which is what makes the message an episode instead of
+        /// a per-frame stream.
+        std::set<String> duplicate_outputs_seen_this_frame_;
+        /// Output names whose collision has already been reported: pruned to the names that are still
+        /// colliding, so a name that breaks again after a clean frame is reported again.
+        std::set<String> duplicate_outputs_reported_;
 
-    /// Passes that asked to publish an output name while having NO render target (they render into
-    /// the window): the registry maps a name to a sampleable target, so there is nothing to publish.
-    /// Rebuilt per frame and pruned into the reported set below, like the collision above — and for
-    /// the same reason: dropping the declaration silently leaves a consumer of that name reporting
-    /// "nothing produced it", which accuses the consumer of the producer's mistake.
-    std::set<raw_ptr<const RenderPass>> unpublishable_passes_seen_this_frame_;
-    /// Those of them already reported (pruned to the passes still declaring it).
-    std::set<raw_ptr<const RenderPass>> unpublishable_passes_reported_;
-    /// Host bindings currently refused because publish() was given no target. A host has no frame
-    /// to re-publish from, so the episode is the name itself: it leaves the set when a publish() for
-    /// it hands over a real target, or when unpublish() withdraws the name.
-    std::set<String> unpublishable_host_names_;
+        /// Passes that asked to publish an output name while having NO render target (they render into
+        /// the window): the registry maps a name to a sampleable target, so there is nothing to publish.
+        /// Rebuilt per frame and pruned into the reported set below, like the collision above — and for
+        /// the same reason: dropping the declaration silently leaves a consumer of that name reporting
+        /// "nothing produced it", which accuses the consumer of the producer's mistake.
+        std::set<raw_ptr<const RenderPass>> unpublishable_passes_seen_this_frame_;
+        /// Those of them already reported (pruned to the passes still declaring it).
+        std::set<raw_ptr<const RenderPass>> unpublishable_passes_reported_;
+        /// Host bindings currently refused because publish() was given no target. A host has no frame
+        /// to re-publish from, so the episode is the name itself: it leaves the set when a publish() for
+        /// it hands over a real target, or when unpublish() withdraws the name.
+        std::set<String> unpublishable_host_names_;
 
-    /// Count of diagnostics this engine reported itself (see
-    /// engineDiagnosticCount).
-    std::size_t engine_diagnostic_count_ = 0;
-    /// Passes already reported for an unresolved declared input, so a producer
-    /// that stays absent does not produce one message per frame. A pass whose
-    /// input resolves again is dropped from the set, so a later breakage is
-    /// reported again (pruned with the pass list).
-    std::set<raw_ptr<const RenderPass>> unresolved_inputs_reported_;
-    /// Images two passes declared as their output (a structural collision), keyed by ADDRESS: pruned
-    /// to the images still colliding each frame, so a collision that goes away is reported again if
-    /// it comes back (see validateWiring).
-    std::set<OutputIdentity> output_collisions_reported_;
-    /// Promises about a target the pass does not write, keyed by (pass, declared image): a promise is
-    /// a claim about the content a consumer gets, so it has to be about what the pass draws into.
-    /// Pruned the same way (see validateWiring).
-    std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> mismatched_promises_reported_;
-    /// Declared input images a pass cannot draw from, keyed by (consumer, image): the image has no
-    /// producer at all, or its producer is registered after the consumer. Pruned the same way, so a
-    /// wire that is fixed and breaks again is reported again (see validateWiring).
-    std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unusable_inputs_reported_;
+        /// Count of diagnostics this engine reported itself (see
+        /// engineDiagnosticCount).
+        std::size_t engine_diagnostic_count_ = 0;
+        /// Passes already reported for an unresolved declared input, so a producer
+        /// that stays absent does not produce one message per frame. A pass whose
+        /// input resolves again is dropped from the set, so a later breakage is
+        /// reported again (pruned with the pass list).
+        std::set<raw_ptr<const RenderPass>> unresolved_inputs_reported_;
+        /// Images two passes declared as their output (a structural collision), keyed by ADDRESS: pruned
+        /// to the images still colliding each frame, so a collision that goes away is reported again if
+        /// it comes back (see validateWiring).
+        std::set<OutputIdentity> output_collisions_reported_;
+        /// Promises about a target the pass does not write, keyed by (pass, declared image): a promise is
+        /// a claim about the content a consumer gets, so it has to be about what the pass draws into.
+        /// Pruned the same way (see validateWiring).
+        std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> mismatched_promises_reported_;
+        /// Declared input images a pass cannot draw from, keyed by (consumer, image): the image has no
+        /// producer at all, or its producer is registered after the consumer. Pruned the same way, so a
+        /// wire that is fixed and breaks again is reported again (see validateWiring).
+        std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unusable_inputs_reported_;
 
-    /// Targets a pass actually drew into THIS frame: what a declared input is answered from (a
-    /// promise says whose content a consumer gets, a filled target says what is there).
-    std::set<raw_ptr<const RenderTarget>> produced_targets_;
-    /// Declared inputs nothing produced this frame, collected while the passes run so the report is
-    /// an episode: seen this frame / already reported (the same prune-and-re-arm rule as the rest).
-    std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unproduced_inputs_seen_this_frame_;
-    std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unproduced_inputs_reported_;
-    /// ScreenPasses that declare no input at all and therefore can never draw (pruned the same
-    /// way; see validateWiring).
-    std::set<raw_ptr<const RenderPass>> missing_inputs_reported_;
+        /// Targets a pass actually drew into THIS frame: what a declared input is answered from (a
+        /// promise says whose content a consumer gets, a filled target says what is there).
+        std::set<raw_ptr<const RenderTarget>> produced_targets_;
+        /// Declared inputs nothing produced this frame, collected while the passes run so the report is
+        /// an episode: seen this frame / already reported (the same prune-and-re-arm rule as the rest).
+        std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unproduced_inputs_seen_this_frame_;
+        std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unproduced_inputs_reported_;
+        /// ScreenPasses that declare no input at all and therefore can never draw (pruned the same
+        /// way; see validateWiring).
+        std::set<raw_ptr<const RenderPass>> missing_inputs_reported_;
 
-    /// ScreenPasses with NO program: there is no implicit shading for them (see
-    /// BuiltinShaders::screenCopyProgram), so such a pass draws nothing. Pruned the same way as the
-    /// reports above, so a pass that is given a program is re-armed.
-    std::set<raw_ptr<const RenderPass>> screen_passes_without_program_reported_;
+        /// ScreenPasses with NO program: there is no implicit shading for them (see
+        /// BuiltinShaders::screenCopyProgram), so such a pass draws nothing. Pruned the same way as the
+        /// reports above, so a pass that is given a program is re-armed.
+        std::set<raw_ptr<const RenderPass>> screen_passes_without_program_reported_;
 
-    /// ScreenPasses that carry a fullscreen program but no camera: the program path builds the
-    /// pass' view from the camera, so such a pass draws nothing at all. Pruned the same way, so a
-    /// pass that is given a camera is re-armed.
-    std::set<raw_ptr<const RenderPass>> program_without_camera_reported_;
+        /// ScreenPasses that carry a fullscreen program but no camera: the program path builds the
+        /// pass' view from the camera, so such a pass draws nothing at all. Pruned the same way, so a
+        /// pass that is given a camera is re-armed.
+        std::set<raw_ptr<const RenderPass>> program_without_camera_reported_;
 
-    /// Declared images (an output promise or a declared input) that nobody BOUND to a target: an
-    /// unbound identity has no address, so nothing can be delivered through it, and the promise
-    /// check has nothing to compare with the rendered target either. Keyed by the IMAGE, because a
-    /// producer and its consumers share the same unbound object; pruned every frame (the set is
-    /// rebuilt from what this frame saw), so binding it re-arms the report.
-    std::set<raw_ptr<const ImageRef>> unbound_declared_images_reported_;
+        /// Declared images (an output promise or a declared input) that nobody BOUND to a target: an
+        /// unbound identity has no address, so nothing can be delivered through it, and the promise
+        /// check has nothing to compare with the rendered target either. Keyed by the IMAGE, because a
+        /// producer and its consumers share the same unbound object; pruned every frame (the set is
+        /// rebuilt from what this frame saw), so binding it re-arms the report.
+        std::set<raw_ptr<const ImageRef>> unbound_declared_images_reported_;
+
+        /** @brief Opens a frame: forgets this frame's registry and re-collects the standing bindings.
+         *
+         * The per-frame half of the episode rule, and the ONLY place the frame-scoped sets are
+         * cleared. Host bindings (publish) have no producer to re-publish them, so they are seeded
+         * into this frame's produced targets — a declared input addressing one is answered.
+         */
+        void beginFrame();
+
+        /** @brief Closes a frame: each "seen this frame" set BECOMES the reported set.
+         *
+         * The other half of the episode rule: an episode that did not happen this frame drops out
+         * of the reported set, so a problem that comes back is reported again. One place, so no
+         * report can be forgotten into a silent state (or a per-frame stream by accident).
+         */
+        void endFrame();
+    };
+
+    WiringState wiring_;
 };
 
 V_GRAPHICS_NS_END

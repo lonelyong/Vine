@@ -193,17 +193,6 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
     /** @brief Returns whether a sub-viewport is configured for this pass. */
     bool hasViewport() const;
 
-    /** @brief Gets the configured sub-viewport in device pixels.
-     *
-     * Values are only meaningful when hasViewport() is true.
-     *
-     * @param x      Receives the viewport origin x.
-     * @param y      Receives the viewport origin y.
-     * @param width  Receives the viewport width.
-     * @param height Receives the viewport height.
-     */
-    void getViewport(int& x, int& y, int& width, int& height) const;
-
     /** @brief Gets the configured draw viewport.
      *
      * Only meaningful when hasViewport() is true; otherwise the pass draws

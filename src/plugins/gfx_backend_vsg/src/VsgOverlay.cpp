@@ -31,7 +31,6 @@
 #include <vine/vsg/VsgPassMaterialiser.hpp>
 #include <vine/vsg/VsgRecordOrder.hpp>
 #include <vine/vsg/VsgTargetBookkeeping.hpp>
-#include <vine/vsg/VsgTargetBookkeeping.hpp>
 
 V_VSG_NS_BEGIN
 

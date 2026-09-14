@@ -2518,13 +2518,12 @@ TEST(RenderEngineTest, ResizeDoesNotManagePassLayout)
     // The pass's viewport and the target size are untouched by the engine.
     EXPECT_EQ(target->width(), 320);
     EXPECT_EQ(target->height(), 180);
-    int x = 0, y = 0, w = 0, h = 0;
     ASSERT_TRUE(pass->hasViewport());
-    pass->getViewport(x, y, w, h);
-    EXPECT_EQ(x, 10);
-    EXPECT_EQ(y, 20);
-    EXPECT_EQ(w, 100);
-    EXPECT_EQ(h, 50);
+    const Viewport vp = pass->viewport();
+    EXPECT_EQ(vp.x, 10);
+    EXPECT_EQ(vp.y, 20);
+    EXPECT_EQ(vp.width, 100);
+    EXPECT_EQ(vp.height, 50);
 }
 
 TEST(RenderEngineTest, NamedOutputRegistryPublishResolve)
@@ -3707,12 +3706,11 @@ TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
     auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());
     gizmo->onSurfaceResized(800, 600);
 
-    int x = 0, y = 0, w = 0, h = 0;
-    gizmo->getViewport(x, y, w, h);
-    EXPECT_EQ(w, 96);
-    EXPECT_EQ(h, 96);
-    EXPECT_EQ(x, 16);
-    EXPECT_EQ(y, 600 - 16 - 96);
+    const Viewport vp = gizmo->viewport();
+    EXPECT_EQ(vp.width, 96);
+    EXPECT_EQ(vp.height, 96);
+    EXPECT_EQ(vp.x, 16);
+    EXPECT_EQ(vp.y, 600 - 16 - 96);
 }
 
 TEST(AxisGizmoTest, OrientationMirrorTracksSource)

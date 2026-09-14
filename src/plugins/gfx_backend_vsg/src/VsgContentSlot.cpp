@@ -1,7 +1,6 @@
 #include <vine/vsg/VsgContentSlot.hpp>
 
 #include <cstdio>
-#include <cstdio>
 #include <cstring>
 #include <optional>
 #include <string>
@@ -12,7 +11,6 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 
 #include <vine/vsg/VsgBackendUtility.hpp>
-#include <vine/vsg/VsgContentSlot.hpp>
 #include <vine/vsg/VsgDiagnostics.hpp>
 #include <vine/vsg/VsgOverlay.hpp>
 #include <vine/vsg/VsgPassMaterialiser.hpp>

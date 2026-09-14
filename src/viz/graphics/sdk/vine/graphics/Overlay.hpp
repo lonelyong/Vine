@@ -33,7 +33,12 @@ class V_GRAPHICS_API Overlay : public Object, public RefCounted<Overlay> {
     V_OBJECT_META_DECL;
 
   public:
-    /** @brief How the overlay camera tracks a source camera. */
+    /** @brief How the overlay camera tracks a source camera.
+     *
+     * Kept as a nested enum because this class predates CameraMirror.hpp, whose `MirrorMode` carries
+     * the same three values; the two are translated in one place (Overlay.cpp), and the mirror MATH
+     * is the shared applyCameraMirror() — this class adds no camera logic of its own.
+     */
     enum class MirrorMode {
         /// Camera is fully independent (e.g. a minimap or a 2D screen HUD).
         None = 0,

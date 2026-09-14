@@ -349,7 +349,7 @@ GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
     if (mesh == nullptr) {
         return GeometryPtr();
     }
-    auto       geometry  = GeometryPtr(new Geometry());
+    auto       geometry  = make_intrusive<Geometry>();
     const auto positions = mesh->positions();
     const auto normals   = mesh->normals();
     const auto texcoords = mesh->texcoords();

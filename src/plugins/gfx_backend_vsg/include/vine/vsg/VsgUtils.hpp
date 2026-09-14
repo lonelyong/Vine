@@ -1,11 +1,11 @@
 ﻿#pragma once
 
-#include <vsg/maths/mat4.h>
-
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <string_view>
+
+#include <vsg/maths/mat4.h>
 
 #include <vine/String.hpp>
 #include <vine/math/Matrix4x4.hpp>

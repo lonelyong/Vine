@@ -27,7 +27,7 @@ class Scene;
  *
  * Example:
  * \code
- * auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());
+ * auto gizmo = make_intrusive<AxisGizmo>();
  * gizmo->setSourceCamera(view->camera());   // the view's primary camera
  * view->addSurfaceLayout([gizmo](int w, int h) { gizmo->onSurfaceResized(w, h); });
  * engine->addPass(gizmo, 10);               // draws on top of the order-0 window pass

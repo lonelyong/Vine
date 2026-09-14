@@ -37,7 +37,7 @@ class Scene;
  *
  * Example:
  * \code
- * auto fps = intrusive_ptr<FpsOverlay>(new FpsOverlay());
+ * auto fps = make_intrusive<FpsOverlay>();
  * fps->setPixelRatio(view->devicePixelRatio());
  * view->addSurfaceLayout([fps](int w, int h) { fps->onSurfaceResized(w, h); });
  * engine->addPass(fps, 30);             // draws above the order-0 window pass

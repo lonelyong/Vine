@@ -53,9 +53,8 @@ void ScreenPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
     }
     backend->setRenderTarget(renderTarget());
     if (hasViewport()) {
-        int x = 0, y = 0, w = 0, h = 0;
-        getViewport(x, y, w, h);
-        backend->setViewport(x, y, w, h);
+        const Viewport vp = viewport();
+        backend->setViewport(vp.x, vp.y, vp.width, vp.height);
     }
     if (clearEnabled()) {
         backend->clear(clearColor(), shouldClearDepth());

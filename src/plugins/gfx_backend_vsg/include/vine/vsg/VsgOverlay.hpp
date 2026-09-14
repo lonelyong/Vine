@@ -17,13 +17,12 @@
 
 #include <vine/vsg/vsg_global.hpp>
 
+#include <vector>
+
 #include <vsg/app/RenderGraph.h>
 #include <vsg/app/View.h>
 #include <vsg/core/ref_ptr.h>
 
-#include <vector>
-
-#include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderTarget.hpp>

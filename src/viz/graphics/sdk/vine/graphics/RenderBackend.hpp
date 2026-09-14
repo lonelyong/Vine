@@ -368,15 +368,19 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * transfer belongs to the backend that owns the attachments. The default
      * implementation reports the operation as unsupported; a backend that
      * implements readback overrides it (staging buffer, image-to-buffer copy,
-     * queue/fence synchronisation and format conversion). Backends without
-     * readback support return false and leave @p outPixels untouched, so a
-     * caller can always distinguish a successful read from unsupported.
+     * queue/fence synchronisation and format conversion).
+     *
+     * A false return covers several causes — the backend does not support
+     * readback, the target was never rendered into / built, the target cannot
+     * answer at all, or the transfer failed — and the RETURN VALUE DOES NOT SAY
+     * WHICH: the backend reports the reason on its diagnostics channel (see the
+     * class contract), and @p outPixels is left untouched either way.
      *
      * @param target     Off-screen target whose colour attachment to read.
      * @param attachment Colour attachment index in [0, target->colorCount()).
      * @param outPixels  Receives the packed RGBA8 pixels on success.
-     * @return true when the pixels were read; false when unsupported or the
-     *         read failed.
+     * @return true when the pixels were read; false when the read could not be
+     *         performed (the reason is reported on the diagnostics channel).
      */
     virtual bool readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
                                  std::vector<std::uint8_t>& outPixels)
@@ -398,8 +402,9 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      *
      * @param target    Off-screen target whose depth buffer to read.
      * @param outDepths Receives the depth values on success.
-     * @return true when the depth values were read; false when unsupported or
-     *         the read failed.
+     * @return true when the depth values were read; false when the read could
+     *         not be performed (the reason is reported on the diagnostics
+     *         channel), see readColorBuffer().
      */
     virtual bool readDepthBuffer(vine::graphics::RenderTarget* target,
                                  std::vector<float>& outDepths)
