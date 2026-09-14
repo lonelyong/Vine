@@ -5,6 +5,8 @@ set(SRC_FILE_LIST
 	GlslCompileTest.cpp
 	SceneBridgePipelineSharingTest.cpp
 	SceneBridgeCacheOwnershipTest.cpp
+	DrawBlockPoolRetireTest.cpp
+	DeferredReleaseTest.cpp
 	SceneBridgeDataRebuildTest.cpp
 	GeometrySafetyTest.cpp
 	CustomAttributeTest.cpp

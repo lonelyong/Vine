@@ -97,6 +97,8 @@ src/plugins/gfx_backend_vsg/
     VsgFramePlan.hpp              # detail::PassAttachments / PassPlan / RecordPlan（纯值）
     VsgPassMaterialiser.hpp       # detail：把一个 pass 变成 render pass/framebuffer/graph
     VsgRetireRing.hpp             # 泊车环：被替换的 GPU 对象延后 kRetireRingDepth 帧释放
+    VsgDeferredRelease.hpp        # 延迟释放时钟（park/advance）：环、槽池、保留节点同一深度
+    VsgRetentionStats.hpp         # 会话保留情况的一个值（retentionStats()：槽池/退役环/编译上下文）
     VsgDiagnostics.hpp            # 诊断路线：stderr 追踪 → SDK channel（模块可接同一条路）
     VsgRecordOrder.hpp            # 命令图录制顺序：计划 + 三阶段 + 驱动器
     VsgReadback.hpp               # 颜色/深度读回（公开覆写的实现与共享守卫）

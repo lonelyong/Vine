@@ -170,7 +170,7 @@ bool keyReleased(const vine::intrusive_ptr<const Object>& object, const OwnedSha
  * Ownership must not turn into a leak, so the entry also reports when it is
  * ABANDONED (the cache is the only owner left, i.e. the app has released the
  * object): nothing can look such an entry up again, so it may be released
- * immediately by eraseAbandoned() instead of being pinned for a reuse window.
+ * immediately by eraseAbandoned() — being kept only while the app wants it, not by a timer.
  *
  * Note that "the only owner left" is judged per cache entry: when SEVERAL
  * caches own the same object (a program is owned by its stage cache, its
@@ -311,7 +311,7 @@ class OwnedPairCacheEntry
  * The prompt half of the ownership bargain: an abandoned entry can never be
  * looked up again, so holding it would only pin the object and its GPU state.
  * The other half — objects the app still holds but does not draw — is the
- * caller's policy (a reuse window, a frame-count sweep), because rebuilding
+ * caller's policy (a capacity trim, or no bound at all), because rebuilding
  * their state may be expensive.
  *
  * @tparam Map  Map from object pointer to OwnedCacheEntry.

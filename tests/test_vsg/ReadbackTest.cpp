@@ -117,7 +117,7 @@ TEST(Readback, ColourReadbackRefusesWithoutABuiltTargetAndSaysWhy)
     ASSERT_EQ(captured.items.size(), 1u);
     EXPECT_NE(captured.items[0].message.stdstr().find("no built attachments"), std::string::npos);
     // ...and it refused BEFORE the wait: a refusal never stops the device.
-    EXPECT_EQ(state.retireRing.waits, 0u);
+    EXPECT_EQ(state.retireRing.waitCount(), 0u);
 }
 
 TEST(Readback, DepthReadbackRefusesWithoutABuiltTargetAndSaysWhy)
@@ -135,7 +135,7 @@ TEST(Readback, DepthReadbackRefusesWithoutABuiltTargetAndSaysWhy)
     EXPECT_TRUE(depths.empty());
     ASSERT_EQ(captured.items.size(), 1u);
     EXPECT_NE(captured.items[0].message.stdstr().find("no built attachments"), std::string::npos);
-    EXPECT_EQ(state.retireRing.waits, 0u);
+    EXPECT_EQ(state.retireRing.waitCount(), 0u);
 }
 
 TEST(Readback, ReadbackRefusesANullTargetAndSaysWhy)

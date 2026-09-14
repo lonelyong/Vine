@@ -80,7 +80,10 @@ SceneBridge::SceneBridge()
     shared_objects_ = ::vsg::SharedObjects::create();
 }
 
-// Deliberately default: the destructor must NOT touch the injected caches (see flushDrawSlots).
+// Deliberately default: the destructor must NOT touch the injected caches, and it must not release
+// the draw slots either. The pool outlives this bridge, and the slots this bridge dropped are on the
+// POOL's retired queue (see VsgDrawBlockPool::retire), so there is nothing to drain here — and
+// releasing them now would hand a slot out while a frame in flight may still bind its offset.
 SceneBridge::~SceneBridge() = default;
 
 void SceneBridge::setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet)
@@ -182,28 +185,12 @@ void SceneBridge::releaseDrawSlot(VsgDrawBlockPool::Slot slot)
     if (draw_block_pool_ == nullptr || !slot.valid()) {
         return;
     }
-    // Deferred by one ring depth: the frames in flight may still bind this slot's offset,
-    // so it must not be handed to another drawable until the retire ring has advanced past
-    // them (the same rule retireNode follows for the nodes that bound it).
-    pending_draw_slots_.push_back(PendingDrawSlot{ slot, kDrawSlotRetireFrames });
-}
-
-void SceneBridge::flushDrawSlots()
-{
-    if (draw_block_pool_ == nullptr || pending_draw_slots_.empty()) {
-        pending_draw_slots_.clear();
-        return;
-    }
-    const auto remaining = std::remove_if(pending_draw_slots_.begin(), pending_draw_slots_.end(),
-                                          [this](PendingDrawSlot& pending) {
-                                              if (pending.frames_remaining > 0u) {
-                                                  --pending.frames_remaining;
-                                                  return false;
-                                              }
-                                              draw_block_pool_->release(pending.slot);
-                                              return true;
-                                          });
-    pending_draw_slots_.erase(remaining, pending_draw_slots_.end());
+    // The pool's RETIRED queue, not a list here: the frames in flight may still bind this slot's
+    // offset, so it must not be handed to another drawable until they are done -- and that
+    // countdown has to outlive this bridge, because a teardown destroys the bridge together with
+    // the content slot that owned it (see VsgDrawBlockPool::retire, which is where the queue went
+    // after the per-bridge one was found to leak the session's capacity).
+    draw_block_pool_->retire(slot);
 }
 
 VsgTextureCache& SceneBridge::textureCache()
@@ -228,6 +215,16 @@ struct SceneBridge::Item {
     // changed" while the retained pipeline / descriptor still belongs to the
     // dead one (wrong colours / wrong shader, silently). The cached variants own
     // their keys for the same reason (see OwnedPairCacheEntry).
+    //
+    // CONSEQUENCE, and why it is bounded rather than a leak: those references are NOT shares (the
+    // counts count CACHE entries only), so a material / program / texture the app has dropped stays
+    // alive until no live item holds it -- i.e. until this geometry is released too. The reuse
+    // window that used to break that tie by evicting the item is gone (see
+    // releaseAbandonedGeometries), so a geometry the app keeps but never draws pins its material's
+    // entry for as long as the app keeps it. Each cache's capacity trim is what bounds that
+    // (VsgMaterialManager::kMaxEntries, the texture cache's, 64 / 64 / 256 for the program caches);
+    // releasing the geometry (or clearCache()) frees it sooner. Pinned by
+    // SceneBridgeCacheOwnershipTest.AHeldUndrawnGeometryPinsItsDroppedMaterial.
     vine::intrusive_ptr<vine::graphics::Material> material;
     vine::intrusive_ptr<const vine::graphics::ShaderProgram> program;
     // The texture the material samples, and the content revision it was translated at. Both are needed:
@@ -457,10 +454,12 @@ void SceneBridge::advanceRetireRing()
     // submits ago, so the command-buffer slot that could have referenced its objects has been
     // re-recorded since (start() waits on the slot's fence before re-recording it) and the GPU
     // no longer executes them.
+    //
+    // The per-draw slots follow the same clock, but their queue is the POOL's (the session's), not
+    // this bridge's: a bridge can be destroyed by a teardown while its slots still have frames to
+    // wait out, and a queue that died with it would lose the pool's capacity for good (see
+    // VsgDrawBlockPool::retire). VsgRenderer::settleSubmittedFrame advances that one.
     retire_ring_.advance();
-    // Same one-per-submit bookkeeping for the per-draw slots whose drawable is gone: their
-    // offset may still be bound by the frames the ring just accounted for.
-    flushDrawSlots();
 }
 
 void SceneBridge::clearCache()
@@ -525,7 +524,8 @@ void SceneBridge::invalidateState()
 bool SceneBridge::syncRenderCommands(
     const std::vector<vine::graphics::RenderCommand>& commands,
     ::vsg::Group* root,
-    std::vector<::vsg::ref_ptr<::vsg::Node>>* created)
+    std::vector<::vsg::ref_ptr<::vsg::Node>>* created,
+    const OwnedShareCounts* session_shares)
 {
     if (root == nullptr) {
         return false;
@@ -895,7 +895,7 @@ bool SceneBridge::syncRenderCommands(
     // go of this geometry" by it and the cache sweep judges its programs and materials by it, so
     // building it once keeps the two from disagreeing about what the scene still holds.
     OwnedShareCounts sweep_shares;
-    const OwnedShareCounts* shares = retained_shares_;
+    const OwnedShareCounts* shares = session_shares;
     if (shares == nullptr) {
         collectSweepShares(sweep_shares);
         shares = &sweep_shares;
@@ -1071,18 +1071,6 @@ void SceneBridge::collectSweepShares(OwnedShareCounts& shares)
 {
     materialManager().collectOwnedShares(shares);
     collectOwnedShares(shares);
-}
-
-std::size_t SceneBridge::releaseAbandonedCaches()
-{
-    // No session counts, so judge by what this bridge can see (see collectSweepShares). The
-    // session's counts are the exact answer when several slots hold the same objects.
-    if (retained_shares_ != nullptr) {
-        return releaseAbandonedCaches(*retained_shares_);
-    }
-    OwnedShareCounts local;
-    collectSweepShares(local);
-    return releaseAbandonedCaches(local);
 }
 
 std::size_t SceneBridge::releaseAbandonedCaches(const OwnedShareCounts& shares)

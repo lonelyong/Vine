@@ -158,18 +158,6 @@ class V_VSG_API SceneBridge {
      */
     bool releaseAbandonedGeometries(const OwnedShareCounts& shares);
 
-    /** @brief Provides the retained-share counts this bridge's sweep judges by.
-     *
-     * Set for the duration of one frame by the session that can count every slot's
-     * shares, and cleared again before the frame returns, so the pointer never
-     * outlives its counts. Unset (the default, and what a caller driving one bridge
-     * directly gets) means the bridge counts what it can see itself — see
-     * releaseAbandonedCaches.
-     *
-     * @param shares Session's counts, or null to count locally.
-     */
-    void setRetainedShares(const OwnedShareCounts* shares) noexcept { retained_shares_ = shares; }
-
     /** @brief Injects the per-view light block this bridge binds for its own forward shader set.
      *
      * Must outlive the bridge. The block is the slot's (not the session's): the
@@ -235,7 +223,8 @@ class V_VSG_API SceneBridge {
     bool syncRenderCommands(
         const std::vector<vine::graphics::RenderCommand>& commands,
         ::vsg::Group* root,
-        std::vector<::vsg::ref_ptr<::vsg::Node>>* created = nullptr);
+        std::vector<::vsg::ref_ptr<::vsg::Node>>* created                  = nullptr,
+        const OwnedShareCounts*                 session_shares         = nullptr);
     /** @brief Releases all retained per-geometry vsg nodes. */
     void clearCache();
 
@@ -259,7 +248,6 @@ class V_VSG_API SceneBridge {
     void setContentDepthMode(vine::graphics::DepthMode mode);
 
     /** @brief Gets the pass-level depth policy (see setContentDepthMode). */
-    [[nodiscard]] vine::graphics::DepthMode contentDepthMode() const noexcept { return content_depth_mode_; }
 
     /** @brief Drops the retained state wrappers so the next sync rebuilds them.
      *
@@ -357,7 +345,7 @@ class V_VSG_API SceneBridge {
     std::size_t sharedPruneCount() const noexcept { return shared_prune_count_; }
 
     /** @brief Records that a capacity trim of a program-keyed cache evicted an
-     * entry, so the next releaseAbandonedCaches() prunes the shared table.
+     * entry, so the next releaseAbandonedCaches(shares) prunes the shared table.
      *
      * The table holds what it registers, so an evicted variant leaves its
      * pipeline behind; the FIFO trims happen at the insert sites (they cannot
@@ -393,8 +381,8 @@ class V_VSG_API SceneBridge {
     /** @brief Gets the number of retained geometry entries.
      *
      * The observable half of this bridge's geometry retention policy: an entry exists from the sync
-     * that first drew its geometry until the app releases it (released at once) or the geometry
-     * has been absent for the whole reuse window. It is also what makes the candidate list
+     * that first drew its geometry until the app releases it (released at once) — being undrawn never evicts it, however long
+     * it stays undrawn. It is also what makes the candidate list
      * assertable — the list has to cover exactly these entries, and an entry it missed would never
      * be evicted, so this count would never fall.
      *
@@ -831,35 +819,6 @@ class V_VSG_API SceneBridge {
     ::vsg::ref_ptr<::vsg::ShaderSet> baseShaderSet();
 
 
-    /** @brief Drops retained cache entries nothing but their own cache holds.
-     *
-     * Every retained cache here owns the object it keys on (see OwnedCache.hpp),
-     * so an entry the app has let go of is released instead of pinning that
-     * program's SPIR-V, its assembled ShaderSet and the cached bind commands for
-     * the rest of the session. Because several caches may share one program
-     * (the stage cache, the per-layout ShaderSet cache and a variant template),
-     * an entry may only go when the ONLY references left to its key are the
-     * retained entries that hold it — which is a number, not a guess: see
-     * OwnedShareCounts and P11.
-     *
-     * Judging happens by the shares the sweep was handed (setRetainedShares), or
-     * by the shares this bridge can count itself when the renderer handed none:
-     * its own caches plus the material manager's, which is complete for a bridge
-     * whose objects no other slot also holds. A SESSION handed
-     * collectOwnedShares() over every slot is what makes the judgement exact
-     * when two slots draw the same material.
-     *
-     * The per-geometry cache has its own sweep inline (it also applies the reuse
-     * window), so it is not part of this.
-     *
-     * The TEXTURE cache is swept here as well: it is this sweep's only caller, and a texture the scene
-     * stopped sampling — or one whose last retained entry just left the frame — must not keep its GPU image
-     * until 256 later textures push it out of the FIFO.
-     *
-     * @return Number of erased entries.
-     */
-    std::size_t releaseAbandonedCaches();
-
     /**
      * @brief Appends the drawable's per-draw bind of set 1 (see VsgDrawBlockPool).
      *
@@ -883,20 +842,6 @@ class V_VSG_API SceneBridge {
      */
     void releaseDrawSlot(VsgDrawBlockPool::Slot slot);
 
-    /**
-     * @brief Returns the parked slots whose ring advances have elapsed to the pool.
-     *
-     * Called once per submitted frame, next to the retire ring's own advance. Nothing here
-     * runs from the destructor: the pool is session-scoped and injected, so it OUTLIVES the
-     * bridge (the same contract the texture / mesh caches have), and a bridge whose slot is
-     * torn down has already returned its slots through clearCache() — which is why the
-     * destructor must not touch the pool at all.
-     */
-    void flushDrawSlots();
-
-    /** @brief Ring advances a released slot waits before the pool may hand it out again. */
-    static constexpr std::uint32_t kDrawSlotRetireFrames = static_cast<std::uint32_t>(VsgRetireRing::kRetireRingDepth);
-
     /** @brief Rebuilds the undrawn candidate list from this sync's drawings.
      *
      * The list is what releaseAbandonedGeometries walks and (with drawn_) the keys of the geometry
@@ -917,7 +862,7 @@ class V_VSG_API SceneBridge {
      *
      * What a bridge can say on its own: the caches it holds, and the manager it draws through. It
      * is the complete picture only while no OTHER slot holds the same objects, which is why a
-     * session hands its counts in instead (see setRetainedShares).
+     * session hands its counts to the sync instead (see syncRenderCommands).
      *
      * @param shares Counts to fill.
      */
@@ -989,19 +934,6 @@ class V_VSG_API SceneBridge {
     // the session's device, so a bridge that owned them would hold device memory past the slot that drew
     // with it. Null when the caller injected none (the drawables then get no per-draw block at all).
     vine::raw_ptr<VsgDrawBlockPool> draw_block_pool_ = nullptr;
-    // Slots whose drawable is gone but whose offset a frame in flight may still bind. A slot is returned to
-    // the pool only after the retire ring has advanced past the release, which is the same rule the
-    // replaced state wrappers / data nodes follow (see retireNode / advanceRetireRing).
-    struct PendingDrawSlot
-    {
-        VsgDrawBlockPool::Slot slot;
-        std::uint32_t          frames_remaining = 0; ///< Ring advances to wait before the slot is free.
-    };
-    std::vector<PendingDrawSlot> pending_draw_slots_;
-    // Retained-share counts the sweep judges by, set for the duration of one frame by the session
-    // (setRetainedShares). Only ever dereferenced inside this bridge's sweep, so the pointer is
-    // live exactly while the session's counts are.
-    const OwnedShareCounts* retained_shares_ = nullptr;
     // The geometries this slot has cached but did not draw in its LAST sync (the sweep's
     // candidates; see releaseAbandonedGeometries), and the geometries it drew in that sync.
     // Together they are the keys of `cache_` — every entry was created by a sync that drew its
@@ -1035,9 +967,9 @@ class V_VSG_API SceneBridge {
     // record. Holding the reference keeps the address unique, and the sweep
     // drops the entry as soon as the app itself no longer holds the geometry
     // (abandoned()), so an abandoned geometry is released promptly instead of
-    // being pinned. The reuse window below is this cache's own policy (a culled
-    // object must stay cheap to bring back), so unlike the program caches this
-    // one is deliberately NOT capacity-trimmed.
+    // being pinned. What IS this cache's own policy is that a geometry the app still holds is
+    // kept however long it goes undrawn (a culled object must stay cheap to bring back), so
+    // unlike the program caches this one is deliberately NOT capacity-trimmed.
     using GeometryCacheEntry =
         OwnedCacheEntry<vine::graphics::Geometry, std::unique_ptr<Item>>;
     std::unordered_map<const vine::graphics::Geometry*, GeometryCacheEntry> cache_;

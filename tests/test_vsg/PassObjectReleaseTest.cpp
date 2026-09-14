@@ -38,11 +38,7 @@ namespace
 /// How many objects the session's retire ring is holding right now.
 std::size_t parkedObjects(const vine::vsg::VsgRendererState& state)
 {
-    std::size_t count = 0;
-    for (const auto& bucket : state.retireRing.ring) {
-        count += bucket.size();
-    }
-    return count;
+    return state.retireRing.parkedCount();
 }
 
 /// Registers one materialised pass under @p pass in @p entry (its objects, as far as a
@@ -72,7 +68,7 @@ TEST(PassObjectReleaseTest, ReleasingAPassDropsTheObjectsItsTargetRetainedForIt)
     // in-flight command buffer may still name them), unlike the destructive slot teardown which
     // keeps the counted device wait.
     EXPECT_EQ(parkedObjects(state), 1u);
-    EXPECT_EQ(state.retireRing.waits, 0u);
+    EXPECT_EQ(state.retireRing.waitCount(), 0u);
 }
 
 TEST(PassObjectReleaseTest, TheRetainedPassTableDoesNotGrowWithThePassesASessionHasSeen)
@@ -90,7 +86,7 @@ TEST(PassObjectReleaseTest, TheRetainedPassTableDoesNotGrowWithThePassesASession
         // Every release leaves the table as empty as it found it: retained state has to reach a
         // steady state ("must not grow with the frame count").
         EXPECT_TRUE(window.passes.empty());
-        EXPECT_EQ(state.retireRing.waits, 0u);
+        EXPECT_EQ(state.retireRing.waitCount(), 0u);
     }
 }
 
@@ -143,7 +139,7 @@ TEST(PassObjectReleaseTest, TheRingReleasesWhatTheReleaseParked)
         state.retireRing.advance();
     }
     EXPECT_EQ(parkedObjects(state), 0u);
-    EXPECT_EQ(state.retireRing.released, 1u);
+    EXPECT_EQ(state.retireRing.releasedCount(), 1u);
 }
 
 /**

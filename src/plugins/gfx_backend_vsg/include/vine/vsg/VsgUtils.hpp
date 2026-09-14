@@ -72,19 +72,4 @@ inline vine::String formatDiagnostic(const char8_t* format, ...)
     return vine::String::fromLocal8Bit(buffer, length);
 }
 
-/**
- * @brief Views an embedded shader's UTF-8 text as the bytes vsg's stages take.
- *
- * The embedded shaders are u8 literals (see cmake/VineShaders.cmake) while
- * vsg::ShaderStage::source is a std::string; GLSL is ASCII, so the byte-wise
- * view is exact.
- *
- * @param text Embedded shader text.
- * @return A view over the same bytes, valid as long as @p text is.
- */
-inline std::string_view asShaderSource(std::u8string_view text) noexcept
-{
-    return { reinterpret_cast<const char*>(text.data()), text.size() };
-}
-
 V_VSG_NS_END

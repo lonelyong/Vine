@@ -33,6 +33,8 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgViewCompiler.cpp` | 增量编译（只编译新 view） |
 | `VsgTextureCache.cpp` / `VsgMaterialManager.cpp` | 纹理上传缓存 / 材质值缓存（都是**按地址键 + owner 持有**） |
 | `VsgRetireRing.cpp` | 退役环（停放被换下的对象，而不是停设备） |
+| `VsgRetentionStats.hpp` | 会话保留情况的**一个值**（`VsgRenderer::retentionStats()`）：内容槽数、槽池统计、退役环计数、编译上下文注册数 |
+| `VsgDeferredRelease.hpp` | 延迟释放的**时钟**：一个模板（`park` / `advance` / `parkedCount`），三个用户共用 —— 退役环（被换下的对象）、`VsgDrawBlockPool`（每 drawable 的槽）、每个内容槽的桥（保留节点）。深度只有一处（`kDeferredReleaseFrames`），`VsgRetireRing::kRetireRingDepth` 是它的历史别名 |
 | `VsgReadback.cpp` | 颜色/深度回读（一次性提交） |
 | `CameraBridge.hpp/.cpp` | Vine 相机 → vsg 相机/view（overlay 的两种绘制共用） |
 | `VsgBackendUtility.cpp` | 窗口句柄/自建窗口等环境相关的小工具（含 `VINE_VSG_OWN_WINDOW` 逃生口） |
@@ -272,6 +274,30 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
 - **失败必报**：能拒绝就拒绝并**在诊断通道说明原因**（不静默降级）。诊断按"每类每段只报一次"分集
   （`prune-and-re-arm`），修好再坏会重新报。
 
+### 3.4 帧所有权：份额是**入参**，不是状态
+
+"应用放手了吗"这个问题由**份额**回答：一个对象上还剩几个**保留条目**在持有它（`OwnedShareCounts`
++ `keyReleased(object, shares)` = `useCount() <= shares`）。份额是**数据相关**的，所以数出来，
+而"数出来之后交给谁用"是这一层的设计：
+
+- 会话在帧首把全会话（材质管理器 + 每个 target 的每个内容槽）数一遍（`VsgRenderer::collectFrameShares`
+  —— 必须**先装份额再 sync 各槽**，否则先 sync 的槽只看到自己的份额，会留下自己的条目）；
+- 这份图**通过参数**交给每次 sync（`SceneBridge::syncRenderCommands(..., const OwnedShareCounts*
+  session_shares)`），所以桥里**没有**指向会话状态的指针、也没有"帧尾记得清指针"这条规则 ——
+  指针生命周期这种协议一旦存在，就总有"某个路径忘了清"的失败模式；
+- 帧尾清扫前**重数一次**（`VsgRenderer::releaseAbandonedContent`）：帧开着的时候被拆掉的槽
+  （离屏按新尺寸重建 / retarget / release）会带走它的条目和那些份额，用帧首的图就会**多算**，
+  而多算等于对"应用仍持有"的对象报"它放手了"。**收集与清扫融合在同一个函数里**，让"用旧图清扫"
+  在结构上无法表达（见 §5.3.1 的实测与 F1）；
+- 单桥直驱（测试、不打开帧的驱动）传 `nullptr` ⇒ 退化为"本桥可见份额 = 自己的缓存 + 材质管理器"
+  （`collectSweepShares`），保守方向（少算 ⇒ 多留一帧）。
+
+诊断面同样按"一个概念一个值"收敛：会话的保留情况是**一个** `VsgRetentionStats`
+（`VsgRenderer::retentionStats()`：内容槽数、槽池的 chunks/capacity/reserved/retired、退役环的
+parked/released/waits、以及**无法撤销**的编译上下文注册数），而"策略类"的单值断言
+（`deviceWaitCount()` / `retiredObjectCount()`）仍按名字暴露 —— 它们答的是"这一帧有没有停设备 /
+环有没有在动"，与"留着多少"是两件事。这两个单值访问器读的就是同一个环的计数器，不会给第二个答案。
+
 ## 4. 调用次数（一帧各发生多少次）
 
 ### 4.1 每帧恰好一次
@@ -437,6 +463,20 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 —— 停放会让 lavapipe 报 `VUID-vkDestroyPipeline-00765` / `vkDestroySampler-01082`。所有等待都必须走
 可数入口（`deviceWaitCount()`），`policy churn:` 相位断言稳态 0 次。
 
+### 5.3.1 两处"活过持有者的注册表"（实测数字，2026-09-14 对抗性复核）
+
+拆槽会销毁桥，因此**任何记在桥上的延迟/保留状态都会跟着死**。这种形状查出来两处：
+
+| 注册表 | 状态 | 实测（自检 376 帧，存活内容槽峰值 9） |
+| --- | --- | --- |
+| **每 drawable 的槽**（`VsgDrawBlockPool`） | **已修**：延迟释放队列搬到**池**（会话级），`retire()` + `advanceRetired()`（提交帧推进，与退役环共用同一个时钟 `VsgDeferredRelease`）；桥侧只剩一行 | 修复：峰值 **1 个 chunk**、64 槽里最多用 13；把槽丢弃（= 修复前后果：队列随桥死）⇒ 峰值 **3 个 chunk**、192 槽里用掉 147。同一负载、同样 9 个存活槽 ⇒ 容量按拆除次数增长 |
+| **编译上下文**（vsg `CompileManager`） | **记录待办**：`VsgViewCompiler` 为每个槽注册一次 `(render pass + view)` 上下文，而 vsg 1.1.16 **没有 remove API**（`add()` 往每个 traversal 的 `contexts` 里 push；每个 `Context` 持一个 `VkCommandPool` 和对该 render pass 的强引用；`observer_ptr<View>` 只是弱引用 ⇒ 不会悬垂） | 峰值 **111 次注册**对应 ≤9 个存活槽 ⇒ 约 102 个上下文属于已销毁的槽，直到会话结束。**有界于槽创建次数**，离屏目标每帧重建就会持续长 |
+
+第二处的两条修法（都**不是**清理级改动，故未动）：①上游加 `CompileManager::remove(view)`；②在破坏性拆除点
+重建 compile manager（`viewer.compileManager` 是公开成员且每帧被 task 读 ⇒ 替换会生效），代价是要重写增量编译
+（D22）的路径并让存活槽重新注册。可观察量：`VsgRenderer::retentionStats().compile_contexts` —— 把它当"只有增没有减"
+的数看着，比让它静默增长好。
+
 ### 5.4 变体与清屏策略
 
 - 每个 pass 的 render pass / framebuffer 由 **`planPassVariant()`**（纯函数）决定：清屏请求（颜色/深度）
@@ -469,9 +509,10 @@ p-vertex 测试整棵子树剪掉，每节点世界盒经 `BoundsCache` 只算�
 | 首帧就被剔除的几何体 | 从未建过 ⇒ 第一次进入视锥那一帧才建 + 编译（走增量编译队列 `pending_compile_views`），会有一帧抖动，不是提前建好 |
 | 包围盒只会“多画” | 节点级 AABB 保守：相交就保留；反面是 Group 被剪掉时里面其实可见的子节点也一起没了 |
 | 未画 ≠ 改动被丢弃 | 未画期间 bump 的 `Geometry::revision()` 不会被消费（`Item::revision` 不更新），回来那一帧才重建 |
-| 候选按槽走，判据是对象级 | `syncRenderCommands()` 是**每个内容槽每帧**调一次，候选表也随之按槽走：同一几何体在 A 槽可见、B 槽被剔除时，B 那边它是候选。但释放判据读的是**整个会话的份额**（`refreshRetainedShares`），A 槽的条目持有它 ⇒ 哪个槽都不会误删 |
+| 候选按槽走，判据是对象级 | `syncRenderCommands()` 是**每个内容槽每帧**调一次，候选表也随之按槽走：同一几何体在 A 槽可见、B 槽被剔除时，B 那边它是候选。但释放判据读的是**整个会话的份额**（帧首/帧末各收一次，`VsgRenderer::collectFrameShares`），A 槽的条目持有它 ⇒ 哪个槽都不会误删 |
 | 剔除 / 隐藏 / 移走，后端看不出区别 | 三者都表现为“这一帧没有它的命令”，所以后端**不能**拿“没画”当删除信号 —— 这正是释放判据改成“外侧是否仍持有”的原因 |
 | 内存上界 | 条目数 = 曾经画过、且缓存之外仍有人持有的几何数；释放途径是**从场景摘掉并丢掉句柄**（或 `clearCache()`），不是等时间 |
+| 一个条目会钉住它用过的材质 / 程序 / 纹理 | `Item` **按引用**持有 `material` / `program` / `texture`（地址即身份，不能只存裸指针），而这些引用**不计入份额**（份额只数缓存条目）⇒ 应用丢弃的材质 / 程序 / 纹理要等**它所在的几何条目也消失**才回收：被持有但不画的几何会一直钉住它们。**有界**（材质 `kMaxEntries`、纹理 `kMaxEntries`、程序 64/64/256、变体 256 的 FIFO），但不是“立即” —— 删掉 600 帧窗口后这条耦合从“最长 600 帧”变成“应用持有该几何多久就多久”。要更早释放：把几何从场景摘掉并丢掉句柄 |
 
 ## 6. 诊断与验证
 

@@ -62,6 +62,7 @@
 #include <vine/vsg/VsgMaterialManager.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgRendererState.hpp>
+#include <vine/vsg/VsgRetentionStats.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -455,6 +456,18 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     [[nodiscard]] std::size_t retiredObjectCount() const noexcept;
 
+    /** @brief Gets the session's retention picture: what is held back, and how the deferral behaves.
+     *
+     * One value, because the pieces are only meaningful together: a slot pool whose capacity climbs
+     * while its reserved count does not is a leak, and a compile-context count that grows while the
+     * content slots do not is retention vsg gives us no way to release (see VsgRetentionStats).
+     * Read as a series, it is what answers "is the backend holding more than the scene needs?" --
+     * the question that otherwise gets reassembled by hand from six counters.
+     *
+     * @return The session's retention counters (see VsgRetentionStats for each field's meaning).
+     */
+    [[nodiscard]] VsgRetentionStats retentionStats() const noexcept;
+
   private:
 
     /** @brief Retires (detaches) the retained view of every pass that was not
@@ -526,36 +539,55 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *    i.e. they are render-pass compatible.
      * 2. The objects parked kRetireRingDepth frames ago can go: one frame has been submitted,
      *    so every command-buffer slot that could still reference them has been re-recorded —
-     *    the scenes' retained nodes (one ring per content slot, see SceneBridge::retireNode)
+     *    the scenes' retained nodes (one ring per content slot, see SceneBridge::retireNode),
      *    and the renderer-owned objects the frame assembly parked rather than stopping the
      *    device (a pass' replaced render pass / framebuffer, a dropped fullscreen-program
-     *    node — see VsgRendererState::retireObject). Both are a @ref VsgRetireRing.
+     *    node — see VsgRendererState::retireObject). All three run on one clock (@ref
+     *    VsgDeferredRelease): the rings, and the per-draw slots the pool retired
+     *    (VsgDrawBlockPool::advanceRetired).
      *
-     * Both steps are keyed on the SAME event, which is why they share one entry point: a
+     * All three advances are keyed on the SAME event, which is why they share one entry point: a
      * frame has been presented. Advancing a ring twice in one frame would release objects
      * one frame too early, and settling variants before the submit would corrupt the frame
-     * being recorded — so the pair is applied together or not at all.
+     * being recorded — so they are applied together or not at all.
      *
      * @pre The frame has been submitted (recordAndSubmit() + present()).
      */
     void settleSubmittedFrame();
 
-    /** @brief Starts a frame's ownership picture: the retained shares every cache sweeps by.
+    /** @brief Counts every cache's retained shares into the frame's ownership picture.
      *
      * A cache can only tell "the app has let go of this object" from "another cache still holds
-     * it" by counting every retained entry that holds it, so the session counts them once per
-     * frame (see OwnedShareCounts and SceneBridge::releaseAbandonedCaches). The same counts are
-     * what the end of the frame releases the abandoned geometries by, for every slot
-     * (SceneBridge::releaseAbandonedGeometries).
-     */
-    void refreshFrameOwnership();
-
-    /** @brief Drops the frame's ownership pointers from every content slot's bridge.
+     * it" by counting every retained entry that holds it (see OwnedShareCounts). Two moments need
+     * the count and both need it FRESH: the frame's start, so every content slot's sync judges by
+     * one picture (SceneBridge::syncRenderCommands is handed it), and the frame's end just before
+     * the sweeps (releaseAbandonedContent()), so a slot dropped during the frame cannot leave it
+     * over-counted. Both passes are O(entries now), never O(entries ever seen).
      *
-     * The counts live on the session state, so a bridge must not keep the pointer past the frame
-     * that filled it (see setRetainedShares).
+     * @pre The session is initialized (the target tables are the session's).
      */
-    void clearFrameOwnership();
+    void collectFrameShares();
+
+    /** @brief Releases what the app has let go of, judged by counts collected for THIS moment.
+     *
+     * The frame's end point for the caches that need no per-slot pass of their own: every slot's
+     * abandoned geometries (including the slots whose pass did not run at all, whose caches no
+     * sync of theirs swept) and the material manager's abandoned materials. A material is also
+     * held by the variant template of every slot that draws it, so that cache's own shares alone
+     * never say "the app dropped it" — the session counts break that mutual wait (P11).
+     *
+     * The counts are COLLECTED HERE, immediately before the sweeps, and that is deliberate: a slot
+     * dropped while the frame was open (an offscreen target rebuilt at a new size, a pass
+     * retargeted, a target released) took its entries — and the shares they held — with it. A
+     * picture taken at the frame's start still counts them, and that over-count reports "the app
+     * let go" for an object the app still holds, so the sweep would release an entry the rule says
+     * to keep. Fusing the two makes judging by a stale picture inexpressible rather than a rule to
+     * remember.
+     *
+     * @pre The frame has been submitted (settleSubmittedFrame() has run), so nothing will draw
+     *      the retained state this releases.
+     */
+    void releaseAbandonedContent();
 
     /** @brief Drops the per-pass request (scope attributes included).
      *

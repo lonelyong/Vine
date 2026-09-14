@@ -90,6 +90,7 @@ bool incrementalCompileViews(VsgRendererState& state)
                 return false;
             }
             slot->compile_context_registered = true;
+            ++state.compile_context_registrations;
         }
 
         // Compile ONLY this view: restrict the compile to the context whose

@@ -382,7 +382,8 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     // window debug path skips syncing the window's presenting slot.
     if (!(request.target == nullptr && forceOwnWindow() && content.presenting)) {
         std::vector<::vsg::ref_ptr<::vsg::Node>> created;
-        content.bridge.syncRenderCommands(*request.commands, content.root.get(), &created);
+        content.bridge.syncRenderCommands(*request.commands, content.root.get(), &created,
+                                          &state.retained_shares);
         if (!created.empty()) {
             // Queue this slot's VIEW for an incremental (re)compile in
             // submitFrame(): traversing the View sets the correct viewID, so

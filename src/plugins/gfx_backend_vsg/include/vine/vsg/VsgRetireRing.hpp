@@ -9,8 +9,12 @@
  * the moment it is replaced: that is undefined behaviour, and the validation layer does not
  * necessarily see it (the recording that references the object may be several frames old).
  *
- * It is PARKED here instead, and released kRetireRingDepth frame advances later. The depth
- * and the "advance after the submit" point are the ones the per-slot node ring established
+ * It is PARKED instead, and released kRetireRingDepth frame advances later — the clock itself is
+ * VsgDeferredRelease, and this ring is one of its three users (the per-draw slot pool parks slots on
+ * it, this parks the renderer-owned objects, and every content slot's SceneBridge parks the retained
+ * nodes it drops: they used to be separate countdowns whose depths had to be kept in step by hand).
+ *
+ * The depth and the "advance after the submit" point are the ones the per-slot node ring established
  * (SceneBridge::retireNode): a command-buffer slot re-records the frame, it never reuses a
  * recording, so a ring bucket is safe once kRetireRingDepth frames have been submitted after
  * it was filled.
@@ -28,13 +32,13 @@
 
 #include <vine/vsg/vsg_global.hpp>
 
-#include <array>
 #include <cstddef>
-#include <vector>
 
 #include <vsg/app/Viewer.h>
 #include <vsg/core/Object.h>
 #include <vsg/core/ref_ptr.h>
+
+#include <vine/vsg/VsgDeferredRelease.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -42,11 +46,11 @@ struct VsgRetireRing
 {
     /** @brief Number of frame advances a parked object is held for.
      *
-     * One more than the viewer's command-buffer slot count, so the slot that could still
-     * reference a parked object has had its fence waited (the wait happens before that slot is
-     * re-recorded) before the object is released.
+     * The deferral clock's depth, under the name this codebase has used since the per-slot node
+     * ring: one more than the viewer's command-buffer slot count, so the slot that could still
+     * reference a parked object has had its fence waited before the object is released.
      */
-    static constexpr std::size_t kRetireRingDepth = 4;
+    static constexpr std::size_t kRetireRingDepth = kDeferredReleaseFrames;
 
     /** @brief Parks @p object until every command buffer that could reference it has been
      * re-recorded.
@@ -64,8 +68,34 @@ struct VsgRetireRing
      */
     void advance();
 
-    /** @brief Stops the device and counts the stop (see @ref waits).
+    /** @brief Gets how many objects are parked right now.
      *
+     * Diagnostic: a ring that never released would grow without bound, so tests and the
+     * policy-churn check watch this count (see @ref releasedCount for the other end of it).
+     *
+     * @return Number of parked objects.
+     */
+    [[nodiscard]] std::size_t parkedCount() const noexcept { return parked.parkedCount(); }
+
+    /** @brief Gets how many objects the ring has released so far.
+     *
+     * Diagnostic (see parkedCount): the count only ever grows, so a parked count that stops
+     * falling while this one stops rising is a ring that is stuck.
+     *
+     * @return Number of objects released.
+     */
+    [[nodiscard]] std::size_t releasedCount() const noexcept { return released_; }
+
+    /** @brief Gets how many device-wide idles have been taken.
+     *
+     * Diagnostic: avoiding them on the frame-assembly paths is what this ring is for, so this is
+     * the judge of that — no policy-changing frame may raise it.
+     *
+     * @return Number of deviceWaitIdle() calls this ring performed.
+     */
+    [[nodiscard]] std::size_t waitCount() const noexcept { return waits_; }
+
+    /** @brief Stops the device and counts the stop (see @ref waitCount).
      * Used by the DESTRUCTIVE teardown paths, which are exactly the ones that drop a
      * bridge's cache: SceneBridge::clearCache() releases the shared object registry, and a
      * pipeline / sampler in it needs no retained node to own it, so those paths cannot be
@@ -79,18 +109,13 @@ struct VsgRetireRing
      */
     void waitForIdle(::vsg::ref_ptr<::vsg::Viewer> viewer);
 
-    // One bucket per frame advance: the objects parked during one frame's assembly. The
-    // ring is advanced after the frame is submitted, never during it.
-    std::array<std::vector<::vsg::ref_ptr<::vsg::Object>>, kRetireRingDepth> ring;
-    std::size_t head = 0;
-    // Objects released by the ring so far (diagnostic; see VsgRenderer::retiredObjectCount()):
-    // a ring that never released would grow without bound, so the policy-churn check asserts
-    // it advances.
-    std::size_t released = 0;
-    // Device-wide idles taken so far (diagnostic; see VsgRenderer::deviceWaitCount()).
-    // Avoiding them on the frame-assembly paths is what the ring is for, so this is the
-    // judge of that change: no policy-changing frame may raise it.
-    std::size_t waits = 0;
+  private:
+    // The parked objects, on the shared deferral clock (see VsgDeferredRelease).
+    VsgDeferredRelease<::vsg::ref_ptr<::vsg::Object>> parked;
+    // Objects released by the ring so far (diagnostic; see releasedCount()).
+    std::size_t released_ = 0;
+    // Device-wide idles taken so far (diagnostic; see waitCount()).
+    std::size_t waits_ = 0;
 };
 
 V_VSG_NS_END

@@ -106,6 +106,29 @@ void VsgDrawBlockPool::release(Slot slot) noexcept
     --reserved_;
 }
 
+void VsgDrawBlockPool::retire(Slot slot)
+{
+    if (!slot.valid()) {
+        return;
+    }
+    // The slot stays reserved while it waits: `reserved_` is decremented by the release() that ends
+    // the countdown, so a retired slot is neither free nor usable in between.
+    //
+    // The queue is the POOL's, not the caller's: a caller (a SceneBridge) is destroyed together with
+    // its content slots during a teardown, and the slots it had retired -- one per retained drawable
+    // -- would be destroyed with it, never coming back to the session pool. The pool outlives the
+    // callers, so the countdown keeps running and the capacity comes back (see the declaration).
+    retired.park(slot);
+}
+
+void VsgDrawBlockPool::advanceRetired()
+{
+    // One advance per submitted frame, on the same clock the retire rings run on: a slot retired this
+    // frame is handed back kDeferredReleaseFrames submits later, by which time the command buffers
+    // that could have bound its offset have been re-recorded.
+    retired.advance([this](Slot& slot) { release(slot); });
+}
+
 void VsgDrawBlockPool::writeOpacity(Slot slot, float opacity) noexcept
 {
     auto* chunk = chunkOf(slot);

@@ -11,6 +11,7 @@
 #include <vsg/vk/Device.h>
 
 #include <vine/raw_ptr.hpp>
+#include <vine/vsg/VsgDeferredRelease.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -101,12 +102,35 @@ class V_VSG_API VsgDrawBlockPool
     [[nodiscard]] Slot reserve();
 
     /**
-     * @brief Returns @p slot to the pool for reuse.
+     * @brief Hands @p slot to the pool's RETIRED queue instead of the free list.
      *
-     * @param slot Slot to release (an invalid slot is a no-op).
+     * A slot's offset is baked into the state wrapper of the drawable that bound it, so the frames
+     * still in flight may read it: it must not be handed to another drawable until they are done.
+     * The queue that records that is the POOL's, deliberately, and not the caller's: a caller (a
+     * SceneBridge) is dropped together with its content slots during a teardown — an offscreen
+     * target rebuilt at a new size, a pass retargeted, a target released — and a queue that lived in
+     * the caller would be destroyed with it, never returning those slots. Here the slots come back
+     * kDeferredReleaseFrames submitted frames later, whoever dropped them, so teardown cannot leak the
+     * pool's capacity (which costs a new chunk, i.e. a new buffer, each time it runs out).
+     *
+     * Measured on this build (self-test, 376 frames, at most 9 live content slots): with the deferred
+     * queue the pool peaked at ONE chunk and 13 of its 64 slots reserved, while the same run with the
+     * slots handed back immediately (what the per-bridge queue effectively did once its bridge was
+     * destroyed) peaked at THREE chunks with 147 of 192 slots reserved — capacity for a scene that
+     * never used more than 13 at once, and growing with every teardown.
+     *
+     * @param slot Slot to retire (an invalid slot is a no-op).
      */
-    void release(Slot slot) noexcept;
+    void retire(Slot slot);
 
+    /**
+     * @brief Advances the retired queue by one SUBMITTED frame.
+     *
+     * Called once per frame that reaches the GPU queue (see VsgRenderer::settleSubmittedFrame), for
+     * the same reason the retire rings are: the count of frames in flight is what makes a retired
+     * slot safe to hand out again.
+     */
+    void advanceRetired();
     /**
      * @brief Writes the drawable's opacity into its slot's `params.x`.
      *
@@ -150,28 +174,51 @@ class V_VSG_API VsgDrawBlockPool
     std::uint32_t stride() const noexcept { return stride_; }
 
     /**
-     * @brief Gets how many chunks the pool has allocated.
+     * @brief What the pool is holding, in one value.
      *
-     * @return Chunk count (diagnostics and tests).
+     * A pool's health is a picture, not four numbers a caller has to remember to ask for together:
+     * `chunks` × `capacity` is what has been allocated, `reserved` is what drawables hold, and
+     * `retired` is the part waiting out the frames in flight (it is reserved, but not usable).
+     * Chunks that ARE allocated are never given back — the pool grows by adding them — so a
+     * `capacity` that keeps climbing while `reserved` does not is the shape of a leak.
      */
-    std::uint32_t chunkCount() const noexcept { return static_cast<std::uint32_t>(chunks_.size()); }
+    struct Stats
+    {
+        std::uint32_t chunks   = 0; ///< Chunks allocated (each one a buffer + descriptor sets).
+        std::uint32_t capacity = 0; ///< Slots the allocated chunks can hold.
+        std::uint32_t reserved = 0; ///< Slots a drawable holds right now.
+        std::uint32_t retired  = 0; ///< Of those, the ones waiting out the frames in flight.
+    };
 
     /**
-     * @brief Gets how many slots the pool can hand out without another chunk.
+     * @brief Gets what the pool is holding right now.
      *
-     * @return Total slot capacity of the allocated chunks.
+     * @return The pool's picture (see @ref Stats).
      */
-    std::uint32_t capacity() const noexcept { return chunkCount() * slots_per_chunk_; }
-
-    /**
-     * @brief Gets how many slots are reserved right now.
-     *
-     * @return Number of live reservations (diagnostics and tests).
-     */
-    std::uint32_t reservedCount() const noexcept { return reserved_; }
+    [[nodiscard]] Stats stats() const noexcept
+    {
+        return Stats{ chunkCount(), capacity(), reserved_, static_cast<std::uint32_t>(retired.parkedCount()) };
+    }
 
   private:
+    /** @brief Chunks allocated so far. */
+    [[nodiscard]] std::uint32_t chunkCount() const noexcept { return static_cast<std::uint32_t>(chunks_.size()); }
+
+    /** @brief Slots the allocated chunks can hold. */
+    [[nodiscard]] std::uint32_t capacity() const noexcept { return chunkCount() * slots_per_chunk_; }
+
     struct Chunk;
+
+    /**
+     * @brief Returns @p slot to the pool for reuse.
+     *
+     * The retired queue's last step, and deliberately not part of the public surface: handing a slot
+     * back the moment its drawable goes is the mistake the countdown exists to prevent (the frames in
+     * flight may still bind its offset), so the only way in is @ref retire().
+     *
+     * @param slot Slot to release (an invalid slot is a no-op).
+     */
+    void release(Slot slot) noexcept;
 
     /**
      * @brief Allocates one chunk (buffer + mapped host-visible memory + its free list).
@@ -194,6 +241,10 @@ class V_VSG_API VsgDrawBlockPool
     std::uint32_t                 block_size_ = 0;    ///< VineDrawBlock size (the bound range).
     std::uint32_t                 params_offset_ = 0; ///< Where `params` sits inside a slot.
     std::uint32_t                 reserved_ = 0;      ///< Live reservations (diagnostics).
+    // Slots whose frames may still be in flight, on the shared deferral clock (see
+    // VsgDeferredRelease): the queue belongs to the pool, so a teardown that destroys the caller
+    // cannot lose it (see retire()).
+    VsgDeferredRelease<Slot> retired;
     // The chunks, indexed by the Slot::chunk handle. Held by pointer because Chunk is
     // incomplete here and because a chunk's address must stay stable for the offsets
     // already bound to it.

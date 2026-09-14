@@ -1,0 +1,62 @@
+#pragma once
+
+/**
+ * @brief What a session is holding back, in one value (see VsgRenderer::retentionStats).
+ *
+ * A backend retains things past the frame that built them: per-draw slots, replaced GPU objects on
+ * their way out, and — for as long as the app holds the content — a compiled subtree per drawable.
+ * Those pieces are only meaningful read TOGETHER: a pool whose capacity climbs while its reserved
+ * count does not is a leak, and a compile-context count that grows while the slot count does not is
+ * retention vsg offers no way to release. Reading them as one value is also what makes a check
+ * possible at all: the same numbers were being reassembled by hand whenever someone asked whether
+ * the backend was holding more than the scene needs.
+ *
+ * @note These are counters, not a bound: nothing here says the numbers are wrong, only what they
+ *       are. The doc for each field says which direction is the suspicious one.
+ */
+
+#include <vine/vsg/vsg_global.hpp>
+
+#include <cstddef>
+
+#include <vine/vsg/VsgDrawBlockPool.hpp>
+
+V_VSG_NS_BEGIN
+
+/** @brief A session's retention picture (see VsgRenderer::retentionStats). */
+struct VsgRetentionStats
+{
+    /** @brief Content slots that exist right now, across every target. */
+    std::size_t content_slots = 0;
+
+    /** @brief The per-draw slot pool's picture (chunks / capacity / reserved / retired). */
+    VsgDrawBlockPool::Stats slots;
+
+    /** @brief Objects parked on the session's retire ring, waiting out the frames in flight.
+     *
+     * Climbs and falls with churn; a value that only climbs means nothing is being released.
+     */
+    std::size_t parked_nodes = 0;
+
+    /** @brief Objects the retire ring has released so far (only ever climbs). */
+    std::size_t released_nodes = 0;
+
+    /** @brief Device-wide idles the retire ring took (only ever climbs).
+     *
+     * A policy-changing frame must not raise this: the ring exists so that replaced objects can
+     * wait instead of stopping the device.
+     */
+    std::size_t device_waits = 0;
+
+    /** @brief Compile contexts this session registered with vsg's CompileManager (only climbs).
+     *
+     * Incremental compile registers a slot's (render pass + view) context with the viewer's
+     * CompileManager, and vsg 1.1.16 offers no way to remove one — each Context owns a
+     * VkCommandPool and holds the render pass it was registered against. The count therefore
+     * follows slot CREATIONS, not `content_slots`: a gap that keeps widening is teardown churn
+     * leaving contexts behind (see docs/backend.md 5.3.1 for the options).
+     */
+    std::size_t compile_contexts = 0;
+};
+
+V_VSG_NS_END

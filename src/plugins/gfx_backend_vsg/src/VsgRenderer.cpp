@@ -396,11 +396,6 @@ void VsgRenderer::shutdown()
         // nulls the internal HWND so the destructor leaves Qt's window alone.
         state.window->releaseWindow();
     }
-    // The content slots are about to be dropped together with the pointers they were handed
-    // (both are session state, inside the state being replaced below): a bridge must not be left
-    // pointing at memory the assignment frees, even though nothing dereferences them outside a
-    // sweep — this is the same lifetime rule the retired draw-block pool has.
-    clearFrameOwnership();
     // Whole-session teardown: assigning over the session state drops the window,
     // viewer, command graph, per-target render graphs, content slots and every
     // compiled pipeline that references the old vsg::Device — in one step, so
@@ -428,44 +423,55 @@ void VsgRenderer::beginFrame()
     }
     state.viewer->advanceToNextFrame();
     state.viewer->handleEvents();
-    refreshFrameOwnership();
+    // The frame's picture, built before any pass runs: every sync this frame judges by it (the
+    // content slot hands it to its bridge, see SceneBridge::syncRenderCommands).
+    collectFrameShares();
 }
 
-void VsgRenderer::refreshFrameOwnership()
+void VsgRenderer::collectFrameShares()
 {
-    // The frame's ownership picture, built once for every cache that sweeps during it (P11): how
-    // many retained entries hold each object, across the material manager and every content slot
-    // of every target. A cache judging by its own shares alone sees the other holders and waits
-    // for them, so this count is what lets "the app let go" be observed at all — and it has to
-    // include the slots that are NOT drawing this frame: their entries hold the objects too.
+    // How many retained entries hold each object, across the material manager and every content slot
+    // of every target. A cache judging by its own shares alone sees the other holders and waits for
+    // them, so this count is what lets "the app let go" be observed at all — and it has to include
+    // the slots that are NOT drawing this frame: their entries hold the objects too.
     //
-    // The same pass starts the frame's drawn set: each slot's sync reports the geometries it drew
-    // into it, and the end of the frame ages every slot's cache by that UNION (P2), so a geometry
-    // one pass draws is not absent for the others — and a pass that does not run at all still has
-    // its cache aged instead of pinning it for the session.
+    // O(entries now), never O(entries ever seen): each bridge counts its candidate lists (which ARE
+    // its cache's key set) and the bounded program / variant caches, so the pass cannot cost more
+    // than the frame it serves.
     //
-    // Both are state members and only ever filled in place (never reallocated away from the
-    // bridges' pointers), and the bridges are handed pointers that the frame's end clears.
+    // The table is a session member and only ever filled IN PLACE (never reallocated), because one
+    // frame's syncs and its end-of-frame sweeps both read it and the keys are counted per entry.
     state.retained_shares.clear();
     persistent.materialManager.collectOwnedShares(state.retained_shares);
     for (auto& target_entry : state.targets) {
         for (auto& slot_entry : target_entry.second.content_slots) {
-            auto& bridge = slot_entry.second.bridge;
-            bridge.collectOwnedShares(state.retained_shares);
-            bridge.setRetainedShares(&state.retained_shares);
+            slot_entry.second.bridge.collectOwnedShares(state.retained_shares);
         }
     }
 }
 
-void VsgRenderer::clearFrameOwnership()
+void VsgRenderer::releaseAbandonedContent()
 {
+    // The frame's END. The counts are collected HERE rather than carried over from the frame's
+    // start: a slot dropped while the frame was open (a target rebuilt at a new size, a pass
+    // retargeted, a target released) took its entries — and the shares they held — with it, so the
+    // start-of-frame picture over-counts, and an over-count reports "the app let go" for an object
+    // the app still holds. Fusing the collection with the sweeps keeps that from being something a
+    // later edit has to remember.
+    collectFrameShares();
+    // Every slot, including the ones whose pass did not run this frame: their caches no sync of
+    // theirs swept, so this is the pass that leaves no slot holding a geometry nothing outside the
+    // caches references any more.
     for (auto& target_entry : state.targets) {
         for (auto& slot_entry : target_entry.second.content_slots) {
-            // A slot built mid-frame never got the pointers, which is exactly the state a bridge
-            // has to be left in (see setRetainedShares).
-            slot_entry.second.bridge.setRetainedShares(nullptr);
+            slot_entry.second.bridge.releaseAbandonedGeometries(state.retained_shares);
         }
     }
+    // Same moment for the materials: their entries own the Material (that is what keeps the pointer
+    // key valid), so this is what stops a live scene's material churn from pinning every material it
+    // has ever seen (D13). Judged by the session's counts, because a material is also held by the
+    // variant template of every slot that draws it (the mutual wait the counts break, P11).
+    persistent.materialManager.releaseAbandoned(state.retained_shares);
 }
 
 void VsgRenderer::endFrame()
@@ -668,11 +674,16 @@ void VsgRenderer::settleSubmittedFrame()
         }
     }
     // 2. Release what the rings parked kRetireRingDepth frames ago: one ring per content slot
-    //    (the bridge's retained nodes) and one for the renderer-owned objects.
+    //    (the bridge's retained nodes) and one for the renderer-owned objects. The per-draw block
+    //    slots ride the same clock, on the pool's own retired queue (it outlives the bridges whose
+    //    teardown dropped them -- see VsgDrawBlockPool::retire).
     for (auto& target_entry : state.targets) {
         for (auto& slot_entry : target_entry.second.content_slots) {
             slot_entry.second.bridge.advanceRetireRing();
         }
+    }
+    if (state.draw_block_pool != nullptr) {
+        state.draw_block_pool->advanceRetired();
     }
     state.retireRing.advance();
 }
@@ -705,25 +716,9 @@ void VsgRenderer::submitFrame()
     state.viewer->present();
     settleSubmittedFrame();
 
-    // Release the geometries the app has let go of, for EVERY slot — including the slots whose
-    // pass did not run this frame, whose caches no sync of theirs swept. Every slot has synced by
-    // now (or did not run at all), so this is the pass that leaves no slot's cache holding a
-    // geometry nothing outside the caches references any more.
-    for (auto& target_entry : state.targets) {
-        for (auto& slot_entry : target_entry.second.content_slots) {
-            slot_entry.second.bridge.releaseAbandonedGeometries(state.retained_shares);
-        }
-    }
-    // Same point in the frame: release the material resources of materials the app has dropped.
-    // Their entries own the Material (that is what keeps the pointer key valid), so this is what
-    // stops a live scene's material churn from pinning every material it has ever seen (D13).
-    // Judged by the frame's counts (refreshRetainedShares): a material is also held by the variant
-    // template of every slot that draws it, so this cache's own shares alone never say "the app
-    // dropped it" — that is the mutual wait the counts break (P11).
-    persistent.materialManager.releaseAbandoned(state.retained_shares);
-    // The counts and the drawn set are the frame's: a bridge that kept the pointers past it would
-    // read counts nothing refreshes (and, after a session teardown, memory that is gone).
-    clearFrameOwnership();
+    // Everything the app let go of, judged by counts collected for this moment (see the
+    // declaration: a slot dropped during the frame must not leave the picture over-counted).
+    releaseAbandonedContent();
 }
 
 void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
@@ -947,12 +942,28 @@ std::size_t VsgRenderer::programSlotBuildCount() const noexcept
 
 std::size_t VsgRenderer::deviceWaitCount() const noexcept
 {
-    return state.retireRing.waits;
+    return state.retireRing.waitCount();
 }
 
 std::size_t VsgRenderer::retiredObjectCount() const noexcept
 {
-    return state.retireRing.released;
+    return state.retireRing.releasedCount();
+}
+
+VsgRetentionStats VsgRenderer::retentionStats() const noexcept
+{
+    VsgRetentionStats stats;
+    for (const auto& target_entry : state.targets) {
+        stats.content_slots += target_entry.second.content_slots.size();
+    }
+    if (state.draw_block_pool != nullptr) {
+        stats.slots = state.draw_block_pool->stats();
+    }
+    stats.parked_nodes    = state.retireRing.parkedCount();
+    stats.released_nodes  = state.retireRing.releasedCount();
+    stats.device_waits    = state.retireRing.waitCount();
+    stats.compile_contexts = state.compile_context_registrations;
+    return stats;
 }
 
 std::size_t VsgRenderer::detachedSlotCount() const noexcept

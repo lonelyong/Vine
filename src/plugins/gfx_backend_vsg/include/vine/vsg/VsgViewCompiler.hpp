@@ -15,6 +15,13 @@
  *     the viewer's CompileManager pool the first time its view is compiled: the pool's pooled
  *     traversal was built while the graph was still empty, so without that registration no
  *     context matches the view and compile() would compile nothing.
+ *
+ *     THAT REGISTRATION CANNOT BE UNDONE: vsg 1.1.16's CompileManager has no remove, so every
+ *     registration stays for the session (each context owns a VkCommandPool and holds the render
+ *     pass it was registered against). It therefore grows with slot CREATIONS, not with the slots
+ *     alive -- measured at 111 registrations for at most 9 live content slots in the self-test --
+ *     which is why it is a field of the retention picture (VsgRetentionStats::compile_contexts) and why
+ *     the options for fixing it are recorded in docs/backend.md 5.3.1 rather than improvised here.
  *   * compilePendingViews() — the driver: use the incremental path unless
  *     VINE_VSG_DISABLE_INCREMENTAL_COMPILE is set (the A/B escape hatch), otherwise fall back
  *     to vsg's full compile over the whole scene. A failure on either path is REPORTED and the

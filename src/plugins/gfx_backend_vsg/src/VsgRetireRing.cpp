@@ -13,18 +13,16 @@ void VsgRetireRing::park(::vsg::ref_ptr<::vsg::Object> object)
     if (object == nullptr) {
         return;
     }
-    ring[head].emplace_back(std::move(object));
+    parked.park(std::move(object));
 }
 
 void VsgRetireRing::advance()
 {
-    // Move to the next bucket and release it: it was filled kRetireRingDepth
-    // advances ago, so every command-buffer slot that could have recorded one of
-    // its objects has been re-recorded since (and start() waited on that slot's
-    // fence before re-recording it), and the GPU no longer executes them.
-    head = (head + 1u) % kRetireRingDepth;
-    released += ring[head].size();
-    ring[head].clear();
+    // Hand the bucket that was filled kRetireRingDepth advances ago to the clock, which drops it:
+    // every command-buffer slot that could have recorded one of its objects has been re-recorded
+    // since (and start() waited on that slot's fence before re-recording it), so the GPU no longer
+    // executes them.
+    released_ += parked.advance();
 }
 
 void VsgRetireRing::waitForIdle(::vsg::ref_ptr<::vsg::Viewer> viewer)
@@ -32,7 +30,7 @@ void VsgRetireRing::waitForIdle(::vsg::ref_ptr<::vsg::Viewer> viewer)
     if (viewer == nullptr) {
         return;
     }
-    ++waits;
+    ++waits_;
     viewer->deviceWaitIdle();
 }
 

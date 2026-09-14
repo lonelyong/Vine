@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <vine/vsg/VsgDiagnostics.hpp>
+#include <vine/vsg/VsgRenderer.hpp>
 #include <vine/vsg/VsgUtils.hpp>
 
 using vine::graphics::DiagnosticCategory;
@@ -88,4 +89,34 @@ TEST(VsgDiagnostics, ReplacingTheDownstreamStopsDeliveringToTheOldOne)
     EXPECT_TRUE(first.items.empty());
     ASSERT_EQ(second.items.size(), 1u);
     EXPECT_EQ(second.items[0].category, DiagnosticCategory::ShaderFallback);
+}
+
+/**
+ * @brief The retention picture a session can be asked for (VsgRetentionStats).
+ *
+ * A backend retains things past the frame that built them, and the pieces are only meaningful read
+ * together (a pool whose capacity climbs while its reserved count does not is a leak; compile
+ * contexts that outnumber the slots that registered them are retention vsg cannot release). This
+ * pins the API: a fresh renderer reports zero everywhere rather than garbage, every field is wired
+ * to a real counter, and the picture is readable without a device (it is counters, not Vulkan).
+ */
+TEST(DiagnosticsTest, AFreshSessionReportsAnEmptyRetentionPicture)
+{
+    vine::vsg::VsgRenderer renderer;
+
+    const vine::vsg::VsgRetentionStats stats = renderer.retentionStats();
+    EXPECT_EQ(stats.content_slots, 0u);
+    EXPECT_EQ(stats.slots.chunks, 0u) << "no device: the pool allocated nothing";
+    EXPECT_EQ(stats.slots.capacity, 0u);
+    EXPECT_EQ(stats.slots.reserved, 0u);
+    EXPECT_EQ(stats.slots.retired, 0u);
+    EXPECT_EQ(stats.parked_nodes, 0u);
+    EXPECT_EQ(stats.released_nodes, 0u);
+    EXPECT_EQ(stats.device_waits, 0u);
+    EXPECT_EQ(stats.compile_contexts, 0u);
+
+    // The single-number accessors read the same counters, so a caller that wants one number does
+    // not need the picture and cannot get a different answer.
+    EXPECT_EQ(renderer.retiredObjectCount(), stats.released_nodes);
+    EXPECT_EQ(renderer.deviceWaitCount(), stats.device_waits);
 }

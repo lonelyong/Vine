@@ -817,3 +817,104 @@ TEST(SceneBridgeCacheOwnershipTest, TwoBridgesWithoutInjectionUploadSeparately)
     ASSERT_NE(info_b, nullptr) << "the textured draw must sample an image";
     EXPECT_NE(info_a, info_b) << "private caches upload the same texture twice";
 }
+
+/**
+ * @brief The frame's counts are rebuilt after a slot is dropped, and that is not redundant.
+ *
+ * The session counts every cache's retained shares at the frame's start and again before the
+ * frame's sweeps (VsgRenderer::releaseAbandonedContent). The second pass exists for one case: a slot
+ * dropped while the frame is open (an offscreen target rebuilt at a new size, a pass retargeted,
+ * a target released) takes its entries -- and the shares they held -- with it, so the
+ * start-of-frame picture still counts them. That over-count makes `useCount() <= shares` true for
+ * an object the app still holds, and a slot whose candidate list holds that geometry (it stopped
+ * drawing it, but its tree still does) would release an entry the rule says it must keep: one
+ * needless rebuild for a geometry that is coming back.
+ *
+ * Both halves are asserted here, because the first one is the reason the second one exists.
+ */
+TEST(SceneBridgeCacheOwnershipTest, CountsRebuiltAfterADropKeepAnEntryTheAppStillHolds)
+{
+    const auto released_with = [](bool rebuild_before_the_sweep) {
+        vine::vsg::SceneBridge a;
+        vine::vsg::SceneBridge b;
+        a.setShaderSet(testContentSet());
+        b.setShaderSet(testContentSet());
+        auto        root_a   = vsg::Group::create();
+        auto        root_b   = vsg::Group::create();
+        auto        geometry = makeTriangle(0);
+        MaterialPtr material(new Material());
+
+        // The app's own content holds the geometry across both frames (its tree, standing in as the
+        // command source), so by the rule the geometry is NOT abandoned.
+        std::vector<RenderCommand> commands{ RenderCommand(geometry, material, Mat4d()) };
+        a.syncRenderCommands(commands, root_a.get(), nullptr);
+        b.syncRenderCommands(commands, root_b.get(), nullptr);
+
+        vine::vsg::OwnedShareCounts shares;
+        a.collectOwnedShares(shares);
+        b.collectOwnedShares(shares);
+        EXPECT_EQ(shares.of(commands.front().geometry.get()), 2u) << "both slots hold it";
+
+        geometry.reset(); // one outside holder: the app's content
+        // Slot B stops drawing it, which is what makes it a CANDIDATE -- the only list a sweep
+        // judges (a geometry a slot still draws is not a candidate at all).
+        b.syncRenderCommands({}, root_b.get(), nullptr);
+        EXPECT_EQ(b.retainedGeometryCount(), 1u) << "held and undrawn: the rule keeps it";
+
+        a.clearCache(); // the mid-frame drop: this slot's entry (and its share) is gone
+        EXPECT_EQ(a.retainedGeometryCount(), 0u);
+
+        if (rebuild_before_the_sweep) {
+            shares = vine::vsg::OwnedShareCounts{};
+            b.collectOwnedShares(shares);
+        }
+        return b.releaseAbandonedGeometries(shares);
+    };
+
+    EXPECT_EQ(released_with(false), 1u)
+        << "without the rebuild the picture over-counts and releases an entry the app still holds";
+    EXPECT_EQ(released_with(true), 0u)
+        << "with it, the entry survives -- which is what VsgRenderer does at the end of a frame";
+}
+
+/**
+ * @brief A held-but-undrawn geometry pins the material it was last built with.
+ *
+ * The retained item holds the material BY REFERENCE (its address is the item's identity) and those
+ * references are deliberately not counted as shares, so "the app dropped this material" cannot be
+ * observed while a live item still holds it. With the reuse window gone this lasts as long as the
+ * app holds the geometry -- bounded by each cache's capacity trim rather than by time. That is the
+ * coupling's price, and it is stated here so it cannot change silently: a change that made this
+ * release earlier would be a change to what makes the pointer key safe.
+ */
+TEST(SceneBridgeCacheOwnershipTest, AHeldUndrawnGeometryPinsItsDroppedMaterial)
+{
+    vine::vsg::SceneBridge        bridge;
+    bridge.setShaderSet(testContentSet());
+    vine::vsg::VsgMaterialManager manager;
+    bridge.setMaterialManager(&manager);
+    auto root     = vsg::Group::create();
+    auto geometry = makeTriangle(0);
+
+    TrackedMaterial::alive = 0;
+    {
+        MaterialPtr                material(new TrackedMaterial());
+        std::vector<RenderCommand> commands{ RenderCommand(geometry, material, Mat4d()) };
+        bridge.syncRenderCommands(commands, root.get(), nullptr);
+    } // the app's reference to the material goes here; the geometry stays held
+
+    for (int i = 0; i < 50; ++i) {
+        bridge.syncRenderCommands({}, root.get(), nullptr);
+    }
+    ASSERT_EQ(bridge.retainedGeometryCount(), 1u) << "held and undrawn: the entry stays";
+    EXPECT_EQ(manager.releaseAbandoned(), 0u)
+        << "the live item holds the material, so the manager's entry cannot be released yet";
+    EXPECT_EQ(TrackedMaterial::alive, 1) << "and the material itself is still alive";
+
+    geometry.reset();
+    bridge.syncRenderCommands({}, root.get(), nullptr);
+    ASSERT_EQ(bridge.retainedGeometryCount(), 0u) << "the app let the geometry go, so the item goes";
+    EXPECT_EQ(manager.releaseAbandoned(), 1u)
+        << "the frame that releases the item is the frame the material becomes releasable";
+    EXPECT_EQ(TrackedMaterial::alive, 0);
+}
