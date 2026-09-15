@@ -12,6 +12,8 @@ layout(binding = 3) uniform sampler2D pos_tex;
 layout(push_constant) uniform PushConstants
 {
     vec4 ambient;
+    // Reserved for a program that reconstructs the view position from the depth buffer (near, far,
+    // proj[0][0], proj[1][1]); this program does not read it - it samples `pos_tex`.
     vec4 projparms;
     vec4 sun_dir[3];
     vec4 sun_color[3];

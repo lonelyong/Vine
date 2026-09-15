@@ -125,6 +125,18 @@ struct ContentSlot {
     // drift apart — see PassAttributes).
     PassAttributes                applied;
     ::vsg::ref_ptr<::vsg::Camera> vsg_camera;
+    // The slot's ONE viewport state, written in place as its role / sub-viewport / surface size changes
+    // (see detail::updateSlotViewport). Replacing it every frame — what the code did — allocated on a
+    // steady-state frame for no other reason than that the rectangle had to be re-asserted, and the
+    // rectangle is not even required to be re-asserted: vsg re-records vkCmdSetViewport from this state
+    // on every recording anyway.
+    ::vsg::ref_ptr<::vsg::ViewportState> viewport_state;
+    // The rectangle @ref viewport_state currently holds, so "unchanged" costs four integer compares
+    // instead of reading them back out of the VkViewport / VkRect2D pair.
+    int                           viewport_x = 0;
+    int                           viewport_y = 0;
+    int                           viewport_w = 0;
+    int                           viewport_h = 0;
     ::vsg::ref_ptr<::vsg::Group>  root;        // retained content root
     // This slot's per-view light block, written from the pass' lights once per
     // frame (see fillVineLightsBlock) and bound at set 0 / binding 2 of the slot's shader set

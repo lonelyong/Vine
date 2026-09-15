@@ -356,9 +356,30 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     void setWindowHandle(void* native_handle);
 
+    /** @brief Gets how many times the engine re-checked the pass wiring.
+     *
+     * The witness of that check being DECLARATION-driven (see RenderEngine::validateWiring): it is
+     * expected to stay at 1 for a steady frame stream, and to rise exactly once per change of a
+     * declaration the wiring checks read (a pass added, removed or re-wired, a host binding published).
+     *
+     * @return Number of validateWiring() runs since this engine was constructed.
+     */
+    [[nodiscard]] std::uint64_t wiringValidationCount() const noexcept;
+
   private:
     /** @brief Executes a scene pass against the given content scene. */
     void drawScenePass(raw_ptr<RenderPass> pass, raw_ptr<Scene> content);
+
+    /** @brief Returns whether any declaration the wiring checks read has moved since they last ran.
+     *
+     * The gate in front of validateWiring() (see it): the pass revisions in @ref wiring_validated_ are
+     * compared with the registered passes', and the host's bindings are marked by publish()/unpublish().
+     * When it answers true the remembered list is rebuilt, so the next frame compares against what was
+     * just validated.
+     *
+     * @return true when the wiring must be re-checked this frame.
+     */
+    bool wiringDeclarationsChanged();
 
     /** @brief Resolves a pass' declared inputs for this frame and hands them to the pass.
      *
@@ -573,8 +594,7 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
 
         /// Count of diagnostics this engine reported itself (see
         /// engineDiagnosticCount).
-        std::size_t engine_diagnostic_count_ = 0;
-        /// Passes already reported for an unresolved declared input, so a producer
+        std::size_t engine_diagnostic_count_ = 0;        /// Passes already reported for an unresolved declared input, so a producer
         /// that stays absent does not produce one message per frame. A pass whose
         /// input resolves again is dropped from the set, so a later breakage is
         /// reported again (pruned with the pass list).
@@ -638,6 +658,15 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     };
 
     WiringState wiring_;
+
+    /// Per registered pass, the wiring declaration revision that was last VALIDATED (in slots_ order),
+    /// so a steady frame stream can tell "nothing the checks read has moved" without rebuilding what they
+    /// read. The vector is reused in place: a frame recomputes it only when it has to validate.
+    std::vector<std::pair<raw_ptr<const RenderPass>, std::uint64_t>> wiring_validated_;
+    /// Runs of validateWiring(), the witness of the rule above (see wiringValidationCount).
+    std::uint64_t wiring_validation_count_ = 0;
+    /// Set when something OTHER than a pass setter invalidated the picture (publish / unpublish).
+    bool wiring_dirty_ = true;
 };
 
 V_GRAPHICS_NS_END

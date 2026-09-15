@@ -883,7 +883,10 @@ void VsgRenderer::resize(int width, int height)
     for (auto& kv : window_target.content_slots) {
         auto& slot = kv.second;
         if (slot.ready && slot.vsg_camera != nullptr && slot.applied.presenting) {
-            slot.vsg_camera->viewportState = ::vsg::ViewportState::create(extent);
+            // Through the ONE slot-viewport implementation (see detail::updateSlotViewport): it updates
+            // the slot's existing ViewportState in place, so a resize does not allocate per slot either.
+            detail::updateSlotViewport(slot, /*presenting*/ true, std::nullopt,
+                                       static_cast<int>(extent.width), static_cast<int>(extent.height));
         }
     }
 }
@@ -964,6 +967,15 @@ VsgRetentionStats VsgRenderer::retentionStats() const noexcept
     if (state.draw_block_pool != nullptr) {
         stats.slots = state.draw_block_pool->stats();
     }
+    // The session's caches, which is where a scene's memory actually goes: entries are what the caches
+    // bound, so a host watching for growth has to see them next to the node counts above.
+    if (state.mesh_cache != nullptr) {
+        stats.mesh_streams = state.mesh_cache->count();
+    }
+    if (state.texture_cache != nullptr) {
+        stats.textures = state.texture_cache->count();
+    }
+    stats.slot_bytes      = stats.slots.bytes;
     stats.parked_nodes    = state.retireRing.parkedCount();
     stats.released_nodes  = state.retireRing.releasedCount();
     stats.device_waits    = state.retireRing.waitCount();

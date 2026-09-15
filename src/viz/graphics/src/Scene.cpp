@@ -188,24 +188,48 @@ class BoundsCache {
 };
 
 /**
+ * @brief The shading state a node INHERITS from the nodes above it.
+ *
+ * The fold is computed once on the way DOWN the traversal, which is where the ancestors already are. The
+ * three lookups a leaf needs (the folded render state, the nearest ancestor material, the nearest ancestor
+ * program) each used to walk back up to the root — per geometry, per pass, per frame — and one of them
+ * (collectRenderState) allocated a vector of the whole ancestor chain to do it. Descending, a StateNode
+ * merges its own state into what it inherited and replaces the material / program it carries, which is
+ * exactly what the three up-walking helpers compute: the deepest StateNode wins for the single-valued
+ * items, and the folded state merges root-to-leaf.
+ *
+ * @note The up-walking helpers stay in StateNode.hpp/.cpp — they are the SDK's public spelling of the same
+ *       rule, used by hosts — and this is their top-down form. A test pins that the two agree on a nested
+ *       tree, because two implementations of one rule are a drift waiting to happen.
+ */
+struct InheritedState
+{
+    RenderState            state;    ///< Fold of every StateNode above this node (deeper overrides).
+    raw_ptr<Material>      material; ///< Nearest StateNode material above this node, or null.
+    raw_ptr<ShaderProgram> program;  ///< Nearest StateNode program above this node, or null.
+};
+
+/**
  * @brief Recursively collects render commands from a node subtree.
  *
  * Container nodes (Group and its subclasses) are descended into; a leaf
  * Geometry emits one render command baked with its world matrix. Nodes fully
  * outside the frustum (and their subtrees) are culled. The world matrix is
- * accumulated top-down (one product per node) and each node's world bound is
- * computed at most once per pass (see BoundsCache), so the cost is linear in
- * the node count instead of quadratic.
+ * accumulated top-down (one product per node), each node's world bound is
+ * computed at most once per pass (see BoundsCache), and so is the shading state
+ * a subtree inherits (see InheritedState), so the cost is linear in the node
+ * count instead of quadratic.
  *
- * @param node    Root node to traverse.
- * @param world   World matrix of @p node (accumulated by the caller).
- * @param frustum View frustum for culling.
- * @param opacity Accumulated opacity of the ancestors.
- * @param bounds  Per-pass bound cache.
- * @param out     Output command list.
+ * @param node      Root node to traverse.
+ * @param world     World matrix of @p node (accumulated by the caller).
+ * @param frustum   View frustum for culling.
+ * @param opacity   Accumulated opacity of the ancestors.
+ * @param inherited Shading state of the ancestors (see InheritedState).
+ * @param bounds    Per-pass bound cache.
+ * @param out       Output command list.
  */
-void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& frustum,
-                         float opacity, BoundsCache& bounds, std::vector<RenderCommand>& out)
+void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& frustum, float opacity,
+                         const InheritedState& inherited, BoundsCache& bounds, std::vector<RenderCommand>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
@@ -218,10 +242,25 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
     // never contributes transparency.
     const float node_opacity = opacity * node->opacity();
 
+    // This node's own declarations apply to its subtree. A StateNode IS a Group, so the merge has to happen
+    // before the descent — and "deeper overrides" is what nearest-ancestor means for the single-valued
+    // items, which is why a non-null material / program simply replaces what was inherited.
+    InheritedState subtree = inherited;
+    if (const auto* state_node = dynamic_cast<const StateNode*>(node)) {
+        subtree.state.merge(state_node->renderState());
+        if (raw_ptr<Material> material = state_node->material()) {
+            subtree.material = material;
+        }
+        if (raw_ptr<ShaderProgram> program = state_node->program()) {
+            subtree.program = program;
+        }
+    }
+
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
         // Resolved rather than read off the geometry: a material set on an enclosing StateNode covers every
         // Geometry in its subtree, and the leaf's own material still wins over it.
-        const MaterialPtr material = effectiveMaterial(node);
+        const MaterialPtr material = geometry->material() != nullptr ? MaterialPtr(geometry->material())
+                                                                     : MaterialPtr(subtree.material);
         const float effective = std::clamp(node_opacity, 0.0f, 1.0f);
         auto& cmd = out.emplace_back(
             intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)),
@@ -230,20 +269,20 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
         cmd.isTransparent = effective < 1.0f - 1e-6f;
         // Render state folds along the node path: every StateNode from the
         // scene root to this geometry contributes, deeper nodes overriding.
-        // The fold is computed once so the backend can also tell whether the
-        // depth item was explicitly authored (an explicit StateNode depth wins
-        // over the pass-level depth policy, see RenderCommand::depthExplicit).
-        const RenderState folded = collectRenderState(node);
-        cmd.renderState    = resolveRenderState(folded);
-        cmd.depthExplicit  = folded.depth.has_value();
+        // The fold arrives already computed, so the backend can also tell whether
+        // the depth item was explicitly authored (an explicit StateNode depth
+        // wins over the pass-level depth policy, see RenderCommand::depthExplicit).
+        cmd.renderState   = resolveRenderState(subtree.state);
+        cmd.depthExplicit = subtree.state.depth.has_value();
         // Shading program resolves leaf-first then ancestor StateNodes.
-        cmd.program = effectiveProgram(node);
+        cmd.program = geometry->program() != nullptr ? ShaderProgramPtr(geometry->program())
+                                                     : ShaderProgramPtr(subtree.program);
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
         for (const auto& child : group->childrenRef()) {
-            collectNodeCommands(child.get(), world * child->localTransformMatrix(),
-                                frustum, node_opacity, bounds, out);
+            collectNodeCommands(child.get(), world * child->localTransformMatrix(), frustum, node_opacity,
+                                subtree, bounds, out);
         }
     }
 }
@@ -272,7 +311,10 @@ struct Scene::ContentMemo {
         Mat4d                      view_proj;
         Vec3d                      eye;
         std::uint64_t              revision = 0;
-        std::vector<RenderCommand> commands;
+        // SHARED and immutable once built (see collectRenderCommandsShared): the passes of a frame hand
+        // the same list around, and a pass that must change something about it (the program override)
+        // makes its own copy of that one list rather than forcing a copy on every pass.
+        std::shared_ptr<const std::vector<RenderCommand>> commands;
     };
 
     /// Lists collected so far this frame (one per distinct view used).
@@ -395,11 +437,14 @@ Aabbd Scene::boundingBox() const
     return root_->boundingBox();
 }
 
-std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> camera) const
+std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsShared(raw_ptr<const Camera> camera) const
 {
-    std::vector<RenderCommand> commands;
+    // The empty answer, shared rather than built: a caller with no camera / an empty scene asks for
+    // nothing, and paying an allocation for "nothing" would make the cheap case the expensive one.
+    static const std::shared_ptr<const std::vector<RenderCommand>> kNoCommands =
+        std::make_shared<const std::vector<RenderCommand>>();
     if (camera == nullptr || !visible_ || root_ == nullptr) {
-        return commands;
+        return kNoCommands;
     }
     const Mat4d view_proj = camera->projectionMatrix() * camera->viewMatrix();
     const Vec3d eye       = camera->eye();
@@ -420,16 +465,18 @@ std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> ca
     };
     if (const ContentMemo::Entry* hit = memo_entry()) {
         ++content_reuse_count_;
-        // Hand out a COPY: a pass may post-process the list it receives (the
-        // pass-level program override rewrites every command's program), and
-        // that must not reach the other passes sharing this memo.
+        // The SHARED list itself, not a copy of it: the list is immutable once built (what a pass may
+        // change is its own view of it, see RenderPass::execute), so handing out one more reference costs
+        // a refcount instead of one copy of every command -- the per-pass copy this replaced was N
+        // intrusive_ptr increments plus an N x sizeof(RenderCommand) memcpy, on every pass of every frame.
         return hit->commands;
     }
     ++content_collect_count_;
 
+    std::vector<RenderCommand> commands;
     const Frustum frustum = Frustum::fromViewProjection(view_proj);
     BoundsCache bounds;
-    collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, opacity_, bounds, commands);
+    collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, opacity_, InheritedState{}, bounds, commands);
     // Sort: opaque front-to-back (near first), transparent back-to-front
     // (far first) after the opaque batch. Transparent objects need painter's
     // order for correct alpha blending.
@@ -462,18 +509,27 @@ std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> ca
         (void)distance;
         ordered.push_back(std::move(*cmd));
     }
+    // Into the shared list by MOVE: the walk's result is the only copy that ever exists.
+    auto shared = std::make_shared<const std::vector<RenderCommand>>(std::move(ordered));
     if (content_frame_ != 0) {
         if (content_memo_ == nullptr) {
             content_memo_ = std::make_unique<ContentMemo>();
         }
         if (ContentMemo::Entry* entry = memo_entry()) {
-            entry->commands = ordered; // the same view asked again after a change
+            entry->commands = shared; // the same view asked again after a change
         }
         else {
-            content_memo_->entries.push_back(ContentMemo::Entry{ view_proj, eye, content_revision_, ordered });
+            content_memo_->entries.push_back(ContentMemo::Entry{ view_proj, eye, content_revision_, shared });
         }
     }
-    return ordered;
+    return shared;
+}
+
+std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> camera) const
+{
+    // The owning spelling of the same collection (see collectRenderCommandsShared): a caller that wants
+    // to keep or edit the list gets its own, and pays exactly one copy of it.
+    return *collectRenderCommandsShared(camera);
 }
 
 void Scene::setContentFrame(std::uint64_t frame)

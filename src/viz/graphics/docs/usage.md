@@ -52,7 +52,7 @@ engine.setBackend(backend);
 | `MatrixTransform` | `Group` + **场景图里唯一持有变换的地方**（`matrix()` / `setMatrix()`） | 嵌套变换沿 root→leaf 相乘 |
 | `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先 |
 | `Geometry` | 叶子：**借用**的属性缓冲 + 可选索引 | `setPositions/setNormals/setTexcoords2/setIndices`、`addBuffer` 加自定义通道、`setRevision()` |
-| `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)` |
+| `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**拥有一份副本**）、`collectRenderCommandsShared(camera)`（**共享不可变表**，引擎自己的 pass 路径用；要改写就自己 fork） |
 
 ### 2.2 属性沿树折叠的规则
 
@@ -62,12 +62,15 @@ engine.setBackend(backend);
 | 属性 | 规则 |
 | --- | --- |
 | 变换 | **相乘**；折好的结果烘焙进 `RenderCommand::modelMatrix` |
-| `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]` |
+| `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]`。**它是引擎唯一的透明度通道**：内置前向着色的片元 alpha 就是它，不乘材质/纹理的 alpha（材质是共享的，乘进去会让所有用它的 drawable 一起半透明，而排序用的是这个值） |
 | 渲染状态（blend / depth / cull / topology） | **最深者覆盖** |
 | material / program | 叶子自己的优先，否则取最近的祖先 `StateNode` |
 | `isVisible` | **硬门**：不可见子树整棵不收集 |
 
 `cmd.isTransparent` 由有效 opacity 推出，它决定这个 drawable 走管线的透明部分。
+整个折叠是**一次自顶向下**的遍历（世界矩阵 / 透明度 / 状态 / material / program 一起往下传），
+`StateNode.hpp` 的 `effectiveRenderState/effectiveMaterial/effectiveProgram`（从叶子往上走）是同一规则的
+公开拼写，两者由测试钉住一致。
 
 ### 2.3 资源
 
@@ -83,7 +86,8 @@ engine.setBackend(backend);
 ### 2.4 渲染对象
 
 - `RenderEngine` —— 帧泵 + 账本：`initialize()`、`addPass(pass, content, order)`、`frame(dt)`、
-  `resize(w, h)`、`publish/resolve`（命名输出）、`validateWiring()`（结构性校验，走诊断通道）、
+  `resize(w, h)`、`publish/resolve`（命名输出）、`validateWiring()`（结构性校验，走诊断通道，
+  **只在声明变化时跑**：`RenderPass::wiringRevision()` 或 `publish/unpublish` 推动，见证量 `wiringValidationCount()`）、
   `shutdown()`。
 - `RenderPass` —— 相机 + 渲染目标 + 渲染状态 + 清屏/深度策略。**没有 renderTarget 的 pass 画进窗口**，
   order 决定先后。

@@ -8,6 +8,14 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 逐帧时序的详细版本在 [`data-flow.md`](data-flow.md)（本文只给概览并指向它），
 设计理由与实测结论在 `.ai/design/` 与 `.ai/memory/graphics.md`。
 
+> **2026-09-15 审查轮次的后端侧变化**（逐条 `defect → evidence → fix` 见 `.ai/design/graphics-vsg-audit.md`）：
+> - **正交相机桥按完整窗口**：`CameraBridge` 用 `Camera::orthographicLeft/Right/Bottom/Top`（以前只拿高度重建**居中**视锥，
+>   与引擎裁剪用的视锥不一致——对称窗口下两者恰好相同，所以一直没暴露）。门禁：`CameraBridgeTest.*`。
+> - **内容槽的 viewport 状态是"一个、原位更新"**：`detail::updateSlotViewport` 不再每槽每帧 `new` 一个
+>   `vsg::ViewportState`（矩形不变就早退）；`VsgRenderer::resize` 走同一个实现。门禁：`ContentSlotViewportTest.*`。
+> - **内存可观测**：`VsgDrawBlockPool::Stats::bytes` 与 `VsgRetentionStats::{slot_bytes,mesh_streams,textures}`；
+>   每 drawable 槽的重复归还会被 `SlotAllocator` 拒绝并计入 `Stats::refused`（必须恒为 0）。
+
 > **本文边界（谁写什么，2026-09-15）** —— 同一件事只写一处：
 >
 > | 主题 | 唯一权威 |

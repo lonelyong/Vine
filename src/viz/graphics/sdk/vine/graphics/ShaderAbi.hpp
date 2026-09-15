@@ -114,18 +114,24 @@ struct alignas(16) VineDrawBlock
  * `VineMaterialBlock`), so the two sides cannot drift: a member added here without the GLSL fails
  * the static_asserts below or the structural test, never silently mis-reads.
  *
- * Transparency is NOT here: opacity is a per-drawable value (VineDrawBlock::params.x), because one
- * material is shared by every drawable that uses it.
+ * Transparency is NOT part of it: opacity is a per-drawable value (VineDrawBlock::params.x), because
+ * one material is shared by every drawable that uses it. `diffuse.w` still carries the material's own
+ * alpha — the byte is transported for a host program that wants its own transparency model — but no
+ * engine program reads it, and in particular the forward stage does not multiply it into the fragment
+ * alpha (doing so made a shared material translucent for every drawable at once, while the sort order
+ * the engine computes is the opacity's).
+ *
+ * Fields the shading never read were removed rather than left declared: an ABI member that promises
+ * an effect has to have one (the removed trio was emissive / alphaMask / alphaMaskCutoff — no SDK
+ * accessor could set them and no stage read them, so a host that believed in them saw nothing).
  */
 struct alignas(16) VineMaterialBlock
 {
-    std::array<float, 4> ambient{};         ///< xyz = colour, w = 1.
-    std::array<float, 4> diffuse{};         ///< xyz = colour, w = the material's own alpha.
-    std::array<float, 4> specular{};        ///< xyz = colour, w = strength.
-    std::array<float, 4> emissive{};        ///< xyz = colour, w unused.
-    float                shininess{ 32.0f };
-    float                alpha_mask{ 1.0f };
-    float                alpha_mask_cutoff{ 0.5f };
+    std::array<float, 4> ambient{};  ///< xyz = colour, w = 1.
+    std::array<float, 4> diffuse{};  ///< xyz = colour, w = the material's own alpha (unread by the
+                                     ///< engine's programs, see the note above).
+    std::array<float, 4> specular{}; ///< xyz = colour, w = strength.
+    float                shininess{ 32.0f }; ///< Phong exponent.
 
     /**
      * @brief Field-wise equality of two blocks.
@@ -187,9 +193,9 @@ static_assert(offsetof(VineViewBlock, frame) == 272u, "VineViewBlock std140 offs
 static_assert(sizeof(VineDrawBlock) == 80u, "VineDrawBlock must be 1 mat4 + 1 vec4");
 static_assert(alignof(VineDrawBlock) == 16u, "VineDrawBlock must stay std140 / D3D-cbuffer aligned");
 static_assert(offsetof(VineDrawBlock, params) == 64u, "VineDrawBlock std140 offset");
-static_assert(sizeof(VineMaterialBlock) == 80u, "VineMaterialBlock must be 4 vec4 + 3 floats (std140 pads it to 80)");
+static_assert(sizeof(VineMaterialBlock) == 64u, "VineMaterialBlock must be 3 vec4 + 1 float (std140 pads it to 64)");
 static_assert(alignof(VineMaterialBlock) == 16u, "VineMaterialBlock must stay std140 / D3D-cbuffer aligned");
-static_assert(offsetof(VineMaterialBlock, shininess) == 64u, "VineMaterialBlock std140 offset");
+static_assert(offsetof(VineMaterialBlock, shininess) == 48u, "VineMaterialBlock std140 offset");
 static_assert(sizeof(VineShadowBlock) == 80u, "VineShadowBlock must be 1 mat4 + 1 vec4");
 static_assert(alignof(VineShadowBlock) == 16u, "VineShadowBlock must stay std140 / D3D-cbuffer aligned");
 static_assert(offsetof(VineShadowBlock, params) == 64u, "VineShadowBlock std140 offset");

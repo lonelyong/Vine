@@ -1,5 +1,22 @@
 # graphics / vsg 后端性能待办（2026-09-13 立项）
 
+> **2026-09-15 更新（审查轮次，逐条见 `.ai/design/graphics-vsg-audit.md`）**：
+> - **P3 已完成**：`Geometry` 现在缓存局部包围盒（键 = positions 缓冲指针 + 缓冲 revision + 段 + geometry revision）。
+>   此前 `BoundsCache` 只能保证"每个叶子算一次盒"，而**求 root 的盒必须先求所有叶子的盒** ⇒ 每次收集 = O(全部节点)
+>   + **O(全部顶点)**，与视锥无关；相机一动 memo 必 miss ⇒ 每帧全场景扫顶点。可观测：
+>   `Geometry::localBoundsComputationCount()`；门禁 `SceneTest.TheLocalDataBoxIsComputedOnceAndRecomputedWhenTheDataChanges`。
+> - **每叶 3 次祖先上行 + 一次 vector 分配已去掉**：状态折叠改**自顶向下**（`InheritedState`）。
+> - **命令表不再每 pass 复制**：`Scene::collectRenderCommandsShared()`（不可变共享表）；只有设了 program override
+>   的 pass 才 fork（`SceneTest.TheSharedCollectionIsOneListAndTheOwningSpellingCopiesIt`）。
+> - **每帧分配又少两处**：`RenderEngine::validateWiring()` 改声明驱动（`wiringValidationCount()`）；
+>   内容槽的 `Vsg::ViewportState` 改"一个、原位更新"（`ContentSlotViewportTest`）。
+> - **内存可观测**：`VsgDrawBlockPool::Stats::bytes`、`VsgRetentionStats::{slot_bytes,mesh_streams,textures}`；
+>   mesh/纹理缓存的**字节**统计与可配上限仍未做（需要 §2 的实测数字）。
+> - **工程坑**：改了 `libviGraphics` 里类的布局后**只 build 目标**会留下陈旧二进制（`vsg_backend_selftest`
+>   旧布局 + 新库 ⇒ `malloc(): largebin double linked list corrupted`）——**证据门禁前必须整包 build**。
+> - **本环境离线**：reconfigure 时 FetchContent 去 `git fetch` spdlog 会失败 ⇒ 已在构建目录设
+>   `FETCHCONTENT_FULLY_DISCONNECTED=ON`（`build/CMakeCache.txt`，gitignore）。
+
 本文记录"大场景 + 相机常动 + 多 pass"下的性能结论与待办项。
 来源：一次代码走查（`Scene::collectRenderCommands` / `SceneBridge` / vsg 1.1.16），
 **未实测**的数字都标了「估算」。
@@ -41,7 +58,7 @@
 | **P1** | 保留策略：**容量 LRU** + 缺席窗口可配置（帧或秒） | 淘汰只看"缺席 600 次同步" → **机制已删（2026-09-14）**，见 P2 更正 | 内存真正封顶；"仍在场景但长期不可见"的条目有归宿 | 需选 LRU 键（条目数/字节） | 待办（窗口部分作废：释放只看外侧持有） |
 | **P2** | sweep 改**候选表**并提到**帧级一次**（本帧所有 pass 的并集都没收集到才计缺席） | 每槽每帧无条件扫整个 cache | 每帧 O(缺席数)；语义变成"这一帧没有任何 pass 画它" | 需要 `VsgRendererState` 级别的帧级 seen 登记（各 bridge 汇报） | **已完成（2026-09-13）**：①候选表——每槽 `absent_` + `last_seen_`（并集就是 `cache_` 的键集，份额收集也读它们），`ageAbsentItems()` 只走候选表 ⇒ 每帧 O(drawn + absent)；②**帧级一次 + 并集语义**——每槽 sync 把自己画的几何报进 `VsgRendererState::geometry_drawn_this_frame`，`submitFrame()` 在所有槽 sync 完后用**并集**给每个槽老化一次 ⇒"本帧没有任何 pass 画它"才算缺席；**副作用（想要的）**：某槽的 pass 本帧根本没跑（被禁用）也会老化，不再把内容钉到会话结束。单桥直驱（测试）没有并集指针 ⇒ 退化为"按本槽自己画的"在 sync 内老化（同一函数，只是 drawn 的来源不同）。窗口语义 = **连续**无 pass 画它 600 帧。守卫：`TheAbsenceWindowAgesTheGeometriesTheFrameStoppedDrawing`（窗口内/超窗口/400→画→400 不淘汰）、`TheAbsenceWindowCountsFramesNoPassDrewTheGeometry`（别的 pass 一直画 ⇒ 永不计缺席；且那些帧会重置窗口）；**三条变异验证过**（不加新缺席到候选 / 回来不重置 / 老化用本槽而非并集）。**实现中踩的坑**：拆函数时把 `cache_.erase(it)` 弄丢了 ⇒ 现有测试（`RetainedCacheOwnsTheGeometryItIsKeyedBy` 等 4 个）立刻红——保留缓存的自持/释放不变量是有测试的。**2026-09-14 更正**：本行里的“缺席窗口 / 帧级并集”已整个删除（见 `.ai/design/vsg-design.md`）——`ageAbsentItems()` → `releaseAbandonedGeometries()`（不再计数、也不再看“本帧有没有 pass 画过”），`VsgRendererState::geometry_drawn_this_frame` / `setFrameGeometrySet()` 随之删除（释放判据是对象级的：缓存之外是否还有人持有）；候选表（`undrawn_` / `drawn_`）保留，只剩成本过滤的作用。上述两个窗口守卫换成：未画 1000 次 sync 仍保留 / 放手当帧回收 / 隐藏 601 帧回来不重建。 |
 | **P13** | P11 修好后的**每帧份额收集**（`VsgRenderer::refreshRetainedShares` 走 manager + 每槽的三个缓存） | 每帧 O(所有条目)；**几何那部分**已随 P2 的候选表去掉（份额改读 `last_seen_ ∪ absent_`，不再走 cache），剩下的是 manager 的材质条目 + 每槽有界的 program 缓存（64/64/256） | 先做到**稳定态零分配**（`OwnedShareCounts` 保留哈希节点、只清值；表涨到远超本帧用量才整表丢弃），把代价从"分配 + 哈希"降到"纯哈希"；真正的候选表与帧级一次留给 P2 | 份额必须覆盖**所有**槽（跨槽互持就是 P11 本身），所以不能只收集本槽可见的；新槽在帧中途建立时它的份额不在本帧计数里 ⇒ 该槽退化成本地份额（保守：晚一帧释放，不会早放） | **已完成（2026-09-13，第一步）**：节点复用 + 冷表整表丢弃 + `trackedCount()` 可断言；test_vsg `TheShareCountsForgetTheirValuesButKeepTheirKeys`；两条证据基线 51 行不变。**剩余**：与 P2 合并成一次帧级遍历 |
-| **P3** | **局部 AABB 缓存**（键 = positions buffer 地址 + revision） | 每个 geometry 每帧重扫全部顶点算局部盒 | 收集侧 O(顶点)/帧 → O(1)/帧 | 缓存失效依赖"调用者改数据就 bump revision"的既有契约（`Geometry` 与 `Buffer` 都是公告一律手动） | 待办 |
+| **P3** | **局部 AABB 缓存**（键 = positions buffer 地址 + revision） | 每个 geometry 每帧重扫全部顶点算局部盒 | 收集侧 O(顶点)/帧 → O(1)/帧 | 缓存失效依赖"调用者改数据就 bump revision"的既有契约（`Geometry` 与 `Buffer` 都是公告一律手动） | **已完成（2026-09-15）**：键 = positions 缓冲指针 + **缓冲 revision** + 段（offset/scalarCount）+ **geometry revision**（枚举后两项：流变了/几何自己宣布变了都要重算）；世界盒仍每次派生。守卫 `SceneTest.TheLocalDataBoxIsComputedOnceAndRecomputedWhenTheDataChanges`（变异：去掉缓冲 revision 键 ⇒ 红） |
 | **P4** | ~~`shared_objects_` 提到 session 级~~ | 每槽一套管线/描述符 | — | — | **已否决（有实测证据，见下）** |
 | **P5** | **派生通道缓存**：法线 / 白 / 零 UV 跨重建保留 | 每次数据重建都重算重分配（36 B/顶点） | 重建时省 O(V) 计算与分配 | 键：白/零 UV = 顶点数；派生法线 = positions 与 indices 的**缓冲区指针 + revision** | **已完成（2026-09-13）** |
 | **P6** | **per-location 变更检测 + 拆绑定**实现局部上传 | 一个 `revision_`，一变全量重建 | 只重建/只重传脏通道（改位置省 ~75% 字节，改索引省 ~93%） | 语义分工：`Geometry::revision()` = "变了"，逐流快照（`Buffer::revision()` + 指针 + 形状）= "变了哪一路"；刷新必须被快照**解释**，否则回退重建 | **已完成（2026-09-13）** |

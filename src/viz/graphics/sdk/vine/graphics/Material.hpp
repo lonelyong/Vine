@@ -18,8 +18,12 @@ V_GRAPHICS_NS_BEGIN
  * Describes the visual appearance of a geometry: diffuse/specular/ambient
  * colors, shininess and an optional texture. A material is always opaque:
  * transparency is a property of the leaf (Geometry::setOpacity) or of a
- * subtree (Node::setOpacity), never of the material itself (diffuse alpha is
- * ignored).
+ * subtree (Node::setOpacity), never of the material itself. The diffuse color's
+ * alpha is carried to the shader unchanged (VineMaterialBlock::diffuse.w) for a
+ * host program that wants a transparency model of its own, but no engine program
+ * reads it: the forward stage's fragment alpha is the drawable's opacity alone,
+ * because the engine sorts by that value and a material is shared by every
+ * drawable that uses it.
  */
 class V_GRAPHICS_API Material : public Object, public RefCounted<Material> {
     V_OBJECT_META_DECL;
@@ -38,6 +42,10 @@ class V_GRAPHICS_API Material : public Object, public RefCounted<Material> {
     Colorf diffuse() const;
 
     /** @brief Sets the diffuse color.
+     *
+     * The alpha is stored and passed to a host shader program through the material block; the
+     * engine's own programs do not read it (see the class note), so setting it does not make the
+     * object translucent - use Geometry::setOpacity() / Node::setOpacity() for that.
      *
      * @param color RGBA color in [0, 1].
      */

@@ -40,14 +40,18 @@ void CameraBridge::apply(vine::raw_ptr<const vine::graphics::Camera> camera, ::v
             ortho = ::vsg::Orthographic::create();
             vsgCamera->projectionMatrix = ortho;
         }
-        const double half_h = camera->orthographicHeight() * 0.5;
-        const double half_w = half_h * camera->aspectRatio();
-        ortho->left = -half_w;
-        ortho->right = half_w;
-        ortho->bottom = -half_h;
-        ortho->top = half_h;
+        // The camera's WHOLE window, not a centred one rebuilt from its height: the engine culls with
+        // the camera's own projection matrix (Scene::collectRenderCommands), so a projection rebuilt
+        // from a height alone renders a different frustum than the one content was culled against. The
+        // two agree exactly when the window is symmetric — which is why this stayed invisible: every
+        // camera the engine builds itself (the shadow frustum, the HUD passes) uses a symmetric window,
+        // and only a host's off-centre one (a tiled view, one eye of a stereo pair) would show it.
+        ortho->left         = camera->orthographicLeft();
+        ortho->right        = camera->orthographicRight();
+        ortho->bottom       = camera->orthographicBottom();
+        ortho->top          = camera->orthographicTop();
         ortho->nearDistance = camera->nearPlane();
-        ortho->farDistance = camera->farPlane();
+        ortho->farDistance  = camera->farPlane();
     }
     else {
         auto persp = vsgCamera->projectionMatrix.cast<::vsg::Perspective>();

@@ -457,6 +457,99 @@ TEST(CameraTest, ScreenToWorldRayCenter)
     EXPECT_NEAR(ray.direction.x, 0.0, 1e-6);
 }
 
+TEST(CameraTest, TheOrthographicWindowIsKeptWhole)
+{
+    // Only the height used to survive setProjectionMatrixAsOrtho(), so a backend that rebuilds the
+    // projection from the camera's parameters rendered a CENTRED window while the engine culled with the
+    // off-centre one it was given: content outside the rendered view was kept, and content inside it ...
+    // was culled. The window is the whole frustum in view space, so all four bounds are part of it.
+    Camera cam;
+    cam.setProjectionMatrixAsOrtho(-2.0, 6.0, -1.0, 3.0, 0.5, 100.0);
+
+    EXPECT_EQ(cam.projectionType(), Camera::ProjectionType::Orthographic);
+    EXPECT_NEAR(cam.orthographicLeft(), -2.0, 1e-9);
+    EXPECT_NEAR(cam.orthographicRight(), 6.0, 1e-9);
+    EXPECT_NEAR(cam.orthographicBottom(), -1.0, 1e-9);
+    EXPECT_NEAR(cam.orthographicTop(), 3.0, 1e-9);
+    EXPECT_NEAR(cam.orthographicHeight(), 4.0, 1e-9);
+
+    // The stored window IS the projection: the matrix's own centre (what maps to NDC 0,0) is the
+    // window's centre — ((left + right) / 2, (bottom + top) / 2) — and not the view axis.
+    const auto window_centre = cam.projectionMatrix() * vine::math::Point3d(2.0, 1.0, -0.5);
+    EXPECT_NEAR(window_centre.x, 0.0, 1e-9) << "x = 2 is the centre of a [-2, 6] window";
+    EXPECT_NEAR(window_centre.y, 0.0, 1e-9) << "y = 1 is the centre of a [-1, 3] window";
+    // ...and the bounds map to the NDC edges, so the window really is the projected frustum.
+    const auto left_edge = cam.projectionMatrix() * vine::math::Point3d(-2.0, -1.0, -0.5);
+    EXPECT_NEAR(left_edge.x, -1.0, 1e-9);
+    EXPECT_NEAR(left_edge.y, -1.0, 1e-9);
+    const auto right_edge = cam.projectionMatrix() * vine::math::Point3d(6.0, 3.0, -0.5);
+    EXPECT_NEAR(right_edge.x, 1.0, 1e-9);
+    EXPECT_NEAR(right_edge.y, 1.0, 1e-9);
+}
+
+TEST(CameraTest, TheOrthographicPickingRayTravelsAcrossTheWindow)
+{
+    // The same window drives picking: screen [0, 1] maps onto [left, right] x [bottom, top], so the
+    // corner of the screen asks about the corner of the window (a centred ray would answer about a
+    // frustum the camera does not use).
+    Camera cam;
+    cam.setViewMatrixAsLookAt(Vec3d(0, 0, 10), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    cam.setProjectionMatrixAsOrtho(-2.0, 6.0, -1.0, 3.0, 0.5, 100.0);
+
+    const Ray centre = cam.screenToWorldRay(Vec2d(0.5, 0.5));
+    EXPECT_NEAR(centre.origin.x, 2.0, 1e-6) << "the window's horizontal centre is x = (+2 + 6)/2";
+    EXPECT_NEAR(centre.origin.y, 1.0, 1e-6) << "its vertical centre is y = (-1 + 3)/2";
+    EXPECT_NEAR(centre.origin.z, 10.0, 1e-6);
+    EXPECT_NEAR(centre.direction.z, -1.0, 1e-6);
+
+    // Bottom-left of the screen: the window's bottom-left corner, and every ray parallel to the view
+    // direction (that is what makes an orthographic projection orthographic).
+    const Ray bottom_left = cam.screenToWorldRay(Vec2d(0.0, 1.0));
+    EXPECT_NEAR(bottom_left.origin.x, -2.0, 1e-6);
+    EXPECT_NEAR(bottom_left.origin.y, -1.0, 1e-6);
+    EXPECT_NEAR(bottom_left.direction.z, -1.0, 1e-6);
+
+    const Ray top_right = cam.screenToWorldRay(Vec2d(1.0, 0.0));
+    EXPECT_NEAR(top_right.origin.x, 6.0, 1e-6);
+    EXPECT_NEAR(top_right.origin.y, 3.0, 1e-6);
+}
+
+TEST(CameraTest, ThePickingRayIsBuiltFromTheViewMatrixBasis)
+{
+    // The ray used to rebuild its basis from eye/target/up with a bare cross product, which divides by a
+    // length near zero when the up vector is parallel to the view direction: lookAt() resolves that case
+    // by picking a reference axis, so the picture was fine while picking returned NaNs. Building the ray
+    // from the view matrix's own rows makes the two the same computation, degenerate case included.
+    Camera cam;
+    // Up parallel to the view direction (looking down -Y with up = +Y).
+    cam.setViewMatrixAsLookAt(Vec3d(0, 10, 0), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    cam.setProjectionMatrixAsPerspective(60.0, 1.0, 0.1, 1000.0);
+
+    const Ray ray = cam.screenToWorldRay(Vec2d(0.5, 0.5));
+    EXPECT_TRUE(std::isfinite(ray.direction.x));
+    EXPECT_TRUE(std::isfinite(ray.direction.y));
+    EXPECT_TRUE(std::isfinite(ray.direction.z));
+    EXPECT_NEAR(ray.direction.length(), 1.0, 1e-9);
+    // The centre ray is the view direction, exactly as the view matrix defines it.
+    EXPECT_NEAR(ray.direction.y, -1.0, 1e-6);
+    EXPECT_NEAR(ray.origin.y, 10.0, 1e-6);
+
+    // A screen point off the centre turns towards the VIEW MATRIX's right/up rows: the ray has to be
+    // built from the basis the picture uses, which is the only basis the degenerate case leaves intact.
+    const Mat4d view = cam.viewMatrix();
+    const Vec3d right(view.element(0, 0), view.element(0, 1), view.element(0, 2));
+    const Vec3d up(view.element(1, 0), view.element(1, 1), view.element(1, 2));
+    const Ray   off_centre = cam.screenToWorldRay(Vec2d(0.9, 0.1));
+    EXPECT_TRUE(std::isfinite(off_centre.direction.x));
+    EXPECT_TRUE(std::isfinite(off_centre.direction.y));
+    EXPECT_TRUE(std::isfinite(off_centre.direction.z));
+    EXPECT_NEAR(off_centre.direction.length(), 1.0, 1e-9);
+    EXPECT_GT(off_centre.direction.dot(right), 0.0) << "a point right of centre must aim towards +right";
+    EXPECT_GT(off_centre.direction.dot(up), 0.0) << "and a point above centre towards +up";
+    // Perspective keeps the eye as the origin for every ray; only the direction turns.
+    EXPECT_NEAR(off_centre.origin.y, 10.0, 1e-6);
+}
+
 // ============ CameraManipulator ============
 
 TEST(CameraManipulatorTest, OrbitKeepsTarget)
@@ -869,6 +962,34 @@ TEST(RayIntersectionTest, AllHitsCollectsEveryTriangleSortedByDepth)
     RayIntersectionResult single = RayIntersection::intersectScene(ray, scene.get());
     EXPECT_TRUE(single.hit);
     EXPECT_NEAR(single.distance, 1.0, 1e-6);
+}
+
+TEST(RayIntersectionTest, ASingularWorldTransformIsSkipped)
+{
+    // Matrix4x4::inverted() cannot report failure (it returns the original matrix for a singular
+    // one), so the picker used to build its local space from a matrix that is not the inverse at
+    // all and answered from that wrong space. A world transform that collapses an axis has no
+    // volume to intersect, so the only honest answer is "miss".
+    auto geom = geometryOf(*makeUnitTriangle());
+    auto root = intrusive_ptr<Group>(new Group());
+    auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    transform->setMatrix(vine::math::scale(Vec3d(0.0, 1.0, 1.0))); // x collapsed
+    transform->addChild(geom);
+    root->addChild(transform);
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    scene->setRoot(root);
+
+    // The ray crosses the triangle's plane exactly on the collapsed axis, i.e. the AABB slab test
+    // alone cannot reject it — the invertibility check is what has to.
+    Ray ray(Vec3d(0.0, 0.25, 1.0), Vec3d(0, 0, -1));
+    EXPECT_FALSE(RayIntersection::intersect(ray, geom.get(), transform->matrix()).hit);
+    EXPECT_FALSE(RayIntersection::intersectScene(ray, scene.get()).hit);
+
+    // Positive control: the same setup with a real (tiny) scale still hits, so the guard rejects
+    // degeneracy rather than "everything that is not the identity".
+    auto thin = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    thin->setMatrix(vine::math::scale(Vec3d(1e-4, 1.0, 1.0)));
+    EXPECT_TRUE(RayIntersection::intersect(ray, geom.get(), thin->matrix()).hit);
 }
 
 // ============ Material ============
@@ -5000,6 +5121,185 @@ TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
     EXPECT_EQ(leaf->bound_calls, 3);
 }
 
+TEST(SceneTest, TheSharedCollectionIsOneListAndTheOwningSpellingCopiesIt)
+{
+    // The passes of one frame draw the SAME commands, so the engine's pass path takes the list by
+    // reference (collectRenderCommandsShared): copying it per pass cost an intrusive_ptr increment per
+    // command (three of them) plus a command-sized memcpy, on every pass of every frame, for a list
+    // nobody was going to change. What must NOT change is the other half of that contract: a caller
+    // that DOES change the list gets its own copy (that is what the pass-level program override relies
+    // on, and it must not reach the other passes sharing the frame's walk).
+    Scene scene;
+    auto  root    = setIdentityRoot(scene);
+    auto  triangle = geometryOf(*makeUnitTriangle());
+    root->addChild(triangle);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    scene.setContentFrame(1);
+    const auto first  = scene.collectRenderCommandsShared(&cam);
+    const auto second = scene.collectRenderCommandsShared(&cam);
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first.get(), second.get()) << "one walk builds one list, and every pass shares it";
+    EXPECT_EQ(first->size(), 1u);
+    EXPECT_EQ(scene.contentCollectCount(), 1u) << "the second call reused the frame's list";
+    EXPECT_EQ(scene.contentCollectReuseCount(), 1u);
+
+    // The owning spelling hands out a COPY: editing it is a pass' own business.
+    auto owned = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(owned.size(), first->size());
+    owned[0].opacity = 0.25f;
+    owned.clear();
+    EXPECT_EQ(first->size(), 1u) << "the shared list is untouched by a caller's own list";
+    EXPECT_NE((*first)[0].opacity, 0.25f) << "a pass' edit must not reach the frame's shared list";
+    EXPECT_EQ(scene.collectRenderCommandsShared(&cam).get(), first.get());
+
+    // Outside a content frame nothing is memoised, so each call builds its own list: a caller that
+    // drives the collection itself keeps the plain walk-on-every-call behaviour.
+    Scene plain;
+    auto  plain_root = setIdentityRoot(plain);
+    plain_root->addChild(geometryOf(*makeUnitTriangle()));
+    const auto plain_first  = plain.collectRenderCommandsShared(&cam);
+    const auto plain_second = plain.collectRenderCommandsShared(&cam);
+    EXPECT_NE(plain_first.get(), plain_second.get());
+    EXPECT_EQ(plain.contentCollectCount(), 2u);
+
+    // And a scene with nothing to draw hands out the shared EMPTY list, not a fresh allocation per
+    // call: asking "nothing" is the one question a caller asks most often.
+    Scene empty;
+    const auto empty_first  = empty.collectRenderCommandsShared(&cam);
+    const auto empty_second = empty.collectRenderCommandsShared(nullptr);
+    EXPECT_TRUE(empty_first->empty());
+    EXPECT_EQ(empty_first.get(), empty_second.get());
+}
+
+TEST(SceneTest, TheLocalDataBoxIsComputedOnceAndRecomputedWhenTheDataChanges)
+{
+    // A collection pass asks EVERY geometry for its bound on every frame it has to walk the tree — a
+    // moving camera fills the frame memo for nothing — and the bound costs a pass over every vertex of
+    // the mesh. So the local data box is remembered, keyed by the stream it was computed from and by the
+    // geometry's own revision: a writer that announces an edit (the codebase's standing contract) gets a
+    // fresh box, and everything else pays one scan instead of one per frame.
+    Scene scene;
+    auto  root     = setIdentityRoot(scene);
+    auto  geometry = vine::make_intrusive<Geometry>();
+    // A writable handle as well as the channel's: announcing an edit is the WRITER's job, and a channel
+    // hands its buffer out as const (the geometry reads it, it does not own the edit).
+    auto positions = packAttribute(makeUnitTriangle()->positions());
+    geometry->setPositions(positions);
+    root->addChild(geometry);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    EXPECT_EQ(geometry->localBoundsComputationCount(), 0u) << "nothing asked yet, nothing computed";
+    ASSERT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(geometry->localBoundsComputationCount(), 1u);
+
+    // A second walk asks for the bound again (the cache lives for one collection) but does not scan the
+    // vertices again — this is the per-frame cost the cache removes, not the per-call one.
+    ASSERT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(geometry->localBoundsComputationCount(), 1u);
+
+    // Moving the node recomputes nothing: the LOCAL box is what was cached, the world box is derived.
+    const Aabbd local = geometry->boundingBox();
+    const Aabbd moved = [&] {
+        auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+        transform->setMatrix(vine::math::translate(Vec3d(0.1, 0.0, 0.0)));
+        transform->addChild(geometry);
+        root->addChild(transform);
+        return geometry->boundingBox();
+    }();
+    EXPECT_EQ(geometry->localBoundsComputationCount(), 1u) << "a translation is not a data change";
+    EXPECT_NEAR(local.center().x, moved.center().x - 0.1, 1e-9) << "and the world box did move";
+
+    // An edit announced at the GEOMETRY level (the "I changed the data" call every writer makes).
+    geometry->setRevision(geometry->revision() + 1);
+    ASSERT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(geometry->localBoundsComputationCount(), 2u) << "an announced edit re-derives the box";
+
+    // ...and one announced on the STREAM, which is how a buffer edited in place is announced.
+    positions->setRevision(positions->revision() + 1);
+    ASSERT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(geometry->localBoundsComputationCount(), 3u);
+
+    // A different SEGMENT of the same buffer is a different stream, so it is a different box: an arena
+    // holds several geometries' vertices, and sharing one cached box between them would cull them together.
+    geometry->setPositions(positions, 0u, 2u);
+    ASSERT_EQ(scene.collectRenderCommands(&cam).size(), 1u);
+    EXPECT_EQ(geometry->localBoundsComputationCount(), 4u);
+}
+
+TEST(SceneTest, TheFoldedStateAgreesWithTheUpWalkingHelpers)
+{
+    // The collection folds the shading state a subtree inherits on the way DOWN (one pass, O(1) per node,
+    // no ancestor walk and no per-leaf allocation), while StateNode.hpp's helpers compute the same thing by
+    // walking UP from the leaf. Two spellings of one rule is one spelling too many unless they are pinned
+    // to agree — and this tree makes every override actually override something: two StateNodes with
+    // different cull modes and depth, a program on the inner one, a material on the outer one, and a leaf
+    // that authors its own material.
+    Scene scene;
+    auto  root   = setIdentityRoot(scene);
+    auto  outer  = vine::make_intrusive<StateNode>();
+    auto  inner  = vine::make_intrusive<StateNode>();
+    auto  geometry = vine::make_intrusive<Geometry>();
+    geometry->setPositions(packAttribute(makeUnitTriangle()->positions()));
+
+    auto outer_material = vine::make_intrusive<Material>();
+    auto own_material   = vine::make_intrusive<Material>();
+    auto inner_program  = flatForwardProgram();
+    ASSERT_NE(inner_program, nullptr);
+
+    outer->setCullMode(CullMode::Back);
+    outer->setMaterial(outer_material);
+    inner->setCullMode(CullMode::Front);
+    inner->setDepth(DepthState{ false, false, CompareOp::Always });
+    inner->setProgram(inner_program);
+    geometry->setMaterial(own_material);
+
+    root->addChild(outer);
+    outer->addChild(inner);
+    inner->addChild(geometry);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    const RenderCommand& command = commands[0];
+
+    // The folded state, item by item, against the SDK's own up-walking spelling.
+    const RenderState           folded   = collectRenderState(geometry.get());
+    const ResolvedRenderState   expected = effectiveRenderState(geometry.get());
+    EXPECT_EQ(command.renderState.cullMode, expected.cullMode) << "the DEEPER StateNode's cull mode wins";
+    EXPECT_EQ(command.renderState.cullMode, CullMode::Front);
+    EXPECT_EQ(command.renderState.depth.test, expected.depth.test);
+    EXPECT_EQ(command.renderState.depth.write, expected.depth.write);
+    EXPECT_EQ(command.renderState.depth.compare, expected.depth.compare);
+    EXPECT_EQ(command.renderState.polygonMode, expected.polygonMode);
+    EXPECT_EQ(command.renderState.blend.enabled, expected.blend.enabled);
+    EXPECT_EQ(command.renderState.topology, expected.topology);
+    EXPECT_EQ(command.depthExplicit, folded.depth.has_value()) << "explicit depth is authored on a StateNode";
+
+    // The single-valued items: the leaf's own material wins over every ancestor's, the program comes from
+    // the nearest ancestor that has one.
+    EXPECT_EQ(command.material.get(), own_material.get());
+    EXPECT_EQ(command.material.get(), effectiveMaterial(geometry.get()).get());
+    EXPECT_EQ(command.program.get(), inner_program.get());
+    EXPECT_EQ(command.program.get(), effectiveProgram(geometry.get()).get());
+
+    // With the leaf's own material cleared, the NEAREST ancestor's covers it.
+    geometry->setMaterial(nullptr);
+    const auto inherited = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(inherited.size(), 1u);
+    EXPECT_EQ(inherited[0].material.get(), outer_material.get());
+    EXPECT_EQ(inherited[0].material.get(), effectiveMaterial(geometry.get()).get());
+
+    // A hidden StateNode hides its whole subtree (the fold must not outlive the culling decision).
+    inner->setVisible(false);
+    EXPECT_TRUE(scene.collectRenderCommands(&cam).empty());
+}
+
 // ============ Backend diagnostics channel ============
 
 /**
@@ -5405,6 +5705,82 @@ TEST(RenderEngineTest, PublishingANameWithoutARenderTargetIsReported)
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
+}
+
+/**
+ * @brief The wiring is checked when a declaration MOVES, not on every frame.
+ *
+ * The checks read declarations (targets, promises, inputs, cameras, programs, the enabled flag) so that
+ * a structural mistake is reported before anything runs. Running them per frame meant building a map of
+ * who fills what and a set of who claims what for every pass and every attachment on every frame, to
+ * answer a question whose answer had not changed. The gate is each pass' own wiring revision (every
+ * wiring setter bumps it) plus the host's bindings, and this pins both halves: a steady frame stream
+ * re-checks nothing, and every way of moving a declaration re-checks once.
+ */
+TEST(RenderEngineTest, TheWiringIsCheckedWhenADeclarationMovesAndNotPerFrame)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    auto main_pass = intrusive_ptr<RenderPass>(new RenderPass());
+    main_pass->setCamera(camera.get());
+    engine->addPass(main_pass, 0);
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->wiringValidationCount(), 1u) << "the first frame has to check what it was given";
+    engine->frame(0.016);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->wiringValidationCount(), 1u) << "nothing moved: nothing to re-check";
+
+    // A pass re-declared IN PLACE (the host holds it and calls a setter between two frames).
+    main_pass->setRenderTarget(RenderTargetPtr(new RenderTarget()));
+    engine->frame(0.016);
+    EXPECT_EQ(engine->wiringValidationCount(), 2u) << "a re-wired pass has to be re-judged";
+
+    // A pass added / removed changes the declaration list itself.
+    auto extra = intrusive_ptr<RenderPass>(new RenderPass());
+    extra->setCamera(camera.get());
+    extra->setRenderTarget(RenderTargetPtr(new RenderTarget()));
+    engine->addPass(extra, 1);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->wiringValidationCount(), 3u);
+    engine->removePass(extra.get());
+    engine->frame(0.016);
+    EXPECT_EQ(engine->wiringValidationCount(), 4u);
+
+    // The host's own bindings: publish() and unpublish() have no pass to state a revision through, so
+    // the engine marks them (and a declared input addressing one is answered from it — which is why a
+    // publish is a declaration the checks read).
+    engine->publish(u8"Host", RenderTargetPtr(new RenderTarget()));
+    engine->frame(0.016);
+    EXPECT_EQ(engine->wiringValidationCount(), 5u);
+    engine->unpublish(u8"Host");
+    engine->frame(0.016);
+    EXPECT_EQ(engine->wiringValidationCount(), 6u);
+
+    // And the checks still DO their job when they run: a declaration that becomes wrong in place is
+    // reported (the point of validating at all), once, not once per frame. The pass renders into its own
+    // target here, so promising an output name is fine...
+    main_pass->setOutputName(u8"SceneColor");
+    engine->frame(0.016);
+    EXPECT_EQ(engine->wiringValidationCount(), 7u);
+    const std::size_t problems_before = engine->engineDiagnosticCount();
+
+    // ...and the SAME declaration becomes undoable the moment the pass renders into the window instead:
+    // the engine publishes sampleable targets, and the backbuffer is not one. Nothing about the pass
+    // changed except the one setter, which is why the checks have to run when it moves.
+    main_pass->setRenderTarget(nullptr);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->wiringValidationCount(), 8u);
+    EXPECT_EQ(engine->engineDiagnosticCount(), problems_before + 1u)
+        << "promising an output while rendering into the window is a wiring problem, in-place change or not";
+    engine->frame(0.016);
+    EXPECT_EQ(engine->engineDiagnosticCount(), problems_before + 1u) << "still one episode, not one per frame";
 }
 
 /**

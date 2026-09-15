@@ -1,5 +1,20 @@
 # Graphics 场景图设计（Node 派生 / OSG-vsg 风）
 
+> ⚠ 落地后修订（2026-09-15，**收集路径**，逐条见 `graphics-vsg-audit.md`）：
+> 1. **局部包围盒有缓存**：`Geometry` 记住"局部数据盒"，键 = positions 缓冲指针 + **该缓冲的 revision** +
+>    段（`offset`/`scalarCount`）+ **geometry revision**；世界盒仍每次由 `worldMatrix()` 派生。
+>    此前每个叶子每帧重新扫全部顶点，而 `BoundsCache` 求 root 的盒必须求所有叶子的盒 ⇒ **视锥剔除在 CPU 侧
+>    一分钱都没省**（每帧 O(全部顶点)）。可观测：`Geometry::localBoundsComputationCount()`。
+> 2. **状态折叠改自顶向下**：`collectNodeCommands` 带一个 `InheritedState`（折好的 `RenderState` + 最近祖先的
+>    material / program）往下传，O(1) 每节点、零分配；此前每个叶子要 `effectiveMaterial`（上行）、
+>    `collectRenderState`（上行 + **一次 vector 分配**）、`effectiveProgram`（再上行）各一次。
+>    `StateNode.hpp` 的三个上行版仍是 SDK 的公开拼写，**两者必须一致**（`SceneTest.TheFoldedStateAgreesWithTheUpWalkingHelpers`）。
+> 3. **命令表共享**：新增 `Scene::collectRenderCommandsShared()`（`shared_ptr<const vector<RenderCommand>>`，
+>    不可变、帧内有效）。pass 路径只用引用，**只有设了 program override 的 pass** 才 fork 一份；
+>    `collectRenderCommands()` 保留为"拥有一份副本"的拼写。
+> 4. **接线校验声明驱动**：`RenderPass::wiringRevision()` / `RenderEngine::wiringValidationCount()`（见
+>    `graphics-render-pipeline.md`）。
+
 > 状态：设计稿 v1（2026-09-03），评审对象。
 > 📋 评审（2026-09-03）：正文 §1/§2/§3/§4/§7 为**写作时**设计（沿用 MatrixNode、Drawable、primitive、
 > "Scene 只持 root"等**历史表述**），**以顶部 ⚠/📋 落地记录为准**。代码核对要点：

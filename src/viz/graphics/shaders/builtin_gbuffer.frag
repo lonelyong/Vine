@@ -19,15 +19,16 @@ layout(location = 0) out vec4 out_albedo;
 layout(location = 1) out vec4 out_normal;
 layout(location = 2) out vec4 out_specular;
 layout(location = 3) out vec4 out_position;
+// The material the host assigned (the same std140 block the forward content stage declares, so one
+// Vine material value feeds both). `diffuse.w` carries the material's own alpha and is NOT read here:
+// the engine's transparency is the per-drawable opacity, and it reaches the composite through the
+// lighting pass, not through this attachment.
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 {
     vec4 ambient;
     vec4 diffuse;
     vec4 specular;
-    vec4 emissive;
     float shininess;
-    float alphaMask;
-    float alphaMaskCutoff;
 } material;
 #ifdef VINE_DIFFUSE_MAP
 // The material's texture, at the same binding the forward content stage samples: the sampler KIND

@@ -57,6 +57,31 @@ struct VsgRetentionStats
      * leaving contexts behind (see docs/backend.md 5.3.1 for the options).
      */
     std::size_t compile_contexts = 0;
+
+    /** @brief Streams the session's mesh cache holds (a bind plus the bytes behind it).
+     *
+     * Bounded by the cache's capacity, so this is what a host can budget against: the count follows how
+     * much geometry the session has drawn, not how long it has run.
+     */
+    std::size_t mesh_streams = 0;
+
+    /** @brief Textures the session's texture cache holds (one image each).
+     *
+     * Bounded by the cache's capacity. Unlike the draw-block slots this is LIVE (a texture the app
+     * releases is swept), so a value pinned at the capacity means the app hands the cache more distinct
+     * textures than it lets go of.
+     */
+    std::size_t textures = 0;
+
+    /** @brief Device bytes the session's per-draw slots occupy (see VsgDrawBlockPool::Stats::bytes).
+     *
+     * The one figure here that is DEVICE MEMORY rather than a count: the pool's chunks are never given
+     * back, so a value that keeps climbing is the shape of a leak (a slot that is never returned), and a
+     * host sizing a budget has a figure to compare against. A byte budget for the mesh and texture caches
+     * is not here yet: those caches bound entries, and the honest way to add bytes is with the measured
+     * numbers the perf backlog asks for (see .ai/memory/graphics-perf-backlog.md).
+     */
+    std::size_t slot_bytes = 0;
 };
 
 V_VSG_NS_END

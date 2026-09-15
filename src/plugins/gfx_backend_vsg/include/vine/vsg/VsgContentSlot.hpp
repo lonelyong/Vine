@@ -49,6 +49,29 @@ V_VSG_NS_BEGIN
 namespace detail
 {
 
+/** @brief Keeps a content slot's viewport (and its one vsg::ViewportState) in step with its role.
+ *
+ * The rectangular area a slot records into has two sources — the pass' announced sub-viewport, and the
+ * target's own size when the pass presents full-target content — and two callers: the per-frame render
+ * path, and the renderer's resize() (which refreshes the presenting slots before their next render).
+ * One implementation, so the two cannot disagree about which rectangle a slot has.
+ *
+ * The state is written IN PLACE when the rectangle changes and left alone when it does not: building a
+ * fresh vsg::ViewportState per slot per frame allocated on every steady-state frame, and the object it
+ * replaced was not even required — vsg re-emits vkCmdSetViewport from the state on every recording, so
+ * re-asserting the same rectangle needs no new object.
+ *
+ * @param content    Slot whose camera viewport to update (its cached state is reused).
+ * @param presenting Whether the slot presents full-target content (wins over @p viewport).
+ * @param viewport   The pass' sub-viewport, when it announced one and is not presenting. A zero-size one
+ *                   is not usable either, so the slot keeps the rule it always had and fills the target.
+ * @param surf_w     Target (or live swapchain) width in pixels; a zero width (a surface with no size yet)
+ *                   asserts nothing, leaving the rectangle the slot already records.
+ * @param surf_h     Target (or live swapchain) height in pixels.
+ */
+void updateSlotViewport(ContentSlot& content, bool presenting, const std::optional<vine::graphics::Viewport>& viewport,
+                        int surf_w, int surf_h);
+
 /** @brief Creates the content slot @p key identifies under @p request's target, if missing.
  *
  * The slot's identity (its camera bridge, its View, its render graph position) is established

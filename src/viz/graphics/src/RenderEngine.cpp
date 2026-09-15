@@ -178,8 +178,15 @@ void RenderEngine::frame(double dt)
     wiring_.beginFrame();
 
     // Structural wiring problems are visible from the DECLARATIONS, so they are reported before
-    // anything runs — not left to show up as "the pass drew nothing" (design §14.4).
-    validateWiring();
+    // anything runs — not left to show up as "the pass drew nothing" (design §14.4). The check reads
+    // ONLY declarations (targets, promises, inputs, cameras, programs, the enabled flag), so it runs
+    // when one of them has moved and not otherwise: every pass tells the engine when one of its own
+    // wiring setters was called (RenderPass::wiringRevision), and publish()/unpublish() mark the host's
+    // bindings the same way. Re-reading all of it every frame built a map of who fills what and a set of
+    // who claims what per frame to answer a question whose answer had not changed.
+    if (wiringDeclarationsChanged()) {
+        validateWiring();
+    }
 
     // Ordered pipeline in ascending order: negative orders run first (shadow
     // / depth / g-buffer pre-pass), the window-present pass (master camera,
@@ -579,6 +586,41 @@ bool RenderEngine::OutputIdentity::operator<(const OutputIdentity& other) const 
         return depth < other.depth;
     }
     return attachment < other.attachment;
+}
+
+bool RenderEngine::wiringDeclarationsChanged()
+{
+    // "Did anything the wiring checks read move?" — answered from the passes' own revisions, so a frame in
+    // which nobody re-declared anything (the steady state, and most frames) costs one revision compare per
+    // pass and allocates nothing. The remembered list is rebuilt only when the answer is yes.
+    if (!wiring_dirty_ && wiring_validated_.size() == slots_.size()) {
+        bool unchanged = true;
+        for (std::size_t index = 0; index < slots_.size(); ++index) {
+            raw_ptr<const RenderPass> pass     = slots_[index].pass.get();
+            const std::uint64_t       revision = pass != nullptr ? pass->wiringRevision() : 0u;
+            if (wiring_validated_[index].first != pass || wiring_validated_[index].second != revision) {
+                unchanged = false;
+                break;
+            }
+        }
+        if (unchanged) {
+            return false;
+        }
+    }
+    wiring_dirty_ = false;
+    wiring_validated_.resize(slots_.size());
+    for (std::size_t index = 0; index < slots_.size(); ++index) {
+        raw_ptr<const RenderPass> pass = slots_[index].pass.get();
+        wiring_validated_[index] =
+            std::make_pair(pass, pass != nullptr ? pass->wiringRevision() : std::uint64_t{ 0 });
+    }
+    ++wiring_validation_count_;
+    return true;
+}
+
+std::uint64_t RenderEngine::wiringValidationCount() const noexcept
+{
+    return wiring_validation_count_;
 }
 
 void RenderEngine::validateWiring()
@@ -1090,6 +1132,9 @@ void RenderEngine::publish(const String& name, intrusive_ptr<RenderTarget> targe
     // the binding died before any consumer could resolve it). Publishing twice under one name is a
     // host swapping what it offers, not the collision two PASSES produce.
     wiring_.host_outputs_[name] = std::move(target);
+    // A host binding is a WIRING DECLARATION the checks read (a declared input addressing it is answered
+    // from it), and the host has no pass revision to state it through: the engine marks it here.
+    wiring_dirty_ = true;
 }
 
 raw_ptr<RenderTarget> RenderEngine::resolve(const String& name) const
@@ -1110,6 +1155,9 @@ void RenderEngine::unpublish(const String& name)
     // Withdrawing the name ends the "cannot serve it" episode: publishing it again with no target is
     // a new mistake, not the same one.
     wiring_.unpublishable_host_names_.erase(name);
+    // Withdrawing a binding is a declaration change too: a consumer that addressed it has nothing to
+    // resolve now, which is exactly what the wiring checks report.
+    wiring_dirty_ = true;
 }
 
 void RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program)

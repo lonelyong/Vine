@@ -386,6 +386,30 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
      */
     virtual void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend);
 
+    /** @brief Gets the revision of this pass' WIRING declarations.
+     *
+     * The declarations the engine's wiring checks read — the target it draws into, the output name /
+     * target / image it promises, the inputs it declares, its camera, its program and whether it is
+     * enabled — are settable one at a time, so nothing but the pass itself can know when the set of them
+     * changed. This counter is that answer: every such setter bumps it, and the engine re-checks the
+     * wiring only when some registered pass's revision differs from the one it last checked.
+     *
+     * Doing that check on every frame instead is what this replaces: it built a map of who fills what and
+     * a set of who claims what for every pass and every attachment, per frame, to answer a question about
+     * DECLARATIONS that had not moved.
+     *
+     * @return Monotonic revision of this pass' wiring declarations (never 0).
+     */
+    [[nodiscard]] std::uint64_t wiringRevision() const noexcept;
+
+  protected:
+    /** @brief Announces that a wiring declaration changed (every such setter calls this).
+     *
+     * Protected rather than private because a subclass that adds a SETTER for one of these declarations
+     * (ScreenPass::setProgram) has to announce it too, and a subclass is the only thing that can.
+     */
+    void bumpWiringRevision() noexcept;
+
   private:
     String name_;
     String output_name_;
@@ -404,6 +428,8 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
     bool enabled_ = true;
     bool has_viewport_ = false;
     Viewport viewport_;
+    // Bumped by every setter of a declaration the wiring checks read; see wiringRevision().
+    std::uint64_t wiring_revision_ = 1;
 };
 
 using RenderPassPtr = intrusive_ptr<RenderPass>;

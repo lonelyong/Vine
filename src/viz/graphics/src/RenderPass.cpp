@@ -1,5 +1,7 @@
 ﻿#include <vine/graphics/RenderPass.hpp>
 
+#include <memory>
+
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderCommand.hpp>
@@ -33,6 +35,7 @@ raw_ptr<RenderTarget> RenderPass::renderTarget() const
 void RenderPass::setRenderTarget(intrusive_ptr<RenderTarget> target)
 {
     render_target_ = std::move(target);
+    bumpWiringRevision();
 }
 
 raw_ptr<Camera> RenderPass::camera() const
@@ -43,6 +46,7 @@ raw_ptr<Camera> RenderPass::camera() const
 void RenderPass::setCamera(raw_ptr<Camera> camera)
 {
     camera_ = camera;
+    bumpWiringRevision();
 }
 
 Color RenderPass::clearColor() const
@@ -103,6 +107,7 @@ bool RenderPass::enabled() const
 void RenderPass::setEnabled(bool enabled)
 {
     enabled_ = enabled;
+    bumpWiringRevision();
 }
 
 void RenderPass::setViewport(int x, int y, int width, int height)
@@ -134,6 +139,7 @@ void RenderPass::clearViewport()
 void RenderPass::setOutputName(const String& name)
 {
     output_name_ = name;
+    bumpWiringRevision();
 }
 
 String RenderPass::outputName() const
@@ -144,6 +150,7 @@ String RenderPass::outputName() const
 void RenderPass::setOutput(intrusive_ptr<ImageRef> image)
 {
     output_image_ = std::move(image);
+    bumpWiringRevision();
 }
 
 raw_ptr<ImageRef> RenderPass::output() const
@@ -154,6 +161,7 @@ raw_ptr<ImageRef> RenderPass::output() const
 void RenderPass::setOutputTarget(intrusive_ptr<RenderTarget> target)
 {
     output_target_ = std::move(target);
+    bumpWiringRevision();
 }
 
 raw_ptr<RenderTarget> RenderPass::outputTarget() const
@@ -165,6 +173,7 @@ void RenderPass::addInputName(const String& name)
 {
     if (!name.empty()) {
         input_names_.push_back(name);
+        bumpWiringRevision();
     }
 }
 
@@ -176,12 +185,14 @@ const std::vector<String>& RenderPass::inputNames() const
 void RenderPass::clearInputNames()
 {
     input_names_.clear();
+    bumpWiringRevision();
 }
 
 void RenderPass::addInput(intrusive_ptr<ImageRef> image)
 {
     if (image != nullptr) {
         input_images_.push_back(std::move(image));
+        bumpWiringRevision();
     }
 }
 
@@ -194,6 +205,7 @@ void RenderPass::addInputTarget(intrusive_ptr<RenderTarget> target)
 {
     if (target != nullptr) {
         input_targets_.push_back(std::move(target));
+        bumpWiringRevision();
     }
 }
 
@@ -206,6 +218,7 @@ void RenderPass::clearInputs()
 {
     input_images_.clear();
     input_targets_.clear();
+    bumpWiringRevision();
 }
 
 raw_ptr<ShaderProgram> RenderPass::programOverride() const
@@ -216,6 +229,17 @@ raw_ptr<ShaderProgram> RenderPass::programOverride() const
 void RenderPass::setProgramOverride(intrusive_ptr<ShaderProgram> program)
 {
     program_override_ = std::move(program);
+    bumpWiringRevision();
+}
+
+std::uint64_t RenderPass::wiringRevision() const noexcept
+{
+    return wiring_revision_;
+}
+
+void RenderPass::bumpWiringRevision() noexcept
+{
+    ++wiring_revision_;
 }
 
 void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
@@ -235,15 +259,11 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
     // how it is lit (the content scene decides the lights). Forwarded so the
     // backend's render() picks the right content-slot depth state.
     backend->setDepthMode(depth_mode_);
-    std::vector<RenderCommand> commands = scene->collectRenderCommands(camera_.get());
-    // Pass-level global program override: replace every command's effective
-    // (per-geometry / StateNode) program so the whole content renders with one
-    // program (see setProgramOverride).
-    if (program_override_ != nullptr) {
-        for (auto& command : commands) {
-            command.program = program_override_;
-        }
-    }
+    // The shared list, not a copy of it: every pass of a frame draws the same commands, and the copy this
+    // used to make cost an intrusive_ptr increment per command (three of them) plus a command-sized
+    // memcpy per pass per frame. What a pass may change is its own VIEW of the list, so the copy happens
+    // below — and only for a pass that actually rewrites something.
+    const std::shared_ptr<const std::vector<RenderCommand>> commands = scene->collectRenderCommandsShared(camera_.get());
     if (camera_ != nullptr) {
         // The pass lights whatever content scene it renders: forward the
         // scene's lights so the backend can match this pass's view lighting.
@@ -253,7 +273,23 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
             light_ptrs.push_back(light.get());
         }
         backend->setLights(light_ptrs);
-        backend->render(commands, camera_.get());
+    }
+    if (program_override_ == nullptr) {
+        if (camera_ != nullptr) {
+            backend->render(*commands, camera_.get());
+        }
+        return;
+    }
+    // Pass-level global program override: replace every command's effective
+    // (per-geometry / StateNode) program so the whole content renders with one
+    // program (see setProgramOverride). This is the one caller that needs its own
+    // list, so it is the one that makes one.
+    auto overridden = std::make_shared<std::vector<RenderCommand>>(*commands);
+    for (auto& command : *overridden) {
+        command.program = program_override_;
+    }
+    if (camera_ != nullptr) {
+        backend->render(*overridden, camera_.get());
     }
 }
 

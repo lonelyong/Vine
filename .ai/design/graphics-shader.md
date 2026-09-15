@@ -1,5 +1,15 @@
 # Graphics 可编程着色设计（用户写 GLSL / ShaderProgram）
 
+> ⚠ 落地后修订（2026-09-15，**透明度与材质 ABI**，逐条见 `graphics-vsg-audit.md`）：
+> 1. **引擎只有一条透明度通道：每 drawable 的 opacity**（`VineDrawBlock::params.x`，由 scene × 节点 × 叶折叠）。
+>    内置前向着色的片元 alpha 就是它，**不再乘** `material.diffuse.a`、也不乘采样到的 `texel.a`：材质是共享的
+>    （一个材质变半透明 = 用它的每个 drawable 都半透明），而排序用的是每 drawable 的 opacity；延迟路径也会丢掉
+>    这个 alpha（点亮程序写 `alpha 1`）⇒ 乘进去会让同一资产在两条路径上不一样。纹理只贡献**颜色**。
+> 2. **`VineMaterialBlock` 瘦身：80B → 64B**：`emissive` / `alphaMask` / `alphaMaskCutoff` 删除（没有 SDK 访问器
+>    能设置它们，也没有 stage 读它们）。`diffuse.w` 仍携带材质自身的 alpha（**传给宿主程序用**），但引擎自己的程序不读。
+> 3. **`LightPushBlock::projparms` 是"预留"**：给自建"从深度重建视图位置"的全屏程序用（透视相机的 near/far/proj00/proj11，
+>    正交视图下为 0）；引擎自己的延迟点亮程序**不读它**（它采样 G-buffer 的位置附件），C++ 与 GLSL 两侧都已写明。
+
 > 状态：设计稿 v1（2026-09-03），评审对象。
 > 上游/前身：`vine-shader.md`（后端 vsg 自写内置 shader 的 P0 落地稿；其 §11 为本文前身，以本文为准）。
 > 关联：`graphics-scene-graph.md`（program 挂点）、`graphics-state.md`（状态参与变体键）、

@@ -54,6 +54,67 @@ V_VSG_NS_BEGIN
 class V_VSG_API VsgDrawBlockPool : public std::enable_shared_from_this<VsgDrawBlockPool>
 {
   public:
+    /**
+     * @brief One chunk's slot bookkeeping: which slots are free and which are handed out.
+     *
+     * The invariant is "a slot is either free or in use, never both, and never twice", and this class
+     * is its only owner: @ref VsgDrawBlockPool::reserve and @ref VsgDrawBlockPool::release are two thin
+     * calls into it. It was worth splitting out of the chunk for one reason: the rule that matters here
+     * (a second giveBack of the same slot must be REFUSED) is invisible from the outside until it has
+     * already done its damage — two drawables writing the same block — and a rule nobody can exercise
+     * without a Vulkan device is a rule nobody tests. This half needs no device.
+     */
+    class SlotAllocator
+    {
+      public:
+        /** @brief Creates an allocator whose every slot is free.
+         *
+         * @param slots Number of slots the chunk holds (at least 1).
+         */
+        explicit SlotAllocator(std::uint32_t slots);
+
+        /** @brief Hands out one free slot, lowest index first.
+         *
+         * Lowest first on purpose: a scene that only ever needs a handful of drawables then touches the
+         * first bytes of the chunk instead of scattering over the whole buffer.
+         *
+         * @param index Receives the index of the slot that was handed out (untouched when none was).
+         * @return true when a slot was handed out, false when every slot is in use.
+         */
+        [[nodiscard]] bool take(std::uint32_t& index) noexcept;
+
+        /** @brief Marks @p index free again.
+         *
+         * REFUSES a slot that is not currently in use: pushing it a second time would put one index in
+         * the free list twice, and the next two reservations would then hand the same block to two
+         * drawables, each silently overwriting the other's per-draw values.
+         *
+         * @param index Slot index to give back.
+         * @return true when the slot was in use and is now free, false when the call was refused.
+         */
+        [[nodiscard]] bool giveBack(std::uint32_t index) noexcept;
+
+        /** @brief Gets how many slots are free right now.
+         *
+         * @return Number of free slots (0 when every slot is in use).
+         */
+        [[nodiscard]] std::uint32_t freeCount() const noexcept
+        {
+            return static_cast<std::uint32_t>(free_.size());
+        }
+
+        /** @brief Gets whether @p index is currently handed out.
+         *
+         * @param index Slot index to ask about.
+         * @return true when the slot is in use (false for an out-of-range index).
+         */
+        [[nodiscard]] bool inUse(std::uint32_t index) const noexcept;
+
+      private:
+        std::vector<std::uint32_t> free_;   ///< Free slot indices, lowest index taken first.
+        std::vector<std::uint8_t>  in_use_; ///< 1 = handed out. The authority; free_ is derived from it.
+    };
+
     /** @brief Slots per chunk (one 16 KB chunk at the usual 256-byte stride). */
     static constexpr std::uint32_t kDefaultSlotsPerChunk = 64;
 
@@ -246,6 +307,16 @@ class V_VSG_API VsgDrawBlockPool : public std::enable_shared_from_this<VsgDrawBl
         std::uint32_t capacity = 0; ///< Slots the allocated chunks can hold.
         std::uint32_t reserved = 0; ///< Slots a drawable holds right now.
         std::uint32_t retired  = 0; ///< Of those, the ones waiting out the frames in flight.
+
+        /// Device bytes the chunks occupy (chunks x slots x stride). What a host needs to see a budget:
+        /// the chunks are never given back, so this is the pool's high-water mark, not a live figure.
+        std::size_t bytes = 0;
+
+        /// Releases refused because the slot was already free (see SlotAllocator::giveBack).
+        /// Must stay 0: a non-zero value means a slot was returned twice — the pool would have
+        /// handed the same block to two drawables, so this is a witness, not a counter to watch
+        /// for growth.
+        std::uint32_t refused = 0;
     };
 
     /**
@@ -255,7 +326,8 @@ class V_VSG_API VsgDrawBlockPool : public std::enable_shared_from_this<VsgDrawBl
      */
     [[nodiscard]] Stats stats() const noexcept
     {
-        return Stats{ chunkCount(), capacity(), reserved_, static_cast<std::uint32_t>(retired.parkedCount()) };
+        return Stats{ chunkCount(), capacity(), reserved_, static_cast<std::uint32_t>(retired.parkedCount()),
+                      static_cast<std::size_t>(capacity()) * stride_, refused_ };
     }
 
   private:
@@ -327,6 +399,11 @@ class V_VSG_API VsgDrawBlockPool : public std::enable_shared_from_this<VsgDrawBl
      * back the moment its drawable goes is the mistake the countdown exists to prevent (the frames in
      * flight may still bind its offset), so the only way in is @ref retire().
      *
+     * A slot that is not currently in use is REFUSED (and counted in @ref Stats::refused) instead of
+     * being pushed onto the free list a second time, and its block's parameters are left alone: a
+     * duplicate return means some other drawable may own that slot by now, so zeroing it would wipe
+     * THAT drawable's opacity.
+     *
      * @param slot Slot to release (an invalid slot is a no-op).
      */
     void release(Slot slot) noexcept;
@@ -352,6 +429,7 @@ class V_VSG_API VsgDrawBlockPool : public std::enable_shared_from_this<VsgDrawBl
     std::uint32_t                 block_size_ = 0;    ///< VineDrawBlock size (the bound range).
     std::uint32_t                 params_offset_ = 0; ///< Where `params` sits inside a slot.
     std::uint32_t                 reserved_ = 0;      ///< Live reservations (diagnostics).
+    std::uint32_t                 refused_ = 0;       ///< Releases refused as duplicates (diagnostics).
     // Slots whose frames may still be in flight, on the shared deferral clock (see
     // VsgDeferredRelease): the queue belongs to the pool, so a teardown that destroys the caller
     // cannot lose it (see retire()).

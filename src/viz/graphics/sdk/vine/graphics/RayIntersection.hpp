@@ -64,9 +64,13 @@ class V_GRAPHICS_API RayIntersection {
      *
      * Returns the closest intersection only.
      *
+     * A geometry whose @p world is SINGULAR (a zero scale on any axis, so the
+     * transform loses a dimension) has no volume to intersect: it is reported
+     * as a miss rather than tested in a space it does not have.
+     *
      * @param ray      The ray to test.
      * @param geometry The geometry to intersect with.
-     * @param world    World transform of the geometry.
+     * @param world    World transform of the geometry (must be invertible to be picked).
      * @return Intersection result. hit=false if no intersection.
      */
     static RayIntersectionResult intersect(const Ray& ray, raw_ptr<Geometry> geometry,

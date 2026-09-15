@@ -32,18 +32,6 @@ using namespace detail;
 namespace
 {
 
-void updateSlotViewport(::vsg::Camera& camera, bool presenting, const std::optional<vine::graphics::Viewport>& viewport,
-                        int surf_w, int surf_h)
-{
-    if (!presenting && viewport && viewport->width > 0 && viewport->height > 0) {
-        camera.viewportState = ::vsg::ViewportState::create(
-            viewport->x, viewport->y, static_cast<uint32_t>(viewport->width), static_cast<uint32_t>(viewport->height));
-        return;
-    }
-    camera.viewportState =
-        ::vsg::ViewportState::create(VkExtent2D{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) });
-}
-
 void logContentSlotDiagnostics(const vine::graphics::RenderTarget* target, vine::graphics::DepthMode depth_mode,
                                int order, std::size_t commands, std::size_t created, std::size_t root_children,
                                std::size_t variants)
@@ -59,6 +47,47 @@ void logContentSlotDiagnostics(const vine::graphics::RenderTarget* target, vine:
 
 namespace detail
 {
+
+void updateSlotViewport(ContentSlot& content, bool presenting, const std::optional<vine::graphics::Viewport>& viewport,
+                        int surf_w, int surf_h)
+{
+    int x = 0;
+    int y = 0;
+    int w = surf_w;
+    int h = surf_h;
+    if (!presenting && viewport && viewport->width > 0 && viewport->height > 0) {
+        x = viewport->x;
+        y = viewport->y;
+        w = viewport->width;
+        h = viewport->height;
+    }
+    if (w <= 0 || h <= 0) {
+        return; // no surface yet (a swapchain that is still 0x0): nothing to assert
+    }
+    if (content.viewport_state != nullptr && content.viewport_x == x && content.viewport_y == y &&
+        content.viewport_w == w && content.viewport_h == h) {
+        return; // same rectangle: the recorded state is already the right one
+    }
+    if (content.viewport_state == nullptr) {
+        content.viewport_state = ::vsg::ViewportState::create(x, y, static_cast<uint32_t>(w), static_cast<uint32_t>(h));
+        content.vsg_camera->viewportState = content.viewport_state;
+    }
+    else {
+        // In place: the view already records this object, so only its values change.
+        auto& vk_viewport  = content.viewport_state->getViewport();
+        vk_viewport.x      = static_cast<float>(x);
+        vk_viewport.y      = static_cast<float>(y);
+        vk_viewport.width  = static_cast<float>(w);
+        vk_viewport.height = static_cast<float>(h);
+        auto& scissor      = content.viewport_state->getScissor();
+        scissor.offset     = VkOffset2D{ x, y };
+        scissor.extent     = VkExtent2D{ static_cast<uint32_t>(w), static_cast<uint32_t>(h) };
+    }
+    content.viewport_x = x;
+    content.viewport_y = y;
+    content.viewport_w = w;
+    content.viewport_h = h;
+}
 
 bool beginLightsDroppedEpisode(std::size_t announced, std::size_t attached, bool& reported)
 {
@@ -326,7 +355,7 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     // Keep the slot's vsg camera viewport in step with its role each frame (see
     // updateSlotViewport): presenting content fills the target, other content carries
     // its pass sub-viewport.
-    updateSlotViewport(*content.vsg_camera, content.applied.presenting, viewport, surf_w, surf_h);
+    updateSlotViewport(content, content.applied.presenting, viewport, surf_w, surf_h);
 
     persistent.cameraBridge.apply(camera, content.vsg_camera);
 

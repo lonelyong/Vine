@@ -591,9 +591,26 @@ class V_GRAPHICS_API Geometry : public Node {
      * The bound of the location-0 positions (local data box) transformed by
      * the enclosing MatrixTransform chain; empty when no positions are set.
      *
+     * The LOCAL box is computed once per data revision and remembered (see
+     * localBoundsCache_), because a collection pass asks every geometry for its bound on every frame it
+     * has to walk the tree (a moving camera fills the frame memo for nothing) and the box costs a pass
+     * over every vertex. The keys are the stream it was computed FROM (the positions buffer, its revision,
+     * the segment) plus this geometry's own revision, which is the codebase's usual contract: the writer
+     * announces an edit, and a consumer of the announced revision may cache what it derived from it.
+     *
      * @return World-space AABB of this geometry's data.
      */
     Aabbd boundingBox() const override;
+
+    /** @brief Gets how many times this geometry's local data box was computed.
+     *
+     * The witness of the cache above: a steady scene's geometry computes it once and then answers every
+     * frame from it, so a count that keeps rising while nothing announces a change means the key is too
+     * strict (a stream identity that changes on its own) and the scan is back on the per-frame path.
+     *
+     * @return Number of times the location-0 positions were scanned to derive the local box.
+     */
+    [[nodiscard]] std::uint64_t localBoundsComputationCount() const noexcept;
 
   public:
     /** @brief The index stream's type: a segment of an index buffer.
@@ -630,6 +647,24 @@ class V_GRAPHICS_API Geometry : public Node {
     static constexpr std::uint32_t kTexCoordLocation = attributeLocation(VertexAttribute::TexCoord0);
 
   private:
+    /**
+     * @brief What the local data box was computed from, and the box itself.
+     *
+     * Keyed by the STREAM (buffer, its revision, the segment) and by this geometry's revision: a buffer
+     * written through a raw pointer is announced by bumping one of them (the contract every cache in this
+     * codebase keys on), so a box computed from the old bytes is never served for the new ones.
+     */
+    struct LocalBoundsCache
+    {
+        const void*   buffer   = nullptr; ///< Positions buffer the box was computed from.
+        std::uint64_t revision = 0;       ///< That buffer's revision at the time.
+        std::size_t   offset   = 0;       ///< First scalar of the positions segment.
+        std::size_t   scalars  = 0;       ///< Scalars the positions segment covered (0 = to the end).
+        std::uint64_t geometry_revision = 0; ///< This geometry's revision at the time.
+        Aabbd         box;                ///< The box those keys describe.
+        bool          valid = false;      ///< False until something was computed.
+    };
+
     std::map<std::uint32_t, AttributeChannel> attributes_;
     /// The index stream: a SEGMENT of a buffer, described the same way an attribute channel is
     /// (see BufferSlice). One structure for every stream means the slicing rules — an offset past the
@@ -639,6 +674,11 @@ class V_GRAPHICS_API Geometry : public Node {
     std::uint64_t                                   revision_ = 0;
     intrusive_ptr<Material> material_;
     intrusive_ptr<ShaderProgram> program_;
+    // Mutable because boundingBox() is const and the cache is a pure function of the keys above: the
+    // collection is single-threaded by contract (see Node/Scene), so remembering a derived value while
+    // reading is not a data race between engine threads.
+    mutable LocalBoundsCache local_bounds_;
+    mutable std::uint64_t    local_bounds_computations_ = 0;
 };
 
 using GeometryPtr = intrusive_ptr<Geometry>;

@@ -1,3 +1,35 @@
+> 2026-09-15 **审查轮次：graphics + vsg 后端逐条修复（见 `.ai/design/graphics-vsg-audit.md`）**
+> 12 条缺陷全部修完，每条都带门禁（单测/像素证据/变异验证）。**判据**：build 0 error；`test_graphics` 260→**269**、
+> `test_vsg` 276→**288**；`scripts/vsg_selftest_evidence.sh` **55 行逐字节不变**。
+> - **透明度只有一条通道**：前向着色改成 `alpha = draw.params.x`（不再乘 `material.diffuse.a` / `texel.a`）。
+>   原因：材质是**共享**的，乘进去会让所有用它的 drawable 一起半透明，而排序用的是每 drawable 的 opacity，
+>   且延迟路径把 alpha 丢掉 —— 同一资产在 forward / deferred 会不一致。纹理只贡献颜色。
+> - **材质 ABI 瘦身**：`VineMaterialBlock` 删掉 `emissive`/`alphaMask`/`alphaMaskCutoff`（无人填无人读），
+>   **80B → 64B**，`static_assert` 与 `ShaderAbiTest` 同步。`LightPushBlock::projparms` 保留但在两侧都写明
+>   "给自建深度重建程序预留"，引擎自己的点亮程序不读它。
+> - **正交相机**：`Camera` 现在保留**完整窗口**（`orthographicLeft/Right/Bottom/Top`），后端按四个边界建
+>   `vsg::Orthographic`。以前只留 height ⇒ 非对称窗口下 CPU 剔除与 GPU 渲染是**两个视锥**。拾取射线也走同一窗口。
+> - **拾取**：`screenToWorldRay` 的基改成**读视图矩阵的行**（退化 up 不再产生 NaN，与 `lookAt` 的兜底一致）；
+>   奇异世界矩阵（某轴缩放为 0）改用 `invert()` 检测后**跳过**（`inverted()` 会静默返回原矩阵 → 假命中，已变异验证）。
+> - **收集路径（Scene）**：①`Geometry` 缓存**局部**包围盒（键 = positions 缓冲指针 + 缓冲 revision + 段 + geometry
+>   revision；可观测 `localBoundsComputationCount()`）——以前每帧全场景**扫描顶点**，剔除一分钱都没省；
+>   ②状态折叠改成**自顶向下**（`InheritedState`），不再每叶 3 次上行 + 一次 vector 分配，`StateNode.hpp` 的上行版保留，
+>   两者由 `SceneTest.TheFoldedStateAgreesWithTheUpWalkingHelpers` 钉住一致；③新增
+>   `Scene::collectRenderCommandsShared()`（不可变共享表），pass 路径不再每 pass 复制整张命令表，
+>   只有设了 program override 的 pass 才 fork。
+> - **引擎侧每帧分配**：`validateWiring()` 改为**声明驱动**（`RenderPass::wiringRevision()` + `publish/unpublish`
+>   标记；可观测 `wiringValidationCount()`）；内容槽的 `ViewportState` 改成**一个、原位更新**（不再每槽每帧 new）。
+> - **每 drawable 槽池**：`SlotAllocator`（无设备可单测）拒绝**重复归还**并计数（`Stats::refused`），且拒绝发生在写字节
+>   之前 —— 否则会清掉现在拥有该槽的 drawable 的 opacity。`Stats` 新增 `bytes`，`VsgRetentionStats` 新增
+>   `slot_bytes`/`mesh_streams`/`textures`。
+> - **踩坑（必须记住）**：改了 `libviGraphics` 里类的布局后**只 build 目标**会留下陈旧二进制
+>   （`vsg_backend_selftest` 旧布局 + 新库 ⇒ 结尾 `malloc(): largebin double linked list corrupted`）。
+>   **证据门禁前必须整包 build**。
+> - **本环境离线**：reconfigure 时 FetchContent 会去 `git fetch` spdlog（TLS 失败）⇒ `build.ninja` 再生失败。
+>   已在构建目录（`build/CMakeCache.txt`，gitignore）设 `FETCHCONTENT_FULLY_DISCONNECTED=ON`。
+>   `vine_shader_check.sh` 需要 Linux `glslangValidator`（本机只有 Windows exe）⇒ 无法运行，着色器编译由
+>   `test_vsg` 的 `GlslCompileTest` 覆盖。
+
 > 2026-09-14 **着色器内的插值变量前缀 `v_` → `vine_`**（补上 2026-09-13「着色器内标识符前缀统一 `vine_`」的尾巴）
 > - `src/viz/graphics/shaders/` 下 9 个源文件全改：`v_uv` → `vine_uv`、`v_view_pos` → `vine_view_pos`、
 >   `v_view_normal` → `vine_view_normal`、`v_color` → `vine_color`、`v_texcoord` → `vine_texcoord`、`v_dir` → `vine_dir`。

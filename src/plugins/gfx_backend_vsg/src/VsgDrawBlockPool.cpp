@@ -27,15 +27,64 @@ constexpr std::uint32_t alignUp(std::uint32_t value, std::uint32_t alignment) no
 /** @brief One chunk: the buffer its slots live in, the mapping onto it and its free list. */
 struct VsgDrawBlockPool::Chunk
 {
+    /** @brief Creates a chunk whose every slot is free.
+     *
+     * @param slots Number of slots this chunk holds.
+     */
+    explicit Chunk(std::uint32_t slots) :
+        slots(slots)
+    {
+    }
+
     ::vsg::ref_ptr<::vsg::Buffer>                       buffer;
     ::vsg::ref_ptr<::vsg::DeviceMemory>                 memory;
     ::vsg::ref_ptr<::vsg::MappedData<::vsg::ubyteArray>> mapped;
-    std::vector<std::uint32_t>                          free_indices; ///< LIFO of unhanded-out slots.
+    SlotAllocator                                       slots; ///< Which slot is free / in use.
     // One descriptor set per set layout that has bound this chunk. A set binds the buffer
     // once with `range` = one block; the slot is chosen by the dynamic offset, so every
     // drawable in the chunk shares these sets.
     std::vector<std::pair<::vsg::ref_ptr<::vsg::DescriptorSetLayout>, ::vsg::ref_ptr<::vsg::DescriptorSet>>> sets;
 };
+
+VsgDrawBlockPool::SlotAllocator::SlotAllocator(std::uint32_t slots)
+{
+    in_use_.assign(slots, 0u);
+    free_.reserve(slots);
+    // Pushed highest-first so take() pops the LOWEST index first (see the declaration).
+    for (std::uint32_t index = slots; index-- > 0u;) {
+        free_.push_back(index);
+    }
+}
+
+bool VsgDrawBlockPool::SlotAllocator::take(std::uint32_t& index) noexcept
+{
+    if (free_.empty()) {
+        return false;
+    }
+    const std::uint32_t free_index = free_.back();
+    free_.pop_back();
+    in_use_[free_index] = 1u;
+    index               = free_index;
+    return true;
+}
+
+bool VsgDrawBlockPool::SlotAllocator::giveBack(std::uint32_t index) noexcept
+{
+    if (index >= in_use_.size() || in_use_[index] == 0u) {
+        // Not in use: refusing is the whole point of having the marks. Pushing it anyway would put the
+        // same index in the free list twice, and the next two take() calls would hand one block to two
+        // drawables - a corruption that shows up as one object wearing another's opacity, frames later.
+        return false;
+    }
+    in_use_[index] = 0u;
+    free_.push_back(index);
+    return true;
+}
+
+bool VsgDrawBlockPool::SlotAllocator::inUse(std::uint32_t index) const noexcept
+{
+    return index < in_use_.size() && in_use_[index] != 0u;
+}
 
 VsgDrawBlockPool::VsgDrawBlockPool(::vsg::ref_ptr<::vsg::Device> device, std::uint32_t slots_per_chunk) :
     device_(std::move(device)),
@@ -76,11 +125,10 @@ VsgDrawBlockPool::Slot VsgDrawBlockPool::reserve()
     }
     for (std::uint32_t index = 0u; index < chunks_.size(); ++index) {
         auto& chunk = *chunks_[index];
-        if (chunk.free_indices.empty()) {
+        std::uint32_t slot_index = 0u;
+        if (!chunk.slots.take(slot_index)) {
             continue;
         }
-        const std::uint32_t slot_index = chunk.free_indices.back();
-        chunk.free_indices.pop_back();
         ++reserved_;
         return Slot{ index, slot_index };
     }
@@ -92,9 +140,10 @@ VsgDrawBlockPool::Slot VsgDrawBlockPool::reserve()
     const std::uint32_t chunk_index = static_cast<std::uint32_t>(chunks_.size());
     chunks_.push_back(std::move(chunk));
 
-    auto& created = *chunks_.back();
-    const std::uint32_t slot_index = created.free_indices.back();
-    created.free_indices.pop_back();
+    std::uint32_t slot_index = 0u;
+    if (!chunks_.back()->slots.take(slot_index)) {
+        return {}; // a freshly created chunk is all-free, so this cannot happen
+    }
     ++reserved_;
     return Slot{ chunk_index, slot_index };
 }
@@ -170,12 +219,18 @@ void VsgDrawBlockPool::release(Slot slot) noexcept
     if (chunk == nullptr || reserved_ == 0u) {
         return;
     }
+    // Refuse a slot that is not in use BEFORE touching its bytes: a duplicate return means somebody else
+    // may own that slot by now, and zeroing its parameters would wipe THAT drawable's opacity. The
+    // refusal is counted, because a non-zero count is the witness of a double return (see Stats).
+    if (!chunk->slots.giveBack(slot.index)) {
+        ++refused_;
+        return;
+    }
     // A stale frame can still read this slot (the caller defers the release past the frames
     // in flight), so its parameters are zeroed rather than left holding the previous
     // drawable's opacity: the next owner writes its own values before it draws.
     std::uint8_t* bytes = static_cast<std::uint8_t*>(chunk->mapped->data());
     std::memset(bytes + static_cast<std::size_t>(slot.index) * stride_ + params_offset_, 0, 16u);
-    chunk->free_indices.push_back(slot.index);
     --reserved_;
 }
 
@@ -272,16 +327,13 @@ std::unique_ptr<VsgDrawBlockPool::Chunk> VsgDrawBlockPool::makeChunk()
         return {};
     }
 
-    auto chunk       = std::make_unique<Chunk>();
+    auto chunk       = std::make_unique<Chunk>(slots_per_chunk_);
     chunk->buffer    = std::move(buffer);
     chunk->memory    = std::move(memory);
     chunk->mapped    = std::move(mapped);
-    chunk->free_indices.reserve(slots_per_chunk_);
-    // Handed out BACK-TO-FRONT so the first reservation takes index 0: a scene that only
-    // ever needs a handful of drawables then touches the first bytes of the chunk.
-    for (std::uint32_t index = slots_per_chunk_; index-- > 0u;) {
-        chunk->free_indices.push_back(index);
-    }
+    // The free list and the in-use marks are the allocator's (see SlotAllocator): it hands slots out
+    // lowest index first, so a scene that only ever needs a handful of drawables touches the first
+    // bytes of the chunk.
     return chunk;
 }
 

@@ -118,19 +118,16 @@ TEST(ShaderAbiTest, MaterialBlockEqualityCoversItsWholeDeclaredLayout)
     // is a second copy of this layout, and one that falls behind it fails silently — the symptom is a
     // material edit that never reaches the GPU. Flipping one bit of every member byte and demanding
     // that the comparison notices pins that coverage without naming the members.
-    constexpr std::size_t member_bytes = offsetof(VineMaterialBlock, alpha_mask_cutoff) + sizeof(float);
-    static_assert(member_bytes == 76u, "the material block's members must end before its std140 padding");
+    constexpr std::size_t member_bytes = offsetof(VineMaterialBlock, shininess) + sizeof(float);
+    static_assert(member_bytes == 52u, "the material block's members must end before its std140 padding");
 
     VineMaterialBlock a;
     // Every field is non-zero: a bit flipped inside a zero float is a denormal, and this test must
     // not depend on how denormals compare.
-    a.ambient  = { 0.1f, 0.2f, 0.3f, 1.0f };
-    a.diffuse  = { 0.4f, 0.5f, 0.6f, 1.0f };
-    a.specular = { 0.7f, 0.8f, 0.9f, 0.5f };
-    a.emissive = { 0.05f, 0.15f, 0.25f, 0.35f };
-    a.shininess          = 32.0f;
-    a.alpha_mask         = 1.0f;
-    a.alpha_mask_cutoff  = 0.5f;
+    a.ambient   = { 0.1f, 0.2f, 0.3f, 1.0f };
+    a.diffuse   = { 0.4f, 0.5f, 0.6f, 1.0f };
+    a.specular  = { 0.7f, 0.8f, 0.9f, 0.5f };
+    a.shininess = 32.0f;
 
     VineMaterialBlock b = a;
     EXPECT_TRUE(a == b);
@@ -155,6 +152,34 @@ TEST(ShaderAbiTest, TheShaderBlockNamesAreTheL1Names)
 
     const std::string gbuffer_fs = asByteString(shaders::kBuiltinGbufferFrag);
     EXPECT_NE(gbuffer_fs.find("uniform VineMaterialBlock"), std::string::npos);
+}
+
+TEST(ShaderAbiTest, TheForwardFragmentsAlphaIsTheDrawablesOpacityAlone)
+{
+    // The engine has ONE transparency channel - the per-drawable opacity - and it is the one the
+    // collection pass sorts by, the one the deferred path carries, and the one the opacity pixel gate
+    // measures. The forward stage used to multiply the material's own alpha and the sampled texel's
+    // alpha into its output alpha as well: the object then blended (blending is always on for the
+    // content pipelines) while the engine had classified it opaque and sorted it front-to-back, and
+    // the SAME asset stayed opaque on the deferred path (whose lighting program writes alpha 1). This
+    // pins the one-input rule in the text, because the structural gates around the block layout and
+    // the variant defines are all blind to an extra factor in a float expression.
+    const std::string forward_fs = asByteString(shaders::kBuiltinForwardFrag);
+    EXPECT_NE(forward_fs.find("float alpha = draw.params.x;"), std::string::npos)
+        << "the fragment alpha must be the drawable's opacity";
+    EXPECT_EQ(forward_fs.find("material.diffuse.a"), std::string::npos)
+        << "the material's alpha must not scale the fragment alpha (a shared material would make "
+           "every drawable that uses it translucent, in an order nobody sorted)";
+    EXPECT_EQ(forward_fs.find("alpha *= texel.a"), std::string::npos)
+        << "the sampled texel's alpha must not scale the fragment alpha either (same reason, and the "
+           "deferred path discards it, so the two paths would disagree about one asset)";
+
+    // The block the shading declares is the engine's material ABI and nothing else: the fields no
+    // accessor could set and no stage read are gone rather than declared (see VineMaterialBlock).
+    EXPECT_EQ(forward_fs.find("alphaMask"), std::string::npos);
+    const std::string gbuffer_fs = asByteString(shaders::kBuiltinGbufferFrag);
+    EXPECT_EQ(gbuffer_fs.find("alphaMask"), std::string::npos);
+    EXPECT_EQ(gbuffer_fs.find("vec4 emissive;"), std::string::npos);
 }
 
 }  // namespace

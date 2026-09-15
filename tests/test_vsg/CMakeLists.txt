@@ -2,10 +2,13 @@ set(TEST_NAME test_vsg)
 set(SRC_FILE_LIST
 	GfxBackendVsgPluginTest.cpp
 	RenderStateMapperTest.cpp
+	CameraBridgeTest.cpp
+	ContentSlotViewportTest.cpp
 	GlslCompileTest.cpp
 	SceneBridgePipelineSharingTest.cpp
 	SceneBridgeCacheOwnershipTest.cpp
 	DrawBlockPoolRetireTest.cpp
+	DrawBlockPoolSlotsTest.cpp
 	DeferredReleaseTest.cpp
 	SceneBridgeDataRebuildTest.cpp
 	GeometrySafetyTest.cpp

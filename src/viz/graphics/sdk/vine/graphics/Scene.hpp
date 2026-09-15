@@ -121,14 +121,37 @@ class V_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * ordering), so a multi-pass pipeline that draws the same scene through the
      * same camera several times per frame would walk it once per pass. Inside a
      * content frame (see setContentFrame) the result of the first walk is kept
-     * and returned — as its own copy, so callers may post-process it (a pass'
-     * program override, for instance) — for every later call with the same
-     * camera, until the scene changes or the next frame begins.
+     * and shared — as its own COPY, because a caller may post-process what it
+     * receives — for every later call with the same camera, until the scene
+     * changes or the next frame begins.
+     *
+     * The owning spelling: use it when the list is KEPT or EDITED. A caller that
+     * only reads it (the engine's own pass path, a backend) hands out the shared
+     * list instead (see collectRenderCommandsShared) and pays no copy at all.
      *
      * @param camera Camera used for culling/ordering.
-     * @return Collected render commands.
+     * @return Collected render commands (a copy of this frame's list for this view).
      */
     std::vector<RenderCommand> collectRenderCommands(raw_ptr<const Camera> camera) const;
+
+    /** @brief Collects render commands as a SHARED, immutable list.
+     *
+     * The same collection as collectRenderCommands(), which is defined in terms of
+     * it, with the list handed over by reference: the passes of one frame draw the
+     * SAME commands, so copying the list per pass spent an intrusive_ptr
+     * increment (three per command) and a command-sized memcpy on every pass of
+     * every frame, for a list nobody was going to change. A caller that has to
+     * change something makes its own copy of what it needs (RenderPass::execute
+     * does exactly that, and only when a program override is set).
+     *
+     * The list is immutable by contract — treat it as const, which its type says —
+     * and stays valid until the scene changes or the frame ends, so a caller must
+     * not hold it past the frame it was collected in.
+     *
+     * @param camera Camera used for culling/ordering.
+     * @return Shared list of collected render commands (empty when there is nothing to draw).
+     */
+    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommandsShared(raw_ptr<const Camera> camera) const;
 
     /** @brief Opens the content frame the collected-command memo belongs to.
      *

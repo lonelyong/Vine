@@ -271,7 +271,7 @@ namespace
  * @param geometry Geometry to bound.
  * @return Local-space AABB (empty when no usable positions are present).
  */
-Aabbd localBounds(const Geometry* geometry)
+Aabbd scanLocalBounds(const Geometry* geometry)
 {
     const AttributeChannel* positions = geometry->buffer(attributeLocation(VertexAttribute::Position));
     if (positions == nullptr || positions->empty() || positions->components < 3u) {
@@ -311,7 +311,40 @@ Aabbd Geometry::boundingBox() const
 {
     // The local data box (location 0 positions) placed in world space by the
     // enclosing MatrixTransform chain.
-    return transformBox(localBounds(this), worldMatrix());
+    //
+    // The LOCAL half is remembered between calls: the pass asks every geometry for its bound on every
+    // frame it walks (a moving camera invalidates the frame memo), and scanning the vertices for a box
+    // that nothing announced a change to was O(visible vertices) per frame — the whole cost of frustum
+    // culling, paid before any culling decision could save anything. The keys are the stream the box was
+    // computed from plus this geometry's revision, so a writer that announces an edit gets a fresh box
+    // (the same "announce it and consumers may cache" contract every other cache here follows).
+    const AttributeChannel* positions = buffer(attributeLocation(VertexAttribute::Position));
+    const void* const       buffer_ptr = positions != nullptr ? positions->values.get() : nullptr;
+    const std::uint64_t     buffer_revision =
+        positions != nullptr && positions->values != nullptr ? positions->values->revision() : 0u;
+    const std::size_t positions_offset = positions != nullptr ? positions->offset : 0u;
+    const std::size_t positions_scalars = positions != nullptr ? positions->scalarCount : 0u;
+
+    const bool cached = local_bounds_.valid && local_bounds_.buffer == buffer_ptr &&
+                        local_bounds_.revision == buffer_revision &&
+                        local_bounds_.offset == positions_offset && local_bounds_.scalars == positions_scalars &&
+                        local_bounds_.geometry_revision == revision_;
+    if (!cached) {
+        local_bounds_.buffer            = buffer_ptr;
+        local_bounds_.revision          = buffer_revision;
+        local_bounds_.offset            = positions_offset;
+        local_bounds_.scalars           = positions_scalars;
+        local_bounds_.geometry_revision = revision_;
+        local_bounds_.box               = scanLocalBounds(this);
+        local_bounds_.valid             = true;
+        ++local_bounds_computations_;
+    }
+    return transformBox(local_bounds_.box, worldMatrix());
+}
+
+std::uint64_t Geometry::localBoundsComputationCount() const noexcept
+{
+    return local_bounds_computations_;
 }
 
 intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec3f> vertices)

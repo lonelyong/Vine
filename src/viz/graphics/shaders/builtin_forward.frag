@@ -22,15 +22,15 @@ layout(location = 0) out vec4 out_color;
 
 // The material the host assigned (the same std140 block the deferred path's
 // G-buffer stage declares, so one Vine material value feeds both).
+// `diffuse.w` carries the material's own alpha and is NOT read here: see the alpha
+// comment in main() (the engine has one transparency channel, and it is the
+// per-drawable opacity).
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 {
     vec4 ambient;
     vec4 diffuse;
     vec4 specular;
-    vec4 emissive;
     float shininess;
-    float alphaMask;
-    float alphaMaskCutoff;
 } material;
 
 #ifdef VINE_DIFFUSE_MAP
@@ -101,11 +101,19 @@ void main()
     // opacity changes, so a translucent drawable costs O(1) per frame instead of
     // a pass over its vertices (and the vertex colour stream stays free to carry
     // authored colours, which its alpha does not compete with).
-    float alpha = material.diffuse.a * draw.params.x;
+    //
+    // It is also the engine's ONLY transparency input, which is why neither the
+    // material's alpha nor the texture's is multiplied in here: a material is
+    // shared by every drawable that uses it ("a translucent material" would make
+    // all of them translucent, and the per-drawable value it would fight with is
+    // the one the engine sorts by), and the deferred path discards them anyway
+    // (its lighting program writes alpha 1) - so reading them here would make the
+    // same asset translucent in forward and opaque in deferred.
+    float alpha = draw.params.x;
 #ifdef VINE_DIFFUSE_MAP
+    // The texture contributes COLOUR only, by the same rule.
     vec4 texel = texture(diffuseMap, vine_uv);
     albedo *= texel.rgb;
-    alpha *= texel.a;
 #endif
 #ifdef VINE_VERTEX_COLOR
     // An AUTHORED vertex colour modulates the albedo only. Its alpha is

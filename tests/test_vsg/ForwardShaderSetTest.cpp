@@ -614,17 +614,27 @@ TEST(ForwardShaderSetTest, OpacityIsNotPartOfTheVariantIdentity)
 
 TEST(ForwardShaderSetTest, TheFragmentStageScalesAlphaByTheDrawBlock)
 {
-    // The other half of the contract above: the value has to be READ. The fragment stage
-    // multiplies the material's alpha by the block's params.x, and deliberately does NOT
-    // take an opacity from the vertex colour's alpha (that would make one drawable's
-    // opacity leak into every geometry sharing the vertex stream).
+    // The other half of the contract above: the value has to be READ, and it has to be the ONLY
+    // transparency input. The fragment stage's alpha is the block's params.x — the drawable's
+    // opacity — and deliberately does NOT read the material's alpha, the sampled texel's alpha or
+    // the vertex colour's alpha:
+    //   * the material is shared by every drawable that uses it, so a translucent material would
+    //     make all of them translucent while the engine sorts by the per-drawable opacity;
+    //   * the texel's alpha is discarded by the deferred path (its lighting program writes alpha 1),
+    //     so reading it here would make one asset translucent in forward and opaque in deferred;
+    //   * the vertex colour's alpha would leak one drawable's opacity into every geometry sharing
+    //     the vertex stream.
+    // Blending is on for every content pipeline, so an alpha that nobody classified as transparent
+    // is not merely wrong in the buffer: it is blended in an order that was never computed.
     const auto program = vine::graphics::forwardProgram();
     ASSERT_NE(program, nullptr);
     ASSERT_EQ(program->stageCount(), 2u);
     const auto* fs_stage = program->stage(1);
     ASSERT_NE(fs_stage, nullptr);
     const std::string fragment = fs_stage->source.stdstr();
-    EXPECT_NE(fragment.find("material.diffuse.a * draw.params.x"), std::string::npos);
+    EXPECT_NE(fragment.find("float alpha = draw.params.x;"), std::string::npos);
+    EXPECT_EQ(fragment.find("material.diffuse.a"), std::string::npos);
+    EXPECT_EQ(fragment.find("alpha *= texel.a;"), std::string::npos);
     EXPECT_EQ(fragment.find("alpha *= vine_color.a;"), std::string::npos);
     // The block itself is declared in its OWN set, because it is bound per drawable with a
     // dynamic offset (the scene shares one buffer and one descriptor set).

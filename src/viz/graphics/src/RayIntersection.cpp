@@ -264,6 +264,15 @@ RayIntersectionResult makeTriangleHit(const Vec3d& a, const Vec3d& b, const Vec3
  * direction, so the local hit is recovered with the same vector that was
  * tested.
  *
+ * A SINGULAR world matrix is rejected here, before the local space is built.
+ * Matrix4x4::inverted() cannot report failure — it returns the original matrix
+ * unchanged — so an inversion that was not checked silently tested the ray in
+ * a space that is not the geometry's at all, which reports a hit for content
+ * the ray never crossed (or misses content it did): a wrong answer from a
+ * function whose whole contract is the answer. A world transform that
+ * collapses a dimension has no volume to intersect, so nothing is picked
+ * there — the same visible outcome as a hidden node.
+ *
  * @param positions  Vertex positions (local space).
  * @param indices    Triangle index array, or null for consecutive triples.
  * @param ray        The world-space ray.
@@ -285,7 +294,12 @@ bool traverseMesh(const vine::geometry::Vec3fArray& positions,
         return false;
     }
 
-    const Mat4d inv = world.inverted();
+    // Copy first: invert() reports failure by returning false and leaving the matrix as it was
+    // (see the note above), so the check has to be on THIS copy, not on the caller's matrix.
+    Mat4d inv = world;
+    if (!inv.invert()) {
+        return false; // singular world transform: no local space to test the ray in
+    }
     const Vec3d local_origin =
         toWorld(inv, ray.origin.x, ray.origin.y, ray.origin.z);
     const Vec3d local_dir =

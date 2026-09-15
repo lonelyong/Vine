@@ -85,8 +85,11 @@ enum class ProgramNodeFailure
 struct alignas(16) LightPushBlock
 {
     std::array<float, 4> ambient{};   // ambient rgb + intensity
-    // Perspective projection params for view-position reconstruction from the
-    // G-buffer depth: x = near, y = far, z = proj[0][0], w = proj[1][1].
+    // RESERVED for a program that reconstructs the view position from the depth buffer: x = near,
+    // y = far, z = proj[0][0], w = proj[1][1] (zeros for an orthographic view, whose reconstruction
+    // formulas are different ones). The engine's own lighting program does NOT read it: it samples
+    // the G-buffer's view-position attachment instead (see builtin_deferred_lighting.frag), which is
+    // why the field is described here as reserved rather than as "the" way to get a position.
     std::array<float, 4> projparms{};
     std::array<std::array<float, 4>, 3> dirs{};   // directional lights: view-space directions
     std::array<std::array<float, 4>, 3> cols{};   // directional lights: rgb + intensity
