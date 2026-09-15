@@ -180,126 +180,29 @@ namespace
     if (geometry == nullptr) {
         return ::vsg::ref_ptr<::vsg::Commands>();
     }
-    // Location 0 is positions and is mandatory. An xyz channel whose length is a whole number of vertices
-    // already IS what vsg's loc0 binding reads, so the binding views the model's own memory instead of a
-    // copy of it; any other stride (a vec4 position, a non-divisible length) keeps the unpacking path, which
-    // is where the xyz/w handling and the diagnostics for those cases live.
-    const auto* position_attr = geometry->buffer(attributeLocation(vine::graphics::VertexAttribute::Position));
-    if (position_attr == nullptr || position_attr->empty()) {
-        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
-               formatDiagnostic(u8"geometry has no position attribute (location %u); not drawn",
-                                attributeLocation(vine::graphics::VertexAttribute::Position)));
-        return ::vsg::ref_ptr<::vsg::Commands>();
+
+    // The four canonical streams, in the binding order the shader contract fixes. Each stage answers the
+    // same two questions — which array does the binding read, and is that array the MODEL's own bytes (the
+    // case a shared bind may serve) or was it built here — so they share one shape, and the order below IS
+    // the order the data node binds them in (0 positions, 1 normals, 2 texcoords, 3 colour).
+    const bool is_triangles = topology == vine::graphics::Topology::Triangles;
+    const bool indexed      = geometry->hasIndices();
+
+    CanonicalStream                    positions;
+    std::span<const vine::math::Vec3f> positions_view;
+    // The unpacked positions (a vec4 stride) live HERE, not in the stage that fills them: the normals
+    // are derived from `positions_view`, which points into this storage.
+    vine::geometry::Vec3fArray unpacked_positions;
+    if (!buildPositionStream(*geometry, positions, positions_view, unpacked_positions, derived)) {
+        return ::vsg::ref_ptr<::vsg::Commands>(); // reported inside
     }
-
-    /// Scalars per xyz element: three, the stride geometry::Mesh stores and vsg's loc0/loc1 bindings read.
-    constexpr std::uint32_t kXyzComponents = 3u;
-
-    // Positions as the CPU sees them while building: the model's own scalars, or the unpacked copy below —
-    // never a third array. The binding may view the model's memory where this is the same memory.
-    std::span<const vine::math::Vec3f> positions;
-    vine::geometry::Vec3fArray        unpacked_positions;
-    // Set only when the bound array IS the model's bytes (the case a shared bind may serve); the unpacked
-    // path below builds a private array instead.
-    const vine::graphics::AttributeChannel* aliased_positions = nullptr;
-
-    ::vsg::ref_ptr<::vsg::Data> vertices;
-    std::size_t                 vertex_count = 0;
-    if (position_attr->components == kXyzComponents && position_attr->floatCount() % kXyzComponents == 0u) {
-        // A REAL vsg array aliases the model's memory (see detail::aliasArray): the element type stays the
-        // array's, so its format and stride keep being inferred from it (nothing about the binding is
-        // hand-written), and the storage Data it points at holds the buffer, so the memory outlives the
-        // node that reads it.
-        vertices          = aliasArray<::vsg::vec3Array, float>(position_attr->values,
-                                                                position_attr->vertexCount(), position_attr->offset);
-        positions         = position_attr->vec3View();
-        vertex_count      = positions.size();
-        aliased_positions = position_attr;
-    } else {
-        const XyzUnpack unpack = unpackXyz(*position_attr, unpacked_positions);
-        if (unpack == XyzUnpack::NotXyzStride) {
-            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
-                   formatDiagnostic(u8"loc0 position has components=%u (a 3/4-component xyz "
-                                    u8"channel is required); not drawn",
-                                    position_attr->components));
-            return ::vsg::ref_ptr<::vsg::Commands>();
-        }
-        if (unpack == XyzUnpack::NotDivisible) {
-            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
-                   formatDiagnostic(u8"loc0 position holds %zu floats, not divisible by its "
-                                    u8"components=%u stride; not drawn",
-                                    position_attr->floatCount(), position_attr->components));
-            return ::vsg::ref_ptr<::vsg::Commands>();
-        }
-        if (unpacked_positions.empty()) {
-            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
-                   u8"geometry loc0 position attribute is empty; not drawn");
-            return ::vsg::ref_ptr<::vsg::Commands>();
-        }
-        positions    = unpacked_positions;
-        vertex_count = positions.size();
-
-        auto typed = ::vsg::vec3Array::create(static_cast<uint32_t>(vertex_count));
-        for (std::size_t i = 0; i < vertex_count; ++i) {
-            const auto& v = positions[i];
-            (*typed)[i]   = ::vsg::vec3(v.x, v.y, v.z);
-        }
-        vertices = typed;
-    }
-
-    // The fallback channels are sized by the vertex count, so a mesh whose count changed must not reuse the
-    // arrays that were built for the previous size (the derived normals carry their own count in the key).
-    if (derived.count != vertex_count) {
-        derived.count          = vertex_count;
-        derived.white_colors   = {};
-        derived.zero_texcoords = {};
-    }
-
-    // Optional normals: when the channel is missing or unusable (bad stride or non-divisible length) it is
-    // reported and treated as absent; the normals are then derived (Triangles) or defaulted (Points / Lines)
-    // below. An authored channel in the layout loc1 binds is read from the model's memory, like the
-    // positions — no copy of it either. A bad OPTIONAL channel must not reject an otherwise drawable mesh.
-    vine::geometry::Vec3fArray         unpacked_normals;
-    std::span<const vine::math::Vec3f> src_normals;
-    // Set only when the channel already IS the layout loc1 binds (three components per vertex): that is
-    // the case the binding can alias instead of copying. A vec4 channel is unpacked above and used from
-    // that copy, since aliasing it would need a stride the array's element type does not have.
-    const vine::graphics::AttributeChannel* authored_normals = nullptr;
-    if (const auto* normal_attr = geometry->buffer(attributeLocation(vine::graphics::VertexAttribute::Normal));
-        normal_attr != nullptr && !normal_attr->empty()) {
-        const std::span<const vine::math::Vec3f> authored = normal_attr->vec3View();
-        if (authored.size() == vertex_count) {
-            src_normals      = authored;
-            authored_normals = normal_attr;
-        } else if (const XyzUnpack unpack = unpackXyz(*normal_attr, unpacked_normals); unpack != XyzUnpack::Ok) {
-            unpacked_normals.clear();
-            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
-                   ignoredNormalChannelMessage(*normal_attr, unpack));
-        } else {
-            src_normals = unpacked_normals;
-        }
-    }
-
-    // Points / lines have no surface to derive normals from: authored normals
-    // (one per vertex) are used when present, otherwise a constant +Z normal.
-    const auto non_triangle_normals = [&]() -> ::vsg::ref_ptr<::vsg::vec3Array> {
-        auto out = ::vsg::vec3Array::create(static_cast<uint32_t>(vertex_count));
-        const bool authored = src_normals.size() == vertex_count;
-        for (std::size_t v = 0; v < vertex_count; ++v) {
-            (*out)[v] = authored
-                            ? ::vsg::vec3(src_normals[v].x, src_normals[v].y, src_normals[v].z)
-                            : ::vsg::vec3(0.0f, 0.0f, 1.0f);
-        }
-        return out;
-    };
+    const std::size_t vertex_count = positions_view.size();
 
     // The index stream is kept VERBATIM — it is never truncated to whole
     // triangles, and an indexed Points / Lines draw must not lose indices to
     // triangle-oriented rules: primitive assembly is the topology's job. Only
     // an out-of-range index is rejected (it would read OOB in the CPU normal
     // derivation and OOB / validation-fault on the GPU via DrawIndexed).
-    const bool                       is_triangles = topology == vine::graphics::Topology::Triangles;
-    const bool                       indexed      = geometry->hasIndices();
     ::vsg::ref_ptr<::vsg::uintArray> indices;
     // The span DrawIndexed reads: a slice of the model's buffer when indexed, the whole synthesised one
     // otherwise (see Geometry::setIndices).
@@ -332,16 +235,140 @@ namespace
         drawn_index_count = vertex_count;
     }
 
+    const CanonicalStream normals   = buildNormalStream(*geometry, positions_view, *indices, indexed, is_triangles, derived);
+    const CanonicalStream colors    = buildColorStream(*geometry, vertex_count, derived);
+    const CanonicalStream texcoords = buildTexCoordStream(*geometry, vertex_count, derived);
+    const ::vsg::DataList custom_arrays = collectCustomChannels(*geometry, vertex_count, extra_channels);
+
+    return assembleDrawCommands(*geometry, { positions, normals, texcoords, colors }, custom_arrays, indices,
+                                drawn_first_index, drawn_index_count, indexed, mesh_cache, out_binds);
+}
+
+bool SceneBridge::buildPositionStream(const vine::graphics::Geometry& geometry, CanonicalStream& out,
+                                      std::span<const vine::math::Vec3f>& out_positions,
+                                      vine::geometry::Vec3fArray& out_unpacked, DerivedChannels& derived)
+{
+    /// Scalars per xyz element: three, the stride geometry::Mesh stores and vsg's loc0/loc1 bindings read.
+    constexpr std::uint32_t kXyzComponents = 3u;
+
+    // Location 0 is positions and is mandatory. An xyz channel whose length is a whole number of vertices
+    // already IS what vsg's loc0 binding reads, so the binding views the model's own memory instead of a
+    // copy of it; any other stride (a vec4 position, a non-divisible length) keeps the unpacking path, which
+    // is where the xyz/w handling and the diagnostics for those cases live.
+    const auto* position_attr = geometry.buffer(attributeLocation(vine::graphics::VertexAttribute::Position));
+    if (position_attr == nullptr || position_attr->empty()) {
+        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+               formatDiagnostic(u8"geometry has no position attribute (location %u); not drawn",
+                                attributeLocation(vine::graphics::VertexAttribute::Position)));
+        return false;
+    }
+
+    // Positions as the CPU sees them while building: the model's own scalars, or the unpacked copy in
+    // @p out_unpacked — never a third array. The binding may view the model's memory where this is the
+    // same memory.
+    if (position_attr->components == kXyzComponents && position_attr->floatCount() % kXyzComponents == 0u) {
+        // A REAL vsg array aliases the model's memory (see detail::aliasArray): the element type stays the
+        // array's, so its format and stride keep being inferred from it (nothing about the binding is
+        // hand-written), and the storage Data it points at holds the buffer, so the memory outlives the
+        // node that reads it.
+        out.array     = aliasArray<::vsg::vec3Array, float>(position_attr->values, position_attr->vertexCount(),
+                                                            position_attr->offset);
+        out.aliased   = position_attr;
+        out_positions = position_attr->vec3View();
+    } else {
+        const XyzUnpack unpack = unpackXyz(*position_attr, out_unpacked);
+        if (unpack == XyzUnpack::NotXyzStride) {
+            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+                   formatDiagnostic(u8"loc0 position has components=%u (a 3/4-component xyz "
+                                    u8"channel is required); not drawn",
+                                    position_attr->components));
+            return false;
+        }
+        if (unpack == XyzUnpack::NotDivisible) {
+            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+                   formatDiagnostic(u8"loc0 position holds %zu floats, not divisible by its "
+                                    u8"components=%u stride; not drawn",
+                                    position_attr->floatCount(), position_attr->components));
+            return false;
+        }
+        if (out_unpacked.empty()) {
+            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::GeometryRejected,
+                   u8"geometry loc0 position attribute is empty; not drawn");
+            return false;
+        }
+        out_positions = out_unpacked;
+
+        auto typed = ::vsg::vec3Array::create(static_cast<uint32_t>(out_positions.size()));
+        for (std::size_t i = 0; i < out_positions.size(); ++i) {
+            const auto& v = out_positions[i];
+            (*typed)[i]   = ::vsg::vec3(v.x, v.y, v.z);
+        }
+        out.array = typed;
+    }
+
+    // The fallback channels are sized by the vertex count, so a mesh whose count changed must not reuse the
+    // arrays that were built for the previous size (the derived normals carry their own count in the key).
+    if (derived.count != out_positions.size()) {
+        derived.count          = out_positions.size();
+        derived.white_colors   = {};
+        derived.zero_texcoords = {};
+    }
+    return true;
+}
+
+SceneBridge::CanonicalStream SceneBridge::buildNormalStream(const vine::graphics::Geometry& geometry,
+                                                            std::span<const vine::math::Vec3f> positions,
+                                                            const ::vsg::uintArray& indices, bool indexed,
+                                                            bool is_triangles, DerivedChannels& derived)
+{
+    const std::size_t vertex_count = positions.size();
+
+    // Optional normals: when the channel is missing or unusable (bad stride or non-divisible length) it is
+    // reported and treated as absent; the normals are then derived (Triangles) or defaulted (Points / Lines)
+    // below. An authored channel in the layout loc1 binds is read from the model's memory, like the
+    // positions — no copy of it either. A bad OPTIONAL channel must not reject an otherwise drawable mesh.
+    vine::geometry::Vec3fArray         unpacked_normals;
+    std::span<const vine::math::Vec3f> src_normals;
+    // Set only when the channel already IS the layout loc1 binds (three components per vertex): that is
+    // the case the binding can alias instead of copying. A vec4 channel is unpacked above and used from
+    // that copy, since aliasing it would need a stride the array's element type does not have.
+    const vine::graphics::AttributeChannel* authored_normals = nullptr;
+    if (const auto* normal_attr = geometry.buffer(attributeLocation(vine::graphics::VertexAttribute::Normal));
+        normal_attr != nullptr && !normal_attr->empty()) {
+        const std::span<const vine::math::Vec3f> authored = normal_attr->vec3View();
+        if (authored.size() == vertex_count) {
+            src_normals      = authored;
+            authored_normals = normal_attr;
+        } else if (const XyzUnpack unpack = unpackXyz(*normal_attr, unpacked_normals); unpack != XyzUnpack::Ok) {
+            unpacked_normals.clear();
+            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
+                   ignoredNormalChannelMessage(*normal_attr, unpack));
+        } else {
+            src_normals = unpacked_normals;
+        }
+    }
+
+    // Points / lines have no surface to derive normals from: authored normals
+    // (one per vertex) are used when present, otherwise a constant +Z normal.
+    const auto non_triangle_normals = [&]() -> ::vsg::ref_ptr<::vsg::vec3Array> {
+        auto out = ::vsg::vec3Array::create(static_cast<uint32_t>(vertex_count));
+        const bool authored = src_normals.size() == vertex_count;
+        for (std::size_t v = 0; v < vertex_count; ++v) {
+            (*out)[v] = authored
+                            ? ::vsg::vec3(src_normals[v].x, src_normals[v].y, src_normals[v].z)
+                            : ::vsg::vec3(0.0f, 0.0f, 1.0f);
+        }
+        return out;
+    };
+
     // Normals: an authored loc1 channel in the layout loc1 binds is aliased from the model's memory — the
     // verbatim copy makeNormals / makeIndexedNormals would build for it is exactly those floats. Anything
     // else is derived (Triangles) or defaulted (Points / Lines, which have no surface to derive from).
-    ::vsg::ref_ptr<::vsg::vec3Array> normals;
-    // Set only when the bound array IS the model's bytes (the case a shared bind may serve).
-    const vine::graphics::AttributeChannel* aliased_normals = nullptr;
+    CanonicalStream out;
     if (authored_normals != nullptr) {
-        normals = aliasArray<::vsg::vec3Array, float>(authored_normals->values, vertex_count,
-                                                      authored_normals->offset);
-        aliased_normals         = authored_normals;
+        out.array               = aliasArray<::vsg::vec3Array, float>(authored_normals->values, vertex_count,
+                                                                      authored_normals->offset);
+        out.aliased             = authored_normals;
         derived.derived_normals = {};
     }
     else if (is_triangles) {
@@ -349,15 +376,16 @@ namespace
         // computed from: same positions buffer, same index buffer, same revisions. An edit that left those
         // alone (a custom channel re-packed, a colour swapped) then does not pay for the derivation again —
         // the rebuild is what costs, not the reason for it.
-        const vine::Buffer<float>* const         positions_buffer = position_attr->values.get();
-        const vine::Buffer<std::uint32_t>* const indices_buffer   = indexed ? geometry->indicesBuffer().get() : nullptr;
+        const vine::Buffer<float>* const         positions_buffer = geometry.buffer(
+            attributeLocation(vine::graphics::VertexAttribute::Position))->values.get();
+        const vine::Buffer<std::uint32_t>* const indices_buffer   = indexed ? geometry.indicesBuffer().get() : nullptr;
         const std::uint64_t positions_revision = positions_buffer != nullptr ? positions_buffer->revision() : 0u;
         const std::uint64_t indices_revision   = indices_buffer != nullptr ? indices_buffer->revision() : 0u;
         // The SLICES belong to the identity: one arena holds several geometries' vertices and indices, so the
         // same buffers at different offsets are different inputs and derive different normals.
-        const std::size_t positions_offset = position_attr->offset;
-        const std::size_t indices_first    = indexed ? geometry->firstIndex() : 0u;
-        const std::size_t indices_count    = indexed ? geometry->indexCount() : 0u;
+        const std::size_t positions_offset = geometry.buffer(attributeLocation(vine::graphics::VertexAttribute::Position))->offset;
+        const std::size_t indices_first    = indexed ? geometry.firstIndex() : 0u;
+        const std::size_t indices_count    = indexed ? geometry.indexCount() : 0u;
 
         const bool reusable = derived.derived_normals != nullptr && derived.normal_vertex_count == vertex_count &&
                               derived.normal_positions == positions_buffer &&
@@ -368,27 +396,35 @@ namespace
                               derived.normal_indices_first == indices_first &&
                               derived.normal_indices_count == indices_count;
         if (reusable) {
-            normals = derived.derived_normals;
+            out.array = derived.derived_normals;
         }
         else {
-            normals = indexed ? makeIndexedNormals(positions, src_normals, *indices)
-                              : makeNormals(positions, src_normals);
-            derived.derived_normals          = normals;
-            derived.normal_positions         = positions_buffer;
+            // Kept in the array's own type, because the derived cache is keyed on it (the reuse check
+            // above compares the streams it was derived FROM, and a Data-typed member would lose that).
+            ::vsg::ref_ptr<::vsg::vec3Array> fresh =
+                indexed ? makeIndexedNormals(positions, src_normals, indices) : makeNormals(positions, src_normals);
+            derived.derived_normals           = fresh;
+            derived.normal_positions          = positions_buffer;
             derived.normal_positions_revision = positions_revision;
-            derived.normal_positions_offset  = positions_offset;
-            derived.normal_indices           = indices_buffer;
-            derived.normal_indices_revision  = indices_revision;
-            derived.normal_indices_first     = indices_first;
-            derived.normal_indices_count     = indices_count;
-            derived.normal_vertex_count      = vertex_count;
+            derived.normal_positions_offset   = positions_offset;
+            derived.normal_indices            = indices_buffer;
+            derived.normal_indices_revision   = indices_revision;
+            derived.normal_indices_first      = indices_first;
+            derived.normal_indices_count      = indices_count;
+            derived.normal_vertex_count       = vertex_count;
+            out.array                         = fresh;
         }
     }
     else {
-        normals = non_triangle_normals();
+        out.array               = non_triangle_normals();
         derived.derived_normals = {};
     }
+    return out;
+}
 
+SceneBridge::CanonicalStream SceneBridge::buildColorStream(const vine::graphics::Geometry& geometry,
+                                                           std::size_t vertex_count, DerivedChannels& derived)
+{
     // vine_Color (binding 3). An authored loc2 channel — when present and well-formed — is bound VERBATIM
     // as vine_Color; nothing overrides it, because nothing else carries opacity: a per-drawable value rides
     // the `vine_draw` block (the shader reads the fragment opacity from set 1), so an authored colour is
@@ -396,29 +432,34 @@ namespace
     //
     // The array is emitted either way: the canonical binding ORDER is what the custom channels after it
     // depend on (see buildGeometryData's contract).
-    ::vsg::ref_ptr<::vsg::vec4Array> colors;
+    CanonicalStream out;
     // Four components alias the model's bytes verbatim; three are packed, which is per-geometry work and
     // therefore not shared.
-    const vine::graphics::AttributeChannel* aliased_colors = nullptr;
-    if (const auto* loc2 = geometry->buffer(2); loc2 != nullptr && !loc2->empty()) {
-        colors = packColor4(*loc2, vertex_count);
-        if (colors != nullptr && loc2->components == 4u) {
-            aliased_colors = loc2;
+    if (const auto* loc2 = geometry.buffer(2); loc2 != nullptr && !loc2->empty()) {
+        out.array = packColor4(*loc2, vertex_count);
+        if (out.array != nullptr && loc2->components == 4u) {
+            out.aliased = loc2;
         }
-        if (colors == nullptr) {
+        if (out.array == nullptr) {
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
                    u8"loc2 colour channel is unusable (3/4 components, one per "
                    u8"vertex required); falling back to white");
         }
     }
-    if (colors == nullptr) {
+    if (out.array == nullptr) {
         // Nothing authored: the white fallback. Built once per vertex count instead of once per rebuild —
         // its bytes are a function of the count alone.
         if (derived.white_colors == nullptr) {
             derived.white_colors = makeWhiteColors(vertex_count);
         }
-        colors = derived.white_colors;
+        out.array = derived.white_colors;
     }
+    return out;
+}
+
+SceneBridge::CanonicalStream SceneBridge::buildTexCoordStream(const vine::graphics::Geometry& geometry,
+                                                              std::size_t vertex_count, DerivedChannels& derived)
+{
     // Texture coordinates: the slot carries a UV pair (a 2-D map) or a direction (a cube map), and the
     // array states which — see texCoordArray, which owns that decision for the builder and the in-place
     // refresh alike. The channel itself lives at the module's canonical source location
@@ -426,49 +467,43 @@ namespace
     // binding order is fixed and the custom channels below keep their indices whether or not this mesh has
     // UVs. A mesh without a usable channel binds zeros, which is what "no UVs" means: every fragment
     // samples the same texel.
-    ::vsg::ref_ptr<::vsg::Data>             texcoords;
-    const vine::graphics::AttributeChannel* aliased_texcoords = nullptr;
-    if (const auto* uv_channel = geometry->buffer(vine::graphics::Geometry::kTexCoordLocation);
+    CanonicalStream out;
+    if (const auto* uv_channel = geometry.buffer(vine::graphics::Geometry::kTexCoordLocation);
         uv_channel != nullptr && !uv_channel->empty()) {
-        texcoords = texCoordArray(*uv_channel, vertex_count);
-        if (texcoords != nullptr) {
-            aliased_texcoords = uv_channel;
+        out.array = texCoordArray(*uv_channel, vertex_count);
+        if (out.array != nullptr) {
+            out.aliased = uv_channel;
         }
-        if (texcoords == nullptr) {
+        if (out.array == nullptr) {
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
                    u8"texture coordinate channel is unusable (2 or 3 components per vertex, covering every "
                    u8"vertex, required); zero UVs are used instead");
         }
     }
-    if (texcoords == nullptr) {
+    if (out.array == nullptr) {
         // Same reuse as the white carrier: the zero array is a function of the vertex count alone.
         if (derived.zero_texcoords == nullptr) {
             derived.zero_texcoords = makeZeroTexcoords(vertex_count);
         }
-        texcoords = derived.zero_texcoords;
+        out.array = derived.zero_texcoords;
     }
-    // The bound vertex data follows the module's CANONICAL vertex binding order:
-    //
-    //   0 = vine_Vertex   1 = vine_Normal   2 = vine_TexCoord0   3 = vine_Color   4+ = custom
-    //
-    // vsg numbers a vertex input binding by the order assignArray() succeeds (it
-    // pushes the array and advances its binding counter), and a ShaderSet that
-    // does not declare a name SKIPS it — so a gap in the prefix would shift every
-    // later binding and quietly feed one attribute the next one's data. Both
-    // shader sets therefore declare the whole prefix in this order, and this list
-    // matches it exactly. The tail is the superset of custom channels (location
-    // >= 3, except the canonical texcoord location) in ascending location order:
-    // a ShaderSet that does not declare them simply ignores the extra buffers, so
-    // switching a geometry between the built-in pipeline and a custom program
-    // never re-uploads the mesh (only the state wrapper is rebuilt). A malformed
-    // custom channel (bad component count, non-divisible or count-mismatched
-    // payload) is reported and skipped — it must not misread or reject the mesh.
+    return out;
+}
+
+::vsg::DataList SceneBridge::collectCustomChannels(const vine::graphics::Geometry& geometry, std::size_t vertex_count,
+                                                   std::vector<VertexChannel>& extra_channels)
+{
+    // The tail is the superset of custom channels (location >= 3, except the canonical texcoord location) in
+    // ascending location order: a ShaderSet that does not declare them simply ignores the extra buffers, so
+    // switching a geometry between the built-in pipeline and a custom program never re-uploads the mesh (only
+    // the state wrapper is rebuilt). A malformed custom channel (bad component count, non-divisible or
+    // count-mismatched payload) is reported and skipped — it must not misread or reject the mesh.
     ::vsg::DataList custom_arrays;
-    for (const std::uint32_t location : geometry->bufferLocations()) {
+    for (const std::uint32_t location : geometry.bufferLocations()) {
         if (vine::graphics::isCanonicalAttributeLocation(location)) {
-            continue; // canonical position / normal / colour / texcoord handled above
+            continue; // canonical position / normal / colour / texcoord handled by the canonical stages
         }
-        const auto* attr = geometry->buffer(location);
+        const auto* attr = geometry.buffer(location);
         if (attr == nullptr || attr->empty()) {
             continue;
         }
@@ -483,7 +518,15 @@ namespace
         custom_arrays.push_back(aliasTypedVertexData(comps, attr->values, vertex_count, attr->offset));
         extra_channels.push_back(VertexChannel{ location, comps });
     }
+    return custom_arrays;
+}
 
+::vsg::ref_ptr<::vsg::Commands> SceneBridge::assembleDrawCommands(
+    const vine::graphics::Geometry& geometry, const std::array<CanonicalStream, RetainedBinds::kCanonicalCount>& canonical,
+    const ::vsg::DataList& custom_arrays, const ::vsg::ref_ptr<::vsg::uintArray>& indices, std::size_t drawn_first_index,
+    std::size_t drawn_index_count, bool indexed, vine::raw_ptr<VsgMeshResourceCache> mesh_cache,
+    RetainedBinds& out_binds)
+{
     // NOTE: manual geometry must use explicit bind/draw commands, NOT a
     // manually-assembled VertexIndexDraw, or nothing is rasterized (same
     // finding as VsgRenderer::makeRawDemoNode).
@@ -503,32 +546,30 @@ namespace
     // geometry reading that stream shares one bind — and therefore one device buffer and one upload. The
     // channels this builder BUILDS (the white opacity carrier, zero UVs, derived normals) are per-geometry by
     // nature: the carrier even carries this drawable's opacity, so it can never be shared.
-    const auto bind_channel = [&](std::size_t                            canonical_index,
-                                  ::vsg::ref_ptr<::vsg::Data>            array,
-                                  const vine::graphics::AttributeChannel* aliased) {
+    const auto bind_channel = [&](std::size_t canonical_index, const CanonicalStream& stream) {
         const auto binding = static_cast<std::uint32_t>(canonical_index);
-        if (mesh_cache != nullptr && aliased != nullptr && aliased->values != nullptr) {
+        if (mesh_cache != nullptr && stream.aliased != nullptr && stream.aliased->values != nullptr) {
             VsgMeshResourceCache::ChannelKey key;
             key.binding    = binding;
-            key.components = aliased->components;
-            key.buffer     = aliased->values.get();
-            key.revision   = aliased->values->revision();
-            key.offset     = aliased->offset;
-            key.count      = aliased->floatCount();
-            out_binds.canonical[canonical_index]        = mesh_cache->getOrCreateVertexBind(key, array);
+            key.components = stream.aliased->components;
+            key.buffer     = stream.aliased->values.get();
+            key.revision   = stream.aliased->values->revision();
+            key.offset     = stream.aliased->offset;
+            key.count      = stream.aliased->floatCount();
+            out_binds.canonical[canonical_index]        = mesh_cache->getOrCreateVertexBind(key, stream.array);
             out_binds.canonical_shared[canonical_index] = true;
         }
         else {
             out_binds.canonical[canonical_index] =
-                ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ array });
+                ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ stream.array });
         }
         out_binds.canonical_child[canonical_index] = drawCommands->children.size();
         drawCommands->addChild(out_binds.canonical[canonical_index]);
     };
-    bind_channel(0u, vertices, aliased_positions);
-    bind_channel(1u, normals, aliased_normals);
-    bind_channel(2u, texcoords, aliased_texcoords);
-    bind_channel(3u, colors, aliased_colors);
+    bind_channel(0u, canonical[0]);
+    bind_channel(1u, canonical[1]);
+    bind_channel(2u, canonical[2]);
+    bind_channel(3u, canonical[3]);
     if (!custom_arrays.empty()) {
         // The custom channels share ONE command: a change in their set or shape is a layout change (the
         // state wrapper is rebuilt for it), and refreshing one of several arrays in a shared command would
@@ -536,10 +577,10 @@ namespace
         drawCommands->addChild(::vsg::BindVertexBuffers::create(
             static_cast<std::uint32_t>(RetainedBinds::kCanonicalCount), custom_arrays));
     }
-    if (mesh_cache != nullptr && indexed && geometry->indicesBuffer() != nullptr) {
+    if (mesh_cache != nullptr && indexed && geometry.indicesBuffer() != nullptr) {
         // Keyed on the WHOLE buffer, which is what the bind aliases (see indexBindKeyOf): every geometry
         // slicing one index arena therefore resolves to one entry and shares one index upload.
-        const auto key         = indexBindKeyOf(*geometry);
+        const auto key         = indexBindKeyOf(geometry);
         out_binds.index        = mesh_cache->getOrCreateIndexBind(key, indices);
         out_binds.index_shared = true;
     }

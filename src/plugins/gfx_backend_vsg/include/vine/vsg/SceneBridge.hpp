@@ -717,6 +717,224 @@ class V_VSG_API SceneBridge {
         RetainedBinds& out_binds,
         vine::raw_ptr<VsgMeshResourceCache> mesh_cache);
 
+    /** @brief The array one canonical vertex binding reads, and the model channel it aliases.
+     *
+     * @p aliased is null when the array was BUILT here (the white colour carrier, the zero UVs, derived
+     * normals, a packed colour) rather than being a verbatim view of a model buffer — which is also
+     * what decides whether the bind may be served from the shared cache (see VsgMeshResourceCache).
+     */
+    struct CanonicalStream
+    {
+        ::vsg::ref_ptr<::vsg::Data>             array;   ///< The array the binding reads.
+        const vine::graphics::AttributeChannel* aliased = nullptr; ///< The model channel it views, or null.
+    };
+
+    /** @brief Builds the loc0 (positions) stream, or reports why the geometry cannot be drawn.
+     *
+     * The one stage that can REJECT the geometry: location 0 is mandatory, and a channel that is neither
+     * three scalars per vertex nor a whole number of xyz elements is refused with the reason (rather than
+     * drawn wrong). Every other stream falls back.
+     *
+     * @param geometry      Geometry to read.
+     * @param out           Receives the array and, when it views the model, the channel it views.
+     * @param out_positions Receives the positions as the CPU sees them (the model's own scalars, or the
+     *                      unpacked copy held by @p out_unpacked).
+     * @param out_unpacked  Storage the unpacked copy lives in: it has to outlive every later stage that
+     *                      reads @p out_positions (the derivation of normals does), so the CALLER owns it
+     *                      rather than this function.
+     * @param derived       Derived-channel cache: the fallbacks are sized by the vertex count, so a mesh
+     *                      whose count changed drops the ones built for the previous size.
+     * @return true when the stream was built (false = reported and the geometry is not drawable).
+     */
+    bool buildPositionStream(const vine::graphics::Geometry& geometry, CanonicalStream& out,
+                             std::span<const vine::math::Vec3f>& out_positions,
+                             vine::geometry::Vec3fArray& out_unpacked, DerivedChannels& derived);
+
+    /** @brief Builds the loc1 (normals) stream: authored, derived (Triangles) or defaulted.
+     *
+     * A bad optional channel is REPORTED and treated as absent (it must not reject an otherwise drawable
+     * mesh), and a derived channel is reused verbatim while the streams it was derived from are the ones
+     * it was derived from.
+     *
+     * @param geometry     Geometry to read.
+     * @param positions    Positions as the CPU sees them (normal derivation input).
+     * @param indices      Index stream of this build.
+     * @param indexed      Whether @p indices came from the model (drives indexed derivation).
+     * @param is_triangles Whether the topology has a surface to derive from.
+     * @param derived      Derived-channel cache (read for reuse, written for a fresh derivation).
+     * @return The stream the loc1 binding reads.
+     */
+    CanonicalStream buildNormalStream(const vine::graphics::Geometry& geometry,
+                                      std::span<const vine::math::Vec3f> positions, const ::vsg::uintArray& indices,
+                                      bool indexed, bool is_triangles, DerivedChannels& derived);
+
+    /** @brief Builds the loc2 (colour) stream: the authored channel verbatim, or the white carrier.
+     *
+     * @param geometry     Geometry to read.
+     * @param vertex_count Vertices the mesh holds (the fallback is sized by it).
+     * @param derived      Derived-channel cache (holds the white carrier).
+     * @return The stream the loc2 binding reads.
+     */
+    CanonicalStream buildColorStream(const vine::graphics::Geometry& geometry, std::size_t vertex_count,
+                                     DerivedChannels& derived);
+
+    /** @brief Builds the texture-coordinate stream: a UV pair or a direction, or zeros.
+     *
+     * The array states which of the two it is (see detail::texCoordArray), and it is emitted whether or
+     * not the mesh authors one, because the canonical binding ORDER is what the custom channels after it
+     * depend on.
+     *
+     * @param geometry     Geometry to read.
+     * @param vertex_count Vertices the mesh holds (the zero fallback is sized by it).
+     * @param derived      Derived-channel cache (holds the zero UVs).
+     * @return The stream the texcoord binding reads.
+     */
+    CanonicalStream buildTexCoordStream(const vine::graphics::Geometry& geometry, std::size_t vertex_count,
+                                        DerivedChannels& derived);
+
+    /** @brief Collects the forwarded custom channels (locations >= 3) in ascending location order.
+     *
+     * A malformed channel is reported and SKIPPED: it must not misread the mesh, and it must not reject a
+     * mesh the rest of which is drawable.
+     *
+     * @param geometry       Geometry to walk.
+     * @param vertex_count   Vertices the mesh holds (a channel must cover them).
+     * @param extra_channels Receives one entry per accepted channel, in binding order.
+     * @return The arrays to bind after the canonical prefix.
+     */
+    ::vsg::DataList collectCustomChannels(const vine::graphics::Geometry& geometry, std::size_t vertex_count,
+                                          std::vector<VertexChannel>& extra_channels);
+
+    /** @brief Assembles the per-channel binds, the index bind and the draw command.
+     *
+     * One BindVertexBuffers PER CHANNEL, each stating its own firstBinding: vsg re-creates and re-copies
+     * every array of a command whose any array is stale, so one command could only ever re-upload the
+     * whole mesh (see RetainedBinds). The child ORDER is the binding order, which is why a refresh swaps a
+     * bind in place rather than rebuilding the list.
+     *
+     * @param geometry          Geometry the commands are built for (index-bind keying and the nil checks).
+     * @param canonical         The four canonical streams, in binding order 0..3.
+     * @param custom_arrays     Arrays bound after the canonical prefix (one shared command for all of them).
+     * @param indices           The index stream to bind.
+     * @param drawn_first_index First index the draw states (a slice of a shared buffer).
+     * @param drawn_index_count Indices the draw states.
+     * @param indexed           Whether the model supplied the indices (decides bind sharing).
+     * @param mesh_cache        Cache for the streams whose bytes are the model's own (null builds privately).
+     * @param out_binds         Receives the binds, so a later edit can refresh one channel in place.
+     * @return The data commands node.
+     */
+    ::vsg::ref_ptr<::vsg::Commands> assembleDrawCommands(
+        const vine::graphics::Geometry& geometry,
+        const std::array<CanonicalStream, RetainedBinds::kCanonicalCount>& canonical,
+        const ::vsg::DataList& custom_arrays, const ::vsg::ref_ptr<::vsg::uintArray>& indices,
+        std::size_t drawn_first_index, std::size_t drawn_index_count, bool indexed,
+        vine::raw_ptr<VsgMeshResourceCache> mesh_cache, RetainedBinds& out_binds);
+
+    /** @brief What the variant being built will sample, and which canonical attributes it feeds.
+     *
+     * One value rather than five locals because the two decisions are entangled: the UV attribute and
+     * the sampler share `VINE_DIFFUSE_MAP`, so dropping one drops the other, and the texcoord width
+     * selects the sampler KIND — which belongs to the variant identity for the same reason the drops do.
+     */
+    struct VariantSampling
+    {
+        ::vsg::ref_ptr<::vsg::ImageInfo> info;  ///< The resource the diffuse descriptor binds.
+        /// Why the material's own texture is not @ref info (Ok = it is; Absent = it has none).
+        detail::TextureReject reason = detail::TextureReject::Absent;
+        bool        forward_set = false;             ///< Our own forward set (the one that can drop attributes).
+        bool        drop_color  = false;             ///< The derived white carrier is not fed.
+        bool        drop_uv     = false;             ///< The zero UVs (and with them the sampler) are not fed.
+        bool        three_scalar_texcoords = false;  ///< The width the data node bound at the texcoord slot.
+        const char* kind_define = nullptr;           ///< The sampler-kind define this variant compiles with.
+    };
+
+    /** @brief Gets the ShaderSet this drawable is shaded with, or reports that there is none.
+     *
+     * A program's own set (per (program, vertex layout)) wins; the slot's set is the fallback. A slot
+     * with no set at all is reported ONCE PER BRIDGE and returns null, which the caller turns into "not
+     * drawn" — shading it with something else would put a picture on screen the host did not ask for.
+     *
+     * @param program        User program, or null for the slot's own set.
+     * @param extra_channels Custom channels the set must declare (part of the set's identity).
+     * @return The set to build the pipeline from, or null when this drawable cannot be shaded.
+     */
+    ::vsg::ref_ptr<::vsg::ShaderSet> shadingSetFor(vine::raw_ptr<const vine::graphics::ShaderProgram> program,
+                                                  const std::vector<VertexChannel>& extra_channels);
+
+    /** @brief Decides what the variant samples and which canonical attributes it feeds.
+     *
+     * Resolves the material's texture first (the descriptor binds the RESOLVED resource, so the variant
+     * key must be computed from it), reports an unusable one once per variant build, decides whether the
+     * DERIVED colour / UV arrays may be dropped, and picks the sampler kind the pipeline compiles with —
+     * substituting the kind's own white fallback when the material's texture is of the other kind, which
+     * costs the map rather than the drawable.
+     *
+     * @param texture    Material's texture (may be null).
+     * @param arrays     Vertex arrays the data node bound, in binding order. IN/OUT: the entries the
+     *                   variant does not feed are CLEARED here, because the assignment stage that runs
+     *                   next reads the same list (a dropped array must not be assigned).
+     * @param shaderSet  Set the pipeline is built from (decides whether a program handed the kind rule).
+     * @param program    User program, or null for our forward set.
+     * @param derived    Channels the data builder derived, or null when the caller cannot say.
+     * @return The decision, as one value.
+     */
+    VariantSampling resolveVariantSampling(vine::raw_ptr<const vine::graphics::Texture> texture, ::vsg::DataList& arrays,
+                                           const ::vsg::ShaderSet& shaderSet,
+                                           vine::raw_ptr<const vine::graphics::ShaderProgram> program,
+                                           const DerivedChannels* derived);
+
+    /** @brief Registers the vertex arrays and the set-0 descriptors the pipeline is built from.
+     *
+     * Every canonical role is matched by NAME (that is how vsg matches an array against a ShaderSet),
+     * and a declared name an array could not match is REPORTED: the drawable would otherwise read an
+     * attribute the pipeline never enables — a degenerate picture with a clean validation log, which is
+     * the failure mode this report exists to make visible.
+     *
+     * @param config         Configurator assembling the pipeline.
+     * @param shaderSet      Set whose declared bindings the arrays are matched against.
+     * @param arrays         Vertex arrays in binding order (entries dropped by @p sampling are null).
+     * @param extra_channels Custom channels, bound after the canonical prefix by name.
+     * @param material_data  The material's uniform bytes.
+     * @param sampling       What the variant samples (decides whether the sampler is assigned at all).
+     */
+    void assignVariantBindings(::vsg::GraphicsPipelineConfigurator& config, ::vsg::ShaderSet& shaderSet,
+                               const ::vsg::DataList& arrays, const std::vector<VertexChannel>& extra_channels,
+                               ::vsg::ref_ptr<::vsg::Data> material_data, const VariantSampling& sampling);
+
+    /** @brief Registers the descriptors the SLOT provides (lights, shadow map and shadow block).
+     *
+     * Each is assigned only when the set declares it: a binding nothing declares must not appear in the
+     * pipeline layout, and a declared-but-unwritten descriptor is an invalid set rather than a harmless
+     * one. A program that shades a drawable whose pass declared a shadow but never reads the map is
+     * reported here (once per variant, not once per frame).
+     *
+     * @param config    Configurator assembling the pipeline.
+     * @param shaderSet Set whose declared bindings decide what is registered.
+     * @param program   User program, or null when the slot's own set shades the drawable.
+     */
+    void assignSlotDescriptors(::vsg::GraphicsPipelineConfigurator& config, ::vsg::ShaderSet& shaderSet,
+                               vine::raw_ptr<const vine::graphics::ShaderProgram> program);
+
+    /** @brief Caches a built variant's reusable pieces for later identical geometry.
+     *
+     * The entry owns both key objects (see OwnedPairCacheEntry), so a released program or material
+     * cannot be replaced at the same address while the template it keyed is cached. Growth is bounded
+     * by the same FIFO trim the geometry and material caches use; the prompt half (an entry whose
+     * program AND material the app released) is releaseAbandonedCaches().
+     *
+     * @param hash_key        Variant key the entry is stored under.
+     * @param program         Key object 1 (may be null).
+     * @param material        Key object 2 (may be null).
+     * @param state           Resolved state the template was built for.
+     * @param layout          Vertex-layout hash (custom channels + the sampling decisions).
+     * @param state_group     Wrapper the reusable state commands are read from.
+     * @param pipeline_layout The variant's pipeline layout (what a reuse binds the per-draw block with).
+     */
+    void cacheStateVariant(std::uint64_t hash_key, vine::raw_ptr<const vine::graphics::ShaderProgram> program,
+                           vine::raw_ptr<vine::graphics::Material> material,
+                           const vine::graphics::ResolvedRenderState& state, std::uint64_t layout,
+                           const ::vsg::StateGroup& state_group, ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout);
+
     /** @brief Builds (or rebuilds) the state wrapper around a data node.
      *
      * The wrapper is a vsg::StateGroup carrying the pipeline + descriptor-set
@@ -786,6 +1004,113 @@ class V_VSG_API SceneBridge {
      * @return The active material manager (always non-null).
      */
     VsgMaterialManager& materialManager();
+
+    /** @brief Reserves the item's per-draw block slot when it needs one, or says why it could not.
+     *
+     * The slot is what a translucent drawable's opacity costs per frame (four bytes written in place),
+     * and its offset is what the item's state wrapper binds, so it is reserved with the ITEM rather
+     * than with either node: a data rebuild must not lose it, and both nodes may come and go.
+     *
+     * Only the bridge's OWN forward set reads the block — the built-in fallback carries opacity in the
+     * vertex colour — so a bridge without that set needs no slot at all.
+     *
+     * A refusal is not "draw it without the block": the shader would read zeros, scale the fragment
+     * alpha by 0 and the drawable would silently vanish, so the failure is REPORTED and the caller
+     * drops the drawable for this frame.
+     *
+     * @param item Item to give a slot to.
+     * @return true when the item can be drawn (it has a slot, or needs none).
+     */
+    bool reserveDrawSlot(Item& item);
+
+    /** @brief Refreshes the streams whose bytes changed, leaving the retained nodes where they are.
+     *
+     * The cheap half of a data edit: each channel has its own bind command, so a stream that changed
+     * bytes is served by re-pointing (or swapping in) that one bind, and vsg re-creates and copies
+     * exactly that channel instead of the whole mesh. The index stream takes the same path — it is one
+     * more channel — but only while the SPAN it draws does not change, because the span lives in the
+     * draw command, which only a rebuild rewrites.
+     *
+     * The refresh has to be EXPLAINED by the stream identities: a revision none of them accounts for
+     * (a buffer mutated in place without bumping its own revision) must not be answered with "nothing
+     * to do", so it returns false and the caller re-reads the model instead.
+     *
+     * @param geometry Geometry whose streams to check.
+     * @param item     Item holding the retained node, the binds and the identities to compare against.
+     * @param state    Resolved render state of this frame (its topology drives normal derivation).
+     * @param keys_now Channel identities as the geometry is NOW.
+     * @param index_now Index stream identity as the geometry is NOW.
+     * @return true when the changed streams were refreshed in place (false = the caller must rebuild).
+     */
+    bool refreshChangedStreams(const vine::graphics::Geometry& geometry, Item& item,
+                               const vine::graphics::ResolvedRenderState& state,
+                               const std::vector<ChannelKey>& keys_now, const ChannelKey& index_now);
+
+    /** @brief Re-materialises the item's data node from the geometry.
+     *
+     * The expensive half: a fresh node built from the model, with the previous one parked (its buffers
+     * may still be in flight) and its binds replaced. The item's channel/index identities are taken
+     * over, so the next revision can tell which streams changed — and only the streams a rebuild can
+     * ACCOUNT for are served from the shared-bind cache.
+     *
+     * A geometry the builder refuses (unusable strides, out-of-range indices) is RECORDED once per
+     * revision: the item keeps its per-draw slot, loses the wrapper that no longer has data to wrap,
+     * and costs one lookup per frame instead of a rebuild per frame.
+     *
+     * @param geometry Geometry to materialise.
+     * @param item     Item to rebuild (its data node, binds and identities are replaced).
+     * @param state    Resolved render state of this frame.
+     * @param keys_now Channel identities as the geometry is NOW (moved into the item).
+     * @param index_now Index identity as the geometry is NOW.
+     * @return true when the data node was built, false when the geometry was refused (recorded).
+     */
+    bool rebuildDataNode(const vine::graphics::Geometry& geometry, Item& item,
+                         const vine::graphics::ResolvedRenderState& state, std::vector<ChannelKey>& keys_now,
+                         const ChannelKey& index_now);
+
+    /** @brief Builds the item's state wrapper, or records that the attempt failed.
+     *
+     * The wrapper carries the pipeline and the descriptor binds, so it is rebuilt whenever one of its
+     * inputs changed, whenever the forwarded channel SET changed (its per-layout shader set follows the
+     * bound arrays), and whenever it is missing while no failure is recorded for the current identity —
+     * which is what makes a pass' depth-policy flip reach a wrapper whose inputs compare equal (see
+     * invalidateState).
+     *
+     * On failure the item KEEPS its data node and its per-draw slot, and the attempt is recorded: the
+     * next frame skips it until something real changes, so a drawable the backend cannot build costs a
+     * lookup per frame instead of a rebuilt subtree per frame.
+     *
+     * @param item Item to rebuild the wrapper of.
+     * @return true when a wrapper was built (false = recorded failure, nothing to draw).
+     */
+    bool rebuildStateWrapper(Item& item);
+
+    /** @brief Puts the item's current nodes into the retained subtree.
+     *
+     * The retained shape is fixed — transform -> state wrapper -> data node — and the children are only
+     * touched when they do NOT already hold the current pair, so a steady frame writes nothing. The
+     * transform is created on first sight; a rebuild of either node reuses it, which is what keeps a
+     * material or data edit from moving the drawable.
+     *
+     * @param item     Item whose nodes to attach.
+     * @param had_node Whether the item already had a retained subtree before this frame.
+     */
+    void attachRetainedNodes(Item& item, bool had_node);
+
+    /** @brief Writes the frame's per-drawable values into the item's nodes.
+     *
+     * Opacity and placement are VALUES, never part of any identity: the opacity goes into the pooled
+     * per-draw block and the placement into the item's transform, each only when it differs from what
+     * the item last wrote (an unchanged value costs one comparison; a moved camera costs one store per
+     * drawable).
+     *
+     * @param item         Item to write into.
+     * @param cmd          Command carrying this frame's opacity.
+     * @param world        World matrix of this draw.
+     * @param matrix_moved Whether @p world differs from the one the item last wrote.
+     */
+    void writePerDrawValues(Item& item, const vine::graphics::RenderCommand& cmd, const ::vsg::dmat4& world,
+                            bool matrix_moved);
 
     /** @brief Gets the cache that uploads the textures the scene samples.
      *

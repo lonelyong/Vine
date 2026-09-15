@@ -596,23 +596,9 @@ bool SceneBridge::syncRenderCommands(
                                         std::move(entry), 0u))
                      .first;
             changed = true;
-            // The drawable's per-draw block slot is reserved here, with the item: the
-            // wrapper built below binds its offset, so it has to exist first. Only OUR
-            // forward set reads the block — the built-in fallback carries opacity in the
-            // vertex colour — so only that set takes a slot. A pool that cannot provide one
-            // is an OUT-OF-MEMORY failure, and drawing without a block would read zeros (the
-            // shader would scale the fragment alpha by 0 and the drawable would silently
-            // vanish), so it is reported and the drawable skipped.
-            if (forward_draw_block_ && !item->draw_slot.valid() && draw_block_pool_ != nullptr) {
-                item->draw_slot = draw_block_pool_->acquire();
-                if (!item->draw_slot.valid()) {
-                    report(vine::graphics::DiagnosticSeverity::Error,
-                           vine::graphics::DiagnosticCategory::ContentSkipped,
-                           u8"the per-draw block pool could not provide a slot (out of device memory); the "
-                           u8"drawable is dropped this frame");
-                    cache_.erase(it);
-                    continue;
-                }
+            if (!reserveDrawSlot(*item)) {
+                cache_.erase(it);
+                continue;
             }
         }
         item = it->second.payload().get();
@@ -707,183 +693,19 @@ bool SceneBridge::syncRenderCommands(
             // The identity of everything the retained node reads, computed BEFORE deciding how to react: an
             // edit that left every vertex channel alone needs only the index stream replaced (see below),
             // while anything else needs the whole node re-materialised.
-            const std::vector<ChannelKey> keys_now  = channelKeysOf(*geometry);
-            const ChannelKey              index_now = indexKeyOf(*geometry);
-            // The fast path must not skip what a rebuild would check. Two checks gate it: the layout has to
-            // be the one the alias path reads (three components per vertex — otherwise the vertex count the
-            // bounds check needs is a different number), and every index has to be in range, because an
-            // out-of-range index reads OOB on the GPU and the builder's rejection (reported once per
-            // revision) is what tells the caller. A stream that fails either takes the rebuild.
-            const auto* const position_channel =
-                geometry->buffer(attributeLocation(vine::graphics::VertexAttribute::Position));
-            const bool        layout_is_aliased =
-                position_channel != nullptr && !position_channel->empty() && position_channel->components == 3u;
-            bool indices_in_range = false;
-            if (layout_is_aliased && index_now.buffer != nullptr) {
-                const std::size_t vertex_count  = position_channel->vertexCount();
-                const auto        src_indices   = geometry->indices();
-                indices_in_range = std::all_of(src_indices.begin(), src_indices.end(),
-                                               [vertex_count](std::uint32_t index) { return index < vertex_count; });
+            std::vector<ChannelKey> keys_now  = channelKeysOf(*geometry);
+            const ChannelKey        index_now = indexKeyOf(*geometry);
+            if (refreshChangedStreams(*geometry, *item, state, keys_now, index_now)) {
+                // Each refreshed channel was served through its own bind, so vsg re-creates and copies
+                // exactly those channels: nothing here is new, but the replaced BufferInfos still need
+                // this frame's compile pass, which the created queue below already covers.
+                changed = true;
             }
-            // An edit that left the node's SHAPE alone can refresh the streams whose bytes changed instead
-            // of re-materialising (and re-uploading) the whole mesh: each channel has its own bind command,
-            // so a fresh BufferInfo for one of them copies one channel (see RetainedBinds). This generalises
-            // the index-only case — the index stream is simply one more channel that refreshes in place.
-            //
-            // The index stream is a SLICE of its buffer (see Geometry::setIndices), and the bind aliases the
-            // whole buffer while the DRAW states first index / count. So replacing the bind in place is only
-            // valid when the same span is drawn from a different buffer: a changed span changes the draw
-            // command, which only a rebuild rewrites.
-            const bool index_buffer_changed = index_now.buffer != nullptr && item->index_key.buffer != nullptr &&
-                                              index_now.buffer != item->index_key.buffer;
-            const bool index_span_changed = index_now.offset != item->index_key.offset ||
-                                            index_now.count != item->index_key.count;
-            const bool index_changed = index_buffer_changed || index_span_changed;
-            // One refreshed channel: the bind to re-point, the array it now reads, and — when that bind is
-            // SHARED — the stream identity the cache has to serve it under (see the apply block below).
-            struct RefreshedChannel
-            {
-                std::size_t                          binding = 0u;
-                ::vsg::ref_ptr<::vsg::Data>          array;
-                VsgMeshResourceCache::ChannelKey     shared_key{};
-                bool                                 shared = false;
-            };
-            std::vector<RefreshedChannel> refreshed;
-            bool refresh_ok = item->data_node != nullptr && item->binds.index != nullptr &&
-                              shapesMatch(item->channel_keys, keys_now) &&
-                              (!index_changed ||
-                               (index_buffer_changed && !index_span_changed && indices_in_range));
-            if (refresh_ok) {
-                const std::size_t vertex_count = position_channel != nullptr ? position_channel->vertexCount() : 0u;
-                const ChannelKey* const positions_before = keyAt(item->channel_keys, 0u);
-                const ChannelKey* const positions_after  = keyAt(keys_now, 0u);
-                const bool positions_changed =
-                    positions_before != nullptr && positions_after != nullptr && !(*positions_before == *positions_after);
-                for (const std::uint32_t location :
-                     { attributeLocation(vine::graphics::VertexAttribute::Position),
-                       attributeLocation(vine::graphics::VertexAttribute::Normal),
-                       attributeLocation(vine::graphics::VertexAttribute::Color),
-                       attributeLocation(vine::graphics::VertexAttribute::TexCoord0) })
-                {
-                    const std::size_t binding = RetainedBinds::canonicalBindingOf(location);
-                    if (binding == RetainedBinds::kNoBinding || item->binds.canonical[binding] == nullptr) {
-                        continue;
-                    }
-                    const ChannelKey* before = keyAt(item->channel_keys, location);
-                    const ChannelKey* after  = keyAt(keys_now, location);
-                    // A derived channel has no channel key at all (the geometry authors none), yet it is what
-                    // the positions are folded into: new positions invalidate it, so it is refreshed too.
-                    const bool derived_normals_invalidated = location == 1u && before == nullptr && after == nullptr &&
-                                                             positions_changed &&
-                                                             item->derived.derived_normals != nullptr;
-                    if (!derived_normals_invalidated &&
-                        (before == nullptr || after == nullptr || *before == *after)) {
-                        continue; // absent both times, or byte-for-byte the same stream
-                    }
-                    auto array =
-                        refreshCanonicalChannel(geometry, location, vertex_count, state.topology, item->derived);
-                    if (array == nullptr) {
-                        refresh_ok = false; // this channel needs the builder (and its diagnostics)
-                        break;
-                    }
-                    RefreshedChannel entry;
-                    entry.binding = binding;
-                    entry.array   = std::move(array);
-                    // A refresh only ever produces one of the VERBATIM views the builder aliases (a packed or
-                    // derived array needs the builder), so a shared bind may be refreshed through the cache:
-                    // the new key says "same buffer, new revision", which is exactly the stream the new bytes
-                    // are, and the next geometry to refresh the same stream joins this entry (one upload).
-                    if (item->binds.canonical_shared[binding] && after != nullptr) {
-                        entry.shared                 = true;
-                        entry.shared_key.binding     = static_cast<std::uint32_t>(binding);
-                        entry.shared_key.components  = after->components;
-                        entry.shared_key.buffer      = after->buffer;
-                        entry.shared_key.revision    = after->revision;
-                        entry.shared_key.offset      = after->offset;
-                        entry.shared_key.count       = after->count;
-                    }
-                    refreshed.push_back(std::move(entry));
-                }
-            }
-
-            // The refresh has to be EXPLAINED by the snapshots: a revision the per-stream identities do not
-            // account for (a buffer mutated in place without bumping its own revision, say) must not be
-            // answered with "nothing to do" — that would leave the previous bytes on the GPU, silently. Such
-            // a revision falls back to the rebuild below, which re-reads everything.
-            const bool refresh_applies = refresh_ok && (!refreshed.empty() || index_changed);
-            if (refresh_applies) {
-                // Every refreshed channel goes through its own bind, so vsg re-creates and copies exactly
-                // those channels; the index stream is swapped the same way. Nothing is new here, but the
-                // replaced BufferInfos still need this frame's compile pass — which the
-                // (data_dirty || state_dirty) block below already queues.
-                for (RefreshedChannel& entry : refreshed) {
-                    if (entry.shared) {
-                        // A shared bind belongs to EVERY geometry reading that stream: re-pointing it here
-                        // would hand them this geometry's array, so this drawable gets the bind the cache
-                        // holds for the NEW stream instead and swaps it in at the same child slot (keeping
-                        // the command order, and therefore the binding numbers, intact).
-                        const auto bind = meshResources().getOrCreateVertexBind(entry.shared_key, entry.array);
-                        swapRetainedChild(item->binds, item->binds.canonical_child[entry.binding], bind.get());
-                        item->binds.canonical[entry.binding] = bind;
-                        continue;
-                    }
-                    item->binds.canonical[entry.binding]->assignArrays(::vsg::DataList{ entry.array });
-                }
-                if (index_changed) {
-                    auto indices = boundIndexArray(*geometry);
-                    if (item->binds.index_shared && indices != nullptr) {
-                        // Same rule as a shared vertex channel: the index stream's bind is not ours alone.
-                        const auto key  = indexBindKeyOf(*geometry);
-                        const auto bind = meshResources().getOrCreateIndexBind(key, indices);
-                        swapRetainedChild(item->binds, item->binds.index_child, bind.get());
-                        item->binds.index = bind;
-                    }
-                    else {
-                        item->binds.index->assignIndices(indices);
-                    }
-                    item->index_key = index_now;
-                }
-                item->channel_keys = keys_now;
-                changed            = true;
+            else if (!rebuildDataNode(*geometry, *item, state, keys_now, index_now)) {
+                continue; // refused and recorded for this revision (see rebuildDataNode)
             }
             else {
-            // Fresh vertex data: rebuild the data node; the previous opacity
-            // carrier is dropped with it and rewritten on the next frames. The
-            // replaced node is parked (its buffers may still be in flight).
-            item->extra_channels.clear();
-            // Whether this rebuild's announcement is one a STREAM accounts for: a fresh node (nothing was
-            // built yet), a channel reading a different buffer / revision, or an index stream that moved.
-            // A revision nothing explains — the geometry says its data changed while every stream still
-            // reads the same bytes, which is what a buffer written through a raw pointer reports — must be
-            // answered by RE-READING the model, and a retained shared bind was copied from the bytes as of
-            // ITS insertion: it cannot be vouched for here, so this node builds its own binds instead.
-            const bool streams_changed = item->data_node == nullptr ||
-                                         !streamsMatch(item->channel_keys, keys_now) ||
-                                         !(index_now == item->index_key);
-            // The retained node is parked (its buffers may still be in flight), which clears the member the
-            // check above reads — hence the order.
-            retireNode(std::move(item->data_node));
-            item->binds     = RetainedBinds{};
-            item->data_node = buildGeometryData(geometry, state.topology, item->extra_channels, item->derived,
-                                                item->binds, streams_changed ? &meshResources() : nullptr);
-            if (item->data_node == nullptr) {
-                // Unsupported shape / malformed vertex data (unusable attribute
-                // strides, out-of-range indices, ...): nothing drawable. The
-                // rejection is recorded (once per data revision, so the
-                // diagnostic is not retried on every frame) and the state
-                // wrapper goes with the data it wrapped.
-                item->rejected          = true;
-                item->rejected_revision = geometry->revision();
-                retireNode(std::move(item->state_node));
-                item->state_channels.clear();
-                item->matrix_valid = false;
-                continue;
-            }
-            state_channels_changed = item->state_channels != item->extra_channels;
-            item->matrix_valid     = false;
-            // Remember what this node was built from, so the next revision can tell which streams changed.
-            item->channel_keys = std::move(keys_now);
-            item->index_key    = index_now;
+                state_channels_changed = item->state_channels != item->extra_channels;
             }
         }
 
@@ -901,68 +723,23 @@ bool SceneBridge::syncRenderCommands(
         bool state_rebuilt = false;
         if (state_inputs_changed || state_channels_changed ||
             (item->state_node == nullptr && !item->state_failed)) {
-            // The replaced wrapper (and the pipeline it holds) may still be
-            // referenced by an in-flight command buffer: park it.
-            retireNode(std::move(item->state_node));
-            item->state_node = buildStateGroup(item->data_node, item->material.get(),
-                                               item->texture.get(), item->render_state,
-                                               item->program.get(), item->extra_channels, &item->derived,
-                                               item->draw_slot);
-            if (item->state_node == nullptr) {
-                // Nothing will be drawn for this identity, but the item KEEPS what it holds: its uploaded data
-                // node and its per-draw slot. The attempt is recorded as failed so the next frame does not
-                // repeat it (see state_failed) — the same "one record per identity" rule the data-rejection
-                // path above follows. Measured on this build: the self-test takes this branch 4 times per run,
-                // and keeping the item changes neither its `buildGeometryData` total (163 either way) nor its
-                // evidence, because the covered failing drawables are not drawn again; what the record buys is
-                // that this no longer HAS to be true for the cost to stay flat.
-                item->state_failed = true;
-                continue;
+            if (!rebuildStateWrapper(*item)) {
+                continue; // recorded failure: nothing to attach, nothing to draw
             }
-            item->state_failed = false;
-            item->state_channels = item->extra_channels;
             state_rebuilt = true;
         }
         if (item->state_node == nullptr) {
             continue; // still unbuildable for this identity: nothing to attach, nothing to draw
         }
 
-        // Attach: the wrapper's child is the current data node and the
-        // retained transform's child is the current wrapper.
-        if (item->state_node->children.empty() ||
-            item->state_node->children.front().get() != item->data_node.get()) {
-            item->state_node->children.clear();
-            item->state_node->addChild(item->data_node);
-        }
-        if (!had_node) {
-            item->transform = ::vsg::MatrixTransform::create();
-            item->transform->addChild(item->state_node);
-        }
-        else if (item->transform->children.empty() ||
-                 item->transform->children.front().get() != item->state_node.get()) {
-            item->transform->children.clear();
-            item->transform->addChild(item->state_node);
-        }
+        attachRetainedNodes(*item, had_node);
 
         if ((data_dirty || state_dirty || state_rebuilt) && created != nullptr) {
             // New/rebuild subtrees must be GPU-compiled before recording.
             created->emplace_back(item->transform);
         }
 
-        // Effective per-drawable opacity: a PER-DRAWABLE VALUE held in the pooled block — four bytes
-        // written through the pool's mapping, so a translucent drawable costs one store per frame
-        // instead of a pass over its vertices, and the value is in the buffer the frame records FROM
-        // rather than one frame behind it.
-        if (item->draw_slot.valid() && item->last_slot_opacity != cmd.opacity) {
-            item->draw_slot.writeOpacity(cmd.opacity);
-            item->last_slot_opacity = cmd.opacity;
-        }
-
-        if (matrix_moved) {
-            item->transform->matrix = world;
-            item->last_matrix       = world;
-            item->matrix_valid      = true;
-        }
+        writePerDrawValues(*item, cmd, world, matrix_moved);
         visible.emplace_back(item->transform);
     }
 
@@ -984,6 +761,250 @@ bool SceneBridge::syncRenderCommands(
     publishRetainedChildren(*root, visible, commands);
     releaseAbandonedCaches(*shares);
     return changed;
+}
+
+bool SceneBridge::reserveDrawSlot(Item& item)
+{
+    if (!forward_draw_block_ || item.draw_slot.valid() || draw_block_pool_ == nullptr) {
+        return true;
+    }
+    item.draw_slot = draw_block_pool_->acquire();
+    if (item.draw_slot.valid()) {
+        return true;
+    }
+    report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ContentSkipped,
+           u8"the per-draw block pool could not provide a slot (out of device memory); the "
+           u8"drawable is dropped this frame");
+    return false;
+}
+
+bool SceneBridge::refreshChangedStreams(const vine::graphics::Geometry& geometry, Item& item,
+                                        const vine::graphics::ResolvedRenderState& state,
+                                        const std::vector<ChannelKey>& keys_now, const ChannelKey& index_now)
+{
+    // The fast path must not skip what a rebuild would check. Two checks gate it: the layout has to
+    // be the one the alias path reads (three components per vertex — otherwise the vertex count the
+    // bounds check needs is a different number), and every index has to be in range, because an
+    // out-of-range index reads OOB on the GPU and the builder's rejection (reported once per
+    // revision) is what tells the caller. A stream that fails either takes the rebuild.
+    const auto* const position_channel =
+        geometry.buffer(attributeLocation(vine::graphics::VertexAttribute::Position));
+    const bool        layout_is_aliased =
+        position_channel != nullptr && !position_channel->empty() && position_channel->components == 3u;
+    bool indices_in_range = false;
+    if (layout_is_aliased && index_now.buffer != nullptr) {
+        const std::size_t vertex_count = position_channel->vertexCount();
+        const auto        src_indices  = geometry.indices();
+        indices_in_range = std::all_of(src_indices.begin(), src_indices.end(),
+                                       [vertex_count](std::uint32_t index) { return index < vertex_count; });
+    }
+    // The index stream is a SLICE of its buffer (see Geometry::setIndices), and the bind aliases the
+    // whole buffer while the DRAW states first index / count. So replacing the bind in place is only
+    // valid when the same span is drawn from a different buffer: a changed span changes the draw
+    // command, which only a rebuild rewrites.
+    const bool index_buffer_changed =
+        index_now.buffer != nullptr && item.index_key.buffer != nullptr && index_now.buffer != item.index_key.buffer;
+    const bool index_span_changed =
+        index_now.offset != item.index_key.offset || index_now.count != item.index_key.count;
+    const bool index_changed = index_buffer_changed || index_span_changed;
+    // One refreshed channel: the bind to re-point, the array it now reads, and — when that bind is
+    // SHARED — the stream identity the cache has to serve it under (see the apply block below).
+    struct RefreshedChannel
+    {
+        std::size_t                      binding = 0u;
+        ::vsg::ref_ptr<::vsg::Data>      array;
+        VsgMeshResourceCache::ChannelKey shared_key{};
+        bool                             shared = false;
+    };
+    std::vector<RefreshedChannel> refreshed;
+    const bool refresh_ok = item.data_node != nullptr && item.binds.index != nullptr &&
+                            shapesMatch(item.channel_keys, keys_now) &&
+                            (!index_changed || (index_buffer_changed && !index_span_changed && indices_in_range));
+    if (refresh_ok) {
+        const std::size_t vertex_count = position_channel != nullptr ? position_channel->vertexCount() : 0u;
+        const ChannelKey* const positions_before = keyAt(item.channel_keys, 0u);
+        const ChannelKey* const positions_after  = keyAt(keys_now, 0u);
+        const bool positions_changed =
+            positions_before != nullptr && positions_after != nullptr && !(*positions_before == *positions_after);
+        for (const std::uint32_t location : { attributeLocation(vine::graphics::VertexAttribute::Position),
+                                              attributeLocation(vine::graphics::VertexAttribute::Normal),
+                                              attributeLocation(vine::graphics::VertexAttribute::Color),
+                                              attributeLocation(vine::graphics::VertexAttribute::TexCoord0) }) {
+            const std::size_t binding = RetainedBinds::canonicalBindingOf(location);
+            if (binding == RetainedBinds::kNoBinding || item.binds.canonical[binding] == nullptr) {
+                continue;
+            }
+            const ChannelKey* before = keyAt(item.channel_keys, location);
+            const ChannelKey* after  = keyAt(keys_now, location);
+            // A derived channel has no channel key at all (the geometry authors none), yet it is what
+            // the positions are folded into: new positions invalidate it, so it is refreshed too.
+            const bool derived_normals_invalidated = location == 1u && before == nullptr && after == nullptr &&
+                                                     positions_changed && item.derived.derived_normals != nullptr;
+            if (!derived_normals_invalidated && (before == nullptr || after == nullptr || *before == *after)) {
+                continue; // absent both times, or byte-for-byte the same stream
+            }
+            auto array = refreshCanonicalChannel(&geometry, location, vertex_count, state.topology, item.derived);
+            if (array == nullptr) {
+                return false; // this channel needs the builder (and its diagnostics)
+            }
+            RefreshedChannel entry;
+            entry.binding = binding;
+            entry.array   = std::move(array);
+            // A refresh only ever produces one of the VERBATIM views the builder aliases (a packed or
+            // derived array needs the builder), so a shared bind may be refreshed through the cache:
+            // the new key says "same buffer, new revision", which is exactly the stream the new bytes
+            // are, and the next geometry to refresh the same stream joins this entry (one upload).
+            if (item.binds.canonical_shared[binding] && after != nullptr) {
+                entry.shared                = true;
+                entry.shared_key.binding    = static_cast<std::uint32_t>(binding);
+                entry.shared_key.components = after->components;
+                entry.shared_key.buffer     = after->buffer;
+                entry.shared_key.revision   = after->revision;
+                entry.shared_key.offset     = after->offset;
+                entry.shared_key.count      = after->count;
+            }
+            refreshed.push_back(std::move(entry));
+        }
+    }
+
+    // The refresh has to be EXPLAINED by the snapshots: a revision the per-stream identities do not
+    // account for (a buffer mutated in place without bumping its own revision, say) must not be
+    // answered with "nothing to do" — that would leave the previous bytes on the GPU, silently. Such
+    // a revision falls back to the rebuild the caller runs instead, which re-reads everything.
+    if (!refresh_ok || (refreshed.empty() && !index_changed)) {
+        return false;
+    }
+    for (RefreshedChannel& entry : refreshed) {
+        if (entry.shared) {
+            // A shared bind belongs to EVERY geometry reading that stream: re-pointing it here
+            // would hand them this geometry's array, so this drawable gets the bind the cache
+            // holds for the NEW stream instead and swaps it in at the same child slot (keeping
+            // the command order, and therefore the binding numbers, intact).
+            const auto bind = meshResources().getOrCreateVertexBind(entry.shared_key, entry.array);
+            swapRetainedChild(item.binds, item.binds.canonical_child[entry.binding], bind.get());
+            item.binds.canonical[entry.binding] = bind;
+            continue;
+        }
+        item.binds.canonical[entry.binding]->assignArrays(::vsg::DataList{ entry.array });
+    }
+    if (index_changed) {
+        auto indices = boundIndexArray(geometry);
+        if (item.binds.index_shared && indices != nullptr) {
+            // Same rule as a shared vertex channel: the index stream's bind is not ours alone.
+            const auto key  = indexBindKeyOf(geometry);
+            const auto bind = meshResources().getOrCreateIndexBind(key, indices);
+            swapRetainedChild(item.binds, item.binds.index_child, bind.get());
+            item.binds.index = bind;
+        }
+        else {
+            item.binds.index->assignIndices(indices);
+        }
+        item.index_key = index_now;
+    }
+    item.channel_keys = keys_now;
+    return true;
+}
+
+bool SceneBridge::rebuildDataNode(const vine::graphics::Geometry& geometry, Item& item,
+                                  const vine::graphics::ResolvedRenderState& state,
+                                  std::vector<ChannelKey>& keys_now, const ChannelKey& index_now)
+{
+    // Fresh vertex data: rebuild the data node; the previous opacity
+    // carrier is dropped with it and rewritten on the next frames. The
+    // replaced node is parked (its buffers may still be in flight).
+    item.extra_channels.clear();
+    // Whether this rebuild's announcement is one a STREAM accounts for: a fresh node (nothing was
+    // built yet), a channel reading a different buffer / revision, or an index stream that moved.
+    // A revision nothing explains — the geometry says its data changed while every stream still
+    // reads the same bytes, which is what a buffer written through a raw pointer reports — must be
+    // answered by RE-READING the model, and a retained shared bind was copied from the bytes as of
+    // ITS insertion: it cannot be vouched for here, so this node builds its own binds instead.
+    const bool streams_changed = item.data_node == nullptr || !streamsMatch(item.channel_keys, keys_now) ||
+                                 !(index_now == item.index_key);
+    // The retained node is parked (its buffers may still be in flight), which clears the member the
+    // check above reads — hence the order.
+    retireNode(std::move(item.data_node));
+    item.binds     = RetainedBinds{};
+    item.data_node = buildGeometryData(&geometry, state.topology, item.extra_channels, item.derived, item.binds,
+                                       streams_changed ? &meshResources() : nullptr);
+    if (item.data_node == nullptr) {
+        // Unsupported shape / malformed vertex data (unusable attribute
+        // strides, out-of-range indices, ...): nothing drawable. The
+        // rejection is recorded (once per data revision, so the
+        // diagnostic is not retried on every frame) and the state
+        // wrapper goes with the data it wrapped.
+        item.rejected          = true;
+        item.rejected_revision = geometry.revision();
+        retireNode(std::move(item.state_node));
+        item.state_channels.clear();
+        item.matrix_valid = false;
+        return false;
+    }
+    item.matrix_valid = false;
+    // Remember what this node was built from, so the next revision can tell which streams changed.
+    item.channel_keys = std::move(keys_now);
+    item.index_key    = index_now;
+    return true;
+}
+
+bool SceneBridge::rebuildStateWrapper(Item& item)
+{
+    // The replaced wrapper (and the pipeline it holds) may still be
+    // referenced by an in-flight command buffer: park it.
+    retireNode(std::move(item.state_node));
+    item.state_node = buildStateGroup(item.data_node, item.material.get(), item.texture.get(), item.render_state,
+                                      item.program.get(), item.extra_channels, &item.derived, item.draw_slot);
+    if (item.state_node == nullptr) {
+        // Nothing will be drawn for this identity, but the item KEEPS what it holds: its uploaded data
+        // node and its per-draw slot. The attempt is recorded as failed so the next frame does not
+        // repeat it (see state_failed) — the same "one record per identity" rule the data-rejection
+        // path follows. Measured on this build: the self-test takes this branch 4 times per run, and
+        // keeping the item changes neither its `buildGeometryData` total (163 either way) nor its
+        // evidence, because the covered failing drawables are not drawn again; what the record buys is
+        // that this no longer HAS to be true for the cost to stay flat.
+        item.state_failed = true;
+        return false;
+    }
+    item.state_failed   = false;
+    item.state_channels = item.extra_channels;
+    return true;
+}
+
+void SceneBridge::attachRetainedNodes(Item& item, bool had_node)
+{
+    // Attach: the wrapper's child is the current data node and the
+    // retained transform's child is the current wrapper.
+    if (item.state_node->children.empty() || item.state_node->children.front().get() != item.data_node.get()) {
+        item.state_node->children.clear();
+        item.state_node->addChild(item.data_node);
+    }
+    if (!had_node) {
+        item.transform = ::vsg::MatrixTransform::create();
+        item.transform->addChild(item.state_node);
+    }
+    else if (item.transform->children.empty() ||
+             item.transform->children.front().get() != item.state_node.get()) {
+        item.transform->children.clear();
+        item.transform->addChild(item.state_node);
+    }
+}
+
+void SceneBridge::writePerDrawValues(Item& item, const vine::graphics::RenderCommand& cmd, const ::vsg::dmat4& world,
+                                     bool matrix_moved)
+{
+    // Effective per-drawable opacity: a PER-DRAWABLE VALUE held in the pooled block — four bytes
+    // written through the pool's mapping, so a translucent drawable costs one store per frame
+    // instead of a pass over its vertices, and the value is in the buffer the frame records FROM
+    // rather than one frame behind it.
+    if (item.draw_slot.valid() && item.last_slot_opacity != cmd.opacity) {
+        item.draw_slot.writeOpacity(cmd.opacity);
+        item.last_slot_opacity = cmd.opacity;
+    }
+    if (matrix_moved) {
+        item.transform->matrix = world;
+        item.last_matrix       = world;
+        item.matrix_valid      = true;
+    }
 }
 
 void SceneBridge::updateUndrawnCandidates(const std::unordered_set<const vine::graphics::Geometry*>& seen)

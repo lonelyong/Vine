@@ -3292,3 +3292,35 @@ harness 的目录）、`selftest_support.cpp` + `selftest_protocol/pixels/textur
 
 **仍遗留**：三个 ~390 行长函数（`syncRenderCommands` / `buildGeometryData` / `buildStateGroup`）拆分；
 真机驱动验证仍只在 lavapipe。
+
+## 65. 第十二轮（2026-09-15）：三个长函数拆成"一个概念一段"
+
+`syncRenderCommands`（~430 行）、`buildGeometryData`（~230 行）、`buildStateGroup`（~380 行）都长在
+"一件事的几个阶段被写在同一个函数体里"。拆分的原则是**每段一个概念，且各段同形**（不是把行数摊平）：
+
+| 函数 | 拆出的段 | 现长 |
+|---|---|---|
+| `syncRenderCommands` | `reserveDrawSlot` / `refreshChangedStreams`（廉价刷新）/ `rebuildDataNode`（重建）/ `rebuildStateWrapper`（含失败记录）/ `attachRetainedNodes` / `writePerDrawValues` | **205** |
+| `buildGeometryData` | `buildPositionStream` / `buildNormalStream` / `buildColorStream` / `buildTexCoordStream` / `collectCustomChannels` / `assembleDrawCommands` | **76** |
+| `buildStateGroup` | `shadingSetFor` / `resolveVariantSampling` / `assignVariantBindings` / `assignSlotDescriptors` / `cacheStateVariant` | **143** |
+
+关键设计点（不是排版）：
+- 四个 canonical 流返回**同一个类型**（`CanonicalStream{array, aliased}`）——"哪个数组 + 它是不是模型字节"
+  正是共享 bind 判据，于是四个阶段同形，`buildGeometryData` 只剩"按绑定序问四个问题 + 组装"。
+- 采样的两个决定（丢通道 / 选 sampler 种类）合成**一个值**（`VariantSampling`）：它们纠缠（丢 UV 必须同时
+  丢 sampler），拆成两个函数会重新制造"两份要一起改的东西"。
+- `refreshChangedStreams` 用**返回值**表示"刷新了没有"，把"没刷新 ⇒ 重建"这条规则放回调用点一处，
+  替掉原来的 `refresh_ok` 可变标志 + `break`（那正是容易漏掉一条 `continue` 的形状）。
+
+**踩到并修掉的两个坑**（都由测试而不是证据基线抓到，记下来因为它们正是拆分最容易犯的错）：
+1. `buildPositionStream` 里解包后的位置数组曾是**函数局部**，而 `span` 被传出去给法线推导读 —— 悬垂 span，
+   `GeometrySafetyTest.Vec4PositionUsesXyzSkipsW` 立刻红（自检抓不到：它的网格全走别名路径）。
+   现在存储由调用方持有，头文件注释写明"必须活过后续阶段"。
+2. `resolveVariantSampling` 一度收 `DataList` **按值**，于是它清掉的通道在调用方那份里还在 —— 被丢掉的
+   UV/颜色仍被 assign ⇒ 自检**崩**、两条单测红。改成按引用，并在头文件把 `arrays` 标成 IN/OUT。
+
+**判据**：`test_vsg` 268、`test_graphics` 260、`test_core` 82、构建 0 error、`[selftest]` 55 行逐字节不变、
+门禁 `RESULT: PASS`（0 VUID）、include/诊断格式门禁 0 发现。行为中性仍由证据基线 + 既有单测共同钉住
+——这一轮的经验是**只有证据基线不够**（第 1 个坑自检看不见），单测与证据缺一不可。
+
+**仍遗留**：真机驱动验证仍只在 lavapipe；`VsgRecordOrder` 的 per-frame `std::set`（与全仓同风格，不单独改）。

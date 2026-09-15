@@ -420,133 +420,33 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         return ::vsg::ref_ptr<::vsg::StateGroup>();
     }
 
-    // The set this drawable is shaded with: the user program's own (compiled per (program, vertex
-    // layout) — L1 — so N geometry bound to one program share a single glslang compile per layout),
-    // else the slot's set.
-    //
-    // NOTHING is shaded without a usable set. A program that fails to compile, a program that
-    // cannot be assembled, and a slot that was never given a set all end the same way: the reason
-    // is reported (once per program/layout/revision, or once per bridge) and the drawable is
-    // DROPPED from the frame rather than drawn with something the host did not ask for.
-    ::vsg::ref_ptr<::vsg::ShaderSet> shaderSet;
-    if (program != nullptr) {
-        shaderSet = getProgramShaderSet(program, extra_channels);
-    }
+    // The set this drawable is shaded with, or a report saying why there is none (in which case the
+    // drawable is DROPPED rather than drawn with something the host did not ask for).
+    auto shaderSet = shadingSetFor(program, extra_channels);
     if (!shaderSet) {
-        shaderSet = baseShaderSet();
-        if (shaderSet == nullptr && !no_shader_set_reported_) {
-            no_shader_set_reported_ = true;
-            report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
-                   u8"this slot has no shader set, so its content cannot be shaded and is NOT drawn (a slot's set "
-                   u8"is built from the shading program the session names; a program the backend cannot compile "
-                   u8"into one has none)");
-        }
-    }
-    if (!shaderSet) {
-        // No set, no draw: shading it with some other program would put a picture on screen that the
-        // host did not ask for and cannot tell apart from the one it did (see the declaration).
         return ::vsg::ref_ptr<::vsg::StateGroup>();
     }
 
+    auto arrays = boundArraysOf(data);
+    // What this variant will sample and which canonical attributes it feeds: one decision, because the
+    // two are entangled (dropping the UV attribute drops the sampler with it).
+    const VariantSampling sampling = resolveVariantSampling(texture, arrays, *shaderSet, program, derived);
+
     // The forwarded custom channels define the geometry's vertex layout, which
     // is part of the L2 variant identity: geometry with a different binding
-    // set must never reuse another geometry's template.
-    std::uint64_t layout = vertexLayoutHash(extra_channels);
-
-    // The material's texture resolves BEFORE the variant key is computed, because what the descriptor
-    // will bind is the RESOLVED resource, not the texture object: two materials can share one Phong value
-    // and still sample different images, and a re-filled texture resolves to a different resource. Keying
-    // on the texture pointer instead would let a variant outlive the pixels it was built for.
-    detail::TextureReject texture_reason = detail::TextureReject::Absent;
-    auto texture_info = textureCache().getOrCreate(texture, texture_reason);
-    if (texture_reason != detail::TextureReject::Ok && texture_reason != detail::TextureReject::Absent &&
-        texture != nullptr) {
-        // Reported here rather than per frame: this block runs when the variant is BUILT, and a built
-        // variant is reused, so a scene reports each unusable texture once.
-        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
-               detail::textureRejectMessage(texture_reason, *texture));
-    }
-
-    // Which optional canonical attributes this variant feeds the pipeline. OUR forward set declares
-    // vine_Color / vine_TexCoord0 behind defines, so a geometry that authors neither can take the variant
-    // WITHOUT those attributes: leaving the array unassigned keeps the define off, which drops one vertex
-    // binding (and, with the texture, one sample). Only a DERIVED array may be dropped — the white colour
-    // carrier / the zero UVs — because an authored channel carries the model's bytes. The UV attribute and
-    // the sampler share `VINE_DIFFUSE_MAP`, so UVs go only when the texture is the white fallback, and only
-    // together with the colour: dropping vine_TexCoord0 alone would renumber vine_Color's binding away from
-    // the fixed canonical index the data node bound it at (see the assign order below).
-    //
-    // The decision does NOT depend on the drawable's opacity, on purpose: opacity is a
-    // per-drawable VALUE (the `vine_draw` block, params.x), so it never changes what the
-    // pipeline must feed — a translucent drawable takes exactly the same variant as an
-    // opaque one, and changing the opacity never rebuilds the state wrapper.
-    auto arrays = boundArraysOf(data);
-    const bool forward_set =
-        program == nullptr && static_cast<bool>(shaderSet->getDescriptorBinding("vine_lights"));
-    const bool drop_color = forward_set && derived != nullptr && arrays.size() > 3u && arrays[3] != nullptr &&
-                            arrays[3] == derived->white_colors;
-    const bool drop_uv = drop_color && derived != nullptr && arrays.size() > 2u && arrays[2] != nullptr &&
-                         arrays[2] == derived->zero_texcoords && texture_reason != detail::TextureReject::Ok;
-    if (drop_color) {
-        arrays[3] = {};
-        if (drop_uv) {
-            arrays[2] = {};
-        }
-    }
-    // The texcoord slot's WIDTH is what the data node bound there (see detail::texCoordArray): three scalars
-    // per vertex, or two. The engine's own forward program reads three as a cube direction and compiles the
-    // samplerCube variant for it, so the width selects the sampler here and belongs to the variant identity
-    // for the same reason the drops above do.
-    const bool three_scalar_texcoords =
-        arrays.size() > 2u && arrays[2] != nullptr && detail::isThreeScalarTexcoord(*arrays[2]);
-
-    // The kind picks the SAMPLER kind, and the two can never mix: a samplerCube bound a 2-D view (or the
-    // other way round) is not a white texel but an invalid descriptor. A texture of the other kind is
-    // therefore reported and the kind's own white fallback is sampled instead — the same answer a material
-    // with no texture gets, so a mismatched map costs the map and not the drawable.
-    //
-    // The kind is NAMED, never defaulted: exactly one of the two names is set on every variant (below),
-    // and a shader that samples the slot without stating its kind fails to compile instead of quietly
-    // taking one. The DATA states which name that is — the width the data node bound is the width the
-    // vertex stage declares — because a texture cannot state it FOR the data: a 2-wide channel with a cube
-    // map is a mismatch the TEXTURE gives way on, not the vertex data.
-    const char* const kind_define = three_scalar_texcoords ? "VINE_TEXCOORD_CUBE" : "VINE_TEXCOORD_UV";
-
-    // WHO GETS THE RULE: the ENGINE's own content sets derive their sampler from the slot, and so does a
-    // program that ASKS for the same treatment by naming the kind it is given in its import pragma — the
-    // SDK's G-buffer geometry stage names both, because its sampler kind has to follow the texcoord width
-    // like the forward stage's. Leaving such a program out would hand it a descriptor the shader's sampler
-    // type does not match, which is an invalid descriptor rather than a wrong picture. A program that does
-    // NOT name that kind declares its own sampler AND its own coordinates, so what its geometry carries in
-    // the texcoord channel is its business: the custom-program cube phase binds a CubeMap through a UV-pair
-    // channel and derives the direction itself, and substituting the white texture there would replace the
-    // program's picture with one it never asked for.
-    const bool engine_picks_sampler = program == nullptr || detail::programImportsDefine(program, kind_define);
-    if (engine_picks_sampler && three_scalar_texcoords &&
-        (texture == nullptr || texture->kind() != vine::graphics::Texture::Kind::Cube)) {
-        texture_info = textureCache().whiteCubeFallback();
-        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
-               u8"the texcoord channel is three scalars wide (a cube direction for this program) while the "
-               u8"material's texture is not a cube map; the white cube is sampled instead (the map is not used)");
-    }
-    else if (engine_picks_sampler && !three_scalar_texcoords && texture != nullptr &&
-             texture->kind() == vine::graphics::Texture::Kind::Cube) {
-        detail::TextureReject white_reason = detail::TextureReject::Absent;
-        texture_info                       = textureCache().getOrCreate(nullptr, white_reason);
-        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
-               u8"the material's texture is a cube map while the texcoord channel is two scalars wide; the "
-               u8"white texture is sampled instead (the map is not used)");
-    }
-
-    // The decision changes the pipeline, so it belongs to the variant identity: two geometries that differ
-    // only in which canonical attributes they carry, or in the texcoord kind, must never share one.
-    layout = hashCombine(layout, (drop_color ? 0u : 1u) | (drop_uv ? 0u : 2u) | (three_scalar_texcoords ? 4u : 0u));
+    // set must never reuse another geometry's template. The sampling decisions
+    // change the pipeline too, so they belong to the identity as well: two
+    // geometries that differ only in which canonical attributes they carry, or
+    // in the texcoord kind, must never share one.
+    std::uint64_t layout = hashCombine(vertexLayoutHash(extra_channels),
+                                       (sampling.drop_color ? 0u : 1u) | (sampling.drop_uv ? 0u : 2u) |
+                                           (sampling.three_scalar_texcoords ? 4u : 0u));
 
     // L2 variant reuse: an identical (program, material, resolved-state,
     // vertex-layout) variant built earlier contributes its reusable bind
     // commands (the shared pipeline bind + the per-material descriptor bind).
     // Reuse skips the configurator entirely.
-    const auto hash_key   = hashStateVariant(program, material, texture_info.get(), state, layout);
+    const auto hash_key   = hashStateVariant(program, material, sampling.info.get(), state, layout);
     const auto variant_it = variant_cache_.find(hash_key);
     if (variant_it != variant_cache_.end() && variant_it->second.payload() != nullptr &&
         variant_it->second.firstKey() == program &&
@@ -571,7 +471,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // the slot without a kind fails to compile rather than taking a default. vsg only delivers a define the
     // source asks for in its `#pragma import_defines` line — a name missing from that list is dropped
     // silently, with no error from any layer — which is why the content stage sources list both names.
-    config->shaderHints->defines.insert(kind_define);
+    config->shaderHints->defines.insert(sampling.kind_define);
 
     // Whether this drawable SAMPLES its material's texture. The engine's forward set gets this define from
     // vsg's own binding gate (its UV attribute and its sampler are declared with it), so the define turns
@@ -586,122 +486,16 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // This is also what keeps the sampler kind honest for that program: with the texture absent there is
     // no sample to get wrong, and with it present the kind check above ran against it (the program opted
     // into that rule by naming VINE_TEXCOORD_CUBE).
-    if (program != nullptr && texture_reason == detail::TextureReject::Ok) {
+    if (program != nullptr && sampling.reason == detail::TextureReject::Ok) {
         config->shaderHints->defines.insert("VINE_DIFFUSE_MAP");
     }
 
-    // Material resources come from the material manager (filled + cached), never
-    // built ad-hoc here. The same attributes and the shared "material" block are
-    // registered on both paths; the actual vertex data is already bound by the
-    // retained data node, so only the bindings are re-declared.
-    {
-        auto& material_manager = materialManager();
-        auto  material_data    = material_manager.getOrCreate(material);
-        ::vsg::DataList scratch;
-        // vsg matches an array against the ShaderSet's declared binding by NAME
-        // and element type, and returns false when nothing matches. A miss is
-        // not cosmetic: the shader then reads an attribute the pipeline never
-        // enables, so the drawable degenerates (in practice: nothing is drawn)
-        // while validation stays clean. Report it here — this is the point
-        // where "the user program does not appear" used to become invisible.
-        const auto declares_binding = [&shaderSet](const std::string& name) {
-            for (const auto& binding : shaderSet->attributeBindings) {
-                if (binding.name == name) {
-                    return true;
-                }
-            }
-            return false;
-        };
-        const auto assign_array = [&](const std::string& name, std::size_t index) {
-            if (index >= arrays.size() || arrays[index] == nullptr) {
-                return;
-            }
-            if (!config->assignArray(scratch, name, VK_VERTEX_INPUT_RATE_VERTEX, arrays[index]) &&
-                declares_binding(name)) {
-                report(vine::graphics::DiagnosticSeverity::Warning,
-                       vine::graphics::DiagnosticCategory::ContentSkipped,
-                       formatDiagnostic(u8"vertex binding '%s' (array %zu, %s) was not matched by the "
-                                        u8"pipeline; the shader reads an attribute the pipeline does not "
-                                        u8"enable, so this drawable cannot render correctly",
-                                        name.c_str(), index, arrays[index]->className()));
-            }
-        };
-        // The canonical roles, by the name our sets declare for them (the engine prefixes everything it
-        // provides with `vine_`, see BuiltinShaders / ShaderAbi). The lookup is by NAME because that is
-        // how vsg matches an array against a ShaderSet; a name the set does not declare is a silent
-        // no-op (assignArray returns false, and there was nothing to match), while a declared name the
-        // array could not match is reported above rather than passed on.
-        assign_array("vine_Vertex", 0u);
-        assign_array("vine_Normal", 1u);
-        // The canonical order the data node and the set share (see buildGeometryData). An entry is nulled
-        // above when our forward set takes the variant WITHOUT that attribute (the geometry authored
-        // nothing); a program that declares both gets the full list.
-        assign_array("vine_TexCoord0", 2u);
-        assign_array("vine_Color", 3u);
-        // The mirror of the per-array report above: a set that declares NONE of the canonical names is
-        // not a set this backend built — the SDK lets a caller inject one, and another library's set
-        // declares its own names — so every array above reached nothing and the same silent
-        // half-drawn drawable follows. It is a property of the SET rather than of one array, so it is
-        // said once per build.
-        if (!declares_binding("vine_Vertex") && !declares_binding("vine_Normal") && !declares_binding("vine_TexCoord0") &&
-            !declares_binding("vine_Color")) {
-            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
-                   formatDiagnostic(u8"the shader set declares none of the engine's vertex attribute names "
-                                    u8"(vine_Vertex / vine_Normal / vine_TexCoord0 / vine_Color): no vertex data "
-                                    u8"reaches its program, so this drawable cannot render correctly"));
-        }
-        // Custom channels: bind each forwarded array under its stable
-        // vine_Attribute{location} name. Only a set that declares the name
-        // consumes it, so an array no program reads is simply an unused vertex buffer.
-        for (std::size_t i = 0; i < extra_channels.size(); ++i) {
-            assign_array(customAttributeName(extra_channels[i].location), 4u + i);
-        }
-        config->assignDescriptor("material", material_data);
-        // The diffuse texture: bound whenever the pipeline samples it. An untextured material resolves to
-        // the shared white fallback, so the shader has ONE path (it always multiplies by a texture) —
-        // unless the variant dropped the UV attribute, in which case the sampler is gated by the SAME
-        // define: assigning it would turn the define back on and leave the shader reading an attribute the
-        // pipeline never enabled.
-        //
-        // Wrapped in an ImageInfoList: assignTexture also has a (textureData, sampler) overload taking a
-        // ref_ptr<Data>, and a bare ImageInfo matches that one instead — which fails to compile with a
-        // pointer-type mismatch rather than doing anything sensible.
-        if (!drop_uv) {
-            config->assignTexture("diffuseMap", ::vsg::ImageInfoList{ texture_info });
-        }
-    }
-
-    // Per-view lights: the slot holds the block and every set the engine builds declares the binding, so
-    // the two conditions coincide — but they are not the same statement, and a set that does NOT declare
-    // it must not get an unused descriptor in its layout (see .ai/design/vsg-custom-shader.md §11).
-    if (lights_data_ != nullptr && shaderSet->getDescriptorBinding("vine_lights")) {
-        config->assignDescriptor("vine_lights", lights_data_);
-    }
-
-    // The shadow ABI (ShaderAbi.hpp): the map the pass declared as an input, and the block that places
-    // this fragment in it. Both are declared by every set this backend builds (the content set is
-    // shared per (target, depth mode), see buildVineShaderSet) and the slot always provides VALID
-    // values for both — the real pair when the pass declared a shadow, a stand-in with the block
-    // disabled when it did not — because a declared-but-unwritten descriptor is an invalid set, not a
-    // harmless one. A set that declares neither (a foreign set) is left with the pipeline it had.
-    if (shadow_map_ != nullptr && shaderSet->getDescriptorBinding("shadow_map")) {
-        config->assignTexture("shadow_map", ::vsg::ImageInfoList{ shadow_map_ });
-    }
-    if (shadow_data_ != nullptr && shaderSet->getDescriptorBinding("vine_shadow")) {
-        config->assignDescriptor("vine_shadow", shadow_data_);
-    }
-    // The pass declared a shadow this PROGRAM cannot shade: the content set declares the shadow ABI
-    // unconditionally (it is shared per (target, depth mode), so a shadowed variant would double that
-    // cache) and the slot binds the real pair, but a program whose text never declares the map simply
-    // never reads it — the picture is unshadowed with nothing anywhere saying why. This is the same
-    // complaint the pipeline builder makes about a PATH that builds no shadow pass; here it is about
-    // the program that shades one drawable. Reported where a VARIANT is built, so it fires once per
-    // (program, layout, revision) instead of once per frame.
-    if (shadow_declared_ && program != nullptr && !detail::programDeclaresBinding(program, 0u, 3u)) {
-        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::UnsupportedRequest,
-               formatDiagnostic(u8"the program shading this drawable declares no shadow_map (set 0 / binding 3), so the "
-                                u8"shadow its pass declared does not reach it: that drawable is shaded unshadowed"));
-    }
+    // Material resources come from the material manager (filled + cached), never built ad-hoc here: the
+    // same attributes and the shared "material" block are registered on both paths, and the actual vertex
+    // data is already bound by the retained data node, so only the bindings are re-declared.
+    const auto material_data = materialManager().getOrCreate(material);
+    assignVariantBindings(*config, *shaderSet, arrays, extra_channels, material_data, sampling);
+    assignSlotDescriptors(*config, *shaderSet, program);
 
     // Assemble the pipeline from the geometry's effective render state. The
     // mapped color blend keeps alpha blending enabled on every pipeline (the
@@ -728,7 +522,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // genuinely new variants so pipelineVariantCount() reflects distinct
     // pipeline states, not the geometry count.
     const auto local_bind = config->bindGraphicsPipeline;
-    auto stateGroup       = ::vsg::StateGroup::create();
+    auto       stateGroup = ::vsg::StateGroup::create();
     config->copyTo(stateGroup, shared_objects_);
     if (config->bindGraphicsPipeline == nullptr) {
         // No pipeline means nothing can be drawn for this variant. It used to
@@ -751,40 +545,278 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // one per pool chunk.
     appendDrawBlockBind(*stateGroup, config->layout, draw_slot);
 
+    cacheStateVariant(hash_key, program, material, state, layout, *stateGroup, config->layout);
+
+    return stateGroup;
+}
+
+::vsg::ref_ptr<::vsg::ShaderSet> SceneBridge::shadingSetFor(vine::raw_ptr<const vine::graphics::ShaderProgram> program,
+                                                            const std::vector<VertexChannel>& extra_channels)
+{
+    // The set this drawable is shaded with: the user program's own (compiled per (program, vertex
+    // layout) — L1 — so N geometry bound to one program share a single glang compile per layout),
+    // else the slot's set.
+    //
+    // NOTHING is shaded without a usable set. A program that fails to compile, a program that
+    // cannot be assembled, and a slot that was never given a set all end the same way: the reason
+    // is reported (once per program/layout/revision, or once per bridge) and the drawable is
+    // DROPPED from the frame rather than drawn with something the host did not ask for.
+    if (program != nullptr) {
+        if (auto program_set = getProgramShaderSet(program, extra_channels)) {
+            return program_set;
+        }
+    }
+    auto slot_set = baseShaderSet();
+    if (slot_set == nullptr && !no_shader_set_reported_) {
+        no_shader_set_reported_ = true;
+        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
+               u8"this slot has no shader set, so its content cannot be shaded and is NOT drawn (a slot's set "
+               u8"is built from the shading program the session names; a program the backend cannot compile "
+               u8"into one has none)");
+    }
+    return slot_set;
+}
+
+SceneBridge::VariantSampling SceneBridge::resolveVariantSampling(vine::raw_ptr<const vine::graphics::Texture> texture,
+                                                                ::vsg::DataList& arrays,
+                                                                const ::vsg::ShaderSet& shaderSet,
+                                                                vine::raw_ptr<const vine::graphics::ShaderProgram> program,
+                                                                const DerivedChannels* derived)
+{
+    VariantSampling sampling;
+
+    // The material's texture resolves BEFORE the variant key is computed, because what the descriptor
+    // will bind is the RESOLVED resource, not the texture object: two materials can share one Phong value
+    // and still sample different images, and a re-filled texture resolves to a different resource. Keying
+    // on the texture pointer instead would let a variant outlive the pixels it was built for.
+    sampling.info = textureCache().getOrCreate(texture, sampling.reason);
+    if (sampling.reason != detail::TextureReject::Ok && sampling.reason != detail::TextureReject::Absent &&
+        texture != nullptr) {
+        // Reported here rather than per frame: this block runs when the variant is BUILT, and a built
+        // variant is reused, so a scene reports each unusable texture once.
+        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+               detail::textureRejectMessage(sampling.reason, *texture));
+    }
+
+    // Which optional canonical attributes this variant feeds the pipeline. OUR forward set declares
+    // vine_Color / vine_TexCoord0 behind defines, so a geometry that authors neither can take the variant
+    // WITHOUT those attributes: leaving the array unassigned keeps the define off, which drops one vertex
+    // binding (and, with the texture, one sample). Only a DERIVED array may be dropped — the white colour
+    // carrier / the zero UVs — because an authored channel carries the model's bytes. The UV attribute and
+    // the sampler share `VINE_DIFFUSE_MAP`, so UVs go only when the texture is the white fallback, and only
+    // together with the colour: dropping vine_TexCoord0 alone would renumber vine_Color's binding away from
+    // the fixed canonical index the data node bound it at (see the assign order in assignVariantBindings).
+    //
+    // The decision does NOT depend on the drawable's opacity, on purpose: opacity is a
+    // per-drawable VALUE (the `vine_draw` block, params.x), so it never changes what the
+    // pipeline must feed — a translucent drawable takes exactly the same variant as an
+    // opaque one, and changing the opacity never rebuilds the state wrapper.
+    sampling.forward_set = program == nullptr && static_cast<bool>(shaderSet.getDescriptorBinding("vine_lights"));
+    sampling.drop_color  = sampling.forward_set && derived != nullptr && arrays.size() > 3u && arrays[3] != nullptr &&
+                           arrays[3] == derived->white_colors;
+    sampling.drop_uv = sampling.drop_color && derived != nullptr && arrays.size() > 2u && arrays[2] != nullptr &&
+                       arrays[2] == derived->zero_texcoords && sampling.reason != detail::TextureReject::Ok;
+    if (sampling.drop_color) {
+        arrays[3] = {};
+        if (sampling.drop_uv) {
+            arrays[2] = {};
+        }
+    }
+    // The texcoord slot's WIDTH is what the data node bound there (see detail::texCoordArray): three scalars
+    // per vertex, or two. The engine's own forward program reads three as a cube direction and compiles the
+    // samplerCube variant for it, so the width selects the sampler here and belongs to the variant identity
+    // for the same reason the drops above do.
+    sampling.three_scalar_texcoords =
+        arrays.size() > 2u && arrays[2] != nullptr && detail::isThreeScalarTexcoord(*arrays[2]);
+
+    // The kind picks the SAMPLER kind, and the two can never mix: a samplerCube bound a 2-D view (or the
+    // other way round) is not a white texel but an invalid descriptor. A texture of the other kind is
+    // therefore reported and the kind's own white fallback is sampled instead — the same answer a material
+    // with no texture gets, so a mismatched map costs the map and not the drawable.
+    //
+    // The kind is NAMED, never defaulted: exactly one of the two names is set on every variant, and a shader
+    // that samples the slot without stating its kind fails to compile instead of quietly taking one. The DATA
+    // states which name that is — the width the data node bound is the width the vertex stage declares —
+    // because a texture cannot state it FOR the data: a 2-wide channel with a cube map is a mismatch the
+    // TEXTURE gives way on, not the vertex data.
+    sampling.kind_define = sampling.three_scalar_texcoords ? "VINE_TEXCOORD_CUBE" : "VINE_TEXCOORD_UV";
+
+    // WHO GETS THE RULE: the ENGINE's own content sets derive their sampler from the slot, and so does a
+    // program that ASKS for the same treatment by naming the kind it is given in its import pragma — the
+    // SDK's G-buffer geometry stage names both, because its sampler kind has to follow the texcoord width
+    // like the forward stage's. Leaving such a program out would hand it a descriptor the shader's sampler
+    // type does not match, which is an invalid descriptor rather than a wrong picture. A program that does
+    // NOT name that kind declares its own sampler AND its own coordinates, so what its geometry carries in
+    // the texcoord channel is its business: the custom-program cube phase binds a CubeMap through a UV-pair
+    // channel and derives the direction itself, and substituting the white texture there would replace the
+    // program's picture with one it never asked for.
+    const bool engine_picks_sampler = program == nullptr || detail::programImportsDefine(program, sampling.kind_define);
+    if (engine_picks_sampler && sampling.three_scalar_texcoords &&
+        (texture == nullptr || texture->kind() != vine::graphics::Texture::Kind::Cube)) {
+        sampling.info = textureCache().whiteCubeFallback();
+        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+               u8"the texcoord channel is three scalars wide (a cube direction for this program) while the "
+               u8"material's texture is not a cube map; the white cube is sampled instead (the map is not used)");
+    }
+    else if (engine_picks_sampler && !sampling.three_scalar_texcoords && texture != nullptr &&
+             texture->kind() == vine::graphics::Texture::Kind::Cube) {
+        detail::TextureReject white_reason = detail::TextureReject::Absent;
+        sampling.info                      = textureCache().getOrCreate(nullptr, white_reason);
+        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+               u8"the material's texture is a cube map while the texcoord channel is two scalars wide; the "
+               u8"white texture is sampled instead (the map is not used)");
+    }
+    return sampling;
+}
+
+void SceneBridge::assignVariantBindings(::vsg::GraphicsPipelineConfigurator& config, ::vsg::ShaderSet& shaderSet,
+                                        const ::vsg::DataList& arrays, const std::vector<VertexChannel>& extra_channels,
+                                        ::vsg::ref_ptr<::vsg::Data> material_data, const VariantSampling& sampling)
+{
+    ::vsg::DataList scratch;
+    // vsg matches an array against the ShaderSet's declared binding by NAME
+    // and element type, and returns false when nothing matches. A miss is
+    // not cosmetic: the shader then reads an attribute the pipeline never
+    // enables, so the drawable degenerates (in practice: nothing is drawn)
+    // while validation stays clean. Report it here — this is the point
+    // where "the user program does not appear" used to become invisible.
+    const auto declares_binding = [&shaderSet](const std::string& name) {
+        for (const auto& binding : shaderSet.attributeBindings) {
+            if (binding.name == name) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto assign_array = [&](const std::string& name, std::size_t index) {
+        if (index >= arrays.size() || arrays[index] == nullptr) {
+            return;
+        }
+        if (!config.assignArray(scratch, name, VK_VERTEX_INPUT_RATE_VERTEX, arrays[index]) && declares_binding(name)) {
+            report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+                   formatDiagnostic(u8"vertex binding '%s' (array %zu, %s) was not matched by the "
+                                    u8"pipeline; the shader reads an attribute the pipeline does not "
+                                    u8"enable, so this drawable cannot render correctly",
+                                    name.c_str(), index, arrays[index]->className()));
+        }
+    };
+    // The canonical roles, by the name our sets declare for them (the engine prefixes everything it
+    // provides with `vine_`, see BuiltinShaders / ShaderAbi). The lookup is by NAME because that is
+    // how vsg matches an array against a ShaderSet; a name the set does not declare is a silent
+    // no-op (assignArray returns false, and there was nothing to match), while a declared name the
+    // array could not match is reported above rather than passed on.
+    assign_array("vine_Vertex", 0u);
+    assign_array("vine_Normal", 1u);
+    // The canonical order the data node and the set share (see buildGeometryData). An entry is nulled
+    // by resolveVariantSampling when our forward set takes the variant WITHOUT that attribute (the
+    // geometry authored nothing); a program that declares both gets the full list.
+    assign_array("vine_TexCoord0", 2u);
+    assign_array("vine_Color", 3u);
+    // The mirror of the per-array report above: a set that declares NONE of the canonical names is
+    // not a set this backend built — the SDK lets a caller inject one, and another library's set
+    // declares its own names — so every array above reached nothing and the same silent
+    // half-drawn drawable follows. It is a property of the SET rather than of one array, so it is
+    // said once per build.
+    if (!declares_binding("vine_Vertex") && !declares_binding("vine_Normal") && !declares_binding("vine_TexCoord0") &&
+        !declares_binding("vine_Color")) {
+        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+               formatDiagnostic(u8"the shader set declares none of the engine's vertex attribute names "
+                                u8"(vine_Vertex / vine_Normal / vine_TexCoord0 / vine_Color): no vertex data "
+                                u8"reaches its program, so this drawable cannot render correctly"));
+    }
+    // Custom channels: bind each forwarded array under its stable
+    // vine_Attribute{location} name. Only a set that declares the name
+    // consumes it, so an array no program reads is simply an unused vertex buffer.
+    for (std::size_t i = 0; i < extra_channels.size(); ++i) {
+        assign_array(customAttributeName(extra_channels[i].location), 4u + i);
+    }
+    config.assignDescriptor("material", material_data);
+    // The diffuse texture: bound whenever the pipeline samples it. An untextured material resolves to
+    // the shared white fallback, so the shader has ONE path (it always multiplies by a texture) —
+    // unless the variant dropped the UV attribute, in which case the sampler is gated by the SAME
+    // define: assigning it would turn the define back on and leave the shader reading an attribute the
+    // pipeline never enabled.
+    //
+    // Wrapped in an ImageInfoList: assignTexture also has a (textureData, sampler) overload taking a
+    // ref_ptr<Data>, and a bare ImageInfo matches that one instead — which fails to compile with a
+    // pointer-type mismatch rather than doing anything sensible.
+    if (!sampling.drop_uv) {
+        config.assignTexture("diffuseMap", ::vsg::ImageInfoList{ sampling.info });
+    }
+}
+
+void SceneBridge::assignSlotDescriptors(::vsg::GraphicsPipelineConfigurator& config, ::vsg::ShaderSet& shaderSet,
+                                        vine::raw_ptr<const vine::graphics::ShaderProgram> program)
+{
+    // Per-view lights: the slot holds the block and every set the engine builds declares the binding, so
+    // the two conditions coincide — but they are not the same statement, and a set that does NOT declare
+    // it must not get an unused descriptor in its layout (see .ai/design/vsg-custom-shader.md §11).
+    if (lights_data_ != nullptr && shaderSet.getDescriptorBinding("vine_lights")) {
+        config.assignDescriptor("vine_lights", lights_data_);
+    }
+
+    // The shadow ABI (ShaderAbi.hpp): the map the pass declared as an input, and the block that places
+    // this fragment in it. Both are declared by every set this backend builds (the content set is
+    // shared per (target, depth mode), see buildVineShaderSet) and the slot always provides VALID
+    // values for both — the real pair when the pass declared a shadow, a stand-in with the block
+    // disabled when it did not — because a declared-but-unwritten descriptor is an invalid set, not a
+    // harmless one. A set that declares neither (a foreign set) is left with the pipeline it had.
+    if (shadow_map_ != nullptr && shaderSet.getDescriptorBinding("shadow_map")) {
+        config.assignTexture("shadow_map", ::vsg::ImageInfoList{ shadow_map_ });
+    }
+    if (shadow_data_ != nullptr && shaderSet.getDescriptorBinding("vine_shadow")) {
+        config.assignDescriptor("vine_shadow", shadow_data_);
+    }
+    // The pass declared a shadow this PROGRAM cannot shade: the content set declares the shadow ABI
+    // unconditionally (it is shared per (target, depth mode), so a shadowed variant would double that
+    // cache) and the slot binds the real pair, but a program whose text never declares the map simply
+    // never reads it — the picture is unshadowed with nothing anywhere saying why. This is the same
+    // complaint the pipeline builder makes about a PATH that builds no shadow pass; here it is about
+    // the program that shades one drawable. Reported where a VARIANT is built, so it fires once per
+    // (program, layout, revision) instead of once per frame.
+    if (shadow_declared_ && program != nullptr && !detail::programDeclaresBinding(program, 0u, 3u)) {
+        report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::UnsupportedRequest,
+               formatDiagnostic(u8"the program shading this drawable declares no shadow_map (set 0 / binding 3), so the "
+                                u8"shadow its pass declared does not reach it: that drawable is shaded unshadowed"));
+    }
+}
+
+void SceneBridge::cacheStateVariant(std::uint64_t hash_key,
+                                    vine::raw_ptr<const vine::graphics::ShaderProgram> program,
+                                    vine::raw_ptr<vine::graphics::Material> material,
+                                    const vine::graphics::ResolvedRenderState& state, std::uint64_t layout,
+                                    const ::vsg::StateGroup& state_group,
+                                    ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout)
+{
     // Cache this variant's reusable pieces for later identical geometry. A
     // hash collision with a different variant simply overwrites the entry —
     // the displaced variant rebuilds fresh on its next appearance (still
     // correct, just uncached).
-    {
-        auto entry = std::make_unique<VariantEntry>();
-        entry->state                 = state;
-        entry->layout                = layout;
-        entry->state_commands        = stateGroup->stateCommands;
-        entry->prototype_array_state = stateGroup->prototypeArrayState;
-        entry->pipeline_layout       = config->layout;
-        // The entry owns BOTH key objects (see OwnedPairCacheEntry): a released
-        // program or material must not be replaceable at the same address while
-        // the template is cached, or the equality check above would report a hit
-        // for a different variant and serve the dead one's pipeline / descriptor.
-        variant_cache_.insert_or_assign(
-            hash_key,
-            VariantCacheEntry(vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program),
-                              vine::intrusive_ptr<const vine::graphics::Material>(material),
-                              std::move(entry), variant_cache_clock_.tick()));
-        // D16, FIFO half: bound slot-lifetime growth with the same rule the
-        // geometry and material caches use — the newest entries are the ones a
-        // live scene draws, so a steady workload never evicts what it is about
-        // to ask for again. This replaced a blot "clear the whole table at 256",
-        // which dropped every cached variant at once; the prompt half (an entry
-        // whose program AND material the app released) is
-        // releaseAbandonedCaches().
-        constexpr std::size_t kMaxVariantCacheEntries = 256;
-        if (trimToCapacity(variant_cache_, kMaxVariantCacheEntries) != 0u) {
-            noteEviction();
-        }
+    auto entry = std::make_unique<VariantEntry>();
+    entry->state                 = state;
+    entry->layout                = layout;
+    entry->state_commands        = state_group.stateCommands;
+    entry->prototype_array_state = state_group.prototypeArrayState;
+    entry->pipeline_layout       = std::move(pipeline_layout);
+    // The entry owns BOTH key objects (see OwnedPairCacheEntry): a released
+    // program or material must not be replaceable at the same address while
+    // the template is cached, or the equality check above would report a hit
+    // for a different variant and serve the dead one's pipeline / descriptor.
+    variant_cache_.insert_or_assign(hash_key,
+                                    VariantCacheEntry(vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program),
+                                                      vine::intrusive_ptr<const vine::graphics::Material>(material),
+                                                      std::move(entry), variant_cache_clock_.tick()));
+    // D16, FIFO half: bound slot-lifetime growth with the same rule the
+    // geometry and material caches use — the newest entries are the ones a
+    // live scene draws, so a steady workload never evicts what it is about
+    // to ask for again. This replaced a blot "clear the whole table at 256",
+    // which dropped every cached variant at once; the prompt half (an entry
+    // whose program AND material the app released) is
+    // releaseAbandonedCaches().
+    constexpr std::size_t kMaxVariantCacheEntries = 256;
+    if (trimToCapacity(variant_cache_, kMaxVariantCacheEntries) != 0u) {
+        noteEviction();
     }
-
-    return stateGroup;
 }
 
 V_VSG_NS_END
