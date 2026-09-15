@@ -17,8 +17,11 @@
  *   - per-frame hot edits: material property changes, per-drawable opacity,
  *     removing / re-adding a drawable from ONE slot, swapping a user program
  *     on one drawable, and reordering the command stream;
- *   - teardown: releaseWindowLayer / releaseRenderTarget then a few more
- *     frames to prove nothing references the freed GPU resources.
+ *   - teardown: releasePass / releaseRenderTarget then a few more frames to
+ *     prove nothing references the freed GPU resources.
+ *
+ * Every pass this file drives is announced with beginPass(pass) … endPass(), the way the engine
+ * drives them: the pass object is the backend's identity for the state it retains for that pass.
  *
  * It is a VALIDATION harness, not a pixel checker: pass/fail is "no crash and
  * no Vulkan validation-layer error". Run it under the lavapipe ICD with the
@@ -116,12 +119,16 @@ int main()
     std::fprintf(stderr, "[selftest] targets: offscreen MRT %dx%d (%d color) + window\n",
                  mrt->width(), mrt->height(), mrt->colorCount());
 
-    // The two screen passes below are announced per frame (they are what tells the backend these are two
-    // slots sampling ONE source), so the pass OBJECTS live outside the loop: a fresh RenderPass each
-    // frame would be a fresh slot identity, and the backend keys its retained slot on the pass pointer
-    // (the engine keeps its passes alive for the same reason).
-    auto pip_pass      = RenderPassPtr(new RenderPass());
-    auto deferred_pass = RenderPassPtr(new RenderPass());
+    // Every pass is announced with its own RenderPass object, and those objects live OUTSIDE the
+    // loops below: a fresh RenderPass each frame would be a fresh slot identity, and the backend keys
+    // the state it retains for a pass on that pointer (the engine keeps its passes alive for exactly
+    // this reason). The harness drives the way the engine drives: beginPass(pass) → that pass' state →
+    // its draw calls → endPass().
+    auto mrt_pass      = RenderPassPtr(new RenderPass());  // off-screen MRT producer (order -100)
+    auto window_pass   = RenderPassPtr(new RenderPass());  // window main pass (order 0)
+    auto hud_pass      = RenderPassPtr(new RenderPass());  // HUD overlay (order 1, sub-viewport)
+    auto pip_pass      = RenderPassPtr(new RenderPass());  // PiP copy of the MRT into the window
+    auto deferred_pass = RenderPassPtr(new RenderPass());  // deferred-lighting fullscreen pass
 
     for (int i = 0; i < frames; ++i) {
         // ---- per-frame hot edits -------------------------------------------
@@ -153,44 +160,38 @@ int main()
         backend->beginFrame();
 
         // (1) Off-screen MRT producer: same camera + same scene as the window.
-        backend->setPassOrder(-100);
-        backend->setRenderTarget(mrt.get());
-        backend->clear(vine::Color(51, 51, 51, 255), true);
-        backend->setLights({});
-        backend->render(gbuffer_commands, camera.get());
+        {
+            PassScope pass(*backend, mrt_pass.get(), -100, mrt.get(), vine::Color(51, 51, 51, 255), true);
+            backend->render(gbuffer_commands, camera.get());
+        }
 
         // (2) Window main pass (shared camera, shared scene, different target).
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->clear(vine::Color(25, 25, 45, 255), true);
-        backend->setLights({});
-        backend->render(window_commands, camera.get());
+        {
+            PassScope pass(*backend, window_pass.get(), 0, nullptr, vine::Color(25, 25, 45, 255), true);
+            backend->render(window_commands, camera.get());
+        }
 
-        // (3) HUD overlay: same camera + target, higher order, sub-viewport,
-        // no preceding clear (on-top / depth-off slot).
-        backend->setViewport(8, 8, 220, 124);
-        backend->setPassOrder(1);
-        backend->render(hud_commands, camera.get());
+        // (3) HUD overlay: same camera + target, higher order, sub-viewport, no clear — it LOADs what
+        // the main pass drew and draws on top of it.
+        {
+            PassScope pass(*backend, hud_pass.get(), 1, nullptr);
+            backend->setViewport(8, 8, 220, 124);
+            backend->render(hud_commands, camera.get());
+        }
 
         // (4) PiP: sample the MRT's colour attachment 0 into the window. A screen draw is a program
         // draw now, and both (4) and (5) sample ONE source into ONE destination — so each gets its own
-        // pass scope, which is what makes them two slots instead of one (the engine always opens one
-        // per pass; a direct driver has to say so).
+        // pass scope, which is what makes them two slots instead of one.
         {
-            backend->beginPass(pip_pass.get());
-            backend->setPassOrder(1);
+            PassScope pass(*backend, pip_pass.get(), 1, nullptr);
             backend->setViewport(8, 560, 240, 135);
             backend->drawScreenProgram(mrt.get(), copy_program.get(), camera.get());
-            backend->endPass();
         }
 
         // (5) Deferred-lighting fullscreen pass over the MRT attachments.
         {
-            backend->beginPass(deferred_pass.get());
-            backend->setPassOrder(2);
-            backend->setLights({});
+            PassScope pass(*backend, deferred_pass.get(), 2, nullptr);
             backend->drawScreenProgram(mrt.get(), deferred_program.get(), camera.get());
-            backend->endPass();
         }
 
         backend->endFrame();
@@ -213,18 +214,19 @@ int main()
     depth_rt->attachColor(RenderTarget::ColorFormat::RGBA8);
     depth_rt->attachDepth(RenderTarget::DepthFormat::D24);
     std::vector<RenderCommand> depth_commands{ cmd_red };
-    const int clear_frames = std::max(4, frames / 3);
+    auto                       depth_rt_pass = RenderPassPtr(new RenderPass());
+    const int                  clear_frames  = std::max(4, frames / 3);
     for (int i = 0; i < clear_frames; ++i) {
         // First half clearDepth=false (depth-LOAD), second half clearDepth=true
         // (depth-CLEAR): exercises both pass policies and the policy-flip
         // rebuild in one run.
         const bool clear_depth = (i >= clear_frames / 2);
         backend->beginFrame();
-        backend->setPassOrder(-200);
-        backend->setRenderTarget(depth_rt.get());
-        backend->clear(vine::Color(12, 40 + i % 40, 90, 255), clear_depth);
-        backend->setLights({});
-        backend->render(depth_commands, camera.get());
+        {
+            PassScope pass(*backend, depth_rt_pass.get(), -200, depth_rt.get(),
+                           vine::Color(12, 40 + i % 40, 90, 255), clear_depth);
+            backend->render(depth_commands, camera.get());
+        }
         backend->endFrame();
         backend->swapBuffers();
     }
@@ -233,11 +235,11 @@ int main()
     depth_rt->setSize(400, 240);
     for (int i = 0; i < 4; ++i) {
         backend->beginFrame();
-        backend->setPassOrder(-200);
-        backend->setRenderTarget(depth_rt.get());
-        backend->clear(vine::Color(70, 20, 30, 255), (i % 2) == 0);
-        backend->setLights({});
-        backend->render(depth_commands, camera.get());
+        {
+            PassScope pass(*backend, depth_rt_pass.get(), -200, depth_rt.get(),
+                           vine::Color(70, 20, 30, 255), (i % 2) == 0);
+            backend->render(depth_commands, camera.get());
+        }
         backend->endFrame();
         backend->swapBuffers();
     }
@@ -258,11 +260,10 @@ int main()
         attr_cmd.program = attr_program;
         for (int i = 0; i < 6; ++i) {
             backend->beginFrame();
-            backend->setPassOrder(0);
-            backend->setRenderTarget(nullptr);
-            backend->clear(vine::Color(20, 20, 40, 255), true);
-            backend->setLights({});
-            backend->render(std::vector<RenderCommand>{ attr_cmd }, camera.get());
+            {
+                PassScope pass(*backend, window_pass.get(), 0, nullptr, vine::Color(20, 20, 40, 255), true);
+                backend->render(std::vector<RenderCommand>{ attr_cmd }, camera.get());
+            }
             backend->endFrame();
             backend->swapBuffers();
         }
@@ -278,24 +279,29 @@ int main()
         auto mid = RenderTargetPtr(new RenderTarget());
         mid->setSize(320, 180);
         mid->attachColor(RenderTarget::ColorFormat::RGBA8);
+        auto chain_source_pass = RenderPassPtr(new RenderPass()); // renders the MRT (A) content
+        auto chain_mid_pass    = RenderPassPtr(new RenderPass()); // samples A into the off-screen B
+        auto chain_window_pass = RenderPassPtr(new RenderPass()); // samples B into the window
         for (int i = 0; i < 4; ++i) {
             backend->beginFrame();
             // Producer: render the MRT (A) content.
-            backend->setPassOrder(-60);
-            backend->setRenderTarget(mrt.get());
-            backend->clear(vine::Color(51, 51, 51, 255), true);
-            backend->setLights({});
-            backend->render(gbuffer_commands, camera.get());
+            {
+                PassScope pass(*backend, chain_source_pass.get(), -60, mrt.get(),
+                               vine::Color(51, 51, 51, 255), true);
+                backend->render(gbuffer_commands, camera.get());
+            }
             // Step 1: sample A's colour attachment 0 into the off-screen B.
-            backend->setRenderTarget(mid.get());
-            backend->setViewport(0, 0, mid->width(), mid->height());
-            backend->setPassOrder(-50);
-            backend->drawScreenProgram(mrt.get(), copy_program.get(), camera.get());
+            {
+                PassScope pass(*backend, chain_mid_pass.get(), -50, mid.get());
+                backend->setViewport(0, 0, mid->width(), mid->height());
+                backend->drawScreenProgram(mrt.get(), copy_program.get(), camera.get());
+            }
             // Step 2: sample B into the window.
-            backend->setRenderTarget(nullptr);
-            backend->setViewport(16, 16, 200, 112);
-            backend->setPassOrder(-40);
-            backend->drawScreenProgram(mid.get(), copy_program.get(), camera.get());
+            {
+                PassScope pass(*backend, chain_window_pass.get(), -40, nullptr);
+                backend->setViewport(16, 16, 200, 112);
+                backend->drawScreenProgram(mid.get(), copy_program.get(), camera.get());
+            }
             backend->endFrame();
             backend->swapBuffers();
         }
@@ -308,19 +314,21 @@ int main()
         mrt->setSize(480, 270);
         for (int i = 0; i < 5; ++i) {
             backend->beginFrame();
-            backend->setPassOrder(-60);
-            backend->setRenderTarget(mrt.get());
-            backend->clear(vine::Color(51, 51, 51, 255), true);
-            backend->setLights({});
-            backend->render(gbuffer_commands, camera.get());
-            backend->setRenderTarget(mid.get());
-            backend->setViewport(0, 0, mid->width(), mid->height());
-            backend->setPassOrder(-50);
-            backend->drawScreenProgram(mrt.get(), copy_program.get(), camera.get());
-            backend->setRenderTarget(nullptr);
-            backend->setViewport(16, 16, 200, 112);
-            backend->setPassOrder(-40);
-            backend->drawScreenProgram(mid.get(), copy_program.get(), camera.get());
+            {
+                PassScope pass(*backend, chain_source_pass.get(), -60, mrt.get(),
+                               vine::Color(51, 51, 51, 255), true);
+                backend->render(gbuffer_commands, camera.get());
+            }
+            {
+                PassScope pass(*backend, chain_mid_pass.get(), -50, mid.get());
+                backend->setViewport(0, 0, mid->width(), mid->height());
+                backend->drawScreenProgram(mrt.get(), copy_program.get(), camera.get());
+            }
+            {
+                PassScope pass(*backend, chain_window_pass.get(), -40, nullptr);
+                backend->setViewport(16, 16, 200, 112);
+                backend->drawScreenProgram(mid.get(), copy_program.get(), camera.get());
+            }
             backend->endFrame();
             backend->swapBuffers();
         }
@@ -389,15 +397,14 @@ int main()
     }
 
     // ---- Teardown paths, then a few frames to prove nothing dangles ---------
-    backend->releaseWindowLayer(camera.get(), 1);   // drop the HUD slot
+    backend->releasePass(hud_pass.get());            // drop the HUD slot
     backend->releaseRenderTarget(mrt.get());         // drop MRT + PiP + deferred slot
     for (int i = 0; i < 3; ++i) {
         backend->beginFrame();
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->clear(vine::Color(25, 25, 45, 255), true);
-        backend->setLights({});
-        backend->render(window_commands, camera.get());
+        {
+            PassScope pass(*backend, window_pass.get(), 0, nullptr, vine::Color(25, 25, 45, 255), true);
+            backend->render(window_commands, camera.get());
+        }
         backend->endFrame();
         backend->swapBuffers();
     }
@@ -405,7 +412,7 @@ int main()
 
     // ---- Deferred shadow (engine-driven phase, its own session) --------------
     // LAST, because it is the only phase that hands the renderer to a RenderEngine: the engine
-    // builds its own session, and everything above has already proven the direct-driver session
+    // builds its own session, and everything above has already proven the harness-driven session
     // tears down cleanly. The evidence it prints is the line before "done".
     if (!runDeferredShadowPixelPhase(backend, 3)) {
         std::fprintf(stderr, "[selftest] FAILED — the deferred shadow phase did not hold\n");

@@ -32,7 +32,7 @@ void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan)
         if (const auto it = owner.program_slots.find(key); it != owner.program_slots.end()) {
             return !it->second.detached;
         }
-        return true; // no retained slot (a direct-driver pass): nothing to retire
+        return true; // no retained slot yet: nothing to retire
     };
     // Inside a target the graphs must record in the passes' explicit pipeline order
     // (setPassOrder) — the position each pass' content would have occupied as a View

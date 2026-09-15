@@ -9,11 +9,12 @@
  * whole class of bugs (state leaking into the next pass, a pass' stacking order
  * silently dropping to 0).
  *
- * The request is now ONE structure with an explicit scope, and misusing the
- * scope is reported on the diagnostics channel instead of degrading quietly.
- * These tests drive the protocol on a renderer that never initialized a device
- * (constructing VsgRenderer creates no window/viewer, and the scope calls only
- * touch the retained request), so they are deterministic and need no GPU.
+ * The request is now ONE structure with an explicit scope, and the scope is the ONLY way to drive
+ * this backend: the state setters are inert on their own (the next scope starts from an empty
+ * request), while a DRAWING call with no pass behind it is refused and reported — it would otherwise
+ * produce content nobody asked for, with whatever state the last scope left. These tests drive that
+ * on a renderer that never initialized a device (constructing VsgRenderer creates no window/viewer,
+ * and the protocol calls only touch the retained request), so they are deterministic and need no GPU.
  */
 
 #include <gtest/gtest.h>
@@ -121,13 +122,13 @@ TEST(PassProtocolTest, NestedBeginPassIsReportedAndStartsClean)
 }
 
 /**
- * @brief Legal sequences stay silent — including the direct-driver path.
+ * @brief Legal sequences stay silent — including state announced with no scope open.
  *
- * Both supported ways of driving the backend must produce NO diagnostics:
- *   * the engine's pass protocol (matched beginPass / endPass per pass, with the
- *     request queued in between);
- *   * a direct driver that never opens a scope (the device self-test and the
- *     legacy keying path), which keeps its request until it overwrites it.
+ * The engine's pass protocol (matched beginPass / endPass per pass, with the request queued in
+ * between) is one legal sequence. The other one a host can write is the state setters alone, with no
+ * scope at all: they are inert rather than a violation — a request nobody drew with is dropped by
+ * the next beginPass() — so nothing may be reported for them. The DRAWING calls are a different
+ * matter: with no pass behind them they are refused (see the test below).
  */
 TEST(PassProtocolTest, LegalSequencesAreSilent)
 {
@@ -155,11 +156,12 @@ TEST(PassProtocolTest, LegalSequencesAreSilent)
     renderer.setDepthMode(DepthMode::TestOnly);
     renderer.endPass();
 
-    // Direct driver: no scope at all, only queued state.
+    // State with no scope open: inert, and therefore silent.
     renderer.setRenderTarget(nullptr);
     renderer.setPassOrder(2);
     renderer.setDepthMode(DepthMode::Disabled);
     renderer.setLights({});
+    renderer.setViewport(0, 0, 4, 4);
 
     EXPECT_TRUE(captured.items.empty());
     EXPECT_EQ(renderer.diagnosticCount(), 0u);
@@ -201,15 +203,63 @@ TEST(PassProtocolTest, OneAnnouncementServesOneDrawingCall)
 }
 
 /**
+ * @brief A drawing call with no pass announced is refused, and says so once per frame.
+ *
+ * The pass is the identity of everything this backend retains and the scope is what makes "which call
+ * means what" independent of the call order, so a drawing call with no pass behind it has nothing to
+ * belong to: serving it would put content on screen with whatever state the last scope left (a target,
+ * an order, a depth policy — none of them announced for this call). The state setters are NOT in this
+ * club: they are inert on their own and silent (see LegalSequencesAreSilent).
+ *
+ * The report is an EPISODE bounded by the frame: the first refusal says so (naming the call), the rest
+ * of the frame is refused silently, and the next beginFrame() re-arms it — a host looping on such a
+ * call is told once, not every iteration.
+ */
+TEST(PassProtocolTest, ADrawingCallOutsideAPassScopeIsRefusedAndReportedOnce)
+{
+    vine::vsg::VsgRenderer renderer;
+    Captured                  captured;
+    captured.installOn(renderer);
+
+    RenderTargetPtr source(new RenderTarget());
+    const auto      copy_program = vine::graphics::screenCopyProgram();
+
+    // Nothing announced: every drawing entry point has nothing to belong to.
+    renderer.render(std::vector<RenderCommand>{}, nullptr);
+    renderer.clear(vine::Color(0, 0, 0, 255), true);
+    renderer.drawScreenProgram(source.get(), copy_program.get(), nullptr);
+
+    ASSERT_EQ(captured.items.size(), 1u) << "one report per frame, whatever the call";
+    EXPECT_EQ(captured.items[0].severity, DiagnosticSeverity::Warning);
+    EXPECT_EQ(captured.items[0].category, DiagnosticCategory::PassProtocolViolation);
+    // One format string per entry point: the host learns WHICH call was refused.
+    EXPECT_NE(captured.items[0].message.stdstr().find("render()"), std::string::npos);
+
+    // A new frame is a new episode.
+    renderer.beginFrame();
+    renderer.render(std::vector<RenderCommand>{}, nullptr);
+    EXPECT_EQ(captured.items.size(), 2u);
+
+    // And a pass scope makes the very same calls legal.
+    RenderPassPtr pass(new RenderPass());
+    renderer.beginPass(pass.get());
+    renderer.setRenderTarget(nullptr);
+    renderer.render(std::vector<RenderCommand>{}, nullptr);
+    renderer.clear(vine::Color(0, 0, 0, 255), true);
+    renderer.endPass();
+    EXPECT_EQ(captured.items.size(), 2u);
+}
+
+/**
  * @brief A call whose announced target was released is refused, and says so once.
  *
- * The queued request is the direct driver's to manage and survives frames, so releasing the
- * target it announces leaves the request naming an object whose last owner is gone — the
- * class contract forbids keeping such a pointer (releaseRenderTarget() announces that the
- * caller may destroy it now). The call cannot be honoured, and drawing into the window
- * instead would put the content somewhere the host never asked for, so it is skipped and
- * reported with the fix. The release is one EPISODE: the rest of it is refused silently, and
- * the next announcement re-arms the report.
+ * The pass announced by beginPass() is borrowed for its SCOPE, and releaseRenderTarget() announces
+ * that the caller may destroy the target now — so a scope that announced it can no longer use it,
+ * and the class contract forbids keeping such a pointer. The call cannot be honoured, and drawing
+ * into the window instead would put the content somewhere the host never asked for, so it is skipped
+ * and reported with the fix. The release is one EPISODE, and the episode is the rest of the scope:
+ * the first refusal says so, the rest are refused silently, and the next setRenderTarget() (or the
+ * next scope, which starts from an empty request) re-arms it.
  */
 TEST(PassProtocolTest, DrawingOnAReleasedTargetIsRefusedAndReportedOnce)
 {
@@ -218,6 +268,9 @@ TEST(PassProtocolTest, DrawingOnAReleasedTargetIsRefusedAndReportedOnce)
     captured.installOn(renderer);
 
     RenderTargetPtr target(new RenderTarget());
+    RenderPassPtr   pass(new RenderPass());
+
+    renderer.beginPass(pass.get());
     renderer.setRenderTarget(target.get());
     renderer.releaseRenderTarget(target.get());
 
@@ -250,13 +303,16 @@ TEST(PassProtocolTest, DrawingOnAReleasedTargetIsRefusedAndReportedOnce)
     renderer.render(std::vector<RenderCommand>{}, nullptr);
     ASSERT_EQ(captured.items.size(), 2u);
     EXPECT_EQ(renderer.diagnosticCount(DiagnosticCategory::PassProtocolViolation), 2u);
+
+    renderer.endPass();
 }
 
 /**
- * @brief A pass scope starts clean, so the refusal cannot leak into the next pass.
+ * @brief A pass scope starts clean, so a dead announcement cannot leak into it.
  *
- * beginPass() drops the whole queued request, which is what keeps a direct driver's dead
- * announcement from refusing the calls of a pass that announced its own (live) target.
+ * beginPass() drops the whole request, so state announced before a scope (including a target that
+ * was released while announced) is gone when the scope opens — a pass that announced its own (live)
+ * target therefore draws, and is not refused for somebody else's dead pointer.
  */
 TEST(PassProtocolTest, APassScopeClearsADeadAnnouncement)
 {

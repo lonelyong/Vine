@@ -45,7 +45,7 @@ GeometryPtr makeGroundQuad(float half)
  * light camera the wrong way, or declaring the input on the wrong pass.
  *
  * The engine brings the renderer up itself (RenderEngine::initialize forwards the default content
- * program and initializes the backend), so this phase runs AFTER the direct-driver teardown at the
+ * program and initializes the backend), so this phase runs AFTER the harness-driven teardown at the
  * end of main(): one session, one owner, no doubt about which slot ledger is live.
  *
  * The picture is read back from the pipeline's COMPOSITE target. The deferred path bakes the lit

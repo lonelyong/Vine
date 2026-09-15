@@ -21,17 +21,21 @@
 > ⚠️ **当前工作区状态（2026-09-04，C6 重构后）**：`VsgRenderer` 不绑定任何 Vine Scene/Camera
 > （`RenderBackendFactory/Registry::create()` 无参）；`Overlay` 类已删（顶部/HUD = 高 order 普通 pass，
 > 见 `.ai/design/graphics-overlay.md`）。后端维护单一 `targets[RenderTarget*]` 表（nullptr 键 = 窗口），
-> 窗口与离屏**同构为统一 `Target`**：每个 target = 一个 RenderGraph + 按 `(camera, pass order)`
-> 键的 `content_slots[]`（每槽 = 保留 View/root/SceneBridge）+ `program_slots[]`（全屏 program：延迟光照 /
+> 窗口与离屏**同构为统一 `Target`**：每个 target = 一个 RenderGraph + 每个 **pass 一个槽**的
+> `content_slots[]`（每槽 = 保留 View/root/SceneBridge）+ `program_slots[]`（全屏 program：延迟光照 /
 > PiP 拷贝 —— **2026-09-13 起只有这一种**，`screen_slots` / `drawScreenTexture` / 后端自身的
 > `shaders/` 目录都已删除，见 `.ai/design/vsg-custom-shader.md` §11.11）；窗口图 = 共享
 > swapchain 图，离屏 target 自持附件（image/view/render_pass/framebuffer）。主/顶(HUD) 由 `clear()`
 > 标记判定（清屏→depth-on 主槽，否则 depth-off+ambient 顶部槽）；同 target 多个不同 order 槽 = 各自
 > 独立保留 ContentSlot 顺序叠画（窗口与离屏同一套代码，`renderContentSlot`/`setupContentSlot` 单一
-> 路径；`buildOffscreenTarget` 只建附件+空图）。每 pass 执行前引擎
-> `RenderBackend::setPassOrder(order)` 把用户显式 order 通知后端（即该相机的内容槽键）；移除 pass 时
-> 引擎 `RenderBackend::releaseWindowLayer(camera, order)` 释放（早期 `contentSlot`/`setContentSlot`
-> 轴与 `primary_camera`/`vsg_camera`/`vsg_scene` 主槽别名已删，窗口即 targets[nullptr]）。
+> 路径；`buildOffscreenTarget` 只建附件+空图）。**槽的身份是 `beginPass(pass)` 公告的那个 pass**
+> （`SlotKey::ownerPass`），所以两个共享相机与 order 的 pass 不会互相顶掉、pass 换相机/目标/程序时
+> 槽跟着它走；每 pass 执行前引擎 `setPassOrder(order)` 只决定该 pass 在 target 内的叠画位置；
+> 移除 pass 时引擎 `RenderBackend::releasePass(pass)` 释放（插件不再实现
+> `releaseWindowLayer(camera, order)`：作用域是唯一驱动方式后，槽一律属于公告的那个 pass，
+> 见 `docs/data-flow.md` §10.2）。槽身份只有**一种**（`SlotKey::ownerPass`），转换只有一处
+> （`VsgPassRequest::slotKey()`）。早期 `contentSlot`/`setContentSlot`
+> 轴与 `primary_camera`/`vsg_camera`/`vsg_scene` 主槽别名已删，窗口即 targets[nullptr]。
 > target 内叠画顺序 = 用户显式 pass order
 > （`ContentSlot.order`，`setupContentSlot` 按 order 升序插入子 View；PiP 视为最高阶）——不用
 > main/HUD 语义限序；深度风格(depth-on/off、光照)由 `clear()` 标记判定，与顺序解耦。按显式 order
@@ -220,9 +224,9 @@ flowchart LR
 
 引擎逐 pass 调 `RenderPass::execute`，它依次对后端调用：
 `setRenderTarget → (setViewport?) → (clear?) → setLights → render(commands, camera)`。
-`ScreenPass` 则 `setRenderTarget → (setViewport?) → drawScreenTexture(source)`。
-（`RenderBackend::executePass` 虽是纯虚但引擎不走它；`VsgRenderer::executePass`
-只是 clear+render 的便捷实现。）
+`ScreenPass` 则 `setRenderTarget → (setViewport?) → drawScreenProgram(source, program, camera)`
+（2026-09-13 起屏幕绘制只有这一个入口：PiP 拷贝、deferred 光照、宿主后处理是同一次调用配不同 program）。
+（`RenderBackend::executePass` 虽是纯虚但引擎不走它。）
 
 ### 5.3 保留式 reconcile（`SceneBridge::syncRenderCommands`）
 
@@ -264,24 +268,27 @@ sequenceDiagram
     participant V as vsg::Viewer
 
     loop 每帧
-        E->>R: beginFrame() = advanceToNextFrame + handleEvents
+        E->>R: beginFrame() = advanceToNextFrame + handleEvents + 发放本帧唯一的提交令牌
         rect rgb(240,248,255)
         note over E,R: 按 order 跑注册 pass（负→0→正；顶部/HUD 高 order 在后）
         E->>P: pass->execute(content, backend)
-        P->>R: setRenderTarget / setViewport / clear / setLights
+        P->>R: beginPass(pass) / setPassOrder / setRenderTarget / setViewport / clear / setLights
         E->>S: collectRenderCommands → vector<RenderCommand>
         P->>R: render(commands, camera)
-        R->>B: 该槽（SlotKey{target,camera,order}）的 bridge.syncRenderCommands(root, created)
+        R->>B: 该 pass 的槽（SlotKey::ownerPass）的 bridge.syncRenderCommands(root, created)
         B-->>R: created 非空 → 只编译新增 View（稳态为空→零编译）
-        R-->>E: needs_submit=true
+        P->>R: endPass()
         end
         E->>R: endFrame() = viewer->update()
         E->>R: swapBuffers() → submitFrame()
         R->>V: recordAndSubmit() + present()（一帧一次）
+        R->>R: settleSubmittedFrame(令牌)：三环各推进 1 步（提交后才允许）
     end
 ```
 
-`VsgRenderer::frame()`（便捷单帧）：`beginFrame→endFrame→render({},camera)→swapBuffers`。
+没有 `VsgRenderer::frame()` 之类的便捷入口：帧只能走 `RenderBackend` 接口（`beginFrame` → 逐 pass →
+`endFrame` → `swapBuffers`），而后端对"没有 `beginFrame` 的 `swapBuffers()`"会**拒绝并只报一次**——
+环的推进以"已提交的一帧"为时钟（`FrameCommit` 令牌），多推一次会提前释放仍在飞行命令缓冲里的对象。
 
 **每帧脏检查与动作**（`syncRenderCommands` 内逐几何）：
 
@@ -305,8 +312,11 @@ sequenceDiagram
 
 后端维护**一个** `vsg::Viewer` + **一个** `vsg::CommandGraph`；每个输出目标（窗口 = `targets[nullptr]`，
 或一个离屏 `RenderTarget*`）各有一张自己的 `RenderGraph`，窗口图共享 swapchain，离屏图自持附件。
-目标内**每个 pass** 是一个**槽**：内容槽按 `SlotKey{target, camera, order}` 键，全屏 program 槽按
-（target, program）键；一个槽 = 一套保留的 View/root/bridge。
+目标内**每个 pass** 是一个**槽**：内容槽与全屏 program 槽都以**公告的那个 pass**（`SlotKey::ownerPass`）
+为身份，一个槽 = 一套保留的 View/root/bridge。身份只有这一种：**作用域是唯一的驱动方式**
+（`beginPass` → 该 pass 的状态 → 它的绘制调用 → `endPass`），没有公告 pass 的**绘制**调用
+（`render` / `clear` / `drawScreenProgram`）会被拒画并每帧只报一次 `PassProtocolViolation`；
+状态 setter 单独调用是惰性的（下一次 `beginPass()` 从空请求开始）。
 
 ```mermaid
 graph TD
@@ -416,7 +426,7 @@ graph TD
 1. **Vine 对象**由场景树 / 调用方持有（`intrusive_ptr`）；后端**不延长**其生命，但保留缓存的
    **条目自持它索引的键对象**（`OwnedCacheEntry`）——“外侧放手了吗”由 `useCount() <= shares` 回答。
 2. **保留 = 显式公告过的东西**（`setRenderTarget` 的 target、`beginPass` 的 pass、内容/程序槽），
-   必须配对 `releaseRenderTarget` / `releasePass` / `releaseWindowLayer` 注销；长期驻留不随帧数增长。
+   必须配对 `releaseRenderTarget` / `releasePass` 注销；长期驻留不随帧数增长。
 3. **在用对象不立即释放**：被换下的保留节点、槽池的槽、退役的 GPU 对象都进泊车环，
    延后 `kDeferredReleaseFrames` 帧（提交过的帧）才真正释放。
 4. **重初始化前必须把会话资源清干净**（否则新 `Window::create()` 撞 `VSG_MAX_DEVICES == 1`）：
@@ -454,7 +464,7 @@ graph TD
 
 ### 12.1 pass 移除（引擎侧释放）
 
-`RenderEngine` 的 `removePass/clearPasses` 在移除后调后端 `releaseWindowLayer(pass->camera())` +
+`RenderEngine` 的 `removePass/clearPasses` 在移除后调后端 `releasePass(pass)` +
 `releaseRenderTarget(pass->renderTarget())`（均非空判断）；pass 在单列表至多注册一次，
 无共用歧义。后端对应实现见上表。
 
@@ -470,9 +480,10 @@ graph TD
   —— 否则 `RenderGraph` 每帧从旧 viewportState 取渲染区域，画面停在旧尺寸
   （见 `.ai/bugs/vsg-resize-distortion.md`）。
 
-离屏 target：其 GPU 附件在**逻辑尺寸变化**（`target->width()/height()` 与缓存不符）
-时于 `renderOffscreenTarget` 内重建；PiP slot 采样源尺寸变化时由 `drawScreenTexture`
-丢弃重建。重建成 3 处都走统一顺序（先摘图 → deviceWaitIdle → 释放 → 重建）。
+离屏 target：其 GPU 附件在**描述变化**（尺寸 / 颜色附件数或格式 / 深度格式 / 深度提升，
+即 `Target::BuildKey` 整把比较与尺寸任一项不符）时整目标重建（`buildOffscreenTarget`）；
+采样它的程序槽在采样源重建、尺寸变化或 program 内容修订变化时丢弃重建（`drawScreenProgram`）。
+重建成 3 处都走统一顺序（先摘图 → deviceWaitIdle（计数）→ 释放 → 重建）。
 
 ## 14. 未定义行为 / 内存 / 异常安全清单
 
@@ -487,9 +498,9 @@ graph TD
 |---|---|---|---|
 | UB-1 | `SceneBridge::cache_`（key `Geometry*`）与 `VsgMaterialManager::cache`（key `Material*`）**裸指针键悬垂 + 地址复用错配** | 调用方先释放对象、缓存条目后引用（**Geometry 侧已不可能**：条目自持键，外侧放手则当帧回收） | 新几何 `find` 命中旧 Item（内容校验可能过不了 revision/material 而触发**重建**；重建 `buildGeometry` 会解引用缓存的 `material` 指针）→ 若旧 `Material*` 已释放则**解引用悬垂 = UB** |
 | UB-2 | 渲染器绑定 `Scene*/Camera*` 悬垂 | 场景/相机先于渲染器销毁 | `initialize/render/frame/frame()` 解引用 → UB（构造文档明示契约） |
-| UB-3 | 槽身份（`SlotKey{target, camera, order}` / 程序槽）对应的 `Camera*`、`RenderTarget*` 悬垂 | 引擎没配对调 `releasePass/releaseWindowLayer/releaseRenderTarget` 就销毁对象 | 槽表残留旧 key；新对象同址 → 错配旧槽（GPU 资源被张冠李戴） |
+| UB-3 | 槽身份（`SlotKey` = 公告的 pass）对应的 `RenderPass*` 悬垂 | 引擎没配对调 `releasePass/releaseRenderTarget` 就销毁对象 | 槽表残留旧 key；新对象同址 → 错配旧槽（GPU 资源被张冠李戴） |
 | UB-4 | `active_target / pending_lights / pending_viewport` 跨调用暂存 | 同一帧内 `setRenderTarget/setLights/setViewport` 后 `render` 前对象被改/销毁 | 引擎同步逐 pass 调用，正常窗口内安全；外部滥用接口时序则有悬垂 |
-| UB-5 | `releaseWindowLayer` 用错相机键 | pass 中途换相机后移除 | 旧键槽泄漏、新槽不释放 → 双重（漏释 + 可能误释别家） |
+| UB-5 | pass 中途换相机 | 该 pass 的槽跟着它走（身份是 pass，不是相机）；旧目标上的槽由 `retargetPass` 丢掉 | 不会再出现"旧键槽泄漏 / 误释别家"——（旧）`releaseWindowLayer(camera, order)` 这条已删 |
 
 **缓解**：场景树是权威持有者，命令流只引用“本帧画的东西”（其 `intrusive_ptr`
 保活）⇒ 稳态无悬垂；真删除 + 不重用的场景最安全。**当前做法**：保留缓存的**条目自持键对象**
@@ -533,8 +544,9 @@ graph TD
 
 - **异常安全**：`initialize()` 里 `Window::create/compile` 失败走 `shutdown()+false`
   返回，不抛（注释里的 try/catch 段已注释掉）。
-- `renderOffscreenTarget` 在 `cameraBridge.create` 失败时 `offscreen.erase(target)`
-  并返回（不留半初始化条目）。
+- 内容槽装配（`setupContentSlot`）失败不留半初始化槽：目标没有可录制的图时上报
+  `TargetBuildFailed`、相机桥创建失败时上报 `ContentSkipped`，两种情况都丢掉该槽
+  （`VsgContentSlot.cpp:105-124`）。
 - `forceOwnWindow()`（`VINE_VSG_OWN_WINDOW`）：后端自建独立 vsg 窗口绕过 Qt 子窗口合成；
   C6 起不再注入红三角 demo，独立窗口内容随引擎逐 pass 驱动（无 pass 则空帧）。
   已删：`makeRawDemoNode` / `VINE_VSG_PROBE_BUILDER_BOX` 及 `raw_layout.txt` 副作用写文件。

@@ -3324,3 +3324,120 @@ harness 的目录）、`selftest_support.cpp` + `selftest_protocol/pixels/textur
 ——这一轮的经验是**只有证据基线不够**（第 1 个坑自检看不见），单测与证据缺一不可。
 
 **仍遗留**：真机驱动验证仍只在 lavapipe；`VsgRecordOrder` 的 per-frame `std::set`（与全仓同风格，不单独改）。
+
+## 66. 第十三轮（2026-09-15）：帧流程的顺序不变量搬进类型（+ 槽身份/协议上报各收敛到一处）
+
+本轮的起点是"**顺序不变量只写在注释里**"：帧流程其实是单路径（`submitFrame()` 一个调用点、
+`recordAndSubmit/present` 各一处、三个环的 `advance` 各一处），但"提交之后才能 settle""一帧只推进一次"
+这两条只存在于 `VsgRenderer.hpp` 的 `@pre` 与三个 concept 头的散装注释里，而插件里**运行期断言为 0**
+（只有 7 个 `static_assert`），`build/` 又是 Debug ⇒ 任何人都能把 `settleSubmittedFrame()` 挪到提交之前、
+或让 `swapBuffers()` 连调两次，编译器与门禁都不会说话。
+
+### 66.1 改了哪条流程：提交令牌（`FrameCommit`）
+
+- **令牌类型**：`VsgDeferredRelease.hpp` 里的 `FrameCommit`（`submitted()` 显式铸造、构造私有）。
+  延迟释放的时钟以"已提交的帧"计数，所以 `VsgRetireRing::advance` / `VsgDrawBlockPool::advanceRetired` /
+  `SceneBridge::advanceRetireRing` 现在**必须**收一枚令牌：advance 说不出"哪一次提交释放了它"就写不出来。
+- **每帧一枚**：`beginFrame()` 铸造并放进会话态（`pending_commit`），唯一的 `submitFrame()` 消费它。
+  没有令牌的 `swapBuffers()`（即没开过 frame）**被拒绝**并以 `PassProtocolViolation` 只报一次
+  （episode，由下一次 `beginFrame()` 重新武装）：服务它等于为同一帧再推一次环 —— 那会在仍可能被在飞
+  命令缓冲引用的对象上提前释放。
+- **删掉的两条 `@pre`**：`settleSubmittedFrame` 的 `@pre The frame has been submitted` 变成形参
+  `FrameCommit commit`；"一帧只推进一次"由"一帧只发一枚令牌"承担。
+
+### 66.2 另外两处"同一件事只有一个权威"
+
+- **槽身份**：两套键（pass 拥有 / 直驱的 (camera,order) 与 (source)）的转换原本散在两个绘制入口
+  （`VsgContentSlot.cpp`、`VsgOverlay.cpp`）。现在规则住在请求自己身上：
+  `VsgPassRequest::contentSlotKey(camera)` / `programSlotKey(source)`，两个入口各一行调用。
+  新加绘制入口不可能再发明第三种身份。
+- **协议误用上报**：三个 `PassProtocolViolation` 上报点（嵌套 `beginPass`、未配对 `endPass`、宣布的
+  target 已被释放）收成一个 `reportPassMisuse(PassMisuse, const char* call)` + 一个私有枚举，
+  severity / category / 消息文本一处决定，既有测试按文本断言照旧通过。
+
+### 66.3 判据与反证（都跑过）
+
+| 判据 | 结果 |
+|---|---|
+| `test_vsg` | 268 → **271**（新增 `FrameCommitTest` ×3） |
+| `test_graphics` / `test_core` | 260 / 82（不变） |
+| `[selftest]` 证据 | **55 行逐字节不变** |
+| 反证①（令牌是编译期屏障） | 把 `state.retireRing.advance(commit)` 改成 `advance()` ⇒ clang 报 `too few arguments … 'commit' was not specified`，构建停 |
+| 反证②（守卫真的在拦） | 把 `if (!commit.has_value())` 短路成 `if (false && …)` ⇒ `FrameCommitTest` 两条红（`captured.items.size()` 为 0） |
+
+### 66.4 顺带清掉的与仍未做的
+
+- 清掉：`VsgRenderer::frame()` / `viewer()`（全仓 0 调用者，且 `frame()` 的文档与实现相反）、
+  `VsgRendererPasses.cpp` 的空匿名 namespace、TU 头注释里"content slots"的漂移。
+- **仍未做 / 需决策**：
+  1. `releaseWindowLayer` 与 `releasePass` 两处释放权威**并存**——它不是死代码，而是**直驱老键唯一的
+     释放入口**（`vsg_selftest/main.cpp:392` 用它丢 HUD 槽）；要收敛就得先决定直驱驱动这条路留不留。
+     引擎侧（`RenderEngine::removePass/clearPasses`）两个都调，属 SDK 契约，未动。
+  2. 直驱驱动（无 `beginPass` 的队列式）仍是第二条 pass 驱动路径，消费者只有 `vsg_selftest/main.cpp`
+     （17 个绘制点）+ 一个无设备测试；统一或删除 = 改 `RenderBackend` 契约 + 引擎 + selftest，未动。
+  3. `endFrame()` 不配对的拒绝、`render()`/`clear()` 在未初始化时的静默返回：**判定为不做**
+     —— 这两条路径今天无害（引擎自己守卫 `initialized_`），补诊断只是排障友好，代价是给 SDK 契约
+     多出一条"未初始化时不得调用"的显式规则；收益趋零。
+  4. `nativeHandle()` 覆写全仓 0 调用者，但它是**兑现** SDK 接口的方法（返回绑定的原生句柄）：
+     删掉 = 少 7 行、收益 0，且调用方会从此拿到 `nullptr`。**判定为保留**。
+  5. 项 1（`releaseWindowLayer`）+ 项 2（直驱）合流：`releaseWindowLayer` 不是死代码，它是**直驱老键
+     唯一的释放入口**（`vsg_selftest/main.cpp:392` 用它丢 HUD 槽），所以它只能跟着"直驱留不留"一起
+     决定。实测可删除量见下表；方案（含 SDK 文本改动点）待批。
+
+| 直驱专属机制（项 2 若批，全部消失） | 位置 | 量 |
+|---|---|---|
+| `SlotKey::cameraOrder` / `sampledTarget` 两个兜底身份工厂 | `VsgRenderTargetEntry.hpp:126/132` | 各 4 行 |
+| dead-announcement：`target_released` / `target_release_reported` / `takeDeadTargetAnnouncement` | `VsgRendererState.hpp:141-167` | ~28 行 |
+| `refuseDeadTargetAnnouncement` + 3 个拒画点 | `VsgRendererPasses.cpp:110-136`、`VsgRenderer.cpp:536/746/907` | 27 行 + 3 |
+| 粘性 `pass_protocol_used`（"从没 beginPass 过就永不退役"这条分支） | `VsgRendererState.hpp:330`、`VsgRendererPasses.cpp:86/128` | 3 处 |
+| `releaseWindowLayer`（覆写 + `detail` 实现） | `VsgRenderer.cpp:898-901`、`VsgTargetBookkeeping.cpp:605-636` | 39 行 |
+
+**引擎不需要改**（`RenderEngine` 本来就只走作用域：warm-up `RenderEngine.cpp:136/139`、帧循环 `:204/:217`）；
+成本集中在 `vsg_selftest/main.cpp` 的 17 个绘制点改用已有的 `PassScope` + 3 个 `RenderBackend.hpp` 段落的
+措辞收窄。
+
+## 67. 第十四轮（2026-09-15）：pass 流程只剩一条路（项 2 + 项 1 合流，P17 结案）
+
+**改了什么**：作用域从"两条驱动方式之一"变成**唯一**驱动方式。直驱（不开 `beginPass`、把请求当
+跨帧队列用）整条路消失，随之消失的是**只为它存在**的全部机制。
+
+| 删掉的东西 | 原来在哪 |
+|---|---|
+| `SlotKey::cameraOrder` / `SlotKey::sampledTarget` 两个兜底身份工厂 + `SlotKey::scope/index` 字段 | `VsgRenderTargetEntry.hpp` |
+| 两个绘制入口里各一份的身份分叉（`contentSlotKey` / `programSlotKey`） | 收成一个 `VsgPassRequest::slotKey()`（作用域成为唯一方式后两条规则本来就是同一条） |
+| 粘性 `pass_protocol_used`（"从没 beginPass 过就永不退役"这条分支） | `VsgRendererState.hpp` + `retireInactivePassSlots` |
+| 直驱专用释放入口 `releaseWindowLayer`（`VsgRenderer` 覆写 + `detail` 实现 39 行） | `VsgRenderer.cpp` / `VsgTargetBookkeeping.{hpp,cpp}` |
+| "排队请求跨帧存活"这条规则（dead-announcement 的跨帧 episode 措辞） | `VsgPassRequest` 文档（机制保留，episode 现在 = 当前作用域） |
+
+**新增的唯一守卫**：`VsgRenderer::refuseNoPassAnnounced(call)` —— `render()` / `clear()` /
+`drawScreenProgram()` 在没有公告 pass 时**拒画**并以 `PassProtocolViolation` **每帧只报一次**
+（episode 由 `beginFrame()` 重新武装；`PassMisuse` 增加 `CallOutsideScope`，消息仍只在一处
+`reportPassMisuse`）。**状态 setter 故意不守卫**：它们单独调用是惰性的（下一次 `beginPass()` 从空请求
+开始），会产出"没人要求的画面"的只有那三个绘制调用。
+
+**SDK 文本收窄（无签名变更）**：`RenderBackend.hpp` 的 `beginPass` / `isPassScopeOpen` /
+`releaseWindowLayer` / `releaseRenderTarget` 四处措辞改成"作用域是唯一方式；作用域外的绘制调用被拒"，
+`releaseWindowLayer` 保留（其它后端仍可用这个更窄的契约），只是不再暗示本后端用它。引擎**零改动**
+（`RenderEngine` 本来就只用作用域：warm-up `:136/:139`、帧循环 `:204/:217`）。
+
+**harness 与测试**：`vsg_selftest/main.cpp` 的 17 个绘制点改用已有的 `PassScope`（7 个 pass 对象提到
+循环外 —— 每帧新建 pass = 每帧新槽）；`PassScope`/`FrameScope` 改成 `RenderBackend&`（harness 一直
+号称只走接口）；`PassProtocolTest` 一条按直驱写的测试改成作用域内形态 + **新增一条**"作用域外绘制被拒"。
+`selftest_protocol.cpp` 把"退役视图数"从会话级**绝对值**改成**增量**（会话级计数现在包含 harness 自己的
+槽，绝对值不再是该相位该管的事实 —— 改增量后证据行数字与基线逐字节相同）。
+
+**判据**（全部实测）：
+
+| 判据 | 结果 |
+|---|---|
+| `[selftest]` 证据 | **55 行逐字节不变**（harness 迁移后与插件删直驱后各验一次） |
+| `test_vsg` / `test_graphics` / `test_core` | 271 → **272**（+1 新测试） / 260 / 82 |
+| 全量构建 | 0 error |
+| lavapipe 门禁 | `RESULT: PASS`，0 VUID |
+| 死符号 | `cameraOrder|sampledTarget|pass_protocol_used|releaseWindowLayer|contentSlotKey|programSlotKey` 在插件与 test_vsg 中 **0 命中** |
+| 反证①（守卫） | 守卫短路 ⇒ `ADrawingCallOutsideAPassScopeIsRefusedAndReportedOnce` 红 |
+| 反证②（第二种键真没了） | 探针里写 `SlotKey::cameraOrder(...)` ⇒ clang `no member named 'cameraOrder' in 'vine::vsg::SlotKey'` |
+| 反证③（提交令牌） | 见 §66.3（去实参 ⇒ 编译期红；守卫短路 ⇒ 2 条测试红） |
+
+**仍未做**：`endFrame()` 不配对的拒绝、未初始化时 `render()/clear()` 的静默返回（判定不做，见 §66.4）；
+`nativeHandle()` 覆写（判定保留）；真机 GPU 冒烟仍只有 lavapipe。

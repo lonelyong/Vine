@@ -11,6 +11,7 @@ set(SRC_FILE_LIST
 	GeometrySafetyTest.cpp
 	CustomAttributeTest.cpp
 	PassProtocolTest.cpp
+	FrameCommitTest.cpp
 	MaterialManagerTest.cpp
 	LightDropReportTest.cpp
 	PassObjectReleaseTest.cpp

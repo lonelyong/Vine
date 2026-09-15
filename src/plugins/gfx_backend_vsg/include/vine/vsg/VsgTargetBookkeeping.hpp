@@ -305,18 +305,6 @@ void dropConsumersSampling(VsgRendererState& state, const vine::graphics::Render
  */
 void releaseRenderTarget(VsgRendererState& state, const VsgDiagnostics& diagnostics, vine::graphics::RenderTarget* target);
 
-/** @brief Releases the window content slot a removed pass left under its legacy (camera, order) key.
- *
- * Only a direct driver that never opened a pass scope owns such a slot (see
- * RenderBackend::releaseWindowLayer), so this is a lookup in the window entry's content slots and a
- * no-op for an engine-driven pass, whose slot releasePass() handles.
- *
- * @param state  Session whose window entry holds the slot.
- * @param camera The removed pass' camera (the legacy content-slot key), or null.
- * @param order  The removed pass' explicit pipeline order (the legacy key within that camera).
- */
-void releaseWindowLayer(VsgRendererState& state, vine::raw_ptr<const vine::graphics::Camera> camera, int order);
-
 } // namespace detail
 
 V_VSG_NS_END

@@ -429,11 +429,9 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     // target's entry: deferred / post passes can write into an off-screen target
     // as well as the window.
     //
-    // Pass-scoped identity when a pass scope is open (normal path), else the
-    // historical per-source identity used by direct drivers.
-    const SlotKey slot_key = (state.request.pass != nullptr)
-                                 ? SlotKey::ownerPass(state.request.pass)
-                                 : SlotKey::sampledTarget(source);
+    // The slot is owned by the pass that draws it: the rule lives on the request,
+    // so this entry point and the content one cannot disagree.
+    const SlotKey slot_key = state.request.slotKey();
     const VsgOverlayDestination overlay =
         resolveOverlayDestination(state, diagnostics, source, slot_key, "drawScreenProgram");
     if (overlay.graph == nullptr) {

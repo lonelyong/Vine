@@ -215,13 +215,16 @@ class V_VSG_API VsgDrawBlockPool : public std::enable_shared_from_this<VsgDrawBl
     void retire(Slot slot);
 
     /**
-     * @brief Advances the retired queue by one SUBMITTED frame.
+     * @brief Advances the retired queue by one COMMITTED frame.
      *
      * Called once per frame that reaches the GPU queue (see VsgRenderer::settleSubmittedFrame), for
      * the same reason the retire rings are: the count of frames in flight is what makes a retired
      * slot safe to hand out again.
+     *
+     * @param commit Evidence that the frame this advance accounts for was committed (see
+     *               @ref FrameCommit: the advance is only legal after the submit).
      */
-    void advanceRetired();
+    void advanceRetired(FrameCommit commit);
     /**
      * @brief Gets the byte stride between two slots.
      *

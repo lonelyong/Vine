@@ -37,6 +37,39 @@ V_VSG_NS_BEGIN
 inline constexpr std::size_t kDeferredReleaseFrames = 4;
 
 /**
+ * @brief Evidence that one frame HAS been committed (recorded, submitted and presented).
+ *
+ * Every deferred release is counted in SUBMITTED frames: a value parked while a frame is being
+ * assembled may be handed back or destroyed only once the command buffers that could still reference
+ * it have been re-recorded, and that is what kDeferredReleaseFrames advances count. So every advance
+ * has one precondition — a frame has been committed — which used to live only as prose ("called once
+ * per SUBMITTED frame") in three separate declarations, where a new call site could break it silently.
+ *
+ * This token states that precondition in the type: an advance cannot be written without saying which
+ * commit released it, and @ref VsgRenderer mints exactly ONE token per frame (in beginFrame()) and
+ * hands it to the one submitFrame(). Neither "advance before the submit" nor "advance twice in one
+ * frame" — both of which would release GPU objects a frame too early, while a submitted command buffer
+ * may still name them — can therefore be written by accident.
+ *
+ * The token carries no data: it is the right to advance, not a fact about the frame.
+ */
+struct FrameCommit
+{
+    /** @brief Mints the token of a frame that has just been committed.
+     *
+     * Named rather than implicit so that every advance says what released it: the device self-test
+     * drives its own frames without a renderer and mints its own, while a production call site that
+     * tries to advance without one does not compile.
+     *
+     * @return The token of the committed frame.
+     */
+    [[nodiscard]] static FrameCommit submitted() noexcept { return FrameCommit{}; }
+
+  private:
+    FrameCommit() = default;
+};
+
+/**
  * @brief A fixed-depth parking queue: park() during a frame, advance() after it is submitted.
  *
  * The values are handed to the advance() callback in the order they were parked, bucket by bucket,

@@ -45,6 +45,11 @@ bool runPassProtocolPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& cam
 
     // A LIVE pass changes its depth policy: its retained state must follow
     // (data reused), and the change must not corrupt the frame.
+    // Pass B is NOT announced from here on, so this is where its view is retired: the count below is
+    // taken just before it, which is what makes the delta measured after it exactly the one view this
+    // phase is about (detached views are a session-wide fact — this harness keeps other passes alive,
+    // and they are retired by the same rule).
+    const std::size_t detached_before_retire = renderer.detachedSlotCount();
     for (int i = 0; i < 2; ++i) {
         FrameScope frame(renderer);
         {
@@ -64,15 +69,16 @@ bool runPassProtocolPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& cam
             renderer.render(commands, camera.get());
         }
     }
+    const std::size_t detached_after_retire = renderer.detachedSlotCount();
     if (renderer.offscreenBuildCount() != builds_before) {
         std::fprintf(stderr, "[selftest] FAIL: retiring an inactive pass rebuilt off-screen targets\n");
         ok = false;
-    } else if (renderer.detachedSlotCount() == 0u) {
+    } else if (detached_after_retire <= detached_before_retire) {
         std::fprintf(stderr, "[selftest] FAIL: the inactive pass was not retired (its view still draws)\n");
         ok = false;
     } else {
         std::fprintf(stderr, "[selftest] pass protocol: inactive pass retired without a rebuild (%zu retired view(s))\n",
-                     renderer.detachedSlotCount());
+                     detached_after_retire - detached_before_retire);
     }
 
     // Disable EVERY pass: with no pass announced at all, the retained views
@@ -104,8 +110,10 @@ bool runPassProtocolPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& cam
                      renderer.detachedSlotCount());
         ok = false;
     } else {
+        // The DELTA again, for the same reason as above: re-attaching this pass' view is what this
+        // phase proves, and it is one view by definition.
         std::fprintf(stderr, "[selftest] pass protocol: re-enabled pass re-attached without a rebuild (%zu retired view(s))\n",
-                     renderer.detachedSlotCount());
+                     retired_all_idle - renderer.detachedSlotCount());
     }
 
     // Explicit release, then frames with no pass at all must stay valid.

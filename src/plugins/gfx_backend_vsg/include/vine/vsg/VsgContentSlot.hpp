@@ -11,8 +11,7 @@
  * its own camera / light group and its stacking position (the pass' explicit pipeline order).
  *
  * The slot is keyed by the pass that OWNS it (@ref SlotKey), so a pass' camera or target may
- * change without orphaning its retained content, and two passes never alias. A direct driver
- * that skips the pass protocol falls back to the historical (camera, order) identity.
+ * change without orphaning its retained content, and two passes never alias.
  *
  * What a draw call announces reaches this code in two pieces, and the split is the point:
  *

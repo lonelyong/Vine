@@ -194,11 +194,12 @@ void VsgDrawBlockPool::retire(Slot slot)
     retired.park(slot);
 }
 
-void VsgDrawBlockPool::advanceRetired()
+void VsgDrawBlockPool::advanceRetired(FrameCommit)
 {
-    // One advance per submitted frame, on the same clock the retire rings run on: a slot retired this
+    // One advance per committed frame, on the same clock the retire rings run on: a slot retired this
     // frame is handed back kDeferredReleaseFrames submits later, by which time the command buffers
-    // that could have bound its offset have been re-recorded.
+    // that could have bound its offset have been re-recorded. The token in the signature is the
+    // evidence that this advance accounts for a committed frame (see FrameCommit).
     retired.advance([this](Slot& slot) { release(slot); });
 }
 

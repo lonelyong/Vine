@@ -97,7 +97,12 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     /** @brief Closes the window and releases the viewer. */
     void shutdown() override;
 
-    /** @brief Begins a frame (advance + handle events). */
+    /** @brief Begins a frame (advance + handle events).
+     *
+     * Also opens the frame's commit token (see @ref FrameCommit): exactly one is minted here and the
+     * one submitFrame() consumes it, so a second swapBuffers() without a new beginFrame() cannot
+     * advance the deferral rings twice.
+     */
     void beginFrame() override;
 
     /** @brief Ends a frame (viewer update). */
@@ -143,8 +148,8 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
 
     /** @brief Reports whether a beginPass() scope is open.
      *
-     * True between beginPass() and endPass(); the direct-drive style (queued
-     * state without a scope) reports false.
+     * True between beginPass() and endPass(); a drawing call made while it is false is refused (see
+     * refuseNoPassAnnounced).
      *
      * @return true while a pass scope is open.
      */
@@ -189,21 +194,6 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     void drawScreenProgram(vine::graphics::RenderTarget*                       source,
                            vine::raw_ptr<const vine::graphics::ShaderProgram> program,
                            vine::raw_ptr<const vine::graphics::Camera>        camera) override;
-
-    /** @brief Stops drawing and frees GPU state for a removed pass' window
-     * content slot.
-     *
-     * Legacy (pass camera, pass order) key used by backends that predate
-     * releasePass(); this backend keys every slot by the pass announced in
-     * beginPass(), so the call only cleans up state created by a direct
-     * driver that never opened a pass scope.
-     *
-     * @param camera The removed pass's camera (the legacy content-slot key),
-     *               or null.
-     * @param order  The removed pass's explicit pipeline order (the legacy
-     *               content-slot key within that camera).
-     */
-    void releaseWindowLayer(raw_ptr<const vine::graphics::Camera> camera, int order) override;
 
     /** @brief Notifies the renderer of the order of the pass about to render.
      *
@@ -375,17 +365,12 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void setDefaultContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program) override;
 
-    // ---- VSG convenience interface ----
+    // ---- VSG diagnostics interface ----
 
-    /** @brief Convenience: runs one full frame loop (begin/render/end/swap).
-     *
-     * Equivalent to calling beginFrame(), render(), endFrame() and
-     * swapBuffers() in sequence.
-     */
-    void frame();
-
-    /** @brief Gets the underlying vsg viewer. */
-    ::vsg::ref_ptr<::vsg::Viewer> viewer() const;
+    // The frame is driven through the RenderBackend interface (beginFrame / per-pass calls / endFrame /
+    // swapBuffers) and nothing else: this class used to offer a convenience frame() and a viewer()
+    // accessor, neither of which had a caller in the repository, and frame() documented a call
+    // sequence it did not perform.
 
     /** @brief Gets how many off-screen target graphs this backend has built.
      *
@@ -470,6 +455,35 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
 
   private:
 
+    /** @brief The pass-protocol rules this backend can be misused about (see reportPassMisuse).
+     *
+     * The rules are the HOST's to keep, so they cannot be made unrepresentable from this side — what
+     * can be unified is where breaking one is reported: this is the complete list, each entry naming
+     * the rule it breaks.
+     */
+    enum class PassMisuse
+    {
+        NestedScope,               ///< beginPass() while a scope was open: the open pass' request was dropped.
+        UnpairedEnd,               ///< endPass() with no open scope: the announced request was already dropped.
+        CallOutsideScope,          ///< A drawing call was made while no pass was announced (no beginPass before it).
+        ReleasedTargetAnnouncement ///< A call still named a render target that was released while announced.
+    };
+
+    /** @brief Reports one misuse of the pass protocol (the ONE place that does).
+     *
+     * One severity, one category and one message per rule, so a caller learns which rule it broke and
+     * how to fix it — and so a new rule is a new case here instead of another hand-written triple at
+     * a refusal point. The rules that CAN be made unrepresentable are not reported but enforced where
+     * they are decided: the frame's commit token (see @ref FrameCommit) and the refusal of a call
+     * whose announced target is gone (see refuseDeadTargetAnnouncement).
+     *
+     * @param misuse Which rule was broken.
+     * @param call   Entry point whose work was refused or skipped, for the rules that refuse a call,
+     *               so the host knows which of render() / clear() / drawScreenProgram() it was;
+     *               unused by the scope rules.
+     */
+    void reportPassMisuse(PassMisuse misuse, const char* call = nullptr);
+
     /** @brief Retires (detaches) the retained view of every pass that was not
      * announced this frame (disabled / unregistered).
      *
@@ -482,19 +496,39 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void retireInactivePassSlots();
 
-    /** @brief Refuses a call whose queued target announcement is dead.
+    /** @brief Refuses a drawing call that no pass scope opened.
      *
-     * The queued request is the direct-drive caller's to manage and survives frames
-     * (RenderBackend::beginPass), so RenderBackend::releaseRenderTarget has to drop an
-     * announcement naming the released target: the host releases it because its last owner is
-     * going away, and the class contract forbids keeping such a pointer. A call that would
-     * still use it cannot be honoured — drawing into the window instead would put the content
-     * somewhere the caller never asked for — so the call is skipped and the caller is told
-     * once, with the fix (announce the target again, or nullptr for the window).
+     * The pass announced by beginPass() is the identity of everything this backend retains and the
+     * scope is what makes "which call means what" independent of the call order, so a drawing call
+     * with no pass behind it has nothing to belong to: it is skipped instead of being served with
+     * state no pass announced (a stale target / order from whenever a scope last ran, or the
+     * defaults). The state setters are deliberately NOT guarded here — they are inert on their own
+     * (the next beginPass() starts from an empty request), while a draw that reached the device
+     * would be content nobody asked for.
      *
-     * The report is an EPISODE: it fires on the first call that needed the dead announcement
-     * and re-arms when the caller announces a target again (or a pass scope opens), so a loop
-     * that keeps drawing without re-announcing says so once instead of every frame.
+     * The report is an EPISODE: one message per frame (the next beginFrame() re-arms it), so a host
+     * looping on such a call is told once.
+     *
+     * @param call Name of the entry point refusing the call (one message per call name, so the host
+     *             knows which of render() / clear() / drawScreenProgram() was skipped).
+     * @return true when the caller must skip the call.
+     */
+    [[nodiscard]] bool refuseNoPassAnnounced(const char* call);
+
+    /** @brief Refuses a call whose announced target is dead.
+     *
+     * A pass is borrowed for its scope (RenderBackend::beginPass), so
+     * RenderBackend::releaseRenderTarget has to drop an announcement naming the released
+     * target: the host releases it because its last owner is going away, and the class contract
+     * forbids keeping such a pointer. A call that would still use it cannot be honoured — drawing
+     * into the window instead would put the content somewhere the caller never asked for — so the
+     * call is skipped and the caller is told once, with the fix (announce the target again, or
+     * nullptr for the window).
+     *
+     * The report is an EPISODE, and the episode is the rest of this scope: it fires on the first
+     * call that needed the dead announcement and re-arms when the caller announces a target again
+     * (a new scope starts from an empty request), so a pass that keeps drawing without
+     * re-announcing says so once.
      *
      * @param call Name of the entry point refusing the call (one message per call, so the host
      *             knows which of render() / clear() / drawScreen*() was skipped).
@@ -547,13 +581,14 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *    (VsgDrawBlockPool::advanceRetired).
      *
      * All three advances are keyed on the SAME event, which is why they share one entry point: a
-     * frame has been presented. Advancing a ring twice in one frame would release objects
+     * frame has been committed. Advancing a ring twice in one frame would release objects
      * one frame too early, and settling variants before the submit would corrupt the frame
      * being recorded — so they are applied together or not at all.
      *
-     * @pre The frame has been submitted (recordAndSubmit() + present()).
+     * @param commit The token beginFrame() minted for this frame (see @ref FrameCommit): the
+     *               advance is only legal after the submit, and the type says so.
      */
-    void settleSubmittedFrame();
+    void settleSubmittedFrame(FrameCommit commit);
 
     /** @brief Counts every cache's retained shares into the frame's ownership picture.
      *
@@ -593,12 +628,16 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *
      * Called when a pass scope opens (so a scope never inherits the previous pass'
      * pending state) and by endPass() (so nothing a pass announced may outlive its
-     * scope, and the next pass — or the direct driver — starts from an empty
-     * request).
+     * scope, and the next pass starts from an empty request).
      */
     void resetPassRequest();
 
-    /** @brief Records and presents the frame (once, when swapBuffers is called). */
+    /** @brief Records and presents the frame (once, when swapBuffers is called).
+     *
+     * Refuses a call that has no frame open: the deferral rings advance on the committed-frame
+     * clock, so a second submit of the same frame would release what they parked a frame too early,
+     * while a command buffer the GPU may still execute names it (see @ref FrameCommit).
+     */
     void submitFrame();
 
     /** @brief Takes the sub-viewport queued for the next draw call.

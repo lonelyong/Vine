@@ -136,7 +136,7 @@ TEST(PassObjectReleaseTest, TheRingReleasesWhatTheReleaseParked)
     ASSERT_EQ(parkedObjects(state), 1u);
 
     for (std::size_t i = 0; i < vine::vsg::VsgRetireRing::kRetireRingDepth; ++i) {
-        state.retireRing.advance();
+        state.retireRing.advance(vine::vsg::FrameCommit::submitted());
     }
     EXPECT_EQ(parkedObjects(state), 0u);
     EXPECT_EQ(state.retireRing.releasedCount(), 1u);

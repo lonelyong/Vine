@@ -606,7 +606,7 @@ TEST(GeometrySafetyTest, ReplacedDataNodeIsParkedUntilTheRingAdvances)
 
     // Released once every slot that could reference it has been re-recorded.
     for (std::size_t i = 0; i < vine::vsg::VsgRetireRing::kRetireRingDepth; ++i) {
-        bridge.advanceRetireRing();
+        bridge.advanceRetireRing(vine::vsg::FrameCommit::submitted());
     }
     EXPECT_EQ(old_data->referenceCount(), 1u); // only this test still holds it
 }

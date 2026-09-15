@@ -35,6 +35,12 @@ std::shared_ptr<VsgDrawBlockPool> makeQueueOnlyPool()
     return VsgDrawBlockPool::create(no_device);
 }
 
+/// Advances the queue by one COMMITTED frame: the token states what the test is simulating.
+void commitOneFrame(const std::shared_ptr<VsgDrawBlockPool>& pool)
+{
+    pool->advanceRetired(vine::vsg::FrameCommit::submitted());
+}
+
 } // namespace
 
 TEST(DrawBlockPoolRetireTest, ARetiredSlotWaitsExactlyTheFramesThatMayStillBindIt)
@@ -48,11 +54,11 @@ TEST(DrawBlockPoolRetireTest, ARetiredSlotWaitsExactlyTheFramesThatMayStillBindI
 
     // It must not be usable before the countdown ends: the frames in flight are still reading it.
     for (std::uint32_t i = 1; i < vine::vsg::VsgRetireRing::kRetireRingDepth; ++i) {
-        pool->advanceRetired();
+        commitOneFrame(pool);
         EXPECT_EQ(pool->stats().retired, 1u)
             << "after " << i << " submitted frame(s) the slot is still in flight";
     }
-    pool->advanceRetired();
+    commitOneFrame(pool);
     EXPECT_EQ(pool->stats().retired, 0u)
         << "and the depth-th advance is what releases it to the free list";
 }
@@ -71,17 +77,17 @@ TEST(DrawBlockPoolRetireTest, TheQueueDrainsEachSlotOnItsOwnCountdown)
     const auto pool = makeQueueOnlyPool();
 
     pool->retire(VsgDrawBlockPool::Slot{ 0u, 0u });
-    pool->advanceRetired(); // the first slot is one frame into its countdown
+    commitOneFrame(pool); // the first slot is one frame into its countdown
     pool->retire(VsgDrawBlockPool::Slot{ 0u, 1u });
     EXPECT_EQ(pool->stats().retired, 2u);
 
     // Three more advances bring the first slot's four to an end; the second, retired one advance
     // later, is still one short -- the countdown is per slot, not per queue.
     for (std::uint32_t i = 1; i < vine::vsg::VsgRetireRing::kRetireRingDepth; ++i) {
-        pool->advanceRetired();
+        commitOneFrame(pool);
     }
     EXPECT_EQ(pool->stats().retired, 1u) << "the slot retired a frame later is a frame behind";
-    pool->advanceRetired();
+    commitOneFrame(pool);
     EXPECT_EQ(pool->stats().retired, 0u) << "and its own depth worth of advances release it";
 }
 
@@ -89,7 +95,7 @@ TEST(DrawBlockPoolRetireTest, AdvancingAnEmptyQueueIsANoOp)
 {
     const auto pool = makeQueueOnlyPool();
     for (int i = 0; i < 4; ++i) {
-        pool->advanceRetired();
+        commitOneFrame(pool);
     }
     EXPECT_EQ(pool->stats().retired, 0u);
     EXPECT_EQ(pool->stats().reserved, 0u);

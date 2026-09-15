@@ -180,9 +180,12 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      *     instead of leaking into the next pass;
      *   * per-draw-call attributes — setViewport and setLights — are consumed
      *     by the draw call that follows them.
-     * A backend that also accepts the direct-drive style (no scope at all, as
-     * the device self-test uses) keeps the queued request until the caller
-     * overwrites it.
+     * The scope is the ONLY way a pass runs. Between the frame pair a host may
+     * announce state with no scope open — those calls are inert (the next
+     * beginPass() starts from an empty request) — but a DRAWING call (render /
+     * clear / drawScreenProgram) with no pass announced has nothing to belong
+     * to, so it is refused and reported (PassProtocolViolation) instead of
+     * drawing with state that pass never announced.
      *
      * The pass is the pass's identity to the backend: a backend that retains
      * per-pass GPU state (a content view, a compiled pipeline, a sampling
@@ -194,8 +197,8 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * camera / render target / depth mode take effect instead of leaving
      * stale content on screen.
      *
-     * The default no-op keeps backends without retained per-pass state (and
-     * direct backend drivers that skip the pass protocol) working unchanged.
+     * The default no-op keeps backends without retained per-pass state working
+     * unchanged.
      *
      * @param pass The pass about to execute (borrowed for the scope).
      */
@@ -223,11 +226,8 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
     /** @brief Reports whether a beginPass() scope is currently open.
      *
      * The engine drives one pass at a time, so the per-pass calls (see
-     * beginPass) belong to the scope between beginPass() and endPass(). A
-     * backend that accepts the direct-drive style (queued state and a draw call
-     * without any scope, which the device self-test uses) treats an open scope
-     * as "this request belongs to that pass" and no scope as "the request is
-     * the caller's to manage". Exposed so a host or test can assert the
+     * beginPass) belong to the scope between beginPass() and endPass(), and a drawing call outside one
+     * is refused (PassProtocolViolation) rather than served. Exposed so a host or test can assert the
      * protocol state instead of inferring it.
      *
      * @return true while a beginPass() scope is open.
@@ -316,12 +316,12 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
 
     /** @brief Releases backend GPU state for a removed pass' window content.
      *
-     * Legacy counterpart of releasePass() for the historical (pass camera,
-     * pass order) content-slot key. The engine still calls it for backends
-     * that only implement this narrower contract; new backends should key
-     * their per-pass state by the pass announced via beginPass() and release
-     * it in releasePass(). The default no-op lets backends that keep no
-     * per-camera GPU state ignore the call.
+     * A NARROWER alternative to releasePass() for a backend that keeps its per-pass state under the
+     * historical (pass camera, pass order) content-slot key instead of under the pass object: the
+     * engine calls it for every removed pass, so such a backend can free that state here without
+     * implementing releasePass(). A backend that keys its state by the pass (see beginPass) needs
+     * nothing from this call — the slots it owns are the pass' and releasePass() drops them — and
+     * the default no-op lets a backend that keeps no per-camera GPU state ignore it.
      *
      * @param camera The removed pass's camera (the content-slot key), or
      *               nullptr.
@@ -345,9 +345,9 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * ignore the call.
      *
      * The call also announces that the caller may destroy @p target now, so a
-     * backend that queued it (a direct driver's setRenderTarget announcement,
-     * which survives frames — see beginPass) must DROP that announcement rather
-     * than keep the pointer. A call that would still have used it cannot be
+     * backend holding an announcement of it — the setRenderTarget() of the scope
+     * being executed (see beginPass) — must DROP that announcement rather than keep
+     * the pointer. A call that would still have used it cannot be
      * honoured: it must be skipped and reported (with the reason) instead of
      * being silently redirected to the default framebuffer, which would draw
      * the content where the caller never asked for it.

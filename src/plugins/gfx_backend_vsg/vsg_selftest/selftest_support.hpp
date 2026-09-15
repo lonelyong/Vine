@@ -150,14 +150,14 @@ struct PixelImage
 };
 
 /**
- * @brief One frame of the direct driver: beginFrame() ... endFrame()+swapBuffers().
+ * @brief One frame of the harness: beginFrame() ... endFrame()+swapBuffers().
  *
  * RAII, so a phase cannot forget the pair — the backend counts frames, and a
  * missed endFrame() would silently skip a submit.
  */
 struct FrameScope
 {
-    explicit FrameScope(vine::vsg::VsgRenderer& renderer) : renderer(renderer)
+    explicit FrameScope(vine::graphics::RenderBackend& renderer) : renderer(renderer)
     {
         renderer.beginFrame();
     }
@@ -169,7 +169,7 @@ struct FrameScope
         renderer.swapBuffers();
     }
 
-    vine::vsg::VsgRenderer& renderer;
+    vine::graphics::RenderBackend& renderer;
 };
 
 /**
@@ -189,7 +189,7 @@ struct FrameScope
 struct PassScope
 {
     /** @brief A pass that CLEARs @p clear_color (and optionally the depth). */
-    PassScope(vine::vsg::VsgRenderer& renderer, vine::graphics::RenderPass* pass, int order,
+    PassScope(vine::graphics::RenderBackend& renderer, vine::graphics::RenderPass* pass, int order,
               vine::graphics::RenderTarget* target, const vine::Color& clear_color, bool clear_depth,
               vine::graphics::DepthMode depth_mode = vine::graphics::DepthMode::TestAndWrite)
         : renderer(renderer)
@@ -198,7 +198,7 @@ struct PassScope
         renderer.clear(clear_color, clear_depth);
     }
     /** @brief A pass that calls no clear() at all: it LOADs what a pass left. */
-    PassScope(vine::vsg::VsgRenderer& renderer, vine::graphics::RenderPass* pass, int order,
+    PassScope(vine::graphics::RenderBackend& renderer, vine::graphics::RenderPass* pass, int order,
               vine::graphics::RenderTarget* target,
               vine::graphics::DepthMode depth_mode = vine::graphics::DepthMode::TestAndWrite)
         : renderer(renderer)
@@ -212,7 +212,7 @@ struct PassScope
         renderer.endPass();
     }
 
-    vine::vsg::VsgRenderer& renderer;
+    vine::graphics::RenderBackend& renderer;
 
   private:
     void begin(vine::graphics::RenderPass* pass, int order, vine::graphics::RenderTarget* target,
@@ -1143,7 +1143,7 @@ bool runLiveDefaultContentProgramSwitchPixelPhase(vine::vsg::VsgRenderer& render
  * declaring the input on the wrong pass.
  *
  * The engine brings the renderer up itself (RenderEngine::initialize forwards the default content
- * program and initializes the backend), so both phases run AFTER the direct-driver teardown at the end
+ * program and initializes the backend), so both phases run AFTER the harness-driven teardown at the end
  * of main(): one session, one owner, no doubt about which slot ledger is live.
  *
  * This one reads the COMPOSITE. The deferred path bakes the lit image off-screen only when it has

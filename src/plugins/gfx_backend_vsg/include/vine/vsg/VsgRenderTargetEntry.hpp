@@ -3,9 +3,9 @@
 /**
  * @brief Key of one retained slot (see VsgRenderTargetEntry).
  *
- * The owning pass, or — for a direct driver that skips the pass protocol — the historical
- * fallback identity named by the factories below. Keying by the OWNING PASS is what lets a
- * slot's camera / target change without orphaning it, and keeps two passes from aliasing.
+ * The owning pass — the one announced by beginPass() — and nothing else. Keying by the OWNING PASS is
+ * what lets a slot's camera / target / program change without orphaning it, and keeps two passes from
+ * aliasing each other even when they share a camera and a pass order.
  */
 
 /**
@@ -86,62 +86,39 @@ struct PassAttributes
     friend bool operator==(const PassAttributes&, const PassAttributes&) noexcept = default;
 };
 
-/** @brief Identity of one retained backend slot.
+/** @brief Identity of one retained backend slot: the pass that draws it.
  *
- * Primary identity: @ref owner, the pass that draws the slot (announced
- * via beginPass). Two passes therefore never alias each other even when
- * they share a camera and a pass order, and the retained state follows the
- * pass when its camera / render target / program changes.
- *
- * A direct backend driver that skips the pass protocol (no beginPass, as
- * the device self-test does) keeps the historical identity instead, carried
- * by @ref scope / @ref index: camera + pass order for a content slot,
- * sampled target + attachment for a picture-in-picture slot, sampled target
- * for a fullscreen-program slot. The two identity schemes never mix in one
- * slot map because a pass-scoped key leaves scope / index at their
- * defaults.
+ * The pass announced via beginPass() owns the slot, so the retained state follows the pass when its
+ * camera / render target / program changes, and two passes never alias each other even when they share
+ * a camera and a pass order. There is deliberately no second key: this backend used to accept a direct
+ * driver that opened no scope, which needed a (camera, order) / (sampled source) fallback identity —
+ * with the scope made mandatory (a drawing call without one is refused, see
+ * VsgRenderer::refuseNoPassAnnounced) there is one way to key a slot, so there is one way to look one up.
  */
-
-
 struct SlotKey
 {
-    const vine::graphics::RenderPass* owner = nullptr; ///< Pass that owns the slot, or null (direct driver).
-    const void*                       scope = nullptr; ///< Fallback identity: camera / sampled target.
-    int                               index = 0;       ///< Fallback identity: pass order / attachment index.
+    const vine::graphics::RenderPass* owner = nullptr; ///< Pass that owns the slot (announced by beginPass).
 
     bool operator<(const SlotKey& o) const noexcept
     {
-        if (owner != o.owner) return owner < o.owner;
-        if (scope != o.scope) return scope < o.scope;
-        return index < o.index;
+        return owner < o.owner;
     }
 
-    /** @brief Key of the slot owned by a pass. */
+    /** @brief Key of the slot a pass owns.
+     *
+     * @param pass Pass announced by beginPass().
+     * @return The key of that pass' slot.
+     */
     static SlotKey ownerPass(const vine::graphics::RenderPass* pass) noexcept
     {
-        return SlotKey{ pass, nullptr, 0 };
-    }
-
-    /** @brief Fallback key of a content slot: (camera, pass order). */
-    static SlotKey cameraOrder(const vine::graphics::Camera* camera, int order) noexcept
-    {
-        return SlotKey{ nullptr, camera, order };
-    }
-
-    /** @brief Fallback key of a fullscreen-program slot: its sampled target. */
-    static SlotKey sampledTarget(const vine::graphics::RenderTarget* source) noexcept
-    {
-        return SlotKey{ nullptr, source, 0 };
+        return SlotKey{ pass };
     }
 };
 
 /** @brief Identifies one content slot.
  *
- * Slots are keyed by SlotKey: the pass announced in beginPass() owns its
- * slot, so the retained state follows the pass (its camera / render target
- * may change without orphaning it) and two passes never alias. A direct
- * driver that skips the pass protocol falls back to the historical
- * (camera, explicit pass order) identity.
+ * Slots are keyed by the pass announced in beginPass(), so the retained state follows the pass (its
+ * camera / render target may change without orphaning it) and two passes never alias.
  */
 struct ContentSlot {
     // The pass attributes this slot has APPLIED (one value: what is stored and what is compared cannot

@@ -484,18 +484,19 @@ void SceneBridge::retireNode(::vsg::ref_ptr<::vsg::Node> node){
     retire_ring_.park(std::move(node));
 }
 
-void SceneBridge::advanceRetireRing()
+void SceneBridge::advanceRetireRing(FrameCommit commit)
 {
-    // One advance per SUBMITTED frame: the bucket entered now was filled kRetireRingDepth
+    // One advance per COMMITTED frame: the bucket entered now was filled kRetireRingDepth
     // submits ago, so the command-buffer slot that could have referenced its objects has been
     // re-recorded since (start() waits on the slot's fence before re-recording it) and the GPU
-    // no longer executes them.
+    // no longer executes them. The token in the signature is the evidence that this advance
+    // accounts for a committed frame (see FrameCommit).
     //
     // The per-draw slots follow the same clock, but their queue is the POOL's (the session's), not
     // this bridge's: a bridge can be destroyed by a teardown while its slots still have frames to
     // wait out, and a queue that died with it would lose the pool's capacity for good (see
     // VsgDrawBlockPool::retire). VsgRenderer::settleSubmittedFrame advances that one.
-    retire_ring_.advance();
+    retire_ring_.advance(commit);
 }
 
 void SceneBridge::clearCache()

@@ -513,12 +513,11 @@ void releaseRenderTarget(VsgRendererState& state, const VsgDiagnostics& diagnost
     if (target == nullptr) {
         return;
     }
-    // A queued direct-drive announcement may still name this target: the request is the
-    // caller's to manage and survives frames (RenderBackend::beginPass), and the caller
-    // releases the target because its last owner is going away — so the queued pointer must
-    // not be used again (the class contract forbids keeping it). Marking it rather than only
-    // clearing it is what lets the next call that needed it say why it was skipped instead of
-    // silently drawing into the window. Mirrors releasePass(), which drops the pass it
+    // The scope being executed may still name this target: the request belongs to that scope, and
+    // the caller releases the target because its last owner is going away — so the announced
+    // pointer must not be used again (the class contract forbids keeping it). Marking it rather
+    // than only clearing it is what lets the next call that needed it say why it was skipped
+    // instead of silently drawing into the window. Mirrors releasePass(), which drops the pass it
     // announces the same way.
     if (state.request.target == target) {
         state.request.target         = nullptr;
@@ -600,34 +599,6 @@ void releaseRenderTarget(VsgRendererState& state, const VsgDiagnostics& diagnost
         detail::reconcileOffscreenOrder(state);
         V_LOGI("[VsgRenderer] released GPU resources for removed render target");
     }
-}
-
-void releaseWindowLayer(VsgRendererState& state, vine::raw_ptr<const vine::graphics::Camera> camera, int order)
-{
-    if (camera == nullptr || !state.initialized) {
-        return;
-    }
-    // Window content slots live in the window target (nullptr key) of the
-    // output-target table, keyed by (camera, explicit pass order). Off-screen
-    // slots are released together with their whole target (releaseRenderTarget).
-    auto& t  = state.entryFor(nullptr);
-    // Legacy key (camera, order): only state created by a direct driver that
-    // never opened a pass scope uses it. Engine-driven slots are released by
-    // releasePass() (keyed by the pass itself).
-    auto  it = t.content_slots.find(SlotKey::cameraOrder(camera, order));
-    if (it == t.content_slots.end()) {
-        return;
-    }
-    // Detach the slot's View from the window render graph so it is no longer
-    // recorded each frame, then drop it (releases its compiled pipelines and
-    // the per-slot bridge cache). Slot removal is rare, so a device wait
-    // before the drop keeps the release safe against an in-flight frame.
-    removeGraphChild(t.graph.get(), it->second.view);
-    // The slot's bridge is destroyed with it, so the bridge's own ring goes too:
-    // the cache drop needs the counted device wait (see detail::unhookTargetPasses).
-    state.retireRing.waitForIdle(state.viewer);
-    it->second.bridge.clearCache();
-    t.content_slots.erase(it);
 }
 
 } // namespace detail

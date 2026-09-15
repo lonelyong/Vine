@@ -24,11 +24,12 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | 单元 | 职责 |
 | --- | --- |
 | `GfxBackendVsgPlugin.cpp` | 插件入口：自注册 `VsgRenderBackendFactory` |
-| `VsgRenderer.cpp` | **帧泵 + `RenderBackend` 覆写**：`initialize/render/clear/beginPass/endPass/drawScreenTexture/drawScreenProgram/readColorBuffer/readDepthBuffer/resize/shutdown/submitFrame` |
-| `VsgRendererState.hpp` | 会话状态（`VsgRendererState`，单窗口会话）、持久状态（`VsgRendererPersistent`，跨会话）、槽的键 `SlotKey` |
-| `VsgRenderTargetEntry.hpp` | 目标账本：一个 `RenderTarget` 的三张槽表（内容/程序/覆盖层）+ 附件 + 深度提升状态 |
-| `VsgFramePlan.hpp` | 帧计划的值类型：`detail::PassPlan` / `detail::RecordPlan` / `detail::PassAttachments` |
-| `VsgRendererPasses.cpp` | pass 协议：`passGraph` 施工与 pass / 槽的生命周期 |
+| `VsgRenderer.cpp` | **帧泵 + `RenderBackend` 覆写**：`initialize/shutdown/beginFrame/endFrame/render/clear/setRenderTarget/setPassOrder/setViewport/setLights/setPassInputs/setDepthMode/swapBuffers/resize/readColorBuffer/readDepthBuffer/releaseRenderTarget/materialManager`（帧泵的七个私有步骤也在本 TU；`drawScreenProgram` / `releasePass` 等只在类上留委派） |
+| `VsgRendererState.hpp` | 会话状态（`VsgRendererState`，单窗口会话）、持久状态（`VsgRendererPersistent`，跨会话）、pass 请求状态机 `VsgPassRequest`（含槽身份的两个转换）、`FrameCommit` 令牌的存位 |
+| `VsgRenderTargetEntry.hpp` | 目标账本：一个 `RenderTarget` 的三张槽表（内容/程序/覆盖层）+ 附件 + 深度提升状态；`SlotKey`（槽身份的两套键） |
+| `VsgFramePlan.hpp` | 帧计划的值类型：`detail::PassPlan` / `detail::PassAttachments`（录制顺序的 `RecordPlan` 在 `VsgRecordOrder.hpp`） |
+| `VsgRendererPasses.cpp` | pass 协议：`beginPass`/`endPass`/`isPassScopeOpen`、未公告 pass 的退役、`releasePass`、协议误用的**唯一**上报点 `reportPassMisuse` |
+| `VsgDeferredRelease.hpp` | 延迟释放的**时钟**与它的**提交令牌** `FrameCommit`（见下行的三个用户） |
 | `VsgPipelineFactory.cpp` | 状态对象与变体决策：`makeRenderStateObjects`、`planPassVariant` / `passVariantIsStale`（纯函数）、清屏附件数与 opaque blend 规则 |
 | `SceneBridge.cpp/.hpp` | **Vine 场景 → vsg 节点的保留缓存**：逐 drawable 的脏检查、重建、停放；每个桥自持一个 `vsg::SharedObjects`（`clearCache()` 清它） |
 | `SceneBridgeGeometry.cpp` | 几何物化：属性通道 → 真 vsg 数组（**别名模型内存**）、索引、诊断 |
@@ -273,7 +274,6 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
   [`data-flow.md`](data-flow.md) §10.3。
 
 ### 3.3 后端对宿主的承诺（借用 vs 保留）
-
 `RenderBackend.hpp` 的类级契约是权威；本插件逐条兑现：
 
 - **借用参数**：`render(commands, camera)` 里的命令/相机、`drawScreenProgram` 的来源、`publish` 的目标 ——
@@ -283,8 +283,11 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
   `unpublish()` 注销。**保留不随帧数增长**。
 - **线程**：`RenderBackend` 的调用是单线程的（宿主主线程）；内部没有后台线程。
 - **失败必报**：能拒绝就拒绝并**在诊断通道说明原因**（不静默降级）。诊断按"每类每段只报一次"分集
-  （`prune-and-re-arm`），修好再坏会重新报。
-
+  （`prune-and-re-arm`），修好再坏会重新报。- **驱动方式只有一种**：引擎那样给每个 pass 开作用域（`beginPass` → 该 pass 的状态 → 它的绘制调用
+  → `endPass`）。没有公告 pass 的**绘制**调用（`render` / `clear` / `drawScreenProgram`）会被**拒画**
+  并以 `PassProtocolViolation` **每帧只报一次**（`refuseNoPassAnnounced`）：没有 pass 就没有身份，
+  服务它等于用上一个作用域剩下的状态画一幅没人要求的画面。状态 setter 不在此列——​它们单独调用是
+  惰性的（下一次 `beginPass()` 从空请求开始）。
 ### 3.4 帧所有权：份额是**入参**，不是状态
 
 "应用放手了吗"这个问题由**份额**回答：一个对象上还剩几个**保留条目**在持有它（`OwnedShareCounts`
@@ -309,6 +312,17 @@ parked/released/waits、以及**无法撤销**的编译上下文注册数），�
 （`deviceWaitCount()` / `retiredObjectCount()`）仍按名字暴露 —— 它们答的是"这一帧有没有停设备 /
 环有没有在动"，与"留着多少"是两件事。这两个单值访问器读的就是同一个环的计数器，不会给第二个答案。
 
+### 3.5 帧的提交令牌（`FrameCommit`，2026-09-15）
+延迟释放的时钟以**已提交的帧**计数，所以"推进环"这件事有一个前置条件：这一帧真的提交过。它现在是
+**类型**而不是注释：`beginFrame()` 铸造本帧唯一的一枚令牌，唯一的 `submitFrame()` 消费它，
+三个环的 `advance`（退役环 / 逐 draw 槽池 / 每个内容槽的桥）都要求这枚令牌 ——
+
+- "提交前 settle"写不出来（没有令牌）；
+- "一帧推两步"写不出来（一帧只发一枚）：没有令牌的 `swapBuffers()` 被**拒绝**并只报一次
+  `PassProtocolViolation`（episode，下一次 `beginFrame()` 重新武装）。服务它等于为同一帧再推一次环，
+  会提前释放仍可能被在飞命令缓冲引用的对象；
+- 设备无关测试自己铸造令牌（它们模拟的正是"提交了一帧"），调用点因此把意图写在脸上。
+
 ## 4. 调用次数（一帧各发生多少次）
 
 ### 4.1 每帧恰好一次
@@ -319,12 +333,14 @@ parked/released/waits、以及**无法撤销**的编译上下文注册数），�
 | --- | --- | --- |
 | `releaseAbandonedTargets()` | 1 | 通常无事（只有目标被放弃时） |
 | `reportSessionDevice()` | 1 | 有标志守卫，多调 no-op |
+| 提交令牌检查（`beginFrame` 发的那一枚） | 1 | 无事——除非这一帧没开过 frame，那就不提交并报一次 |
 | `retireInactivePassSlots()` | 1 | 通常无事（只有本帧未公告的 pass 槽） |
 | `compilePendingViews()`（增量编译） | 1 | 队列空 = 立刻返回 |
 | `viewer->recordAndSubmit()` | **1**（一帧只提交一次） | 是 |
 | `viewer->present()` | 1 | 是 |
-| `settleSubmittedFrame()`（各内容槽 + 渲染器退役环各推进一步） | 1 | 是（推进环） |
-| `materialManager.releaseAbandoned()` | 1 | 通常无事 |
+| `settleSubmittedFrame(令牌)`（各内容槽 + 渲染器退役环 + 逐 draw 槽池各推进一步） | 1 | 是（推进环） |
+| `releaseAbandonedContent()`（**先重数份额、再清扫**：几何 + 材质） | 1 | 通常无事 |
+| └ 其中的 `collectFrameShares()` | **2**（帧首一次 + 清扫前重数一次） | 是（O(当前条目)） |
 
 另外每帧一次（在逐 pass 驱动里）：
 
@@ -467,8 +483,8 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 
 | 路径 | 策略 |
 | --- | --- |
-| 状态变体交换、撤销深度提升、被丢弃的 program 节点、视图摘除 | **停放**（退役环，深度 4，提交后推进）⇒ 0 次设备等待 |
-| 槽 teardown / 目标重建 / `clearCache()` / depth 模式变更的状态重建 | **计数等待**（`Impl::waitForIdle()`） |
+| 状态变体交换、撤销深度提升、被丢弃的 program 节点、视图摘除 | **停放**（退役环，深度 4，**由提交令牌驱动推进**：只有已提交的一帧才能推一步，见 §4.1）⇒ 0 次设备等待 |
+| 槽 teardown / 目标重建 / `clearCache()` / depth 模式变更的状态重建 | **计数等待**（`VsgRetireRing::waitForIdle(viewer)`） |
 
 理由（实测）：`clearCache()` 会清空**该桥的**共享对象注册表，那里的管线/采样器不一定还有存活节点作为唯一持有者
 —— 停放会让 lavapipe 报 `VUID-vkDestroyPipeline-00765` / `vkDestroySampler-01082`。所有等待都必须走
@@ -537,6 +553,12 @@ p-vertex 测试整棵子树剪掉，每节点世界盒经 `BoundsCache` 只算�
   `ShaderFallback` Warning + 什么都不画”，这个脚本把它提到提交之前。
 - 设备无关规则有独立单测（`tests/test_vsg/SceneRulesTest.cpp`）—— 通道形状、解包、法线推导、格式/绑定
   点映射、布局与变体哈希都能在无设备环境下断言。
+- 三份"活文档"与代码树的一致性由 `scripts/check_doc_symbols.py` 钉住：文档里以反引号标注的**本插件
+  单元名**（形如 `Vsg…` / `SceneBridge…` 的 `.hpp` / `.cpp`）必须真的存在（历史章节与此处提到的
+  逃生注释除外），且 `src/` 与 `include/vine/vsg/` 下每个单元都必须在某份活文档里被点名 —— 单元
+  改名/删除后没人改文档，这道门会红（`drawScreenTexture`、`renderOffscreenTarget`、
+  `window_layers` 就是这么漂走的）。**它只判单元级事实**：一句话的语义（某个符号现在归谁负责）
+  仍要人读。
 
 ## 7. 已知坑（扩展前必读）
 

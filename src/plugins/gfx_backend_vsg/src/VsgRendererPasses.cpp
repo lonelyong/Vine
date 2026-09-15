@@ -34,18 +34,43 @@
 
 V_VSG_NS_BEGIN
 
-// The pass protocol and the content slots: beginPass / endPass and the retained pass scope,
-// retiring the passes that stopped executing, and the per-slot content draw.
+// The pass protocol: beginPass / endPass and the retained pass scope, retiring the passes that
+// stopped executing, and the one place a misuse of the protocol is reported (reportPassMisuse).
 //
-// This translation unit is one of several that share a single free-function
-// layer (VsgPipelineFactory.hpp / VsgBackendUtility.hpp); the directive keeps
-// its call sites unqualified.
-using namespace detail;
+// The call sites name the free-function layer they use (VsgPipelineFactory.hpp /
+// VsgBackendUtility.hpp) explicitly, as they did before the module was split into TUs.
 
-namespace
+void VsgRenderer::reportPassMisuse(PassMisuse misuse, const char* call)
 {
-
-} // namespace
+    // The pass protocol's ONE report site: which rule was broken decides the message, and every rule
+    // is a Warning on the same category (the host switches on the category, and the message tells it
+    // which rule and what to do about it).
+    vine::String message;
+    switch (misuse) {
+        case PassMisuse::NestedScope:
+            message = u8"beginPass() while a pass scope is open: the open pass' request was dropped";
+            break;
+        case PassMisuse::UnpairedEnd:
+            message = u8"endPass() without an open pass scope: the announced request was already dropped";
+            break;
+        case PassMisuse::ReleasedTargetAnnouncement:
+            message = formatDiagnostic(u8"%s: the announced render target was released while it was"
+                                       u8" still announced, so the call was skipped instead of falling"
+                                       u8" back to the window — announce the target again (or nullptr to"
+                                       u8" draw into the window)",
+                                       call != nullptr ? call : "(unknown call)");
+            break;
+        case PassMisuse::CallOutsideScope:
+            message = formatDiagnostic(u8"%s: no pass scope is open, so this call has no pass to belong to"
+                                       u8" — the call was skipped instead of drawing with state no pass"
+                                       u8" announced. Drive a pass the way the engine does: beginPass(pass)"
+                                       u8" → the pass' state → its draw calls → endPass()",
+                                       call != nullptr ? call : "(unknown call)");
+            break;
+    }
+    diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                       vine::graphics::DiagnosticCategory::PassProtocolViolation, message);
+}
 
 void VsgRenderer::beginPass(vine::raw_ptr<const vine::graphics::RenderPass> pass)
 {
@@ -53,12 +78,10 @@ void VsgRenderer::beginPass(vine::raw_ptr<const vine::graphics::RenderPass> pass
         // The engine runs one pass at a time; a nested beginPass means the
         // previous scope was never ended, so its announced state would silently
         // apply to the new pass. Report it and start clean.
-        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
-                           vine::graphics::DiagnosticCategory::PassProtocolViolation,
-                           u8"beginPass() while a pass scope is open: the open pass' request was dropped");
+        reportPassMisuse(PassMisuse::NestedScope);
     }
     // A pass opens a CLEAN request: no pass may inherit what an earlier one
-    // announced. The direct-driver path (no beginPass) keeps its queue instead.
+    // announced.
     resetPassRequest();
     state.request.pass = pass;
     state.pass_open    = true;
@@ -67,7 +90,6 @@ void VsgRenderer::beginPass(vine::raw_ptr<const vine::graphics::RenderPass> pass
         // pass that is not announced again next frame is retired (see
         // retireInactivePassSlots), which is what makes disabling it take effect.
         state.passes_active_this_frame.insert(pass);
-        state.pass_protocol_used = true;
     }
 }
 
@@ -82,9 +104,7 @@ void VsgRenderer::endPass()
         // Reported because it means the pass protocol is out of step: the
         // state announced since the last endPass (or beginPass) had already
         // been dropped, so whatever the caller expected to apply did not.
-        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
-                           vine::graphics::DiagnosticCategory::PassProtocolViolation,
-                           u8"endPass() without an open pass scope: the announced request was already dropped");
+        reportPassMisuse(PassMisuse::UnpairedEnd);
     }
     // Close the scope: everything the pass announced is dropped here (including
     // scope attributes no draw call consumed), so nothing can apply to the next
@@ -93,40 +113,46 @@ void VsgRenderer::endPass()
     resetPassRequest();
 }
 
+bool VsgRenderer::refuseNoPassAnnounced(const char* call)
+{
+    if (state.request.pass != nullptr) {
+        return false;
+    }
+    // ONE refusal site, and one report per FRAME (not per call): a host looping on such a call is
+    // told once, and the next beginFrame() re-arms it. The state setters are deliberately not
+    // guarded: they are inert on their own (the next beginPass() starts from an empty request), so
+    // the calls that could draw something nobody asked for are exactly these three.
+    if (!state.scope_refusal_reported) {
+        state.scope_refusal_reported = true;
+        reportPassMisuse(PassMisuse::CallOutsideScope, call);
+    }
+    return true;
+}
+
 bool VsgRenderer::refuseDeadTargetAnnouncement(const char* call)
 {
     bool report = false;
     if (!state.request.takeDeadTargetAnnouncement(report)) {
         return false;
     }
-    // One report per release episode: the request's flag is cleared by the next
-    // setRenderTarget() (and with the request when a scope opens or closes), so a caller
-    // that keeps drawing on the same dead announcement is told once — with the fix, which
+    // One report per episode, and the episode is the rest of this scope: the request's flags are
+    // cleared by the next setRenderTarget() (and with the request when a scope opens or closes),
+    // so a pass that keeps drawing on the same dead announcement is told once — with the fix, which
     // is the point of the message: the draw went nowhere, not into the window.
     if (report) {
-        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
-                           vine::graphics::DiagnosticCategory::PassProtocolViolation,
-                           formatDiagnostic(u8"%s: the announced render target was released while it was"
-                                            u8" still announced, so the call was skipped instead of falling"
-                                            u8" back to the window — announce the target again (or nullptr to"
-                                            u8" draw into the window)",
-                                            call));
+        reportPassMisuse(PassMisuse::ReleasedTargetAnnouncement, call);
     }
     return true;
 }
 
 void VsgRenderer::retireInactivePassSlots()
 {
-    if (!state.pass_protocol_used) {
-        return; // direct driver (legacy keys): nothing is pass-owned
-    }
     // A slot needs retiring when its pass did not execute this frame and its
     // view is still attached. Already-retired slots are skipped, so a pass that
     // stays disabled costs nothing per frame (no scan hit, no detach, no
     // repeated diagnostic).
     const auto needs_retire = [this](const SlotKey& key, bool detached) {
-        return !detached && key.owner != nullptr &&
-               state.passes_active_this_frame.count(key.owner) == 0;
+        return !detached && key.owner != nullptr && state.passes_active_this_frame.count(key.owner) == 0;
     };
     // NO device wait here: this path DETACHES a view from its graph and keeps the
     // slot (the view, its node and the compiled pipelines stay referenced by the

@@ -96,12 +96,16 @@ struct VsgRendererPersistent {
 //   * per-draw-call attributes (viewport, lights) are consumed by the draw
 //     call that follows them (takeViewport / takeLights).
 //
-// A direct driver that never calls beginPass keeps using this as a plain
-// request queue: nothing is dropped until it overwrites it with the next
-// set* call (the legacy behaviour).
+// The scope is the ONLY way to drive this backend: a request exists between beginPass() and
+// endPass(), and a drawing call that finds none is refused (see VsgRenderer::refuseNoPassAnnounced)
+// instead of drawing with state no pass announced. There used to be a second way — a direct driver
+// that never opened a scope, which kept the request alive across frames — and every rule that
+// existed only to make THAT safe (the (camera, order) / (source) fallback identities, a sticky
+// "protocol used" flag, an episode spanning frames) is gone with it.
 struct VsgPassRequest
 {
-    /// The pass announced by beginPass() (null for a direct driver).
+    /// The pass announced by beginPass(): the identity of every slot the request draws into
+    /// (null while no scope is open — see VsgRenderer::refuseNoPassAnnounced).
     const vine::graphics::RenderPass* pass = nullptr;
     /// Target announced by setRenderTarget() (null = the window).
     vine::graphics::RenderTarget* target = nullptr;
@@ -130,17 +134,17 @@ struct VsgPassRequest
     // A content slot reads them when it builds/updates its state: the shadow map is an input, and
     // the slot is what binds it (see VsgContentSlot).
     std::vector<vine::raw_ptr<vine::graphics::RenderTarget>> inputs;
-    /// The announced target was released while it was still announced
-    /// (RenderBackend::releaseRenderTarget). The queued request is the direct
-    /// driver's to manage and survives frames (RenderBackend::beginPass), so this
-    /// flag is how a call that would still use the dead pointer knows it cannot be
-    /// honoured: such a call must be skipped, not redirected to the window. A
-    /// pass-scope driven caller never sees it — beginPass() starts from an empty
-    /// request — and setRenderTarget() clears it, so it lives exactly as long as
-    /// the announcement it invalidates.
+    /// The announced target was released while this scope was still using it
+    /// (RenderBackend::releaseRenderTarget). The pass announced by beginPass() is
+    /// borrowed for its scope, so a drawing call that would still use the dead
+    /// pointer cannot be honoured: it is skipped rather than redirected to the
+    /// window, which would put the content somewhere the caller never asked for.
+    /// A new setRenderTarget() clears it (and so does the next scope, which starts
+    /// from an empty request).
     bool target_released = false;
     /// True once the dead announcement above was reported: the report is an
-    /// EPISODE, one per release, so a caller looping on it is not flooded.
+    /// EPISODE, and the episode is the rest of THIS scope (beginPass() starts from
+    /// an empty request), so a pass that keeps drawing on it is told once.
     /// Cleared together with target_released.
     bool target_release_reported = false;
 
@@ -188,6 +192,21 @@ struct VsgPassRequest
     [[nodiscard]] PassAttributes attributes() const noexcept
     {
         return PassAttributes{ depth_mode, order, presenting };
+    }
+
+    /** @brief Gets the slot identity every draw call of this request belongs to.
+     *
+     * The announced pass, and nothing else: the pass IS the identity of the state this backend
+     * retains, so two passes never alias and a slot follows its pass when its camera / target /
+     * program changes. Living on the request (rather than being rebuilt at each draw entry point)
+     * means the rule has ONE home, and a request with no pass in it is refused before it gets here
+     * (see VsgRenderer::refuseNoPassAnnounced).
+     *
+     * @return The key of the slots this request draws into.
+     */
+    [[nodiscard]] SlotKey slotKey() const noexcept
+    {
+        return SlotKey::ownerPass(pass);
     }
 
     /** @brief Consumes the queued lights.
@@ -258,10 +277,25 @@ struct VsgRendererState {
     // used, so querying it during initialize() returns nothing.
     bool                                device_reported = false;
 
-    /// The request in progress: the open pass scope, or the direct driver's queue.
+    // ---- The frame's commit token (see FrameCommit, VsgDeferredRelease.hpp) ----
+
+    // Minted by beginFrame() and consumed by the one submitFrame(): the deferral rings advance on the
+    // committed-frame clock, so this is what makes an advance mean "a frame was committed", and it is
+    // why a second swapBuffers() without a new beginFrame() cannot advance them a second time (which
+    // would release GPU objects a frame too early, while a submitted command buffer may still name them).
+    std::optional<FrameCommit> pending_commit;
+    // True once a submit that had no open frame was refused: the refusal is an EPISODE — one report per
+    // episode, re-armed by the next beginFrame() — so a host looping on swapBuffers() is not flooded.
+    bool submit_without_frame_reported = false;
+
+    /// The request in progress: filled by the open pass scope, dropped by endPass().
     VsgPassRequest request;
     /// True while a beginPass() scope is open (endPass() closes it).
     bool pass_open = false;
+    // True once a drawing call that found no announced pass was refused: the refusal is an EPISODE —
+    // one report per frame, re-armed by the next beginFrame() — so a host looping on such a call is
+    // not flooded (see VsgRenderer::refuseNoPassAnnounced).
+    bool scope_refusal_reported = false;
     // Passes announced since the last submitted frame (see
     // retireInactivePassSlots): a pass that did not execute this frame is
     // retired (its view detached) rather than left drawing stale content.
@@ -281,12 +315,6 @@ struct VsgRendererState {
     // asks "was announced this frame", a semantic change hiding inside a
     // refactor. See .ai/design/vsg-pass-lifecycle.md §63 for the survey.
     std::set<const vine::graphics::RenderPass*> passes_active_this_frame;
-    // STICKY: set once any pass is announced, i.e. this backend is being driven
-    // through the engine's pass protocol. It is never cleared, so that a frame
-    // in which EVERY pass is disabled (nothing announced) still retires the
-    // retained views instead of leaving them on screen. A direct driver that
-    // never calls beginPass keeps the legacy keying and is never retired.
-    bool pass_protocol_used = false;
 
     // Successful off-screen target builds (diagnostic; see
     // VsgRenderer::offscreenBuildCount()).

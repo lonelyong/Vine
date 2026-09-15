@@ -298,12 +298,14 @@ class V_VSG_API SceneBridge {
 
     /** @brief Releases the nodes retired one ring cycle ago.
      *
-     * Must be called exactly once per SUBMITTED frame — after that frame's
-     * recordAndSubmit() — because one advance is what accounts for one
-     * submission's fence wait (see retireNode). The ring itself, its depth and its policy are
-     * VsgRetireRing.
+     * Must be called exactly once per COMMITTED frame — after that frame's recordAndSubmit() —
+     * because one advance is what accounts for one submission's fence wait (see retireNode). The
+     * ring itself, its depth and its policy are VsgRetireRing.
+     *
+     * @param commit Evidence that the frame this advance accounts for was committed (see
+     *               @ref FrameCommit: the advance is only legal after the submit).
      */
-    void advanceRetireRing();
+    void advanceRetireRing(FrameCommit commit);
 
     /** @brief Gets the number of distinct compiled pipeline variants.
      *

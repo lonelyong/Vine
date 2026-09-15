@@ -418,6 +418,13 @@ void VsgRenderer::beginFrame()
     // backend has been driven through pass scopes, a frame in which every pass
     // is disabled announces nothing and must still retire the retained views.
     state.passes_active_this_frame.clear();
+    // The frame's commit token, and the refusal episode it re-arms: ONE frame = ONE token, so the
+    // only advance of the deferral rings (settleSubmittedFrame) has to have this frame's token.
+    // Minted even when there is no session: "a frame was opened" is a fact about the caller's
+    // protocol, not about the device (see FrameCommit).
+    state.pending_commit                = FrameCommit::submitted();
+    state.submit_without_frame_reported = false;
+    state.scope_refusal_reported        = false;
     if (state.viewer == nullptr) {
         return;
     }
@@ -525,8 +532,12 @@ bool VsgRenderer::supportsRenderTargets()
 
 void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& commands, vine::raw_ptr<const vine::graphics::Camera> camera)
 {
-    // A target announcement whose target was released cannot serve this draw call
-    // (the queued pointer lost its owner when it was released): say so once and skip it.
+    // A drawing call with no pass behind it has nothing to belong to (see refuseNoPassAnnounced),
+    // and a target announcement whose target was released cannot serve this draw call either
+    // (the pointer lost its owner when it was released): say so once and skip the call.
+    if (refuseNoPassAnnounced("render()")) {
+        return;
+    }
     if (refuseDeadTargetAnnouncement("render()")) {
         return;
     }
@@ -543,8 +554,7 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
 
     // The SCOPE attributes are READ, never consumed: they describe the PASS, so every draw call
     // of the same scope sees the same order / depth policy / target / presenting flag (endPass()
-    // drops them with the rest of the request, and a direct driver overwrites them with its next
-    // set* call). What each one means is documented where it is set: setPassOrder (it is also
+    // drops them with the rest of the request, and the next beginPass() starts from an empty one). What each one means is documented where it is set: setPassOrder (it is also
     // the content-slot key under this camera AND the stacking order), setDepthMode, and
     // setRenderTarget — EVERY target shares the one slot path below, and the GPU attachments are
     // ensured before the slot draws (window = the shared swapchain graph from initialize();
@@ -652,7 +662,7 @@ void VsgRenderer::reportSessionDevice()
            properties.driverVersion, static_cast<int>(properties.deviceType));
 }
 
-void VsgRenderer::settleSubmittedFrame()
+void VsgRenderer::settleSubmittedFrame(FrameCommit commit)
 {
     // 1. Switch every pass that recorded a ONE-FRAME variant back to its steady variant — the
     //    one the NEXT frame has to record (see the declaration's notes).
@@ -670,13 +680,13 @@ void VsgRenderer::settleSubmittedFrame()
     //    teardown dropped them -- see VsgDrawBlockPool::retire).
     for (auto& target_entry : state.targets) {
         for (auto& slot_entry : target_entry.second.content_slots) {
-            slot_entry.second.bridge.advanceRetireRing();
+            slot_entry.second.bridge.advanceRetireRing(commit);
         }
     }
     if (state.draw_block_pool != nullptr) {
-        state.draw_block_pool->advanceRetired();
+        state.draw_block_pool->advanceRetired(commit);
     }
-    state.retireRing.advance();
+    state.retireRing.advance(commit);
 }
 
 void VsgRenderer::submitFrame()
@@ -686,6 +696,26 @@ void VsgRenderer::submitFrame()
     // submit may only be settled after it.
     releaseAbandonedTargets();
     reportSessionDevice();
+
+    // The frame beginFrame() opened. A submit that no frame opened is REFUSED rather than served:
+    // the deferral rings advance on the committed-frame clock, so serving it would advance them for
+    // a frame that was never recorded — releasing what they parked a frame too early, while a
+    // command buffer the GPU may still execute names it. The refusal is an EPISODE: one report, and
+    // the next beginFrame() re-arms it, so a host looping on swapBuffers() is not flooded.
+    const std::optional<FrameCommit> commit = state.pending_commit;
+    state.pending_commit.reset();
+    if (!commit.has_value()) {
+        if (!state.submit_without_frame_reported) {
+            state.submit_without_frame_reported = true;
+            diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                               vine::graphics::DiagnosticCategory::PassProtocolViolation,
+                               u8"swapBuffers() without an open frame (no beginFrame() before it): the submit"
+                               u8" was skipped instead of recording a frame twice — the deferral rings advance"
+                               u8" once per COMMITTED frame, and a second advance would release GPU objects a"
+                               u8" frame too early");
+        }
+        return;
+    }
 
     if (!state.initialized || state.viewer == nullptr) {
         return;
@@ -705,7 +735,7 @@ void VsgRenderer::submitFrame()
     // Re-recording an unchanged graph is cheap (vsg records the command graph every frame).
     state.viewer->recordAndSubmit();
     state.viewer->present();
-    settleSubmittedFrame();
+    settleSubmittedFrame(*commit);
 
     // Everything the app let go of, judged by counts collected for this moment (see the
     // declaration: a slot dropped during the frame must not leave the picture over-counted).
@@ -714,9 +744,12 @@ void VsgRenderer::submitFrame()
 
 void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
 {
-    // The clear belongs to the target the pass announced (see below), so a released
-    // announcement refuses it like it refuses a draw call: clearing the WINDOW instead
-    // would wipe the frame the caller never asked to touch.
+    // The clear belongs to the pass that announced its target (see below), so a call with no pass
+    // behind it is refused like a draw call would be: pushing this clear to the WINDOW would wipe a
+    // frame the caller never asked to touch.
+    if (refuseNoPassAnnounced("clear()")) {
+        return;
+    }
     if (refuseDeadTargetAnnouncement("clear()")) {
         return;
     }
@@ -869,15 +902,13 @@ void VsgRenderer::releaseRenderTarget(vine::graphics::RenderTarget* target)
     detail::releaseRenderTarget(state, diagnostics, target);
 }
 
-void VsgRenderer::releaseWindowLayer(vine::raw_ptr<const vine::graphics::Camera> camera, int order)
-{
-    detail::releaseWindowLayer(state, camera, order);
-}
-
 void VsgRenderer::drawScreenProgram(vine::graphics::RenderTarget* source,
                                     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
                                     vine::raw_ptr<const vine::graphics::Camera>        camera)
 {
+    if (refuseNoPassAnnounced("drawScreenProgram()")) {
+        return;
+    }
     if (refuseDeadTargetAnnouncement("drawScreenProgram()")) {
         return;
     }
@@ -900,25 +931,6 @@ void VsgRenderer::setDiagnosticSink(vine::graphics::DiagnosticSink sink)
             detail::installDiagnosticRoute(diagnostics, slot_entry.second.bridge);
         }
     }
-}
-
-void VsgRenderer::frame()
-{
-    if (!state.initialized || state.viewer == nullptr) {
-        return;
-    }
-    // VSG frame order: advance -> handleEvents -> update -> record -> present.
-    // No Vine content is bound to the renderer: the engine drives content per
-    // pass, so this convenience hook only presents whatever the passes synced
-    // (submitFrame() skips when nothing was rendered this frame).
-    beginFrame();
-    endFrame();
-    swapBuffers();
-}
-
-::vsg::ref_ptr<::vsg::Viewer> VsgRenderer::viewer() const
-{
-    return state.viewer;
 }
 
 std::size_t VsgRenderer::offscreenBuildCount() const noexcept

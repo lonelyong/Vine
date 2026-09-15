@@ -258,11 +258,9 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     // draw call); the per-draw-call state is the arguments above.
     const vine::graphics::RenderTarget* target_key = state.request.target;
     const PassAttributes                wanted     = state.request.attributes();
-    // The slot is owned by the pass that draws it (pass scope) or, for a
-    // direct driver, by the historical (camera, order) pair.
-    const SlotKey key = (state.request.pass != nullptr)
-                            ? SlotKey::ownerPass(state.request.pass)
-                            : SlotKey::cameraOrder(camera, wanted.order);
+    // The slot is owned by the pass that draws it: the rule lives on the request,
+    // so this entry point and the screen one cannot disagree.
+    const SlotKey key = state.request.slotKey();
 
     auto& t  = state.entryFor(state.request.target);
     auto  it = t.content_slots.find(key);

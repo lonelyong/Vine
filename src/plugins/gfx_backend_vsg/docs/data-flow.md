@@ -329,27 +329,29 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 |---|---|---|
 | 几何逐出 | 外侧无人持有（`abandoned(shares)`，即 `useCount() <= shares`）→ erase，释放该几何的 vsg 子树 | `SceneBridge::releaseAbandonedGeometries`（sync 内 + 帧末对未跑 pass 的槽） |
 | Material 增删改 | `getOrCreate / updateMaterial / releaseMaterial / clear` | `VsgMaterialManager` |
-| 离屏 resize | 摘 graph → `deviceWaitIdle` → `clearCache` + 置空 image/view/RP/framebuffer → 按新尺寸重建 | `renderOffscreenTarget` |
-| 移除 RenderTarget | 摘 offscreen graph + 摘 PiP view → `deviceWaitIdle` → `clearCache` + erase | `releaseRenderTarget` |
-| 移除窗口层 | 摘该层 View → `deviceWaitIdle` → erase 槽 | `releaseWindowLayer` |
+| 目标描述变了（尺寸 / 附件形态 / 深度提升）或借用失效 | 摘旧图册 → `deviceWaitIdle`（计数）→ `clearCache` + 置空 image/view/RP/framebuffer → 按新描述重建 | `detail::buildOffscreenTarget`（重建谓词 = `VsgRenderTargetEntry::BuildKey` 整把比较 + 尺寸） |
+| 移除 RenderTarget | 摘 offscreen graph + 摘采样它的槽 → `deviceWaitIdle`（计数）→ `clearCache` + erase | `detail::releaseRenderTarget` |
+| 移除 pass（引擎驱动） | 摘该 pass 的槽 View / 程序槽 → `deviceWaitIdle`（计数）→ `clearCache` + erase 槽 | `VsgRenderer::releasePass`（`detail::erasePassFromTarget`） |
+| 移除窗口层（老键） | 摘该层 View → `deviceWaitIdle` → erase 槽 | 插件不再实现此路：作用域是唯一驱动方式后，槽一律属于公告的 pass，由 `releasePass` 释放（`RenderBackend::releaseWindowLayer` 仍留在 SDK，供其它后端用更窄的契约） |
+| 帧末清扫（无主对象） | 用**当前**份额数判定"应用放手了"→ 逐槽几何 + 材质 + 废弃目标 | `releaseAbandonedContent` / `releaseAbandonedTargets` |
 | shutdown（析构/重初始化前） | 见 10.3 | `shutdown` |
 
 ### 10.3 shutdown 顺序（关键：撞 `VSG_MAX_DEVICES==1`）
 
 ```text
-deviceWaitIdle
-  → viewer 收尾（close/removeWindow）+ window->releaseWindow()  // 不 Destroy 宿主(Qt) 窗口
-  → render_graph 置空
-  → 逐 window_layers：释放 view/root/light_group/vsg_camera + 该层 bridge.clearCache()
-  → window_layers.clear()
-  → 置空 vsg_camera / vsg_scene / depth_on_shader_set / depth_off_shader_set
-  → materialManager.clear()
-  → initialized=false
+state.retireRing.waitForIdle(viewer)          // 计数的一次设备等待：会话要走了，不能停
+  → viewer->removeWindow(window) + viewer->close()
+  → window->releaseWindow()                   // 不 Destroy 宿主(Qt) 窗口
+  → state = VsgRendererState{}                // 一步整体替换：窗口 / viewer / 命令图 / 每个目标的
+                                              //  图与槽 / 编译队列 / 退役环 / 未消费的提交令牌
+  → persistent.materialManager.clear()        // 跨会话保留，要显式清（其条目持旧 device 的对象）
+  → persistent.bound_handle = nullptr
 ```
 
-- **原因（代码注释）**：已编译的 pipeline / descriptor set 持旧 `vsg::Device` 引用；
-  表面重建再 `Window::create()` 会分配第二个 Device，撞 `VSG_MAX_DEVICES == 1` 抛异常。
-  因此**重初始化前必须把上面全部释放干净**。
+- **为什么是整体赋值而不是一步步拆**：会话里一切引用 `vsg::Window` / `vsg::Device` 的东西都在
+  `VsgRendererState` 一个对象里，赋值就全没了——新增一个持有 vsg 对象的成员不需要改拆卸代码。
+- **为什么必须清干净**：已编译的 pipeline / descriptor set 持旧 `vsg::Device` 引用；表面重建再
+  `Window::create()` 会分配第二个 Device，撞 `VSG_MAX_DEVICES == 1` 抛异常。
 
 ## 11. 每帧数据流（时序）
 
@@ -363,33 +365,32 @@ sequenceDiagram
 
     loop 每帧
         E->>E: frame() 开始
-        E->>R: (advanceToNextFrame/handleEvents)
+        E->>R: beginFrame() = advanceToNextFrame + handleEvents + 发放本帧唯一的提交令牌
         rect rgb(240,248,255)
-        note over E,R: 逐 pass 驱动
-        E->>S: 收集内容光(该 pass 场景)
+        note over E,R: 逐 pass 驱动（order 升序）
         E->>S: collectRenderCommands(剔除/透明排序)
         S-->>E: vector<RenderCommand>(帧级快照)
+        E->>R: beginPass(pass) / setPassOrder / setRenderTarget / clear / setLights
         E->>R: render(commands, camera)
-        alt active_target(离屏)
-            R->>B: 离屏 bridge.syncRenderCommands(root, created)
-            B-->>R: created(新/重建子树)
-            R->>V: created? compile()
-        else window 层（主/顶部，键=相机）
-            R->>B: window_layers[camera].bridge.syncRenderCommands(root, created)
-            B-->>R: created
-            R->>V: created? compile()   // 稳态: created=0 → 零编译
+        R->>B: 该 pass 的槽（SlotKey::ownerPass）bridge.syncRenderCommands(root, created)
+        B-->>R: created(新/重建子树)
+        R->>V: created? compile()   // 稳态: created=0 → 零编译
+        E->>R: endPass()
         end
-        R-->>E: needs_submit=true (提交延迟)
-        end
-        E->>R: swapBuffers()
+        E->>R: endFrame() = viewer->update()
+        E->>R: swapBuffers() → submitFrame()
         R->>V: recordAndSubmit() + present()   // 一帧只提交一次
+        R->>R: settleSubmittedFrame(令牌)      // 提交之后才推进三环（各一步）
     end
 ```
 
 - 稳态帧成本：`syncRenderCommands` 内每个几何做**廉价脏检查**（revision / material /
   render_state / program / matrix 是否变、opacity 是否变），命中缓存则只更新
   `MatrixTransform::matrix` 或 `colors[].a`，**不重建、不重编**。
-- 引擎无 pass 时也有便捷 `frame()`（begin→end→render({},camera)→swapBuffers）。
+- 帧驱动只有 `RenderBackend` 接口这一条路（后端**没有**便捷的 `frame()`）：`beginFrame` →
+  逐 pass → `endFrame` → `swapBuffers`。`beginFrame` 发放本帧唯一的提交令牌（`FrameCommit`），
+  `swapBuffers` 消费它；没有令牌的 `swapBuffers()` 会被拒绝并只报一次——环的推进以"已提交的一帧"
+  为时钟，多推一步会提前释放仍被在飞命令缓冲引用的对象。
 
 ## 12. 支持 / 不支持矩阵
 

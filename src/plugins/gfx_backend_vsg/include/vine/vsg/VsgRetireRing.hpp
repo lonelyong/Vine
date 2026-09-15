@@ -61,12 +61,15 @@ struct VsgRetireRing
 
     /** @brief Releases the objects parked kRetireRingDepth frame advances ago.
      *
-     * Called once per submitted frame, beside the per-slot node rings: the bucket entered
-     * now was filled kRetireRingDepth submits ago, so every command buffer that could have
-     * recorded one of its objects has been re-recorded since — and the recording that
-     * replaced it waited on that slot's fence before starting.
+     * Called once per committed frame, beside the per-slot node rings: the bucket entered now was
+     * filled kRetireRingDepth submits ago, so every command buffer that could have recorded one of its
+     * objects has been re-recorded since — and the recording that replaced it waited on that slot's
+     * fence before starting.
+     *
+     * @param commit Evidence that the frame this advance accounts for was committed (see
+     *               @ref FrameCommit: the advance is only legal after the submit).
      */
-    void advance();
+    void advance(FrameCommit commit);
 
     /** @brief Gets how many objects are parked right now.
      *

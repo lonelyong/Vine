@@ -16,12 +16,13 @@ void VsgRetireRing::park(::vsg::ref_ptr<::vsg::Object> object)
     parked.park(std::move(object));
 }
 
-void VsgRetireRing::advance()
+void VsgRetireRing::advance(FrameCommit)
 {
     // Hand the bucket that was filled kRetireRingDepth advances ago to the clock, which drops it:
     // every command-buffer slot that could have recorded one of its objects has been re-recorded
     // since (and start() waited on that slot's fence before re-recording it), so the GPU no longer
-    // executes them.
+    // executes them. The token in the signature is the evidence that this advance accounts for a
+    // committed frame (see FrameCommit); it carries no data.
     released_ += parked.advance();
 }
 
