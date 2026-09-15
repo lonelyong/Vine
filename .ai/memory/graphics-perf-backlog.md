@@ -14,8 +14,9 @@
 >   mesh/纹理缓存的**字节**统计与可配上限仍未做（需要 §2 的实测数字）。
 > - **工程坑**：改了 `libviGraphics` 里类的布局后**只 build 目标**会留下陈旧二进制（`vsg_backend_selftest`
 >   旧布局 + 新库 ⇒ `malloc(): largebin double linked list corrupted`）——**证据门禁前必须整包 build**。
-> - **本环境离线**：reconfigure 时 FetchContent 去 `git fetch` spdlog 会失败 ⇒ 已在构建目录设
->   `FETCHCONTENT_FULLY_DISCONNECTED=ON`（`build/CMakeCache.txt`，gitignore）。
+> - **本环境的 `http(s)_proxy` 是坏的**（TLS 握手中断连），**直连正常**：reconfigure 时 FetchContent 去
+>   `git fetch` spdlog 会失败 ⇒ 已在构建目录设 `FETCHCONTENT_FULLY_DISCONNECTED=ON`
+>   （`build/CMakeCache.txt`，gitignore）；`git push` 用 `env -u http_proxy -u https_proxy ...` 绕。
 
 本文记录"大场景 + 相机常动 + 多 pass"下的性能结论与待办项。
 来源：一次代码走查（`Scene::collectRenderCommands` / `SceneBridge` / vsg 1.1.16），

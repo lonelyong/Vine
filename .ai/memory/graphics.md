@@ -25,8 +25,10 @@
 > - **踩坑（必须记住）**：改了 `libviGraphics` 里类的布局后**只 build 目标**会留下陈旧二进制
 >   （`vsg_backend_selftest` 旧布局 + 新库 ⇒ 结尾 `malloc(): largebin double linked list corrupted`）。
 >   **证据门禁前必须整包 build**。
-> - **本环境离线**：reconfigure 时 FetchContent 会去 `git fetch` spdlog（TLS 失败）⇒ `build.ninja` 再生失败。
->   已在构建目录（`build/CMakeCache.txt`，gitignore）设 `FETCHCONTENT_FULLY_DISCONNECTED=ON`。
+> - **本环境的 `http(s)_proxy` 是坏的**（`127.0.0.1:7890` 在 TLS 握手中断连），**直连正常**：FetchContent 的
+>   `git fetch spdlog`（reconfigure）与 `git push` 都会报 `GnuTLS, handshake failed`。绕过：
+>   `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY git push ...`；构建目录已设
+>   `FETCHCONTENT_FULLY_DISCONNECTED=ON`（`build/CMakeCache.txt`，gitignore，依赖已就位）。
 >   `vine_shader_check.sh` 需要 Linux `glslangValidator`（本机只有 Windows exe）⇒ 无法运行，着色器编译由
 >   `test_vsg` 的 `GlslCompileTest` 覆盖。
 
