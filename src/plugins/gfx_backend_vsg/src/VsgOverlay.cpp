@@ -439,10 +439,8 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     }
     vine::graphics::RenderTarget* const dest       = overlay.target;
     auto&                              dest_entry = state.entryFor(dest);
-    const auto&                        dest_graph = overlay.graph;
     const int                          surf_w     = overlay.surf_w;
     const int                          surf_h     = overlay.surf_h;
-    auto&                              slot       = dest_entry.program_slots[slot_key];
 
     // Destination rectangle: the pass' sub-viewport, else the full surface
     // (clamped into the surface - the fullscreen draw has no auto-fit).
@@ -494,23 +492,29 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     // below by writing a disabled block — rebuilding for it would make a program that declares the
     // shadow ABI refuse to build (and so draw nothing) over a shadow it can simply skip.
     const std::uint64_t program_revision = program->revision();
-    const bool stale = !slot.ready || slot.source_target != source ||
-                       slot.source_w != src.width || slot.source_h != src.height ||
-                       slot.dest_w != surf_w || slot.dest_h != surf_h ||
-                       slot.source_depth_sampleable != src.depth_sampleable ||
-                       (resolved_shadow.map != nullptr && slot.shadow_view != resolved_shadow.map) ||
-                       slot.program.get() != program || slot.program_revision != program_revision;
+    const auto          existing         = dest_entry.program_slots.find(slot_key);
+    const ProgramSlot*  previous = existing == dest_entry.program_slots.end() ? nullptr : &existing->second;
+    const bool stale = previous == nullptr || !previous->ready || previous->source_target != source ||
+                       previous->source_w != src.width || previous->source_h != src.height ||
+                       previous->dest_w != surf_w || previous->dest_h != surf_h ||
+                       previous->source_depth_sampleable != src.depth_sampleable ||
+                       (resolved_shadow.map != nullptr && previous->shadow_view != resolved_shadow.map) ||
+                       previous->program.get() != program || previous->program_revision != program_revision;
     if (stale) {
-        if (dest_graph != nullptr) {
-            removeGraphChild(dest_graph.get(), slot.view);
-        }
-        slot = ProgramSlot{};
+        // The previous slot goes through the ONE drop (eraseProgramSlot): its view stops being
+        // recorded and its NODE is PARKED on the retire ring instead of being destroyed here. A
+        // submitted command buffer may still name that node's pipeline / descriptor sets (the
+        // slot was recorded in the frames before this one), and overwriting the slot — what this
+        // did — destroyed them in flight. The slot reference below is taken AFTER the drop
+        // because the erasure invalidates the entry the map held.
+        eraseProgramSlot(state, dest_entry, dest, slot_key);
+        ProgramSlot& rebuilt = dest_entry.program_slots[slot_key];
         // Capture the pass's explicit order (announced by the engine before
         // this pass) so the fullscreen view stacks at its pipeline position
         // among the target's content slots (e.g. between an opaque depth pass
         // and a forward transparent pass) instead of always drawing first.
-        slot.order = state.request.order;
-        slot.push_data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(LightPushBlock)));
+        rebuilt.order = state.request.order;
+        rebuilt.push_data = ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(LightPushBlock)));
         const VkExtent2D surface{ static_cast<uint32_t>(surf_w), static_cast<uint32_t>(surf_h) };
         ProgramNodeFailure program_failure = ProgramNodeFailure::None;
         // The host asked for the source's depth to be sampleable
@@ -556,7 +560,7 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         }
         auto node = makeFullscreenProgramNode(program, src.color_views,
                                               src.depth_sampleable ? src.depth_view : ::vsg::ref_ptr<::vsg::ImageView>(),
-                                              shadow, surface, slot.push_data, &program_failure);
+                                              shadow, surface, rebuilt.push_data, &program_failure);
         if (node == nullptr) {
             const vine::String why =
                 program_failure == ProgramNodeFailure::NoCompiler
@@ -570,15 +574,17 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
             diagnostics.report(vine::graphics::DiagnosticSeverity::Error,
                                vine::graphics::DiagnosticCategory::CompileFailed,
                                why + vine::String(u8": the pass draws nothing"));
-            dest_entry.program_slots.erase(slot_key);
+            // Nothing of this attempt was recorded, so the drop is the same one home (it parks the
+            // slot's node — null here — and erases the slot) rather than a second way to erase.
+            eraseProgramSlot(state, dest_entry, dest, slot_key);
             return;
         }
-        slot.source_target = source;
-        slot.source_w = src.width;
-        slot.source_h = src.height;
-        slot.dest_w   = surf_w;
-        slot.dest_h   = surf_h;
-        slot.source_depth_sampleable = src.depth_sampleable;
+        rebuilt.source_target = source;
+        rebuilt.source_w = src.width;
+        rebuilt.source_h = src.height;
+        rebuilt.dest_w   = surf_w;
+        rebuilt.dest_h   = surf_h;
+        rebuilt.source_depth_sampleable = src.depth_sampleable;
         // Whether the node BOUND the depth is the shader's decision, not the
         // policy's: the depth descriptor only exists when the fragment stage
         // declares the ABI binding (the colour count). A colour-only program
@@ -586,34 +592,38 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         // the frame a pass of the source revokes it, where a slot that DOES bind
         // the depth has to be dropped (its descriptor names a layout the image
         // leaves later in that same frame, see the promotion cascade).
-        slot.binds_source_depth = slot.source_depth_sampleable && programSamplesDepth(program, src.color_views.size());
-        // Retained so the revoke can take the slot out of the frame on its own
-        // (the host is not called again in the frame that revokes).
-        slot.dest_graph       = dest_graph.get();
-        slot.program          = vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program);
-        slot.program_revision = program_revision;
-        slot.node             = node;
+        rebuilt.binds_source_depth = rebuilt.source_depth_sampleable &&
+                                     programSamplesDepth(program, src.color_views.size());
+        // The graph the slot records into is looked up from the owning pass when the slot is
+        // dropped (see eraseProgramSlot), so the slot does not remember a second copy of it.
+        rebuilt.program          = vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program);
+        rebuilt.program_revision = program_revision;
+        rebuilt.node             = node;
         // Keep the shadow the node bound: its map is the rebuild identity (see `stale` above) and
         // its block is the object the per-frame refresh rewrites (it is the same object the
         // descriptor was assigned, so mutating its bytes + dirty() is what reaches the GPU).
-        slot.shadow_view  = resolved_shadow.map;
-        slot.shadow_block = shadow.block;
+        rebuilt.shadow_view  = resolved_shadow.map;
+        rebuilt.shadow_block = shadow.block;
 
         // Create + compile the fullscreen view against this target's render pass
         // (inserted provisionally at the front so the compile sees it), then move
         // it to its explicit-order position.
-        if (!installOverlayView(state, diagnostics, overlay, slot, node, rect_x, rect_y, rect_w, rect_h,
+        if (!installOverlayView(state, diagnostics, overlay, rebuilt, node, rect_x, rect_y, rect_w, rect_h,
                                /*front*/ true,
                                "fullscreen program")) {
             // The compile already reported (when it was the compile): drop the
-            // half-made slot so the next frame retries.
-            dest_entry.program_slots.erase(slot_key);
+            // half-made slot so the next frame retries. This one was never recorded, and the drop
+            // is the same one home as above.
+            eraseProgramSlot(state, dest_entry, dest, slot_key);
             return;
         }
         ++state.program_slot_build_count;
         V_LOGI("[VsgRenderer] EXPERIMENTAL deferred fullscreen program {}x{} -> {} {},{},{}x{} attached", src.width,
                src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
     }
+
+    // The slot this pass owns, now that it exists in every path that reaches here.
+    auto& slot = dest_entry.program_slots[slot_key];
 
     // Rewrite the shadow block's bytes EVERY frame, next to the view-space light block taken just
     // below and for the same reason: the block's matrix steps from this pass' view space into light

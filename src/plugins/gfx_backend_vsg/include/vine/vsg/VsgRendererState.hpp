@@ -221,6 +221,28 @@ struct VsgPassRequest
     }
 };
 
+/**
+ * @brief One content-slot view queued for the frame's incremental compile, and where it is recorded.
+ *
+ * The queue has ONE producer (VsgContentSlot::renderContentSlot, the call that built the subtree), so
+ * the entry records the slot the view belongs to instead of making the compiler search: it used to
+ * walk every target's slot table per queued view looking for a matching view pointer, and to hand
+ * the whole frame over to vsg's full compile when the search found nothing (a view that had just
+ * been dropped, or one that belongs to no content slot). The record answers that question directly,
+ * and "not found" becomes "nothing records this view any more" rather than a whole-scene recompile.
+ *
+ * It is a SHORTCUT, not a promise: a slot can be dropped between the queue push and the compile, and
+ * a new target allocated at the recorded address must not have this view compiled against ITS
+ * framebuffer — so the compiler still checks that the recorded slot holds THIS view (see
+ * detail::incrementalCompileViews).
+ */
+struct PendingCompileView
+{
+    ::vsg::ref_ptr<::vsg::View>   view;          ///< The view to compile (never null).
+    vine::graphics::RenderTarget* target = nullptr; ///< Entry that holds the slot (nullptr = the window).
+    SlotKey                       slot;          ///< Slot the view is a child of.
+};
+
 struct VsgRendererState {
     ::vsg::ref_ptr<::vsg::Window>       window;
     ::vsg::ref_ptr<::vsg::Viewer>       viewer;
@@ -332,13 +354,17 @@ struct VsgRendererState {
     // its frames advance.
     VsgRetireRing retireRing;
 
-    // Content-slot VIEWs that gained new/rebuild subtrees this frame. D22
-    // incremental compile: submitFrame() recompiles ONLY these views (not the
+    // ---- Content-slot views that gained new/rebuild subtrees this frame ---------
+    //
+    // D22 incremental compile: submitFrame() recompiles ONLY these views (not the
     // whole scene). The view (not a detached subtree) is the compile unit
     // because vsg assigns the per-View viewID only while traversing the View
     // node — compiling a detached subtree always uses viewID 0 and crashes at
     // record for any other slot's viewID.
-    std::vector<::vsg::ref_ptr<::vsg::View>> pending_compile_views;
+    //
+    // Each entry says WHERE the view is recorded (see PendingCompileView), so the
+    // compiler does not have to search every target's slots for it.
+    std::vector<PendingCompileView> pending_compile_views;
 
     // ---- Output targets: the window (nullptr key) + off-screen (RT* key) ----
 

@@ -11,8 +11,11 @@
  *
  *   * incrementalCompileViews() — compile ONLY the queued views (the frame's newly added /
  *     rebuilt content), one at a time, restricting each compile to the context whose
- *     pre-assigned view matches. The slot's (render pass + view) context is registered into
- *     the viewer's CompileManager pool the first time its view is compiled: the pool's pooled
+ *     pre-assigned view matches. Each queued entry names the slot it belongs to (the queue has ONE
+ *     producer, see PendingCompileView), so the context is looked up rather than searched for — and
+ *     an entry whose slot no longer holds that view (dropped in between) is skipped instead of
+ *     handing the frame to the full compile. The slot's (render pass + view) context is registered
+ *     into the viewer's CompileManager pool the first time its view is compiled: the pool's pooled
  *     traversal was built while the graph was still empty, so without that registration no
  *     context matches the view and compile() would compile nothing.
  *
@@ -44,9 +47,10 @@ namespace detail
 /** @brief Compiles only the queued views (the incremental path).
  *
  * @param state Session whose viewer / targets supply the compile contexts.
- * @return true when every queued view was compiled; false when the incremental path cannot
- *         serve this frame (no CompileManager, a queued view that belongs to no ready content
- *         slot, or a failed compile), so the caller falls back to the full compile.
+ * @return true when every queued view that still belongs to a slot was compiled; false when the
+ *         incremental path cannot serve this frame (no CompileManager, a null view, or a failed
+ *         compile), so the caller falls back to the full compile. A queued view whose slot is gone
+ *         is not a failure: nothing records it any more.
  */
 [[nodiscard]] bool incrementalCompileViews(VsgRendererState& state);
 

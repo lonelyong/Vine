@@ -226,7 +226,8 @@ namespace
         return {};
     }
 
-    auto image = ::vsg::Image::create();    image->data          = texels;
+    auto image = ::vsg::Image::create();
+    image->data          = texels;
     image->imageType     = VK_IMAGE_TYPE_2D;
     image->format        = format;
     image->extent        = { width, height, 1u };

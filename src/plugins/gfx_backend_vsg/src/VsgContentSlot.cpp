@@ -234,7 +234,7 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     //
     // Within a target the slot views are stacked in ASCENDING pass order —
     // the order the caller gave addPass() and the engine already runs passes
-    // in (placeViewByOrder keeps content, fullscreen-program and PiP / present
+    // in (placeViewByOrder keeps content and full-screen program
     // views all sorted by it). No main/on-top semantic constrains the order —
     // a pass positioned by the user at any order draws exactly there. Ordering
     // by the explicit value also keeps the pre-frame warm-up safe: warm-up may
@@ -388,10 +388,15 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
             // Queue this slot's VIEW for an incremental (re)compile in
             // submitFrame(): traversing the View sets the correct viewID, so
             // the new/rebuild subtrees compile for the view they will be
-            // recorded under (D22). One entry per view per frame.
+            // recorded under (D22). One entry per view per frame, and the entry
+            // carries WHERE the view is recorded (this is the queue's only
+            // producer), so the compiler needs no search (see PendingCompileView).
             auto& pending = state.pending_compile_views;
-            if (std::find(pending.begin(), pending.end(), content.view) == pending.end()) {
-                pending.push_back(content.view);
+            const auto known = std::find_if(pending.begin(), pending.end(), [&content](const PendingCompileView& entry) {
+                return entry.view == content.view;
+            });
+            if (known == pending.end()) {
+                pending.push_back(PendingCompileView{ content.view, state.request.target, key });
             }
         }
         // TEMP diagnostics, env-gated: how many commands this slot collected, how
@@ -412,8 +417,8 @@ void placeViewByOrder(VsgRendererState& state, ::vsg::ref_ptr<::vsg::RenderGraph
     }
     auto& children = graph->children; // RenderGraph is a Group: children are ref_ptr<Node>
     // Drop any previous position, then insert so the children stay ascending
-    // by each slot's explicit order: content slots carry theirs, fullscreen-
-    // program and PiP / present screen slots carry theirs, and any child with
+    // by each slot's explicit order: content slots carry theirs and full-screen
+    // program slots carry theirs, and any child with
     // no known slot sorts last. Reordering render-graph children only changes
     // per-frame record order within the (single) render pass, so no
     // recompilation is needed.

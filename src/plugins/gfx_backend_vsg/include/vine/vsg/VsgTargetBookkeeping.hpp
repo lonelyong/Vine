@@ -12,14 +12,18 @@
  * the two per-frame decisions the frame makes about an entry (does the borrow force a rebuild;
  * which consumers sampled a rebuilt target).
  *
- * Two rules run through all of it. What a build OWNS is exactly what a rebuild must forget, which
- * is why resetTargetAttachments is written as one list. And every path that stops a slot drawing
- * goes through detachSlotView: a slot whose view is still attached to a graph keeps drawing.
+ * Three rules run through all of it. What a build OWNS is exactly what a rebuild must forget, which
+ * is why the forgetting half (clearTargetAttachments) is written as one list — and why it is ONE
+ * call: the unhook before it is what makes the release safe, and that order used to be a rule of its
+ * own. Every path that stops a slot drawing goes through detachSlotView. And every path that drops a
+ * full-screen program slot goes through eraseProgramSlot, which parks the node on the way out.
  *
  * The destructive paths keep the COUNTED device wait (VsgRetireRing::waitForIdle) rather than
  * parking their objects; the notes on unhookTargetPasses and erasePassFromTarget record why
  * (clearCache() releases the shared object registry, whose pipelines / samplers the retained nodes
- * are not necessarily the only owner of).
+ * are not necessarily the only owner of). Dropping a PROGRAM slot is the exception that proves the
+ * rule: it parks, because nothing else holds its node's pipeline / descriptor sets (see
+ * eraseProgramSlot).
  */
 
 
@@ -53,7 +57,7 @@ namespace detail
  * the same multi-slot mechanism the window target uses, so one RT can
  * bake several content groups with different programs / depth policy). A
  * rebuild first releases the previous graph and every content slot
- * compiled against it. EXPERIMENTAL: needs on-device validation.
+ * compiled against it.
  *
  * @param target Off-screen target to (re)build.
  */
@@ -154,24 +158,36 @@ void createTargetAttachments(VsgRendererState& state, VsgRenderTargetEntry& t, :
 [[nodiscard]] bool borrowNeedsRebuild(const VsgRendererState& state, const VsgRenderTargetEntry& t,
                                       const vine::graphics::RenderTarget* target_key);
 
-/** @brief Forgets everything a previous build of a target's attachments produced.
+/** @brief Forgets a target's attachments and everything that hangs off them — ONE call, ONE order.
  *
- * The second half of a rebuild (the first is unhookTargetPasses, which stops the old
- * passes being recorded and makes the release safe): every image / view / slot table and
- * every flag the build set goes back to its initial value, while the target's own entry
- * stays. Written as ONE list because it is exactly what a build OWNS — a Target field
- * added later and forgotten here would survive a rebuild as a stale image, a stale
- * "already built" flag or a stale borrow source, and nothing would report it.
+ * A rebuild has to do two things to what the previous build produced, and the order between them is
+ * what makes the release safe: stop the old pass graphs being recorded and release what hangs off
+ * them with the COUNTED device wait (the bridges' caches release the shared object registry, whose
+ * pipelines / samplers the retained nodes are not necessarily the only owner of), and only then
+ * forget the images / views / slots / flags. As two public functions with that requirement written
+ * in prose, calling the second without the first destroyed every slot's bridge — and therefore its
+ * pipelines — without the wait, which is the "destroy while a command buffer may still name it"
+ * failure the whole retire-ring policy exists to prevent. One entry point means the order is not
+ * something a caller can get wrong: it is the body of this function.
  *
- * @param t Target entry being emptied (its key stays registered).
+ * A target that was never built has nothing to unhook (no pass graph was ever created for it, and
+ * no slot was ever created either — a slot needs the target's attachments), so this is a no-op
+ * there.
+ *
+ * Written as ONE list for the forgetting half: it is exactly what a build OWNS, and a Target field
+ * added later and forgotten there would survive a rebuild as a stale image, a stale "already built"
+ * flag or a stale borrow source, with nothing to report it.
+ *
+ * @param state Session whose command graph / retire ring / compile queue the unhook touches.
+ * @param t     Target entry being emptied (its key stays registered).
  */
-void resetTargetAttachments(VsgRenderTargetEntry& t);
+void clearTargetAttachments(VsgRendererState& state, VsgRenderTargetEntry& t);
 
 /** @brief Stops a target's passes being recorded and makes their release safe.
  *
- * The destructive unhook both teardown paths need: a target about to be rebuilt
- * (buildOffscreenTarget) and a target about to be released
- * (releaseRenderTarget). Each pass graph is removed from the command graph, the
+ * The destructive unhook two paths need: a target about to be rebuilt (see
+ * @ref clearTargetAttachments, which is the one a rebuild should call) and a target about to be
+ * released (releaseRenderTarget). Each pass graph is removed from the command graph, the
  * device is waited on, and every content slot's bridge cache is dropped together
  * with its queued compile view.
  *
@@ -201,6 +217,17 @@ void unhookTargetPasses(VsgRendererState& state, VsgRenderTargetEntry& t);
  */
 void detachSlotView(VsgRendererState& state, VsgRenderTargetEntry& owner, vine::graphics::RenderTarget* owner_key,
                     const SlotKey& key, const ::vsg::ref_ptr<::vsg::View>& view);
+
+/** @brief Drops @p view from the frame's incremental-compile queue, if it is queued.
+ *
+ * The other half of "this view is no longer recorded" (see detachSlotView): the queue's entry names the
+ * slot to compile, so an entry left behind after its slot was dropped would be compiled against a
+ * framebuffer the view no longer belongs to. The compiler re-checks that anyway (see
+ * PendingCompileView), which makes this the cheap path rather than the only guard.
+ *
+ * @param view View to drop from the queue (null is a no-op).
+ */
+void dropQueuedCompileView(VsgRendererState& state, const ::vsg::ref_ptr<::vsg::View>& view);
 
 /** @brief Drops every content slot's baked shader set so the next frame builds them again.
  *
@@ -243,8 +270,8 @@ void resetContentShaderSlots(VsgRendererState& state);
 /** @brief Erases everything one target retains for a pass: its slots AND its materialised objects.
  *
  * The one "this pass is gone from this target" path: the pass is removed
- * (releasePass) or it moved to another target (retargetPass). Its SLOTS (content view,
- * PiP screen slot, fullscreen-program slot) are detached and dropped, and the pass' OWN
+ * (releasePass) or it moved to another target (retargetPass). Its SLOTS (the content
+ * view, the full-screen program slot) are detached and dropped, and the pass' OWN
  * materialised objects (its render pass + one-frame transient variant, its framebuffer and
  * its RenderGraph — see VsgRenderTargetEntry::PassObjects) go with them.
  *
@@ -278,16 +305,45 @@ void erasePassFromTarget(VsgRendererState& state, vine::graphics::RenderTarget* 
  */
 void retargetPass(VsgRendererState& state, const vine::graphics::RenderPass* pass, vine::graphics::RenderTarget* target);
 
+/** @brief Drops one retained full-screen program slot, the ONE way such a slot goes.
+ *
+ * A program slot owns three things, and each of them used to be a step its drop site could
+ * forget (two of the four sites did):
+ *
+ *  - its VIEW has to be detached from the graph it records into — a view left attached keeps
+ *    drawing;
+ *  - its NODE has to be PARKED on the retire ring, not destroyed: a SUBMITTED command buffer
+ *    may still name the pipeline, the descriptor sets and (through them) the sampled image
+ *    views the node holds, so destroying it at this moment is the "destroy while in flight"
+ *    that the ring exists to prevent (measured earlier on the teardown paths as
+ *    `vkDestroyPipeline-00765`);
+ *  - the slot itself has to be erased, so its owner's next call builds a new one.
+ *
+ * Parking is also what makes the drop WAIT-FREE: the old node keeps its Vulkan objects (and the
+ * image views it samples) alive until every slot that could have recorded it has been
+ * re-recorded, so no path that drops a program slot has to stop the device first. The two paths
+ * that used to wait for a device-wide idle per dropped slot (a released render target, a rebuilt
+ * source) now pay nothing for it.
+ *
+ * @param state     Session whose retire ring parks the node.
+ * @param owner     Target entry that holds the slot.
+ * @param owner_key Key @p owner is registered under (nullptr = window).
+ * @param key       Slot key of the program slot to drop (absent key is a no-op).
+ */
+void eraseProgramSlot(VsgRendererState& state, VsgRenderTargetEntry& owner,
+                      vine::graphics::RenderTarget* owner_key, const SlotKey& key);
+
 /** @brief Drops every slot that SAMPLES @p target, which was just (re)built.
  *
  * A rebuild creates FRESH colour views, and a consumer's stale check only watches the
- * source's SIZE — which a same-size rebuild does not change — so a PiP / fullscreen-program
+ * source's SIZE — which a same-size rebuild does not change — so a full-screen program
  * slot built against the old views would go on sampling an image nothing draws into any
  * more. Dropping the slot makes its owner's next drawScreenProgram call reattach against the new
  * attachments.
  *
  * Consumers are found by inspecting the slot ATTRIBUTE (source_target), because a slot's
- * key is the pass that OWNS it, not the target it samples.
+ * key is the pass that OWNS it, not the target it samples. They go through
+ * @ref eraseProgramSlot like every other drop.
  *
  * @param target Target whose attachments were just rebuilt (the sampled source).
  */

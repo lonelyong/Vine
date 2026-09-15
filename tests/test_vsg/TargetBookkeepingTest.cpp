@@ -57,6 +57,21 @@ struct Captured
     }
 };
 
+/// How many CountedTargets have been destroyed (see the release test: "freed" has to be observable
+/// without reading the freed object).
+int s_counted_target_destructions = 0;
+
+/// @brief A render target whose destruction is countable.
+///
+/// The release test needs to know whether the object it handed to the release path was freed DURING
+/// that call. Reading anything off the freed object to find out would itself be undefined behaviour
+/// (and an assertion that passes on freed memory proves nothing), so the object announces its
+/// destruction instead.
+struct CountedTarget : RenderTarget
+{
+    ~CountedTarget() override { ++s_counted_target_destructions; }
+};
+
 }  // namespace
 
 /**
@@ -158,4 +173,56 @@ TEST(TargetBookkeepingTest, AReleasedSourcesTombstoneOwnsItSoItsAddressCannotBeR
 
     // The host has let go: the only remaining reference is the tombstone's, which is the point of the test.
     EXPECT_EQ(state.entryFor(borrower.get()).unusable_depth_source->useCount(), 1u);
+}
+
+/**
+ * @brief The released target outlives its own release, even when the table entry was its last owner.
+ *
+ * `releaseRenderTarget` erases the table entry, and the entry OWNS the target (that ownership is what
+ * keeps the address unreusable for a later target) — so on the path that exists exactly for "the host
+ * dropped the target itself" (VsgRenderer::releaseAbandonedTargets releases what only the entry still
+ * holds) the erase is the target's LAST release. The rest of the function then still reads the
+ * released target: its name for the log line, its identity compared against every borrowing and
+ * sampling slot, and the tombstone that keeps a borrowing target from retrying the borrow. Without a
+ * reference held for the length of the call that is a use-after-free whose write lands on freed
+ * memory (the tombstone's addRef), which is why this test counts the destructions instead of
+ * believing the call.
+ */
+TEST(TargetBookkeepingTest, AReleasedTargetOutlivesItsOwnReleaseWhenTheEntryWasItsLastOwner)
+{
+    vine::vsg::VsgRendererState state;
+    // The release path is the session's, and the graph it re-orders afterwards is the session's command
+    // graph: both are needed for the bookkeeping to run without a device (no window, no viewer, no images).
+    state.initialized   = true;
+    state.command_graph = ::vsg::CommandGraph::create();
+
+    Captured   captured;
+    const auto diagnostics = captured.route();
+
+    // The released target is BORROWED by another one: that is what makes the release path read it
+    // after the entry is erased (the borrower's tombstone and the log line name it).
+    RenderTargetPtr               borrower(new RenderTarget());
+    vine::graphics::RenderTarget* released = nullptr;
+    {
+        RenderTargetPtr source(new CountedTarget());
+        released = source.get();
+        // The table entry owns it (the rule every path that touches the table follows)...
+        state.entryFor(released);
+        state.entryFor(borrower.get()).depth_source = released;
+    }
+    // ...and the host's reference is gone: the entry's owner is the last one, which is the state
+    // VsgRenderer::releaseAbandonedTargets looks for.
+    ASSERT_EQ(released->useCount(), 1u);
+
+    s_counted_target_destructions = 0;
+    vine::vsg::detail::releaseRenderTarget(state, diagnostics, released);
+
+    // The release may not free the target it is still describing — not for the tombstone below, and
+    // not for the log line above it.
+    EXPECT_EQ(s_counted_target_destructions, 0) << "the target was freed while its own release was still using it";
+    // And the borrower's tombstone now OWNS it, which is what makes "a later shareDepth() naming a
+    // different source clears the condition" true.
+    EXPECT_EQ(state.entryFor(borrower.get()).unusable_depth_source.get(), released);
+    EXPECT_EQ(released->useCount(), 1u); // the tombstone's reference only
+    EXPECT_TRUE(state.targets.find(released) == state.targets.end());
 }

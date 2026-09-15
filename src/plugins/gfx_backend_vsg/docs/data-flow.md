@@ -329,8 +329,8 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 |---|---|---|
 | 几何逐出 | 外侧无人持有（`abandoned(shares)`，即 `useCount() <= shares`）→ erase，释放该几何的 vsg 子树 | `SceneBridge::releaseAbandonedGeometries`（sync 内 + 帧末对未跑 pass 的槽） |
 | Material 增删改 | `getOrCreate / updateMaterial / releaseMaterial / clear` | `VsgMaterialManager` |
-| 目标描述变了（尺寸 / 附件形态 / 深度提升）或借用失效 | 摘旧图册 → `deviceWaitIdle`（计数）→ `clearCache` + 置空 image/view/RP/framebuffer → 按新描述重建 | `detail::buildOffscreenTarget`（重建谓词 = `VsgRenderTargetEntry::BuildKey` 整把比较 + 尺寸） |
-| 移除 RenderTarget | 摘 offscreen graph + 摘采样它的槽 → `deviceWaitIdle`（计数）→ `clearCache` + erase | `detail::releaseRenderTarget` |
+| 目标描述变了（尺寸 / 附件形态 / 深度提升）或借用失效 | 摘旧图册 → `deviceWaitIdle`（计数）→ `clearCache` + 置空 image/view/RP/framebuffer → 按新描述重建（**一次调用**：`clearTargetAttachments` = 摘 + 忘，顺序写在函数体里） | `detail::buildOffscreenTarget`（重建谓词 = `VsgRenderTargetEntry::BuildKey` 整把比较 + 尺寸） |
+| 移除 RenderTarget | 摘 offscreen graph + 摘采样它的槽（采样槽走**停放**：`eraseProgramSlot`）→ `deviceWaitIdle`（计数）→ `clearCache` + erase | `detail::releaseRenderTarget`（释放路径**自持**被释放目标到函数结束：条目被 erase 后它可能已无其它持有者） |
 | 移除 pass（引擎驱动） | 摘该 pass 的槽 View / 程序槽 → `deviceWaitIdle`（计数）→ `clearCache` + erase 槽 | `VsgRenderer::releasePass`（`detail::erasePassFromTarget`） |
 | 移除窗口层（老键） | 摘该层 View → `deviceWaitIdle` → erase 槽 | 插件不再实现此路：作用域是唯一驱动方式后，槽一律属于公告的 pass，由 `releasePass` 释放（`RenderBackend::releaseWindowLayer` 仍留在 SDK，供其它后端用更窄的契约） |
 | 帧末清扫（无主对象） | 用**当前**份额数判定"应用放手了"→ 逐槽几何 + 材质 + 废弃目标 | `releaseAbandonedContent` / `releaseAbandonedTargets` |

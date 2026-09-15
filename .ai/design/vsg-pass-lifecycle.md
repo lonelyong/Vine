@@ -3441,3 +3441,110 @@ harness 的目录）、`selftest_support.cpp` + `selftest_protocol/pixels/textur
 
 **仍未做**：`endFrame()` 不配对的拒绝、未初始化时 `render()/clear()` 的静默返回（判定不做，见 §66.4）；
 `nativeHandle()` 覆写（判定保留）；真机 GPU 冒烟仍只有 lavapipe。
+
+## 68. 第十五轮（2026-09-15）：三处"靠注释维系的顺序"搬进代码（+ 一个进程级无界缓存）
+
+本轮起点是三轮对账：①实现 vs 注释 / vs 设计；②缺陷与内存；③结构是否有更稳的形状。
+
+### 68.1 D63（缺陷，内存安全）：释放目标时"先 erase 再使用"
+
+`detail::releaseRenderTarget` 先 `state.targets.erase(ot)`，再拿**裸指针** `target` 做三件事：
+打日志（`target->name()`）、与每个借用者的 `depth_source` 比较、给借用者写墓碑
+（`other.unusable_depth_source = intrusive_ptr<const RenderTarget>(target)`）。而目标表**自持**它索引的目标
+（`VsgRenderTargetEntry::owner`）——在"宿主自己把 RenderTarget 丢了"这条路径
+（`VsgRenderer::releaseAbandonedTargets`，判据就是 `owner->useCount() <= 1`）上，那次 erase **就是最后一次
+释放**：对象当场析构，随后三件事读/写已释放内存（墓碑那次是 `addRef`，直接堆破坏）。
+
+**修法**：函数开头持一枚 `intrusive_ptr` 到函数结束（`alive`）——本次调用里那个地址是真的。
+
+**判据**：`TargetBookkeepingTest.AReleasedTargetOutlivesItsOwnReleaseWhenTheEntryWasItsLastOwner`
+（子类计数器证明"没被当场释放"+ 墓碑 `useCount()==1`）。**反证**：把 `alive` 换成空指针 ⇒ 测试红
+（`1` destruction、`useCount` 读出 `12585731676101993372`），进程随后
+`free(): invalid pointer` 而崩。
+
+### 68.2 D64（缺陷，在飞销毁）：全屏 program 槽的两条丢弃路径既不等待也不停放
+
+`drawScreenProgram` 重建槽时 `slot = ProgramSlot{}` **直接覆盖**旧槽 —— 旧 node（持有 VkPipeline 与描述符
+集，描述符集又握着被采样图像的 view）在记录过它的命令缓冲可能仍在飞时被析构；`dropConsumersSampling`
+同样只摘 view + erase。这是 `VUID-vkDestroyPipeline-pipeline-00765` 那一类，模块自己早就把它定为铁律
+（"被替换、且已提交命令缓冲可能仍引用的对象，只能停放"）。
+
+**修法（一个 home）**：新增 `detail::eraseProgramSlot(state, owner, owner_key, key)` —— 摘 view
+（`detachSlotView`）+ **停放** node（`VsgRetireRing::park`）+ erase 槽，**四个丢弃点全部改走它**
+（overlay 重建、overlay 的两条失败路径、`dropConsumersSampling`、`releaseRenderTarget` 的采样槽清扫、
+`dropDepthSamplingProgramSlots`）。随之**删掉 `ProgramSlot::dest_graph`**（它唯一的读者就是那条"自己摘"
+的代码；要摘哪个图现在由 `slotGraph(owner, owner_key, key)` 说了算——同一件事只留一处）。
+停放同时消掉了 `releaseRenderTarget` 采样清扫里**每个槽一次**的 `deviceWaitIdle`。
+
+**判据**：`PassObjectReleaseTest.DroppingAProgramSlotParksItsNodeAndDetachesItsView`（view 不在图里了 /
+node `referenceCount()==1` 由环持有 / `waitCount()==0` / 4 帧后环归还）+
+`DroppingAProgramSlotThatIsNotThereIsANoOp`。**反证**：去掉 `park` ⇒ 第一条红（`releasedCount` 0）。
+
+### 68.3 D65（内存）：编译着色器 stage 的表是**进程级且无界**
+
+`detail::compiledStages`（`VsgPipelineFactory.cpp`）用函数局部 `static std::map` 缓存
+`(program, revision) → SPIR-V`，条目**自持 program**、**没有容量上界、没有任何人释放**。它是进程级是有理由的
+（会话默认着色用的是**引擎自己的** program 单例，第二个会话不该再编译一遍），但宿主一旦churn program
+（shader 编辑器每敲一次就是一个新 revision）就是"每个 revision 一条，活到进程结束"，且 `shutdown()` 也
+放不掉它（跨会话的宿主对象被钉住）。
+
+**修法**：套模块**自己的容量规则**（`OwnedCache.hpp` 的 `trimToCapacity` + `InsertionClock`，条目的
+`sequence()` 访问器同形）：上界 `kMaxCompiledStageEntries = 16`，最旧的先走——只丢快路径（下次重新编译），
+**永不影响正确性**。表搬进 `CompiledStageTable` 值类型 + `compiledStageTable()` 取值，于是诊断
+`compiledStageCacheCount()` 与表本身是同一个对象；`compiledStages` 改为**按值**返回（表会被裁，引用会悬垂）。
+
+**判据**：`ForwardShaderSetTest.TheCompiledStageTableIsBoundedAndStillUsableAfterATrim`（编译
+`上界+2` 个不同 program 后 `<= 上界` 且 `< 编译过的个数`；被裁掉的那个再问一次仍然拿得到 set）。
+**反证**：去掉 `trimToCapacity` ⇒ 两条 EXPECT 同时红。
+
+### 68.4 D66（结构）：重建的两半是一次"靠注释维系的顺序"
+
+`buildOffscreenTarget` 里 `unhookTargetPasses(state, t)` + `resetTargetAttachments(t)` 必须**按序**调用：
+前者摘旧图、**计数等待**、清每个内容槽的 `bridge.clearCache()`；后者清 image/view/槽表/标志。第二半单独
+被调用过（或顺序颠倒）就是"在有存活桥 cache 的情况下销毁桥"——即 68.2 同一类在飞销毁，而当时这条要求只写在
+注释里。**修法**：新增 `clearTargetAttachments(state, t)`（收 `state`），把顺序写进**函数体**；
+`resetTargetAttachments` 降为 TU 内部 helper（头文件里不再存在，也就无法被写错顺序地调用）。
+
+### 68.5 D67（结构）：增量编译队列要**搜索**才知道该把 view 编到哪
+
+`pending_compile_views` 是 `vector<ref_ptr<View>>`，`incrementalCompileViews` 对**每个**待编 view 遍历
+所有 target 的所有 content slot 找匹配，找不到就 `return false` ⇒ 整帧回退**全图编译**（一个刚被丢掉的
+view 就能触发）。队列只有一个生产者（`VsgContentSlot::renderContentSlot`，它当然知道 target 与 slot key），
+所以**让条目自己记住**：`PendingCompileView{view, target, slot}`。查找消失；"槽已经不在了"从
+"整帧重编"变成"这条跳过"（那个 view 已经没人记录）；编译器**仍然复核**槽里就是这条 view（记录是捷径不是
+承诺：中间被丢、或同地址新 target 不该拿它的帧缓冲来编这个 view）。
+
+### 68.6 同一轮里收敛的注释漂移（实现/设计 vs 注释）
+
+均逐条读码核实后改：`beginFrame()` 里已经不存在的"粘性 protocol 标记"；`VsgRenderer.hpp` 的
+`setPassInputs` 顶着 `setLights` 的文档（`@param lights` 挂在 `inputs` 上）而 `setLights` 无文档；
+`retiredObjectCount()`/`settleSubmittedFrame()` 指向**已不存在**的 `VsgRendererState::retireObject`；
+`retireInactivePassSlots()` 的"协议被用过之后才跑"（该条件已删）；`SceneBridge::syncRenderCommands`
+缺 `@param session_shares`；`VsgDrawBlockPool` 类注释仍说槽"用 `release()` 归还"（唯一入口是 `Lease`）；
+`EXPERIMENTAL: needs on-device validation` 两处（离屏目标早已被自检 + 验证层 + 像素断言覆盖）；
+`PiP screen slot` / `两种绘制` 一类 2026-09-13 就删掉的"屏幕槽"措辞（代码注释 + 模块文档 + `docs/backend.md`
+文件表）。另有 `setRenderTarget` 的 `}` 粘在语句行尾、`VsgTextureCache` 两语句一行。
+
+### 68.7 判据与仍未做
+
+| 判据 | 结果 |
+| --- | --- |
+| `test_vsg` | 272 → **276**（+4：68.1 ×1、68.2 ×2、68.3 ×1） |
+| `test_graphics` / `test_core` | 260 / 82（不变） |
+| 全量构建 | 0 error |
+| `[selftest]` 证据 | **55 行逐字节不变**（68.4 / 68.5 / `waitForIdle` 收 const ref 都是行为中性） |
+| lavapipe 门禁 | `RESULT: PASS`，0 VUID |
+| 文档门禁 | `check_doc_symbols` / `check_include_hygiene` / `check_diagnostic_formats` 各 0 发现 |
+
+**登记未做（都有理由，不是遗漏）**：
+1. **编译上下文不可撤销**（vsg 1.1.16 `CompileManager` 无 remove）——每次**建槽**注册一个
+   `(render pass + view)` 上下文（各持一个 VkCommandPool + 对 render pass 的强引用），随槽创建次数增长；
+   修法要么上游加 remove，要么在破坏性拆除点重建 compile manager（代价是重写 D22 的增量编译）。见
+   `docs/backend.md` §5.3.1。
+2. **`VsgPassRequest::inputs` 是裸指针**：宿主若在作用域内释放一个被声明为输入的 target，同地址新 target
+   会被当成那个 shadow 源（静默绑错图）。窗口极窄（要求"作用域内释放输入"），且修法要么让请求持
+   `intrusive_ptr`（`resolveShadowInput` 需要 const_cast 查表），要么在 `releaseRenderTarget` 里顺手把
+   它从当前请求的 inputs 里摘掉——**待定，先记录**。
+3. **`VsgRecordOrder` 每帧重建命令图 children**（`fillRecordPlan` 里对每个 target × 每个 pass × children
+   做线性查找，`applyRecordPlan` 清空重填）：图数量级小（每 target 每 pass 一张），量过不是热点，未动。
+4. 真机 GPU 冒烟仍只有 lavapipe。

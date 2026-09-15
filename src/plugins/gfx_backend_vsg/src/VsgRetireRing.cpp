@@ -26,7 +26,7 @@ void VsgRetireRing::advance(FrameCommit)
     released_ += parked.advance();
 }
 
-void VsgRetireRing::waitForIdle(::vsg::ref_ptr<::vsg::Viewer> viewer)
+void VsgRetireRing::waitForIdle(const ::vsg::ref_ptr<::vsg::Viewer>& viewer)
 {
     if (viewer == nullptr) {
         return;

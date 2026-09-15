@@ -215,10 +215,17 @@ class V_VSG_API SceneBridge {
      * material binding changed, and children whose geometry is no longer drawn
      * are dropped.
      *
-     * @param commands Render commands for the current frame.
-     * @param root     Stable vsg root group the retained children live under.
-     * @param created  Optional: receives the subtrees newly built this frame
-     *                 (they still need GPU compilation before recording).
+     * @param commands       Render commands for the current frame.
+     * @param root           Stable vsg root group the retained children live under.
+     * @param created        Optional: receives the subtrees newly built this frame
+     *                       (they still need GPU compilation before recording).
+     * @param session_shares The frame's ownership picture — how many retained entries hold each
+     *                       object, counted across every slot and the material manager (see
+     *                       OwnedShareCounts). Passed in rather than held: this bridge has no
+     *                       pointer to the session, so there is no lifetime protocol to keep. A null
+     *                       pointer means "no session" (a device-free caller driving one bridge):
+     *                       this bridge then counts its own shares plus the material manager's, the
+     *                       conservative direction (an under-count keeps an entry a frame longer).
      * @return true when the graph changed structurally; only newly built
      *         subtrees in @p created require compilation.
      */

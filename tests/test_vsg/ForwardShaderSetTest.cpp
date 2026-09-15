@@ -832,4 +832,63 @@ TEST(ForwardShaderSetTest, AForeignSetIsReportedInsteadOfQuietlyUnbound)
     EXPECT_EQ(reported.front().category, vine::graphics::DiagnosticCategory::ContentSkipped);
 }
 
+/**
+ * @brief A minimal usable program: positions in the vertex stage, one colour out of the fragment one.
+ *
+ * The stage table is keyed by the program itself, so the bound test needs DISTINCT programs; what
+ * they shade does not matter (no device is involved, and a set is assembled from the same ABI
+ * declarations for all of them).
+ *
+ * @return The program.
+ */
+vine::intrusive_ptr<const vine::graphics::ShaderProgram> makeMinimalProgram()
+{
+    auto program = vine::intrusive_ptr<vine::graphics::ShaderProgram>(new vine::graphics::ShaderProgram());
+    vine::graphics::ShaderStage vs;
+    vs.type   = vine::graphics::ShaderStageType::Vertex;
+    vs.source = u8"#version 450\n"
+                u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                u8"void main() { gl_Position = vec4(vine_Vertex, 1.0); }\n";
+    program->addStage(vs);
+    vine::graphics::ShaderStage fs;
+    fs.type   = vine::graphics::ShaderStageType::Fragment;
+    fs.source = u8"#version 450\n"
+                u8"layout(location = 0) out vec4 outColor;\n"
+                u8"void main() { outColor = vec4(1.0, 1.0, 1.0, 1.0); }\n";
+    program->addStage(fs);
+    return program;
+}
+
+TEST(ForwardShaderSetTest, TheCompiledStageTableIsBoundedAndStillUsableAfterATrim)
+{
+    // The compiled stages of a program are remembered in a PROCESS-wide table: the programs a session
+    // shades by default are the engine's own singletons, so a second session should not pay for
+    // compiling them again — but nothing releases that table, and an entry holds the program and its
+    // SPIR-V, so without a bound a host that churns its shaders (one revision per edit) would leave
+    // one entry per revision for the life of the process. This pins both halves of the bargain: the
+    // table stays within its bound, and a program whose entry was trimmed still builds a set (the
+    // bound costs a recompile, never the answer).
+    const VkExtent2D extent{ 640, 360 };
+    const auto       first  = makeMinimalProgram();
+    ASSERT_NE(makeContentShaderSet(first, extent, true, true, 1), nullptr);
+
+    std::vector<vine::intrusive_ptr<const vine::graphics::ShaderProgram>> churn;
+    churn.reserve(kMaxCompiledStageEntries + 2u);
+    for (std::size_t i = 0; i < kMaxCompiledStageEntries + 2u; ++i) {
+        churn.push_back(makeMinimalProgram());
+        ASSERT_NE(makeContentShaderSet(churn.back(), extent, true, true, 1), nullptr) << "program " << i;
+    }
+
+    EXPECT_LE(compiledStageCacheCount(), kMaxCompiledStageEntries)
+        << "the table grew past its bound: nothing releases it, so the bound is what keeps a shader "
+           "editor from leaking one entry per edit for the life of the process";
+    EXPECT_LT(compiledStageCacheCount(), churn.size())
+        << "the table remembered every program it ever compiled, i.e. it never trimmed";
+
+    // The trimmed program is asked for again: a trimmed entry must recompile rather than be answered
+    // with a stale or empty stage list.
+    EXPECT_NE(makeContentShaderSet(first, extent, true, true, 1), nullptr)
+        << "a trimmed program must still build a set";
+}
+
 }  // namespace

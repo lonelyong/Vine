@@ -108,9 +108,10 @@ struct VsgRetireRing
      * instead (@ref park), and the policy-churn check asserts that the two kinds stay apart.
      *
      * @param viewer Session viewer, or null when there is no session to stop (no-op, and
-     *               an unstopped device is not counted).
+     *               an unstopped device is not counted). Borrowed for the call: the wait does not
+     *               need its own reference to the session's viewer.
      */
-    void waitForIdle(::vsg::ref_ptr<::vsg::Viewer> viewer);
+    void waitForIdle(const ::vsg::ref_ptr<::vsg::Viewer>& viewer);
 
   private:
     // The parked objects, on the shared deferral clock (see VsgDeferredRelease).

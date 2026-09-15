@@ -101,8 +101,8 @@ void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan)
 
 void orderRecordPlan(const VsgRendererState& state, RecordPlan& plan)
 {
-    // Sampling edges: a consumer depends on every source it samples (screen slot
-    // keys carry the sampled target; program slots are keyed by it). Self-sampling
+    // Sampling edges: a consumer depends on every source it samples (a program slot's
+    // key carries the sampled target). Self-sampling
     // is rejected on attach and mutual same-frame sampling (ping-pong inside one
     // frame) is not a supported pattern, so the edge graph is acyclic in practice; a
     // cycle would only leave state.targets in their current order.
@@ -181,7 +181,7 @@ void applyRecordPlan(VsgRendererState& state, const RecordPlan& plan)
 void reconcileOffscreenOrder(VsgRendererState& state)
 {
     // Keeps the command graph's child render graphs in a dependency-valid RECORD
-    // order: a screen pass that samples another target reads that target's colour
+    // order: a full-screen program pass that samples another target reads that target's colour
     // texture, and the sample is only CURRENT when the producer's graph is recorded
     // first. The three phases (collect → order → apply) are named units; each
     // explains what it guarantees.

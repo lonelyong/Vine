@@ -96,8 +96,8 @@ void applyRecordPlan(VsgRendererState& state, const RecordPlan& plan);
 
 /** @brief Plans and applies one frame's record order (the driver of the three phases).
  *
- * A consumer's graph must be ordered after every target it samples (its PiP screen /
- * fullscreen-program sources), so a same-frame producer chain (A -> B -> window) samples the
+ * A consumer's graph must be ordered after every target it samples (a full-screen program's
+ * sources), so a same-frame producer chain (A -> B -> window) samples the
  * CURRENT frame, and the window's swapchain graph stays the last child. Called whenever an
  * off-screen graph is (re)built or a sampling slot is newly attached / dropped: creation
  * order alone cannot guarantee it (a producer rebuilt after its consumers existed, or a

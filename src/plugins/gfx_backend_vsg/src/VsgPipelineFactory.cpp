@@ -1,5 +1,6 @@
 #include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
+#include <vine/vsg/OwnedCache.hpp>
 
 // The definitions below are the moved bodies: their documentation and default
 // arguments live on the declarations in the header.
@@ -131,6 +132,43 @@ namespace
 {
 
 /**
+ * @brief The process-wide table of compiled stages (its bound lives on kMaxCompiledStageEntries).
+ *
+ * A function-local static reached through a call, so the table and the diagnostic that reports its
+ * size are the same object: no session owns it (it is shared by every session, which is the point),
+ * so the bound is the only thing keeping it from growing, and the bound needs a witness.
+ */
+struct CompiledStageTable
+{
+    /// One compiled program: the program it came from (OWNED: the key is its address), the revision
+    /// it was compiled at, and its SPIR-V stages.
+    struct Entry
+    {
+        vine::intrusive_ptr<const vine::graphics::ShaderProgram> owner;
+        std::uint64_t                                            revision = 0;
+        std::uint64_t                                            inserted = 0;
+        ::vsg::ShaderStages                                      stages;
+
+        /** @brief Gets the insertion sequence (FIFO order for the capacity trim). */
+        std::uint64_t sequence() const noexcept { return inserted; }
+    };
+
+    std::map<std::pair<const void*, std::uint64_t>, Entry> entries; ///< Keyed by (program, revision).
+    InsertionClock                                         clock;   ///< FIFO order for the capacity trim.
+};
+
+/**
+ * @brief Gets the table (see @ref CompiledStageTable).
+ *
+ * @return The process-wide compiled-stage table.
+ */
+CompiledStageTable& compiledStageTable()
+{
+    static CompiledStageTable table;
+    return table;
+}
+
+/**
  * @brief Compiles a shading program into vsg stages, once per (program, revision).
  *
  * glslang is the expensive part of building the set, and every pass/depth-mode
@@ -147,20 +185,27 @@ namespace
  * address could serve a dead program's stages to a new one allocated at the same address, and a
  * program edited in place announces itself through its revision (the rule every cache here follows).
  *
+ * ONE table, PROCESS-wide, and BOUNDED (unlike the bridges' caches, which are per session and are
+ * released with it): the programs a session shades by default are the ENGINE's own — process-wide
+ * singletons — and a second session should not pay for compiling them again. What it may not do is
+ * grow without end: an entry holds the program and its SPIR-V, so a host that churns programs (a
+ * shader editor makes a new revision per edit) would otherwise leave one entry per revision for the
+ * life of the process. The bound is the module's own capacity rule (trimToCapacity): the OLDEST
+ * entry goes first, which only costs a recompile — the same "never correctness, only the fast path"
+ * bargain the bridges' caches make — and a null/absent program recompiles into an empty list rather
+ * than being remembered, so the table never has to remember "this one failed".
+ *
  * @param program Program to compile (null yields an empty list).
  * @return Compiled stages, or an empty list when the program cannot be used.
  */
-const ::vsg::ShaderStages& compiledStages(const vine::intrusive_ptr<const vine::graphics::ShaderProgram>& program)
+::vsg::ShaderStages compiledStages(const vine::intrusive_ptr<const vine::graphics::ShaderProgram>& program)
 {
-    struct Entry
-    {
-        vine::intrusive_ptr<const vine::graphics::ShaderProgram> owner;
-        std::uint64_t                                            revision = 0;
-        ::vsg::ShaderStages                                      stages;
-    };
-    // Keyed by (address, revision) with the entry owning the program, and node-based so a reference
-    // handed out stays valid across later insertions.
-    static std::map<std::pair<const void*, std::uint64_t>, Entry> cache;
+    // Keyed by (address, revision) with the entry owning the program. The capacity trim below needs
+    // one accessor name on the entry (the same shape OwnedCache's entries expose), and the returned
+    // stages are COPIED out rather than referenced into the table: an entry can be evicted by a
+    // later call, so a reference into it would be a dangling one waiting for the next program.
+    auto& cache = compiledStageTable().entries;
+    auto& clock = compiledStageTable().clock;
 
     const auto revision = program != nullptr ? program->revision() : 0u;
     const auto key      = std::make_pair(static_cast<const void*>(program.get()), revision);
@@ -191,10 +236,21 @@ const ::vsg::ShaderStages& compiledStages(const vine::intrusive_ptr<const vine::
             }
         }
     }
-    return cache.emplace(key, Entry{ program, revision, std::move(stages) }).first->second.stages;
+    cache.emplace(key, CompiledStageTable::Entry{ program, revision, clock.tick(), stages });
+    // The newest entry is never the one this trims: trimToCapacity removes by the smallest sequence,
+    // and the entry just inserted has the largest one.
+    trimToCapacity(cache, kMaxCompiledStageEntries);
+    return stages;
 }
 
 }  // namespace
+
+std::size_t compiledStageCacheCount() noexcept
+{
+    // The table is process-wide, so it has no session to ask and no owner to count it: this is the
+    // only witness of the bound (see kMaxCompiledStageEntries) that the table holds to.
+    return compiledStageTable().entries.size();
+}
 
 DrawBlockSetBinding::DrawBlockSetBinding() :
     Inherit(1u) // set 1
@@ -234,11 +290,12 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     // BuiltinShaders.hpp). A program that has no stages, or that glslang refuses, DECLINES here: the
     // caller reports it and the drawable is not drawn — nothing is shaded with a program the host did
     // not name, which is what makes the shading side free of hidden defaults.
-    const auto& stages = compiledStages(program);
+    // By VALUE: the table the stages come from is bounded and trims its oldest entry, so a
+    // reference into it would be a dangling one waiting for the next program to be compiled.
+    const ::vsg::ShaderStages stages = compiledStages(program);
     if (stages.empty()) {
         return {};
     }
-
     // The canonical shader LOCATIONS are the SDK's ABI (ShaderAbi.hpp), not a
     // backend choice; the vsg_* names are only this backend's binding aliases.
     using vine::graphics::attributeLocation;

@@ -129,6 +129,27 @@ static_assert(sizeof(VineLightsBlock) == 112, "VineLightsBlock must match the GL
 static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-aligned");
 
 
+/**
+ * @brief How many programs' compiled stages the process-wide table remembers.
+ *
+ * The table is shared by every session — the programs a session shades by default are the ENGINE's
+ * own, process-wide singletons — so it cannot be released with a session, and an entry holds the
+ * program AND its SPIR-V. A host that churns programs (a shader editor makes a new revision per
+ * edit) would therefore leave one entry per revision for the life of the process, so the table is
+ * bounded and trims its oldest entry (the module's own capacity rule: only the fast path is lost).
+ */
+inline constexpr std::size_t kMaxCompiledStageEntries = 16;
+
+/**
+ * @brief Gets how many programs' compiled stages the process-wide table remembers.
+ *
+ * Diagnostic: the table is bounded (see @ref kMaxCompiledStageEntries) and nothing else can show
+ * that the bound holds, because the table is process-wide and has no owner to ask.
+ *
+ * @return Number of remembered (program, revision) entries.
+ */
+[[nodiscard]] std::size_t compiledStageCacheCount() noexcept;
+
 ::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program,
                                                      const VkExtent2D& extent, bool depth_test, bool depth_write,
                                                      int color_count = 1);
@@ -473,7 +494,7 @@ struct FullscreenShadowInput
  * depth_view is set, the source's depth attachment (next binding), and reads a
  * per-frame @p push_data block (see LightPushBlock). Depth test/write are
  * disabled and blending is off: the draw overwrites the sub-viewport it owns.
- * The retained node is drawn as its own View (viewport = the PiP rectangle),
+ * The retained node is drawn as its own View (viewport = the pass' rectangle),
  * so it composites over previously rendered content.
  *
  * Fragment-shader ABI the user program must follow:

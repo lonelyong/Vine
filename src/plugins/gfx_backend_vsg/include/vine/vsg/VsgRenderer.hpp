@@ -125,7 +125,7 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     /** @brief Opens a pass scope for the pass the engine is about to execute.
      *
      * The announced pass is the identity of the GPU state this backend
-     * retains for it (content view + scene bridge, PiP / fullscreen-program
+     * retains for it (content view + scene bridge, full-screen-program
      * slot), so two passes never alias each other even when they share a
      * camera and a pass order, and the state follows the pass when its camera
      * / render target / program changes. It also marks the pass active for
@@ -158,7 +158,7 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     /** @brief Releases every GPU resource this backend retains for a pass.
      *
      * Detaches and drops the pass' content view (window or off-screen), its
-     * PiP / fullscreen-program slot, its per-pass scene-bridge cache and the
+     * full-screen-program slot, its per-pass scene-bridge cache and the
      * compiled pipelines it owns, after waiting for the device to go idle.
      * Called by the engine when the pass is removed.
      *
@@ -174,9 +174,9 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
 
     /** @brief Draws a full-screen pass through a fragment program, sampling the source's attachments.
      *
-     * This is the ONLY full-screen draw: a PiP copy, a deferred lighting pass and a host
-     * post-process are the same call with different programs (see RenderBackend::drawScreenProgram
-     * for the contract). The backend
+     * This is the ONLY full-screen draw: a copy of a sub-rectangle, a deferred lighting pass
+     * and a host post-process are the same call with different programs and viewports (see
+     * RenderBackend::drawScreenProgram for the contract). The backend
      * compiles the program's fragment stage, binds each source colour
      * attachment as a sampled texture (binding 0..N-1) and pushes view-space
      * light parameters each frame.
@@ -208,7 +208,7 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void setPassOrder(int order) override;
 
-    /** @brief Frees GPU state (offscreen graph + PiP slot) for a removed target.
+    /** @brief Frees GPU state (offscreen pass graphs + full-screen program slots) for a removed target.
      *
      * @param target Render target being removed, or null.
      */
@@ -263,6 +263,17 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void render(const std::vector<vine::graphics::RenderCommand>& commands, vine::raw_ptr<const vine::graphics::Camera> camera) override;
 
+    /** @brief Announces the targets the pass about to execute declares as its INPUTS.
+     *
+     * Called by RenderPass::execute() from the pass' own declaration before it draws. The list is
+     * borrowed for the scope and read by the slot when it (re)builds its retained state — that is
+     * how a pass that declares a shadow map gets it bound (see detail::resolveShadowInput, the one
+     * rule both shadow consumers use).
+     *
+     * @param inputs Targets the pass declares (its own order decides which one is the shadow).
+     */
+    void setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::RenderTarget>>& inputs) override;
+
     /** @brief Sets the light sources for the upcoming render() pass.
      *
      * Called by RenderPass::execute() from the pass's content scene before
@@ -273,8 +284,6 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *
      * @param lights Lights of the content scene, or empty for the default.
      */
-    void setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::RenderTarget>>& inputs) override;
-
     void setLights(const std::vector<vine::raw_ptr<const vine::graphics::Light>>& lights) override;
 
     /** @brief Sets the clear color and depth-clear state. */
@@ -430,10 +439,10 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
 
     /** @brief Gets how many parked objects the retire ring has released.
      *
-     * Diagnostic: a replaced render pass / framebuffer or a dropped
-     * fullscreen-program node is parked for a few frame advances and then
-     * released (VsgRendererState::retireObject / advanceRetireRing). A ring that never
-     * released would grow without bound, so a policy-changing check asserts this
+     * Diagnostic: a replaced render pass / framebuffer, a dropped fullscreen-program node and a
+     * dropped content-slot node are PARKED for a few frame advances and then released (see
+     * VsgRetireRing — park() is the only way in, and its three users are named on the type). A ring
+     * that never released would grow without bound, so a policy-changing check asserts this
      * advances — and, together with the validation-clean run, is what shows the
      * deferral is live rather than merely silent.
      *
@@ -487,9 +496,8 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     /** @brief Retires (detaches) the retained view of every pass that was not
      * announced this frame (disabled / unregistered).
      *
-     * Runs once per submitted frame once the pass protocol has been used at
-     * all: a slot whose pass did not execute this frame would otherwise keep
-     * drawing its last synced content, i.e. the pass would appear to ignore
+     * Runs once per submitted frame: a slot whose pass did not execute this frame would otherwise
+     * keep drawing its last synced content, i.e. the pass would appear to ignore
      * RenderPass::setEnabled(). The slot keeps its data and pipelines, so
      * re-enabling the pass only re-attaches the view. Already-retired slots are
      * skipped, so a pass that stays disabled costs nothing per frame.
@@ -576,7 +584,7 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *    the scenes' retained nodes (one ring per content slot, see SceneBridge::retireNode),
      *    and the renderer-owned objects the frame assembly parked rather than stopping the
      *    device (a pass' replaced render pass / framebuffer, a dropped fullscreen-program
-     *    node — see VsgRendererState::retireObject). All three run on one clock (@ref
+     *    node — see VsgRetireRing::park). All three run on one clock (@ref
      *    VsgDeferredRelease): the rings, and the per-draw slots the pool retired
      *    (VsgDrawBlockPool::advanceRetired).
      *
@@ -642,7 +650,7 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
 
     /** @brief Takes the sub-viewport queued for the next draw call.
      *
-     * Every draw path (main scene, PiP screen, fullscreen program) reads the
+     * Every draw path (the main scene, the full-screen program) reads the
      * same pending rectangle and clears it, so the consume is factored here.
      * A pass that never queued a viewport gets std::nullopt and the caller
      * substitutes the full target.

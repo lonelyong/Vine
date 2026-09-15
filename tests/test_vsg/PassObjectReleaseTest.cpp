@@ -143,6 +143,71 @@ TEST(PassObjectReleaseTest, TheRingReleasesWhatTheReleaseParked)
 }
 
 /**
+ * @brief Dropping a full-screen program slot detaches its view, PARKS its node and erases the slot.
+ *
+ * A program slot's node owns the pipeline, the descriptor sets and (through them) the image views of
+ * the images it sampled, and the frames in flight may still name all of that: the drop therefore goes
+ * through ONE home (detail::eraseProgramSlot), which is also what makes it wait-free. Two of the
+ * four drop sites used to skip the parking — the slot REBUILD overwrote the slot, which destroyed
+ * the node in flight, and a released render target stopped the device once PER DROPPED SLOT to
+ * compensate — so the rule is pinned here rather than left to each site to remember.
+ */
+TEST(PassObjectReleaseTest, DroppingAProgramSlotParksItsNodeAndDetachesItsView)
+{
+    vine::vsg::VsgRendererState state;
+    auto&                        window = state.entryFor(nullptr);
+    window.graph = ::vsg::RenderGraph::create(); // the graph a window slot's view records into
+
+    RenderPassPtr            pass(new RenderPass());
+    const vine::vsg::SlotKey key = vine::vsg::SlotKey::ownerPass(pass.get());
+
+    auto  view     = ::vsg::View::create();
+    auto  node     = ::vsg::Group::create();
+    auto* node_ptr = node.get();
+    {
+        auto& slot  = window.program_slots[key];
+        slot.view   = view;
+        slot.node   = node;
+        slot.ready  = true;
+        slot.order  = 7;
+        window.graph->addChild(view);
+    }
+    // The slot is the node's only holder, which is what "parked, not destroyed" has to keep alive.
+    node.reset();
+    ASSERT_EQ(node_ptr->referenceCount(), 1u);
+
+    vine::vsg::detail::eraseProgramSlot(state, window, nullptr, key);
+
+    // The slot is gone and its view stopped being recorded...
+    EXPECT_TRUE(window.program_slots.empty());
+    EXPECT_EQ(window.graph->children.size(), 0u);
+    // ...its node is PARKED (the ring holds it: a submitted command buffer may still name it)...
+    EXPECT_EQ(node_ptr->referenceCount(), 1u);
+    EXPECT_EQ(parkedObjects(state), 1u);
+    // ...and nothing stopped the device for the drop.
+    EXPECT_EQ(state.retireRing.waitCount(), 0u);
+
+    // Parked is not leaked: the ring hands it back once the frames in flight are done.
+    for (std::size_t i = 0; i < vine::vsg::VsgRetireRing::kRetireRingDepth; ++i) {
+        state.retireRing.advance(vine::vsg::FrameCommit::submitted());
+    }
+    EXPECT_EQ(parkedObjects(state), 0u);
+    EXPECT_EQ(state.retireRing.releasedCount(), 1u);
+}
+
+TEST(PassObjectReleaseTest, DroppingAProgramSlotThatIsNotThereIsANoOp)
+{
+    vine::vsg::VsgRendererState state;
+    auto&                        window = state.entryFor(nullptr);
+    RenderPassPtr                pass(new RenderPass());
+
+    vine::vsg::detail::eraseProgramSlot(state, window, nullptr, vine::vsg::SlotKey::ownerPass(pass.get()));
+
+    EXPECT_EQ(parkedObjects(state), 0u);
+    EXPECT_EQ(state.retireRing.waitCount(), 0u);
+}
+
+/**
  * @brief Releasing a target drops the announcement that names it.
  *
  * The queued request is the direct driver's to manage and survives frames (RenderBackend::

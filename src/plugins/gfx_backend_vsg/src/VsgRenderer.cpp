@@ -413,10 +413,10 @@ void VsgRenderer::shutdown()
 void VsgRenderer::beginFrame()
 {
     // A new frame: the passes active this frame are re-announced by beginPass()
-    // as the engine runs them, so the activity set starts empty. The
-    // protocol-used marker is deliberately STICKY (not cleared here): once the
-    // backend has been driven through pass scopes, a frame in which every pass
-    // is disabled announces nothing and must still retire the retained views.
+    // as the engine runs them, so the activity set starts empty. A frame in which every pass is
+    // disabled therefore announces nothing — and STILL retires the retained views of the passes
+    // that did not run, because that decision is taken from the slots (who announced them this
+    // frame) rather than from a flag saying the protocol was ever used.
     state.passes_active_this_frame.clear();
     // The frame's commit token, and the refusal episode it re-arms: ONE frame = ONE token, so the
     // only advance of the deferral rings (settleSubmittedFrame) has to have this frame's token.
@@ -494,11 +494,13 @@ void VsgRenderer::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> ta
     // A scope attribute: the pass announced by beginPass() renders into this
     // target for every draw call of its scope (setRenderTarget comes before the
     // first one, see RenderBackend::setRenderTarget).
-    state.request.target = target;    // Announcing a target (re)arms the refusal of a dead announcement: whatever
+    state.request.target = target;
+    // Announcing a target (re)arms the refusal of a dead announcement: whatever
     // was released before is none of THIS announcement's business
     // (refuseDeadTargetAnnouncement).
-    state.request.target_released          = false;
-    state.request.target_release_reported  = false;}
+    state.request.target_released         = false;
+    state.request.target_release_reported = false;
+}
 
 void VsgRenderer::resetPassRequest()
 {

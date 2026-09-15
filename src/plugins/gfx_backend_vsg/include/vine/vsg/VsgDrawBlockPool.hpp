@@ -44,11 +44,10 @@ V_VSG_NS_BEGIN
  * it grows. It grows by adding a CHUNK of `slotsPerChunk` slots, which keeps growth
  * allocation-only: no buffer is ever re-created and no descriptor set is ever rewritten.
  *
- * LIFETIME. A slot belongs to whoever reserved it and is returned with release(). The
- * caller is responsible for not reusing a slot whose frames may still be in flight (see
- * SceneBridge, which defers the release past its retire ring); the pool itself only
- * guarantees that a released slot is handed to the NEXT reserve(), never to two callers
- * at once.
+ * LIFETIME. A slot belongs to whoever holds its LEASE (see @ref Lease, the only way to hold one) and goes
+ * back through the pool's retired queue when that lease is destroyed — never straight to the free list,
+ * because the frames still in flight may bind its offset. The pool itself only guarantees that a free
+ * slot is handed to the NEXT reserve(), never to two holders at once.
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the bridge.
  */

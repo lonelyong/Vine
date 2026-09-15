@@ -23,46 +23,37 @@ bool incrementalCompileViews(VsgRendererState& state)
         return false;
     }
 
-    for (const auto& view : state.pending_compile_views) {
+    for (const PendingCompileView& pending : state.pending_compile_views) {
+        const ::vsg::ref_ptr<::vsg::View>& view = pending.view;
         if (view == nullptr) {
             return false;
         }
 
-        // Locate the owning target (window target keyed by nullptr) and the
-        // retained content slot the view belongs to, so the compile context
-        // can carry that target's render pass (window swapchain vs off-screen
-        // framebuffer — a graphics pipeline cannot be created without one).
-        VsgRenderTargetEntry*     owner    = nullptr;
-        ContentSlot* slot    = nullptr;
-        SlotKey           slot_key;
-        bool              is_window = false;
-        for (auto& [target_key, target] : state.targets) {
-            for (auto& [candidate_key, candidate] : target.content_slots) {
-                if (candidate.ready && candidate.view == view) {
-                    owner     = &target;
-                    slot      = &candidate;
-                    slot_key  = candidate_key;
-                    is_window = (target_key == nullptr);
-                    break;
-                }
-            }
-            if (slot != nullptr) {
-                break;
-            }
+        // The queue entry says which slot the view belongs to (it has one producer, see
+        // PendingCompileView), so the compile context is looked up rather than searched for — but the
+        // slot is still CHECKED to hold this view: a slot can be dropped between the queue push and
+        // this compile, and a new target allocated at the recorded address must not have this view
+        // compiled against ITS framebuffer. An entry whose slot is gone is simply dropped: nothing
+        // records that view any more, so there is nothing to compile (this used to fall back to
+        // compiling the whole scene).
+        const auto target_entry = state.targets.find(pending.target);
+        if (target_entry == state.targets.end()) {
+            continue;
         }
-        if (slot == nullptr) {
-            // A pending view that is not a content slot (e.g. a PiP or
-            // program slot compiled by another path): let the caller fall
-            // back to the full compile.
-            return false;
+        VsgRenderTargetEntry& owner = target_entry->second;
+        const auto            slot_entry = owner.content_slots.find(pending.slot);
+        if (slot_entry == owner.content_slots.end() || slot_entry->second.view != view) {
+            continue;
         }
+        ContentSlot& slot      = slot_entry->second;
+        const bool   is_window = pending.target == nullptr;
 
         // Register the slot's (render pass + view) context once. The pool's
         // pooled traversal was built by CompileManager::create(viewer, hints)
         // when the window graph was still empty, so without this the pool has
         // no context that matches this view and compile() would compile
         // nothing.
-        if (!slot->compile_context_registered) {
+        if (!slot.compile_context_registered) {
             ::vsg::CollectResourceRequirements collect;
             view->accept(collect);
             const auto& requirements = collect.requirements;
@@ -77,9 +68,9 @@ bool incrementalCompileViews(VsgRendererState& state)
                     // The compile context carries the render pass the pipeline
                     // is built against, so it must be THIS pass' framebuffer —
                     // an off-screen target has one per pass (§28).
-                    const auto pass_fb = owner->passes.find(slot_key);
+                    const auto pass_fb = owner.passes.find(pending.slot);
                     const ::vsg::ref_ptr<::vsg::Framebuffer> framebuffer =
-                        pass_fb == owner->passes.end() ? ::vsg::ref_ptr<::vsg::Framebuffer>() : pass_fb->second.framebuffer;
+                        pass_fb == owner.passes.end() ? ::vsg::ref_ptr<::vsg::Framebuffer>() : pass_fb->second.framebuffer;
                     if (framebuffer == nullptr || framebuffer->getDevice() == nullptr) {
                         return false;
                     }
@@ -89,7 +80,7 @@ bool incrementalCompileViews(VsgRendererState& state)
             catch (...) {
                 return false;
             }
-            slot->compile_context_registered = true;
+            slot.compile_context_registered = true;
             ++state.compile_context_registrations;
         }
 

@@ -134,7 +134,7 @@ src/plugins/gfx_backend_vsg/
     VsgViewCompiler.cpp           # 增量编译两条路径 + 全图回落
     VsgContentSlot.cpp            # 内容槽搭建/绘制 + 四个文件局部 helper
     VsgTargetBookkeeping.cpp      # detail：目标装配/重建/注销 + releaseRenderTarget/WindowLayer
-    VsgOverlay.cpp                # PiP 采样 + 全屏用户程序（视图编译、摆放、光照 push 块填充）
+    VsgOverlay.cpp                # 全屏用户程序（视图编译、摆放、光照 push 块填充）
     VsgSceneRules.cpp             # detail：通道形状判定 + 缓存键哈希 + opaque 多附件写
     VsgRendererPasses.cpp         # pass 协议（begin/end/releasePass、退役）
     SceneBridge.cpp               # 保留 Item 缓存 / buildGeometry / syncRenderCommands

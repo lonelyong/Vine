@@ -19,6 +19,7 @@
 #include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgRecordOrder.hpp>
+#include <vine/vsg/VsgTargetBookkeeping.hpp>
 #include <vine/vsg/VsgUtils.hpp>
 
 V_VSG_NS_BEGIN
@@ -412,18 +413,16 @@ void detail::dropDepthSamplingProgramSlots(VsgRendererState& state, const VsgDia
     // pipeline layout has no depth sampler, so nothing it records names that
     // layout, and it keeps drawing — this frame and every one after.
     for (auto& dest_entry : state.targets) {
-        auto& slots = dest_entry.second.program_slots;
-        for (auto slot_it = slots.begin(); slot_it != slots.end();) {
-            auto& slot = slot_it->second;
-            if (!slot.ready || slot.source_target != target || !slot.binds_source_depth) {
-                ++slot_it;
-                continue;
+        // Collected first: the drop below erases from this table (and it is the one home for that,
+        // see eraseProgramSlot — it detaches the view, parks the node and erases the slot).
+        std::vector<SlotKey> drop;
+        for (const auto& slot : dest_entry.second.program_slots) {
+            if (slot.second.ready && slot.second.source_target == target && slot.second.binds_source_depth) {
+                drop.push_back(slot.first);
             }
-            removeGraphChild(slot.dest_graph.get(), slot.view);
-            // The node owns the program's pipeline / descriptor objects, and the
-            // command buffer that recorded this slot may still be pending: park it
-            // rather than release it in flight (a view holds no Vulkan object).
-            state.retireRing.park(slot.node);
+        }
+        for (const SlotKey& key : drop) {
+            eraseProgramSlot(state, dest_entry.second, dest_entry.first, key);
             diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                                vine::graphics::DiagnosticCategory::ContentSkipped,
                                formatDiagnostic(u8"drawScreenProgram: sampled target '%s' started preserving depth, which"
@@ -431,7 +430,6 @@ void detail::dropDepthSamplingProgramSlots(VsgRendererState& state, const VsgDia
                                                 u8" dropped for this frame (its slot is rebuilt on the owner's next"
                                                 u8" draw)",
                                                 target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str()));
-            slot_it = slots.erase(slot_it);
         }
     }
 }

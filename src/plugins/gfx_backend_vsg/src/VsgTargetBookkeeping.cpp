@@ -81,6 +81,22 @@ bool borrowNeedsRebuild(const VsgRendererState& state, const VsgRenderTargetEntr
     return false;
 }
 
+namespace
+{
+
+/**
+ * @brief Forgets everything a previous build of a target's attachments produced.
+ *
+ * The forgetting half of clearTargetAttachments, and deliberately NOT callable on its own: every
+ * image / view / slot table and every flag the build set goes back to its initial value, while the
+ * target's own entry stays — and doing that while the old pass graphs are still recorded, or before
+ * the device was waited on, is what that function's body exists to make impossible. Written as ONE
+ * list because it is exactly what a build OWNS: a Target field added later and forgotten here would
+ * survive a rebuild as a stale image, a stale "already built" flag or a stale borrow source, and
+ * nothing would report it.
+ *
+ * @param t Target entry being emptied (its key stays registered).
+ */
 void resetTargetAttachments(VsgRenderTargetEntry& t)
 {
     t.content_slots.clear();
@@ -108,6 +124,22 @@ void resetTargetAttachments(VsgRenderTargetEntry& t)
     t.build_key = {};
 }
 
+} // namespace
+
+void eraseProgramSlot(VsgRendererState& state, VsgRenderTargetEntry& owner,
+                      vine::graphics::RenderTarget* owner_key, const SlotKey& key)
+{
+    const auto slot = owner.program_slots.find(key);
+    if (slot == owner.program_slots.end()) {
+        return;
+    }
+    // The order is the rule (see the declaration): stop recording the view, park the node that
+    // the frames in flight may still name, then let the slot go.
+    detachSlotView(state, owner, owner_key, key, slot->second.view);
+    state.retireRing.park(slot->second.node);
+    owner.program_slots.erase(slot);
+}
+
 void dropConsumersSampling(VsgRendererState& state, const vine::graphics::RenderTarget* target)
 {
     for (auto& entry : state.targets) {
@@ -115,14 +147,15 @@ void dropConsumersSampling(VsgRendererState& state, const vine::graphics::Render
         if (entry.first == target || (!other.attachments_built && other.graph == nullptr)) {
             continue;
         }
-        for (auto it = other.program_slots.begin(); it != other.program_slots.end();) {
-            if (it->second.source_target == target) {
-                detachSlotView(state, other, entry.first, it->first, it->second.view);
-                it = other.program_slots.erase(it);
+        // Collected first: erasing while the walk runs would invalidate it.
+        std::vector<SlotKey> drop;
+        for (const auto& slot : other.program_slots) {
+            if (slot.second.source_target == target) {
+                drop.push_back(slot.first);
             }
-            else {
-                ++it;
-            }
+        }
+        for (const SlotKey& key : drop) {
+            eraseProgramSlot(state, other, entry.first, key);
         }
     }
 }
@@ -222,10 +255,22 @@ void unhookTargetPasses(VsgRendererState& state, VsgRenderTargetEntry& t)
         slot_entry.second.bridge.clearCache();
         // A dropped slot must not stay queued for the frame's incremental compile:
         // its view no longer belongs to any target.
-        const auto& view  = slot_entry.second.view;
-        auto&       queue = state.pending_compile_views;
-        queue.erase(std::remove(queue.begin(), queue.end(), view), queue.end());
+        dropQueuedCompileView(state, slot_entry.second.view);
     }
+}
+
+void clearTargetAttachments(VsgRendererState& state, VsgRenderTargetEntry& t)
+{
+    // A target that was never built has nothing to unhook: no pass graph was ever created for it
+    // (passGraph refuses without attachments) and no slot either, so the forgetting half is the
+    // whole job — which is also what the guard buys: a first build pays no device wait.
+    if (!t.attachments_built) {
+        return;
+    }
+    // The order IS the function body (see the declaration): stop the old graphs recording and make
+    // the release safe FIRST, then forget what they owned.
+    unhookTargetPasses(state, t);
+    resetTargetAttachments(t);
 }
 
 void detachSlotView(VsgRendererState& state, VsgRenderTargetEntry& owner, vine::graphics::RenderTarget* owner_key,
@@ -237,8 +282,15 @@ void detachSlotView(VsgRendererState& state, VsgRenderTargetEntry& owner, vine::
     // A dropped view must not stay queued for the frame's incremental compile —
     // only content slots queue their views, so this is a no-op for the other
     // kinds (which compile the moment they are built).
+    dropQueuedCompileView(state, view);
+}
+
+void dropQueuedCompileView(VsgRendererState& state, const ::vsg::ref_ptr<::vsg::View>& view)
+{
     auto& queue = state.pending_compile_views;
-    queue.erase(std::remove(queue.begin(), queue.end(), view), queue.end());
+    queue.erase(std::remove_if(queue.begin(), queue.end(),
+                               [&view](const PendingCompileView& entry) { return entry.view == view; }),
+                queue.end());
 }
 
 void resetContentShaderSlots(VsgRendererState& state)
@@ -339,20 +391,16 @@ void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnos
     // to the target. The graph is created EMPTY: content-slot Views are
     // appended by setupContentSlot() as passes render into this target (C6.4:
     // one RT can hold several content slots, like the window target).
-    // EXPERIMENTAL: must be validated on a real Vulkan device before
-    // production use.
     if (target == nullptr) {
         return;
     }
     auto& t = state.entryFor(target);
 
-    // A rebuild (target resized or its attachment shape changed) must first stop the previous
-    // pass graphs being recorded and release what hangs off them, then forget the previous
-    // build's images / views / flags (the counted device wait lives in that unhook).
-    if (t.attachments_built) {
-        unhookTargetPasses(state, t);
-        resetTargetAttachments(t);
-    }
+    // A rebuild (target resized or its attachment shape changed) first stops the previous pass
+    // graphs being recorded and releases what hangs off them (the counted device wait lives in
+    // that unhook), then forgets the previous build's images / views / flags — ONE call, because the
+    // order between the two halves is what makes the release safe (see clearTargetAttachments).
+    clearTargetAttachments(state, t);
 
     const uint32_t w = static_cast<uint32_t>(target->width());
     const uint32_t h = static_cast<uint32_t>(target->height());
@@ -417,7 +465,7 @@ void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnos
     t.attachments_built = has_color || has_depth;
 
     // A (re)built target created FRESH colour views: any OTHER target that samples this one
-    // (PiP screen slots / fullscreen-program slots) still holds the OLD views — see
+    // (a full-screen program slot) still holds the OLD views — see
     // detail::dropConsumersSampling.
     dropConsumersSampling(state, target);
 
@@ -513,6 +561,17 @@ void releaseRenderTarget(VsgRendererState& state, const VsgDiagnostics& diagnost
     if (target == nullptr) {
         return;
     }
+    // The target has to OUTLIVE this call, even when nothing else holds it: the table entry that
+    // owns it is erased below (that is what "released" means here), so without this reference the
+    // erase can be the last release — and the rest of this function still reads the released
+    // target (its name, its identity compared against every borrowing / sampling slot, and the
+    // tombstone that keeps a borrowing target from retrying the borrow). That is a use-after-free
+    // with a heap-visible consequence (the tombstone would write into freed memory), and it is
+    // reachable from the path that exists exactly for "the host dropped the target itself" (see
+    // VsgRenderer::releaseAbandonedTargets, which releases targets whose only owner is the entry).
+    // One reference, for the length of the call, is what makes the identity below a fact.
+    const vine::intrusive_ptr<vine::graphics::RenderTarget> alive(target);
+
     // The scope being executed may still name this target: the request belongs to that scope, and
     // the caller releases the target because its last owner is going away — so the announced
     // pointer must not be used again (the class contract forbids keeping it). Marking it rather
@@ -567,29 +626,28 @@ void releaseRenderTarget(VsgRendererState& state, const VsgDiagnostics& diagnost
         other.height                = 0;
         released                    = true;
     }
-    // A slot that SAMPLES the removed target (a screen / program slot lives under
-    // the target that DRAWS it, and its source is a slot attribute) would keep a
-    // dead image bound: drop it wherever it lives. Content slots own no sampling
-    // edge, so they are skipped by the requires-clause.
+    // A slot that SAMPLES the removed target (a program slot lives under the target that DRAWS
+    // it, and its source is a slot attribute) would keep a dead image bound: drop it wherever it
+    // lives. Content slots own no sampling edge, so they are skipped by the requires-clause.
     for (auto& target_entry : state.targets) {
         auto& t = target_entry.second;
         // Collect first: erasing while the visitor walks the tables would
         // invalidate the walk.
-        std::vector<std::pair<VsgRenderTargetEntry::SlotKind, SlotKey>> drop;
-        t.forEachSlot([&](const SlotKey& key, auto& slot, VsgRenderTargetEntry::SlotKind kind) {
+        std::vector<SlotKey> drop;
+        t.forEachSlot([&](const SlotKey& key, auto& slot, VsgRenderTargetEntry::SlotKind) {
             if constexpr (requires { slot.source_target; }) {
                 if (slot.source_target == target) {
-                    detachSlotView(state, t, target_entry.first, key, slot.view);
-                    drop.emplace_back(kind, key);
+                    drop.push_back(key);
                 }
             }
         });
-        for (const auto& [kind, key] : drop) {
-            // Destructive (the slot's node goes with it), so this keeps the
-            // counted device wait rather than parking the view — see
-            // erasePassFromTarget.
-            state.retireRing.waitForIdle(state.viewer);
-            t.eraseSlot(kind, key);
+        for (const SlotKey& key : drop) {
+            // One home for the drop (see eraseProgramSlot): it detaches the view, PARKS the node
+            // and erases the slot. Parking is what this loop used to pay a device-wide idle PER
+            // SLOT for — the node holds the descriptor set that names the removed target's images,
+            // so it has to outlive the frames that may still record it, and the ring is what keeps
+            // it alive for exactly that long.
+            eraseProgramSlot(state, t, target_entry.first, key);
             released = true;
         }
     }

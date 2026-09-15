@@ -39,7 +39,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgRecordOrder.cpp` | 录制顺序：采样边 + 深度借用边 + 稳定拓扑排序 |
 | `VsgTargetBookkeeping.cpp` | 目标装配/注销：附件创建、深度借用解析、重建与释放 |
 | `VsgContentSlot.cpp` | 内容槽的每帧驱动（视口、灯块、诊断）。灯只有 `vine_lights` 块一个来源（2026-09-13 起 vsg 灯节点/`setGroupLights` 已删除） |
-| `VsgOverlay.cpp` | PiP / 全屏 program overlay 的两种绘制 |
+| `VsgOverlay.cpp` | 全屏 program overlay：视图编译 / 摆放 + 光照 push 块填充（2026-09-13 起屏幕绘制只有这一个入口） |
 | `shaders/`（**已删除，2026-09-13**） | 本后端曾自带两段 GLSL（全屏三角形 / 屏幕拷贝）。它们都在**引擎可见的画面**后面 —— 没有 program 的 `ScreenPass` 画的就是那段拷贝，所有全屏 program 也是照那个三角形写的 —— 而文本却住在一个后端里。现在两段都是 SDK program（`BuiltinShaders::fullscreenVertexProgram` / `screenCopyProgram`），本后端只决定**怎么编译和绑**（清单因此只剩一个 owner：`cmake/VineShaders.cmake`） |
 | `detail::buildVineShaderSet` / `makeContentShaderSet` | **自写前向着色**（替代 vsg 内建 phong 的 P0）：**GLSL 归 SDK**（`src/viz/graphics/shaders/builtin_forward.*`，经 `BuiltinShaders.hpp` 的 `forwardProgram()` / `flatForwardProgram()` 取源——本后端只编译它并声明 ABI）。属性 0/1/2(色,define) / 8(uv,define)、set0 的 material(b0) / diffuseMap(b1) / **vine_lights(b2, 每槽 UBO)**、**set1/b0 `vine_draw`（`VineDrawBlock`，UNIFORM_BUFFER_DYNAMIC，每 drawable 一个槽）** + push `pc` 0..128（vsg 矩阵栈填）。**唯一路径（2026-09-13 起）**：`makeContentShaderSet` 总是返回引擎自己的 set，**完全不使用 vsg 内建 set**（`VINE_VSG_BUILTIN` 开关与内建基线已删除）。**不兜底**：`makeContentShaderSet(program)` 用不了就返回 null（`program == nullptr`，或它没有可编译的 stage）——调用方报一条 diagnostic 并**不画**，不会替你换成别的着色。证据基线一条（见该文档 §11） |
 | `VsgViewCompiler.cpp` | 增量编译（只编译新 view） |
@@ -303,8 +303,9 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
   （离屏按新尺寸重建 / retarget / release）会带走它的条目和那些份额，用帧首的图就会**多算**，
   而多算等于对"应用仍持有"的对象报"它放手了"。**收集与清扫融合在同一个函数里**，让"用旧图清扫"
   在结构上无法表达（见 §5.3.1 的实测与 F1）；
-- 单桥直驱（测试、不打开帧的驱动）传 `nullptr` ⇒ 退化为"本桥可见份额 = 自己的缓存 + 材质管理器"
-  （`collectSweepShares`），保守方向（少算 ⇒ 多留一帧）。
+- 设备无关的调用点（单测直接驱动一个桥，没有会话可以数份额）传 `nullptr` ⇒ 退化为"本桥可见份额 =
+  自己的缓存 + 材质管理器"（`collectSweepShares`），保守方向（少算 ⇒ 多留一帧）。生产路径全部由会话给图
+  —— "单桥直驱"这条驱动方式本身已随 §67 删除。
 
 诊断面同样按"一个概念一个值"收敛：会话的保留情况是**一个** `VsgRetentionStats`
 （`VsgRenderer::retentionStats()`：内容槽数、槽池的 chunks/capacity/reserved/retired、退役环的
@@ -484,7 +485,8 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 | 路径 | 策略 |
 | --- | --- |
 | 状态变体交换、撤销深度提升、被丢弃的 program 节点、视图摘除 | **停放**（退役环，深度 4，**由提交令牌驱动推进**：只有已提交的一帧才能推一步，见 §4.1）⇒ 0 次设备等待 |
-| 槽 teardown / 目标重建 / `clearCache()` / depth 模式变更的状态重建 | **计数等待**（`VsgRetireRing::waitForIdle(viewer)`） |
+| 全屏 program 槽丢弃（`detail::eraseProgramSlot`：摘 view + 停放 node + erase） | **停放** —— 它的 node 持有管线与描述符集（描述符集又握着被采样图像的 view），停放让它们活过在飞命令缓冲 |
+| 内容槽 teardown（`erasePassFromTarget` / `clearTargetAttachments`，都要 `bridge.clearCache()`）/ 目标重建 / `clearCache()` / depth 模式变更的状态重建 | **计数等待**（`VsgRetireRing::waitForIdle(viewer)`） |
 
 理由（实测）：`clearCache()` 会清空**该桥的**共享对象注册表，那里的管线/采样器不一定还有存活节点作为唯一持有者
 —— 停放会让 lavapipe 报 `VUID-vkDestroyPipeline-00765` / `vkDestroySampler-01082`。所有等待都必须走

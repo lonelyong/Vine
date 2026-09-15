@@ -190,10 +190,6 @@ struct ProgramSlot {
     bool                             binds_source_depth = false;
     ::vsg::ref_ptr<::vsg::Camera>    camera;     // carries the sub-rect viewport
     ::vsg::ref_ptr<::vsg::View>      view;       // extra View of this target's render graph
-    // The graph @p view is a child of. Kept so a slot can be taken out of the
-    // frame it was built for (the depth-promotion revoke does that without a
-    // host call: the slot was built while the promotion still stood).
-    ::vsg::ref_ptr<::vsg::Group>     dest_graph;
     ::vsg::ref_ptr<::vsg::Node>      node;       // the fullscreen program drawable
     ::vsg::ref_ptr<::vsg::Data>      push_data;  // per-frame push-constant bytes
     // The shadow this slot's program shades: the map its descriptor was built for, and the
