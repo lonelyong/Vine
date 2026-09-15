@@ -3,11 +3,20 @@
 > 模块：`src/plugins/gfx_backend_vsg`
 > 版本依据：2026-09-04 工作区代码（`git` 后状态）+ 本机 vsg v1.1.16。
 >
-> 本文件是模块级**综合文档**：讲清类职责、数据链路、图结构、生命周期、资源
-> 清理、resize / pass 移除行为，以及**未定义行为 / 内存 / 线程 / 异常安全**风险。
-> 纯数据格式与 ShaderSet 契约、顶点读取细节见 `docs/`
-> [`data-flow.md`](./docs/data-flow.md)（本文件引用它，不重复整表）；
-> 早期设计历史见 `.ai/design/vsg-design.md`；自定义着色 ABI 见 `.ai/design/vsg-custom-shader.md`。
+> 本文件是模块的**导航与现状说明**：它回答"这个插件是什么、有哪些文件、类各自负责什么、图长什么样、线程约定是什么"，并指向每个主题的权威文档。
+>
+> **本文边界（谁写什么，2026-09-15）** —— 同一件事只写一处，其余给链接：
+>
+> | 主题 | 唯一权威 |
+> |---|---|
+> | 运行时行为：数据流、调用次数、更新策略、诊断、坑 | [`docs/backend.md`](./docs/backend.md) |
+> | L0/L1 契约映射、ShaderSet 契约表、支持矩阵、历史缺陷登记（D1–D28） | [`docs/data-flow.md`](./docs/data-flow.md) |
+> | 所有权 / 生命周期 / 每个清理点的动作 | `docs/data-flow.md` §9–§10（**唯一表格**）与 `docs/backend.md` §3（会话与持久、帧份额） |
+> | 目标 / 内容槽模型与 pass 生命周期 | `.ai/design/vsg-target-unification.md`、`.ai/design/vsg-pass-lifecycle.md` |
+> | 待办与缺陷登记 | `.ai/memory/graphics-perf-backlog.md`（**唯一登记**；本模块文档不再各自维护一份） |
+> | 自定义着色 ABI、内建契约 | `.ai/design/vsg-custom-shader.md`、`.ai/design/graphics-shader.md` |
+>
+> 早期设计历史见 `.ai/design/vsg-design.md`。
 >
 > ⚠️ **当前工作区状态（2026-09-04，C6 重构后）**：`VsgRenderer` 不绑定任何 Vine Scene/Camera
 > （`RenderBackendFactory/Registry::create()` 无参）；`Overlay` 类已删（顶部/HUD = 高 order 普通 pass，
@@ -28,9 +37,8 @@
 > main/HUD 语义限序；深度风格(depth-on/off、光照)由 `clear()` 标记判定，与顺序解耦。按显式 order
 > 归位天然处理引擎 warm-up 越序建槽（不再出现 [HUD, MAIN] 把 HUD 盖住）。早期 B1
 > （残留 `delete d;`）已修复。
-> **本文第 7/11/12 节架构文字撰写于 C6 之前**（描述三桶 window_layers/offscreen/screen_slots、绑
-> scene/camera、renderOffscreenTarget/setupWindowLayer 等旧形态），当前形态的权威说明见
-> `.ai/design/vsg-target-unification.md` 与代码本身；该等章节的全量改写为待办。
+> **2026-09-15**：第 7/11/12 节已按当前形态（统一 target + 内容/程序槽、无 PImpl）改写，
+> 与上式同源；仍以 `.ai/design/vsg-target-unification.md` 与代码为最终依据。
 >
 > ⚠️ **2026-09-08 更新（管线共享基础已落地）**：`SceneBridge` 的 `shared_objects_`
 > 已接入（此前声明未赋值 = 文档-代码漂移），同 (program×状态×槽位) 的几何共享一条
@@ -167,8 +175,8 @@ CMake 里显式 `target_compile_definitions(... PRIVATE V_VSG_LIB)` 让 `V_VSG_A
 
 | 类 | 职责 | 备注 |
 |---|---|---|
-| `VsgRenderer` | 实现 `RenderBackend`：窗口/Viewer/RenderGraph、窗口层（主/顶部/HUD）、离屏、PiP、帧提交 | PIMPL(`Impl`)；绑 raw `Scene*`+`Camera*`；on-screen 层统一 `window_layers` |
-| `SceneBridge` | 把每帧命令流保留式 reconcile 到一棵 `vsg::Group`；按 `Geometry*` 缓存 Item | 每个 window 层 / 离屏 target 各一套（vsg 按 viewID 编管线） |
+| `VsgRenderer` | 实现 `RenderBackend`：帧泵、pass 协议、目标账本、内容/程序槽、读回、诊断路由 | **无 PImpl**（状态按值：`VsgRendererPersistent` 跨会话 + `VsgRendererState` 单会话）；不绑 Vine Scene/Camera |
+| `SceneBridge` | 把每帧命令流保留式 reconcile 到一棵 `vsg::Group`；按 `Geometry*` 缓存 Item（**条目自持键**） | 每个**内容槽**一个（窗口与离屏同构；vsg 按 viewID 编管线 ⇒ 槽的管线注册表不可共享） |
 | `CameraBridge` | `Camera`（eye/target/up + fov/ortho）→ `vsg::LookAt` + `vsg::Perspective/Orthographic`；`apply()` 原位同步 | vsg 相机不含 viewportState（渲染器补） |
 | `VsgMaterialManager` | `Material*` → 缓存 `VineMaterialBlock` 的字节（`vsg::ubyteArray`） | 实现 `graphics::MaterialManager` |
 | `RenderStateMapper` | `ResolvedRenderState` → DepthStencil/Rasterization/ColorBlend/InputAssembly 四态 | header-only；含 reverse-Z 深度比较反转 |
@@ -238,9 +246,9 @@ flowchart LR
 ### 5.4 GPU 上传 / 编译
 
 `syncRenderCommands` 把新建/重建子树收进 `created`；调用方（`VsgRenderer`）在
-`created` 非空时 `viewer->compile()`（**当前全图编译**，非增量）。稳态帧
-`created` 为空 → **零编译**。编译即 vsg 的 `Data→VkBuffer` 上传 + 建
-pipeline / descriptor set。
+`created` 非空时编译**只有新增的那些 View**（`VsgViewCompiler`：两条路径 + 全图回落；
+待编列表 `pending_compile_views`）。稳态帧 `created` 为空 → **零编译**。编译即 vsg 的
+`Data→VkBuffer` 上传 + 建 pipeline / descriptor set。
 
 ## 6. 帧循环与每帧成本
 
@@ -263,12 +271,8 @@ sequenceDiagram
         P->>R: setRenderTarget / setViewport / clear / setLights
         E->>S: collectRenderCommands → vector<RenderCommand>
         P->>R: render(commands, camera)
-        alt 离屏 target
-            R->>B: 离屏 bridge.syncRenderCommands(root, created)
-        else window 层（主/顶部，键=相机）
-            R->>B: window_layers[camera].bridge.syncRenderCommands(root, created)
-        end
-        B-->>R: created 非空 → viewer->compile()（稳态为空→零编译）
+        R->>B: 该槽（SlotKey{target,camera,order}）的 bridge.syncRenderCommands(root, created)
+        B-->>R: created 非空 → 只编译新增 View（稳态为空→零编译）
         R-->>E: needs_submit=true
         end
         E->>R: endFrame() = viewer->update()
@@ -294,72 +298,71 @@ sequenceDiagram
 不建管线、不编译**。透明排序依赖命令序（root 子序），混合**恒开**由逐顶点 alpha
 承载（代价：opaque 也走 alpha 混合，GPU 固定小开销）。
 
-## 7. 图结构与多 View
+## 7. 图结构与槽
 
-后端维护一个 `vsg::Viewer` + 一个 `vsg::CommandGraph`，图上有**一棵主场景树 +
-若干附加 View**：
+> 设计权威：`.ai/design/vsg-target-unification.md`（目标统一）与
+> `.ai/design/vsg-pass-lifecycle.md`（pass/槽生命周期）。本节只给形状。
+
+后端维护**一个** `vsg::Viewer` + **一个** `vsg::CommandGraph`；每个输出目标（窗口 = `targets[nullptr]`，
+或一个离屏 `RenderTarget*`）各有一张自己的 `RenderGraph`，窗口图共享 swapchain，离屏图自持附件。
+目标内**每个 pass** 是一个**槽**：内容槽按 `SlotKey{target, camera, order}` 键，全屏 program 槽按
+（target, program）键；一个槽 = 一套保留的 View/root/bridge。
 
 ```mermaid
 graph TD
     V[vsg::Viewer<br/>EmbeddedViewer] --> CG[vsg::CommandGraph]
-    CG --> RG_O[离屏 RenderGraph ×N<br/>插在最前（先于主图录制）]
-    CG --> RG_M[主窗口 RenderGraph]
-    RG_M --> MV[主 View: 主相机]
-    RG_M --> OV[window layer View ×N<br/>window_layers keyed by Camera*]
-    RG_M --> PV[PiP View ×M<br/>screen_slots keyed by RenderTarget*]
-    RG_O --> OFV[离屏 View ×N<br/>offscreen keyed by RenderTarget*]
-    MV --> LG[light group<br/>scene lights/headlight] & SC[vsg_scene root Group]
+    CG --> RG_M[窗口目标 RenderGraph<br/>= 共享 swapchain]
+    CG --> RG_O[离屏目标 RenderGraph ×N<br/>自持 image/view/RP/framebuffer；按录制顺序插入]
+    RG_M --> MV[内容槽 View ×N<br/>键 (camera, order)，每槽一个 SceneBridge]
+    RG_M --> PV[程序槽 View ×M<br/>全屏 program / PiP]
+    RG_O --> OFV[离屏内容槽 / 程序槽 View]
+    MV --> LG[vine_lights UBO（每槽）] & SC[保留 root Group]
     SC --> IT[MatrixTransform ×N]
-    IT --> SG[StateGroup: pipeline+material DS]
+    IT --> SG[StateGroup: pipeline + material DS]
     SG --> DR[Bind* + DrawIndexed]
 ```
 
-### 7.1 主 View（on-screen）
+录制顺序不是“离屏永远在前”：采样边与深度借用边由 `VsgRecordOrder` 拓扑排序决定
+（一个离屏目标可以采样另一个离屏目标）。
 
-- `initialize()` 调 `setupWindowLayer(impl->camera, on_top=false)` 建主窗口层：
-  `CameraBridge::create` 得 vsg_camera、root `Group`、light group（scene 有灯则建灯节点，
-  否则 `createHeadlight()`）、`View::create(vsg_camera)`；别名 `vsg_camera/vsg_scene` 指向主层。
-- `render_graph = RenderGraph::create(window, primary.view)` → 挂 `command_graph` →
-  `viewer->assignRecordAndSubmitTaskAndPresentation(...)` → 首次 `compile()`。
-- 主内容的**预编译不在后端**：`initialize()` 只建窗口 target 与空图（“the renderer binds neither a
-  Vine scene nor a camera and pre-creates nothing here”），内容槽按 pass 惰性创建，几何子树在
-  `submitFrame()` 里走增量编译（`compilePendingViews()` / `pending_compile_views`）。历史实现曾有的
-  `collectSceneCommandsNoCull`（不剔除地预收集一遍）已删除。
+### 7.1 窗口内容槽（on-screen）
 
-### 7.2 Window Layer（HUD / 顶部层）
+- `initialize()` 建窗口目标（`VsgRenderTargetEntry`）与**空图**：它既不绑 Vine 场景也不绑相机
+  （“the renderer binds neither a Vine scene nor a camera and pre-creates nothing here”）。
+- 内容槽**按 pass 惰性创建**：引擎每帧 `beginPass(pass)` + `setPassOrder(order)` + `setRenderTarget(...)`
+  把槽键交给后端，首次出现时建 `CameraBridge` + `View` + 保留 root + 该槽自己的 `SceneBridge`。
+- 几何子树的编译是**增量**的：新建/重建的 View 进 `pending_compile_views`，`submitFrame()` 里由
+  `VsgViewCompiler` 编译（两条路径 + 全图回落）。
+- 深度风格（depth-on / depth-off、光照）由该 pass 的 **`clear()` 请求**判定，与槽顺序解耦；
+  槽内叠画顺序 = 用户显式 `order`（`PassAttributes.order`，升序插入），不再有 main/HUD 语义限序。
 
-- `window_layers` 以 **pass 的相机指针**为键，主层即 `camera == impl->camera` 那一项。首次遇到某相机
-  （`setupWindowLayer(cam, cam != impl->camera)`）建：`CameraBridge::create` + `vsg_camera` +
-  顶部层一个环境光（避免方向光导致轴随视角变黑）+ 内容 root；作为**主 RenderGraph 的额外
-  View** 加入（同一 render pass 内多 viewport），顶部层用 `depth_off_shader_set`（深度 test/write
-  关）的 layer bridge 同步内容，再 compile。
-- 每帧（`renderWindowLayer`）：把该层相机 viewportState 设成对应 pass 的子矩形（无则全屏）→
-  `CameraBridge::apply` → `layer.bridge.syncRenderCommands` → created 非空则 compile。
-  （每层不透明度/灯各自独立：不透明度走每 drawable 的 `vine_draw` 槽，灯走每槽的 `vine_lights` 块 ——
-  2026-09-13 起不再有 vsg 灯节点/`setGroupLights`。）
-- 移除见 §12；`RenderEngine::initialize` 会对已注册的 enabled 且**不清屏**的 pass **预热一次**
-  （先建好、编译好，避免帧中途首见编译不可靠）。
+### 7.2 同目标多槽（HUD / 顶部层）
 
-### 7.3 离屏 RenderTarget（EXPERIMENTAL）
+- 同一相机 + **不同 order** = 两个槽，各自保留 View/root/bridge，按 order 叠画；顶部层用
+  `depth_off` 着色集（深度 test/write 关）。
+- 每帧把该槽相机的 `viewportState` 设成该 pass 的 `setViewport` 子矩形（无则全屏）→
+  `CameraBridge::apply` → 该槽 bridge 同步。灯只有 `vine_lights` UBO 一个来源，不透明度走每 drawable 的
+  `vine_draw` 槽（vsg 灯节点 / `setGroupLights` 已于 2026-09-13 删除）。
+- 移除见 §12.2；`RenderEngine::initialize` 会对已注册、enabled 且**不清屏**的 pass 预热一次
+  （先建好、编译好，避开帧中途首见编译）。
 
-- `offscreen` 以 `RenderTarget*` 为键。`renderOffscreenTarget` 首次为该 target
-  建 GPU 附件（color ± depth image/view）、`makeSampleableRenderPass`（color 附件
-  以 `SHADER_READ_ONLY_OPTIMAL` 结束，供后续采样）或 `makeDepthOnlyRenderPass`
-  （shadow map 基础）、`Framebuffer`、独立 `RenderGraph`（`VK_SUBPASS_CONTENTS_INLINE`，
-  自定义 clearValues）、自己的 `View` + `CameraBridge::create` + light group +
-  root + **专用 `SceneBridge`**（不能与主 bridge 共用：vsg 管线按 viewID 编译，
-  共用会 `GraphicsPipeline::vk()` 崩溃）。
-- 该离屏 graph **插入 command_graph 最前** → 主窗口 PiP 在同一帧采样时纹理已最新。
-- 每帧 `cameraBridge.apply` + `off.bridge.syncRenderCommands`，created 非空则 compile。
+### 7.3 离屏 RenderTarget
 
-### 7.4 PiP / ScreenPass（EXPERIMENTAL）
+- 离屏目标自持 GPU 附件（color ± depth image/view）、自己的 render pass / framebuffer 与
+  `RenderGraph`（`VK_SUBPASS_CONTENTS_INLINE` + 每 pass 自定义 clearValues）。
+- 它和窗口**同一套代码路径**：同样的内容槽 / 程序槽，同样的 `renderContentSlot`；差别只在附件与
+  录制位置。深度的“promotion”（可采样）与“借用”由目标账本记录，详见 `.ai/design/vsg-pass-lifecycle.md`。
+- 采样方（PiP / 延迟光照 / 用户全屏 program）与生产者之间的顺序由 `VsgRecordOrder` 保证：
+  采样边 + 深度借用边拓扑排序，且生产者重建后消费者丢弃旧 image view。
 
-- `screen_slots` 以 **source RenderTarget*** 为键；`drawScreenTexture(source)` 首次建
-  `makeScreenTextureNode`（顶点着色器用 `gl_VertexIndex` 生成全屏三角形，片元采样
-  离屏 color view，深度 test/write 关）+ 一个带子矩形 `ViewportState` 的相机 +
-  作为主 RenderGraph 第二个 View。
-- 每帧更新该相机 viewportState 跟随 `setViewport` 队列的矩形（越界自动右下角
-  16:9 贴边）；source 尺寸变化 → 丢弃旧 slot 重建。
+### 7.4 程序槽（PiP / 全屏 program）
+
+- 2026-09-13 起只有这一种屏幕绘制：`drawScreenProgram(source, program, camera)`（`screen_slots` /
+  `drawScreenTexture` / 后端自带 `shaders/` 目录均已删除，见 `.ai/design/vsg-custom-shader.md` §11.11）。
+- 全屏三角形由 SDK program 提供（`BuiltinShaders` 的 `fullscreenVertexProgram` / `screenCopyProgram`）——
+  没有 program 的 `ScreenPass` 画的就是那段拷贝；后端只决定**怎么编译与怎么绑**。
+- 每帧更新该槽相机 `viewportState` 跟随 `setViewport` 矩形（越界自动右下角 16:9 贴边）；
+  source 尺寸变化 → 丢旧槽重建。
 
 ## 8. 相机桥接（CameraBridge）
 
@@ -380,18 +383,21 @@ graph TD
   零 rebuild；`diffuse.w` 是材质自身的 alpha，物体不透明度走 `vine_draw` 槽的 `params.x`。
 - 抽象基类接口：`updateMaterial / releaseMaterial / clear / find / materialCount /
   hasMaterial / forEachMaterial`。
-- ⚠️ `updateMaterial/releaseMaterial` **全仓无调用点**（登记 D13）→ 缓存只增不减，
-  最像内存泄漏的留存；shutdown 时 `clear()`。
+- 刷新与回收（登记 D13 已修，2026-09-14）：`updateMaterial` **由 `SceneBridge` 每帧调用**（在
+  `syncRenderCommands` 尾部），比较的是块类型**自己的** `operator==`（`ShaderAbi.hpp`，默认化）——
+  所以块里加成员时比较自动跟上，不会出现“改了属性但画面不动”的静默失效；条目自持 `Material`，
+  帧级 `releaseAbandoned()` 回收 App 已放手的材质，容量裁剪兜住极端情况。
 
 ## 10. 渲染状态映射（StateNode / reverse-Z / 深度约定）
 
 - 状态在**收集期**已折叠进 `RenderCommand.resolvedRenderState`，vsg 侧不存在“StateNode
   节点”。`Item` 记录上一次 `render_state`，每帧比较，变了才重建管线。
 - `RenderStateMapper` 把平面状态映射成 4 个 vsg 态：
-  - **深度**：test/write 1:1；**比较符反转**（`Less→GREATER` 等）。注释称后端走
-    reverse-Z 约定（近→NDC depth 1、远→0、clear 0）。⚠️ `CameraBridge` 目前给的是
-    普通 `vsg::Perspective`，reverse-Z 是否真成立取决于 vsg 默认投影实现——若默认
-    非 reverse-Z，则 StateNode 比较语义需复核（登记为待验证项）。
+  - **深度**：test/write 1:1；**比较符反转**（`Less→GREATER` 等）。这是 reverse-Z 约定的代码面：
+    `RenderStateMapper.hpp` 直接写着“the vsg backend uses a reverse-Z …”，目标清屏值取的是
+    reverse-Z 的远平面（`VsgTargetBookkeeping.cpp`：depth clear = 0.0）。**已实测**（不再是待验证项）：
+    selftest 的 program 相位把几何画在 clip `z = 0.5`，若约定不成立（clear 0 + GREATER）该几何会
+    被整片丢弃；反向改 `LESS` 或把 z 写成 0 会立即可见。
   - **剔除/多边形**：`cullMode` 映射，`frontFace` **固定 CCW**（配合 vsg Y-flip）；
     `polygonMode` Fill/Line/Point。
   - **混合**：**恒开**（`blend.enabled=false` 不关混合，只回默认因子
@@ -399,34 +405,29 @@ graph TD
     单 color attachment，MRT 未做。
   - **拓扑**：Triangles/Points/Lines → `TRIANGLE_LIST/POINT_LIST/LINE_LIST`。
 
-## 11. 生命周期与所有权总表
+## 11. 生命周期与所有权
 
-| 对象 | 谁持有 | 生命周期契约 | 违反后果 |
-|---|---|---|---|
-| Vine `Scene/Node/Geometry/Material/Camera/Light/ShaderProgram` | 场景树/调用方（`intrusive_ptr`，RefCounted） | 后端只存 **raw 指针**，不延长生命 | 悬垂（见 §14） |
-| `VsgRenderer` 绑定的 `Scene* / Camera*` | 调用方 | **必须活得比渲染器久**（构造文档明示） | initialize/render/frame 解引用 UB |
-| `SceneBridge::cache_` key `Geometry*` | 场景树 / 调用方 | 条目自持键；外侧放手那一帧即释放 | 地址复用错配（§14-1） |
-| `VsgMaterialManager::cache` key `Material*` | 同上 | 同上；无逐出 | 同上 + 只增不减留存 |
-| `SceneBridge::material_manager_` | `raw_ptr<VsgMaterialManager>` | **manager 必须活得比 bridge 久**（接口约定） | bridge 析构若触碰则悬垂（当前析构为空，无碍） |
-| vsg `ref_ptr<Window/Viewer/Graph/Camera/Node/Image/...>` | vsg 引用计数 | `Impl` 成员；shutdown 显式置空 | 引用未清 → 撞 `VSG_MAX_DEVICES==1` / 资源滞留 |
-| `window_layers/offscreen/screen_slots` key `Camera*/RenderTarget*` | `Impl` 成员 map | 引擎移除 pass/target 时须调 `releaseWindowLayer/releaseRenderTarget`；否则资源到渲染器析构才释放 | 悬垂 key / 延迟释放 |
-| 命令流 `vector<RenderCommand>` | 帧级栈对象 | 内部 `intrusive_ptr` 帧末释放 | —（帧内借用安全） |
-| `GfxBackendVsgPlugin` 的 `static s_factory` / `Registrar` | 进程级静态 | 插件 load 注册 / unload 不动 | 跨 TU 静态初始化序（§14-9） |
+> **谁拥有什么的唯一表格在 [`docs/backend.md`](docs/backend.md) §3**（逐项：拥有者 / 契约 / 违约后果，
+> 含会话级纹理与网格缓存、退役环、帧份额），**逐清理点的动作表在
+> [`docs/data-flow.md`](docs/data-flow.md) §9–§10**。本节只说模块级约定，不重复那两张表。
 
-### 11.1 PIMPL / Impl 内部成员
+四条合同（违反即 UB / 双释放 / 撞 `VSG_MAX_DEVICES==1`）：
 
-> **已作废（2026-09-12，设计 §44/§45/§47/§48）**：PImpl 与 `Impl` 早已删除 —— 类定义现在整个在
-> `include/vine/vsg/VsgRenderer.hpp`，状态按值持有：`VsgRendererPersistent`（跨会话）+
-> `VsgRendererState`（单窗口会话，`VsgRendererState.hpp`），目标表 / pass 计划 / 物料化 / 泊车环
-> 各在 `VsgRenderTargetEntry.hpp` / `VsgFramePlan.hpp` / `VsgPassMaterialiser.hpp` / `VsgRetireRing.hpp`。
-> 下面这段是 PImpl 时代的记录，保留作历史。
+1. **Vine 对象**由场景树 / 调用方持有（`intrusive_ptr`）；后端**不延长**其生命，但保留缓存的
+   **条目自持它索引的键对象**（`OwnedCacheEntry`）——“外侧放手了吗”由 `useCount() <= shares` 回答。
+2. **保留 = 显式公告过的东西**（`setRenderTarget` 的 target、`beginPass` 的 pass、内容/程序槽），
+   必须配对 `releaseRenderTarget` / `releasePass` / `releaseWindowLayer` 注销；长期驻留不随帧数增长。
+3. **在用对象不立即释放**：被换下的保留节点、槽池的槽、退役的 GPU 对象都进泊车环，
+   延后 `kDeferredReleaseFrames` 帧（提交过的帧）才真正释放。
+4. **重初始化前必须把会话资源清干净**（否则新 `Window::create()` 撞 `VSG_MAX_DEVICES == 1`）：
+   做法是 `state = VsgRendererState{}` 整体替换，而不是手写拆卸清单。
 
-`VsgRenderer` 用 `std::unique_ptr<Impl> impl` 持有全部实现状态（窗口/图/缓存/槽等）。
-`Impl` 内**不拥有** Vine 对象；全用 vsg `ref_ptr` 拥有 GPU 对象。构造时
-`impl(new Impl())` 并写 scene/camera；析构先 `shutdown()` 再释放 `impl`（B1 已修复：
-析构即 shutdown()）。**注意**：`Impl` 析构会释放 `window_layers/offscreen/screen_slots`
-里仍存活的 vsg 子树——因为 `shutdown()` 已 `deviceWaitIdle`+close viewer/window，
-释放是安全的（见 §12 统一顺序）。
+### 11.1 状态按值，无 PImpl
+
+类定义整个在 `include/vine/vsg/VsgRenderer.hpp`；会话态 = `VsgRendererState`（`VsgRendererState.hpp`），
+跨会话态 = `VsgRendererPersistent`，目标账本 / 帧计划 / 物料化 / 泊车环各在
+`VsgRenderTargetEntry.hpp` / `VsgFramePlan.hpp` / `VsgPassMaterialiser.hpp` / `VsgRetireRing.hpp`。
+早期 PImpl（`unique_ptr<Impl>`）已于 2026-09-12 删除（设计 §44–§48）。
 
 ### 11.2 线程模型
 
@@ -440,40 +441,18 @@ graph TD
 
 ## 12. 资源清理路径
 
-**统一清理顺序**（代码多处复用）：
-> ① **先从录制图摘下**（从 command/render graph children erase，保证不再被记录）
-> → ② **`deviceWaitIdle()`**（等 in-flight 命令缓冲不再引用旧 Vk 对象）
-> → ③ **丢 vsg 子树 / `clearCache()`**（释放 GPU 资源）→ ④ **erase 槽/映射**。
+> **统一顺序、逐清理点表格、`shutdown()` 的完整步骤：唯一权威在
+> [`docs/data-flow.md`](docs/data-flow.md) §10**（本节不重复）。口诀：
+> 先从录制图摘下 → `deviceWaitIdle()` → 丢 vsg 子树 / `clearCache()` → erase 槽/映射。
 
-| 场景 | 动作 | 入口 |
-|---|---|---|
-| 几何逐出 | 外侧无人持有（`abandoned(shares)`）→ erase，释放该几何 vsg 子树 | `SceneBridge::releaseAbandonedGeometries`（sync 内 + 帧末） |
-| Material 增删改 | `updateMaterial/releaseMaterial/clear`（无调用点） | `VsgMaterialManager` |
-| 离屏 resize | 摘 graph → deviceWaitIdle → clearCache+置空附件 → 新尺寸重建 | `renderOffscreenTarget` |
-| 移除 RenderTarget | 摘 offscreen graph + 摘 PiP view → deviceWaitIdle → clearCache + erase | `releaseRenderTarget` |
-| 移除窗口层 | 摘该层 View（含主层时清空别名 vsg_camera/vsg_scene）→ deviceWaitIdle → clearCache + erase | `releaseWindowLayer` |
-| 渲染器 shutdown | 见下 | `shutdown()` |
+只有两条只住在这里的注意事项：
 
-### 12.1 `shutdown()`（重初始化前必走）
-
-```text
-deviceWaitIdle
-  → viewer 收尾（close/removeWindow）+ window->releaseWindow()   // 不 Destroy 宿主(Qt) 窗口
-  → render_graph 置空（不再录制任何层）
-  → 逐 window_layers：释放 view/root/light_group/vsg_camera + 该层 bridge.clearCache()
-  → window_layers.clear()
-  → 置空 vsg_camera / vsg_scene / depth_on_shader_set / depth_off_shader_set
-  → materialManager.clear()
-  → initialized=false
-```
-
-- **为什么必须清干净**：已编译 pipeline / descriptor set 引用旧 `vsg::Device`；
-  表面重建后再次 `Window::create()` 会分配**第二个 Device**，撞本构建
-  `VSG_MAX_DEVICES == 1` 抛未捕获异常（vsg `Device.cpp`）。
+- **为什么必须清干净**：已编译的 pipeline / descriptor set 持旧 `vsg::Device` 引用；表面重建后再
+  `Window::create()` 会分配**第二个 Device**，撞本构建 `VSG_MAX_DEVICES == 1` 抛未捕获异常。
 - `releaseWindow()` 漏调 → `Win32_Window` 析构会对 Qt 拥有的 HWND 调
-  `DestroyWindow()/UnregisterClass()`（主机正在拆窗口）→ 双释放（登记 D17）。
+  `DestroyWindow()/UnregisterClass()`（主机正在拆窗口）→ 双释放。
 
-### 12.2 pass 移除（引擎侧释放）
+### 12.1 pass 移除（引擎侧释放）
 
 `RenderEngine` 的 `removePass/clearPasses` 在移除后调后端 `releaseWindowLayer(pass->camera())` +
 `releaseRenderTarget(pass->renderTarget())`（均非空判断）；pass 在单列表至多注册一次，
@@ -508,28 +487,28 @@ deviceWaitIdle
 |---|---|---|---|
 | UB-1 | `SceneBridge::cache_`（key `Geometry*`）与 `VsgMaterialManager::cache`（key `Material*`）**裸指针键悬垂 + 地址复用错配** | 调用方先释放对象、缓存条目后引用（**Geometry 侧已不可能**：条目自持键，外侧放手则当帧回收） | 新几何 `find` 命中旧 Item（内容校验可能过不了 revision/material 而触发**重建**；重建 `buildGeometry` 会解引用缓存的 `material` 指针）→ 若旧 `Material*` 已释放则**解引用悬垂 = UB** |
 | UB-2 | 渲染器绑定 `Scene*/Camera*` 悬垂 | 场景/相机先于渲染器销毁 | `initialize/render/frame/frame()` 解引用 → UB（构造文档明示契约） |
-| UB-3 | `window_layers` key `Camera*`、`offscreen/screen_slots` key `RenderTarget*` 悬垂 | 引擎没调 `releaseWindowLayer/releaseRenderTarget` 就销毁对象 | map 残留旧 key；新对象同址 → 错配旧 slot（GPU 资源被张冠李戴） |
+| UB-3 | 槽身份（`SlotKey{target, camera, order}` / 程序槽）对应的 `Camera*`、`RenderTarget*` 悬垂 | 引擎没配对调 `releasePass/releaseWindowLayer/releaseRenderTarget` 就销毁对象 | 槽表残留旧 key；新对象同址 → 错配旧槽（GPU 资源被张冠李戴） |
 | UB-4 | `active_target / pending_lights / pending_viewport` 跨调用暂存 | 同一帧内 `setRenderTarget/setLights/setViewport` 后 `render` 前对象被改/销毁 | 引擎同步逐 pass 调用，正常窗口内安全；外部滥用接口时序则有悬垂 |
 | UB-5 | `releaseWindowLayer` 用错相机键 | pass 中途换相机后移除 | 旧键槽泄漏、新槽不释放 → 双重（漏释 + 可能误释别家） |
 
 **缓解**：场景树是权威持有者，命令流只引用“本帧画的东西”（其 `intrusive_ptr`
-保活）→ 稳态无悬垂；真删除 + 不重用的场景最安全。**规避建议**：后端缓存改
-持“弱引用/世代号”或由上层在销毁前显式 release（引擎 remove/clear 路径已做）。
+保活）⇒ 稳态无悬垂；真删除 + 不重用的场景最安全。**当前做法**：保留缓存的**条目自持键对象**
+（`OwnedCacheEntry`），所以“外侧放手”与“仍被持有”用 `useCount() <= shares` 就能分开，
+既不需要弱引用/世代号，也不需要时间窗（早期 600 帧滞留窗已删）。
 
-### 14.2 编译 / 重构态（当前代码即时问题）
+### 14.2 头文件纪律
 
-| ID | 风险 | 位置 | 说明 |
+| ID | 约束 | 位置 | 说明 |
 |---|---|---|---|
-| B1 | ~~编译不过：`delete d;`，`d` 未声明~~ **已修复**（析构即 `shutdown()`） | `VsgRenderer.cpp` | PIMPL 重构到 `unique_ptr<Impl> impl` 时残留的 `delete d;`；2026-09 删除 |
-| B2 | 若已按“非 PIMPL”继续展开，头文件成员会要求**完整类型**（`SceneBridge`/`vsg::...` 成员需对应 include） | 头文件纪律 | `intrusive_ptr`/`unique_ptr` 指向不完整类型只允许在析构/清理点在 .cpp 的场景；见 D24 |
+| B2 | `VsgRenderer.hpp` 按值持有会话态，成员类型必须是**完整类型** | 头文件纪律 | 不能再靠“只在 .cpp 里才需要完整类型”省 include；新增成员若用 `unique_ptr`/`intrusive_ptr` 指不完整类型，只能在头里用引用/指针并另找一处放置 |
 
 ### 14.3 数据读取 / 越界
 
 | ID | 风险 | 位置 |
 |---|---|---|
-| UB-6 | loc0/loc1 读取**写死 `i+=3`**，`AttributeChannel.components` 未当 stride → vec4/非 3 分量通道**交错读错**（越界/错位，不报错） | `SceneBridge::buildGeometry`（= D1） |
-| UB-7 | 各属性 buffer 顶点数不校验（假定全等 loc0）→ 错位 / 潜在越界 | `buildGeometry`（= D4） |
-| UB-8 | 退化三角形推导法线 → NaN / 垃圾法线 | `makeNormals/makeIndexedNormals`（= D7） |
+| UB-6 | loc0/loc1 读取不再假定 3 分量：`components` 进通道形状判定，形状不对**拒绝并报诊断**（不再交错读错） | `VsgSceneRules::classifyChannel`、`SceneBridgeGeometry` |
+| UB-7 | 各属性 buffer 顶点数已与 loc0 对齐校验，不等则拒绝并报原因 | `SceneBridgeGeometry`（loc0/loc1 形状检查） |
+| UB-8 | 退化三角形推导法线 → NaN / 垃圾法线 | `makeNormals/makeIndexedNormals` |
 
 ### 14.4 生命周期时序 / 异常安全
 
@@ -537,8 +516,8 @@ deviceWaitIdle
 |---|---|---|
 | UB-9 | 重初始化前未走完整 shutdown → 撞 `VSG_MAX_DEVICES==1` **未捕获异常**（terminate） | shutdown 顺序即安全顺序（§12.1） |
 | UB-10 | `releaseWindow()` 漏调 → vsg 析构 `DestroyWindow` 宿主 Qt HWND → **双释放** | shutdown 固定调用 |
-| UB-11 | `materialManager` 是 `Impl` 成员，构造序在 bridge 之前、**析构序在 bridge 之后释放**（bridge 晚析构）——只要 bridge 析构不碰 manager 就安全 | 约定：别在 bridge 析构里用 manager（当前为空） |
-| UB-12 | 帧中途结构变化触发 `viewer->compile()` 全图编译，历史“运行期新增编译不可靠” | 规避 = initialize/预热预编译 |
+| UB-11 | `materialManager` 在 `VsgRendererPersistent`，dock 于所有 bridge 之上（接口约定：manager 必须活得比 bridge 久）—— 只要 bridge 析构不碰 manager 就安全 | 约定：别在 bridge 析构里用 manager |
+| UB-12 | 帧中途结构变化触发编译（增量，必要时全图回落） | 规避 = initialize / enable 后预热；稳态帧零编译 |
 | UB-13 | 非 Windows 下宿主窗口句柄（`QWindow::winId()`）窄化为 `uint32_t xcb_window_t`；`nativeWindow` 用 `std::any` 按**精确类型**匹配，存错类型 → `bad_any_cast` 抛异常 | `initialize()` 有注释；若窗口 id 高 32 位非零会丢位（罕见） |
 | UB-14 | `frontFace` 固定 CCW + `cullMode` 默认 None；“两种绕序兼容”只在 cull=None 成立；开 cull 后绕序错即整面消隐 | RenderStateMapper |
 
@@ -560,26 +539,17 @@ deviceWaitIdle
   C6 起不再注入红三角 demo，独立窗口内容随引擎逐 pass 驱动（无 pass 则空帧）。
   已删：`makeRawDemoNode` / `VINE_VSG_PROBE_BUILDER_BOX` 及 `raw_layout.txt` 副作用写文件。
 
-## 15. 已知缺陷登记（汇总）
+## 15. 缺陷与待办登记（只指向唯一登记）
 
-数据/Shader/材质/清理层的 D1–D26 完整登记在 `docs/data-flow.md` §13，
-此处只补模块级新增 + 给出🔴 优先处置建议摘要：
+本模块**不再维护第二份登记**：两份（本节与 `docs/data-flow.md` §13）在 2026-09-15 前已经互相漂移
+—— D13、D14、D1 等项的“现状”在不同文档里同时存在“已修”与“未修”两个版本。现在：
 
-| 编号 | 缺陷 | 严重度 |
-|---|---|---|
-| B1 | ~~析构残留 `delete d;` → 编译失败~~ **已修复**（析构即 shutdown） | ✅ 已销 |
-| D1 | `components` 未当 stride，非 3 分量通道交错读错 | 🔴 |
-| D3 | 用户 loc6 顶点色被白色+opacity 覆盖 | 🔴 |
-| D9 | program 编译失败**静默回退内建**，无诊断 | 🔴 |
-| D10 | `ShaderProgram` 无 revision/变更通知 → 改 shader 不生效 | 🔴 |
-| D13 | `MaterialManager` 缓存无逐出（release/update 零调用点）→ 只增不减 | 🔴 最像泄漏 |
-| D14 | 裸指针缓存键 + 600 帧滞留窗（UB-1）——**Geometry 侧滞留窗已删（2026-09-14）**，Material 侧见 D13 | 🟢 |
-| D17 | shutdown 顺序错 → 撞 `VSG_MAX_DEVICES==1`；漏 `releaseWindow` → Destroy Qt 窗口 | 🟡 |
-| D20 | 验证只在 lavapipe + `debugLayer=false`；真机驱动差异未覆盖 | 🟡 |
-| D22 | 运行期结构变化触发全图 compile（非增量） | 🟡 |
+- **当前待办**（含优先级与实测依据）：`.ai/memory/graphics-perf-backlog.md`。
+- **历史登记（D1–D28，含已修项与其原因）**：`docs/data-flow.md` §13，带日期，**不再更新**。
+- **设计层未做项**（逐项设计已写好）：`.ai/design/vsg-pass-lifecycle.md` §9。
 
-**🔴 建议顺序**：~~修 B1~~（已修复）→ D10（program revision）→
-D9（失败上报）→ D13（引擎调 release/容量上限）→ D1（按 components 跳步）→ D3。
+已修项的例子（保留在这里只是为了让读者知道“别照着旧文去找”）：D13 材质缓存无逐出、
+D14 裸指针键滞留窗、D22 全图 compile、B1 析构残留 `delete d;`。
 
 ## 16. 调试与实验开关（现状残留）
 
@@ -594,16 +564,17 @@ D9（失败上报）→ D13（引擎调 release/容量上限）→ D1（按 comp
 
 ## 17. 支持 / 不支持矩阵（摘要，详见 data-flow §12）
 
-**已支持**：三角形/线/点（`Topology`）、线框（`PolygonMode`）、深度 test/write/
-compare（反转）、剔除（None/Front/Back）、混合恒开+因子、每几何独立拓扑、
-Phong 材质（共享缓存+每帧就地刷新）、scene×node×叶 opacity→per-vertex alpha、
-用户 program（运行期 glslang + `pc`）、scene 级环境光/方向光、多 pass（主/overlay/
-离屏/PiP/动态子视口）、跨几何 `shared_objects_` 共享 pipeline/DS。
+**已支持**：三角形/线/点（`Topology`）、线框（`PolygonMode`）、深度 test/write/compare
+（**reverse-Z + GREATER**）、剔除、混合、每几何独立拓扑、材质（共享缓存 + 每帧就地刷新）、
+scene×node×叶 opacity → per-vertex alpha、用户 program（运行期 glslang）、scene 级环境光/方向光、
+多 pass（主/叠画/离屏/PiP/动态子视口/自定义全屏 program）、跨几何共享 pipeline/描述符、
+**纹理与 uv（含 cube map）**、**自定义顶点通道（任意 location，含 loc6 顶点色）**、
+**阴量子相位（延迟 + 前向，selftest 断言画面）**、MRT 多 color 附件 + 每 pass 清屏策略、
+深度借用（一个目标采另一个目标的深度）与深度提升。
 
-**未支持/待办**：纹理/uv 未接线；用户 loc≥2 自定义通道未消费；用户 loc6 顶点色
-被覆盖；`LINE_STRIP`、`wideLines`/线宽、点大小未做；阴影采样（shadowed Phong）未完成；
-`Pbr/ShadowedPhong` preset 仅预留；instancing/skinning/billboard 槽未暴露；MRT/
-自定义 blend op/独立 mask/frontFace 固定 CCW；增量 compile（Phase 3）。
+**未支持 / 待办**：`LINE_STRIP`、`wideLines`/线宽、点大小；instancing/skinning/billboard 槽未暴露；
+PBR（`VineMaterialBlock` 扩 metallic/roughness —— 块结构已为此留了默认化 `operator==`）；
+真机驱动差异（验证只在 lavapipe）。优先级见 `.ai/memory/graphics-perf-backlog.md`。
 
 ## 18. 关联文档
 

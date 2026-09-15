@@ -7,6 +7,18 @@
 > `.ai/memory/graphics.md`。
 > 运行时的另外三件（生命周期 / 调用次数 / 更新策略）：[`backend.md`](backend.md)。
 >
+> **本文边界（谁写什么，2026-09-15）** —— 同一件事只写一处：
+>
+> | 主题 | 唯一权威 |
+> |---|---|
+> | L0/L1 契约映射、ShaderSet 契约表、L0/L1 支持矩阵、历史缺陷登记（D 系列） | **本文** |
+> | 所有权表 / 每个清理点的动作 / `shutdown()` 步骤 | **本文 §9–§10**（其他文档只链接不重写） |
+> | 运行时行为：调用次数、更新策略、诊断、坑 | [`backend.md`](backend.md) |
+> | 目标/槽模型、pass 生命周期、模块导航 | [`../gfx_backend_vsg.md`](../gfx_backend_vsg.md) |
+> | **待办与当前缺陷** | `.ai/memory/graphics-perf-backlog.md`（**唯一登记**） |
+>
+> 本文自身的历史注（下面两个 ⚠️ 块）已并入各节正文；只有当作日期戳保留。
+>
 > 本文件原为 `src/plugins/gfx_backend_vsg/vine-to-vsg-data-flow.md`；2026-09-12 移入 `docs/` 并改名为
 > `data-flow.md`（插件文档统一收进 `docs/`）。`.ai/` 下历史记录里的旧名引用指的就是本文。
 >
@@ -276,13 +288,18 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
   内部持 `intrusive_ptr<Geometry/Material>` 与 `ShaderProgramPtr`）；帧末命令 vector
   析构即释放这些临时引用。后端消费的是这份**已快照的命令流**，不再回看场景树。
 
-### 9.3 后端缓存：裸指针当 key，不引用 Vine 对象
+### 9.3 后端缓存：裸指针当 key，但条目**自持**键对象
+
+“键是指针”并不等于“键会悬垂”：每个缓存条目都持有它索引的那个对象（`OwnedCacheEntry`），
+所以“App 已经放手了吗”可以由 `useCount() <= shares`（份额：还剩几个保留条目持有它）回答，
+既没有悬垂窗口，也不需要时间窗。份额是数据，不是状态——每帧数一次（会话的 + 各槽的），详情见
+[`backend.md`](backend.md) §3.4。
 
 | 缓存 | 键 | 值 | 谁持有 |
 |---|---|---|---|
 | `SceneBridge::cache_` | `const Geometry*`（裸指针） | `unique_ptr<Item>`（vsg 子树，vsg `ref_ptr` 自持） | bridge |
 | `SceneBridge::program_shader_sets_` | `const ShaderProgram*`（L1） | `vsg::ref_ptr<ShaderSet>`（glslang 编译产物，失败=null） | bridge（`clearCache`） |
-| `SceneBridge::variant_cache_` | (program, material, ResolvedRenderState) 内容哈希（L2） | `unique_ptr<VariantEntry>`（共享 state 命令+base_binding） | bridge（`clearCache`） |
+| `SceneBridge::variant_cache_` | (program, material, ResolvedRenderState) 内容哈希（L2） | `unique_ptr<VariantEntry>`（共享 state 命令 + pipeline layout） | bridge（`clearCache`） |
 | `VsgMaterialManager::cache` | `Material*`（裸指针） | `vsg::ref_ptr<vsg::ubyteArray>`（`VineMaterialBlock` 的字节） | manager |
 | `shared_objects_` | —（内容级去重） | 共享 pipeline / layout / DS | bridge（`clearCache` + 析构） |
 
@@ -405,7 +422,14 @@ sequenceDiagram
 | 固定项 | `frontFace` 固定 CCW、MRT/自定义 blend op/独立 mask 未做 |
 | 生命周期局限 | 缓存以裸指针为键，靠**条目自持键 + 外侧持有判据**保活；曾被画过且仍被持有的几何会一直留在 `cache_`（复用承诺的代价） |
 
-## 13. 已知缺陷清单（2026-09-04 登记）
+## 13. 已知缺陷清单（历史登记，2026-09-04）
+
+> **本表不再更新**（2026-09-15）：它是 2026-09-04 的一次走查快照，其中多项已修（如 D13 材质缓存
+> 逐出、D14 裸指针键滞留窗、D22 全图 compile）。“**现在已经修了没？”不要读本表**：
+> - 当前待办与优先级：`.ai/memory/graphics-perf-backlog.md`（唯一登记）；
+> - 逐项设计（含未做项）：`.ai/design/vsg-pass-lifecycle.md` §9。
+>
+> 保留本表的价值是“当初为什么这么改”的历史，而不是现状。
 
 > 内存结论：所有权两侧均引用计数、**无环**（`Node::parent_` 是非拥有 `raw_ptr`；
 > ShaderProgram/Material 只被单向持有；命令流帧级释放；vsg 编译产物随节点释放），

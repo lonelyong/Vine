@@ -224,6 +224,50 @@ TEST(MaterialManagerTest, UpdateMaterialRewritesOnlyOnChange)
 }
 
 /**
+ * @brief Every property the mapper reads is one the refresh can see change.
+ *
+ * The manager decides "does this material need re-sending?" with the block type's own equality (see
+ * ShaderAbi.hpp), so this is the other half of that pair: each property materialBlockOf() reads must
+ * reach the bytes AND make the comparison report a change. A property that is written by the mapper
+ * but missing from the comparison is invisible in the opposite way — the app edits it and the picture
+ * never moves — which is why each one is checked here rather than only the diffuse colour.
+ */
+TEST(MaterialManagerTest, EveryMappedPropertyReachesTheBytesAndTriggersARefresh)
+{
+    vine::vsg::VsgMaterialManager manager;
+    MaterialPtr                  material(new Material());
+
+    const auto value = manager.getOrCreate(material.get());
+    ASSERT_NE(value, nullptr);
+
+    vsg::ModifiedCount snapshot;
+    ASSERT_TRUE(value->getModifiedCount(snapshot)); // consumes the current count
+
+    material->setDiffuse(vine::Colorf(0.11f, 0.22f, 0.33f, 1.0f));
+    manager.updateMaterial(material.get());
+    EXPECT_TRUE(value->differentModifiedCount(snapshot));
+    EXPECT_FLOAT_EQ(materialBlockOf(value).diffuse[1], 0.22f);
+
+    ASSERT_TRUE(value->getModifiedCount(snapshot));
+    material->setSpecular(vine::Colorf(0.44f, 0.55f, 0.66f, 0.77f));
+    manager.updateMaterial(material.get());
+    EXPECT_TRUE(value->differentModifiedCount(snapshot));
+    EXPECT_FLOAT_EQ(materialBlockOf(value).specular[3], 0.77f);
+
+    ASSERT_TRUE(value->getModifiedCount(snapshot));
+    material->setAmbient(vine::Colorf(0.12f, 0.34f, 0.56f, 1.0f));
+    manager.updateMaterial(material.get());
+    EXPECT_TRUE(value->differentModifiedCount(snapshot));
+    EXPECT_FLOAT_EQ(materialBlockOf(value).ambient[2], 0.56f);
+
+    ASSERT_TRUE(value->getModifiedCount(snapshot));
+    material->setShininess(8.5f);
+    manager.updateMaterial(material.get());
+    EXPECT_TRUE(value->differentModifiedCount(snapshot));
+    EXPECT_FLOAT_EQ(materialBlockOf(value).shininess, 8.5f);
+}
+
+/**
  * @brief The explicit MaterialManager contract still works.
  *
  * releaseMaterial() / clear() are the caller's own tools and keep their meaning

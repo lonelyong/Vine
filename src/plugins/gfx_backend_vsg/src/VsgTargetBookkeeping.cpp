@@ -65,13 +65,14 @@ bool borrowNeedsRebuild(const VsgRendererState& state, const VsgRenderTargetEntr
     // Non-const: the targets table is keyed by the plain pointer (and the SDK's accessor
     // returns one even through a const target).
     vine::graphics::RenderTarget* const wanted_source = target_key->depthSource();
-    if (wanted_source != nullptr && t.depth_source != wanted_source && t.unusable_depth_source != wanted_source) {
+    if (wanted_source != nullptr && t.depth_source != wanted_source &&
+        t.unusable_depth_source.get() != wanted_source) {
         const auto src_it = state.targets.find(wanted_source);
         if (src_it != state.targets.end() && src_it->second.depth_view != nullptr) {
             return true; // the borrow was only WAITING for its source
         }
     }
-    if (t.depth_source != nullptr && t.unusable_depth_source != t.depth_source) {
+    if (t.depth_source != nullptr && t.unusable_depth_source.get() != t.depth_source) {
         const auto src_it = state.targets.find(t.depth_source);
         if (src_it == state.targets.end() || src_it->second.depth_view != t.depth_source_view) {
             return true; // the image this framebuffer borrowed is gone
@@ -272,7 +273,7 @@ bool resolveDepthBorrow(VsgRendererState& state, const VsgDiagnostics& diagnosti
     // source's VkImage is gone — so such a target builds with its own depth instead
     // of failing to build for ever (see releaseRenderTarget).
     vine::graphics::RenderTarget* const depth_src = target.depthSource();
-    if (depth_src == nullptr || t.unusable_depth_source == depth_src) {
+    if (depth_src == nullptr || t.unusable_depth_source.get() == depth_src) {
         return false;
     }
     // Three ways a borrow is unusable, each of which was silent before:
@@ -327,7 +328,7 @@ bool resolveDepthBorrow(VsgRendererState& state, const VsgDiagnostics& diagnosti
                                         target.name().empty() ? "(unnamed)" : target.name().stdstr().c_str(),
                                         depth_src->name().empty() ? "(unnamed)" : depth_src->name().stdstr().c_str(),
                                         reason));
-    t.unusable_depth_source = depth_src;
+    t.unusable_depth_source = vine::intrusive_ptr<const vine::graphics::RenderTarget>(depth_src);
     return false;
 }
 
@@ -556,10 +557,11 @@ void releaseRenderTarget(VsgRendererState& state, const VsgDiagnostics& diagnost
                entry.first->name().empty() ? "(unnamed)" : entry.first->name().stdstr(),
                target->name().empty() ? "(unnamed)" : target->name().stdstr());
         // Remember WHICH source became unusable instead of a global tombstone
-        // set: a later shareDepth() with a live source clears the condition by
-        // being a different pointer, and the memory is bounded by the live
+        // set: a later shareDepth() naming a live source clears the condition (the
+        // remembered one is a DIFFERENT object, and the entry owns it, so no new
+        // target can be mistaken for it), and the memory is bounded by the live
         // targets rather than by every target ever released.
-        other.unusable_depth_source = target;
+        other.unusable_depth_source = vine::intrusive_ptr<const vine::graphics::RenderTarget>(target);
         other.depth_source          = nullptr;
         other.depth_share_barrier   = {};
         other.width                 = 0;

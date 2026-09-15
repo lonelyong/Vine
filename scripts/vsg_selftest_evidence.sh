@@ -23,6 +23,12 @@
 #   scripts/vsg_selftest_evidence.sh [BUILD_DIR]   BUILD_DIR defaults to <root>/build
 #   scripts/vsg_selftest_evidence.sh --update      Rewrite the baseline from this build
 #
+# Env:
+#   VINE_EVIDENCE_FRAMES   Frames the baseline was recorded with (default 30). The run is PINNED to this
+#                          value, so a caller that shrinks VINE_SELFTEST_FRAMES for speed cannot turn the
+#                          comparison into a false difference; set it here and pass --update to rebase.
+#   VINE_EVIDENCE_TIMEOUT  Seconds the run may take (default 120); a run that does not finish fails.
+#
 # One baseline, because there is one content-shading path: the engine's own sets.
 # vsg's built-in shader sets are not used at all any more (see
 # makeContentShaderSet), so the second baseline this script used to keep — the
@@ -32,6 +38,19 @@
 # Exit code 0 when the evidence matches the baseline, 1 otherwise.
 
 set -u
+# Judge pipelines by every stage, not by their last one (a `... | head` that found nothing must not be
+# able to speak for the command it filtered).
+set -o pipefail
+
+# The frame count the baseline was recorded with, PINNED here and exported into the run: several evidence
+# lines state how many frames a phase drove ("30 frames", "policy churn: 30 frame(s)"), so inheriting the
+# caller's VINE_SELFTEST_FRAMES (e.g. the 15 a faster pre-commit run uses) compares a 15-frame run against
+# a 30-frame baseline and reports a difference that cannot exist. The override exists for updating the
+# baseline deliberately: VINE_EVIDENCE_FRAMES=... scripts/vsg_selftest_evidence.sh --update.
+FRAMES="${VINE_EVIDENCE_FRAMES:-30}"
+# A self-test that never finishes must fail the comparison instead of leaving the baseline unmatched
+# forever (the phases print as they go, so a hung run would otherwise have "some" evidence to diff).
+TIMEOUT_S="${VINE_EVIDENCE_TIMEOUT:-120}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -58,7 +77,21 @@ RAW="$(mktemp)"
 CURRENT="$(mktemp)"
 trap 'rm -f "$RAW" "$CURRENT"' EXIT
 
-"$SELFTEST" > "$RAW" 2>&1
+VINE_SELFTEST_FRAMES="$FRAMES" timeout "$TIMEOUT_S" "$SELFTEST" > "$RAW" 2>&1
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    # Reported as a failure of the RUN, not as a difference from the baseline: "the self-test did not
+    # succeed" is a different thing from "the picture changed", and a reader acting on the second would go
+    # looking in the renderer. The two cases are named apart: the timeout killed it (124), or its own
+    # assertions did (anything else).
+    if [ "$rc" -eq 124 ]; then
+        echo "vsg_selftest_evidence.sh: the self-test was still running after ${TIMEOUT_S}s, so its evidence cannot be judged:" >&2
+    else
+        echo "vsg_selftest_evidence.sh: the self-test failed (exit $rc), so its evidence cannot be judged:" >&2
+    fi
+    tail -20 "$RAW" >&2
+    exit 1
+fi
 grep '^\[selftest\]' "$RAW" > "$CURRENT"
 # NOT named LINES: bash's LINES/COLUMNS are the terminal height/width, and it re-reads them after every
 # external command — so a count kept in LINES is silently replaced by the terminal's row count (measured:

@@ -76,10 +76,7 @@ bool beginLightsDroppedEpisode(std::size_t announced, std::size_t attached, bool
 void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent,
                       const VsgDiagnostics& diagnostics, const SlotKey& key,
                       vine::graphics::RenderTarget*               target,
-                      vine::raw_ptr<const vine::graphics::Camera> camera,
-                      int                                         order,
-                      vine::graphics::DepthMode                   depth_mode,
-                      bool                                        presenting)
+                      vine::raw_ptr<const vine::graphics::Camera> camera)
 {
     // Content slots are retained Views under the TARGET's render graph — the
     // window target (target == nullptr) and every off-screen target share
@@ -114,9 +111,9 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
         t.content_slots.erase(key);
         return;
     }
-    content.order      = order;
-    content.depth_mode = depth_mode;
-    content.presenting = presenting;
+    // What the pass announced IS what this slot applies first (the request is the session's own, so this is
+    // the only place the slot's applied value is seeded from something other than a comparison).
+    content.applied    = state.request.attributes();
     content.vsg_camera = persistent.cameraBridge.create(camera);
     if (content.vsg_camera == nullptr) {
         diagnostics.report(vine::graphics::DiagnosticSeverity::Error,
@@ -139,19 +136,21 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // policy-churn phase's depth invariant (scripts/vsg_selftest_evidence.sh).
     if (target == nullptr) {
         // Window slots share the renderer's (window-sized) shader sets.
-        content.bridge.setShaderSet(depth_mode == vine::graphics::DepthMode::TestAndWrite ? state.depth_on_shader_set
-                                    : depth_mode == vine::graphics::DepthMode::TestOnly ? state.depth_testonly_shader_set
-                                                                                         : state.depth_off_shader_set);
+        content.bridge.setShaderSet(content.applied.depth_mode == vine::graphics::DepthMode::TestAndWrite
+                                        ? state.depth_on_shader_set
+                                    : content.applied.depth_mode == vine::graphics::DepthMode::TestOnly
+                                        ? state.depth_testonly_shader_set
+                                        : state.depth_off_shader_set);
     }
     else {
         // Off-screen slots get a per-target shader set baked at the target's
         // size (created lazily).
-        auto& set_ref = depth_mode == vine::graphics::DepthMode::TestAndWrite ? t.depth_on_shader_set
-                        : depth_mode == vine::graphics::DepthMode::TestOnly ? t.depth_testonly_shader_set
-                                                                            : t.depth_off_shader_set;
+        auto& set_ref = content.applied.depth_mode == vine::graphics::DepthMode::TestAndWrite ? t.depth_on_shader_set
+                        : content.applied.depth_mode == vine::graphics::DepthMode::TestOnly ? t.depth_testonly_shader_set
+                                                                                            : t.depth_off_shader_set;
         if (set_ref == nullptr) {
-            const bool depth_test  = depth_mode != vine::graphics::DepthMode::Disabled;
-            const bool depth_write = depth_mode == vine::graphics::DepthMode::TestAndWrite;
+            const bool depth_test  = content.applied.depth_mode != vine::graphics::DepthMode::Disabled;
+            const bool depth_write = content.applied.depth_mode == vine::graphics::DepthMode::TestAndWrite;
             set_ref = makeContentShaderSet(persistent.default_content_program,
                                            VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) },
                                            depth_test, depth_write,
@@ -191,7 +190,7 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // The pass' depth policy reaches the pipeline through the bridge (it fills
     // the depth item of content that did not author one), so it must be set
     // before the slot's first sync; a later change invalidates the state.
-    content.bridge.setContentDepthMode(depth_mode);
+    content.bridge.setContentDepthMode(content.applied.depth_mode);
     content.bridge.clearCache();
 
     // This slot's light block, written every frame from the pass' own lights and
@@ -242,7 +241,7 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // create a higher-order (on-top) slot before a lower-order (main) slot has
     // run, but the main slot is inserted ahead of it by its smaller order when
     // it is finally created.
-    placeViewByOrder(state, graph, target, content.view, content.order);
+    placeViewByOrder(state, graph, target, content.view, content.applied.order);
     content.ready = true;
     if (state.viewer != nullptr) {
         state.viewer->compile();
@@ -250,22 +249,25 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
 }
 
 void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent,
-                       const VsgDiagnostics& diagnostics, const VsgContentSlotRequest& request)
+                       const VsgDiagnostics& diagnostics, vine::raw_ptr<const vine::graphics::Camera> camera,
+                       const std::vector<vine::graphics::RenderCommand>& commands,
+                       const std::vector<const vine::graphics::Light*>&   lights,
+                       const std::optional<vine::graphics::Viewport>&     viewport)
 {
-    if (request.commands == nullptr || request.lights == nullptr) {
-        return; // no command stream / light list to draw from
-    }
+    // The pass' SCOPE attributes are the session's request (one description of a pass, not a copy built per
+    // draw call); the per-draw-call state is the arguments above.
+    const vine::graphics::RenderTarget* target_key = state.request.target;
+    const PassAttributes                wanted     = state.request.attributes();
     // The slot is owned by the pass that draws it (pass scope) or, for a
     // direct driver, by the historical (camera, order) pair.
     const SlotKey key = (state.request.pass != nullptr)
                             ? SlotKey::ownerPass(state.request.pass)
-                            : SlotKey::cameraOrder(request.camera, request.order);
+                            : SlotKey::cameraOrder(camera, wanted.order);
 
-    auto& t  = state.entryFor(request.target);
+    auto& t  = state.entryFor(state.request.target);
     auto  it = t.content_slots.find(key);
     if (it == t.content_slots.end() || !it->second.ready) {
-        setupContentSlot(state, persistent, diagnostics, key, request.target, request.camera,
-                        request.order, request.depth_mode, request.presenting);
+        setupContentSlot(state, persistent, diagnostics, key, state.request.target, camera);
         it = t.content_slots.find(key);
     }
     if (it == t.content_slots.end() || !it->second.ready) {
@@ -275,60 +277,60 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     // The graph this pass records into (see passGraph): the window's swapchain
     // graph, or this pass' own off-screen graph — created on the slot's first
     // render and reused every frame after.
-    const auto graph = passGraph(state, diagnostics, request.target, key);
+    const auto graph = passGraph(state, diagnostics, state.request.target, key);
 
     if (content.detached) {
         // The pass executes again after having been retired: re-attach its
         // retained view (its data and pipelines were kept, so no upload /
         // recompile is needed).
-        placeViewByOrder(state, graph, request.target, content.view, content.order);
+        placeViewByOrder(state, graph, state.request.target, content.view, content.applied.order);
         content.detached = false;
         // Re-attaching is what puts its graph back into the command graph: a
         // retired pass' graph is deliberately left out of it (see
         // reconcileOffscreenOrder).
-        if (request.target != nullptr) {
+        if (state.request.target != nullptr) {
             detail::reconcileOffscreenOrder(state);
         }
     }
 
     // The pass' properties are re-applied every frame, so changing them at run
     // time takes effect instead of leaving the slot with the state it was
-    // first built with:
+    // first built with. ONE comparison decides whether anything has to be re-applied at all, and then each
+    // attribute that changed is applied: what the slot REMEMBERS (content.applied) is the same value that
+    // was compared, so storing it cannot be forgotten for an attribute someone adds later:
     //  - the depth policy is forwarded to the bridge (which rebuilds only the
     //    state wrappers, not the vertex data) and invalidates them on change;
     //  - the explicit pipeline order moves the view to its new stacking slot;
     //  - the presenting role drives the viewport each frame and re-seeds the
     //    slot's default light when it flips.
-    if (content.depth_mode != request.depth_mode) {
-        // No device wait: the state wrappers being dropped are PARKED by the
-        // bridge itself (SceneBridge::invalidateState), so the pipelines they own
-        // stay alive until every slot that could have recorded them has been
-        // re-recorded. The depth mode is a per-frame host decision (a UI toggling
-        // depth test), so waiting here would stall the device on every frame it
-        // changes — measured: 14 waits over 15 flipping frames before this.
-        content.depth_mode = request.depth_mode;
-        content.bridge.setContentDepthMode(request.depth_mode);
-        content.bridge.invalidateState();
-    }
-    if (content.order != request.order) {
-        content.order = request.order;
-        placeViewByOrder(state, graph, request.target, content.view, request.order);
-    }
-    if (content.presenting != request.presenting) {
-        content.presenting = request.presenting;
+    if (content.applied != wanted) {
+        if (content.applied.depth_mode != wanted.depth_mode) {
+            // No device wait: the state wrappers being dropped are PARKED by the
+            // bridge itself (SceneBridge::invalidateState), so the pipelines they own
+            // stay alive until every slot that could have recorded them has been
+            // re-recorded. The depth mode is a per-frame host decision (a UI toggling
+            // depth test), so waiting here would stall the device on every frame it
+            // changes — measured: 14 waits over 15 flipping frames before this.
+            content.bridge.setContentDepthMode(wanted.depth_mode);
+            content.bridge.invalidateState();
+        }
+        if (content.applied.order != wanted.order) {
+            placeViewByOrder(state, graph, state.request.target, content.view, wanted.order);
+        }
+        content.applied = wanted; // applied, in one place, whatever changed above
     }
 
     // Full target extent for this slot's viewport: the live swapchain size for
     // the window target, the off-screen target's logical size otherwise.
-    const int surf_w = (request.target == nullptr) ? static_cast<int>(state.window->extent2D().width) : t.width;
-    const int surf_h = (request.target == nullptr) ? static_cast<int>(state.window->extent2D().height) : t.height;
+    const int surf_w = (target_key == nullptr) ? static_cast<int>(state.window->extent2D().width) : t.width;
+    const int surf_h = (target_key == nullptr) ? static_cast<int>(state.window->extent2D().height) : t.height;
 
     // Keep the slot's vsg camera viewport in step with its role each frame (see
     // updateSlotViewport): presenting content fills the target, other content carries
     // its pass sub-viewport.
-    updateSlotViewport(*content.vsg_camera, content.presenting, request.viewport, surf_w, surf_h);
+    updateSlotViewport(*content.vsg_camera, content.applied.presenting, viewport, surf_w, surf_h);
 
-    persistent.cameraBridge.apply(request.camera, content.vsg_camera);
+    persistent.cameraBridge.apply(camera, content.vsg_camera);
 
     // This slot's lights, packed for its shader set (view space, ambient + up to three
     // directionals). Written every frame because the directions are view-space: a moving camera moves
@@ -336,7 +338,7 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     std::size_t attached_lights = 0u;
     if (content.lights_data != nullptr && content.lights_data->dataSize() >= sizeof(VineLightsBlock)) {
         VineLightsBlock block;
-        attached_lights = fillVineLightsBlock(request.camera, *request.lights, block);
+        attached_lights = fillVineLightsBlock(camera, lights, block);
         std::memcpy(content.lights_data->dataPointer(), &block, sizeof(block));
         content.lights_data->dirty();
     }
@@ -345,7 +347,7 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     // consumer uses (detail::resolveShadowInput — the fullscreen lighting pass calls it too), so the
     // forward content and the deferred lighting cannot disagree about which map they are reading.
     if (content.shadow_data != nullptr && content.shadow_data->dataSize() >= sizeof(vine::graphics::VineShadowBlock)) {
-        const detail::ShadowInput shadow = detail::resolveShadowInput(state, request.camera, *request.lights);
+        const detail::ShadowInput shadow = detail::resolveShadowInput(state, camera, lights);
         std::memcpy(content.shadow_data->dataPointer(), &shadow.block, sizeof(shadow.block));
         content.shadow_data->dirty();
         if (content.shadow_view != shadow.map) {
@@ -362,8 +364,8 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         }
     }
 
-    if (beginLightsDroppedEpisode(request.lights->size(), attached_lights, content.light_fallback_reported)) {
-        const std::size_t announced = request.lights->size();
+    if (beginLightsDroppedEpisode(lights.size(), attached_lights, content.light_fallback_reported)) {
+        const std::size_t announced = lights.size();
         // One message per branch: a shared format string whose arguments are ordered for one of
         // them is how a branch ends up printing the wrong number (§54).
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ChannelIgnored,
@@ -380,9 +382,9 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     // The command stream is the source of truth: reconcile the retained slot
     // root against it (in-place for moves/material edits). The legacy own-
     // window debug path skips syncing the window's presenting slot.
-    if (!(request.target == nullptr && forceOwnWindow() && content.presenting)) {
+    if (!(state.request.target == nullptr && forceOwnWindow() && content.applied.presenting)) {
         std::vector<::vsg::ref_ptr<::vsg::Node>> created;
-        content.bridge.syncRenderCommands(*request.commands, content.root.get(), &created,
+        content.bridge.syncRenderCommands(commands, content.root.get(), &created,
                                           &state.retained_shares);
         if (!created.empty()) {
             // Queue this slot's VIEW for an incremental (re)compile in
@@ -397,7 +399,7 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         // TEMP diagnostics, env-gated: how many commands this slot collected, how
         // many subtrees were built and how many pipeline variants exist (see
         // logContentSlotDiagnostics).
-        logContentSlotDiagnostics(request.target, request.depth_mode, request.order, request.commands->size(),
+        logContentSlotDiagnostics(target_key, wanted.depth_mode, wanted.order, commands.size(),
                                   created.size(), content.root->children.size(),
                                   content.bridge.pipelineVariantCount());
     }
@@ -428,7 +430,7 @@ void placeViewByOrder(VsgRendererState& state, ::vsg::ref_ptr<::vsg::RenderGraph
     const auto child_order = [&](const ::vsg::ref_ptr<::vsg::Node>& child) -> int {
         for (const auto& kv : t.content_slots) {
             if (kv.second.ready && kv.second.view.get() == child.get()) {
-                return kv.second.order;
+                return kv.second.applied.order;
             }
         }
         for (const auto& kv : t.program_slots) {

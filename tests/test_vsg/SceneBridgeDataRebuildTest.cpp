@@ -547,3 +547,55 @@ TEST(SceneBridgeDataRebuildTest, AuthoredChannelEditsRefreshOnlyThatChannel)
     EXPECT_NE(findBoundData(root.get(), kBindingNormals), normals_before) << "the new normals must reach the GPU";
     EXPECT_EQ(findDataNode(root.get()), data_node_before) << "no shape changed";
 }
+
+/**
+ * @brief A drawable the backend cannot shade is not retried, and does not lose its mesh, on every frame.
+ *
+ * The wrapper cannot be built while the bridge has no shader set (`buildStateGroup` declines without one), and
+ * the two ways of reacting to that are NOT equivalent over a frame loop: dropping the item makes the next frame
+ * rebuild what it just built — a new item, a fresh data node, the mesh uploaded again — which is precisely what
+ * the "one record per identity" rule already forbids on the data-rejection path (a rejected mesh is skipped
+ * until its revision changes, not re-tried). What this test pins is that rule's other half, and its cost: the
+ * data node the failure found is the data node the drawable comes back with.
+ */
+TEST(SceneBridgeDataRebuildTest, ADrawableThatCannotBeShadedKeepsItsMeshAndIsNotRetried)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(testContentSet());
+    auto root     = vsg::Group::create();
+    auto geometry = indexedTriangle(0.0f);
+    auto material = MaterialPtr(new Material());
+
+    std::vector<RenderCommand> commands;
+    commands.emplace_back(geometry, material, Mat4d());
+
+    std::vector<::vsg::ref_ptr<::vsg::Node>> created;
+    EXPECT_TRUE(bridge.syncRenderCommands(commands, root.get(), &created));
+    auto* data_before = findDataNode(root.get());
+    ASSERT_NE(data_before, nullptr) << "the first sync retains the drawable";
+
+    // Take the set away: the wrapper cannot be built any more, so nothing is drawn...
+    bridge.setShaderSet(nullptr);
+    std::vector<::vsg::ref_ptr<::vsg::Node>> created_failed;
+    bridge.syncRenderCommands(commands, root.get(), &created_failed);
+    EXPECT_EQ(findDataNode(root.get()), nullptr) << "an unshadeable drawable draws nothing";
+
+    // ...and with nothing changed since, the failure is REMEMBERED rather than retried: the sync reports no
+    // change, queues nothing for the compile pass, and keeps the item (the caller's geometry is still there).
+    std::vector<::vsg::ref_ptr<::vsg::Node>> created_again;
+    EXPECT_FALSE(bridge.syncRenderCommands(commands, root.get(), &created_again))
+        << "a drawable whose state could not be built must not be re-attempted every frame";
+    EXPECT_TRUE(created_again.empty()) << "and the retry must not queue work for the compile pass";
+
+    // Hand a set back: the drawable returns — as the SAME retained data node, i.e. the mesh was never thrown
+    // away and re-materialised while the state could not be built — and the rebuilt subtree is queued for the
+    // compile pass (nothing else would compile its pipeline before it is recorded, see D22).
+    bridge.setShaderSet(testContentSet());
+    std::vector<::vsg::ref_ptr<::vsg::Node>> created_healed;
+    bridge.syncRenderCommands(commands, root.get(), &created_healed);
+    EXPECT_EQ(findDataNode(root.get()), data_before)
+        << "the mesh built before the failure is the mesh the drawable comes back with";
+    ASSERT_EQ(created_healed.size(), 1u) << "the rebuilt subtree must reach the compile queue";
+    EXPECT_EQ(created_healed[0].get(), root->children.front().get())
+        << "and it is the drawable that was queued";
+}

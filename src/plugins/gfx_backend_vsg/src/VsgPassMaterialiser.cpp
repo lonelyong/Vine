@@ -1,6 +1,5 @@
 #include <vine/vsg/VsgPassMaterialiser.hpp>
 
-#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <set>
@@ -282,7 +281,7 @@ detail::PassPlan detail::planPass(const VsgRendererState& state, const VsgRender
     // (see clear()); the constant is the historical default for a target nobody
     // has ever cleared.
     const ::vsg::vec4 clear_color =
-        (t.clear_seen || state.request.presenting) ? t.clear_color : ::vsg::vec4{ 0.2f, 0.2f, 0.2f, 1.0f };
+        (t.clear_seen || state.request.presenting) ? t.clear_color : kDefaultClearColor;
 
     // A pass that LOADs depth must find the image in a layout it named, so no
     // pass of this target may promote it any more. A target whose earlier passes

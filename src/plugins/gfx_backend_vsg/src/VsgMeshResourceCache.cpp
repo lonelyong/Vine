@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <vine/vsg/OwnedCache.hpp>
+#include <vine/vsg/VsgSceneRules.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -48,17 +49,16 @@ struct VsgMeshResourceCache::Data
 
 std::size_t VsgMeshResourceCache::ChannelKeyHash::operator()(const ChannelKey& key) const noexcept
 {
-    std::uint64_t h = 1469598103934665603ull; // FNV-1a
-    const auto    mix = [&h](std::uint64_t value) {
-        h ^= value;
-        h *= 1099511628211ull;
-    };
-    mix(key.binding);
-    mix(key.components);
-    mix(reinterpret_cast<std::uintptr_t>(key.buffer));
-    mix(key.revision);
-    mix(key.offset);
-    mix(key.count);
+    // The module's ONE hash seed and mix (see VsgSceneRules): a cache key built from its own copy of FNV is
+    // a second definition of the same thing, and the copy this replaces had lost a digit of the offset
+    // basis while still claiming "FNV-1a" in its comment.
+    std::uint64_t h = detail::kHashSeed;
+    h               = detail::hashCombine(h, key.binding);
+    h               = detail::hashCombine(h, key.components);
+    h               = detail::hashCombine(h, reinterpret_cast<std::uintptr_t>(key.buffer));
+    h               = detail::hashCombine(h, key.revision);
+    h               = detail::hashCombine(h, key.offset);
+    h               = detail::hashCombine(h, key.count);
     return static_cast<std::size_t>(h);
 }
 

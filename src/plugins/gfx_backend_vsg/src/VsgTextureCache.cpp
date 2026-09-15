@@ -25,6 +25,8 @@ V_VSG_NS_BEGIN
 // texture rules are under detail, so those are the ones that need pulling in.
 using detail::anisotropyFor;
 using detail::classifyTexture;
+using detail::levelExtent;
+using detail::textureDataMatchesExtent;
 using detail::TextureReject;
 using detail::vkFormatFor;
 
@@ -95,24 +97,6 @@ namespace
 }
 
 /**
- * @brief Gets one mip level's extent along one axis.
- *
- * @param size  Base-level extent in pixels.
- * @param level Mip level index.
- * @return The extent at that level, never below 1.
- */
-std::uint32_t levelExtent(int size, std::size_t level) noexcept
-{
-    // A level beyond the bit width has collapsed to 1 already; shifting by that much would be undefined.
-    if (level >= 32u) {
-        return 1u;
-    }
-
-    const auto shifted = static_cast<unsigned>(size) >> level;
-    return (shifted == 0u) ? 1u : shifted;
-}
-
-/**
  * @brief Describes every mip level's extent and where it starts inside the staged bytes.
  *
  * ONE entry per level — not per layer. vsg advances this table once per level and reaches the remaining
@@ -169,11 +153,24 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
  *
  * @param texture Texture to build the image for.
  * @param format  Vulkan format both the data and the image are declared with.
- * @return The image, ready to be uploaded by a descriptor bind, or null when the texel width has no vsg
- *         array type (the caller reports it).
+ * @param reason  Receives why no image could be built (left untouched on success): a texel width no vsg
+ *                array type is as wide as (UnsupportedFormat), or pixel data that does not account for
+ *                the extent the staging below sizes its slots from (Inconsistent).
+ * @return The image, ready to be uploaded by a descriptor bind, or null when the texture cannot be turned
+ *         into one (the caller reports @p reason).
  */
-::vsg::ref_ptr<::vsg::Image> makeImage(const vine::graphics::Texture& texture, VkFormat format)
+::vsg::ref_ptr<::vsg::Image> makeImage(const vine::graphics::Texture& texture, VkFormat format,
+                                       TextureReject& reason)
 {
+    // The staging below sizes each layer's slot from the texture's EXTENT and copies the layer's own bytes
+    // into it, so a texture whose data disagrees with that extent writes past the slot (and a chain too
+    // large for vsg's 32-bit level offsets wraps them). One rule, shared with classifyTexture so the policy
+    // and the guard cannot drift: it is what makes the memcpy below in-bounds by construction.
+    if (!textureDataMatchesExtent(texture)) {
+        reason = TextureReject::Inconsistent;
+        return {};
+    }
+
     const auto width           = static_cast<std::uint32_t>(texture.width());
     const auto height          = static_cast<std::uint32_t>(texture.height());
     const auto mip_levels      = static_cast<std::uint32_t>(texture.mipCount());
@@ -224,6 +221,8 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
     auto texels = makeTexelArray(storage, layout, width, height, layer_count, bytes_per_texel, properties,
                                  bytes_per_texel);
     if (texels == nullptr) {
+        // No vsg array type is as wide as one texel of this layout (see makeTexelArray).
+        reason = TextureReject::UnsupportedFormat;
         return {};
     }
 
@@ -423,12 +422,14 @@ void VsgTextureCache::setMaxAnisotropy(float device_limit) noexcept
     }
 
     const VkFormat format    = vkFormatFor(source->format());
-    auto           vsg_image = makeImage(*texture, format);
+    TextureReject  build_reason = reason; // unchanged (Ok) unless makeImage refuses
+    auto           vsg_image = makeImage(*texture, format, build_reason);
     if (vsg_image == nullptr) {
-        // makeImage() reports this when no vsg array type is as wide as the texel. Every 3-byte format is
-        // already turned away by vkFormatFor(), so nothing classifyTexture() accepts reaches here; it is
-        // checked rather than asserted because uploading a null image would take the whole frame down.
-        reason = TextureReject::UnsupportedFormat;
+        // The two ways an uploadable texture can still fail to become an image, each reported as what it
+        // is (see makeImage): a texel width no vsg array type matches, and pixel data that disagrees with
+        // the extent the staging sizes its slots from. Uploading a null image would take the frame down,
+        // so the fallback is bound instead.
+        reason = build_reason;
         return whiteFallback();
     }
 

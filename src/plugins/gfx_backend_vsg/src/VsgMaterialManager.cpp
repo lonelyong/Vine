@@ -17,8 +17,9 @@ namespace
  * @brief Maps a Vine material onto the engine's material block (ShaderAbi.hpp).
  *
  * The one definition of the mapping: an entry builds its block with it, a refresh compares the result
- * with what the GPU already has, and a change writes it again — so "did anything change" and "what do
- * we send" can never disagree.
+ * with what the GPU already has (with the block's OWN `operator==`, so the two sides of the
+ * comparison cannot fall behind the layout), and a change writes it again — so "did anything change"
+ * and "what do we send" can never disagree.
  *
  * Transparency is NOT here: opacity is a per-drawable value (VineDrawBlock::params.x), because one
  * material is shared by every drawable that uses it.
@@ -40,14 +41,6 @@ vine::graphics::VineMaterialBlock materialBlockOf(vine::graphics::Material* mate
     block.ambient      = { ambient.r, ambient.g, ambient.b, ambient.a };
     block.shininess    = material->shininess();
     return block;
-}
-
-/** @brief Field-wise equality: the scale at which a material change matters. */
-bool sameBlock(const vine::graphics::VineMaterialBlock& a, const vine::graphics::VineMaterialBlock& b) noexcept
-{
-    return a.ambient == b.ambient && a.diffuse == b.diffuse && a.specular == b.specular &&
-           a.emissive == b.emissive && a.shininess == b.shininess && a.alpha_mask == b.alpha_mask &&
-           a.alpha_mask_cutoff == b.alpha_mask_cutoff;
 }
 
 /**
@@ -164,7 +157,7 @@ void VsgMaterialManager::updateMaterial(vine::raw_ptr<vine::graphics::Material> 
         return;
     }
     const vine::graphics::VineMaterialBlock wanted = materialBlockOf(material);
-    if (sameBlock(it->second.payload().block, wanted)) {
+    if (it->second.payload().block == wanted) {
         // Steady state: nothing to write, nothing to transfer. This is the
         // check callers used to duplicate (see the design doc, D19).
         return;

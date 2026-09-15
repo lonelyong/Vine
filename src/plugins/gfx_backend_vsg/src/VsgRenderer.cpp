@@ -306,7 +306,7 @@ bool VsgRenderer::initialize()
     // ONE pool, so the blocks live in a few mapped buffers instead of one buffer and one
     // descriptor set per drawable (see VsgDrawBlockPool). It needs the device, so it is created
     // here rather than with the other caches, and its memory goes away with the session.
-    state.draw_block_pool = std::make_unique<vine::vsg::VsgDrawBlockPool>(state.window->getOrCreateDevice());
+    state.draw_block_pool = vine::vsg::VsgDrawBlockPool::create(state.window->getOrCreateDevice());
 
     // Window-target shader sets shared by its content slots (embedded SPIR-V,
     // no runtime glslang): the depth-on set keeps depth test/write on; the
@@ -540,7 +540,6 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // light(s)). Taking clears them, so one draw call cannot inherit the other's.
     const std::optional<vine::graphics::Viewport> viewport = takeRequestViewport();
     std::vector<const vine::graphics::Light*>     lights   = state.request.takeLights();
-    ++state.request.draws;
 
     // The SCOPE attributes are READ, never consumed: they describe the PASS, so every draw call
     // of the same scope sees the same order / depth policy / target / presenting flag (endPass()
@@ -550,10 +549,11 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // setRenderTarget — EVERY target shares the one slot path below, and the GPU attachments are
     // ensured before the slot draws (window = the shared swapchain graph from initialize();
     // off-screen = owned attachments + graph, built / rebuilt to the target's size).
-    const int                       pass_order = state.request.order;
-    const vine::graphics::DepthMode depth_mode = state.request.depth_mode;
-    const bool                      presenting = state.request.presenting;
-    vine::graphics::RenderTarget*   target_key = state.request.target;
+    //
+    // Only the target is read into a local here (the attachment checks below need it); the order / depth
+    // policy / presenting role are read by the content slot from the same request, so a pass' attributes
+    // exist in ONE description instead of being copied per draw call.
+    vine::graphics::RenderTarget* target_key = state.request.target;
 
     if (target_key != nullptr && (camera == nullptr || !target_key->valid() || (!target_key->hasColor() && !target_key->hasDepth()))) {
         // Off-screen target unusable (no camera, invalid, or neither colour
@@ -589,21 +589,12 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     }
 
     // Render into the content slot this pass owns under the active target —
-    // window and off-screen share the same slot machinery (C6.4). The slot's
-    // depth style and presenting role are carried per call and re-applied when
-    // they changed; its stacking position follows the pass' explicit order.
+    // window and off-screen share the same slot machinery (C6.4). The pass' SCOPE attributes are the ones
+    // queued in state.request (the slot reads them itself, so a pass' description exists once), and what
+    // belongs to THIS draw call — the camera, the command stream, the announced lights and the taken
+    // sub-viewport — is passed along.
     if (camera != nullptr) {
-        VsgContentSlotRequest request;
-        request.target      = target_key;
-        request.camera      = camera;
-        request.commands    = &commands;
-        request.lights      = &lights;
-        request.depth_mode  = depth_mode;
-        request.presenting  = presenting;
-        request.clear_depth = state.request.clear_depth;
-        request.order       = pass_order;
-        request.viewport    = viewport;
-        detail::renderContentSlot(state, persistent, diagnostics, request);
+        detail::renderContentSlot(state, persistent, diagnostics, camera, commands, lights, viewport);
     }
 
     // Submission is deferred to swapBuffers() so one frame (main pass + all
@@ -856,7 +847,7 @@ void VsgRenderer::resize(int width, int height)
     const auto extent = state.window->extent2D();
     for (auto& kv : window_target.content_slots) {
         auto& slot = kv.second;
-        if (slot.ready && slot.vsg_camera != nullptr && slot.presenting) {
+        if (slot.ready && slot.vsg_camera != nullptr && slot.applied.presenting) {
             slot.vsg_camera->viewportState = ::vsg::ViewportState::create(extent);
         }
     }

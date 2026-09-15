@@ -142,6 +142,11 @@ target_link_libraries(${GFX_BACKEND_VSG_TARGET} PRIVATE
 #   VINE_VSG_DEBUG_LAYER=1 VINE_SELFTEST_FRAMES=30 ./vsg_backend_selftest
 add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_support.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_protocol.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_pixels.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_textures.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_shadows.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgeGeometry.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgePipeline.cpp

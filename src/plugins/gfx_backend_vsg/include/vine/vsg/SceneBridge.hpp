@@ -105,12 +105,14 @@ class V_VSG_API SceneBridge {
 
     /** @brief Injects the session's pool of per-draw uniform slots (see VsgDrawBlockPool).
      *
-     * Must outlive the bridge. Our forward set reads per-drawable values (`VineDrawBlock`:
-     * the opacity today) from set 1, and the slots they live in come from this ONE pool, so
-     * a scene's drawables share a handful of buffers and descriptor sets instead of owning
-     * one each. Every slot's lifetime is the drawable's: the bridge reserves one when it
-     * retains a geometry and returns it — deferred past the retire ring, because a frame in
-     * flight may still bind the offset — when the geometry is evicted.
+     * Held as a non-owning pointer: the LEASES the bridge takes hold the pool (see VsgDrawBlockPool::Lease),
+     * so what this pointer needs is only to be alive when a slot is acquired — the slots already handed out
+     * stay valid (and keep the pool alive) however the session tears down. Our forward set reads per-drawable
+     * values (`VineDrawBlock`: the opacity today) from set 1, and the slots they live in come from this ONE
+     * pool, so a scene's drawables share a handful of buffers and descriptor sets instead of owning one each.
+     * Every slot's lifetime is the drawable's: the bridge acquires one when it retains a geometry and the
+     * lease returns it — deferred through the pool's retired queue, because a frame in flight may still bind
+     * the offset — when the geometry is dropped.
      *
      * Left unset, the bridge's drawables get NO per-draw block: our forward set would then
      * read the block's zeroed memory and draw nothing, so a caller that uses that set must
@@ -246,8 +248,6 @@ class V_VSG_API SceneBridge {
      * @param mode Depth handling for this slot's content.
      */
     void setContentDepthMode(vine::graphics::DepthMode mode);
-
-    /** @brief Gets the pass-level depth policy (see setContentDepthMode). */
 
     /** @brief Drops the retained state wrappers so the next sync rebuilds them.
      *
@@ -641,10 +641,11 @@ class V_VSG_API SceneBridge {
 
     /** @brief Reports one diagnostic to the installed sink and counts it.
      *
-     * Also writes the message to stderr: that is this backend's built-in
-     * tracing (the validation harness reads it), so routing a rejection site
-     * through here keeps today's out-of-band behaviour and adds the
-     * programmatic channel. Failing to draw something must never be silent.
+     * The sink is the renderer's route (it adds the stderr trace, the backend-wide counters and the
+     * host's own sink), so this bridge writes nothing out of band itself: one reporting authority,
+     * no double traces. Without a sink the message is still counted, so a host can gate on
+     * diagnosticCount() without listening (see setDiagnosticSink). Failing to draw something must
+     * never be silent.
      *
      * @param severity How bad the situation is.
      * @param category What it is about.
@@ -739,10 +740,11 @@ class V_VSG_API SceneBridge {
      *                       or null when the caller cannot say. Used only to decide whether OUR forward
      *                       set may take the variant WITHOUT a canonical attribute: a derived array (the
      *                       geometry authored none) is dropped, an authored one is never.
-     * @param draw_slot      The drawable's slot in the per-draw block pool, or an invalid Slot when it has
-     *                       none. The slot is NOT part of the variant identity (its values are rewritten in
-     *                       place), so what the wrapper records is the slot's OFFSET: one shared
-     *                       descriptor set per pool chunk, bound with this drawable's dynamic offset.
+     * @param draw_slot      The drawable's lease on a slot in the per-draw block pool, or an empty
+     *                       one when it has none. The slot is NOT part of the variant identity (its
+     *                       values are rewritten in place), so what the wrapper records is the slot's
+     *                       OFFSET: one shared descriptor set per pool chunk, bound with this
+     *                       drawable's dynamic offset.
      * @return State wrapper, or null when not buildable.
      */
     ::vsg::ref_ptr<::vsg::StateGroup> buildStateGroup(
@@ -753,7 +755,7 @@ class V_VSG_API SceneBridge {
         vine::raw_ptr<const vine::graphics::ShaderProgram> program,
         const std::vector<VertexChannel>& extra_channels,
         const DerivedChannels* derived = nullptr,
-        VsgDrawBlockPool::Slot draw_slot = {});
+        const VsgDrawBlockPool::Lease& draw_slot = {});
 
     /** @brief Gets (and caches) the run-time compiled ShaderSet for a program.
      *
@@ -761,7 +763,7 @@ class V_VSG_API SceneBridge {
      * (program, vertex layout) instead of once per geometry: N geometry bound
      * to the same program AND carrying the same set of custom channels share a
      * single glslang compile and ShaderSet. Besides the canonical
-     * vine_Vertex/Normal/Color bindings (locations 0/1/2), the set declares one
+     * vine_Vertex/Normal/Color bindings (the locations `attributeLocation()` assigns them), the set declares one
      * vine_Attribute{location} binding per forwarded custom channel, whose
      * format follows its components. A compile/assembly failure is cached too
      * (null), so later geometry does not retry the failed compile each time.
@@ -794,30 +796,23 @@ class V_VSG_API SceneBridge {
     /** @brief Gets the mesh-resource cache in use (the injected one, or this bridge's own). */
     VsgMeshResourceCache& meshResources();
 
-    /** @brief Gets the slot pool per-drawable values are written to (see setDrawBlockPool).
+    /** @brief Gets the slot's base shader set: whatever was injected, and nothing else.
      *
-     * @return The injected pool, or null when the caller injected none.
-     */
-    VsgDrawBlockPool* drawBlockPool();
-
-    /** @brief Gets the slot's base shader set (the engine's forward set when unset).
-     *
-     * The ENGINE's own set is built lazily on first use and cached, so a bridge never pays for a
-     * fresh build per geometry — and never reaches for another library's set (see
-     * detail::makeContentShaderSet). A user program path builds on top of this set's default
-     * pipeline states (the baked viewport / blending), keeping both paths on one material
-     * descriptor ABI.
+     * The ENGINE builds its own sets lazily — one per (target size, depth policy), cached by the
+     * renderer and handed to each content slot (see detail::makeContentShaderSet) — so a bridge never
+     * pays for a fresh build per geometry and never reaches for another library's set. A user program
+     * path builds on top of the injected set's default pipeline states (the baked viewport /
+     * blending), keeping both paths on one material descriptor ABI.
      *
      * A caller may INJECT any set (setShaderSet), including a foreign one: the bridge is generic on
      * purpose and reads whatever that set declares. The ENGINE never does — every set it hands a slot
      * is one of its own (see detail::makeContentShaderSet) — so a foreign set that shades from another
      * library's own light data draws without the lights this bridge feeds.
      *
-     * @return The base shader set, or null when even the engine's own stages are unusable (the
-     *         embedded-shader gate rules that out).
+     * @return The injected set, or null when none was set (a bridge with no set cannot shade: it
+     *         reports that once and draws no content rather than inventing a default).
      */
     ::vsg::ref_ptr<::vsg::ShaderSet> baseShaderSet();
-
 
     /**
      * @brief Appends the drawable's per-draw bind of set 1 (see VsgDrawBlockPool).
@@ -829,18 +824,11 @@ class V_VSG_API SceneBridge {
      * @param state_group     Wrapper being assembled (the bind is appended last).
      * @param pipeline_layout The variant's pipeline layout (null or set-less for the sets that
      *                        declare no per-draw block: nothing is appended then).
-     * @param draw_slot       The drawable's slot (an invalid slot appends nothing).
+     * @param draw_slot       The drawable's lease on a slot (an empty lease appends nothing).
      */
     void appendDrawBlockBind(::vsg::StateGroup& state_group,
                              ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout,
-                             VsgDrawBlockPool::Slot draw_slot);
-
-    /** @brief Parks @p slot for release once the frames that could bind it are accounted for.
-     *
-     * @param slot Slot whose drawable is gone (an invalid slot or a bridge without a pool
-     *             is a no-op).
-     */
-    void releaseDrawSlot(VsgDrawBlockPool::Slot slot);
+                             const VsgDrawBlockPool::Lease& draw_slot);
 
     /** @brief Rebuilds the undrawn candidate list from this sync's drawings.
      *

@@ -12,7 +12,7 @@
  * alive is installed the same way.
  *
  * @ref VsgOverlayDestination is namespace-scope on purpose: helpers read it, and a private nested
- * type could not be named by them (the same reason VsgContentSlotRequest was liberated).
+ * type could not be named by them.
  */
 
 #include <vine/vsg/vsg_global.hpp>

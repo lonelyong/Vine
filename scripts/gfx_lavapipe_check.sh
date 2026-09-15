@@ -49,6 +49,11 @@
 # Exit code 0 when every stage is clean, 1 otherwise.
 
 set -u
+# pipefail as well: the checks in this file judge PIPELINES (`... | head`, `... | sed`), and a pipeline's
+# status is its LAST command's — so a filter that succeeded used to decide the outcome no matter what the
+# command before it did. That is not hypothetical here: it is how the byte-exact evidence gate below read as
+# a PASS for as long as it did (measured: `if <script> | sed ...; then` tests sed).
+set -o pipefail
 
 # ---- Locate root / build ----------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -105,17 +110,14 @@ FAILED=0
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-report() { # name  file  [ok_exit_codes...]
+report() { # name  file
     local name="$1" file="$2"
-    shift 2
+    # Log-level gate only: whether the run DREW anything is the caller's own evidence check
+    # (require_evidence), which is what keeps "no validation error" from meaning "nothing happened".
     if grep -qiE "VUID-|UNASSIGNED-|\[Validation\].*error|validation layer.*error|exception|compile failed|failed to create window|vkCreateInstance.*fail|ERROR:.*Loader" "$file"; then
         echo "[FAIL] $name"
         grep -iE "VUID-|UNASSIGNED-|\[Validation\]|exception|compile failed|failed|ERROR" "$file" | head -20
         FAILED=1
-    elif [ $# -gt 0 ]; then
-        # Expected (non-zero) exit codes passed as ok; anything else is fatal.
-        grep -q "done\|running\|sync" "$file" || true
-        echo "[PASS] $name"
     else
         echo "[PASS] $name"
     fi
@@ -202,7 +204,12 @@ else
     require_evidence "^\[selftest\] target description:" 1 "target description rebuild assertion"
     require_evidence "^\[selftest\] policy churn:" 1 "policy-churn (no device stall) assertion"
     require_evidence "^\[selftest\] MRT " 2 "MRT report"
-    # The self-test is expected to finish (0); a timeout (124) is also OK.
+    # The run has to have FINISHED its phases: without this, a run that hung (or was killed by the
+    # timeout) after the last evidence line still had every assertion above satisfied, and the 124
+    # tolerance below turned that into a PASS.
+    require_evidence "^\\[selftest\\] done" 1 "self-test completion line"
+    # The self-test is expected to finish (0). A timeout (124) is tolerated for a slow host, but only
+    # together with the completion line above: the phases must all have run and reported.
     if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
         echo "[FAIL] vsg_backend_selftest exited early with $rc"
         tail -30 "$log"
@@ -234,12 +241,16 @@ if [ ! -x "$SELF" ]; then
     echo "[FAIL] vsg_backend_selftest not built"
     FAILED=1
 else
-    # The byte-exact comparison is delegated to the evidence script (which owns the baseline and runs
-    # the self-test with its own fixed frame count: the frame count is part of the evidence lines, so
-    # comparing a 15-frame run against a 30-frame baseline could never match).
-    if "$SCRIPT_DIR/vsg_selftest_evidence.sh" "$BUILD" 2>&1 | sed 's/^/    /'; then
+    # The byte-exact comparison is delegated to the evidence script, which owns the baseline and PINS the
+    # frame count the baseline was recorded with (the count is one of the evidence lines, so comparing a
+    # 15-frame run against a 30-frame baseline could never match). The script's own exit code is what
+    # decides here: judging a PIPELINE would test the filter, not the comparison (see set -o pipefail).
+    evidence_log="$TMP/evidence.log"
+    if "$SCRIPT_DIR/vsg_selftest_evidence.sh" "$BUILD" >"$evidence_log" 2>&1; then
+        sed 's/^/    /' "$evidence_log"
         echo "[PASS] content-shading evidence matches its baseline"
     else
+        sed 's/^/    /' "$evidence_log"
         echo "[FAIL] content-shading evidence differs from its baseline"
         FAILED=1
     fi

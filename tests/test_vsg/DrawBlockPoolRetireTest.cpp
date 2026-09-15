@@ -16,6 +16,8 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
+
 #include <vine/vsg/VsgDrawBlockPool.hpp>
 #include <vine/vsg/VsgRetireRing.hpp>
 
@@ -27,71 +29,71 @@ namespace
 {
 
 /// A pool with no device: enough for the retired queue, not for reserving.
-VsgDrawBlockPool makeQueueOnlyPool()
+std::shared_ptr<VsgDrawBlockPool> makeQueueOnlyPool()
 {
     ::vsg::ref_ptr<::vsg::Device> no_device;
-    return VsgDrawBlockPool(no_device);
+    return VsgDrawBlockPool::create(no_device);
 }
 
 } // namespace
 
 TEST(DrawBlockPoolRetireTest, ARetiredSlotWaitsExactlyTheFramesThatMayStillBindIt)
 {
-    VsgDrawBlockPool pool = makeQueueOnlyPool();
-    EXPECT_EQ(pool.stats().retired, 0u);
+    const auto pool = makeQueueOnlyPool();
+    EXPECT_EQ(pool->stats().retired, 0u);
 
     const VsgDrawBlockPool::Slot slot{ 0u, 7u };
-    pool.retire(slot);
-    EXPECT_EQ(pool.stats().retired, 1u) << "a valid slot goes to the retired queue";
+    pool->retire(slot);
+    EXPECT_EQ(pool->stats().retired, 1u) << "a valid slot goes to the retired queue";
 
     // It must not be usable before the countdown ends: the frames in flight are still reading it.
     for (std::uint32_t i = 1; i < vine::vsg::VsgRetireRing::kRetireRingDepth; ++i) {
-        pool.advanceRetired();
-        EXPECT_EQ(pool.stats().retired, 1u)
+        pool->advanceRetired();
+        EXPECT_EQ(pool->stats().retired, 1u)
             << "after " << i << " submitted frame(s) the slot is still in flight";
     }
-    pool.advanceRetired();
-    EXPECT_EQ(pool.stats().retired, 0u)
+    pool->advanceRetired();
+    EXPECT_EQ(pool->stats().retired, 0u)
         << "and the depth-th advance is what releases it to the free list";
 }
 
 TEST(DrawBlockPoolRetireTest, AnInvalidSlotIsNeverQueued)
 {
-    VsgDrawBlockPool pool = makeQueueOnlyPool();
+    const auto pool = makeQueueOnlyPool();
 
-    pool.retire(VsgDrawBlockPool::Slot{}); // no chunk: "no slot"
-    EXPECT_EQ(pool.stats().retired, 0u) << "a slot nobody reserved is not something to wait out";
-    EXPECT_EQ(pool.stats().reserved, 0u);
+    pool->retire(VsgDrawBlockPool::Slot{}); // no chunk: "no slot"
+    EXPECT_EQ(pool->stats().retired, 0u) << "a slot nobody reserved is not something to wait out";
+    EXPECT_EQ(pool->stats().reserved, 0u);
 }
 
 TEST(DrawBlockPoolRetireTest, TheQueueDrainsEachSlotOnItsOwnCountdown)
 {
-    VsgDrawBlockPool pool = makeQueueOnlyPool();
+    const auto pool = makeQueueOnlyPool();
 
-    pool.retire(VsgDrawBlockPool::Slot{ 0u, 0u });
-    pool.advanceRetired(); // the first slot is one frame into its countdown
-    pool.retire(VsgDrawBlockPool::Slot{ 0u, 1u });
-    EXPECT_EQ(pool.stats().retired, 2u);
+    pool->retire(VsgDrawBlockPool::Slot{ 0u, 0u });
+    pool->advanceRetired(); // the first slot is one frame into its countdown
+    pool->retire(VsgDrawBlockPool::Slot{ 0u, 1u });
+    EXPECT_EQ(pool->stats().retired, 2u);
 
     // Three more advances bring the first slot's four to an end; the second, retired one advance
     // later, is still one short -- the countdown is per slot, not per queue.
     for (std::uint32_t i = 1; i < vine::vsg::VsgRetireRing::kRetireRingDepth; ++i) {
-        pool.advanceRetired();
+        pool->advanceRetired();
     }
-    EXPECT_EQ(pool.stats().retired, 1u) << "the slot retired a frame later is a frame behind";
-    pool.advanceRetired();
-    EXPECT_EQ(pool.stats().retired, 0u) << "and its own depth worth of advances release it";
+    EXPECT_EQ(pool->stats().retired, 1u) << "the slot retired a frame later is a frame behind";
+    pool->advanceRetired();
+    EXPECT_EQ(pool->stats().retired, 0u) << "and its own depth worth of advances release it";
 }
 
 TEST(DrawBlockPoolRetireTest, AdvancingAnEmptyQueueIsANoOp)
 {
-    VsgDrawBlockPool pool = makeQueueOnlyPool();
+    const auto pool = makeQueueOnlyPool();
     for (int i = 0; i < 4; ++i) {
-        pool.advanceRetired();
+        pool->advanceRetired();
     }
-    EXPECT_EQ(pool.stats().retired, 0u);
-    EXPECT_EQ(pool.stats().reserved, 0u);
+    EXPECT_EQ(pool->stats().retired, 0u);
+    EXPECT_EQ(pool->stats().reserved, 0u);
     // A pool with no device allocated nothing, so nothing was released either.
-    EXPECT_EQ(pool.stats().chunks, 0u);
-    EXPECT_EQ(pool.stats().capacity, 0u);
+    EXPECT_EQ(pool->stats().chunks, 0u);
+    EXPECT_EQ(pool->stats().capacity, 0u);
 }

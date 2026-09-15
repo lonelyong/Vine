@@ -8,6 +8,17 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 逐帧时序的详细版本在 [`data-flow.md`](data-flow.md)（本文只给概览并指向它），
 设计理由与实测结论在 `.ai/design/` 与 `.ai/memory/graphics.md`。
 
+> **本文边界（谁写什么，2026-09-15）** —— 同一件事只写一处：
+>
+> | 主题 | 唯一权威 |
+> |---|---|
+> | **所有权表**（谁拥有什么、契约、违约后果） | **本文 §3.1** |
+> | 会话/持久划分、帧份额 | **本文 §3.2 / §3.4** |
+> | 清理点的动作表与 `shutdown()` 步骤 | [`data-flow.md`](data-flow.md) §9–§10 |
+> | L0/L1 契约映射、ShaderSet 契约表、支持矩阵 | [`data-flow.md`](data-flow.md) |
+> | **待办与当前缺陷** | `.ai/memory/graphics-perf-backlog.md`（**唯一登记**） |
+> | 目标/槽模型与 pass 生命周期、模块导航 | `.ai/design/vsg-target-unification.md`、[`../gfx_backend_vsg.md`](../gfx_backend_vsg.md) |
+
 ## 1. 文件地图：谁负责什么
 
 | 单元 | 职责 |
@@ -115,7 +126,7 @@ graph TB
 | 顶点 / 索引（静态） | vsg 首次使用该数组时 | `BufferInfo` → 设备本地 buffer（staging / `TransferTask`）；我们的数组**不是 DYNAMIC** ⇒ 只传一次 | 每次数据重建一次 |
 | 顶点颜色（opacity 载体） | 该 drawable 的 `cmd.opacity` 变了 | DYNAMIC ⇒ `Data::dirty()` → vsg `TransferTask` 拷贝（按 `(VkBuffer, offset)` **去重**） | 每次 opacity 变化一次 |
 | 材质值 | `Material` 参数变了 | 同上（DYNAMIC）：走 host-visible 分支是**直接 `memcpy`**，不建 staging、不进队列 | 每次材质变化一次 |
-| 纹理 | 新纹理，或 `Texture::revision()` 变了 | 新建 `vsg::Image` + 一次上传；旧条目由容量裁剪 / 废弃回收 | 每次变化一次 |
+| 纹理 | 新纹理，或 `Texture::revision()` 变了 | 新建 `vsg::Image` + 一次上传；旧条目由容量裁剪 / 废弃回收。**上传前先过 `textureDataMatchesExtent()`**（`TextureReject::Inconsistent`）：每个 mip 层每张脸的字节数必须等于它的 extent×format 算出的值，否则就是一次越过 staging 缓冲的拷贝（以前是越界写，现在是拒绝 + 诊断） | 每次变化一次 |
 
 于是**稳态帧**：不重建节点、不重编译管线、不重传任何数据、零设备等待（§4.4 的三个 0）。
 
@@ -469,7 +480,7 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 
 | 注册表 | 状态 | 实测（自检 376 帧，存活内容槽峰值 9） |
 | --- | --- | --- |
-| **每 drawable 的槽**（`VsgDrawBlockPool`） | **已修**：延迟释放队列搬到**池**（会话级），`retire()` + `advanceRetired()`（提交帧推进，与退役环共用同一个时钟 `VsgDeferredRelease`）；桥侧只剩一行 | 修复：峰值 **1 个 chunk**、64 槽里最多用 13；把槽丢弃（= 修复前后果：队列随桥死）⇒ 峰值 **3 个 chunk**、192 槽里用掉 147。同一负载、同样 9 个存活槽 ⇒ 容量按拆除次数增长 |
+| **每 drawable 的槽**（`VsgDrawBlockPool`） | **已修**：延迟释放队列搬到**池**（会话级），`retire()` + `advanceRetired()`（提交帧推进，与退役环共用同一个时钟 `VsgDeferredRelease`）；**2026-09-15 起桥侧一行也不剩**：`VsgDrawBlockPool::Lease`（`acquire()` 取得）把归还写进析构，`Item` 一死槽就回池，任何丢弃分支都不可能漏 | 修复：峰值 **1 个 chunk**、64 槽里最多用 13；把槽丢弃（= 修复前后果：队列随桥死）⇒ 峰值 **3 个 chunk**、192 槽里用掉 147。同一负载、同样 9 个存活槽 ⇒ 容量按拆除次数增长 |
 | **编译上下文**（vsg `CompileManager`） | **记录待办**：`VsgViewCompiler` 为每个槽注册一次 `(render pass + view)` 上下文，而 vsg 1.1.16 **没有 remove API**（`add()` 往每个 traversal 的 `contexts` 里 push；每个 `Context` 持一个 `VkCommandPool` 和对该 render pass 的强引用；`observer_ptr<View>` 只是弱引用 ⇒ 不会悬垂） | 峰值 **111 次注册**对应 ≤9 个存活槽 ⇒ 约 102 个上下文属于已销毁的槽，直到会话结束。**有界于槽创建次数**，离屏目标每帧重建就会持续长 |
 
 第二处的两条修法（都**不是**清理级改动，故未动）：①上游加 `CompileManager::remove(view)`；②在破坏性拆除点

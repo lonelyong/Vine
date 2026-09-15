@@ -52,6 +52,40 @@
 #include <vine/vsg/SceneBridge.hpp>
 
 V_VSG_NS_BEGIN
+
+/**
+ * @brief The colour a target is cleared to when no pass asked for one.
+ *
+ * Every target's first pass has to clear its colour image (an UNDEFINED image may not be LOADed) and the
+ * window's swapchain graph is the viewer's own, so a pass that never called clear() still needs a value to
+ * be laid down under its picture. One definition, because the same grey written out at every site that
+ * needs it is as many chances to change all but one of them — and a target built under one default and
+ * cleared under another reads as a flicker the renderer cannot explain.
+ */
+inline constexpr ::vsg::vec4 kDefaultClearColor{ 0.2f, 0.2f, 0.2f, 1.0f };
+
+/**
+ * @brief The pass scope attributes one content slot applies to itself, and remembers as applied.
+ *
+ * ONE value, because what a slot STORES and what the frame compares against have to be the same thing:
+ * as three loose fields the per-frame path compared them one by one, so a fourth attribute added to the
+ * pass protocol could be stored and never applied (or applied and never stored) with nothing saying which
+ * fields the slot actually owns. As a value, adding one means adding it here, and the frame's apply step
+ * reads it from the same place.
+ *
+ * The per-DRAW-CALL state (the command stream, the announced lights, the sub-viewport) is deliberately not
+ * here: it arrives with each call instead of being remembered.
+ */
+struct PassAttributes
+{
+    vine::graphics::DepthMode depth_mode = vine::graphics::DepthMode::TestAndWrite; ///< Depth policy for content that authored none.
+    int                       order      = 0;     ///< The pass' explicit pipeline order (the slot's stacking position).
+    bool                      presenting = false; ///< True for the full-target pass that cleared the target.
+
+    /** @brief Field-wise equality: the scale at which the slot has to re-apply its pass attributes. */
+    friend bool operator==(const PassAttributes&, const PassAttributes&) noexcept = default;
+};
+
 /** @brief Identity of one retained backend slot.
  *
  * Primary identity: @ref owner, the pass that draws the slot (announced
@@ -94,12 +128,6 @@ struct SlotKey
         return SlotKey{ nullptr, camera, order };
     }
 
-    /** @brief Fallback key of a PiP screen slot: (sampled target, attachment). */
-    static SlotKey sampledTarget(const vine::graphics::RenderTarget* source, int attachment) noexcept
-    {
-        return SlotKey{ nullptr, source, attachment };
-    }
-
     /** @brief Fallback key of a fullscreen-program slot: its sampled target. */
     static SlotKey sampledTarget(const vine::graphics::RenderTarget* source) noexcept
     {
@@ -116,9 +144,9 @@ struct SlotKey
  * (camera, explicit pass order) identity.
  */
 struct ContentSlot {
-    int                           order  = 0;   // explicit pipeline order (stacking)
-    vine::graphics::DepthMode     depth_mode = vine::graphics::DepthMode::TestAndWrite;
-    bool                          presenting = false; // this slot cleared the target (full-target main pass)
+    // The pass attributes this slot has APPLIED (one value: what is stored and what is compared cannot
+    // drift apart — see PassAttributes).
+    PassAttributes                applied;
     ::vsg::ref_ptr<::vsg::Camera> vsg_camera;
     ::vsg::ref_ptr<::vsg::Group>  root;        // retained content root
     // This slot's per-view light block, written from the pass' lights once per
@@ -338,7 +366,7 @@ struct VsgRenderTargetEntry {
         /// materialised counterpart: a pass that asked for no clear LOADs).
         bool        want_depth_clear = false;
         /// This pass' clear colour (its own clear() request).
-        ::vsg::vec4 clear_color{ 0.2f, 0.2f, 0.2f, 1.0f };
+        ::vsg::vec4 clear_color{ kDefaultClearColor };
         /// True while @ref graph records @ref render_pass_transient instead
         /// of @ref render_pass, i.e. for the ONE frame in which this pass
         /// consumes a depth image that is in a transitional layout because
@@ -515,9 +543,13 @@ struct VsgRenderTargetEntry {
     ::vsg::ref_ptr<::vsg::PipelineBarrier> depth_share_barrier;
     // Set when the borrowed source above was RELEASED while still borrowed:
     // its VkImage is gone, so the borrow cannot be honoured and this target
-    // builds with its own depth instead (a later shareDepth() with a live
-    // source clears the condition by being a different pointer).
-    const vine::graphics::RenderTarget* unusable_depth_source = nullptr;
+    // builds with its own depth instead. The entry OWNS the remembered source,
+    // which is what makes "a later shareDepth() naming a DIFFERENT source clears
+    // the condition" true rather than assumed: a raw pointer here would compare
+    // equal to a new target allocated at the released one's address, and the
+    // borrow would stay refused for the rest of the session (the same
+    // address-reuse rule the entry's own `owner` follows — see D34).
+    vine::intrusive_ptr<const vine::graphics::RenderTarget> unusable_depth_source;
     // Per-size shader sets for off-screen slots (window slots share the
     // renderer's depth_on / depth_test only / depth_off shader sets). Built lazily.
     ::vsg::ref_ptr<::vsg::ShaderSet> depth_on_shader_set;
@@ -534,7 +566,7 @@ struct VsgRenderTargetEntry {
     // hard-coded default. A pass' OWN clear request (the open scope) takes
     // precedence; this is the fallback for a pass that never asked.
     bool        clear_seen  = false;
-    ::vsg::vec4 clear_color{ 0.2f, 0.2f, 0.2f, 1.0f };
+    ::vsg::vec4 clear_color{ kDefaultClearColor };
     // Depth value a pass of this target clears to: the reverse-Z FAR plane
     // (0.0) for every target, colour or depth-only. The depth compare is
     // VK_COMPARE_OP_GREATER, so the buffer must start at the far plane for
@@ -575,7 +607,7 @@ struct VsgRenderTargetEntry {
 
     // ---- content slots (retained Views under graph), keyed by owning pass ----
     std::map<SlotKey, ContentSlot> content_slots;
-    // ---- PiP views sampling other targets (drawn under this graph) ----
+    // ---- fullscreen-program views (sampled-source composites), keyed by owning pass ----
     // ---- fullscreen-program views (deferred lighting), keyed by owning pass ----
     std::map<SlotKey, ProgramSlot> program_slots;
 

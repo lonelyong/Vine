@@ -1144,3 +1144,42 @@ TEST(SceneBridgePipelineSharingTest, IndexedGeometryAliasesItsTexcoordsAndIndexB
         << "the index binding must alias the model's index buffer";
     EXPECT_EQ(index_bind->indices->data->valueCount(), geometry->indices().size());
 }
+
+/**
+ * @brief A wrapper rebuilt with NONE of its inputs changed still reaches the compile queue.
+ *
+ * `invalidateState()` replaces the retained wrapper without changing anything it is built from, and the queue
+ * used to be driven by "an input changed" — so the new subtree was about to be recorded without ever having
+ * been compiled (the D22 shape: a pipeline with no per-view implementation). The case is a pass whose commands
+ * all author their own depth: a depth-policy flip does not reach their resolved state, and the wrapper is
+ * rebuilt anyway.
+ */
+TEST(SceneBridgePipelineSharingTest, ARebuiltWrapperIsQueuedForCompileEvenWhenItsInputsAreUnchanged)
+{
+    vine::vsg::SceneBridge bridge;
+    bridge.setShaderSet(testContentSet());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
+    auto geometry = makeTriangle(0);
+
+    std::vector<RenderCommand> commands;
+    commands.emplace_back(geometry, material, Mat4d());
+    commands[0].depthExplicit          = true;
+    commands[0].renderState.depth.test = true;
+
+    std::vector<vsg::ref_ptr<vsg::Node>> created;
+    ASSERT_TRUE(bridge.syncRenderCommands(commands, root.get(), &created));
+    ASSERT_EQ(created.size(), 1u);
+    const std::size_t variants_before = bridge.pipelineVariantCount();
+
+    // A policy flip this command ignores, and the "drop the wrappers" request the renderer makes with it.
+    bridge.setContentDepthMode(vine::graphics::DepthMode::Disabled);
+    bridge.invalidateState();
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+
+    EXPECT_EQ(created.size(), 1u)
+        << "the rebuilt subtree must be compiled before it is recorded, whether or not an input changed";
+    EXPECT_EQ(bridge.pipelineVariantCount(), variants_before)
+        << "and rebuilding it must reuse the variant its unchanged inputs resolve to";
+}

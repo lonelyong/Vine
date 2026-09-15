@@ -264,6 +264,7 @@ enum class TextureReject
     Absent,             ///< No texture at all (a material without one).
     Incomplete,         ///< Not every face has been filled yet.
     UnsupportedFormat,  ///< The pixel layout has no Vulkan format (a three-channel layout).
+    Inconsistent,       ///< The pixel data does not account for what the description claims (see textureDataMatchesExtent).
 };
 
 /**
@@ -276,6 +277,36 @@ enum class TextureReject
  * @return Why the texture cannot be uploaded, or TextureReject::Ok.
  */
 TextureReject classifyTexture(const vine::graphics::Texture* texture) noexcept;
+
+/**
+ * @brief Gets one mip level's extent along one axis.
+ *
+ * @param size  Base level extent in pixels.
+ * @param level Mip level index (0 = the base level).
+ * @return The extent at that level, never below 1.
+ */
+std::uint32_t levelExtent(int size, std::size_t level) noexcept;
+
+/**
+ * @brief Whether a texture's pixel data accounts for every byte its own description claims.
+ *
+ * WHY THIS IS A RULE. The upload stages a mip chain by copying one layer's chain at a time into a slot
+ * sized from the texture's extent, so a texture whose data disagrees with its width / height / mip count
+ * is not "a texture with the wrong picture": it is a copy that runs past the end of the staging buffer
+ * (measured: a level with more bytes than its extent accounts for writes over the next level's bytes, and
+ * a level with fewer leaves the tail of the image holding whatever the allocation held — neither shows up
+ * as a validation error). The check is what turns that into a refusal, and it is a pure function of the
+ * description and the spans, so a test can drive it without a device.
+ *
+ * It also bounds the chain: vsg addresses a level's byte offset with a 32-bit `uivec4` field, so a chain
+ * that does not fit is refused here rather than silently wrapped there.
+ *
+ * @param texture Texture to check (may be null).
+ * @return true when every layer of every declared level holds exactly the bytes its extent and format
+ *         account for, and the whole chain fits the offsets vsg addresses. A null texture, a null layer
+ *         or an empty level is false.
+ */
+bool textureDataMatchesExtent(const vine::graphics::Texture& texture) noexcept;
 
 /**
  * @brief Reduces a device's anisotropy limit to the level a sampler may be created with.

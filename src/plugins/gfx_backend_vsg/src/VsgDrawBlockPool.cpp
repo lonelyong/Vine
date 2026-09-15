@@ -59,6 +59,14 @@ VsgDrawBlockPool::VsgDrawBlockPool(::vsg::ref_ptr<::vsg::Device> device, std::ui
     stride_ = alignUp(block_size_, alignment);
 }
 
+std::shared_ptr<VsgDrawBlockPool> VsgDrawBlockPool::create(::vsg::ref_ptr<::vsg::Device> device,
+                                                           std::uint32_t                 slots_per_chunk)
+{
+    // shared_ptr(new ...), not make_shared: the constructor is private (see create's contract), and this
+    // allocation is the one written inside the class that may name it.
+    return std::shared_ptr<VsgDrawBlockPool>(new VsgDrawBlockPool(std::move(device), slots_per_chunk));
+}
+
 VsgDrawBlockPool::~VsgDrawBlockPool() = default;
 
 VsgDrawBlockPool::Slot VsgDrawBlockPool::reserve()
@@ -89,6 +97,71 @@ VsgDrawBlockPool::Slot VsgDrawBlockPool::reserve()
     created.free_indices.pop_back();
     ++reserved_;
     return Slot{ chunk_index, slot_index };
+}
+
+VsgDrawBlockPool::Lease VsgDrawBlockPool::acquire()
+{
+    const Slot slot = reserve();
+    if (!slot.valid()) {
+        return Lease{};
+    }
+    // The lease holds the pool through the shared_ptr it was created with, so a caller that drops the lease
+    // later than the session drops the pool still returns its slot into live memory (see Lease::LIFETIME).
+    return Lease{ shared_from_this(), slot };
+}
+
+VsgDrawBlockPool::Lease::Lease(Lease&& other) noexcept :
+    pool_(std::move(other.pool_)), slot_(other.slot_)
+{
+    other.slot_ = {};
+}
+
+VsgDrawBlockPool::Lease& VsgDrawBlockPool::Lease::operator=(Lease&& other) noexcept
+{
+    if (this != &other) {
+        // Release what THIS lease holds before taking the other's: the pool must not end up with a
+        // slot that is busy in two leases at once.
+        retireNow();
+        pool_       = std::move(other.pool_);
+        slot_       = other.slot_;
+        other.slot_ = {};
+    }
+    return *this;
+}
+
+VsgDrawBlockPool::Lease::~Lease()
+{
+    retireNow();
+}
+
+void VsgDrawBlockPool::Lease::retireNow() noexcept
+{
+    if (pool_ != nullptr && slot_.valid()) {
+        // The pool's counting queue, never the free list: the frames in flight may still bind this
+        // slot's offset, which is the whole reason a reservation is given back through retire(). The pool is
+        // held by this lease, so it is alive right here whatever order the session tore down in.
+        pool_->retire(slot_);
+    }
+    pool_.reset();
+    slot_ = {};
+}
+
+void VsgDrawBlockPool::Lease::writeOpacity(float opacity) noexcept
+{
+    if (pool_ != nullptr) {
+        pool_->writeOpacity(slot_, opacity);
+    }
+}
+
+std::uint32_t VsgDrawBlockPool::Lease::offset() const noexcept
+{
+    return pool_ != nullptr ? pool_->offset(slot_) : 0u;
+}
+
+::vsg::ref_ptr<::vsg::DescriptorSet> VsgDrawBlockPool::Lease::descriptorSet(
+    ::vsg::ref_ptr<::vsg::DescriptorSetLayout> layout) const
+{
+    return pool_ != nullptr ? pool_->descriptorSet(slot_, std::move(layout)) : ::vsg::ref_ptr<::vsg::DescriptorSet>();
 }
 
 void VsgDrawBlockPool::release(Slot slot) noexcept

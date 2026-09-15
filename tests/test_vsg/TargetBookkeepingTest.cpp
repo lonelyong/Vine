@@ -16,6 +16,8 @@
 #include <cstdint>
 #include <vector>
 
+#include <vsg/app/CommandGraph.h>
+
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/vsg/VsgDiagnostics.hpp>
@@ -116,4 +118,44 @@ TEST(TargetBookkeepingTest, AUsableSizeReArmsTheReportOfAMissingOne)
     // So the next episode is reported again instead of being swallowed.
     EXPECT_TRUE(vine::vsg::detail::beginTargetSizeMissingEpisode(0, 0, reported));
     EXPECT_FALSE(vine::vsg::detail::beginTargetSizeMissingEpisode(0, 0, reported));
+}
+
+/**
+ * @brief The tombstone of a released depth source holds that source, so its address cannot be reused.
+ *
+ * A borrower whose source is released keeps a tombstone saying "this source is not borrowable any more", so
+ * the borrow is not retried (and re-reported) every frame. A tombstone that only REMEMBERED the address
+ * would refuse the borrow of a brand-new target allocated at the released one's address — for the rest of
+ * the session, with nothing to tell the host why — which is the same address-reuse defect the target table
+ * itself fixed by owning the target it is keyed by.
+ */
+TEST(TargetBookkeepingTest, AReleasedSourcesTombstoneOwnsItSoItsAddressCannotBeReused)
+{
+    vine::vsg::VsgRendererState state;
+    // The release path is the session's, and the graph it re-orders afterwards is the session's command
+    // graph: both are needed for the bookkeeping to run without a device (no window, no viewer, no images).
+    state.initialized   = true;
+    state.command_graph = ::vsg::CommandGraph::create();
+
+    Captured   captured;
+    const auto diagnostics = captured.route();
+
+    RenderTargetPtr borrower(new RenderTarget());
+    {
+        RenderTargetPtr source(new RenderTarget());
+        // The borrow as the build records it (the field the release path reads).
+        state.entryFor(borrower.get()).depth_source = source.get();
+
+        vine::vsg::detail::releaseRenderTarget(state, diagnostics, source.get());
+
+        // The tombstone is what tells the next build "do not retry this source"...
+        const auto& tombstone = state.entryFor(borrower.get()).unusable_depth_source;
+        EXPECT_EQ(tombstone.get(), source.get());
+        // ...and it HOLDS it: the host's reference going out of scope must not free the address, because a
+        // new target landing there would compare equal to the tombstone and stay refused for ever.
+        EXPECT_EQ(source->useCount(), 2u); // this scope's reference + the tombstone
+    }
+
+    // The host has let go: the only remaining reference is the tombstone's, which is the point of the test.
+    EXPECT_EQ(state.entryFor(borrower.get()).unusable_depth_source->useCount(), 1u);
 }

@@ -126,6 +126,22 @@ struct alignas(16) VineMaterialBlock
     float                shininess{ 32.0f };
     float                alpha_mask{ 1.0f };
     float                alpha_mask_cutoff{ 0.5f };
+
+    /**
+     * @brief Field-wise equality of two blocks.
+     *
+     * A backend refreshes a material by comparing the block it WOULD send with the one the GPU
+     * already has, so this comparison is a type-level fact and not a backend detail. Defaulted on
+     * purpose: a member added here (PBR's metallic/roughness, say) then enters the comparison by
+     * itself, whereas a hand-written field list in the backend is a second copy of this layout that
+     * can silently fall behind it — and its failure mode is a material edit that never reaches the
+     * GPU, i.e. a slider that does nothing with nothing to see in a log.
+     *
+     * @param a Left block.
+     * @param b Right block.
+     * @return true when every member is equal.
+     */
+    friend constexpr bool operator==(const VineMaterialBlock& a, const VineMaterialBlock& b) noexcept = default;
 };
 
 /**

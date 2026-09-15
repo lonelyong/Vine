@@ -111,6 +111,39 @@ TEST(ShaderAbiTest, ShadowBlockIsTheViewToLightMatrixPlusItsParameters)
     EXPECT_EQ(offsetof(VineShadowBlock, params), 64u);
 }
 
+TEST(ShaderAbiTest, MaterialBlockEqualityCoversItsWholeDeclaredLayout)
+{
+    // A backend asks "does the GPU need this material again?" by comparing two blocks, so the
+    // comparison is the type's own (the defaulted operator==): a field list written out in a backend
+    // is a second copy of this layout, and one that falls behind it fails silently — the symptom is a
+    // material edit that never reaches the GPU. Flipping one bit of every member byte and demanding
+    // that the comparison notices pins that coverage without naming the members.
+    constexpr std::size_t member_bytes = offsetof(VineMaterialBlock, alpha_mask_cutoff) + sizeof(float);
+    static_assert(member_bytes == 76u, "the material block's members must end before its std140 padding");
+
+    VineMaterialBlock a;
+    // Every field is non-zero: a bit flipped inside a zero float is a denormal, and this test must
+    // not depend on how denormals compare.
+    a.ambient  = { 0.1f, 0.2f, 0.3f, 1.0f };
+    a.diffuse  = { 0.4f, 0.5f, 0.6f, 1.0f };
+    a.specular = { 0.7f, 0.8f, 0.9f, 0.5f };
+    a.emissive = { 0.05f, 0.15f, 0.25f, 0.35f };
+    a.shininess          = 32.0f;
+    a.alpha_mask         = 1.0f;
+    a.alpha_mask_cutoff  = 0.5f;
+
+    VineMaterialBlock b = a;
+    EXPECT_TRUE(a == b);
+
+    auto* bytes = reinterpret_cast<unsigned char*>(&b);
+    for (std::size_t offset = 0; offset < member_bytes; ++offset) {
+        bytes[offset] ^= 0x01u;
+        EXPECT_TRUE(a != b) << "a change at byte " << offset << " must be visible to the comparison";
+        bytes[offset] ^= 0x01u;
+    }
+    EXPECT_TRUE(a == b) << "the scan must leave the block as it found it";
+}
+
 TEST(ShaderAbiTest, TheShaderBlockNamesAreTheL1Names)
 {
     // The L1 name and the GLSL block type are the same string, so the contract and the

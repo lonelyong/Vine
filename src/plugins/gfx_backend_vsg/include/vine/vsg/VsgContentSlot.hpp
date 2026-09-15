@@ -14,11 +14,16 @@
  * change without orphaning its retained content, and two passes never alias. A direct driver
  * that skips the pass protocol falls back to the historical (camera, order) identity.
  *
- * @ref VsgContentSlotRequest carries everything one draw call announces — it is what
- * `VsgRenderer::render` fills from the pass scope and what the slot code consumes — and it is
- * namespace-scope on purpose: the request is read by helpers too, which could not name it
- * while it was a private nested type (§37 had to pass eight loose fields around because of
- * that).
+ * What a draw call announces reaches this code in two pieces, and the split is the point:
+ *
+ *  - the pass SCOPE attributes (target, order, depth policy, presenting role) are read from the
+ *    session's own request (@ref VsgPassRequest, which the renderer filled from the scope), so there is
+ *    ONE description of a pass' attributes rather than a second copy built per draw call;
+ *  - the PER-DRAW-CALL state (the command stream, the announced lights, the taken sub-viewport) arrives
+ *    as arguments, because it is consumed by the call instead of remembered.
+ *
+ * What a slot REMEMBERS it keeps as one value (@ref PassAttributes), so "what was applied" cannot drift
+ * from "what was compared".
  */
 
 #include <vine/vsg/vsg_global.hpp>
@@ -42,20 +47,6 @@
 
 V_VSG_NS_BEGIN
 
-/// Everything one content-slot draw announces (see renderContentSlot).
-struct VsgContentSlotRequest
-{
-    vine::graphics::RenderTarget*                  target   = nullptr; ///< Target key (nullptr = window).
-    vine::raw_ptr<const vine::graphics::Camera>    camera   = nullptr; ///< Camera identifying the slot.
-    const std::vector<vine::graphics::RenderCommand>* commands = nullptr; ///< Commands to reconcile (borrowed).
-    const std::vector<const vine::graphics::Light*>* lights  = nullptr; ///< Content lights (borrowed, may be empty).
-    vine::graphics::DepthMode                      depth_mode = vine::graphics::DepthMode::TestAndWrite; ///< The pass' depth policy.
-    bool                                           presenting = false; ///< True for the full-target pass that cleared.
-    bool                                           clear_depth = false; ///< The pass' own depth-clear request (a mixed target clears it per pass).
-    int                                            order      = 0;     ///< The pass' explicit pipeline order (stacking).
-    std::optional<vine::graphics::Viewport>        viewport;  ///< Sub-viewport, or nullopt for the full target.
-};
-
 namespace detail
 {
 
@@ -71,10 +62,16 @@ namespace detail
  * @param persistent  Cross-session services the slot needs (its camera bridge).
  * @param diagnostics Route a slot that cannot be built is reported on.
  * @param key         Slot key (the owning pass, or the historical fallback identity).
- * @param request     What the draw call announced (target, camera, depth policy, order, role).
+ * @param target      Target the pass draws into (nullptr = the window).
+ * @param camera      Camera the slot renders through.
+ *
+ * Its pass attributes are seeded from the session's request (@ref VsgPassRequest::attributes): a slot is
+ * created by a draw call of the pass it belongs to, so "what the pass announced" is what the slot applies
+ * first.
  */
 void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent, const VsgDiagnostics& diagnostics,
-                      const SlotKey& key, const VsgContentSlotRequest& request);
+                      const SlotKey& key, vine::graphics::RenderTarget* target,
+                      vine::raw_ptr<const vine::graphics::Camera> camera);
 
 /** @brief Renders one content slot (a View of a target's render graph).
  *
@@ -89,10 +86,16 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
  * @param state       Session whose target table holds the slot.
  * @param persistent  Cross-session services the slot sync needs.
  * @param diagnostics Route a failed content sync is reported on.
- * @param request     Draw request (see VsgContentSlotRequest).
+ * @param camera      Camera this draw call renders through.
+ * @param commands    Commands to reconcile (the call's own stream).
+ * @param lights      Lights the pass announced for this call (may be empty).
+ * @param viewport    Sub-viewport taken for this call, or empty for the full target.
  */
 void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent, const VsgDiagnostics& diagnostics,
-                       const VsgContentSlotRequest& request);
+                       vine::raw_ptr<const vine::graphics::Camera> camera,
+                       const std::vector<vine::graphics::RenderCommand>& commands,
+                       const std::vector<const vine::graphics::Light*>& lights,
+                       const std::optional<vine::graphics::Viewport>& viewport);
 
 /** @brief Places one slot view in a target's graph at its pass' explicit pipeline order.
  *

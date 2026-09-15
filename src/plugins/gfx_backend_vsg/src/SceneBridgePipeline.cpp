@@ -1,6 +1,5 @@
 ﻿#include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgBackendUtility.hpp>
-#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -270,12 +269,12 @@ bool isPerDrawSetLayout(const ::vsg::DescriptorSetLayout& layout)
 
 void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
                                       ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout,
-                                      VsgDrawBlockPool::Slot draw_slot)
+                                      const VsgDrawBlockPool::Lease& draw_slot)
 {
-    // Nothing to bind when the drawable has no slot, the bridge has no pool, or the variant's
-    // set is not the per-draw one (the built-in set declares its own set 1, and a user program's
-    // set may have fewer sets than that).
-    if (!draw_slot.valid() || draw_block_pool_ == nullptr || pipeline_layout == nullptr ||
+    // Nothing to bind when the drawable holds no slot, or the variant's set is not the per-draw one
+    // (the built-in set declares its own set 1, and a user program's set may have fewer sets than
+    // that). A valid lease IS the pool, so the bridge's own pointer needs no separate check.
+    if (!draw_slot.valid() || pipeline_layout == nullptr ||
         pipeline_layout->setLayouts.size() < 2u || pipeline_layout->setLayouts[1] == nullptr ||
         !isPerDrawSetLayout(*pipeline_layout->setLayouts[1])) {
         return;
@@ -283,12 +282,12 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // The set is per (pool chunk, layout) and the BIND is per drawable: this is where the
     // drawable's slot becomes a dynamic offset, so every drawable sharing the chunk reuses one
     // descriptor set while reading its own block.
-    auto descriptor_set = draw_block_pool_->descriptorSet(draw_slot, pipeline_layout->setLayouts[1]);
+    auto descriptor_set = draw_slot.descriptorSet(pipeline_layout->setLayouts[1]);
     if (descriptor_set == nullptr) {
         return;
     }
     auto bind = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1u, descriptor_set);
-    bind->dynamicOffsets.push_back(draw_block_pool_->offset(draw_slot));
+    bind->dynamicOffsets.push_back(draw_slot.offset());
     state_group.stateCommands.push_back(bind);
 }
 
@@ -415,7 +414,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
     const std::vector<VertexChannel>& extra_channels,
     const DerivedChannels* derived,
-    VsgDrawBlockPool::Slot draw_slot)
+    const VsgDrawBlockPool::Lease& draw_slot)
 {
     if (data == nullptr) {
         return ::vsg::ref_ptr<::vsg::StateGroup>();
@@ -762,7 +761,6 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         entry->layout                = layout;
         entry->state_commands        = stateGroup->stateCommands;
         entry->prototype_array_state = stateGroup->prototypeArrayState;
-        entry->base_binding          = config->baseAttributeBinding;
         entry->pipeline_layout       = config->layout;
         // The entry owns BOTH key objects (see OwnedPairCacheEntry): a released
         // program or material must not be replaceable at the same address while

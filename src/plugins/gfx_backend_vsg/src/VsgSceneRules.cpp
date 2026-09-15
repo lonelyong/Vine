@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 
@@ -11,6 +12,7 @@
 #include <vsg/state/ColorBlendState.h>
 #include <vsg/utils/ShaderSet.h>
 
+#include <vine/imaging/Image.hpp>
 #include <vine/vsg/VsgUtils.hpp>
 
 V_VSG_NS_BEGIN
@@ -235,8 +237,55 @@ TextureReject classifyTexture(const vine::graphics::Texture* texture) noexcept
     if (vkFormatFor(texture->format()) == VK_FORMAT_UNDEFINED) {
         return TextureReject::UnsupportedFormat;
     }
+    // Last, because it is the only rule that touches the pixels: a texture that is still being filled is a
+    // normal intermediate state, while one whose data already disagrees with its extent is a caller's bug
+    // that the upload would otherwise act on (a copy past the staging buffer — see the rule's own notes).
+    if (!textureDataMatchesExtent(*texture)) {
+        return TextureReject::Inconsistent;
+    }
 
     return TextureReject::Ok;
+}
+
+std::uint32_t levelExtent(int size, std::size_t level) noexcept
+{
+    // A level beyond the bit width has collapsed to 1 already; shifting by that much would be undefined.
+    if (level >= 32u) {
+        return 1u;
+    }
+
+    const auto shifted = static_cast<unsigned>(size) >> level;
+    return (shifted == 0u) ? 1u : shifted;
+}
+
+bool textureDataMatchesExtent(const vine::graphics::Texture& texture) noexcept
+{
+    const auto bytes_per_texel = static_cast<std::size_t>(vine::imaging::bytesPerPixel(texture.format()));
+    const auto level_count     = static_cast<std::size_t>(texture.mipCount());
+    const auto layer_count     = static_cast<std::size_t>(texture.layerCount());
+    if (bytes_per_texel == 0u || level_count == 0u || layer_count == 0u) {
+        return false;
+    }
+    // The offsets are the running sum of the levels' sizes, and vsg carries one in a 32-bit field (see the
+    // declaration): the check that the chain fits is what keeps that field from wrapping.
+    constexpr std::size_t kMaxOffset = static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max());
+    std::size_t           offset     = 0u;
+    for (std::size_t level = 0; level < level_count; ++level) {
+        const auto width  = static_cast<std::size_t>(levelExtent(texture.width(), level));
+        const auto height = static_cast<std::size_t>(levelExtent(texture.height(), level));
+        const auto span   = bytes_per_texel * width * height; // one layer of this level
+        for (std::size_t layer = 0; layer < layer_count; ++layer) {
+            const auto* source = texture.layer(static_cast<int>(layer));
+            if (source == nullptr || source->mipData(static_cast<int>(level)).size() != span) {
+                return false;
+            }
+        }
+        offset += span * layer_count;
+        if (offset > kMaxOffset) {
+            return false;
+        }
+    }
+    return true;
 }
 
 float anisotropyFor(float device_limit) noexcept
@@ -262,6 +311,13 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
         case TextureReject::UnsupportedFormat:
             return formatDiagnostic(u8"texture pixel layout '%s' has no Vulkan format; "
                                     u8"the material renders untextured",
+                                    vine::imaging::formatName(texture.format()));
+
+        case TextureReject::Inconsistent:
+            return formatDiagnostic(u8"texture pixel data does not account for its description "
+                                    u8"(%dx%d, %d level(s), %d layer(s), layout '%s'); "
+                                    u8"the material renders untextured",
+                                    texture.width(), texture.height(), texture.mipCount(), texture.layerCount(),
                                     vine::imaging::formatName(texture.format()));
 
         // Absent is the normal "this material has no texture" case and is not a diagnostic; Ok is never

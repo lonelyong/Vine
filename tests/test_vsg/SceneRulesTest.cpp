@@ -837,6 +837,60 @@ TEST(VsgSceneRulesTest, ACubeMapIsUploadedAsSixLayers)
     EXPECT_EQ(classifyTexture(half_cube.get()), TextureReject::Incomplete);
 }
 
+TEST(VsgSceneRulesTest, TheExtentRuleAccountsForEveryLevelAndLayer)
+{
+    using vine::vsg::detail::classifyTexture;
+    using vine::vsg::detail::textureDataMatchesExtent;
+    using vine::vsg::detail::TextureReject;
+
+    // A chain, not a single level: the rule sizes each level from ITS extent, so a texture whose image
+    // carries three levels has to be measured level by level (level 1 is 4x4 of an 8x8 base, level 2 is 2x2).
+    auto texture = vine::intrusive_ptr<vine::graphics::Texture2D>(
+        new vine::graphics::Texture2D(8, 8, vine::imaging::PixelFormat::Rgba8Unorm, 3));
+    texture->setImage(vine::intrusive_ptr<const vine::imaging::Image>(
+        new vine::imaging::Image(8, 8, vine::imaging::PixelFormat::Rgba8Unorm, 3)));
+
+    EXPECT_TRUE(textureDataMatchesExtent(*texture));
+    EXPECT_EQ(classifyTexture(texture.get()), TextureReject::Ok);
+
+    // Six layers, each level of each face: the same rule has to walk the layers too, which is what a cube
+    // map with mips exercises.
+    auto cube = vine::intrusive_ptr<vine::graphics::CubeMap>(
+        new vine::graphics::CubeMap(4, vine::imaging::PixelFormat::Rgba8Unorm, 2));
+    for (int face = 0; face < cube->faceCount(); ++face) {
+        cube->setSource(face, vine::intrusive_ptr<const vine::imaging::Image>(
+                                   new vine::imaging::Image(4, 4, vine::imaging::PixelFormat::Rgba8Unorm, 2)));
+    }
+    EXPECT_TRUE(textureDataMatchesExtent(*cube));
+    EXPECT_EQ(classifyTexture(cube.get()), TextureReject::Ok);
+}
+
+TEST(VsgSceneRulesTest, AnUnfilledLayerIsRefusedInsteadOfBeingDereferenced)
+{
+    using vine::vsg::detail::classifyTexture;
+    using vine::vsg::detail::textureDataMatchesExtent;
+    using vine::vsg::detail::TextureReject;
+
+    // An empty face is the ordinary "still being filled" state, and the two rules have to agree about it:
+    // classification says Incomplete (what the caller can act on), and the extent rule says "no" WITHOUT
+    // reading a null layer — the guard the uploader relies on before it copies bytes by the extent.
+    auto unfilled = vine::intrusive_ptr<vine::graphics::Texture2D>(
+        new vine::graphics::Texture2D(4, 4, vine::imaging::PixelFormat::Rgba8Unorm));
+
+    EXPECT_FALSE(textureDataMatchesExtent(*unfilled));
+    EXPECT_EQ(classifyTexture(unfilled.get()), TextureReject::Incomplete);
+
+    // A cube with one face missing is the same answer: the rule walks every layer, so a single empty one is
+    // enough to refuse (and the uploader never stages a partly filled cube).
+    auto half_cube = vine::intrusive_ptr<vine::graphics::CubeMap>(
+        new vine::graphics::CubeMap(4, vine::imaging::PixelFormat::Rgba8Unorm));
+    half_cube->setSource(0, vine::intrusive_ptr<const vine::imaging::Image>(
+                                new vine::imaging::Image(4, 4, vine::imaging::PixelFormat::Rgba8Unorm)));
+
+    EXPECT_FALSE(textureDataMatchesExtent(*half_cube));
+    EXPECT_EQ(classifyTexture(half_cube.get()), TextureReject::Incomplete);
+}
+
 TEST(VsgSceneRulesTest, AnisotropyIsClampedToWhatTheDeviceOffers)
 {
     using vine::vsg::detail::anisotropyFor;
@@ -874,13 +928,16 @@ TEST(VsgSceneRulesTest, EachRefusalSaysWhichCaseFired)
 
     const auto incomplete = textureRejectMessage(TextureReject::Incomplete, *unfilled);
     const auto format = textureRejectMessage(TextureReject::UnsupportedFormat, *three_channel);
+    const auto inconsistent = textureRejectMessage(TextureReject::Inconsistent, *three_channel);
 
     EXPECT_FALSE(incomplete.empty());
     EXPECT_FALSE(format.empty());
+    EXPECT_FALSE(inconsistent.empty());
 
     // One format string per branch: a shared message would leave a caller unable to tell an unfinished
     // texture from one the backend cannot represent at all.
     EXPECT_NE(incomplete, format);
+    EXPECT_NE(inconsistent, format);
 
     // Neither is a diagnostic: absence is the ordinary "this material has no texture", and Ok is never
     // reported at all.

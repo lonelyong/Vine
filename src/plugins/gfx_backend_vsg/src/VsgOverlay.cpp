@@ -636,7 +636,6 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     // program pass that carries no lights still shades its albedo instead of
     // rendering black.
     std::vector<const vine::graphics::Light*> lights = state.request.takeLights();
-    ++state.request.draws;
     LightPushBlock block{};
     fillLightPushBlock(camera, lights, block);
     if (slot.push_data != nullptr && slot.push_data->dataSize() >= sizeof(block)) {

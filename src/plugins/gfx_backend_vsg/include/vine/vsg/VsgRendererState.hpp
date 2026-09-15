@@ -40,7 +40,6 @@
 #include <memory>
 #include <optional>
 #include <set>
-#include <unordered_set>
 #include <vector>
 
 #include <vsg/app/CommandGraph.h>
@@ -120,7 +119,7 @@ struct VsgPassRequest
     bool clear_depth = true;
     /// Colour the clear() call above asked for. Only consumed by an
     /// off-screen pass (the window clears from the viewer's own record).
-    ::vsg::vec4 clear_color{ 0.2f, 0.2f, 0.2f, 1.0f };
+    ::vsg::vec4 clear_color{ kDefaultClearColor };
     /// Sub-viewport announced by setViewport(), per draw call.
     std::optional<vine::graphics::Viewport> viewport;
     /// Lights announced by setLights(), per draw call. Empty keeps the
@@ -131,8 +130,6 @@ struct VsgPassRequest
     // A content slot reads them when it builds/updates its state: the shadow map is an input, and
     // the slot is what binds it (see VsgContentSlot).
     std::vector<vine::raw_ptr<vine::graphics::RenderTarget>> inputs;
-    /// Draw calls (render / drawScreen*) this request served (diagnostic).
-    std::size_t draws = 0;
     /// The announced target was released while it was still announced
     /// (RenderBackend::releaseRenderTarget). The queued request is the direct
     /// driver's to manage and survives frames (RenderBackend::beginPass), so this
@@ -181,6 +178,18 @@ struct VsgPassRequest
         return queued;
     }
 
+    /** @brief Gets the scope attributes as the one value a content slot remembers.
+     *
+     * The single conversion from "what the pass announced" to "what a slot applies", so the two cannot
+     * disagree about which attributes exist (see PassAttributes).
+     *
+     * @return The depth policy, stacking order and presenting role of this request.
+     */
+    [[nodiscard]] PassAttributes attributes() const noexcept
+    {
+        return PassAttributes{ depth_mode, order, presenting };
+    }
+
     /** @brief Consumes the queued lights.
      *
      * @return The lights announced for the next draw call (empty = keep).
@@ -212,7 +221,12 @@ struct VsgRendererState {
     // the slots those blocks live in are shared by the whole session, so a scene's drawables own
     // slots in a handful of buffers instead of one buffer and one descriptor set each.
     // Session-scoped because the slots' memory belongs to the session's device.
-    std::unique_ptr<VsgDrawBlockPool> draw_block_pool;
+    // SHARED ownership: the leases the pool hands out (VsgDrawBlockPool::Lease) hold it, so a bridge that
+    // outlives this session still returns its slots into live memory instead of writing into a destroyed
+    // pool — the state is replaced wholesale by shutdown(), whose member assignment order would otherwise
+    // have to keep the pool alive past the target table (measured: it did not, and the corruption was a
+    // crash at exit in one run out of three).
+    std::shared_ptr<VsgDrawBlockPool> draw_block_pool;
     // The frame's ownership picture: the retained shares of every cache that sweeps this frame.
     // Built at the frame's start and handed to each sync (SceneBridge::syncRenderCommands), then
     // rebuilt just before the frame's end-of-frame sweeps (VsgRenderer::releaseAbandonedContent),
@@ -251,6 +265,21 @@ struct VsgRendererState {
     // Passes announced since the last submitted frame (see
     // retireInactivePassSlots): a pass that did not execute this frame is
     // retired (its view detached) rather than left drawing stale content.
+    //
+    // Why a set of pass pointers next to the slots' own SlotKey::owner — asked
+    // once, so the answer is written down: they are two DIFFERENT facts, not two
+    // copies of one. `SlotKey::owner` is persistent identity ("which pass owns
+    // this slot"); this set is a per-frame EVENT ("which passes were announced
+    // this frame"). beginPass() knows the pass but not yet the target, camera or
+    // order — those are announced AFTER it — so the slot a pass will end up in
+    // cannot be resolved at announcement time, which is the only moment the event
+    // happens. Its two readers both go through slots (retireInactivePassSlots
+    // asks "was this slot's owner announced?", depthStillPromoted asks the same
+    // about an earlier pass of one target), so it is a proxy for a slot fact, and
+    // the tempting alternative — a bool on each slot, set when the slot is USED —
+    // would not be the same question: it would read "drew this frame" where this
+    // asks "was announced this frame", a semantic change hiding inside a
+    // refactor. See .ai/design/vsg-pass-lifecycle.md §63 for the survey.
     std::set<const vine::graphics::RenderPass*> passes_active_this_frame;
     // STICKY: set once any pass is announced, i.e. this backend is being driven
     // through the engine's pass protocol. It is never cleared, so that a frame

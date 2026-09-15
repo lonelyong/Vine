@@ -80,11 +80,21 @@ SceneBridge::SceneBridge()
     shared_objects_ = ::vsg::SharedObjects::create();
 }
 
-// Deliberately default: the destructor must NOT touch the injected caches, and it must not release
-// the draw slots either. The pool outlives this bridge, and the slots this bridge dropped are on the
-// POOL's retired queue (see VsgDrawBlockPool::retire), so there is nothing to drain here — and
-// releasing them now would hand a slot out while a frame in flight may still bind its offset.
-SceneBridge::~SceneBridge() = default;
+// The destructor drains the retained cache so that every item leaves while the retire ring still
+// exists (see the body), and deliberately touches nothing else: the injected caches are the
+// session's, and each item's per-draw slot goes back to the pool through its lease, retired for the
+// frames that could still bind its offset (see VsgDrawBlockPool::Lease).
+SceneBridge::~SceneBridge()
+{
+    // The items are dropped HERE rather than by the member destructors: an item parks its retained
+    // subtree on the retire ring when it goes (Item::~Item), and the ring is declared AFTER this
+    // cache — the member destructors run in reverse order, so they would park into a destroyed ring.
+    // Emptying the cache in the body makes every item leave while the ring is still there; whatever
+    // they park is then released with the bridge, which is safe at this point: nothing is in flight
+    // (an explicit teardown path waits for the device first, and a bridge that goes with its session
+    // goes with the device).
+    cache_.clear();
+}
 
 void SceneBridge::setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet)
 {
@@ -175,32 +185,49 @@ void SceneBridge::setDrawBlockPool(vine::raw_ptr<VsgDrawBlockPool> pool)
     draw_block_pool_ = pool;
 }
 
-VsgDrawBlockPool* SceneBridge::drawBlockPool()
-{
-    return draw_block_pool_;
-}
-
-void SceneBridge::releaseDrawSlot(VsgDrawBlockPool::Slot slot)
-{
-    if (draw_block_pool_ == nullptr || !slot.valid()) {
-        return;
-    }
-    // The pool's RETIRED queue, not a list here: the frames in flight may still bind this slot's
-    // offset, so it must not be handed to another drawable until they are done -- and that
-    // countdown has to outlive this bridge, because a teardown destroys the bridge together with
-    // the content slot that owned it (see VsgDrawBlockPool::retire, which is where the queue went
-    // after the per-bridge one was found to leak the session's capacity).
-    draw_block_pool_->retire(slot);
-}
-
 VsgTextureCache& SceneBridge::textureCache()
 {
     return texture_cache_ != nullptr ? *texture_cache_ : default_texture_cache_;
 }
 
 
-/** @brief Retained vsg node for one drawn geometry. */
+/** @brief Retained vsg node for one drawn geometry.
+ *
+ * An item owns the GPU state a dropped drawable must not destroy outright: its per-draw slot (through
+ * the LEASE, which retires it back to the pool) and its retained subtree (parked on the bridge's
+ * retire ring by the destructor). Both are consequences of BEING DROPPED rather than steps for the
+ * code path that does the dropping, so no erase site can forget one — which is exactly what the one
+ * path that did (a state wrapper that failed to build) used to do: it leaked a per-draw slot on every
+ * frame it failed in, and destroyed a subtree a submitted command buffer could still name.
+ */
 struct SceneBridge::Item {
+    /** @brief Creates an item whose drops go through @p bridge (its retire ring).
+     *
+     * @param bridge Bridge the item belongs to (it must outlive the item).
+     */
+    explicit Item(SceneBridge& bridge) noexcept :
+        owner(bridge)
+    {
+    }
+
+    /** @brief Parks the retained subtree and returns the per-draw slot.
+     *
+     * A dropped subtree may still be named by a submitted command buffer, so it is PARKED
+     * (SceneBridge::retireNode) instead of destroyed — the rule the data and state rebuild paths
+     * already followed, applied here so that every way out of the cache follows it. Parking
+     * @ref transform covers the whole subtree (the state wrapper and the data node are its
+     * descendants); a data node that never reached the graph needs no park, because nothing ever
+     * recorded it.
+     */
+    ~Item()
+    {
+        if (transform != nullptr) {
+            owner.retireNode(std::move(transform));
+        }
+    }
+
+    SceneBridge& owner;
+
     // Rejection record: true when this geometry's data could not be built at
     // @ref rejected_revision (malformed attributes / out-of-range indices).
     // Kept so the diagnostic prints once per revision instead of every frame,
@@ -208,6 +235,14 @@ struct SceneBridge::Item {
     // re-evaluated on its next appearance.
     bool rejected = false;
     std::uint64_t rejected_revision = 0;
+    // State-build record: true when the LAST attempt to build this drawable's state wrapper failed for the
+    // identity stored above (a program the backend cannot compile, a pipeline it cannot create). Like the
+    // rejection record, it is what keeps such a drawable from being re-attempted every frame: the attempt is
+    // skipped until one of its inputs changes, and the next attempt clears it. The item itself is KEPT (with
+    // its uploaded data node and its per-draw slot), so a drawable the backend cannot build costs a lookup
+    // per frame instead of an item churn — and no longer depends on the covered cases happening not to draw
+    // the failing drawable again, which is the only reason the erasure this replaced was invisible.
+    bool state_failed = false;
     // Last translated identity, used to detect geometry/material/state changes.
     // The material and the program are HELD, not merely compared: the address is
     // the identity here, so a released material or program could be replaced at
@@ -247,11 +282,12 @@ struct SceneBridge::Item {
     // rebuilds so a material/state/program edit never re-materialises or
     // re-uploads the mesh data.
     ::vsg::ref_ptr<::vsg::Commands> data_node;
-    // This drawable's slot in the session's per-draw block pool (see setDrawBlockPool), or an
-    // invalid slot when the bridge has no pool or the reserve failed. The slot's VALUES are
-    // what a translucent drawable costs per frame — four floats written in place instead of a
-    // pass over its vertices — and the slot's OFFSET is what its state wrapper binds.
-    VsgDrawBlockPool::Slot draw_slot;
+    // This drawable's LEASE on a session per-draw block slot (see setDrawBlockPool), or an empty one
+    // when the bridge has no pool or the reservation failed. The slot's VALUES are what a translucent
+    // drawable costs per frame — four floats written in place instead of a pass over its vertices —
+    // and the slot's OFFSET is what its state wrapper binds. The lease is what hands the slot back
+    // when this item goes, so no drop path releases it by hand.
+    VsgDrawBlockPool::Lease draw_slot;
     // Identity of the streams the retained data node was built from, per vertex channel and for the index
     // stream (see ChannelKey). A data revision whose VERTEX channels are all unchanged needs only the index
     // stream replaced: a rebuild would re-materialise — and re-upload — every channel with it.
@@ -464,14 +500,10 @@ void SceneBridge::advanceRetireRing()
 
 void SceneBridge::clearCache()
 {
-    // Every retained item goes, so every per-draw slot it held goes with it (deferred: the
-    // wrappers that bound those offsets are being dropped in the same breath).
-    for (auto& entry : cache_) {
-        if (Item* item = entry.second.payload().get()) {
-            releaseDrawSlot(item->draw_slot);
-            item->draw_slot = {};
-        }
-    }
+    // Every retained item goes, so every per-draw slot it held goes with it: the slot's lease retires
+    // it back to the pool, and the item's destructor parks its retained subtree (see Item), as the
+    // item is destroyed. Neither is spelled out here, so this path cannot disagree with the live ones
+    // about what dropping a drawable costs.
     cache_.clear();
     // The candidate lists describe that cache (the keys it holds), so they go with it: a list left
     // behind would keep raw geometry addresses alive-looking for a cache that no longer has them.
@@ -518,6 +550,10 @@ void SceneBridge::invalidateState()
         // Force the per-layout rebuild path too: the channel set tracked by the
         // dropped wrapper is meaningless once the wrapper itself is gone.
         item->state_channels.clear();
+        // And re-arm the build: this call exists to say "the wrappers were built
+        // against something that is no longer true", so a recorded failure (a set
+        // or a pipeline that could not be built) must not suppress the new attempt.
+        item->state_failed = false;
     }
 }
 
@@ -550,7 +586,7 @@ bool SceneBridge::syncRenderCommands(
         Item* item = nullptr;
         auto it = cache_.find(geometry);
         if (it == cache_.end()) {
-            auto entry = std::make_unique<Item>();
+            auto entry = std::make_unique<Item>(*this);
             item = entry.get();
             // The lookup key is the geometry as given, while the ENTRY holds the
             // owning reference that keeps that address unique (OwnedCacheEntry).
@@ -568,7 +604,7 @@ bool SceneBridge::syncRenderCommands(
             // shader would scale the fragment alpha by 0 and the drawable would silently
             // vanish), so it is reported and the drawable skipped.
             if (forward_draw_block_ && !item->draw_slot.valid() && draw_block_pool_ != nullptr) {
-                item->draw_slot = draw_block_pool_->reserve();
+                item->draw_slot = draw_block_pool_->acquire();
                 if (!item->draw_slot.valid()) {
                     report(vine::graphics::DiagnosticSeverity::Error,
                            vine::graphics::DiagnosticCategory::ContentSkipped,
@@ -615,21 +651,34 @@ bool SceneBridge::syncRenderCommands(
         const vine::graphics::Texture* const texture =
             cmd.material.get() != nullptr ? cmd.material.get()->texture() : nullptr;
         const std::uint64_t texture_revision = texture != nullptr ? texture->revision() : 0u;
+        // "No data yet" is a property of the DATA node, not of the transform. A drawable whose state could not
+        // be built keeps its data node and its per-draw slot but has no transform, so asking `!had_node` marked
+        // it dirty for ever: its whole mesh was re-materialised and re-uploaded on every frame it was drawn
+        // (measured on the self-test: 163 -> 160 builds per run, small because its covered failing drawables
+        // are drawn on a single frame — an application loop that keeps drawing one would pay it every frame).
+        // What decides a rebuild is the data IDENTITY below, the same rule the state attempt follows.
         const bool          data_dirty =
-            !had_node || item->revision != geometry->revision() ||
+            item->data_node == nullptr || item->revision != geometry->revision() ||
             item->topology != state.topology ||
             (has_loc2 && (item->program.get() == nullptr) != (cmd.program.get() == nullptr));
         // Opacity is a per-drawable VALUE, never a state input: it rides the draw block
         // on our forward set and the colour carrier's alpha on the built-in one, and
         // neither changes which vertex inputs the pipeline feeds. An opacity edit is
         // therefore always a value write, with no rebuild in between.
-        const bool state_dirty = !had_node || item->material.get() != cmd.material.get() ||
-                                 item->texture.get() != texture ||
-                                 item->texture_revision != texture_revision ||
-                                 item->render_state != state ||
-                                 item->program.get() != cmd.program.get() ||
-                                 item->program_revision != program_rev;
-        if (data_dirty || state_dirty) {
+        //
+        // The five inputs a wrapper is built from, kept apart from `state_dirty` below because "there is no
+        // wrapper yet" is not one of them (see the attempt rule).
+        const bool state_inputs_changed = item->material.get() != cmd.material.get() ||
+                                          item->texture.get() != texture ||
+                                          item->texture_revision != texture_revision ||
+                                          item->render_state != state ||
+                                          item->program.get() != cmd.program.get() ||
+                                          item->program_revision != program_rev;
+        const bool state_dirty = !had_node || state_inputs_changed;
+        // The identity block records what the retained nodes were built FOR, so it runs when one of those
+        // inputs changed — `!had_node` is not one of them, and a failing drawable neither has a transform nor
+        // new inputs (it keeps its data, its slot and its recorded failure until something real changes).
+        if (data_dirty || state_inputs_changed) {
             item->revision                = geometry->revision();
             item->topology                = state.topology;
             item->material                = cmd.material;
@@ -639,6 +688,12 @@ bool SceneBridge::syncRenderCommands(
             item->program                 = cmd.program;
             item->program_revision        = program_rev;
             changed                       = true;
+            if (data_dirty) {
+                // Fresh data is a fresh attempt: a failure recorded for the previous data says nothing about
+                // this one (the shape is part of what a variant can fail to be built for — a channel set is
+                // the obvious case, which state_channels_changed below also covers).
+                item->state_failed = false;
+            }
         }
 
         // A data rebuild may have changed the forwarded custom-channel SET
@@ -837,7 +892,15 @@ bool SceneBridge::syncRenderCommands(
         const ::vsg::dmat4 world       = detail::toVsg(cmd.modelMatrix);
         const bool        matrix_moved = !item->matrix_valid || item->last_matrix != world;
 
-        if (state_dirty || item->state_node == nullptr || state_channels_changed) {
+        // Whether this frame BUILT a new wrapper (as opposed to reusing the retained one): a new wrapper is a new
+        // subtree, so it has to reach the compile queue below whoever asked for the rebuild — an identity change,
+        // a channel-set change, or invalidateState() (which replaces the wrapper while changing none of its
+        // inputs at all: a pass whose commands all author their own depth gets a wrapper rebuilt by a depth-policy
+        // flip that then compares equal, and the queue used to stay empty for it — the D22 shape, an
+        // uncompiled pipeline about to be recorded).
+        bool state_rebuilt = false;
+        if (state_inputs_changed || state_channels_changed ||
+            (item->state_node == nullptr && !item->state_failed)) {
             // The replaced wrapper (and the pipeline it holds) may still be
             // referenced by an in-flight command buffer: park it.
             retireNode(std::move(item->state_node));
@@ -846,10 +909,22 @@ bool SceneBridge::syncRenderCommands(
                                                item->program.get(), item->extra_channels, &item->derived,
                                                item->draw_slot);
             if (item->state_node == nullptr) {
-                cache_.erase(it);
+                // Nothing will be drawn for this identity, but the item KEEPS what it holds: its uploaded data
+                // node and its per-draw slot. The attempt is recorded as failed so the next frame does not
+                // repeat it (see state_failed) — the same "one record per identity" rule the data-rejection
+                // path above follows. Measured on this build: the self-test takes this branch 4 times per run,
+                // and keeping the item changes neither its `buildGeometryData` total (163 either way) nor its
+                // evidence, because the covered failing drawables are not drawn again; what the record buys is
+                // that this no longer HAS to be true for the cost to stay flat.
+                item->state_failed = true;
                 continue;
             }
+            item->state_failed = false;
             item->state_channels = item->extra_channels;
+            state_rebuilt = true;
+        }
+        if (item->state_node == nullptr) {
+            continue; // still unbuildable for this identity: nothing to attach, nothing to draw
         }
 
         // Attach: the wrapper's child is the current data node and the
@@ -869,7 +944,7 @@ bool SceneBridge::syncRenderCommands(
             item->transform->addChild(item->state_node);
         }
 
-        if ((data_dirty || state_dirty) && created != nullptr) {
+        if ((data_dirty || state_dirty || state_rebuilt) && created != nullptr) {
             // New/rebuild subtrees must be GPU-compiled before recording.
             created->emplace_back(item->transform);
         }
@@ -879,7 +954,7 @@ bool SceneBridge::syncRenderCommands(
         // instead of a pass over its vertices, and the value is in the buffer the frame records FROM
         // rather than one frame behind it.
         if (item->draw_slot.valid() && item->last_slot_opacity != cmd.opacity) {
-            draw_block_pool_->writeOpacity(item->draw_slot, cmd.opacity);
+            item->draw_slot.writeOpacity(cmd.opacity);
             item->last_slot_opacity = cmd.opacity;
         }
 
@@ -976,14 +1051,10 @@ bool SceneBridge::releaseAbandonedGeometries(const OwnedShareCounts& shares)
             still_undrawn.push_back(geometry); // still held outside the caches
             continue;
         }
-        Item* item = it->second.payload().get();
-        // The retained subtree may still be referenced by an in-flight command buffer, so park it
-        // instead of destroying it here.
-        retireNode(std::move(item->transform));
-        // The draw block's slot goes with it — also deferred, because a frame in flight may still
-        // bind the offset this drawable's wrapper recorded.
-        releaseDrawSlot(item->draw_slot);
-        item->draw_slot = {};
+        // Dropping the item IS the release: its destructor parks the retained subtree (a submitted
+        // command buffer may still name its pipeline) and its slot lease hands the per-draw slot back
+        // to the pool's retired queue. Neither is spelled out here, so neither can be forgotten here
+        // (see Item).
         cache_.erase(it);
         changed = true;
     }

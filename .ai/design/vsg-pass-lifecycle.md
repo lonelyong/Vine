@@ -3068,3 +3068,227 @@ lavapipe + 验证层环境加上 `VINE_VSG_DEFERRED=1` 复跑（延迟光照那�
 `test_graphics` 185、全量 `ninja` 零 error/零 warning、`[selftest]` **45 行逐字节相同**、门禁 `RESULT: PASS`（VUID 0，默认 + `VINE_VSG_DEFERRED=1` + `VINE_VSG_OFFSCREEN_MULTISLOT=1`）且**两条新报告在生产路径零触发**、格式检查 0 suspicious。
 **SDK 文档同步**：`releaseRenderTarget()` 补"调用同时宣布宿主可以销毁该 target ⇒ 后端必须丢掉队列里的宣布，画不了要跳过并说明，不得静默改画到默认 framebuffer"；
 `DiagnosticCategory::PassProtocolViolation` 的说明从"nested / unpaired beginPass/endPass"扩到"宣布的状态没有生效"（含"宣布的 target 已被释放"）。
+
+## 60. 第七轮审查（2026-09-15）：丢一个 drawable 要做的三件事变成类型不变量
+
+**发现的缺陷（都会静默）**
+1. **块槽位每帧泄漏 + 绕过 park 铁律**：`SceneBridge::syncRenderCommands` 在
+   `buildStateGroup()` 返回 null 的分支里只 `cache_.erase(it); continue;` —— 既没
+   `releaseDrawSlot(item->draw_slot)` 也没 `retireNode(item->transform)`（对比
+   `releaseAbandonedGeometries()` 的正确收尾）。**触发面（探针量过，勿再按直觉写）**：
+   只有当该 slot 的 set 读 `vine_draw`（引擎自己的 forward set）而 `buildStateGroup()`
+   又失败时才会走这条路——比如一个**编译不出来的用户程序**（`runDiagnosticsPhase` 的
+   `bad_program` 每帧都走一次）。自检里那个"没有 stages 的程序"**根本不进这条路径**：
+   探针实测它 130 帧里 `chunks 1->1 reserved 0->0 retired 0->0`（内容槽压根没建起来
+   ⇒ 没有 item、没有租约）。量到的后果：把 `Lease::retireNow()` 的归还关掉后，整轮
+   自检结束时池是 **3 个 chunk / 142 槽 reserved / 0 retired**（= 历史上取过的槽一个
+   都没还；池只增不减，chunk 永不归还 ⇒ 每 64 个泄漏槽买一个设备 buffer）；同时旧代
+   码还会立即销毁可能仍被在飞命令缓冲引用的子树。
+2. **纹理上传越界写**：`VsgTextureCache` 的 `makeImage()` 按 extent 给每个 mip 层每
+   个 face 算出一段 staging 区间，却直接 `memcpy(..., level_bytes.size())` 而不校验
+   两者相等（`texture.layer()` 也不查空）。`Texture`/`Image` 今天各自校验（所以现状
+   不可达），但这里是**唯一把该假设变成一次拷贝**的地方，失效模式是内存破坏而不是画
+   错。
+3. **墓碑按指针值比较**：`VsgRenderTargetEntry::unusable_depth_source` 是裸指针，源被
+   释放后同地址新建的目标会被**永久误判为不可借**（D34 同类；目标表早已用 `owner` 修
+   掉这一半，墓碑漏了）。
+
+**修法（三件都做成"不可写错"的形状）**
+- 新增 `VsgDrawBlockPool::Lease`（`acquire()` 取得）：槽位的归还写在**析构**里，池的
+  `reserve/writeOpacity/offset/descriptorSet` 全部转私有 ⇒ "拿到槽而不记得还"在类型
+  上无法表达。池改为 `create()` 工厂 + `shared_ptr` 持有、`Lease` 持 `shared_ptr` ⇒
+  租约**保活池**，"池先于桥销毁"这一类顺序依赖消失（**这条是实测出来的**：改成
+  `shared_ptr` 之前，`shutdown()` 的 `state = VsgRendererState{}` 按成员声明序先销毁
+  `draw_block_pool`、后销毁 `targets`（桥），租约析构写进已释放内存 —— 3 次运行崩 1
+  次，`corrupted double-linked list`）。
+- `SceneBridge::Item` 变 RAII：析构时 park 自己的子树（`retireNode(transform)`，覆盖
+  整棵子树）并（经 `Lease`）归还槽位。三个 erase 点因此都缩成一行，
+  `releaseDrawSlot()`/`drawBlockPool()` 删除；`~SceneBridge` 显式 `cache_.clear()`
+  （退役环声明在 cache 之后，成员反序析构会 park 进已销毁的环）。
+- 纹理：新增 device-free 规则 `detail::textureDataMatchesExtent()`（`VsgSceneRules`，
+  与 `levelExtent` 一起从上传单元搬过来），`classifyTexture()` 增
+  `TextureReject::Inconsistent`（+ 消息分支），`makeImage()` 拷前再校验一次并把失败
+  原因经 out-param 回给 `getOrCreate()`（不再谎报 UnsupportedFormat）；顺带把谱系总
+  长 > 32 位 offset 的情形归到同一条规则（vsg 的 `uivec4` 只装 32 位）。
+- 墓碑改为自持 `intrusive_ptr<const RenderTarget>` ⇒ "换一个源就能清掉"是**事实**而
+  不是假设。
+
+**判据（判据 + 反证都跑过）**
+- `test_vsg` 265（+3）：`VsgSceneRulesTest.TheExtentRuleAccountsForEveryLevelAndLayer`
+  （8x8 三级链 + 4x4 两级 cube）、`AnUnfilledLayerIsRefusedInsteadOfBeingDereferenced`
+  （空 face 不得被解引用，且 `Incomplete` 仍先于 `Inconsistent`）、
+  `EachRefusalSaysWhichCaseFired` 加 Inconsistent 分支、
+  `TargetBookkeepingTest.AReleasedSourcesTombstoneOwnsItSoItsAddressCannotBeReused`
+  （源出作用域后 `useCount()==1` ⇒ 只有墓碑持有它）。
+- `vsg_backend_selftest` 新增池**形状断言**（`runProgramShadingPixelPhase`，只读计
+  数器、不加帧）：整轮跑下来池必须是 **1 chunk、live ≤ 2**（"会话只保留活着的槽，而
+  不是历史上取过的每一个"），理由是失败 drawable 每帧都被丢弃重建 ⇒ 任何丢弃分支没
+  归还都会按帧累积。**反证**：把 `Lease::retireNow()` 的归还注释掉 ⇒ 自检红
+  （`3 chunk(s) with 142 live slot(s) (142 reserved, 0 retired)`，exit 1）；恢复 ⇒
+  10/10 次干净、`[selftest]` 55 行**逐字节不变**。
+  **代价说明（量过）**：`VsgDrawBlockPool::Lease` 只在**创建/丢弃 drawable** 时动智
+  能指针 —— 稳态帧 **0 次**（`moves=0`，`acquire`/`release` 只在相位切换时增长：
+  360 帧=140 次、706 帧=224 次）；每次取用是 1 次 `shared_from_this()`（弱锁 + 1 原子
+  自增）、丢弃 1 次原子自减，**0 次分配**（控制块每会话一个）；内存代价是每个保留
+  drawable **+16 B**（`Lease` 24 B vs 旧 `Slot` 8 B）。
+- 门禁 `RESULT: PASS`（lavapipe + validation 层 0 VUID）、`test_graphics` 259、
+  `test_core` 82、全量构建 0 error、include/诊断格式门禁 0 发现。
+- **门禁自身也修了**：`gfx_lavapipe_check.sh` 判定不再经过管道（`if <script> | sed`
+  判的是 `sed` ⇒ 逐字节证据门**永远不会红**）+ `set -o pipefail` + 要求
+  `[selftest] done`（否则卡在最后一行证据后仍 PASS）+ `report()` 删掉恒真的
+  `grep -q ... || true` 分支；`vsg_selftest_evidence.sh` 固定帧数（基线含帧数，继承
+  `VINE_SELFTEST_FRAMES` 会假红）、加超时并检查退出码（跑不完不再当"差异"报）。
+
+**同批清理**（死代码/漂移，均为读码核实）：`VariantEntry::base_binding`（只写不
+读）、`VsgPassRequest::draws`（只自增）、`SceneBridge::drawBlockPool()`、
+`SlotKey::sampledTarget(source, attachment)`、自检 `readDepthOrFail()`、
+`VsgContentSlot.hpp` 那个**无定义的 5 参 `setupContentSlot` 声明**；`report()` /
+`baseShaderSet()` 的注释与实现相反、canonical location 写成 "0/1/2"（texcoord 是
+8）、`docs/data-flow.md` 仍列 `base_binding`；`VsgMeshResourceCache` 自写的 FNV 常
+数少一位 ⇒ 改用模块唯一的 `hashCombine/kHashSeed`；默认清屏色四处字面量收成
+`kDefaultClearColor`。
+
+## 61. 第八轮（2026-09-15）：失败 drawable 的两条"永远脏"判据
+
+**问题**：`buildStateGroup()` 返回 null 时旧代码 `cache_.erase(it)` —— 之后**次帧重建整个条目**。
+这不只丢掉"已经上传的 mesh + 每 drawable 的池槽位"，还让两条判据永久成立，因为失败条目**没有
+transform**：
+
+- `data_dirty` 的 `!had_node` ⇒ 次帧"数据脏" ⇒ `buildGeometryData()` 重跑（重打包顶点 + 重传）；
+- 状态尝试的 `item->state_node == nullptr` ⇒ 次帧再试一次 `buildStateGroup()`（编译/装配重跑）。
+
+这与本文件里**数据拒绝**那条规则不一致：被拒绝的网格有 `rejected` + `rejected_revision` 记录，
+**条目保留**、按 revision 去重、不重试。状态失败这一支当时没有对应的记录。
+
+**修法**（镜像数据拒绝的规则）：
+- `Item::state_failed`：本次身份下无法建状态就记一笔，尝试谓词改成
+  `state_inputs_changed || state_channels_changed || (state_node == nullptr && !state_failed)`；
+  成功清位、数据重建清位、`invalidateState()` 清位（它就是"推翻重来"的入口）。
+- `data_dirty` 的 `!had_node` → `item->data_node == nullptr`（"有没有数据"是**数据节点**的属性，
+  不是 transform 的），身份块随之改成按 `data_dirty || state_inputs_changed` 判断。
+- 失败时**保留条目**（数据节点 + 池槽位随条目留着），只 `continue` 不挂载、不绘制。
+
+**判据（实测，含反证）**
+- 新设备无关测试 `SceneBridgeDataRebuildTest.ADrawableThatCannotBeShadedKeepsItsMeshAndIsNotRetried`：
+  ①取走 shader set 后不绘制；②无变化的下一帧 `syncRenderCommands()` **返回 false** 且
+  `created` **为空**（不重试、不排队编译）；③把 set 交回来，挂到 root 下的数据节点**地址不变**
+  （mesh 从未被丢弃重建）。**反证**：把 `cache_.erase(it)` 加回去 ⇒ 两条断言同时红
+  （retry 报 changed、数据节点地址变了）。
+- 自检：`state_node == nullptr` 分支一轮触发 **4 次**；整轮 `buildGeometryData` 调用数
+  163（旧）→ **160**（新）——**覆盖里很小，因为被覆盖的失败 drawable 只被画一帧**；生产里
+  "失败 drawable 被持续绘制"才会按帧付费，本次改动是把那个**形状**去掉而不是消掉一个当下的大头。
+  证据 55 行**逐字节不变**、`test_vsg` 266、`test_graphics` 259、门禁 `RESULT: PASS`。
+- 代价（明说）：不可建的 drawable 现在会**留着**条目（数据节点 + 一个池槽位）直到宿主放弃该几何；
+  上界就是"宿主还持有它多久"，与任何保留几何同一规则。自检的池形状断言（1 chunk、live ≤ 2）仍成立。
+
+## 62. 第九轮（2026-09-15）：重建的状态包装没进编译队列（D22 家族的窄口）
+
+**问题**：增量编译队列（`created` → `state.pending_compile_views` → `incrementalCompileViews`）由
+`(data_dirty || state_dirty)` 驱动，而 `state_dirty = !had_node || state_inputs_changed`。于是
+**身份没变、但包装确实被重建**的那一类漏掉了：
+
+- `SceneBridge::invalidateState()` 就是"把包装换掉、身份不动"的入口；
+- 生产里的可达路径：一帧里所有命令**都自报 depth**（`depthExplicit`）⇒
+  `effectiveCommandState()` 不受 pass 策略影响 ⇒ 深度策略翻转时 `state_inputs_changed` 为假，
+  但 `VsgContentSlot` 仍然 `setContentDepthMode()` + `invalidateState()`（策略变了就重建）；
+- 结果：新子树没被排进增量编译 ⇒ 录制时管线可能还没有 `_implementation[viewID]` ——
+  **D22 的症状（未编译管线被录制）**，而"无 VUID"不会告诉你。
+
+**修法**：把"这一帧真的建了新包装"作为独立事实记下来（`state_rebuilt`），并让它进入编译队列的判据：
+`(data_dirty || state_dirty || state_rebuilt)`。它落在**重建发生的地方**，因此不再依赖
+"调用方恰好也改了身份"这种当下成立、将来会被打破的巧合。
+
+**判据（含反证）**
+- 新测试 `SceneBridgePipelineSharingTest.ARebuiltWrapperIsQueuedForCompileEvenWhenItsInputsAreUnchanged`：
+  命令自报 depth ⇒ 策略翻转 + `invalidateState()` 后必须 `created.size()==1`（并且
+  `pipelineVariantCount()` 不变 ⇒ 重建复用同一变体，不是新建管线）。
+- 另一条断言落在 `SceneBridgeDataRebuildTest.ADrawableThatCannotBeShadedKeepsItsMeshAndIsNotRetried`：
+  交回 shader set 后重建的子树必须进队列，且队列里就是被重挂的那个 drawable。
+- **反证**：把 `|| state_rebuilt` 去掉 ⇒ 上面两条断言同时红（`must be compiled ... whether or not an
+  input changed` / `the rebuilt subtree must reach the compile queue`）；恢复 ⇒ 绿。
+- `test_vsg` 267→**268**、`test_graphics` 259→**260**、全量构建 0 error、`[selftest]` 55 行**逐字节不变**、
+  门禁 `RESULT: PASS`。
+
+## 63. 第十轮（2026-09-15）：pass 属性的"三份权威"收敛成两份（+ 一个死字段）
+
+**问题（结构性的，不是缺陷）**：同一个"pass 宣告了什么"存在于三处：
+
+| 处 | 内容 | 问题 |
+|---|---|---|
+| `VsgPassRequest`（会话） | target / order / depth_mode / presenting / clear_depth / … | 权威，但在 `render()` 里被**逐字段抄**一遍 |
+| `VsgContentSlotRequest`（每次绘制） | 上面 5 项 + camera / commands / lights / viewport | 抄出来的副本；`clear_depth` **写了从没读过**（死字段） |
+| `ContentSlot`（槽位记下的） | `order` / `depth_mode` / `presenting` 三个散字段 | 每帧手写三处 `if` 逐一比较与回写——加第四个属性时"存了没应用/应用了没存"都不会有人发现 |
+
+**修法**
+- **删掉 `VsgContentSlotRequest`**：`renderContentSlot()` 只收"属于这次调用"的东西
+  （camera / commands / lights / 已取走的 viewport），pass 的**作用域**属性直接读会话请求
+  （`state.request`）⇒ 一个 pass 的属性只剩**一处描述**；`render()` 里那 3 个只为抄写存在的局部量
+  与死字段 `clear_depth` 一并消失。
+- **`PassAttributes`（order + depth_mode + presenting）** 作为槽位"已应用"的**单一值**
+  （`ContentSlot::applied`），带 `operator==`；每帧一次整值比较决定"要不要重新应用"，需要应用时按
+  字段分派动作，最后**整值回写**（`content.applied = wanted`）⇒ "存"与"比较"不可能漂移，将来加
+  属性只改这一个类型 + 它的应用分支。
+- 槽位创建时用 `VsgPassRequest::attributes()` 播种（唯一一处"从宣告转成已应用"的转换）。
+
+**判据**：`test_vsg` 267→**268**、`test_graphics` 259→**260**、全量构建 0 error、include/诊断格式门禁 0 发现、
+`[selftest]` **55 行逐字节不变**、门禁 `RESULT: PASS`（0 VUID）。行为中性由证据基线钉住
+——本改动**没有**新增测试：它没有改变任何可观察行为，只把"同一个事实的副本"减到一份
+（沿用 §37/§47 那条"先搬运、后加能力"的规矩）。
+
+**同类遗留（查过后不改）**：`VsgRendererState::passes_active_this_frame` 曾被我登记为"与 `SlotKey`
+各存一份身份"。2026-09-15 逐调用点查证：**它不是副本，是另一个事实** —— `SlotKey::owner` 是"这个槽属于
+哪个 pass"（持久身份），那个集合是"本帧宣告过哪些 pass"（逐帧事件）；`beginPass()` 只知道 pass，
+`setRenderTarget`/`setPassOrder` 在它**之后**才宣告，所以事件发生的那一刻算不出槽；它的两个读者
+（`retireInactivePassSlots` / `depthStillPromoted`）都**经槽**发问，因此它是槽事实的代理。
+"改成槽上的 bool" 会把语义从"本帧被宣告"偷换成"本帧被使用"——那是行为改动，不是搬运，所以不做；
+理由已写进该成员的声明注释。
+
+**仍遗留**：长函数（`syncRenderCommands` ~390 行、`buildGeometryData` ~386、`buildStateGroup` ~380）拆分未排期；
+`VsgRendererState::request` 与 `VsgPassRequest` 之外，`VsgRecordOrder` 里还有一处 per-frame `std::set`（小集合，
+与全仓 `RenderEngine` 的 `*_seen_this_frame_` 同风格，不单独改）。
+
+## 64. 第十一轮（2026-09-15）：四处长尾债务（比较、巨型 TU、文档漂移、一个"假副本"）
+
+四项都是"结构性的、不是缺陷"，判据统一：行为中性由 `[selftest]` 55 行逐字节 + 267/259 单测钉住。
+
+**64.1 材质块的比较搬回类型本身（原"假比较"）**
+`VsgMaterialManager::sameBlock()` 是后端手抄的一份字段清单：7 项里有 3 项（`emissive` /
+`alpha_mask` / `alpha_mask_cutoff`）后端从不写入，所以恒真；更要紧的是它与
+`VineMaterialBlock` 的**布局**是两份，PBR（`VineMaterialBlock` 扩 metallic/roughness，见
+`render-pipeline.md`）加成员时漏抄一项的失败模式是**静默的**：属性改了、GPU 不更新、日志什么都没有。
+改法：`ShaderAbi.hpp` 给块加**默认化** `operator==`（它就在布局旁边，`static_assert` 也在那儿），删掉
+`sameBlock()`，调用点写 `block == wanted`。
+判据：新增两个守卫测试（`ShaderAbiTest.MaterialBlockEqualityCoversItsWholeDeclaredLayout` =
+逐字节翻位都必被发现；`MaterialManagerTest.EveryMappedPropertyReachesTheBytesAndTriggersARefresh` =
+mapper 读的每个属性都进字节且触发一次刷新）。反证：把两处换回手写清单（各漏一项）⇒ 两条测试同时变红。
+`test_graphics` 259 → **260**，`test_vsg` 267 → **268**。
+
+**64.2 selftest 拆 TU + 像素取样按目标尺寸取名**
+`vsg_selftest/main.cpp` 6165 行、40 个相位挤在一个匿名命名空间里。拆成
+`selftest_support.hpp`（共享类型 + 每个相位的原型，**相位自己的文档随原型走**，于是这个头文件就是
+harness 的目录）、`selftest_support.cpp` + `selftest_protocol/pixels/textures/shadows.cpp`，
+`main.cpp` 只剩驱动（421 行）。同时把 93 处硬编码像素坐标（128,72 / 64,36 / 48,27 = 各自目标的中心，
+2,2 / 4,4 / 5,5 = 未绘制区的探针）换成 `PixelImage::centre()` / `corner(inset)`：读者不再需要
+反推"这个数字是谁的一半"，改目标尺寸时取样点自动跟随（此前改尺寸会静默采到隔壁像素）。
+顺带删掉死函数 `readDepthOrFail`（全仓只有定义、没有调用）。
+反证/判据：拆完 `[selftest]` **55 行逐字节不变**、exit 0、门禁 PASS；include 门禁 0 发现。
+
+**64.3 模块三份文档收敛为一事一处**
+模块文档的结构性漂移是"同一事实有两份、各自变老"。现在每份文档开头有**本文边界**表，声明主题归属：
+`gfx_backend_vsg.md`（导航与现状）、`docs/backend.md`（运行时行为 + **所有权表**）、
+`docs/data-flow.md`（L0/L1 契约 + **清理点表** + 历史 D 登记）、
+`.ai/memory/graphics-perf-backlog.md`（**唯一待办登记**）。随之删掉/改造的是重复副本与过期断言：
+`gfx_backend_vsg.md` §7/§11/§12（C6 前的三桶模型、PImpl 时代的所有权表、与 data-flow §10 逐字重复的
+清理表）、§15（第二份缺陷登记）、§9 的"`updateMaterial` 全仓无调用点"（早已由 `SceneBridge` 每帧调用）、
+§10 的"reverse-Z 待验证"（`RenderStateMapper.hpp` + 清屏值 0 + selftest 已实测）、§17 的"纹理/uv 未接线、
+自定义通道未消费"（都已支持）。`data-flow.md` §9.3 的标题"不引用 Vine 对象"与它自己下一段矛盾，改为
+"条目自持键对象"。
+
+**64.4 `passes_active_this_frame` 不是 `SlotKey` 的副本（查过后不改）**
+我此前把它登记为"身份存了两份"。逐调用点查证后结论相反：一个是持久身份（槽属于哪个 pass），
+一个是逐帧事件（本帧宣告过哪些 pass），而事件发生的时刻（`beginPass`）**算不出槽**（target/order 在其后
+才宣告），两个读者又都是经槽发问的。改成"槽上的 bool"会把语义从"被宣告"偷换成"被使用"——
+行为改动而非搬运，故不做；理由写进成员声明注释。
+
+**仍遗留**：三个 ~390 行长函数（`syncRenderCommands` / `buildGeometryData` / `buildStateGroup`）拆分；
+真机驱动验证仍只在 lavapipe。
