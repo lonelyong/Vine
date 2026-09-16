@@ -111,6 +111,24 @@
 > · **像素阶段顺手修的一个真坑**：它原来在“看到第一行 attach”时就定住句柄，钩子把窗口换掉后它采的是**已销毁的窗口** ⇒ 抽出 `latest_window_id()`（attach 与 move 两行都算、取最后一行），并且在钩子开启时**先等 move、采样前再取一次**。
 > · 判据：build 0/0、`test_vsg` 292 / `test_graphics` 272 / `test_core` 82、include 卫生 0、63 单元 agree、**证据 55 行逐字不变**、lavapipe PASS 0 VUID。
 
+> 2026-09-17 **H1 落地：Win32 分支从“只能审读”变成“有门禁”**
+> · 原来的样子是自检相位开头写着 `#if defined(_WIN32) … return true; // 本机不跑，靠 Windows 的 app 门禁` —— 也就是**在 Windows 上什么都不验**。现在两个平台共用一个相位体，平台差异只剩两处：`HostWindow`（X11：自己的 connection + `xcb_create_window`；Win32：自己的窗口类 + `AdjustWindowRect` + `ShowWindow(SW_SHOWNOACTIVATE)`，句柄就是指针）与 `setEnvironmentFlag()`（`setenv/unsetenv` 对 `_putenv_s`）。断言（像素、计数、窗口存活、三条拒绕路径）两平台一模一样地跑。
+> · **实测（Windows 11 + RTX 4060，Vulkan 1.4.351）**：自检 exit 0，`mapped=true`、`windows built 2 before, 2 after; 1 counted device stop(s); host windows intact; centre 34,6,2 before and after; a repeated handle kept the session: yes`、`refusals: 3 reported`；app 门禁（`VINE_RECREATE_SURFACE_MS=1200`）`attached to the host window 0xe083c (752x480, mapped=true)` → `moved to the host's new window 0xf083c (752x480); the device and its pipelines were kept`，`attached=1 / moved=1`、0 VUID。
+> · **变异**（`~VsgHostWindow()` 里的 `_window = {};` 注掉）⇒ 非 0 退出（后续 rebuild 拿着无效句柄：`GetClientRect(..) failed : 无效的窗口句柄` → `initialize FAILED` → `FAILED — the host surface move did not hold`）。
+> · **这一跑顺手挖出一个真缺陷（Win32 专有）**：vsg 的 `Win32_Window` **采纳**宿主窗口时也会走 `_initDrop()`，把 OLE 拖放目标注册到**宿主窗口**上；撤销只在基类析构里做，而那时本类已把 `_window` 置空（不置空就会被 `DestroyWindow`），**搬移后句柄更不是注册时那个** ⇒ 宿主窗口上留下一个指向已 `Release()` 的 `DropTarget` 的注册（拖上去就是 UAF），且**该窗口此后注册不上拖放**。判据很好抓：修复前同一窗口第二次被采纳时 `Warning: Win32_Window::_initDrop() RegisterDragDrop failed`，一轮 2 次；修复后 0 次。
+> · 处置：新增 `VsgHostWindow::withdrawHostWindowState()`（头文件里的平台小节，Win32 = `_shutdownDrop()`，X11 为空实现），在**构造末尾**调用 —— 构造时就撤，而不是等析构：搬移会让“句柄”和“注册时的窗口”失去对应，只有刚采纳的那一刻两者一定一致。副作用：本后端不再在宿主窗口上提供文件拖放，但那条路本来就死了（`EmbeddedViewer::pollEvents()` 不泵窗口，drop 事件永远不会被发出）。
+> · **仍缺**：Windows 上没有 `xwin2ppm.py` 的等价物 ⇒ app 阶段在 Windows 只能断言结构性证据（attach/move 计数、0 VUID、`mapped=true`），**“画出来没有”仍无判据**；“拉伸窗口看画面跟随”仍需人工拖一次。
+
+> 2026-09-17 **宿主表面续：放大窗口后「新露出的区域先黑、然后被拉伸填满、再恢复正常」**
+> · 判据来源：本机 Windows 11 + RTX 4060 跑 `Vine.exe`（deferred 默认管线），`scripts/win_maximize_probe.ps1`（`ShowWindow(SW_MAXIMIZE)`）触发，靠**临时**插桩（`beginFrame`/`endFrame`/`resize` 打窗口 extent、窗口 RenderGraph 的 `renderArea`、每个 slot 的 viewport 矩形，以及各 target/slot 的重建时间戳）读时间线。**修前**一条：`resize announced=1176x444 live=2352x888 graphRenderArea=752x480+0,0` → 该帧结束仍 `renderArea=752x480`（旧矩形），而**这一帧里**重建完 gbuffer/composite + 5 个全屏程序槽（各 ~21 ms，共 ~250 ms）→ 下一帧才 `renderArea=2352x888`。完整记录（现象/根因/修复/验证）见 `.ai/bugs/vsg-maximize-black-band.md`。
+> · **根因一**：窗口共享 `RenderGraph` 的 `renderArea` 只由 vsg 在**录制期**（`RenderGraph::accept` 发现 extent 变化 → `resized()`）缩放 ⇒ 中间那些帧仍按旧矩形清/画，新露出的部分既没清也没画（刚重建的 swapchain 图像本来就是黑的）。**修**：`VsgRenderer::resize()` 里**当场**写 `renderArea = {{0,0}, extent}` / `viewportState->set(...)`，并把 `previous_extent` 同步成同值。
+> · **顺带修掉一个更隐蔽的**：同步 `previous_extent` 等于**关掉 vsg 的缩放路径**——它会把 Vine 已经正确的矩形再按 new/old 缩一次。实测 HUD overlay 矩形 `16,368 96x96` → `50,1436 300x177`（跑到 888 高的窗口外）、fps overlay → `7003,1561`（x > 2352）；修后 `16,776 96x96` / `2239,844 105x36`，都在窗口内。
+> · **根因二**：「第一帧就是最贵的那帧」：`RenderControl::handleSurfaceUpdate()` 是先 `view->onSurfaceResized()`（= 重建整条离屏链）再 `renderFrame()`，那 ~250 ms 里**没有任何一帧以新尺寸 present 过** ⇒ 新露出的区域一直黑。**试过**：拆成 `engine->resize()` → `renderFrame()`（离屏链还是旧尺寸 ⇒ 上一帧画面被**拉伸**填满新窗口，实测第一帧 26 ms 就提交）→ `view->onSurfaceResized()` → `renderFrame()`（重建帧）→ settle frames。**结论：这个中间帧撤掉了**（2026-09-17 实机看过后按需求决定）——它把画面**拉伸变形**（旧画面按新 aspect 拉伸一下再弹回），比“新区域晚 ~250 ms 才填上”更难接受。**现在的约定：画面任何时刻都不变形**；窗口新长出来的部分等重建帧落地时填（该帧覆盖整个新窗口，因为 renderArea 已当场写对）。
+> · **根因三**：程序槽的 rebuild identity 里含**目标表面尺寸**（`ProgramSlot::dest_w/dest_h`），于是 resize 帧要把窗口里的 5 个全屏程序全部重编译（~105 ms）。**修**：去掉它——节点的几何是全屏三角形、矩形是**动态状态**（每帧从 pass 的 viewport 写进 `slot.camera->viewportState`），每个全屏片段阶段都按 `vine_uv` 采样（与尺寸无关）；「矩形是动态而不是烤死的」由自检的 PiP 相位**反证**（PiP 在小矩形里采到**整个**源，而它的管道是按**表面**尺寸烤的）。
+> · **实测（最终形态）**：resize 后**只提交一帧**（重建帧，~240 ms：gbuffer + composite 重建，6 个全屏程序节点重建），该帧覆盖整个新窗口（renderArea 当场写对），0 VUID、无崩溃。中间帧版本实测过（26 ms 提交），因为拉伸变形已撤。
+> · 判据：全量构建绿；`test_vsg` / `test_graphics` / `test_gui` 通过；`vsg_backend_selftest` 绿（`[host-surface] move:` 行 + 0 VUID + `[selftest] done`）。
+> · **仍剩（登记在 backlog H9）**：重建帧本身 ~240 ms（6 个全屏程序节点 ~180 ms + 2 个 target ~40 ms；**glslang 只占 ~50 ms**，其余是 vsg 每节点建管线/描述符）。这段期间旧画面在屏（不变形），窗口新长出来的部分到重建帧落地时才填上。要缩短只能改槽的重建策略（原地改描述符 + 动态 viewport 状态），因为 resize 后**源的图像视图换了**，节点必须重建，而每节点 ~20–40 ms 是驱动建管线的成本。**未做**。
+
 > 2026-09-16 **R3 落地：「一个 episode 只报一次」从 10 份约定收成一个类型**
 > 新增 `include/vine/vsg/VsgReportOnce.hpp`（`shouldReport()` / `reported()` / `rearm()`），把散在 `VsgRendererState`（5）、`VsgRenderTargetEntry`（3）、`SceneBridge`（1）的 bool，以及 `detail::beginLightsDroppedEpisode` / `beginTargetSizeMissingEpisode` 两个 `bool&` 自由函数全部换掉。**重武装仍由调用者决定**（各站点边界不同：新帧 / 新作用域 / 可用的尺寸 / 每盏灯都亮回来 / 换了源），类型只承载规则本身 —— 这是本次抽取唯一的风险点，所以写进了类注。
 > · 两个自由函数因此各短三行：`if (条件结束) { reported.rearm(); return false; } return reported.shouldReport();`。
@@ -1987,7 +2005,7 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 - **小经验**：`VsgRenderer::deviceWaitCount()` 是**会话级**计数，`shutdown()` 后读回 0 ⇒ 相位要在放手之前取样（打印的就是量到的值，别写死散文数字）。
 - **宿主侧下一步**：`src/fw/appfw/src/gui/RenderControl.cpp::initializeBackend` 仍先 `shutdown()`；改成"只重新公告句柄 + `resize()`/渲染"，让后端的 `initialize()` 去搬（本环境除 app 演示外无门禁覆盖）。**已做（2026-09-16 晚，H4）**：宿主**两处** shutdown 都删了（`initializeBackend()` 与 `onSurfaceDestroyed()`），并加了 `VINE_RECREATE_SURFACE_MS` 钩子把它接进门禁 —— 见本文件顶部 H4 条目。
 
-## A6 落地：`VsgHostWindow` 改成派生平台窗口（2026-09-16 完成）
+## A6 落地：`VsgHostWindow` 改成派生平台窗口（2026-09-16 完成；**Win32 分支 2026-09-17 已在 Windows 上实测，见本文件 H1 落地条目**）
 
 - **做法**：`using VsgHostWindowBase = vsgXcb::Xcb_Window | vsgWin32::Win32_Window`（平台 typedef），`class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow>` **只改两件事**：① 析构 `clear()` 后把 `_window` 置空（基类析构因此不 `xcb_destroy_window`／不 `DestroyWindow`，Win32 更不会 `UnregisterClass(GetClassName(hwnd))` 去注销 Qt 的窗口类）；② `moveToHostSurface()`（丢 surface/swapchain → **继承的** `_initSurface()` 重建 surface → `_initFormats()` → 格式变了就拒 → **继承的** `resize()` 重查几何 + 重建 swapchain）。连接/屏幕/几何/surface/`valid()`/`visible()`/`pollEvents()`/XDND/`systemConnection` 全部白拿。
 - **根因与收益**：黑屏 bug 的根因就是"手写平台窗口，漏了 `valid()/visible()`"（vsg 的两个平台窗口**在采纳分支里就设 `_windowMapped = true`**，所以它们对宿主的窗口本来就答对）。派生后这一整类"漏覆写虚函数"的风险消失，`VsgHostWindow.*` 从 **567 行降到 315 行**（−252，约 −44%，含两平台分支），手写的 `hostWindowFromTraits`/`hostWindowExtent`/`valid`/`visible`/`refreshHostWindowState`/`_initSurface`/`resize`/`<atomic>` 全删。
@@ -2004,7 +2022,7 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 ### 1. 代码写了但本机证明不了的（最该先补）
 | # | 事项 | 现状 | 判据 |
 | --- | --- | --- | --- |
-| V1 | **Win32 分支**（`VsgHostWindow` 派生 `vsgWin32::Win32_Window`） | 本机 `_WIN32` 不成立 ⇒ **编译器都没跑过**，只做了源码审读（`Win32_Window` 是 `VSG_DECLSPEC`；采纳分支设 `_windowMapped = true`；其析构会 `DestroyWindow` **和** `UnregisterClass(GetClassName(hwnd))` ⇒ 我们"析构先置空 `_window`"是对的） | Windows 上：build 0/0 + app 门禁 + 自检相位（`mapped=true`、窗口构建数不变、恰好 1 次计数 device stop、两宿主窗口存活）+ 拉伸窗口看画面跟随（走 `resize()`） |
+| ~~V1~~ | **Win32 分支**（`VsgHostWindow` 派生 `vsgWin32::Win32_Window`） | **已做（2026-09-17，Windows 11 + RTX 4060）**；原先：本机 `_WIN32` 不成立 ⇒ **编译器都没跑过**，只做了源码审读（`Win32_Window` 是 `VSG_DECLSPEC`；采纳分支设 `_windowMapped = true`；其析构会 `DestroyWindow` **和** `UnregisterClass(GetClassName(hwnd))` ⇒ 我们"析构先置空 `_window`"是对的） | Windows 上：build 0/0 + app 门禁 + 自检相位（`mapped=true`、窗口构建数不变、恰好 1 次计数 device stop、两宿主窗口存活）+ 拉伸窗口看画面跟随（走 `resize()`） |
 | V2 | 采纳路径下 `pollEvents()` 不会偷 Qt 事件 | 源码级已确认：事件掩码只在 `createWindow` 分支的 `xcb_create_window` 里设置，我们这条连接收不到 X 事件 | 真机上边缩放/拖拽边点菜单，确认 Qt 事件不丢 |
 | V3 | 新副作用：vsg 平台窗口构造会调 `_initXdnd()`，在**宿主窗口**上写 `XdndAware` 属性 | 幂等，且 Qt 在 X11 本来也用 XDND | 往窗口拖一个文件试；若真有害，对策是"不接受 vsg 构造"或构造后清属性 |
 | ~~V4~~ | ~~宿主侧 `RenderControl::initializeBackend()` 仍是 `engine->shutdown()` + `initialize()`~~ | **已做（2026-09-16 晚，H4）**：宿主**两处** shutdown 删除（`initializeBackend()` + `onSurfaceDestroyed()`），新增 `VINE_RECREATE_SURFACE_MS` 钩子把“平台窗口被重建”变成可按需触发，app 阶段断言 `moved ≥ 1` 且 `attached == 1` | 实测 `0x60004a → 0x600051`、渲染区 84.90% 非黑；**变异**（shutdown 放回 `onSurfaceDestroyed()`）⇒ 三条红。见本文件顶部 H4 条目 |

@@ -6,7 +6,8 @@
  * is that the backend MOVES to the new one, so the device, the render pass and every pipeline compiled
  * against it stay -- which is what this phase asserts, with the host's windows being the test's own:
  *
- *   1. two host windows, created by the test on its own connection (never the backend's);
+ *   1. two host windows, created by the test itself and never by the backend -- on its own X11 connection
+ *      on X11, with its own window class on Win32;
  *   2. a session attached to the first, drawing and reading a pixel back from it;
  *   3. the host announces the second -> the session moves (VsgRenderer::windowBuildCount() stays flat,
  *      which is what "no new instance / physical device / device" looks like from outside);
@@ -15,28 +16,136 @@
  *   5. BOTH windows still exist on the server, and the one the session adopted is still there after
  *      shutdown(): the backend presents through the host's window, it never owns it.
  *
- * The last one is the assertion vsg's own platform window fails: it destroys the window it adopted, which
- * is why this backend used to call releaseWindow() before letting its window die.
+ * The last one is the assertion vsg's own platform window fails: it destroys the window it adopted (and on
+ * Win32 then unregisters whatever class it finds on it), which is why this backend used to call
+ * releaseWindow() before letting its window die.
+ *
+ * WHAT THE TWO WINDOW SYSTEMS SHARE is everything below the HostWindow class and the environment shim: the
+ * frames, the counts, the refusals and the teardown are asserted once, so the two platforms cannot be held
+ * to different standards. See VsgHostWindow.hpp for the same arrangement in the code under test.
  */
 
 #include "selftest_support.hpp"
 
-#include <cstdio>
-
-#if !defined(_WIN32)
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 
-#include <xcb/xcb.h>
+#if defined(_WIN32)
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    include <windows.h>
+#else
+#    include <xcb/xcb.h>
 #endif
 
 namespace selftest
 {
 
-#if !defined(_WIN32)
-
 namespace
 {
+#if defined(_WIN32)
+/** @brief One host window this phase owns: created with the phase's own window class, never the backend's. */
+class HostWindow
+{
+  public:
+    HostWindow() = default;
+    HostWindow(const HostWindow&) = delete;
+    HostWindow& operator=(const HostWindow&) = delete;
+    ~HostWindow() { close(); }
+
+    /** @brief Creates and shows a window whose CLIENT area is @p width x @p height.
+     *
+     * The class is the phase's own, and it is deliberately NEVER unregistered: that makes it the second
+     * thing a backend that hands the window back to vsg's destructor takes away (that destructor calls
+     * DestroyWindow on the adopted handle and then UnregisterClass on its class, which for a host's window
+     * class is the same kind of damage as destroying the window).
+     *
+     * @param width  Client-area width in pixels.
+     * @param height Client-area height in pixels.
+     * @return true when the window was created.
+     */
+    bool open(std::uint32_t width, std::uint32_t height)
+    {
+        if (!ensureClassRegistered()) {
+            return false;
+        }
+
+        // Sized through the frame so that GetClientRect -- what vsg and this phase both read -- reports the
+        // requested size, exactly as the X11 window below is created at that size.
+        RECT rect{ 0, 0, static_cast<LONG>(width), static_cast<LONG>(height) };
+        if (!::AdjustWindowRect(&rect, kWindowStyle, FALSE)) {
+            return false;
+        }
+
+        window_ = ::CreateWindowExW(0, kClassName, L"Vine host surface (self-test)", kWindowStyle, CW_USEDEFAULT,
+                                    CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr,
+                                    ::GetModuleHandleW(nullptr), nullptr);
+        if (window_ == nullptr) {
+            return false;
+        }
+        // Shown but not activated: vsg's frame path SKIPS a window whose visible() is false, so a hidden
+        // window would test a path no host has -- and taking the foreground away from whoever is running
+        // the gate would be rude.
+        ::ShowWindow(window_, SW_SHOWNOACTIVATE);
+        return true;
+    }
+
+    /** @brief Whether the window still exists.
+     *
+     * IsWindow asks the window manager for the window itself, which is the answer that matters: a destroyed
+     * handle is reported as non-existent even though the value still reads like a handle.
+     *
+     * @return true when the window is still there.
+     */
+    [[nodiscard]] bool exists() const { return window_ != nullptr && ::IsWindow(window_) != 0; }
+
+    /** @brief Destroys the window (this phase's own teardown, never the backend's doing). */
+    void close()
+    {
+        if (window_ != nullptr) {
+            ::DestroyWindow(window_);
+            window_ = nullptr;
+        }
+    }
+
+    /** @brief The handle as the host announces it.
+     *
+     * On Win32 the native handle IS a pointer, so it travels as-is; the X11 window below has to go through
+     * an integer first. That difference -- and the `_putenv_s` vs `setenv` one -- is all this file's
+     * platforms differ in.
+     *
+     * @return The value to hand to RenderBackend::setWindowHandle().
+     */
+    [[nodiscard]] void* handle() const noexcept { return reinterpret_cast<void*>(window_); }
+
+  private:
+    inline static constexpr const wchar_t* kClassName   = L"VineSelftestHostSurface";
+    inline static constexpr DWORD          kWindowStyle = WS_OVERLAPPEDWINDOW;
+
+    /** @brief Registers the phase's window class once per process.
+     *
+     * @return true when the class is in place.
+     */
+    static bool ensureClassRegistered()
+    {
+        static const bool registered = [] {
+            WNDCLASSEXW description{};
+            description.cbSize        = sizeof(WNDCLASSEXW);
+            description.style         = CS_HREDRAW | CS_VREDRAW;
+            description.lpfnWndProc   = ::DefWindowProcW;
+            description.hInstance     = ::GetModuleHandleW(nullptr);
+            description.hCursor       = ::LoadCursorW(nullptr, IDC_ARROW);
+            description.lpszClassName = kClassName;
+            return ::RegisterClassExW(&description) != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+        }();
+        return registered;
+    }
+
+    HWND window_ = nullptr;
+};
+#else
 /** @brief One host window this phase owns: created on the phase's own connection, never the backend's. */
 class HostWindow
 {
@@ -109,27 +218,50 @@ class HostWindow
         connection_ = nullptr;
     }
 
-    /** @brief The window's id, as the host announces it. */
-    [[nodiscard]] xcb_window_t id() const noexcept { return id_; }
+    /** @brief The handle as the host announces it.
+     *
+     * The X window id is an integer, so it reaches the `void*` RenderBackend::setWindowHandle() takes
+     * through one; the Win32 window above is a pointer and travels as-is.
+     *
+     * @return The value to hand to RenderBackend::setWindowHandle().
+     */
+    [[nodiscard]] void* handle() const noexcept
+    {
+        return reinterpret_cast<void*>(static_cast<std::uintptr_t>(id_));
+    }
 
   private:
     xcb_connection_t* connection_ = nullptr;
     xcb_window_t      id_         = 0;
 };
-} // namespace
+#endif
 
-#endif // !_WIN32
+/** @brief Sets or clears the environment variable a hatch is read from.
+ *
+ * The hatches themselves are read with std::getenv() by the code under test, so this has to write the
+ * environment the running process sees: setenv()/unsetenv() on POSIX, _putenv_s() on Windows (which updates
+ * what getenv() reads in the same CRT).
+ *
+ * @param name Variable name.
+ * @param on   true to set it to "1", false to clear it.
+ */
+void setEnvironmentFlag(const char* name, bool on)
+{
+#if defined(_WIN32)
+    (void)::_putenv_s(name, on ? "1" : "");
+#else
+    if (on) {
+        setenv(name, "1", 1);
+    }
+    else {
+        unsetenv(name);
+    }
+#endif
+}
+} // namespace
 
 bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames)
 {
-#if defined(_WIN32)
-    // This phase builds its host windows with X11, which is the window system this gate runs on; the Win32
-    // branch of VsgHostWindow is exercised by the app gate on Windows instead.
-    (void)renderer;
-    (void)camera;
-    (void)frames;
-    return true;
-#else
     HostWindow host_a;
     HostWindow host_b;
     if (!host_a.open(320, 180) || !host_b.open(320, 180)) {
@@ -141,7 +273,7 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
     // vsg's own window, so it is replaced here. vsg's device cap is back at its default, so a leaked device
     // would throw right here rather than pass quietly.
     renderer.shutdown();
-    renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_a.id())));
+    renderer.setWindowHandle(host_a.handle());
     if (!renderer.initialize()) {
         std::fprintf(stderr, "[selftest] FAIL: a session could not attach to the host surface the phase announced\n");
         return false;
@@ -214,7 +346,7 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
     // Re-announcing the window the session is ALREADY on must keep it, not rebuild it: a host that repeats
     // setWindowHandle() + initialize() (a show/resize event, say) would otherwise pay a full session rebuild
     // -- the instance, the device and every compiled pipeline -- for nothing.
-    renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_a.id())));
+    renderer.setWindowHandle(host_a.handle());
     if (!renderer.initialize()) {
         std::fprintf(stderr, "[selftest] FAIL: re-announcing the window the session is already on was refused\n");
         return false;
@@ -229,7 +361,7 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
     }
 
     // The host replaces its window and announces the new one: the session must FOLLOW it.
-    renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_b.id())));
+    renderer.setWindowHandle(host_b.handle());
     if (!renderer.initialize()) {
         std::fprintf(stderr, "[selftest] FAIL: the session did not come up on the host's new window\n");
         return false;
@@ -318,7 +450,7 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
 
     // Path 2: the session is on this backend's OWN window now (the rebuild above), so the host's window can
     // only be served by starting a fresh session -- reported rather than silent, for the same reason.
-    renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_a.id())));
+    renderer.setWindowHandle(host_a.handle());
     if (!renderer.initialize()) {
         std::fprintf(stderr, "[selftest] FAIL: the session did not come up on the announced window again\n");
         return false;
@@ -333,7 +465,7 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
 
     // Back onto the host's presenting window, so the teardown below still runs against the window the host
     // last handed over: that assertion is about the ADOPTED window outliving us.
-    renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_b.id())));
+    renderer.setWindowHandle(host_b.handle());
     if (!renderer.initialize()) {
         std::fprintf(stderr, "[selftest] FAIL: the session did not move back onto the host's window\n");
         return false;
@@ -346,10 +478,10 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
     // counted again.
     const std::size_t refusals_before_third = refusals;
     const std::size_t builds_before_third   = renderer.windowBuildCount();
-    setenv("VINE_HOST_MOVE_FORMAT_MISMATCH", "1", 1);
-    renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_a.id())));
+    setEnvironmentFlag("VINE_HOST_MOVE_FORMAT_MISMATCH", true);
+    renderer.setWindowHandle(host_a.handle());
     const bool came_up_after_mismatch = renderer.initialize();
-    unsetenv("VINE_HOST_MOVE_FORMAT_MISMATCH");
+    setEnvironmentFlag("VINE_HOST_MOVE_FORMAT_MISMATCH", false);
     if (!came_up_after_mismatch) {
         std::fprintf(stderr, "[selftest] FAIL: the session did not come up after the format mismatch was forced\n");
         return false;
@@ -371,7 +503,18 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
                  refusals, renderer.windowBuildCount() - builds_before_refusals);
 
     // Let go of the session: the window the host handed over is the HOST's, so it must outlive us -- the
-    // assertion vsg's own platform window fails (it destroys the window it adopted).
+    // assertion vsg's own platform window fails (it destroys the window it adopted). This is the phase's
+    // SECOND look, after the refusals above rather than only after the move: a refusal is a rebuild, and a
+    // rebuild destroys the window object the session was on, which is where a window the class failed to hand
+    // back is taken down. Checking only after the move would leave that to be discovered as a later step
+    // failing to attach to a handle that no longer names a window.
+    if (!host_a.exists() || !host_b.exists()) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the backend destroyed a host window while it moved or refused (announced=%d,"
+                     " adopted=%d, both must still exist)\n",
+                     static_cast<int>(host_a.exists()), static_cast<int>(host_b.exists()));
+        ok = false;
+    }
     renderer.shutdown();
     if (!host_b.exists()) {
         std::fprintf(stderr, "[selftest] FAIL: shutting the session down destroyed the host's window\n");
@@ -384,7 +527,6 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
                  " %d,%d,%d before and after; a repeated handle kept the session: %s)\n",
                  windows_before, builds_after, stops, after[0], after[1], after[2], same_handle_kept ? "yes" : "no");
     return ok;
-#endif // !_WIN32
 }
 
 } // namespace selftest

@@ -64,13 +64,44 @@ using VsgHostWindowBase = ::vsgXcb::Xcb_Window;
 using VsgHostHandle = xcb_window_t;
 #endif
 
-/** @brief Narrows a native handle carried as `void*` back to the type the platform window expects.
+/** @brief Reads the numeric value of a native handle, the form every other conversion goes through.
  *
  * This `#if` is the ENTIRE platform difference left in converting a handle, and it exists because the handle
  * is an INTEGER on X11 (`xcb_window_t`) and a POINTER on Win32 (`HWND`): no single cast expresses both (a
  * `reinterpret_cast` straight to `xcb_window_t` is rejected for losing information, and `reinterpret_cast`
  * will not convert integer to integer). Keeping it here is what lets the window class body and the traits
  * builder be written once -- see VsgHostWindow.cpp, which has no platform branch at all.
+ *
+ * @param handle Handle in the type the platform's vsg window reads out of the traits.
+ * @return The handle as an integer wide enough to hold it on every platform.
+ */
+[[nodiscard]] inline std::uintptr_t hostHandleValue(VsgHostHandle handle) noexcept
+{
+#if defined(_WIN32)
+    return reinterpret_cast<std::uintptr_t>(handle);
+#else
+    // An X window id is 32 bits wide, so the value survives the widening.
+    return static_cast<std::uintptr_t>(handle);
+#endif
+}
+
+/** @brief Widens a native handle to the `void*` this backend passes around.
+ *
+ * The inverse of @ref hostHandleFromVoid. It needs no platform branch because what travels through the
+ * `void*` is the handle's own value, which @ref hostHandleValue has already reduced to an integer.
+ *
+ * @param handle Handle in the type the platform's vsg window reads out of the traits.
+ * @return The handle as this backend passes it around (what `RenderBackend::setWindowHandle` is given).
+ */
+[[nodiscard]] inline void* hostHandleToVoid(VsgHostHandle handle) noexcept
+{
+    return reinterpret_cast<void*>(hostHandleValue(handle));
+}
+
+/** @brief Narrows a native handle carried as `void*` back to the type the platform window expects.
+ *
+ * The inverse of @ref hostHandleToVoid; see that function and @ref hostHandleValue for why the platform
+ * branch below is the only one in the handle path.
  *
  * @param handle Handle as this backend passes it around (what `RenderBackend::setWindowHandle` is given).
  * @return The handle in the type the platform's vsg window reads out of the traits.
@@ -133,6 +164,34 @@ class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow>
      * does; here it is this class' decision instead of a call every teardown path has to remember.
      */
     ~VsgHostWindow() override;
+
+  private:
+    /** @brief Withdraws what adopting the host's window registered ON that window.
+     *
+     * A platform window registers itself with the window system as part of adopting a handle, and its own
+     * destructor is what withdraws that again. Neither half can stand for this class:
+     *   - what gets registered belongs to the HOST's window, while the events it exists for can never be
+     *     delivered -- this backend's viewer does not pump the window (see EmbeddedViewer), because the host
+     *     owns the event loop;
+     *   - the withdrawal cannot wait for the destructor, because the handle is dropped there (it has to be:
+     *     the base class' destructor destroys the window it holds) and, after a move, the handle in hand is no
+     *     longer the one the registration was made on.
+     *
+     * Win32: vsg's `Win32_Window` calls `_initDrop()` on adoption, which registers an OLE drop target on the
+     * window, and `_shutdownDrop()` is its counterpart. Left behind, the host's window keeps a pointer to a
+     * target owned by this dead window (measured 2026-09-17: the next `RegisterDragDrop()` on that window
+     * fails, so a host window that was handed over twice cannot take a drop target again, and a drag over it
+     * would reach freed memory).
+     *
+     * X11: nothing to withdraw -- vsg's `Xcb_Window` writes the XdndAware property on the adopted window
+     * instead, which is that window's own state with nothing of this object behind it.
+     */
+    void withdrawHostWindowState() noexcept
+    {
+#if defined(_WIN32)
+        _shutdownDrop();
+#endif
+    }
 };
 
 } // namespace detail

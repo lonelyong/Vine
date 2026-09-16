@@ -14,7 +14,7 @@ namespace detail
 
 void* VsgHostWindow::hostHandle() const noexcept
 {
-    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(_window));
+    return hostHandleToVoid(_window);
 }
 
 VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
@@ -25,6 +25,13 @@ VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
     if (hostHandle() == nullptr) {
         throw ::vsg::Exception{"VsgHostWindow needs a host window handle in its traits.", VK_ERROR_INVALID_EXTERNAL_HANDLE};
     }
+
+    // Whatever the base class registered ON the window it adopted is withdrawn before anything else runs: the
+    // window is the host's, and this class MOVES off the handle it was constructed with (see
+    // moveToHostSurface), so a registration left in place would sit on someone else's window and would no
+    // longer be reachable from here. See withdrawHostWindowState().
+    withdrawHostWindowState();
+
     // Which surface the backend is on is a fact the host (and anyone reading a log) needs: it is the
     // difference between "rendering into the window you handed us" and "rendering into one of our own".
     // The map state is part of that fact: vsg's frame path SKIPS a window whose visible() is false, and
@@ -32,7 +39,7 @@ VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
     // for it. The handle is part of it too, and it is the only way to tell which window to look at: a
     // reader that wants the pixels (scripts/xwin2ppm.py) has to name THIS window, because a Qt container
     // keeps the render area as a child and the parent's name matches several windows.
-    V_LOGI("[VsgHostWindow] attached to the host window 0x{:x} ({}x{}, mapped={})", static_cast<std::uintptr_t>(_window),
+    V_LOGI("[VsgHostWindow] attached to the host window 0x{:x} ({}x{}, mapped={})", hostHandleValue(_window),
            _extent2D.width, _extent2D.height, visible());
 }
 
@@ -108,7 +115,7 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
     // log says so because it is otherwise invisible. The new handle goes in for the same reason the attach
     // line carries it: whoever reads the pixels has to follow the session to the window it moved to.
     V_LOGI("[VsgHostWindow] moved to the host's new window 0x{:x} ({}x{}); the device and its pipelines were kept",
-           static_cast<std::uintptr_t>(_window), _extent2D.width, _extent2D.height);
+           hostHandleValue(_window), _extent2D.width, _extent2D.height);
     return true;
 }
 

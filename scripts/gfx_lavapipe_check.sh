@@ -314,6 +314,11 @@ else
     require_evidence "^\[selftest\] depth share order:" 1 "depth-share ordering assertion"
     require_evidence "^\[selftest\] target description:" 1 "target description rebuild assertion"
     require_evidence "^\[selftest\] policy churn:" 1 "policy-churn (no device stall) assertion"
+    # The host-surface phase prints [host-surface] lines rather than [selftest] ones, and it is the only phase
+    # covering the window the HOST owns (adoption, move, refusals, and that the host's window survives us).
+    # Without this line a phase that stopped running would still read as a pass -- it is worth requiring even
+    # though the phase's own return value is what turns a violation into a non-zero exit.
+    require_evidence "^\[host-surface\] move:" 1 "host-surface move assertion"
     require_evidence "^\[selftest\] MRT " 2 "MRT report"
     # The run has to have FINISHED its phases: without this, a run that hung (or was killed by the
     # timeout) after the last evidence line still had every assertion above satisfied, and the 124
