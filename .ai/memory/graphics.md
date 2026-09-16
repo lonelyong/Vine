@@ -35,10 +35,38 @@
 > 且那句"`observer_ptr<View>` 只是弱引用 ⇒ 不会悬垂"是**错的**。
 > **那笔 +0.43 s 仍未查明**：租约版复测 3.12–3.27 s（3 次），与上一版同区间 ⇒ "释放调用"与"影子计数器"也可排除。
 
+> 2026-09-16 **C1 brief：后端自己拥有宿主表面（宿主重建窗口 = 迁移，而不是整会话重建）**
+> **现状（三条已核实的事实）**：① `RenderControl::initializeBackend()` 在 Qt 重建平台窗口时走 `engine->shutdown()` + `initialize()`
+> ——整会话重建：设备、**全部 PSO**、全部目标与缓存；② SDK 契约（`RenderBackend::nativeHandle()` 的注释）本来就写着"重新公告
+> `setWindowHandle()` **就是让后端迁到新表面**的方式"，也就是说**契约允许迁移，而我们做不到**；③ 为了迁就现状，
+> `CMakeLists.txt` 把 vsg 的并发设备上限抬到 4（`VSG_MAX_DEVICES=4`，注释写明是 Qt 表面重建），`shutdown()` 里还得
+> `window->releaseWindow()`——否则 vsg 的 XCB 窗口析构会 `xcb_destroy_window` **宿主的**窗口。
+> **另外，上一轮我判"C1 在本环境没有门禁覆盖"是错的**：这里 `DISPLAY=:0` 且 `/tmp/.X11-unix/X0` 可连（`xcb_connect` 成功），
+> 门禁的 app demo 本来就是跑在窗口上的，所以宿主表面这条路**既能回归也能新增用例**。
+> **做法**：新增 `detail::VsgHostWindow : vsg::Inherit<vsg::Window, VsgHostWindow>`，**只替换 `_initSurface()`**（在自己开的 X 连接上用
+> `vkCreateXcbSurfaceKHR` 建宿主窗口的 surface；Win32 分支同理），其余全部复用 vsg 基类的受保护机器
+> （`_initFormats` / `_initPhysicalDevice` / `_initDevice` / `_initRenderPass` / `_initSwapchain` / `buildSwapchain`，惰性 `getOrCreate*` 照旧）。
+> 析构只 `clear()`，**绝不**销毁宿主的窗口/连接。新增 `bool moveToHostSurface(void* handle)`：采纳新 id → 丢 surface/swapchain →
+> 在**同一个 `VkInstance`** 上重建 surface → 重算格式；**格式变了就返回 false**（调用方回落整会话重建），否则 `buildSwapchain()`
+> 后返回 true。插件侧：`initialize()` 用它；`setWindowHandle()` 在活会话上改为"移动"；`shutdown()` 删 `releaseWindow()`；
+> `CMakeLists.txt` 把 `VSG_MAX_DEVICES` 恢复默认。宿主侧：`RenderControl` 在句柄变化时改为"重新公告"，不再 shutdown+initialize。
+> **为什么这样比"换个窗口重建"划算**：`resize()` 这条路**今天已经在跑**——`Xcb_Window::resize()` 就是"重查几何 + `buildSwapchain()`"，
+> 而 `buildSwapchain()` 不碰 `_renderPass` ⇒ "重建 swapchain 而设备与管线不动"是**已验证的机制**；D28 没有管线缓存，
+> 所以少一次设备重建省下的是**全部 PSO**。
+> **判据**：① 新自检相位 `host surface move`（自建 X 窗口 → 后端挂上 → 销毁并重建另一个窗口 → 重新公告）断言：会话未被重建
+> （阶段缓存与管线计数不变）、移动后回读像素仍正确、**旧宿主窗口仍然存活**（`xcb_get_geometry` 有回包）、0 VUID；
+> ② 55 行证据逐字节不变（默认参数必须与 vsg 的 XCB 窗口一致——render pass/swapchain 仍是 vsg 的代码，这是"只换 `_initSurface`"的回报）；
+> ③ 设备上限恢复默认（任何路径想要第二个并发设备都会**抛异常**，门禁会红）；④ `test_vsg` 289 / `test_graphics` 272 / `test_core` 82 /
+> 三脚本 0 / app 门禁 PASS。
+> **变异（必须红）**：把 `moveToHostSurface()` 改成回落整会话重建 ⇒ 断言①红；让析构照 vsg 那样 `xcb_destroy_window` ⇒ 断言（旧窗口存活）红。
+> **风险**：与 vsg XCB 窗口在默认参数（present 模式/格式/深度格式/图像数）上漂移——证据门禁会抓；格式真变时回落整会话重建（今天的行为）；
+> Windows 路径本机只能编译不能验。**不做**：Wayland（vsg 1.1.16 无 Wayland 窗口实现）。
+
+
 > 2026-09-16 **继续：候选清单的裁决 + 那笔账的调查（无代码改动，只动文档）**
 > **stash 已删**：`derived+instr`（上一轮的 WIP + 自检探针，已被提交的工作覆盖）；删前把它的 `--stat` 记进了提交信息。当时 `git stash list` 还有过一条历史遗留——这正是"二进制 A/B 前先验身份"那条教训的实物。
 > **C4（一帧瞬态变体 → 派生 `RenderGraph`）：不做。** 查细后的理由两条：① `settleSubmittedFrame()` 的换回**必须发生在提交之后**——瞬时变体一旦被**记录**，深度图像就已经回到稳态变体所期望的布局，而"开了帧但没提交"的那一帧什么都没记录，瞬态必须**继续挂**；改成"每帧开始时无条件下调回稳态"会在那种帧上记录一个声明了错误 initialLayout 的变体（比现状更差）。② 正确的版本是"图自己在被记录时消耗掉这一枪"（派生 `accept(RecordTraversal&) const` + `mutable`/`const_cast` 改 `renderPass`），能删掉 `PassObjects::transient` 与两处调平，但代价是新增一个类 + 一处"const 录制里改状态"，对一个**没有实测缺陷**的小簿记不划算。
-> **C1（宿主表面窗口）：登录路线，现在不做。** 前提**已证实**：`RenderControl::initializeBackend()`（`src/fw/appfw/src/gui/RenderControl.cpp`）在 Qt 重建平台窗口时确实走 `engine->shutdown()` + `initialize()` 整会话重建，而 SDK 契约（`RenderBackend::nativeHandle()` 的注释）本来就写着"重新公告 setWindowHandle 就是让后端**迁到**新表面的方式"——两边合起来就是**当前后端不能迁**。改成派生 `vsg::Window` 接管宿主表面的好处很硬：删掉 `VSG_MAX_DEVICES=4`（抬高上游上限）、`releaseWindow()`（否则析构会 Destroy 宿主的 HWND）、以及表面重建不再丢设备与全部 PSO（D28 无管线缓存时这笔最贵）。**但现在不做**：这条路在本环境**没有任何门禁覆盖**（门禁跑的是无窗口的 app demo；D21 仍标着"Qt 子窗口主路径待定"），而它要新增 Xcb/Wayland/Win32 的 surface 代码——无门禁可验的平台码与本仓库的规矩相背；等有人能在真窗口环境验的那一轮再动。
+> **C1（宿主表面窗口）：登录路线，现在不做。** 前提**已证实**：`RenderControl::initializeBackend()`（`src/fw/appfw/src/gui/RenderControl.cpp`）在 Qt 重建平台窗口时确实走 `engine->shutdown()` + `initialize()` 整会话重建，而 SDK 契约（`RenderBackend::nativeHandle()` 的注释）本来就写着"重新公告 setWindowHandle 就是让后端**迁到**新表面的方式"——两边合起来就是**当前后端不能迁**。改成派生 `vsg::Window` 接管宿主表面的好处很硬：删掉 `VSG_MAX_DEVICES=4`（抬高上游上限）、`releaseWindow()`（否则析构会 Destroy 宿主的 HWND）、以及表面重建不再丢设备与全部 PSO（D28 无管线缓存时这笔最贵）。**但现在不做**：这条路在本环境**没有任何门禁覆盖**（门禁跑的是无窗口的 app demo；D21 仍标着"Qt 子窗口主路径待定"），而它要新增 Xcb/Wayland/Win32 的 surface 代码——无门禁可验的平台码与本仓库的规矩相背；等有人能在真窗口环境验的那一轮再动。（**同日更正**：这条里的"没有任何门禁覆盖"**是错的**——本机 `DISPLAY=:0` 可连、app 门禁本来就跑在窗口上；C1 随即开工，见上面的 C1 brief。）
 > **C2（管线归属下沉到 `Command`）**：维持登记，等实测需要（D28 启动耗时 / §9.4 tile GPU）。
 > **那笔 +0.43 s（现已收敛为 +0.47 s 的"一次性"账）**：`perf` 要提权、本机无 valgrind，于是树内临时装 SIGPROF 采样器 + 时间戳对齐 + 三个扰动实验（详见 `docs/backend.md` 5.3.1）。结论：**工作逐行相同、计数相同、与帧数无关、无热点，差在软件光栅器的一次性开销**；"代码布局"这条被三个扰动实验否掉（旧猜测已删）。**未做**：release 复测（全量 reconfigure+build）。
 
