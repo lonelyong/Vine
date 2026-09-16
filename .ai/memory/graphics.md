@@ -1,3 +1,17 @@
+> 2026-09-17 **P10 结案：缺陷已修且已钉，剩下的 B2 触发条件**未到**（顺手纠正本行一句陈旧话 + 给设计提个醒）**
+> 先查"剩余"是什么：本行说`内建路径仍用载体（vsg phong 读 `vine_Color.a`）`，查下去发现这句话**两重陈旧** ——
+> vsg 内建 set 这条路径 **2026-09-13 已删**（现在只有引擎自己的 set）；剩下的"白载体"是**静态兜底**，给没写 loc2 色的
+> 几何一个合法的 `vine_Color` 属性（乘 albedo 等于没乘），**不承载 opacity**。opacity 今天的唯一来源是每 drawable 的
+> `draw.params.x`（渐变片 `alpha = draw.params.x`，顶点色只出 `.rgb`），并被三条**具名**测试钉住：
+> `OpacityIsNotPartOfTheVariantIdentity`、`OpacityDoesNotRideTheVertexColour`、`OpacityEditRebuildsNothing`。
+> · **B2 按自己的触发条件暂缓**（§12.6："要等第二个标量（材质值或用户参数）出现，否则会把一个 float 包装成一整套 API"），
+> 实测条件**未到**：`VineDrawBlock.params` 只有一个活标量（`.x`），`.yzw` 在渐变片里明写 reserved；阴影块的
+> `params = {1.0, bias, strength, 0}` 属于**另一个块**，不算第二个标量。
+> · **给将来的 B2 留一句**：§12.6 把"材质值进 `VineDrawBlock.params`"当首个候选消费者，但 `params` 是**每 drawable** 的，
+> 材质是**每材质**的（按地址键、跨 drawable 共享、已有 `set0/b0` 材质块）—— 搬进去等于按 drawable 复制材质值，还和材质身份
+> 键打架。已在 `.ai/design/graphics-shader.md` §12.6 加一条日期注记。
+> · 本次**无代码改动**（缺陷已修、API 按设计暂缓），只改了 backlog 一行 + 设计文档一条注记。
+
 > 2026-09-17 **R4 落地：八个诊断计数折成一个 `VsgRendererCounters` + `counters()`（别名式，零调用点改动）**
 > 它那行的触发条件自己说了算 ——「等真要加下一个计数时再动」：V7 加了 `streamsRefreshed`/`dataNodesBuilt`，6 → 8，
 > 每个都要一条公开方法 + 一段 Doxygen。做法照**仓库里已有的先例**（`VsgRetentionStats` + `retentionStats()`）：新头文件

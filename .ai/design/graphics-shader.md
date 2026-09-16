@@ -315,3 +315,11 @@ GLSL 与 HLSL 连**声明结构**都不同（`layout(binding = N)` vs `register(
 **C4 已经让 `VineDrawBlock` 有了真实消费者（opacity），但只是 `params.x` 一个标量**：
 参数表（“名字 → 槽位/偏移 + 类型”）要等**第二个标量**（材质值或用户参数）出现才值得引入，
 否则会把一个 `float` 包装成一整套 API。⇒ **维持暂缓，等那个消费者。**
+
+> **2026-09-17 复核（P10 收口时）**：上面点名的"首个真实消费者"要再分一层。`VineDrawBlock.params` 是
+> **每 drawable** 的（动态偏移、每 draw 一个槽），而**材质值属于每材质**：材质按地址键缓存、跨 drawable 共享，
+> 值已经住在 `set0/b0` 的材质块里。把材质值搬进 `params` = 按 drawable 复制材质值，并和材质身份键打架 ——
+> 所以它**不该**成为参数表的触发理由。今天 `draw.params` 仍然只有 `.x`（opacity）一个活标量，`.yzw` 在渐变片里
+> 明写 reserved（阴影块那个 `params = {1.0, bias, strength, 0}` 是**另一个块**，不算）。⇒ 暂缓继续有效；
+> 真的出现第二个标量时，先问它是"每 drawable 的覆盖值"还是"每材质的值"。
+
