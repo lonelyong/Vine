@@ -210,12 +210,11 @@ class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer> {
             traits->height = client_rect.bottom - client_rect.top;
         }
 #else
-        // vsg's Xcb backend reads the native window as an xcb_window_t (uint32_t).
-        // The host handle carries QWindow::winId() bits, so narrow it to exactly
-        // that type: std::any only matches on the exact type, and storing a
-        // void*/64-bit handle makes vsg throw bad_any_cast when it casts back to
-        // xcb_window_t.
-        traits->nativeWindow = static_cast<unsigned int>(reinterpret_cast<std::uintptr_t>(host_handle));
+        // vsg's Xcb backend reads the native window back as an xcb_window_t, and std::any only matches on
+        // the EXACT type, so the handle is narrowed to that type here: storing a void*/64-bit handle -- or
+        // an `unsigned int` on a platform where that is not xcb_window_t -- makes vsg throw bad_any_cast
+        // when it casts the handle back.
+        traits->nativeWindow = static_cast<xcb_window_t>(reinterpret_cast<std::uintptr_t>(host_handle));
 #endif
     }
     return traits;

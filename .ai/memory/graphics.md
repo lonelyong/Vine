@@ -1838,12 +1838,13 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 - **小经验**：`VsgRenderer::deviceWaitCount()` 是**会话级**计数，`shutdown()` 后读回 0 ⇒ 相位要在放手之前取样（打印的就是量到的值，别写死散文数字）。
 - **宿主侧下一步**：`src/fw/appfw/src/gui/RenderControl.cpp::initializeBackend` 仍先 `shutdown()`；改成"只重新公告句柄 + `resize()`/渲染"，让后端的 `initialize()` 去搬（本环境除 app 演示外无门禁覆盖）。
 
-## 下一轮（A6）：`VsgHostWindow` 应该派生平台窗口，而不是重写一个（2026-09-16 定位）
+## A6 落地：`VsgHostWindow` 改成派生平台窗口（2026-09-16 完成）
 
-- **实测到的关键事实**：`vsgXcb::Xcb_Window` 与 `vsgWin32::Win32_Window` 在**采纳** `traits->nativeWindow` 的分支里也把 `_windowMapped = true`（Xcb：`else { _windowMapped = true; _first_xcb_time_point = now(); }`；Win32：构造尾部 `_windowMapped = true;`）⇒ 它们对"宿主的窗口"本来就答 `valid()/visible()` 正确。**今天那个黑屏 bug 的根因就是"手写平台窗口"**：换成派生后 `valid()/visible()` 白拿，也就不会漏（而且能顺手删掉我们那套 `valid/visible/refreshHostWindowState` + 连接/屏幕/几何/客户区/surface 的手写代码，约 180 行）。
-- **收益**：只留两件事——① 析构在基类析构前把 `_window` 置空（不销毁宿主窗口；`releaseWindow()` 的那一行，但放进决定它的类里）；② `moveToHostSurface()`（丢 surface/swapchain → 继承的 `_initSurface()` 重建 surface → `_initFormats()` → `buildSwapchain()`）。`pollEvents()`/XDND/`systemConnection`/`x/y` traits 也一并继承。
-- **要注意的点**：① `Xcb_Window` 没标 `VSG_DECLSPEC`（Linux 默认可见、与本插件同属 libvsg；Windows 上本就该用 `Win32_Window`，它是 `VSG_DECLSPEC`）；② 两边基类析构都**会**销毁 `_window`，所以我们的析构必须先置空；③ Win32 分支在本机**只能审读、不能编译**，改动要尽量机械；④ `makeWindowTraits` 现在把句柄存成 `unsigned int`，而 vsg 用 `std::any_cast<xcb_window_t>`——两者在 Linux 上是同一类型，但顺手改成 `xcb_window_t`（或由平台 typedef 决定）更稳；⑤ 采纳路径下 vsg 不改宿主的 event mask（事件选择只在 `createWindow` 分支的 `xcb_create_window` 里），所以 `pollEvents()` 不会偷 Qt 的事件——这条要在真机上再确认一次。
-- **判据**（照今天的做法）：`[VsgHostWindow] attached … mapped=true` + `xwd` 抓 Qt 渲染区像素（修前 0.84% → 应为 83.81% 非黑）+ 自检相位（窗口构建数不变、恰好 1 次计数 device stop、同句柄保持会话、两宿主窗口存活、centre/角点像素跨搬移逐位相同）+ 全门禁。
+- **做法**：`using VsgHostWindowBase = vsgXcb::Xcb_Window | vsgWin32::Win32_Window`（平台 typedef），`class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow>` **只改两件事**：① 析构 `clear()` 后把 `_window` 置空（基类析构因此不 `xcb_destroy_window`／不 `DestroyWindow`，Win32 更不会 `UnregisterClass(GetClassName(hwnd))` 去注销 Qt 的窗口类）；② `moveToHostSurface()`（丢 surface/swapchain → **继承的** `_initSurface()` 重建 surface → `_initFormats()` → 格式变了就拒 → **继承的** `resize()` 重查几何 + 重建 swapchain）。连接/屏幕/几何/surface/`valid()`/`visible()`/`pollEvents()`/XDND/`systemConnection` 全部白拿。
+- **根因与收益**：黑屏 bug 的根因就是"手写平台窗口，漏了 `valid()/visible()`"（vsg 的两个平台窗口**在采纳分支里就设 `_windowMapped = true`**，所以它们对宿主的窗口本来就答对）。派生后这一整类"漏覆写虚函数"的风险消失，`VsgHostWindow.*` 从 **567 行降到 315 行**（−252，约 −44%，含两平台分支），手写的 `hostWindowFromTraits`/`hostWindowExtent`/`valid`/`visible`/`refreshHostWindowState`/`_initSurface`/`resize`/`<atomic>` 全删。
+- **顺带**：`makeWindowTraits` 的句柄类型从 `unsigned int` 改成 `xcb_window_t`（vsg 用 `std::any_cast<xcb_window_t>`，std::any 要求类型**完全一致**）；头文件按平台 include `vsg/platform/.../Xxx_Window.h`，并在 `__APPLE__` 上 `#error`（CMake 只在 `UNIX AND NOT APPLE` 给 xcb）。公开 SDK 头不受影响：`VsgRenderer.hpp` 不包含这个头（只在 .cpp 与 `tests/test_vsg` 里）。
+- **实测**：build 0/0；自检相位绿、0 VUID，`[host-surface] attached … (320x180, mapped=true)`、搬移 `windows built 2 before, 2 after; 1 counted device stop; centre 34,6,2 / corner 10,20,30 与手写版逐位相同`；app 日志 `attached to the host window (378x234, mapped=true)`，`xwd` 读渲染区 **85.75% 非黑**（同一动画场景，比例随帧变化）；`gfx_lavapipe_check.sh` PASS（55 行证据逐字相同、app demo PASS、0 VUID）；`test_vsg` 289 / `test_graphics` 272。
+- **仍未验证/待确认**：Win32 分支本机**编译不了**（只能审读：`vsgWin32::Win32_Window` 是 `VSG_DECLSPEC`，采纳分支同样设 `_windowMapped`，析构会 `DestroyWindow` + `UnregisterClass` ⇒ 我们置空句柄是对的）；采纳路径下我们这条连接不选事件掩码 ⇒ `pollEvents()` 收不到 X 事件、不会偷 Qt 事件（已按源码确认，真机再复验一次更稳）；vsg 平台窗口构造会调 `_initXdnd()`，会在**宿主窗口**上写 XdndAware 属性（幂等、Qt 在 X11 本来也用 XDND）。
 
 ## 模块文档（面向使用者）
 

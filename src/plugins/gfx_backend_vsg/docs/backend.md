@@ -538,10 +538,11 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 
 **新增一类窗口**（`include/vine/vsg/VsgHostWindow.hpp` + `src/VsgHostWindow.cpp`）：`detail::VsgHostWindow : public ::vsg::Inherit<::vsg::Window, VsgHostWindow>`，实现 vsg 那两个纯虚（`_initSurface()` **和** `instanceExtensionSurfaceName()`），X11 分支给出 `VK_KHR_XCB_SURFACE_EXTENSION_NAME`、Win32 分支 `VK_KHR_WIN32_SURFACE_EXTENSION_NAME`（本环境只能编译验证 Win32 分支，行为由 Windows 上的 app 门禁覆盖）。
 
-- **附加**：构造时自己 `xcb_connect()`、采纳 `traits->nativeWindow` 作为宿主窗口 id（**不**创建、**不**销毁），从 `traits` 里读出尺寸写进 `_extent2D`；`_initSurface()` 用 `new vsgXcb::Xcb_Surface(_instance, connection, window)`（该类没有 `create()`，且 `Xcb_Surface` 在 `libvsg` 里导出）。
-- **搬移**：`moveToHostSurface(native_handle)` 丢掉 `_swapchain/_frames/_indices/_depth*/_multisample*/_surface`，在**同一个** instance 上重建 surface，`_initFormats()` 复核格式——`_imageFormat.format` 变了就**拒绝**（返回 false，让调用方退回重建），否则 `buildSwapchain()`。device、render pass、已编译管线全部留用。
-- **绝不销毁**：析构只 `clear()` + `xcb_disconnect()`。宿主给我们的窗口活过我们，这正是 vsg 自带平台窗口做不到的事（自检直接断言这一点）。
-- `resize()` 只需重查几何 + `buildSwapchain()`（vsg 的窗口本来就这么做 ⇒ 机制是现成的）。
+- **派生自平台窗口**：`VsgHostWindowBase` = `vsgXcb::Xcb_Window`（X11）／`vsgWin32::Win32_Window`（Win32），`VsgHostWindow : vsg::Inherit<VsgHostWindowBase, VsgHostWindow>` **只改两件事**（下两条）——自持连接、屏幕、几何、surface、`valid()`/`visible()`（map 状态）、`resize()`、事件泵全部继承。
+- **绝不销毁**：析构 `clear()` 后把 `_window` 置空，**基类析构因此不会** `xcb_destroy_window()`／`::DestroyWindow()`（Win32 那条路还会顺手 `UnregisterClass(GetClassName(hwnd))`——对 Qt 的类是灾难）。这就是这一层存在的唯一理由。
+- **搬移**：`moveToHostSurface(native_handle)` 丢掉 `_swapchain/_frames/_indices/_depth*/_multisample*/_surface`，**继承的** `_initSurface()` 在**同一个** instance 上重建 surface，`_initFormats()` 复核格式——`_imageFormat.format` 变了就**拒绝**（返回 false，让调用方退回重建），否则**继承的** `resize()`（重查几何 + `buildSwapchain()`）接手。device、render pass、已编译管线全部留用。
+- **为什么不是重写**：C1 第一版自己实现平台窗口，结果漏了 `valid()`/`visible()`（见下），于是黑屏且零 validation error。派生之后“漏一个虚函数”的整类风险消失，两个文件从 **567 行降到 315 行**（−252，约 −44%，含两个平台分支与注释）。
+- **一处代价要知道**：vsg 平台窗口的构造里会调 `_initXdnd()`（在**宿主窗口**上写 XdndAware 属性）。Qt 在 X11 上本来也用 XDND，属性是幂等的；而且我们从不 `pollEvents()`（采纳路径不会选事件掩码 ⇒ 我们这条连接收不到 X 事件），所以不会偷 Qt 的事件。
 - `VINE_VSG_OWN_WINDOW` 仍是测试逃生口（后端自建窗口），不是生产路径。
 
 **搬移的入口与判据**：`VsgRenderer::moveSessionToHostSurface(void*)` 对 `nullptr` / 同一句柄 / 不是本后端的窗口一律拒绝；否则先 `retireRing.waitForIdle(state.viewer)`（计数等待，飞行中的 work 可能还指着旧表面/交换链/深度图），再调窗口搬移；被拒时发一条 `DiagnosticSeverity::Warning` + `DiagnosticCategory::UnsupportedRequest` 并返回 false。`initialize()` 的"会话还活着"分支因此变成**先搬、搬不动才重建**。新增可观测量 `VsgRenderer::windowBuildCount()`：**没有新建窗口 ⇒ 没有新 instance / physical device / device ⇒ 管线没被丢掉**，这就是"搬"与"重建"在测试里的分别。
@@ -558,9 +559,9 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 | `CommandGraph::record()`（`if (window && !window->visible()) return;`）、`SecondaryCommandGraph::record()`、`Viewer::advance()`（`if (!window->visible()) continue;`）、`Presentation::present()` 全都先问 `visible()` | **整帧不录**：窗口是黑的，**离屏 target 也一个像素都不会被写**（它们在这条命令图里），而且 **0 条 validation error**——"validation clean" 与 "什么都没画" 在这里完全同形 |
 | `vsgXcb::Xcb_Window` 覆写 `valid()`(`_window != 0`) 与 `visible()`(`_windowMapped`) | 所以 C1 之前那条"宿主句柄走 `vsg::Window::create`"的路径是好的，换成自建类后立刻变黑 |
 
-**修法**：`VsgHostWindow` 自己回答这两个问题——`valid()` = 有句柄且连接在，`visible()` = 采纳的宿主窗口处于映射态（X11 问 `xcb_get_window_attributes().map_state == XCB_MAP_STATE_VIEWABLE`；Win32 用 `IsWindow` + `IsWindowVisible`）。宿主窗口的 map/unmap 事件我们不收（`pollEvents()` 不归我们），所以状态在**本来就要和服务器说话的三个点**刷新（附加、`resize()`、搬移），并在读数为"未映射"时惰性重问一次；映射态是稳态，不产生额外往返。
+**修法（第一版在子类里自己回答，第二轮改成派生后自带）**：`VsgHostWindow` 先自己实现了 `valid()`/`visible()`——`valid()` = 有句柄且连接在，`visible()` = 采纳的宿主窗口处于映射态（X11 问 `xcb_get_window_attributes().map_state == XCB_MAP_STATE_VIEWABLE`；Win32 用 `IsWindow` + `IsWindowVisible`）。随后查实 **vsg 的两个平台窗口本来就在采纳分支里把 `_windowMapped = true`**（Xcb：`else { _windowMapped = true; … }`；Win32：构造尾部）⇒ 正确的做法是**派生它们**（见上），那套手写的 `valid/visible/refreshHostWindowState` 与 `_initSurface/resize` 全部删除。**这条的结论比补丁本身重要：不要重写平台窗口，派生它。**
 
-**实测（都验过二进制身份，见下）**：`xwd` 读 Qt 渲染区窗口的真实像素（`xwd -id <id>` + 自写 PPM 解码）⇒ 修前 **741/88452 = 0.84% 非黑**（均值 (0,1,0)），修后 **74132/88452 = 83.81% 非黑**（均值 (96,105,112)）——与 C1 之前 `vsgXcb::Xcb_Window` 那条路径**逐位相同**；日志同时从 `attached to the host window (378x234)` 变成 `attached to the host window (378x234, mapped=true)`。把窗口拉到 1498×828 后渲染区跟着变成 **97.10% 非黑**（`resize()` + 刷新也在跑）。自检相位因此恢复成真正的**像素**判据：离屏 target 的 `centre 34,6,2` vs 角点 `10,20,30`（角点就是 pass 的清屏色），搬移前后**逐位相同**；帧被跳过时两点都是透明黑 ⇒ 断言直接红。
+**实测（都验过二进制身份，见下）**：`xwd` 读 Qt 渲染区窗口的真实像素（`xwd -id <id>` + 自写 PPM 解码）⇒ 修前 **741/88452 = 0.84% 非黑**（均值 (0,1,0)），修后 **74132/88452 = 83.81% 非黑**（均值 (96,105,112)）——与 C1 之前 `vsgXcb::Xcb_Window` 那条路径**逐位相同**；日志同时从 `attached to the host window (378x234)` 变成 `attached to the host window (378x234, mapped=true)`。把窗口拉到 1498×828 后渲染区跟着变成 **97.10% 非黑**（`resize()` + 刷新也在跑）。**派生版复测**：渲染区 **85.75% 非黑**（同一动画场景，比例随帧变化，两版都远超“全黑”），自检相位的 `centre 34,6,2 / corner 10,20,30` 与手写版**逐位相同**。自检相位因此恢复成真正的**像素**判据：离屏 target 的中心 vs 角点（角点就是 pass 的清屏色），搬移前后**逐位相同**；帧被跳过时两点都是透明黑 ⇒ 断言直接红。
 
 **这笔教训值得单列（验证纪律）**：先有一次"修好了"的假阳性——`cmake --build . --target Vine` **不会重建插件** `plugins/vine/gfx_backend_vsgd.so`（app 是运行时 dlopen 它），于是那次跑的还是 19:42 那份**C1 之前**的插件。**结论：二进制级结论必须按构建产物验身份**（`nm -DC build/plugins/vine/gfx_backend_vsgd.so | grep VsgHostWindow` + `.so` 时间戳），只验 `bin/Vine` 不够。
 
