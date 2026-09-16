@@ -25,6 +25,7 @@ namespace vsg
 {
 
 class CommandGraph;
+class ResourceHints;
 class ShaderSet;
 class View;
 class Viewer;

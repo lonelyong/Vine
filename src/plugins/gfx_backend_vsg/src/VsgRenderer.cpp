@@ -24,7 +24,6 @@
 #    include <cxxabi.h>
 #endif
 
-#include <vsg/app/CompileManager.h>
 #include <vsg/app/CommandGraph.h>
 #include <vsg/app/RenderGraph.h>
 #include <vsg/app/View.h>
@@ -59,7 +58,6 @@
 #include <vsg/state/ViewportState.h>
 #include <vsg/state/material.h>
 #include <vsg/utils/Builder.h>
-#include <vsg/app/CompileManager.h>
 #include <vsg/utils/GraphicsPipelineConfigurator.h>
 #include <vsg/utils/ShaderCompiler.h>
 #include <vsg/utils/ShaderSet.h>
@@ -346,7 +344,9 @@ bool VsgRenderer::initialize()
     state.viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ commandGraph });
 
     init_stage = "initial viewer compile";
-    const auto compileResult = state.viewer->compile();
+    // The hints come from the one place that names them, because this call is what lets vsg CREATE the
+    // session's compile manager, and renewCompileContexts() later replaces it with the same value.
+    const auto compileResult = state.viewer->compile(compileManagerHints());
     if (!compileResult) {
         diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
                            formatDiagnostic(u8"initialize FAILED at '%s': %s", init_stage,
@@ -522,27 +522,6 @@ VsgRendererState::~VsgRendererState() noexcept = default;
 VsgRendererState::VsgRendererState() noexcept = default;
 VsgRendererState::VsgRendererState(VsgRendererState&& other) noexcept = default;
 VsgRendererState& VsgRendererState::operator=(VsgRendererState&& other) noexcept = default;
-
-void VsgRenderer::probeSwapCompileManager()
-{
-    if (state.viewer == nullptr) {
-        return;
-    }
-    // The same construction vsg's Viewer uses when it first sets a manager up (see its setup path). An empty
-    // hints object is enough for the experiment; a real fix would carry the session's own.
-    state.viewer->compileManager =
-        ::vsg::CompileManager::create(*state.viewer, ::vsg::ref_ptr<::vsg::ResourceHints>{});
-    // Every CONTENT slot (the window's entry is keyed by nullptr) has to re-register into the new manager: its
-    // (render pass + view) context lived in the old one, which nothing can serve any more. Only content slots
-    // carry the flag — a program slot has no compile context of its own.
-    for (auto& entry : state.targets) {
-        for (auto& slot_entry : entry.second.content_slots) {
-            slot_entry.second.compile_context_registered = false;
-        }
-    }
-    // The count describes the manager that is now in place, not the session's history.
-    state.compile_context_registrations = 0;
-}
 
 void VsgRenderer::resetPassRequest()
 {

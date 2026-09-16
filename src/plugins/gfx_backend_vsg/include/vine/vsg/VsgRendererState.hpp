@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -365,9 +366,19 @@ struct VsgRendererState {
     // EVERY slot holding it: with two slots drawing one material, a bridge judging by its own
     // shares sees the other's and waits for it (the P11 mutual wait).
     OwnedShareCounts retained_shares;
-    // Compile contexts this session registered with vsg's CompileManager (see
-    // VsgRetentionStats::compile_contexts: vsg has no API to remove one, so this counts what is
-    // still held, and it grows with slot creations rather than with the slots alive).
+    // WHICH compile manager the registrations below belong to. A registration is only valid for the
+    // manager that was in place when it was made, and such a manager can be replaced wholesale when a
+    // teardown has left it holding contexts nothing can use any more (detail::renewCompileContexts),
+    // so the session names the current one as a number that replacement bumps: every registration
+    // becomes stale in one step, without walking the slots. A slot keeps the value it registered
+    // under and compares (see ContentSlot::compile_manager_generation); 0 there means "never".
+    // Starts at 1 so that a fresh slot is never "registered".
+    std::uint64_t compile_manager_generation = 1;
+    // Registrations this backend has made into the manager named above (see
+    // VsgRetentionStats::compile_contexts). vsg 1.1.16 has no API to remove one, so a manager keeps
+    // what it has been given until it is replaced -- and a teardown replaces it once at least half of
+    // what it holds is a registration whose slot is gone (detail::renewCompileContexts). This stays
+    // under twice the slots alive, instead of a count that follows the slots ever CREATED.
     std::size_t compile_context_registrations = 0;
     // Window-target shader sets shared by its content slots' bridges: one per
     // DepthMode (TestAndWrite / TestOnly / Disabled) so each slot bakes the

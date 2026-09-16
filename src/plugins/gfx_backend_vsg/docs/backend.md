@@ -318,7 +318,7 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
 
 诊断面同样按"一个概念一个值"收敛：会话的保留情况是**一个** `VsgRetentionStats`
 （`VsgRenderer::retentionStats()`：内容槽数、槽池的 chunks/capacity/reserved/retired、退役环的
-parked/released/waits、以及**无法撤销**的编译上下文注册数），而"策略类"的单值断言
+parked/released/waits、以及**换掉 manager 才能收回**的编译上下文注册数），而"策略类"的单值断言
 （`deviceWaitCount()` / `retiredObjectCount()`）仍按名字暴露 —— 它们答的是"这一帧有没有停设备 /
 环有没有在动"，与"留着多少"是两件事。这两个单值访问器读的就是同一个环的计数器，不会给第二个答案。
 
@@ -508,19 +508,13 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 | 注册表 | 状态 | 实测（自检 376 帧，存活内容槽峰值 9） |
 | --- | --- | --- |
 | **每 drawable 的槽**（`VsgDrawBlockPool`） | **已修**：延迟释放队列搬到**池**（会话级），`retire()` + `advanceRetired()`（提交帧推进，与退役环共用同一个时钟 `VsgDeferredRelease`）；**2026-09-15 起桥侧一行也不剩**：`VsgDrawBlockPool::Lease`（`acquire()` 取得）把归还写进析构，`Item` 一死槽就回池，任何丢弃分支都不可能漏 | 修复：峰值 **1 个 chunk**、64 槽里最多用 13；把槽丢弃（= 修复前后果：队列随桥死）⇒ 峰值 **3 个 chunk**、192 槽里用掉 147。同一负载、同样 9 个存活槽 ⇒ 容量按拆除次数增长 |
-| **编译上下文**（vsg `CompileManager`） | **记录待办**：`VsgViewCompiler` 为每个槽注册一次 `(render pass + view)` 上下文，而 vsg 1.1.16 **没有 remove API**（`add()` 往每个 traversal 的 `contexts` 里 push；每个 `Context` 持一个 `VkCommandPool` 和对该 render pass 的强引用；`observer_ptr<View>` 只是弱引用 ⇒ 不会悬垂） | 峰值 **111 次注册**对应 ≤9 个存活槽 ⇒ 约 102 个上下文属于已销毁的槽，直到会话结束。**有界于槽创建次数**，离屏目标每帧重建就会持续长 |
+| **编译上下文**（vsg `CompileManager`） | **已修（2026-09-16）**：`VsgViewCompiler` 为每个槽注册一次 `(render pass + view)` 上下文，而 vsg 1.1.16 **没有 remove API**（`add()` 往每个 traversal 的 `contexts` 里 push；每个 `Context` 持一个 `VkCommandPool` 和对该 render pass 的强引用；`observer_ptr<View>` 只是弱引用 ⇒ 不会悬垂）——但整个 manager 可以**替换**（`viewer.compileManager` 是公开成员且每帧被 task 读）。槽记的不是布尔标志，而是**注册进的是哪个 manager**（generation），于是替换一步就让所有注册失效；替换发生在**已经在停设备的那三处拆除点**（`detail::renewCompileContexts`，规则见 `VsgTargetBookkeeping.hpp`），且只在 **manager 手里的注册至少一半是废的**时才做 | 修前 `churn START: content_slots=3 compile_contexts=60`（60 次注册只有 3 个存活槽）→ 修后 **0**；`churn END: content_slots=6` 时 60→63 变成 0→3（同相位 `waits=0 retired=115 builds=2 stage_cache=1`）。单次编译要过一遍的上下文数均值从 **53.5**（8962 次访问 / 167 次编译）降到与存活槽同量级 |
 
-第二处的两条修法（都**不是**清理级改动，故未动）：①上游加 `CompileManager::remove(view)`；②在破坏性拆除点
-重建 compile manager（`viewer.compileManager` 是公开成员且每帧被 task 读 ⇒ 替换会生效），代价是要重写增量编译
-（D22）的路径并让存活槽重新注册。可观察量：`VsgRenderer::retentionStats().compile_contexts` —— 把它当"只有增没有减"
-的数看着，比让它静默增长好。
+**为什么不是"每次拆除都换"（2026-09-16 实测）**：替换本身不贵（82 次替换在函数内只花 **20 ms**），贵的是它**让活槽的注册一起失效**——那些槽要重新注册并重新编译，而这条路在自检里约值 **0.4 s / 2.8 s**。于是规则取"至少一半是废的才换"：既让释放不亏本，也保证**逐帧重建的离屏目标不会逐帧换 manager**（十二个存活槽里死一个时，注册留着即可），于是保留量的上界是**存活槽数的两倍**，而不是与拆除次数成正比。
 
-**怎么按需把它看出来（2026-09-16 加）**：自检的 policy churn 相位前后各采一次保留量，默认**不打印**（否则会动到证据基线），
-用 `VINE_PROBE_RETENTION=1 VK_ICD_FILENAMES=<lavapipe icd> ./bin/vsg_backend_selftest` 打开。**第一组实测**：
-`churn START: content_slots=4 compile_contexts=60` → `churn END: content_slots=7 compile_contexts=63`（同相位 `waits=0`）。
-读法：**相位开始就有 60 次注册对应仅 4 个存活槽 ⇒ 约 56 个上下文属于已销毁的槽**，即泄漏形状 = 会话累计、按槽创建次数；
-相位内 1:1 是因为 policy churn 换的是**变体**、槽是持久的。**仍未验证**（决定①/②的那个实验）：换掉 manager 是否会让活视图
-**重造管线**——设计见 `.ai/memory/graphics.md` 本日条目（三个判据：管线/变体计数不涨、55 行证据不变、墙钟）。
+**为什么换 manager 之后那些编译仍然慢了（2026-09-16 实测，机制未查明）**：替换后的 manager 会**自带** vsg 自己从当前命令图派生出来的上下文（`CompileTraversal` 的 Viewer 构造，`AddViews`），而被这些上下文服务的编译比被本后端手工注册的上下文服务时慢（同一份自检、同样 167 次编译：**372 ms vs 585 ms**）。两者的上下文**字段逐项相同**（viewID / mask / render pass / transfer task / view-dependent state / pipeline states / transfer hint，实测），所以慢的不是上下文的内容；**机制未查明**，查清并消掉的话这一项就近乎免费。三个已排除项：不是重造管线（`stage_cache` 恒 1）、不是"重复上下文"（让槽完全不重新注册、每次编译都只匹配一个上下文时，耗时不变）、不是上下文数量（基线那 53 个上下文的编译反而更快）。
+
+**怎么按需把它看出来**：自检的 policy churn 相位前后各采一次保留量，默认**不打印**（否则会动到证据基线），用 `VINE_PROBE_RETENTION=1 VK_ICD_FILENAMES=<lavapipe icd> ./bin/vsg_backend_selftest` 打开；该相位末尾还会**断言**`compile_contexts <= 2 * content_slots`（修前的 60 对 3 会直接 FAIL）。仍未做的两件事（都超出这次范围）：①上游加 `CompileManager::remove(view)`；②消掉上面那个机制未查明的慢。
 
 ### 5.4 变体与清屏策略
 

@@ -1208,33 +1208,18 @@ bool runPolicyChurnStressPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
 
     const std::size_t waits_before   = renderer.deviceWaitCount();
     // Retention probe (VINE_PROBE_RETENTION=1), OFF by default so the evidence lines this phase reports are
-    // exactly the baseline's. It prints the two retention numbers around the suite's densest churn, which is
-    // where the one shape worth watching shows: `compile_contexts` records a registration that vsg has no API
-    // to undo (docs/backend.md 5.3.1), so a count that follows the slots ALIVE is healthy while one that
-    // follows the slot CREATIONS is the documented leak. Read the SECOND sample against the FIRST.
+    // exactly the baseline's. It prints the retention numbers around the suite's densest churn, which is
+    // where the shape worth watching shows: `compile_contexts` counts the registrations this backend made
+    // with vsg's CompileManager, which has no API to take one back (docs/backend.md 5.3.1) -- so a number
+    // that follows the slots ALIVE is healthy, while one that follows the slot CREATIONS is the leak a
+    // teardown is supposed to hand over to a replacement manager. Read the SECOND sample against the FIRST.
     const bool probe_retention = std::getenv("VINE_PROBE_RETENTION") != nullptr;
-    // T16 experiment, same switch style: replace the session's compile manager before the churn frames run, so
-    // the frames below exercise the re-registration path. Judges: the retention numbers either side, the
-    // pipeline / variant counts, the evidence lines (must stay byte-identical), and the wall clock.
-    if (std::getenv("VINE_PROBE_SWAP_MANAGER") != nullptr) {
-        renderer.probeSwapCompileManager();
-        std::fprintf(stderr, "[probe] churn: compile manager replaced (T16 experiment)\n");
-    }
-    // Leak放大器: a ref_ptr assignment releases the old object only when nothing else holds it, so if the OLD
-    // compile manager survives (a co-owner such as the viewer's task graph or a database pager), repeating the
-    // swap would accumulate managers -- each with its traversals and their command pools. Peak RSS of this run
-    // against the same run without the loop is the judge, because no counter counts manager objects.
-    if (const char* swaps = std::getenv("VINE_PROBE_SWAP_LOOP"); swaps != nullptr) {
-        const int count = std::atoi(swaps) > 0 ? std::atoi(swaps) : 1;
-        for (int i = 0; i < count; ++i) {
-            renderer.probeSwapCompileManager();
-        }
-        std::fprintf(stderr, "[probe] swapped the compile manager %d time(s)\n", count);
-    }
+    // Sampled either way: these are the numbers the assertion at the end of the phase judges (printing them
+    // is what the switch adds).
+    const auto retention_before = renderer.retentionStats();
     if (probe_retention) {
-        const auto snapshot = renderer.retentionStats();
         std::fprintf(stderr, "[probe] churn START: content_slots=%zu compile_contexts=%zu stage_cache=%zu\n",
-                     snapshot.content_slots, snapshot.compile_contexts,
+                     retention_before.content_slots, retention_before.compile_contexts,
                      vine::vsg::detail::compiledStageCacheCount());
     }
     const std::size_t retired_before = renderer.retiredObjectCount();
@@ -1280,12 +1265,25 @@ bool runPolicyChurnStressPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
     const std::size_t waits   = renderer.deviceWaitCount() - waits_before;
     const std::size_t retired = renderer.retiredObjectCount() - retired_before;
     const std::size_t builds  = renderer.offscreenBuildCount() - builds_before;
+    const auto        retention_after = renderer.retentionStats();
     if (probe_retention) {
-        const auto snapshot = renderer.retentionStats();
         std::fprintf(stderr,
                      "[probe] churn END: content_slots=%zu compile_contexts=%zu stage_cache=%zu (waits=%zu retired=%zu builds=%zu)\n",
-                     snapshot.content_slots, snapshot.compile_contexts,
+                     retention_after.content_slots, retention_after.compile_contexts,
                      vine::vsg::detail::compiledStageCacheCount(), waits, retired, builds);
+    }
+    // The bound the compile-context fix keeps: a registration is only valid for the manager it was made
+    // into, so a teardown that drops a slot hands that manager over (detail::renewCompileContexts) -- and
+    // it does so as soon as at least half of what the manager holds is waste, which keeps the count under
+    // twice the slots that can use one. Without the fix the count follows the slots ever CREATED (measured
+    // here as 60 registrations for 3 live slots), and every one of them keeps a command pool and the
+    // render pass it was registered against alive for the rest of the session.
+    if (retention_after.compile_contexts > 2 * retention_after.content_slots) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: %zu compile-context registration(s) held for %zu live content slot(s);"
+                     " teardowns must hand over the manager that holds their registrations\n",
+                     retention_after.compile_contexts, retention_after.content_slots);
+        ok = false;
     }
     if (waits != 0) {
         std::fprintf(stderr,

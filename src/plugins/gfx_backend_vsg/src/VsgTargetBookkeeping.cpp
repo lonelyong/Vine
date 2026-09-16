@@ -29,6 +29,7 @@
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgRecordOrder.hpp>
 #include <vine/vsg/VsgUtils.hpp>
+#include <vine/vsg/VsgViewCompiler.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -251,6 +252,9 @@ void unhookTargetPasses(VsgRendererState& state, VsgRenderTargetEntry& t)
     // the views instead was measured to trip vkDestroyPipeline-00765 /
     // vkDestroySampler-01082, so this is the wait, not a park.
     state.retireRing.waitForIdle(state.viewer);
+    // That wait is also what makes replacing the compile manager safe, and this teardown is what
+    // orphaned the registrations of the slots it drops (see renewCompileContexts).
+    renewCompileContexts(state);
     for (auto& slot_entry : t.content_slots) {
         slot_entry.second.bridge.clearCache();
         // A dropped slot must not stay queued for the frame's incremental compile:
@@ -299,6 +303,9 @@ void resetContentShaderSlots(VsgRendererState& state)
     // their caches release the shared object registry, which is the counted
     // device wait (see unhookTargetPasses) rather than a park.
     state.retireRing.waitForIdle(state.viewer);
+    // Every content slot goes below, so every registration this session made is orphaned here:
+    // replacing the manager is what releases them (see renewCompileContexts).
+    renewCompileContexts(state);
     for (auto& entry : state.targets) {
         auto& t = entry.second;
         for (auto& slot_entry : t.content_slots) {
@@ -529,6 +536,9 @@ void erasePassFromTarget(VsgRendererState& state, vine::graphics::RenderTarget* 
     // parking was measured to trip vkDestroyPipeline-00765 (see the
     // policy-churn notes).
     state.retireRing.waitForIdle(state.viewer);
+    // The pass' slots are erased below, which orphans their registrations: the manager is replaced
+    // here, where the wait has already made that safe (see renewCompileContexts).
+    renewCompileContexts(state);
 
     t.visitSlot(key, [&](auto& slot, VsgRenderTargetEntry::SlotKind kind) {
         detachSlotView(state, t, target, key, slot.view);

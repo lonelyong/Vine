@@ -299,24 +299,6 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     /** @brief Presents the rendered frame. */
     void swapBuffers() override;
 
-    /** @brief TEMPORARY PROBE (T16): replaces the session's compile manager and re-arms every slot.
-     *
-     * It exists to answer ONE question that cannot be settled by reading vsg: when the contexts the plugin
-     * registered are replaced by a fresh `CompileManager`, does a live view's next incremental compile REBUILD
-     * its pipelines (a failure mode worse than the registration leak it would fix), or reuse them? The
-     * selftest drives it behind an env switch and reports the retention picture around it; the judges are
-     * the pipeline / variant counts, the byte-identical evidence lines, and the wall clock.
-     *
-     * It does exactly what a real fix would do: hand the viewer a new manager (the same construction vsg's
-     * `Viewer` uses — the fresh one carries default resource hints, which is enough to answer the question and
-     * would have to be the session's own hints in a real fix), clear every content slot's registration flag so
-     * the slots register into the new manager on their next compile, and restart the registration count so the
-     * observable describes the CURRENT manager rather than the session.
-     *
-     * REMOVE this and its selftest call once the question is answered.
-     */
-    void probeSwapCompileManager();
-
     /** @brief Binds a host native window; when present, the renderer renders
      * into that window's native surface instead of creating its own window.
      *

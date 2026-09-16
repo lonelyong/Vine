@@ -92,77 +92,35 @@
 >   （路 B + pipeline-factory 前向声明）与 PCH 在**这个负载 + 这台机**上都不划算——判据是墙钟，不是 CPU 秒。
 >   ④ 何时该重新量：CI 变单核、或 TU 数大幅增加、或链上出现更贵的头（届时应先量墙钟再决定，不要照抄"16 s"）。
 >   ⑤ 教训（通用）：**优化编译时间必须报墙钟并注明核数**；CPU 秒乘以 TU 数会高估一个数量级。
-> - **T16 开工清单（下一窗口按此执行；这一轮把设计补全了，别再重新查）**。
->   **义务点是 4 个**（判据 = 调用 `state.retireRing.waitForIdle(state.viewer)` 的破坏性点；`VsgReadback.cpp:195/377`
->   的两个同类调用是**拷贝前停设备**，与拆除无关，**排除**）：
->   ① `VsgTargetBookkeeping.cpp:490 erasePassFromTarget`（**单槽删除原语**）；② `:262 clearTargetAttachments`
->   （**整目标槽删除原语**）；③ `VsgRenderer.cpp:378 shutdown`；④ `:243 unhookTargetPasses` / `:296 resetContentShaderSlots`
->   （**摘挂 / 重建着色槽**）。
->   **关键设计内容（半接线会留 bug）**：①②③ 里槽**消失** ⇒ 它的注册不再有意义（释放路径）；④ 里槽可能**存活**而
->   render pass 换了 ⇒ 旧 context 已陈旧，而槽上的 `compile_context_registered` 仍为真 ⇒ **必须重新武装**（清标志，
->   下一次编译重新注册）。**两种语义要写进那个类型的契约里**，不能散在调用点；只接 2 处就会留下"标志说已注册、
->   context 指向旧 render pass"的不同步 bug。
->   **六步**：①拥有者类型放既有的 `VsgViewCompiler.{hpp,cpp}`（**不动 CMake**）：注册/记录/计数（语义 = "当前 manager"）
->   + 唯一的"注册失效"义务入口，两种语义在里面分开；②4 个站点接线，与 `waitForIdle` 同址；③策略（层内一行）=
->   换 `viewer->compileManager` + 重新武装活槽 + 计数归零（四维已验证）；④撤 `probeSwapCompileManager` 与两个实验开关
->   （**保留量探针保留**，它是有文档的正式可观测量）；⑤边界：确认该路径不装 `databasePager`（vsg 的 Viewer setup 会给
->   它挂 manager），否则换之前清掉那个引用；⑥`docs/backend.md` §5.3.1 改写。
->   **判据**：55 行证据逐字节不变、`stage_cache` 不涨、墙钟不涨、峰值 RSS 不涨（含 200 次放大）、**外加** churn 后
->   `compile_contexts` 有界（用保留量探针读成断言）。
->   **本轮排除掉的两条假路（别重走）**：①"resize 不引起设备等待"**不能写成自检断言**——自检**无窗口**（无 `setWindowHandle`，
->   只渲染到离屏）而 `VsgRenderer::resize` 在 `state.window == nullptr` 时直接返回 ⇒ 断言恒真、是**假守卫**；有意义的
->   位置只在有窗口的 app 门禁（那属于门禁改造）。②PCH 已试已否证（见上条）。
->   **配方更正（2026-09-16 末，重要）**：`ShaderSet.h` 在本链上有**两个**来源，只做路 B **达不到目标**——
->   状态链是 `VsgRendererState.hpp` → `VsgFramePlan.hpp` → {`VsgPipelineFactory.hpp`, `VsgRenderTargetEntry.hpp`}，
->   而**两者都** `include <vsg/utils/ShaderSet.h>`（`VsgPipelineFactory.hpp` 只在签名里用 `ref_ptr<ShaderSet>&` ⇒
->   **可以纯靠前向声明清掉**）。所以批次 = **两个头**（entry 走路 B、pipeline-factory 走 `VsgFwd.hpp`）+ `content.bridge.`
->   改 `->`（约 6 个 .cpp：`VsgContentSlot.cpp` 10+ 处、`VsgTargetBookkeeping.cpp`、`VsgRendererPasses.cpp`、
->   `VsgPassMaterialiser.cpp`、`VsgProgramSlot.cpp`）+ 建槽处的 `make_unique<SceneBridge>()` + 两个头的特殊成员外移。
->   判据同前（`VsgReadback.hpp` 0.83 → **~0.3 s**、构建 0/0、289+272、55 行证据不变）。
-> - **T16 第一步已做（探针，env 门控）**：在「policy churn」相位前后各采一次保留量，脚本
->   `VINE_PROBE_RETENTION=1 VK_ICD_FILENAMES=…/lvp_icd.json ./build/bin/vsg_backend_selftest`。**实测**：
->   `churn START: content_slots=4 compile_contexts=60` → `churn END: content_slots=7 compile_contexts=63`
->   （`waits=0 retired=115 builds=2`）。读法：**相位开始前就有 60 次注册对应仅 4 个存活槽 ⇒ 约 56 个上下文属于早已销毁的槽**，
->   即泄漏形状 = **会话累计、按槽创建次数**（文档记载成立）；相位内是 1:1（3 个新槽 / 3 次新注册），因为 policy churn
->   换的是**变体**、槽是持久的。探针打到 **stderr + `[probe]` 前缀**，而证据脚本只收 `[selftest]` 开头 ⇒ **默认 55 行不变**。
->   源码里标了 `TEMPORARY PROBE (T16)`，**待定**：留作正式可观测量、还是提交前撤掉。
-> - **T16 决策前必须做的实验（设计已定，未实现）**：插件侧换 manager 的唯一拦路石是「**新上下文会不会让活视图重造管线**」
->   （比泄漏更糟的失败模式），而它在 vsg 源码里**没找到可依据的守卫**（`src/vsg/utils/GraphicsPipelineConfigurator.cpp` 里
->   没有按 viewID 跳过已编译的明显守卫），所以**必须实测**。设计：在破坏性拆除点（已在 `waitForIdle` 的地方：
->   `VsgTargetBookkeeping.cpp:253/301/531`、`VsgRenderer.cpp:383`）加一个 env 门控的 `resetCompileManagerIfProbing(state)`：
->   新建 `CompileManager` 赋给 `viewer->compileManager` + 清掉所有活槽的 `compile_context_registered` + 计数归零；
->   然后整跑自检，比对 **① 管线/变体计数是否上涨**（`docs/backend.md` §4.4 那批"稳态应为 0"的计数 + `retentionStats()`）、
->   **② 55 行证据是否仍逐字节不变**（若变，多半就是重造管线被抓住）、**③ 墙钟时间**。三个数一起看；
->   若①不涨 ⇒ ② 方案风险归零、可直接采用（不必碰 vsg 源码）；若①涨 ⇒ 「改 vsg 源码」从我的推断升级为**实测结论**。
->   注意：换 manager 后 `VsgRetentionStats::compile_contexts` 的语义要从"会话累计"改成"当前 manager"，否则观测失真。
->   **执行实验前查实的两个事实（省下一轮调研）**：① **manager 不是插件建的**——`build/_deps/vsg-src/src/vsg/app/Viewer.cpp`
->   的 setup 路径里惰性 `compileManager = CompileManager::create(*this, hints)`，所以替换可以照同一条构造走（插件 `src/`
->   里**没有任何** `viewer->compileManager =` 赋值，只有读）；② 要清的标志在**内容槽**上（`VsgRenderTargetEntry.hpp` 的
->   `compile_context_registered`，注释明写"每个槽注册一次"），而 `VsgRenderTargetEntry` 有 `forEachSlot()` 可遍历
->   ⇒ 复位就是 `for (auto& entry : state.targets) entry.second.forEachSlot([](auto& key, auto& slot, auto){ slot.compile_context_registered = false; });`
->   加上 `state.compile_context_registrations = 0`。**自检够不到 `state`**（它只用 `VsgRenderer` 的公开面），所以实验需要一个
->   env 门控的**临时**入口（标 TEMPORARY，跑完撤）——这也是为什么它该单独一批，而不是顺手改。
-> - **T16 实验已完成，四个维度都验证过（2026-09-16）**，判定：**插件侧方案可行，不需要 fork vsg**。
->   开关：`VINE_PROBE_SWAP_MANAGER=1`（在位换 manager）、`VINE_PROBE_SWAP_LOOP=N`（放大 N 次）。实测（lavapipe，同一负载）：
->   ① **形状**：`compile_contexts` 从 `60→63`（累积）变成 `0→3`（跟 6 个存活槽）——泄漏形状被修掉；
->   ② **不重造管线**：`detail::compiledStageCacheCount()` 两边都是 **1**（视图若被重编译，阶段会新增），且证据脚本
->   `VINE_PROBE_SWAP_MANAGER=1 bash scripts/vsg_selftest_evidence.sh` → **PASS，55 行逐字节不变**；
->   ③ **无代价**：墙钟 2.87 s 对 2.87 s，`waits=0 / retired=115 / builds=2` 与 OFF 完全一致；
->   ④ **不漏 manager**：连换 200 次，**峰值 RSS 216420 → 215032 → 213808 KB（平坦）**——若有共同持有者，200 个 manager
->   （各带 traversal 与命令池）应是几十 MB 级增长 ⇒ `ref_ptr` 赋值的 unref 确实把它释放了。**边界**：本次会话**没有 databasePager**，
->   而 vsg 的 Viewer setup 会把 manager 也挂给 pager（若存在）⇒ **真修复必须确认这条路径不装 pager，或换之前一并清掉那个引用**。
-> - **T16 最优设计（已定，下一批实现）**：**先立一层拥有者**，再把策略放进去——把"注册"这件事从**四处**收成**一处**：
->   创建（`VsgViewCompiler`）、记录（槽上的 bool + 会话里的只增计数）、以及**槽死时的义务**（现在散在 6 个破坏性拆除路径、
->   且"什么都不做"就是泄漏本身）。这一层让"context 活得比槽久"**结构上不可能忘**，并让策略成为层内的一行；形状与仓库既有的
->   `VsgRetireRing`（停放策略的家）/ `OwnedCache`（"谁还持有"的家）/ `VsgDeferredRelease`（延迟时钟的家）同族。
->   - **策略选 ②（换 manager，不 fork vsg）**，实现放在层内；层对外的**唯一**拆除点义务入口（如 `onSlotsDestroyed()`）与
->     `waitForIdle` 同址——破坏性点欠的两件事（停设备、归还 context）落在一处。
->   - **①（在 vsg 加按 view 移除）写成层内注释里的备选**：若将来接受依赖补丁，它是 O(1) 精确移除、无重新注册，比②更干净；
->     今天不做（外来 diff 每个 vsg 版本都要维护，且 `find_package(vsg)` 那条路不生效）。层立起来之后，换策略是**一行**。
->   - **附带必改**：`VsgRetentionStats::compile_contexts` 语义 = "当前 manager"；`docs/backend.md` §5.3.1 从"两条未做的修法"
->     改成"已修 + 策略 + 边界（pager）"；**撤掉** `VsgRenderer::probeSwapCompileManager` 与自检里的实验调用点。
->   - **判据**：沿用今天四条（55 行证据逐字节不变、`stage_cache` 不涨、墙钟不涨、峰值 RSS 不涨，含 200 次放大），
->     外加一条新的：churn 相位后 `compile_contexts` **有界**（用保留量探针读，这是从"只能看着它涨"变成"可以断言"）。
+> - **T16 已完成：编译上下文泄漏已修（2026-09-16，插件侧，未 fork vsg）**。批次的最终形态与实测：
+>   - **机制**：槽记的不是布尔标志而是 **`compile_manager_generation`（注册进的是哪个 manager）**；会话记
+>     `compile_manager_generation` + `compile_context_registrations`。于是"换掉 manager"**一步**就让所有注册失效，
+>     没有任何拆除路径需要记得清标志——失效是结构性的，不是义务。`renewCompileContexts()`（`VsgViewCompiler.{hpp,cpp}`）
+>     是唯一的义务入口，**只在三处已经 `waitForIdle` 的拆除点**调用：`unhookTargetPasses`、`resetContentShaderSlots`、
+>     `erasePassFromTarget`；`VsgRenderer::shutdown` **不调用**（manager 随 session state 一起没，调用只会白建一个）。
+>   - **规则（为什么不是"每次拆除都换"）**：`waste = 注册数 - 仍在用的注册数`；**`waste >= 仍在用` 才换**。
+>     实测依据：替换本身便宜（82 次替换函数内共 **20 ms**），贵的是**让活槽的注册一起失效**（重新注册 + 重新编译 ≈
+>     **0.4 s / 2.8 s**）；同一条规则也保证**逐帧重建的离屏目标不会逐帧换 manager**（12 个活槽死 1 个时留着即可），
+>     于是保留量**上界 = 活槽数 × 2**，而不是与拆除次数成正比。自检里把它钉成断言：
+>     `compile_contexts <= 2 * content_slots`（policy churn 相位末，无条件检查，打印仍走 `VINE_PROBE_RETENTION=1`）。
+>   - **实测（lavapipe，同一负载）**：`churn START` 从 `content_slots=3 compile_contexts=60` 变成 **0**；`churn END`
+>     `60→63` 变成 `0→3`；单次编译要过滤的上下文数均值 **53.5 → 与活槽同量级**（8962 次访问 / 167 次编译）。
+>     门禁全绿：build 0/0、`test_vsg` **289**、`test_graphics` **272**、`test_core` **82**、三脚本 0、
+>     `gfx_lavapipe_check.sh` → **PASS + 55 行证据逐字节不变**。
+>   - **代价（实测 + 未查明的一项）**：自检墙钟 2.8 → 3.15 s（**+12%**；CPU +0.33 s，四组交错配对）。定位：
+>     同样 167 次编译，**372 ms → 585 ms**；而两者的上下文**字段逐项相同**（viewID / mask / render pass / transfer task /
+>     view-dependent state / pipeline states / transfer hint，实测）。已排除：重造管线（`stage_cache` 恒 1）、重复上下文
+>     （让槽完全不重新注册、每次只匹配一个上下文时耗时不变）、上下文数量（基线那 53 个上下文反而更快）。
+>     **机制未查明**——查清并消掉的话这一项近乎免费；这是本次唯一留下的悬念，已写进 `docs/backend.md` §5.3.1。
+>   - **两条被否掉的设计（别重走）**：①**"把活槽都标成已服务"**（省掉重新注册）——**不安全**：插件的命令图滞后于
+>     自己的表（`applyRecordPlan` 整批重写 children，新图要到下次 reconcile 才进去），所以"槽没 detached"**不等于**
+>     "vsg 的派生一定能看见它"；标错方向 = 编译静默什么都不做（内容停止绘制），是比泄漏更糟的失败模式。
+>     ②**"先编译、没服务到再注册"**（乐观探测）——不可靠：`CompileResult::views` 是**编译前**由
+>     `CollectResourceRequirements` 填的，为空并不等于"没有上下文匹配"。
+>   - **附带事实（省下一轮调研）**：替换后的 manager **自带** vsg 从当前命令图派生的上下文（`CompileTraversal` 的 Viewer
+>     构造 `AddViews`），它们在字段上与手工注册的等价；本会话**没有 `databasePager`**（vsg 只在
+>     `viewer.databasePager` 非空时把 manager 也挂给它，且 `updateTasks` 只对带 pager 的 task 回写）⇒ 替换不会留下
+>     共同持有者（200 次连换峰值 RSS 平坦，实测）。
 
 > 2026-09-15 **审查轮次：graphics + vsg 后端逐条修复（见 `.ai/design/graphics-vsg-audit.md`）**
 > 12 条缺陷全部修完，每条都带门禁（单测/像素证据/变异验证）。**判据**：build 0 error；`test_graphics` 260→**269**、

@@ -24,6 +24,11 @@
  * are not necessarily the only owner of). Dropping a PROGRAM slot is the exception that proves the
  * rule: it parks, because nothing else holds its node's pipeline / descriptor sets (see
  * eraseProgramSlot).
+ *
+ * Those same waits are where the session's compile contexts are renewed
+ * (detail::renewCompileContexts): a slot dropped here orphans the registration it made with vsg's
+ * CompileManager, and only replacing that manager releases it -- so the three functions that stop the
+ * device call the renewal, and no path that drops a slot has to remember to.
  */
 
 
