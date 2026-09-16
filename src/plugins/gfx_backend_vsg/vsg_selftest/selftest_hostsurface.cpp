@@ -289,12 +289,9 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
 
     // A refusal is a REBUILD -- the instance, the device and every compiled pipeline -- so a host that could
     // have avoided it (by not taking its window away while the session runs) has to be able to HEAR about it:
-    // every refusal of a move reports a Warning / UnsupportedRequest. Two of the three paths are reachable
-    // from a host's own calls, and they are driven here. The third -- a new window whose swapchain format
-    // cannot serve this session's render pass -- needs two windows whose visuals map to different swapchain
-    // formats, which is a property of the driver rather than of this code; it reports through the same
-    // contract this block pins (VsgHostWindow::moveToHostSurface makes that decision by comparing the
-    // presentation format before and after the surface is rebuilt).
+    // every refusal of a move reports a Warning / UnsupportedRequest. All three paths are driven here: the
+    // first two from the host's own calls, the third through the format hatch (see below), because no window
+    // system hands out two visuals whose swapchain formats differ on demand.
     std::size_t refusals = 0;
     renderer.setDiagnosticSink([&refusals](const vine::graphics::RenderDiagnostic& diagnostic) {
         if (diagnostic.severity == vine::graphics::DiagnosticSeverity::Warning &&
@@ -341,13 +338,36 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
         std::fprintf(stderr, "[selftest] FAIL: the session did not move back onto the host's window\n");
         return false;
     }
+
+    // Path 3: a host window whose swapchain format cannot serve this session's render pass. That needs two
+    // windows whose visuals map to different swapchain formats -- a property of the driver, not of this code --
+    // so the phase sets the hatch that makes the window's comparison fail instead. The code path is the one the
+    // real condition takes: refuse, report, rebuild. Measured from here, so the steps above do not have to be
+    // counted again.
+    const std::size_t refusals_before_third = refusals;
+    const std::size_t builds_before_third   = renderer.windowBuildCount();
+    setenv("VINE_HOST_MOVE_FORMAT_MISMATCH", "1", 1);
+    renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_a.id())));
+    const bool came_up_after_mismatch = renderer.initialize();
+    unsetenv("VINE_HOST_MOVE_FORMAT_MISMATCH");
+    if (!came_up_after_mismatch) {
+        std::fprintf(stderr, "[selftest] FAIL: the session did not come up after the format mismatch was forced\n");
+        return false;
+    }
+    if (refusals != refusals_before_third + 1u || renderer.windowBuildCount() != builds_before_third + 1u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: a window whose swapchain format cannot serve this session neither reported"
+                     " a refusal nor rebuilt (%zu refusal(s) for that step, %zu window build(s) before, %zu after)\n",
+                     refusals - refusals_before_third, builds_before_third, renderer.windowBuildCount());
+        ok = false;
+    }
     // The sink captures a local, so it goes before the local does (the convention the other phases follow).
     renderer.setDiagnosticSink({});
 
     std::fprintf(stderr,
-                 "[host-surface] refusals: %zu reported (announcing no window, then a window while the session was"
-                 " on one of the backend's own), %zu window build(s) for them, and the session is back on the"
-                 " host's window\n",
+                 "[host-surface] refusals: %zu reported (announcing no window, a window while the session was on"
+                 " one of the backend's own, and a window whose swapchain format cannot serve this session), %zu"
+                 " window build(s) for them, and the session is back on the host's window\n",
                  refusals, renderer.windowBuildCount() - builds_before_refusals);
 
     // Let go of the session: the window the host handed over is the HOST's, so it must outlive us -- the

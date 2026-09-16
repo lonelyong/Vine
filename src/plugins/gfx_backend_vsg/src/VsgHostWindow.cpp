@@ -1,5 +1,7 @@
 #include <vine/vsg/VsgHostWindow.hpp>
 
+#include <cstdlib>
+
 #include <vsg/vk/Instance.h>
 #include <vsg/vk/Surface.h>
 
@@ -82,7 +84,15 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
     // device and every pipeline compiled against it survive the move.
     _initSurface();
     _initFormats();
-    if (_imageFormat.format != previous_format) {
+    // No window system hands out two windows whose visuals map to different swapchain formats on demand
+    // (the format comes from the surface's supported list, and two visuals of the same display agree), so
+    // the refusal below -- which costs the caller the instance, the device and every compiled pipeline --
+    // could not be driven from a host's own calls. The hatch makes the COMPARISON fail instead, which is
+    // the same code path the real condition takes: selftest_hostsurface.cpp sets it and asserts both the
+    // report and the rebuild.
+    const bool format_cannot_serve = std::getenv("VINE_HOST_MOVE_FORMAT_MISMATCH") != nullptr ||
+                                     _imageFormat.format != previous_format;
+    if (format_cannot_serve) {
         // A different presentation format means a different render pass, and every pipeline was compiled
         // against the one this session has: no move can serve that, so the caller starts a new session.
         return false;

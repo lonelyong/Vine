@@ -559,7 +559,11 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 - **一处代价要知道**：vsg 平台窗口的构造里会调 `_initXdnd()`（在**宿主窗口**上写 XdndAware 属性）。Qt 在 X11 上本来也用 XDND，属性是幂等的；而且我们从不 `pollEvents()`（采纳路径不会选事件掩码 ⇒ 我们这条连接收不到 X 事件），所以不会偷 Qt 的事件。
 - `VINE_VSG_OWN_WINDOW` 仍是测试逃生口（后端自建窗口），不是生产路径。
 
-**搬移的入口与判据**：`VsgRenderer::moveSessionToHostSurface(void*)` **先认同一句柄**——公告的正是会话已经在的那一个 ⇒ 返回 true 并把会话留着（2026-09-16 复核：以前这里当拒答，而拒答的代价是整会话重建，等于对"显示/缩放事件重复公告同一窗口"收全价）；否则对被拒的三种情形返回 false：**公告 `nullptr`**（宿主没有窗口可给）、**会话不在本后端的宿主窗口上**（vsg 自建窗口 / `VINE_VSG_OWN_WINDOW`）、**新窗口的 swapchain 格式不能服务本会话的 render pass**（`_imageFormat.format` 搬前后不一致，由 `VsgHostWindow::moveToHostSurface` 判）。**三种都发一条 `DiagnosticSeverity::Warning` + `DiagnosticCategory::UnsupportedRequest`**（2026-09-16 补：前两种原本静默，而它们的代价同样是整会话重建，宿主却听不到）；真正搬之前先 `retireRing.waitForIdle(state.viewer)`（计数等待，飞行中的 work 可能还指着旧表面/交换链/深度图）。`initialize()` 的"会话还活着"分支因此变成**先搬、搬不动才重建**。新增可观测量 `VsgRenderer::windowBuildCount()`：**没有新建窗口 ⇒ 没有新 instance / physical device / device ⇒ 管线没被丢掉**，这就是"搬"与"重建"在测试里的分别。前两条拒答由自检相位各钉一条断言（被拒 ⇒ 上报 + 重建），第三条要两个视觉映射到不同 swapchain 格式的窗口，是驱动属性，仍无断言（登记在 `.ai/memory/graphics-perf-backlog.md` 的 H6）。
+**搬移的入口与判据**：`VsgRenderer::moveSessionToHostSurface(void*)` **先认同一句柄**——公告的正是会话已经在的那一个 ⇒ 返回 true 并把会话留着（2026-09-16 复核：以前这里当拒答，而拒答的代价是整会话重建，等于对"显示/缩放事件重复公告同一窗口"收全价）；否则对被拒的三种情形返回 false：**公告 `nullptr`**（宿主没有窗口可给）、**会话不在本后端的宿主窗口上**（vsg 自建窗口 / `VINE_VSG_OWN_WINDOW`）、**新窗口的 swapchain 格式不能服务本会话的 render pass**（`_imageFormat.format` 搬前后不一致，由 `VsgHostWindow::moveToHostSurface` 判）。**三种都发一条 `DiagnosticSeverity::Warning` + `DiagnosticCategory::UnsupportedRequest`**（2026-09-16 补：前两种原本静默，而它们的代价同样是整会话重建，宿主却听不到）；真正搬之前先 `retireRing.waitForIdle(state.viewer)`（计数等待，飞行中的 work 可能还指着旧表面/交换链/深度图）。`initialize()` 的"会话还活着"分支因此变成**先搬、搬不动才重建**。新增可观测量 `VsgRenderer::windowBuildCount()`：**没有新建窗口 ⇒ 没有新 instance / physical device / device ⇒ 管线没被丢掉**，这就是"搬"与"重建"在测试里的分别。**三条拒答都由自检相位各钉一条断言**（被拒 ⇒ 上报 + 重建；2026-09-17 补：第三条要
+两个视觉映射到不同 swapchain 格式的窗口，是驱动属性而非调用方行为，于是由测试档 `V
+INE_HOST_MOVE_FORMAT_MISMATCH` 令那次比较失败——**走的是同一条代码路径**，只是触发
+条件被伪造；变异两半各验一次：静音上报 ⇒ 诊断那半红，令窗口不再拒答 ⇒ 重建与诊断同
+时不增）。
 
 **自检相位**（`vsg_selftest/selftest_hostsurface.cpp`）：自建两个 X11 宿主窗口 A、B（320×180），shutdown 后公告 A 并 `initialize()`，在两个窗口上各驱动若干帧，再把句柄换成 B、`initialize()`，然后断言：① `windowBuildCount()` **不变**（搬了，不是重建）；② 恰好 **1 次**计数 device stop；③ 两个宿主窗口都还在；④ `shutdown()` 之后**宿主 B 仍然存在**。它打印的行是 `[host-surface] ...`，**故意不带 `[selftest]` 前缀**，所以 55 行证据基线一字不动。
 
@@ -654,7 +658,8 @@ p-vertex 测试整棵子树剪掉，每节点世界盒经 `BoundsCache` 只算�
 5. **一个 drawable 三层串联**（`MatrixTransform → StateGroup → Commands`）；手工拼 `VertexIndexDraw` 不会
    被光栅化，必须用显式 bind/draw 命令。
 6. **`RenderTarget` 默认尺寸是 1×1**（不是 0）：想表达"没有尺寸"要显式 `setSize(0,0)`。
-7. **`VINE_VSG_OWN_WINDOW`** 是临时逃生口（后端自建窗口，忽略公告的表面尺寸），只用于测试。
+7. **`VINE_VSG_OWN_WINDOW`** 是临时逃生口（后端自建窗口，忽略公告的表面尺寸），只用于测试；
+   `VINE_HOST_MOVE_FORMAT_MISMATCH` 同理（令搬移时那次格式比较失败，驱动第三条拒答）。
 8. **新增 `src/` 文件后必须重新 `cmake -S . -B build`**（插件源文件列表是 `GLOB_RECURSE` 且无
    `CONFIGURE_DEPENDS`）；`tests/*/CMakeLists.txt` 的条目用 **tab** 缩进。
 9. **新增 shader 文件除了重新 configure，还要进 `cmake/VineShaders.cmake` 的清单**：清单漏了则
