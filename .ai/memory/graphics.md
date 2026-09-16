@@ -1,3 +1,19 @@
+> 2026-09-17 **H6 全清（第三条拒答路径）+ P13 结案（那次"帧级一次"的遍历早就在代码里）**
+> **H6**：`moveSessionToHostSurface` 三条拒答里，第三条（新窗口的 swapchain 格式不能服务本会话的
+> render pass）要两个视觉映射到不同格式的窗口 —— 那是驱动属性，不是调用方行为，所以相位改为由测试档
+> `VINE_HOST_MOVE_FORMAT_MISMATCH` 令那次比较失败（**走的是同一条代码路径**，只伪造触发条件）。新账
+> 是：该步**恰好一条** `Warning`/`UnsupportedRequest` **且恰好一次**窗口重建（都从该步之前起算，前两
+> 幕因此不必重数）。**两半各变异一次**：静音上报 ⇒ 重建照旧（4→5 build）而诊断不增，只诊断那半红；
+> 令窗口不再拒答 ⇒ 4→4、诊断也不增 ⇒ 两半都被证明是承重的。相位成功行：`refusals: 3 reported …`。
+> **P13**：登记的是"剩余：与 P2 合并成一次帧级遍历"。先查再动 —— `collectFrameShares()` 是全仓唯一
+> 收集入口，调用点只有两个且都帧级。**实测**：772 = 2 × 386（`beginFrame`），与槽数无关；每槽
+> `SceneBridge::collectOwnedShares` 2827/772 ≈ 3.66 次/收集 ⇒ 每槽恰好一次且省不掉。**不能再合成**：
+> 释放要判"整会话都松手"，第一个槽做决定前那张表就得含所有槽 + manager（P11 本身），塞进逐槽 sweep
+> 就是那一类悬垂。不改代码。
+> 判据（H6 有代码改动 / P13 无）：build 0/0、`test_vsg` 292 / `test_graphics` 272 / `test_core` 82、
+> **证据 55 行逐字不变**、lavapipe PASS 0 VUID、四个静态检查 0（窗口表面那个仍报 8 dropped / 5
+> refreshed / 9 kept）。
+
 > 2026-09-16 **H5 完成：那笔 +0.43 s 在 release 里的真相（附带一个方法论教训）**
 > 做法：`git worktree` 各建一个 revision，**各自独立**在 Release 下建 `vsg_backend_selftest`（依赖源码用 `-DFETCHCONTENT_SOURCE_DIR_<NAME>=主树/build/_deps/<name>-src` 复用 ⇒ 不需要网络；**各 1m29s**），交错 5 轮 × 30 帧、lavapipe。
 > · **数字**：pre-T16（`d6a182f`）**2.76 s** 对 T16（`fb6894f`）**3.37 s** ⇒ **+0.61 s（+22%）** —— 比 -O0 的 +0.43 s **更大** ⇒ **交付物确实带这笔钱**。
