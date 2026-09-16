@@ -81,6 +81,18 @@ class VsgHostWindow : public ::vsg::Inherit<::vsg::Window, VsgHostWindow>
      */
     [[nodiscard]] void* hostHandle() const noexcept { return reinterpret_cast<void*>(host_window_); }
 
+    /** @brief Whether this window is there and can be presented to.
+     *
+     * vsg's frame path asks these before it records anything: `CommandGraph::record()` and the viewer's
+     * frame loop both SKIP a window whose `visible()` is false, and the base class answers false until a
+     * platform window says otherwise. An adopted host window is the host's, so the answer has to come from
+     * the window itself: `valid()` from holding a handle and a connection, `visible()` from its map state.
+     *
+     * @return true when the host window is present (valid) / mapped (visible).
+     */
+    bool valid() const override;
+    bool visible() const override;
+
   protected:
     void _initSurface() override;
 
@@ -94,8 +106,16 @@ class VsgHostWindow : public ::vsg::Inherit<::vsg::Window, VsgHostWindow>
     ~VsgHostWindow() override;
 
   private:
-    void*          connection_  = nullptr; ///< The connection this window opened (never the host's).
-    std::uintptr_t host_window_ = 0;       ///< The adopted host window (never created, never destroyed).
+    /** @brief Re-reads the host window's map state, the one fact visible() cannot see by itself.
+     *
+     * An adopted window shows us none of the host's map/unmap events, so the state is re-read wherever we
+     * are already talking to the server (attach, resize, move) and lazily again while it reads as unmapped.
+     */
+    void refreshHostWindowState() const;
+
+    void*          connection_    = nullptr; ///< The connection this window opened (never the host's).
+    std::uintptr_t host_window_   = 0;       ///< The adopted host window (never created, never destroyed).
+    mutable bool   window_mapped_ = false;   ///< Whether the host window was last seen mapped.
 };
 
 } // namespace detail

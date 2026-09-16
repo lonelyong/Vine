@@ -550,7 +550,19 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 
 实测（lavapipe，本机）：`[host-surface] move: the session followed the host's new window (windows built 2 before, 2 after; 1 counted device stop(s); host windows intact; the session still presented it)`。**变异**（项目标准）：把 `moveSessionToHostSurface()` 改成 `return false`（回落到整会话重建）⇒ 立刻红：`the session was REBUILT for the host's new window (2 window build(s) before, 3 after)` + `the move took 0 counted device stop(s), expected exactly 1`，相位报 `FAILED`。注意 `deviceWaitCount()` 是**会话级**的，`shutdown()` 之后读回 0，所以相位在放手之前取这两个计数（打印的就是量到的值）。
 
-**未解决的一条（本相位的证据因此是"呈现 + 计数"，不是像素）**：在**窗口会话**里把 pass 指向**离屏** target 时，该 target 不被写入（读回透明黑），并产生 1 条 `UNASSIGNED-CoreValidation-DrawState-InvalidImageLayout`（"expects SHADER_READ_ONLY_OPTIMAL--instead, current layout is UNDEFINED"）。修前二进制 0 条、`cur` 1 条，位置就在本相位第一段帧里；加"先给窗口若干帧预热"后仍然复现 ⇒ 与"首帧布局"无关。宿主路径的**像素**证据目前由 app 门禁承担（`[PASS] Vine app (default demo)`，0 VUID），本相位只断言"窗口还在、呈现不报错、没有重建"。**待办**：查清"窗口会话 + 离屏 target"这条路径（要么修布局，要么在自检里记下它不能作为证据来源）。
+**曾经记成"未解决的一条"，其实是同一个 bug 的另一张脸（2026-09-16 修正）**：先前这里写着"窗口会话里把 pass 指向离屏 target 时该 target 不被写入（读回透明黑），并出 1 条 `UNASSIGNED-…InvalidImageLayout`"，还当成一个独立的、待查的后端缺陷。**它是错的**：根因是 **`VSG` 的帧路径按 `window->visible()` 决定要不要录帧**，而本后端的窗口类当时没回答这个问题：
+
+| vsg 的事实 | 后果 |
+| --- | --- |
+| `Window::valid()` 返回 **false**，`Window::visible()` 返回 `valid()`（基类对"没有平台类认领的窗口"一律答 false） | 自建的 `VsgHostWindow` 继承到 **false/false** |
+| `CommandGraph::record()`（`if (window && !window->visible()) return;`）、`SecondaryCommandGraph::record()`、`Viewer::advance()`（`if (!window->visible()) continue;`）、`Presentation::present()` 全都先问 `visible()` | **整帧不录**：窗口是黑的，**离屏 target 也一个像素都不会被写**（它们在这条命令图里），而且 **0 条 validation error**——"validation clean" 与 "什么都没画" 在这里完全同形 |
+| `vsgXcb::Xcb_Window` 覆写 `valid()`(`_window != 0`) 与 `visible()`(`_windowMapped`) | 所以 C1 之前那条"宿主句柄走 `vsg::Window::create`"的路径是好的，换成自建类后立刻变黑 |
+
+**修法**：`VsgHostWindow` 自己回答这两个问题——`valid()` = 有句柄且连接在，`visible()` = 采纳的宿主窗口处于映射态（X11 问 `xcb_get_window_attributes().map_state == XCB_MAP_STATE_VIEWABLE`；Win32 用 `IsWindow` + `IsWindowVisible`）。宿主窗口的 map/unmap 事件我们不收（`pollEvents()` 不归我们），所以状态在**本来就要和服务器说话的三个点**刷新（附加、`resize()`、搬移），并在读数为"未映射"时惰性重问一次；映射态是稳态，不产生额外往返。
+
+**实测（都验过二进制身份，见下）**：`xwd` 读 Qt 渲染区窗口的真实像素（`xwd -id <id>` + 自写 PPM 解码）⇒ 修前 **741/88452 = 0.84% 非黑**（均值 (0,1,0)），修后 **74132/88452 = 83.81% 非黑**（均值 (96,105,112)）——与 C1 之前 `vsgXcb::Xcb_Window` 那条路径**逐位相同**；日志同时从 `attached to the host window (378x234)` 变成 `attached to the host window (378x234, mapped=true)`。把窗口拉到 1498×828 后渲染区跟着变成 **97.10% 非黑**（`resize()` + 刷新也在跑）。自检相位因此恢复成真正的**像素**判据：离屏 target 的 `centre 34,6,2` vs 角点 `10,20,30`（角点就是 pass 的清屏色），搬移前后**逐位相同**；帧被跳过时两点都是透明黑 ⇒ 断言直接红。
+
+**这笔教训值得单列（验证纪律）**：先有一次"修好了"的假阳性——`cmake --build . --target Vine` **不会重建插件** `plugins/vine/gfx_backend_vsgd.so`（app 是运行时 dlopen 它），于是那次跑的还是 19:42 那份**C1 之前**的插件。**结论：二进制级结论必须按构建产物验身份**（`nm -DC build/plugins/vine/gfx_backend_vsgd.so | grep VsgHostWindow` + `.so` 时间戳），只验 `bin/Vine` 不够。
 
 ### 5.4 变体与清屏策略
 

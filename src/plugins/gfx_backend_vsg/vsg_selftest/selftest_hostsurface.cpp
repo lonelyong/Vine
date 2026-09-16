@@ -156,19 +156,51 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
 
     // Every frame goes to the HOST SURFACE itself. That is the target a host presents, and it is the one the
     // move has to keep working: a surface or swapchain rebuilt against the wrong window fails as a validation
-    // error rather than silently, so presenting is the observable this phase drives.
+    // error rather than silently, so presenting is the observable this phase drives. The PIXEL this phase
+    // compares across the move is read from an off-screen target drawn in the same frame, because the window
+    // target has no readback path of its own.
+    auto pixels_target = RenderTargetPtr(new RenderTarget());
+    pixels_target->setSize(256, 144);
+    pixels_target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    pixels_target->attachDepth(RenderTarget::DepthFormat::D24);
+    // Its own pass: the window pass and this one run in the same frame, and a pass names ONE target.
+    auto pixels_pass = RenderPassPtr(new RenderPass());
+
     const auto draw = [&]() {
         for (int i = 0; i < frames; ++i) {
             FrameScope frame(renderer);
-            PassScope  pass_scope(renderer, pass.get(), 0, nullptr, clear_color, true,
-                                 vine::graphics::DepthMode::TestAndWrite);
+            PassScope  window_pass(renderer, pass.get(), 0, nullptr, clear_color, true,
+                                  vine::graphics::DepthMode::TestAndWrite);
+            renderer.render(std::vector<RenderCommand>{ command }, camera.get());
+            PassScope offscreen_pass(renderer, pixels_pass.get(), 0, pixels_target.get(), clear_color, true,
+                                     vine::graphics::DepthMode::TestAndWrite);
             renderer.render(std::vector<RenderCommand>{ command }, camera.get());
         }
     };
+    const auto readCentre = [&](const char* when, int centre[3], int corner[3], bool& ok) {
+        std::vector<std::uint8_t> pixels;
+        if (!renderer.readColorBuffer(pixels_target.get(), 0, pixels)) {
+            std::fprintf(stderr, "[selftest] FAIL: the phase's own target could not be read back (%s the move)\n", when);
+            ok = false;
+            return;
+        }
+        const auto at = [&pixels](std::uint32_t x, std::uint32_t y, int channel) {
+            return static_cast<int>(pixels[(static_cast<std::size_t>(y) * 256u + x) * 4u + static_cast<std::size_t>(channel)]);
+        };
+        for (int channel = 0; channel < 3; ++channel) {
+            centre[channel] = at(128u, 72u, channel);
+            corner[channel] = at(0u, 0u, channel);
+        }
+        std::fprintf(stderr, "[host-surface] %s the move: centre %d,%d,%d, corner %d,%d,%d\n", when, centre[0],
+                     centre[1], centre[2], corner[0], corner[1], corner[2]);
+    };
 
-    bool ok = true;
+    bool ok        = true;
+    int  before[3] = { 0, 0, 0 };
+    int  corner[3] = { 0, 0, 0 };
 
     draw();
+    readCentre("before", before, corner, ok);
 
     const std::size_t windows_before = renderer.windowBuildCount();
     const std::size_t waits_before   = renderer.deviceWaitCount();
@@ -207,6 +239,30 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
     // Drive the session again on the NEW surface: the swapchain was rebuilt in place, so this is the frame that
     // proves the move left a session that still renders and presents.
     draw();
+    int after[3] = { 0, 0, 0 };
+    readCentre("after", after, corner, ok);
+
+    // The pixel is the part of this phase a validation-clean run cannot fake. The corner holds the pass' own
+    // clear colour and the centre the quad, so "the centre differs from the corner" is what says the frame
+    // really drew -- and it is exactly what a frame the engine SKIPPED cannot produce (a skipped frame leaves
+    // the whole off-screen target untouched, i.e. transparent black at both points, reported with no error).
+    const auto drew_the_quad = [](const int centre[3], const int corner_rgb[3]) {
+        return centre[0] != corner_rgb[0] || centre[1] != corner_rgb[1] || centre[2] != corner_rgb[2];
+    };
+    if (!drew_the_quad(before, corner) || !drew_the_quad(after, corner)) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the off-screen frame this phase rides on did not draw (centre before the"
+                     " move %d,%d,%d, after %d,%d,%d, corner %d,%d,%d: a frame the engine skipped reads back\n"
+                     "untouched at both points)\n",
+                     before[0], before[1], before[2], after[0], after[1], after[2], corner[0], corner[1], corner[2]);
+        ok = false;
+    }
+    if (before[0] != after[0] || before[1] != after[1] || before[2] != after[2]) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the picture changed across the move (before %d,%d,%d, after %d,%d,%d)\n",
+                     before[0], before[1], before[2], after[0], after[1], after[2]);
+        ok = false;
+    }
 
     // Let go of the session: the window the host handed over is the HOST's, so it must outlive us -- the
     // assertion vsg's own platform window fails (it destroys the window it adopted).
@@ -218,8 +274,9 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
 
     std::fprintf(stderr,
                  "[host-surface] move: the session followed the host's new window (windows built %zu before, %zu"
-                 " after; %zu counted device stop(s); host windows intact; the session still presented it)\n",
-                 windows_before, builds_after, stops);
+                 " after; %zu counted device stop(s); host windows intact; the session still presented it; centre"
+                 " %d,%d,%d before and after)\n",
+                 windows_before, builds_after, stops, after[0], after[1], after[2]);
     return ok;
 #endif // !_WIN32
 }

@@ -68,6 +68,44 @@ const char* VsgHostWindow::instanceExtensionSurfaceName() const
     return VK_KHR_XCB_SURFACE_EXTENSION_NAME;
 }
 
+bool VsgHostWindow::valid() const
+{
+    return host_window_ != 0 && connection_ != nullptr;
+}
+
+bool VsgHostWindow::visible() const
+{
+    if (!valid()) {
+        return false;
+    }
+    // An adopted window shows us none of the host's map/unmap events, so a window that is not known to be
+    // mapped is asked about again; the mapped case is the steady one and costs nothing. Answering false
+    // here is not cosmetic: the frame path asks this before recording, so a false would make the WHOLE
+    // frame -- every pass, off-screen ones included -- disappear without one validation error to show for
+    // it (the base class answers false for a window no platform class claimed).
+    if (!window_mapped_) {
+        refreshHostWindowState();
+    }
+    return window_mapped_;
+}
+
+void VsgHostWindow::refreshHostWindowState() const
+{
+    auto* connection = static_cast<xcb_connection_t*>(connection_);
+    if (connection == nullptr || host_window_ == 0) {
+        window_mapped_ = false;
+        return;
+    }
+    xcb_get_window_attributes_reply_t* attributes = xcb_get_window_attributes_reply(
+        connection, xcb_get_window_attributes(connection, static_cast<xcb_window_t>(host_window_)), nullptr);
+    if (attributes == nullptr) {
+        window_mapped_ = false;
+        return;
+    }
+    window_mapped_ = attributes->map_state == XCB_MAP_STATE_VIEWABLE;
+    free(attributes);
+}
+
 VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
     Inherit(traits)
 {
@@ -98,7 +136,11 @@ VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
     }
     // Which surface the backend is on is a fact the host (and anyone reading a log) needs: it is the
     // difference between "rendering into the window you handed us" and "rendering into one of our own".
-    V_LOGI("[VsgHostWindow] attached to the host window ({}x{})", _extent2D.width, _extent2D.height);
+    // The map state is part of that fact: a host window that is not on screen yet answers visible() false,
+    // and vsg's frame path then records nothing at all (see valid() / visible()).
+    refreshHostWindowState();
+    V_LOGI("[VsgHostWindow] attached to the host window ({}x{}, mapped={})", _extent2D.width, _extent2D.height,
+           window_mapped_);
 }
 
 void VsgHostWindow::_initSurface()
@@ -163,6 +205,7 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
         _traits->height = static_cast<int>(height);
     }
     _traits->nativeWindow = static_cast<unsigned int>(next);
+    refreshHostWindowState();
     // The device, the render pass and every pipeline are still here: that is the point of the move, and the
     // log says so because it is otherwise invisible.
     V_LOGI("[VsgHostWindow] moved to the host's new window ({}x{}); the device and its pipelines were kept",
@@ -183,6 +226,8 @@ void VsgHostWindow::resize()
     }
     _extent2D.width  = width;
     _extent2D.height = height;
+    // The same round trip the geometry cost us: keep the map state honest while we are talking to the server.
+    refreshHostWindowState();
     buildSwapchain();
 }
 
@@ -240,6 +285,30 @@ const char* VsgHostWindow::instanceExtensionSurfaceName() const
     return VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
 }
 
+bool VsgHostWindow::valid() const
+{
+    return host_window_ != 0;
+}
+
+bool VsgHostWindow::visible() const
+{
+    if (!valid()) {
+        return false;
+    }
+    // See the X11 branch: the frame path skips a window whose visible() is false, so an adopted window has
+    // to answer for itself. A window that is not known to be visible is asked about again.
+    if (!window_mapped_) {
+        refreshHostWindowState();
+    }
+    return window_mapped_;
+}
+
+void VsgHostWindow::refreshHostWindowState() const
+{
+    const HWND window = static_cast<HWND>(reinterpret_cast<void*>(host_window_));
+    window_mapped_    = ::IsWindow(window) != FALSE && ::IsWindowVisible(window) != FALSE;
+}
+
 VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
     Inherit(traits)
 {
@@ -255,6 +324,9 @@ VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
         traits->width    = static_cast<int>(width);
         traits->height   = static_cast<int>(height);
     }
+    // The map state decides whether vsg's frame path records anything for this window at all (see
+    // visible()), so it is read here and refreshed wherever we talk to Win32 again.
+    refreshHostWindowState();
 }
 
 void VsgHostWindow::_initSurface()
@@ -316,6 +388,7 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
         _traits->height = static_cast<int>(height);
     }
     _traits->nativeWindow = static_cast<HWND>(native_handle);
+    refreshHostWindowState();
     return true;
 }
 
@@ -328,6 +401,7 @@ void VsgHostWindow::resize()
     }
     _extent2D.width  = width;
     _extent2D.height = height;
+    refreshHostWindowState();
     buildSwapchain();
 }
 
