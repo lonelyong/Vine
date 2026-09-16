@@ -1,3 +1,51 @@
+> 2026-09-16 **审查轮次 3：接口 / 命名 / 文档收尾（任务表 T1–T16）**
+> 判据（整批）：build 0 error/0 warning；`test_graphics` 269→**272**、`test_vsg` **289**、`test_core` **82**；
+> 三脚本 0（文档 58 单元、include 659 文件、诊断格式 31 文件）；lavapipe **RESULT: PASS** 且 **55 行证据逐字节不变**。
+> - **接口瘦身 29→27 虚函数**：删 `RenderBackend::materialManager()`（返回后端内部缓存，连后端自己都不经接口拿；
+>   `SceneBridge::materialManager()` 是**另一个**函数）；`isPassScopeOpen()` **移出接口**（测试钩子不该长在公开契约上，
+>   每个后端都要为它写实现）→ 成为 `VsgRenderer` 的方法。`nativeHandle()` **保留**：它是宿主面能力（检测窗口被系统重建），
+>   只把"宿主会拿它比较"这个没人做的承诺改写清楚——按先例，**"背后什么都没有"的动作才删**（如 `releaseWindowLayer`）。
+> - **`supportsRenderTargets()` 从"文档里的协商"变成真协商**：引擎每帧问一次，按 **episode** 只报一次
+>   （`TargetBuildFailed`，点名 pass）。删掉它才是错的：引擎遇到不支持离屏目标的后端会**静默把内容画进窗口**。
+>   `MockBackend` 现在答 `true`（带 `supports_targets` 开关）⇒ 既有管线用例零影响；用例
+>   `ABackendThatCannotDrawTargetsIsToldOncePerEpisode` 钉住"只报一次 + 条件消失后重新武装"。
+> - **清屏三 setter 不合并（撤回原提案）**：`isClearEnabled` / `clearColor` / `shouldClearDepth` 是**三个正交轴**
+>   （8 处生产调用点；"清色但保深度"是真实状态）；开关关闭时另两轴失效是**任何可选属性**的通性（`viewport` 同理）。
+>   但顺手挖出真东西：**清屏色默认是不透明 `(51,51,51,255)`（窗口灰），而 `RenderPipelineBuilder` 从不设颜色**
+>   ⇒ 每个离屏 pass 的附件 0 也清成不透明灰（附件 ≥1 仍是透明黑，那是后端契约）。改成把来历写清，**不动默认值**（那会改画面）。
+> - **`setOcclusionEnabled`/`occlusionEnabled` 删除**：三值枚举压成两布尔，`p.setOcclusionEnabled(p.occlusionEnabled())`
+>   会把 `TestOnly` 静默升级成 `TestAndWrite`；getter 只有测试读。4 处生产调用点全是"关深度" → `setDepthMode(Disabled)`；
+>   测试改名 `DepthStyleIsExplicitAndIndependentOfClear` 并新增"**TestOnly 能存活**"这条断言。
+> - **命名**：`RenderEngine::diagnosticCount()` → `backendDiagnosticCount()`（它的 3 个读者读的是**后端**计数）；
+>   布尔谓词 `valid→isValid`、`bound→isBound`、`complete→isComplete`、`clearEnabled→isClearEnabled`、`enabled→isEnabled`
+>   （最后一个是同类内一致性：改了兄弟就一起改）。
+> - **`bumpRevision()` 新增**（`Buffer` 与 `Geometry`——唯一两个有 `setRevision` 的）：`setRevision(revision() + 1u)`
+>   这个咒语此前在测试里 20+ 处重复，连 `Mesh.hpp:219` 的**生产代码**都在写它；新方法让"前进一格、不会倒退"成为易写且写不错的路。
+> - **T7（已记待办，未做）**：专门写了扫描器量 Doxygen 覆盖——**公开函数 `@param` 缺口 = 0**（约定这半边本来就守住了）；
+>   **缺 `@return` 的 103 处**，绝大多数是 `/** @brief Gets X. */ X x() const;`，`@brief` 本身就是返回值说明。
+>   补 103 条 "@return The X" 属文档戏法，**建议把规则收窄为"`@brief` 已说明返回值时可省 `@return`"**；决定前不动
+>   （`scripts/check_doc_symbols.py` 不查每参数标签，门禁不会因此变红）。
+> - **T6 遗留（已决定不改）**：`Light::castShadow()`、`RenderTarget::depthPromotion()`、`OrbitCameraManipulator::zoomToCursor()`
+>   三处不合 `is/has` 前缀，但其 `is/has` 形式读起来更差——与 `RenderPass::shouldClearDepth()`（**请求**而非状态，头文件已写明理由）同理。
+> - **T10（重新定性，只改注释）**：`setLights` 的 `reserve` 与 `setPassInputs` 的"assign 保住 buffer"注释**陈述了代码做不到的事**
+>   ——`resetPassRequest()` 是 `state.request = VsgPassRequest{}`，**每个 pass 整体赋值两次**（beginPass + endPass），容量照样丢。
+>   修法要么字段化重置（丢掉"新增字段永不忘重置"这个**刻意**保证，见该函数注释），要么把两个 buffer 移出 request（~8 处改名）；
+>   **收益（~2 次分配/pass/帧）不值这个保证**，故只把注释改成事实，并写下将来真要动时该怎么做。
+> - **T15（已量，待做）**：`VsgRendererState&` 的实际使用面量出来了——真正收它的**定义**是 **38 个**（先前口径 81 含头文件声明），
+>   **24 个只碰 ≤2 个字段**，均值 **2.6 字段 / ~30**；只有 3 个碰 ≥8（`setupContentSlot` 12、`drawScreenProgram` 12、
+>   `renderContentSlot` 8 —— 正是已标记过长的那些）。⇒ **收窄参数是机械可做的（24 处）且真能换来隔离**，
+>   而重耦合只在 3 个长函数上，属于 T14/拆函数的同一味药。测量脚本：`/tmp/statefields.py`（按 `state.<field>` 读点计数）。
+> - **T11 已完成**：`passes_active_this_frame` 从每帧 `std::set` 换成复用 vector（`AnnouncedPasses`：`mark/contains/drop/clear`
+>   把"去重"这条规则收进类型），每 pass 每帧的节点分配归零——与 `RenderEngine::WiringState::outputs_` 同一拼法。
+> - **T9 已完成**：`addOffscreenToScreen` 的 4 个连续 `int` 换成 `Viewport`（demo 原来传 `px/py/pip_w/pip_h`，测试传 `8,8,320,180`）；
+>   `deferredLightProgram(bool with_shadow)` 拆成**两个具名工厂** `deferredLightProgram()` / `shadowedDeferredLightProgram()`
+>   （调用点原来自己在写 `/*with_shadow*/` 注释解释实参——布尔不可读的自证），共享实现留在 .cpp 的匿名命名空间里。
+> - **T13（已量，未做）**：`vsg/app/Viewer.h` 单独就是 **0.94 s / 208 MB**，被 **4 个**插件头拉进
+>   （`VsgBackendUtility.hpp` / `VsgRenderer.hpp` / `VsgRendererState.hpp` / `VsgRetireRing.hpp`），而 `VsgRendererState.hpp`
+>   是它们的传递源 ⇒ 一个 TU 花 **1.21 s / 203 MB**（引擎接口只要 0.25 s）。做法：前向声明 + 析构移出到 .cpp（`ref_ptr` 成员只
+>   需不完整类型，前提是含它的类析构不在头里实例化）；**注意测试是在栈上直接构造 `VsgRenderer`**，所以 `~VsgRenderer` 也要 out-of-line，
+>   否则测试 TU 自己就会实例化状态的析构、把 vsg 头拉回来。
+
 > 2026-09-15 **审查轮次：graphics + vsg 后端逐条修复（见 `.ai/design/graphics-vsg-audit.md`）**
 > 12 条缺陷全部修完，每条都带门禁（单测/像素证据/变异验证）。**判据**：build 0 error；`test_graphics` 260→**269**、
 > `test_vsg` 276→**288**；`scripts/vsg_selftest_evidence.sh` **55 行逐字节不变**。

@@ -121,7 +121,7 @@ class V_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
      *
      * @return true when a target is bound.
      */
-    bool bound() const noexcept;
+    bool isBound() const noexcept;
 
   private:
     String                      label_;

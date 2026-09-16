@@ -106,7 +106,7 @@ RenderTarget::DepthFormat RenderTarget::depthFormat() const
     return depth_format_;
 }
 
-bool RenderTarget::valid() const
+bool RenderTarget::isValid() const
 {
     return (!color_formats_.empty() || has_depth_) && width_ > 0 && height_ > 0;
 }

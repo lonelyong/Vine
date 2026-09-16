@@ -1176,7 +1176,7 @@ TEST(TextureTest, A2DTextureIsOneFace)
     EXPECT_EQ(texture.format(), PixelFormat::Rgba8Unorm);
     EXPECT_EQ(texture.mipCount(), 2);
     EXPECT_EQ(texture.source(0), nullptr);
-    EXPECT_FALSE(texture.complete());
+    EXPECT_FALSE(texture.isComplete());
 }
 
 TEST(TextureTest, ACubeTextureIsSixFacesSharingOneDescription)
@@ -1198,11 +1198,11 @@ TEST(TextureTest, BecomesCompleteOnlyWhenEveryFaceIsFilled)
 
     for (int face = 0; face < 5; ++face) {
         texture.setSource(face, sourceImage(texture, 1));
-        EXPECT_FALSE(texture.complete()) << "face " << face;
+        EXPECT_FALSE(texture.isComplete()) << "face " << face;
     }
 
     texture.setSource(5, sourceImage(texture, 1));
-    EXPECT_TRUE(texture.complete());
+    EXPECT_TRUE(texture.isComplete());
 }
 
 TEST(TextureTest, HoldsItsFacesByStrongReference)
@@ -1252,7 +1252,7 @@ TEST(TextureTest, RejectsASourceThatDoesNotMatchTheDescription)
 
     texture.setSource(0, sourceImage(texture, 2));
     EXPECT_TRUE(texture.hasSource(0));
-    EXPECT_TRUE(texture.complete());
+    EXPECT_TRUE(texture.isComplete());
 }
 
 TEST(TextureTest, RejectsAnImpossibleDescription)
@@ -1289,7 +1289,7 @@ TEST(TextureTest, FillingAFaceBumpsTheContentRevision)
 
     // Reading is not a mutation.
     (void)texture.source(0);
-    (void)texture.complete();
+    (void)texture.isComplete();
     EXPECT_EQ(texture.revision(), after_fill);
 
     // Replacing the pixels counts, as does clearing the face.
@@ -1313,10 +1313,10 @@ TEST(Texture2DTest, IsOneImageAndTakesNoFaceIndex)
     EXPECT_EQ(texture.width(), 8);
     EXPECT_EQ(texture.height(), 4);
     EXPECT_EQ(texture.image(), nullptr);
-    EXPECT_FALSE(texture.complete());
+    EXPECT_FALSE(texture.isComplete());
 
     texture.setImage(sourceImage(texture, 2));
-    EXPECT_TRUE(texture.complete());
+    EXPECT_TRUE(texture.isComplete());
     EXPECT_EQ(texture.image(), texture.source(0));
     EXPECT_EQ(texture.layer(0), texture.image());
 }
@@ -1354,7 +1354,7 @@ TEST(CubeMapTest, IsSixSquareFacesOfOneSize)
     EXPECT_EQ(cube.width(), 16);
     EXPECT_EQ(cube.height(), 16);
     EXPECT_EQ(cube.mipCount(), 3);
-    EXPECT_FALSE(cube.complete());
+    EXPECT_FALSE(cube.isComplete());
 }
 
 TEST(CubeMapTest, FacesAreNamedInTheLayerOrderVulkanReads)
@@ -1384,13 +1384,13 @@ TEST(CubeMapTest, EachFaceIsFilledAndReadBackByName)
     EXPECT_EQ(cube.faceImage(CubeMap::Face::PosZ), front.get());
     EXPECT_EQ(cube.faceImage(CubeMap::Face::NegZ), nullptr);
     EXPECT_EQ(cube.layer(4), front.get()) << "faceImage(PosZ) must be the layer Vulkan reads as +Z";
-    EXPECT_FALSE(cube.complete());
+    EXPECT_FALSE(cube.isComplete());
 
     for (const CubeMap::Face face : { CubeMap::Face::PosX, CubeMap::Face::NegX, CubeMap::Face::PosY,
                                       CubeMap::Face::NegY, CubeMap::Face::NegZ }) {
         cube.setFaceImage(face, sourceImage(cube, 1));
     }
-    EXPECT_TRUE(cube.complete());
+    EXPECT_TRUE(cube.isComplete());
 }
 
 TEST(CubeMapTest, FillingAFaceBumpsTheContentRevision)
@@ -1743,6 +1743,27 @@ TEST(ShaderProgramTest, AggregatesStages)
     EXPECT_EQ(all[0].source, vs.source);
 }
 
+TEST(GeometryTest, BumpRevisionMovesForwardFromWhereverItIs)
+{
+    Geometry geometry;
+    EXPECT_EQ(geometry.revision(), 0u);
+
+    // One call reports one edit, whatever the counter currently holds — a host that does not keep the
+    // number itself (the whole reason setRevision(revision() + 1) was written by hand at every call site).
+    geometry.bumpRevision();
+    EXPECT_EQ(geometry.revision(), 1u);
+    geometry.setRevision(41u);
+    geometry.bumpRevision();
+    EXPECT_EQ(geometry.revision(), 42u);
+
+    // And the counter cannot be LOWERED by arithmetic: the hazard setRevision documents as "treat it as
+    // monotonic" is not something a bumper can get wrong.
+    for (int i = 0; i < 3; ++i) {
+        geometry.bumpRevision();
+    }
+    EXPECT_EQ(geometry.revision(), 45u);
+}
+
 TEST(GeometryTest, ProgramSlotDefaultsNull)
 {
     Geometry geom;
@@ -1885,7 +1906,7 @@ TEST(GeometryTest, BoundingBoxComputedFromBuffers)
 TEST(RenderTargetTest, OffscreenDescription)
 {
     RenderTarget rt;
-    EXPECT_FALSE(rt.valid());
+    EXPECT_FALSE(rt.isValid());
     EXPECT_FALSE(rt.hasColor());
     EXPECT_FALSE(rt.hasDepth());
 
@@ -1897,13 +1918,13 @@ TEST(RenderTargetTest, OffscreenDescription)
     EXPECT_TRUE(rt.hasDepth());
     EXPECT_EQ(rt.colorFormat(), RenderTarget::ColorFormat::RGBA8);
     EXPECT_EQ(rt.depthFormat(), RenderTarget::DepthFormat::D24);
-    EXPECT_TRUE(rt.valid());
+    EXPECT_TRUE(rt.isValid());
     EXPECT_EQ(rt.width(), 320);
     EXPECT_EQ(rt.height(), 240);
 
     // Zero-size target is never usable, even with attachments attached.
     rt.setSize(0, 0);
-    EXPECT_FALSE(rt.valid());
+    EXPECT_FALSE(rt.isValid());
 }
 
 TEST(RenderTargetTest, MultipleColorAttachments)
@@ -1931,7 +1952,7 @@ TEST(RenderTargetTest, MultipleColorAttachments)
     EXPECT_EQ(rt.colorFormat(3), RenderTarget::ColorFormat::RGBA8);
     EXPECT_EQ(rt.colorFormat(-1), RenderTarget::ColorFormat::RGBA8);
     EXPECT_TRUE(rt.hasDepth());
-    EXPECT_TRUE(rt.valid());
+    EXPECT_TRUE(rt.isValid());
 }
 
 // ============ RenderEngine ============
@@ -2043,6 +2064,11 @@ class MockBackend : public RenderBackend {
         ++clear_calls;
         last_clear_policy = policy;
     }
+    /// What this double reports for RenderBackend::supportsRenderTargets: TRUE by default, because the
+    /// double honours every target it is handed (a pass test is not asking about target support).
+    /// A test that wants the other answer flips this and the engine reports the pipeline it cannot serve.
+    bool supports_targets = true;
+    bool supportsRenderTargets() override { return supports_targets; }
     void swapBuffers() override { ++swap_calls; }
 
     // Pass-scope recording: the engine opens/closes one scope per executed
@@ -2313,6 +2339,52 @@ TEST(RenderEngineTest, APassAnnouncesItsClearPolicyToTheBackend)
     EXPECT_EQ(backend->last_clear_policy.color.g, 20);
     EXPECT_EQ(backend->last_clear_policy.color.b, 30);
     EXPECT_FALSE(backend->last_clear_policy.depth);
+}
+
+TEST(RenderEngineTest, ABackendThatCannotDrawTargetsIsToldOncePerEpisode)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->initialize();
+
+    std::vector<RenderDiagnostic> reported;
+    engine->setDiagnosticSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    auto offscreen = intrusive_ptr<RenderTarget>(new RenderTarget());
+    auto pass      = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setName(u8"GBuffer");
+    pass->setRenderTarget(offscreen);
+    engine->addPass(pass, 0);
+
+    // This backend honours targets, so the pipeline means what it says and nothing is reported about it.
+    engine->frame();
+    const std::size_t quiet            = engine->engineDiagnosticCount();
+    const std::size_t reported_before  = reported.size();
+
+    // The same pipeline on a backend that cannot draw into a target: the pass is recorded in the window
+    // instead of where the pipeline put it (a wrong picture, not a slow one), so the engine says so.
+    backend->supports_targets = false;
+    engine->frame();
+    ASSERT_EQ(engine->engineDiagnosticCount(), quiet + 1);
+    ASSERT_EQ(reported.size(), reported_before + 1);
+    const RenderDiagnostic& diagnostic = reported[reported_before];
+    EXPECT_EQ(diagnostic.severity, DiagnosticSeverity::Warning);
+    EXPECT_EQ(diagnostic.category, DiagnosticCategory::TargetBuildFailed);
+    EXPECT_NE(diagnostic.message.stdstr().find("GBuffer"), std::string::npos)
+        << "the report names the pass the host has to fix";
+
+    // ONCE: a host looping on frames cannot fix this by drawing another one, so it is an episode.
+    engine->frame();
+    EXPECT_EQ(engine->engineDiagnosticCount(), quiet + 1);
+
+    // The ask stops (the pass is skipped), which re-arms the episode: asking again is a new problem.
+    pass->setEnabled(false);
+    engine->frame();
+    EXPECT_EQ(engine->engineDiagnosticCount(), quiet + 1);
+    pass->setEnabled(true);
+    engine->frame();
+    EXPECT_EQ(engine->engineDiagnosticCount(), quiet + 2);
 }
 
 TEST(RenderEngineTest, FrameBeforeInitializeIsNoOp)
@@ -2637,7 +2709,7 @@ TEST(RenderPassTest, ViewportObjectDefaultsAndRoundTrip)
     EXPECT_EQ(vp.y, 5);
     EXPECT_EQ(vp.width, 96);
     EXPECT_EQ(vp.height, 96);
-    EXPECT_TRUE(vp.valid());
+    EXPECT_TRUE(vp.isValid());
 
     pass->clearViewport();
     EXPECT_FALSE(pass->hasViewport());
@@ -2731,7 +2803,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     screen->setProgram(copy_program);
     screen->addInputName(u8"SceneColor");
     // A screen pass composites over existing content, so it never clears.
-    EXPECT_FALSE(screen->clearEnabled());
+    EXPECT_FALSE(screen->isClearEnabled());
     engine->addPass(screen, 100);
 
     const int before = backend->program_draws;
@@ -3089,7 +3161,7 @@ TEST(RenderPipelineBuilderTest, OffscreenToScreenBuildsExpectedPipeline)
         u8"SceneColor", 640, 360,
         RenderTarget::ColorFormat::RGBA8,
         RenderTarget::DepthFormat::D24,
-        8, 8, 320, 180);
+        Viewport{ 8, 8, 320, 180 });
     ASSERT_NE(screen, nullptr);
     // The recipe adds the off-screen (order < 0) + screen (order > 0) passes.
     EXPECT_EQ(engine->passCount(), 2u);
@@ -3613,7 +3685,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     ASSERT_NE(present, nullptr);
     EXPECT_EQ(present->camera(), cam.get());
     EXPECT_EQ(present->renderTarget(), nullptr);
-    EXPECT_FALSE(present->clearEnabled());
+    EXPECT_FALSE(present->isClearEnabled());
     const auto& inputs = present->inputNames();
     EXPECT_NE(std::find(inputs.begin(), inputs.end(), vine::String(u8"Composite")), inputs.end());
 
@@ -3648,22 +3720,27 @@ TEST(RenderPipelineBuilderTest, ForwardPresetWithTransparentContentStacksDepthOn
     EXPECT_EQ(pipeline->compositeTarget(), nullptr);
 }
 
-TEST(RenderPassTest, OcclusionIsExplicitAndIndependentOfClear)
+TEST(RenderPassTest, DepthStyleIsExplicitAndIndependentOfClear)
 {
     RenderPass pass;
     // Depth style is explicit and defaults on; it is NOT inferred from the
     // clear flag (a depth-on pass may skip clearing).
-    EXPECT_TRUE(pass.occlusionEnabled());
-    EXPECT_TRUE(pass.clearEnabled());
-    pass.setOcclusionEnabled(false);
-    EXPECT_FALSE(pass.occlusionEnabled());
-    // The two flags are orthogonal: disabling the clear does not flip depth.
+    EXPECT_EQ(pass.depthMode(), DepthMode::TestAndWrite);
+    EXPECT_TRUE(pass.isClearEnabled());
+    pass.setDepthMode(DepthMode::Disabled);
+    EXPECT_EQ(pass.depthMode(), DepthMode::Disabled);
+    // The two axes are orthogonal: disabling the clear does not flip depth.
     pass.setClearEnabled(false);
-    EXPECT_FALSE(pass.clearEnabled());
-    EXPECT_FALSE(pass.occlusionEnabled());
-    pass.setOcclusionEnabled(true);
-    EXPECT_TRUE(pass.occlusionEnabled());
-    EXPECT_FALSE(pass.clearEnabled());
+    EXPECT_FALSE(pass.isClearEnabled());
+    EXPECT_EQ(pass.depthMode(), DepthMode::Disabled);
+    pass.setDepthMode(DepthMode::TestAndWrite);
+    EXPECT_EQ(pass.depthMode(), DepthMode::TestAndWrite);
+    EXPECT_FALSE(pass.isClearEnabled());
+    // All THREE values are reachable, and the middle one stays itself: a test-only pass must not be
+    // flattened into "on" by reading a boolean and writing it back (the convenience pair that did
+    // exactly that is gone — setDepthMode is the only spelling of this fact).
+    pass.setDepthMode(DepthMode::TestOnly);
+    EXPECT_EQ(pass.depthMode(), DepthMode::TestOnly);
 }
 
 TEST(RenderPipelineBuilderTest, DefaultGbufferTargetIsCanonicalLayout)
@@ -3781,7 +3858,7 @@ TEST(HudPassTest, SubViewportAndClearPolicy)
     hud->setCamera(cam);
     // A top pass never clears the surface it draws over.
     hud->setClearEnabled(false);
-    EXPECT_FALSE(hud->clearEnabled());
+    EXPECT_FALSE(hud->isClearEnabled());
     hud->setViewport(4, 5, 96, 96);
     engine->addPass(hud, scene, 10);
 
@@ -3848,7 +3925,7 @@ TEST(AxisGizmoTest, BuildsThreeColouredSticks)
     }
     EXPECT_NE(gizmo->camera(), nullptr);
     // A HUD pass never clears the surface it draws over.
-    EXPECT_FALSE(gizmo->clearEnabled());
+    EXPECT_FALSE(gizmo->isClearEnabled());
 }
 
 TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
@@ -5367,16 +5444,16 @@ TEST(DiagnosticsTest, EngineForwardsSinkToCurrentAndFutureBackend)
     EXPECT_EQ(received[0].severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ShaderFallback);
     EXPECT_EQ(received[0].message, u8"synthetic");
-    EXPECT_EQ(engine.diagnosticCount(), 1u);
+    EXPECT_EQ(engine.backendDiagnosticCount(), 1u);
 
     // Clearing the sink stops delivery but not counting; no backend means 0.
     engine.setDiagnosticSink({});
     later->emitDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::GeometryRejected,
                           u8"second");
     EXPECT_EQ(received.size(), 1u);
-    EXPECT_EQ(engine.diagnosticCount(), 2u);
+    EXPECT_EQ(engine.backendDiagnosticCount(), 2u);
     engine.setBackend(nullptr);
-    EXPECT_EQ(engine.diagnosticCount(), 0u);
+    EXPECT_EQ(engine.backendDiagnosticCount(), 0u);
 }
 
 // ============ Collected-content memo (D27) ============
@@ -5929,7 +6006,7 @@ TEST(ImageRefTest, LabelKindAndBindingRoundTrip)
     auto color = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.color"));
     EXPECT_EQ(color->label(), u8"GBuffer.color");
     EXPECT_EQ(color->kind(), ImageRef::Kind::Color);
-    EXPECT_FALSE(color->bound());
+    EXPECT_FALSE(color->isBound());
     EXPECT_EQ(color->target(), nullptr);
     EXPECT_EQ(color->attachment(), 0);
 
@@ -5940,14 +6017,14 @@ TEST(ImageRefTest, LabelKindAndBindingRoundTrip)
     target->attachColor(RenderTarget::ColorFormat::RGBA8);
     target->setSize(320, 180);
     color->bind(target, 2);
-    EXPECT_TRUE(color->bound());
+    EXPECT_TRUE(color->isBound());
     EXPECT_EQ(color->target(), target.get());
     EXPECT_EQ(color->attachment(), 2);
 
     // Unbinding is how "the image is gone" is expressed, so a consumer can
     // never be handed a stale one.
     color->unbind();
-    EXPECT_FALSE(color->bound());
+    EXPECT_FALSE(color->isBound());
     EXPECT_EQ(color->target(), nullptr);
     EXPECT_EQ(color->attachment(), 0);
 }
@@ -5969,7 +6046,7 @@ TEST(ImageRefTest, HoldsItsTargetAlive)
         image->bind(target, 1);
     }
     // The owner is gone; the image is still bound.
-    ASSERT_TRUE(image->bound());
+    ASSERT_TRUE(image->isBound());
     ASSERT_NE(image->target(), nullptr);
     EXPECT_EQ(image->target()->width(), 64);
     EXPECT_EQ(image->target()->height(), 32);

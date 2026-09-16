@@ -69,7 +69,7 @@ void RenderPass::setShouldClearDepth(bool clear)
     clear_depth_ = clear;
 }
 
-bool RenderPass::clearEnabled() const
+bool RenderPass::isClearEnabled() const
 {
     return clear_enabled_;
 }
@@ -89,17 +89,7 @@ void RenderPass::setDepthMode(DepthMode mode)
     depth_mode_ = mode;
 }
 
-bool RenderPass::occlusionEnabled() const
-{
-    return depth_mode_ != DepthMode::Disabled;
-}
-
-void RenderPass::setOcclusionEnabled(bool enabled)
-{
-    depth_mode_ = enabled ? DepthMode::TestAndWrite : DepthMode::Disabled;
-}
-
-bool RenderPass::enabled() const
+bool RenderPass::isEnabled() const
 {
     return enabled_;
 }

@@ -62,8 +62,10 @@ order 100 present（全幅采样 Composite）→ 窗口（携带 view camera）
   - 顶层枚举 `vine::graphics::DepthMode { Disabled, TestOnly, TestAndWrite }`（F3）：
     `Disabled` = 不测不写（HUD 浮层）；`TestOnly` = 只 depth test 不 write（半透明叠层，写深度的
     不透明几何不破坏其后半透明）；`TestAndWrite` = 默认，普通不透明几何。
-  - `setDepthMode(DepthMode)`（默认 `TestAndWrite`）；便捷 `setOcclusionEnabled(bool)` 保留，
-    映射 `true→TestAndWrite / false→Disabled`。**不从 clear 推断**。
+  - `setDepthMode(DepthMode)`（默认 `TestAndWrite`）；**只有这一个拼法**。曾经的便捷 `setOcclusionEnabled(bool)`
+    已删（2026-09-16）：它把三值枚举压成两布尔，`true→TestAndWrite / false→Disabled`，于是
+    `p.setOcclusionEnabled(p.occlusionEnabled())` 会把 `TestOnly` 静默升级成 `TestAndWrite`；4 处生产调用点
+    都只是"关深度"，已写成 `setDepthMode(DepthMode::Disabled)`。**不从 clear 推断**。
   - 光照：由**内容 scene 决定**，不再由样式选——后端对每个内容槽一律应用场景灯（空则保留 seed：
     window 的 presenting(清屏整幅) 槽默认 headlight，其余 ambient）。
 - 透明 pass = `setClearEnabled(false)` + `setDepthMode(TestOnly)`（depth test 开但不清屏不写深度），
@@ -102,4 +104,4 @@ order 100 present（全幅采样 Composite）→ 窗口（携带 view camera）
   “有透明内容时 composite/present pass 拓扑与顺序”。（已加：`DeferredPresetWithTransparentContentBuildsComposite`
   （S5 后 4 pass + compositeTarget + present 采样 Composite + 双 target resize，composite 共享
   gbuffer depth）、`ForwardPresetWithTransparentContentStacksDepthOnPass`、
-  `RenderPassTest::OcclusionIsExplicitAndIndependentOfClear`）
+  `RenderPassTest::DepthStyleIsExplicitAndIndependentOfClear`）

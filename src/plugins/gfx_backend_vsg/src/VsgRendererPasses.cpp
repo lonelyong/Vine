@@ -89,7 +89,7 @@ void VsgRenderer::beginPass(vine::raw_ptr<const vine::graphics::RenderPass> pass
         // The pass owns its retained slot and counts as active this frame: a
         // pass that is not announced again next frame is retired (see
         // retireInactivePassSlots), which is what makes disabling it take effect.
-        state.passes_active_this_frame.insert(pass);
+        state.passes_active_this_frame.mark(pass);
     }
 }
 
@@ -152,7 +152,7 @@ void VsgRenderer::retireInactivePassSlots()
     // stays disabled costs nothing per frame (no scan hit, no detach, no
     // repeated diagnostic).
     const auto needs_retire = [this](const SlotKey& key, bool detached) {
-        return !detached && key.owner != nullptr && state.passes_active_this_frame.count(key.owner) == 0;
+        return !detached && key.owner != nullptr && !state.passes_active_this_frame.contains(key.owner);
     };
     // NO device wait here: this path DETACHES a view from its graph and keeps the
     // slot (the view, its node and the compiled pipelines stay referenced by the
@@ -188,7 +188,7 @@ void VsgRenderer::releasePass(vine::raw_ptr<const vine::graphics::RenderPass> pa
     for (auto& entry : state.targets) {
         detail::erasePassFromTarget(state, entry.first, removed);
     }
-    state.passes_active_this_frame.erase(removed);
+    state.passes_active_this_frame.drop(removed);
     if (state.request.pass == removed) {
         state.request.pass = nullptr;
     }

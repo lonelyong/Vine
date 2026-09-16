@@ -251,6 +251,11 @@ void Geometry::setRevision(std::uint64_t revision) noexcept
     revision_ = revision;
 }
 
+void Geometry::bumpRevision() noexcept
+{
+    ++revision_;
+}
+
 std::size_t Geometry::vertexCount() const
 {
     return positionCount();

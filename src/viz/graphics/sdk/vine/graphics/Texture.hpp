@@ -167,7 +167,7 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
      *
      * @return true when no face is empty.
      */
-    [[nodiscard]] bool complete() const noexcept;
+    [[nodiscard]] bool isComplete() const noexcept;
 
     /**
      * @brief Gets the content revision.

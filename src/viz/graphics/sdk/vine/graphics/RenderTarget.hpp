@@ -177,7 +177,7 @@ class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarge
      *
      * @return true when the target has an attachment and a positive size.
      */
-    bool valid() const;
+    bool isValid() const;
 
     /** @brief States the view-projection this target's producer rendered with.
      *

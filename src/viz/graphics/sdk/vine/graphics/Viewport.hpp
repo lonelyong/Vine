@@ -23,7 +23,7 @@ struct V_GRAPHICS_API Viewport {
     int height = 0;
 
     /** @brief Returns whether this viewport describes a positive draw area. */
-    bool valid() const
+    bool isValid() const
     {
         return width > 0 && height > 0;
     }

@@ -76,7 +76,7 @@ void RenderEngine::setDiagnosticSink(DiagnosticSink sink)
     }
 }
 
-std::size_t RenderEngine::diagnosticCount() const
+std::size_t RenderEngine::backendDiagnosticCount() const
 {
     return backend_ != nullptr ? backend_->diagnosticCount() : 0u;
 }
@@ -130,7 +130,7 @@ bool RenderEngine::initialize()
         for (const auto& slot : slots_) {
             RenderPass* pass   = slot.pass.get();
             Scene*      content = slot.content.get();
-            if (pass == nullptr || content == nullptr || !pass->enabled() || pass->clearEnabled()) {
+            if (pass == nullptr || content == nullptr || !pass->isEnabled() || pass->isClearEnabled()) {
                 continue;
             }
             backend_->beginPass(pass);
@@ -148,6 +148,20 @@ void RenderEngine::shutdown()
         backend_->shutdown();
     }
     initialized_ = false;
+}
+
+raw_ptr<const RenderPass> RenderEngine::passNeedingAnUnsupportedTarget() const
+{
+    if (backend_ == nullptr || backend_->supportsRenderTargets()) {
+        return nullptr;
+    }
+    // Only ENABLED passes matter: a disabled pass is skipped, so its target is never asked for.
+    for (const Slot& slot : slots_) {
+        if (slot.pass != nullptr && slot.pass->isEnabled() && slot.pass->renderTarget() != nullptr) {
+            return slot.pass.get();
+        }
+    }
+    return nullptr;
 }
 
 void RenderEngine::frame(double dt)
@@ -188,6 +202,28 @@ void RenderEngine::frame(double dt)
         validateWiring();
     }
 
+    // A backend reporting no off-screen target support IGNORES a non-null target, so a pass staged
+    // through one is recorded where the pipeline never put it — a WRONG PICTURE rather than a slow one,
+    // and silent unless the engine asks (see RenderBackend::supportsRenderTargets). Asked here, once per
+    // frame, and reported as an EPISODE: the pass is still run (its content is the host's to place), but
+    // the host is told that the pipeline it built cannot mean what it says.
+    if (raw_ptr<const RenderPass> unsupported = passNeedingAnUnsupportedTarget(); unsupported != nullptr) {
+        if (!unsupported_target_reported_) {
+            unsupported_target_reported_ = true;
+            reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
+                                vine::graphics::DiagnosticCategory::TargetBuildFailed,
+                                String(u8"the backend reports no off-screen render target support, so pass '") +
+                                    reportedPassName(unsupported) +
+                                    String(u8"' (and any other pass rendering into a target) is not drawn where "
+                                           u8"the pipeline expects it: the backend ignores the target and draws "
+                                           u8"into the window"));
+        }
+    }
+    else {
+        // The pipeline stopped asking for what the backend cannot do, so a later ask is a new problem.
+        unsupported_target_reported_ = false;
+    }
+
     // Ordered pipeline in ascending order: negative orders run first (shadow
     // / depth / g-buffer pre-pass), the window-present pass (master camera,
     // null render target) conventionally sits at order 0, and positive orders
@@ -200,7 +236,7 @@ void RenderEngine::frame(double dt)
     // order (equal orders keep registration order).
     for (const auto& slot : slots_) {
         RenderPass* pass = slot.pass.get();
-        if (pass == nullptr || !pass->enabled()) {
+        if (pass == nullptr || !pass->isEnabled()) {
             continue;
         }
         raw_ptr<Scene> content = slot.content.get();
@@ -281,7 +317,7 @@ bool RenderEngine::hasWindowPass(raw_ptr<Camera> camera) const
 {
     for (const auto& slot : slots_) {
         RenderPass* pass = slot.pass.get();
-        if (pass != nullptr && pass->enabled() && pass->camera() == camera
+        if (pass != nullptr && pass->isEnabled() && pass->camera() == camera
             && pass->renderTarget() == nullptr) {
             return true;
         }
@@ -702,7 +738,7 @@ void RenderEngine::validateWiring()
             filled.emplace(drawn_into, Declaration{ nullptr, drawn_into, pass, index });
         }
 
-        if (!pass->enabled()) {
+        if (!pass->isEnabled()) {
             continue;
         }
 
@@ -769,7 +805,7 @@ void RenderEngine::validateWiring()
             // consumer could resolve it either (an unbound identity has no address). Reported once
             // per image, here (the producer side) so the consumer side below stays quiet about the
             // same object.
-            if (!output->bound()) {
+            if (!output->isBound()) {
                 // Recorded, not reported yet: if another pass also claims this image, the collision
                 // report below names both passes and the image, and binding the image alone would not
                 // fix a double claim — one mistake, one message. Phase 4 reports the rest.
@@ -882,7 +918,7 @@ void RenderEngine::validateWiring()
             // An UNBOUND image can never be delivered (resolveDeclaredImage returns null for it, and
             // deliberately says nothing — declaring it is what is wrong). Reported once per IMAGE:
             // by the producer side above when a pass declares it as its output, otherwise here.
-            if (!image->bound()) {
+            if (!image->isBound()) {
                 unbound_declared_images.insert(image.get());
                 unbound_declared_by.emplace(image.get(), std::make_pair(raw_ptr<const RenderPass>(pass), false));
                 unusable_inputs.emplace(pass, identity);
@@ -954,7 +990,7 @@ void RenderEngine::validateWiring()
     // mistake should read as one message.
     for (const auto& slot : slots_) {
         auto* pass = dynamic_cast<ScreenPass*>(slot.pass.get());
-        if (pass == nullptr || !pass->enabled()) {
+        if (pass == nullptr || !pass->isEnabled()) {
             continue;
         }
 

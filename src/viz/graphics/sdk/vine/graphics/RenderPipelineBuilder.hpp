@@ -206,7 +206,7 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      *   - an order < 0 scene pass rendering into a @p rt_width x @p rt_height
      *     RenderTarget (publishing its colour as @p output_slot), and
      *   - an order > 0 ScreenPass that samples @p output_slot into the
-     *     @p pip_... sub-viewport.
+     *     @p pip sub-viewport.
      *
      * OWNERSHIP: both passes are registered on the engine IMMEDIATELY and the
      * engine keeps them alive — they are NOT part of any Pipeline handle, so a
@@ -227,14 +227,16 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      * @param rt_height   Off-screen target height.
      * @param color_format Off-screen colour format.
      * @param depth_format Off-screen depth format.
-     * @param pip_x/y/w/h  PiP sub-viewport on the output surface (device px).
+     * @param pip          PiP sub-viewport on the output surface (device px). Taken as the SDK's own
+     *                     rectangle rather than four coordinates in a row: `pip` is applied to a pass
+     *                     without a viewport of its own (see RenderPass::setViewport).
      * @return The created ScreenPass (owned by the engine; do not delete).
      */
     raw_ptr<ScreenPass> addOffscreenToScreen(const String& output_slot,
                                              int rt_width, int rt_height,
                                              RenderTarget::ColorFormat color_format,
                                              RenderTarget::DepthFormat depth_format,
-                                             int pip_x, int pip_y, int pip_w, int pip_h);
+                                             const Viewport& pip);
 
     /** @brief Manual escape hatch: adds an arbitrary pass to the engine.
      *

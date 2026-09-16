@@ -270,7 +270,16 @@ intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment)
     return program;
 }
 
-intrusive_ptr<ShaderProgram> deferredLightProgram(bool with_shadow)
+namespace
+{
+
+/** @brief The deferred lighting program's one implementation.
+ *
+ * The two public factories differ only in this argument, and both go through the same substitution: keeping
+ * the switch here means neither public name can drift from the other (see BuiltinShaders.hpp for why the two
+ * are named separately rather than selected by a boolean at the call site).
+ */
+intrusive_ptr<ShaderProgram> makeDeferredLightingProgram(bool with_shadow)
 {
     auto program = make_intrusive<ShaderProgram>();
     program->setName(with_shadow ? u8"builtin_deferred_lighting_shadowed" : u8"builtin_deferred_lighting");
@@ -298,6 +307,18 @@ intrusive_ptr<ShaderProgram> deferredLightProgram(bool with_shadow)
     fragment.source = String(source);
     program->addStage(fragment);
     return program;
+}
+
+}  // namespace
+
+intrusive_ptr<ShaderProgram> deferredLightProgram()
+{
+    return makeDeferredLightingProgram(false);
+}
+
+intrusive_ptr<ShaderProgram> shadowedDeferredLightProgram()
+{
+    return makeDeferredLightingProgram(true);
 }
 
 V_GRAPHICS_NS_END

@@ -124,7 +124,7 @@ bool Texture::hasSource(int face) const noexcept
     return source(face) != nullptr;
 }
 
-bool Texture::complete() const noexcept
+bool Texture::isComplete() const noexcept
 {
     for (const intrusive_ptr<const imaging::Image>& source : sources_) {
         if (source == nullptr) {

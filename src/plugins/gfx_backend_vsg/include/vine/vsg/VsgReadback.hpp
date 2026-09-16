@@ -91,7 +91,7 @@ enum class ReadbackRefusal
  * @return The entry, or null when this readback cannot be served.
  */
 [[nodiscard]] const VsgRenderTargetEntry* readbackTarget(const VsgRendererState& state,
-                                                        vine::graphics::RenderTarget* target,
+                                                        const vine::graphics::RenderTarget* target,
                                                         ReadbackRefusal& refusal);
 
 /** @brief Records @p commands into a fresh command buffer and waits for it.
@@ -138,7 +138,7 @@ enum class ReadbackRefusal
  * @return true when the pixels were read; false when the target or attachment is unusable.
  */
 [[nodiscard]] bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
-                                   vine::graphics::RenderTarget* target, int attachment,
+                                   const vine::graphics::RenderTarget* target, int attachment,
                                    std::vector<std::uint8_t>& out_pixels,
                                    vine::graphics::ReadbackResult* why = nullptr);
 
@@ -160,7 +160,7 @@ enum class ReadbackRefusal
  * @return true when the depth values were read; false when the target has no readable depth.
  */
 [[nodiscard]] bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
-                                   vine::graphics::RenderTarget* target, std::vector<float>& out_depths,
+                                   const vine::graphics::RenderTarget* target, std::vector<float>& out_depths,
                                    vine::graphics::ReadbackResult* why = nullptr);
 
 } // namespace detail

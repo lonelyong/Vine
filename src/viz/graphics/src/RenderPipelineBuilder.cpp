@@ -46,7 +46,7 @@ intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultGbufferGeometryProgra
  */
 intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultDeferredLightProgram()
 {
-    return deferredLightProgram(/*with_shadow*/ false);
+    return deferredLightProgram();
 }
 
 Mat4d RenderPipelineBuilder::directionalShadowMatrix(const Light& light, const vine::math::Aabbd& bounds,
@@ -332,7 +332,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     if (light_program == nullptr) {
         // A shadow changes the SHADING, so it changes which program the lighting pass draws with
         // (the variant declares the map and its block; see BuiltinShaders::deferredLightProgram).
-        light_program = deferredLightProgram(/*with_shadow*/ shadow_light != nullptr);
+        light_program = shadow_light != nullptr ? shadowedDeferredLightProgram() : deferredLightProgram();
     }
 
     // G-buffer at the requested / current surface / default size.
@@ -476,7 +476,7 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
                                                                 int rt_height,
                                                                 RenderTarget::ColorFormat color_format,
                                                                 RenderTarget::DepthFormat depth_format,
-                                                                int pip_x, int pip_y, int pip_w, int pip_h)
+                                                                const Viewport& pip)
 {
     if (engine_ == nullptr) {
         return nullptr;
@@ -515,7 +515,7 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     screen->setProgram(screenCopyProgram());
     screen->addInputName(output_slot);
     screen->addInputTarget(target);   // samples the whole published target
-    screen->setViewport(pip_x, pip_y, pip_w, pip_h);
+    screen->setViewport(pip);
     engine_->addPass(screen, pipelineStageOrder(PipelineStage::Preview));
 
     return screen.get();

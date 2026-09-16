@@ -92,7 +92,7 @@ AxisGizmo::AxisGizmo()
     // A HUD pass draws over the main content each frame: never clear and no
     // depth occlusion (always on top).
     setClearEnabled(false);
-    setOcclusionEnabled(false);
+    setDepthMode(DepthMode::Disabled);
     rebuild();
 }
 

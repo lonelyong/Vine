@@ -550,6 +550,15 @@ class V_GRAPHICS_API Geometry : public Node {
      */
     void setRevision(std::uint64_t revision) noexcept;
 
+    /** @brief Announces a data change by moving the revision one step forward.
+     *
+     * The safe spelling of `setRevision(revision() + 1)` for the ordinary "I edited this geometry's data"
+     * case (see setRevision for why the announcement is the caller's to make): one call reports the edit,
+     * and the counter cannot be LOWERED by arithmetic — the "treat it as monotonic" rule setRevision
+     * documents is then not something a caller has to remember.
+     */
+    void bumpRevision() noexcept;
+
     /** @brief Gets the vertex count.
      *
      * @return Number of vertices (the position buffer at location 0).

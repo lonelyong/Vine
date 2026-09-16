@@ -525,14 +525,20 @@ void VsgRenderer::setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::
 {
     // Hold them for the drawing call that follows, like the lights: the slot binds them when it
     // (re)builds its retained state (see VsgContentSlot::setupContentSlot / renderContentSlot).
-    // assign(), not copy-assignment of a whole vector: the request is refilled once per pass per
-    // frame, and this keeps the buffer it already owns.
+    //
+    // assign() rather than a whole-vector copy, so the fill itself does not grow a buffer element by
+    // element. It does NOT hand the buffer on to the next pass: resetPassRequest() replaces the whole
+    // request (its one assignment is what keeps a field from being forgotten there), so this vector
+    // starts each pass with no capacity. The steadier fix — if the per-pass allocation is ever worth
+    // disturbing that guarantee — is to keep these two buffers apart from the request's scalars.
     state.request.inputs.assign(inputs.begin(), inputs.end());
 }
 
 void VsgRenderer::setLights(const std::vector<vine::raw_ptr<const vine::graphics::Light>>& lights)
 {
     // Queue the lights for the next render() call (mirrors setViewport()): the
+    // reserve below covers this fill only — resetPassRequest() replaces the request
+    // between passes, so the buffer is not carried from one pass to the next.
     // light nodes are built when the matching view is reconciled in render().
     state.request.lights.clear();
     state.request.lights.reserve(lights.size());
@@ -581,7 +587,7 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // exist in ONE description instead of being copied per draw call.
     vine::graphics::RenderTarget* target_key = state.request.target;
 
-    if (target_key != nullptr && (camera == nullptr || !target_key->valid() || (!target_key->hasColor() && !target_key->hasDepth()))) {
+    if (target_key != nullptr && (camera == nullptr || !target_key->isValid() || (!target_key->hasColor() && !target_key->hasDepth()))) {
         // Off-screen target unusable (no camera, invalid, or neither colour
         // nor depth attachment): nothing to draw this pass.
         return;
@@ -834,11 +840,6 @@ void VsgRenderer::swapBuffers()
     submitFrame();
 }
 
-vine::raw_ptr<vine::graphics::MaterialManager> VsgRenderer::materialManager()
-{
-    return &persistent.materialManager;
-}
-
 void VsgRenderer::setDefaultContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program)
 {
     if (persistent.default_content_program == program) {
@@ -905,13 +906,13 @@ void VsgRenderer::resize(int width, int height)
     }
 }
 
-bool VsgRenderer::readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
+bool VsgRenderer::readColorBuffer(const vine::graphics::RenderTarget* target, int attachment,
                                   std::vector<std::uint8_t>& outPixels, vine::graphics::ReadbackResult* why)
 {
     return detail::readColorBuffer(state, diagnostics, target, attachment, outPixels, why);
 }
 
-bool VsgRenderer::readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths,
+bool VsgRenderer::readDepthBuffer(const vine::graphics::RenderTarget* target, std::vector<float>& outDepths,
                                   vine::graphics::ReadbackResult* why)
 {
     return detail::readDepthBuffer(state, diagnostics, target, outDepths, why);

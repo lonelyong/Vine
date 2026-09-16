@@ -38,7 +38,7 @@ int ImageRef::attachment() const noexcept
     return attachment_;
 }
 
-bool ImageRef::bound() const noexcept
+bool ImageRef::isBound() const noexcept
 {
     return target_ != nullptr;
 }

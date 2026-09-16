@@ -151,9 +151,13 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * True between beginPass() and endPass(); a drawing call made while it is false is refused (see
      * refuseNoPassAnnounced).
      *
+     * The scope flag is this backend's own state and nothing in the engine asks for it, so it is a
+     * method of THIS class rather than of the RenderBackend interface: the protocol test asserts the
+     * scope it opens and closes, and no backend that keeps no per-pass state has to answer for it.
+     *
      * @return true while a pass scope is open.
      */
-    bool isPassScopeOpen() const override;
+    bool isPassScopeOpen() const;
 
     /** @brief Releases every GPU resource this backend retains for a pass.
      *
@@ -233,7 +237,7 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * @return true when the pixels were read; false when the target was never
      *         built, the attachment is out of range or its format is not RGBA8.
      */
-    bool readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
+    bool readColorBuffer(const vine::graphics::RenderTarget* target, int attachment,
                          std::vector<std::uint8_t>& outPixels,
                          vine::graphics::ReadbackResult* why = nullptr) override;
 
@@ -256,7 +260,7 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *         target that borrows its depth (RenderTarget::shareDepth) reports
      *         false: read the source target's depth instead.
      */
-    bool readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths,
+    bool readDepthBuffer(const vine::graphics::RenderTarget* target, std::vector<float>& outDepths,
                          vine::graphics::ReadbackResult* why = nullptr) override;
 
     /** @brief Renders the current frame from the render command stream.
@@ -308,15 +312,6 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
 
     /** @brief Presents the rendered frame. */
     void swapBuffers() override;
-
-    /** @brief Gets the backend's material manager.
-     *
-     * The manager is created with the renderer and stays valid for the
-     * renderer's lifetime.
-     *
-     * @return The VSG material manager.
-     */
-    vine::raw_ptr<vine::graphics::MaterialManager> materialManager() override;
 
     /** @brief Binds a host native window; when present, the renderer renders
      * into that window's native surface instead of creating its own window.

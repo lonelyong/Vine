@@ -101,7 +101,7 @@ bool detail::depthStillPromoted(const VsgRendererState& state, const VsgRenderTa
         if (&other.second == current || other.second.order >= order) {
             continue; // this pass itself, or one that records after it
         }
-        if (state.passes_active_this_frame.count(other.first.owner) != 0) {
+        if (state.passes_active_this_frame.contains(other.first.owner)) {
             return false; // it ran first this frame and left its own layout
         }
     }

@@ -134,16 +134,26 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0
  *
  * Reads a G-buffer's colour attachments by binding (albedo / normal+shininess / specular / view
  * position) and the pass camera's lights; see fullscreenVertexProgram for the fragment-stage
- * interface it shares with every other fullscreen program.
+ * interface it shares with every other fullscreen program. It declares neither a shadow map nor a
+ * shadow block, so the pass that draws it must provide neither — use shadowedDeferredLightProgram()
+ * for the variant that consumes one.
  *
- * @param with_shadow True for the variant that also shades a shadow map: it declares the map at
- *                    binding 5 and its `VineShadowBlock` at binding 6 (the shadow ABI; a pipeline
- *                    that asks for it must declare that map as an input of the lighting pass), and
- *                    scales each light's diffuse term by the map. False is the plain program, which
- *                    declares neither — so the pass that draws it must provide neither.
- * @return The fragment program (see fullscreenVertexProgram for the vertex stage), or null when the
- *         source no longer carries the markers the shadowed variant is built from.
+ * @return The fragment program (see fullscreenVertexProgram for the vertex stage).
  */
-V_GRAPHICS_API intrusive_ptr<ShaderProgram> deferredLightProgram(bool with_shadow);
+V_GRAPHICS_API intrusive_ptr<ShaderProgram> deferredLightProgram();
+
+/**
+ * @brief The deferred lighting program that also shades a shadow map.
+ *
+ * The same program with the shadow ABI added: it declares the map at binding 5 and its
+ * `VineShadowBlock` at binding 6 (a pipeline that asks for it must declare that map as an input of the
+ * lighting pass), and scales each light's diffuse term by the map. A NAMED variant rather than a
+ * boolean argument, because the two programs have different interfaces: whoever calls this one owes the
+ * map (see Light::castShadow for the pipeline rule that decides between them).
+ *
+ * @return The fragment program, or null when the source no longer carries the markers the shadowed
+ *         variant is built from.
+ */
+V_GRAPHICS_API intrusive_ptr<ShaderProgram> shadowedDeferredLightProgram();
 
 V_GRAPHICS_NS_END

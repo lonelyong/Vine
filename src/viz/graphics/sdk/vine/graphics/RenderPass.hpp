@@ -89,9 +89,9 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
 
     /** @brief Announces this pass' clear policy to the backend, if it clears at all.
      *
-     * The ONE place a pass' three clear settings (clearEnabled / clearColor / shouldClearDepth)
+     * The ONE place a pass' three clear settings (isClearEnabled / clearColor / shouldClearDepth)
      * become the backend's announcement, so the base pass and a subclass that overrides execute()
-     * cannot disagree about what "this pass clears" means. It is a no-op when clearEnabled() is
+     * cannot disagree about what "this pass clears" means. It is a no-op when isClearEnabled() is
      * false: a pass that does not clear announces nothing, which is how a backend tells "clears to
      * this colour" from "draws over what is there".
      *
@@ -102,13 +102,34 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
      */
     void announceClear(raw_ptr<RenderBackend> backend) const;
 
-    /** @brief Gets the clear color. */
+    /** @brief Gets the clear color.
+     *
+     * The default is an opaque dark grey (51, 51, 51, 255): the value the main WINDOW pass was
+     * written against, because that is the pass filling the surface a host looks at. Nothing in the
+     * engine names a colour for the off-screen targets its builders create, so an off-screen pass that
+     * wants one says so itself — otherwise attachment 0 of an off-screen target clears to that window
+     * grey. (Attachments 1 and beyond are not this value at all: the backend clears them to transparent
+     * black by contract, so a consumer can tell "nothing drawn here" from data — see
+     * RenderBackend::ClearPolicy.)
+     *
+     * @return The colour this pass clears attachment 0 to when it clears.
+     */
     Color clearColor() const;
 
-    /** @brief Sets the clear color. */
+    /** @brief Sets the clear color.
+     *
+     * @param color Colour attachment 0 is cleared to when this pass clears (0..255 per channel).
+     */
     void setClearColor(const Color& color);
 
-    /** @brief Returns whether the depth buffer is cleared. */
+    /** @brief Returns whether the depth buffer is cleared.
+     *
+     * A REQUEST, not the state — hence "should" rather than the is/has prefix the other boolean
+     * accessors use: a backend may not be able to honour it (the window surface always clears depth),
+     * which is exactly what its documentation records. The state is only ever this pass' intent.
+     *
+     * @return True when this pass asks for a cleared depth buffer.
+     */
     bool shouldClearDepth() const;
 
     /** @brief Sets whether the depth buffer is cleared before this pass.
@@ -130,7 +151,7 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
      * The main pass clears by default; top / HUD passes usually disable it so
      * they draw over the previous frame's content.
      */
-    bool clearEnabled() const;
+    bool isClearEnabled() const;
 
     /** @brief Sets whether the colour/depth buffer is cleared before this pass.
      *
@@ -158,25 +179,8 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
      */
     void setDepthMode(DepthMode mode);
 
-    /** @brief Returns whether this pass's content is occluded by (tests
-     * against) the target's current depth.
-     *
-     * Convenience for depthMode() != DepthMode::Disabled.
-     *
-     * @return True when depth testing is on.
-     */
-    bool occlusionEnabled() const;
-
-    /** @brief Convenience: TestAndWrite when enabled, Disabled when not.
-     *
-     * Use setDepthMode for the finer-grained translucent (TestOnly) case.
-     *
-     * @param enabled True for depth-tested scene content.
-     */
-    void setOcclusionEnabled(bool enabled);
-
     /** @brief Returns whether this pass is drawn by the engine this frame. */
-    bool enabled() const;
+    bool isEnabled() const;
 
     /** @brief Sets whether this pass is drawn by the engine.
      *

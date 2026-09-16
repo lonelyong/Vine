@@ -231,7 +231,7 @@ TextureReject classifyTexture(const vine::graphics::Texture* texture) noexcept
         case Texture::Kind::Cube:
             break;
     }
-    if (!texture->complete()) {
+    if (!texture->isComplete()) {
         return TextureReject::Incomplete;
     }
     if (vkFormatFor(texture->format()) == VK_FORMAT_UNDEFINED) {

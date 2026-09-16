@@ -1003,10 +1003,7 @@ void addOffscreenValidationPass(gui::RenderControl* render_control)
                                                 360,
                                                 vine::graphics::RenderTarget::ColorFormat::RGBA8,
                                                 vine::graphics::RenderTarget::DepthFormat::D24,
-                                                px,
-                                                py,
-                                                pip_w,
-                                                pip_h);
+                                                vine::graphics::Viewport{ px, py, pip_w, pip_h });
     if (screen == nullptr) {
         return;
     }
@@ -1090,7 +1087,7 @@ void addSlotOverlayDemo(gui::RenderControl* render_control)
         pass->setName(u8"slot_overlay");
         pass->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
         pass->setClearEnabled(false); // overlay: no clear + no depth -> on-top
-        pass->setOcclusionEnabled(false);
+        pass->setDepthMode(vine::graphics::DepthMode::Disabled);
         engine->addPass(pass, overlay, 20); // its own (master camera, order 20) slot
     });
 }
@@ -1162,7 +1159,7 @@ void addOffscreenMultiSlotDemo(gui::RenderControl* render_control)
     pass_top->setRenderTarget(target);
     pass_top->setOutputName(u8"MultiColor"); // publishes the same baked target
     pass_top->setClearEnabled(false);        // no clear + no depth -> on-top slot
-    pass_top->setOcclusionEnabled(false);
+    pass_top->setDepthMode(vine::graphics::DepthMode::Disabled);
     engine->addPass(pass_top, overlay, -1); // slot = (master, -1)
 
     // PiP screen pass sampling the baked texture into the window.

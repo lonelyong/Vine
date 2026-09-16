@@ -35,11 +35,11 @@
 
 #include <vine/vsg/vsg_global.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <vector>
 
 #include <vsg/app/CommandGraph.h>
@@ -243,6 +243,62 @@ struct PendingCompileView
     SlotKey                       slot;          ///< Slot the view is a child of.
 };
 
+/**
+ * @brief The passes announced since the last submitted frame.
+ *
+ * A REUSED vector rather than a `std::set`, for the same reason the engine's publication registry is one
+ * (RenderEngine::WiringState::outputs_): it holds one entry per announced pass (a handful), it is rebuilt
+ * every frame, and the set paid a node allocation per pass per frame for three questions that are all a
+ * linear scan of four entries. The de-duplication the set gave for free is what the methods below keep —
+ * the RULE lives here, next to the storage, rather than at each call site.
+ *
+ * WHAT IT MEANS is documented on @ref VsgRendererState::passes_active_this_frame (an event this frame,
+ * not the slots' persistent @ref SlotKey::owner).
+ */
+struct AnnouncedPasses
+{
+    /** @brief Announces @p pass for this frame (idempotent: a pass announced twice is one entry).
+     *
+     * @param pass Pass that began a scope, or null (ignored).
+     */
+    void mark(const vine::graphics::RenderPass* pass)
+    {
+        if (pass != nullptr && !contains(pass)) {
+            entries.push_back(pass);
+        }
+    }
+
+    /** @brief Gets whether @p pass was announced this frame.
+     *
+     * @param pass Pass to test, or null.
+     * @return true when this frame announced @p pass.
+     */
+    [[nodiscard]] bool contains(const vine::graphics::RenderPass* pass) const
+    {
+        return std::find(entries.begin(), entries.end(), pass) != entries.end();
+    }
+
+    /** @brief Forgets @p pass: a released pass is not announced any more.
+     *
+     * @param pass Pass that was released, or null (ignored).
+     */
+    void drop(const vine::graphics::RenderPass* pass)
+    {
+        entries.erase(std::remove(entries.begin(), entries.end(), pass), entries.end());
+    }
+
+    /** @brief Forgets every announcement: the next frame starts from none. */
+    void clear() noexcept
+    {
+        entries.clear();
+    }
+
+  private:
+    // The announced passes, in announcement order. Kept across frames so the buffer is reused (see the
+    // type's documentation): clear() empties it without giving the memory back.
+    std::vector<const vine::graphics::RenderPass*> entries;
+};
+
 struct VsgRendererState {
     ::vsg::ref_ptr<::vsg::Window>       window;
     ::vsg::ref_ptr<::vsg::Viewer>       viewer;
@@ -322,7 +378,7 @@ struct VsgRendererState {
     // retireInactivePassSlots): a pass that did not execute this frame is
     // retired (its view detached) rather than left drawing stale content.
     //
-    // Why a set of pass pointers next to the slots' own SlotKey::owner — asked
+    // Why a separate list of pass pointers next to the slots' own SlotKey::owner — asked
     // once, so the answer is written down: they are two DIFFERENT facts, not two
     // copies of one. `SlotKey::owner` is persistent identity ("which pass owns
     // this slot"); this set is a per-frame EVENT ("which passes were announced
@@ -336,7 +392,7 @@ struct VsgRendererState {
     // would not be the same question: it would read "drew this frame" where this
     // asks "was announced this frame", a semantic change hiding inside a
     // refactor. See .ai/design/vsg-pass-lifecycle.md §63 for the survey.
-    std::set<const vine::graphics::RenderPass*> passes_active_this_frame;
+    AnnouncedPasses passes_active_this_frame;
 
     // Successful off-screen target builds (diagnostic; see
     // VsgRenderer::offscreenBuildCount()).

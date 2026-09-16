@@ -32,7 +32,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | 单元 | 职责 |
 | --- | --- |
 | `GfxBackendVsgPlugin.cpp` | 插件入口：自注册 `VsgRenderBackendFactory` |
-| `VsgRenderer.cpp` | **帧泵 + `RenderBackend` 覆写**：`initialize/shutdown/beginFrame/endFrame/render/clear/setRenderTarget/setPassOrder/setViewport/setLights/setPassInputs/setDepthMode/swapBuffers/resize/readColorBuffer/readDepthBuffer/releaseRenderTarget/materialManager`（帧泵的七个私有步骤也在本 TU；`drawScreenProgram` / `releasePass` 等只在类上留委派） |
+| `VsgRenderer.cpp` | **帧泵 + `RenderBackend` 覆写**：`initialize/shutdown/beginFrame/endFrame/render/setClearPolicy/setRenderTarget/setPassOrder/setViewport/setLights/setPassInputs/setDepthMode/swapBuffers/resize/readColorBuffer/readDepthBuffer/releaseRenderTarget`（帧泵的七个私有步骤也在本 TU；`drawScreenProgram` / `releasePass` 等只在类上留委派） |
 | `VsgRendererState.hpp` | 会话状态（`VsgRendererState`，单窗口会话）、持久状态（`VsgRendererPersistent`，跨会话）、pass 请求状态机 `VsgPassRequest`（含槽身份的两个转换）、`FrameCommit` 令牌的存位 |
 | `VsgRenderTargetEntry.hpp` | 目标账本：一个 `RenderTarget` 的三张槽表（内容/程序/覆盖层）+ 附件 + 深度提升状态；`SlotKey`（槽身份的两套键） |
 | `VsgFramePlan.hpp` | 帧计划的值类型：`detail::PassPlan` / `detail::PassAttachments`（录制顺序的 `RecordPlan` 在 `VsgRecordOrder.hpp`） |

@@ -210,7 +210,8 @@ class Buffer : public RefCounted<Buffer<T>> {
      * where an edit begins and ends, so it must not guess — the WRITER knows, and says so once per EDIT rather
      * than once per element. That is also the granularity a consumer wants: "re-read, I am done".
      *
-     * The usual value is `revision() + 1`. The counter is only ever COMPARED, so nothing breaks if it jumps;
+     * The usual value is `revision() + 1` — for that case prefer bumpRevision(), which cannot move the
+     * counter backwards by accident. The counter is only ever COMPARED, so nothing breaks if it jumps;
      * but lowering it is a real hazard: a consumer holding a cached revision could then treat old bytes as
      * current, or vice versa. Treat it as monotonic unless a caller genuinely needs otherwise.
      *
@@ -219,6 +220,19 @@ class Buffer : public RefCounted<Buffer<T>> {
     void setRevision(std::uint64_t revision) noexcept
     {
         revision_ = revision;
+    }
+
+    /**
+     * @brief Announces a content change by moving the revision one step forward.
+     *
+     * The safe spelling of `setRevision(revision() + 1)`: one call reports an edit, and the counter cannot
+     * be LOWERED by arithmetic (see setRevision, where lowering is the hazard). Use this for the ordinary
+     * "I edited the contents" case; setRevision stays for a writer that has a revision of its own to
+     * report (a model's version, a file's).
+     */
+    void bumpRevision() noexcept
+    {
+        ++revision_;
     }
 
     /**

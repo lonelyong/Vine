@@ -216,7 +216,7 @@ class V_GEOMETRY_API Mesh : public Shape {
     template <typename T>
     void announceChange(const intrusive_ptr<Buffer<T>>& buffer) noexcept
     {
-        buffer->setRevision(buffer->revision() + 1u);
+        buffer->bumpRevision();
     }
 
     /// Vertex positions as packed scalars; never null, empty when the mesh has no vertices.

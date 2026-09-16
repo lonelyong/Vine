@@ -96,14 +96,18 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     /** @brief Gets the installed diagnostic sink (empty when unset). */
     const DiagnosticSink& diagnosticSink() const { return diagnostic_sink_; }
 
-    /** @brief Gets how many diagnostics the current backend reported.
+    /** @brief Gets how many diagnostics the current BACKEND reported.
+     *
+     * Named for what it counts: the engine's own reports are counted by @ref engineDiagnosticCount, and
+     * an unqualified diagnosticCount() on this class read as "what the engine said" — the one thing it
+     * does not answer. A host that wants the total adds the two.
      *
      * 0 without a backend. Counted by the backend whether or not a sink is
      * installed, so a host can gate on it without listening.
      *
-     * @return Number of reported diagnostics (0 when no backend is set).
+     * @return Number of diagnostics the backend reported (0 when no backend is set).
      */
-    std::size_t diagnosticCount() const;
+    std::size_t backendDiagnosticCount() const;
 
     /** @brief Gets how many diagnostics the ENGINE itself reported.
      *
@@ -392,6 +396,17 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     void resolvePassInputs(raw_ptr<RenderPass> pass);
 
+    /** @brief Returns the first enabled pass that needs a target this backend cannot draw into.
+     *
+     * A backend reporting no off-screen support IGNORES a non-null target (see
+     * RenderBackend::supportsRenderTargets), so such a pass draws into the window instead of where the
+     * pipeline expects it, and nothing else in the frame would notice (see frame(), the one caller).
+     *
+     * @return The first enabled pass with a non-null render target, or null when the backend supports
+     *         targets or no pass asks for one.
+     */
+    [[nodiscard]] raw_ptr<const RenderPass> passNeedingAnUnsupportedTarget() const;
+
     /** @brief Reports the structural wiring problems the pass declarations themselves carry.
      *
      * Every pass on its own is valid, so nothing else can see these, and they are all properties of
@@ -550,6 +565,10 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     std::uint64_t                       content_frame_      = 0;
     void*                               native_handle_      = nullptr;
     bool                                initialized_        = false;
+    // True once the frame reported that the backend cannot draw the off-screen targets the pipeline
+    // asks for (see frame()): the report is an EPISODE, so it repeats only after the pipeline stopped
+    // asking for one — the flag is cleared the moment no enabled pass needs a target.
+    bool                                unsupported_target_reported_ = false;
 
     /**
      * @brief Everything the wiring checks own: this frame's registry, and what they have reported.

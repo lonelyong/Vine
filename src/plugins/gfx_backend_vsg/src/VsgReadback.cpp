@@ -105,7 +105,7 @@ vine::graphics::ReadbackResult readbackResultOf(ReadbackRefusal refusal) noexcep
 }
 
 const VsgRenderTargetEntry* readbackTarget(const VsgRendererState& state,
-                                           vine::graphics::RenderTarget* target, ReadbackRefusal& refusal)
+                                           const vine::graphics::RenderTarget* target, ReadbackRefusal& refusal)
 {
     if (target == nullptr) {
         refusal = ReadbackRefusal::NoTarget;
@@ -120,7 +120,11 @@ const VsgRenderTargetEntry* readbackTarget(const VsgRendererState& state,
         refusal = ReadbackRefusal::NoSession;
         return nullptr;
     }
-    const auto entry = state.targets.find(target);
+    // The table is keyed by a MUTABLE pointer because each entry OWNS the target it is keyed by (see
+    // VsgRenderTargetEntry::owner, which pins its address) — ownership is not mutability, and reading a
+    // target's pixels changes nothing about the target, which is why the caller-facing signatures hand
+    // this function a const one. The cast is the ONE place the two meet.
+    const auto entry = state.targets.find(const_cast<vine::graphics::RenderTarget*>(target));
     if (entry == state.targets.end()) {
         refusal = ReadbackRefusal::NotRendered;
         return nullptr;
@@ -139,8 +143,8 @@ const VsgRenderTargetEntry* readbackTarget(const VsgRendererState& state,
 }
 
 bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
-                     vine::graphics::RenderTarget* target, int attachment, std::vector<std::uint8_t>& out_pixels,
-                     vine::graphics::ReadbackResult* why)
+                     const vine::graphics::RenderTarget* target, int attachment,
+                     std::vector<std::uint8_t>& out_pixels, vine::graphics::ReadbackResult* why)
 {
     // Pessimistic default: a refusal path that forgets to say which answer it is reports Failed
     // (a host looks at it) instead of Ok (a host believes it). Every success sets Ok below.
@@ -301,7 +305,7 @@ bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
 }
 
 bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
-                     vine::graphics::RenderTarget* target, std::vector<float>& out_depths,
+                     const vine::graphics::RenderTarget* target, std::vector<float>& out_depths,
                      vine::graphics::ReadbackResult* why)
 {
     // See readColorBuffer: every refusal names its answer, and a success is the only path that

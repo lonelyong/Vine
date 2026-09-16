@@ -293,14 +293,14 @@ TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceC
     EXPECT_NE(source.find("// VINE_SHADOW_BINDINGS"), std::string::npos) << "the declarations' marker";
     EXPECT_NE(source.find("// VINE_SHADOW_TERM"), std::string::npos) << "the term's marker";
 
-    const auto plain = deferredLightProgram(/*with_shadow*/ false);
+    const auto plain = deferredLightProgram();
     ASSERT_NE(plain, nullptr);
     const std::string plain_text = plain->stage(0)->source.stdstr();
     EXPECT_EQ(plain_text.find("VINE_SHADOW_"), std::string::npos)
         << "the unshadowed program must ask the pass for no shadow binding at all";
     EXPECT_EQ(plain_text.find("shadow_map"), std::string::npos);
 
-    const auto shadowed = deferredLightProgram(/*with_shadow*/ true);
+    const auto shadowed = shadowedDeferredLightProgram();
     ASSERT_NE(shadowed, nullptr);
     const std::string shadowed_text = shadowed->stage(0)->source.stdstr();
     EXPECT_NE(shadowed_text.find("layout(binding = 5) uniform sampler2D shadow_map;"), std::string::npos);

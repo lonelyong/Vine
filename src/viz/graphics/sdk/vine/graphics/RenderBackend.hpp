@@ -21,7 +21,6 @@ V_GRAPHICS_NS_BEGIN
 
 class Camera;
 class Light;
-class MaterialManager;
 class RenderTarget;
 class RenderPass;
 class ShaderProgram;
@@ -210,6 +209,10 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * that do not support them only accept nullptr (the default framebuffer)
      * and should ignore off-screen targets.
      *
+     * The engine ASKS this once per frame (see RenderEngine::frame), so declining is a state the host
+     * is told about — a pass staged through a target the backend cannot draw would otherwise be
+     * recorded where the pipeline never put it, which is a wrong picture rather than a slow one.
+     *
      * @return true when setRenderTarget() accepts off-screen targets.
      */
     virtual bool supportsRenderTargets()
@@ -276,20 +279,6 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * than silently drawing something else.
      */
     virtual void endPass() {}
-
-    /** @brief Reports whether a beginPass() scope is currently open.
-     *
-     * The engine drives one pass at a time, so the per-pass calls (see
-     * beginPass) belong to the scope between beginPass() and endPass(), and a drawing call outside one
-     * is refused (PassProtocolViolation) rather than served. Exposed so a host or test can assert the
-     * protocol state instead of inferring it.
-     *
-     * @return true while a beginPass() scope is open.
-     */
-    virtual bool isPassScopeOpen() const
-    {
-        return false;
-    }
 
     /** @brief Draws a full-screen pass through a fragment program, sampling the source's colour attachments.
      *
@@ -411,7 +400,9 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * its diagnostics channel (see the class contract), and @p outPixels is left
      * untouched either way.
      *
-     * @param target     Off-screen target whose colour attachment to read.
+     * @param target     Off-screen target whose colour attachment to read. Borrowed, and CONST: reading
+     *                   pixels changes nothing about the target, and a host holding one as const (a
+     *                   reader of a target it did not create) can still ask for its pixels.
      * @param attachment Colour attachment index in [0, target->colorCount()).
      * @param outPixels  Receives the packed RGBA8 pixels on success.
      * @param why        Receives why the read did not happen (Ok when it did), or null
@@ -420,7 +411,7 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * @return true when the pixels were read; false when the read could not be
      *         performed (see @p why and the diagnostics channel).
      */
-    virtual bool readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
+    virtual bool readColorBuffer(const vine::graphics::RenderTarget* target, int attachment,
                                  std::vector<std::uint8_t>& outPixels, ReadbackResult* why = nullptr)
     {
         (void)target;
@@ -441,14 +432,15 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * (RenderTarget::shareDepth) is read through the SOURCE target, not the
      * borrower, which reports the request as unsupported.
      *
-     * @param target    Off-screen target whose depth buffer to read.
+     * @param target    Off-screen target whose depth buffer to read (borrowed, and const like
+     *                  readColorBuffer's).
      * @param outDepths Receives the depth values on success.
      * @param why       Receives why the read did not happen (Ok when it did), or null
      *                  to ignore; see readColorBuffer().
      * @return true when the depth values were read; false when the read could
      *         not be performed (see @p why and the diagnostics channel).
      */
-    virtual bool readDepthBuffer(vine::graphics::RenderTarget* target,
+    virtual bool readDepthBuffer(const vine::graphics::RenderTarget* target,
                                  std::vector<float>& outDepths, ReadbackResult* why = nullptr)
     {
         (void)target;
@@ -566,19 +558,6 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      */
     virtual void swapBuffers() = 0;
 
-    /** @brief Gets the backend's material manager.
-     *
-     * Returns nullptr when the backend has no material manager, e.g. before
-     * initialize() or when the backend does not support materials. The
-     * returned manager stays valid for the backend's lifetime.
-     *
-     * @return The backend material manager, or nullptr.
-     */
-    virtual MaterialManager* materialManager()
-    {
-        return nullptr;
-    }
-
     /** @brief Selects the DEFAULT program for content: what a drawable naming none of its own gets.
      *
      * A default, not an override: a drawable's own program still wins, and so does a pass' program
@@ -663,9 +642,10 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * Returns the native window handle (HWND on Windows) the backend bound
      * its render surface to during initialize(), or nullptr when the backend
      * is not attached to a host surface (standalone window or not yet
-     * initialized). Host code can compare this against the current window
-     * context handle to detect when the windowing system recreated the native
-     * surface underneath the backend.
+     * initialized). It answers "which surface am I on" for a host that has to notice the windowing
+     * system recreating that surface underneath the backend: re-announcing through
+     * setWindowHandle() is how the backend is moved to the new one, and this is how a host decides
+     * whether that is necessary.
      *
      * @return The attached native handle, or nullptr.
      */
