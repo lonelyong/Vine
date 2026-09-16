@@ -250,10 +250,16 @@ bool VsgRenderer::moveSessionToHostSurface(void* native_handle)
     }
     // Only a session on THIS backend's host window can follow a host surface: a session on vsg's own window
     // (one this backend created -- the VINE_VSG_OWN_WINDOW hatch, or a session initialized with no host
-    // handle) has no host surface to move to, and one already on this handle has nothing to do.
+    // handle) has no host surface to move to.
     auto host_window = state.window.cast<detail::VsgHostWindow>();
-    if (host_window == nullptr || native_handle == host_window->hostHandle()) {
+    if (host_window == nullptr) {
         return false;
+    }
+    if (native_handle == host_window->hostHandle()) {
+        // The host re-announced the window this session is already on (a show/resize event, say): that is a
+        // request to KEEP the session, not to rebuild it. Reporting failure here would send the caller down
+        // its "start a fresh session" path and cost the device, the instance and every compiled pipeline.
+        return true;
     }
     // A COUNTED device stop, not a bare vkDeviceWaitIdle: the surface, the swapchain and the depth image
     // being replaced may still be named by work in flight, and this is the wait every destructive step in
@@ -440,12 +446,9 @@ void VsgRenderer::shutdown()
         }
         state.viewer->close();
     }
-    if (state.window != nullptr) {
-        // Nothing to hand back: this backend's own window never destroys the host's window (see
-        // VsgHostWindow), and vsg's own window (the VINE_VSG_OWN_WINDOW hatch, or a session built with no
-        // host handle) created the window it tears down here.
-        state.window->releaseWindow();
-    }
+    // Nothing to hand back: the window is either this backend's own host-window class (which never destroys
+    // the host's window -- see VsgHostWindow) or one vsg created for this session, whose destructor is
+    // exactly where its window should be destroyed.
     // The slots own their compile registrations (VsgCompileRegistration), so they are dropped while the
     // viewer -- which holds the manager each registration belongs to -- is still here. The assignment
     // below releases its members in DECLARATION order, which puts `viewer` (and with it the manager)

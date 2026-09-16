@@ -24,6 +24,12 @@ namespace detail
 
 #if !defined(_WIN32)
 
+#if defined(__APPLE__)
+// The X11 back end below needs XCB, and the build links it under (UNIX AND NOT APPLE) only, so this is a
+// missing back end rather than a missing package: say so here instead of failing at the link step.
+#error "VsgHostWindow has no window-system back end for this platform (the X11 one needs XCB)."
+#endif
+
 namespace
 {
 /** @brief The host window handle the traits carry, as the X server names it.
@@ -140,7 +146,7 @@ VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
     // and vsg's frame path then records nothing at all (see valid() / visible()).
     refreshHostWindowState();
     V_LOGI("[VsgHostWindow] attached to the host window ({}x{}, mapped={})", _extent2D.width, _extent2D.height,
-           window_mapped_);
+           window_mapped_.load());
 }
 
 void VsgHostWindow::_initSurface()

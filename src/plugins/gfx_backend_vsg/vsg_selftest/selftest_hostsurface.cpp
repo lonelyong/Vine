@@ -205,6 +205,23 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
     const std::size_t windows_before = renderer.windowBuildCount();
     const std::size_t waits_before   = renderer.deviceWaitCount();
 
+    // Re-announcing the window the session is ALREADY on must keep it, not rebuild it: a host that repeats
+    // setWindowHandle() + initialize() (a show/resize event, say) would otherwise pay a full session rebuild
+    // -- the instance, the device and every compiled pipeline -- for nothing.
+    renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_a.id())));
+    if (!renderer.initialize()) {
+        std::fprintf(stderr, "[selftest] FAIL: re-announcing the window the session is already on was refused\n");
+        return false;
+    }
+    const bool same_handle_kept = renderer.windowBuildCount() == windows_before && renderer.deviceWaitCount() == waits_before;
+    if (!same_handle_kept) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: re-announcing the SAME host window rebuilt the session (windows built"
+                     " %zu before, %zu after; %zu counted device stop(s))\n",
+                     windows_before, renderer.windowBuildCount(), renderer.deviceWaitCount() - waits_before);
+        ok = false;
+    }
+
     // The host replaces its window and announces the new one: the session must FOLLOW it.
     renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_b.id())));
     if (!renderer.initialize()) {
@@ -275,8 +292,8 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
     std::fprintf(stderr,
                  "[host-surface] move: the session followed the host's new window (windows built %zu before, %zu"
                  " after; %zu counted device stop(s); host windows intact; the session still presented it; centre"
-                 " %d,%d,%d before and after)\n",
-                 windows_before, builds_after, stops, after[0], after[1], after[2]);
+                 " %d,%d,%d before and after; a repeated handle kept the session: %s)\n",
+                 windows_before, builds_after, stops, after[0], after[1], after[2], same_handle_kept ? "yes" : "no");
     return ok;
 #endif // !_WIN32
 }

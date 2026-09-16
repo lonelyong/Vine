@@ -504,10 +504,12 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * pass and every pipeline compiled against it stay.
      *
      * @param native_handle Handle of the host's new window.
-     * @return true when the session moved; false when nothing was moved -- no handle, the same handle,
-     *         a session that is not on this backend's own host window (vsg's own window / the
-     *         VINE_VSG_OWN_WINDOW hatch), or a new window whose swapchain format cannot serve this
-     *         session's render pass -- and the caller starts a fresh session instead.
+     * @return true when the session is on @p native_handle afterwards -- either because it moved onto it, or
+     *         because it was already there (re-announcing the same window keeps the session, it does not
+     *         rebuild it); false when the session cannot serve it -- a null handle, a session that is not on
+     *         this backend's own host window (vsg's own window / the VINE_VSG_OWN_WINDOW hatch), or a new
+     *         window whose swapchain format cannot serve this session's render pass -- and the caller starts
+     *         a fresh session instead.
      */
     [[nodiscard]] bool moveSessionToHostSurface(void* native_handle);
 

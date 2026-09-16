@@ -534,7 +534,7 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 | 旧补丁 | 为什么存在 | 现在的处置 |
 | --- | --- | --- |
 | `VSG_MAX_DEVICES=4`（CMake 强制） | 重建窗口会再建 instance/physical device/device，1 个不够 | **撤回**：搬移不新建窗口 ⇒ 同一时刻只有一个 device，默认上限就够（也把"有没有泄漏 device"变成真判据） |
-| `VsgRenderer::releaseWindow()`（把 vsg 窗口的 `nativeWindow` 摘掉再析构） | vsg 的 `Xcb_Window::~Xcb_Window()` 会 `xcb_destroy_window()`——**宿主的窗口** | **不必再用**：本后端的窗口类根本不销毁宿主窗口（调用点保留但已是空操作，注释同步改写） |
+| `VsgRenderer::releaseWindow()`（把 vsg 窗口的 `nativeWindow` 摘掉再析构） | vsg 的 `Xcb_Window::~Xcb_Window()` 会 `xcb_destroy_window()`——**宿主的窗口** | **已删除（2026-09-16 复核）**：本后端的窗口类根本不销毁宿主窗口，于是这个调用对 `VsgHostWindow` 是空操作，对 vsg 自建的窗口（`VINE_VSG_OWN_WINDOW`、**任何没有宿主句柄的会话**）却是把 `_window` 置 0 ⇒ 析构不再 `xcb_destroy_window`，**每个会话漏一个 X 窗口**。调用点、注释，以及整条“第三方窗口要顺手还回去”的思路一起删掉 |
 
 **新增一类窗口**（`include/vine/vsg/VsgHostWindow.hpp` + `src/VsgHostWindow.cpp`）：`detail::VsgHostWindow : public ::vsg::Inherit<::vsg::Window, VsgHostWindow>`，实现 vsg 那两个纯虚（`_initSurface()` **和** `instanceExtensionSurfaceName()`），X11 分支给出 `VK_KHR_XCB_SURFACE_EXTENSION_NAME`、Win32 分支 `VK_KHR_WIN32_SURFACE_EXTENSION_NAME`（本环境只能编译验证 Win32 分支，行为由 Windows 上的 app 门禁覆盖）。
 

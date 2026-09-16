@@ -341,7 +341,6 @@ flat/phong/pbr 共用同一张表（详见 `.ai/design/vsg-custom-shader.md` §9
 ```text
 state.retireRing.waitForIdle(viewer)          // 计数的一次设备等待：会话要走了，不能停
   → viewer->removeWindow(window) + viewer->close()
-  → window->releaseWindow()                   // 不 Destroy 宿主(Qt) 窗口
   → state = VsgRendererState{}                // 一步整体替换：窗口 / viewer / 命令图 / 每个目标的
                                               //  图与槽 / 编译队列 / 退役环 / 未消费的提交令牌
   → persistent.materialManager.clear()        // 跨会话保留，要显式清（其条目持旧 device 的对象）
@@ -472,7 +471,7 @@ sequenceDiagram
 | D14 | 裸指针缓存键 + 600 帧滞留窗：Geometry/Material 删除后、逐出前有悬垂窗口（安全依赖场景树保活）。**Geometry 部分已修（2026-09-11，设计 §8.1）**：`Item` 自持所索引的几何 → 不再有悬垂窗口；**滞留窗已删（2026-09-14，见 D15）** → 也不再有“已放手但还留着”的窗口；**Material 部分仍见 D13** | `SceneBridge::cache_` | 🟢 |
 | D15 | `SceneBridge::cache_` 删除几何 600 帧后才释放（延迟释放）。**已闭环（2026-09-14）**：时间窗整个删除——释放判据只剩一条“缓存之外无人持有”（`abandoned(shares)`）；被剔除 / 隐藏 / 移动的对象一律保留（树或调用方持有它们），App 放手则**当帧**回收，候选表退化为成本过滤。守卫：`AnUndrawnGeometryIsKeptHoweverLongItStaysUndrawn`（未画 1000 次 sync 仍保留；变异“进候选即删”⇒ 红）+ `ADroppedGeometryIsReleasedByTheFrameSweep`（放手当帧回收；变异“永不释放”⇒ 红）+ `HiddenGeometryIsKeptAndReappearsWithoutRebuilding`（隐藏 601 帧后回来仍是同一棵保留子树） | `SceneBridge::releaseAbandonedGeometries` | 🟢 |
 | D16 | 共享/变体缓存只增不减（随"历史见过的不同变体数"增长）；2026-09-08 起 `clearCache()`（槽 teardown/resize/release）同时清 `shared_objects_`/`program_shader_sets_`/`variant_cache_`，**槽内活跃期间仍不修剪**。**已修（2026-09-11，设计 §20）**：三个 program 缓存迁到既有缓存骨架（`OwnedCache.hpp`）——容量用同一套 FIFO `trimToCapacity`（64 / 64 / 256），插入时修剪；"超限整表清空"删除（它会把当前场景正在绘制的程序一并丢掉）；每帧 `releaseAbandonedCaches()` 回收链条尾部的条目 | `SceneBridge` | 🟢 |
-| D17 | shutdown 顺序错 → 撞 `VSG_MAX_DEVICES==1`；`releaseWindow()` 漏调会 Destroy Qt 宿主窗口 | `VsgRenderer::shutdown` | 🟡 |
+| D17 | shutdown 顺序错 → 撞 `VSG_MAX_DEVICES==1`；`releaseWindow()` 漏调会 Destroy Qt 宿主窗口。**已闭环（2026-09-16）**：① `VSG_MAX_DEVICES` 强制撤回（搬移不新建窗口 ⇒ 同一时刻只有一个 device，默认上限就是真判据）；② `releaseWindow()` 调用点删除——它对宿主窗口无意义，对自建窗口反而是“析构不再销毁它”的**窗口泄漏**；窗口归属现在只由窗口类自己表达（`VsgHostWindow` 不销毁采纳的窗口，vsg 自建窗口由自己的析构销毁） | `VsgRenderer::shutdown` | 🟢 |
 | D18 | resize / release / 离屏 resize 走 `deviceWaitIdle` 全停（简单但会整帧卡顿） | `VsgRenderer` | 🟢 |
 | D29 | pass 协议隐式：7 个 `pending_*` 字段 + 三个读取入口，"调用含义"依赖调用顺序（本会话 6 个缺陷的来源）。**已修（2026-09-11，设计 §11）**：收敛为单一 `PassRequest` + 显式作用域（作用域属性 vs 每次绘制属性），违反协议（嵌套 beginPass / 不配对 endPass）经诊断通道上报（`PassProtocolViolation`） | `VsgRenderer` | 🟢 |
 | D19 | 每帧 O(materials) 就地改写 + `updateMaterial` 双路径并存。**已修（2026-09-11，设计 §12）**：比较/写入移入缓存（`Entry` 记上次参数），`SceneBridge` 只调 `updateMaterial()` —— 单一路径，且该接口首次有真实调用点 | `syncRenderCommands` 尾部 / `VsgMaterialManager` | 🟢 |
