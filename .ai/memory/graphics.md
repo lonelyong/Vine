@@ -1,3 +1,10 @@
+> 2026-09-16 **H5 完成：那笔 +0.43 s 在 release 里的真相（附带一个方法论教训）**
+> 做法：`git worktree` 各建一个 revision，**各自独立**在 Release 下建 `vsg_backend_selftest`（依赖源码用 `-DFETCHCONTENT_SOURCE_DIR_<NAME>=主树/build/_deps/<name>-src` 复用 ⇒ 不需要网络；**各 1m29s**），交错 5 轮 × 30 帧、lavapipe。
+> · **数字**：pre-T16（`d6a182f`）**2.76 s** 对 T16（`fb6894f`）**3.37 s** ⇒ **+0.61 s（+22%）** —— 比 -O0 的 +0.43 s **更大** ⇒ **交付物确实带这笔钱**。
+> · **但它其实是“启动成本 + 每帧收益”**：10/60 帧为 +0.73/+0.60 ⇒ 拟合 **A 12.8 ms/帧、B 10.2 ms/帧** ⇒ 修复**每帧省 ~2.6 ms（−20%）**，帧循环前**一次性 +0.76 s**，**约 290 帧回本**。（-O0 看不到每帧那笔：帧成本被软光栅器主导。）
+> · **教训（比数字值钱）**：第一次我拿 pre-T16 对 **HEAD** 算出 +0.82 s，**那个比较是错的** —— HEAD 多了 C1/A6 的 host-surface 相位（每轮多两次整会话重建）。`nm -C` 身份只证明了“符号对”，**没证明“工作负载相同”**：要再验 `grep -c host-surface`（pre-T16/T16 = 0，HEAD = 4）。⇒ **二进制 A/B 检查单：符号身份 + 工作负载身份**。
+> · 副产品：`build-release/` 现成（gitignore `/build-*`），以后做 Release 对比直接复用；两个 worktree 用完已删。
+
 > 2026-09-16 **R5 结案：appfw 插件注册表的 LSan 报告 —— 抑制，但把“为什么是有意的”一并写进去**
 > 先查证它到底是不是缺陷：`~DynamicLibraryLoader` 的 `d.release()` **是有意的**（注释写明：若按静态析构序在退出时 dlclose 掉插件代码，而 `CommandManager` / `RenderBackendRegistry` 还持着指进插件的 callable / 工厂指针 ⇒ SIGSEGV）。所以这是**保留决定**，不是忘记释放 —— 而 `asan_leaks.supp` 原来的规则（“框架自己的分配一律不许抑制”）恰好把这种情况也堵死了。
 > · 处置：给那份文件加一条**带条件的例外**（“有意保留 **且** 决定写在代码里，可以入表；‘只有几个字节’不是理由”），并新增 `leak:vine::runtime::DynamicLibrary` + 实测数字。
