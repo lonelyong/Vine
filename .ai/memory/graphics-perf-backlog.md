@@ -113,6 +113,23 @@
 **同轮排除 / 确认为正确的**：`VsgBufferView` 的 `dataAvailable` / `dataRelease` / `dimensions` / `elements` / `valueSize` 是 `vsg::Data` 的虚覆写（不是死代码）；三个设备资源缓存（texture / mesh / material）已共用 `OwnedCache.hpp`，各自只剩 ~140 行；`VsgDrawBlockPool` 用 `shared_ptr` **是必需的** —— `Lease` 持 `shared_ptr<VsgDrawBlockPool>`，所以"池比租约活得久"是**类型保证**的（旧笔记里"析构绝不碰池"那条现在是保险而非唯一防线）；`SceneBridge.hpp` 1377 行 / `.cpp` 1209 行**不建议按体积拆**（绝大部分是 Doxygen，且规则已按 `VsgSceneRules` / `SceneBridgeGeometry` / `SceneBridgePipeline` 分好家 —— 按仓库规矩"抽概念，不抽文件"）。
 **同轮发现的一条真漂移**：`.ai/design/graphics-overlay.md` 仍把 `RenderBackend::releaseWindowLayer` 与"按相机键的 `window_layers` 表"当**现役**接口写（line 30 / 33 / 65 / 96），而两者**都已从 SDK 与后端删除**（P17：作用域是唯一驱动；保留身份现在是 `SlotKey::ownerPass`）。`hasWindowPass()` 仍在役。修法：该文件顶部加 dated banner 指到当前模型（`.ai/design/vsg-pass-lifecycle.md`）。**已修（2026-09-16）**。
 
+### 审查轮次 5（2026-09-16 深夜，专找"因 vsg 限制而绕的路"）候选（V1–V6）
+
+> 触发：用户要求找"因为 vsg 限制而绕弯路"的地方。判据不是"能不能改 vsg"，而是**这条绕路今天是否还成立、有没有守卫**。
+> vsg 由 `src/plugins/gfx_backend_vsg/CMakeLists.txt:83-86` 钉在 `GIT_TAG v1.1.16` ⇒ 升级是**有意动作**，所以"依赖内部实现"的风险不是"哪天突然坏"，
+> 而是**升级时没有任何门禁会提醒**。下表按"能不能少写代码 / 会不会静默坏"排序。
+
+| 编号 | 绕的路 | 现状（带证据） | 风险 | 建议 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| **V1** | `VsgHostWindow::moveToHostSurface()` **手工丢弃 vsg 缓存的表面状态**（vsg 没有"换 surface"这种 API） | 我们重置 8 个成员（`_swapchain` / `_frames` / `_indices` / `_depthImage` / `_depthImageView` / `_multisampleImage` / `_multisampleImageView` / `_surface`，`src/VsgHostWindow.cpp:63-70`），但 `vsg::Window` 里按表面缓存的**还有** `_renderPass` 与 `_multisampleDepthImage` / `_multisampleDepthImageView`（`build/_deps/vsg-src/include/vsg/app/Window.h:151-176`）。**今天不炸**：全树没有一处调用 `VsgWindow::renderPass()` / `framebuffer()`（grep 零匹配；vsg 是惰性创建 ⇒ `_renderPass` 恒 null），也没开 MSAA | **中（latent）**：一旦有路径懒创建 `_renderPass`，它连同**按旧 swapchain 的 image view 建出来的 framebuffer** 会被留下，而 `_swapchain.reset()` 已经把那些 view 销毁 ⇒ 悬空句柄，且只在"有人真的用了"时才现形 | ① `_renderPass` 与两个 multisample depth 也重置（1–3 行），并把"搬移必须丢弃哪些"写成不变式注释；② **更值钱的是门禁**：读 vsg `app/Window.h` 的 protected 段，成员既不在"搬移要丢弃"清单、也不在"与表面无关"白名单里就红 ⇒ **升级 vsg 加成员时强制做决定**，而不是静默留一个陈旧值 | **待办（建议先做）** |
+| **V2** | 靠 `protected` 的池做出上游没有的 `remove(view)` | `detail::VsgCompileManager : vsg::CompileManager`，用 `protected` 的池实现 `forget(view)`（`VsgViewCompiler.hpp:26`、`docs/backend.md:54`）；HEAD 实测 `forget` 93 次 | 低—中：依赖 vsg 的 protected 布局，但比打补丁干净 | 不改；把"升级 vsg 时同时复核 V1 + V2"写进升级清单 | 待办（仅登记） |
+| **V3** | 拿不到 `VkPipelineCache`（D28） | vsg 的 `GraphicsPipeline::compile` 不接受 `VkPipelineCache` ⇒ 跨会话/磁盘的 PSO 复用做不到；两条路都堵（等上游 / 自建管线，后者不推荐） | 中 | **优先级应上调**：H7/H8 刚量出"编译"是启动成本的大头（但**应用只编一次** ⇒ 受益集中在冷启动与换会话）。把那些测量数字挂到这条上，作为推上游的理由 | 待办（上游阻塞，优先级重估） |
+| **V4** | 合并每 pass 的 `beginRenderPass`（dynamic rendering，§9.4） | vsg 的记录路径只有 `vkCmdBeginRenderPass`（全树无 `vkCmdBeginRendering`）⇒ 无法在它的遍历里插一个 | — | 保持"被上游阻塞"，不动 | 待办（上游阻塞） |
+| **V5** | 变体 define **只能经 `#pragma import_defines` 递送**（源码 pragma 与后端 define 双向维护） | `VsgBackendUtility.hpp:103`、`SceneBridgePipeline.cpp:470`；这个坑**真发生过两次**（`.ai/memory/graphics.md:426`：`VINE_DIFFUSE_MAP` / `VINE_VERTEX_COLOR` 两个分支从未编译过，而全部结构门禁都绿） | 已收口 | 不动 | **已收口**（`ForwardShaderSetTest::TheForwardStagesAskForEveryDefineTheBackendCanSet` + selftest 的 `built-in sampling` 相，两条都做过变异） |
+| **V6** | 为适配 vsg 的**粒度**而长期维护的机制：P6/P7 的每通道快照 + `assignArrays`/`assignIndices` 原地替换；P10 的 `VsgDrawBlockPool` + dynamic offset；P15/P16 的段描述各写一遍 | 存在理由都是 vsg 的行为：重传粒度是**整条 `BindVertexBuffers`**、内建路径的 binding 2 是**每 drawable 的 DYNAMIC 载体**、canonical 角色陈述"段"只能绕 `addBuffer` + `AttributeChannel::slice` | 中：**这一轮里唯一可能净减代码**的一条 | **先量再决定**：P6 快路径的触发条件是"顶点通道快照完全一致、而索引流换了缓冲"——统计真实负载里它**命中几次**；命中率近零 ⇒ 这套复杂度是纯负担，可删 | 待办（需先量） |
+
+**同轮确认不必动的**：`VsgHostWindow` 析构把 `_window` 置空以阻止基类 `xcb_destroy_window` / `DestroyWindow` + `UnregisterClass`（同样是内部约定，但已有 H4/`selftest_hostsurface` 的端到端门禁兜底，且 `VINE_VSG_OWN_WINDOW` 那条路径不在此列）；`VsgCompileRegistration` 把释放点绑在槽的析构上（H7 已查明它是**行为了正确性**的设计，代价只是自检负载多几个 glslang epoch，见 H8）。
+
 ## 2. 需要实测的数字（还没有）
 
 | 问题 | 怎么测 |
