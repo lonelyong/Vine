@@ -393,6 +393,37 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     return buildVineShaderSet(std::move(program), extent, depth_test, depth_write, color_count);
 }
 
+DepthTestWrite depthTestWrite(vine::graphics::DepthMode mode) noexcept
+{
+    // No default arm: a new DepthMode is a compile-time question here, not a silent fall-through to
+    // "no depth at all".
+    switch (mode) {
+    case vine::graphics::DepthMode::Disabled:
+        return DepthTestWrite{ /*test*/ false, /*write*/ false };
+    case vine::graphics::DepthMode::TestOnly:
+        return DepthTestWrite{ /*test*/ true, /*write*/ false };
+    case vine::graphics::DepthMode::TestAndWrite:
+        return DepthTestWrite{ /*test*/ true, /*write*/ true };
+    }
+    return DepthTestWrite{ /*test*/ true, /*write*/ true };
+}
+
+::vsg::ref_ptr<::vsg::ShaderSet>& shaderSetFor(vine::graphics::DepthMode mode,
+                                               ::vsg::ref_ptr<::vsg::ShaderSet>& depth_on,
+                                               ::vsg::ref_ptr<::vsg::ShaderSet>& depth_testonly,
+                                               ::vsg::ref_ptr<::vsg::ShaderSet>& depth_off) noexcept
+{
+    switch (mode) {
+    case vine::graphics::DepthMode::Disabled:
+        return depth_off;
+    case vine::graphics::DepthMode::TestOnly:
+        return depth_testonly;
+    case vine::graphics::DepthMode::TestAndWrite:
+        return depth_on;
+    }
+    return depth_off;
+}
+
 VkFormat toColorFormat(vine::graphics::RenderTarget::ColorFormat f)
 {
     switch (f) {

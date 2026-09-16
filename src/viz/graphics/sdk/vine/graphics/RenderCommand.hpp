@@ -38,8 +38,20 @@ struct V_GRAPHICS_API RenderCommand {
     /** World-space model matrix. */
     Mat4d modelMatrix;
 
-    /** Whether the object is transparent (requires sorted rendering). */
-    bool isTransparent = false;
+    /** @brief Returns whether the object is transparent and therefore needs sorted rendering.
+     *
+     * DERIVED from @ref opacity, never stored: two fields for one fact let a caller set `opacity = 0.5`
+     * without the flag (the command then sorts into the opaque batch and draws with the wrong blend
+     * expectation) or set the flag alone (it draws as opaque). Scene::collectRenderCommands is the only
+     * producer and derives it the same way, so the two spellings cannot disagree — and the epsilon lives
+     * here, once, instead of at every producer.
+     *
+     * @return true when the effective opacity is below 1 (within the comparison epsilon).
+     */
+    [[nodiscard]] bool isTransparent() const noexcept
+    {
+        return opacity < 1.0f - 1e-6f;
+    }
 
     /** Effective opacity in [0, 1]: scene x nodes x leaf geometry. */
     float opacity = 1.0f;

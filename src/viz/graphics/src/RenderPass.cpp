@@ -43,9 +43,9 @@ raw_ptr<Camera> RenderPass::camera() const
     return camera_.get();
 }
 
-void RenderPass::setCamera(raw_ptr<Camera> camera)
+void RenderPass::setCamera(intrusive_ptr<Camera> camera)
 {
-    camera_ = camera;
+    camera_ = std::move(camera);
     bumpWiringRevision();
 }
 
@@ -242,6 +242,18 @@ void RenderPass::bumpWiringRevision() noexcept
     ++wiring_revision_;
 }
 
+void RenderPass::announceClear(raw_ptr<RenderBackend> backend) const
+{
+    // The ONE place "does this pass clear, and how" is answered: a pass that does not clear
+    // announces nothing, so a backend can tell "clears to this colour" from "draws over what is
+    // already there" — and cannot be told two different things by two call sites.
+    if (backend == nullptr || !clear_enabled_) {
+        return;
+    }
+    const ClearPolicy policy{ clear_color_, clear_depth_ };
+    backend->setClearPolicy(policy);
+}
+
 void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
 {
     if (backend == nullptr || scene == nullptr) {
@@ -251,9 +263,7 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
     if (has_viewport_) {
         backend->setViewport(viewport_.x, viewport_.y, viewport_.width, viewport_.height);
     }
-    if (clear_enabled_) {
-        backend->clear(clear_color_, clear_depth_);
-    }
+    announceClear(backend);
     // Depth handling is explicit (DepthMode), never inferred from the clear
     // flag: depth test/write are independent of whether the pass clears and of
     // how it is lit (the content scene decides the lights). Forwarded so the

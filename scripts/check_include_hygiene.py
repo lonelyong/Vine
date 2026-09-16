@@ -17,7 +17,7 @@ Two kinds of defect are invisible to the compiler and therefore rot silently:
   * an include written TWICE.  A real example lived in VsgContentSlot.cpp: the
     file's own header at line 1 and again among the plugin headers, left behind
     by the script that merged the public renderer header (§44) into each TU;
-    VsgOverlay.hpp included vine/graphics/Camera.hpp twice.  `#pragma once` makes
+    VsgProgramSlot.hpp included vine/graphics/Camera.hpp twice.  `#pragma once` makes
     them harmless, which is exactly why nobody notices them.
 
 In a .cpp the FIRST include is the file's own header (the rule says so), so it is

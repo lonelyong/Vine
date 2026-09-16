@@ -380,6 +380,12 @@ TEST(MeshResourceCacheTest, ARefilledStreamIsNeverServedTheStaleBind)
     sync(bridge, *root, { RenderCommand(geometry, material, Mat4d()) });
     auto* const fresh_bind = findBoundBind(root.get(), kBindingPositions);
     EXPECT_NE(fresh_bind, stale_bind) << "new bytes must not reuse the bind over the old ones";
+    // The sweep is the FRAME's, not the sync's: the entry's key is the stream revision, so it is shared by
+    // every slot that reads it (see VsgRenderer::releaseAbandonedContent). The slot's own sync must leave it
+    // alone — and the sweep then drops it, which is what keeps the table from growing per revision.
+    EXPECT_EQ(cache.count(), entry_count + 1u)
+        << "the abandoned revision's entry is still there until the frame's session sweep";
+    cache.releaseAbandoned(); // the frame's session sweep (VsgRenderer::releaseAbandonedContent)
     EXPECT_EQ(cache.count(), entry_count) << "the abandoned revision's entry is swept, not accumulated";
     auto* const bound = findBoundData(root.get(), kBindingPositions);
     ASSERT_NE(bound, nullptr);
@@ -483,7 +489,8 @@ TEST(MeshResourceCacheTest, ARevisionNoStreamExplainsTakesItsOwnBinds)
  * An entry holds the bind, the bind holds the array and the array holds the model's buffer, so a shared
  * stream keeps its bytes alive. When the last drawable reading it moves on (here: the geometry is pointed at
  * a different buffer, which a review of the retained node can absorb), the entry's last user is gone and the
- * frame sweep drops it — otherwise a session that keeps editing meshes would grow its table without limit
+ * frame's session sweep drops it (see VsgRenderer::releaseAbandonedContent) — otherwise a session that keeps
+ * editing meshes would grow its table without limit
  * until the FIFO bound pushed something live out.
  */
 TEST(MeshResourceCacheTest, AStreamNobodyReadsAnyMoreIsReleased)
@@ -506,6 +513,9 @@ TEST(MeshResourceCacheTest, AStreamNobodyReadsAnyMoreIsReleased)
 
     sync(bridge, *root, { RenderCommand(geometry, material, Mat4d()) });
     EXPECT_NE(findBoundBind(root.get(), kBindingPositions), abandoned);
+    EXPECT_EQ(cache.count(), 2u)
+        << "the slot's own sync must not sweep the SESSION mesh cache: its entries are shared by every slot";
+    cache.releaseAbandoned(); // the frame's session sweep (VsgRenderer::releaseAbandonedContent)
     EXPECT_EQ(cache.count(), 1u) << "the abandoned stream's entry must be swept, not kept";
 }
 

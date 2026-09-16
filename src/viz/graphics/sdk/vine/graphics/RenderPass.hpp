@@ -76,9 +76,31 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
      * its map came back empty (found by vsg_backend_selftest's deferred shadow
      * phase). A host camera outliving its pass is unaffected.
      *
-     * @param camera Camera to draw through (may be null).
+     * The parameter says so: it is an owning handle, not a `raw_ptr`, so a caller
+     * reading the signature can see the pass takes the camera over. Passing a
+     * borrowed camera is spelled `intrusive_ptr<Camera>(borrowed)` — the
+     * conversion is explicit, which is what makes it a decision rather than an
+     * accident (this parameter used to be a `raw_ptr` that the body retained,
+     * the one place in the SDK where the signature hid the retention).
+     *
+     * @param camera Camera to draw through and keep alive (may be null).
      */
-    void setCamera(raw_ptr<Camera> camera);
+    void setCamera(intrusive_ptr<Camera> camera);
+
+    /** @brief Announces this pass' clear policy to the backend, if it clears at all.
+     *
+     * The ONE place a pass' three clear settings (clearEnabled / clearColor / shouldClearDepth)
+     * become the backend's announcement, so the base pass and a subclass that overrides execute()
+     * cannot disagree about what "this pass clears" means. It is a no-op when clearEnabled() is
+     * false: a pass that does not clear announces nothing, which is how a backend tells "clears to
+     * this colour" from "draws over what is there".
+     *
+     * A backend call does not depend on it, so callers need no backend to ask the policy itself
+     * (see clearColor / shouldClearDepth).
+     *
+     * @param backend Backend to announce to (may be null, in which case nothing happens).
+     */
+    void announceClear(raw_ptr<RenderBackend> backend) const;
 
     /** @brief Gets the clear color. */
     Color clearColor() const;
@@ -91,13 +113,13 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
 
     /** @brief Sets whether the depth buffer is cleared before this pass.
      *
-     * Controls the clearDepth argument passed to RenderBackend::clear() when
-     * this pass clears (see setClearEnabled). Whether a false value actually
-     * preserves the previous depth depends on the target: it is honoured for
-     * off-screen targets (their depth survives via a depth-LOAD pass), but a
-     * pass rendering into the window / main surface always gets a cleared
-     * depth buffer (the surface render pass clears depth), so the flag is
-     * ignored there.
+     * Controls the depth flag of the ClearPolicy announced to the backend when
+     * this pass clears (see setClearEnabled / announceClear). Whether a false
+     * value actually preserves the previous depth depends on the target: it is
+     * honoured for off-screen targets (their depth survives via a depth-LOAD
+     * pass), but a pass rendering into the window / main surface always gets a
+     * cleared depth buffer (the surface render pass clears depth), so the flag
+     * is ignored there.
      *
      * @param clear True to clear the depth buffer (the default).
      */

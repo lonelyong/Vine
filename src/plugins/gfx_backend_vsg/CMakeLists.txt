@@ -166,7 +166,8 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPassMaterialiser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRetireRing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRendererPasses.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgOverlay.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgProgramSlot.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgLights.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgBackendUtility.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPipelineFactory.cpp)
 target_compile_definitions(vsg_backend_selftest PRIVATE V_VSG_LIB)

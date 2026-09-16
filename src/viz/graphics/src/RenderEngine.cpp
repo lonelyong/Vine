@@ -212,13 +212,18 @@ void RenderEngine::frame(double dt)
         backend_->setPassOrder(slot.order);
         // The pass' inputs are announced before it draws: they are a property of the pass, so
         // every draw call in it sees the same list (and a pass that declared none announces none).
-        backend_->setPassInputs(resolvePassInputs(pass));
+        resolvePassInputs(pass);
+        backend_->setPassInputs(resolved_inputs_);
         drawScenePass(pass, content);
         // What it just drew into is produced for the rest of the frame: this is the fact, where a
         // promise is only the claim (a pass may promise a target it draws into — the normal case —
         // and what a consumer reads is what actually ran).
         if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
-            wiring_.produced_targets_.insert(drawn_into);
+            // Linear and idempotent: at most one entry per pass that drew into a target.
+            if (std::find(wiring_.produced_targets_.begin(), wiring_.produced_targets_.end(), drawn_into) ==
+                wiring_.produced_targets_.end()) {
+                wiring_.produced_targets_.push_back(drawn_into);
+            }
         }
         publishPassOutput(pass);
         backend_->endPass();
@@ -250,7 +255,7 @@ void RenderEngine::WiringState::beginFrame()
     produced_targets_.clear();
     for (const auto& binding : host_outputs_) {
         if (binding.second != nullptr) {
-            produced_targets_.insert(binding.second.get());
+            produced_targets_.push_back(binding.second.get());
         }
     }
 }
@@ -329,13 +334,9 @@ void RenderEngine::removePass(raw_ptr<RenderPass> pass)
     wiring_.unresolved_inputs_reported_.erase(pass);
 
     // A pass is registered at most once, so any removal drops its only user:
-    // release the backend state it retained — keyed by the pass itself (the
-    // primary contract, releasePass) and by (pass camera, pass order) (the
-    // legacy contract) — plus any off-screen target the pass owns.
+    // release the backend state it retained — keyed by the pass itself (see
+    // RenderBackend::releasePass) — plus any off-screen target the pass owns.
     if (backend_ != nullptr && pass != nullptr && slots_.size() != old_size) {
-        if (raw_ptr<Camera> camera = pass->camera(); camera != nullptr) {
-            backend_->releaseWindowLayer(camera, order);
-        }
         backend_->releasePass(pass);
         if (raw_ptr<RenderTarget> target = pass->renderTarget(); target != nullptr) {
             backend_->releaseRenderTarget(target);
@@ -345,14 +346,13 @@ void RenderEngine::removePass(raw_ptr<RenderPass> pass)
 
 void RenderEngine::clearPasses()
 {
-    // Snapshot every registered (pass, order) pair — the order is the
-    // content-slot key of the window content each pass drew — drop all slots,
-    // then release the backend resources each removed pass owned.
-    std::vector<std::pair<raw_ptr<RenderPass>, int>> removed;
+    // Snapshot the registered passes, drop all slots, then release the backend
+    // resources each removed pass owned (see RenderBackend::releasePass).
+    std::vector<raw_ptr<RenderPass>> removed;
     removed.reserve(slots_.size());
     for (const auto& slot : slots_) {
         if (slot.pass != nullptr) {
-            removed.emplace_back(slot.pass.get(), slot.order);
+            removed.push_back(slot.pass.get());
         }
     }
 
@@ -362,11 +362,7 @@ void RenderEngine::clearPasses()
     wiring_.duplicate_outputs_reported_.clear();
 
     if (backend_ != nullptr) {
-        for (const auto& entry : removed) {
-            RenderPass* pass = entry.first;
-            if (raw_ptr<Camera> camera = (pass != nullptr) ? pass->camera() : nullptr; camera != nullptr) {
-                backend_->releaseWindowLayer(camera, entry.second);
-            }
+        for (RenderPass* pass : removed) {
             if (pass != nullptr) {
                 backend_->releasePass(pass);
             }
@@ -414,7 +410,9 @@ void RenderEngine::drawScenePass(raw_ptr<RenderPass> pass, raw_ptr<Scene> conten
 
 raw_ptr<RenderTarget> RenderEngine::resolveDeclaredTarget(raw_ptr<RenderPass> pass, raw_ptr<RenderTarget> target)
 {
-    if (wiring_.produced_targets_.count(target) != 0) {
+    if (wiring_.produced_targets_.end() != std::find(wiring_.produced_targets_.begin(),
+                                                      wiring_.produced_targets_.end(),
+                                                      static_cast<raw_ptr<const RenderTarget>>(target))) {
         return target;
     }
     // A pass reading what it draws into is the feedback pattern, and whether the actual draw call is
@@ -440,7 +438,10 @@ raw_ptr<RenderTarget> RenderEngine::resolveDeclaredImage(raw_ptr<RenderPass> pas
         return nullptr;
     }
     const bool depth_usable = (image.kind() != ImageRef::Kind::Depth) || target->hasDepth();
-    if (depth_usable && wiring_.produced_targets_.count(target) != 0) {
+    const bool produced     = wiring_.produced_targets_.end() != std::find(wiring_.produced_targets_.begin(),
+                                                                           wiring_.produced_targets_.end(),
+                                                                           static_cast<raw_ptr<const RenderTarget>>(target));
+    if (depth_usable && produced) {
         return target;
     }
     // Same as above: a pass that reads the target it draws into is the feedback pattern, judged by
@@ -473,10 +474,11 @@ void RenderEngine::reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputI
                                    u8" (check the producer's order and its enabled state)"));
 }
 
-std::vector<raw_ptr<RenderTarget>> RenderEngine::resolvePassInputs(raw_ptr<RenderPass> pass)
+void RenderEngine::resolvePassInputs(raw_ptr<RenderPass> pass)
 {
+    resolved_inputs_.clear();
     if (pass == nullptr) {
-        return {};
+        return;
     }
 
     // The object-typed declarations ARE the wiring; a name is the sugar over it (design §14.3). When
@@ -484,28 +486,26 @@ std::vector<raw_ptr<RenderTarget>> RenderEngine::resolvePassInputs(raw_ptr<Rende
     // declaration, in declaration order, null where nothing produced it — and the names are not
     // consulted at all: one wire stated twice must not be resolved twice.
     if (!pass->inputs().empty() || !pass->inputTargets().empty()) {
-        std::vector<raw_ptr<RenderTarget>> resolved;
-        resolved.reserve(pass->inputs().size() + pass->inputTargets().size());
+        resolved_inputs_.reserve(pass->inputs().size() + pass->inputTargets().size());
         for (const auto& image : pass->inputs()) {
-            resolved.push_back(image != nullptr ? resolveDeclaredImage(pass, *image) : nullptr);
+            resolved_inputs_.push_back(image != nullptr ? resolveDeclaredImage(pass, *image) : nullptr);
         }
         for (const auto& target : pass->inputTargets()) {
-            resolved.push_back(target != nullptr ? resolveDeclaredTarget(pass, target.get()) : nullptr);
+            resolved_inputs_.push_back(target != nullptr ? resolveDeclaredTarget(pass, target.get()) : nullptr);
         }
-        pass->resolveInputTextures(resolved);
-        return resolved;
+        pass->resolveInputTextures(resolved_inputs_);
+        return;
     }
 
     const auto& names = pass->inputNames();
     if (names.empty()) {
-        return {};
+        return;
     }
-    std::vector<raw_ptr<RenderTarget>> resolved;
-    resolved.reserve(names.size());
+    resolved_inputs_.reserve(names.size());
     for (const auto& name : names) {
-        resolved.push_back(resolve(name));
+        resolved_inputs_.push_back(resolve(name));
     }
-    pass->resolveInputTextures(resolved);
+    pass->resolveInputTextures(resolved_inputs_);
 
     // A declared input nobody published this frame means the pass draws
     // NOTHING (ScreenPass keeps the first non-null input and returns early when
@@ -513,12 +513,12 @@ std::vector<raw_ptr<RenderTarget>> RenderEngine::resolvePassInputs(raw_ptr<Rende
     // the engine's job, so it says so. A pass may declare several alternative
     // names (a chain that falls back), so this only fires when NONE of them
     // resolved.
-    const bool any_resolved = std::any_of(resolved.begin(), resolved.end(),
+    const bool any_resolved = std::any_of(resolved_inputs_.begin(), resolved_inputs_.end(),
                                           [](raw_ptr<RenderTarget> target) { return target != nullptr; });
     if (any_resolved) {
         // Re-arm: if this pass loses its producer later, that is a new problem.
         wiring_.unresolved_inputs_reported_.erase(pass);
-        return resolved;
+        return;
     }
     if (wiring_.unresolved_inputs_reported_.insert(pass).second) {
         // The frontend has no printf-style helper of its own: the message is
@@ -532,7 +532,6 @@ std::vector<raw_ptr<RenderTarget>> RenderEngine::resolvePassInputs(raw_ptr<Rende
     }
     // The pass still gets the list it asked for (with the nulls in it): the caller announces it to
     // the backend, and "nothing produced this input" is part of what the pass must be able to see.
-    return resolved;
 }
 
 RenderEngine::OutputIdentity RenderEngine::OutputIdentity::of(const ImageRef& image) noexcept
@@ -1082,8 +1081,12 @@ void RenderEngine::publishFrameOutput(const String& name, intrusive_ptr<RenderTa
     if (name.empty() || target == nullptr) {
         return;
     }
-    const auto existing = wiring_.outputs_.find(name);
-    if (existing != wiring_.outputs_.end() && existing->second.get() != target.get()) {
+    auto&      outputs  = wiring_.outputs_;
+    const auto existing = std::find_if(outputs.begin(), outputs.end(),
+                                       [&name](const std::pair<String, intrusive_ptr<RenderTarget>>& entry) {
+                                           return entry.first == name;
+                                       });
+    if (existing != outputs.end() && existing->second.get() != target.get()) {
         // Two passes published DIFFERENT targets under one name: every consumer of that name
         // silently gets whichever pass ran last, and only the engine can see the collision (each
         // pass is individually valid). Reported once per episode — a scene that keeps the wiring
@@ -1102,7 +1105,12 @@ void RenderEngine::publishFrameOutput(const String& name, intrusive_ptr<RenderTa
                                     String(u8"' samples whichever pass ran last"));
         }
     }
-    wiring_.outputs_[name] = std::move(target);
+    if (existing != outputs.end()) {
+        existing->second = std::move(target);
+    }
+    else {
+        outputs.emplace_back(name, std::move(target));
+    }
 }
 
 void RenderEngine::publish(const String& name, intrusive_ptr<RenderTarget> target)
@@ -1140,8 +1148,12 @@ void RenderEngine::publish(const String& name, intrusive_ptr<RenderTarget> targe
 raw_ptr<RenderTarget> RenderEngine::resolve(const String& name) const
 {
     // This frame's pass publication wins: that pass ran, so its content is this frame's.
-    const auto published = wiring_.outputs_.find(name);
-    if (published != wiring_.outputs_.end()) {
+    const auto& outputs   = wiring_.outputs_;
+    const auto  published = std::find_if(outputs.begin(), outputs.end(),
+                                        [&name](const std::pair<String, intrusive_ptr<RenderTarget>>& entry) {
+                                            return entry.first == name;
+                                        });
+    if (published != outputs.end()) {
         return published->second.get();
     }
     const auto bound = wiring_.host_outputs_.find(name);
@@ -1150,7 +1162,12 @@ raw_ptr<RenderTarget> RenderEngine::resolve(const String& name) const
 
 void RenderEngine::unpublish(const String& name)
 {
-    wiring_.outputs_.erase(name);
+    auto& outputs = wiring_.outputs_;
+    outputs.erase(std::remove_if(outputs.begin(), outputs.end(),
+                                 [&name](const std::pair<String, intrusive_ptr<RenderTarget>>& entry) {
+                                     return entry.first == name;
+                                 }),
+                  outputs.end());
     wiring_.host_outputs_.erase(name);
     // Withdrawing the name ends the "cannot serve it" episode: publishing it again with no target is
     // a new mistake, not the same one.

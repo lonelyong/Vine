@@ -53,8 +53,8 @@ namespace detail
 struct RecordPlan {
     ::vsg::ref_ptr<::vsg::RenderGraph> window_graph;
     std::map<vine::graphics::RenderTarget*, std::vector<::vsg::ref_ptr<::vsg::RenderGraph>>> graphs_of;
-    std::vector<vine::graphics::RenderTarget*> present; ///< Targets recorded now, in current child order.
-    std::vector<vine::graphics::RenderTarget*> order;   ///< Targets in dependency-valid order (see orderRecordPlan).
+    std::vector<vine::graphics::RenderTarget*> recorded_now; ///< Targets recorded now, in current child order.
+    std::vector<vine::graphics::RenderTarget*> record_order;   ///< Targets in dependency-valid order (see orderRecordPlan).
 };
 
 /** @brief Fills @p plan's graph map and current record order (phase 1).

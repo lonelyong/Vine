@@ -30,12 +30,21 @@ enum class CompareOp
 
 /**
  * @brief Face culling mode for a StateNode subtree.
+ *
+ * WHICH FACE IS FRONT IS THE SDK'S RULE, NOT THE GPU'S: a triangle is front-facing when its vertices
+ * appear counter-clockwise to the camera in a right-handed world (the SDK's view looks down -Z, see
+ * Camera), so a host can author geometry against one convention and get the same picture on every
+ * backend. A backend is free to render with another clip convention — the vsg backend flips Y for
+ * Vulkan, where the front face is defined in framebuffer coordinates — and is responsible for mapping
+ * this rule onto its own front face. A backend that got the mapping wrong culls the faces it was asked
+ * to keep, which reads as an object disappearing with no diagnostic (the risk is recorded as UB-14 in
+ * the vsg backend's notes).
  */
 enum class CullMode
 {
     None,  ///< No faces are culled (two-sided rendering).
-    Front, ///< Front-facing triangles are culled.
-    Back,  ///< Back-facing triangles are culled.
+    Front, ///< Counter-clockwise (front-facing) triangles are culled.
+    Back,  ///< Clockwise (back-facing) triangles are culled.
 };
 
 /**

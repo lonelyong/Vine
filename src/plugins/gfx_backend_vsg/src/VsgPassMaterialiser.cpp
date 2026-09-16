@@ -117,7 +117,7 @@ void detail::revokeDepthPromotion(VsgRendererState& state, VsgRenderTargetEntry&
             continue;
         }
         auto [render_pass, framebuffer] =
-            makePassObjects(state, t, att, pass.second.color_clear, pass.second.load_depth,
+            makePassObjects(state, t, att, pass.second.want_color_clear, pass.second.load_depth,
                             /*promote*/ false,
                             pass.second.load_depth ? steady_depth_initial : VK_IMAGE_LAYOUT_UNDEFINED);
         // The variant this pass RECORDED may still be named by an in-flight command
@@ -375,7 +375,6 @@ detail::PassPlan detail::planPass(const VsgRendererState& state, const VsgRender
     objects.framebuffer           = framebuffer;
     objects.graph                 = graph;
     objects.load_depth            = plan.depth_load;
-    objects.color_clear           = plan.want_color_clear;
     objects.want_color_clear      = plan.want_color_clear;
     objects.want_depth_clear      = plan.want_depth_clear;
     objects.clear_color           = clear_color;

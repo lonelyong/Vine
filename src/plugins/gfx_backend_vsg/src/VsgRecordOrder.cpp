@@ -92,7 +92,7 @@ void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan)
                 continue;
             }
             if (seen.insert(entry.first).second) {
-                plan.present.push_back(entry.first);
+                plan.recorded_now.push_back(entry.first);
             }
             break;
         }
@@ -107,11 +107,11 @@ void orderRecordPlan(const VsgRendererState& state, RecordPlan& plan)
     // frame) is not a supported pattern, so the edge graph is acyclic in practice; a
     // cycle would only leave state.targets in their current order.
     std::map<vine::graphics::RenderTarget*, std::size_t> index_of;
-    for (std::size_t i = 0; i < plan.present.size(); ++i) {
-        index_of.emplace(plan.present[i], i);
+    for (std::size_t i = 0; i < plan.recorded_now.size(); ++i) {
+        index_of.emplace(plan.recorded_now[i], i);
     }
     std::vector<GraphOrderEdge> edges;
-    for (auto* t : plan.present) {
+    for (auto* t : plan.recorded_now) {
         const auto entry = state.targets.find(t);
         if (entry == state.targets.end()) {
             continue;
@@ -147,9 +147,9 @@ void orderRecordPlan(const VsgRendererState& state, RecordPlan& plan)
             }
         }
     }
-    plan.order.reserve(plan.present.size());
-    for (const std::size_t index : stableTopologicalOrder(plan.present.size(), edges)) {
-        plan.order.push_back(plan.present[index]);
+    plan.record_order.reserve(plan.recorded_now.size());
+    for (const std::size_t index : stableTopologicalOrder(plan.recorded_now.size(), edges)) {
+        plan.record_order.push_back(plan.recorded_now[index]);
     }
 }
 
@@ -157,7 +157,7 @@ void applyRecordPlan(VsgRendererState& state, const RecordPlan& plan)
 {
     auto& children = state.command_graph->children;
     children.clear();
-    for (auto* t : plan.order) {
+    for (auto* t : plan.record_order) {
         const auto graphs = plan.graphs_of.find(t);
         if (graphs == plan.graphs_of.end()) {
             continue;

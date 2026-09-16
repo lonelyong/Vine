@@ -117,7 +117,8 @@ src/plugins/gfx_backend_vsg/
     VsgViewCompiler.hpp           # D22 增量编译：只编译本帧新增的槽 View
     VsgContentSlot.hpp            # 内容槽：请求类型 + 搭建 / 绘制 / 按序摆放
     VsgTargetBookkeeping.hpp      # detail：目标装配/重建/注销（附件、借用深度、槽视图）
-    VsgOverlay.hpp                # 采样与摆放：VsgOverlayDestination + 解目标/摆放/绘制 + 光照 push 块
+    VsgProgramSlot.hpp           # 全屏 program 槽：目的目标解析/摆放
+    VsgLights.hpp                # detail：光照块填充（世界→视图，两路共用）
     VsgSceneRules.hpp             # detail：设备无关规则（通道形状、缓存键哈希、颜色附件/opaque 写）
     VsgPipelineFactory.hpp        # vsg 对象工厂 + detail（格式转换 / 渲染通道 / 着色器集 / 管线态）
     VsgBackendUtility.hpp         # detail：图手术、设备同步、会话策略查询
@@ -134,7 +135,8 @@ src/plugins/gfx_backend_vsg/
     VsgViewCompiler.cpp           # 增量编译两条路径 + 全图回落
     VsgContentSlot.cpp            # 内容槽搭建/绘制 + 四个文件局部 helper
     VsgTargetBookkeeping.cpp      # detail：目标装配/重建/注销 + releaseRenderTarget/WindowLayer
-    VsgOverlay.cpp                # 全屏用户程序（视图编译、摆放、光照 push 块填充）
+    VsgProgramSlot.cpp           # 全屏用户程序（视图编译、摆放）
+    VsgLights.cpp                # detail：光照块填充（viewRotation + 两个块）
     VsgSceneRules.cpp             # detail：通道形状判定 + 缓存键哈希 + opaque 多附件写
     VsgRendererPasses.cpp         # pass 协议（begin/end/releasePass、退役）
     SceneBridge.cpp               # 保留 Item 缓存 / buildGeometry / syncRenderCommands

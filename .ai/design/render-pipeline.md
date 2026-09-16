@@ -173,7 +173,7 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 | 内容 set **永远声明**阴影两槽（set 0 / binding 3 = `shadow_map`，4 = `vine_shadow`），程序文本也永远声明 | 一个 set 一份，不翻倍；宿主程序不需要"阴影孪生版"就能拿到这两个绑定 | 变体方案要给每个 target 再翻一倍缓存，而且**宿主自己的内容程序没有阴影变体可挑**——那条路只能靠"永远声明"兜住 |
 | 关闭时绑 **会话的白回退**（不是 1×1 深度图）+ 块 `params.x = 0` | 声明了的绑定必须**写进描述符**（未写入的 set 是非法的），而"白回退 + 关闭的块"是一次性资源、且 shader 永不采样它（`params.x` 就是那个开关，`ShaderAbi.hpp` 写着它存在的理由） | 少一件设备资源、少一条"占位图"约定 |
 | 前向的 hand-off = **内容 pass 自己声明输入** | 前向没有 G-buffer、没有全屏 program，map 只能作为**内容 pass 的输入**交给后端 | 引擎的 `resolvePassInputs` / `setPassInputs` 通路（S2a 建的）原样复用 |
-| 一个**解析规则**给两个消费者 | `detail::resolveShadowInput(state, camera, lights)`：`VsgOverlay`（延迟光照）与 `VsgContentSlot`（前向内容）都调它 | 两个消费者各推一遍"哪个输入是图、矩阵怎么乘"就是两份只在被改之前一致的约定 |
+| 一个**解析规则**给两个消费者 | `detail::resolveShadowInput(state, camera, lights)`：`VsgProgramSlot`（延迟光照）与 `VsgContentSlot`（前向内容）都调它 | 两个消费者各推一遍"哪个输入是图、矩阵怎么乘"就是两份只在被改之前一致的约定 |
 
 **门禁（`runForwardShadowPixelPhase`）**：同一个场景、同两个采样点、同三级亮度（背景 15 /
 影内 31 / 阳光下 196），只把管线换成前向 —— 两条路径一比，差的就是**路径**。证据 **54 → 55 行**

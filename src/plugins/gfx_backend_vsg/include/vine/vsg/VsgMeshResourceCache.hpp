@@ -60,7 +60,8 @@ V_VSG_NS_BEGIN
 class V_VSG_API VsgMeshResourceCache
 {
   public:
-    /** @brief Upper bound on cached shared binds (FIFO past it, like the other retained caches). */
+    /** @brief Upper bound on EACH of the two shared-bind maps (FIFO past it, like the other
+     * retained caches), so one session holds at most 2 * kMaxEntries streams. */
     static constexpr std::size_t kMaxEntries = 512;
 
     /** @brief Identity of one aliased stream (what a shared bind reads). */

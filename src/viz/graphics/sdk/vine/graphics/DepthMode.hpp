@@ -14,6 +14,12 @@ V_GRAPHICS_NS_BEGIN
  *
  * Independent of clearing (RenderPass::clearEnabled) and of lighting: whether
  * the content is lit comes from the lights of the scene it renders.
+ *
+ * ADDING AN ENUMERATOR IS A BACKEND QUESTION, NOT ONLY AN SDK ONE: what a mode means to a pipeline
+ * ("test depth", "write depth") and which baked shader set it selects are derived in the vsg
+ * backend (detail::depthTestWrite / detail::shaderSetFor), each a switch with NO default arm — so a
+ * new mode makes the compiler point at those two places instead of falling through to the "no depth
+ * at all" arm in one of them.
  */
 enum class DepthMode
 {

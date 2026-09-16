@@ -248,7 +248,7 @@ scene_rt->setSize(surface_w, surface_h);
 // ② 场景 pass：画进 scene_rt。order < 0 ⇒ 先于主 pass 执行。
 auto scene_pass = make_intrusive<RenderPass>();
 scene_pass->setName(u8"scene_into_rt");
-scene_pass->setCamera(camera.get());
+scene_pass->setCamera(camera);
 scene_pass->setRenderTarget(scene_rt);
 scene_pass->setClearEnabled(true);                     // 自己是第一笔，清屏
 scene_pass->setClearColor(vine::Color(26, 26, 31));    // vine::Color 是 0..255 的 uint8 构造
@@ -261,7 +261,7 @@ engine.addPass(scene_pass, scene, -1);                 // -1 < 0：排在主 pas
 // ③ 合成 pass：作为**窗口 pass**（没有 renderTarget ⇒ 画进窗口），order 0。
 auto compose = make_intrusive<ScreenPass>();
 compose->setName(u8"compose_to_window");
-compose->setCamera(camera.get());                      // 窗口 pass 的相机决定窗口视角
+compose->setCamera(camera);                      // 窗口 pass 的相机决定窗口视角
 compose->setProgram(screenCopyProgram());              // 画面是**命名**的：纯拷贝用 SDK 的这个程序
 compose->addInputName(u8"SceneColor");                 // 名字形式
 compose->addInputTarget(scene_rt);                     // 对象形式（两层在地址上汇合）
@@ -295,7 +295,7 @@ auto gbuffer = RenderPipelineBuilder::defaultGbufferTarget(width, height);
 auto gbuffer_program = RenderPipelineBuilder::defaultGbufferGeometryProgram();
 auto gbuf_pass = make_intrusive<RenderPass>();
 gbuf_pass->setName(u8"gbuffer");
-gbuf_pass->setCamera(camera.get());
+gbuf_pass->setCamera(camera);
 gbuf_pass->setRenderTarget(gbuffer);
 gbuf_pass->setProgramOverride(gbuffer_program);   // 场景 pass 也可以带自己的 program
 gbuf_pass->setOutputName(u8"GBuffer");
@@ -315,7 +315,7 @@ composite->shareDepth(gbuffer);                  // 借深度
 auto light_program = RenderPipelineBuilder::defaultDeferredLightProgram();
 auto light = make_intrusive<ScreenPass>();
 light->setName(u8"deferred_lighting");
-light->setCamera(camera.get());                  // program 路径**必须**有相机
+light->setCamera(camera);                  // program 路径**必须**有相机
 light->setRenderTarget(composite);
 light->addInputName(u8"GBuffer");
 light->addInputTarget(gbuffer);                  // 读整捆：program 按 binding 自己挑
@@ -325,7 +325,7 @@ engine.addPass(light, scene, 0);
 // ⑤ 前向透明：不清屏（压在光照结果上），只测深度不写。
 auto forward = make_intrusive<RenderPass>();
 forward->setName(u8"forward_transparent");
-forward->setCamera(camera.get());
+forward->setCamera(camera);
 forward->setRenderTarget(composite);
 forward->setClearEnabled(false);
 forward->setDepthMode(DepthMode::TestOnly);
@@ -336,7 +336,7 @@ engine.addPass(forward, transparent_scene, 1);
 // ⑥ 呈现：把烘好的 composite 拷到窗口（窗口 pass，无 renderTarget）。
 auto present = make_intrusive<ScreenPass>();
 present->setName(u8"present");
-present->setCamera(camera.get());
+present->setCamera(camera);
 present->addInputName(u8"Composite");
 present->addInputTarget(composite);
 engine.addPass(present, 2);

@@ -226,7 +226,7 @@ TEST(PassProtocolTest, ADrawingCallOutsideAPassScopeIsRefusedAndReportedOnce)
 
     // Nothing announced: every drawing entry point has nothing to belong to.
     renderer.render(std::vector<RenderCommand>{}, nullptr);
-    renderer.clear(vine::Color(0, 0, 0, 255), true);
+    renderer.setClearPolicy(vine::graphics::ClearPolicy{ vine::Color(0, 0, 0, 255), true });
     renderer.drawScreenProgram(source.get(), copy_program.get(), nullptr);
 
     ASSERT_EQ(captured.items.size(), 1u) << "one report per frame, whatever the call";
@@ -245,7 +245,7 @@ TEST(PassProtocolTest, ADrawingCallOutsideAPassScopeIsRefusedAndReportedOnce)
     renderer.beginPass(pass.get());
     renderer.setRenderTarget(nullptr);
     renderer.render(std::vector<RenderCommand>{}, nullptr);
-    renderer.clear(vine::Color(0, 0, 0, 255), true);
+    renderer.setClearPolicy(vine::graphics::ClearPolicy{ vine::Color(0, 0, 0, 255), true });
     renderer.endPass();
     EXPECT_EQ(captured.items.size(), 2u);
 }
@@ -286,7 +286,7 @@ TEST(PassProtocolTest, DrawingOnAReleasedTargetIsRefusedAndReportedOnce)
     EXPECT_EQ(captured.items.size(), 1u);
     // ...and the other entry points that draw into the announced target refuse it too.
     RenderTargetPtr source(new RenderTarget());
-    renderer.clear(vine::Color(0, 0, 0, 255), true);
+    renderer.setClearPolicy(vine::graphics::ClearPolicy{ vine::Color(0, 0, 0, 255), true });
     const auto copy_program = vine::graphics::screenCopyProgram();
     renderer.drawScreenProgram(source.get(), copy_program.get(), nullptr);
     EXPECT_EQ(captured.items.size(), 1u);
@@ -294,7 +294,7 @@ TEST(PassProtocolTest, DrawingOnAReleasedTargetIsRefusedAndReportedOnce)
     // Announcing a target again ends the episode: calls are served from here on.
     renderer.setRenderTarget(nullptr);
     renderer.render(std::vector<RenderCommand>{}, nullptr);
-    renderer.clear(vine::Color(0, 0, 0, 255), true);
+    renderer.setClearPolicy(vine::graphics::ClearPolicy{ vine::Color(0, 0, 0, 255), true });
     EXPECT_EQ(captured.items.size(), 1u);
 
     // A new release is a new episode, so it is reported again.

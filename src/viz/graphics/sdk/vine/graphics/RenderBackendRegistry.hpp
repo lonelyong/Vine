@@ -85,8 +85,9 @@ class V_GRAPHICS_API RenderBackendFactory {
     /** @brief Creates a backend instance.
      *
      * The engine owns the pipeline and drives content per pass, so a backend
-     * is not bound to a Vine scene or camera: window layers are created
-     * lazily from the per-pass render() calls the engine drives.
+     * is not bound to a Vine scene or camera: its content slots are created
+     * lazily from the per-pass render() calls the engine drives, keyed by the
+     * pass announced through beginPass().
      *
      * @return Newly created backend; the caller owns the returned reference.
      */

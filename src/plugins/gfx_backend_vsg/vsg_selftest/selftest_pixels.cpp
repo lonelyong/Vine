@@ -1844,7 +1844,7 @@ bool runMrtProbe(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int 
         // And the contract for the extra attachments: a pixel no geometry
         // covers must read TRANSPARENT BLACK, not the pass' clear colour — this
         // is what a deferred consumer keys "background" off (see
-        // RenderBackend::clear and RenderPipelineBuilder's lighting program).
+        // RenderBackend::setClearPolicy and RenderPipelineBuilder's lighting program).
         if (attachment > 0 && (image.at(image.corner(4), 0) != 0 || image.at(image.corner(4), 1) != 0 || image.at(image.corner(4), 2) != 0 ||
                                image.at(image.corner(4), 3) != 0)) {
             std::fprintf(stderr,

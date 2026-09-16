@@ -65,6 +65,17 @@ V_VSG_NS_BEGIN
 inline constexpr ::vsg::vec4 kDefaultClearColor{ 0.2f, 0.2f, 0.2f, 1.0f };
 
 /**
+ * @brief The depth value every target's depth image is cleared to: the reverse-Z FAR plane.
+ *
+ * The backend's depth compare is VK_COMPARE_OP_GREATER with near = 1 and far = 0, so a buffer
+ * initialised to the NEAR plane would reject every fragment (`depth > 1.0` is never true) and a
+ * depth-only target would stay empty. One definition, because the off-screen attachment path and
+ * the window swapchain path have to clear to the same plane: a target cleared to one and tested
+ * against the other reads as content that silently disappears.
+ */
+inline constexpr float kReverseZFarPlane = 0.0f;
+
+/**
  * @brief The pass scope attributes one content slot applies to itself, and remembers as applied.
  *
  * ONE value, because what a slot STORES and what the frame compares against have to be the same thing:
@@ -336,16 +347,19 @@ struct VsgRenderTargetEntry {
         int         order       = std::numeric_limits<int>::max();
         /// True when this pass preserves (LOADs) depth instead of clearing it.
         bool        load_depth  = false;
-        /// True when this pass clears colour at its start; false LOADs the
-        /// previous pass' colour (see planPassVariant). This is the
-        /// STEADY variant's load-op, i.e. what @ref want_color_clear asks for.
-        bool        color_clear = true;
-        /// This pass' own clear requests (what the host asked), the input
-        /// @ref color_clear / @ref load_depth were derived from. A run-time
-        /// change of THESE is what makes a pass rebuild its variant
-        /// (RenderPass::setClearEnabled / setShouldClearDepth): the
-        /// materialised load-ops also carry the one-frame bootstrap, and the
-        /// same frame builds one pass twice (setupContentSlot + render).
+        /// This pass' own clear requests: what the host asked for through
+        /// RenderPass::setClearEnabled / setShouldClearDepth. A run-time change of
+        /// THESE is what makes a pass rebuild its variant — the materialised
+        /// load-ops also carry the one-frame bootstrap, and the same frame builds
+        /// one pass twice (setupContentSlot + render).
+        ///
+        /// `want_color_clear` is ALSO the steady variant's colour load-op: the
+        /// bootstrap only changes the load-op of the frame that first defines the
+        /// image (see planPassVariant), which is the TRANSIENT variant's business,
+        /// so the steady render pass is the one this value describes. There is no
+        /// separate "materialised" field to keep in step with it; this backend had
+        /// one, it was written from this value on every build, and it was read only
+        /// where the steady variant is rebuilt (see revokeDepthPromotion).
         bool        want_color_clear = false;
         /// True when this pass asked to clear depth (@ref load_depth is its
         /// materialised counterpart: a pass that asked for no clear LOADs).

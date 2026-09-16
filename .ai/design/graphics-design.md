@@ -533,8 +533,11 @@ class V_GRAPHICS_API RenderBackend {
     virtual void render(const std::vector<RenderCommand>& commands,
                         const Camera* camera) = 0;
 
-    /** @brief 清空缓冲。 */
-    virtual void clear(const Color& backgroundColor, bool clearDepth = true) = 0;
+    /** @brief 声明本 pass 的清屏策略（颜色 + 是否清深度）。
+     *
+     * 默认空实现（不是纯虚）：不清屏的 pass 什么也不声明。
+     */
+    virtual void setClearPolicy(const ClearPolicy& policy) { (void)policy; }
 
     /** @brief 交换缓冲区（double buffer）。 */
     virtual void swapBuffers() = 0;
@@ -932,7 +935,7 @@ camera->setProjectionMatrixAsPerspective(60.0, 16.0 / 9.0, 0.1, 1000.0);
 auto commands = scene->collectRenderCommands(camera.get());
 
 // 渲染（后端由调用方提供）
-backend->clear(Color(51, 51, 51, 255));
+backend->setClearPolicy(ClearPolicy{ Color(51, 51, 51, 255), true });
 backend->render(commands, camera.get());
 backend->swapBuffers();
 ```

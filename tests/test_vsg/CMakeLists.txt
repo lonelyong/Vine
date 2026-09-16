@@ -28,7 +28,7 @@ set(SRC_FILE_LIST
 	TextureCacheTest.cpp
 	MeshResourceCacheTest.cpp
 	ChannelSliceTest.cpp
-	OverlayLightingTest.cpp
+	LightsTest.cpp
 	OverlayStagesTest.cpp
 	ForwardShaderSetTest.cpp
 )
@@ -92,7 +92,8 @@ target_sources(${TEST_NAME} PRIVATE
 	# VsgRenderer is split over several TUs that share one free-function layer;
 	# the test compiles the ones a device-free run reaches.
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgRendererPasses.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgOverlay.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgProgramSlot.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgLights.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgBackendUtility.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgPipelineFactory.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/CameraBridge.cpp)

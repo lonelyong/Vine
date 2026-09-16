@@ -195,7 +195,7 @@ struct PassScope
         : renderer(renderer)
     {
         begin(pass, order, target, depth_mode);
-        renderer.clear(clear_color, clear_depth);
+        renderer.setClearPolicy(vine::graphics::ClearPolicy{ clear_color, clear_depth });
     }
     /** @brief A pass that calls no clear() at all: it LOADs what a pass left. */
     PassScope(vine::graphics::RenderBackend& renderer, vine::graphics::RenderPass* pass, int order,
@@ -959,7 +959,7 @@ bool runColorBootstrapPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& c
  * What it measured the first time it ran: attachment 0 carries the pass' clear
  * colour and the geometry, while every extra attachment is TRANSPARENT BLACK
  * everywhere, geometry included. That is the CONTRACT, not an accident
- * (RenderBackend::clear documents it, and the deferred-lighting consumer relies
+ * (RenderBackend::setClearPolicy documents it, and the deferred-lighting consumer relies
  * on a stored view position of ~0 meaning "background"): the assertions here
  * pin both halves — the geometry reaches attachment 0, and an extra attachment
  * an uncovered pixel would land in reads transparent black rather than the pass'

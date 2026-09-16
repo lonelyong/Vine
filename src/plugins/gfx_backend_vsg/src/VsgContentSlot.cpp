@@ -12,7 +12,8 @@
 
 #include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgDiagnostics.hpp>
-#include <vine/vsg/VsgOverlay.hpp>
+#include <vine/vsg/VsgProgramSlot.hpp>
+#include <vine/vsg/VsgLights.hpp>
 #include <vine/vsg/VsgPassMaterialiser.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgRecordOrder.hpp>
@@ -164,25 +165,21 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // incompatible render pass. Measured: sharing the table breaks the
     // policy-churn phase's depth invariant (scripts/vsg_selftest_evidence.sh).
     if (target == nullptr) {
-        // Window slots share the renderer's (window-sized) shader sets.
-        content.bridge.setShaderSet(content.applied.depth_mode == vine::graphics::DepthMode::TestAndWrite
-                                        ? state.depth_on_shader_set
-                                    : content.applied.depth_mode == vine::graphics::DepthMode::TestOnly
-                                        ? state.depth_testonly_shader_set
-                                        : state.depth_off_shader_set);
+        // Window slots share the renderer's (window-sized) shader sets. Which of the three a policy
+        // means is one rule (see detail::shaderSetFor), not a ternary per target kind.
+        content.bridge.setShaderSet(detail::shaderSetFor(content.applied.depth_mode, state.depth_on_shader_set,
+                                                         state.depth_testonly_shader_set, state.depth_off_shader_set));
     }
     else {
         // Off-screen slots get a per-target shader set baked at the target's
         // size (created lazily).
-        auto& set_ref = content.applied.depth_mode == vine::graphics::DepthMode::TestAndWrite ? t.depth_on_shader_set
-                        : content.applied.depth_mode == vine::graphics::DepthMode::TestOnly ? t.depth_testonly_shader_set
-                                                                                            : t.depth_off_shader_set;
+        auto& set_ref = detail::shaderSetFor(content.applied.depth_mode, t.depth_on_shader_set,
+                                             t.depth_testonly_shader_set, t.depth_off_shader_set);
         if (set_ref == nullptr) {
-            const bool depth_test  = content.applied.depth_mode != vine::graphics::DepthMode::Disabled;
-            const bool depth_write = content.applied.depth_mode == vine::graphics::DepthMode::TestAndWrite;
+            const detail::DepthTestWrite depth = detail::depthTestWrite(content.applied.depth_mode);
             set_ref = makeContentShaderSet(persistent.default_content_program,
                                            VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) },
-                                           depth_test, depth_write,
+                                           depth.test, depth.write,
                                            target->colorCount());
         }
         content.bridge.setShaderSet(set_ref);

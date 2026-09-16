@@ -179,27 +179,6 @@ class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarge
      */
     bool valid() const;
 
-    /** @brief Reads back the color buffer.
-     *
-     * NOT IMPLEMENTED — returns an all-zero buffer: a logical RenderTarget
-     * owns no GPU pixels, so it cannot produce real data by itself. Use
-     * RenderBackend::readColorBuffer(), the backend that owns this target's
-     * attachments, for actual pixels; it reports unsupported explicitly when
-     * the backend cannot read back.
-     *
-     * @return All-zero placeholder sized width * height * 4 bytes.
-     */
-    std::vector<std::uint8_t> readColorBuffer() const;
-
-    /** @brief Reads back the depth buffer.
-     *
-     * NOT IMPLEMENTED — returns an all-zero buffer (see readColorBuffer()).
-     * Use RenderBackend::readDepthBuffer() for actual depth values.
-     *
-     * @return All-zero placeholder sized width * height floats.
-     */
-    std::vector<float> readDepthBuffer() const;
-
     /** @brief States the view-projection this target's producer rendered with.
      *
      * A target is not only an image: when a pass renders it from a CAMERA whose

@@ -61,8 +61,12 @@ vine::graphics::ResolvedRenderState effectiveCommandState(
 {
     vine::graphics::ResolvedRenderState state = command.renderState;
     if (!command.depthExplicit) {
-        state.depth.test  = content_depth_mode != vine::graphics::DepthMode::Disabled;
-        state.depth.write = content_depth_mode == vine::graphics::DepthMode::TestAndWrite;
+        // ONE derivation of what the policy means to a pipeline (see detail::depthTestWrite), shared
+        // with the slot that bakes it into the shader set: two copies is how a fourth DepthMode ends
+        // up honoured in one of them.
+        const detail::DepthTestWrite depth = detail::depthTestWrite(content_depth_mode);
+        state.depth.test                   = depth.test;
+        state.depth.write                  = depth.write;
     }
     return state;
 }
@@ -1175,20 +1179,13 @@ std::size_t SceneBridge::releaseAbandonedCaches(const OwnedShareCounts& shares)
     const std::size_t erased = eraseAbandoned(program_stages_, shares) +
                                eraseAbandoned(program_shader_sets_, shares) +
                                eraseAbandoned(variant_cache_, shares);
-    // Textures are swept here too, and this is the sweep's ONLY caller:
-    // VsgTextureCache::releaseAbandoned() had an implementation and a unit test but no production caller,
-    // so a texture the scene stopped sampling kept its GPU image until 256 later textures pushed it out of
-    // the FIFO (or the slot was destroyed). Its entry owns the texture it is keyed by, so "the app dropped
-    // it and no retained entry holds it any more" is observable exactly here — releaseAbandonedGeometries()
-    // ran earlier in this same sync, so the geometry that just left the frame has already let go of the
-    // texture its entry held.
+    // The SESSION-scoped caches (uploaded textures, shared mesh binds) are NOT swept here: their entries
+    // are shared by every slot, so a per-slot sweep multiplied the work by the slot count (and rebuilt a
+    // share count per slot) to answer a question that does not change between slots. They are swept once
+    // per frame by VsgRenderer::releaseAbandonedContent(), which runs after every slot's geometry sweep
+    // — the ordering a texture's "the app dropped it and no retained entry holds it any more" judgement
+    // needs, one level up from this sync.
     //
-    // Deliberately NOT part of the eviction gate below: the shared-object table registers pipelines /
-    // layouts / descriptor sets, never images, so releasing a texture is no reason to walk it.
-    textureCache().releaseAbandoned();
-    // Same for the shared mesh binds: their entries hold the arrays (and through them the model's buffers),
-    // so an entry whose last geometry is gone must not keep that stream uploaded for the session.
-    meshResources().releaseAbandoned();
     // A registered variant is HELD BY shared_objects_ (registering is what the
     // table does), so evicting its cache entries freed nothing: the table still
     // referenced the pipeline, layout and descriptor sets, and it only ever grew

@@ -7,7 +7,7 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/math/Vector3.hpp>
-#include <vine/vsg/VsgOverlay.hpp>
+#include <vine/vsg/VsgLights.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 
 using vine::graphics::Camera;
@@ -70,7 +70,7 @@ double dot(const double a[3], const double b[3])
 // The camera basis the lights are transformed with.
 // ---------------------------------------------------------------------------
 
-TEST(OverlayLightingTest, ViewRotationBuildsARightHandedBasis)
+TEST(LightsTest, ViewRotationBuildsARightHandedBasis)
 {
     Camera camera;
     makeForwardCamera(camera);
@@ -85,7 +85,7 @@ TEST(OverlayLightingTest, ViewRotationBuildsARightHandedBasis)
     EXPECT_NEAR(f[2], -1.0, 1e-12);
 }
 
-TEST(OverlayLightingTest, ViewRotationFollowsTheCameraOrientation)
+TEST(LightsTest, ViewRotationFollowsTheCameraOrientation)
 {
     Camera camera;
     camera.setViewMatrixAsLookAt(vine::math::Vec3d(5.0, 0.0, 0.0), vine::math::Vec3d(0.0, 0.0, 0.0),
@@ -99,7 +99,7 @@ TEST(OverlayLightingTest, ViewRotationFollowsTheCameraOrientation)
     EXPECT_NEAR(r[2], -1.0, 1e-12);
 }
 
-TEST(OverlayLightingTest, ViewRotationIsOrthonormalForAnyCamera)
+TEST(LightsTest, ViewRotationIsOrthonormalForAnyCamera)
 {
     const vine::math::Vec3d eyes[]    = { { 3.0, 4.0, 5.0 }, { -2.0, 0.5, 1.0 }, { 0.0, 0.0, 10.0 } };
     const vine::math::Vec3d targets[] = { { 0.0, 0.0, 0.0 }, { 1.0, -1.0, 0.0 }, { 0.0, 1.0, 0.0 } };
@@ -120,7 +120,7 @@ TEST(OverlayLightingTest, ViewRotationIsOrthonormalForAnyCamera)
     }
 }
 
-TEST(OverlayLightingTest, ViewRotationSurvivesDegenerateInput)
+TEST(LightsTest, ViewRotationSurvivesDegenerateInput)
 {
     // A camera whose eye IS its target has no forward direction: the fallback keeps a usable
     // basis instead of dividing by zero (the push block would otherwise hold NaN).
@@ -147,7 +147,7 @@ TEST(OverlayLightingTest, ViewRotationSurvivesDegenerateInput)
 // The push block the fullscreen program reads.
 // ---------------------------------------------------------------------------
 
-TEST(OverlayLightingTest, PushBlockIsZeroedWithoutACamera)
+TEST(LightsTest, PushBlockIsZeroedWithoutACamera)
 {
     // The block is written verbatim into the push range, so a camera-less draw must zero it
     // rather than push whatever the previous frame left in it.
@@ -159,7 +159,7 @@ TEST(OverlayLightingTest, PushBlockIsZeroedWithoutACamera)
     }
 }
 
-TEST(OverlayLightingTest, PerspectiveParametersReconstructViewPosition)
+TEST(LightsTest, PerspectiveParametersReconstructViewPosition)
 {
     Camera camera;
     makeForwardCamera(camera);
@@ -172,7 +172,7 @@ TEST(OverlayLightingTest, PerspectiveParametersReconstructViewPosition)
     EXPECT_FLOAT_EQ(block.projparms[3], 1.0f);
 }
 
-TEST(OverlayLightingTest, OrthographicCameraLeavesThePerspectiveParametersEmpty)
+TEST(LightsTest, OrthographicCameraLeavesThePerspectiveParametersEmpty)
 {
     Camera camera;
     camera.setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 0.0), vine::math::Vec3d(0.0, 0.0, -1.0),
@@ -188,7 +188,7 @@ TEST(OverlayLightingTest, OrthographicCameraLeavesThePerspectiveParametersEmpty)
     EXPECT_FLOAT_EQ(block.dirs[0][2], -1.0f);
 }
 
-TEST(OverlayLightingTest, AmbientLightIsBakedAndASmallDefaultIsSeededWithoutOne)
+TEST(LightsTest, AmbientLightIsBakedAndASmallDefaultIsSeededWithoutOne)
 {
     Camera camera;
     makeForwardCamera(camera);
@@ -211,7 +211,7 @@ TEST(OverlayLightingTest, AmbientLightIsBakedAndASmallDefaultIsSeededWithoutOne)
     EXPECT_FLOAT_EQ(unlit.ambient[3], 1.0f);
 }
 
-TEST(OverlayLightingTest, DirectionalLightsAreBakedInViewSpace)
+TEST(LightsTest, DirectionalLightsAreBakedInViewSpace)
 {
     Camera camera;
     makeForwardCamera(camera); // looks down -Z, up +Y
@@ -240,7 +240,7 @@ TEST(OverlayLightingTest, DirectionalLightsAreBakedInViewSpace)
     EXPECT_FLOAT_EQ(block.cols[1][3], 1.0f); // default intensity
 }
 
-TEST(OverlayLightingTest, DisabledAndNullLightsAreSkippedWithoutConsumingASlot)
+TEST(LightsTest, DisabledAndNullLightsAreSkippedWithoutConsumingASlot)
 {
     Camera camera;
     makeForwardCamera(camera);
@@ -256,7 +256,7 @@ TEST(OverlayLightingTest, DisabledAndNullLightsAreSkippedWithoutConsumingASlot)
     EXPECT_FLOAT_EQ(block.dirs[1][1], 0.0f);
 }
 
-TEST(OverlayLightingTest, OnlyThreeDirectionalLightsAreBaked)
+TEST(LightsTest, OnlyThreeDirectionalLightsAreBaked)
 {
     Camera camera;
     makeForwardCamera(camera);
@@ -300,7 +300,7 @@ VineLightsBlock forwardBlockFor(const Camera* camera, const std::vector<const Li
 
 } // namespace
 
-TEST(OverlayLightingTest, ForwardBlockIsTheLightHalfOfThePushBlock)
+TEST(LightsTest, ForwardBlockIsTheLightHalfOfThePushBlock)
 {
     Camera camera;
     makeForwardCamera(camera);
@@ -318,7 +318,7 @@ TEST(OverlayLightingTest, ForwardBlockIsTheLightHalfOfThePushBlock)
     EXPECT_EQ(forward.cols, push.cols);
 }
 
-TEST(OverlayLightingTest, ForwardBlockIsZeroedWithoutACamera)
+TEST(LightsTest, ForwardBlockIsZeroedWithoutACamera)
 {
     const auto                  sun = Light::createDirectional(vine::math::Vec3d(0.0, 1.0, 0.0));
     const VineLightsBlock block = forwardBlockFor(nullptr, { sun.get() });
@@ -333,7 +333,7 @@ TEST(OverlayLightingTest, ForwardBlockIsZeroedWithoutACamera)
     }
 }
 
-TEST(OverlayLightingTest, ForwardBlockSeedsAmbientSoASceneIsNeverBlack)
+TEST(LightsTest, ForwardBlockSeedsAmbientSoASceneIsNeverBlack)
 {
     Camera camera;
     makeForwardCamera(camera);
@@ -343,7 +343,7 @@ TEST(OverlayLightingTest, ForwardBlockSeedsAmbientSoASceneIsNeverBlack)
     EXPECT_GT(block.ambient[0], 0.0f);
 }
 
-TEST(OverlayLightingTest, ForwardBlockReportsHowManyAnnouncedLightsItCarries)
+TEST(LightsTest, ForwardBlockReportsHowManyAnnouncedLightsItCarries)
 {
     // The block is a fixed-size carrier (one ambient + three directionals) and the slot reports the
     // difference between what was announced and what it carries, so the return value has to be ABOUT

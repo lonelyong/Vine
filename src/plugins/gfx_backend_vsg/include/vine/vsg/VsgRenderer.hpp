@@ -228,11 +228,14 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * @param target     Off-screen target this backend rendered into.
      * @param attachment Colour attachment index in [0, target->colorCount()).
      * @param outPixels  Receives the packed RGBA8 pixels on success.
+     * @param why        Receives why the read did not happen (Ok when it did), or null to
+     *                   ignore (see RenderBackend::readColorBuffer).
      * @return true when the pixels were read; false when the target was never
      *         built, the attachment is out of range or its format is not RGBA8.
      */
     bool readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
-                         std::vector<std::uint8_t>& outPixels) override;
+                         std::vector<std::uint8_t>& outPixels,
+                         vine::graphics::ReadbackResult* why = nullptr) override;
 
     /** @brief Reads back the depth attachment of an off-screen render target.
      *
@@ -246,12 +249,15 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *
      * @param target    Off-screen target this backend rendered into.
      * @param outDepths Receives the depth values on success.
+     * @param why       Receives why the read did not happen (Ok when it did), or null to
+     *                  ignore (see RenderBackend::readDepthBuffer).
      * @return true when the depth values were read; false when the target was
      *         never built, has no depth attachment or uses a packed format. A
      *         target that borrows its depth (RenderTarget::shareDepth) reports
      *         false: read the source target's depth instead.
      */
-    bool readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths) override;
+    bool readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths,
+                         vine::graphics::ReadbackResult* why = nullptr) override;
 
     /** @brief Renders the current frame from the render command stream.
      *
@@ -286,8 +292,12 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void setLights(const std::vector<vine::raw_ptr<const vine::graphics::Light>>& lights) override;
 
-    /** @brief Sets the clear color and depth-clear state. */
-    void clear(const vine::Color& backgroundColor, bool clearDepth) override;
+    /** @brief Announces how this pass' target is cleared before it draws (see
+     * RenderBackend::setClearPolicy).
+     *
+     * @param policy Colour of attachment 0 and whether depth is cleared too.
+     */
+    void setClearPolicy(const vine::graphics::ClearPolicy& policy) override;
 
     /** @brief Sets how the next render()'s content handles depth (see
      * RenderBackend::setDepthMode).

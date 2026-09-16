@@ -663,25 +663,30 @@ TEST(SceneBridgeCacheOwnershipTest, SharedObjectsTableIsPrunedOnEvictionFramesOn
 }
 
 /**
- * @brief A texture nothing samples any more is released by the frame's sweep.
+ * @brief A texture nothing samples any more is released by the frame's session sweep.
  *
  * VsgTextureCache::releaseAbandoned() had an implementation and a unit test but
  * no caller in the backend, so a texture the scene stopped sampling kept its GPU
  * image until 256 later textures pushed it out of the FIFO — or until the whole
- * slot was destroyed. The sweep belongs to the frame, because that is when the
- * question becomes answerable: a retained entry HOLDS the texture it was built
- * for, and releaseAbandonedGeometries() runs before the sweep in the same sync,
- * so the frame a geometry leaves the scene is the frame its texture becomes
- * releasable.
+ * slot was destroyed. Its home is the FRAME's end, not a slot's sync: the entries
+ * are shared by every slot (see VsgRenderer::releaseAbandonedContent), so sweeping
+ * them per slot did the same work once per slot. The sweep belongs to the frame
+ * because that is when the question becomes answerable: a retained entry HOLDS the
+ * texture it was built for, and every slot's releaseAbandonedGeometries() has run
+ * by then, so the frame a geometry leaves the scene is the frame its texture
+ * becomes releasable.
  */
-TEST(SceneBridgeCacheOwnershipTest, ADroppedTextureIsReleasedByTheFrameSweep)
+TEST(SceneBridgeCacheOwnershipTest, ADroppedTextureIsReleasedByTheFrameSessionSweep)
 {
     vine::vsg::SceneBridge bridge;
     bridge.setShaderSet(testContentSet());
-    // The material manager is the RENDERER's (it sweeps it at the end of a submitted frame), and its entry
-    // owns the Material — which holds the texture. Injecting one lets the test drive that step itself.
+    // Both sweeps the RENDERER performs at the end of a submitted frame are injected here so the test can
+    // drive that step itself: the material manager's (its entry owns the Material, which holds the texture)
+    // and the SESSION texture cache's (the frame's session sweep).
     vine::vsg::VsgMaterialManager manager;
+    vine::vsg::VsgTextureCache   session_cache;
     bridge.setMaterialManager(&manager);
+    bridge.setTextureCache(&session_cache);
     auto root = vsg::Group::create();
 
     Material* material_address = nullptr;
@@ -716,12 +721,15 @@ TEST(SceneBridgeCacheOwnershipTest, ADroppedTextureIsReleasedByTheFrameSweep)
 
     // The SDK's explicit release: the manager drops its entry, the variant template's abandoned() becomes
     // true on the next sweep, the material dies — and the frame that makes the texture unreachable is the
-    // frame the texture sweep releases its resources on.
+    // frame the session sweep releases its resources on.
     manager.releaseMaterial(material_address);
     bridge.syncRenderCommands(no_commands, root.get(), nullptr);
+    EXPECT_EQ(bridge.textureCount(), 1u)
+        << "the slot's own sync must not sweep the SESSION cache: its entries are shared by every slot";
+    session_cache.releaseAbandoned(); // the frame's session sweep (VsgRenderer::releaseAbandonedContent)
     EXPECT_EQ(bridge.textureCount(), 0u)
-        << "the unreachable texture's resources must be released by the frame's sweep, not pinned until the "
-           "FIFO cap or the slot teardown";
+        << "the unreachable texture's resources must be released by the frame's session sweep, not pinned "
+           "until the FIFO cap or the slot teardown";
 }
 
 /**

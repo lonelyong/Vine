@@ -453,7 +453,7 @@ void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnos
     // near plane would reject every fragment (`depth > 1.0` is never true) and
     // a depth-only target would stay empty — the value has to be the far plane
     // the test expects, exactly as the window swapchain pass clears to 0.0.
-    t.depth_clear_value = 0.0f;
+    t.depth_clear_value = kReverseZFarPlane;
     // Whether this target's depth may be promoted to a sampleable texture is
     // part of the target's DESCRIPTION (RenderTarget::depthPromotion), so it is
     // known HERE rather than only once a pass is created: a consumer that

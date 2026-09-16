@@ -259,7 +259,7 @@ intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(Pipeline& pip
 
     auto shadow_pass = make_intrusive<RenderPass>();
     shadow_pass->setName(u8"shadow");
-    shadow_pass->setCamera(light_camera.get());
+    shadow_pass->setCamera(light_camera);
     shadow_pass->setRenderTarget(shadow_map);
     // Its only writer owns the hand-off: the pass that samples it declares this target as an input,
     // and the engine answers that from the passes that DREW into it.
@@ -288,7 +288,7 @@ bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
     // stage; there is no separate geometry pass to place.
     auto pass = make_intrusive<RenderPass>();
     pass->setName(u8"main");
-    pass->setCamera(camera_);
+    pass->setCamera(intrusive_ptr<Camera>(camera_));
     if (shadow_map != nullptr) {
         pass->addInputTarget(shadow_map);
     }
@@ -299,7 +299,7 @@ bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
     if (transparent_ != nullptr) {
         auto transparent = make_intrusive<RenderPass>();
         transparent->setName(u8"forward_transparent");
-        transparent->setCamera(camera_);
+        transparent->setCamera(intrusive_ptr<Camera>(camera_));
         // Translucent / overlay content: depth-TESTS against the opaque depth
         // the main content pass just wrote, but does NOT write depth (standard
         // alpha-blend rule) and does not clear.
@@ -367,7 +367,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     // G-buffer geometry pass (order < 0), publishing the target as "GBuffer".
     auto gbuf_pass = make_intrusive<RenderPass>();
     gbuf_pass->setName(u8"gbuffer");
-    gbuf_pass->setCamera(camera_);
+    gbuf_pass->setCamera(intrusive_ptr<Camera>(camera_));
     gbuf_pass->setRenderTarget(gbuffer);
     gbuf_pass->setProgramOverride(std::move(gbuf_program));
     gbuf_pass->setOutputName(u8"GBuffer");
@@ -385,7 +385,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     if (transparent_ == nullptr) {
         auto light = make_intrusive<ScreenPass>();
         light->setName(u8"deferred_lighting");
-        light->setCamera(camera_);
+        light->setCamera(intrusive_ptr<Camera>(camera_));
         light->addInputName(u8"GBuffer");
         // It reads the WHOLE G-buffer: a fullscreen program receives every colour attachment of its
         // source (plus its depth while that one is sampleable) and picks by binding, so the unit it
@@ -422,7 +422,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     // program that overwrites every pixel with the lit opaque result.
     auto light = make_intrusive<ScreenPass>();
     light->setName(u8"deferred_lighting");
-    light->setCamera(camera_);
+    light->setCamera(intrusive_ptr<Camera>(camera_));
     light->setRenderTarget(composite);
     light->addInputName(u8"GBuffer");
     light->addInputTarget(gbuffer);   // reads the whole G-buffer (see the comment on the program path)
@@ -439,7 +439,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     // the target as "Composite".
     auto transparent = make_intrusive<RenderPass>();
     transparent->setName(u8"forward_transparent");
-    transparent->setCamera(camera_);
+    transparent->setCamera(intrusive_ptr<Camera>(camera_));
     transparent->setRenderTarget(composite);
     transparent->setClearEnabled(false);
     transparent->setDepthMode(DepthMode::TestOnly);
@@ -456,7 +456,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     // (orders 10 / 30) stack above it.
     auto present = make_intrusive<ScreenPass>();
     present->setName(u8"present");
-    present->setCamera(camera_);
+    present->setCamera(intrusive_ptr<Camera>(camera_));
     // The recipe names the copy program: the SDK's own passes have no implicit shading either, so
     // "present the baked target" is an SDK program (BuiltinShaders::screenCopyProgram) rather than a
     // backend-side default (see ScreenPass::setProgram).
@@ -497,7 +497,7 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
 
     auto offscreen = make_intrusive<RenderPass>();
     offscreen->setName(output_slot);
-    offscreen->setCamera(camera);
+    offscreen->setCamera(intrusive_ptr<Camera>(camera));
     offscreen->setRenderTarget(target);
     offscreen->setOutputName(output_slot);
     offscreen->setOutputTarget(target);   // its only writer: it owns the hand-off
@@ -511,7 +511,7 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     // pass' view (see ScreenPass::setProgram).
     auto screen = make_intrusive<ScreenPass>();
     screen->setName(output_slot);
-    screen->setCamera(camera_);
+    screen->setCamera(intrusive_ptr<Camera>(camera_));
     screen->setProgram(screenCopyProgram());
     screen->addInputName(output_slot);
     screen->addInputTarget(target);   // samples the whole published target

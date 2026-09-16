@@ -168,14 +168,18 @@ struct alignas(16) VineMaterialBlock
  * strength (0 disables the darkening without unbinding anything); `w` is reserved.
  *
  * THE MATRIX IS IN THE SDK'S CLIP CONVENTION, THE MAP IS NOT: `view_to_light` maps a view-space
- * position to x right / y up, z = 0 at the light's near plane and 1 at its far one — this SDK's own
- * projection convention, so the matrix means the same thing on every backend. The MAP it is compared
- * against is a GPU image the backend rasterised, and its two axes are the backend's business: the
- * vsg backend renders reverse-Z (near = 1, far = 0) into a top-down image (v = 0 is world up, the
- * same fact that makes its G-buffer upright). A shader therefore converts x/y by `xy * vec2(0.5,
- * -0.5) + 0.5` and z by `1 - (z * 0.5 + 0.5)` before comparing, and getting either sign wrong is
- * invisible: the picture loses its sun, or samples a mirrored texel. Both were measured, one at a
- * time, by vsg_backend_selftest's deferred shadow phase.
+ * position to the SDK's OWN clip space — x right, y up, z in [-1, 1] with -1 at the light's near
+ * plane and +1 at its far one (see Camera; RenderPipelineBuilder::directionalShadowMatrix builds it
+ * as `projection * view` in that convention and states it on the map through
+ * RenderTarget::setProducerViewProjection) — so the matrix means the same thing on every backend.
+ * The MAP it is compared against is a GPU image the backend rasterised, and its two axes are the
+ * backend's business: the vsg backend renders reverse-Z (near = 1, far = 0) into a top-down image
+ * (v = 0 is world up, the same fact that makes its G-buffer upright). A shader therefore converts
+ * x/y by `xy * vec2(0.5, -0.5) + 0.5` and z by `1 - (z * 0.5 + 0.5)` before comparing — the z line
+ * IS the [-1, 1] -> [1, 0] remap, so a producer that stated a [0, 1] matrix here would sample the
+ * wrong end of the map — and getting either sign wrong is invisible: the picture loses its sun, or
+ * samples a mirrored texel. Both were measured, one at a time, by vsg_backend_selftest's deferred
+ * shadow phase.
  */
 struct alignas(16) VineShadowBlock
 {

@@ -28,6 +28,60 @@ class ShaderProgram;
 struct RenderCommand;
 
 /**
+ * @brief Why a readback did or did not happen (see readColorBuffer / readDepthBuffer).
+ *
+ * A bool alone answered four different questions with one value, so a caller could not tell
+ * "this backend cannot read back at all" (expected — gate the feature on it) from "there is
+ * nothing to read YET" (retry after the target is rendered) from "the request was wrong" (a
+ * caller bug) from "the copy was attempted and failed" (report it). The methods keep their bool
+ * return, and a caller that needs the distinction passes a pointer to one of these: the same
+ * information an enum return would give, without re-spelling every `if (!read(...))` in a
+ * caller (this codebase's other reason-reporting entries use the same out-parameter shape, see
+ * VsgTextureCache::makeImage).
+ *
+ * The diagnostics channel still carries the human-readable sentence; this is the machine answer.
+ */
+enum class ReadbackResult
+{
+    Ok,          ///< The pixels / depths were read.
+    Unsupported, ///< This backend cannot read this back: no readback support, or a format / usage it does not decode.
+    NotReady,    ///< There is nothing to read yet: unknown target, no built attachments, no usable size.
+    Invalid,     ///< The request itself was wrong (no target, attachment index out of range).
+    Failed,      ///< The copy was attempted and failed (no usable device, submission error).
+};
+
+/** @brief How a pass has its target cleared before it draws.
+ *
+ * A SCOPE ATTRIBUTE, announced between beginPass() and the pass' draw (setClearPolicy), so it reads
+ * as what it is: the pass describes the clear its content expects, and every draw call of that pass
+ * gets it. Nothing is cleared at the moment of the call — a backend that clears through its render
+ * pass' load-op (which is what the load-op IS for) applies it when the pass records, and the name
+ * no longer promises an action that may never happen.
+ *
+ * ONE COLOUR, because one colour is what a colour ATTACHMENT gets: @ref color is attachment 0's,
+ * and every further attachment of an MRT target is left TRANSPARENT BLACK (0,0,0,0) until a
+ * fragment writes it. That is the contract, not an omission: it lets a consumer tell "nothing was
+ * drawn here" from the stored data itself — the deferred-lighting program reads a stored view
+ * position of ~0 as background — so a backend may not clear every attachment uniformly without
+ * auditing those consumers, and one that cannot honour this must report it on its diagnostics
+ * channel instead of clearing differently.
+ *
+ * DEPTH IS A FLAG, NOT A VALUE: every backend clears depth to its own far plane (this SDK's
+ * backends render reverse-Z, whose far plane is 0 — see Camera), so a value here would be a second
+ * place to get the clip convention wrong. @ref depth is honoured for off-screen targets, whose
+ * depth content survives frames through a depth-LOAD pass; the WINDOW is the exception — the
+ * surface render pass belongs to the windowing system and clears depth whatever this says (a pass
+ * that needs a previous frame's depth renders into an off-screen target and composites it).
+ */
+struct ClearPolicy
+{
+    /// Colour attachment 0 is cleared to (the only colour a single-attachment target reads).
+    Color color{};
+    /// Whether the depth buffer is cleared too (honoured off-screen; the window always clears depth).
+    bool depth = true;
+};
+
+/**
  * @brief Abstract render backend interface.
  *
  * Defines the contract that concrete graphics backends (vsg/Vulkan, OpenGL,
@@ -314,26 +368,6 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         (void)pass;
     }
 
-    /** @brief Releases backend GPU state for a removed pass' window content.
-     *
-     * A NARROWER alternative to releasePass() for a backend that keeps its per-pass state under the
-     * historical (pass camera, pass order) content-slot key instead of under the pass object: the
-     * engine calls it for every removed pass, so such a backend can free that state here without
-     * implementing releasePass(). A backend that keys its state by the pass (see beginPass) needs
-     * nothing from this call — the slots it owns are the pass' and releasePass() drops them — and
-     * the default no-op lets a backend that keeps no per-camera GPU state ignore it.
-     *
-     * @param camera The removed pass's camera (the content-slot key), or
-     *               nullptr.
-     * @param order  The removed pass's explicit pipeline order (the
-     *               content-slot key within that camera).
-     */
-    virtual void releaseWindowLayer(raw_ptr<const Camera> camera, int order = 0)
-    {
-        (void)camera;
-        (void)order;
-    }
-
     /** @brief Releases backend GPU resources for a removed render target.
      *
      * Called by the engine before a target's owning pass/slot is destroyed.
@@ -370,24 +404,31 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * implements readback overrides it (staging buffer, image-to-buffer copy,
      * queue/fence synchronisation and format conversion).
      *
-     * A false return covers several causes — the backend does not support
+     * A false return is one of several causes — the backend does not support
      * readback, the target was never rendered into / built, the target cannot
-     * answer at all, or the transfer failed — and the RETURN VALUE DOES NOT SAY
-     * WHICH: the backend reports the reason on its diagnostics channel (see the
-     * class contract), and @p outPixels is left untouched either way.
+     * answer, or the transfer failed. Pass @p why to tell them apart
+     * programmatically (ReadbackResult); the backend also reports the reason on
+     * its diagnostics channel (see the class contract), and @p outPixels is left
+     * untouched either way.
      *
      * @param target     Off-screen target whose colour attachment to read.
      * @param attachment Colour attachment index in [0, target->colorCount()).
      * @param outPixels  Receives the packed RGBA8 pixels on success.
+     * @param why        Receives why the read did not happen (Ok when it did), or null
+     *                   to ignore. A backend that does not implement readback leaves it
+     *                   at Unsupported.
      * @return true when the pixels were read; false when the read could not be
-     *         performed (the reason is reported on the diagnostics channel).
+     *         performed (see @p why and the diagnostics channel).
      */
     virtual bool readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
-                                 std::vector<std::uint8_t>& outPixels)
+                                 std::vector<std::uint8_t>& outPixels, ReadbackResult* why = nullptr)
     {
         (void)target;
         (void)attachment;
         (void)outPixels;
+        if (why != nullptr) {
+            *why = ReadbackResult::Unsupported;
+        }
         return false;
     }
 
@@ -402,15 +443,19 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      *
      * @param target    Off-screen target whose depth buffer to read.
      * @param outDepths Receives the depth values on success.
+     * @param why       Receives why the read did not happen (Ok when it did), or null
+     *                  to ignore; see readColorBuffer().
      * @return true when the depth values were read; false when the read could
-     *         not be performed (the reason is reported on the diagnostics
-     *         channel), see readColorBuffer().
+     *         not be performed (see @p why and the diagnostics channel).
      */
     virtual bool readDepthBuffer(vine::graphics::RenderTarget* target,
-                                 std::vector<float>& outDepths)
+                                 std::vector<float>& outDepths, ReadbackResult* why = nullptr)
     {
         (void)target;
         (void)outDepths;
+        if (why != nullptr) {
+            *why = ReadbackResult::Unsupported;
+        }
         return false;
     }
 
@@ -493,37 +538,27 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         (void)mode;
     }
 
-    /** @brief Clears the colour buffer, and optionally the depth buffer, of
-     * the current render target.
+    /** @brief Announces how this pass' target is cleared before it draws.
      *
-     * Applies to the target selected with setRenderTarget(); null (the
-     * default) means the window / main surface. For the WINDOW target the
-     * depth buffer is always cleared regardless of @p clearDepth: the
-     * windowing system owns the surface render pass and fixes its depth
-     * load-op to CLEAR, so clearDepth=false cannot be honoured there and is
-     * treated as true (only the clear colour takes effect).
+     * The scope attribute for clearing (see ClearPolicy for what a policy means and which parts of
+     * it a target can honour): call it between beginPass() and the pass' draw, before the draw that
+     * should see the cleared target. Applies to the target selected with setRenderTarget(); null
+     * (the default) means the window / main surface.
      *
-     * clearDepth=false IS honoured for off-screen render targets: their depth
-     * content is preserved across frames through a depth-LOAD pass. Passes
-     * that need a previous frame's depth (accumulation, or incremental writes
-     * that depth-test against existing content) should render into an
-     * off-screen target and composite it into the window.
+     * NOT CALLING IT LEAVES THE TARGET UNCLEARED. That is the whole difference from the three
+     * pass-side clear setters on RenderPass (clearColor / shouldClearDepth / clearEnabled): those
+     * describe a policy, this announces it, and a pass that never announces one draws over whatever
+     * the target already holds.
      *
-     * MULTI-ATTACHMENT (MRT) TARGETS: the clear color applies to the FIRST
-     * colour attachment; every further attachment is left TRANSPARENT BLACK
-     * (0,0,0,0) until a fragment writes it. That is deliberate, not an
-     * oversight: it lets a consumer tell "nothing was drawn here" from the
-     * stored data itself — the deferred-lighting program treats a stored view
-     * position of ~0 as background — so the rule must not be changed to a
-     * uniform clear without auditing those consumers. A backend that cannot
-     * honour it must say so on its diagnostics channel rather than silently
-     * clearing differently.
+     * The default no-op lets a backend that cannot clear ignore it (its diagnostics channel is where
+     * it says so — a silently different clear is a picture the pass did not ask for).
      *
-     * @param backgroundColor Clear color.
-     * @param clearDepth      Whether to also clear the depth buffer. Ignored
-     *                        for the window target (always cleared).
+     * @param policy How to clear: the colour of attachment 0 and whether depth is cleared too.
      */
-    virtual void clear(const Color& backgroundColor, bool clearDepth = true) = 0;
+    virtual void setClearPolicy(const ClearPolicy& policy)
+    {
+        (void)policy;
+    }
 
     /** @brief Presents the rendered frame.
      *

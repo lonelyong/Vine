@@ -3,7 +3,7 @@
 #include <vine/vsg/VsgViewCompiler.hpp>
 
 #include <vine/vsg/VsgContentSlot.hpp>
-#include <vine/vsg/VsgOverlay.hpp>
+#include <vine/vsg/VsgProgramSlot.hpp>
 #include <vine/vsg/VsgReadback.hpp>
 
 #include <vine/vsg/VsgUtils.hpp>
@@ -479,6 +479,18 @@ void VsgRenderer::releaseAbandonedContent()
     // has ever seen (D13). Judged by the session's counts, because a material is also held by the
     // variant template of every slot that draws it (the mutual wait the counts break, P11).
     persistent.materialManager.releaseAbandoned(state.retained_shares);
+    // The session-scoped caches are swept ONCE per frame, here, and not from the per-slot sync: their
+    // entries are shared by every slot, so a per-slot sweep multiplied the work by the slot count (and
+    // rebuilt a share count each time) to answer a question that does not change between slots. The
+    // judgement itself is unchanged — a texture (or shared mesh bind) whose last holder is gone goes —
+    // and this is the ordering it needs: every slot's geometry sweep, and the frame-end one above, has
+    // run, so a geometry that left the frame has already let go of the texture its entry held.
+    if (state.texture_cache != nullptr) {
+        state.texture_cache->releaseAbandoned();
+    }
+    if (state.mesh_cache != nullptr) {
+        state.mesh_cache->releaseAbandoned();
+    }
 }
 
 void VsgRenderer::endFrame()
@@ -513,7 +525,9 @@ void VsgRenderer::setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::
 {
     // Hold them for the drawing call that follows, like the lights: the slot binds them when it
     // (re)builds its retained state (see VsgContentSlot::setupContentSlot / renderContentSlot).
-    state.request.inputs = inputs;
+    // assign(), not copy-assignment of a whole vector: the request is refilled once per pass per
+    // frame, and this keeps the buffer it already owns.
+    state.request.inputs.assign(inputs.begin(), inputs.end());
 }
 
 void VsgRenderer::setLights(const std::vector<vine::raw_ptr<const vine::graphics::Light>>& lights)
@@ -744,15 +758,15 @@ void VsgRenderer::submitFrame()
     releaseAbandonedContent();
 }
 
-void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
+void VsgRenderer::setClearPolicy(const vine::graphics::ClearPolicy& policy)
 {
     // The clear belongs to the pass that announced its target (see below), so a call with no pass
     // behind it is refused like a draw call would be: pushing this clear to the WINDOW would wipe a
     // frame the caller never asked to touch.
-    if (refuseNoPassAnnounced("clear()")) {
+    if (refuseNoPassAnnounced("setClearPolicy()")) {
         return;
     }
-    if (refuseDeadTargetAnnouncement("clear()")) {
+    if (refuseDeadTargetAnnouncement("setClearPolicy()")) {
         return;
     }
     // A clear marks the next render() as main (depth-on) content; a render
@@ -761,7 +775,7 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
     // below (colour + optional depth on the CURRENT target), so the depth-on/
     // off mechanism no longer swallows the actual clear semantics.
     state.request.presenting  = true;
-    state.request.clear_depth = clearDepth;
+    state.request.clear_depth = policy.depth;
 
     // The clear applies to the CURRENT render target (set by setRenderTarget;
     // nullptr = the window): an off-screen pass's clear must reach ITS graph,
@@ -771,10 +785,10 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
     vine::graphics::RenderTarget* key = state.request.target;
     auto& t = state.entryFor(key);
     const ::vsg::vec4 color{
-        backgroundColor.r / 255.0f,
-        backgroundColor.g / 255.0f,
-        backgroundColor.b / 255.0f,
-        backgroundColor.a / 255.0f
+        policy.color.r / 255.0f,
+        policy.color.g / 255.0f,
+        policy.color.b / 255.0f,
+        policy.color.a / 255.0f
     };
     t.clear_seen              = true;
     t.clear_color             = color;
@@ -787,14 +801,14 @@ void VsgRenderer::clear(const vine::Color& backgroundColor, bool clearDepth)
         // Window graph: the swapchain render pass (vsg-owned) clears colour AND
         // depth at the start of every frame, so the requested colour is pushed
         // through and the depth-clear value is the main pass's (0.0). The
-        // window CANNOT honour clearDepth=false — vsg fixes the pass depth
+        // window CANNOT honour depth = false — vsg fixes the pass depth
         // load-op to CLEAR when the window is created — so a false request is
-        // treated as true there (documented on RenderBackend::clear()); only
-        // off-screen targets honour clearDepth through their depth-LOAD pass.
+        // treated as true there (documented on RenderBackend::setClearPolicy());
+        // only off-screen targets honour policy.depth through their depth-LOAD pass.
         const VkClearColorValue clear_value{
             { color.r, color.g, color.b, color.a }
         };
-        t.graph->setClearValues(clear_value, VkClearDepthStencilValue{ 0.0f, 0 });
+        t.graph->setClearValues(clear_value, VkClearDepthStencilValue{ kReverseZFarPlane, 0 });
         return;
     }
 
@@ -809,8 +823,8 @@ void VsgRenderer::setDepthMode(vine::graphics::DepthMode mode)
 {
     // A scope attribute: the content's depth handling is explicit (Disabled /
     // TestOnly / TestAndWrite) and every draw call of the scope keeps it.
-    // Independent of clear() (a pass can test-only against depth an earlier
-    // pass of the same target wrote, without clearing) and of lighting.
+    // Independent of setClearPolicy() (a pass can test-only against depth an
+    // earlier pass of the same target wrote, without clearing) and of lighting.
     state.request.depth_mode = mode;
 }
 
@@ -892,14 +906,15 @@ void VsgRenderer::resize(int width, int height)
 }
 
 bool VsgRenderer::readColorBuffer(vine::graphics::RenderTarget* target, int attachment,
-                                  std::vector<std::uint8_t>& outPixels)
+                                  std::vector<std::uint8_t>& outPixels, vine::graphics::ReadbackResult* why)
 {
-    return detail::readColorBuffer(state, diagnostics, target, attachment, outPixels);
+    return detail::readColorBuffer(state, diagnostics, target, attachment, outPixels, why);
 }
 
-bool VsgRenderer::readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths)
+bool VsgRenderer::readDepthBuffer(vine::graphics::RenderTarget* target, std::vector<float>& outDepths,
+                                  vine::graphics::ReadbackResult* why)
 {
-    return detail::readDepthBuffer(state, diagnostics, target, outDepths);
+    return detail::readDepthBuffer(state, diagnostics, target, outDepths, why);
 }
 
 void VsgRenderer::releaseRenderTarget(vine::graphics::RenderTarget* target)

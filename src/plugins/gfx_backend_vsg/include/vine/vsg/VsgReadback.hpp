@@ -23,6 +23,7 @@
 #include <vsg/core/ref_ptr.h>
 #include <vsg/vk/DeviceMemory.h>
 
+#include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
 #include <vine/vsg/VsgDiagnostics.hpp>
@@ -64,6 +65,18 @@ enum class ReadbackRefusal
  */
 [[nodiscard]] vine::String readbackRefusalMessage(ReadbackRefusal refusal, const char* what,
                                                   const vine::graphics::RenderTarget* target);
+
+/** @brief Translates an internal refusal into the SDK's machine-readable result.
+ *
+ * The internal enum names every state the backend can be in; the SDK's ReadbackResult names the
+ * four answers a CALLER acts on. One table, so a caller that gates on "this backend cannot do
+ * it" cannot be told a different story by a new refusal case added here — a new enumerator that
+ * is not mapped falls back to Failed (report it), not to Ok.
+ *
+ * @param refusal Why the readback refused.
+ * @return The SDK result the refusal means.
+ */
+[[nodiscard]] vine::graphics::ReadbackResult readbackResultOf(ReadbackRefusal refusal) noexcept;
 
 /** @brief The built target entry a readback reads from, or null.
  *
@@ -121,11 +134,13 @@ enum class ReadbackRefusal
  * @param target     Target to read from.
  * @param attachment Colour attachment index to read.
  * @param out_pixels Receives width * height * 4 RGBA bytes on success.
+ * @param why        Receives why the read did not happen (Ok when it did), or null to ignore.
  * @return true when the pixels were read; false when the target or attachment is unusable.
  */
 [[nodiscard]] bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                                    vine::graphics::RenderTarget* target, int attachment,
-                                   std::vector<std::uint8_t>& out_pixels);
+                                   std::vector<std::uint8_t>& out_pixels,
+                                   vine::graphics::ReadbackResult* why = nullptr);
 
 /** @brief Reads back the depth attachment of an off-screen render target.
  *
@@ -141,10 +156,12 @@ enum class ReadbackRefusal
  * @param diagnostics Route a refusal is reported on.
  * @param target    Target to read from.
  * @param out_depths Receives width * height values in [0, 1], row-major, on success.
+ * @param why       Receives why the read did not happen (Ok when it did), or null to ignore.
  * @return true when the depth values were read; false when the target has no readable depth.
  */
 [[nodiscard]] bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
-                                   vine::graphics::RenderTarget* target, std::vector<float>& out_depths);
+                                   vine::graphics::RenderTarget* target, std::vector<float>& out_depths,
+                                   vine::graphics::ReadbackResult* why = nullptr);
 
 } // namespace detail
 

@@ -1,4 +1,6 @@
-#include <vine/vsg/VsgOverlay.hpp>
+#include <vine/vsg/VsgProgramSlot.hpp>
+
+#include <vine/vsg/VsgLights.hpp>
 
 #include <cstdint>
 #include <map>
@@ -67,7 +69,7 @@ namespace
  * @param front    When true, insert the View as the graph's first child.
  * @return The compiled View, or null when compilation failed.
  */
-::vsg::ref_ptr<::vsg::View> makeCompiledOverlayView(
+::vsg::ref_ptr<::vsg::View> makeCompiledProgramSlotView(
     ::vsg::Viewer& viewer,
     ::vsg::Group* graph,
     ::vsg::ref_ptr<::vsg::Node> content,
@@ -110,185 +112,11 @@ namespace
 
 } // namespace
 
-void viewRotation(const vine::graphics::Camera* camera, double r[3], double u[3], double f[3])
-{
-    const auto eye    = camera->eye();
-    const auto center = camera->target();
-    const auto up_vec = camera->up();
-    double fx = center.x - eye.x;
-    double fy = center.y - eye.y;
-    double fz = center.z - eye.z;
-    const double fl = std::sqrt(fx * fx + fy * fy + fz * fz);
-    if (fl > 1e-12) {
-        fx /= fl;
-        fy /= fl;
-        fz /= fl;
-    }
-    else {
-        fx = 0.0;
-        fy = 0.0;
-        fz = -1.0;
-    }
-    // r = normalize(f x up), u = r x f.
-    double rx = fy * up_vec.z - fz * up_vec.y;
-    double ry = fz * up_vec.x - fx * up_vec.z;
-    double rz = fx * up_vec.y - fy * up_vec.x;
-    const double rl = std::sqrt(rx * rx + ry * ry + rz * rz);
-    if (rl > 1e-12) {
-        rx /= rl;
-        ry /= rl;
-        rz /= rl;
-    }
-    else {
-        rx = 1.0;
-        ry = 0.0;
-        rz = 0.0;
-    }
-    const double ux = ry * fz - rz * fy;
-    const double uy = rz * fx - rx * fz;
-    const double uz = rx * fy - ry * fx;
-    r[0] = rx;
-    r[1] = ry;
-    r[2] = rz;
-    u[0] = ux;
-    u[1] = uy;
-    u[2] = uz;
-    f[0] = fx;
-    f[1] = fy;
-    f[2] = fz;
-}
-
-namespace
-{
-
-/**
- * @brief Packs a light list into view-space ambient + up to three directional slots.
- *
- * One implementation for both consumers: the full-screen deferred path encodes
- * this into its push block (LightPushBlock) and the forward path into its
- * per-view uniform block (VineLightsBlock). Directions arrive in world space and
- * leave in view space (rotation only: rows r, u, -f), which is what lets both
- * shaders light in view space and skip the world matrix entirely.
- *
- * An empty (or entirely unusable) light list keeps a small default ambient so a
- * scene is still visible instead of being multiplied by zero.
- *
- * @param camera  Face rotation source (null leaves the block empty).
- * @param lights  Lights to pack (borrowed; null entries and disabled lights are skipped).
- * @param ambient Receives rgb + intensity.
- * @param dirs    Receives up to three view-space directions (xyz, w = 0).
- * @param cols    Receives rgb + intensity per direction.
- * @return How many of @p lights the packing represents (the caller reports the difference).
- */
-std::size_t collectViewSpaceLights(const vine::graphics::Camera*                    camera,
-                                   const std::vector<const vine::graphics::Light*>& lights,
-                                   std::array<float, 4>&                            ambient,
-                                   std::array<std::array<float, 4>, 3>&             dirs,
-                                   std::array<std::array<float, 4>, 3>&             cols)
-{
-    if (camera == nullptr) {
-        return 0u;
-    }
-    double r[3] = {}, u[3] = {}, f[3] = {};
-    viewRotation(camera, r, u, f);
-    int  dirlight    = 0;
-    bool has_ambient = false;
-    for (const auto* light : lights) {
-        if (light == nullptr || !light->isEnabled()) {
-            continue;
-        }
-        const auto c = light->color();
-        switch (light->type()) {
-        case vine::graphics::LightType::Ambient:
-            ambient[0]  = c.r;
-            ambient[1]  = c.g;
-            ambient[2]  = c.b;
-            ambient[3]  = light->intensity();
-            has_ambient = true;
-            break;
-        case vine::graphics::LightType::Directional:
-            if (dirlight >= 3) {
-                break; // the block holds up to three directional lights
-            }
-            {
-                const auto d = light->direction();
-                // world -> view direction (rotation only): rows r, u, -f.
-                double vx = r[0] * d.x + r[1] * d.y + r[2] * d.z;
-                double vy = u[0] * d.x + u[1] * d.y + u[2] * d.z;
-                double vz = -f[0] * d.x - f[1] * d.y - f[2] * d.z;
-                const double vl = std::sqrt(vx * vx + vy * vy + vz * vz);
-                if (vl > 1e-9) {
-                    vx /= vl;
-                    vy /= vl;
-                    vz /= vl;
-                }
-                float* dd = dirs[dirlight].data();
-                float* cc = cols[dirlight].data();
-                dd[0] = static_cast<float>(vx);
-                dd[1] = static_cast<float>(vy);
-                dd[2] = static_cast<float>(vz);
-                dd[3] = 0.0f;
-                cc[0] = c.r;
-                cc[1] = c.g;
-                cc[2] = c.b;
-                cc[3] = light->intensity();
-                ++dirlight;
-            }
-            break;
-        default:
-            break;
-        }
-    }
-    if (!has_ambient) {
-        // Keep an unlit pass visible: without any ambient the fragment shader
-        // would multiply the albedo by zero (see the header).
-        ambient[0] = 0.15f;
-        ambient[1] = 0.15f;
-        ambient[2] = 0.15f;
-        ambient[3] = 1.0f;
-    }
-    // The ambient FILL above is not an announced light, so it is not counted: the number has to be
-    // about what the host asked for, or the caller reports a drop that did not happen.
-    return static_cast<std::size_t>(dirlight) + (has_ambient ? 1u : 0u);
-}
-
-}  // namespace
-
-void fillLightPushBlock(const vine::graphics::Camera*                               camera,
-                        const std::vector<const vine::graphics::Light*>&            lights,
-                        LightPushBlock&                                             block)
-{
-    block = LightPushBlock{};
-    if (camera == nullptr) {
-        return;
-    }
-    // Perspective projection parameters for view-position reconstruction from
-    // the G-buffer depth (near / far / proj00 / proj11).
-    if (camera->projectionType() == vine::graphics::Camera::ProjectionType::Perspective) {
-        const double fov    = camera->fieldOfView() * 0.5; // degrees
-        const double cot    = 1.0 / std::tan(fov * 3.14159265358979323846 / 180.0);
-        const double aspect = camera->aspectRatio();
-        block.projparms[0]  = static_cast<float>(camera->nearPlane());
-        block.projparms[1]  = static_cast<float>(camera->farPlane());
-        block.projparms[2]  = static_cast<float>(cot / aspect); // proj[0][0]
-        block.projparms[3]  = static_cast<float>(cot);          // proj[1][1]
-    }
-    collectViewSpaceLights(camera, lights, block.ambient, block.dirs, block.cols);
-}
-
-std::size_t fillVineLightsBlock(const vine::graphics::Camera*                    camera,
-                                const std::vector<const vine::graphics::Light*>&  lights,
-                                VineLightsBlock&                                  block)
-{
-    block = VineLightsBlock{};
-    return collectViewSpaceLights(camera, lights, block.ambient, block.dirs, block.cols);
-}
-
-VsgOverlayDestination resolveOverlayDestination(VsgRendererState& state, const VsgDiagnostics& diagnostics,
+ProgramSlotDestination resolveProgramSlotDestination(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                                                 vine::graphics::RenderTarget* source, const SlotKey& key,
                                                 const char* what)
 {
-    VsgOverlayDestination out;
+    ProgramSlotDestination out;
     // The destination is the SCOPE's target (setRenderTarget, nullptr = the
     // window): read, not consumed, so every draw call of the pass agrees on it.
     vine::graphics::RenderTarget* dest = state.request.target;
@@ -335,7 +163,7 @@ VsgOverlayDestination resolveOverlayDestination(VsgRendererState& state, const V
     return out;
 }
 
-void placeOverlayView(VsgRendererState& state, const VsgOverlayDestination& dest,
+void placeProgramSlotView(VsgRendererState& state, const ProgramSlotDestination& dest,
                       const ::vsg::ref_ptr<::vsg::View>& view, int order)
 {
     detail::placeViewByOrder(state, dest.graph, dest.target, view, order);
@@ -370,12 +198,12 @@ void placeOverlayView(VsgRendererState& state, const VsgOverlayDestination& dest
  * @return true when the slot now holds a compiled, placed view.
  */
 template <class Slot>
-bool installOverlayView(VsgRendererState& state, const VsgDiagnostics& diagnostics, const VsgOverlayDestination& dest,
+bool installProgramSlotView(VsgRendererState& state, const VsgDiagnostics& diagnostics, const ProgramSlotDestination& dest,
                         Slot& slot, const ::vsg::ref_ptr<::vsg::Node>& content, int x, int y, int w, int h,
                         bool front, const char* what)
 {
     bool compile_failed = false;
-    auto view = makeCompiledOverlayView(*state.viewer, dest.graph.get(), content, x, y, w, h, front, &compile_failed);
+    auto view = makeCompiledProgramSlotView(*state.viewer, dest.graph.get(), content, x, y, w, h, front, &compile_failed);
     if (view == nullptr) {
         if (compile_failed) {
             diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
@@ -387,7 +215,7 @@ bool installOverlayView(VsgRendererState& state, const VsgDiagnostics& diagnosti
     slot.camera = view->camera;
     slot.view   = view;
     slot.ready  = true;
-    placeOverlayView(state, dest, view, slot.order);
+    placeProgramSlotView(state, dest, view, slot.order);
     return true;
 }
 
@@ -432,8 +260,8 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     // The slot is owned by the pass that draws it: the rule lives on the request,
     // so this entry point and the content one cannot disagree.
     const SlotKey slot_key = state.request.slotKey();
-    const VsgOverlayDestination overlay =
-        resolveOverlayDestination(state, diagnostics, source, slot_key, "drawScreenProgram");
+    const ProgramSlotDestination overlay =
+        resolveProgramSlotDestination(state, diagnostics, source, slot_key, "drawScreenProgram");
     if (overlay.graph == nullptr) {
         return;
     }
@@ -608,7 +436,7 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         // Create + compile the fullscreen view against this target's render pass
         // (inserted provisionally at the front so the compile sees it), then move
         // it to its explicit-order position.
-        if (!installOverlayView(state, diagnostics, overlay, rebuilt, node, rect_x, rect_y, rect_w, rect_h,
+        if (!installProgramSlotView(state, diagnostics, overlay, rebuilt, node, rect_x, rect_y, rect_w, rect_h,
                                /*front*/ true,
                                "fullscreen program")) {
             // The compile already reported (when it was the compile): drop the
@@ -653,7 +481,7 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     if (slot.ready && slot.detached) {
         // Re-attach a slot retired while its pass was inactive (see
         // retireInactivePassSlots): its node and pipeline were kept.
-        placeOverlayView(state, overlay, slot.view, slot.order);
+        placeProgramSlotView(state, overlay, slot.view, slot.order);
         slot.detached = false;
     }
 

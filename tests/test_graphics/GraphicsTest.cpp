@@ -232,7 +232,7 @@ TEST(SceneTest, CollectCommandsSortsOpaqueFrontToBack)
     ASSERT_EQ(commands.size(), 2u);
     EXPECT_EQ(commands[0].geometry->name(), u8"near");
     EXPECT_EQ(commands[1].geometry->name(), u8"far");
-    EXPECT_FALSE(commands[0].isTransparent);
+    EXPECT_FALSE(commands[0].isTransparent());
 }
 
 TEST(SceneTest, CollectCommandsSortsTransparentBackToFrontAfterOpaque)
@@ -257,12 +257,12 @@ TEST(SceneTest, CollectCommandsSortsTransparentBackToFrontAfterOpaque)
     ASSERT_EQ(commands.size(), 3u);
     // Opaque batch first (regardless of depth).
     EXPECT_EQ(commands[0].geometry->name(), u8"opaque-far");
-    EXPECT_FALSE(commands[0].isTransparent);
+    EXPECT_FALSE(commands[0].isTransparent());
     // Transparent drawn back-to-front.
     EXPECT_EQ(commands[1].geometry->name(), u8"trans-far");
-    EXPECT_TRUE(commands[1].isTransparent);
+    EXPECT_TRUE(commands[1].isTransparent());
     EXPECT_EQ(commands[2].geometry->name(), u8"trans-near");
-    EXPECT_TRUE(commands[2].isTransparent);
+    EXPECT_TRUE(commands[2].isTransparent());
 }
 
 TEST(SceneTest, CollectCommandsCullsOutOfView)
@@ -375,7 +375,7 @@ TEST(SceneTest, CollectCommandsEffectiveOpacity)
     auto commands = scene.collectRenderCommands(&cam);
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].opacity, 0.5f * 0.5f * 0.5f, 1e-5f);
-    EXPECT_TRUE(commands[0].isTransparent);
+    EXPECT_TRUE(commands[0].isTransparent());
 }
 
 TEST(SceneTest, CollectCommandsOpacityLeafAndNode)
@@ -393,7 +393,7 @@ TEST(SceneTest, CollectCommandsOpacityLeafAndNode)
     auto commands = scene.collectRenderCommands(&cam);
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].opacity, 0.5f * 0.5f, 1e-5f);
-    EXPECT_TRUE(commands[0].isTransparent);
+    EXPECT_TRUE(commands[0].isTransparent());
 }
 
 TEST(SceneTest, CollectCommandsOpacityMultipliesAlongHierarchy)
@@ -411,7 +411,7 @@ TEST(SceneTest, CollectCommandsOpacityMultipliesAlongHierarchy)
     auto commands = scene.collectRenderCommands(&cam);
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].opacity, 0.25f, 1e-5f);
-    EXPECT_TRUE(commands[0].isTransparent);
+    EXPECT_TRUE(commands[0].isTransparent());
 }
 
 // ============ Camera ============
@@ -1956,6 +1956,8 @@ class MockBackend : public RenderBackend {
     int swap_calls = 0;
     int render_calls = 0;
     int clear_calls = 0;
+    /// Policy of the last setClearPolicy() call, so a test can assert WHAT was announced.
+    ClearPolicy last_clear_policy{};
     int viewport_sets = 0;
     const Camera* last_camera = nullptr;
     /// Camera of every render() call, in call order (a pass' own camera, not just the last one).
@@ -2036,7 +2038,11 @@ class MockBackend : public RenderBackend {
         last_viewport[2] = width;
         last_viewport[3] = height;
     }
-    void clear(const Color&, bool) override { ++clear_calls; }
+    void setClearPolicy(const ClearPolicy& policy) override
+    {
+        ++clear_calls;
+        last_clear_policy = policy;
+    }
     void swapBuffers() override { ++swap_calls; }
 
     // Pass-scope recording: the engine opens/closes one scope per executed
@@ -2053,19 +2059,10 @@ class MockBackend : public RenderBackend {
     void endPass() override { ++end_passes; }
 
     // Closed-loop release recording (removePass/clearPasses -> backend).
-    int layer_releases = 0;
     int target_releases = 0;
     int pass_releases = 0;
-    const Camera* last_released_layer = nullptr;
-    int last_released_slot = 0;
     RenderTarget* last_released_target = nullptr;
     const RenderPass* last_released_pass = nullptr;
-    void releaseWindowLayer(vine::raw_ptr<const Camera> camera, int slot) override
-    {
-        ++layer_releases;
-        last_released_layer = camera;
-        last_released_slot = slot;
-    }
     void releasePass(vine::raw_ptr<const RenderPass> pass) override
     {
         ++pass_releases;
@@ -2093,11 +2090,11 @@ TEST(RenderEngineTest, PassScopeOpensAndClosesOncePerExecutedPass)
     auto camera = intrusive_ptr<Camera>(new Camera());
     auto scene  = intrusive_ptr<Scene>(new Scene());
     auto pass_a = intrusive_ptr<RenderPass>(new RenderPass());
-    pass_a->setCamera(camera.get());
+    pass_a->setCamera(camera);
     auto pass_b = intrusive_ptr<RenderPass>(new RenderPass());
-    pass_b->setCamera(camera.get());
+    pass_b->setCamera(camera);
     auto hidden = intrusive_ptr<RenderPass>(new RenderPass());
-    hidden->setCamera(camera.get());
+    hidden->setCamera(camera);
     hidden->setEnabled(false);
 
     engine->addPass(pass_a, scene, 0);
@@ -2158,11 +2155,11 @@ TEST(RenderEngineTest, RemovePassReleasesBackendRenderTarget)
     EXPECT_EQ(backend->last_released_target, target.get());
 }
 
-TEST(RenderEngineTest, RemovePassReleasesBackendWindowLayerAndTarget)
+TEST(RenderEngineTest, RemovePassReleasesBackendStateAndTarget)
 {
-    // Closed loop: dropping a pass must tell the backend to stop drawing its
-    // window layer (keyed by the pass camera) AND free any off-screen target
-    // the pass owns.
+    // Closed loop: dropping a pass must tell the backend to free the per-pass
+    // state it retained (keyed by the pass) AND any off-screen target the pass
+    // owns.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setBackend(backend);
@@ -2170,13 +2167,11 @@ TEST(RenderEngineTest, RemovePassReleasesBackendWindowLayerAndTarget)
     auto camera  = intrusive_ptr<Camera>(new Camera());
     auto target  = intrusive_ptr<RenderTarget>(new RenderTarget());
     auto pass    = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setCamera(camera.get());
+    pass->setCamera(camera);
     pass->setRenderTarget(target);
     engine->addPass(pass, 1);
 
     engine->removePass(pass.get());
-    EXPECT_EQ(backend->layer_releases, 1);
-    EXPECT_EQ(backend->last_released_layer, camera.get());
     EXPECT_EQ(backend->target_releases, 1);
     EXPECT_EQ(backend->last_released_target, target.get());
     EXPECT_EQ(backend->pass_releases, 1);
@@ -2194,20 +2189,19 @@ TEST(RenderEngineTest, ClearPassesReleasesEveryRegisteredPass)
 
     auto cam_a   = intrusive_ptr<Camera>(new Camera());
     auto pass_a  = intrusive_ptr<RenderPass>(new RenderPass());
-    pass_a->setCamera(cam_a.get());
+    pass_a->setCamera(cam_a);
     engine->addPass(pass_a, 0);
 
     auto cam_b   = intrusive_ptr<Camera>(new Camera());
     auto target  = intrusive_ptr<RenderTarget>(new RenderTarget());
     auto pass_b  = intrusive_ptr<RenderPass>(new RenderPass());
-    pass_b->setCamera(cam_b.get());
+    pass_b->setCamera(cam_b);
     pass_b->setRenderTarget(target);
     engine->addPass(pass_b, 5);
 
     EXPECT_EQ(engine->passCount(), 2u);
     engine->clearPasses();
     EXPECT_EQ(engine->passCount(), 0u);
-    EXPECT_EQ(backend->layer_releases, 2);
     EXPECT_EQ(backend->target_releases, 1);
     EXPECT_EQ(backend->last_released_target, target.get());
     EXPECT_EQ(backend->pass_releases, 2);
@@ -2227,13 +2221,13 @@ TEST(RenderEngineTest, HasWindowPassReflectsCameraPresentation)
     // view camera.
     auto hud_cam = intrusive_ptr<Camera>(new Camera());
     auto hud     = intrusive_ptr<RenderPass>(new RenderPass());
-    hud->setCamera(hud_cam.get());
+    hud->setCamera(hud_cam);
     engine->addPass(hud, 10);
     EXPECT_FALSE(engine->hasWindowPass(view_cam.get()));
 
     // A pass presenting the view camera to the backbuffer is.
     auto window = intrusive_ptr<RenderPass>(new RenderPass());
-    window->setCamera(view_cam.get());
+    window->setCamera(view_cam);
     engine->addPass(window, 0);
     EXPECT_TRUE(engine->hasWindowPass(view_cam.get()));
 
@@ -2275,7 +2269,7 @@ TEST(RenderEngineTest, FrameRunsPipeline)
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam = intrusive_ptr<Camera>(new Camera());
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setCamera(cam.get());
+    pass->setCamera(cam);
     engine->addPass(pass, content, 0);
 
     engine->frame();
@@ -2284,6 +2278,41 @@ TEST(RenderEngineTest, FrameRunsPipeline)
     EXPECT_EQ(backend->end_calls, 1);
     EXPECT_EQ(backend->swap_calls, 1);
     EXPECT_GE(backend->clear_calls, 1);
+}
+
+TEST(RenderEngineTest, APassAnnouncesItsClearPolicyToTheBackend)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    engine->initialize();
+
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam = intrusive_ptr<Camera>(new Camera());
+
+    // A pass that CLEARS announces its colour and its depth flag...
+    auto clearing = intrusive_ptr<RenderPass>(new RenderPass());
+    clearing->setCamera(cam);
+    clearing->setClearColor(Color(10, 20, 30, 255));
+    clearing->setShouldClearDepth(false);
+    engine->addPass(clearing, content, 0);
+
+    // ...and a pass that does not clear announces NOTHING, even though it carries a colour of its
+    // own: a backend must be able to tell the two apart, so this pass must not overwrite what the
+    // first one said.
+    auto loading = intrusive_ptr<RenderPass>(new RenderPass());
+    loading->setCamera(cam);
+    loading->setClearEnabled(false);
+    loading->setClearColor(Color(200, 200, 200, 255));
+    engine->addPass(loading, content, 1);
+
+    engine->frame();
+
+    EXPECT_EQ(backend->clear_calls, 1);
+    EXPECT_EQ(backend->last_clear_policy.color.r, 10);
+    EXPECT_EQ(backend->last_clear_policy.color.g, 20);
+    EXPECT_EQ(backend->last_clear_policy.color.b, 30);
+    EXPECT_FALSE(backend->last_clear_policy.depth);
 }
 
 TEST(RenderEngineTest, FrameBeforeInitializeIsNoOp)
@@ -2381,7 +2410,7 @@ TEST(SceneViewTest, EnsureWindowPassSkipsWhenCameraAlreadyPresented)
     view->setEngine(engine.get());
 
     auto main = intrusive_ptr<RenderPass>(new RenderPass());
-    main->setCamera(view->camera());
+    main->setCamera(intrusive_ptr<Camera>(view->camera()));
     engine->addPass(main, 0);
 
     view->ensureWindowPass();
@@ -2495,11 +2524,11 @@ TEST(RenderEngineTest, RegisteredPassesRunInAscendingOrder)
     post_cam->setName(u8"postfx");
 
     auto main = intrusive_ptr<RenderPass>(new RenderPass());
-    main->setCamera(window_cam.get());
+    main->setCamera(window_cam);
     auto pre = intrusive_ptr<RenderPass>(new RenderPass());
-    pre->setCamera(pre_cam.get());
+    pre->setCamera(pre_cam);
     auto post = intrusive_ptr<RenderPass>(new RenderPass());
-    post->setCamera(post_cam.get());
+    post->setCamera(post_cam);
 
     engine->addPass(main, content, 0);   // window-present pass.
     engine->addPass(pre, content, -5);   // shadow-map style pass before the window pass.
@@ -2541,10 +2570,10 @@ TEST(RenderEngineTest, PassContentBindingManagedByEngine)
 
     // Explicit content: pass A draws sceneA; pass B has no content.
     auto passA = intrusive_ptr<RenderPass>(new RenderPass());
-    passA->setCamera(cam.get());
+    passA->setCamera(cam);
     engine->addPass(passA, sceneA, 5);
     auto passB = intrusive_ptr<RenderPass>(new RenderPass());
-    passB->setCamera(cam.get());
+    passB->setCamera(cam);
     engine->addPass(passB, -5);
 
     EXPECT_EQ(engine->passCount(), 2u);
@@ -2629,7 +2658,7 @@ TEST(RenderEngineTest, ResizeDoesNotManagePassLayout)
     target->setSize(320, 180);
     auto cam  = intrusive_ptr<Camera>(new Camera());
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setCamera(cam.get());
+    pass->setCamera(cam);
     pass->setRenderTarget(target);
     pass->setViewport(10, 20, 100, 50);
     engine->addPass(pass, 5);
@@ -2689,7 +2718,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     rt->attachDepth(RenderTarget::DepthFormat::D24);
 
     auto off = intrusive_ptr<RenderPass>(new RenderPass());
-    off->setCamera(cam.get());
+    off->setCamera(cam);
     off->setRenderTarget(rt);
     off->setOutputName(u8"SceneColor");
     engine->addPass(off, -2);
@@ -2698,7 +2727,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     // draws it with — a screen pass has no implicit shading (see ScreenPass).
     auto copy_program = vine::graphics::screenCopyProgram();
     auto screen       = intrusive_ptr<ScreenPass>(new ScreenPass());
-    screen->setCamera(cam.get());
+    screen->setCamera(cam);
     screen->setProgram(copy_program);
     screen->addInputName(u8"SceneColor");
     // A screen pass composites over existing content, so it never clears.
@@ -2723,7 +2752,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     engine2->setBackend(backend2);
     engine2->initialize();
     auto orphan = intrusive_ptr<ScreenPass>(new ScreenPass());
-    orphan->setCamera(cam.get());
+    orphan->setCamera(cam);
     orphan->setProgram(vine::graphics::screenCopyProgram());
     orphan->addInputName(u8"SceneColor");
     engine2->addPass(orphan, 100);
@@ -2738,7 +2767,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     engine3->setBackend(backend3);
     engine3->initialize();
     auto program_less = intrusive_ptr<ScreenPass>(new ScreenPass());
-    program_less->setCamera(cam.get());
+    program_less->setCamera(cam);
     program_less->addInputName(u8"SceneColor");
     engine3->publish(u8"SceneColor", rt);
     engine3->addPass(program_less, 100);
@@ -2778,7 +2807,7 @@ TEST(RenderEngineTest, ScreenPassProgramCarriesTheAttachmentItReads)
     EXPECT_EQ(rt->colorCount(), 2);
 
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
-    producer->setCamera(cam.get());
+    producer->setCamera(cam);
     producer->setRenderTarget(rt);
     producer->setOutputName(u8"GBuffer");
     engine->addPass(producer, -2);
@@ -2791,13 +2820,13 @@ TEST(RenderEngineTest, ScreenPassProgramCarriesTheAttachmentItReads)
     EXPECT_NE(albedo_program->name(), normal_program->name());
 
     auto albedo = intrusive_ptr<ScreenPass>(new ScreenPass());
-    albedo->setCamera(cam.get());
+    albedo->setCamera(cam);
     albedo->setProgram(albedo_program);
     albedo->addInputName(u8"GBuffer");
     engine->addPass(albedo, 100);
 
     auto normal = intrusive_ptr<ScreenPass>(new ScreenPass());
-    normal->setCamera(cam.get());
+    normal->setCamera(cam);
     normal->setProgram(normal_program);
     normal->addInputName(u8"GBuffer");
     engine->addPass(normal, 101);
@@ -2831,7 +2860,7 @@ TEST(RenderEngineTest, ScreenPassProgramSamplesMrtForDeferredLighting)
     rt->attachDepth(RenderTarget::DepthFormat::D24);
     EXPECT_EQ(rt->colorCount(), 3);
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
-    producer->setCamera(cam.get());
+    producer->setCamera(cam);
     producer->setRenderTarget(rt);
     producer->setOutputName(u8"GBuffer");
     engine->addPass(producer, -3);
@@ -2849,7 +2878,7 @@ TEST(RenderEngineTest, ScreenPassProgramSamplesMrtForDeferredLighting)
 
     auto light = intrusive_ptr<ScreenPass>(new ScreenPass());
     light->addInputName(u8"GBuffer");
-    light->setCamera(cam.get());
+    light->setCamera(cam);
     light->setProgram(program);
     EXPECT_EQ(light->program(), program.get());
     engine->addPass(light, 100);
@@ -2942,7 +2971,7 @@ TEST(RenderPassTest, ExecuteForwardsSceneLights)
     auto light   = Light::createAmbient();
 
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setCamera(camera.get());
+    pass->setCamera(camera);
     pass->execute(scene.get(), backend.get());
     // No lights on the scene -> an empty light set is forwarded.
     EXPECT_GE(backend->light_sets, 1);
@@ -3009,7 +3038,7 @@ TEST(RenderEngineTest, ShadowPassIsJustARegisteredScenePass)
 
     auto cam = intrusive_ptr<Camera>(new Camera());
     auto main = intrusive_ptr<RenderPass>(new RenderPass());
-    main->setCamera(cam.get());
+    main->setCamera(cam);
     engine->addPass(main, content, 0);   // window pass (null target).
 
     // Explicit depth-only shadow pass: a light-view camera + depth-only
@@ -3022,7 +3051,7 @@ TEST(RenderEngineTest, ShadowPassIsJustARegisteredScenePass)
     depth->attachDepth(RenderTarget::DepthFormat::D24);
     auto shadow = intrusive_ptr<RenderPass>(new RenderPass());
     shadow->setName(u8"shadow");
-    shadow->setCamera(light_cam.get());
+    shadow->setCamera(light_cam);
     shadow->setRenderTarget(depth);
     shadow->setShouldClearDepth(true);
     engine->addPass(shadow, content, -5);
@@ -3479,7 +3508,7 @@ TEST(RenderPipelineBuilderTest, DeclaredPassInputsReachTheBackend)
     engine->publish(u8"Produced", produced);
 
     auto consumer = intrusive_ptr<RenderPass>(new RenderPass());
-    consumer->setCamera(cam.get());
+    consumer->setCamera(cam);
     consumer->addInputName(u8"Produced");
     consumer->addInputName(u8"NothingPublishesThis");
     engine->addPass(consumer, 1);
@@ -3699,7 +3728,7 @@ TEST(HudPassTest, EngineDrawsPassesInOrderAndSkipsDisabled)
     auto win_content = intrusive_ptr<Scene>(new Scene());
     auto master_cam = intrusive_ptr<Camera>(new Camera());
     auto window = intrusive_ptr<RenderPass>(new RenderPass());
-    window->setCamera(master_cam.get());
+    window->setCamera(master_cam);
     engine->addPass(window, win_content, 0);
 
     auto cam = intrusive_ptr<Camera>(new Camera());
@@ -3709,17 +3738,17 @@ TEST(HudPassTest, EngineDrawsPassesInOrderAndSkipsDisabled)
     // Two enabled HUD passes at ascending orders plus a disabled one; every
     // HUD pass draws over the previous content (clearing disabled).
     auto low = intrusive_ptr<RenderPass>(new RenderPass());
-    low->setCamera(cam.get());
+    low->setCamera(cam);
     low->setClearEnabled(false);
     engine->addPass(low, scene, 5);
 
     auto high = intrusive_ptr<RenderPass>(new RenderPass());
-    high->setCamera(cam.get());
+    high->setCamera(cam);
     high->setClearEnabled(false);
     engine->addPass(high, scene, 10);
 
     auto hidden = intrusive_ptr<RenderPass>(new RenderPass());
-    hidden->setCamera(cam.get());
+    hidden->setCamera(cam);
     hidden->setClearEnabled(false);
     hidden->setEnabled(false);
     engine->addPass(hidden, scene, 7);
@@ -3741,7 +3770,7 @@ TEST(HudPassTest, SubViewportAndClearPolicy)
     auto win_content = intrusive_ptr<Scene>(new Scene());
     auto master_cam = intrusive_ptr<Camera>(new Camera());
     auto window = intrusive_ptr<RenderPass>(new RenderPass());
-    window->setCamera(master_cam.get());
+    window->setCamera(master_cam);
     engine->addPass(window, win_content, 0);
 
     auto cam = intrusive_ptr<Camera>(new Camera());
@@ -3749,7 +3778,7 @@ TEST(HudPassTest, SubViewportAndClearPolicy)
     auto scene = intrusive_ptr<Scene>(new Scene());
 
     auto hud = intrusive_ptr<RenderPass>(new RenderPass());
-    hud->setCamera(cam.get());
+    hud->setCamera(cam);
     // A top pass never clears the surface it draws over.
     hud->setClearEnabled(false);
     EXPECT_FALSE(hud->clearEnabled());
@@ -3873,7 +3902,7 @@ TEST(RenderPassTest, ProgramOverrideReplacesEffectiveProgram)
     // Without an override each command keeps its effective (per-geometry)
     // program; here it is null (no program set).
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setCamera(camera.get());
+    pass->setCamera(camera);
     pass->execute(scene.get(), backend.get());
     ASSERT_EQ(backend->last_programs.size(), 1u);
     EXPECT_EQ(backend->last_programs[0], nullptr);
@@ -3882,7 +3911,7 @@ TEST(RenderPassTest, ProgramOverrideReplacesEffectiveProgram)
     // same content scene can be re-rendered with a different shader.
     auto override_program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
     auto overridden       = intrusive_ptr<RenderPass>(new RenderPass());
-    overridden->setCamera(camera.get());
+    overridden->setCamera(camera);
     overridden->setProgramOverride(override_program);
     EXPECT_EQ(overridden->programOverride(), override_program.get());
     overridden->execute(scene.get(), backend.get());
@@ -5019,7 +5048,7 @@ TEST(SceneTest, CollectCommandsPreservesCollectionOrderForEqualDepth)
     const auto transparent = scene.collectRenderCommands(&cam);
     ASSERT_EQ(transparent.size(), 3u);
     EXPECT_EQ(transparent[0].geometry->name(), u8"third");   // opaque batch
-    EXPECT_FALSE(transparent[0].isTransparent);
+    EXPECT_FALSE(transparent[0].isTransparent());
     EXPECT_EQ(transparent[1].geometry->name(), u8"first");
     EXPECT_EQ(transparent[2].geometry->name(), u8"second");
 }
@@ -5513,11 +5542,11 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
     cam_b->setProjectionMatrixAsPerspective(60.0, 1.0, 0.1, 1000.0);
 
     auto pass_a = intrusive_ptr<RenderPass>(new RenderPass());
-    pass_a->setCamera(cam_a.get());
+    pass_a->setCamera(cam_a);
     auto pass_b = intrusive_ptr<RenderPass>(new RenderPass());
-    pass_b->setCamera(cam_a.get());
+    pass_b->setCamera(cam_a);
     auto pass_c = intrusive_ptr<RenderPass>(new RenderPass());
-    pass_c->setCamera(cam_b.get());
+    pass_c->setCamera(cam_b);
     engine->addPass(pass_a, scene, 0);
     engine->addPass(pass_b, scene, 1);
     engine->addPass(pass_c, scene, 2);
@@ -5562,7 +5591,7 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     // A consumer with no producer for "GBuffer".
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"light");
-    consumer->setCamera(camera.get());
+    consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vine::graphics::screenCopyProgram());
@@ -5585,7 +5614,7 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     // A producer publishing that name resolves the input: nothing more to say.
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"gbuffer");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(RenderTargetPtr(new RenderTarget()));
     producer->setOutputName(u8"GBuffer");
     engine->addPass(producer, -1);
@@ -5624,7 +5653,7 @@ TEST(RenderEngineTest, TwoProducersUnderOneOutputNameAreReportedOnce)
     const auto make_producer = [&camera](const vine::String& name, RenderTargetPtr target) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
-        pass->setCamera(camera.get());
+        pass->setCamera(camera);
         pass->setRenderTarget(std::move(target));
         pass->setOutputName(u8"shared");
         return pass;
@@ -5681,7 +5710,7 @@ TEST(RenderEngineTest, PublishingANameWithoutARenderTargetIsReported)
 
     auto presenter = intrusive_ptr<RenderPass>(new RenderPass());
     presenter->setName(u8"presenter");
-    presenter->setCamera(camera.get());
+    presenter->setCamera(camera);
     presenter->setOutputName(u8"SceneColor");   // renders into the window: nothing to publish
     engine->addPass(presenter, 0);
 
@@ -5728,7 +5757,7 @@ TEST(RenderEngineTest, TheWiringIsCheckedWhenADeclarationMovesAndNotPerFrame)
     setupLookAtCamera(*camera);
 
     auto main_pass = intrusive_ptr<RenderPass>(new RenderPass());
-    main_pass->setCamera(camera.get());
+    main_pass->setCamera(camera);
     engine->addPass(main_pass, 0);
 
     engine->frame(0.016);
@@ -5744,7 +5773,7 @@ TEST(RenderEngineTest, TheWiringIsCheckedWhenADeclarationMovesAndNotPerFrame)
 
     // A pass added / removed changes the declaration list itself.
     auto extra = intrusive_ptr<RenderPass>(new RenderPass());
-    extra->setCamera(camera.get());
+    extra->setCamera(camera);
     extra->setRenderTarget(RenderTargetPtr(new RenderTarget()));
     engine->addPass(extra, 1);
     engine->frame(0.016);
@@ -5845,7 +5874,7 @@ TEST(RenderEngineTest, OneWireIsReportedByOneCheckWhetherDeclaredByNameOrObject)
     const auto make_pass = [&camera](const vine::String& name, RenderTargetPtr target, RenderTargetPtr promise) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
-        pass->setCamera(camera.get());
+        pass->setCamera(camera);
         pass->setRenderTarget(std::move(target));
         pass->setOutputName(u8"shared");
         if (promise != nullptr) {
@@ -6010,7 +6039,7 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
     const auto make_producer = [&camera, &image](const vine::String& name, RenderTargetPtr target) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
-        pass->setCamera(camera.get());
+        pass->setCamera(camera);
         pass->setRenderTarget(std::move(target));
         pass->setOutput(image);
         return pass;
@@ -6084,7 +6113,7 @@ TEST(RenderEngineTest, TwoImageRefsOfOneAttachmentAreReportedOnce)
     const auto make_producer = [&camera, &target](const vine::String& name, intrusive_ptr<ImageRef> image) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
-        pass->setCamera(camera.get());
+        pass->setCamera(camera);
         pass->setRenderTarget(target);
         pass->setOutput(std::move(image));
         return pass;
@@ -6152,7 +6181,7 @@ TEST(RenderEngineTest, TwoImagesOfOneTargetWithDifferentAttachmentsAreNotACollis
     const auto make_pass = [&camera, &target](const vine::String& name, intrusive_ptr<ImageRef> image) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
-        pass->setCamera(camera.get());
+        pass->setCamera(camera);
         pass->setRenderTarget(target);
         pass->setOutput(std::move(image));
         return pass;
@@ -6193,7 +6222,7 @@ TEST(RenderEngineTest, TwoDistinctUnboundImagesAreNotACollision)
     const auto make_pass = [&camera](const vine::String& name, intrusive_ptr<ImageRef> image) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
-        pass->setCamera(camera.get());
+        pass->setCamera(camera);
         pass->setRenderTarget(RenderTargetPtr(new RenderTarget()));
         pass->setOutput(std::move(image));
         return pass;
@@ -6244,7 +6273,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
 
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"light");
-    consumer->setCamera(camera.get());
+    consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vine::graphics::screenCopyProgram());
@@ -6266,7 +6295,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     // whole, so nothing more to say.
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"gbuffer");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutput(image);
     engine->addPass(producer, -1);
@@ -6309,7 +6338,7 @@ TEST(RenderEngineTest, InputImageProducedByALaterPassIsReported)
 
     auto consumer           = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"light");
-    consumer->setCamera(camera.get());
+    consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vine::graphics::screenCopyProgram());
@@ -6319,7 +6348,7 @@ TEST(RenderEngineTest, InputImageProducedByALaterPassIsReported)
     // Registered AFTER the consumer (higher order), drawing into the target it promises.
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"gbuffer");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutput(image);
     engine->addPass(producer, 5);
@@ -6377,7 +6406,7 @@ TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
 
     auto pass = intrusive_ptr<ScreenPass>(new ScreenPass());
     pass->setName(u8"overlay");
-    pass->setCamera(camera.get());
+    pass->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
     pass->setProgram(vine::graphics::screenCopyProgram());
@@ -6475,7 +6504,7 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     // Producer: fills the target and promises the whole of it.
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"gbuffer_pass");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(gbuffer);
     producer->setOutputTarget(gbuffer);
     engine->addPass(producer, -3);
@@ -6485,7 +6514,7 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     sampled->bind(gbuffer, 2);
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"preview");
-    consumer->setCamera(camera.get());
+    consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vine::graphics::screenCopyProgram());
@@ -6523,7 +6552,7 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
 
     auto light = intrusive_ptr<ScreenPass>(new ScreenPass());
     light->setName(u8"deferred_lighting");
-    light->setCamera(camera.get());
+    light->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
     light->setProgram(vine::graphics::screenCopyProgram());
@@ -6543,7 +6572,7 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     // A writer appears (it fills the target; no promise needed): the read is answered.
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"fill");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(orphan);
     engine->addPass(producer, -1);
     engine->frame(0.016);
@@ -6582,7 +6611,7 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
 
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"light");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(color_only);   // fills the target, but it has no depth
     engine->addPass(producer, -1);
 
@@ -6590,7 +6619,7 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     depth_image->bind(color_only, 0);
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"reconstruct");
-    consumer->setCamera(camera.get());
+    consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vine::graphics::screenCopyProgram());
@@ -6636,14 +6665,14 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
 
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"scene");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(target);
     producer->setOutput(unbound);   // declared, but never bound to that target
     engine->addPass(producer, -1);
 
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"present");
-    consumer->setCamera(camera.get());
+    consumer->setCamera(camera);
     consumer->setProgram(vine::graphics::screenCopyProgram());
     consumer->addInput(unbound);
     engine->addPass(consumer, 1);
@@ -6704,7 +6733,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
     target->attachDepth(RenderTarget::DepthFormat::D24);
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"light");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(target);
     engine->addPass(producer, -1);
 
@@ -6712,7 +6741,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
     depth_image->bind(target, 0);
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"reconstruct");
-    consumer->setCamera(camera.get());
+    consumer->setCamera(camera);
     consumer->addInput(depth_image);
     engine->addPass(consumer, 1);
 
@@ -6774,13 +6803,13 @@ TEST(RenderEngineTest, DepthAndColorAttachmentZeroAreDistinctImages)
 
     auto depths = intrusive_ptr<RenderPass>(new RenderPass());
     depths->setName(u8"depth_owner");
-    depths->setCamera(camera.get());
+    depths->setCamera(camera);
     depths->setRenderTarget(target);
     depths->setOutput(depth_image);
 
     auto colors = intrusive_ptr<RenderPass>(new RenderPass());
     colors->setName(u8"color_owner");
-    colors->setCamera(camera.get());
+    colors->setCamera(camera);
     colors->setRenderTarget(target);   // a promise has to be about what the pass writes
     colors->setOutput(color_image);
     engine->addPass(depths, 0);
@@ -6820,13 +6849,13 @@ TEST(RenderEngineTest, WholeTargetPromiseCollidingWithAFineOneIsReported)
 
     auto fine = intrusive_ptr<RenderPass>(new RenderPass());
     fine->setName(u8"fine_owner");
-    fine->setCamera(camera.get());
+    fine->setCamera(camera);
     fine->setRenderTarget(shared);
     fine->setOutput(promised_one);
 
     auto whole = intrusive_ptr<RenderPass>(new RenderPass());
     whole->setName(u8"whole_owner");
-    whole->setCamera(camera.get());
+    whole->setCamera(camera);
     whole->setRenderTarget(shared);
     whole->setOutputTarget(shared);
     engine->addPass(fine, 0);
@@ -6872,7 +6901,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
 
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"gbuffer_pass");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutputTarget(source);
     engine->addPass(producer, -3);
@@ -6884,7 +6913,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     sampled->bind(source, 2);
     auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
     preview->setName(u8"preview");
-    preview->setCamera(camera.get());
+    preview->setCamera(camera);
     preview->setProgram(vine::graphics::screenCopyProgram(2));
     preview->addInput(sampled);
     engine->addPass(preview, 10);
@@ -6923,13 +6952,13 @@ TEST(RenderEngineTest, CoarseDeclarationAndTheProgramsBindingPickTheAttachment)
 
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"bake");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(baked);
     engine->addPass(producer, -1);
 
     auto pip = intrusive_ptr<ScreenPass>(new ScreenPass());
     pip->setName(u8"pip");
-    pip->setCamera(camera.get());
+    pip->setCamera(camera);
     pip->setProgram(vine::graphics::screenCopyProgram(1));
     pip->addInputTarget(baked);
     engine->addPass(pip, 100);
@@ -6966,7 +6995,7 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
 
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"gbuffer_pass");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutputTarget(source);
     engine->addPass(producer, -3);
@@ -6975,7 +7004,7 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     sampled->bind(source, 0);
     auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
     preview->setName(u8"preview");
-    preview->setCamera(camera.get());
+    preview->setCamera(camera);
     preview->setProgram(vine::graphics::screenCopyProgram());
     preview->addInput(sampled);
     engine->addPass(preview, 10);
@@ -7034,7 +7063,7 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
 
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"gbuffer_pass");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutputName(u8"GBuffer");
     producer->setOutputTarget(source);
@@ -7044,7 +7073,7 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
     sampled->bind(source, 0);
     auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
     preview->setName(u8"preview");
-    preview->setCamera(camera.get());
+    preview->setCamera(camera);
     preview->setProgram(vine::graphics::screenCopyProgram());
     preview->addInputName(u8"GBuffer");
     preview->addInput(sampled);
@@ -7094,13 +7123,13 @@ TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
 
     auto coarse = intrusive_ptr<RenderPass>(new RenderPass());
     coarse->setName(u8"coarse_liar");
-    coarse->setCamera(camera.get());
+    coarse->setCamera(camera);
     coarse->setRenderTarget(drawn_into);
     coarse->setOutputTarget(promised_coarse);
 
     auto fine = intrusive_ptr<RenderPass>(new RenderPass());
     fine->setName(u8"fine_liar");
-    fine->setCamera(camera.get());
+    fine->setCamera(camera);
     fine->setRenderTarget(drawn_into);
     fine->setOutput(fine_image);
     engine->addPass(coarse, 0);
@@ -7163,7 +7192,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     // A consumer that resolves the name.
     auto by_name = intrusive_ptr<ScreenPass>(new ScreenPass());
     by_name->setName(u8"by_name");
-    by_name->setCamera(camera.get());
+    by_name->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
     by_name->setProgram(vine::graphics::screenCopyProgram());
@@ -7176,7 +7205,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     declared->bind(external, 0);
     auto by_object = intrusive_ptr<ScreenPass>(new ScreenPass());
     by_object->setName(u8"by_object");
-    by_object->setCamera(camera.get());
+    by_object->setCamera(camera);
     by_object->setProgram(vine::graphics::screenCopyProgram());
     by_object->addInput(declared);
     engine->addPass(by_object, 1);
@@ -7228,7 +7257,7 @@ TEST(RenderEngineTest, ScreenPassWithAProgramAndNoCameraIsReported)
 
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"scene");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(RenderTargetPtr(new RenderTarget()));
     producer->setOutputName(u8"SceneColor");
     engine->addPass(producer, -1);
@@ -7261,7 +7290,7 @@ TEST(RenderEngineTest, ScreenPassWithAProgramAndNoCameraIsReported)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
 
     // Giving it a camera ends the episode, and the pass draws.
-    light->setCamera(camera.get());
+    light->setCamera(camera);
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     EXPECT_EQ(backend->program_draws - draws_before, 1);
@@ -7283,7 +7312,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAnyInputIsReportedOnce)
 
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"overlay");
-    consumer->setCamera(camera.get());
+    consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vine::graphics::screenCopyProgram());
@@ -7308,7 +7337,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAnyInputIsReportedOnce)
 
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
     producer->setName(u8"fill");
-    producer->setCamera(camera.get());
+    producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutput(image);
     engine->addPass(producer, -1);
@@ -7343,7 +7372,7 @@ TEST(RenderEngineTest, ScenePassWithoutInputIsNotReported)
     setupLookAtCamera(*camera);
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setName(u8"scene");
-    pass->setCamera(camera.get());
+    pass->setCamera(camera);
     pass->setRenderTarget(RenderTargetPtr(new RenderTarget()));
     engine->addPass(pass, 0);
 
@@ -7370,7 +7399,7 @@ TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
     const auto make_producer = [&camera, &shared_target](const vine::String& name, int order) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
-        pass->setCamera(camera.get());
+        pass->setCamera(camera);
         pass->setRenderTarget(shared_target);
         pass->setOutputName(u8"shared");
         return std::make_pair(pass, order);

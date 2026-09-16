@@ -252,9 +252,8 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      *
      * The pass is dropped from the ordered list. Its backend resources are
      * released: the retained per-pass GPU state (RenderBackend::releasePass,
-     * keyed by the pass itself), the legacy window layer keyed by the pass's
-     * camera (RenderBackend::releaseWindowLayer), plus any off-screen render
-     * target the pass owns (RenderBackend::releaseRenderTarget).
+     * keyed by the pass itself), plus any off-screen render target the pass
+     * owns (RenderBackend::releaseRenderTarget).
      *
      * @param pass Pass to remove (by pointer).
      */
@@ -263,8 +262,8 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     /** @brief Removes all registered passes.
      *
      * Every registered pass is removed and its backend resources released
-     * (the retained per-pass GPU state, the legacy camera-keyed window layer,
-     * plus any off-screen render target the pass owns).
+     * (the retained per-pass GPU state, plus any off-screen render target the
+     * pass owns).
      */
     void clearPasses();
 
@@ -381,15 +380,17 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      */
     bool wiringDeclarationsChanged();
 
-    /** @brief Resolves a pass' declared inputs for this frame and hands them to the pass.
+    /** @brief Resolves a pass' declared inputs for this frame into @ref resolved_inputs_.
+     *
+     * The result is a REUSED member rather than a return value: this runs once per registered pass per
+     * frame, so a fresh vector here was one heap allocation per pass in a frame that otherwise allocates
+     * nothing — and the caller then copied it again to announce it (see RenderBackend::setPassInputs).
+     * The pass is still told the result (the pass' inputs are what an effect reads), and the backend is
+     * handed the same vector.
      *
      * @param pass Pass whose declarations are resolved.
-     * @return The resolved targets, in the pass' declaration order (null where nothing
-     *         produced one). The caller announces them to the backend — the pass' inputs are
-     *         what an effect reads, and a backend binds them itself (see
-     *         RenderBackend::setPassInputs).
      */
-    std::vector<raw_ptr<RenderTarget>> resolvePassInputs(raw_ptr<RenderPass> pass);
+    void resolvePassInputs(raw_ptr<RenderPass> pass);
 
     /** @brief Reports the structural wiring problems the pass declarations themselves carry.
      *
@@ -537,6 +538,9 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     // the constructor to forwardProgram(), replaced by setDefaultContentProgram(), and null means "decline".
     intrusive_ptr<const ShaderProgram>  default_content_program_;
     std::vector<Slot>                   slots_;         // uniform ordered draw registry
+    // Reused buffer of the pass' resolved declared inputs (see resolvePassInputs): one pass' worth at a
+    // time, refilled in place every frame, so the frame loop allocates nothing in a steady state.
+    std::vector<raw_ptr<RenderTarget>>  resolved_inputs_;
     FrameContext                        frame_ctx_;
     // Monotonic content-frame token, announced to every rendered scene each
     // frame (Scene::setContentFrame): the passes of one frame that draw the same
@@ -561,10 +565,11 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      * this class can interpret them.
      */
     struct WiringState {
-        /// This frame's pass publications: slot name -> published target. Cleared at
-        /// the start of every frame and rebuilt as the ordered passes publish (a pass
-        /// that stops running stops publishing).
-        std::map<String, intrusive_ptr<RenderTarget>> outputs_;
+        /// This frame's pass publications: the name a pass published under and the target it published,
+        /// in publication order. A REUSED vector, not a map: it holds one entry per publishing pass (a
+        /// handful), is rebuilt every frame, and a map paid a node allocation and a tree walk per
+        /// producer per frame in a loop that otherwise allocates nothing after this warms up.
+        std::vector<std::pair<String, intrusive_ptr<RenderTarget>>> outputs_;
         /// Standing host bindings (RenderEngine::publish): they have no producer to re-publish them each
         /// frame, so they survive the per-frame clear until unpublish() removes them. Seeded into the
         /// frame's produced targets, so an object-typed input addressing one is answered as well.
@@ -613,8 +618,9 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
         std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unusable_inputs_reported_;
 
         /// Targets a pass actually drew into THIS frame: what a declared input is answered from (a
-        /// promise says whose content a consumer gets, a filled target says what is there).
-        std::set<raw_ptr<const RenderTarget>> produced_targets_;
+        /// promise says whose content a consumer gets, a filled target says what is there). A reused
+        /// vector for the same reason as outputs_: up to one entry per pass, rebuilt every frame.
+        std::vector<raw_ptr<const RenderTarget>> produced_targets_;
         /// Declared inputs nothing produced this frame, collected while the passes run so the report is
         /// an episode: seen this frame / already reported (the same prune-and-re-arm rule as the rest).
         std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unproduced_inputs_seen_this_frame_;

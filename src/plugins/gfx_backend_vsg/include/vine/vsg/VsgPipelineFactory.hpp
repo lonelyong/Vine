@@ -27,6 +27,7 @@
 #include <vsg/vk/Device.h>
 #include <vsg/vk/RenderPass.h>
 
+#include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -234,6 +235,50 @@ struct V_VSG_API DrawBlockSetBinding : public ::vsg::Inherit<::vsg::CustomDescri
 ::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program,
                                                      const VkExtent2D& extent, bool depth_test, bool depth_write,
                                                      int color_count = 1);
+
+/** @brief What a pass-level depth policy means to a pipeline.
+ *
+ * The pair makeContentShaderSet bakes into a set's pipeline states. ONE derivation for both
+ * consumers — the slot's set selection and SceneBridge::effectiveCommandState, which folds the same
+ * policy onto the commands that authored none — because two copies of "test = not Disabled, write =
+ * TestAndWrite" is how a fourth DepthMode ends up honoured in one place and not the other.
+ */
+struct DepthTestWrite
+{
+    bool test  = true; ///< Depth testing on: the fragment is occluded by what the target already holds.
+    bool write = true; ///< Depth writing on: the fragment updates the depth buffer.
+};
+
+/** @brief Derives (test, write) from a pass-level depth policy.
+ *
+ * A switch with NO default arm on purpose: adding a DepthMode then makes the compiler say so here
+ * (and in shaderSetFor below) instead of letting the new mode fall through to the "off" arm.
+ *
+ * @param mode Pass-level depth policy.
+ * @return The pipeline's depth test / write pair.
+ */
+[[nodiscard]] DepthTestWrite depthTestWrite(vine::graphics::DepthMode mode) noexcept;
+
+/** @brief The shader-set slot a depth policy selects, among one target's three.
+ *
+ * The three sets differ only in the depth states baked into them, so "which one" is a function of
+ * the policy and nothing else — and it is written ONCE: this used to be the same nested ternary in
+ * the window and the off-screen branch of setupContentSlot, which is two chances to update one of
+ * them when a mode is added. The caller passes the three slots (a session's or a target's); the
+ * reference is returned so the off-screen path can lazily build the set it gets.
+ *
+ * A switch with no default arm, like depthTestWrite.
+ *
+ * @param mode           Pass-level depth policy.
+ * @param depth_on       Slot for TestAndWrite.
+ * @param depth_testonly Slot for TestOnly.
+ * @param depth_off      Slot for Disabled.
+ * @return The slot this policy uses.
+ */
+[[nodiscard]] ::vsg::ref_ptr<::vsg::ShaderSet>& shaderSetFor(vine::graphics::DepthMode mode,
+                                                             ::vsg::ref_ptr<::vsg::ShaderSet>& depth_on,
+                                                             ::vsg::ref_ptr<::vsg::ShaderSet>& depth_testonly,
+                                                             ::vsg::ref_ptr<::vsg::ShaderSet>& depth_off) noexcept;
 
 /**
  * @brief Builds the colour(+depth) render pass ONE pass records into.

@@ -82,6 +82,28 @@ vine::String readbackRefusalMessage(ReadbackRefusal refusal, const char* what,
     return vine::String();
 }
 
+vine::graphics::ReadbackResult readbackResultOf(ReadbackRefusal refusal) noexcept
+{
+    // The four answers a CALLER acts on: gate on Unsupported, retry NotReady, fix an Invalid
+    // request, report Failed. The internal enum is finer grained than that on purpose (each case
+    // has its own sentence), so the mapping is written once, here, and anything unmapped falls
+    // back to Failed — the bucket a host is expected to look at — never to Ok.
+    switch (refusal) {
+    case ReadbackRefusal::None:
+        return vine::graphics::ReadbackResult::Ok;
+    case ReadbackRefusal::NoTarget:
+        return vine::graphics::ReadbackResult::Invalid;
+    case ReadbackRefusal::NoSession:
+    case ReadbackRefusal::NotRendered:
+    case ReadbackRefusal::NotBuilt:
+    case ReadbackRefusal::Empty:
+        return vine::graphics::ReadbackResult::NotReady;
+    case ReadbackRefusal::NoDevice:
+        return vine::graphics::ReadbackResult::Unsupported;
+    }
+    return vine::graphics::ReadbackResult::Failed;
+}
+
 const VsgRenderTargetEntry* readbackTarget(const VsgRendererState& state,
                                            vine::graphics::RenderTarget* target, ReadbackRefusal& refusal)
 {
@@ -117,19 +139,31 @@ const VsgRenderTargetEntry* readbackTarget(const VsgRendererState& state,
 }
 
 bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
-                     vine::graphics::RenderTarget* target, int attachment, std::vector<std::uint8_t>& out_pixels)
+                     vine::graphics::RenderTarget* target, int attachment, std::vector<std::uint8_t>& out_pixels,
+                     vine::graphics::ReadbackResult* why)
 {
+    // Pessimistic default: a refusal path that forgets to say which answer it is reports Failed
+    // (a host looks at it) instead of Ok (a host believes it). Every success sets Ok below.
+    if (why != nullptr) {
+        *why = vine::graphics::ReadbackResult::Failed;
+    }
     ReadbackRefusal refusal = ReadbackRefusal::None;
     auto*           built   = readbackTarget(state, target, refusal);
     if (built == nullptr) {
         // Every reason to refuse is reported, and before the device is stopped (see the header):
         // a bare false used to be indistinguishable from "unsupported" for the caller.
+        if (why != nullptr) {
+            *why = readbackResultOf(refusal);
+        }
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                            vine::graphics::DiagnosticCategory::ContentSkipped,
                            readbackRefusalMessage(refusal, "readColorBuffer", target));
         return false;
     }
     if (attachment < 0 || static_cast<std::size_t>(attachment) >= built->color_images.size()) {
+        if (why != nullptr) {
+            *why = vine::graphics::ReadbackResult::Invalid;
+        }
         diagnostics.report(vine::graphics::DiagnosticSeverity::Error,
                            vine::graphics::DiagnosticCategory::ContentSkipped,
                            formatDiagnostic(u8"readColorBuffer: attachment %d is out of range for this target", attachment));
@@ -139,6 +173,9 @@ bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
     // attachment would have to be converted (and the caller told how), so it is
     // reported as unsupported instead of returning wrongly packed bytes.
     if (target->colorFormat(attachment) != vine::graphics::RenderTarget::ColorFormat::RGBA8) {
+        if (why != nullptr) {
+            *why = vine::graphics::ReadbackResult::Unsupported;
+        }
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                            vine::graphics::DiagnosticCategory::ContentSkipped,
                            formatDiagnostic(u8"readColorBuffer: attachment %d is not RGBA8 (packed RGBA8 readback only)", attachment));
@@ -157,6 +194,9 @@ bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
     auto physical = state.window->getPhysicalDevice();
     auto source   = built->color_images[attachment];
     if (device == nullptr || physical == nullptr || source == nullptr) {
+        if (why != nullptr) {
+            *why = vine::graphics::ReadbackResult::Unsupported;
+        }
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                            vine::graphics::DiagnosticCategory::ContentSkipped,
                            readbackRefusalMessage(ReadbackRefusal::NoDevice, "readColorBuffer", target));
@@ -167,6 +207,9 @@ bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
     vkGetPhysicalDeviceFormatProperties(*physical, format, &properties);
     if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0 ||
         (properties.linearTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0) {
+        if (why != nullptr) {
+            *why = vine::graphics::ReadbackResult::Unsupported;
+        }
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                            vine::graphics::DiagnosticCategory::ContentSkipped,
                            formatDiagnostic(u8"readColorBuffer: format %d cannot be blitted", static_cast<int>(format)));
@@ -228,6 +271,9 @@ bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                                           VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination, range)));
 
     if (!submitOneShot(state, commands)) {
+        if (why != nullptr) {
+            *why = vine::graphics::ReadbackResult::Failed;
+        }
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                            vine::graphics::DiagnosticCategory::ContentSkipped,
                            readbackRefusalMessage(ReadbackRefusal::NoDevice, "readColorBuffer", target));
@@ -248,17 +294,29 @@ bool readColorBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
         std::memcpy(out_pixels.data() + static_cast<std::size_t>(row) * row_bytes,
                     mapped->dataPointer(static_cast<std::size_t>(row) * sub_layout.rowPitch), row_bytes);
     }
+    if (why != nullptr) {
+        *why = vine::graphics::ReadbackResult::Ok;
+    }
     return true;
 }
 
 bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
-                     vine::graphics::RenderTarget* target, std::vector<float>& out_depths)
+                     vine::graphics::RenderTarget* target, std::vector<float>& out_depths,
+                     vine::graphics::ReadbackResult* why)
 {
+    // See readColorBuffer: every refusal names its answer, and a success is the only path that
+    // sets Ok.
+    if (why != nullptr) {
+        *why = vine::graphics::ReadbackResult::Failed;
+    }
     ReadbackRefusal refusal = ReadbackRefusal::None;
     auto*           built   = readbackTarget(state, target, refusal);
     if (built == nullptr) {
         // See readColorBuffer: a refused readback says why (the state it is in), and does not
         // reach the device wait below.
+        if (why != nullptr) {
+            *why = readbackResultOf(refusal);
+        }
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                            vine::graphics::DiagnosticCategory::ContentSkipped,
                            readbackRefusalMessage(refusal, "readDepthBuffer", target));
@@ -269,9 +327,25 @@ bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
             // The depth is real but owned by the target it was borrowed from
             // (shareDepth): it is read through the SOURCE, not the borrower, so
             // this is a documented unsupported case rather than a silent one.
+            if (why != nullptr) {
+                *why = vine::graphics::ReadbackResult::Unsupported;
+            }
             diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                                vine::graphics::DiagnosticCategory::ChannelIgnored,
                                u8"readDepthBuffer: this target borrows its depth (shareDepth); read the source target instead");
+        }
+        else {
+            // The target was built and its depth belongs to nobody: this is a target without a
+            // depth attachment at all. It used to leave here with NO diagnostic, which is the one
+            // readback path where "false" said nothing — the header promises a refused readback
+            // says why, so it does.
+            if (why != nullptr) {
+                *why = vine::graphics::ReadbackResult::NotReady;
+            }
+            diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                               vine::graphics::DiagnosticCategory::ContentSkipped,
+                               formatDiagnostic(u8"readDepthBuffer: target '%s' has no depth attachment",
+                                                target->name().stdstr().c_str()));
         }
         return false;
     }
@@ -282,6 +356,9 @@ bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
     const VkFormat      format      = built->depth_image->format;
     const std::size_t   texel_bytes = (format == VK_FORMAT_D32_SFLOAT) ? 4u : (format == VK_FORMAT_D16_UNORM) ? 2u : 0u;
     if (texel_bytes == 0u) {
+        if (why != nullptr) {
+            *why = vine::graphics::ReadbackResult::Unsupported;
+        }
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
                            formatDiagnostic(u8"readDepthBuffer: format %d is packed (depth + stencil in one texel) and is "
                                             u8"not decoded; use D32_SFLOAT or D16_UNORM for depth readback",
@@ -299,6 +376,9 @@ bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
     // the one-shot submit, which guards for them itself.
     auto device = state.window->getDevice();
     if (device == nullptr) {
+        if (why != nullptr) {
+            *why = vine::graphics::ReadbackResult::Failed;
+        }
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                            vine::graphics::DiagnosticCategory::ContentSkipped,
                            readbackRefusalMessage(ReadbackRefusal::NoDevice, "readDepthBuffer", target));
@@ -356,6 +436,9 @@ bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                                           VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, built->depth_image, range)));
 
     if (!submitOneShot(state, commands)) {
+        if (why != nullptr) {
+            *why = vine::graphics::ReadbackResult::Failed;
+        }
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                            vine::graphics::DiagnosticCategory::ContentSkipped,
                            readbackRefusalMessage(ReadbackRefusal::NoDevice, "readDepthBuffer", target));
@@ -376,6 +459,9 @@ bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
             std::memcpy(&value, mapped->dataPointer(i * 2u), 2u);
             out_depths[i] = static_cast<float>(value) / 65535.0f;
         }
+    }
+    if (why != nullptr) {
+        *why = vine::graphics::ReadbackResult::Ok;
     }
     return true;
 }

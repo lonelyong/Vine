@@ -1088,7 +1088,7 @@ void addSlotOverlayDemo(gui::RenderControl* render_control)
 
         auto pass = vine::make_intrusive<vine::graphics::RenderPass>();
         pass->setName(u8"slot_overlay");
-        pass->setCamera(render_control->view()->camera());
+        pass->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
         pass->setClearEnabled(false); // overlay: no clear + no depth -> on-top
         pass->setOcclusionEnabled(false);
         engine->addPass(pass, overlay, 20); // its own (master camera, order 20) slot
@@ -1133,7 +1133,7 @@ void addOffscreenMultiSlotDemo(gui::RenderControl* render_control)
     // Slot 0: the main engine scene, cleared (depth-on).
     auto pass_main = vine::make_intrusive<vine::graphics::RenderPass>();
     pass_main->setName(u8"multislot_main");
-    pass_main->setCamera(render_control->view()->camera());
+    pass_main->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
     pass_main->setRenderTarget(target);
     pass_main->setOutputName(u8"MultiColor");
     engine->addPass(pass_main, render_control->view()->scene(), -2); // content = view scene
@@ -1158,7 +1158,7 @@ void addOffscreenMultiSlotDemo(gui::RenderControl* render_control)
 
     auto pass_top = vine::make_intrusive<vine::graphics::RenderPass>();
     pass_top->setName(u8"multislot_top");
-    pass_top->setCamera(render_control->view()->camera());
+    pass_top->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
     pass_top->setRenderTarget(target);
     pass_top->setOutputName(u8"MultiColor"); // publishes the same baked target
     pass_top->setClearEnabled(false);        // no clear + no depth -> on-top slot
@@ -1186,7 +1186,7 @@ void addOffscreenMultiSlotDemo(gui::RenderControl* render_control)
     screen->setName(u8"multislot_pip");
     // A ScreenPass names its program and carries the view camera: there is no implicit copy, and a
     // fullscreen program is drawn through the pass' view (SDK copy program for the plain copy).
-    screen->setCamera(render_control->view()->camera());
+    screen->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
     screen->setProgram(vine::graphics::screenCopyProgram());
     screen->addInputName(u8"MultiColor");
     // The two bake passes above accumulate into one target, so neither of them owns the hand-off
@@ -1230,7 +1230,7 @@ void addGbufferDemo(gui::RenderControl* render_control)
     auto target = makeGbufferTarget();
     auto gbuf   = vine::make_intrusive<vine::graphics::RenderPass>();
     gbuf->setName(u8"gbuffer_pass");
-    gbuf->setCamera(render_control->view()->camera());
+    gbuf->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
     gbuf->setRenderTarget(target);
     gbuf->setProgramOverride(vine::graphics::RenderPipelineBuilder::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
@@ -1248,7 +1248,7 @@ void addGbufferDemo(gui::RenderControl* render_control)
     for (int attachment = 0; attachment < 4; ++attachment) {
         auto screen = vine::make_intrusive<vine::graphics::ScreenPass>();
         screen->setName(u8"gbuffer_preview");
-        screen->setCamera(render_control->view()->camera());
+        screen->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
         // One copy program PER attachment: which attachment a fullscreen program reads is its
         // sampler binding (screenCopyProgram(n) writes binding n), and the declared image below says
         // which target it is that binding of.
@@ -1291,7 +1291,7 @@ void addDeferredDemo(gui::RenderControl* render_control)
     auto target = makeGbufferTarget();
     auto gbuf   = vine::make_intrusive<vine::graphics::RenderPass>();
     gbuf->setName(u8"deferred_gbuffer");
-    gbuf->setCamera(render_control->view()->camera());
+    gbuf->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
     gbuf->setRenderTarget(target);
     gbuf->setProgramOverride(vine::graphics::RenderPipelineBuilder::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
@@ -1306,7 +1306,7 @@ void addDeferredDemo(gui::RenderControl* render_control)
     light->setName(u8"deferred_lighting");
     light->addInputName(u8"GBuffer");
     light->addInputTarget(target);   // a fullscreen program reads the whole source target
-    light->setCamera(render_control->view()->camera());
+    light->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
     light->setProgram(vine::graphics::RenderPipelineBuilder::defaultDeferredLightProgram());
     light->setViewport(8, 8, pw, ph);
     // The content scene must be bound to THIS pass too: ScreenPass forwards a scene's lights to the
@@ -1459,7 +1459,7 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
         for (int attachment = 0; attachment < 4; ++attachment) {
             auto preview = vine::make_intrusive<vine::graphics::ScreenPass>();
             preview->setName(u8"gbuffer_preview");
-            preview->setCamera(render_control->view()->camera());
+            preview->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
             // One copy program per attachment: the sampler binding IS the attachment (see
             // BuiltinShaders::screenCopyProgram), which is what the declared image below is that of.
             preview->setProgram(vine::graphics::screenCopyProgram(attachment));

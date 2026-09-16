@@ -59,9 +59,8 @@ void ScreenPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
         const Viewport vp = viewport();
         backend->setViewport(vp.x, vp.y, vp.width, vp.height);
     }
-    if (clearEnabled()) {
-        backend->clear(clearColor(), shouldClearDepth());
-    }
+    // The clearEnabled guard lives in announceClear (one rule for both kinds of pass).
+    announceClear(backend);
     if (program_ == nullptr || camera() == nullptr) {
         // Nothing to draw with, or no view to build: the ENGINE reports both at wiring time (see
         // RenderEngine::validateWiring), so this path stays silent and draws nothing.

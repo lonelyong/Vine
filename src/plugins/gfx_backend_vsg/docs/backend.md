@@ -47,7 +47,8 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgRecordOrder.cpp` | 录制顺序：采样边 + 深度借用边 + 稳定拓扑排序 |
 | `VsgTargetBookkeeping.cpp` | 目标装配/注销：附件创建、深度借用解析、重建与释放 |
 | `VsgContentSlot.cpp` | 内容槽的每帧驱动（视口、灯块、诊断）。灯只有 `vine_lights` 块一个来源（2026-09-13 起 vsg 灯节点/`setGroupLights` 已删除） |
-| `VsgOverlay.cpp` | 全屏 program overlay：视图编译 / 摆放 + 光照 push 块填充（2026-09-13 起屏幕绘制只有这一个入口） |
+| `VsgProgramSlot.cpp` | 全屏 program 槽：目的目标解析 / 视图摆放（2026-09-13 起屏幕绘制只有这一个入口） |
+| `VsgLights.cpp` | `detail`：光照块填充（`viewRotation` + `fillLightPushBlock` / `fillVineLightsBlock`，两路共用一次打包） |
 | `shaders/`（**已删除，2026-09-13**） | 本后端曾自带两段 GLSL（全屏三角形 / 屏幕拷贝）。它们都在**引擎可见的画面**后面 —— 没有 program 的 `ScreenPass` 画的就是那段拷贝，所有全屏 program 也是照那个三角形写的 —— 而文本却住在一个后端里。现在两段都是 SDK program（`BuiltinShaders::fullscreenVertexProgram` / `screenCopyProgram`），本后端只决定**怎么编译和绑**（清单因此只剩一个 owner：`cmake/VineShaders.cmake`） |
 | `detail::buildVineShaderSet` / `makeContentShaderSet` | **自写前向着色**（替代 vsg 内建 phong 的 P0）：**GLSL 归 SDK**（`src/viz/graphics/shaders/builtin_forward.*`，经 `BuiltinShaders.hpp` 的 `forwardProgram()` / `flatForwardProgram()` 取源——本后端只编译它并声明 ABI）。属性 0/1/2(色,define) / 8(uv,define)、set0 的 material(b0) / diffuseMap(b1) / **vine_lights(b2, 每槽 UBO)**、**set1/b0 `vine_draw`（`VineDrawBlock`，UNIFORM_BUFFER_DYNAMIC，每 drawable 一个槽）** + push `pc` 0..128（vsg 矩阵栈填）。**唯一路径（2026-09-13 起）**：`makeContentShaderSet` 总是返回引擎自己的 set，**完全不使用 vsg 内建 set**（`VINE_VSG_BUILTIN` 开关与内建基线已删除）。**不兜底**：`makeContentShaderSet(program)` 用不了就返回 null（`program == nullptr`，或它没有可编译的 stage）——调用方报一条 diagnostic 并**不画**，不会替你换成别的着色。证据基线一条（见该文档 §11） |
 | `VsgViewCompiler.cpp` | 增量编译（只编译新 view） |

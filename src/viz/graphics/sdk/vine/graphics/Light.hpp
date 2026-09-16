@@ -34,11 +34,17 @@ enum class ShadowFilter {
 
 /**
  * @brief Per-light shadow-map settings (value type).
+ *
+ * `resolution` and `bias` are consumed by the renderers that build and sample a shadow map;
+ * `filter` is RESERVED — no renderer reads it yet (the shadow term does one depth compare, see
+ * ShaderAbi.hpp's VineShadowBlock), so setting it changes nothing today. It is kept so a host can
+ * state the intent a future PCF implementation will honour, and marked here so it cannot be
+ * mistaken for a working quality knob.
  */
 struct V_GRAPHICS_API ShadowSettings {
     uint32_t     resolution = 1024;                    ///< Shadow-map side length in texels.
     float        bias       = 0.002f;                  ///< Depth bias used to avoid self-shadowing.
-    ShadowFilter filter     = ShadowFilter::Hard;      ///< Sampling filter.
+    ShadowFilter filter     = ShadowFilter::Hard;      ///< Sampling filter (RESERVED — not read yet).
 };
 
 /**
@@ -126,8 +132,11 @@ class V_GRAPHICS_API Light : public Object, public RefCounted<Light> {
 
     /** @brief Sets whether the light casts a shadow.
      *
-     * The engine schedules a depth-only shadow pass for the light when it is
-     * enabled and the light is directional.
+     * Read by RenderPipelineBuilder, which builds ONE depth-only pass for the FIRST enabled,
+     * shadow-casting directional light of the content it was given (the further ones, and any
+     * content rendered by passes it did not create, stay unshadowed and are reported on the host's
+     * diagnostic channel). The engine itself schedules nothing: a shadow pass is an ordinary
+     * registered pass at PipelineStage::Depth.
      *
      * @param cast True to request shadow casting.
      */

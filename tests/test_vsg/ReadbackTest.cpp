@@ -24,9 +24,11 @@
 using vine::graphics::RenderDiagnostic;
 using vine::graphics::RenderTarget;
 using vine::graphics::RenderTargetPtr;
+using vine::graphics::ReadbackResult;
 using vine::vsg::VsgDiagnostics;
 using vine::vsg::VsgRendererState;
 using vine::vsg::detail::readbackRefusalMessage;
+using vine::vsg::detail::readbackResultOf;
 using vine::vsg::detail::ReadbackRefusal;
 using vine::vsg::detail::readbackTarget;
 using vine::vsg::detail::readColorBuffer;
@@ -181,4 +183,46 @@ TEST(Readback, EachRefusalKeepsItsOwnWording)
     EXPECT_EQ(empty.find("no built attachments"), std::string::npos);
     // Nothing refused: no message to report.
     EXPECT_TRUE(readbackRefusalMessage(ReadbackRefusal::None, "readDepthBuffer", target.get()).empty());
+}
+
+/**
+ * @brief A refusal names WHICH kind of failure it is, not only the prose.
+ *
+ * A bare false was four answers in one value: a host cannot gate a feature on "this backend does
+ * not read back at all" when it arrives as the same false as "the transfer failed". The
+ * out-parameter carries the answer, and the mapping is total — a refusal added to the internal
+ * enum without a mapping falls back to Failed (a host looks at it), never to Ok (a host believes
+ * it).
+ */
+TEST(Readback, ARefusalNamesWhichKindOfFailureItIs)
+{
+    // The internal states, mapped onto the four answers a caller acts on.
+    EXPECT_EQ(readbackResultOf(ReadbackRefusal::None), ReadbackResult::Ok);
+    EXPECT_EQ(readbackResultOf(ReadbackRefusal::NoTarget), ReadbackResult::Invalid);
+    EXPECT_EQ(readbackResultOf(ReadbackRefusal::NoSession), ReadbackResult::NotReady);
+    EXPECT_EQ(readbackResultOf(ReadbackRefusal::NotRendered), ReadbackResult::NotReady);
+    EXPECT_EQ(readbackResultOf(ReadbackRefusal::NotBuilt), ReadbackResult::NotReady);
+    EXPECT_EQ(readbackResultOf(ReadbackRefusal::Empty), ReadbackResult::NotReady);
+    EXPECT_EQ(readbackResultOf(ReadbackRefusal::NoDevice), ReadbackResult::Unsupported);
+
+    VsgRendererState          state = initializedSession();
+    VsgDiagnostics            diagnostics;
+    RenderTargetPtr           target(new RenderTarget());
+    std::vector<std::uint8_t> pixels;
+    std::vector<float>        depths;
+    state.entryFor(target.get()); // known to the session, but with no built attachments
+
+    // The entry points report it too, so a caller that does not listen to the sink is not left
+    // with an undifferentiated false.
+    auto why = ReadbackResult::Ok;
+    EXPECT_FALSE(readColorBuffer(state, diagnostics, target.get(), 0, pixels, &why));
+    EXPECT_EQ(why, ReadbackResult::NotReady);
+    why = ReadbackResult::Ok;
+    EXPECT_FALSE(readDepthBuffer(state, diagnostics, target.get(), depths, &why));
+    EXPECT_EQ(why, ReadbackResult::NotReady);
+
+    // A request that is wrong is the caller's bug, not a limitation of the backend.
+    why = ReadbackResult::Ok;
+    EXPECT_FALSE(readDepthBuffer(state, diagnostics, nullptr, depths, &why));
+    EXPECT_EQ(why, ReadbackResult::Invalid);
 }

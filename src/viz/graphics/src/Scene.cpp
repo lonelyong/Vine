@@ -266,7 +266,6 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)),
             material, world);
         cmd.opacity = effective;
-        cmd.isTransparent = effective < 1.0f - 1e-6f;
         // Render state folds along the node path: every StateNode from the
         // scene root to this geometry contributes, deeper nodes overriding.
         // The fold arrives already computed, so the backend can also tell whether
@@ -497,10 +496,10 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsSh
     std::stable_sort(keyed.begin(), keyed.end(),
                      [](const std::pair<double, RenderCommand*>& lhs,
                         const std::pair<double, RenderCommand*>& rhs) {
-                         if (lhs.second->isTransparent != rhs.second->isTransparent) {
-                             return !lhs.second->isTransparent;
+                         if (lhs.second->isTransparent() != rhs.second->isTransparent()) {
+                             return !lhs.second->isTransparent();
                          }
-                         return lhs.second->isTransparent ? lhs.first > rhs.first
+                         return lhs.second->isTransparent() ? lhs.first > rhs.first
                                                           : lhs.first < rhs.first;
                      });
     std::vector<RenderCommand> ordered;
