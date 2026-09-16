@@ -29,6 +29,8 @@
 
 #include <vine/vsg/vsg_global.hpp>
 
+#include <cstdint>
+
 #include <vsg/app/Window.h>
 
 #if defined(_WIN32)
@@ -47,10 +49,41 @@ namespace detail
 #if defined(_WIN32)
 /** @brief The vsg platform window this class derives from, for the window system being built for. */
 using VsgHostWindowBase = ::vsgWin32::Win32_Window;
+/** @brief The native window handle that platform's `WindowTraits::nativeWindow` carries. */
+using VsgHostHandle = HWND;
 #else
 /** @brief The vsg platform window this class derives from, for the window system being built for. */
 using VsgHostWindowBase = ::vsgXcb::Xcb_Window;
+/** @brief The native window handle that platform's `WindowTraits::nativeWindow` carries.
+ *
+ * It is the type vsg's platform window reads back out of the traits through `std::any`, which matches on
+ * the EXACT type -- hence one name for it, used by every conversion between it and the `void*` this
+ * backend passes around (see VsgRenderer::makeWindowTraits). It is also what lets the window class be
+ * written ONCE: the two platforms differ in this type and in nothing else about this class.
+ */
+using VsgHostHandle = xcb_window_t;
 #endif
+
+/** @brief Narrows a native handle carried as `void*` back to the type the platform window expects.
+ *
+ * This `#if` is the ENTIRE platform difference left in converting a handle, and it exists because the handle
+ * is an INTEGER on X11 (`xcb_window_t`) and a POINTER on Win32 (`HWND`): no single cast expresses both (a
+ * `reinterpret_cast` straight to `xcb_window_t` is rejected for losing information, and `reinterpret_cast`
+ * will not convert integer to integer). Keeping it here is what lets the window class body and the traits
+ * builder be written once -- see VsgHostWindow.cpp, which has no platform branch at all.
+ *
+ * @param handle Handle as this backend passes it around (what `RenderBackend::setWindowHandle` is given).
+ * @return The handle in the type the platform's vsg window reads out of the traits.
+ */
+[[nodiscard]] inline VsgHostHandle hostHandleFromVoid(void* handle) noexcept
+{
+#if defined(_WIN32)
+    return reinterpret_cast<VsgHostHandle>(reinterpret_cast<std::uintptr_t>(handle));
+#else
+    // An X window id is 32 bits wide, so the value survives the narrowing.
+    return static_cast<VsgHostHandle>(reinterpret_cast<std::uintptr_t>(handle));
+#endif
+}
 
 /** @brief A vsg platform window that adopts the host's window and never destroys it. */
 class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow>

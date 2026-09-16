@@ -25,6 +25,18 @@
 #   VINE_ASAN_TARGET=test_core VINE_ASAN_FILTER='*' scripts/asan_check.sh
 #   VINE_ASAN_LEAKS=1 scripts/asan_check.sh                 # + LeakSanitizer
 #
+# The vsg BACKEND (the device-free suite plus its device-backed self-test). The
+# suite needs the leak scope: it links the appfw plugin manager, whose registry
+# stays loaded for the process lifetime, so without a scope that one report
+# would mask every backend finding:
+#   VINE_ASAN_TARGET=test_vsg VINE_ASAN_FILTER='*' VINE_ASAN_LEAKS=1 \
+#       VINE_ASAN_LEAK_SCOPE='vine::vsg' scripts/asan_check.sh
+#   VINE_ASAN_TARGET=vsg_backend_selftest VINE_ASAN_LEAKS=1 \
+#       VINE_ASAN_LEAK_SCOPE='vine::vsg' scripts/asan_check.sh      # needs DISPLAY + an ICD; QT_QPA_PLATFORM is irrelevant
+# What the suite covers: the caches, the pools, the retire rings, the compile leases and the session
+# teardown of the GPU-free paths. What the self-test adds: the SAME objects with a real device, i.e.
+# session build / move / shutdown and every target it materialises.
+#
 # LeakSanitizer suppressions live in scripts/asan_leaks.supp and only cover
 # library-internal retention (fontconfig); anything the framework leaks is still
 # reported. The whole-suite leak mode additionally reports `GuiTest::buildDock`
@@ -60,6 +72,10 @@ BUILD="${1:-$ROOT/build-asan}"
 TARGET="${VINE_ASAN_TARGET:-test_gui}"
 FILTER="${VINE_ASAN_FILTER:-EventBusTest.*}"
 LEAKS="${VINE_ASAN_LEAKS:-0}"
+# When set (a grep -E pattern, e.g. 'vine::vsg'), a LeakSanitizer report that mentions NO frame matching it
+# is reported but does not fail the run: the run judges the pattern's own allocations. Unset = every leak
+# fails, which is what the appfw gate wants.
+LEAK_SCOPE="${VINE_ASAN_LEAK_SCOPE:-}"
 JOBS="${VINE_ASAN_JOBS:-$(nproc 2>/dev/null || echo 8)}"
 RECONFIG="${VINE_ASAN_RECONFIG:-0}"
 
@@ -82,10 +98,12 @@ if [ -z "$CXX_BIN" ]; then
 fi
 if [ -z "$CC_BIN" ] && [ -n "$CXX_BIN" ]; then
     case "$CXX_BIN" in
-        # clang++-22 -> clang-22, /usr/bin/clang++ -> /usr/bin/clang
-        *clang*) CC_BIN="$(printf '%s' "$CXX_BIN" | sed -E 's|(^|/)clang\+\+|\1clang|')" ;;
+        # clang++-22 -> clang-22, /usr/bin/clang++ -> /usr/bin/clang. The delimiter is '#', not '|': the
+        # pattern contains '|' itself, and sed read that as the end of the substitution (it printed
+        # "unknown option to `s'" and the derivation silently never happened -- measured 2026-09-16).
+        *clang*) CC_BIN="$(printf '%s' "$CXX_BIN" | sed -E 's#(^|/)clang\+\+#\1clang#')" ;;
         # g++-13 -> gcc-13, /usr/bin/g++ -> /usr/bin/gcc
-        *g++*)   CC_BIN="$(printf '%s' "$CXX_BIN" | sed -E 's|(^|/)g\+\+|\1gcc|')" ;;
+        *g++*)   CC_BIN="$(printf '%s' "$CXX_BIN" | sed -E 's#(^|/)g\+\+#\1gcc#')" ;;
     esac
     if [ -n "$CC_BIN" ] && ! command -v "$CC_BIN" >/dev/null 2>&1; then
         CC_BIN=""
@@ -183,9 +201,29 @@ echo "[info] log: $LOG"
 "$BIN" --gtest_filter="$FILTER" >"$LOG" 2>&1
 STATUS=$?
 
+# leaks_outside_scope_only — true when the ONLY findings are LeakSanitizer reports whose stacks do not
+# mention $LEAK_SCOPE (a memory error or a failed test is never excused, and a non-zero exit with no leak
+# report at all is not this function's to explain).
+leaks_outside_scope_only() {
+    grep -qE "ERROR: AddressSanitizer:|\[  FAILED  \]" "$LOG" && return 1
+    grep -q "ERROR: LeakSanitizer" "$LOG" || return 1
+    # Only the leak section is searched: the test output above it names test suites, which would match a
+    # scope pattern like 'vine::vsg' and turn a report about someone else's allocation into a failure here.
+    sed -n '/ERROR: LeakSanitizer/,$p' "$LOG" | grep -qE "$LEAK_SCOPE" && return 1
+    return 0
+}
+
 # ASan writes its report to stderr and the process exits non-zero; gtest also
 # uses a non-zero exit for test failures, so any non-zero means "not clean".
 if [ "$STATUS" -ne 0 ]; then
+    if [ -n "$LEAK_SCOPE" ] && [ "$LEAKS" = "1" ] && leaks_outside_scope_only; then
+        echo "[warn] the run is non-zero only because of LeakSanitizer reports OUTSIDE '$LEAK_SCOPE':"
+        sed -n '/ERROR: LeakSanitizer/,$p' "$LOG" | grep -E "^    #|^in " | sort -u | head -6 | sed 's/^/    /'
+        echo "[warn] those are not this run's subject, but they are NOT hidden (see $LOG); a report whose"
+        echo "       stack mentions '$LEAK_SCOPE' fails this run."
+        echo "RESULT: PASS (scope '$LEAK_SCOPE' clean; leaks outside it reported above)"
+        exit 0
+    fi
     echo "[info] --- AddressSanitizer / sanitizer report ---"
     sed -n '/ERROR: AddressSanitizer/,/^$/p' "$LOG" | head -40
     echo "[info] --- last test output ---"

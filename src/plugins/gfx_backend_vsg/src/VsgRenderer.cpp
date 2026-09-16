@@ -202,19 +202,19 @@ class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer> {
 
     if (host_handle != nullptr) {
 #ifdef _WIN32
-        traits->nativeWindow = reinterpret_cast<HWND>(host_handle);
+        traits->nativeWindow = hostHandleFromVoid(host_handle);
         RECT client_rect{};
-        if (::GetClientRect(reinterpret_cast<HWND>(host_handle), &client_rect) &&
+        if (::GetClientRect(hostHandleFromVoid(host_handle), &client_rect) &&
             client_rect.right > client_rect.left && client_rect.bottom > client_rect.top) {
             traits->width  = client_rect.right - client_rect.left;
             traits->height = client_rect.bottom - client_rect.top;
         }
 #else
         // vsg's Xcb backend reads the native window back as an xcb_window_t, and std::any only matches on
-        // the EXACT type, so the handle is narrowed to that type here: storing a void*/64-bit handle -- or
-        // an `unsigned int` on a platform where that is not xcb_window_t -- makes vsg throw bad_any_cast
-        // when it casts the handle back.
-        traits->nativeWindow = static_cast<xcb_window_t>(reinterpret_cast<std::uintptr_t>(host_handle));
+        // the EXACT type, so the handle has to be in that type (VsgHostHandle names it -- see
+        // hostHandleFromVoid): storing a void*/64-bit handle, or an `unsigned int` on a platform where that
+        // is not xcb_window_t, makes vsg throw bad_any_cast when it casts the handle back.
+        traits->nativeWindow = hostHandleFromVoid(host_handle);
 #endif
     }
     return traits;
