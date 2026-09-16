@@ -563,6 +563,10 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 
 **自检相位**（`vsg_selftest/selftest_hostsurface.cpp`）：自建两个 X11 宿主窗口 A、B（320×180），shutdown 后公告 A 并 `initialize()`，在两个窗口上各驱动若干帧，再把句柄换成 B、`initialize()`，然后断言：① `windowBuildCount()` **不变**（搬了，不是重建）；② 恰好 **1 次**计数 device stop；③ 两个宿主窗口都还在；④ `shutdown()` 之后**宿主 B 仍然存在**。它打印的行是 `[host-surface] ...`，**故意不带 `[selftest]` 前缀**，所以 55 行证据基线一字不动。
 
+**数据编辑："原地刷新"还是"重建"，现在也是可判的（2026-09-17，V6 的测量 / V7 的收口）**。`SceneBridge` 记 `DataEditStats`（`streams_refreshed` / `data_nodes_built`），`VsgRenderer::streamsRefreshed()` / `dataNodesBuilt()` 把它们按会话的内容槽求和暴露出来（照 `detachedSlotCount()` 的样子迭代 `state.targets` 的 `content_slots`）。**为什么是一对而不是一个**：一条数据编辑要么把变化的流**原地重指**（`refreshChangedStreams`），要么把整个数据节点**重造**（`rebuildDataNode`）—— 两者**画出的画面完全一样**，像素判不出来，而"只重传变的那一路"正是增量路径存在的理由。自检相位 `selftest_datarefresh.cpp` 因此同时钉两半：① 一帧建节点（`dataNodesBuilt() +1`、`streamsRefreshed()` 不变，且四边形在视野外 ⇒ 中心是清屏色 `(10,20,30)`）；② **同一个** geometry 换 positions **并公告**；③ 随后的帧由增量路径服务（`streamsRefreshed() +1`）、**没有重建**（`dataNodesBuilt()` 不变），中心变成四边形的红 `(34,6,2)`。**变异**（让快路径恒拒）⇒ 前两条断言同时红，而**像素仍然是对的** —— 这正是"像素单独覆盖不了它"的实证。它打印的行是 `[data-refresh] ...`（同样不带 `[selftest]` 前缀，55 行基线一字不动）。
+
+**顺手钉住的一条 SDK 契约**：`Geometry::setPositions()` 等**不会**公告变化，**公告是调用方的事**（`setRevision(revision() + 1)`）。相位第一版漏了它，结果是**什么都没发生**（0 次刷新**且** 0 次重建 —— 后端压根不知道该去看它），而"两个计数都是 0"正是当时唯一能看出问题的地方。
+
 实测（lavapipe，本机）：`[host-surface] move: the session followed the host's new window (windows built 2 before, 2 after; 1 counted device stop(s); host windows intact; the session still presented it)`。**变异**（项目标准）：把 `moveSessionToHostSurface()` 改成 `return false`（回落到整会话重建）⇒ 立刻红：`the session was REBUILT for the host's new window (2 window build(s) before, 3 after)` + `the move took 0 counted device stop(s), expected exactly 1`，相位报 `FAILED`。注意 `deviceWaitCount()` 是**会话级**的，`shutdown()` 之后读回 0，所以相位在放手之前取这两个计数（打印的就是量到的值）。
 
 **曾经记成"未解决的一条"，其实是同一个 bug 的另一张脸（2026-09-16 修正）**：先前这里写着"窗口会话里把 pass 指向离屏 target 时该 target 不被写入（读回透明黑），并出 1 条 `UNASSIGNED-…InvalidImageLayout`"，还当成一个独立的、待查的后端缺陷。**它是错的**：根因是 **`VSG` 的帧路径按 `window->visible()` 决定要不要录帧**，而本后端的窗口类当时没回答这个问题：

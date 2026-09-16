@@ -710,6 +710,7 @@ bool SceneBridge::syncRenderCommands(
                 continue; // refused and recorded for this revision (see rebuildDataNode)
             }
             else {
+                ++data_edit_stats_.data_nodes_built;
                 state_channels_changed = item->state_channels != item->extra_channels;
             }
         }
@@ -907,6 +908,7 @@ bool SceneBridge::refreshChangedStreams(const vine::graphics::Geometry& geometry
         item.index_key = index_now;
     }
     item.channel_keys = keys_now;
+    ++data_edit_stats_.streams_refreshed;
     return true;
 }
 

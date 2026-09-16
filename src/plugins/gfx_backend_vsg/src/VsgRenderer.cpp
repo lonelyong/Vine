@@ -1089,4 +1089,26 @@ std::size_t VsgRenderer::detachedSlotCount() const noexcept
     return count;
 }
 
+std::size_t VsgRenderer::streamsRefreshed() const noexcept
+{
+    std::size_t count = 0;
+    for (auto& entry : state.targets) {
+        for (auto& slot : entry.second.content_slots) {
+            count += slot.second.bridge.dataEditStats().streams_refreshed;
+        }
+    }
+    return count;
+}
+
+std::size_t VsgRenderer::dataNodesBuilt() const noexcept
+{
+    std::size_t count = 0;
+    for (auto& entry : state.targets) {
+        for (auto& slot : entry.second.content_slots) {
+            count += slot.second.bridge.dataEditStats().data_nodes_built;
+        }
+    }
+    return count;
+}
+
 V_VSG_NS_END

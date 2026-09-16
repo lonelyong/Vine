@@ -354,6 +354,28 @@ class V_VSG_API SceneBridge {
      */
     std::size_t sharedPruneCount() const noexcept { return shared_prune_count_; }
 
+    /** @brief How this bridge has served geometry DATA edits so far (diagnostic).
+     *
+     * A data edit takes one of two paths, and from outside they are
+     * indistinguishable: the changed STREAM(S) can be re-pointed in place
+     * (refreshChangedStreams), or the whole data node can be built again
+     * (rebuildDataNode). Both draw the same picture, so no pixel test can tell
+     * them apart -- these counters are what can, which is what lets the
+     * incremental path be asserted end to end through the backend's public
+     * surface (see VsgRenderer::streamsRefreshed() / dataNodesBuilt()).
+     */
+    struct DataEditStats
+    {
+        std::size_t streams_refreshed{0}; ///< Edits served by re-pointing the changed stream in place.
+        std::size_t data_nodes_built{0};  ///< Data nodes materialised (a first build or a rebuild).
+    };
+
+    /** @brief Gets how this bridge served geometry data edits.
+     *
+     * @return The counters (see DataEditStats).
+     */
+    const DataEditStats& dataEditStats() const noexcept { return data_edit_stats_; }
+
     /** @brief Records that a capacity trim of a program-keyed cache evicted an
      * entry, so the next releaseAbandonedCaches(shares) prunes the shared table.
      *
@@ -1230,6 +1252,8 @@ class V_VSG_API SceneBridge {
     std::size_t pipeline_variants_ = 0;
     // Number of prunes of shared_objects_ (see sharedPruneCount()).
     std::size_t shared_prune_count_ = 0;
+    // How geometry data edits were served (see dataEditStats()).
+    DataEditStats data_edit_stats_;
     // Evictions reported by the capacity trims since the last prune
     // (see noteEviction()).
     std::size_t pending_evictions_ = 0;

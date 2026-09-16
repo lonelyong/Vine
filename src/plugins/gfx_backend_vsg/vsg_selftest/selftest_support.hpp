@@ -1208,4 +1208,20 @@ bool runForwardShadowPixelPhase(const vine::intrusive_ptr<RenderBackend>& backen
  */
 bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames);
 
+/** @brief Asserts that editing one channel of an ALREADY-DRAWN geometry is served in place.
+ *
+ * The incremental path (P6) keeps a per-stream identity for every geometry, so an edit that only
+ * changes one stream re-points that stream instead of re-materialising the whole data node. From
+ * outside the two are indistinguishable -- they draw the same picture -- so the phase asserts the
+ * counter pair the backend exposes for it (VsgRenderer::streamsRefreshed / dataNodesBuilt)
+ * TOGETHER with the picture: the node is built once, the edit refreshes once without building
+ * again, and the new positions are visible in the read-back centre pixel.
+ *
+ * @param renderer Session to draw through.
+ * @param camera   Camera to draw through.
+ * @param frames   Frames to draw after the edit (the refresh must happen exactly once).
+ * @return true when the edit took the incremental path and reached the GPU.
+ */
+bool runDataRefreshPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames);
+
 }  // namespace selftest

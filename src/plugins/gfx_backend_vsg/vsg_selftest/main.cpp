@@ -409,6 +409,16 @@ int main()
         backend->swapBuffers();
     }
 
+    // ---- Data edit served in place (P6) ------------------------------------
+    // Nothing above ever edits a geometry it has already drawn, so this is the
+    // only end-to-end cover for the incremental path: build once, edit one
+    // channel, draw again, and tell "re-pointed the stream" from "rebuilt the
+    // node" by the counter pair (they draw the same picture).
+    if (!runDataRefreshPhase(*renderer, camera, 3)) {
+        std::fprintf(stderr, "[selftest] FAILED — a data edit was not served by the incremental path\n");
+        return 1;
+    }
+
     // ---- Host surface move (C1, its own session) ---------------------------
     // The session driven above ran on vsg's own window; this phase replaces it with one attached to a
     // host window (what a host hands this backend) and asserts that the session MOVES when the host

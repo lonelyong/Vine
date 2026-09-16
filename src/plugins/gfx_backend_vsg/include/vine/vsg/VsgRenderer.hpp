@@ -390,6 +390,26 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     [[nodiscard]] std::size_t offscreenBuildCount() const noexcept;
 
+    /** @brief Gets how many geometry data edits were served by re-pointing the changed stream IN PLACE.
+     *
+     * Diagnostic, and the pair to @ref dataNodesBuilt(): an incremental update and a full data
+     * rebuild draw the same picture, so pixels cannot tell them apart, and "only the changed
+     * stream was re-uploaded" is the property the incremental path exists for. Summed over the
+     * session's content slots (see SceneBridge::DataEditStats).
+     *
+     * @return Number of in-place stream refreshes so far.
+     */
+    [[nodiscard]] std::size_t streamsRefreshed() const noexcept;
+
+    /** @brief Gets how many geometry data nodes this session has BUILT.
+     *
+     * Counts a geometry's first materialisation as well as every later rebuild, so a phase that
+     * asserts "the edit did not rebuild" compares this against the same value before the edit.
+     *
+     * @return Number of data nodes materialised so far.
+     */
+    [[nodiscard]] std::size_t dataNodesBuilt() const noexcept;
+
     /** @brief Gets how many windows this session has BUILT.
      *
      * Diagnostic: a session owns one window, and that window owns the VkInstance, the physical device and
