@@ -385,6 +385,19 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     [[nodiscard]] std::size_t offscreenBuildCount() const noexcept;
 
+    /** @brief Gets how many windows this session has BUILT.
+     *
+     * Diagnostic: a session owns one window, and that window owns the VkInstance, the physical device and
+     * the VkDevice -- so "no new window" is what "the device, and every pipeline compiled against it, were
+     * kept" looks like from outside. A host that announces a new native window is asking the session to MOVE
+     * to it (see moveSessionToHostSurface), which leaves this flat; a session that had to be rebuilt instead
+     * -- no host window, the same handle, or a new window that cannot present this session's render pass --
+     * counts one more.
+     *
+     * @return Number of windows built so far.
+     */
+    [[nodiscard]] std::size_t windowBuildCount() const noexcept;
+
     /** @brief Gets how many retained slot views are currently retired.
      *
      * A slot whose pass did not execute in the last submitted frame has its
@@ -483,6 +496,20 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *               unused by the scope rules.
      */
     void reportPassMisuse(PassMisuse misuse, const char* call = nullptr);
+
+    /** @brief Moves a LIVE session onto the host surface @p native_handle names.
+     *
+     * What a host that announces a different window is asking for (RenderBackend::setWindowHandle):
+     * the surface and the swapchain are rebuilt against the new window while the device, the render
+     * pass and every pipeline compiled against it stay.
+     *
+     * @param native_handle Handle of the host's new window.
+     * @return true when the session moved; false when nothing was moved -- no handle, the same handle,
+     *         a session that is not on this backend's own host window (vsg's own window / the
+     *         VINE_VSG_OWN_WINDOW hatch), or a new window whose swapchain format cannot serve this
+     *         session's render pass -- and the caller starts a fresh session instead.
+     */
+    [[nodiscard]] bool moveSessionToHostSurface(void* native_handle);
 
     /** @brief Retires (detaches) the retained view of every pass that was not
      * announced this frame (disabled / unregistered).

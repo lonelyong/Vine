@@ -75,6 +75,10 @@ struct VsgRendererPersistent {
     // (reported) instead of guessing. RenderEngine supplies forwardProgram() by default.
     vine::intrusive_ptr<const vine::graphics::ShaderProgram> default_content_program;
     void*                               bound_handle = nullptr;
+    // Windows this backend has BUILT, across sessions on purpose (see VsgRenderer::windowBuildCount): the
+    // counter is what tells a session that MOVED to a host's new window (no window built) from one that had
+    // to be rebuilt (one more window -- and with it a new instance, physical device and device).
+    std::size_t                         window_build_count = 0;
 };
 
 // ---- Pass scope (RenderBackend::beginPass / endPass) ----

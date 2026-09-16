@@ -86,10 +86,12 @@ if(VINE_USE_FETCHCONTENT)
     )
     set(VSG_SUPPORTS_ShaderCompiler ON CACHE BOOL "" FORCE)
     # vsg caps simultaneous vsg::Device instances at VSG_MAX_DEVICES (default
-    # 1). Qt surface recreation makes the backend tear down and recreate its
-    # vsg::Window/Device, so raise the cap to let a fresh device coexist with
-    # a dying one instead of tripping vsg's Device.cpp exception.
-    set(VSG_MAX_DEVICES 4 CACHE STRING "" FORCE)
+    # 1). The backend used to raise that cap because a Qt surface recreation
+    # made it tear its vsg::Window/Device down and build a second one while the
+    # first was still dying. It no longer has to: a recreated host window MOVES
+    # the session (see VsgHostWindow), so no second device is ever created -- and
+    # the default cap is what keeps that honest, because a path that did try to
+    # create one now throws instead of quietly working on this machine.
     FetchContent_MakeAvailable(vsg)
     v_group_targets_folder(${vsg_SOURCE_DIR} third_party)
 
@@ -122,12 +124,26 @@ endif()
 # vsg::vsg is PUBLIC because SceneBridge exposes vsg::ref_ptr<vsg::Node> in its API.
 # The plugin needs appfw for the Plugin base class, graphics for the backend
 # interface + registry and logging for its informational traces.
+#
+# VsgHostWindow creates the host surface itself, on its own window-system connection (it adopts the
+# window the host announces and never destroys it). vsg builds the same code but links xcb PRIVATE, so
+# its include directories do not reach this target.
+set(_gfx_backend_vsg_host_surface_libs "")
+if(UNIX AND NOT APPLE)
+    find_package(PkgConfig REQUIRED)
+    if(NOT TARGET PkgConfig::xcb)
+        pkg_check_modules(xcb REQUIRED IMPORTED_TARGET xcb)
+    endif()
+    set(_gfx_backend_vsg_host_surface_libs PkgConfig::xcb)
+endif()
+
 target_link_libraries(${GFX_BACKEND_VSG_TARGET} PRIVATE
     vi::Appfw
     vi::Graphics
     vi::Imaging
     vi::Logging
-    vsg::vsg)
+    vsg::vsg
+    ${_gfx_backend_vsg_host_surface_libs})
 
 # The backend has no GLSL of its own: every stage it compiles comes from the SDK
 # (vine/graphics/EmbeddedShaders.hpp, via BuiltinShaders). See cmake/VineShaders.cmake.
@@ -147,6 +163,7 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_pixels.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_textures.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_shadows.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_hostsurface.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgeGeometry.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgePipeline.cpp
@@ -169,9 +186,11 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgProgramSlot.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgLights.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgBackendUtility.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgHostWindow.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPipelineFactory.cpp)
 target_compile_definitions(vsg_backend_selftest PRIVATE V_VSG_LIB)
 target_include_directories(vsg_backend_selftest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(vsg_backend_selftest PRIVATE vi::Graphics vi::Logging vsg::vsg)
+target_link_libraries(vsg_backend_selftest PRIVATE vi::Graphics vi::Logging vsg::vsg
+    ${_gfx_backend_vsg_host_surface_libs})
 set_target_properties(vsg_backend_selftest PROPERTIES FOLDER third_party)

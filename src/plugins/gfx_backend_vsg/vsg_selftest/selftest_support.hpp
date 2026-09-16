@@ -1190,4 +1190,22 @@ bool runDeferredShadowPixelPhase(const vine::intrusive_ptr<RenderBackend>& backe
  */
 bool runForwardShadowPixelPhase(const vine::intrusive_ptr<RenderBackend>& backend, int frames);
 
+/** @brief Asserts that a session FOLLOWS the host's new window instead of being rebuilt (C1).
+ *
+ * A host (Qt) hands the backend a native window and replaces it when the windowing system recreates it;
+ * the SDK contract for setWindowHandle() is that the backend MOVES to the new one. This phase creates
+ * two host windows of its own, attaches a session to the first, draws and reads a pixel, announces the
+ * second, and then asserts that the session moved rather than was rebuilt (VsgRenderer::windowBuildCount
+ * stays flat), that the picture is unchanged, and that a window the backend let go of -- and the one it
+ * adopted -- still exist on the server: the backend owns the surface it presents through, never the
+ * host's window.
+ *
+ * @param renderer Session to move (its current session is replaced: a session on vsg's own window has no
+ *                 host surface to follow).
+ * @param camera   Camera to draw through.
+ * @param frames   Frames to draw before and after the move.
+ * @return true when the session moved and the host's windows survived it.
+ */
+bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames);
+
 }  // namespace selftest

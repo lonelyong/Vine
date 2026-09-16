@@ -64,6 +64,16 @@ find_package(vsg CONFIG QUIET)
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Core)
 
 target_link_libraries(${TEST_NAME} vi::Appfw vi::Graphics vi::Logging Qt6::Core)
+
+# VsgHostWindow creates the host surface itself; vsg builds the same code but links xcb PRIVATE, so its
+# include directories do not reach this target.
+if(UNIX AND NOT APPLE)
+    find_package(PkgConfig REQUIRED)
+    if(NOT TARGET PkgConfig::xcb)
+        pkg_check_modules(xcb REQUIRED IMPORTED_TARGET xcb)
+    endif()
+    target_link_libraries(${TEST_NAME} PkgConfig::xcb)
+endif()
 if(vsg_FOUND)
 	target_link_libraries(${TEST_NAME} vsg::vsg)
 endif()
@@ -80,8 +90,7 @@ target_sources(${TEST_NAME} PRIVATE
 	# its validation must be testable WITHOUT a device: constructing the renderer
 	# creates no window/viewer, and the scope calls only touch the retained
 	# request. CameraBridge comes with it (content slots create one).
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgDiagnostics.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgHostWindow.cpp	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgDiagnostics.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgRecordOrder.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgReadback.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgViewCompiler.cpp

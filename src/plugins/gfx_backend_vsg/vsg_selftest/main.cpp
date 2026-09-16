@@ -408,6 +408,16 @@ int main()
         backend->endFrame();
         backend->swapBuffers();
     }
+
+    // ---- Host surface move (C1, its own session) ---------------------------
+    // The session driven above ran on vsg's own window; this phase replaces it with one attached to a
+    // host window (what a host hands this backend) and asserts that the session MOVES when the host
+    // announces a new one -- same device, same pipelines. It leaves no live session behind, so the
+    // shutdown below is still the last word.
+    if (!runHostSurfaceMovePhase(*renderer, camera, 3)) {
+        std::fprintf(stderr, "[selftest] FAILED — the host surface move did not hold\n");
+        return 1;
+    }
     backend->shutdown();
 
     // ---- Deferred shadow (engine-driven phase, its own session) --------------

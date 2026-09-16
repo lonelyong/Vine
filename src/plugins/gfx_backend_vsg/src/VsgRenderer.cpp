@@ -8,6 +8,7 @@
 
 #include <vine/vsg/VsgUtils.hpp>
 #include <vine/vsg/VsgBackendUtility.hpp>
+#include <vine/vsg/VsgHostWindow.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgTargetBookkeeping.hpp>
 
@@ -242,6 +243,39 @@ VsgRenderer::~VsgRenderer()
     shutdown();
 }
 
+bool VsgRenderer::moveSessionToHostSurface(void* native_handle)
+{
+    if (native_handle == nullptr) {
+        return false;
+    }
+    // Only a session on THIS backend's host window can follow a host surface: a session on vsg's own window
+    // (one this backend created -- the VINE_VSG_OWN_WINDOW hatch, or a session initialized with no host
+    // handle) has no host surface to move to, and one already on this handle has nothing to do.
+    auto host_window = state.window.cast<detail::VsgHostWindow>();
+    if (host_window == nullptr || native_handle == host_window->hostHandle()) {
+        return false;
+    }
+    // A COUNTED device stop, not a bare vkDeviceWaitIdle: the surface, the swapchain and the depth image
+    // being replaced may still be named by work in flight, and this is the wait every destructive step in
+    // this backend goes through so it shows up in deviceWaitCount().
+    state.retireRing.waitForIdle(state.viewer);
+    if (!host_window->moveToHostSurface(native_handle)) {
+        // The new window presents a different swapchain format, so its render pass -- and with it every
+        // pipeline compiled against the one this session has -- cannot serve. The session is rebuilt from
+        // scratch by the caller; said out loud because that is a visible cost the host can avoid by
+        // keeping the window's format.
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::UnsupportedRequest,
+                           u8"the host's new window presents a different swapchain format, so this session cannot move"
+                           u8" to it: it is rebuilt from scratch and every compiled pipeline is rebuilt with it");
+        return false;
+    }
+    persistent.bound_handle = native_handle;
+    // Nothing is rewired here on purpose: the window's render graph names the WINDOW (see initialize), so vsg
+    // resolves the framebuffer of the rebuilt swapchain when it records.
+    return true;
+}
+
 bool VsgRenderer::initialize()
 {
     // The unified output-target table keys the window (backbuffer) by a null
@@ -249,10 +283,15 @@ bool VsgRenderer::initialize()
     // on-screen target. The window entry is created below when its shared
     // swapchain render graph is assigned.
     // Defensive: tear down any still-live previous session (a caller that
-    // skipped shutdown()) so this re-init starts from a clean session.
+    // skipped shutdown()) so this re-init starts from a clean session -- unless the host has announced a
+    // DIFFERENT native window, which is its way of asking this session to FOLLOW it onto a new surface
+    // (see moveSessionToHostSurface): that keeps the device and every compiled pipeline.
     // shutdown() nulls bound_handle, so restore the just-bound handle.
     if (state.window != nullptr) {
         void* bound = persistent.bound_handle;
+        if (moveSessionToHostSurface(bound)) {
+            return true;
+        }
         shutdown();
         persistent.bound_handle = bound;
     }
@@ -271,7 +310,12 @@ bool VsgRenderer::initialize()
         host_handle = nullptr;
     }
     auto traits = makeWindowTraits(host_handle);
-    state.window = ::vsg::Window::create(traits);
+    // A host surface is served by this backend's OWN window class, because vsg's platform window would
+    // destroy the window it adopted (and could not follow it to the next one) -- see VsgHostWindow. A
+    // session with no host window keeps vsg's own window, which is what the VINE_VSG_OWN_WINDOW test
+    // hatch asks for.
+    state.window = host_handle != nullptr ? ::vsg::ref_ptr<::vsg::Window>(detail::VsgHostWindow::create(traits))
+                                          : ::vsg::Window::create(traits);
     if (state.window == nullptr) {
         V_LOGE("[VsgRenderer] Window::create FAILED (nativeWindow={}, {}x{})",
                traits->nativeWindow.has_value() ? 1 : 0, traits->width, traits->height);
@@ -287,6 +331,10 @@ bool VsgRenderer::initialize()
         shutdown();
         return false;
     }
+    // One more window built: a session that MOVED to a new host surface never comes back here (see
+    // moveSessionToHostSurface), which is what makes this counter the judge for "the device, and every
+    // pipeline compiled against it, were kept".
+    ++persistent.window_build_count;
 
     // The session's texture cache, created before any slot exists so every slot's bridge uploads through this
     // ONE cache (see SceneBridge::setTextureCache): a texture sampled by several slots is staged once, not
@@ -393,11 +441,9 @@ void VsgRenderer::shutdown()
         state.viewer->close();
     }
     if (state.window != nullptr) {
-        // Release the native handle the platform window wraps. When the
-        // reference is dropped, the Win32_Window destructor would call
-        // ::DestroyWindow() (and ::UnregisterClass()) on the HOST's window —
-        // here a Qt-owned HWND that Qt is itself tearing down. releaseWindow()
-        // nulls the internal HWND so the destructor leaves Qt's window alone.
+        // Nothing to hand back: this backend's own window never destroys the host's window (see
+        // VsgHostWindow), and vsg's own window (the VINE_VSG_OWN_WINDOW hatch, or a session built with no
+        // host handle) created the window it tears down here.
         state.window->releaseWindow();
     }
     // The slots own their compile registrations (VsgCompileRegistration), so they are dropped while the
@@ -974,6 +1020,11 @@ void VsgRenderer::setDiagnosticSink(vine::graphics::DiagnosticSink sink)
 std::size_t VsgRenderer::offscreenBuildCount() const noexcept
 {
     return state.offscreen_build_count;
+}
+
+std::size_t VsgRenderer::windowBuildCount() const noexcept
+{
+    return persistent.window_build_count;
 }
 
 std::size_t VsgRenderer::programSlotBuildCount() const noexcept

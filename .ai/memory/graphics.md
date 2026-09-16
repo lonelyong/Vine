@@ -1824,6 +1824,17 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 第一版被推翻的过程、setter 合名的理由、以及预测与实际破坏点清单的差异，
 详见 `.ai/design/geometry-attribute-storage.md`。
 
+## C1 落地：宿主表面归宿主（附加 / 搬移 / 绝不销毁，2026-09-16）
+
+- **前提确认**：宿主的 `RenderControl::initializeBackend()` 在句柄变化时 `shutdown()` + `initialize()`，而 `setWindowHandle()` 的语义本就是"搬"；`VSG_MAX_DEVICES=4` 与 `releaseWindow()` 都只是这个症状的补丁 ⇒ 前者**撤回**、后者**不再需要**（调用点保留但已成空操作）。
+- **新窗口类** `detail::VsgHostWindow`（`VsgHostWindow.hpp/.cpp`）：`vsg::Inherit<vsg::Window, ...>`，实现 `_initSurface()` + `instanceExtensionSurfaceName()`（X11 `VK_KHR_XCB_SURFACE_EXTENSION_NAME`／Win32 `VK_KHR_WIN32_SURFACE_EXTENSION_NAME`，Win32 分支本机只编译验证）。自持 `xcb_connect`，**采纳** `traits->nativeWindow`，`_initSurface()` 用 `new vsgXcb::Xcb_Surface(...)`（无 `create()`）；`moveToHostSurface()` 丢弃 swapchain/frames/indices/depth/multisample/surface → 同一 instance 上重建 surface → `_initFormats()` 复核（格式变了就拒绝）→ `buildSwapchain()`；析构只 `clear()` + `xcb_disconnect`，**永不** `xcb_destroy_window`。
+- **入口**：`VsgRenderer::moveSessionToHostSurface(void*)`（先 `retireRing.waitForIdle` → 计数；拒绝 null/同句柄/非本后端窗口，并报 `Warning` + `UnsupportedRequest`）；`initialize()` 的活会话分支 = **先搬、搬不动才重建**。可观测量 `windowBuildCount()`：**没新建窗口 ⇒ 没新 instance/device ⇒ 管线留着**。
+- **自检相位** `selftest_hostsurface.cpp`：两个自建 X11 宿主窗口 A→B，断言 ①窗口构建数不变 ②恰好 1 次计数 device stop ③两窗口都活着 ④`shutdown()` 后宿主 B 仍活。打印 `[host-surface] ...`（**不带 `[selftest]` 前缀** ⇒ 55 行证据基线不动）。实测：`windows built 2 before, 2 after; 1 counted device stop(s); host windows intact; the session still presented it`。**变异**（`moveSessionToHostSurface()` → `return false`）⇒ 3 builds + 0 stops，相位红，符合预期。
+- **门禁**：build 0/0、`test_vsg` 289、证据 55 行逐字相同、app 演示 PASS、`RESULT: PASS — lavapipe validation clean`。
+- **未解决（记录在案）**：**窗口会话里 pass 指向离屏 target 时该 target 不被写入**（读回透明黑），并出 1 条 `UNASSIGNED-CoreValidation-DrawState-InvalidImageLayout`（expects SHADER_READ_ONLY_OPTIMAL，current UNDEFINED）；修前二进制 0 条、现在 1 条，窗口帧"预热"后仍复现 ⇒ 与本相位"首帧布局"无关。所以该相位的证据是**呈现 + 计数**，宿主路径的像素证据由 app 门禁承担。**待办**：查这条路径（修布局，或在文档里钉死它不能当证据来源）。
+- **小经验**：`VsgRenderer::deviceWaitCount()` 是**会话级**计数，`shutdown()` 后读回 0 ⇒ 相位要在放手之前取样（打印的就是量到的值，别写死散文数字）。
+- **宿主侧下一步**：`src/fw/appfw/src/gui/RenderControl.cpp::initializeBackend` 仍先 `shutdown()`；改成"只重新公告句柄 + `resize()`/渲染"，让后端的 `initialize()` 去搬（本环境除 app 演示外无门禁覆盖）。
+
 ## 模块文档（面向使用者）
 
 `src/viz/graphics/docs/usage.md`（仿 `src/base/math/docs/Eigen.md` 的"模块自带 docs 目录"约定）：分层架构、属性沿树折叠的四条规则、每帧数据流与"顶点被别名而非复制"、生命周期与变更契约（**数据变更一律 `Geometry::setRevision()` 公告**）、最小宿主用法，以及现成例子的**构建与运行方式**（`VINE_PIPELINE=forward|deferred|forward_shadowed|deferred_shadowed`（默认 deferred）、`VINE_VSG_GBUFFER` / `VINE_VSG_DEFERRED` / `VINE_VSG_OFFSCREEN_MULTISLOT` / `VINE_VSG_SLOT_DEMO` / `VINE_SHADER_PRESET`、无头门禁）。

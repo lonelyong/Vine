@@ -527,6 +527,31 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 
 **怎么按需把它看出来**：自检 policy churn 相位前后各采一次保留量，默认**不打印**（否则会动到证据基线），用 `VINE_PROBE_RETENTION=1 VK_ICD_FILENAMES=<lavapipe icd> ./bin/vsg_backend_selftest` 打开；该相位末尾还会**断言**`compile_contexts <= content_slots`（修前的 60 对 4 会直接 FAIL）。未做的：上游加 `CompileManager::remove(view)`（有了派生方案就不需要了），以及上面那 0.4 s 的归因。
 
+### 5.3.2 宿主表面归宿主：附加、搬移、绝不销毁（2026-09-16 落地）
+
+**约束来自宿主**：`RenderControl::initializeBackend()` 在句柄变化时做 `engine->shutdown()` + `initialize()`，而 SDK 的 `setWindowHandle()` 语义本来就是"把后端**搬**到新表面"。于是此前为了"重建窗口不炸"加的两条补丁都是**症状**，不是需求：
+
+| 旧补丁 | 为什么存在 | 现在的处置 |
+| --- | --- | --- |
+| `VSG_MAX_DEVICES=4`（CMake 强制） | 重建窗口会再建 instance/physical device/device，1 个不够 | **撤回**：搬移不新建窗口 ⇒ 同一时刻只有一个 device，默认上限就够（也把"有没有泄漏 device"变成真判据） |
+| `VsgRenderer::releaseWindow()`（把 vsg 窗口的 `nativeWindow` 摘掉再析构） | vsg 的 `Xcb_Window::~Xcb_Window()` 会 `xcb_destroy_window()`——**宿主的窗口** | **不必再用**：本后端的窗口类根本不销毁宿主窗口（调用点保留但已是空操作，注释同步改写） |
+
+**新增一类窗口**（`include/vine/vsg/VsgHostWindow.hpp` + `src/VsgHostWindow.cpp`）：`detail::VsgHostWindow : public ::vsg::Inherit<::vsg::Window, VsgHostWindow>`，实现 vsg 那两个纯虚（`_initSurface()` **和** `instanceExtensionSurfaceName()`），X11 分支给出 `VK_KHR_XCB_SURFACE_EXTENSION_NAME`、Win32 分支 `VK_KHR_WIN32_SURFACE_EXTENSION_NAME`（本环境只能编译验证 Win32 分支，行为由 Windows 上的 app 门禁覆盖）。
+
+- **附加**：构造时自己 `xcb_connect()`、采纳 `traits->nativeWindow` 作为宿主窗口 id（**不**创建、**不**销毁），从 `traits` 里读出尺寸写进 `_extent2D`；`_initSurface()` 用 `new vsgXcb::Xcb_Surface(_instance, connection, window)`（该类没有 `create()`，且 `Xcb_Surface` 在 `libvsg` 里导出）。
+- **搬移**：`moveToHostSurface(native_handle)` 丢掉 `_swapchain/_frames/_indices/_depth*/_multisample*/_surface`，在**同一个** instance 上重建 surface，`_initFormats()` 复核格式——`_imageFormat.format` 变了就**拒绝**（返回 false，让调用方退回重建），否则 `buildSwapchain()`。device、render pass、已编译管线全部留用。
+- **绝不销毁**：析构只 `clear()` + `xcb_disconnect()`。宿主给我们的窗口活过我们，这正是 vsg 自带平台窗口做不到的事（自检直接断言这一点）。
+- `resize()` 只需重查几何 + `buildSwapchain()`（vsg 的窗口本来就这么做 ⇒ 机制是现成的）。
+- `VINE_VSG_OWN_WINDOW` 仍是测试逃生口（后端自建窗口），不是生产路径。
+
+**搬移的入口与判据**：`VsgRenderer::moveSessionToHostSurface(void*)` 对 `nullptr` / 同一句柄 / 不是本后端的窗口一律拒绝；否则先 `retireRing.waitForIdle(state.viewer)`（计数等待，飞行中的 work 可能还指着旧表面/交换链/深度图），再调窗口搬移；被拒时发一条 `DiagnosticSeverity::Warning` + `DiagnosticCategory::UnsupportedRequest` 并返回 false。`initialize()` 的"会话还活着"分支因此变成**先搬、搬不动才重建**。新增可观测量 `VsgRenderer::windowBuildCount()`：**没有新建窗口 ⇒ 没有新 instance / physical device / device ⇒ 管线没被丢掉**，这就是"搬"与"重建"在测试里的分别。
+
+**自检相位**（`vsg_selftest/selftest_hostsurface.cpp`）：自建两个 X11 宿主窗口 A、B（320×180），shutdown 后公告 A 并 `initialize()`，在两个窗口上各驱动若干帧，再把句柄换成 B、`initialize()`，然后断言：① `windowBuildCount()` **不变**（搬了，不是重建）；② 恰好 **1 次**计数 device stop；③ 两个宿主窗口都还在；④ `shutdown()` 之后**宿主 B 仍然存在**。它打印的行是 `[host-surface] ...`，**故意不带 `[selftest]` 前缀**，所以 55 行证据基线一字不动。
+
+实测（lavapipe，本机）：`[host-surface] move: the session followed the host's new window (windows built 2 before, 2 after; 1 counted device stop(s); host windows intact; the session still presented it)`。**变异**（项目标准）：把 `moveSessionToHostSurface()` 改成 `return false`（回落到整会话重建）⇒ 立刻红：`the session was REBUILT for the host's new window (2 window build(s) before, 3 after)` + `the move took 0 counted device stop(s), expected exactly 1`，相位报 `FAILED`。注意 `deviceWaitCount()` 是**会话级**的，`shutdown()` 之后读回 0，所以相位在放手之前取这两个计数（打印的就是量到的值）。
+
+**未解决的一条（本相位的证据因此是"呈现 + 计数"，不是像素）**：在**窗口会话**里把 pass 指向**离屏** target 时，该 target 不被写入（读回透明黑），并产生 1 条 `UNASSIGNED-CoreValidation-DrawState-InvalidImageLayout`（"expects SHADER_READ_ONLY_OPTIMAL--instead, current layout is UNDEFINED"）。修前二进制 0 条、`cur` 1 条，位置就在本相位第一段帧里；加"先给窗口若干帧预热"后仍然复现 ⇒ 与"首帧布局"无关。宿主路径的**像素**证据目前由 app 门禁承担（`[PASS] Vine app (default demo)`，0 VUID），本相位只断言"窗口还在、呈现不报错、没有重建"。**待办**：查清"窗口会话 + 离屏 target"这条路径（要么修布局，要么在自检里记下它不能作为证据来源）。
+
 ### 5.4 变体与清屏策略
 
 - 每个 pass 的 render pass / framebuffer 由 **`planPassVariant()`**（纯函数）决定：清屏请求（颜色/深度）
