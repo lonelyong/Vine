@@ -19,9 +19,9 @@ namespace detail {
  */
 struct LatchState
 {
-    std::mutex mutex_;
-    std::size_t count_{ 0 };
-    AsyncEvent done_;
+    std::mutex mutex;
+    std::size_t count{ 0 };
+    AsyncEvent done;
 };
 
 } // namespace detail
@@ -30,7 +30,9 @@ struct LatchState
  * @brief Count-down latch for one-time synchronization.
  *
  * wait() suspends until the initial count reaches zero via countDown(); once
- * released it returns immediately forever (manual-reset semantics). Thread-safe.
+ * released it returns immediately forever (manual-reset semantics). A latch
+ * constructed with a count of zero is already released: wait() completes
+ * without suspending and isReady() reports true from the start. Thread-safe.
  */
 class AsyncLatch
 {
@@ -42,7 +44,14 @@ class AsyncLatch
      */
     explicit AsyncLatch(std::size_t count) : state_(std::make_shared<detail::LatchState>())
     {
-        state_->count_ = count;
+        state_->count = count;
+        if (count == 0)
+        {
+            // A latch that starts at zero is already released: wait() must not
+            // suspend, otherwise it would hang forever (isReady() already
+            // reports true for it, and no countDown() is pending).
+            state_->done.set();
+        }
     }
 
     AsyncLatch(const AsyncLatch&) = delete;
@@ -57,17 +66,17 @@ class AsyncLatch
     {
         bool ready = false;
         {
-            std::lock_guard<std::mutex> lock(state_->mutex_);
-            if (n > state_->count_)
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            if (n > state_->count)
             {
-                n = state_->count_;
+                n = state_->count;
             }
-            state_->count_ -= n;
-            ready = (state_->count_ == 0);
+            state_->count -= n;
+            ready = (state_->count == 0);
         }
         if (ready)
         {
-            state_->done_.set();
+            state_->done.set();
         }
     }
 
@@ -79,8 +88,8 @@ class AsyncLatch
     [[nodiscard]]
     bool isReady() const
     {
-        std::lock_guard<std::mutex> lock(state_->mutex_);
-        return state_->count_ == 0;
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return state_->count == 0;
     }
 
     /**
@@ -92,7 +101,7 @@ class AsyncLatch
     Task<void> wait()
     {
         auto state = state_; // Keep the latch alive while awaiting.
-        co_await state->done_;
+        co_await state->done;
     }
 
   private:

@@ -2,7 +2,6 @@
 
 #include "async_global.hpp"
 
-#include <algorithm>
 #include <coroutine>
 #include <exception>
 #include <memory>
@@ -29,11 +28,11 @@ namespace detail {
 template<typename T>
 struct TcsState
 {
-    std::mutex mutex_;
-    bool completed_{ false };
-    std::optional<T> value_{};
-    std::exception_ptr exception_{};
-    std::vector<std::coroutine_handle<>> waiters_;
+    std::mutex mutex;
+    bool completed{ false };
+    std::optional<T> value{};
+    std::exception_ptr exception{};
+    std::vector<std::coroutine_handle<>> waiters;
 };
 
 /**
@@ -42,10 +41,10 @@ struct TcsState
 template<>
 struct TcsState<void>
 {
-    std::mutex mutex_;
-    bool completed_{ false };
-    std::exception_ptr exception_{};
-    std::vector<std::coroutine_handle<>> waiters_;
+    std::mutex mutex;
+    bool completed{ false };
+    std::exception_ptr exception{};
+    std::vector<std::coroutine_handle<>> waiters;
 };
 
 /**
@@ -68,9 +67,8 @@ class TcsAwaiter
     {
         if (handle_)
         {
-            std::lock_guard<std::mutex> lock(state_->mutex_);
-            auto& waiters = state_->waiters_;
-            waiters.erase(std::remove(waiters.begin(), waiters.end(), handle_), waiters.end());
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            std::erase(state_->waiters, handle_);
         }
     }
 
@@ -82,8 +80,8 @@ class TcsAwaiter
     [[nodiscard]]
     bool await_ready() const noexcept
     {
-        std::lock_guard<std::mutex> lock(state_->mutex_);
-        return state_->completed_;
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return state_->completed;
     }
 
     /**
@@ -94,12 +92,12 @@ class TcsAwaiter
     bool await_suspend(std::coroutine_handle<> h) noexcept
     {
         handle_ = h;
-        std::lock_guard<std::mutex> lock(state_->mutex_);
-        if (state_->completed_)
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        if (state_->completed)
         {
             return false; // Already completed; do not suspend.
         }
-        state_->waiters_.push_back(h);
+        state_->waiters.push_back(h);
         return true;
     }
 
@@ -110,13 +108,13 @@ class TcsAwaiter
      */
     decltype(auto) await_resume()
     {
-        if (state_->exception_)
+        if (state_->exception)
         {
-            std::rethrow_exception(state_->exception_);
+            std::rethrow_exception(state_->exception);
         }
         if constexpr (!std::is_void_v<T>)
         {
-            return std::move(*state_->value_);
+            return std::move(*state_->value);
         }
     }
 
@@ -140,13 +138,13 @@ inline void resumeWaitersOneByOne(const std::shared_ptr<TcsState<T>>& state) noe
     {
         std::coroutine_handle<> h;
         {
-            std::lock_guard<std::mutex> lock(state->mutex_);
-            if (state->waiters_.empty())
+            std::lock_guard<std::mutex> lock(state->mutex);
+            if (state->waiters.empty())
             {
                 break;
             }
-            h = state->waiters_.back();
-            state->waiters_.pop_back();
+            h = state->waiters.back();
+            state->waiters.pop_back();
         }
         h.resume(); // Resume outside the lock.
     }
@@ -187,8 +185,8 @@ class TaskCompletionSource
     [[nodiscard]]
     bool isCompleted() const
     {
-        std::lock_guard<std::mutex> lock(impl_->mutex_);
-        return impl_->completed_;
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        return impl_->completed;
     }
 
     /**
@@ -199,13 +197,13 @@ class TaskCompletionSource
     void setResult(T value)
     {
         {
-            std::lock_guard<std::mutex> lock(impl_->mutex_);
-            if (impl_->completed_)
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            if (impl_->completed)
             {
                 throw std::logic_error("async::TaskCompletionSource: already completed");
             }
-            impl_->value_.emplace(std::move(value));
-            impl_->completed_ = true;
+            impl_->value.emplace(std::move(value));
+            impl_->completed = true;
         }
         detail::resumeWaitersOneByOne(impl_);
     }
@@ -219,13 +217,13 @@ class TaskCompletionSource
     bool trySetResult(T value)
     {
         {
-            std::lock_guard<std::mutex> lock(impl_->mutex_);
-            if (impl_->completed_)
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            if (impl_->completed)
             {
                 return false;
             }
-            impl_->value_.emplace(std::move(value));
-            impl_->completed_ = true;
+            impl_->value.emplace(std::move(value));
+            impl_->completed = true;
         }
         detail::resumeWaitersOneByOne(impl_);
         return true;
@@ -243,13 +241,13 @@ class TaskCompletionSource
             throw std::invalid_argument("async::TaskCompletionSource: null exception");
         }
         {
-            std::lock_guard<std::mutex> lock(impl_->mutex_);
-            if (impl_->completed_)
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            if (impl_->completed)
             {
                 throw std::logic_error("async::TaskCompletionSource: already completed");
             }
-            impl_->exception_ = std::move(exception);
-            impl_->completed_ = true;
+            impl_->exception = std::move(exception);
+            impl_->completed = true;
         }
         detail::resumeWaitersOneByOne(impl_);
     }
@@ -279,13 +277,13 @@ class TaskCompletionSource
             return false;
         }
         {
-            std::lock_guard<std::mutex> lock(impl_->mutex_);
-            if (impl_->completed_)
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            if (impl_->completed)
             {
                 return false;
             }
-            impl_->exception_ = std::move(exception);
-            impl_->completed_ = true;
+            impl_->exception = std::move(exception);
+            impl_->completed = true;
         }
         detail::resumeWaitersOneByOne(impl_);
         return true;
@@ -350,8 +348,8 @@ class TaskCompletionSource<void>
     [[nodiscard]]
     bool isCompleted() const
     {
-        std::lock_guard<std::mutex> lock(impl_->mutex_);
-        return impl_->completed_;
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        return impl_->completed;
     }
 
     /**
@@ -360,12 +358,12 @@ class TaskCompletionSource<void>
     void setResult()
     {
         {
-            std::lock_guard<std::mutex> lock(impl_->mutex_);
-            if (impl_->completed_)
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            if (impl_->completed)
             {
                 throw std::logic_error("async::TaskCompletionSource: already completed");
             }
-            impl_->completed_ = true;
+            impl_->completed = true;
         }
         detail::resumeWaitersOneByOne(impl_);
     }
@@ -378,12 +376,12 @@ class TaskCompletionSource<void>
     bool trySetResult()
     {
         {
-            std::lock_guard<std::mutex> lock(impl_->mutex_);
-            if (impl_->completed_)
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            if (impl_->completed)
             {
                 return false;
             }
-            impl_->completed_ = true;
+            impl_->completed = true;
         }
         detail::resumeWaitersOneByOne(impl_);
         return true;
@@ -401,13 +399,13 @@ class TaskCompletionSource<void>
             throw std::invalid_argument("async::TaskCompletionSource: null exception");
         }
         {
-            std::lock_guard<std::mutex> lock(impl_->mutex_);
-            if (impl_->completed_)
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            if (impl_->completed)
             {
                 throw std::logic_error("async::TaskCompletionSource: already completed");
             }
-            impl_->exception_ = std::move(exception);
-            impl_->completed_ = true;
+            impl_->exception = std::move(exception);
+            impl_->completed = true;
         }
         detail::resumeWaitersOneByOne(impl_);
     }
@@ -437,13 +435,13 @@ class TaskCompletionSource<void>
             return false;
         }
         {
-            std::lock_guard<std::mutex> lock(impl_->mutex_);
-            if (impl_->completed_)
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            if (impl_->completed)
             {
                 return false;
             }
-            impl_->exception_ = std::move(exception);
-            impl_->completed_ = true;
+            impl_->exception = std::move(exception);
+            impl_->completed = true;
         }
         detail::resumeWaitersOneByOne(impl_);
         return true;

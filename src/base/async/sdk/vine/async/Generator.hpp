@@ -95,11 +95,16 @@ class Generator
             coro_.resume();
             if (coro_.done())
             {
-                if (auto ex = coro_.promise().exception())
+                // Read the outcome and invalidate before rethrowing: a throwing
+                // increment must leave `it == end()`. Leaving the handle set
+                // would make the caller's next increment resume a coroutine
+                // parked at final_suspend, which is undefined behaviour.
+                std::exception_ptr ex = coro_.promise().exception();
+                coro_ = nullptr;
+                if (ex)
                 {
                     std::rethrow_exception(ex);
                 }
-                coro_ = nullptr;
             }
             return *this;
         }
@@ -157,11 +162,17 @@ class Generator
             coro_.resume();
             if (coro_.done())
             {
-                if (auto ex = coro_.promise().exception())
+                // The generator finished before (or without) its first co_yield.
+                // This frame is done, so free it here: dropping the handle instead
+                // would leak it, and rethrowing before dropping it would leave a
+                // handle parked at final_suspend behind.
+                std::exception_ptr ex = coro_.promise().exception();
+                coro_.destroy();
+                coro_ = nullptr;
+                if (ex)
                 {
                     std::rethrow_exception(ex);
                 }
-                coro_ = nullptr;
             }
         }
         return iterator{ coro_ };

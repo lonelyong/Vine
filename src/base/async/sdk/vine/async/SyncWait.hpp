@@ -37,7 +37,7 @@ template<typename T>
 class SyncWaitTask
 {
   public:
-    struct promise_type : detail::TaskPromiseReturn<T, promise_type>
+    struct promise_type : detail::TaskPromiseReturn<T>
     {
         [[nodiscard]]
         SyncWaitTask get_return_object() noexcept
@@ -57,9 +57,9 @@ class SyncWaitTask
 
             void await_suspend(std::coroutine_handle<promise_type> h) noexcept
             {
-                if (h.promise().event_)
+                if (h.promise().event)
                 {
-                    h.promise().event_->set();
+                    h.promise().event->set();
                 }
             }
 
@@ -68,10 +68,10 @@ class SyncWaitTask
 
         FinalAwaiter final_suspend() noexcept { return {}; }
 
-        void unhandled_exception() noexcept { exception_ = std::current_exception(); }
+        void unhandled_exception() noexcept { exception = std::current_exception(); }
 
-        std::exception_ptr exception_{};
-        SyncWaitEvent* event_{ nullptr };
+        std::exception_ptr exception{};
+        SyncWaitEvent* event{ nullptr };
     };
 
     using handle_type = std::coroutine_handle<promise_type>;
@@ -134,15 +134,15 @@ T syncWait(Task<T>&& task)
     detail::SyncWaitEvent event;
 
     auto syncTask = detail::makeSyncWaitTask(std::move(task));
-    syncTask.handle_.promise().event_ = &event;
+    syncTask.handle_.promise().event = &event;
 
     syncTask.handle_.resume();
     event.wait();
 
     auto& promise = syncTask.handle_.promise();
-    if (promise.exception_)
+    if (promise.exception)
     {
-        std::rethrow_exception(std::move(promise.exception_));
+        std::rethrow_exception(std::move(promise.exception));
     }
 
     if constexpr (!std::is_void_v<T>)

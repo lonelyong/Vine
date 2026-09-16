@@ -72,7 +72,7 @@ class WhenChild
   public:
     struct promise_type
     {
-        std::shared_ptr<WhenState> state_;
+        std::shared_ptr<WhenState> state;
 
         [[nodiscard]]
         WhenChild get_return_object() noexcept
@@ -95,15 +95,15 @@ class WhenChild
                 // A thread-stack copy keeps the state alive through done.set(),
                 // which resumes the composition to completion and destroys the
                 // frames (children included) that also hold references.
-                auto  state = h.promise().state_;
+                auto  state = h.promise().state;
                 bool  finish = false;
 
                 if (state->mode == WhenMode::All)
                 {
                     // Record the first failure among all children, in any order.
-                    if (h.promise().exception_ && !state->exception_recorded.exchange(true))
+                    if (h.promise().exception && !state->exception_recorded.exchange(true))
                     {
-                        state->first_exception = std::move(h.promise().exception_);
+                        state->first_exception = std::move(h.promise().exception);
                     }
                     finish = (--state->remaining == 0);
                 }
@@ -111,9 +111,9 @@ class WhenChild
                 {
                     // Only the first child to finish publishes its failure.
                     finish = !state->any_finished.exchange(true);
-                    if (finish && h.promise().exception_)
+                    if (finish && h.promise().exception)
                     {
-                        state->first_exception = std::move(h.promise().exception_);
+                        state->first_exception = std::move(h.promise().exception);
                     }
                 }
 
@@ -133,9 +133,9 @@ class WhenChild
 
         void return_void() noexcept {}
 
-        void unhandled_exception() noexcept { exception_ = std::current_exception(); }
+        void unhandled_exception() noexcept { exception = std::current_exception(); }
 
-        std::exception_ptr exception_{};
+        std::exception_ptr exception{};
     };
 
     using handle_type = std::coroutine_handle<promise_type>;
@@ -174,7 +174,7 @@ class WhenChild
     void start(std::shared_ptr<WhenState> state) noexcept
     {
         assert(handle_);
-        handle_.promise().state_ = std::move(state);
+        handle_.promise().state = std::move(state);
         handle_.resume();
     }
 
@@ -185,6 +185,69 @@ class WhenChild
 inline WhenChild composeChild(AnyTask task)
 {
     co_await std::move(task);
+}
+
+/**
+ * @brief Drives a whenAll/whenAny over void tasks.
+ *
+ * Both modes share the whole lifecycle: pre-check the token, build the shared
+ * state, own and start every child, wake on completion or cancellation, then
+ * rethrow the recorded outcome. Only the completion rule differs, so it is the
+ * single parameter this driver takes.
+ *
+ * @param mode Completion rule: All waits for every child, Any for the first.
+ * @param tasks Tasks to await; each element must be non-empty.
+ * @param token Token checked before any child is started.
+ * @return A task completing per mode, rethrowing the first child failure.
+ */
+[[nodiscard]]
+Task<void> whenRace(WhenMode mode, std::vector<AnyTask> tasks, CancellationToken token)
+{
+    throwIfCancelled(token);
+
+    const std::size_t count = tasks.size();
+    if (count == 0)
+    {
+        co_return;
+    }
+
+    // Heap-allocated so the completion event outlives the composition frame:
+    // done.set() resumes this coroutine to completion, and destroying the frame
+    // (which owns the event) while set() runs would be a use-after-free. The
+    // shared state stays alive through set() via thread-stack copies held by
+    // the stop callback and by the completing child's FinalAwaiter.
+    auto state = std::make_shared<WhenState>();
+    state->mode      = mode;
+    state->remaining = count;
+
+    // Wakes the composition on cancellation; flag-only, no coroutine resume race.
+    std::stop_callback cancellation{ token, [state]() noexcept {
+        auto s = state; // Thread-stack copy keeps the state alive through set().
+        s->cancelled = true;
+        s->done.set();
+    } };
+
+    std::vector<WhenChild> children;
+    children.reserve(count);
+    for (auto& task : tasks)
+    {
+        children.push_back(composeChild(std::move(task)));
+    }
+    for (auto& child : children)
+    {
+        child.start(state);
+    }
+
+    co_await state->done;
+
+    if (state->cancelled)
+    {
+        throw TaskCancelledException{};
+    }
+    if (state->first_exception)
+    {
+        std::rethrow_exception(state->first_exception);
+    }
 }
 
 } // namespace detail
@@ -204,53 +267,12 @@ inline WhenChild composeChild(AnyTask task)
  * @param token Optional cancellation token.
  * @return A task that completes when every input task completes.
  */
+[[nodiscard]]
 Task<void> whenAll(std::vector<AnyTask> tasks, CancellationToken token = {})
 {
-    throwIfCancelled(token);
-
-    const std::size_t count = tasks.size();
-    if (count == 0)
-    {
-        co_return;
-    }
-
-    // Heap-allocated so the completion event outlives the composition frame:
-    // done.set() resumes this coroutine to completion, and destroying the frame
-    // (which owns the event) while set() runs would be a use-after-free. The
-    // shared state stays alive through set() via thread-stack copies held by
-    // the stop callback and by the completing child's FinalAwaiter.
-    auto state = std::make_shared<detail::WhenState>();
-    state->mode      = detail::WhenMode::All;
-    state->remaining = count;
-
-    // Wakes the composition on cancellation; flag-only, no coroutine resume race.
-    std::stop_callback cancellation{ token, [state]() noexcept {
-        auto s = state; // Thread-stack copy keeps the state alive through set().
-        s->cancelled = true;
-        s->done.set();
-    } };
-
-    std::vector<detail::WhenChild> children;
-    children.reserve(count);
-    for (auto& task : tasks)
-    {
-        children.push_back(detail::composeChild(std::move(task)));
-    }
-    for (auto& child : children)
-    {
-        child.start(state);
-    }
-
-    co_await state->done;
-
-    if (state->cancelled)
-    {
-        throw TaskCancelledException{};
-    }
-    if (state->first_exception)
-    {
-        std::rethrow_exception(state->first_exception);
-    }
+    // Forwarded, not wrapped in another coroutine: the driver is already lazy and
+    // owns the children, so an extra frame would buy nothing.
+    return detail::whenRace(detail::WhenMode::All, std::move(tasks), std::move(token));
 }
 
 /**
@@ -267,48 +289,10 @@ Task<void> whenAll(std::vector<AnyTask> tasks, CancellationToken token = {})
  * @param token Optional cancellation token.
  * @return A task that completes when the first input task completes.
  */
+[[nodiscard]]
 Task<void> whenAny(std::vector<AnyTask> tasks, CancellationToken token = {})
 {
-    throwIfCancelled(token);
-
-    const std::size_t count = tasks.size();
-    if (count == 0)
-    {
-        co_return;
-    }
-
-    auto state = std::make_shared<detail::WhenState>();
-    state->mode      = detail::WhenMode::Any;
-    state->remaining = count;
-
-    // Wakes the composition on cancellation; flag-only, no coroutine resume race.
-    std::stop_callback cancellation{ token, [state]() noexcept {
-        auto s = state; // Thread-stack copy keeps the state alive through set().
-        s->cancelled = true;
-        s->done.set();
-    } };
-
-    std::vector<detail::WhenChild> children;
-    children.reserve(count);
-    for (auto& task : tasks)
-    {
-        children.push_back(detail::composeChild(std::move(task)));
-    }
-    for (auto& child : children)
-    {
-        child.start(state);
-    }
-
-    co_await state->done;
-
-    if (state->cancelled)
-    {
-        throw TaskCancelledException{};
-    }
-    if (state->first_exception)
-    {
-        std::rethrow_exception(state->first_exception);
-    }
+    return detail::whenRace(detail::WhenMode::Any, std::move(tasks), std::move(token));
 }
 
 namespace detail {
@@ -349,6 +333,7 @@ WhenChild composeChildResult(Task<T> task, std::optional<T>* slot)
  * @return A task producing the tuple of all results.
  */
 template<typename... Ts>
+[[nodiscard]]
 Task<std::tuple<Ts...>> whenAllImpl(CancellationToken token, Task<Ts>... tasks)
 {
     throwIfCancelled(token);
@@ -413,9 +398,9 @@ class WhenAnyChild
   public:
     struct promise_type
     {
-        std::shared_ptr<WhenAnyState<T>> state_{};
-        std::exception_ptr exception_{};
-        std::optional<T> result_{};
+        std::shared_ptr<WhenAnyState<T>> state{};
+        std::exception_ptr exception{};
+        std::optional<T> result{};
 
         [[nodiscard]]
         WhenAnyChild get_return_object() noexcept
@@ -437,19 +422,19 @@ class WhenAnyChild
             {
                 auto& p = h.promise();
                 // Thread-stack copy keeps the state alive through done.set().
-                auto  state = p.state_;
+                auto  state = p.state;
 
                 // Only the first child to finish publishes its outcome.
                 if (!state->first_done.exchange(true))
                 {
-                    if (p.exception_)
+                    if (p.exception)
                     {
-                        state->exception = std::move(p.exception_);
+                        state->exception = std::move(p.exception);
                     }
                     else
                     {
-                        assert(p.result_.has_value());
-                        state->result.emplace(std::move(p.result_).value());
+                        assert(p.result.has_value());
+                        state->result.emplace(std::move(p.result).value());
                     }
                     state->done.set();
                 }
@@ -465,10 +450,10 @@ class WhenAnyChild
 
         void return_value(T value)
         {
-            result_.emplace(std::move(value));
+            result.emplace(std::move(value));
         }
 
-        void unhandled_exception() noexcept { exception_ = std::current_exception(); }
+        void unhandled_exception() noexcept { exception = std::current_exception(); }
     };
 
     using handle_type = std::coroutine_handle<promise_type>;
@@ -506,7 +491,7 @@ class WhenAnyChild
     /// Binds the shared state and starts driving the sub-task.
     void start(std::shared_ptr<WhenAnyState<T>> state) noexcept
     {
-        handle_.promise().state_ = std::move(state);
+        handle_.promise().state = std::move(state);
         handle_.resume();
     }
 
@@ -553,6 +538,7 @@ WhenAnyChild<T> composeAnyChild(Task<T> task)
  */
 template<typename... Ts>
     requires (sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
+[[nodiscard]]
 Task<std::tuple<Ts...>> whenAll(Task<Ts>... tasks)
 {
     co_return co_await detail::whenAllImpl(CancellationToken{}, std::move(tasks)...);
@@ -560,6 +546,7 @@ Task<std::tuple<Ts...>> whenAll(Task<Ts>... tasks)
 
 template<typename... Ts>
     requires (sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
+[[nodiscard]]
 Task<std::tuple<Ts...>> whenAll(CancellationToken token, Task<Ts>... tasks)
 {
     co_return co_await detail::whenAllImpl(std::move(token), std::move(tasks)...);
@@ -582,6 +569,7 @@ Task<std::tuple<Ts...>> whenAll(CancellationToken token, Task<Ts>... tasks)
  */
 template<typename T>
     requires (!std::is_void_v<T>)
+[[nodiscard]]
 Task<std::vector<T>> whenAll(std::vector<Task<T>> tasks, CancellationToken token = {})
 {
     throwIfCancelled(token);
@@ -651,6 +639,7 @@ Task<std::vector<T>> whenAll(std::vector<Task<T>> tasks, CancellationToken token
  */
 template<typename T>
     requires (!std::is_void_v<T>)
+[[nodiscard]]
 Task<T> whenAny(std::vector<Task<T>> tasks, CancellationToken token = {})
 {
     throwIfCancelled(token);
@@ -714,6 +703,7 @@ Task<T> whenAny(std::vector<Task<T>> tasks, CancellationToken token = {})
  */
 template<typename T, typename... Ts>
     requires (!std::is_void_v<T>) && (std::is_same_v<T, Ts> && ...)
+[[nodiscard]]
 Task<T> whenAny(Task<T> first, Task<Ts>... rest)
 {
     std::vector<Task<T>> tasks;
@@ -725,6 +715,7 @@ Task<T> whenAny(Task<T> first, Task<Ts>... rest)
 
 template<typename T, typename... Ts>
     requires (!std::is_void_v<T>) && (std::is_same_v<T, Ts> && ...)
+[[nodiscard]]
 Task<T> whenAny(CancellationToken token, Task<T> first, Task<Ts>... rest)
 {
     throwIfCancelled(token);

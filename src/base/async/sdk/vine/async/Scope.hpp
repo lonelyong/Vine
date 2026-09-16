@@ -28,10 +28,10 @@ namespace detail {
  */
 struct ScopeState
 {
-    std::mutex mutex_;
-    std::size_t pending_{ 0 };
-    std::exception_ptr first_exception_{};
-    AsyncEvent done_;
+    std::mutex mutex;
+    std::size_t pending{ 0 };
+    std::exception_ptr first_exception{};
+    AsyncEvent done;
 };
 
 /**
@@ -40,7 +40,7 @@ struct ScopeState
  * Runs as a DetachedTask: the child starts eagerly and owns itself, so it
  * never dangles even if the Scope goes out of scope first. On completion it
  * records the first exception and ticks the shared pending counter, setting
- * done_ when the last child finishes.
+ * done when the last child finishes.
  *
  * @tparam T Result type of the child task (ignored).
  * @param state Shared scope state.
@@ -55,21 +55,21 @@ DetachedTask runScopeChild(std::shared_ptr<ScopeState> state, Task<T> task)
     }
     catch (...)
     {
-        std::lock_guard<std::mutex> lock(state->mutex_);
-        if (!state->first_exception_)
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (!state->first_exception)
         {
-            state->first_exception_ = std::current_exception();
+            state->first_exception = std::current_exception();
         }
     }
 
     bool done_now = false;
     {
-        std::lock_guard<std::mutex> lock(state->mutex_);
-        done_now = (--state->pending_ == 0);
+        std::lock_guard<std::mutex> lock(state->mutex);
+        done_now = (--state->pending == 0);
     }
     if (done_now)
     {
-        state->done_.set();
+        state->done.set();
     }
 }
 
@@ -115,14 +115,14 @@ class Scope
     void add(Task<T> task)
     {
         {
-            std::lock_guard<std::mutex> lock(state_->mutex_);
-            if (state_->pending_ == 0)
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            if (state_->pending == 0)
             {
                 // A fresh batch starts: clear the previous completion state.
-                state_->done_.reset();
-                state_->first_exception_ = nullptr;
+                state_->done.reset();
+                state_->first_exception = nullptr;
             }
-            ++state_->pending_;
+            ++state_->pending;
         }
         detail::runScopeChild(state_, std::move(task));
     }
@@ -145,22 +145,22 @@ class Scope
 
         // Cancellation only wakes the wait; join() re-checks the token and the
         // pending counter after every wakeup, so a cancelled join never leaves
-        // done_ armed for a later join().
+        // done armed for a later join().
         std::stop_callback cancellation{ token, [state = state_]() noexcept {
-            state->done_.set();
+            state->done.set();
         } };
 
         for (;;)
         {
             {
-                std::lock_guard<std::mutex> lock(state_->mutex_);
-                if (state_->pending_ == 0)
+                std::lock_guard<std::mutex> lock(state_->mutex);
+                if (state_->pending == 0)
                 {
                     break;
                 }
-                // Re-arm before waiting: done_ is manual-reset and may have
+                // Re-arm before waiting: done is manual-reset and may have
                 // been set by a previous cancellation.
-                state_->done_.reset();
+                state_->done.reset();
             }
 
             if (token.stop_requested())
@@ -168,7 +168,7 @@ class Scope
                 throw TaskCancelledException{};
             }
 
-            co_await state_->done_;
+            co_await state_->done;
 
             if (token.stop_requested())
             {
@@ -178,8 +178,8 @@ class Scope
 
         std::exception_ptr ex;
         {
-            std::lock_guard<std::mutex> lock(state_->mutex_);
-            ex = state_->first_exception_;
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            ex = state_->first_exception;
         }
         if (ex)
         {

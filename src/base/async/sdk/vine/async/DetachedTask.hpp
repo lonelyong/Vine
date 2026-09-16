@@ -2,6 +2,7 @@
 
 #include "async_global.hpp"
 
+#include <atomic>
 #include <coroutine>
 #include <exception>
 
@@ -12,11 +13,13 @@ namespace detail {
 /**
  * @brief Handler invoked when a detached coroutine throws.
  *
- * If null the process is terminated; set it to log instead of aborting.
+ * If null the process is terminated; set it to log instead of aborting. Atomic
+ * because it is read by whichever thread a detached coroutine happens to fail
+ * on, which need not be the thread that installed it.
  */
 using DetachedExceptionHandler = void (*)(const std::exception_ptr&) noexcept;
 
-inline DetachedExceptionHandler s_detachedExceptionHandler = nullptr;
+inline std::atomic<DetachedExceptionHandler> s_detachedExceptionHandler{ nullptr };
 
 } // namespace detail
 
@@ -54,9 +57,9 @@ class DetachedTask
 
         void unhandled_exception() noexcept
         {
-            if (detail::s_detachedExceptionHandler)
+            if (auto handler = detail::s_detachedExceptionHandler.load(std::memory_order_acquire))
             {
-                detail::s_detachedExceptionHandler(std::current_exception());
+                handler(std::current_exception());
             }
             else
             {
@@ -77,10 +80,11 @@ class DetachedTask
  *
  * @param handler Callback receiving the captured exception. It may log and
  * return, in which case the exception is swallowed and the coroutine completes.
+ * May be called from any thread; it does not wait for handlers already running.
  */
 inline void setDetachedExceptionHandler(detail::DetachedExceptionHandler handler) noexcept
 {
-    detail::s_detachedExceptionHandler = handler;
+    detail::s_detachedExceptionHandler.store(handler, std::memory_order_release);
 }
 
 V_ASYNC_NS_END

@@ -24,15 +24,15 @@ class CvWaiter;
  *
  * The waiter list is intrusive (nodes live in coroutine frames), so awaiting
  * never allocates and there is no bad_alloc in the noexcept await path.
- * notified_ is a sticky flag that preserves a notification issued while no
+ * notified is a sticky flag that preserves a notification issued while no
  * waiter was registered; see AsyncConditionVariable for the exact semantics.
  */
 struct CvState
 {
-    std::mutex mutex_;
-    CvWaiter* head_{ nullptr };
-    CvWaiter* tail_{ nullptr };
-    bool notified_{ false };
+    std::mutex mutex;
+    CvWaiter* head{ nullptr };
+    CvWaiter* tail{ nullptr };
+    bool notified{ false };
 };
 
 /**
@@ -101,30 +101,30 @@ inline bool CvWaiter::await_suspend(std::coroutine_handle<> h) noexcept
 {
     assert(h);
     handle_ = h;
-    std::lock_guard<std::mutex> lock(state_->mutex_);
-    if (state_->notified_)
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    if (state_->notified)
     {
-        state_->notified_ = false;
+        state_->notified = false;
         return false; // A pending notification was consumed; do not suspend.
     }
     queued_ = true;
-    prev_ = state_->tail_;
+    prev_ = state_->tail;
     next_ = nullptr;
-    if (state_->tail_)
+    if (state_->tail)
     {
-        state_->tail_->next_ = this;
+        state_->tail->next_ = this;
     }
     else
     {
-        state_->head_ = this;
+        state_->head = this;
     }
-    state_->tail_ = this;
+    state_->tail = this;
     return true;
 }
 
 inline CvWaiter::~CvWaiter()
 {
-    std::lock_guard<std::mutex> lock(state_->mutex_);
+    std::lock_guard<std::mutex> lock(state_->mutex);
     if (queued_)
     {
         if (prev_)
@@ -133,8 +133,8 @@ inline CvWaiter::~CvWaiter()
         }
         else
         {
-            assert(state_->head_ == this);
-            state_->head_ = next_;
+            assert(state_->head == this);
+            state_->head = next_;
         }
         if (next_)
         {
@@ -142,8 +142,8 @@ inline CvWaiter::~CvWaiter()
         }
         else
         {
-            assert(state_->tail_ == this);
-            state_->tail_ = prev_;
+            assert(state_->tail == this);
+            state_->tail = prev_;
         }
         queued_ = false;
         prev_ = nullptr;
@@ -210,18 +210,18 @@ class AsyncConditionVariable
     {
         detail::CvWaiter* w = nullptr;
         {
-            std::lock_guard<std::mutex> lock(state_->mutex_);
-            if (state_->head_)
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            if (state_->head)
             {
-                w = state_->head_;
-                state_->head_ = w->next_;
-                if (!state_->head_)
+                w = state_->head;
+                state_->head = w->next_;
+                if (!state_->head)
                 {
-                    state_->tail_ = nullptr;
+                    state_->tail = nullptr;
                 }
                 else
                 {
-                    state_->head_->prev_ = nullptr;
+                    state_->head->prev_ = nullptr;
                 }
                 w->next_ = nullptr;
                 w->prev_ = nullptr;
@@ -229,7 +229,7 @@ class AsyncConditionVariable
             }
             else
             {
-                state_->notified_ = true; // Preserve the notification.
+                state_->notified = true; // Preserve the notification.
             }
         }
         if (w)
@@ -266,19 +266,19 @@ class AsyncConditionVariable
         {
             detail::CvWaiter* w = nullptr;
             {
-                std::lock_guard<std::mutex> lock(state_->mutex_);
-                if (state_->head_)
+                std::lock_guard<std::mutex> lock(state_->mutex);
+                if (state_->head)
                 {
                     woke_any = true;
-                    w = state_->head_;
-                    state_->head_ = w->next_;
-                    if (!state_->head_)
+                    w = state_->head;
+                    state_->head = w->next_;
+                    if (!state_->head)
                     {
-                        state_->tail_ = nullptr;
+                        state_->tail = nullptr;
                     }
                     else
                     {
-                        state_->head_->prev_ = nullptr;
+                        state_->head->prev_ = nullptr;
                     }
                     w->next_ = nullptr;
                     w->prev_ = nullptr;
@@ -288,7 +288,7 @@ class AsyncConditionVariable
                 {
                     if (!woke_any)
                     {
-                        state_->notified_ = true; // Preserve the notification.
+                        state_->notified = true; // Preserve the notification.
                     }
                     break;
                 }

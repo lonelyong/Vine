@@ -48,6 +48,7 @@ namespace detail {
  * @brief A task that "wins" the timeout race by throwing TimeoutException.
  */
 template<typename T>
+[[nodiscard]]
 Task<T> timeoutTask(std::chrono::milliseconds timeout, CancellationToken token)
 {
     co_await sleepFor(timeout, std::move(token));
@@ -72,6 +73,7 @@ Task<T> timeoutTask(std::chrono::milliseconds timeout, CancellationToken token)
  */
 template<typename T>
     requires (!std::is_void_v<T>)
+[[nodiscard]]
 Task<T> withTimeout(Task<T> task, std::chrono::milliseconds timeout, CancellationToken token = {})
 {
     std::vector<Task<T>> race;
@@ -88,6 +90,7 @@ Task<T> withTimeout(Task<T> task, std::chrono::milliseconds timeout, Cancellatio
  * @param token Optional token forwarded to the timer.
  * @return A task completing on success or throwing TimeoutException.
  */
+[[nodiscard]]
 inline Task<void> withTimeout(Task<void> task,
                               std::chrono::milliseconds timeout,
                               CancellationToken token = {})

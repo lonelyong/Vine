@@ -83,6 +83,7 @@ class ThreadPoolScheduler
  * @return A task that completes with the callable's result.
  */
 template<typename F, typename... Args>
+[[nodiscard]]
 Task<std::invoke_result_t<F, Args...>> runOn(vine::ThreadPool& pool, F f, Args... args)
 {
     // Hop to a pool worker before invoking the callable.
@@ -114,6 +115,7 @@ Task<std::invoke_result_t<F, Args...>> runOn(vine::ThreadPool& pool, F f, Args..
  * @return A task that completes with the callable's result.
  */
 template<typename F, typename... Args>
+[[nodiscard]]
 Task<std::invoke_result_t<F, Args...>> run(F f, Args... args)
 {
     co_return co_await runOn(vine::ThreadPool::defaultPool(), std::move(f), std::move(args)...);

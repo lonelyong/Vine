@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <coroutine>
+#include <cstdint>
 #include <mutex>
 
 V_ASYNC_NS_BEGIN
@@ -130,6 +131,14 @@ class AsyncEvent
         /// true while this awaiter is linked into the waiter list.
         bool queued_{ false };
 
+        /// Generation stamp: the event's set_epoch_ at the moment this awaiter
+        /// was queued. set() releases only waiters stamped before its own epoch,
+        /// so a waiter queued during the resume window (the next generation)
+        /// stays parked. Unlike a boundary pointer, the stamp survives the
+        /// destruction of any sibling waiter, so removing a waiter mid-set()
+        /// cannot make the release loop run past the boundary.
+        std::uint64_t epoch_{ 0 };
+
         /// List links; non-null while queued.
         Awaiter* next_{ nullptr };
         Awaiter* prev_{ nullptr };
@@ -152,13 +161,18 @@ class AsyncEvent
 
     mutable std::mutex mutex_;
     bool set_{ false };
+
+    /// Incremented at the start of every set(); each queued waiter is stamped
+    /// with the value current at that moment. See set() for the generation rule.
+    std::uint64_t set_epoch_{ 0 };
+
     Awaiter* head_{ nullptr };
     Awaiter* tail_{ nullptr };
 };
 
 inline void AsyncEvent::set() noexcept
 {
-    Awaiter* boundary = nullptr;
+    std::uint64_t epoch = 0;
     {
         std::lock_guard lock(mutex_);
         // Manual-reset: arm the flag exactly once, before any waiter is
@@ -166,17 +180,22 @@ inline void AsyncEvent::set() noexcept
         // reset() issued by a resumed waiter (e.g. an edge-triggered event
         // clearing itself for the next batch), so it must happen here.
         set_ = true;
-        // 代际边界：本次 set() 只释放到调用时队尾（boundary）为止。恢复期间
-        // （仍在本 set() 栈上）新入队的 waiter 属于下一代，留给下一次 set()，
-        // 否则顺序复用一个事件时会把新等待者提前唤醒。
-        boundary = tail_;
+        // 代际边界：先把世代号推进一格，再按排号释放——本次 set() 只释放调用时已
+        // 经入队的 waiter（代际号 < epoch）。恢复期间（仍在本 set() 栈上）新入队的
+        // waiter 打的是 epoch，属于下一代，留给下一次 set()，否则顺序复用一个事件
+        // 时会把新等待者提前唤醒。
+        //
+        // 边界必须用世代号、而不是 set() 时的队尾指针：恢复期间被唤醒的 waiter 可能
+        // 销毁队尾那个 waiter（whenAny 赢家销毁落败的兄弟），指针比较随后再也判不出
+        // 边界，循环会把下一代 waiter 也唤醒（虚假唤醒）。排号天然不受谁被销毁影响。
+        epoch = ++set_epoch_;
     }
     for (;;)
     {
         Awaiter* a = nullptr;
         {
             std::lock_guard lock(mutex_);
-            if (head_)
+            if (head_ && head_->epoch_ < epoch)
             {
                 a = head_;
                 head_ = a->next_;
@@ -197,15 +216,8 @@ inline void AsyncEvent::set() noexcept
         {
             break;
         }
-        // 在 resume 前记录是否到达代际边界：resume 可能销毁本协程帧（a 悬垂），
-        // 之后再比较指针是 UB；这里只比较指针值、不解引用。
-        const bool at_boundary = (a == boundary);
         assert(a->handle_);
         a->handle_.resume(); // Resume outside the lock.
-        if (at_boundary)
-        {
-            break;
-        }
     }
 }
 
@@ -247,6 +259,7 @@ inline void AsyncEvent::enqueue(Awaiter& a) noexcept
 {
     assert(!a.queued_);
     a.queued_ = true;
+    a.epoch_ = set_epoch_; // Stamp under mutex_: set() compares it under mutex_ too.
     a.prev_ = tail_;
     a.next_ = nullptr;
     if (tail_)

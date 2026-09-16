@@ -56,6 +56,7 @@ inline void throwIfCancelled(const CancellationToken& token)
  * @return A task that completes as task does, or throws TaskCancelledException.
  */
 template<typename T>
+[[nodiscard]]
 Task<T> withCancellation(CancellationToken token, Task<T> task)
 {
     throwIfCancelled(token);

@@ -39,6 +39,7 @@ auto resumeOn(S& s) -> decltype(s.schedule())
  * @return A task that runs task after scheduling onto s.
  */
 template<Schedulable S, typename T>
+[[nodiscard]]
 Task<T> scheduleOn(S& s, Task<T> task)
 {
     co_await s.schedule(); // Hop to the scheduler's context before running the task.

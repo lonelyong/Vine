@@ -11,7 +11,8 @@ V_ASYNC_NS_BEGIN
  * @brief Awaiter that yields the current thread's CPU slice.
  *
  * await_suspend calls std::this_thread::yield() so the OS can schedule other
- * threads, then resumes the coroutine inline on the same thread.
+ * threads, then transfers control back to the same coroutine, which therefore
+ * continues on the same thread without growing the machine stack.
  */
 class YieldAwaiter
 {
@@ -28,14 +29,21 @@ class YieldAwaiter
     }
 
     /**
-     * @brief Yields the CPU to the OS, then resumes inline.
+     * @brief Yields the CPU to the OS, then resumes by symmetric transfer.
+     *
+     * The handle is returned instead of resumed here: a nested h.resume() would
+     * leave this await_suspend frame and the coroutine's resume frame on the
+     * machine stack for every single yield, so a loop over co_await yield()
+     * would consume O(iterations) stack and overflow it. Returning the handle
+     * lets the compiler resume it without growing the stack.
      *
      * @param h Coroutine to resume after yielding.
+     * @return The same handle, transferred to instead of resumed inline.
      */
-    void await_suspend(std::coroutine_handle<> h) const noexcept
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> h) const noexcept
     {
         std::this_thread::yield();
-        h.resume();
+        return h;
     }
 
     void await_resume() const noexcept {}

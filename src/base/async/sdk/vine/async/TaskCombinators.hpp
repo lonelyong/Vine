@@ -42,6 +42,7 @@ struct AndThenResult<F, void>
  */
 template<typename T, typename F>
     requires (!std::is_void_v<T>)
+[[nodiscard]]
 Task<std::invoke_result_t<F, T>> transform(Task<T> task, F f)
 {
     co_return f(co_await std::move(task));
@@ -56,6 +57,7 @@ Task<std::invoke_result_t<F, T>> transform(Task<T> task, F f)
  * @return A task yielding f's return value.
  */
 template<typename F>
+[[nodiscard]]
 Task<std::invoke_result_t<F>> transform(Task<void> task, F f)
 {
     co_await std::move(task);
@@ -75,6 +77,7 @@ Task<std::invoke_result_t<F>> transform(Task<void> task, F f)
  * @return A task yielding the continuation's result.
  */
 template<typename T, typename F>
+[[nodiscard]]
 Task<typename detail::AndThenResult<F, T>::type> andThen(Task<T> task, F f)
 {
     if constexpr (std::is_void_v<T>)

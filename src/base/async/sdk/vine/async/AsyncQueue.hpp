@@ -2,7 +2,6 @@
 
 #include "async_global.hpp"
 
-#include <algorithm>
 #include <coroutine>
 #include <cstddef>
 #include <deque>
@@ -21,19 +20,19 @@ namespace detail {
 /**
  * @brief Shared state of an AsyncQueue.
  *
- * capacity_ == 0 means unbounded (push never suspends). poppers_/pushers_
+ * capacity == 0 means unbounded (push never suspends). poppers/pushers
  * hold the coroutines waiting for a value or room; handles are resumed outside
  * the mutex to avoid lock-held-resume deadlocks.
  */
 template<typename T>
 struct AsyncQueueState
 {
-    std::mutex mutex_;
-    std::size_t capacity_{ 0 };
-    std::deque<T> items_;
-    std::vector<std::coroutine_handle<>> poppers_;
-    std::vector<std::coroutine_handle<>> pushers_;
-    bool closed_{ false };
+    std::mutex mutex;
+    std::size_t capacity{ 0 };
+    std::deque<T> items;
+    std::vector<std::coroutine_handle<>> poppers;
+    std::vector<std::coroutine_handle<>> pushers;
+    bool closed{ false };
 };
 
 /**
@@ -48,21 +47,21 @@ T popOne(const std::shared_ptr<AsyncQueueState<T>>& state)
     std::vector<std::coroutine_handle<>> to_resume;
     T value;
     {
-        std::lock_guard<std::mutex> lock(state->mutex_);
-        if (state->items_.empty())
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (state->items.empty())
         {
-            if (state->closed_)
+            if (state->closed)
             {
                 throw std::runtime_error("async::AsyncQueue: closed");
             }
             throw std::logic_error("async::AsyncQueue: pop on empty queue");
         }
-        value = std::move(state->items_.front());
-        state->items_.pop_front();
-        if (!state->pushers_.empty())
+        value = std::move(state->items.front());
+        state->items.pop_front();
+        if (!state->pushers.empty())
         {
-            to_resume.push_back(state->pushers_.front());
-            state->pushers_.erase(state->pushers_.begin());
+            to_resume.push_back(state->pushers.front());
+            state->pushers.erase(state->pushers.begin());
         }
     }
     for (auto h : to_resume)
@@ -90,9 +89,8 @@ class QueuePopAwaiter
     {
         if (handle_)
         {
-            std::lock_guard<std::mutex> lock(state_->mutex_);
-            auto& waiters = state_->poppers_;
-            waiters.erase(std::remove(waiters.begin(), waiters.end(), handle_), waiters.end());
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            std::erase(state_->poppers, handle_);
         }
     }
 
@@ -104,19 +102,19 @@ class QueuePopAwaiter
     [[nodiscard]]
     bool await_ready() const noexcept
     {
-        std::lock_guard<std::mutex> lock(state_->mutex_);
-        return !state_->items_.empty() || state_->closed_;
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return !state_->items.empty() || state_->closed;
     }
 
     bool await_suspend(std::coroutine_handle<> h) noexcept
     {
         handle_ = h;
-        std::lock_guard<std::mutex> lock(state_->mutex_);
-        if (!state_->items_.empty() || state_->closed_)
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        if (!state_->items.empty() || state_->closed)
         {
             return false;
         }
-        state_->poppers_.push_back(h);
+        state_->poppers.push_back(h);
         return true;
     }
 
@@ -148,9 +146,8 @@ class QueuePushAwaiter
     {
         if (handle_)
         {
-            std::lock_guard<std::mutex> lock(state_->mutex_);
-            auto& waiters = state_->pushers_;
-            waiters.erase(std::remove(waiters.begin(), waiters.end(), handle_), waiters.end());
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            std::erase(state_->pushers, handle_);
         }
     }
 
@@ -162,21 +159,21 @@ class QueuePushAwaiter
     [[nodiscard]]
     bool await_ready() const noexcept
     {
-        std::lock_guard<std::mutex> lock(state_->mutex_);
-        return state_->closed_ || state_->capacity_ == 0
-            || state_->items_.size() < state_->capacity_;
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return state_->closed || state_->capacity == 0
+            || state_->items.size() < state_->capacity;
     }
 
     bool await_suspend(std::coroutine_handle<> h) noexcept
     {
         handle_ = h;
-        std::lock_guard<std::mutex> lock(state_->mutex_);
-        if (state_->closed_ || state_->capacity_ == 0
-            || state_->items_.size() < state_->capacity_)
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        if (state_->closed || state_->capacity == 0
+            || state_->items.size() < state_->capacity)
         {
             return false; // Room now; await_resume enqueues.
         }
-        state_->pushers_.push_back(h);
+        state_->pushers.push_back(h);
         return true;
     }
 
@@ -184,16 +181,16 @@ class QueuePushAwaiter
     {
         std::vector<std::coroutine_handle<>> to_resume;
         {
-            std::lock_guard<std::mutex> lock(state_->mutex_);
-            if (state_->closed_)
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            if (state_->closed)
             {
                 throw std::logic_error("async::AsyncQueue: push on closed queue");
             }
-            state_->items_.push_back(std::move(value_));
-            if (!state_->poppers_.empty())
+            state_->items.push_back(std::move(value_));
+            if (!state_->poppers.empty())
             {
-                to_resume.push_back(state_->poppers_.front());
-                state_->poppers_.erase(state_->poppers_.begin());
+                to_resume.push_back(state_->poppers.front());
+                state_->poppers.erase(state_->poppers.begin());
             }
         }
         for (auto h : to_resume)
@@ -234,7 +231,7 @@ class AsyncQueue
     explicit AsyncQueue(std::size_t capacity = 0) noexcept
       : state_(std::make_shared<detail::AsyncQueueState<T>>())
     {
-        state_->capacity_ = capacity;
+        state_->capacity = capacity;
     }
 
     AsyncQueue(const AsyncQueue&) = delete;
@@ -262,20 +259,20 @@ class AsyncQueue
     {
         std::vector<std::coroutine_handle<>> to_resume;
         {
-            std::lock_guard<std::mutex> lock(state_->mutex_);
-            if (state_->closed_)
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            if (state_->closed)
             {
                 return false;
             }
-            if (state_->capacity_ != 0 && state_->items_.size() >= state_->capacity_)
+            if (state_->capacity != 0 && state_->items.size() >= state_->capacity)
             {
                 return false;
             }
-            state_->items_.push_back(std::move(value));
-            if (!state_->poppers_.empty())
+            state_->items.push_back(std::move(value));
+            if (!state_->poppers.empty())
             {
-                to_resume.push_back(state_->poppers_.front());
-                state_->poppers_.erase(state_->poppers_.begin());
+                to_resume.push_back(state_->poppers.front());
+                state_->poppers.erase(state_->poppers.begin());
             }
         }
         for (auto h : to_resume)
@@ -329,17 +326,17 @@ class AsyncQueue
         {
             std::coroutine_handle<> h;
             {
-                std::lock_guard<std::mutex> lock(state_->mutex_);
-                state_->closed_ = true; // No new waiters register once closed.
-                if (!state_->poppers_.empty())
+                std::lock_guard<std::mutex> lock(state_->mutex);
+                state_->closed = true; // No new waiters register once closed.
+                if (!state_->poppers.empty())
                 {
-                    h = state_->poppers_.back();
-                    state_->poppers_.pop_back();
+                    h = state_->poppers.back();
+                    state_->poppers.pop_back();
                 }
-                else if (!state_->pushers_.empty())
+                else if (!state_->pushers.empty())
                 {
-                    h = state_->pushers_.back();
-                    state_->pushers_.pop_back();
+                    h = state_->pushers.back();
+                    state_->pushers.pop_back();
                 }
                 else
                 {
@@ -358,8 +355,8 @@ class AsyncQueue
     [[nodiscard]]
     bool isClosed() const
     {
-        std::lock_guard<std::mutex> lock(state_->mutex_);
-        return state_->closed_;
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return state_->closed;
     }
 
   private:

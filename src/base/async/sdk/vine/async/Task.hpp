@@ -19,49 +19,43 @@ namespace detail {
 /**
  * @brief State shared by every Task promise: continuation and exception.
  *
- * continuation_ links this task to the coroutine that awaits it: awaiting a
+ * continuation links this task to the coroutine that awaits it: awaiting a
  * Task stores the waiter's handle here, symmetric-transfers into the task
- * body, and TaskFinalAwaiter resumes continuation_ when the task completes.
+ * body, and TaskFinalAwaiter resumes continuation when the task completes.
  * This forms the await chain that unwinds control back to the caller on
  * suspension.
  */
 struct TaskPromiseBase
 {
     /// Non-owning handle of the coroutine awaiting this task; resumed on completion.
-    std::coroutine_handle<> continuation_{};
+    std::coroutine_handle<> continuation{};
 
     /// Exception captured by unhandled_exception, rethrown from await_resume.
-    std::exception_ptr exception_{};
+    std::exception_ptr exception{};
 };
 
 /**
- * @brief Storage for a Task result; empty for void.
+ * @brief Promise mix-in that turns co_return into the task's result.
+ *
+ * Holds the result slot for non-void tasks and provides return_void for void
+ * tasks, so a promise type can inherit one mix-in regardless of T. The slot is
+ * read by the Task's awaiter (and by syncWait's helper promise) after the body
+ * has finished.
  */
 template<typename T>
-struct TaskResult
+struct TaskPromiseReturn
 {
+    /// Result slot; empty until the body co_returns.
     std::optional<T> value{};
-};
 
-template<>
-struct TaskResult<void>
-{
-};
-
-/**
- * @brief Provides return_value for non-void tasks and return_void for void tasks.
- */
-template<typename T, typename Promise>
-struct TaskPromiseReturn : TaskResult<T>
-{
     void return_value(T value)
     {
         this->value.emplace(std::move(value));
     }
 };
 
-template<typename Promise>
-struct TaskPromiseReturn<void, Promise> : TaskResult<void>
+template<>
+struct TaskPromiseReturn<void>
 {
     void return_void() noexcept {}
 };
@@ -74,11 +68,11 @@ struct TaskPromiseReturn<void, Promise> : TaskResult<void>
  * returns a std::coroutine_handle<>, which is the "transfer rule" that tells
  * the compiler "symmetric-transfer to this coroutine" (as opposed to void,
  * which just hands control back to the caller). That is exactly how "the
- * child finishes and wakes up the parent": control jumps to continuation_.
+ *   child finishes and wakes up the parent": control jumps to continuation.
  *
  * await_ready() is always false, so the coroutine always suspends once at
  * completion and never resumes into a destroyed frame. If nobody awaited the
- * task, continuation_ is null and it transfers to std::noop_coroutine(); the
+ * task, continuation is null and it transfers to std::noop_coroutine(); the
  * frame is then freed by handle_.destroy().
  */
 template<typename Promise>
@@ -93,7 +87,7 @@ struct TaskFinalAwaiter
     /**
      * @brief The child finishes here and wakes up whoever awaited it.
      *
-     * Called at co_return. It reads continuation_ — the parent coroutine
+     * Called at co_return. It reads continuation — the parent coroutine
      * that Awaiter::await_suspend registered earlier — and symmetric-
      * transfers back to it: "I'm done, go resume the parent that is
      * waiting for my result." If nobody awaited the task, it transfers to
@@ -101,7 +95,7 @@ struct TaskFinalAwaiter
      */
     std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> h) noexcept
     {
-        auto continuation = h.promise().continuation_;
+        auto continuation = h.promise().continuation;
         return continuation ? continuation : std::noop_coroutine();
     }
 
@@ -147,12 +141,12 @@ class Task
      * - initial_suspend(): decides whether the body runs immediately.
      * - final_suspend(): decides what happens when the body co_returns.
      * - unhandled_exception(): catches whatever the body throws.
-     * It also inherits the shared state (continuation_ / exception_ / value)
+     * It also inherits the shared state (continuation / exception / value)
      * from TaskPromiseBase and TaskPromiseReturn, so the Task's awaiter and
      * final awaiter can find everything in one place.
      */
     struct promise_type : detail::TaskPromiseBase,
-                          detail::TaskPromiseReturn<T, promise_type>
+                          detail::TaskPromiseReturn<T>
     {
         /**
          * @brief Hands back the Task the caller receives.
@@ -210,7 +204,7 @@ class Task
          * the awaiting coroutine has resumed and collected the result.
          *
          * TaskFinalAwaiter::await_suspend() performs a symmetric transfer to
-         * the awaiting coroutine stored in continuation_. The parent then
+         * the awaiting coroutine stored in continuation. The parent then
          * resumes at the suspension point of co_await and obtains the result
          * through await_resume().
          *
@@ -224,7 +218,7 @@ class Task
          *   another coroutine.
          *
          * std::suspend_always uses the void form, so it cannot perform the
-         * required symmetric transfer to continuation_. Task therefore uses a
+         * required symmetric transfer to continuation. Task therefore uses a
          * custom TaskFinalAwaiter.
          *
          * @return An awaiter that suspends the completed coroutine and
@@ -233,7 +227,7 @@ class Task
         detail::TaskFinalAwaiter<promise_type> final_suspend() noexcept { return {}; }
 
         /// If the body throws, stash the exception so await_resume can rethrow it.
-        void unhandled_exception() noexcept { exception_ = std::current_exception(); }
+        void unhandled_exception() noexcept { exception = std::current_exception(); }
     };
 
     using handle_type = std::coroutine_handle<promise_type>;
@@ -334,7 +328,7 @@ class Task
          * Called by the compiler right after await_ready() returned false,
          * when the parent coroutine reaches this co_await. The parent is
          * about to suspend, so it does two things:
-         * 1. Saves its own handle as the task's continuation_ — "I'm going
+         * 1. Saves its own handle as the task's continuation — "I'm going
          *    to sleep, wake me up when you're done" — so the task knows
          *    whom to resume on completion.
          * 2. Returns the task's handle for symmetric transfer, so the thread
@@ -348,7 +342,7 @@ class Task
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> waiter) noexcept
         {
             // Save the parent's handle: "I'm sleeping, wake me up when done."
-            handle_.promise().continuation_ = waiter;
+            handle_.promise().continuation = waiter;
             // Jump straight into the child body instead of returning to the parent.
             return handle_;
         }
@@ -372,9 +366,9 @@ class Task
             }
 
             auto& promise = handle_.promise();
-            if (promise.exception_)
+            if (promise.exception)
             {
-                std::exception_ptr ex = std::move(promise.exception_);
+                std::exception_ptr ex = std::move(promise.exception);
                 destroy();
                 std::rethrow_exception(ex);
             }
@@ -460,6 +454,7 @@ using AnyTask = Task<void>;
  * @return A task that completes when task completes.
  */
 template<typename T>
+[[nodiscard]]
 Task<void> discard(Task<T> task)
 {
     co_await std::move(task);

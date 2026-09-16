@@ -32,10 +32,15 @@
 #include <atomic>
 #include <chrono>
 #include <coroutine>
+#include <cstddef>
 #include <memory>
 #include <stdexcept>
 #include <thread>
 #include <vector>
+
+#if defined(__linux__)
+#include <dirent.h>
+#endif
 
 using namespace vine;
 
@@ -2215,4 +2220,421 @@ TEST(TaskCompletionSourceTest, SetResultWinnerDestroysLoserIsSafe)
         runner.join();
         EXPECT_GE(completed.load(), 1);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests for the async-library defects found on 2026-09-17.
+// Each test names the invariant it pins down and the failure mode it guards.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+async::Generator<int> genEmpty()
+{
+    co_return;
+}
+
+async::Generator<int> genThrowBeforeYield()
+{
+    throw std::runtime_error("boom before the first value");
+    co_yield 1;
+}
+
+async::Task<void> yieldLoop(unsigned iterations)
+{
+    for (unsigned i = 0; i < iterations; ++i)
+    {
+        co_await async::yield();
+    }
+    co_return;
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+async::Task<void> yieldLoopDepth(unsigned iterations, std::ptrdiff_t& depth)
+{
+    char* top    = static_cast<char*>(__builtin_frame_address(0));
+    char* bottom = top;
+    for (unsigned i = 0; i < iterations; ++i)
+    {
+        bottom = static_cast<char*>(__builtin_frame_address(0));
+        co_await async::yield();
+    }
+    depth = top - bottom;
+    co_return;
+}
+#endif
+
+async::Task<void> eventGen2Waiter(async::AsyncEvent& event,
+                                  std::atomic<int>& woken,
+                                  std::atomic<int>& is_set)
+{
+    co_await event;
+    is_set.store(event.isSet() ? 1 : 0); // Woken while the event is clear => spurious.
+    ++woken;
+    co_return;
+}
+
+async::Task<void> eventReArmAndFinish(async::AsyncEvent& event,
+                                      async::Scope& scope,
+                                      std::atomic<int>& registered,
+                                      std::atomic<int>& gen2_woken,
+                                      std::atomic<int>& gen2_is_set)
+{
+    ++registered;
+    co_await event; // gen-1 waiter, queued first, so it is the first one resumed
+    event.reset();  // re-arm while set() is still unwinding (the read-loop pattern)
+    scope.add(eventGen2Waiter(event, gen2_woken, gen2_is_set)); // gen-2 waiter, queued now
+    co_return; // finishing makes whenAny the winner: the sibling below is destroyed
+}
+
+async::Task<void> eventBoundaryWaiter(async::AsyncEvent& event,
+                                      std::atomic<int>& registered,
+                                      std::atomic<int>& ran)
+{
+    ++registered;
+    co_await event; // gen-1 waiter, queued second => it is the generation boundary
+    ++ran;
+    co_return;
+}
+
+async::Task<void> eventRaceReArmWithBoundarySibling(async::AsyncEvent& event,
+                                                    async::Scope& scope,
+                                                    std::atomic<int>& registered,
+                                                    std::atomic<int>& gen2_woken,
+                                                    std::atomic<int>& gen2_is_set,
+                                                    std::atomic<int>& boundary_ran)
+{
+    std::vector<async::AnyTask> race;
+    race.push_back(async::discard(eventReArmAndFinish(event, scope, registered, gen2_woken, gen2_is_set)));
+    race.push_back(async::discard(eventBoundaryWaiter(event, registered, boundary_ran)));
+    co_await async::whenAny(std::move(race));
+}
+
+} // namespace
+
+TEST(AsyncDefectRegressionTest, ZeroCountLatchWaitReturnsImmediately)
+{
+    // Invariant: a latch whose count is already zero is released, so wait() must
+    // complete without suspending. Before the fix the done event was armed only
+    // by countDown(), so wait() hung forever while isReady() reported true.
+    // withTimeout turns that hang into a plain test failure.
+    async::AsyncLatch latch(0);
+    ASSERT_TRUE(latch.isReady());
+
+    EXPECT_NO_THROW(async::syncWait(async::withTimeout(latch.wait(), std::chrono::milliseconds(200))));
+}
+
+TEST(AsyncDefectRegressionTest, EventKeepsNextGenerationParkedWhenBoundaryIsDestroyed)
+{
+    // Invariant (documented on AsyncEvent::set): only the waiters queued at the
+    // moment set() is called are released; a waiter registered during the resume
+    // window waits for the next set().
+    //
+    // Before the fix the boundary was a pointer to the queue tail, so when the
+    // resumed waiter destroyed that tail (a whenAny winner abandoning its
+    // sibling) the release loop lost the boundary and went on to wake the
+    // next-generation waiter while the event was still clear - a spurious
+    // wakeup that breaks waiters which do not re-check their predicate (the
+    // sequential read loops in ConsoleUserIO / VisualUserIO).
+    async::AsyncEvent event;
+    async::Scope scope;
+    std::atomic<int> registered{ 0 };
+    std::atomic<int> gen2_woken{ 0 };
+    std::atomic<int> gen2_is_set{ -1 };
+    std::atomic<int> boundary_ran{ 0 };
+
+    std::thread runner([&] {
+        async::syncWait(eventRaceReArmWithBoundarySibling(
+            event, scope, registered, gen2_woken, gen2_is_set, boundary_ran));
+    });
+    while (registered.load() < 2)
+    {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20)); // both gen-1 waiters parked
+
+    event.set(); // set #1 releases the two gen-1 waiters only
+
+    // Precondition, so the test cannot pass vacuously: the boundary waiter was
+    // abandoned (not resumed), i.e. the boundary really did disappear while
+    // set() was unwinding.
+    EXPECT_EQ(boundary_ran.load(), 0);
+    // The invariant under test.
+    EXPECT_EQ(gen2_woken.load(), 0);
+    EXPECT_EQ(gen2_is_set.load(), -1);
+
+    runner.join();
+
+    event.set(); // set #2 releases the gen-2 waiter
+    async::syncWait(scope.join());
+    EXPECT_EQ(gen2_woken.load(), 1);
+    EXPECT_EQ(gen2_is_set.load(), 1); // ...and only while the event is set
+}
+
+TEST(AsyncDefectRegressionTest, FinishedGeneratorReleasesItsFrame)
+{
+    // Invariant: begin() owns the frame, so a generator that finishes before its
+    // first co_yield must free it (empty body, or a throw before the first
+    // value). Before the fix begin() dropped the handle without destroying the
+    // frame (leak) and rethrew before dropping it, which also left a handle
+    // parked at final_suspend. LeakSanitizer is what observes this: run under
+    // the ASan gate for the leak half of the evidence.
+    {
+        auto empty = genEmpty();
+        EXPECT_TRUE(empty.begin() == empty.end());
+    }
+    {
+        auto throwing = genThrowBeforeYield();
+        EXPECT_THROW(throwing.begin(), std::runtime_error);
+    }
+}
+
+TEST(AsyncDefectRegressionTest, ThrowingGeneratorInvalidatesIterator)
+{
+    // Invariant: a generator that throws is exhausted from the caller's point of
+    // view, so the increment that rethrows must leave the iterator equal to
+    // end(). Before the fix the rethrow ran before coro_ was cleared, so
+    // `it != end()` still held and the caller's next increment resumed a
+    // coroutine parked at final_suspend (undefined behaviour, a segfault here).
+    auto gen = genThrow(); // co_yield 1; throw; co_yield 2;
+    auto it  = gen.begin();
+    ASSERT_EQ(*it, 1);
+
+    EXPECT_THROW(++it, std::runtime_error);
+    EXPECT_TRUE(it == gen.end());
+}
+
+TEST(AsyncDefectRegressionTest, YieldLoopStackIsConstant)
+{
+    // Invariant: co_await yield() must not consume stack per iteration - it is a
+    // suspension point, so resuming has to go through symmetric transfer.
+    // Before the fix await_suspend called h.resume() inline, keeping one
+    // await_suspend plus one resume frame alive per yield: 336 bytes/yield at
+    // -O0 (a 100k loop overflows the 8 MiB stack) and 32 bytes/yield at -O2.
+#if defined(__GNUC__) || defined(__clang__)
+    std::ptrdiff_t depth = 0;
+    async::syncWait(yieldLoopDepth(5000, depth));
+    EXPECT_LT(depth, 64 * 1024); // O(1); the buggy build measures ~1.7 MB
+#endif
+    // Portable backstop that needs no frame-address builtin: this loop dies of
+    // stack exhaustion when the awaiter resumes inline.
+    async::syncWait(yieldLoop(100000));
+}
+
+// ---------------------------------------------------------------------------
+// Sleep timer service: one process-wide thread, exact deadlines, immediate
+// cancellation. The measurements these tests pin down are in the class comment
+// of detail::TimerService (Sleep.hpp).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+#if defined(__linux__)
+/// Number of OS threads this process currently has (Linux: /proc/self/task).
+long osThreadCount()
+{
+    long count = 0;
+    if (DIR* dir = opendir("/proc/self/task"))
+    {
+        while (readdir(dir) != nullptr)
+        {
+            ++count;
+        }
+        closedir(dir);
+    }
+    return count - 2; // "." and ".."
+}
+#endif
+
+async::Task<void> sleepCounted(std::chrono::milliseconds duration, std::atomic<int>& completed)
+{
+    co_await async::sleepFor(duration);
+    ++completed;
+    co_return;
+}
+
+async::Task<void> sleepFlag(std::chrono::milliseconds duration, std::atomic<bool>& done)
+{
+    co_await async::sleepFor(duration);
+    done.store(true);
+    co_return;
+}
+
+async::Task<void> cancellableSleepFor(vine::CancellationToken token, std::atomic<bool>& cancelled)
+{
+    try
+    {
+        co_await async::sleepFor(std::chrono::milliseconds(500), token);
+    }
+    catch (const async::TaskCancelledException&)
+    {
+        cancelled.store(true);
+    }
+    co_return;
+}
+
+async::Task<void> sleepRecordingThread(vine::CancellationToken token,
+                                       std::thread::id& wake_thread,
+                                       std::atomic<bool>& cancelled)
+{
+    try
+    {
+        co_await async::sleepFor(std::chrono::milliseconds(500), token);
+    }
+    catch (const async::TaskCancelledException&)
+    {
+        wake_thread = std::this_thread::get_id(); // The thread the resume ran on.
+        cancelled.store(true);
+    }
+    co_return;
+}
+
+} // namespace
+
+TEST(SleepTimerTest, ConcurrentSleepsShareOneTimerThread)
+{
+    // One timer thread serves every pending sleep. The previous implementation
+    // started one OS thread per sleep, so this line read "+64" for 64 sleeps.
+    async::Scope scope;
+#if defined(__linux__)
+    const long before = osThreadCount();
+#endif
+    std::atomic<int> completed{ 0 };
+    for (int i = 0; i < 32; ++i)
+    {
+        scope.add(sleepCounted(std::chrono::milliseconds(100), completed));
+    }
+#if defined(__linux__)
+    const long during = osThreadCount();
+    EXPECT_LE(during - before, 2); // The shared worker, plus slack.
+#endif
+    async::syncWait(scope.join());
+    EXPECT_EQ(completed.load(), 32);
+}
+
+TEST(SleepTimerTest, CancellationWakesPromptly)
+{
+    // 23 ms deliberately avoids the 10 ms grid the old slice loop polled on:
+    // it measured ~8.8 ms worst case there, because the token was only noticed
+    // at the next slice boundary. The timer service resumes the waiter on the
+    // cancelling thread, so the bound below has ~20x margin.
+    long long worst = 0;
+    for (int i = 0; i < 5; ++i)
+    {
+        vine::CancellationSource source;
+        std::atomic<bool>        cancelled{ false };
+        auto                     task = cancellableSleepFor(source.get_token(), cancelled);
+
+        std::chrono::steady_clock::time_point requested{};
+        std::thread canceller([&source, &requested] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(23));
+            requested = std::chrono::steady_clock::now();
+            source.request_stop();
+        });
+        async::syncWait(std::move(task));
+        const auto latency = std::chrono::duration_cast<std::chrono::microseconds>(
+                                 std::chrono::steady_clock::now() - requested)
+                                 .count();
+        canceller.join();
+
+        EXPECT_TRUE(cancelled.load());
+        if (latency > worst)
+        {
+            worst = latency;
+        }
+    }
+    EXPECT_LT(worst, 3000); // Microseconds; the polling implementation: ~8800.
+}
+
+TEST(SleepTimerTest, CancellationResumesOnTheTimerThreadNotTheCancellers)
+{
+    // Resuming the continuation inside request_stop() would run all of the
+    // cancelled coroutine's remaining code in the canceller's stack: re-entrant
+    // into whatever the canceller holds, and it changes the thread hand-off
+    // timing that other threads observe. Measured before this was fixed: 6/10
+    // full test_gui runs failed its exclusive-takeover handshake, against 0/10
+    // for the thread-based implementation.
+    vine::CancellationSource source;
+    std::thread::id          wake_thread{};
+    std::atomic<bool>        cancelled{ false };
+    auto                     task = sleepRecordingThread(source.get_token(), wake_thread, cancelled);
+
+    std::thread::id canceller_thread{};
+    std::thread     canceller([&] {
+        canceller_thread = std::this_thread::get_id();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        source.request_stop();
+    });
+    async::syncWait(std::move(task));
+    canceller.join();
+
+    EXPECT_TRUE(cancelled.load());
+    EXPECT_NE(wake_thread, canceller_thread);
+}
+
+TEST(SleepTimerTest, ShorterDeadlineInsertedLaterStillFiresFirst)
+{
+    // install() must wake the worker when a new deadline jumps the queue;
+    // without that notification the later, shorter sleep would only fire when
+    // the earlier long deadline expires. Bound chosen far below the 400 ms long
+    // sleep, so this is a real check and not a timing race.
+    async::Scope      scope;
+    std::atomic<bool> long_done{ false };
+    std::atomic<bool> short_done{ false };
+
+    scope.add(sleepFlag(std::chrono::milliseconds(400), long_done));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20)); // long sleep arms first
+
+    const auto start = std::chrono::steady_clock::now();
+    scope.add(sleepFlag(std::chrono::milliseconds(20), short_done));
+    while (!short_done.load() && std::chrono::steady_clock::now() - start < std::chrono::seconds(1))
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start)
+                            .count();
+
+    EXPECT_TRUE(short_done.load());
+    EXPECT_LT(waited, 150); // Should be ~20 ms; a missed notify would be ~380 ms.
+
+    async::syncWait(scope.join());
+    EXPECT_TRUE(long_done.load());
+}
+
+TEST(SleepTimerTest, ManyStaggeredDeadlinesAllFireOnce)
+{
+    // Exercises the worker's "pop one due node per lock, resume outside" loop:
+    // 100 deadlines land in one narrow window, so the queue is repeatedly
+    // non-empty and several nodes are due at the same wake-up.
+    async::Scope      scope;
+    std::atomic<int>  completed{ 0 };
+    const auto        start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 100; ++i)
+    {
+        scope.add(sleepCounted(std::chrono::milliseconds(1 + i % 20), completed));
+    }
+    async::syncWait(scope.join());
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - start)
+                             .count();
+
+    EXPECT_EQ(completed.load(), 100);
+    EXPECT_LT(elapsed, 400); // ~20 ms of deadlines; serialization would show here.
+}
+
+TEST(SleepTimerTest, AbandonedSleepIsDroppedWithoutResuming)
+{
+    // Destroying a suspended sleep claims its timer node, so the timer thread
+    // must drop the entry at its deadline instead of resuming a dead frame.
+    // A resume here is a use-after-free, which the ASan gate sees as a crash.
+    std::atomic<bool> abandoned_ran{ false };
+
+    std::vector<async::AnyTask> race;
+    race.push_back(async::discard(sleepFlag(std::chrono::milliseconds(60), abandoned_ran)));
+    race.push_back(async::discard(async::sleepFor(std::chrono::milliseconds(5))));
+    async::syncWait(async::whenAny(std::move(race))); // the 60 ms sleep is destroyed here
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(120)); // past its deadline
+    EXPECT_FALSE(abandoned_ran.load());
 }

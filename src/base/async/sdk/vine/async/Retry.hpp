@@ -26,6 +26,7 @@ V_ASYNC_NS_BEGIN
  * @return A task yielding the first successful result.
  */
 template<typename F>
+[[nodiscard]]
 Task<typename std::invoke_result_t<F>::value_type> retry(F factory,
                                                          std::size_t attempts,
                                                          std::chrono::milliseconds delay = {})
