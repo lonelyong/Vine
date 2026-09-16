@@ -1,3 +1,18 @@
+> 2026-09-17 **V3/V4 收口：把"等上游"从假设变成有门禁的事实（附一个表格形状的坑）**
+> 停在"被上游阻塞"上的条目，危险的不是它没做，而是**前提悄悄失效后没人再看它**。
+> · **事实（现抓，不是回忆）**：pinned v1.1.16 与**上游 master** 都是 `vkCreateGraphicsPipelines(*device, **VK_NULL_HANDLE**, …)`
+> ——`src/vsg/state/GraphicsPipeline.cpp:260`，compute `ComputePipeline.cpp:110`、rt `RayTracingPipeline.cpp:168` 同样；
+> vsg 自己的代码里除 Vulkan 头文件（`include/vsg/vk/vulkan.h` 的 typedef）外**不出现** `VkPipelineCache`，也没有
+> `PipelineCache` 类型 ⇒ **升到 master 也拿不到**。V4 同理：`src/` 全树无 `vkCmdBeginRendering`，只有
+> `vkCmdBeginRenderPass`（`src/vsg/app/RenderGraph.cpp`）。
+> · **门禁**：新增 `scripts/check_vsg_upstream_capabilities.py`（7 条断言；无 vsg 树则 SKIP 退 0，照 `check_vsg_window_surface_state.py`
+> 的样子）。**变异 4 条全红**：让 vsg 传一个真 cache 句柄 / 在 vsg 头里加 `VkPipelineCache` / 往 `RenderGraph.cpp` 塞
+> `vkCmdBeginRendering` / 造一个 `PipelineCache.h`。变异后 vsg 树**逐字节复原**（`diff -q` 验过）。
+> · **推上游的最小形状**照 vsg 自己的先例：`Context` 已有 `getOrCreateShaderCompiler()`（`include/vsg/vk/Context.h:88`）
+> ⇒ 要一个 `getOrCreatePipelineCache()`（默认 `VK_NULL_HANDLE`，零破坏），`Implementation` 里把那第三实参换成它。
+> · **坑**：backlog 里 V3/V4 两行**原本就多带一个空的尾单元格**（9 parts），我按"6 列 = 8 parts"断言，替换后才发现行变成 8 个 `|`。
+> ⇒ **表格行替换要在替换后复查 pipe 数**（或者按"目标形状"重建整行），不要只断言替换前。
+
 > 2026-09-17 **P10 结案：缺陷已修且已钉，剩下的 B2 触发条件**未到**（顺手纠正本行一句陈旧话 + 给设计提个醒）**
 > 先查"剩余"是什么：本行说`内建路径仍用载体（vsg phong 读 `vine_Color.a`）`，查下去发现这句话**两重陈旧** ——
 > vsg 内建 set 这条路径 **2026-09-13 已删**（现在只有引擎自己的 set）；剩下的"白载体"是**静态兜底**，给没写 loc2 色的
