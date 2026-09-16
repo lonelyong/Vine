@@ -21,6 +21,19 @@
 > **不做**：RAII 句柄挂在槽上（`state = VsgRendererState{}` 是**按声明序**赋值成员，`window`/`viewer` 先于 `targets` 被释放
 > ⇒ 句柄会对着已析构的 manager 调 forget；把 T16 刚去掉的隐性耦合请回来）。
 > **本条也回答"派生到底带来什么"**：T16 派生掉的是一条 **API 缺口**，本轮去掉的是一条**义务**——池自己算得出来的事实，不该由人记住。
+>
+> **2026-09-16 收尾（实际落地的是"租约"，不是 brief 里的"每帧对账"）**：先按 brief 把"每帧对账"实现完了（`prune`/`holds`/`contextCount` + `syncCompileContexts`），**自检 3/3 次段错误**（都在 churn 的 `churn-rebuild`
+> 阶段），gdb 下因 ASLR 关闭又不复现。改用**租约**后全绿。判词：**释放必须绑在槽的析构上**（新类型 `detail::VsgCompileRegistration`，声明在 `view` 之后，成员反序析构
+> ⇒ 注册先走而 view 还活着）——延迟释放会让池里留着一个 `context->view` 已析构的 context，而 vsg 的 `CompileTraversal::apply(View&)`
+> 对每个 context 做 `context->view.ref_ptr()`（`observer_ptr` → `ref_ptr` **就是加引用计数**），于是悬垂 observer 不是只读比较而是**写已释放内存**。
+> **落地结果**：删掉槽上的 bool、会话上的影子计数器（`compile_contexts` 改成问 manager 要池真值）、三处 `forgetCompileContext` 与解释它们的整段文档；
+> 新增 `VsgCompileRegistration.hpp`（~90 行含注释）；`shutdown()` 在整体赋值前多一行 `state.targets.clear()`（成员赋值按**声明序**释放，`viewer` 先于 `targets`
+> ⇒ 槽要在 viewer 还在时释放注册）。
+> **判据（全绿）**：55 行证据逐字节不变、`test_vsg` 289 / `test_graphics` 272 / `test_core` 82、三脚本 0、lavapipe PASS + 0 VUID、build 0 warning；指纹
+> `churn START 3/3`、`END 6/6`（与**基线**逐字相同，同日 A/B：stash 前后各跑一次）；**变异**：`release()` 短路 ⇒ 立刻回到修前 `4/60 → 63` 且断言红。
+> **顺带的记录更正**：旧文里"修后 START 4/4、END 7/7"在记下它的那份代码上今天也复现不出来（基线二进制读到 3/6，`retired=115 builds=2` 两者相同），
+> 且那句"`observer_ptr<View>` 只是弱引用 ⇒ 不会悬垂"是**错的**。
+> **那笔 +0.43 s 仍未查明**：租约版复测 3.12–3.27 s（3 次），与上一版同区间 ⇒ "释放调用"与"影子计数器"也可排除。
 
 > 2026-09-16 **审查轮次 3：接口 / 命名 / 文档收尾（任务表 T1–T16）**
 > 判据（整批）：build 0 error/0 warning；`test_graphics` 269→**272**、`test_vsg` **289**、`test_core` **82**；

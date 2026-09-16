@@ -53,10 +53,12 @@ struct VsgRetentionStats
      * Incremental compile registers a slot's (render pass + view) context with the viewer's
      * CompileManager, and vsg 1.1.16 offers no way to remove one -- each Context owns a
      * VkCommandPool and holds the render pass it was registered against. This session's manager is
-     * therefore the backend's own subclass, which can drop a registration where the slot it belongs
-     * to dies (see docs/backend.md 5.3.1), so the count follows the slots ALIVE and not the slots a
-     * session has ever created: at the self-test's churn phase the two numbers were 60 and 4 before
-     * that release existed, and 4 and 4 with it.
+     * therefore the backend's own subclass, which can take a registration back where the slot that made it
+     * dies (see docs/backend.md 5.3.1), so the number follows the slots ALIVE and not the
+     * slots a session has ever created: at the self-test's churn phase the two numbers were 60 and 4
+     * before any release existed, and 4 and 4 with it. It is COUNTED FROM THE POOL (the manager is
+     * asked how many contexts it holds) because that is where the fact lives -- there used to be a
+     * counter kept in step with it by hand.
      */
     std::size_t compile_contexts = 0;
 

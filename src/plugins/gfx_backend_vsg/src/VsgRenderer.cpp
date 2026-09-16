@@ -400,6 +400,11 @@ void VsgRenderer::shutdown()
         // nulls the internal HWND so the destructor leaves Qt's window alone.
         state.window->releaseWindow();
     }
+    // The slots own their compile registrations (VsgCompileRegistration), so they are dropped while the
+    // viewer -- which holds the manager each registration belongs to -- is still here. The assignment
+    // below releases its members in DECLARATION order, which puts `viewer` (and with it the manager)
+    // before `targets`: a registration destroyed after that would have nothing left to release into.
+    state.targets.clear();
     // Whole-session teardown: assigning over the session state drops the window,
     // viewer, command graph, per-target render graphs, content slots and every
     // compiled pipeline that references the old vsg::Device — in one step, so
@@ -1007,7 +1012,9 @@ VsgRetentionStats VsgRenderer::retentionStats() const noexcept
     stats.parked_nodes    = state.retireRing.parkedCount();
     stats.released_nodes  = state.retireRing.releasedCount();
     stats.device_waits    = state.retireRing.waitCount();
-    stats.compile_contexts = state.compile_context_registrations;
+    // Asked of the pool itself (VsgRetentionStats::compile_contexts): what the session's manager holds is
+    // a DERIVED fact -- one context per live content slot -- so there is no counter to keep in step with it.
+    stats.compile_contexts = detail::compileContextCount(state);
     return stats;
 }
 

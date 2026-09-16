@@ -25,11 +25,9 @@
  * rule: it parks, because nothing else holds its node's pipeline / descriptor sets (see
  * eraseProgramSlot).
  *
- * Those same waits are where the compile contexts of the slots a teardown drops are released
- * (detail::forgetCompileContext): a registration belongs to the slot it was made for, and releasing it
- * in the teardown that drops that slot is what keeps the manager's context count a count of live slots
- * rather than of the slots a session has ever created -- so the three functions that stop the device
- * are also the three that forget, and no path that drops a slot has to remember to.
+ * The compile contexts of the slots a teardown drops are NOT released here: a registration is owned by the
+ * slot that made it (detail::VsgCompileRegistration), whose destruction is what releases it -- so these
+ * teardowns owe the compile manager nothing at all.
  */
 
 

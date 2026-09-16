@@ -366,12 +366,9 @@ struct VsgRendererState {
     // EVERY slot holding it: with two slots drawing one material, a bridge judging by its own
     // shares sees the other's and waits for it (the P11 mutual wait).
     OwnedShareCounts retained_shares;
-    // Compile contexts the session's manager holds (see VsgRetentionStats::compile_contexts). vsg's
-    // CompileManager only ever adds one, so this session's manager is the backend's own subclass with
-    // a way to take one back (detail::VsgCompileManager::forget), called where the slot it was
-    // registered for dies (detail::forgetCompileContext) -- the count follows the slots ALIVE, not
-    // the slots a session has ever created.
-    std::size_t compile_context_registrations = 0;
+    // The compile registrations are NOT tracked here: each content slot owns its own
+    // (VsgCompileRegistration, released where that slot dies), so the number a host reads
+    // (VsgRetentionStats::compile_contexts) is asked of the pool, where the fact lives.
     // Window-target shader sets shared by its content slots' bridges: one per
     // DepthMode (TestAndWrite / TestOnly / Disabled) so each slot bakes the
     // right depth test/write state. Per-geometry pipelines are compiled per

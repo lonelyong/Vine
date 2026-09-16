@@ -50,6 +50,7 @@
 #include <vine/intrusive_ptr.hpp>
 
 #include <vine/vsg/SceneBridge.hpp>
+#include <vine/vsg/VsgCompileRegistration.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -166,12 +167,14 @@ struct ContentSlot {
     ::vsg::ref_ptr<::vsg::Sampler>   shadow_sampler;
     ::vsg::ref_ptr<::vsg::ImageInfo> shadow_placeholder;
     ::vsg::ref_ptr<::vsg::View>   view;
+    // D22: this slot's registration with the session's compile manager (VsgCompileRegistration). It is held
+    // HERE so that the release happens where the slot dies, and it is declared after `view` on purpose:
+    // members are destroyed in reverse order, so the registration goes -- and the pool stops naming the
+    // view -- while the view it names is still alive. Nothing else has to remember to release it (that was
+    // three teardown calls before, and a deferred release is not an option: the next compile walks the
+    // context and takes a ref_ptr of the view, see VsgCompileRegistration).
+    detail::VsgCompileRegistration compile_registration;
     SceneBridge                   bridge;      // per-view pipelines (vsg compiles per viewID; see VsgContentSlot.hpp on why the state registry must stay per slot)
-    // D22: true once this slot's (window/framebuffer render pass + view) context has been registered
-    // with the session's CompileManager (incrementalCompileViews). A registration is released where the
-    // slot dies (detail::forgetCompileContext), so the manager holds one per LIVE slot -- which is what
-    // makes a flag enough here: it is only ever read for a slot that still exists.
-    bool                          compile_context_registered = false;
     // True while this slot's view is DETACHED from its target's graph
     // because the pass did not execute in the last submitted frame (see
     // retireInactivePassSlots): the retained data / pipelines are kept, so

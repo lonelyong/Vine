@@ -19,17 +19,16 @@
  *     traversal was built while the graph was still empty, so without that registration no
  *     context matches the view and compile() would compile nothing.
  *
- *     A REGISTRATION LIVES AS LONG AS ITS SLOT, because this backend owns the manager it registers
- *     with. vsg 1.1.16's CompileManager only ever ADDS a context and offers no way to take one back,
- *     so a registration would otherwise outlive the slot it was made for and hold a VkCommandPool
- *     plus the render pass it was registered against for the rest of the session (measured: 60 of
- *     them against 3 live content slots). The pool and the traversal it hands out are `protected` --
- *     the seam vsg leaves for a subclass -- so @ref VsgCompileManager does what an upstream
- *     `remove(view)` would, without patching vsg, and the teardowns that drop a slot call
- *     @ref forgetCompileContext for it.
+ *     THE SLOT OWNS ITS REGISTRATION (see VsgCompileRegistration): vsg 1.1.16's CompileManager only ever
+ *     ADDS a context and offers no way to take one back, so a registration that outlived its slot would
+ *     hold a VkCommandPool plus the render pass it was registered against for the rest of the session
+ *     (measured: 60 of them against 3 live content slots). The pool and the traversal it hands out are
+ *     `protected` -- the seam vsg leaves for a subclass -- so @ref VsgCompileManager::forget takes one
+ *     back, and the object that owns the registration is what calls it: the release happens where the
+ *     slot dies, which no teardown has to remember and no path that drops a slot can skip.
  *
- *     That record is what VsgRetentionStats::compile_contexts reports, and the measurements behind it
- *     are in docs/backend.md 5.3.1.
+ *     That record is what VsgRetentionStats::compile_contexts reports -- counted from the pool itself
+ *     (@ref compileContextCount) -- and the measurements behind it are in docs/backend.md 5.3.1.
  *   * compilePendingViews() — the driver: use the incremental path unless
  *     VINE_VSG_DISABLE_INCREMENTAL_COMPILE is set (the A/B escape hatch), otherwise fall back
  *     to vsg's full compile over the whole scene. A failure on either path is REPORTED and the
@@ -40,6 +39,8 @@
  */
 
 #include <vine/vsg/vsg_global.hpp>
+
+#include <cstddef>
 
 #include <vsg/app/CompileManager.h>
 
@@ -55,11 +56,17 @@ namespace detail
 /** @brief The session's compile manager: vsg's own, plus the one operation its pool does not expose.
  *
  * WHY IT EXISTS. vsg's CompileManager only ever ADDS a context: `add()` appends it to the traversal in
- * the pool, and 1.1.16 has no way to take one back. A registration therefore outlives the slot it was
- * made for -- a Context holds a VkCommandPool and the render pass it was registered against, so what
+ * the pool, and 1.1.16 has no way to take one back. A registration would therefore outlive the slot it
+ * was made for -- a Context holds a VkCommandPool and the render pass it was registered against, so what
  * stays behind is driver objects, for as long as the session runs. The pool and the traversal it hands
  * out are `protected` (the seam vsg leaves for a subclass) and `CompileTraversal::contexts` is public,
- * so @ref forget can do what an upstream `remove(view)` would do without patching vsg.
+ * so @ref forget does what an upstream `remove(view)` would, without patching vsg.
+ *
+ * WHO CALLS IT. The slot that owns the registration (@ref VsgCompileRegistration), which keeps the
+ * release where the slot dies instead of at teardowns that would have to remember it: the pool's
+ * contents are then "one context per live slot" by construction, and no sweep has to reconcile them.
+ * A registration left behind after its view died is not merely stale -- the next compile walks it and
+ * takes a ref_ptr of the dead view (see VsgCompileRegistration) -- so the release belongs exactly there.
  *
  * IT ALSO STARTS THE POOL EMPTY. The base constructor builds its traversal as
  * `CompileTraversal(viewer, requirements)`, which walks the command graph and adds a context for every
@@ -82,27 +89,48 @@ class VsgCompileManager : public ::vsg::Inherit<::vsg::CompileManager, VsgCompil
 
     /** @brief Drops every compile context registered for @p view.
      *
-     * Called where the slot that owns @p view dies: the context's render pass and command pool belong
-     * to that slot's registration, and nothing can use them afterwards. Harmless (and safe) if no
-     * context is registered for the view, which is what the return value tells the caller.
+     * Called by the slot that owns the registration (@ref VsgCompileRegistration), where that slot dies:
+     * the context's render pass and command pool belong to the registration, and nothing can use them
+     * afterwards. Harmless (and safe) if no context is registered for the view, which is what the return
+     * value tells the caller.
      *
      * @param view View whose registrations to drop (null is a no-op).
      * @return How many contexts were dropped.
      */
     std::size_t forget(const ::vsg::View* view);
+
+    /** @brief How many contexts the pool holds.
+     *
+     * The registration record, counted where it lives: VsgRetentionStats::compile_contexts reads this
+     * instead of a counter that had to be kept in step with the pool by hand.
+     *
+     * @return Number of contexts in the pool.
+     */
+    std::size_t contextCount();
+
+  private:
+    /** @brief Runs @p visit over the pool's traversal, borrowing it for the visit.
+     *
+     * The one place that knows how to touch the pool, so the borrowing contract is stated once: the pool
+     * hands its traversal out for the duration of a compile and every compile gives it back, so this
+     * waits only while a compile is actually running -- which the callers above cannot be doing.
+     *
+     * @param visit Callable taking the borrowed ::vsg::CompileTraversal&.
+     */
+    template <typename Visitor>
+    void visitPool(Visitor&& visit);
 };
 
-/** @brief Drops the compile context registered for a slot's view, where that slot dies.
+/** @brief How many compile contexts the session's manager holds.
  *
- * The one obligation a teardown owes the compile manager (see VsgTargetBookkeeping's note on the
- * three functions that call it): the registration it made belongs to the slot that is going away, so
- * releasing it here is what keeps `VsgRetentionStats::compile_contexts` a count of LIVE slots rather
- * than of the slots a session has ever created.
+ * A query rather than a tracked number: what the pool holds is a fact about the slots that are alive (a
+ * registration cannot outlive its slot, see VsgCompileRegistration), so it is read from the pool.
  *
- * @param state Session whose manager holds the registration.
- * @param view  The dying slot's retained view (null is a no-op).
+ * @param state Session whose manager is asked.
+ * @return Number of registered contexts (0 without a session, or without one of ours) -- see
+ *         VsgRetentionStats::compile_contexts.
  */
-void forgetCompileContext(VsgRendererState& state, const ::vsg::View* view);
+std::size_t compileContextCount(const VsgRendererState& state);
 
 /** @brief Compiles only the queued views (the incremental path).
  *

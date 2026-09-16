@@ -253,9 +253,6 @@ void unhookTargetPasses(VsgRendererState& state, VsgRenderTargetEntry& t)
     // vkDestroySampler-01082, so this is the wait, not a park.
     state.retireRing.waitForIdle(state.viewer);
     for (auto& slot_entry : t.content_slots) {
-        // The slot's registration with the compile manager belongs to it and goes with it here (see
-        // forgetCompileContext): the release that keeps the manager's context count a count of live slots.
-        forgetCompileContext(state, slot_entry.second.view.get());
         slot_entry.second.bridge.clearCache();
         // A dropped slot must not stay queued for the frame's incremental compile:
         // its view no longer belongs to any target.
@@ -310,9 +307,6 @@ void resetContentShaderSlots(VsgRendererState& state)
             // whose view is still attached to its pass graph keeps drawing with
             // the set it was built with, which is exactly what this replaces.
             detachSlotView(state, t, entry.first, slot_entry.first, slot_entry.second.view);
-            // Every content slot goes below, so each one's registration goes with it here (see
-            // forgetCompileContext).
-            forgetCompileContext(state, slot_entry.second.view.get());
             slot_entry.second.bridge.clearCache();
         }
         t.content_slots.clear();
@@ -539,10 +533,8 @@ void erasePassFromTarget(VsgRendererState& state, vine::graphics::RenderTarget* 
 
     t.visitSlot(key, [&](auto& slot, VsgRenderTargetEntry::SlotKind kind) {
         detachSlotView(state, t, target, key, slot.view);
-        // Only a content slot owns a bridge (its caches go with the slot) -- and with it a compile
-        // registration, which dies with the slot it was made for (see forgetCompileContext).
+        // Only a content slot owns a bridge (its caches go with the slot).
         if constexpr (requires { slot.bridge; }) {
-            forgetCompileContext(state, slot.view.get());
             slot.bridge.clearCache();
         }
         t.eraseSlot(kind, key);

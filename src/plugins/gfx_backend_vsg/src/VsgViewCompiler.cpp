@@ -11,6 +11,7 @@
 #include <vsg/vk/Context.h>
 #include <vsg/vk/Framebuffer.h>
 
+#include <vine/vsg/VsgCompileRegistration.hpp>
 #include <vine/vsg/VsgDiagnostics.hpp>
 #include <vine/vsg/VsgRendererState.hpp>
 #include <vine/vsg/VsgUtils.hpp>
@@ -32,41 +33,114 @@ VsgCompileManager::VsgCompileManager(::vsg::Viewer& viewer, ::vsg::ref_ptr<::vsg
     compileTraversals->add(::vsg::CompileTraversal::create());
 }
 
+template <typename Visitor>
+void VsgCompileManager::visitPool(Visitor&& visit)
+{
+    // The pool hands its traversal out for the duration of a compile and every compile gives it back
+    // (CompileManager::compile does, whether the compile succeeded or threw), so borrowing it waits only
+    // while a compile is actually running -- which the callers of this helper cannot be doing: both are
+    // reached from the frame thread, one of them from the destruction of a slot that thread owns.
+    auto traversals = takeCompileTraversals(numCompileTraversals);
+    for (auto& traversal : traversals) {
+        visit(*traversal);
+        compileTraversals->add(traversal);
+    }
+}
+
 std::size_t VsgCompileManager::forget(const ::vsg::View* view)
 {
     if (view == nullptr) {
         return 0;
     }
-    // The pool hands its traversal out for the duration of a compile and every compile gives it back
-    // (CompileManager::compile does, whether the compile succeeded or threw), so this waits only while
-    // a compile is actually running -- which the teardown that calls it cannot be doing.
-    std::size_t forgotten  = 0;
-    auto        traversals = takeCompileTraversals(numCompileTraversals);
-    for (auto& traversal : traversals) {
-        forgotten += traversal->contexts.remove_if(
+    std::size_t forgotten = 0;
+    visitPool([&](::vsg::CompileTraversal& traversal) {
+        forgotten += traversal.contexts.remove_if(
             [view](const ::vsg::ref_ptr<::vsg::Context>& context) { return context->view.get() == view; });
-        compileTraversals->add(traversal);
-    }
+    });
     return forgotten;
 }
 
-void forgetCompileContext(VsgRendererState& state, const ::vsg::View* view)
+std::size_t VsgCompileManager::contextCount()
 {
-    if (view == nullptr || state.viewer == nullptr) {
+    std::size_t count = 0;
+    visitPool([&](::vsg::CompileTraversal& traversal) { count += traversal.contexts.size(); });
+    return count;
+}
+
+VsgCompileRegistration::~VsgCompileRegistration()
+{
+    release();
+}
+
+VsgCompileRegistration::VsgCompileRegistration(VsgCompileRegistration&& other) noexcept :
+    manager_(other.manager_),
+    view_(other.view_)
+{
+    other.manager_ = nullptr;
+    other.view_    = nullptr;
+}
+
+VsgCompileRegistration& VsgCompileRegistration::operator=(VsgCompileRegistration&& other) noexcept
+{
+    if (this != &other) {
+        release();
+        manager_       = other.manager_;
+        view_          = other.view_;
+        other.manager_ = nullptr;
+        other.view_    = nullptr;
+    }
+    return *this;
+}
+
+void VsgCompileRegistration::adopt(VsgCompileManager& manager, const ::vsg::View* view)
+{
+    release();
+    if (view != nullptr) {
+        manager_ = &manager;
+        view_    = view;
+    }
+}
+
+void VsgCompileRegistration::release()
+{
+    if (view_ == nullptr) {
         return;
     }
-    // The session's manager is this backend's own -- initialize() installs it before the viewer could
-    // create one lazily -- so the cast holds; a manager that is not ours holds no registration of ours.
-    if (auto manager = state.viewer->compileManager.cast<VsgCompileManager>()) {
-        const std::size_t forgotten = manager->forget(view);
-        state.compile_context_registrations -= std::min(forgotten, state.compile_context_registrations);
+    // Cleared BEFORE the call, so that this object cannot be left naming a registration it has already
+    // released -- release() is documented idempotent, and what makes that true is this order.
+    VsgCompileManager* const manager = manager_;
+    const ::vsg::View* const view    = view_;
+    manager_                         = nullptr;
+    view_                            = nullptr;
+    if (manager != nullptr) {
+        manager->forget(view);
     }
+}
+
+std::size_t compileContextCount(const VsgRendererState& state)
+{
+    if (state.viewer == nullptr) {
+        return 0;
+    }
+    if (auto manager = state.viewer->compileManager.cast<VsgCompileManager>()) {
+        return manager->contextCount();
+    }
+    return 0;
 }
 
 bool incrementalCompileViews(VsgRendererState& state)
 {
     auto compileManager = state.viewer->compileManager;
     if (compileManager == nullptr) {
+        return false;
+    }
+    // The registration the slots make is theirs to release (VsgCompileRegistration), so this path needs
+    // this backend's subclass for the OTHER reason as well: a manager that is not ours has no pool of
+    // ours to register with, and what it holds (contexts derived from the command graph, which no slot
+    // registered) is not this path's business. Falling back to the full compile is the honest answer
+    // there, and returning false is how that is spelled.
+    auto pool = compileManager.cast<VsgCompileManager>();
+    if (pool == nullptr) {
         return false;
     }
 
@@ -100,9 +174,10 @@ bool incrementalCompileViews(VsgRendererState& state)
         // when the window graph was still empty, so without this the pool has
         // no context that matches this view and compile() would compile
         // nothing -- the manager this backend installs starts with no contexts at all
-        // (VsgCompileManager). The registration is released where the slot dies
-        // (forgetCompileContext), so the pool holds one per LIVE slot.
-        if (!slot.compile_context_registered) {
+        // (VsgCompileManager). The SLOT owns the registration it makes here (VsgCompileRegistration),
+        // which is what releases it exactly where the slot dies: a registration released anywhere else
+        // would leave a context naming a view that is gone.
+        if (!slot.compile_registration.isRegistered()) {
             ::vsg::CollectResourceRequirements collect;
             view->accept(collect);
             const auto& requirements = collect.requirements;
@@ -129,8 +204,8 @@ bool incrementalCompileViews(VsgRendererState& state)
             catch (...) {
                 return false;
             }
-            slot.compile_context_registered = true;
-            ++state.compile_context_registrations;
+            // The slot now holds the registration, so its destruction is what releases the context.
+            slot.compile_registration.adopt(*pool, view.get());
         }
 
         // Compile ONLY this view: restrict the compile to the context whose
