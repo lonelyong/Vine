@@ -106,11 +106,15 @@ void swizzleRedBlue(std::span<std::byte> pixels) noexcept
 /**
  * @brief Compares ASCII text without regard to case.
  *
+ * The text is UTF-8 rather than plain `char` because it comes straight from `std::filesystem::path::u8string()`,
+ * the only path conversion that is lossless on Windows (where the native form is UTF-16, so `native()` cannot
+ * be compared against an ASCII suffix at all).
+ *
  * @param text    Text to compare.
- * @param literal Lowercase literal to compare against.
+ * @param literal Lowercase UTF-8 literal to compare against.
  * @return true when they are equal ignoring ASCII case.
  */
-bool equalsIgnoreCaseAscii(std::string_view text, std::string_view literal) noexcept
+bool equalsIgnoreCaseAscii(std::u8string_view text, std::u8string_view literal) noexcept
 {
     if (text.size() != literal.size()) {
         return false;
@@ -119,7 +123,7 @@ bool equalsIgnoreCaseAscii(std::string_view text, std::string_view literal) noex
     for (std::size_t i = 0; i < text.size(); ++i) {
         const unsigned char c = static_cast<unsigned char>(text[i]);
         const char          lower = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
-        if (lower != literal[i]) {
+        if (lower != static_cast<char>(literal[i])) {
             return false;
         }
     }
@@ -170,21 +174,20 @@ const char* formatName(ImageFileFormat format) noexcept
 
 ImageFileFormat formatFromPath(const std::filesystem::path& path)
 {
-    // Held in a named object: extension() returns a temporary path, so taking a view of its native string
-    // directly would dangle at the end of the full expression.
-    const std::filesystem::path extension_path = path.extension();
-    const std::string_view      extension      = extension_path.native();
+    // Materialised rather than viewed: extension() returns a temporary path, and u8string() a temporary
+    // string, so a view of either would dangle at the end of the full expression.
+    const std::u8string extension = path.extension().u8string();
 
-    if (equalsIgnoreCaseAscii(extension, ".png")) {
+    if (equalsIgnoreCaseAscii(extension, u8".png")) {
         return ImageFileFormat::Png;
     }
-    if (equalsIgnoreCaseAscii(extension, ".jpg") || equalsIgnoreCaseAscii(extension, ".jpeg")) {
+    if (equalsIgnoreCaseAscii(extension, u8".jpg") || equalsIgnoreCaseAscii(extension, u8".jpeg")) {
         return ImageFileFormat::Jpeg;
     }
-    if (equalsIgnoreCaseAscii(extension, ".bmp")) {
+    if (equalsIgnoreCaseAscii(extension, u8".bmp")) {
         return ImageFileFormat::Bmp;
     }
-    if (equalsIgnoreCaseAscii(extension, ".tga")) {
+    if (equalsIgnoreCaseAscii(extension, u8".tga")) {
         return ImageFileFormat::Tga;
     }
 

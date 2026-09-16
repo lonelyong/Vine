@@ -1,0 +1,10 @@
+# Shader sources are embedded verbatim into a generated header, and
+# v_embed_shaders.cmake rejects CR bytes because the embedded text must match the
+# file on disk byte for byte. Force LF in the working tree so a Windows checkout
+# with core.autocrlf=true cannot break the build.
+*.vert text eol=lf
+*.frag text eol=lf
+*.comp text eol=lf
+*.geom text eol=lf
+*.tesc text eol=lf
+*.tese text eol=lf

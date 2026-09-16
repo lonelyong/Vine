@@ -190,6 +190,13 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgHostWindow.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPipelineFactory.cpp)
 target_compile_definitions(vsg_backend_selftest PRIVATE V_VSG_LIB)
+# MSVC options for the project's own code, as v_add_library/v_add_plugin set them: the
+# self-test reuses the plugin's translation units, whose string literals carry non-ASCII
+# text that MSVC would otherwise read through the system code page (C4819, and C2001 once a
+# mis-decoded byte eats the closing quote).
+if(MSVC)
+    target_compile_options(vsg_backend_selftest PRIVATE /utf-8 /EHsc /Zc:preprocessor /Zc:__cplusplus)
+endif()
 target_include_directories(vsg_backend_selftest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(vsg_backend_selftest PRIVATE vi::Graphics vi::Logging vsg::vsg
