@@ -7,6 +7,7 @@
 
 #include <vsg/app/RenderGraph.h>
 #include <vsg/app/View.h>
+#include <vsg/app/Viewer.h>
 
 #include <vine/graphics/BuiltinShaders.hpp>
 

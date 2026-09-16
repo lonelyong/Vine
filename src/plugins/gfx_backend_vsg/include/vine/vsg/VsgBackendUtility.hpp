@@ -12,7 +12,6 @@
 #include <utility>
 #include <vector>
 
-#include <vsg/app/Viewer.h>
 #include <vsg/core/ref_ptr.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>

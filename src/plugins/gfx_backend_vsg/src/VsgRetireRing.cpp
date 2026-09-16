@@ -1,5 +1,7 @@
 #include <vine/vsg/VsgRetireRing.hpp>
 
+#include <vsg/app/Viewer.h>
+
 #include <utility>
 
 V_VSG_NS_BEGIN

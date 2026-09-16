@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <vsg/app/View.h>
+#include <vsg/app/Viewer.h>
 #include <vsg/app/CompileManager.h>
 #include <vsg/vk/Framebuffer.h>
 

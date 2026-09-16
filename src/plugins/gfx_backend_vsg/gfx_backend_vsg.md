@@ -104,6 +104,7 @@ src/plugins/gfx_backend_vsg/
     VsgMaterialManager.hpp        # 材质管理器（实现 graphics::MaterialManager）
     RenderStateMapper.hpp         # ResolvedRenderState → 4 个 vsg 管线态（header-only）
     OwnedCache.hpp                # 拥有键对象的缓存（契约见头）
+    VsgFwd.hpp                    # 只在指针/ref_ptr 后面出现的 vsg 类型（前向声明单一家，规则见头）
     VsgRendererState.hpp          # 会话态（纯数据）：Persistent / PassRequest / 目标表 + entryFor
     VsgRenderTargetEntry.hpp      # 一个输出目标的保留态（SlotKey + 三种槽 + per-pass 对象）
     VsgFramePlan.hpp              # detail::PassAttachments / PassPlan / RecordPlan（纯值）

@@ -40,11 +40,35 @@
 > - **T9 已完成**：`addOffscreenToScreen` 的 4 个连续 `int` 换成 `Viewport`（demo 原来传 `px/py/pip_w/pip_h`，测试传 `8,8,320,180`）；
 >   `deferredLightProgram(bool with_shadow)` 拆成**两个具名工厂** `deferredLightProgram()` / `shadowedDeferredLightProgram()`
 >   （调用点原来自己在写 `/*with_shadow*/` 注释解释实参——布尔不可读的自证），共享实现留在 .cpp 的匿名命名空间里。
-> - **T13（已量，未做）**：`vsg/app/Viewer.h` 单独就是 **0.94 s / 208 MB**，被 **4 个**插件头拉进
->   （`VsgBackendUtility.hpp` / `VsgRenderer.hpp` / `VsgRendererState.hpp` / `VsgRetireRing.hpp`），而 `VsgRendererState.hpp`
->   是它们的传递源 ⇒ 一个 TU 花 **1.21 s / 203 MB**（引擎接口只要 0.25 s）。做法：前向声明 + 析构移出到 .cpp（`ref_ptr` 成员只
->   需不完整类型，前提是含它的类析构不在头里实例化）；**注意测试是在栈上直接构造 `VsgRenderer`**，所以 `~VsgRenderer` 也要 out-of-line，
->   否则测试 TU 自己就会实例化状态的析构、把 vsg 头拉回来。
+> - **T13 第一步已完成（前向声明）**：新增 `VsgFwd.hpp`（**只在指针/ref_ptr 后面出现的 vsg 类型的前向声明单一家**，规则写在头里：
+>   一旦某个头要调方法/取大小/按值持有，该类型就回到**那个头**的真实 include，而不是加到这个文件）。
+>   实测：`#include <vine/vsg/VsgRenderer.hpp>` **1.21 s / 203 MB → 0.55 s / 152 MB**；`VsgRetireRing.hpp` 降到 0.18 s；
+>   `VsgReadback.hpp` 1.01 → 0.74（**还没到底**：链上还剩 `VsgRenderTargetEntry.hpp`（View.h/RenderGraph.h/ShaderSet.h/
+>   PipelineBarrier.h）与 `SceneBridge.hpp`（ShaderSet.h + 47 处 vsg 用法）。`VsgBackendUtility.hpp` 的 `vsg/app/Viewer.h`
+>   是**纯多余** include（0 处使用）。
+> - **T13 的两个 C++ 陷阱（必须记住）**：
+>   ① **在头里声明析构函数会让编译器在这里实例化每个成员的析构**——为了算隐含的异常规格。`ref_ptr<T>` 的析构要
+>   `T` 完整 ⇒ `member access into incomplete type` 出现在**每个**含该头的 TU。解法：析构声明**显式写 `noexcept`**，
+>   外加 out-of-line `= default`。**默认构造同理**（其异常规格也要实例化成员析构），所以三个特殊成员（ctor/dtor/move-assign）
+>   全部外移，并在 .cpp 里 `= default`。
+>   ② **用户声明析构或移动赋值会抑制隐式移动构造与默认构造**，而 `VsgRendererState` 是**按值构造并返回**的（测试夹具）
+>   ⇒ 必须把**移动构造和默认构造都显式声明**（否则 `return state;` 落到被删除的拷贝构造上）。
+>   ③ 顺带：源文件现在**必须自己 include 它用到的 vsg 头**（`VsgContentSlot.cpp` / `VsgRetireRing.cpp` / `VsgViewCompiler.cpp`
+>   各补了 `vsg/app/Viewer.h`）——这正是 `VsgFwd.hpp` 规则的另一半。
+>   **改动前的三个拉取者**（`VsgBackendUtility.hpp` / `VsgRenderer.hpp` / `VsgRendererState.hpp` / `VsgRetireRing.hpp`）里，
+>   `VsgRenderer.hpp` 的 14 个 vsg include **一个都不需要**（vsg 类型只出现在注释里，成员全是插件自己的类型，且它的析构早已 out-of-line）。
+> - **T13 第二步：卡在"签名词汇"而不是 include 卫生（已核实，未做）**。`VsgRenderTargetEntry.hpp` 本身可清（所有 vsg 用法都在
+>   `ref_ptr`/指针后面，唯一按值的是 `::vsg::vec4`，那个头很便宜），但它 **include 了 `SceneBridge.hpp`**，而后者把 vsg 的**类型词汇
+>   写进了自己的签名**：`::vsg::DataList`、`::vsg::ShaderStages`（**按值成员**）、`::vsg::uintArray&`、`::vsg::dmat4&`、
+>   `::vsg::GraphicsPipelineConfigurator&` —— 前向声明救不了，这些是 typedef / 按值类型。而链路余下的成本**正好等于**
+>   `#include <vsg/utils/ShaderSet.h>`（实测 0.73 s；当前 `VsgReadback.hpp` 0.74 s）⇒ **只清 `VsgRenderTargetEntry.hpp` 收益为零**。
+>   三条路：①把带 vsg 类型词汇的入口从 `SceneBridge.hpp` 移到只被 .cpp 包含的 `detail` 头（调用者全是内部的
+>   `SceneBridgeGeometry.cpp`/`SceneBridgePipeline.cpp`）——这是真正的修法，保住边界头；②把词汇换成插件自己的类型；
+>   ③就此停在"边界头 1.21→0.55"，让内部 TU 继续付 `ShaderSet.h`。**建议 ①，当专批做**（纯头重组，行为不变）。
+>   另外：**PImpl 在这里不划算**（已量）——`VsgRenderer.hpp` 10 个消费者里只有 4 个"只需接口"（PImpl 只帮这 4 个 ≈1.6 s），
+>   6 个本来就要内部；而第二步做完后 `VsgRenderer.hpp` 自己就会掉到 ~0.2 s，不需要 PImpl。PImpl 用在 `VsgRendererState`
+>   上则是明确错的（该类型自己写明"没有 d-pointer"的理由 + 38 个 detail 函数收它 + 6 个测试直接读字段）。
+>   **PImpl 的触发条件**：插件头若要作为给宿主的契约发出去（要 ABI 稳定），那时它买的是边界声明而非编译时间。
 
 > 2026-09-15 **审查轮次：graphics + vsg 后端逐条修复（见 `.ai/design/graphics-vsg-audit.md`）**
 > 12 条缺陷全部修完，每条都带门禁（单测/像素证据/变异验证）。**判据**：build 0 error；`test_graphics` 260→**269**、

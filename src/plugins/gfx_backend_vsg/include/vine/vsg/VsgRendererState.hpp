@@ -42,16 +42,11 @@
 #include <optional>
 #include <vector>
 
-#include <vsg/app/CommandGraph.h>
-#include <vsg/app/RenderGraph.h>
-#include <vsg/app/View.h>
-#include <vsg/app/Viewer.h>
-#include <vsg/commands/PipelineBarrier.h>
 #include <vsg/core/ref_ptr.h>
 #include <vsg/maths/vec4.h>
-#include <vsg/utils/ShaderSet.h>
 
 #include <vine/vsg/VsgDrawBlockPool.hpp>
+#include <vine/vsg/VsgFwd.hpp>
 #include <vine/vsg/VsgMeshResourceCache.hpp>
 #include <vine/vsg/VsgTextureCache.hpp>
 
@@ -300,6 +295,44 @@ struct AnnouncedPasses
 };
 
 struct VsgRendererState {
+    /** @brief Releases the ref-counted vsg objects this session holds.
+     *
+     * Declared here and defined in VsgRenderer.cpp, which is what lets the members above name vsg types
+     * this header does not include (see VsgFwd.hpp): a `ref_ptr` needs its pointee complete only where it
+     * is DESTROYED, and the destructor is the one place that happens. `noexcept` is spelled out for the
+     * same reason: the IMPLICIT exception specification would have the compiler instantiate every member's
+     * destructor right here, in every translation unit, to find out whether it can throw — which is the
+     * cost this arrangement exists to avoid, and the answer is known (releasing a ref_ptr cannot throw).
+     */
+    ~VsgRendererState() noexcept;
+
+    /** @brief Starts an empty session: no window, no viewer, no target table.
+     *
+     * Defined out of line with the rest of the special members: a defaulted-in-the-header one would have
+     * its exception specification computed HERE, and computing it instantiates every member's destructor
+     * (see the destructor's note above).
+     */
+    VsgRendererState() noexcept;
+
+    /** @brief Takes over @p other's session.
+     *
+     * Declared alongside the destructor and the move assignment, because a user-declared destructor or move
+     * assignment stops the compiler from generating the move operations — and this type is BUILT AND
+     * RETURNED BY VALUE (the tests' session fixtures), so it needs them. All three are defined out of line
+     * for the reason VsgFwd.hpp gives: releasing ref-counted vsg members needs those types complete in one
+     * .cpp rather than in every translation unit that includes this header.
+     *
+     * @param other State to move from.
+     */
+    VsgRendererState(VsgRendererState&& other) noexcept;
+
+    /** @brief Replaces this session wholesale with @p other's (see shutdown()).
+     *
+     * @param other State to move from.
+     * @return This state.
+     */
+    VsgRendererState& operator=(VsgRendererState&& other) noexcept;
+
     ::vsg::ref_ptr<::vsg::Window>       window;
     ::vsg::ref_ptr<::vsg::Viewer>       viewer;
     ::vsg::ref_ptr<::vsg::CommandGraph> command_graph;

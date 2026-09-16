@@ -514,6 +514,14 @@ void VsgRenderer::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> ta
     state.request.target_release_reported = false;
 }
 
+// Defined here rather than in the header for the sake of the header's reach: the state's ref-counted members
+// name vsg types (VsgFwd.hpp), and a `ref_ptr` needs its pointee complete only in the translation unit that
+// DESTROYS it. Every TU that includes VsgRendererState.hpp would otherwise compile vsg's app layer again.
+VsgRendererState::~VsgRendererState() noexcept = default;
+VsgRendererState::VsgRendererState() noexcept = default;
+VsgRendererState::VsgRendererState(VsgRendererState&& other) noexcept = default;
+VsgRendererState& VsgRendererState::operator=(VsgRendererState&& other) noexcept = default;
+
 void VsgRenderer::resetPassRequest()
 {
     // One assignment: a field added to VsgPassRequest can never be forgotten here,

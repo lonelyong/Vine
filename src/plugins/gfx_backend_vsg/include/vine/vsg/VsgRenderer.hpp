@@ -30,21 +30,7 @@
 #include <set>
 #include <vector>
 
-#include <vsg/app/CommandGraph.h>
-#include <vsg/app/RenderGraph.h>
-#include <vsg/app/View.h>
-#include <vsg/app/Viewer.h>
-#include <vsg/commands/PipelineBarrier.h>
-#include <vsg/core/Data.h>
-#include <vsg/core/ref_ptr.h>
-#include <vsg/maths/vec4.h>
-#include <vsg/nodes/Group.h>
-#include <vsg/nodes/Node.h>
-#include <vsg/state/Image.h>
-#include <vsg/state/ImageView.h>
-#include <vsg/utils/ShaderSet.h>
-#include <vsg/vk/Framebuffer.h>
-#include <vsg/vk/RenderPass.h>
+#include <vine/vsg/VsgFwd.hpp>
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/DepthMode.hpp>

@@ -34,11 +34,11 @@
 
 #include <cstddef>
 
-#include <vsg/app/Viewer.h>
 #include <vsg/core/Object.h>
 #include <vsg/core/ref_ptr.h>
 
 #include <vine/vsg/VsgDeferredRelease.hpp>
+#include <vine/vsg/VsgFwd.hpp>
 
 V_VSG_NS_BEGIN
 
