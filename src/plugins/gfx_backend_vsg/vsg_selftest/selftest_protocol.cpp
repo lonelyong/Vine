@@ -1213,10 +1213,29 @@ bool runPolicyChurnStressPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
     // to undo (docs/backend.md 5.3.1), so a count that follows the slots ALIVE is healthy while one that
     // follows the slot CREATIONS is the documented leak. Read the SECOND sample against the FIRST.
     const bool probe_retention = std::getenv("VINE_PROBE_RETENTION") != nullptr;
+    // T16 experiment, same switch style: replace the session's compile manager before the churn frames run, so
+    // the frames below exercise the re-registration path. Judges: the retention numbers either side, the
+    // pipeline / variant counts, the evidence lines (must stay byte-identical), and the wall clock.
+    if (std::getenv("VINE_PROBE_SWAP_MANAGER") != nullptr) {
+        renderer.probeSwapCompileManager();
+        std::fprintf(stderr, "[probe] churn: compile manager replaced (T16 experiment)\n");
+    }
+    // Leak放大器: a ref_ptr assignment releases the old object only when nothing else holds it, so if the OLD
+    // compile manager survives (a co-owner such as the viewer's task graph or a database pager), repeating the
+    // swap would accumulate managers -- each with its traversals and their command pools. Peak RSS of this run
+    // against the same run without the loop is the judge, because no counter counts manager objects.
+    if (const char* swaps = std::getenv("VINE_PROBE_SWAP_LOOP"); swaps != nullptr) {
+        const int count = std::atoi(swaps) > 0 ? std::atoi(swaps) : 1;
+        for (int i = 0; i < count; ++i) {
+            renderer.probeSwapCompileManager();
+        }
+        std::fprintf(stderr, "[probe] swapped the compile manager %d time(s)\n", count);
+    }
     if (probe_retention) {
         const auto snapshot = renderer.retentionStats();
-        std::fprintf(stderr, "[probe] churn START: content_slots=%zu compile_contexts=%zu\n",
-                     snapshot.content_slots, snapshot.compile_contexts);
+        std::fprintf(stderr, "[probe] churn START: content_slots=%zu compile_contexts=%zu stage_cache=%zu\n",
+                     snapshot.content_slots, snapshot.compile_contexts,
+                     vine::vsg::detail::compiledStageCacheCount());
     }
     const std::size_t retired_before = renderer.retiredObjectCount();
     const std::size_t builds_before  = renderer.offscreenBuildCount();
@@ -1263,8 +1282,10 @@ bool runPolicyChurnStressPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
     const std::size_t builds  = renderer.offscreenBuildCount() - builds_before;
     if (probe_retention) {
         const auto snapshot = renderer.retentionStats();
-        std::fprintf(stderr, "[probe] churn END: content_slots=%zu compile_contexts=%zu (waits=%zu retired=%zu builds=%zu)\n",
-                     snapshot.content_slots, snapshot.compile_contexts, waits, retired, builds);
+        std::fprintf(stderr,
+                     "[probe] churn END: content_slots=%zu compile_contexts=%zu stage_cache=%zu (waits=%zu retired=%zu builds=%zu)\n",
+                     snapshot.content_slots, snapshot.compile_contexts,
+                     vine::vsg::detail::compiledStageCacheCount(), waits, retired, builds);
     }
     if (waits != 0) {
         std::fprintf(stderr,

@@ -85,6 +85,34 @@
 >   **② 55 行证据是否仍逐字节不变**（若变，多半就是重造管线被抓住）、**③ 墙钟时间**。三个数一起看；
 >   若①不涨 ⇒ ② 方案风险归零、可直接采用（不必碰 vsg 源码）；若①涨 ⇒ 「改 vsg 源码」从我的推断升级为**实测结论**。
 >   注意：换 manager 后 `VsgRetentionStats::compile_contexts` 的语义要从"会话累计"改成"当前 manager"，否则观测失真。
+>   **执行实验前查实的两个事实（省下一轮调研）**：① **manager 不是插件建的**——`build/_deps/vsg-src/src/vsg/app/Viewer.cpp`
+>   的 setup 路径里惰性 `compileManager = CompileManager::create(*this, hints)`，所以替换可以照同一条构造走（插件 `src/`
+>   里**没有任何** `viewer->compileManager =` 赋值，只有读）；② 要清的标志在**内容槽**上（`VsgRenderTargetEntry.hpp` 的
+>   `compile_context_registered`，注释明写"每个槽注册一次"），而 `VsgRenderTargetEntry` 有 `forEachSlot()` 可遍历
+>   ⇒ 复位就是 `for (auto& entry : state.targets) entry.second.forEachSlot([](auto& key, auto& slot, auto){ slot.compile_context_registered = false; });`
+>   加上 `state.compile_context_registrations = 0`。**自检够不到 `state`**（它只用 `VsgRenderer` 的公开面），所以实验需要一个
+>   env 门控的**临时**入口（标 TEMPORARY，跑完撤）——这也是为什么它该单独一批，而不是顺手改。
+> - **T16 实验已完成，四个维度都验证过（2026-09-16）**，判定：**插件侧方案可行，不需要 fork vsg**。
+>   开关：`VINE_PROBE_SWAP_MANAGER=1`（在位换 manager）、`VINE_PROBE_SWAP_LOOP=N`（放大 N 次）。实测（lavapipe，同一负载）：
+>   ① **形状**：`compile_contexts` 从 `60→63`（累积）变成 `0→3`（跟 6 个存活槽）——泄漏形状被修掉；
+>   ② **不重造管线**：`detail::compiledStageCacheCount()` 两边都是 **1**（视图若被重编译，阶段会新增），且证据脚本
+>   `VINE_PROBE_SWAP_MANAGER=1 bash scripts/vsg_selftest_evidence.sh` → **PASS，55 行逐字节不变**；
+>   ③ **无代价**：墙钟 2.87 s 对 2.87 s，`waits=0 / retired=115 / builds=2` 与 OFF 完全一致；
+>   ④ **不漏 manager**：连换 200 次，**峰值 RSS 216420 → 215032 → 213808 KB（平坦）**——若有共同持有者，200 个 manager
+>   （各带 traversal 与命令池）应是几十 MB 级增长 ⇒ `ref_ptr` 赋值的 unref 确实把它释放了。**边界**：本次会话**没有 databasePager**，
+>   而 vsg 的 Viewer setup 会把 manager 也挂给 pager（若存在）⇒ **真修复必须确认这条路径不装 pager，或换之前一并清掉那个引用**。
+> - **T16 最优设计（已定，下一批实现）**：**先立一层拥有者**，再把策略放进去——把"注册"这件事从**四处**收成**一处**：
+>   创建（`VsgViewCompiler`）、记录（槽上的 bool + 会话里的只增计数）、以及**槽死时的义务**（现在散在 6 个破坏性拆除路径、
+>   且"什么都不做"就是泄漏本身）。这一层让"context 活得比槽久"**结构上不可能忘**，并让策略成为层内的一行；形状与仓库既有的
+>   `VsgRetireRing`（停放策略的家）/ `OwnedCache`（"谁还持有"的家）/ `VsgDeferredRelease`（延迟时钟的家）同族。
+>   - **策略选 ②（换 manager，不 fork vsg）**，实现放在层内；层对外的**唯一**拆除点义务入口（如 `onSlotsDestroyed()`）与
+>     `waitForIdle` 同址——破坏性点欠的两件事（停设备、归还 context）落在一处。
+>   - **①（在 vsg 加按 view 移除）写成层内注释里的备选**：若将来接受依赖补丁，它是 O(1) 精确移除、无重新注册，比②更干净；
+>     今天不做（外来 diff 每个 vsg 版本都要维护，且 `find_package(vsg)` 那条路不生效）。层立起来之后，换策略是**一行**。
+>   - **附带必改**：`VsgRetentionStats::compile_contexts` 语义 = "当前 manager"；`docs/backend.md` §5.3.1 从"两条未做的修法"
+>     改成"已修 + 策略 + 边界（pager）"；**撤掉** `VsgRenderer::probeSwapCompileManager` 与自检里的实验调用点。
+>   - **判据**：沿用今天四条（55 行证据逐字节不变、`stage_cache` 不涨、墙钟不涨、峰值 RSS 不涨，含 200 次放大），
+>     外加一条新的：churn 相位后 `compile_contexts` **有界**（用保留量探针读，这是从"只能看着它涨"变成"可以断言"）。
 
 > 2026-09-15 **审查轮次：graphics + vsg 后端逐条修复（见 `.ai/design/graphics-vsg-audit.md`）**
 > 12 条缺陷全部修完，每条都带门禁（单测/像素证据/变异验证）。**判据**：build 0 error；`test_graphics` 260→**269**、
