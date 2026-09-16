@@ -245,6 +245,13 @@ VsgRenderer::~VsgRenderer()
 bool VsgRenderer::moveSessionToHostSurface(void* native_handle)
 {
     if (native_handle == nullptr) {
+        // No window was announced at all, so there is no surface to move onto: the caller rebuilds the
+        // session on a window of this backend's own. Said out loud for the same reason the format case
+        // below is -- the rebuild costs the instance, the device and every compiled pipeline.
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::UnsupportedRequest,
+                           u8"no host window was announced, so this session cannot move onto one: it is rebuilt on a"
+                           u8" window of this backend's own, and every compiled pipeline with it");
         return false;
     }
     // Only a session on THIS backend's host window can follow a host surface: a session on vsg's own window
@@ -252,6 +259,10 @@ bool VsgRenderer::moveSessionToHostSurface(void* native_handle)
     // handle) has no host surface to move to.
     auto host_window = state.window.cast<detail::VsgHostWindow>();
     if (host_window == nullptr) {
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                           vine::graphics::DiagnosticCategory::UnsupportedRequest,
+                           u8"this session is not on a host window of this backend, so it has no host surface to move:"
+                           u8" the announced window is served by starting a fresh session instead");
         return false;
     }
     if (native_handle == host_window->hostHandle()) {
@@ -936,7 +947,7 @@ void VsgRenderer::setWindowHandle(void* native_handle)
     persistent.bound_handle = native_handle;
 }
 
-void VsgRenderer::resize(int width, int height)
+void VsgRenderer::resize(int announced_width, int announced_height)
 {
     // The surface owns its size: this session renders into a vsg window, so the size that counts is
     // that window's extent, and the announcement is advisory here (the engine keeps the announced
@@ -944,8 +955,8 @@ void VsgRenderer::resize(int width, int height)
     // authority order). window->resize() re-queries the surface the host gave us (an embedded Qt
     // window, which follows the widget), and the presenting slots' viewports are re-derived from
     // the live extent below.
-    (void)width;
-    (void)height;
+    (void)announced_width;
+    (void)announced_height;
     if (state.window != nullptr) {
         state.window->resize();
     }

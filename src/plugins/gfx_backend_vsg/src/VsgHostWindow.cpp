@@ -36,9 +36,11 @@ VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
     // difference between "rendering into the window you handed us" and "rendering into one of our own".
     // The map state is part of that fact: vsg's frame path SKIPS a window whose visible() is false, and
     // then no pass -- off-screen ones included -- is recorded at all, with no validation error to show
-    // for it.
-    V_LOGI("[VsgHostWindow] attached to the host window ({}x{}, mapped={})", _extent2D.width, _extent2D.height,
-           visible());
+    // for it. The handle is part of it too, and it is the only way to tell which window to look at: a
+    // reader that wants the pixels (scripts/xwin2ppm.py) has to name THIS window, because a Qt container
+    // keeps the render area as a child and the parent's name matches several windows.
+    V_LOGI("[VsgHostWindow] attached to the host window 0x{:x} ({}x{}, mapped={})", static_cast<std::uintptr_t>(_window),
+           _extent2D.width, _extent2D.height, visible());
 }
 
 bool VsgHostWindow::moveToHostSurface(void* native_handle)
@@ -93,9 +95,10 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
     _traits->height = static_cast<int>(_extent2D.height);
 
     // The device, the render pass and every pipeline are still here: that is the point of the move, and the
-    // log says so because it is otherwise invisible.
-    V_LOGI("[VsgHostWindow] moved to the host's new window ({}x{}); the device and its pipelines were kept",
-           _extent2D.width, _extent2D.height);
+    // log says so because it is otherwise invisible. The new handle goes in for the same reason the attach
+    // line carries it: whoever reads the pixels has to follow the session to the window it moved to.
+    V_LOGI("[VsgHostWindow] moved to the host's new window 0x{:x} ({}x{}); the device and its pipelines were kept",
+           static_cast<std::uintptr_t>(_window), _extent2D.width, _extent2D.height);
     return true;
 }
 
@@ -128,9 +131,11 @@ VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
     // difference between "rendering into the window you handed us" and "rendering into one of our own".
     // The map state is part of that fact: vsg's frame path SKIPS a window whose visible() is false, and
     // then no pass -- off-screen ones included -- is recorded at all, with no validation error to show
-    // for it.
-    V_LOGI("[VsgHostWindow] attached to the host window ({}x{}, mapped={})", _extent2D.width, _extent2D.height,
-           visible());
+    // for it. The handle is part of it too, and it is the only way to tell which window to look at: a
+    // reader that wants the pixels (scripts/xwin2ppm.py) has to name THIS window, because a Qt container
+    // keeps the render area as a child and the parent's name matches several windows.
+    V_LOGI("[VsgHostWindow] attached to the host window 0x{:x} ({}x{}, mapped={})", static_cast<std::uintptr_t>(_window),
+           _extent2D.width, _extent2D.height, visible());
 }
 
 bool VsgHostWindow::moveToHostSurface(void* native_handle)
@@ -185,9 +190,10 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
     _traits->height = static_cast<int>(_extent2D.height);
 
     // The device, the render pass and every pipeline are still here: that is the point of the move, and the
-    // log says so because it is otherwise invisible.
-    V_LOGI("[VsgHostWindow] moved to the host's new window ({}x{}); the device and its pipelines were kept",
-           _extent2D.width, _extent2D.height);
+    // log says so because it is otherwise invisible. The new handle goes in for the same reason the attach
+    // line carries it: whoever reads the pixels has to follow the session to the window it moved to.
+    V_LOGI("[VsgHostWindow] moved to the host's new window 0x{:x} ({}x{}); the device and its pipelines were kept",
+           static_cast<std::uintptr_t>(_window), _extent2D.width, _extent2D.height);
     return true;
 }
 

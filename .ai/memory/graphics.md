@@ -1,3 +1,14 @@
+> 2026-09-16 **H6 收尾（宿主表面那四项）：app 门禁开始看画面，拒答不再静默**
+> **④ app 门禁读像素（四项里最值钱的一条）**：此前 app 阶段只看 stderr 证据 + "0 VUID"，**一个黑屏会话把两条都满足**（当天 0.84% 那次就是这么过的）。现在：
+> ① 后端把**它渲染的那个窗口句柄**写进日志（`[VsgHostWindow] attached to the host window 0x60004a (378x247, mapped=true)`，搬移那行同理）—— Qt 的渲染区是**具名顶层窗口的子窗**，按名字读会读到 Qt 自己的界面，而那块**即使渲染区全黑也是亮的**（0.84% 被藏住就是这个原因：实测按名字读顶层是 97.06%，按句柄读渲染区才是 84.90%）；
+> ② `scripts/xwd2ppm.py` → **`scripts/xwin2ppm.py`**：抓取改走 libX11 `XGetImage`（自己解 `XImage` 的掩码/步长；32 位真彩走切片快路径），**不再需要 xwd/xwininfo** —— 本机根本没装 x11-apps 且 `sudo` 要密码装不上，旧版会在**最需要它的地方**静默跳过；
+> ③ app 阶段把 app 放到**后台**跑（`cd $BUILD && exec timeout $SECONDS_V ./bin/Vine &`，`exec` 让 `$!` 就是那个进程、退出码语义仍是 124）⇒ 趁它活着采样 ⇒ 再 `wait`；开关 `VINE_APP_PIXELS=0`、`VINE_APP_MIN_CONTENT`(30)、`VINE_APP_PIXEL_WAIT`(8)、`VINE_APP_PIXEL_SETTLE`(2)。
+> **判据**：门禁绿时打印 `84.90% of the render area is not near-black (threshold 30%)`（渲染区 378x247，与 C1 当天的 83.81% / 均值 (96,105,112) 同量级）；**变异**（`VsgHostWindow::visible() → false`，就是当天黑屏的根因）⇒ `0.00%` + `[FAIL]` + `RESULT: FAIL`。分支各自验过：`VINE_APP_PIXELS=0`、无 `DISPLAY`（都跳过且不计失败）、app 一直不报窗口、句柄读不到、阈值 0/30/99 两侧。
+> **顺带修掉一个报告缺陷**：阶段判 PASS 原用 `stage_before=$FAILED` 比全局布尔，**前面阶段已经失败时就分不出"又多一条失败"** —— 变异那次它就打出了 `[PASS] Vine (default demo)` 压在刚报的 `[FAIL]` 上。现在每阶段自己的计数 `STAGE_FAILURES`（`mark_stage_failure`），PASS 只在它为 0 时打印。
+> **② 拒答路径**：`moveSessionToHostSurface` 的"公告 null 句柄"与"会话不在本后端宿主窗口"两条**原本静默**（`docs/backend.md` 却说它们会报），现在各自报 `Warning` + `UnsupportedRequest`；自检相位加两条断言（被拒 ⇒ 上报 + 重建，`windowBuildCount()` +1 / +2，最后搬回宿主窗口以保持"采纳的窗口要活过我们"那条断言仍指向 B）；**两条都变异过**（各自静音 ⇒ 恰好对应那条红）。**第三条**（新窗口 swapchain 格式不可用）仍**无断言**：它要两个视觉映射到不同格式的窗口，是驱动属性不是调用方行为，已登记遗留。
+> **① 相位尺寸**：`kPixelsWidth/kPixelsHeight` 只命名一次，采样点由它派生（原 `256/144/128/72` 散在三处）；**③ `resize`**：覆写参数改 `announced_width/announced_height` 并写明"公告是 advisory"（SDK 契约本就是 surface > announcement > default）。
+> **门禁**：build 0/0；`test_vsg` **289** / `test_graphics` **272** / `test_core` **82**（**未增删单测**：拒答是私有的，驱动它要走 `setWindowHandle` + `initialize`，那是**带设备**的自检相位的活——先在 `tests/test_vsg` 起了个 GPU-free 的套件，编译期就报 `private member`，拆了）；三脚本 0（62 单元 / 663 文件 / 33 文件）；证据 **55 行逐字节不变**；lavapipe **PASS**、0 VUID；自检 3.8 s（多了两次重建，仍在门禁 12 s 预算内）。
+
 > 2026-09-16 **C3（本轮 brief）：编译上下文的池由"每帧对账"决定，而不是靠三处记得释放（T16 的收尾）**
 > **目标**：让"池里有哪些 context"成为**存活内容槽的函数**，而不是一条需要三处拆除点记住的约定。
 > 现状的四个负担：`ContentSlot::compile_context_registered`（bool）、`VsgRendererState::compile_context_registrations`
@@ -1834,7 +1845,7 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 - **宿主窗口必须回答 `valid()` / `visible()`（2026-09-16 修正，重要）**：vsg 的 `Window::valid()` 默认 **false**、`visible()` 默认 `valid()`；而 `CommandGraph::record()` / `SecondaryCommandGraph::record()` / `Viewer::advance()` / `Presentation::present()` 全先问 `visible()` ⇒ 自建窗口类不覆写就**整帧不录**：窗口黑、**离屏 target 也一个像素都不写**，而且 **0 条 validation error**（"validation clean" 与 "什么都没画" 同形）。`vsgXcb::Xcb_Window` 覆写 `visible() = _windowMapped`；`VsgHostWindow` 现在覆写为"采纳窗口的 map 状态"（X11 `xcb_get_window_attributes().map_state == XCB_MAP_STATE_VIEWABLE`，Win32 `IsWindow`+`IsWindowVisible`），在附加/`resize()`/搬移处刷新、未映射时惰性重问。**实测**：Qt 渲染区 0.84% → **83.81%** 非黑（与 C1 前 `Xcb_Window` 逐位相同），窗口拉到 1498×828 后 97.10%；日志多出 `mapped=true`。
 - **先前记的"窗口会话 + 离屏 target 不写入 / InvalidImageLayout 是独立未解 bug"是错的**：它就是上面这条（整帧被跳过），不是布局缺陷；自检相位因此恢复像素判据（`centre 34,6,2` vs 角点清屏色 `10,20,30`，搬移前后逐位相同；帧被跳过时两点皆透明黑）。
 - **验证纪律（新踩的坑）**：`cmake --build . --target Vine` **不重建插件** `build/plugins/vine/gfx_backend_vsgd.so`（app 运行时 dlopen），只验 `bin/Vine` 会导致假阳性 ⇒ 二进制级结论要按**构建产物**验身份（`nm -DC <plugin.so> | grep <symbol>` + 时间戳）。
-- **看画面本身的办法**：`xwd -id <窗口id> -out f.xwd`（`-root` 在 XWayland 下 BadMatch；`-out -` 不支持）＋自写 PPM 解码（XWD 头偏移：bpp@44、bytes_per_line@48、mask@56/60/64），再用 `scripts/ppm2png.py` 转 PNG；窗口 id 从 `xwininfo -root -tree` 里取（Qt 渲染区是主窗的子窗，尺寸与 `[VsgHostWindow] attached` 行一致）。
+- **看画面本身的办法（2026-09-16 晚已改工具，见顶部 H6 条目）**：`scripts/xwin2ppm.py <窗口句柄|窗口名> [out.ppm]` —— 句柄从后端那行 `[VsgHostWindow] attached to the host window 0x…` 里取（Qt 渲染区是具名顶层窗口的**子窗**，按名字读到的是 Qt 自己的界面）；它经 libX11 `XGetImage` 自己抓、自己解掩码，**不需要 xwd/xwininfo**，再用 `scripts/ppm2png.py` 转 PNG。（旧写法是 `xwd -id … -out f.xwd` + 自解 XWD 头：`-root` 在 XWayland 下 BadMatch、`-out -` 不支持，`bpp@44 / bytes_per_line@48 / mask@56,60,64`。）
 - **小经验**：`VsgRenderer::deviceWaitCount()` 是**会话级**计数，`shutdown()` 后读回 0 ⇒ 相位要在放手之前取样（打印的就是量到的值，别写死散文数字）。
 - **宿主侧下一步**：`src/fw/appfw/src/gui/RenderControl.cpp::initializeBackend` 仍先 `shutdown()`；改成"只重新公告句柄 + `resize()`/渲染"，让后端的 `initialize()` 去搬（本环境除 app 演示外无门禁覆盖）。
 
@@ -1865,7 +1876,7 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 - **自检相位的魔法尺寸**：`vsg_selftest/selftest_hostsurface.cpp` 里 `at(128u, 72u, …)` 与 `256u`/`144u` 同 `pixels_target` 的尺寸是同一个事实写两遍；从 target 取尺寸或提成常量。
 - **拒答路径零覆盖**：`VsgRenderer::initialize()` 收 null 句柄、公告的窗口"不是本后端的"、以及"搬移被拒（新表面 swapchain 格式不同）"这三条分支，连同 `Warning` + `DiagnosticCategory::UnsupportedRequest` 诊断，**一条断言都没有**。建议各加一条（诊断可用 `renderer.setDiagnosticSink(...)` 收）。
 - **`VsgRenderer::resize(int,int)` 忽略参数**（尺寸权威在窗口，这是设计），但签名会让读者误以为值生效；可标 `[[maybe_unused]]` 或改注释。
-- **app 门禁仍不看像素**：`gfx_lavapipe_check.sh` 的 app 阶段只查 stderr 证据 ⇒ **今天的黑屏被它完整放过**。工具已入库：`scripts/xwd2ppm.py`（见下），可考虑把"渲染区非黑比例 ≥ 阈值"接进 app 阶段（跨 X 环境可能不稳，做成可选档）。
+- **app 门禁仍不看像素**：`gfx_lavapipe_check.sh` 的 app 阶段只查 stderr 证据 ⇒ **今天的黑屏被它完整放过**。工具已入库：`scripts/xwin2ppm.py`（原名 `xwd2ppm.py`；见下）。**已接进门禁（2026-09-16 晚，见顶部 H6 条目）**：app 阶段现在趁 app 活着读它的渲染区，要求非黑比例 ≥ `VINE_APP_MIN_CONTENT`（默认 30%），`VINE_APP_PIXELS=0` 可关。
 - 早前会话留下的：上游 vsg 加 `CompileManager::remove(view)`（已有派生方案，**不需要了**，见 §5.3.1）；`docs/` 与 `.ai/design/` 里若要给 `VsgHostWindow` 的"派生 vs 重写"留设计记录，可在 `graphics-vsg-audit.md` 补一节。
 
 ### 3. 今天的判据 / 命令速查（回家直接抄）
@@ -1884,12 +1895,12 @@ python3 scripts/check_diagnostic_formats.py
 
 # 看 GUI 到底画没画（今天的黑屏就是这么抓到的）
 ./bin/Vine &                       # 默认 demo（VINE_VSG_OWN_WINDOW=1 可看后端自建窗口那条对照）
-python3 scripts/xwd2ppm.py Vine /tmp/area.ppm     # 打印非黑比例/均值色 + 写 PPM
+python3 scripts/xwin2ppm.py Vine /tmp/area.ppm     # 打印非黑比例/均值色 + 写 PPM
 python3 scripts/ppm2png.py /tmp/area.ppm /tmp/area.png
 ```
 
 > **身份铁律（今天就栽过一次）**：`cmake --build . --target Vine` **不会重建插件** `build/plugins/vine/gfx_backend_vsgd.so`（app 运行时 dlopen 它）。任何二进制级结论都要 `nm -DC <构建产物> | grep <symbol>` + 时间戳，只验 `bin/Vine` 会得到假阳性。
-> **另**：`xwd -root` 在 XWayland 下 BadMatch；`xwd -out -`（stdout）不支持；XWD 头偏移 bpp@44 / bytes_per_line@48 / RGB mask@56,60,64（`scripts/xwd2ppm.py` 已经封好）。
+> **另（2026-09-16 晚起已不适用）**：抓图工具不再用 `xwd`（`xwd -root` 在 XWayland 下 BadMatch、`-out -` 不支持、XWD 头偏移 bpp@44 / bytes_per_line@48 / RGB mask@56,60,64 都是它当年自己封的坑）；现在只依赖 libX11 的 `XGetImage`（`scripts/xwin2ppm.py`）。
 
 ## 模块文档（面向使用者）
 

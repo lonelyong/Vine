@@ -228,7 +228,7 @@ enum class ShaderPreset { StandardPhong, FlatShaded, Pbr, ShadowedPhong };   // 
   PiP 189x106@(181,120) 右下挂载；PiP 区放大 = 整帧缩小版 mini-frame（灰菱形地面 + 彩块堆栈），
   证明 离屏渲染 → 发布 SceneColor → ScreenPass 采样上屏链路在跑。
 - 环境开关：`VINE_SHADER_PRESET`（存在→FlatShaded）；`VINE_VSG_OFFSCREEN` 开离屏验证。
-- 验证入口：`./build/bin/Vine`（非 install 副本），xwd 抓子窗口 + 自写 XWD→PNG 解码。
+- 验证入口：`./build/bin/Vine`（非 install 副本），`scripts/xwin2ppm.py` 抓渲染区（句柄取自后端的 `[VsgHostWindow] attached to the host window 0x…` 行）+ `scripts/ppm2png.py` 转 PNG。
 
 ### 8.4 与 §4/§6 的关系
 - P0 自写 `buildVineShaderSet(program, ...)` 时，`forwardProgram()` 须先复刻当前 phong 输出

@@ -159,8 +159,13 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
     // error rather than silently, so presenting is the observable this phase drives. The PIXEL this phase
     // compares across the move is read from an off-screen target drawn in the same frame, because the window
     // target has no readback path of its own.
-    auto pixels_target = RenderTargetPtr(new RenderTarget());
-    pixels_target->setSize(256, 144);
+    // The off-screen target this phase reads back. Its size is named ONCE: the pixel coordinates below are
+    // derived from it (they were spelled 256 / 144 / 128 / 72 in three places until 2026-09-16, so changing
+    // the target would have left the samples pointing at the old layout).
+    constexpr std::uint32_t kPixelsWidth  = 256u;
+    constexpr std::uint32_t kPixelsHeight = 144u;
+    auto                    pixels_target = RenderTargetPtr(new RenderTarget());
+    pixels_target->setSize(static_cast<int>(kPixelsWidth), static_cast<int>(kPixelsHeight));
     pixels_target->attachColor(RenderTarget::ColorFormat::RGBA8);
     pixels_target->attachDepth(RenderTarget::DepthFormat::D24);
     // Its own pass: the window pass and this one run in the same frame, and a pass names ONE target.
@@ -185,10 +190,11 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
             return;
         }
         const auto at = [&pixels](std::uint32_t x, std::uint32_t y, int channel) {
-            return static_cast<int>(pixels[(static_cast<std::size_t>(y) * 256u + x) * 4u + static_cast<std::size_t>(channel)]);
+            return static_cast<int>(
+                pixels[(static_cast<std::size_t>(y) * kPixelsWidth + x) * 4u + static_cast<std::size_t>(channel)]);
         };
         for (int channel = 0; channel < 3; ++channel) {
-            centre[channel] = at(128u, 72u, channel);
+            centre[channel] = at(kPixelsWidth / 2u, kPixelsHeight / 2u, channel);
             corner[channel] = at(0u, 0u, channel);
         }
         std::fprintf(stderr, "[host-surface] %s the move: centre %d,%d,%d, corner %d,%d,%d\n", when, centre[0],
@@ -280,6 +286,69 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
                      before[0], before[1], before[2], after[0], after[1], after[2]);
         ok = false;
     }
+
+    // A refusal is a REBUILD -- the instance, the device and every compiled pipeline -- so a host that could
+    // have avoided it (by not taking its window away while the session runs) has to be able to HEAR about it:
+    // every refusal of a move reports a Warning / UnsupportedRequest. Two of the three paths are reachable
+    // from a host's own calls, and they are driven here. The third -- a new window whose swapchain format
+    // cannot serve this session's render pass -- needs two windows whose visuals map to different swapchain
+    // formats, which is a property of the driver rather than of this code; it reports through the same
+    // contract this block pins (VsgHostWindow::moveToHostSurface makes that decision by comparing the
+    // presentation format before and after the surface is rebuilt).
+    std::size_t refusals = 0;
+    renderer.setDiagnosticSink([&refusals](const vine::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.severity == vine::graphics::DiagnosticSeverity::Warning &&
+            diagnostic.category == vine::graphics::DiagnosticCategory::UnsupportedRequest) {
+            ++refusals;
+        }
+    });
+    const std::size_t builds_before_refusals = renderer.windowBuildCount();
+
+    // Path 1: the host announces NO window (it has none to give). There is no surface to move onto, so the
+    // session is rebuilt on a window of this backend's own.
+    renderer.setWindowHandle(nullptr);
+    if (!renderer.initialize()) {
+        std::fprintf(stderr, "[selftest] FAIL: the session did not come up after the host announced no window\n");
+        return false;
+    }
+    if (refusals != 1u || renderer.windowBuildCount() != builds_before_refusals + 1u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: announcing no window neither reported a refusal nor rebuilt (%zu refusal(s),"
+                     " %zu window build(s) before, %zu after)\n",
+                     refusals, builds_before_refusals, renderer.windowBuildCount());
+        ok = false;
+    }
+
+    // Path 2: the session is on this backend's OWN window now (the rebuild above), so the host's window can
+    // only be served by starting a fresh session -- reported rather than silent, for the same reason.
+    renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_a.id())));
+    if (!renderer.initialize()) {
+        std::fprintf(stderr, "[selftest] FAIL: the session did not come up on the announced window again\n");
+        return false;
+    }
+    if (refusals != 2u || renderer.windowBuildCount() != builds_before_refusals + 2u) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: a session that is not on a host window neither reported a refusal nor"
+                     " rebuilt (%zu refusal(s), %zu window build(s) before, %zu after)\n",
+                     refusals, builds_before_refusals, renderer.windowBuildCount());
+        ok = false;
+    }
+
+    // Back onto the host's presenting window, so the teardown below still runs against the window the host
+    // last handed over: that assertion is about the ADOPTED window outliving us.
+    renderer.setWindowHandle(reinterpret_cast<void*>(static_cast<std::uintptr_t>(host_b.id())));
+    if (!renderer.initialize()) {
+        std::fprintf(stderr, "[selftest] FAIL: the session did not move back onto the host's window\n");
+        return false;
+    }
+    // The sink captures a local, so it goes before the local does (the convention the other phases follow).
+    renderer.setDiagnosticSink({});
+
+    std::fprintf(stderr,
+                 "[host-surface] refusals: %zu reported (announcing no window, then a window while the session was"
+                 " on one of the backend's own), %zu window build(s) for them, and the session is back on the"
+                 " host's window\n",
+                 refusals, renderer.windowBuildCount() - builds_before_refusals);
 
     // Let go of the session: the window the host handed over is the HOST's, so it must outlive us -- the
     // assertion vsg's own platform window fails (it destroys the window it adopted).

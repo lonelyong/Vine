@@ -261,7 +261,7 @@ void main()
 - **P0.0 spike（单点风险先破）**：用自写 VS/FS（flat.vert/.frag 已备）+ 离线 `.spv` 在 lavapipe
   渲出纯色三角 → 确认 (a) push-constant 矩阵被 vsg 自动写入、(b) 内嵌 SPIR-V 加载路径通。
 - **P0.1 主场景平替 + A/B**：`buildVineShaderSet` 只接主场景几何；临时 env（如 `VINE_VSG_USE_BUILTIN`）
-  在自写/内建间 A/B；同相机同场景截图（沿用 xwd 抓图 + XWD→PNG 自解码）像素一致 → 冻结公式。
+  在自写/内建间 A/B；同相机同场景截图（`scripts/xwin2ppm.py` 抓渲染区 + `scripts/ppm2png.py` 转 PNG）像素一致 → 冻结公式。
 - **P0.2 光路切换**：FrameUBO/LightsUBO 每帧打包；有内容光用内容光、无光回退默认；主/离屏 PiP 同源
   （沿用 `VINE_VSG_OFFSCREEN=1`）；`VINE_SHADER_PRESET` 切 FlatShaded = 仅 unlit flag，无管线重编。
 - **P0.3**：overlay/axis 迁移可选项；`raw_layout.txt` 之类临时诊断移除。

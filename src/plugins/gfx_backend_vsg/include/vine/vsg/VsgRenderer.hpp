@@ -306,12 +306,17 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     void setWindowHandle(void* native_handle) override;
 
-    /** @brief Rebuilds the swapchain for the new surface size.
+    /** @brief Re-reads the window's size and rebuilds the swapchain for it.
      *
-     * @param width  New surface width in pixels.
-     * @param height New surface height in pixels.
+     * The announced numbers are advisory here, not applied: this backend renders into a window and the
+     * window owns its size, so the surface it re-queries is the authority (RenderBackend::resize spells
+     * out that order: surface > announcement > default). The values are taken for the passes that lay
+     * themselves out on the announcement, which the engine keeps for that purpose.
+     *
+     * @param announced_width  Announced surface width in pixels (advisory; see above).
+     * @param announced_height Announced surface height in pixels (advisory; see above).
      */
-    void resize(int width, int height) override;
+    void resize(int announced_width, int announced_height) override;
 
     /** @brief Restricts the next render() to a sub-viewport of the surface.
      *
@@ -509,7 +514,8 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      *         rebuild it); false when the session cannot serve it -- a null handle, a session that is not on
      *         this backend's own host window (vsg's own window / the VINE_VSG_OWN_WINDOW hatch), or a new
      *         window whose swapchain format cannot serve this session's render pass -- and the caller starts
-     *         a fresh session instead.
+     *         a fresh session instead. Each refusal reports a Warning / UnsupportedRequest, because each one
+     *         costs a full session rebuild (see windowBuildCount).
      */
     [[nodiscard]] bool moveSessionToHostSurface(void* native_handle);
 
