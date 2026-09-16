@@ -25,14 +25,18 @@
 #   VINE_ASAN_TARGET=test_core VINE_ASAN_FILTER='*' scripts/asan_check.sh
 #   VINE_ASAN_LEAKS=1 scripts/asan_check.sh                 # + LeakSanitizer
 #
-# The vsg BACKEND (the device-free suite plus its device-backed self-test). The
-# suite needs the leak scope: it links the appfw plugin manager, whose registry
-# stays loaded for the process lifetime, so without a scope that one report
-# would mask every backend finding:
-#   VINE_ASAN_TARGET=test_vsg VINE_ASAN_FILTER='*' VINE_ASAN_LEAKS=1 \
-#       VINE_ASAN_LEAK_SCOPE='vine::vsg' scripts/asan_check.sh
-#   VINE_ASAN_TARGET=vsg_backend_selftest VINE_ASAN_LEAKS=1 \
-#       VINE_ASAN_LEAK_SCOPE='vine::vsg' scripts/asan_check.sh      # needs DISPLAY + an ICD; QT_QPA_PLATFORM is irrelevant
+# The vsg BACKEND (the device-free suite plus its device-backed self-test), both
+# under STRICT leak judging: the one report the suite produced came from the
+# plugin loader, whose retention is deliberate (it never dlclose()s plugin code),
+# and that is excused in asan_leaks.supp with its reason next to the release()
+# that causes it:
+#   VINE_ASAN_TARGET=test_vsg VINE_ASAN_FILTER='*' VINE_ASAN_LEAKS=1 scripts/asan_check.sh
+#   VINE_ASAN_TARGET=vsg_backend_selftest VINE_ASAN_LEAKS=1 scripts/asan_check.sh
+#       (the self-test needs DISPLAY + an ICD; QT_QPA_PLATFORM is irrelevant to it)
+# VINE_ASAN_LEAK_SCOPE remains the FALLBACK for a run whose leaks are not excused
+# yet: it reports leaks outside the pattern without failing the run. Prefer
+# excusing them properly (a justified entry) over scoping them away, because a
+# scope also hides the next leak in the same run.
 # What the suite covers: the caches, the pools, the retire rings, the compile leases and the session
 # teardown of the GPU-free paths. What the self-test adds: the SAME objects with a real device, i.e.
 # session build / move / shutdown and every target it materialises.
@@ -74,7 +78,8 @@ FILTER="${VINE_ASAN_FILTER:-EventBusTest.*}"
 LEAKS="${VINE_ASAN_LEAKS:-0}"
 # When set (a grep -E pattern, e.g. 'vine::vsg'), a LeakSanitizer report that mentions NO frame matching it
 # is reported but does not fail the run: the run judges the pattern's own allocations. Unset = every leak
-# fails, which is what the appfw gate wants.
+# fails, which is what the appfw gate wants. Use it only while a report is not excused yet (see the recipes
+# in this file's header): a justified entry in asan_leaks.supp is the stronger answer.
 LEAK_SCOPE="${VINE_ASAN_LEAK_SCOPE:-}"
 JOBS="${VINE_ASAN_JOBS:-$(nproc 2>/dev/null || echo 8)}"
 RECONFIG="${VINE_ASAN_RECONFIG:-0}"

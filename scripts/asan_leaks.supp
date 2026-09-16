@@ -1,8 +1,14 @@
 # LeakSanitizer suppressions for the ASan gate (scripts/asan_check.sh).
 #
-# Only library-internal retention that the framework cannot control belongs here.
-# Anything the framework allocates and fails to release must stay reported, so
-# keep this file minimal and justify every entry.
+# Only library-internal retention that the framework cannot control belongs here,
+# plus allocations the framework retains ON PURPOSE with the decision written down
+# next to it in the code (see the entry below). Anything the framework allocates
+# and simply fails to release must stay reported, so keep this file minimal and
+# justify every entry.
+#
+# A suppression hides a whole class of reports at once, so an entry is only
+# acceptable when the code says why the memory is still there; "it is only a few
+# bytes" is not a reason.
 
 # libfontconfig keeps its parsed font configuration (320 B) allocated after Qt's
 # QFontDatabase initialization and never releases it at exit. The allocation is
@@ -10,3 +16,21 @@
 # created nor holds it.
 leak:libfontconfig
 leak:libexpat
+
+# The plugin loader's libraries and its bookkeeping (a map of DynamicLibrary
+# handles, one per plugin) are retained DELIBERATELY. ~DynamicLibraryLoader
+# releases its impl instead of destroying it, because destroying it would dlclose
+# the loaded plugins during static destruction -- and the process-wide registries
+# (CommandManager, RenderBackendRegistry) are destroyed in an order relative to
+# that, while still holding callables and factory pointers INTO the plugin code,
+# so unmapping it first segfaults on exit. The reasoning, and what a future
+# unload implementation must do instead, is written next to that release() in
+# src/base/runtime/src/DynamicLibraryLoader.cpp.
+#
+# Measured (2026-09-16): this is the ONLY leak a test_vsg run reports -- 808 B in
+# 16 allocations, all in vine::runtime::DynamicLibraryLoader /
+# DynamicLibrary::DynamicLibrary, with no frame in the vsg backend. Before this
+# entry, the backend's ASan run had to be judged with VINE_ASAN_LEAK_SCOPE (report
+# leaks outside a pattern without failing); with it, the whole suite runs with
+# plain all-or-nothing leak judging, which is the stronger setting.
+leak:vine::runtime::DynamicLibrary

@@ -1,3 +1,9 @@
+> 2026-09-16 **R5 结案：appfw 插件注册表的 LSan 报告 —— 抑制，但把“为什么是有意的”一并写进去**
+> 先查证它到底是不是缺陷：`~DynamicLibraryLoader` 的 `d.release()` **是有意的**（注释写明：若按静态析构序在退出时 dlclose 掉插件代码，而 `CommandManager` / `RenderBackendRegistry` 还持着指进插件的 callable / 工厂指针 ⇒ SIGSEGV）。所以这是**保留决定**，不是忘记释放 —— 而 `asan_leaks.supp` 原来的规则（“框架自己的分配一律不许抑制”）恰好把这种情况也堵死了。
+> · 处置：给那份文件加一条**带条件的例外**（“有意保留 **且** 决定写在代码里，可以入表；‘只有几个字节’不是理由”），并新增 `leak:vine::runtime::DynamicLibrary` + 实测数字。
+> · 收益：后端两条跑法（`test_vsg` **292** 全绿 + 设备自检 55 行证据全跑完）现在都用**全或无**泄漏判据 PASS —— 比 R2 当时的 `VINE_ASAN_LEAK_SCOPE` **更强**（scope 会把同一轮里别的泄漏一起放过）。scope 开关保留，但降级为“还没 excuse 的泄漏”的备用手段。
+> · **证据**：`LSAN_OPTIONS=…:print_suppressions=1` ⇒ `Suppressions used: count 16 bytes 808 template vine::runtime::DynamicLibrary`（**只有**这一类被匹配）。
+
 > 2026-09-16 **H4 落地：宿主真的开始“跟着走”了（C1 的另一半），且这件事终于可判**
 > 原计划是“把 `initializeBackend()` 里的 `shutdown()` 换成重新公告句柄”。查下去发现**宿主有两处在拆会话**：`initializeBackend()` 的“句柄变了”分支，**以及** `onSurfaceDestroyed()`（Qt 的 `SurfaceAboutToBeDestroyed`）。只要后者还在，前者改得再对也没用 —— 真实路径（Qt 重建窗口）先经过它。两处都改：`onSurfaceDestroyed()` 只标记 `surface_ok=false`（渲染由 `renderFrame()` 既有的“句柄/可见性”守卫拦住），会话留着等新句柄；`initializeBackend()` 在新句柄到来时**重新公告**（`setWindowHandle` + `initialize`），由后端的 `initialize()` 自己决定搬还是重建；`init()` 的幂等返回改成“句柄匹配才算已绑定”。
 > · **可判性是这次的重点**：“平台窗口被重建”（换屏 / reparent / 把 dock 拖出去）本来**无法按需触发**，所以加了一个测试钩子：`VINE_RECREATE_SURFACE_MS` → `RenderControl::recreateSurface()`（`QWindow::destroy() + create() + show()`）。app 阶段默认 `VINE_APP_RECREATE_MS=1200`，并断言两条：`moved to the host's new window ≥ 1` **且** `attached to the host window == 1`（重建就是 2/0）。
