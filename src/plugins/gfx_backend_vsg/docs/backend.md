@@ -529,7 +529,7 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 
 ### 5.3.2 宿主表面归宿主：附加、搬移、绝不销毁（2026-09-16 落地）
 
-**约束来自宿主**：`RenderControl::initializeBackend()` 在句柄变化时做 `engine->shutdown()` + `initialize()`，而 SDK 的 `setWindowHandle()` 语义本来就是"把后端**搬**到新表面"。于是此前为了"重建窗口不炸"加的两条补丁都是**症状**，不是需求：
+**约束曾来自宿主（2026-09-16 晚已解，见本节末条）**：宿主以前在句柄变化时做 `engine->shutdown()` + `initialize()`（而且是**两处**：`initializeBackend()` 的“句柄变了”分支，加上 `onSurfaceDestroyed()` 的 `SurfaceAboutToBeDestroyed`），而 SDK 的 `setWindowHandle()` 语义本来就是“把后端**搬**到新表面”。于是此前为了“重建窗口不炸”加的两条补丁都是**症状**，不是需求：
 
 | 旧补丁 | 为什么存在 | 现在的处置 |
 | --- | --- | --- |
@@ -541,7 +541,8 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 - **派生自平台窗口**：`VsgHostWindowBase` = `vsgXcb::Xcb_Window`（X11）／`vsgWin32::Win32_Window`（Win32），`VsgHostWindow : vsg::Inherit<VsgHostWindowBase, VsgHostWindow>` **只改两件事**（下两条）——自持连接、屏幕、几何、surface、`valid()`/`visible()`（map 状态）、`resize()`、事件泵全部继承。
 - **绝不销毁**：析构 `clear()` 后把 `_window` 置空，**基类析构因此不会** `xcb_destroy_window()`／`::DestroyWindow()`（Win32 那条路还会顺手 `UnregisterClass(GetClassName(hwnd))`——对 Qt 的类是灾难）。这就是这一层存在的唯一理由。
 - **搬移**：`moveToHostSurface(native_handle)` 丢掉 `_swapchain/_frames/_indices/_depth*/_multisample*/_surface`，**继承的** `_initSurface()` 在**同一个** instance 上重建 surface，`_initFormats()` 复核格式——`_imageFormat.format` 变了就**拒绝**（返回 false，让调用方退回重建），否则**继承的** `resize()`（重查几何 + `buildSwapchain()`）接手。device、render pass、已编译管线全部留用。
-- **为什么不是重写**：C1 第一版自己实现平台窗口，结果漏了 `valid()`/`visible()`（见下），于是黑屏且零 validation error。派生之后“漏一个虚函数”的整类风险消失，两个文件从 **567 行降到 315 行**（−252，约 −44%，含两个平台分支与注释）。
+- **为什么不是重写**：C1 第一版自己实现平台窗口，结果漏了 `valid()`/`visible()`（见下），于是黑屏且零 validation error。派生之后“漏一个虚函数”的整类风险消失，两个文件从 **567 行降到 315 行**（−252，约 −44%，含两个平台分支与注释）；**2026-09-16 晚再收成一份**：两个平台分支本是逐字重复（真正不同的只有 3 处 handle 转换），现在合成一份 ⇒ `VsgHostWindow.cpp` **315 → 110 行**、`.cpp` 里**零** `#if`（平台差异只剩头文件的 `VsgHostHandle` typedef + `hostHandleFromVoid()` 的 4 行）。
+- **宿主真的开始跟着走了（2026-09-16 晚，H4）**：两处 shutdown 都删掉 —— `onSurfaceDestroyed()` 只标记 `surface_ok=false`（渲染由 `renderFrame()` 的可见性/句柄比较拦住），新句柄到来时 `initializeBackend()` **重新公告**（`setWindowHandle` + `initialize`），由后端的 `initialize()` 自己决定搬还是重建；`init()` 的幂等返回改成“句柄匹配才算已绑定”。**可判性**：新测试钩子 `VINE_RECREATE_SURFACE_MS`（`RenderControl::recreateSurface()`：`QWindow::destroy()+create()+show()`）把那个本来只能靠换屏/重新 parent/拖出 dock 触发的事件变成可按需触发，app 阶段默认 `VINE_APP_RECREATE_MS=1200` 并断言 `moved to the host's new window ≥ 1` **且** `attached to the host window == 1`。**实测**：`0x60004a` → 钩子 → `[RenderControl] … re-announcing` → `moved to the host's new window 0x600051`，渲染区（**采的就是新窗口**）84.90% 非黑；**变异**（把 shutdown 放回 `onSurfaceDestroyed()`）⇒ `follow it (0 moved)` + `rebuilt the session (2 attached)` + 像素阶段读旧窗口失败，三条红。
 - **一处代价要知道**：vsg 平台窗口的构造里会调 `_initXdnd()`（在**宿主窗口**上写 XdndAware 属性）。Qt 在 X11 上本来也用 XDND，属性是幂等的；而且我们从不 `pollEvents()`（采纳路径不会选事件掩码 ⇒ 我们这条连接收不到 X 事件），所以不会偷 Qt 的事件。
 - `VINE_VSG_OWN_WINDOW` 仍是测试逃生口（后端自建窗口），不是生产路径。
 

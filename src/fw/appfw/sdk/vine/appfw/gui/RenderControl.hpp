@@ -124,6 +124,16 @@ class V_APPFW_API RenderControl : public Control {
     /** @brief Initializes the engine once the native surface is exposed. */
     void initializeBackend();
 
+    /** @brief Recreates the native render surface, forcing the host's follow path.
+     *
+     * ONLY a test hatch (VINE_RECREATE_SURFACE_MS, see init()): a window-system recreation -- a screen
+     * change, a reparent, a dock drag-out -- cannot be produced on demand from outside the process, and the
+     * host's answer to it (re-announce the new handle; the backend moves or rebuilds) is the thing worth
+     * gating. The backend's own self-test covers ITS half (VsgRenderer::moveSessionToHostSurface); this
+     * covers the host's.
+     */
+    void recreateSurface();
+
     /** @brief Pops up the view context menu at the cursor position. */
     void showContextMenu();
 

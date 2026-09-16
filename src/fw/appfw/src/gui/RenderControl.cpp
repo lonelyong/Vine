@@ -419,9 +419,11 @@ bool RenderControl::surfaceVisible() const
 
 bool RenderControl::init()
 {
-    // Idempotent: repeated calls are harmless and return the current result.
-    if (d->initialized) {
-        return d->init_ok;
+    // Idempotent: repeated calls are harmless and return the current result -- but only while the session is
+    // bound to the surface the window reports NOW: after Qt recreated the platform window this has to
+    // re-attach (a re-announce, so the backend can move) rather than report the old attach as current.
+    if (d->initialized && d->init_ok && nativeHandle() == d->initialized_handle) {
+        return true;
     }
     if (d->engine == nullptr || d->surface == nullptr) {
         return false;
@@ -447,6 +449,12 @@ bool RenderControl::init()
 
     if (nativeHandle() != nullptr) {
         initializeBackend();
+    }
+    // Test hatch: force a platform-window recreation after VINE_RECREATE_SURFACE_MS milliseconds, which is
+    // the event the follow path above exists for. See recreateSurface().
+    if (const char* recreate_ms = std::getenv("VINE_RECREATE_SURFACE_MS"); recreate_ms != nullptr && *recreate_ms != '\0') {
+        const int delay_ms = std::atoi(recreate_ms);
+        QTimer::singleShot(delay_ms, d->surface, [this] { recreateSurface(); });
     }
     if (d->init_ok) {
         // The deferred app_shell init() can land before the dock layout has
@@ -539,16 +547,14 @@ void RenderControl::wireEvents()
 
 void RenderControl::onSurfaceDestroyed()
 {
-    // Qt destroys and recreates the native platform surface (new HWND) on
-    // layout changes. Release the backend now; the next created/resize notice
-    // re-attaches to the new surface.
+    // Qt destroys and recreates the native platform surface (a new HWND / xcb window) on layout changes,
+    // screen changes and reparents. The SESSION is not torn down for that: the surface is marked unusable so
+    // nothing renders into a dead window (renderFrame also compares the live handle against the bound one),
+    // and the backend is handed the NEW handle when it appears -- which is the move the SDK contract
+    // describes (RenderBackend::setWindowHandle "re-announce the handle to follow a new surface"), and which
+    // keeps the device and every compiled pipeline. Shutting the engine down here was what made every
+    // recreation cost a full session rebuild.
     d->surface_ok = false;
-    if (d->initialized) {
-        d->engine->shutdown();
-    }
-    d->initialized = false;
-    d->init_ok = false;
-    d->initialized_handle = nullptr;
 }
 
 void RenderControl::onSurfaceResized()
@@ -631,17 +637,9 @@ void RenderControl::onSurfaceUpdate()
 void RenderControl::initializeBackend()
 {
     void* h = nativeHandle();
-    if (d->initialized) {
-        // Already bound; only re-attach when the native surface was swapped
-        // for a new one (Qt recreated the platform window).
-        if (h != nullptr && h != d->initialized_handle) {
-            d->engine->shutdown();
-            d->initialized = false;
-            d->init_ok = false;
-            d->initialized_handle = nullptr;
-        } else {
-            return;
-        }
+    if (d->initialized && d->init_ok && h != nullptr && h == d->initialized_handle) {
+        // Already bound to this very surface: nothing to do.
+        return;
     }
     if (h == nullptr || surfaceWidth() <= 0 || surfaceHeight() <= 0) {
         // No usable native surface yet (Qt destroying/recreating the platform
@@ -649,9 +647,19 @@ void RenderControl::initializeBackend()
         // a dead or empty handle. Retried on SurfaceCreated/expose/resize.
         return;
     }
+    if (d->initialized && h != d->initialized_handle) {
+        // The platform window was recreated and this is the new one. Re-announce the handle instead of
+        // tearing the session down: setWindowHandle is the contract for "follow me onto this surface", so
+        // the backend moves -- the device and every compiled pipeline stay -- and rebuilds the session
+        // itself when it cannot serve the new window (a different swapchain format). Shutting the engine
+        // down here forced the expensive path on every recreation; the vsg backend's windowBuildCount() is
+        // what tells the two apart (flat after a move, +1 after a rebuild).
+        vine::logging::defaultLogger().info(
+            "[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
+    }
     // Give the engine the native window the backend must attach to; the
-    // handle is refreshed here so re-initialization after a surface recreate
-    // uses the new HWND.
+    // handle is refreshed here so a re-announce after a surface recreate uses
+    // the new handle (and a backend that can move does exactly that).
     d->engine->setWindowHandle(h);
     d->init_ok = d->engine->initialize();
     if (d->init_ok) {
@@ -683,6 +691,20 @@ void RenderControl::fitToScreen()
         }
     }
     renderFrame();
+}
+
+void RenderControl::recreateSurface()
+{
+    if (d->surface == nullptr) {
+        return;
+    }
+    // destroy() + create() is how a platform window is recreated (the surface is nested in the host widget, so
+    // it comes back in the same place with a NEW handle); the follow path then does the work.
+    vine::logging::defaultLogger().info("[RenderControl] test hatch: recreating the render surface");
+    d->surface->destroy();
+    d->surface->create();
+    d->surface->show();
+    scheduleSurfaceUpdate();
 }
 
 void RenderControl::showContextMenu()

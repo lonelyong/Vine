@@ -75,6 +75,11 @@ SECONDS_V="${VINE_CHECK_SECONDS:-12}"
 APP_MIN_CONTENT="${VINE_APP_MIN_CONTENT:-30}"
 APP_PIXEL_WAIT="${VINE_APP_PIXEL_WAIT:-8}"
 APP_PIXEL_SETTLE="${VINE_APP_PIXEL_SETTLE:-2}"
+# Milliseconds after which the app RECREATES its platform window (VINE_RECREATE_SURFACE_MS, a test hatch in
+# RenderControl). That is the event the host's follow path exists for, and the app stage asserts it: the
+# backend must MOVE onto the new window (device and pipelines kept) instead of the session being rebuilt.
+# 0 disables both the hatch and the assertions on it.
+APP_RECREATE_MS="${VINE_APP_RECREATE_MS:-1200}"
 
 # ---- Select the lavapipe ICD -----------------------------------------------
 ICD="${VK_ICD_FILENAMES:-}"
@@ -162,6 +167,13 @@ require_evidence() { # pattern minimum label
     fi
 }
 
+# latest_window_id — the window the backend LAST reported rendering into. The backend names it on attach and
+# on every move, so "last line wins" is the live window (the app stage forces a recreation, see
+# APP_RECREATE_MS); reading only the first attach is how the sample went to a destroyed window once.
+latest_window_id() {
+    sed -n 's/.*attached to the host window \(0x[0-9a-fA-F]*\).*/\1/p;s/.*moved to the host.s new window \(0x[0-9a-fA-F]*\).*/\1/p' "$log" | tail -1
+}
+
 # check_app_pixels — read the LIVE app's render area and require that it is not black.
 #
 # The app stage judges the app by what it LOGS ("the plugin loaded", "the cube maps loaded") plus "no
@@ -186,7 +198,7 @@ check_app_pixels() { # the caller's $app_pid and $log
 
     local id="" waited=0
     while [ "$waited" -lt "$APP_PIXEL_WAIT" ]; do
-        id=$(sed -n 's/.*\[VsgHostWindow\] attached to the host window \(0x[0-9a-fA-F]*\).*/\1/p' "$log" | tail -1)
+        id=$(latest_window_id)
         [ -n "$id" ] && break
         kill -0 "$app_pid" 2>/dev/null || break
         sleep 1
@@ -198,9 +210,22 @@ check_app_pixels() { # the caller's $app_pid and $log
         mark_stage_failure
         return
     fi
+    # With the recreation hatch on, wait for the MOVE too and then re-read the handle: the sample has to land on
+    # the window the session moved to, which is also the surface the host's follow path is being judged on.
+    if [ "${APP_RECREATE_MS:-0}" != "0" ]; then
+        waited=0
+        while [ "$waited" -lt "$APP_PIXEL_WAIT" ] && [ "$(grep -c "moved to the host's new window" "$log" || true)" -lt 1 ]; do
+            kill -0 "$app_pid" 2>/dev/null || break
+            sleep 1
+            waited=$((waited + 1))
+        done
+        id=$(latest_window_id)
+    fi
     # The window exists before the demo's scene does: give its first frames time to build the cube maps and
     # the shadow pass, or the sample lands on a half-drawn frame.
     sleep "$APP_PIXEL_SETTLE"
+    # And once more after settling: nothing may have recreated the surface under the sample.
+    id=$(latest_window_id)
 
     local report share
     if ! report=$(python3 "$SCRIPT_DIR/xwin2ppm.py" "$id" "$TMP/app-area.ppm" 2>&1); then
@@ -358,7 +383,7 @@ else
         # Background, not foreground: the render area's pixels can only be read while the app is alive (see
         # check_app_pixels). `exec` keeps $! the app's own pid, and waiting below still yields the status the
         # foreground form did (124 when the timeout fired), so nothing else about this stage moves.
-        (cd "$BUILD" && exec timeout "$SECONDS_V" ./bin/Vine) >"$log" 2>&1 &
+        (cd "$BUILD" && VINE_RECREATE_SURFACE_MS="$APP_RECREATE_MS" exec timeout "$SECONDS_V" ./bin/Vine) >"$log" 2>&1 &
         app_pid=$!
         check_app_pixels
         wait "$app_pid"
@@ -378,6 +403,22 @@ else
         require_evidence "^\[demo\] cube map: six" 1 "cube map load from the shipped assets"
         require_evidence "sky box 'sky_box' samples it by direction" 1 "sky cube map load (the default demo's sky box)"
         require_evidence "off-screen target 'shadow_map'" 1 "shadow pass target for the demo's casting light"
+        # The host's half of the surface-follow work: with the recreation hatch on, the session must MOVE onto
+        # the recreated window. A rebuild would show up as a SECOND "attached to the host window" line (and no
+        # move at all) -- which is exactly what the host did before it stopped shutting the engine down for a
+        # recreated window (measured: 2 attached / 0 moved through this stage).
+        if [ "${APP_RECREATE_MS:-0}" != "0" ]; then
+            attached=$(grep -c "attached to the host window" "$log" || true)
+            moved=$(grep -c "moved to the host's new window" "$log" || true)
+            if [ "${moved:-0}" -lt 1 ]; then
+                echo "[FAIL] ${STAGE}: the recreated surface did not make the backend follow it (0 'moved to the host's new window' line(s))"
+                mark_stage_failure
+            fi
+            if [ "${attached:-0}" -ne 1 ]; then
+                echo "[FAIL] ${STAGE}: a recreated surface rebuilt the session (${attached:-0} 'attached to the host window' line(s), expected exactly 1)"
+                mark_stage_failure
+            fi
+        fi
         # Vine is a GUI app: it runs until killed. A timeout (124) is success;
         # any other non-zero exit indicates a startup crash.
         if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then

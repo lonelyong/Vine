@@ -1,3 +1,10 @@
+> 2026-09-16 **H4 落地：宿主真的开始“跟着走”了（C1 的另一半），且这件事终于可判**
+> 原计划是“把 `initializeBackend()` 里的 `shutdown()` 换成重新公告句柄”。查下去发现**宿主有两处在拆会话**：`initializeBackend()` 的“句柄变了”分支，**以及** `onSurfaceDestroyed()`（Qt 的 `SurfaceAboutToBeDestroyed`）。只要后者还在，前者改得再对也没用 —— 真实路径（Qt 重建窗口）先经过它。两处都改：`onSurfaceDestroyed()` 只标记 `surface_ok=false`（渲染由 `renderFrame()` 既有的“句柄/可见性”守卫拦住），会话留着等新句柄；`initializeBackend()` 在新句柄到来时**重新公告**（`setWindowHandle` + `initialize`），由后端的 `initialize()` 自己决定搬还是重建；`init()` 的幂等返回改成“句柄匹配才算已绑定”。
+> · **可判性是这次的重点**：“平台窗口被重建”（换屏 / reparent / 把 dock 拖出去）本来**无法按需触发**，所以加了一个测试钩子：`VINE_RECREATE_SURFACE_MS` → `RenderControl::recreateSurface()`（`QWindow::destroy() + create() + show()`）。app 阶段默认 `VINE_APP_RECREATE_MS=1200`，并断言两条：`moved to the host's new window ≥ 1` **且** `attached to the host window == 1`（重建就是 2/0）。
+> · **实测**：`attached to the host window 0x60004a` → 钩子 → `[RenderControl] the render surface was recreated: re-announcing …` → `[VsgHostWindow] moved to the host's new window 0x600051 (378x247); the device and its pipelines were kept`；渲染区**采的就是新窗口**、84.90% 非黑、0 VUID。**变异**（把 shutdown 放回 `onSurfaceDestroyed()`）⇒ `follow it (0 moved)` + `rebuilt the session (2 attached)` + 像素阶段去读**已销毁的旧窗口**失败，**三条红**；回滚后全绿。
+> · **像素阶段顺手修的一个真坑**：它原来在“看到第一行 attach”时就定住句柄，钩子把窗口换掉后它采的是**已销毁的窗口** ⇒ 抽出 `latest_window_id()`（attach 与 move 两行都算、取最后一行），并且在钩子开启时**先等 move、采样前再取一次**。
+> · 判据：build 0/0、`test_vsg` 292 / `test_graphics` 272 / `test_core` 82、include 卫生 0、63 单元 agree、**证据 55 行逐字不变**、lavapipe PASS 0 VUID。
+
 > 2026-09-16 **R3 落地：「一个 episode 只报一次」从 10 份约定收成一个类型**
 > 新增 `include/vine/vsg/VsgReportOnce.hpp`（`shouldReport()` / `reported()` / `rearm()`），把散在 `VsgRendererState`（5）、`VsgRenderTargetEntry`（3）、`SceneBridge`（1）的 bool，以及 `detail::beginLightsDroppedEpisode` / `beginTargetSizeMissingEpisode` 两个 `bool&` 自由函数全部换掉。**重武装仍由调用者决定**（各站点边界不同：新帧 / 新作用域 / 可用的尺寸 / 每盏灯都亮回来 / 换了源），类型只承载规则本身 —— 这是本次抽取唯一的风险点，所以写进了类注。
 > · 两个自由函数因此各短三行：`if (条件结束) { reported.rearm(); return false; } return reported.shouldReport();`。
@@ -1872,7 +1879,7 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 - **验证纪律（新踩的坑）**：`cmake --build . --target Vine` **不重建插件** `build/plugins/vine/gfx_backend_vsgd.so`（app 运行时 dlopen），只验 `bin/Vine` 会导致假阳性 ⇒ 二进制级结论要按**构建产物**验身份（`nm -DC <plugin.so> | grep <symbol>` + 时间戳）。
 - **看画面本身的办法（2026-09-16 晚已改工具，见顶部 H6 条目）**：`scripts/xwin2ppm.py <窗口句柄|窗口名> [out.ppm]` —— 句柄从后端那行 `[VsgHostWindow] attached to the host window 0x…` 里取（Qt 渲染区是具名顶层窗口的**子窗**，按名字读到的是 Qt 自己的界面）；它经 libX11 `XGetImage` 自己抓、自己解掩码，**不需要 xwd/xwininfo**，再用 `scripts/ppm2png.py` 转 PNG。（旧写法是 `xwd -id … -out f.xwd` + 自解 XWD 头：`-root` 在 XWayland 下 BadMatch、`-out -` 不支持，`bpp@44 / bytes_per_line@48 / mask@56,60,64`。）
 - **小经验**：`VsgRenderer::deviceWaitCount()` 是**会话级**计数，`shutdown()` 后读回 0 ⇒ 相位要在放手之前取样（打印的就是量到的值，别写死散文数字）。
-- **宿主侧下一步**：`src/fw/appfw/src/gui/RenderControl.cpp::initializeBackend` 仍先 `shutdown()`；改成"只重新公告句柄 + `resize()`/渲染"，让后端的 `initialize()` 去搬（本环境除 app 演示外无门禁覆盖）。
+- **宿主侧下一步**：`src/fw/appfw/src/gui/RenderControl.cpp::initializeBackend` 仍先 `shutdown()`；改成"只重新公告句柄 + `resize()`/渲染"，让后端的 `initialize()` 去搬（本环境除 app 演示外无门禁覆盖）。**已做（2026-09-16 晚，H4）**：宿主**两处** shutdown 都删了（`initializeBackend()` 与 `onSurfaceDestroyed()`），并加了 `VINE_RECREATE_SURFACE_MS` 钩子把它接进门禁 —— 见本文件顶部 H4 条目。
 
 ## A6 落地：`VsgHostWindow` 改成派生平台窗口（2026-09-16 完成）
 
@@ -1894,7 +1901,7 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 | V1 | **Win32 分支**（`VsgHostWindow` 派生 `vsgWin32::Win32_Window`） | 本机 `_WIN32` 不成立 ⇒ **编译器都没跑过**，只做了源码审读（`Win32_Window` 是 `VSG_DECLSPEC`；采纳分支设 `_windowMapped = true`；其析构会 `DestroyWindow` **和** `UnregisterClass(GetClassName(hwnd))` ⇒ 我们"析构先置空 `_window`"是对的） | Windows 上：build 0/0 + app 门禁 + 自检相位（`mapped=true`、窗口构建数不变、恰好 1 次计数 device stop、两宿主窗口存活）+ 拉伸窗口看画面跟随（走 `resize()`） |
 | V2 | 采纳路径下 `pollEvents()` 不会偷 Qt 事件 | 源码级已确认：事件掩码只在 `createWindow` 分支的 `xcb_create_window` 里设置，我们这条连接收不到 X 事件 | 真机上边缩放/拖拽边点菜单，确认 Qt 事件不丢 |
 | V3 | 新副作用：vsg 平台窗口构造会调 `_initXdnd()`，在**宿主窗口**上写 `XdndAware` 属性 | 幂等，且 Qt 在 X11 本来也用 XDND | 往窗口拖一个文件试；若真有害，对策是"不接受 vsg 构造"或构造后清属性 |
-| V4 | 宿主侧 `RenderControl::initializeBackend()` 仍是 `engine->shutdown()` + `initialize()` | C1/A6 只让后端**有能力**搬；宿主还没改成"只重新公告句柄" | 改 `src/fw/appfw/src/gui/RenderControl.cpp`：句柄变化时只 `setWindowHandle()` + `initialize()`（**不** shutdown），再 resize/渲染；断言/日志看 `windowBuildCount()` 不变 |
+| ~~V4~~ | ~~宿主侧 `RenderControl::initializeBackend()` 仍是 `engine->shutdown()` + `initialize()`~~ | **已做（2026-09-16 晚，H4）**：宿主**两处** shutdown 删除（`initializeBackend()` + `onSurfaceDestroyed()`），新增 `VINE_RECREATE_SURFACE_MS` 钩子把“平台窗口被重建”变成可按需触发，app 阶段断言 `moved ≥ 1` 且 `attached == 1` | 实测 `0x60004a → 0x600051`、渲染区 84.90% 非黑；**变异**（shutdown 放回 `onSurfaceDestroyed()`）⇒ 三条红。见本文件顶部 H4 条目 |
 | V5 | `+0.43 s` 的 **release(-O2) 复测** | 只有 debug(-O0) 的交错 A/B；当时已排除"代码布局/堆起点"等猜测，但"交付物是否带这笔钱"仍未测 | 新开 `build-release/`（`-DCMAKE_BUILD_TYPE=Release`）全量构建，三条已提交二进制交错比墙钟；**先验身份**（`nm -C` + 指纹）再下结论 |
 
 ### 2. 已定位、未做的代码收尾（都小）
