@@ -1846,6 +1846,49 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 - **实测**：build 0/0；自检相位绿、0 VUID，`[host-surface] attached … (320x180, mapped=true)`、搬移 `windows built 2 before, 2 after; 1 counted device stop; centre 34,6,2 / corner 10,20,30 与手写版逐位相同`；app 日志 `attached to the host window (378x234, mapped=true)`，`xwd` 读渲染区 **85.75% 非黑**（同一动画场景，比例随帧变化）；`gfx_lavapipe_check.sh` PASS（55 行证据逐字相同、app demo PASS、0 VUID）；`test_vsg` 289 / `test_graphics` 272。
 - **仍未验证/待确认**：Win32 分支本机**编译不了**（只能审读：`vsgWin32::Win32_Window` 是 `VSG_DECLSPEC`，采纳分支同样设 `_windowMapped`，析构会 `DestroyWindow` + `UnregisterClass` ⇒ 我们置空句柄是对的）；采纳路径下我们这条连接不选事件掩码 ⇒ `pollEvents()` 收不到 X 事件、不会偷 Qt 事件（已按源码确认，真机再复验一次更稳）；vsg 平台窗口构造会调 `_initXdnd()`，会在**宿主窗口**上写 XdndAware 属性（幂等、Qt 在 X11 本来也用 XDND）。
 
+## 交接：未做的事、待确认的事（2026-09-16 收工存档，回家接着干）
+
+> 今天已完成并提交：`424e15e` C1（宿主表面归属）→ `143c9f4`（`valid()/visible()` 修复，黑屏根因）→ `dce6946`（复核五项：删 `releaseWindow()`、同句柄保持会话、atomic、拆文档、`__APPLE__` 守卫）→ `44e6ad9` A6（改为派生平台窗口，567→315 行）。下面只列**没做完的**，每条写清"为什么没做 / 怎么判成功 / 动哪里"。
+
+### 1. 代码写了但本机证明不了的（最该先补）
+| # | 事项 | 现状 | 判据 |
+| --- | --- | --- | --- |
+| V1 | **Win32 分支**（`VsgHostWindow` 派生 `vsgWin32::Win32_Window`） | 本机 `_WIN32` 不成立 ⇒ **编译器都没跑过**，只做了源码审读（`Win32_Window` 是 `VSG_DECLSPEC`；采纳分支设 `_windowMapped = true`；其析构会 `DestroyWindow` **和** `UnregisterClass(GetClassName(hwnd))` ⇒ 我们"析构先置空 `_window`"是对的） | Windows 上：build 0/0 + app 门禁 + 自检相位（`mapped=true`、窗口构建数不变、恰好 1 次计数 device stop、两宿主窗口存活）+ 拉伸窗口看画面跟随（走 `resize()`） |
+| V2 | 采纳路径下 `pollEvents()` 不会偷 Qt 事件 | 源码级已确认：事件掩码只在 `createWindow` 分支的 `xcb_create_window` 里设置，我们这条连接收不到 X 事件 | 真机上边缩放/拖拽边点菜单，确认 Qt 事件不丢 |
+| V3 | 新副作用：vsg 平台窗口构造会调 `_initXdnd()`，在**宿主窗口**上写 `XdndAware` 属性 | 幂等，且 Qt 在 X11 本来也用 XDND | 往窗口拖一个文件试；若真有害，对策是"不接受 vsg 构造"或构造后清属性 |
+| V4 | 宿主侧 `RenderControl::initializeBackend()` 仍是 `engine->shutdown()` + `initialize()` | C1/A6 只让后端**有能力**搬；宿主还没改成"只重新公告句柄" | 改 `src/fw/appfw/src/gui/RenderControl.cpp`：句柄变化时只 `setWindowHandle()` + `initialize()`（**不** shutdown），再 resize/渲染；断言/日志看 `windowBuildCount()` 不变 |
+| V5 | `+0.43 s` 的 **release(-O2) 复测** | 只有 debug(-O0) 的交错 A/B；当时已排除"代码布局/堆起点"等猜测，但"交付物是否带这笔钱"仍未测 | 新开 `build-release/`（`-DCMAKE_BUILD_TYPE=Release`）全量构建，三条已提交二进制交错比墙钟；**先验身份**（`nm -C` + 指纹）再下结论 |
+
+### 2. 已定位、未做的代码收尾（都小）
+- **自检相位的魔法尺寸**：`vsg_selftest/selftest_hostsurface.cpp` 里 `at(128u, 72u, …)` 与 `256u`/`144u` 同 `pixels_target` 的尺寸是同一个事实写两遍；从 target 取尺寸或提成常量。
+- **拒答路径零覆盖**：`VsgRenderer::initialize()` 收 null 句柄、公告的窗口"不是本后端的"、以及"搬移被拒（新表面 swapchain 格式不同）"这三条分支，连同 `Warning` + `DiagnosticCategory::UnsupportedRequest` 诊断，**一条断言都没有**。建议各加一条（诊断可用 `renderer.setDiagnosticSink(...)` 收）。
+- **`VsgRenderer::resize(int,int)` 忽略参数**（尺寸权威在窗口，这是设计），但签名会让读者误以为值生效；可标 `[[maybe_unused]]` 或改注释。
+- **app 门禁仍不看像素**：`gfx_lavapipe_check.sh` 的 app 阶段只查 stderr 证据 ⇒ **今天的黑屏被它完整放过**。工具已入库：`scripts/xwd2ppm.py`（见下），可考虑把"渲染区非黑比例 ≥ 阈值"接进 app 阶段（跨 X 环境可能不稳，做成可选档）。
+- 早前会话留下的：上游 vsg 加 `CompileManager::remove(view)`（已有派生方案，**不需要了**，见 §5.3.1）；`docs/` 与 `.ai/design/` 里若要给 `VsgHostWindow` 的"派生 vs 重写"留设计记录，可在 `graphics-vsg-audit.md` 补一节。
+
+### 3. 今天的判据 / 命令速查（回家直接抄）
+```bash
+# 全门禁（PASS = 55 行证据逐字相同 + content-shading 匹配 + app demo PASS + 0 VUID）
+timeout 900 bash scripts/gfx_lavapipe_check.sh
+
+# 自检 + 校验层（相位含窗口构建数 / 计数 device stop / 宿主窗口存活 / 同句柄 / 像素）
+VINE_VSG_DEBUG_LAYER=1 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json ./bin/vsg_backend_selftest
+
+# 单测 / 脚本门禁
+./bin/test_vsg            # 289 ; ./bin/test_graphics  # 272
+python3 scripts/check_doc_symbols.py       # 3 living document(s) and 62 unit(s) agree
+python3 scripts/check_include_hygiene.py   # 0 finding(s) in 663 file(s)
+python3 scripts/check_diagnostic_formats.py
+
+# 看 GUI 到底画没画（今天的黑屏就是这么抓到的）
+./bin/Vine &                       # 默认 demo（VINE_VSG_OWN_WINDOW=1 可看后端自建窗口那条对照）
+python3 scripts/xwd2ppm.py Vine /tmp/area.ppm     # 打印非黑比例/均值色 + 写 PPM
+python3 scripts/ppm2png.py /tmp/area.ppm /tmp/area.png
+```
+
+> **身份铁律（今天就栽过一次）**：`cmake --build . --target Vine` **不会重建插件** `build/plugins/vine/gfx_backend_vsgd.so`（app 运行时 dlopen 它）。任何二进制级结论都要 `nm -DC <构建产物> | grep <symbol>` + 时间戳，只验 `bin/Vine` 会得到假阳性。
+> **另**：`xwd -root` 在 XWayland 下 BadMatch；`xwd -out -`（stdout）不支持；XWD 头偏移 bpp@44 / bytes_per_line@48 / RGB mask@56,60,64（`scripts/xwd2ppm.py` 已经封好）。
+
 ## 模块文档（面向使用者）
 
 `src/viz/graphics/docs/usage.md`（仿 `src/base/math/docs/Eigen.md` 的"模块自带 docs 目录"约定）：分层架构、属性沿树折叠的四条规则、每帧数据流与"顶点被别名而非复制"、生命周期与变更契约（**数据变更一律 `Geometry::setRevision()` 公告**）、最小宿主用法，以及现成例子的**构建与运行方式**（`VINE_PIPELINE=forward|deferred|forward_shadowed|deferred_shadowed`（默认 deferred）、`VINE_VSG_GBUFFER` / `VINE_VSG_DEFERRED` / `VINE_VSG_OFFSCREEN_MULTISLOT` / `VINE_VSG_SLOT_DEMO` / `VINE_SHADER_PRESET`、无头门禁）。
