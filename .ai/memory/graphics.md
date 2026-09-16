@@ -69,6 +69,22 @@
 >   6 个本来就要内部；而第二步做完后 `VsgRenderer.hpp` 自己就会掉到 ~0.2 s，不需要 PImpl。PImpl 用在 `VsgRendererState`
 >   上则是明确错的（该类型自己写明"没有 d-pointer"的理由 + 38 个 detail 函数收它 + 6 个测试直接读字段）。
 >   **PImpl 的触发条件**：插件头若要作为给宿主的契约发出去（要 ABI 稳定），那时它买的是边界声明而非编译时间。
+> - **T16 第一步已做（探针，env 门控）**：在「policy churn」相位前后各采一次保留量，脚本
+>   `VINE_PROBE_RETENTION=1 VK_ICD_FILENAMES=…/lvp_icd.json ./build/bin/vsg_backend_selftest`。**实测**：
+>   `churn START: content_slots=4 compile_contexts=60` → `churn END: content_slots=7 compile_contexts=63`
+>   （`waits=0 retired=115 builds=2`）。读法：**相位开始前就有 60 次注册对应仅 4 个存活槽 ⇒ 约 56 个上下文属于早已销毁的槽**，
+>   即泄漏形状 = **会话累计、按槽创建次数**（文档记载成立）；相位内是 1:1（3 个新槽 / 3 次新注册），因为 policy churn
+>   换的是**变体**、槽是持久的。探针打到 **stderr + `[probe]` 前缀**，而证据脚本只收 `[selftest]` 开头 ⇒ **默认 55 行不变**。
+>   源码里标了 `TEMPORARY PROBE (T16)`，**待定**：留作正式可观测量、还是提交前撤掉。
+> - **T16 决策前必须做的实验（设计已定，未实现）**：插件侧换 manager 的唯一拦路石是「**新上下文会不会让活视图重造管线**」
+>   （比泄漏更糟的失败模式），而它在 vsg 源码里**没找到可依据的守卫**（`src/vsg/utils/GraphicsPipelineConfigurator.cpp` 里
+>   没有按 viewID 跳过已编译的明显守卫），所以**必须实测**。设计：在破坏性拆除点（已在 `waitForIdle` 的地方：
+>   `VsgTargetBookkeeping.cpp:253/301/531`、`VsgRenderer.cpp:383`）加一个 env 门控的 `resetCompileManagerIfProbing(state)`：
+>   新建 `CompileManager` 赋给 `viewer->compileManager` + 清掉所有活槽的 `compile_context_registered` + 计数归零；
+>   然后整跑自检，比对 **① 管线/变体计数是否上涨**（`docs/backend.md` §4.4 那批"稳态应为 0"的计数 + `retentionStats()`）、
+>   **② 55 行证据是否仍逐字节不变**（若变，多半就是重造管线被抓住）、**③ 墙钟时间**。三个数一起看；
+>   若①不涨 ⇒ ② 方案风险归零、可直接采用（不必碰 vsg 源码）；若①涨 ⇒ 「改 vsg 源码」从我的推断升级为**实测结论**。
+>   注意：换 manager 后 `VsgRetentionStats::compile_contexts` 的语义要从"会话累计"改成"当前 manager"，否则观测失真。
 
 > 2026-09-15 **审查轮次：graphics + vsg 后端逐条修复（见 `.ai/design/graphics-vsg-audit.md`）**
 > 12 条缺陷全部修完，每条都带门禁（单测/像素证据/变异验证）。**判据**：build 0 error；`test_graphics` 260→**269**、

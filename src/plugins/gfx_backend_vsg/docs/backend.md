@@ -515,6 +515,13 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 （D22）的路径并让存活槽重新注册。可观察量：`VsgRenderer::retentionStats().compile_contexts` —— 把它当"只有增没有减"
 的数看着，比让它静默增长好。
 
+**怎么按需把它看出来（2026-09-16 加）**：自检的 policy churn 相位前后各采一次保留量，默认**不打印**（否则会动到证据基线），
+用 `VINE_PROBE_RETENTION=1 VK_ICD_FILENAMES=<lavapipe icd> ./bin/vsg_backend_selftest` 打开。**第一组实测**：
+`churn START: content_slots=4 compile_contexts=60` → `churn END: content_slots=7 compile_contexts=63`（同相位 `waits=0`）。
+读法：**相位开始就有 60 次注册对应仅 4 个存活槽 ⇒ 约 56 个上下文属于已销毁的槽**，即泄漏形状 = 会话累计、按槽创建次数；
+相位内 1:1 是因为 policy churn 换的是**变体**、槽是持久的。**仍未验证**（决定①/②的那个实验）：换掉 manager 是否会让活视图
+**重造管线**——设计见 `.ai/memory/graphics.md` 本日条目（三个判据：管线/变体计数不涨、55 行证据不变、墙钟）。
+
 ### 5.4 变体与清屏策略
 
 - 每个 pass 的 render pass / framebuffer 由 **`planPassVariant()`**（纯函数）决定：清屏请求（颜色/深度）

@@ -1207,6 +1207,17 @@ bool runPolicyChurnStressPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
     auto rebuild_pass = RenderPassPtr(new RenderPass());
 
     const std::size_t waits_before   = renderer.deviceWaitCount();
+    // Retention probe (VINE_PROBE_RETENTION=1), OFF by default so the evidence lines this phase reports are
+    // exactly the baseline's. It prints the two retention numbers around the suite's densest churn, which is
+    // where the one shape worth watching shows: `compile_contexts` records a registration that vsg has no API
+    // to undo (docs/backend.md 5.3.1), so a count that follows the slots ALIVE is healthy while one that
+    // follows the slot CREATIONS is the documented leak. Read the SECOND sample against the FIRST.
+    const bool probe_retention = std::getenv("VINE_PROBE_RETENTION") != nullptr;
+    if (probe_retention) {
+        const auto snapshot = renderer.retentionStats();
+        std::fprintf(stderr, "[probe] churn START: content_slots=%zu compile_contexts=%zu\n",
+                     snapshot.content_slots, snapshot.compile_contexts);
+    }
     const std::size_t retired_before = renderer.retiredObjectCount();
     const std::size_t builds_before  = renderer.offscreenBuildCount();
 
@@ -1250,6 +1261,11 @@ bool runPolicyChurnStressPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
     const std::size_t waits   = renderer.deviceWaitCount() - waits_before;
     const std::size_t retired = renderer.retiredObjectCount() - retired_before;
     const std::size_t builds  = renderer.offscreenBuildCount() - builds_before;
+    if (probe_retention) {
+        const auto snapshot = renderer.retentionStats();
+        std::fprintf(stderr, "[probe] churn END: content_slots=%zu compile_contexts=%zu (waits=%zu retired=%zu builds=%zu)\n",
+                     snapshot.content_slots, snapshot.compile_contexts, waits, retired, builds);
+    }
     if (waits != 0) {
         std::fprintf(stderr,
                      "[selftest] FAIL: %d frame(s) of policy churn stopped the device %zu time(s); a replaced render"
