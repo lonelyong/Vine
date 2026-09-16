@@ -35,6 +35,13 @@
 > 且那句"`observer_ptr<View>` 只是弱引用 ⇒ 不会悬垂"是**错的**。
 > **那笔 +0.43 s 仍未查明**：租约版复测 3.12–3.27 s（3 次），与上一版同区间 ⇒ "释放调用"与"影子计数器"也可排除。
 
+> 2026-09-16 **继续：候选清单的裁决 + 那笔账的调查（无代码改动，只动文档）**
+> **stash 已删**：`derived+instr`（上一轮的 WIP + 自检探针，已被提交的工作覆盖）；删前把它的 `--stat` 记进了提交信息。当时 `git stash list` 还有过一条历史遗留——这正是"二进制 A/B 前先验身份"那条教训的实物。
+> **C4（一帧瞬态变体 → 派生 `RenderGraph`）：不做。** 查细后的理由两条：① `settleSubmittedFrame()` 的换回**必须发生在提交之后**——瞬时变体一旦被**记录**，深度图像就已经回到稳态变体所期望的布局，而"开了帧但没提交"的那一帧什么都没记录，瞬态必须**继续挂**；改成"每帧开始时无条件下调回稳态"会在那种帧上记录一个声明了错误 initialLayout 的变体（比现状更差）。② 正确的版本是"图自己在被记录时消耗掉这一枪"（派生 `accept(RecordTraversal&) const` + `mutable`/`const_cast` 改 `renderPass`），能删掉 `PassObjects::transient` 与两处调平，但代价是新增一个类 + 一处"const 录制里改状态"，对一个**没有实测缺陷**的小簿记不划算。
+> **C1（宿主表面窗口）：登录路线，现在不做。** 前提**已证实**：`RenderControl::initializeBackend()`（`src/fw/appfw/src/gui/RenderControl.cpp`）在 Qt 重建平台窗口时确实走 `engine->shutdown()` + `initialize()` 整会话重建，而 SDK 契约（`RenderBackend::nativeHandle()` 的注释）本来就写着"重新公告 setWindowHandle 就是让后端**迁到**新表面的方式"——两边合起来就是**当前后端不能迁**。改成派生 `vsg::Window` 接管宿主表面的好处很硬：删掉 `VSG_MAX_DEVICES=4`（抬高上游上限）、`releaseWindow()`（否则析构会 Destroy 宿主的 HWND）、以及表面重建不再丢设备与全部 PSO（D28 无管线缓存时这笔最贵）。**但现在不做**：这条路在本环境**没有任何门禁覆盖**（门禁跑的是无窗口的 app demo；D21 仍标着"Qt 子窗口主路径待定"），而它要新增 Xcb/Wayland/Win32 的 surface 代码——无门禁可验的平台码与本仓库的规矩相背；等有人能在真窗口环境验的那一轮再动。
+> **C2（管线归属下沉到 `Command`）**：维持登记，等实测需要（D28 启动耗时 / §9.4 tile GPU）。
+> **那笔 +0.43 s（现已收敛为 +0.47 s 的"一次性"账）**：`perf` 要提权、本机无 valgrind，于是树内临时装 SIGPROF 采样器 + 时间戳对齐 + 三个扰动实验（详见 `docs/backend.md` 5.3.1）。结论：**工作逐行相同、计数相同、与帧数无关、无热点，差在软件光栅器的一次性开销**；"代码布局"这条被三个扰动实验否掉（旧猜测已删）。**未做**：release 复测（全量 reconfigure+build）。
+
 > 2026-09-16 **审查轮次 3：接口 / 命名 / 文档收尾（任务表 T1–T16）**
 > 判据（整批）：build 0 error/0 warning；`test_graphics` 269→**272**、`test_vsg` **289**、`test_core` **82**；
 > 三脚本 0（文档 58 单元、include 659 文件、诊断格式 31 文件）；lavapipe **RESULT: PASS** 且 **55 行证据逐字节不变**。
