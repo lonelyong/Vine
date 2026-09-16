@@ -81,6 +81,21 @@
 | **P4：把 `shared_objects_`（管线状态注册表）提到会话级** | 会让两个槽共享 `vsg::GraphicsPipeline` 对象，而 vsg 的 per-view 实现复选**不比 render pass**（`GraphicsPipeline.cpp:177`），后端又刻意按 pass 变体建不同的 `VkRenderPass` ⇒ 第二个 view 拿到用不兼容 render pass 编译的 pipeline。**实测**：注入会话级表后 selftest 的 policy-churn 相位失败（深度读到 0.0000，期望 ~0.0249）；回退后门禁 PASS。正确的跨槽去重范围是**不携带 render pass 的对象**（缓冲区/网格资源），即 P9 |
 | 收集时**连视锥外的也一起枚举**（为了区分"被剔除"与"已移除"） | 视锥早退正是剔除省钱之处；全量枚举要**不剪枝走完整棵树** ⇒ 每帧 O(全部节点)，与目标相反。"已移除"已由 `abandoned()` 免费覆盖；如需更强信号，可只对**缺席候选**做 O(depth) 父链/可见性检查 |
 
+### 宿主表面（C1/A6）未完成项（2026-09-16 登记，编号 H#；过程与判据见 `.ai/memory/graphics.md` 的“交接”节）
+
+> 背景：2026-09-16 把宿主表面归属做成后端自己的事（`VsgHostWindow` 派生 vsg 平台窗口），撤回 `VSG_MAX_DEVICES`／`releaseWindow()`，修好“窗口是黑的”（`valid()/visible()` 漏覆写 ⇒ 整帧不录）。代码已提交（`424e15e`/`143c9f4`/`dce6946`/`44e6ad9`），下列是**还没做完的**。
+
+| 编号 | 项目 | 现状 | 目标 | 代价/风险 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| **H1** | **Win32 分支的编译与行为验证**（`VsgHostWindow` 派生 `vsgWin32::Win32_Window`） | 本机 `_WIN32` 不成立 ⇒ **编译器都没跑过**，只做了源码审读（`VSG_DECLSPEC`、采纳分支设 `_windowMapped = true`、析构会 `DestroyWindow` **和** `UnregisterClass(GetClassName(hwnd))` ⇒ 我们“析构先置空 `_window`”是对的） | Windows：build 0/0 + app 门禁 + 自检相位（`mapped=true`、窗口构建数不变、恰好 1 次计数 device stop、两宿主窗口存活）+ 拉伸窗口看画面跟随 | 无法在本环境验证；错误会以“窗口黑/崩溃”形式出现，而不是编译错误 | 待办（最高优先） |
+| **H2** | 继承来的 `pollEvents()` 会不会偷 Qt 的事件 | 源码级已确认：事件掩码只在 `createWindow` 分支的 `xcb_create_window` 里设，采纳路径我们这条连接收不到 X 事件 | 真机上边缩放/拖拽边点菜单，确认 Qt 事件不丢 | 只在真实交互下暴露 | 待办（真机复验） |
+| **H3** | 新副作用：vsg 平台窗口构造会调 `_initXdnd()`，在**宿主窗口**上写 `XdndAware` 属性 | 幂等，且 Qt 在 X11 本来也用 XDND | 往窗口拖一个文件验证无害；若有害则构造后清属性（或拒绝 vsg 构造） | 可能影响 Qt 的拖放行为 | 待办（低成本验证） |
+| **H4** | 宿主侧 `RenderControl::initializeBackend()` 仍做 `engine->shutdown()` + `initialize()` | C1/A6 只给了后端**搬**的能力，宿主还没用上 | 改成句柄变化时只 `setWindowHandle()` + `initialize()`（**不** shutdown），再 resize/渲染；用 `windowBuildCount()` 断言没重建 | 落在 `src/fw/appfw/src/gui/RenderControl.cpp`；本环境除 app 演示外无自动门禁覆盖 | 待办 |
+| **H5** | **`+0.43 s` 的 release(-O2) 复测** | 只有 debug(-O0) 的交错 A/B（已排除代码布局/堆起点等猜测，无热点、帧数无关的一次性开销） | 新开 `build-release/`（`-DCMAKE_BUILD_TYPE=Release`）全量构建，三条已提交二进制交错比墙钟，**先验身份**（`nm -C` + 指纹）再下结论 | 一次全量构建；FetchContent 需 `FETCHCONTENT_FULLY_DISCONNECTED=ON`（见本文件 §0 末条） | 待办 |
+| **H6** | 宿主表面这条线的**小收尾（四项）** | ① 自检相位里 `at(128u, 72u, …)`／`256u`/`144u` 与 `pixels_target` 尺寸重复；② 三条**拒答路径零覆盖**（null 句柄 / 非本后端窗口 / 搬移被拒）连同 `Warning` + `UnsupportedRequest` 诊断无断言；③ `VsgRenderer::resize(int,int)` 忽略参数（设计如此，但签名易误读）；④ **app 门禁仍只看 stderr** ⇒ 当天的黑屏被完整放过 | ①从 target 取尺寸或提常量；②各加一条断言（诊断用 `setDiagnosticSink` 收）；③标 `[[maybe_unused]]` 或改注释；④把“渲染区非黑比例 ≥ 阈值”接进 app 阶段（用已入库的 `scripts/xwd2ppm.py`，跨 X 环境可能不稳 ⇒ 做成可选档） | 都是小改动；④有一个阈值选取问题 | 待办 |
+
+两条当日踩到的坑（非性能，值钱）：① `cmake --build . --target Vine` **不重建插件** `build/plugins/vine/gfx_backend_vsgd.so`（app 运行时 dlopen 它）⇒ 二进制级结论要 `nm -DC <产物> | grep <symbol>` + 时间戳，只验 `bin/Vine` 会得到假阳性；② `xwd -root` 在 XWayland 下 BadMatch、`xwd -out -` 不支持（工具 `scripts/xwd2ppm.py` 已把这层封好）。
+
 ## 2. 需要实测的数字（还没有）
 
 | 问题 | 怎么测 |
