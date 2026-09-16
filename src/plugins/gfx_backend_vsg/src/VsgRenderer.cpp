@@ -969,6 +969,21 @@ void VsgRenderer::resize(int announced_width, int announced_height)
         return;
     }
     const auto extent = state.window->extent2D();
+    // The window's shared render graph follows the window HERE, not when vsg notices: vsg's own resize
+    // handling runs while a frame is being RECORDED (its RenderGraph::accept compares the window extent
+    // against the one it saw last), so a frame recorded in between still names the OLD render area -- and
+    // the part of the client area the window just grew by is then neither cleared nor drawn, which is
+    // what leaves it black until a later frame presents. `previous_extent` is kept in step with what is
+    // written here so that handler does not scale a rectangle that is already right (it scales the views'
+    // sub-viewports too: measured on a maximize, the HUD overlays' rectangles came back 3x their size and
+    // off the window).
+    if (window_target.graph != nullptr) {
+        window_target.graph->renderArea = VkRect2D{ { 0, 0 }, extent };
+        window_target.graph->previous_extent = extent;
+        if (window_target.graph->viewportState != nullptr) {
+            window_target.graph->viewportState->set(0, 0, extent.width, extent.height);
+        }
+    }
     for (auto& kv : window_target.content_slots) {
         auto& slot = kv.second;
         if (slot.ready && slot.vsg_camera != nullptr && slot.applied.presenting) {

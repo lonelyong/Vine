@@ -602,6 +602,20 @@ void RenderControl::handleSurfaceUpdate()
     // Normal resize of the attached surface: rebuild the swapchain at the
     // final native size, refresh the view's camera projection aspect, present,
     // then request settle frames so the resized view is actually displayed.
+    //
+    // ONE frame, and no frame before the layout step. That step resizes the
+    // creator's off-screen chain (the deferred G-buffer, the composite target and
+    // every program slot that samples them), and the rebuild it triggers costs a
+    // frame's worth of work -- measured ~250 ms for the deferred demo on a
+    // maximize (six fullscreen programs and two off-screen targets). A frame
+    // presented BEFORE it is possible (the swapchain already follows the window,
+    // and a fullscreen program samples its source through vine_uv, so the
+    // previous picture would be scaled to the new size) and fills the window
+    // sooner -- but it fills it DISTORTED: the old picture stretched to the new
+    // aspect, then snapping back when this frame lands. That was tried on
+    // Windows and rejected: the picture is never distorted, and the part of the
+    // client area the window just grew by is simply filled when this frame
+    // lands. See .ai/memory/graphics.md (2026-09-17).
     d->engine->resize(w, sh);
     d->view->onSurfaceResized(w, sh);
     renderFrame();

@@ -238,8 +238,6 @@ struct ProgramSlot {
     std::uint64_t                    program_revision = 0;
     int                              source_w = 0;
     int                              source_h = 0;
-    int                              dest_w   = 0; // destination surface the node was built for
-    int                              dest_h   = 0;
     // See ContentSlot::detached.
     bool                             detached = false;
     bool                             ready    = false;

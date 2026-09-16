@@ -13,6 +13,7 @@
   - `vsg-embedded-init-crash.md` —— 嵌入式后端初始化崩溃（关闭窗口/Qt 重建 surface 时）。
   - `vsg-embedded-blank-render.md` —— 嵌入式渲染视图空白（SceneBridge 内容不显示）。
   - `vsg-resize-distortion.md` —— 窗口缩放时几何体变形（挤压/拉伸）。
+  - `vsg-maximize-black-band.md` —— 放大窗口后新露出的区域先黑，以及中间帧的取舍（2026-09-17）。
 
 约定：`memory/` 保持简短要点式；详细设计放 `design/`；两者内容互补。
 Bug 修复按条记录在 `bugs/`，一 bug 一文件。

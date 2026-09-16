@@ -310,10 +310,22 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     const detail::ShadowInput resolved_shadow = detail::resolveShadowInput(state, camera, state.request.lights);
 
     // (Re)build the retained slot when it is missing, the sampled source
-    // changed (or was resized: its colour views were rebuilt), the DESTINATION
-    // was resized, the program changed, a DIFFERENT shadow map arrived, or the source's depth
+    // changed (or was resized: its colour views were rebuilt), the program changed, a DIFFERENT shadow
+    // map arrived, or the source's depth
     // stopped being sampleable (a pass of the source that preserves depth revokes the
     // promotion, so the depth binding has to go with it).
+    //
+    // The DESTINATION SURFACE's size is deliberately NOT part of that list, though the node is still
+    // built with it (the baked default viewport, see makeFullscreenProgramNode). The node's geometry is
+    // the fullscreen triangle and its rectangle is DYNAMIC state: every fragment stage samples by
+    // vine_uv, which spans whatever rectangle the view is given, and the rectangle is re-set from the
+    // pass' announced viewport at the end of this function (slot.camera->viewportState). A window resize
+    // therefore changes nothing the node holds. Leaving it in made every fullscreen program in the
+    // window rebuild whenever the window changed size — five pipeline + glslang builds, measured at
+    // ~21 ms each — and since that is the frame a resize has to get out before anything at the new size
+    // can be on screen, the newly exposed part of the client area stayed black for it (~130 ms on a
+    // maximize). The sub-rect programs (a PiP) prove the rectangle is dynamic rather than baked: they
+    // sample the whole source inside a rectangle far smaller than the surface they were built for.
     //
     // The map only forces a rebuild when there IS one: the map is a descriptor's image view, which
     // cannot be re-pointed in place, but a map that DISAPPEARS is answered in the per-frame refresh
@@ -324,7 +336,6 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     const ProgramSlot*  previous = existing == dest_entry.program_slots.end() ? nullptr : &existing->second;
     const bool stale = previous == nullptr || !previous->ready || previous->source_target != source ||
                        previous->source_w != src.width || previous->source_h != src.height ||
-                       previous->dest_w != surf_w || previous->dest_h != surf_h ||
                        previous->source_depth_sampleable != src.depth_sampleable ||
                        (resolved_shadow.map != nullptr && previous->shadow_view != resolved_shadow.map) ||
                        previous->program.get() != program || previous->program_revision != program_revision;
@@ -410,8 +421,6 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         rebuilt.source_target = source;
         rebuilt.source_w = src.width;
         rebuilt.source_h = src.height;
-        rebuilt.dest_w   = surf_w;
-        rebuilt.dest_h   = surf_h;
         rebuilt.source_depth_sampleable = src.depth_sampleable;
         // Whether the node BOUND the depth is the shader's decision, not the
         // policy's: the depth descriptor only exists when the fragment stage

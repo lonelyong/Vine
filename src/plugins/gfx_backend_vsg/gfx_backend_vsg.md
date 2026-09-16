@@ -387,6 +387,8 @@ graph TD
   （由 orthoHeight×aspect 得 half_w/half_h）。
 - vsg 相机**不带 viewportState**（桥无窗口概念）；`VsgRenderer` 在 initialize/resize
   时用 `window->extent2D()` 补 viewportState，`RenderGraph` 每帧从它取渲染区域。
+  （2026-09-17：窗口图的 `renderArea`/`viewportState`/`previous_extent` 也在 `resize()` 里直接写成新
+  extent —— 见 §13。）
 
 ## 9. 材质管理（VsgMaterialManager）
 
@@ -483,10 +485,24 @@ graph TD
 - 更新 `vsg_camera->viewportState = ViewportState::create(window->extent2D())`
   —— 否则 `RenderGraph` 每帧从旧 viewportState 取渲染区域，画面停在旧尺寸
   （见 `.ai/bugs/vsg-resize-distortion.md`）。
+- **窗口共享 `RenderGraph` 的 `renderArea` / `viewportState` 在这里就写成新 extent**（并把 `previous_extent`
+  同步成同值）：vsg 自己的 resize 处理只在**录制期**发现 extent 变化后缩放，中间那些帧仍按旧矩形清/画，
+  新露出的部分既没清也没画 ⇒ 黑带（2026-09-17 实测：最大化后 250–320 ms）。同步 `previous_extent` 顺带
+  关掉了 vsg 的缩放路径（它会把已经正确的矩形再缩一次：HUD overlay 跑到窗口外）。
+
+**宿主侧顺序保持一帧**（`src/fw/appfw/src/gui/RenderControl.cpp::handleSurfaceUpdate`）：`engine->resize()` →
+`view->onSurfaceResized()`（重建离屏链）→ `renderFrame()` → settle。“先呈现一帧再重建”（旧画面被拉伸填满
+新窗口，实测 26 ms 就上屏）**试过又撤了**：它把画面拉伸变形，比“新区域晚 ~240 ms 才填上”更难接受 ⇒
+**约定：画面任何时刻不变形**；重建帧覆盖整个新窗口（因为 `renderArea` 已当场写对，见上）。重建帧 ~240 ms
+里 6 个全屏程序节点占 ~180 ms（glslang 只 ~50 ms，其余是 vsg 每节点建管线/描述符）。
 
 离屏 target：其 GPU 附件在**描述变化**（尺寸 / 颜色附件数或格式 / 深度格式 / 深度提升，
 即 `Target::BuildKey` 整把比较与尺寸任一项不符）时整目标重建（`buildOffscreenTarget`）；
 采样它的程序槽在采样源重建、尺寸变化或 program 内容修订变化时丢弃重建（`drawScreenProgram`）。
+**采样它的程序槽的 rebuild identity 不含“目标表面尺寸”**（2026-09-17 改）：节点的几何是全屏三角形，
+矩形是**动态状态**（每帧从 pass 的 viewport 写进 `slot.camera->viewportState`，而每个全屏片段阶段都按
+`vine_uv` 采样，与尺寸无关），所以窗口改尺寸不需要重建它。留在 identity 里的代价实测是把窗口里 5 个
+全屏程序在 resize 帧全部重编译（各 ~21 ms，共 ~105 ms），而那正是“必须尽快提交一帧”的那一帧。
 重建成 3 处都走统一顺序（先摘图 → deviceWaitIdle（计数）→ 释放 → 重建）。
 
 ## 14. 未定义行为 / 内存 / 异常安全清单
