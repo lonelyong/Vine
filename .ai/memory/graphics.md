@@ -92,6 +92,26 @@
 >   （路 B + pipeline-factory 前向声明）与 PCH 在**这个负载 + 这台机**上都不划算——判据是墙钟，不是 CPU 秒。
 >   ④ 何时该重新量：CI 变单核、或 TU 数大幅增加、或链上出现更贵的头（届时应先量墙钟再决定，不要照抄"16 s"）。
 >   ⑤ 教训（通用）：**优化编译时间必须报墙钟并注明核数**；CPU 秒乘以 TU 数会高估一个数量级。
+> - **T16 开工清单（下一窗口按此执行；这一轮把设计补全了，别再重新查）**。
+>   **义务点是 4 个**（判据 = 调用 `state.retireRing.waitForIdle(state.viewer)` 的破坏性点；`VsgReadback.cpp:195/377`
+>   的两个同类调用是**拷贝前停设备**，与拆除无关，**排除**）：
+>   ① `VsgTargetBookkeeping.cpp:490 erasePassFromTarget`（**单槽删除原语**）；② `:262 clearTargetAttachments`
+>   （**整目标槽删除原语**）；③ `VsgRenderer.cpp:378 shutdown`；④ `:243 unhookTargetPasses` / `:296 resetContentShaderSlots`
+>   （**摘挂 / 重建着色槽**）。
+>   **关键设计内容（半接线会留 bug）**：①②③ 里槽**消失** ⇒ 它的注册不再有意义（释放路径）；④ 里槽可能**存活**而
+>   render pass 换了 ⇒ 旧 context 已陈旧，而槽上的 `compile_context_registered` 仍为真 ⇒ **必须重新武装**（清标志，
+>   下一次编译重新注册）。**两种语义要写进那个类型的契约里**，不能散在调用点；只接 2 处就会留下"标志说已注册、
+>   context 指向旧 render pass"的不同步 bug。
+>   **六步**：①拥有者类型放既有的 `VsgViewCompiler.{hpp,cpp}`（**不动 CMake**）：注册/记录/计数（语义 = "当前 manager"）
+>   + 唯一的"注册失效"义务入口，两种语义在里面分开；②4 个站点接线，与 `waitForIdle` 同址；③策略（层内一行）=
+>   换 `viewer->compileManager` + 重新武装活槽 + 计数归零（四维已验证）；④撤 `probeSwapCompileManager` 与两个实验开关
+>   （**保留量探针保留**，它是有文档的正式可观测量）；⑤边界：确认该路径不装 `databasePager`（vsg 的 Viewer setup 会给
+>   它挂 manager），否则换之前清掉那个引用；⑥`docs/backend.md` §5.3.1 改写。
+>   **判据**：55 行证据逐字节不变、`stage_cache` 不涨、墙钟不涨、峰值 RSS 不涨（含 200 次放大）、**外加** churn 后
+>   `compile_contexts` 有界（用保留量探针读成断言）。
+>   **本轮排除掉的两条假路（别重走）**：①"resize 不引起设备等待"**不能写成自检断言**——自检**无窗口**（无 `setWindowHandle`，
+>   只渲染到离屏）而 `VsgRenderer::resize` 在 `state.window == nullptr` 时直接返回 ⇒ 断言恒真、是**假守卫**；有意义的
+>   位置只在有窗口的 app 门禁（那属于门禁改造）。②PCH 已试已否证（见上条）。
 >   **配方更正（2026-09-16 末，重要）**：`ShaderSet.h` 在本链上有**两个**来源，只做路 B **达不到目标**——
 >   状态链是 `VsgRendererState.hpp` → `VsgFramePlan.hpp` → {`VsgPipelineFactory.hpp`, `VsgRenderTargetEntry.hpp`}，
 >   而**两者都** `include <vsg/utils/ShaderSet.h>`（`VsgPipelineFactory.hpp` 只在签名里用 `ref_ptr<ShaderSet>&` ⇒
