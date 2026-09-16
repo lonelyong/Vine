@@ -1,3 +1,27 @@
+> 2026-09-16 **C3（本轮 brief）：编译上下文的池由"每帧对账"决定，而不是靠三处记得释放（T16 的收尾）**
+> **目标**：让"池里有哪些 context"成为**存活内容槽的函数**，而不是一条需要三处拆除点记住的约定。
+> 现状的四个负担：`ContentSlot::compile_context_registered`（bool）、`VsgRendererState::compile_context_registrations`
+> （与池内容必须同步的影子计数器，+1 在 `VsgViewCompiler.cpp`、-1 在 `forgetCompileContext`）、
+> **三处必须记得调的 `forgetCompileContext`**（`unhookTargetPasses` / `resetContentShaderSlots` / `erasePassFromTarget`）、
+> 以及为解释这条约定写下的整段文档（`VsgViewCompiler.hpp` 类注、`VsgTargetBookkeeping.hpp` 的"三处即三处"段、
+> `VsgRendererState.hpp` / `VsgRetentionStats.hpp` / `docs/backend.md` 5.3.1 各一段）。
+> **做法（五步）**：① `VsgCompileManager` 的 `forget(view)` 换成 `prune(span<const View*> live)`，另加 `holds(view)`（查池）与
+> `contextCount()`（问池）；三者共用一个私有的 `visitPool()`，把"借出 traversal 再归还"这条契约只写一遍。
+> ② 新增 `syncCompileContexts(state)`：由会话的槽表算出 live 视图表，交给 `prune`；`compilePendingViews()` 在**队列判空之前**
+> 调用它 ⇒ 每个提交帧结束时池 = 存活内容槽（帧内槽的丢弃都发生在 `retireInactivePassSlots()` 之前，`VsgRenderer.cpp:760/763`）。
+> ③ 注册分支改问池：`if (!manager->holds(view))` ⇒ 删 bool。④ `retentionStats()` 的 `compile_contexts` 改成问池
+> （`detail::compileContextCount`）⇒ 删影子计数器。⑤ 删三处 `forgetCompileContext` 调用及其注释。
+> **判据**：① 池里一条都不多（`VINE_PROBE_RETENTION=1` 指纹：`churn START 4/4`、`END 7/7`，与 T16 终态**逐字相同**）；
+> ② 该相位末尾既有断言 `compile_contexts <= content_slots` **不变**、仍然通过；③ 55 行证据逐字节不变；④ `test_vsg` 289 /
+> `test_graphics` 272 / `test_core` 82；⑤ 三脚本 0；⑥ lavapipe PASS、0 VUID；⑦ build 0 warning、include 卫生 0 命中。
+> **变异（必须红）**：把 `prune` 改成空转 ⇒ 60 对 4 的指纹回来、断言 FAIL；把 `holds` 恒返回 false ⇒ 同一视图被反复注册 ⇒ 断言 FAIL。
+> **已知代价（写进注释，不藏）**：① 释放从"立即"变成"**至多晚一帧**"（下一次 `compilePendingViews` 对账时释放），
+> 与停放/退役环同级，而不是 T16 之前那种"活一整个会话"；② `retentionStats()` 从读一个字段变成**借一次池**
+> （无并发编译时即时返回；它是 `noexcept`，取还只在队列上 push/pop）。
+> **不做**：RAII 句柄挂在槽上（`state = VsgRendererState{}` 是**按声明序**赋值成员，`window`/`viewer` 先于 `targets` 被释放
+> ⇒ 句柄会对着已析构的 manager 调 forget；把 T16 刚去掉的隐性耦合请回来）。
+> **本条也回答"派生到底带来什么"**：T16 派生掉的是一条 **API 缺口**，本轮去掉的是一条**义务**——池自己算得出来的事实，不该由人记住。
+
 > 2026-09-16 **审查轮次 3：接口 / 命名 / 文档收尾（任务表 T1–T16）**
 > 判据（整批）：build 0 error/0 warning；`test_graphics` 269→**272**、`test_vsg` **289**、`test_core` **82**；
 > 三脚本 0（文档 58 单元、include 659 文件、诊断格式 31 文件）；lavapipe **RESULT: PASS** 且 **55 行证据逐字节不变**。
