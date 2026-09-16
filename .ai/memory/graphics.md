@@ -1,3 +1,15 @@
+> 2026-09-16 **审查轮次 4：后端 + SDK 复看（只读，无代码改动；候选登记为 R1–R4）**
+> **泄漏这条的判据是跑出来的，不是看出来的**：`build-asan` 里 vsg 目标**一个都没建**（脚本默认 `VINE_ASAN_TARGET=test_gui`），今天手工补建（`ninja -C build-asan test_vsg vsg_backend_selftest`，1m55s，0 error）后跑 LSan：
+> · `ASAN_OPTIONS=detect_leaks=1 ./build-asan/bin/test_vsg` ⇒ **289 全绿**，泄漏报告**唯一一条在 appfw**（`vine::appfw::PluginManager::loadAll` → `DynamicLibraryLoader` 单例，808 B / 16 次分配，栈里**零 vsg 帧**）；
+> · `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json ASAN_OPTIONS=detect_leaks=1 ./build-asan/bin/vsg_backend_selftest` ⇒ **exit 0、0 条 sanitizer 报告**（会话建立/搬移/退役环/缓存/编译租约全过）。
+> · **坑**：ASan 树里不先建插件 ⇒ `VsgBackendPluginTest` 两条假红（"gfx_backend_vsg plugin should have registered the 'vsg' backend"），`ninja -C build-asan gfx_backend_vsg` 之后 4/4 绿。所以 **R2** = 把后端纳入 ASan 门禁 + 决定 appfw 那个单例抑制还是修。
+> **R1（平台重复）怎么量出来的**：把 `VsgHostWindow.cpp` 两个 `#if` 分支各自抽出（各 ~93 行）、归一化平台词汇后 `diff` ⇒ **真正因平台不同的代码只有 3 处**（`hostHandle()` 的两种 cast、空句柄判定 `== nullptr`/`== 0`、`next` 的两种转换），其余**逐字相同**，而两份注释已经开始漂移（`xcb_destroy_window` vs `DestroyWindow` + `UnregisterClass`）。收成一份约 **−85 ~ −90 行**，`#if` 只留在头文件的 typedef/include 上。
+> **R3（episode 规则散布）**：`grep -rn "bool .*_reported" include/vine/vsg/*.hpp` ⇒ 10 处；另有 2 个 `begin*Episode(..., bool&)` 自由函数；重武装点 4 处（`beginFrame` / `setRenderTarget` / `VsgTargetBookkeeping` ×2）。
+> **R4**：`VsgRenderer.hpp:391-460` 6 个 `*Count()` 各配一段 Doxygen，值分散在 `persistent` / `state` / `retireRing`+池 stats 三个属主 ⇒ 可并成一个 `VsgRendererCounters`，但测试里这些名字出现几十次，低优先。
+> **两条"看着像、查完不是"的**（记下来免得下一轮再查）：`VsgBufferView` 的 `dataAvailable`/`dataRelease`/`dimensions`/`elements`/`valueSize` 看着没人调用，实际是 `vsg::Data` 的虚覆写；`VsgDrawBlockPool` 用 `shared_ptr` 看着能收成 `unique_ptr`，实际 `Lease` 持 `shared_ptr<VsgDrawBlockPool>` ⇒ 收不了（而这正是"池比租约活得久"的类型保证，旧笔记里"析构绝不碰池"那条现在只是保险）。
+> **一条真漂移**：`.ai/design/graphics-overlay.md` 仍以**现役**口吻写 `RenderBackend::releaseWindowLayer` 与"按相机键的 `window_layers` 表"（line 30/33/65/96），而两者**已从 SDK 与后端删除**（P17 之后身份是 `SlotKey::ownerPass`、作用域是唯一驱动），`hasWindowPass()` 仍在役 ⇒ 该文件需要一条 dated banner 指到 `.ai/design/vsg-pass-lifecycle.md`。
+> **不做**：按体积拆 `SceneBridge.hpp` / `SceneBridge.cpp`（1377 / 1209 行）。绝大部分是 Doxygen，且规则已按 `VsgSceneRules` / `SceneBridgeGeometry` / `SceneBridgePipeline` 分好家 —— 仓库的规矩是"抽概念，不抽文件"。
+
 > 2026-09-16 **H6 收尾（宿主表面那四项）：app 门禁开始看画面，拒答不再静默**
 > **④ app 门禁读像素（四项里最值钱的一条）**：此前 app 阶段只看 stderr 证据 + "0 VUID"，**一个黑屏会话把两条都满足**（当天 0.84% 那次就是这么过的）。现在：
 > ① 后端把**它渲染的那个窗口句柄**写进日志（`[VsgHostWindow] attached to the host window 0x60004a (378x247, mapped=true)`，搬移那行同理）—— Qt 的渲染区是**具名顶层窗口的子窗**，按名字读会读到 Qt 自己的界面，而那块**即使渲染区全黑也是亮的**（0.84% 被藏住就是这个原因：实测按名字读顶层是 97.06%，按句柄读渲染区才是 84.90%）；

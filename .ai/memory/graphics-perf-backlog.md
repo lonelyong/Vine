@@ -96,6 +96,20 @@
 
 两条当日踩到的坑（非性能，值钱）：① `cmake --build . --target Vine` **不重建插件** `build/plugins/vine/gfx_backend_vsgd.so`（app 运行时 dlopen 它）⇒ 二进制级结论要 `nm -DC <产物> | grep <symbol>` + 时间戳，只验 `bin/Vine` 会得到假阳性；② **抓图工具原来依赖 `xwd`/`xwininfo`（x11-apps），本机没有、`sudo` 又要密码装不上** ⇒ 门禁会在最需要它的地方静默跳过。已改：`scripts/xwin2ppm.py` 经 libX11 `XGetImage` 自己抓（名字从 `xwd2ppm.py` 改过来就是因为它不再用 xwd），`xwd -root` 在 XWayland 下 BadMatch、`-out -` 不支持这些坑随之消失。
 
+### 审查轮次 4（2026-09-16 晚，后端 + SDK 复看）候选（R1–R4）
+
+> 过程与实测数据见 `.ai/memory/graphics.md` 顶部同日条目。**R1 / R2 建议先做**（一个删代码、一个补门禁），R3 次之，R4 可等。
+
+| 编号 | 项目 | 现状（带证据） | 目标 | 代价/风险 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| **R1** | `VsgHostWindow.cpp` 的**平台分支整段重复** | 两个 `#if` 分支各自 ~93 行，**真正因平台不同的代码只有 3 处**（`hostHandle()` 的两种 cast、空句柄判定 `== nullptr`/`== 0`、`next` 的两种转换），其余逐字相同；注释已开始漂移（X11 写 `xcb_destroy_window`、Win32 写 `DestroyWindow` + `UnregisterClass`）。文件 315 行，收成一份约 **−85 ~ −90 行** | 一份类体：`using VsgHostHandle`（`xcb_window_t` / `HWND`）+ 三处可移植写法（`reinterpret_cast<void*>(static_cast<std::uintptr_t>(_window))`、`_window == 0`、`reinterpret_cast<VsgHostHandle>(native_handle)`），`#if` 只留在头文件的 typedef/include 上 | 低；X11 分支可编译验证（Win32 仍只能审读，但**行为代码从此只有一份** ⇒ H1 的风险面收窄到 typedef）。门禁：`test_vsg` 289 + 自检 host-surface 相位 + 55 行证据逐字不变 | 待办 |
+| **R2** | **后端从没进过 ASan/LSan 门禁** | `scripts/asan_check.sh` 默认 `VINE_ASAN_TARGET=test_gui` + `EventBusTest.*`；`build-asan` 里 vsg 目标**一个都没建**。今天手工补上（`ninja -C build-asan test_vsg vsg_backend_selftest` + LSan）⇒ **后端零发现**：`test_vsg` 289 全绿、设备路径自检 0 报告；**唯一**泄漏在 appfw（`vine::appfw::PluginManager::loadAll` → `DynamicLibraryLoader` 单例，808 B / 16 次分配，栈里没有一行 vsg） | 把后端纳入 ASan 门禁（脚本支持 `VINE_ASAN_TARGET=test_vsg`，或加一条后端档）；决定 appfw 那个单例是**抑制**还是**修**（它每次跑都报，`scripts/asan_leaks.supp` 里没有） | 低（脚本 + 一处抑制/修复）；注意 ASan 下**必须先建插件**，否则 `VsgBackendPluginTest` 2 条假红（今天踩过：`ninja -C build-asan gfx_backend_vsg` 之后 4/4 绿） | 待办 |
+| **R3** | "报告一次（episode）"这条规则**实现了 ~10 遍** | `VsgRendererState`：`submit_without_frame_reported` / `scope_refusal_reported` / `target_release_reported` / `device_reported` / `no_default_default_content_program_reported`；`VsgRenderTargetEntry`：`light_fallback_reported` / `depth_borrow_pending_reported` / `size_missing_reported`；`SceneBridge`：`no_shader_set_reported_`；另有 `beginLightsDroppedEpisode(..., bool& reported)` 与 `beginTargetSizeMissingEpisode` 两种自由函数写法。重武装点散在 4 处（`beginFrame` / `setRenderTarget` / `VsgTargetBookkeeping` ×2） | 一个小值类型（`ReportOnce{ bool reported; shouldReport(); rearm(); }`）统一它们，规则写在类型上 | 低—中（~10 文件机械改动）；风险：**episode 的边界各不相同**（每作用域 / 每帧 / 每会话 / 每 episode 重武装）⇒ 类型必须把"谁重武装"留给调用者，否则会悄悄改行为 | 待办 |
+| **R4** | `VsgRenderer` 的 **6 个诊断计数**各占一个公开方法与一段 Doxygen | `offscreenBuildCount` / `windowBuildCount` / `detachedSlotCount` / `programSlotBuildCount` / `deviceWaitCount` / `retiredObjectCount`（`VsgRenderer.hpp:391-460`），值分散在 `persistent.window_build_count`、`state.*_build_count`、`retireRing`/池的 stats 三处 | 一个 `struct VsgRendererCounters` + 一个 `counters()` 访问器（少数高频名可留转发） | 低价值高流失：这些名字在 selftest/测试里出现几十次，**建议等真要加下一个计数时再动** | 待办（低优先） |
+
+**同轮排除 / 确认为正确的**：`VsgBufferView` 的 `dataAvailable` / `dataRelease` / `dimensions` / `elements` / `valueSize` 是 `vsg::Data` 的虚覆写（不是死代码）；三个设备资源缓存（texture / mesh / material）已共用 `OwnedCache.hpp`，各自只剩 ~140 行；`VsgDrawBlockPool` 用 `shared_ptr` **是必需的** —— `Lease` 持 `shared_ptr<VsgDrawBlockPool>`，所以"池比租约活得久"是**类型保证**的（旧笔记里"析构绝不碰池"那条现在是保险而非唯一防线）；`SceneBridge.hpp` 1377 行 / `.cpp` 1209 行**不建议按体积拆**（绝大部分是 Doxygen，且规则已按 `VsgSceneRules` / `SceneBridgeGeometry` / `SceneBridgePipeline` 分好家 —— 按仓库规矩"抽概念，不抽文件"）。
+**同轮发现的一条真漂移**：`.ai/design/graphics-overlay.md` 仍把 `RenderBackend::releaseWindowLayer` 与"按相机键的 `window_layers` 表"当**现役**接口写（line 30 / 33 / 65 / 96），而两者**都已从 SDK 与后端删除**（P17：作用域是唯一驱动；保留身份现在是 `SlotKey::ownerPass`）。`hasWindowPass()` 仍在役。修法：该文件顶部加 dated banner 指到当前模型（`.ai/design/vsg-pass-lifecycle.md`）。
+
 ## 2. 需要实测的数字（还没有）
 
 | 问题 | 怎么测 |
