@@ -343,10 +343,13 @@ bool VsgRenderer::initialize()
     state.command_graph = commandGraph;
     state.viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ commandGraph });
 
+    // The session's compile manager is this backend's own, installed BEFORE the first compile: vsg
+    // creates one lazily inside Viewer::compile(), and only if none is set -- and this backend's is the
+    // one that can take a registration back (see VsgCompileManager on why that matters).
+    state.viewer->compileManager = VsgCompileManager::create(*state.viewer, ::vsg::ref_ptr<::vsg::ResourceHints>{});
+
     init_stage = "initial viewer compile";
-    // The hints come from the one place that names them, because this call is what lets vsg CREATE the
-    // session's compile manager, and renewCompileContexts() later replaces it with the same value.
-    const auto compileResult = state.viewer->compile(compileManagerHints());
+    const auto compileResult = state.viewer->compile();
     if (!compileResult) {
         diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
                            formatDiagnostic(u8"initialize FAILED at '%s': %s", init_stage,

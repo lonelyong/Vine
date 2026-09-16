@@ -167,16 +167,11 @@ struct ContentSlot {
     ::vsg::ref_ptr<::vsg::ImageInfo> shadow_placeholder;
     ::vsg::ref_ptr<::vsg::View>   view;
     SceneBridge                   bridge;      // per-view pipelines (vsg compiles per viewID; see VsgContentSlot.hpp on why the state registry must stay per slot)
-    // D22: which compile manager this slot's (window/framebuffer render pass + view) context was
-    // registered into -- 0 = none, otherwise the manager's generation at the time
-    // (VsgRendererState::compile_manager_generation; see detail::renewCompileContexts).
-    // A registration is only valid for the manager it was made into, and a manager can be replaced
-    // wholesale when a teardown has left it holding contexts no slot can use any more, so the slot
-    // records WHICH manager it registered into rather than a flag: the replacement then invalidates
-    // every registration of the session in one step, with no path having to remember to clear a
-    // flag -- and a slot whose generation is behind registers again on its next compile, instead of
-    // believing it is registered while nothing matches its view (see incrementalCompileViews).
-    std::uint64_t                 compile_manager_generation = 0;
+    // D22: true once this slot's (window/framebuffer render pass + view) context has been registered
+    // with the session's CompileManager (incrementalCompileViews). A registration is released where the
+    // slot dies (detail::forgetCompileContext), so the manager holds one per LIVE slot -- which is what
+    // makes a flag enough here: it is only ever read for a slot that still exists.
+    bool                          compile_context_registered = false;
     // True while this slot's view is DETACHED from its target's graph
     // because the pass did not execute in the last submitted frame (see
     // retireInactivePassSlots): the retained data / pipelines are kept, so

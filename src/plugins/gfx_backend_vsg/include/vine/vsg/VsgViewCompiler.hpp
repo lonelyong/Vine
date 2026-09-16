@@ -19,18 +19,17 @@
  *     traversal was built while the graph was still empty, so without that registration no
  *     context matches the view and compile() would compile nothing.
  *
- *     A REGISTRATION BELONGS TO THE MANAGER IT WAS MADE INTO. vsg 1.1.16's CompileManager has no
- *     remove, so a registration cannot be taken back once made -- but the manager itself can be
- *     REPLACED, and every context in it goes with it. Each of those contexts owns a VkCommandPool and
- *     holds the render pass it was registered against, so a manager that lives as long as the session
- *     accumulates one per slot CREATION rather than per slot alive: measured at 111 registrations for
- *     at most 9 live content slots before this was fixed. renewCompileContexts() is the replacement,
- *     and it happens at the teardowns that already stop the device (see its own note) -- while the
- *     slot records WHICH manager it registered into instead of a flag, so that replacing the manager
- *     invalidates every registration at once and no teardown path can forget to re-arm one.
+ *     A REGISTRATION LIVES AS LONG AS ITS SLOT, because this backend owns the manager it registers
+ *     with. vsg 1.1.16's CompileManager only ever ADDS a context and offers no way to take one back,
+ *     so a registration would otherwise outlive the slot it was made for and hold a VkCommandPool
+ *     plus the render pass it was registered against for the rest of the session (measured: 60 of
+ *     them against 3 live content slots). The pool and the traversal it hands out are `protected` --
+ *     the seam vsg leaves for a subclass -- so @ref VsgCompileManager does what an upstream
+ *     `remove(view)` would, without patching vsg, and the teardowns that drop a slot call
+ *     @ref forgetCompileContext for it.
  *
- *     That record is a field of the retention picture (VsgRetentionStats::compile_contexts) and the
- *     measurement behind it is in docs/backend.md 5.3.1.
+ *     That record is what VsgRetentionStats::compile_contexts reports, and the measurements behind it
+ *     are in docs/backend.md 5.3.1.
  *   * compilePendingViews() — the driver: use the incremental path unless
  *     VINE_VSG_DISABLE_INCREMENTAL_COMPILE is set (the A/B escape hatch), otherwise fall back
  *     to vsg's full compile over the whole scene. A failure on either path is REPORTED and the
@@ -42,6 +41,8 @@
 
 #include <vine/vsg/vsg_global.hpp>
 
+#include <vsg/app/CompileManager.h>
+
 #include <vine/vsg/VsgDiagnostics.hpp>
 #include <vine/vsg/VsgFwd.hpp>
 #include <vine/vsg/VsgRendererState.hpp>
@@ -51,64 +52,57 @@ V_VSG_NS_BEGIN
 namespace detail
 {
 
-/** @brief The hints a session's compile manager is built with.
+/** @brief The session's compile manager: vsg's own, plus the one operation its pool does not expose.
  *
- * `Viewer::compile()` takes the hints as a PARAMETER and keeps none (it builds a manager from them),
- * so there is no viewer field to read back: the one call that lets vsg create this session's manager
- * (VsgRenderer::initialize) and the one that replaces it (@ref renewCompileContexts) take the value
- * from here -- one home for "which hints this backend's managers are built with", so the two cannot
- * drift apart.
+ * WHY IT EXISTS. vsg's CompileManager only ever ADDS a context: `add()` appends it to the traversal in
+ * the pool, and 1.1.16 has no way to take one back. A registration therefore outlives the slot it was
+ * made for -- a Context holds a VkCommandPool and the render pass it was registered against, so what
+ * stays behind is driver objects, for as long as the session runs. The pool and the traversal it hands
+ * out are `protected` (the seam vsg leaves for a subclass) and `CompileTraversal::contexts` is public,
+ * so @ref forget can do what an upstream `remove(view)` would do without patching vsg.
  *
- * @return The resource hints to build a compile manager for this session with.
+ * IT ALSO STARTS THE POOL EMPTY. The base constructor builds its traversal as
+ * `CompileTraversal(viewer, requirements)`, which walks the command graph and adds a context for every
+ * View it finds. Each slot's own registration is what serves it here, so those derived contexts are not
+ * needed -- and a pool that carries a second context for every view in the graph (with its command pool
+ * and the render pass behind it) is work this backend does not ask for. A pool whose traversal starts
+ * with no contexts keeps the pool's contents exactly what this backend registered -- which is also why
+ * REPLACING the manager (the only release a plain CompileManager offers) is no longer needed: the walk a
+ * replacement would do is the very thing this avoids.
  */
-[[nodiscard]] ::vsg::ref_ptr<::vsg::ResourceHints> compileManagerHints() noexcept;
+class VsgCompileManager : public ::vsg::Inherit<::vsg::CompileManager, VsgCompileManager>
+{
+  public:
+    /** @brief Creates the manager and installs a pool with one context-free traversal.
+     *
+     * @param viewer Viewer whose status the pool's queue uses.
+     * @param hints  Resource hints for the traversal (see VsgRenderer::initialize).
+     */
+    VsgCompileManager(::vsg::Viewer& viewer, ::vsg::ref_ptr<::vsg::ResourceHints> hints);
 
-/** @brief Replaces the session's compile manager, dropping the registrations a teardown has orphaned.
+    /** @brief Drops every compile context registered for @p view.
+     *
+     * Called where the slot that owns @p view dies: the context's render pass and command pool belong
+     * to that slot's registration, and nothing can use them afterwards. Harmless (and safe) if no
+     * context is registered for the view, which is what the return value tells the caller.
+     *
+     * @param view View whose registrations to drop (null is a no-op).
+     * @return How many contexts were dropped.
+     */
+    std::size_t forget(const ::vsg::View* view);
+};
+
+/** @brief Drops the compile context registered for a slot's view, where that slot dies.
  *
- * vsg only ever ADDS: a registration appends a Context (with its own VkCommandPool and a strong
- * reference to the render pass it was registered against) to the manager's pooled traversal, and
- * 1.1.16 offers no way to take one back. A session that drops and recreates content slots therefore
- * accumulates a context per CREATION while only the live slots can use one -- memory and command
- * pools held for the whole session, measured at 111 registrations against at most 9 live slots. The
- * answer is to replace the manager: the old one, and every context in it, is released with it.
+ * The one obligation a teardown owes the compile manager (see VsgTargetBookkeeping's note on the
+ * three functions that call it): the registration it made belongs to the slot that is going away, so
+ * releasing it here is what keeps `VsgRetentionStats::compile_contexts` a count of LIVE slots rather
+ * than of the slots a session has ever created.
  *
- * TWO KINDS OF SLOT, and this is why the renewal is one function rather than a line per caller:
- *
- *   * a slot this teardown DROPPED needs nothing -- its registration goes with the slot, and the
- *     replacement is what releases that registration now rather than at the end of the session;
- *   * a slot it did NOT drop (the target's other passes, every other target, a slot only rebuilt)
- *     must register again, because the context it registered into no longer exists. Its generation is
- *     therefore left behind by the bump below, so its next compile registers it into the new manager.
- *     Skipping that is worse than the leak this fixes: a slot believing it is registered while no
- *     context matches its view makes `compile(view, selector)` select NO context at all, which reports
- *     success with nothing compiled -- content that silently stops being drawn.
- *
- * WHERE, AND WHEN IT IS WORTH IT. It is called at the teardowns that already stop the device for
- * exactly the reason this needs (no compile in flight): see the three call sites in VsgTargetBookkeeping.
- * The session's own end needs no call -- its manager is dropped with the session state
- * (VsgRenderer::shutdown).
- *
- * A replacement is not free, and the price is NOT the new manager: it is that a live slot's
- * registration is invalidated with it, so that slot registers and compiles again. Measured on the
- * self-test (376 frames, the densest churn in it): 82 replacements cost 20 ms inside this function,
- * while the re-registrations they caused cost about 0.4 s of the run's 2.8 s -- so the rule below is
- * "replace once at least half of what the manager holds is waste", which is the state in which
- * releasing is worth at least as much as the churn it causes. It also keeps the replacement off a
- * per-FRAME path (a target rebuilt every frame, with one slot dying out of a dozen live ones, keeps
- * its registrations instead of rebuilding the manager each frame), which is what makes the retained
- * set bounded at under twice the slots alive rather than proportional to the teardowns.
- *
- * The new manager ALSO carries the contexts vsg derives from the views in the command graph at that
- * moment (CompileTraversal's Viewer constructor), and those are equivalent to the ones this backend
- * registers by hand in every inspected field (view ID, mask, render pass, transfer task,
- * view-dependent state, pipeline states, transfer hint -- measured), so a slot the derivation serves
- * is served correctly. Nothing of this is a pipeline rebuild: a context matching an already-compiled
- * view reuses that implementation (GraphicsPipeline::compile matches one by viewID and render pass),
- * which is what the stage counter of the self-test measures across the churn phase (flat).
- *
- * @param state Session whose manager may be replaced and whose slots then register again.
+ * @param state Session whose manager holds the registration.
+ * @param view  The dying slot's retained view (null is a no-op).
  */
-void renewCompileContexts(VsgRendererState& state);
+void forgetCompileContext(VsgRendererState& state, const ::vsg::View* view);
 
 /** @brief Compiles only the queued views (the incremental path).
  *

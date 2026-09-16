@@ -92,35 +92,28 @@
 >   （路 B + pipeline-factory 前向声明）与 PCH 在**这个负载 + 这台机**上都不划算——判据是墙钟，不是 CPU 秒。
 >   ④ 何时该重新量：CI 变单核、或 TU 数大幅增加、或链上出现更贵的头（届时应先量墙钟再决定，不要照抄"16 s"）。
 >   ⑤ 教训（通用）：**优化编译时间必须报墙钟并注明核数**；CPU 秒乘以 TU 数会高估一个数量级。
-> - **T16 已完成：编译上下文泄漏已修（2026-09-16，插件侧，未 fork vsg）**。批次的最终形态与实测：
->   - **机制**：槽记的不是布尔标志而是 **`compile_manager_generation`（注册进的是哪个 manager）**；会话记
->     `compile_manager_generation` + `compile_context_registrations`。于是"换掉 manager"**一步**就让所有注册失效，
->     没有任何拆除路径需要记得清标志——失效是结构性的，不是义务。`renewCompileContexts()`（`VsgViewCompiler.{hpp,cpp}`）
->     是唯一的义务入口，**只在三处已经 `waitForIdle` 的拆除点**调用：`unhookTargetPasses`、`resetContentShaderSlots`、
->     `erasePassFromTarget`；`VsgRenderer::shutdown` **不调用**（manager 随 session state 一起没，调用只会白建一个）。
->   - **规则（为什么不是"每次拆除都换"）**：`waste = 注册数 - 仍在用的注册数`；**`waste >= 仍在用` 才换**。
->     实测依据：替换本身便宜（82 次替换函数内共 **20 ms**），贵的是**让活槽的注册一起失效**（重新注册 + 重新编译 ≈
->     **0.4 s / 2.8 s**）；同一条规则也保证**逐帧重建的离屏目标不会逐帧换 manager**（12 个活槽死 1 个时留着即可），
->     于是保留量**上界 = 活槽数 × 2**，而不是与拆除次数成正比。自检里把它钉成断言：
->     `compile_contexts <= 2 * content_slots`（policy churn 相位末，无条件检查，打印仍走 `VINE_PROBE_RETENTION=1`）。
->   - **实测（lavapipe，同一负载）**：`churn START` 从 `content_slots=3 compile_contexts=60` 变成 **0**；`churn END`
->     `60→63` 变成 `0→3`；单次编译要过滤的上下文数均值 **53.5 → 与活槽同量级**（8962 次访问 / 167 次编译）。
->     门禁全绿：build 0/0、`test_vsg` **289**、`test_graphics` **272**、`test_core` **82**、三脚本 0、
->     `gfx_lavapipe_check.sh` → **PASS + 55 行证据逐字节不变**。
->   - **代价（实测 + 未查明的一项）**：自检墙钟 2.8 → 3.15 s（**+12%**；CPU +0.33 s，四组交错配对）。定位：
->     同样 167 次编译，**372 ms → 585 ms**；而两者的上下文**字段逐项相同**（viewID / mask / render pass / transfer task /
->     view-dependent state / pipeline states / transfer hint，实测）。已排除：重造管线（`stage_cache` 恒 1）、重复上下文
->     （让槽完全不重新注册、每次只匹配一个上下文时耗时不变）、上下文数量（基线那 53 个上下文反而更快）。
->     **机制未查明**——查清并消掉的话这一项近乎免费；这是本次唯一留下的悬念，已写进 `docs/backend.md` §5.3.1。
->   - **两条被否掉的设计（别重走）**：①**"把活槽都标成已服务"**（省掉重新注册）——**不安全**：插件的命令图滞后于
->     自己的表（`applyRecordPlan` 整批重写 children，新图要到下次 reconcile 才进去），所以"槽没 detached"**不等于**
->     "vsg 的派生一定能看见它"；标错方向 = 编译静默什么都不做（内容停止绘制），是比泄漏更糟的失败模式。
->     ②**"先编译、没服务到再注册"**（乐观探测）——不可靠：`CompileResult::views` 是**编译前**由
->     `CollectResourceRequirements` 填的，为空并不等于"没有上下文匹配"。
->   - **附带事实（省下一轮调研）**：替换后的 manager **自带** vsg 从当前命令图派生的上下文（`CompileTraversal` 的 Viewer
->     构造 `AddViews`），它们在字段上与手工注册的等价；本会话**没有 `databasePager`**（vsg 只在
->     `viewer.databasePager` 非空时把 manager 也挂给它，且 `updateTasks` 只对带 pager 的 task 回写）⇒ 替换不会留下
->     共同持有者（200 次连换峰值 RSS 平坦，实测）。
+> - **T16 已完成：编译上下文泄漏已修（2026-09-16），最终形态是"派生 manager"，不是"换 manager"**。
+>   - **机制（最终）**：会话的 manager 是本后端的 `detail::VsgCompileManager`
+>     （`vsg::Inherit<vsg::CompileManager, …>` + `create()`；`~CompileManager()` 是 protected，派生类把析构声明 public 即可）。
+>     能这么做是因为 `CompileManager` 的池（`compileTraversals` / `numCompileTraversals` / `takeCompileTraversals`）是
+>     **protected**、`CompileTraversal::contexts` 是 **public**：于是 `forget(view)` 做出了上游 `remove(view)` 的效果，
+>     **不用打 vsg 补丁**（先前记的"①上游加 remove"因此不需要了）。池被换成"一条无上下文的 traversal"，本后端自己注册每条
+>     上下文；槽死时三处拆除点（`unhookTargetPasses` / `resetContentShaderSlots` / `erasePassFromTarget`）调
+>     `detail::forgetCompileContext`。槽上回到一个 **bool**，会话上没有 generation，也没有替换规则——比 renewal 方案更简单。
+>   - **实测（lavapipe，二进制已按指纹+符号验明）**：`churn START content_slots=4 compile_contexts=60` → **4/4**；
+>     `churn END` 63 → **7/7**（**恰好一槽一条**）；单次编译要过一遍的上下文数均值 53.5（8962/167）→ 与存活槽同量级；
+>     `stage_cache` 恒 1；释放代价 **118 次调用、摘掉 114 条、13 ms**（实测）。门禁全绿（build 0/0、289/272/82、三脚本、
+>     `gfx_lavapipe_check.sh` PASS + 55 行证据逐字节不变）。
+>   - **仍未查明的一笔账（重要，别再重复我这次的误判）**：整份改动相对修前的墙钟 **2.79–3.03 s → 3.23–3.40 s**（+0.43 s，≈+15%）、
+>     CPU **+0.42 s**，两份各自独立构建的修前二进制都复现。但它**不是**这次的逻辑：① 不是编译上下文（修后池内容与修前相同，
+>     一槽一条）；② 不是释放（13 ms）；③ 不是 manager 安装（每会话一次）；④ 不是自检新增的两次 `retentionStats()` 与断言。
+>     ⇒ 按排除法更像**代码布局/代码生成效应**；下一步得用 profiler（本机 `perf` 受 `perf_event_paranoid` 限制）。
+>     **先前那条"编译穿过派生上下文慢 1.6×"的归因已被推翻**（派生上下文在最终方案里根本不存在，慢还在）。
+>   - **方法论教训（这次绕了远路的根因）**：`git stash push -q` **静默失败**过一次，于是有几个"修前二进制"其实是我自己的代码，
+>     一度得出"没有差别"的错结论；还发生过把 renewal 版当成 derived 版比较。⇒ **二进制级 A/B 之前先验身份**：
+>     `nm -C <bin> | grep <symbol>` + `VINE_PROBE_RETENTION=1` 指纹（修前 60 / renewal 0–3 / derived 恰好等于存活槽数）。
+>   - **被取代的设计**：`renewCompileContexts`（整只换 manager + generation + "至少一半是废的"规则）——它能批量带走废注册，
+>     但会让活槽注册一起失效（重新注册 + 重新编译）且更复杂；已从树里移除（在 `f483245` 的历史里）。
 
 > 2026-09-15 **审查轮次：graphics + vsg 后端逐条修复（见 `.ai/design/graphics-vsg-audit.md`）**
 > 12 条缺陷全部修完，每条都带门禁（单测/像素证据/变异验证）。**判据**：build 0 error；`test_graphics` 260→**269**、

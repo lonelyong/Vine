@@ -48,16 +48,15 @@ struct VsgRetentionStats
      */
     std::size_t device_waits = 0;
 
-    /** @brief Compile contexts this session has registered with the manager in place.
+    /** @brief Compile contexts this session's manager holds: one per live content slot.
      *
      * Incremental compile registers a slot's (render pass + view) context with the viewer's
      * CompileManager, and vsg 1.1.16 offers no way to remove one -- each Context owns a
-     * VkCommandPool and holds the render pass it was registered against. The manager itself can be
-     * replaced, though, and a teardown does that once at least half of what it holds is a
-     * registration whose slot is gone (see docs/backend.md 5.3.1). This is what has been registered
-     * into the manager in place, so it stays under twice the slots that can use one instead of
-     * following the slots ever created: at the self-test's churn phase the two numbers were 60 and 3
-     * before that rule existed, and 0 and 3 with it.
+     * VkCommandPool and holds the render pass it was registered against. This session's manager is
+     * therefore the backend's own subclass, which can drop a registration where the slot it belongs
+     * to dies (see docs/backend.md 5.3.1), so the count follows the slots ALIVE and not the slots a
+     * session has ever created: at the self-test's churn phase the two numbers were 60 and 4 before
+     * that release existed, and 4 and 4 with it.
      */
     std::size_t compile_contexts = 0;
 

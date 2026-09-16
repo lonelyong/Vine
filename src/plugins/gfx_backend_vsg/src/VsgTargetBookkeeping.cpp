@@ -252,10 +252,10 @@ void unhookTargetPasses(VsgRendererState& state, VsgRenderTargetEntry& t)
     // the views instead was measured to trip vkDestroyPipeline-00765 /
     // vkDestroySampler-01082, so this is the wait, not a park.
     state.retireRing.waitForIdle(state.viewer);
-    // That wait is also what makes replacing the compile manager safe, and this teardown is what
-    // orphaned the registrations of the slots it drops (see renewCompileContexts).
-    renewCompileContexts(state);
     for (auto& slot_entry : t.content_slots) {
+        // The slot's registration with the compile manager belongs to it and goes with it here (see
+        // forgetCompileContext): the release that keeps the manager's context count a count of live slots.
+        forgetCompileContext(state, slot_entry.second.view.get());
         slot_entry.second.bridge.clearCache();
         // A dropped slot must not stay queued for the frame's incremental compile:
         // its view no longer belongs to any target.
@@ -303,9 +303,6 @@ void resetContentShaderSlots(VsgRendererState& state)
     // their caches release the shared object registry, which is the counted
     // device wait (see unhookTargetPasses) rather than a park.
     state.retireRing.waitForIdle(state.viewer);
-    // Every content slot goes below, so every registration this session made is orphaned here:
-    // replacing the manager is what releases them (see renewCompileContexts).
-    renewCompileContexts(state);
     for (auto& entry : state.targets) {
         auto& t = entry.second;
         for (auto& slot_entry : t.content_slots) {
@@ -313,6 +310,9 @@ void resetContentShaderSlots(VsgRendererState& state)
             // whose view is still attached to its pass graph keeps drawing with
             // the set it was built with, which is exactly what this replaces.
             detachSlotView(state, t, entry.first, slot_entry.first, slot_entry.second.view);
+            // Every content slot goes below, so each one's registration goes with it here (see
+            // forgetCompileContext).
+            forgetCompileContext(state, slot_entry.second.view.get());
             slot_entry.second.bridge.clearCache();
         }
         t.content_slots.clear();
@@ -536,14 +536,13 @@ void erasePassFromTarget(VsgRendererState& state, vine::graphics::RenderTarget* 
     // parking was measured to trip vkDestroyPipeline-00765 (see the
     // policy-churn notes).
     state.retireRing.waitForIdle(state.viewer);
-    // The pass' slots are erased below, which orphans their registrations: the manager is replaced
-    // here, where the wait has already made that safe (see renewCompileContexts).
-    renewCompileContexts(state);
 
     t.visitSlot(key, [&](auto& slot, VsgRenderTargetEntry::SlotKind kind) {
         detachSlotView(state, t, target, key, slot.view);
-        // Only a content slot owns a bridge (its caches go with the slot).
+        // Only a content slot owns a bridge (its caches go with the slot) -- and with it a compile
+        // registration, which dies with the slot it was made for (see forgetCompileContext).
         if constexpr (requires { slot.bridge; }) {
+            forgetCompileContext(state, slot.view.get());
             slot.bridge.clearCache();
         }
         t.eraseSlot(kind, key);

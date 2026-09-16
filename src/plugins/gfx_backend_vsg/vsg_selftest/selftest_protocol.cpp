@@ -1272,13 +1272,12 @@ bool runPolicyChurnStressPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
                      retention_after.content_slots, retention_after.compile_contexts,
                      vine::vsg::detail::compiledStageCacheCount(), waits, retired, builds);
     }
-    // The bound the compile-context fix keeps: a registration is only valid for the manager it was made
-    // into, so a teardown that drops a slot hands that manager over (detail::renewCompileContexts) -- and
-    // it does so as soon as at least half of what the manager holds is waste, which keeps the count under
-    // twice the slots that can use one. Without the fix the count follows the slots ever CREATED (measured
-    // here as 60 registrations for 3 live slots), and every one of them keeps a command pool and the
-    // render pass it was registered against alive for the rest of the session.
-    if (retention_after.compile_contexts > 2 * retention_after.content_slots) {
+    // The bound the compile-context fix keeps: a registration belongs to the slot it was made for, so the
+    // teardown that drops that slot releases it (detail::forgetCompileContext) -- which makes the manager
+    // hold at most one context per live slot. Without the fix the count follows the slots ever CREATED
+    // (measured here as 60 registrations for 3 live slots), and every one of them keeps a command pool and
+    // the render pass it was registered against alive for the rest of the session.
+    if (retention_after.compile_contexts > retention_after.content_slots) {
         std::fprintf(stderr,
                      "[selftest] FAIL: %zu compile-context registration(s) held for %zu live content slot(s);"
                      " teardowns must hand over the manager that holds their registrations\n",
