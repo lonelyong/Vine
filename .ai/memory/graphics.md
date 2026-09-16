@@ -1,3 +1,10 @@
+> 2026-09-16 **R3 落地：「一个 episode 只报一次」从 10 份约定收成一个类型**
+> 新增 `include/vine/vsg/VsgReportOnce.hpp`（`shouldReport()` / `reported()` / `rearm()`），把散在 `VsgRendererState`（5）、`VsgRenderTargetEntry`（3）、`SceneBridge`（1）的 bool，以及 `detail::beginLightsDroppedEpisode` / `beginTargetSizeMissingEpisode` 两个 `bool&` 自由函数全部换掉。**重武装仍由调用者决定**（各站点边界不同：新帧 / 新作用域 / 可用的尺寸 / 每盏灯都亮回来 / 换了源），类型只承载规则本身 —— 这是本次抽取唯一的风险点，所以写进了类注。
+> · 两个自由函数因此各短三行：`if (条件结束) { reported.rearm(); return false; } return reported.shouldReport();`。
+> · 语义中性由既有测试守着（`LightDropReportTest` / `TargetBookkeepingTest` / `DiagnosticsTest` / `PassProtocolTest` / `FrameCommitTest` 都断言上报次数）；新增 `tests/test_vsg/ReportOnceTest.cpp`（3 条）直接钉类型契约（含“被拒的上报不得重武装”与“对未上报的 episode 重武装是 no-op”）。
+> · **变异**：`shouldReport()` 改恒 `true` ⇒ **恰好 6 条红**（新套件 1 + LightDrop 3 + TargetBookkeeping 2）。
+> · 判据：build 0/0、`test_vsg` **289 → 292**、`test_graphics` 272 / `test_core` 82、三脚本 0（**63** 单元 —— 新头必须先补进 `gfx_backend_vsg.md` 的单元表，否则 `check_doc_symbols.py` 会红，这正是它该有的行为）、**证据 55 行逐字不变**、lavapipe PASS 0 VUID。
+
 > 2026-09-16 **R1 + R2 落地（审查轮次 4 的头两条）**
 > **R1 平台重复收成一份**：`VsgHostWindow.cpp` **315 → 110 行**、`.cpp` 里**零** `#if`。做法：新增 `VsgHostHandle`（`xcb_window_t` / `HWND`）与 `hostHandleFromVoid(void*)`（头文件里的 4 行 `#if`），类体只写一遍；`makeWindowTraits` 的两处句柄转换也改用它。**两次编译拒绝（标准限制，不是风格问题）**：① `reinterpret_cast<uint32_t>(void*)` ⇒ "cast from pointer to smaller type loses information"；② `reinterpret_cast<uint32_t>(uintptr_t)` ⇒ "reinterpret_cast from integer to integer is not allowed" ⇒ 那个 4 行 `#if`（X11 用 `static_cast` 收窄 / Win32 用 `reinterpret_cast` 取指针）**不可消除**。顺带删掉 `.cpp` 里 A6 派生重构后的残留 include（`vulkan/vulkan_{xcb,win32}.h`、`xcb/xcb.h` —— surface 现在建在基类里），空句柄判定从 `_window == 0` 改成 `hostHandle() == nullptr`（两平台同一写法，也不怕 `-Wzero-as-null-pointer-constant`）。判据：build 0/0、289/272/82、include 卫生 0、**证据 55 行逐字不变**、lavapipe PASS 0 VUID（自检 host-surface 相位就是这条转换的端到端门禁）。
 > **R2 后端进 ASan 门禁**：脚本本来就为 `test_vsg` 加建 `gfx_backend_vsg`（今天才知道 —— 手工 `ninja` 少了这步会让 `VsgBackendPluginTest` 两条假红），真正的卡点是**泄漏判据全或无**：`test_vsg` 链 appfw 插件管理器，`DynamicLibraryLoader` 单例必报 ⇒ 后端结论被遮住。新增 `VINE_ASAN_LEAK_SCOPE`（grep -E 模式）：只有“栈里没有任何一句匹配它”的泄漏才**报出但不判**；内存错误与测试失败永不豁免。两条跑法写进脚本头。

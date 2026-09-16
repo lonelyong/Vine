@@ -122,8 +122,7 @@ bool VsgRenderer::refuseNoPassAnnounced(const char* call)
     // told once, and the next beginFrame() re-arms it. The state setters are deliberately not
     // guarded: they are inert on their own (the next beginPass() starts from an empty request), so
     // the calls that could draw something nobody asked for are exactly these three.
-    if (!state.scope_refusal_reported) {
-        state.scope_refusal_reported = true;
+    if (state.scope_refusal_reported.shouldReport()) {
         reportPassMisuse(PassMisuse::CallOutsideScope, call);
     }
     return true;

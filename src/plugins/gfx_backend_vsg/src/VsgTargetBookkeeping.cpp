@@ -44,17 +44,13 @@ using namespace detail;
 namespace detail
 {
 
-bool beginTargetSizeMissingEpisode(std::uint32_t width, std::uint32_t height, bool& reported)
+bool beginTargetSizeMissingEpisode(std::uint32_t width, std::uint32_t height, ReportOnce& reported)
 {
     if (width != 0u && height != 0u) {
-        reported = false; // a usable size re-arms the report (the host sized the target)
+        reported.rearm(); // a usable size ends the episode (the host sized the target)
         return false;
     }
-    if (reported) {
-        return false; // already reported for this episode
-    }
-    reported = true;
-    return true;
+    return reported.shouldReport();
 }
 
 bool borrowNeedsRebuild(const VsgRendererState& state, const VsgRenderTargetEntry& t,
@@ -115,7 +111,7 @@ void resetTargetAttachments(VsgRenderTargetEntry& t)
     t.depth_source_view    = {};
     t.depth_share_barrier  = {};
     t.depth_sampleable     = false;
-    t.depth_borrow_pending_reported = false;
+    t.depth_borrow_pending_reported.rearm();
     t.graph                = {};
     t.depth_on_shader_set  = {};
     t.depth_testonly_shader_set = {};
@@ -350,14 +346,13 @@ bool resolveDepthBorrow(VsgRendererState& state, const VsgDiagnostics& diagnosti
         // depth and the borrow is retried as soon as the source exists (render()'s
         // rebuild predicate). Reported once per episode, so a source that never
         // arrives is not silent either.
-        if (!t.depth_borrow_pending_reported) {
+        if (t.depth_borrow_pending_reported.shouldReport()) {
             diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                                vine::graphics::DiagnosticCategory::ContentSkipped,
                                formatDiagnostic(u8"shared-depth target '%s': source '%s' has no depth image yet;"
                                                 u8" this target builds its own depth and retries the borrow",
                                                 target.name().empty() ? "(unnamed)" : target.name().stdstr().c_str(),
                                                 depth_src->name().empty() ? "(unnamed)" : depth_src->name().stdstr().c_str()));
-            t.depth_borrow_pending_reported = true;
         }
         return false;
     }
@@ -369,7 +364,7 @@ bool resolveDepthBorrow(VsgRendererState& state, const VsgDiagnostics& diagnosti
     }
     if (reason == nullptr) {
         // Honoured (or nothing to retry): re-arm the transient report.
-        t.depth_borrow_pending_reported = false;
+        t.depth_borrow_pending_reported.rearm();
         return true;
     }
     // PERSISTENT: a property of the setup, not of this frame — the same source stays

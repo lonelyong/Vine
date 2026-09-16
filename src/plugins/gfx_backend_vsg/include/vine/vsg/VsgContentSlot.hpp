@@ -151,10 +151,10 @@ void placeViewByOrder(VsgRendererState& state, ::vsg::ref_ptr<::vsg::RenderGraph
  *
  * @param announced Lights the pass announced this frame (its scene's list size).
  * @param attached  Lights @ref fillVineLightsBlock reported as represented in the block.
- * @param reported  Per-slot episode flag (true while the current episode was reported).
+ * @param reported  Per-slot episode flag (see @ref ReportOnce: who re-arms it is the caller's call).
  * @return true on the ONE frame the caller has to report.
  */
-[[nodiscard]] bool beginLightsDroppedEpisode(std::size_t announced, std::size_t attached, bool& reported);
+[[nodiscard]] bool beginLightsDroppedEpisode(std::size_t announced, std::size_t attached, ReportOnce& reported);
 
 } // namespace detail
 

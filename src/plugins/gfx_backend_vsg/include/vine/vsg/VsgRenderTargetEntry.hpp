@@ -51,6 +51,7 @@
 
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgCompileRegistration.hpp>
+#include <vine/vsg/VsgReportOnce.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -186,7 +187,7 @@ struct ContentSlot {
     // — all of them (it therefore draws under the ambient fill) or only some (the rest are lit).
     // Re-armed once every announced light is represented in the block again, so each episode reports
     // once instead of every frame (see beginLightsDroppedEpisode).
-    bool                          light_fallback_reported = false;
+    ReportOnce                    light_fallback_reported;
 };
 
 /** @brief One retained fullscreen-program view sampling another target's
@@ -597,7 +598,7 @@ struct VsgRenderTargetEntry {
     // as the source exists (see render()'s rebuild predicate) and this flag
     // is cleared when it is honoured, so a source that arrives late is
     // reported once, not every frame.
-    bool        depth_borrow_pending_reported = false;
+    ReportOnce  depth_borrow_pending_reported;
 
     // True while this target has no size, so a build attempt cannot produce attachments and
     // every pass drawing into it draws nothing — and the report for that episode was already
@@ -605,7 +606,7 @@ struct VsgRenderTargetEntry {
     // sizes later is reported again if it loses the size, and a frame-by-frame build attempt
     // on an unsized target says so once instead of every frame (see
     // detail::beginTargetSizeMissingEpisode).
-    bool        size_missing_reported = false;
+    ReportOnce  size_missing_reported;
 
     // ---- content slots (retained Views under graph), keyed by owning pass ----
     std::map<SlotKey, ContentSlot> content_slots;

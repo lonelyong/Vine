@@ -26,6 +26,7 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/vsg/OwnedCache.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
+#include <vine/vsg/VsgReportOnce.hpp>
 #include <vine/vsg/VsgRetireRing.hpp>
 #include <vine/vsg/VsgDrawBlockPool.hpp>
 #include <vine/vsg/VsgMeshResourceCache.hpp>
@@ -1268,7 +1269,7 @@ class V_VSG_API SceneBridge {
     // Whether this bridge already reported that it has no shader set to shade with (see
     // setShaderSet / buildStateGroup). Once per set: injecting one re-arms the report, so a slot
     // that loses its set again says so again instead of going quiet.
-    bool no_shader_set_reported_ = false;
+    ReportOnce no_shader_set_reported_;
     // The slot's per-view light block (setLightsData): declared in the pipeline
     // layout and descriptor set of the variants built from a ShaderSet that asks
     // for `vine_lights` (our forward set). Null while the built-in set draws.

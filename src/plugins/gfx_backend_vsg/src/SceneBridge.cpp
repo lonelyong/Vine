@@ -110,7 +110,7 @@ void SceneBridge::setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet)
         shader_set_ != nullptr && static_cast<bool>(shader_set_->getDescriptorBinding("vine_draw"));
     // A new set re-arms the "I have nothing to shade with" report (see buildStateGroup): a slot
     // given one again must not stay silent if it loses it a second time.
-    no_shader_set_reported_ = false;
+    no_shader_set_reported_.rearm();
     // The retained STATE wrappers were built against the OLD set (their pipelines, descriptor sets
     // and attribute bindings are the old set's), so they have to go: the next sync rebuilds them
     // from the new one. The vertex data is untouched — a set change costs pipelines, not uploads

@@ -118,17 +118,17 @@ TEST(TargetBookkeepingTest, BuildingATargetWithoutASizeIsReportedOnce)
  */
 TEST(TargetBookkeepingTest, AUsableSizeReArmsTheReportOfAMissingOne)
 {
-    bool reported = false;
+    vine::vsg::ReportOnce reported;
 
     // A build attempt on an unsized target reports...
     EXPECT_TRUE(vine::vsg::detail::beginTargetSizeMissingEpisode(0, 0, reported));
-    EXPECT_TRUE(reported);
+    EXPECT_TRUE(reported.reported());
     // ...the rest of the episode does not...
     EXPECT_FALSE(vine::vsg::detail::beginTargetSizeMissingEpisode(0, 0, reported));
     EXPECT_FALSE(vine::vsg::detail::beginTargetSizeMissingEpisode(640, 0, reported));
     // ...and a usable size ends it.
     EXPECT_FALSE(vine::vsg::detail::beginTargetSizeMissingEpisode(640, 360, reported));
-    EXPECT_FALSE(reported);
+    EXPECT_FALSE(reported.reported());
 
     // So the next episode is reported again instead of being swallowed.
     EXPECT_TRUE(vine::vsg::detail::beginTargetSizeMissingEpisode(0, 0, reported));

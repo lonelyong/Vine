@@ -91,17 +91,13 @@ void updateSlotViewport(ContentSlot& content, bool presenting, const std::option
     content.viewport_h = h;
 }
 
-bool beginLightsDroppedEpisode(std::size_t announced, std::size_t attached, bool& reported)
+bool beginLightsDroppedEpisode(std::size_t announced, std::size_t attached, ReportOnce& reported)
 {
     if (announced == 0u || attached >= announced) {
-        reported = false; // nothing announced, or every announced light is lit: re-arm the report
+        reported.rearm(); // nothing announced, or every announced light is lit: the episode is over
         return false;
     }
-    if (reported) {
-        return false; // already reported for this episode
-    }
-    reported = true;
-    return true;
+    return reported.shouldReport();
 }
 
 void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent,
@@ -190,8 +186,7 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // (see buildStateGroup) and draws nothing. Said out loud here as well, ONCE per session, at the
     // level the host asked the question at: "you named no program, so program-less content will not be
     // drawn" — not a picture it did not ask for.
-    if (persistent.default_content_program == nullptr && !state.no_default_default_content_program_reported) {
-        state.no_default_default_content_program_reported = true;
+    if (persistent.default_content_program == nullptr && state.no_default_default_content_program_reported.shouldReport()) {
         diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
                            u8"this session has no default content program (setDefaultContentProgram(nullptr)), so content without a "
                            u8"program of its own is NOT drawn (the engine never substitutes a shading nobody named)");

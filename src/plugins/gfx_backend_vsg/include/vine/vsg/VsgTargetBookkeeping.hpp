@@ -266,10 +266,10 @@ void resetContentShaderSlots(VsgRendererState& state);
  *
  * @param width    Width the target reports for the build attempt.
  * @param height   Height the target reports for the build attempt.
- * @param reported Per-target episode flag (true while the current episode was reported).
+ * @param reported Per-target episode flag (see @ref ReportOnce: who re-arms it is the caller's call).
  * @return true on the ONE attempt the caller has to report.
  */
-[[nodiscard]] bool beginTargetSizeMissingEpisode(std::uint32_t width, std::uint32_t height, bool& reported);
+[[nodiscard]] bool beginTargetSizeMissingEpisode(std::uint32_t width, std::uint32_t height, ReportOnce& reported);
 
 /** @brief Erases everything one target retains for a pass: its slots AND its materialised objects.
  *

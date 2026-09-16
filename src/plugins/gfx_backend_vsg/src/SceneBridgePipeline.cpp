@@ -356,8 +356,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         // A program's set is assembled ON the slot's (its default pipeline states are the viewport /
         // depth policy the pass asked for), so without one there is nothing to build on: reported
         // once per bridge, and the drawable is dropped (see buildStateGroup).
-        if (!no_shader_set_reported_) {
-            no_shader_set_reported_ = true;
+        if (no_shader_set_reported_.shouldReport()) {
             report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
                    formatDiagnostic(u8"program '%s' cannot be assembled: this slot has no shader set to build it "
                                     u8"on, so its content is NOT drawn",
@@ -567,8 +566,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         }
     }
     auto slot_set = baseShaderSet();
-    if (slot_set == nullptr && !no_shader_set_reported_) {
-        no_shader_set_reported_ = true;
+    if (slot_set == nullptr && no_shader_set_reported_.shouldReport()) {
         report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
                u8"this slot has no shader set, so its content cannot be shaded and is NOT drawn (a slot's set "
                u8"is built from the shading program the session names; a program the backend cannot compile "

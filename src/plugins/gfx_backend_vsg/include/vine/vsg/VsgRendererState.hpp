@@ -49,6 +49,7 @@
 #include <vine/vsg/VsgDrawBlockPool.hpp>
 #include <vine/vsg/VsgFwd.hpp>
 #include <vine/vsg/VsgMeshResourceCache.hpp>
+#include <vine/vsg/VsgReportOnce.hpp>
 #include <vine/vsg/VsgTextureCache.hpp>
 
 #include <vine/graphics/DepthMode.hpp>
@@ -146,7 +147,7 @@ struct VsgPassRequest
     /// EPISODE, and the episode is the rest of THIS scope (beginPass() starts from
     /// an empty request), so a pass that keeps drawing on it is told once.
     /// Cleared together with target_released.
-    bool target_release_reported = false;
+    ReportOnce target_release_reported;
 
     /** @brief Consumes a dead target announcement, telling the caller to report it once.
      *
@@ -166,8 +167,7 @@ struct VsgPassRequest
         if (!target_released) {
             return false;
         }
-        report                  = !target_release_reported;
-        target_release_reported = true;
+        report = target_release_reported.shouldReport();
         return true;
     }
 
@@ -382,7 +382,7 @@ struct VsgRendererState {
     // that names none is not drawn (see VsgContentSlot): once per session, so telling the host once
     // is what makes "you named no program" visible without becoming per-slot noise. Session state,
     // so a re-init tells the new session's host as well.
-    bool                                no_default_default_content_program_reported = false;
+    ReportOnce                          no_default_default_content_program_reported;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_on_shader_set;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_testonly_shader_set;
     ::vsg::ref_ptr<::vsg::ShaderSet>    depth_off_shader_set;
@@ -390,7 +390,7 @@ struct VsgRendererState {
     // The device report is logged once, from the first submitted frame: the
     // window's Vulkan device / swapchain only materialises when it is first
     // used, so querying it during initialize() returns nothing.
-    bool                                device_reported = false;
+    ReportOnce                          device_reported;
 
     // ---- The frame's commit token (see FrameCommit, VsgDeferredRelease.hpp) ----
 
@@ -401,7 +401,7 @@ struct VsgRendererState {
     std::optional<FrameCommit> pending_commit;
     // True once a submit that had no open frame was refused: the refusal is an EPISODE — one report per
     // episode, re-armed by the next beginFrame() — so a host looping on swapBuffers() is not flooded.
-    bool submit_without_frame_reported = false;
+    ReportOnce submit_without_frame_reported;
 
     /// The request in progress: filled by the open pass scope, dropped by endPass().
     VsgPassRequest request;
@@ -410,7 +410,7 @@ struct VsgRendererState {
     // True once a drawing call that found no announced pass was refused: the refusal is an EPISODE —
     // one report per frame, re-armed by the next beginFrame() — so a host looping on such a call is
     // not flooded (see VsgRenderer::refuseNoPassAnnounced).
-    bool scope_refusal_reported = false;
+    ReportOnce scope_refusal_reported;
     // Passes announced since the last submitted frame (see
     // retireInactivePassSlots): a pass that did not execute this frame is
     // retired (its view detached) rather than left drawing stale content.

@@ -491,8 +491,8 @@ void VsgRenderer::beginFrame()
     // Minted even when there is no session: "a frame was opened" is a fact about the caller's
     // protocol, not about the device (see FrameCommit).
     state.pending_commit                = FrameCommit::submitted();
-    state.submit_without_frame_reported = false;
-    state.scope_refusal_reported        = false;
+    state.submit_without_frame_reported.rearm();
+    state.scope_refusal_reported.rearm();
     if (state.viewer == nullptr) {
         return;
     }
@@ -579,7 +579,7 @@ void VsgRenderer::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> ta
     // was released before is none of THIS announcement's business
     // (refuseDeadTargetAnnouncement).
     state.request.target_released         = false;
-    state.request.target_release_reported = false;
+    state.request.target_release_reported.rearm();
 }
 
 // Defined here rather than in the header for the sake of the header's reach: the state's ref-counted members
@@ -744,10 +744,9 @@ void VsgRenderer::releaseAbandonedTargets()
 
 void VsgRenderer::reportSessionDevice()
 {
-    if (state.device_reported || state.window == nullptr) {
+    if (state.window == nullptr || !state.device_reported.shouldReport()) {
         return;
     }
-    state.device_reported = true;
     const ::vsg::ref_ptr<::vsg::PhysicalDevice> physical = state.window->getPhysicalDevice();
     if (physical == nullptr) {
         V_LOGW("[VsgRenderer] device: (none reported by the window)");
@@ -803,8 +802,7 @@ void VsgRenderer::submitFrame()
     const std::optional<FrameCommit> commit = state.pending_commit;
     state.pending_commit.reset();
     if (!commit.has_value()) {
-        if (!state.submit_without_frame_reported) {
-            state.submit_without_frame_reported = true;
+        if (state.submit_without_frame_reported.shouldReport()) {
             diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                                vine::graphics::DiagnosticCategory::PassProtocolViolation,
                                u8"swapBuffers() without an open frame (no beginFrame() before it): the submit"

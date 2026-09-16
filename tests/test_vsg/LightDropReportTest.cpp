@@ -31,7 +31,7 @@ using vine::vsg::detail::beginLightsDroppedEpisode;
  */
 TEST(LightDropReportTest, ADroppedLightStartsAnEpisodeEvenWhenOthersStayLit)
 {
-    bool reported = false;
+    vine::vsg::ReportOnce reported;
 
     EXPECT_TRUE(beginLightsDroppedEpisode(3u, 2u, reported));
     // The same list on the next frame is the SAME episode — the announced list is rebuilt every
@@ -47,7 +47,7 @@ TEST(LightDropReportTest, ADroppedLightStartsAnEpisodeEvenWhenOthersStayLit)
  */
 TEST(LightDropReportTest, EveryLightLitAgainRearmsTheReport)
 {
-    bool reported = false;
+    vine::vsg::ReportOnce reported;
 
     EXPECT_TRUE(beginLightsDroppedEpisode(2u, 1u, reported));
     EXPECT_FALSE(beginLightsDroppedEpisode(2u, 2u, reported)); // all lit: re-arm
@@ -60,12 +60,13 @@ TEST(LightDropReportTest, EveryLightLitAgainRearmsTheReport)
  */
 TEST(LightDropReportTest, AnEmptyAnnouncementIsNotAnEpisode)
 {
-    bool reported = true; // a previous episode was reported
+    vine::vsg::ReportOnce reported;
+    EXPECT_TRUE(reported.shouldReport()); // a previous episode was reported
 
     // No lights announced: the block falls back to its ambient fill, which is the normal state of
     // a pass whose content scene carries no lights — nothing is dropped, and the report re-arms.
     EXPECT_FALSE(beginLightsDroppedEpisode(0u, 0u, reported));
-    EXPECT_FALSE(reported);
+    EXPECT_FALSE(reported.reported());
 
     // ...so the next real drop is a new episode.
     EXPECT_TRUE(beginLightsDroppedEpisode(2u, 0u, reported));
@@ -76,7 +77,7 @@ TEST(LightDropReportTest, AnEmptyAnnouncementIsNotAnEpisode)
  */
 TEST(LightDropReportTest, AWholeListDroppedIsStillReported)
 {
-    bool reported = false;
+    vine::vsg::ReportOnce reported;
 
     EXPECT_TRUE(beginLightsDroppedEpisode(1u, 0u, reported));
     EXPECT_FALSE(beginLightsDroppedEpisode(1u, 0u, reported));
