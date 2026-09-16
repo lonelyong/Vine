@@ -1028,29 +1028,57 @@ void VsgRenderer::setDiagnosticSink(vine::graphics::DiagnosticSink sink)
     }
 }
 
+VsgRendererCounters VsgRenderer::counters() const noexcept
+{
+    VsgRendererCounters counters;
+    counters.offscreen_builds    = state.offscreen_build_count;
+    counters.window_builds       = persistent.window_build_count;
+    counters.program_slot_builds = state.program_slot_build_count;
+    counters.device_waits        = state.retireRing.waitCount();
+    counters.released_objects    = state.retireRing.releasedCount();
+    // The three slot-derived counts are ASKED OF the slots, the way retentionStats() asks the pool
+    // for its compile contexts: "how many views are detached" and "how many edits were served in
+    // place" are facts about the slots, so there is no counter here to keep in step with them.
+    for (auto& entry : state.targets) {
+        entry.second.forEachSlot([&](const SlotKey&, const auto& slot, auto) { counters.detached_slots += slot.detached ? 1u : 0u; });
+    }
+    for (auto& entry : state.targets) {
+        for (auto& slot : entry.second.content_slots) {
+            counters.streams_refreshed += slot.second.bridge.dataEditStats().streams_refreshed;
+        }
+    }
+    for (auto& entry : state.targets) {
+        for (auto& slot : entry.second.content_slots) {
+            counters.data_nodes_built += slot.second.bridge.dataEditStats().data_nodes_built;
+        }
+    }
+    return counters;
+
+}
+
 std::size_t VsgRenderer::offscreenBuildCount() const noexcept
 {
-    return state.offscreen_build_count;
+    return counters().offscreen_builds;
 }
 
 std::size_t VsgRenderer::windowBuildCount() const noexcept
 {
-    return persistent.window_build_count;
+    return counters().window_builds;
 }
 
 std::size_t VsgRenderer::programSlotBuildCount() const noexcept
 {
-    return state.program_slot_build_count;
+    return counters().program_slot_builds;
 }
 
 std::size_t VsgRenderer::deviceWaitCount() const noexcept
 {
-    return state.retireRing.waitCount();
+    return counters().device_waits;
 }
 
 std::size_t VsgRenderer::retiredObjectCount() const noexcept
 {
-    return state.retireRing.releasedCount();
+    return counters().released_objects;
 }
 
 VsgRetentionStats VsgRenderer::retentionStats() const noexcept
@@ -1082,33 +1110,17 @@ VsgRetentionStats VsgRenderer::retentionStats() const noexcept
 
 std::size_t VsgRenderer::detachedSlotCount() const noexcept
 {
-    std::size_t count = 0;
-    for (auto& entry : state.targets) {
-        entry.second.forEachSlot([&](const SlotKey&, const auto& slot, auto) { count += slot.detached ? 1u : 0u; });
-    }
-    return count;
+    return counters().detached_slots;
 }
 
 std::size_t VsgRenderer::streamsRefreshed() const noexcept
 {
-    std::size_t count = 0;
-    for (auto& entry : state.targets) {
-        for (auto& slot : entry.second.content_slots) {
-            count += slot.second.bridge.dataEditStats().streams_refreshed;
-        }
-    }
-    return count;
+    return counters().streams_refreshed;
 }
 
 std::size_t VsgRenderer::dataNodesBuilt() const noexcept
 {
-    std::size_t count = 0;
-    for (auto& entry : state.targets) {
-        for (auto& slot : entry.second.content_slots) {
-            count += slot.second.bridge.dataEditStats().data_nodes_built;
-        }
-    }
-    return count;
+    return counters().data_nodes_built;
 }
 
 V_VSG_NS_END

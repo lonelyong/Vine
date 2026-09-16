@@ -48,6 +48,7 @@
 #include <vine/vsg/VsgMaterialManager.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgRendererState.hpp>
+#include <vine/vsg/VsgRendererCounters.hpp>
 #include <vine/vsg/VsgRetentionStats.hpp>
 
 V_VSG_NS_BEGIN
@@ -377,105 +378,63 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     // accessor, neither of which had a caller in the repository, and frame() documented a call
     // sequence it did not perform.
 
+    /** @brief Gets the session's build and behaviour counters as one value.
+     *
+     * The counters are only meaningful read together (see VsgRendererCounters), and this is where
+     * they are gathered: the named accessors below are aliases of these fields, so a counter cannot
+     * be updated in one and not the other. A host that wants the whole picture -- or a phase that
+     * wants to report what it did -- reads this once instead of calling eight getters.
+     *
+     * @return The session's counters (see VsgRendererCounters for what each field means, and which
+     *         direction of each is the suspicious one).
+     */
+    [[nodiscard]] VsgRendererCounters counters() const noexcept;
+
     /** @brief Gets how many off-screen target graphs this backend has built.
      *
-     * Diagnostic: counts every successful off-screen build (a fresh attachment
-     * set or a rebuild). A target built once and then driven with a stable size
-     * and clear policy must keep this flat — a count that grows with the frame
-     * count is the signature of a rebuild loop (a size or depth-policy mismatch
-     * re-entering the build path every frame, which tears the graph down,
-     * waits for the device and recompiles the whole graph).
-     *
-     * @return Number of off-screen target builds so far.
+     * @return offscreen_builds (see VsgRendererCounters).
      */
     [[nodiscard]] std::size_t offscreenBuildCount() const noexcept;
 
     /** @brief Gets how many geometry data edits were served by re-pointing the changed stream IN PLACE.
      *
-     * Diagnostic, and the pair to @ref dataNodesBuilt(): an incremental update and a full data
-     * rebuild draw the same picture, so pixels cannot tell them apart, and "only the changed
-     * stream was re-uploaded" is the property the incremental path exists for. Summed over the
-     * session's content slots (see SceneBridge::DataEditStats).
-     *
-     * @return Number of in-place stream refreshes so far.
+     * @return streams_refreshed (see VsgRendererCounters).
      */
     [[nodiscard]] std::size_t streamsRefreshed() const noexcept;
 
     /** @brief Gets how many geometry data nodes this session has BUILT.
      *
-     * Counts a geometry's first materialisation as well as every later rebuild, so a phase that
-     * asserts "the edit did not rebuild" compares this against the same value before the edit.
-     *
-     * @return Number of data nodes materialised so far.
+     * @return data_nodes_built (see VsgRendererCounters).
      */
     [[nodiscard]] std::size_t dataNodesBuilt() const noexcept;
 
     /** @brief Gets how many windows this session has BUILT.
      *
-     * Diagnostic: a session owns one window, and that window owns the VkInstance, the physical device and
-     * the VkDevice -- so "no new window" is what "the device, and every pipeline compiled against it, were
-     * kept" looks like from outside. A host that announces a new native window is asking the session to MOVE
-     * to it (see moveSessionToHostSurface), which leaves this flat; a session that had to be rebuilt instead
-     * -- no host window, the same handle, or a new window that cannot present this session's render pass --
-     * counts one more.
-     *
-     * @return Number of windows built so far.
+     * @return window_builds (see VsgRendererCounters).
      */
     [[nodiscard]] std::size_t windowBuildCount() const noexcept;
 
     /** @brief Gets how many retained slot views are currently retired.
      *
-     * A slot whose pass did not execute in the last submitted frame has its
-     * view detached from the render graph (its data and pipelines are kept, so
-     * re-enabling the pass only re-attaches). This counts those detached views:
-     * it is 0 while every registered pass draws, and rises as passes are
-     * disabled / unregistered. Diagnostic for "why is nothing drawing?" and the
-     * regression check of the retirement path.
-     *
-     * @return Number of slot views currently detached.
+     * @return detached_slots (see VsgRendererCounters).
      */
     [[nodiscard]] std::size_t detachedSlotCount() const noexcept;
 
     /** @brief Gets how many fullscreen-program slots this backend has built.
      *
-     * Diagnostic: counts every successful build / rebuild of a retained
-     * fullscreen-program slot (drawScreenProgram). A slot is rebuilt when its
-     * sampled source, destination size or program changes — and, since the
-     * slot's identity includes the program's CONTENT revision, also when the
-     * program object is edited in place (ShaderProgram::replaceStages /
-     * setStage). This makes a hot-reload observable, which a pointer-only
-     * identity could not: it kept drawing the old SPIR-V. A steady scene must
-     * keep this flat.
-     *
-     * @return Number of fullscreen-program slot builds so far.
+     * @return program_slot_builds (see VsgRendererCounters).
      */
     [[nodiscard]] std::size_t programSlotBuildCount() const noexcept;
 
     /** @brief Gets how many device-wide idles this backend has taken.
      *
-     * Diagnostic with an invariant behind it: NO frame-assembly path may stop the
-     * device any more — a replaced render pass / framebuffer, a dropped
-     * fullscreen-program node, a slot being torn down, a target being rebuilt and
-     * a bridge dropping its state wrappers all PARK their objects in the retire
-     * ring instead. So this stays 0, and a check that changes a pass' clear and
-     * depth policy, a pass' activity, its depth MODE and a target's attachment
-     * shape every frame asserts that it does (VsgRetireRing::waitForIdle is the counted
-     * entry point a future teardown that cannot park would have to use).
-     *
-     * @return Number of device-wide idles taken so far.
+     * @return device_waits (see VsgRendererCounters).
      */
     [[nodiscard]] std::size_t deviceWaitCount() const noexcept;
 
     /** @brief Gets how many parked objects the retire ring has released.
      *
-     * Diagnostic: a replaced render pass / framebuffer, a dropped fullscreen-program node and a
-     * dropped content-slot node are PARKED for a few frame advances and then released (see
-     * VsgRetireRing — park() is the only way in, and its three users are named on the type). A ring
-     * that never released would grow without bound, so a policy-changing check asserts this
-     * advances — and, together with the validation-clean run, is what shows the
-     * deferral is live rather than merely silent.
-     *
-     * @return Number of objects released by the ring so far.
+     * @return released_objects (see VsgRendererCounters).
      */
     [[nodiscard]] std::size_t retiredObjectCount() const noexcept;
 

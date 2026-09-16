@@ -1266,6 +1266,35 @@ bool runPolicyChurnStressPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr
     const std::size_t retired = renderer.retiredObjectCount() - retired_before;
     const std::size_t builds  = renderer.offscreenBuildCount() - builds_before;
     const auto        retention_after = renderer.retentionStats();
+
+    // VsgRendererCounters is the backend's second aggregate, and where the two overlap they have to
+    // tell the same story: both count the retire ring, so "this session took no device wait and
+    // released these objects" cannot be two different numbers. Asserted rather than argued, because
+    // two aggregates that drift apart are worse than the hand-kept counter the retention header
+    // records having removed -- the aliases make a counter's VALUE unforgeable, but not which source
+    // it is read from.
+    const vine::vsg::VsgRendererCounters counters = renderer.counters();
+    if (counters.device_waits != retention_after.device_waits ||
+        counters.released_objects != retention_after.released_nodes) {
+        std::fprintf(stderr,
+                     "[selftest] FAIL: the two counter aggregates disagree about the retire ring:"
+                     " counters() reports %zu wait(s) and %zu release(s), retentionStats() reports"
+                     " %zu and %zu\n",
+                     counters.device_waits, counters.released_objects, retention_after.device_waits,
+                     retention_after.released_nodes);
+        ok = false;
+    }
+    else {
+        // Reports the agreement AND what the session had done by then, so a reader can see the check
+        // was not vacuous (a [counters] prefix, like the other phases' own lines, keeps the 55-line
+        // evidence baseline untouched).
+        std::fprintf(stderr,
+                     "[counters] the two aggregates agree on the retire ring (%zu wait(s), %zu"
+                     " release(s)); the session built %zu window(s) and %zu off-screen graph(s),"
+                     " refreshed %zu geometry stream(s) and has %zu view(s) detached\n",
+                     counters.device_waits, counters.released_objects, counters.window_builds,
+                     counters.offscreen_builds, counters.streams_refreshed, counters.detached_slots);
+    }
     if (probe_retention) {
         std::fprintf(stderr,
                      "[probe] churn END: content_slots=%zu compile_contexts=%zu stage_cache=%zu (waits=%zu retired=%zu builds=%zu)\n",

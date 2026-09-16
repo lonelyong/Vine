@@ -15,6 +15,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 >   `vsg::ViewportState`（矩形不变就早退）；`VsgRenderer::resize` 走同一个实现。门禁：`ContentSlotViewportTest.*`。
 > - **内存可观测**：`VsgDrawBlockPool::Stats::bytes` 与 `VsgRetentionStats::{slot_bytes,mesh_streams,textures}`；
 >   每 drawable 槽的重复归还会被 `SlotAllocator` 拒绝并计入 `Stats::refused`（必须恒为 0）。
+> - **计数器可观测（2026-09-17，R4）**：`VsgRenderer::counters()` 一次给出全部八个构建/行为计数（`VsgRendererCounters`：离屏图 / 窗口 / 全屏槽构建数、原地刷新数、数据节点构建数、挂起视图数、停设备次数、退役环释放数）。两个聚合（它与 `retentionStats()`）在重叠处必须一致，由 policy-churn 相位断言（`[counters]` 行；变异：把两个字段的来源互换 ⇒ 立刻报 301 对 148）。
 
 > **本文边界（谁写什么，2026-09-15）** —— 同一件事只写一处：
 >
@@ -56,6 +57,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgTextureCache.cpp` / `VsgMaterialManager.cpp` | 纹理上传缓存 / 材质值缓存（都是**按地址键 + owner 持有**） |
 | `VsgRetireRing.cpp` | 退役环（停放被换下的对象，而不是停设备） |
 | `VsgRetentionStats.hpp` | 会话保留情况的**一个值**（`VsgRenderer::retentionStats()`）：内容槽数、槽池统计、退役环计数、编译上下文注册数 |
+| `VsgRendererCounters.hpp` | 会话**做过什么**的**一个值**（`VsgRenderer::counters()`）：离屏图 / 窗口 / 全屏槽的构建数、原地刷新的数据编辑数、挂起视图数、停设备次数、退役环释放数。与上面那个（**手里握着什么**）成对：build 计数随帧数涨 = 重建环，`device_waits` 必须恒为 **0**。八个具名访问器（`windowBuildCount()` 等）现在是它的**别名**（约 110 处调用点因此一行未改），所以一份计数不会"在一边更新、另一边忘了" |
 | `VsgDeferredRelease.hpp` | 延迟释放的**时钟**：一个模板（`park` / `advance` / `parkedCount`），三个用户共用 —— 退役环（被换下的对象）、`VsgDrawBlockPool`（每 drawable 的槽）、每个内容槽的桥（保留节点）。深度只有一处（`kDeferredReleaseFrames`），`VsgRetireRing::kRetireRingDepth` 是它的历史别名 |
 | `VsgReadback.cpp` | 颜色/深度回读（一次性提交） |
 | `CameraBridge.hpp/.cpp` | Vine 相机 → vsg 相机/view（overlay 的两种绘制共用） |

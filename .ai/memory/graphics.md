@@ -1,3 +1,19 @@
+> 2026-09-17 **R4 落地：八个诊断计数折成一个 `VsgRendererCounters` + `counters()`（别名式，零调用点改动）**
+> 它那行的触发条件自己说了算 ——「等真要加下一个计数时再动」：V7 加了 `streamsRefreshed`/`dataNodesBuilt`，6 → 8，
+> 每个都要一条公开方法 + 一段 Doxygen。做法照**仓库里已有的先例**（`VsgRetentionStats` + `retentionStats()`）：新头文件
+> `VsgRendererCounters.hpp`（八个字段，各写"哪个方向可疑"，其中两条是**不变量**：`device_waits` 恒 0、`detached_slots`
+> 在全部 pass 都画时恒 0），`VsgRenderer::counters()` 一处汇总；值仍来自三处（`persistent.window_build_count`、
+> `state.*_build_count`、退役环）**加**三个"问槽本身"的求和（同 `retentionStats()` 问池要 `compile_contexts` 的手法）。
+> **八个访问器全部保留为一行的别名**（约 110 处调用点：`offscreenBuildCount` 31 / `windowBuildCount` 19 /
+> `deviceWaitCount` 18 …）⇒ 公开 API 零破坏、零迁移，计数从此只有**一处**。
+> · **门禁的设计比门禁本身重要**：别名让"访问器 == 字段"成了定义（永远绿），所以要比的是**两个独立聚合在重叠处
+> 是否说同一句话** —— 两者都读退役环。policy-churn 相位断言 `counters().{device_waits,released_objects}` ==
+> `retentionStats().{device_waits,released_nodes}`，打印 `[counters]` 行（不带 `[selftest]` 前缀 ⇒ 55 行基线不动）。
+> · **变异**：把两个字段的来源互换 ⇒ 新断言立刻红："counters() says 301 wait(s) / 148 release(s), retentionStats()
+> says 148 / 301"（外加两条既有断言同时红）。
+> · **顺手记住的硬要求**：**新增公开头文件 ⇒ `docs/backend.md` 单元表必须加一行**，否则 `check_doc_symbols.py` 直接点名
+> `VsgRendererCounters.hpp: no living document names this unit`。
+
 > 2026-09-17 **P1 结案：上界早就在，"容量 LRU"没有触发面（附一个会把"0 次"说成证据的坑）**
 > 先查"封顶"缺什么：**不缺**。三个 program 缓存（64/64/256）、纹理 256、mesh 256、材质 `kMaxEntries` 都在插入点
 > `trimToCapacity(...) != 0u` 裁剪，且驱逐**真的归还对象**（`noteEviction()` → `shared_objects_->prune()`，即 D40）；边界由单测
