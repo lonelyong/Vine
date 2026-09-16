@@ -69,6 +69,36 @@
 >   6 个本来就要内部；而第二步做完后 `VsgRenderer.hpp` 自己就会掉到 ~0.2 s，不需要 PImpl。PImpl 用在 `VsgRendererState`
 >   上则是明确错的（该类型自己写明"没有 d-pointer"的理由 + 38 个 detail 函数收它 + 6 个测试直接读字段）。
 >   **PImpl 的触发条件**：插件头若要作为给宿主的契约发出去（要 ABI 稳定），那时它买的是边界声明而非编译时间。
+> - **T13 第二步：诊断修正 + 尝试与回滚（2026-09-16，下一批按此执行）**。真正的阻塞**不是"签名词汇"而是成员数据**：
+>   `SceneBridge.hpp` 的 `RetainedBinds`（`ref_ptr<Commands>`、`array<ref_ptr<BindVertexBuffers>>`、`ref_ptr<BindIndexBuffer>`）
+>   与每 draw 的 `white_colors`/`zero_texcoords`/`derived_normals` 都是 vsg 节点，前向声明救不了；而状态的内容槽
+>   **按值**持有 `SceneBridge bridge;` ⇒ 状态头必然要它完整 ⇒ 整条链一直付 `ShaderSet.h` 的 **0.79 s**（链本身 0.83 s）。
+>   **两条路**：**A** 给 `SceneBridge` 上 PImpl——但 22 个测试文件正是**读它内部**的设备无关单测（`RetainedBinds`、每 draw 数组都被断言）
+>   ⇒ 用可测性换编译时间，不推荐；**B（推荐）把重的成员躲在指针后面**：`ContentSlot::bridge` 改 `std::unique_ptr<SceneBridge>`，
+>   于是 `VsgRenderTargetEntry.hpp` 可前向声明 `SceneBridge`，**`SceneBridge` 类与 22 个测试一行不改**，状态链摘掉 `ShaderSet.h`。
+>   这是 PImpl 的同一条原理，只用在真正贵的那个成员上。外部调用者只有 `uintArray`（`ChannelSliceTest`/`SceneRulesTest`）⇒ 边界不是问题。
+>   **已尝试的第一步 + 它的代价（已回滚，树保持绿）**：把 `VsgRenderTargetEntry.hpp` 的 vsg 头换成 `VsgFwd.hpp`（扩到 18 个类型）
+>   + 只留 `ref_ptr.h`/`vec4.h`，结果 **99 个错误、全是预期两类**：`VsgReadback.cpp` **38** 个（源文件必须自己 include 它用到的 vsg 头）
+>   + **61** 个 `ref_ptr` 析构实例化（说明 entry 里**按值**持有的 vsg 类型在多处被销毁 ⇒ entry 的 ctor/dtor/move 必须像 `VsgRendererState`
+>   那样**显式 `noexcept` + 定义外移**）。⇒ **这一批要留出 N 个构建循环**，顺序：① entry 的特殊成员外移；② 逐 TU 补 include；
+>   ③ 路 B（`unique_ptr` 化 + 建槽处的分配）；④ 量 `VsgReadback.hpp` **0.83 s → ~0.3 s**。判据沿用：构建 0/0、`test_vsg` 289、
+>   `test_graphics` 272、三脚本 0、lavapipe **55 行证据逐字节不变**。
+> - **T13 第三步（PCH）已试、已否证、已回滚；T13 就此停在第一步（2026-09-16 定论）**。
+>   ① 我先前报的"33 TU × 0.5 s ≈ **16 s**"是 **CPU 秒而不是墙钟**：这台机 **24 核**，触碰链根头
+>   （`VsgRendererState.hpp`）后重建 `gfx_backend_vsg + vsg_backend_selftest + test_vsg` 的**墙钟只有 1.64–1.95 s**。
+>   ② 试了三行 `target_precompile_headers`（覆盖上述三个目标、16 个 vsg app/state 头）⇒ **同一负载反而慢 4–6 倍**：
+>   `1.66 s → 14.52 / 6.69 / 10.56 s`，三个 PCH 各 **~40 MB**；已 `git checkout` 回滚，基线恢复 1.95 s。
+>   ③ ⇒ **结论：T13 停在第一步**（已提交：`VsgRenderer.hpp` **1.21 → 0.55 s / 203 → 152 MB**）。剩余的头批次
+>   （路 B + pipeline-factory 前向声明）与 PCH 在**这个负载 + 这台机**上都不划算——判据是墙钟，不是 CPU 秒。
+>   ④ 何时该重新量：CI 变单核、或 TU 数大幅增加、或链上出现更贵的头（届时应先量墙钟再决定，不要照抄"16 s"）。
+>   ⑤ 教训（通用）：**优化编译时间必须报墙钟并注明核数**；CPU 秒乘以 TU 数会高估一个数量级。
+>   **配方更正（2026-09-16 末，重要）**：`ShaderSet.h` 在本链上有**两个**来源，只做路 B **达不到目标**——
+>   状态链是 `VsgRendererState.hpp` → `VsgFramePlan.hpp` → {`VsgPipelineFactory.hpp`, `VsgRenderTargetEntry.hpp`}，
+>   而**两者都** `include <vsg/utils/ShaderSet.h>`（`VsgPipelineFactory.hpp` 只在签名里用 `ref_ptr<ShaderSet>&` ⇒
+>   **可以纯靠前向声明清掉**）。所以批次 = **两个头**（entry 走路 B、pipeline-factory 走 `VsgFwd.hpp`）+ `content.bridge.`
+>   改 `->`（约 6 个 .cpp：`VsgContentSlot.cpp` 10+ 处、`VsgTargetBookkeeping.cpp`、`VsgRendererPasses.cpp`、
+>   `VsgPassMaterialiser.cpp`、`VsgProgramSlot.cpp`）+ 建槽处的 `make_unique<SceneBridge>()` + 两个头的特殊成员外移。
+>   判据同前（`VsgReadback.hpp` 0.83 → **~0.3 s**、构建 0/0、289+272、55 行证据不变）。
 > - **T16 第一步已做（探针，env 门控）**：在「policy churn」相位前后各采一次保留量，脚本
 >   `VINE_PROBE_RETENTION=1 VK_ICD_FILENAMES=…/lvp_icd.json ./build/bin/vsg_backend_selftest`。**实测**：
 >   `churn START: content_slots=4 compile_contexts=60` → `churn END: content_slots=7 compile_contexts=63`
