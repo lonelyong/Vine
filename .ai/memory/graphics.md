@@ -1838,6 +1838,13 @@ buffer 句柄 + `packIndices()` 工厂，`geometryFromShape()` 共享索引 ⇒ 
 - **小经验**：`VsgRenderer::deviceWaitCount()` 是**会话级**计数，`shutdown()` 后读回 0 ⇒ 相位要在放手之前取样（打印的就是量到的值，别写死散文数字）。
 - **宿主侧下一步**：`src/fw/appfw/src/gui/RenderControl.cpp::initializeBackend` 仍先 `shutdown()`；改成"只重新公告句柄 + `resize()`/渲染"，让后端的 `initialize()` 去搬（本环境除 app 演示外无门禁覆盖）。
 
+## 下一轮（A6）：`VsgHostWindow` 应该派生平台窗口，而不是重写一个（2026-09-16 定位）
+
+- **实测到的关键事实**：`vsgXcb::Xcb_Window` 与 `vsgWin32::Win32_Window` 在**采纳** `traits->nativeWindow` 的分支里也把 `_windowMapped = true`（Xcb：`else { _windowMapped = true; _first_xcb_time_point = now(); }`；Win32：构造尾部 `_windowMapped = true;`）⇒ 它们对"宿主的窗口"本来就答 `valid()/visible()` 正确。**今天那个黑屏 bug 的根因就是"手写平台窗口"**：换成派生后 `valid()/visible()` 白拿，也就不会漏（而且能顺手删掉我们那套 `valid/visible/refreshHostWindowState` + 连接/屏幕/几何/客户区/surface 的手写代码，约 180 行）。
+- **收益**：只留两件事——① 析构在基类析构前把 `_window` 置空（不销毁宿主窗口；`releaseWindow()` 的那一行，但放进决定它的类里）；② `moveToHostSurface()`（丢 surface/swapchain → 继承的 `_initSurface()` 重建 surface → `_initFormats()` → `buildSwapchain()`）。`pollEvents()`/XDND/`systemConnection`/`x/y` traits 也一并继承。
+- **要注意的点**：① `Xcb_Window` 没标 `VSG_DECLSPEC`（Linux 默认可见、与本插件同属 libvsg；Windows 上本就该用 `Win32_Window`，它是 `VSG_DECLSPEC`）；② 两边基类析构都**会**销毁 `_window`，所以我们的析构必须先置空；③ Win32 分支在本机**只能审读、不能编译**，改动要尽量机械；④ `makeWindowTraits` 现在把句柄存成 `unsigned int`，而 vsg 用 `std::any_cast<xcb_window_t>`——两者在 Linux 上是同一类型，但顺手改成 `xcb_window_t`（或由平台 typedef 决定）更稳；⑤ 采纳路径下 vsg 不改宿主的 event mask（事件选择只在 `createWindow` 分支的 `xcb_create_window` 里），所以 `pollEvents()` 不会偷 Qt 的事件——这条要在真机上再确认一次。
+- **判据**（照今天的做法）：`[VsgHostWindow] attached … mapped=true` + `xwd` 抓 Qt 渲染区像素（修前 0.84% → 应为 83.81% 非黑）+ 自检相位（窗口构建数不变、恰好 1 次计数 device stop、同句柄保持会话、两宿主窗口存活、centre/角点像素跨搬移逐位相同）+ 全门禁。
+
 ## 模块文档（面向使用者）
 
 `src/viz/graphics/docs/usage.md`（仿 `src/base/math/docs/Eigen.md` 的"模块自带 docs 目录"约定）：分层架构、属性沿树折叠的四条规则、每帧数据流与"顶点被别名而非复制"、生命周期与变更契约（**数据变更一律 `Geometry::setRevision()` 公告**）、最小宿主用法，以及现成例子的**构建与运行方式**（`VINE_PIPELINE=forward|deferred|forward_shadowed|deferred_shadowed`（默认 deferred）、`VINE_VSG_GBUFFER` / `VINE_VSG_DEFERRED` / `VINE_VSG_OFFSCREEN_MULTISLOT` / `VINE_VSG_SLOT_DEMO` / `VINE_SHADER_PRESET`、无头门禁）。
