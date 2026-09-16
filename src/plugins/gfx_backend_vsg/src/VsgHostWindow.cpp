@@ -60,6 +60,15 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
     // made the device idle, so nothing in flight still names the swapchain / depth image being replaced).
     // Dropping the swapchain here -- rather than at the first buildSwapchain() -- is deliberate: its
     // oldSwapchain argument is a hint for a swapchain of the SAME surface.
+    //
+    // WHICH members go, and which must NOT, is written down and checked by
+    // scripts/check_vsg_window_surface_state.py against this very function: vsg's buildSwapchain()
+    // APPENDS to `_frames`/`_indices` (uncleared, the old swapchain's framebuffers would stay in the frame
+    // ring), ASSIGNS the depth and multisample images fresh (so resetting those releases them early rather
+    // than saving anything), and DEREFERENCES its own `_renderPass` -- which is why that one is
+    // deliberately absent below: nothing re-creates it before buildSwapchain(), so a null one segfaults in
+    // Framebuffer's constructor (measured, not reasoned -- it is what the first version of this comment's
+    // patch did).
     _swapchain.reset();
     _frames.clear();
     _indices.clear();
