@@ -3,9 +3,14 @@
 #include "async_global.hpp"
 
 #include <coroutine>
+#include <cstddef>
 #include <exception>
+#include <iterator>
+#include <memory>
 #include <optional>
 #include <utility>
+
+#include "Concepts.hpp"
 
 V_ASYNC_NS_BEGIN
 
@@ -15,11 +20,12 @@ V_ASYNC_NS_BEGIN
  * A coroutine that produces a sequence of values with co_yield. The body does
  * not run until iteration starts; each co_yield suspends and hands one value
  * to the consumer, and the next increment resumes the body. Usable with
- * range-for. Move-only; not awaitable.
+ * range-for, and a C++20 input_range, so ranges algorithms and views accept it.
+ * Move-only; not awaitable.
  *
- * @tparam T Produced value type.
+ * @tparam T Produced value type. Must be storable (see StorableValue).
  */
-template<typename T>
+template<StorableValue T>
 class Generator
 {
   public:
@@ -66,11 +72,19 @@ class Generator
     };
 
   public:
-    /// Input iterator over the produced values.
+    /**
+     * @brief Single-pass iterator over the produced values.
+     *
+     * Satisfies std::input_iterator: iterator_concept is input_iterator_tag,
+     * and both increment forms exist, which is what the C++20 iterator
+     * protocol requires (a missing postfix increment alone was enough to keep
+     * std::ranges algorithms and views from accepting a Generator).
+     */
     class iterator
     {
       public:
         using iterator_category = std::input_iterator_tag;
+        using iterator_concept  = std::input_iterator_tag;
         using value_type        = T;
         using difference_type   = std::ptrdiff_t;
         using pointer           = const T*;
@@ -109,10 +123,19 @@ class Generator
             return *this;
         }
 
+        /// Postfix increment; the protocol requires it even for single-pass use.
+        void operator++(int) { ++*this; }
+
         [[nodiscard]]
         reference operator*() const noexcept
         {
             return coro_.promise().value();
+        }
+
+        [[nodiscard]]
+        pointer operator->() const noexcept
+        {
+            return std::addressof(coro_.promise().value());
         }
 
       private:

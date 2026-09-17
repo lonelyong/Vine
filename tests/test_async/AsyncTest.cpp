@@ -30,10 +30,12 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <coroutine>
 #include <cstddef>
 #include <memory>
+#include <ranges>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -130,6 +132,12 @@ async::Task<int> ranOne(bool& ran)
     co_return 1;
 }
 
+async::Task<void> ranOneVoid(bool& ran)
+{
+    ran = true;
+    co_return;
+}
+
 async::Task<std::unique_ptr<int>> makeUniquePtr(int v)
 {
     co_return std::make_unique<int>(v);
@@ -218,6 +226,13 @@ async::Task<void> markDone(int& done)
     co_return;
 }
 
+async::Task<void> reportIfReleased(async::AsyncEvent& release, std::atomic<bool>& reported)
+{
+    co_await release;
+    reported.store(true);
+    co_return;
+}
+
 async::Task<void> lockGuardRelease(async::AsyncMutex& mutex)
 {
     auto guard = co_await async::lockAsync(mutex);
@@ -268,6 +283,87 @@ async::Task<void> resumeOnPoolTask(async::ThreadPoolScheduler& scheduler, bool& 
     co_await async::resumeOn(scheduler);
     ran = true;
     co_return;
+}
+
+// Compile-time contract of Concepts.hpp: Awaitable mirrors the co_await lookup
+// (awaiter itself, or operator co_await), and it rejects an awaiter whose
+// await_suspend return type is none of void / bool / coroutine_handle.
+static_assert(async::Awaitable<async::YieldAwaiter>);
+static_assert(async::Awaitable<async::Task<int>>);
+static_assert(async::Awaitable<async::SharedTask<int>>);
+static_assert(async::Awaitable<async::AsyncEvent>);
+static_assert(async::Awaitable<async::AsyncEvent::Awaiter>);
+static_assert(!async::Awaitable<int>);
+static_assert(!async::Awaitable<async::Task<int>&>); // Task is rvalue-awaitable only.
+
+struct IllegalAwaiter
+{
+    bool await_ready() const noexcept { return true; }
+    int  await_suspend(std::coroutine_handle<>) const noexcept { return 0; }
+    void await_resume() const noexcept {}
+};
+
+static_assert(!async::Awaitable<IllegalAwaiter>);
+
+/// await_suspend must not return a reference to a handle: the language allows
+/// only void, bool or a coroutine_handle value (clang rejects this form, g++
+/// currently accepts it, so rejecting it keeps the concept portable).
+struct ReferenceReturningAwaiter
+{
+    bool                     await_ready() const noexcept { return true; }
+    std::coroutine_handle<>& await_suspend(std::coroutine_handle<>) const noexcept;
+    void                     await_resume() const noexcept {}
+};
+
+static_assert(!async::Awaitable<ReferenceReturningAwaiter>);
+
+/// await_ready only has to convert contextually to bool, exactly as co_await
+/// requires, so a returning-int awaiter is legal (measured on clang and g++).
+struct ContextualBoolAwaiter
+{
+    int  await_ready() const noexcept { return 1; }
+    void await_suspend(std::coroutine_handle<>) const noexcept {}
+    void await_resume() const noexcept {}
+};
+
+static_assert(async::Awaitable<ContextualBoolAwaiter>);
+
+/// Scheduler whose schedule() returns a Task instead of a bare awaiter.
+struct TaskReturningScheduler
+{
+    async::Task<void> schedule() { co_return; }
+};
+
+static_assert(async::Schedulable<async::InlineScheduler>);
+static_assert(async::Schedulable<async::ThreadPoolScheduler>);
+static_assert(async::Schedulable<TaskReturningScheduler>);
+
+// StorableValue keeps unrepresentable results out of Task/SharedTask/Generator:
+// a reference result is rejected at the template boundary instead of failing
+// deep inside std::optional (naming Task<int&> itself is a hard error, so the
+// class-template constraint is pinned through a declaration-only helper).
+static_assert(async::StorableValue<int>);
+static_assert(async::StorableValue<void>);
+static_assert(!async::StorableValue<int&>);
+static_assert(!async::StorableValue<int[3]>);
+
+template<typename T>
+async::Task<T> taskOfType(); // Declared only: substitution, no coroutine created.
+
+/// Whether Task<T> is a valid specialization at all (checked as a concept, so
+/// the constraint failure stays a substitution failure).
+template<typename T>
+concept TaskAcceptsResult = requires { taskOfType<T>(); };
+
+static_assert(TaskAcceptsResult<int>);
+static_assert(TaskAcceptsResult<void>);
+static_assert(!TaskAcceptsResult<int&>);
+static_assert(!TaskAcceptsResult<int[3]>);
+
+async::Task<int> scheduleViaTaskReturningScheduler(TaskReturningScheduler& scheduler)
+{
+    co_await async::resumeOn(scheduler);
+    co_return 7;
 }
 
 async::Task<void> scopeFlag(bool& flag)
@@ -954,6 +1050,16 @@ TEST(SchedulerTest, ScheduleOnRunsTask)
     EXPECT_EQ(async::syncWait(std::move(task)), 42);
 }
 
+TEST(SchedulerTest, ScheduleMayReturnATask)
+{
+    // Invariant: Awaitable unwraps operator co_await, so a scheduler whose
+    // schedule() returns a Task - not a bare awaiter - is Schedulable as well.
+    // Before the concept was fixed, Awaitable<Task<void>> was false, so this
+    // scheduler could not be passed to resumeOn()/scheduleOn() at all.
+    TaskReturningScheduler scheduler;
+    EXPECT_EQ(async::syncWait(scheduleViaTaskReturningScheduler(scheduler)), 7);
+}
+
 TEST(CancellationTest, TokenAliases)
 {
     vine::CancellationSource source;
@@ -1003,6 +1109,35 @@ TEST(TaskTest, WhenAllPropagatesFirstException)
     tasks.push_back(noop());
 
     EXPECT_THROW(async::syncWait(async::whenAll(std::move(tasks))), std::runtime_error);
+}
+
+TEST(TaskTest, WhenAllVariadicAcceptsVoidTasks)
+{
+    // Invariant: the variadic form composes void tasks directly, without
+    // discard() and without a hand-built container. Before the fix the
+    // constraint excluded void results, so only the container form compiled.
+    int done = 0;
+    async::syncWait(async::whenAll(markDone(done), markDone(done), markDone(done)));
+    EXPECT_EQ(done, 3);
+
+    async::syncWait(async::whenAll(noop())); // A single void task needs no container either.
+}
+
+TEST(TaskTest, WhenAllVariadicVoidPropagatesFailure)
+{
+    EXPECT_THROW(async::syncWait(async::whenAll(failTask(), noop())), std::runtime_error);
+}
+
+TEST(TaskTest, WhenAnyVariadicAcceptsVoidTasks)
+{
+    // Invariant: the first void task to finish completes the composition and the
+    // still-parked siblings are destroyed with it, so a sibling that never gets
+    // its event never reports. Before the fix only the container form compiled.
+    async::AsyncEvent never_set;
+    std::atomic<bool> reported{ false };
+
+    async::syncWait(async::whenAny(noop(), reportIfReleased(never_set, reported)));
+    EXPECT_FALSE(reported.load());
 }
 
 TEST(TaskTest, WhenAnyCompletesOnFirst)
@@ -1083,6 +1218,29 @@ TEST(GeneratorTest, ExceptionPropagates)
     auto it = gen.begin();
     EXPECT_EQ(*it, 1);
     EXPECT_THROW(++it, std::runtime_error);
+}
+
+TEST(GeneratorTest, SatisfiesTheCxx20InputRangeContract)
+{
+    // Invariant: Generator is a std::ranges input_range, so ranges algorithms
+    // and views accept it. Before the fix the iterator had no postfix increment,
+    // which is enough for weakly_incrementable to fail and with it input_range.
+    static_assert(std::ranges::input_range<async::Generator<int>>);
+    static_assert(std::input_iterator<async::Generator<int>::iterator>);
+
+    auto counted = gen123();
+    EXPECT_EQ(std::ranges::distance(counted), 3);
+
+    auto taken = gen123();
+    int sum   = 0;
+    for (int v : std::views::take(taken, 2))
+    {
+        sum += v;
+    }
+    EXPECT_EQ(sum, 3);
+
+    auto arrowed = gen123();
+    EXPECT_EQ(arrowed.begin().operator->(), std::addressof(*arrowed.begin()));
 }
 
 TEST(AsyncMutexTest, LockUnlock)
@@ -2070,6 +2228,25 @@ TEST(TaskTest, WhenAllCancelledDoesNotStartChildren)
     EXPECT_FALSE(ran); // Children must not start when already cancelled.
 }
 
+TEST(TaskTest, WhenAllVariadicVoidCancelledDoesNotStartChildren)
+{
+    // Invariant: the void variadic overloads forward their token to the shared
+    // driver instead of silently dropping it, so an already-cancelled token
+    // still throws before any child runs.
+    vine::CancellationSource source;
+    source.request_stop();
+
+    bool ran = false;
+    EXPECT_THROW(async::syncWait(async::whenAll(source.get_token(), ranOneVoid(ran))),
+                 async::TaskCancelledException);
+    EXPECT_FALSE(ran);
+
+    bool ran_any = false;
+    EXPECT_THROW(async::syncWait(async::whenAny(source.get_token(), ranOneVoid(ran_any), noop())),
+                 async::TaskCancelledException);
+    EXPECT_FALSE(ran_any);
+}
+
 TEST(TaskTest, MoveOnlyResultComposition)
 {
     std::vector<async::Task<std::unique_ptr<int>>> tasks;
@@ -2419,6 +2596,84 @@ TEST(AsyncDefectRegressionTest, YieldLoopStackIsConstant)
     // Portable backstop that needs no frame-address builtin: this loop dies of
     // stack exhaustion when the awaiter resumes inline.
     async::syncWait(yieldLoop(100000));
+}
+
+namespace {
+
+#if defined(__GNUC__) || defined(__clang__)
+/// Opaque barrier: the pointer escapes into inline asm, so the compiler cannot
+/// prove the padding unused and has to keep it inside the coroutine frame.
+void keepFramePaddingAlive(const void* p, std::size_t n) noexcept
+{
+    asm volatile("" : : "r"(p), "r"(n) : "memory");
+}
+#else
+/// Best effort elsewhere: touch both ends of the padding.
+void keepFramePaddingAlive(const void* p, std::size_t n) noexcept
+{
+    const volatile unsigned char* bytes = static_cast<const volatile unsigned char*>(p);
+    (void)bytes[0];
+    (void)bytes[n - 1];
+}
+#endif
+
+/// Coroutine-frame padding: a frame this large is served by its own mmap'ed
+/// chunk, so resuming it after destruction faults on the unmapped page instead
+/// of quietly reading freed-but-mapped memory.
+struct FramePadding
+{
+    std::array<unsigned char, 256 * 1024> bytes{};
+};
+
+async::Task<int> sharedAwaitCounted(async::SharedTask<int>& st, std::atomic<int>& resumed)
+{
+    FramePadding padding;
+    padding.bytes[0] = 1;
+    keepFramePaddingAlive(&padding, sizeof(padding));
+
+    const int v = co_await st;
+
+    keepFramePaddingAlive(&padding, sizeof(padding)); // Must stay live across the await.
+    resumed.fetch_add(v == 7 && padding.bytes[0] == 1 ? 1 : 0);
+    co_return v;
+}
+
+} // namespace
+
+TEST(AsyncDefectRegressionTest, SharedTaskResumesWaitersOneAtATime)
+{
+    // Invariant: resuming one waiter of a shared completion must never resume a
+    // sibling that the resumed waiter destroyed. whenAny makes the first waiter
+    // to finish destroy the losers, which is the pattern every other completion
+    // source in this module handles by popping one waiter per lock and never
+    // holding a handle across a resume. Before the fix runShared() swapped the
+    // whole waiter list out first and then resumed each handle in it, so the
+    // losing waiter was resumed after its frame had been freed: heap-use-
+    // after-free under ASan, and a fault on the frame's own mmap'ed chunk
+    // otherwise (measured: 20/20 faults with padded frames and the settle
+    // window below, 19/20 without either).
+    std::atomic<int> runs{ 0 };
+    auto st = async::sharedTask(sharedSourceSlow(runs)); // sleeps 30 ms, then yields 7
+
+    std::atomic<int> resumed{ 0 };
+    std::vector<async::AnyTask> race;
+    race.reserve(2);
+    race.push_back(async::discard(sharedAwaitCounted(st, resumed)));
+    race.push_back(async::discard(sharedAwaitCounted(st, resumed)));
+
+    // The 30 ms source keeps both waiters parked simultaneously, so completion
+    // resumes two of them: the winner finishes, the loser is destroyed.
+    async::syncWait(async::whenAny(std::move(race)));
+
+    // syncWait() returns as soon as the winner is published, while the loser is
+    // still being resumed (or destroyed) on the timer thread: stay alive long
+    // enough for that to happen, or process exit would hide the fault.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    EXPECT_TRUE(st.isReady());
+    EXPECT_EQ(runs.load(), 1);    // The source still ran exactly once.
+    EXPECT_EQ(resumed.load(), 1); // Only the winner ran; the loser was destroyed.
+    EXPECT_EQ(async::syncWait(sharedAwaitInt(st)), 7); // Completion stayed usable.
 }
 
 // ---------------------------------------------------------------------------

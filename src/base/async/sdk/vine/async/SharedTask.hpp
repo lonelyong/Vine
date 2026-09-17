@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "Concepts.hpp"
 #include "DetachedTask.hpp"
 #include "Task.hpp"
 
@@ -66,6 +67,12 @@ struct SharedTaskState
  * Runs as a DetachedTask so it survives its own suspensions. On completion it
  * caches the result (or exception) in the shared state and resumes every
  * waiter. The caller must not hold the state mutex when spawning this.
+ *
+ * Waiters are popped and resumed one at a time, never holding a handle across
+ * a resume: a resumed waiter whose completion destroys a still-suspended
+ * sibling (e.g. a whenAny winner destroying the losers) unregisters itself, so
+ * the next iteration simply does not find it. Swapping the whole list out
+ * first would resume a destroyed frame instead.
  */
 template<typename T>
 DetachedTask runShared(std::shared_ptr<SharedTaskState<T>> state)
@@ -97,15 +104,22 @@ DetachedTask runShared(std::shared_ptr<SharedTaskState<T>> state)
         state->exception = std::current_exception();
     }
 
-    std::vector<std::coroutine_handle<>> to_resume;
+    for (;;)
     {
-        std::lock_guard<std::mutex> lock(state->mutex);
-        state->completed = true;
-        to_resume.swap(state->waiters);
-    }
-    for (auto h : to_resume)
-    {
-        h.resume();
+        std::coroutine_handle<> h;
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            // Published before the first resume: a waiter resumed below may
+            // re-enter (await the SharedTask again) and must see it completed.
+            state->completed = true;
+            if (state->waiters.empty())
+            {
+                break;
+            }
+            h = state->waiters.back();
+            state->waiters.pop_back();
+        }
+        h.resume(); // Resume outside the lock.
     }
 }
 
@@ -223,9 +237,10 @@ class SharedTaskAwaiter
  * concurrently by another thread while the source is completing (see the
  * framework contract in async_global.hpp).
  *
- * @tparam T Result type; void for a result-less shared task.
+ * @tparam T Result type; void for a result-less shared task. Must be storable
+ *           (see StorableValue).
  */
-template<typename T>
+template<StorableValue T>
 class SharedTask
 {
   public:
@@ -297,7 +312,7 @@ class SharedTask
     }
 
   private:
-    template<typename U>
+    template<StorableValue U>
     friend SharedTask<U> sharedTask(Task<U>);
 
     explicit SharedTask(std::shared_ptr<detail::SharedTaskState<T>> state) noexcept
@@ -317,7 +332,7 @@ class SharedTask
  * @param task Source task; must be non-empty.
  * @return A copyable SharedTask sharing the single computation.
  */
-template<typename T>
+template<StorableValue T>
 [[nodiscard]]
 SharedTask<T> sharedTask(Task<T> task)
 {

@@ -516,6 +516,26 @@ WhenAnyChild<T> composeAnyChild(Task<T> task)
     }
 }
 
+/**
+ * @brief Composes a void task pack into the container the shared driver takes.
+ *
+ * The void variadic overloads have no result to return, so they reuse the
+ * already-tested vector driver rather than duplicating it over tuples.
+ *
+ * @tparam Ts Task types; every one of them must be void.
+ * @param tasks Tasks to move into the container.
+ * @return The tasks in argument order.
+ */
+template<typename... Ts>
+    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+std::vector<AnyTask> toAnyTasks(Task<Ts>... tasks)
+{
+    std::vector<AnyTask> all;
+    all.reserve(sizeof...(tasks));
+    (all.push_back(std::move(tasks)), ...);
+    return all;
+}
+
 } // namespace detail
 
 /**
@@ -527,8 +547,8 @@ WhenAnyChild<T> composeAnyChild(Task<T> task)
  * rethrown after all tasks finish; if the token is already cancelled,
  * TaskCancelledException is thrown without starting any task, and cancellation
  * while waiting abandons (destroys) the children. Structured concurrency:
- * children are owned by the composition. Tasks must be non-void; use
- * discard()/whenAll(std::vector<AnyTask>) for void tasks.
+ * children are owned by the composition. Tasks must be non-void; when every
+ * task is a Task<void> the void overload below is selected instead.
  *
  * @tparam Ts Result types of the tasks.
  * @param tasks Tasks to await; each must be non-empty.
@@ -550,6 +570,40 @@ template<typename... Ts>
 Task<std::tuple<Ts...>> whenAll(CancellationToken token, Task<Ts>... tasks)
 {
     co_return co_await detail::whenAllImpl(std::move(token), std::move(tasks)...);
+}
+
+/**
+ * @brief Awaits void tasks concurrently; variadic form.
+ *
+ * The void counterpart of the tuple form above and the direct form of
+ * whenAll(std::vector<AnyTask>): pass Task<void> values without building a
+ * container. Semantics match the container form - every task is started, the
+ * first failure by completion order is rethrown after all tasks finish, and
+ * an already-cancelled token throws without starting any task.
+ *
+ * @tparam Ts Task types; every one of them must be void.
+ * @param tasks Tasks to await; each must be non-empty.
+ * @param token Optional cancellation token; when supplied it is the first
+ *        argument.
+ * @return A task completing when every input task completes.
+ */
+template<typename... Ts>
+    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+[[nodiscard]]
+Task<void> whenAll(Task<Ts>... tasks)
+{
+    co_await detail::whenRace(detail::WhenMode::All,
+                              detail::toAnyTasks(std::move(tasks)...),
+                              CancellationToken{});
+}
+
+template<typename... Ts>
+    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+[[nodiscard]]
+Task<void> whenAll(CancellationToken token, Task<Ts>... tasks)
+{
+    co_await detail::whenRace(
+        detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), std::move(token));
 }
 
 /**
@@ -725,6 +779,40 @@ Task<T> whenAny(CancellationToken token, Task<T> first, Task<Ts>... rest)
     tasks.push_back(std::move(first));
     (tasks.push_back(std::move(rest)), ...);
     co_return co_await whenAny(std::move(tasks), std::move(token));
+}
+
+/**
+ * @brief Awaits void tasks and completes with the first of them; variadic form.
+ *
+ * The void counterpart of the form above and the direct form of
+ * whenAny(std::vector<AnyTask>): pass Task<void> values without building a
+ * container. Semantics match the container form - the returned task completes
+ * when the first task finishes, the remaining tasks are destroyed with the
+ * composition, and an already-cancelled token throws without starting any task.
+ *
+ * @tparam Ts Task types; every one of them must be void.
+ * @param tasks Tasks to await; each must be non-empty.
+ * @param token Optional cancellation token; when supplied it is the first
+ *        argument.
+ * @return A task completing when the first input task completes.
+ */
+template<typename... Ts>
+    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+[[nodiscard]]
+Task<void> whenAny(Task<Ts>... tasks)
+{
+    co_await detail::whenRace(detail::WhenMode::Any,
+                              detail::toAnyTasks(std::move(tasks)...),
+                              CancellationToken{});
+}
+
+template<typename... Ts>
+    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+[[nodiscard]]
+Task<void> whenAny(CancellationToken token, Task<Ts>... tasks)
+{
+    co_await detail::whenRace(
+        detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), std::move(token));
 }
 
 V_ASYNC_NS_END

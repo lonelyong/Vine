@@ -9,9 +9,19 @@
 #include <type_traits>
 #include <utility>
 
+#include "Concepts.hpp"
+
 V_ASYNC_NS_BEGIN
 
-template<typename T>
+/**
+ * @brief Lazy, move-only asynchronous operation producing a value (or void).
+ *
+ * The result type must be storable (see StorableValue): references, arrays and
+ * function types are rejected here rather than inside std::optional.
+ *
+ * @tparam T Result type of the asynchronous operation; void for no result.
+ */
+template<StorableValue T>
 class Task;
 
 namespace detail {
@@ -126,7 +136,7 @@ struct TaskFinalAwaiter
  *
  * @tparam T Result type of the asynchronous operation; void for no result.
  */
-template<typename T>
+template<StorableValue T>
 class Task
 {
   public:
@@ -453,7 +463,7 @@ using AnyTask = Task<void>;
  * @param task Task to run; its result is ignored.
  * @return A task that completes when task completes.
  */
-template<typename T>
+template<StorableValue T>
 [[nodiscard]]
 Task<void> discard(Task<T> task)
 {
