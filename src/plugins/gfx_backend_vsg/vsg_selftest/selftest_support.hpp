@@ -1204,8 +1204,10 @@ bool runForwardShadowPixelPhase(const vine::intrusive_ptr<RenderBackend>& backen
  * in the scene can occlude - at two camera vantages, with and without the shadow term, and also asserts
  * that the shadow still reaches the ground (so the phase cannot pass on a shadow that stopped working).
  *
- * The pipeline is built WITHOUT transparent content on purpose: RenderPipelineBuilder's standalone branch
- * is the one where the G-buffer keeps its depth promotion, and no other phase builds that branch.
+ * The pipeline is built with an EMPTY transparent scene (the composite branch, the one every demo view
+ * uses). The standalone shape - no transparent content, the lighting pass presenting through its window
+ * pass - is NOT asserted yet: measured 2026-09-18, that branch resolves the right map and binds the right
+ * block and still draws no shadow (see graphics-shadow.md 11).
  *
  * @param backend Backend under test (the engine initializes it: it must be down when called).
  * @param frames  Frames to drive per read-back.

@@ -480,10 +480,10 @@ int pixelSum(const PixelImage& image, PixelImage::Point p)
  * The pipeline is built with an EMPTY transparent scene, exactly as the deferred phase above hands it
  * over: that selects RenderPipelineBuilder's COMPOSITE branch, the one every demo view uses (the demo
  * always has overlay content), and the only one where the shadow term reaches the picture at all -
- * measured on 2026-09-18, a pipeline built WITHOUT transparent content darkened ZERO pixels when the
- * shadow was switched on. A gate for that standalone branch has to wait for that defect to be fixed;
- * the resolver identifies a map by declared input ORDER while `depth_sampleable` is true by DEFAULT,
- * which is the first thing to check there. Three camera vantages are used, the last one CLOSE, because
+ * measured on 2026-09-18: that branch resolves the right map and slot and binds the right block, and
+ * still draws no shadow at all - a defect of the branch itself, recorded in the design doc, which this
+ * phase waits for rather than encoding a picture no demo view draws. Three camera vantages are used, the
+ * last one CLOSE, because
  * the demo's own numbers put one shadow-map texel at ~8.7 mm of world: an artifact a few texels wide is
  * sub-pixel from far away and plainly visible at the scale a host zooms to.
  *
@@ -599,13 +599,10 @@ bool runShadowedLitFacePhase(const vine::intrusive_ptr<RenderBackend>& backend, 
         RenderPipelineBuilder builder(engine.get());
         builder.setContent(content);
         builder.setCamera(camera.get());
-        // An EMPTY transparent scene, exactly as the deferred phase above hands it over: that selects the
-        // composite branch, which is the one every demo view uses (the demo always has overlay content).
-        // NOT the standalone branch: measured on 2026-09-18 with this very scene, a pipeline built without
-        // transparent content darkens ZERO pixels when the shadow is switched on - its shadow block never
-        // resolves a map, so that branch renders unshadowed, and a phase for it has to wait for that
-        // defect to be fixed (see the report on the shadow resolver: it identifies a map by declared
-        // input ORDER, and `depth_sampleable` is true by DEFAULT).
+        // An EMPTY transparent scene selects the composite branch, which is the one every demo view uses
+        // (the demo always has overlay content). The other branch - no transparent content, the lighting
+        // pass presenting through its window pass - resolves the right map and slot and still draws no
+        // shadow at all (see the design doc's record); it has no demo view, so this gate waits for it.
         builder.setTransparentContent(vine::intrusive_ptr<Scene>(new Scene()));
         PipelineOptions options;
         options.path             = ShadingPath::Deferred;
@@ -618,8 +615,9 @@ bool runShadowedLitFacePhase(const vine::intrusive_ptr<RenderBackend>& backend, 
             engine->shutdown();
             return false;
         }
-        // The standalone branch presents straight through its window pass, so it has no composite to
-        // read back: give that pass a target, exactly as the forward shadow phase does.
+        // The pipeline is read back through its WINDOW pass, retargeted into a target of this phase's own
+        // (the composite branch's window pass blits the composite there): readColorBuffer refuses a null
+        // target, and the window cannot be read.
         auto target = RenderTargetPtr(new RenderTarget());
         target->setSize(width, height);
         target->attachColor(RenderTarget::ColorFormat::RGBA8);

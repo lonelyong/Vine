@@ -206,6 +206,15 @@ virtual void setShadowMap(raw_ptr<const Light> light, raw_ptr<RenderTarget> shad
   castShadow 的太阳 + **不投影的补光**，断言：(1) 太阳照到的顶面在开/关阴影时不变；
   (2) 太阳照不到、补光照到的面在开/关阴影时**不变**（修前实测 384→99，修后 384→384）；
   (3) 受光地面不变、且开阴影确实让画面某处变暗（防空转）。
-  记录：该阶段初版用 `setTransparentContent(nullptr)`（standalone deferred 分支）时实测
-  "开阴影后变暗像素 = 0"，即该分支根本不出影（`resolveShadowInput` 按**声明顺序**挑图、
-  而 `depth_sampleable` 默认成立）；现按复合分支测量，standalone 分支的影缺失另案待修。
+  该阶段初版用 `setTransparentContent(nullptr)`（standalone deferred 分支）時实测"开阴影后变暗像素 = 0"。
+- **standalone 分支的缺陷已定位到一半（2026-09-18 仪器实测）**：
+  * 不是解析器的锅：该分支里 lighting pass 解析出的正是 `params = {1, 0.005, 1, 槽位}`（与复合分支一致），
+    且它的 slot 已绑定 `map=yes shadow_block=yes`；
+  * 不是"重定向窗口 pass"的锅：forward 相位用**同一手法**（把 window pass 重定向到离屏目标）是**正确出影**的
+    （31 vs 196）；
+  * 该分支自己的画面不对：近景 vantage 变暗像素 = 0，而另两个 vantage 又异常偏大（23k/35k）⇒ 下一步给该分支一个
+    **host 侧离屏目标**（而不是重定向），或把该分支 fragment 的输入（G-buffer 附件 3 / uv / depth）dump 出来对。
+  * 没有任何 demo 视图使用该分支，所以门禁先只钉复合分支（`main.cpp` 里的注释指向本条）。
+- **顺带实测到**一个"按声明顺序挑图"的实例：某个 content pass 选中了 640x360、producer 矩阵为**单位阵**的目标
+  （打印 `chosen 640x360 producerVP: m00=1 m33=1 …`）⇒ 该规则确实能挑到非阴影片（该 pass 今天不用其结果，故无害，
+  但它是"按来源而非顺序识别"那个改法的又一个理由）。
