@@ -80,6 +80,33 @@ void fillLightPushBlock(const vine::graphics::Camera* camera,
 std::size_t fillVineLightsBlock(const vine::graphics::Camera* camera,
                                 const std::vector<const vine::graphics::Light*>& lights, VineLightsBlock& block);
 
+/**
+ * @brief The directional slot the shadow-casting light occupies, and the light itself.
+ *
+ * The shadow ABI carries the index of the light a map belongs to (`VineShadowBlock::params.w`), because
+ * the shader's shadow term is inserted INSIDE the loop over the block's directional lights: without the
+ * index it scales every light's term, and a light that casts nothing (the demo's fill) is extinguished
+ * wherever the casting light is blocked - measured: a face the sun never reaches fell to ambient-only in
+ * the shape of the sun's shadow (the lit-face phase of vsg_backend_selftest is the gate).
+ *
+ * The walk is the packing's own rule (enabled directionals in announcement order, three slots), so the
+ * index cannot drift from the block the shader reads.
+ */
+struct ShadowLightSlot
+{
+    const vine::graphics::Light* light = nullptr; ///< The first enabled shadow-casting directional.
+    std::size_t                  slot  = 3u;      ///< Its block slot (0..2), or 3 when the block cannot carry it.
+};
+
+/**
+ * @brief Finds the light a shadow map would belong to, and the slot a shader can name it by.
+ *
+ * @param lights Scene lights to walk (borrowed; null entries and disabled lights are skipped).
+ * @return The light and its slot; `light` is null when nothing casts, `slot` is 3 when the caster would
+ *         fall outside the block's three directional slots (nothing the shader could scale).
+ */
+ShadowLightSlot shadowLightSlot(const std::vector<const vine::graphics::Light*>& lights);
+
 } // namespace detail
 
 V_VSG_NS_END

@@ -33,7 +33,7 @@
 > `OpacityIsNotPartOfTheVariantIdentity`、`OpacityDoesNotRideTheVertexColour`、`OpacityEditRebuildsNothing`。
 > · **B2 按自己的触发条件暂缓**（§12.6："要等第二个标量（材质值或用户参数）出现，否则会把一个 float 包装成一整套 API"），
 > 实测条件**未到**：`VineDrawBlock.params` 只有一个活标量（`.x`），`.yzw` 在渐变片里明写 reserved；阴影块的
-> `params = {1.0, bias, strength, 0}` 属于**另一个块**，不算第二个标量。
+> `VineShadowBlock` 属于**另一个块**（它自己的 `params.w` 自 2026-09-18 起 = 所属灯的槽位），不算第二个标量。
 > · **给将来的 B2 留一句**：§12.6 把"材质值进 `VineDrawBlock.params`"当首个候选消费者，但 `params` 是**每 drawable** 的，
 > 材质是**每材质**的（按地址键、跨 drawable 共享、已有 `set0/b0` 材质块）—— 搬进去等于按 drawable 复制材质值，还和材质身份
 > 键打架。已在 `.ai/design/graphics-shader.md` §12.6 加一条日期注记。

@@ -92,7 +92,7 @@ std::u8string shadowBindings(std::uint32_t set_index, std::uint32_t map_binding,
                         : std::u8string(u8"layout(binding = ") + digits(map_binding + 1u)
                               + u8", std140) uniform VineShadowBlock\n{\n");
     text += u8"    mat4 viewToLight;   // view space -> light clip\n";
-    text += u8"    vec4 params;        // x = enabled, y = depth bias, z = strength\n";
+    text += u8"    vec4 params;        // x = enabled, y = depth bias, z = strength, w = the light it belongs to\n";
     text += u8"} shadow;";
     return text;
 }
@@ -103,9 +103,16 @@ std::u8string shadowBindings(std::uint32_t set_index, std::uint32_t map_binding,
  * Deliberately identical for every path that shades a shadow (the deferred lighting program and the
  * forward content program): the two differ in how they obtain the fragment's view position, not in
  * what a shadow does to a light, so the text is written once and inserted twice.
+ *
+ * The insertion points are INSIDE the loop over the block's directional lights, so the term has to name
+ * the light its map belongs to (params.w): a map is produced by ONE light, and scaling every light's
+ * term by it makes lights that do not cast lose their contribution wherever that one light is blocked.
+ * The demo's fill light lit the faces the sun cannot reach; with the term unconditional, those faces
+ * went to ambient-only in the shape of the sun's shadow (measured by vsg_backend_selftest's lit-face
+ * phase, which asserts exactly that they do not move).
  */
 constexpr char8_t shadow_term[] =
-    u8"        if (shadow.params.x > 0.5)\n"
+    u8"        if (shadow.params.x > 0.5 && i == int(shadow.params.w))\n"
     u8"        {\n"
     u8"            // Where this fragment lands in the LIGHT's map, and how deep the nearest caster\n"
     u8"            // the map found is. Outside the map's rectangle nothing casts, so the fragment\n"

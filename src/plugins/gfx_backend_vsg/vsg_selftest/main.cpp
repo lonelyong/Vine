@@ -442,6 +442,10 @@ int main()
         std::fprintf(stderr, "[selftest] FAILED — the forward shadow phase did not hold\n");
         return 1;
     }
+    if (!runShadowedLitFacePhase(backend, 3)) {
+        std::fprintf(stderr, "[selftest] FAILED — a lit face was darkened by the shadow term\n");
+        return 1;
+    }
 
     std::fprintf(stderr, "[selftest] done — no crash, no validation error expected\n");
     return 0;

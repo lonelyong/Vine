@@ -402,4 +402,353 @@ bool runForwardShadowPixelPhase(const vine::intrusive_ptr<RenderBackend>& backen
     return ok;
 }
 
+/** @brief Builds the five visible faces of an axis-aligned box (no bottom) as ONE drawable. */
+GeometryPtr makeBoxFaces(float half_x, float half_z, float bottom_y, float top_y)
+{
+    auto                       geom = GeometryPtr(new Geometry());
+    vine::geometry::Vec3fArray positions;
+    vine::geometry::Vec3fArray normals;
+    // One quad = two triangles, appended in the order given. Culling is off by default (StateNode),
+    // so the winding is not load-bearing: the depth test sorts the far faces of the closed body out.
+    const auto add_quad = [&](float ax, float ay, float az, float bx, float by, float bz, float cx, float cy,
+                              float cz, float dx, float dy, float dz, float nx, float ny, float nz) {
+        const float px[6] = { ax, bx, cx, ax, cx, dx };
+        const float py[6] = { ay, by, cy, ay, cy, dy };
+        const float pz[6] = { az, bz, cz, az, cz, dz };
+        for (int i = 0; i < 6; ++i) {
+            positions.emplace_back(px[i], py[i], pz[i]);
+            normals.emplace_back(nx, ny, nz);
+        }
+    };
+    const float hx = half_x;
+    const float hz = half_z;
+    // Top: the face this phase measures, facing the sun and the camera alike.
+    add_quad(-hx, top_y, -hz, hx, top_y, -hz, hx, top_y, hz, -hx, top_y, hz, 0.0f, 1.0f, 0.0f);
+    // The four sides, so the body occludes its own far faces and casts a shadow with a defined edge.
+    add_quad(hx, bottom_y, -hz, hx, bottom_y, hz, hx, top_y, hz, hx, top_y, -hz, 1.0f, 0.0f, 0.0f);
+    add_quad(-hx, bottom_y, hz, -hx, bottom_y, -hz, -hx, top_y, -hz, -hx, top_y, hz, -1.0f, 0.0f, 0.0f);
+    add_quad(-hx, bottom_y, hz, hx, bottom_y, hz, hx, top_y, hz, -hx, top_y, hz, 0.0f, 0.0f, 1.0f);
+    add_quad(hx, bottom_y, -hz, -hx, bottom_y, -hz, -hx, top_y, -hz, hx, top_y, -hz, 0.0f, 0.0f, -1.0f);
+    geom->setPositions(vine::graphics::packAttribute(positions));
+    geom->setNormals(vine::graphics::packAttribute(normals));
+    return geom;
+}
+
+/** @brief The pixel a world point projects to, in a read-back image (y downwards, like the buffer). */
+PixelImage::Point pixelOfWorld(const Camera& camera, const vine::math::Vec3d& world, int width, int height)
+{
+    const vine::math::Mat4d clip = camera.projectionMatrix() * camera.viewMatrix();
+    const double              w    = clip(3, 0) * world.x + clip(3, 1) * world.y + clip(3, 2) * world.z + clip(3, 3);
+    const double              x    = clip(0, 0) * world.x + clip(0, 1) * world.y + clip(0, 2) * world.z + clip(0, 3);
+    const double              y    = clip(1, 0) * world.x + clip(1, 1) * world.y + clip(1, 2) * world.z + clip(1, 3);
+    const double              ndc_x = (w != 0.0) ? x / w : 0.0;
+    const double              ndc_y = (w != 0.0) ? y / w : 0.0;
+    PixelImage::Point         point;
+    point.x = static_cast<int>((ndc_x * 0.5 + 0.5) * static_cast<double>(width));
+    point.y = static_cast<int>((0.5 - ndc_y * 0.5) * static_cast<double>(height));
+    point.x = std::max(0, std::min(width - 1, point.x));
+    point.y = std::max(0, std::min(height - 1, point.y));
+    return point;
+}
+
+/** @brief Summed colour of a pixel, the one number these phases compare. */
+int pixelSum(const PixelImage& image, PixelImage::Point p)
+{
+    return image.at(p, 0) + image.at(p, 1) + image.at(p, 2);
+}
+
+/**
+ * @brief Asserts a shadow toggle cannot darken a face the sun reaches: a lit TOP face stays lit.
+ *
+ * The two phases above measure the GROUND, and that is what lets this class of bug through. A
+ * consumer resolves its shadow map as "the first declared input whose depth is sampleable", and a
+ * target's depth is sampleable BY DEFAULT: `RenderTarget::depth_promotion_` is true, and
+ * `depth_sampleable` is derived from it (`has_depth && !borrowed && depthPromotion`). A pass that
+ * declares another depth-bearing target BEFORE its shadow map therefore binds THAT target's depth
+ * and maps a fragment with ITS producer view-projection - which no shadow pass ever stated, so the
+ * matrix is the identity and "light clip" really means world position. The lighting then compares a
+ * light-space value against an unrelated depth, and the shading follows wherever that comparison
+ * crosses: on a flat, sun-facing surface it darkens a BAND, and the band moves with the CAMERA.
+ *
+ * The ground alone cannot pin that down (a wrong map can darken "some ground" by accident), so this
+ * phase measures the one thing a wrong map cannot get right: the box's TOP face, which the sun
+ * reaches and which nothing else in this scene can occlude. Rendering the same scene with
+ * castShadow off and on has to leave every probe on that face unchanged, while the ground behind the
+ * box has to be plainly darker - so the phase fails if a lit face is darkened AND fails if the
+ * shadow term stopped reaching the ground at all.
+ *
+ * The pipeline is built with an EMPTY transparent scene, exactly as the deferred phase above hands it
+ * over: that selects RenderPipelineBuilder's COMPOSITE branch, the one every demo view uses (the demo
+ * always has overlay content), and the only one where the shadow term reaches the picture at all -
+ * measured on 2026-09-18, a pipeline built WITHOUT transparent content darkened ZERO pixels when the
+ * shadow was switched on. A gate for that standalone branch has to wait for that defect to be fixed;
+ * the resolver identifies a map by declared input ORDER while `depth_sampleable` is true by DEFAULT,
+ * which is the first thing to check there. Three camera vantages are used, the last one CLOSE, because
+ * the demo's own numbers put one shadow-map texel at ~8.7 mm of world: an artifact a few texels wide is
+ * sub-pixel from far away and plainly visible at the scale a host zooms to.
+ *
+ * @param backend The renderer to drive (a real device, lavapipe in CI).
+ * @param frames  Frames to render per read-back, so every pass has been through its first-frame
+ *                pipeline build.
+ * @return true when a lit top face survives the shadow term and the ground shadow still lands.
+ */
+bool runShadowedLitFacePhase(const vine::intrusive_ptr<RenderBackend>& backend, int frames)
+{
+    auto engine = vine::intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    if (!engine->initialize()) {
+        std::fprintf(stderr, "[selftest] FAIL: the lit-face phase's engine could not bring the backend up\n");
+        return false;
+    }
+
+    auto content = vine::intrusive_ptr<Scene>(new Scene());
+    auto root    = vine::intrusive_ptr<Group>(new Group());
+
+    auto ground_material = MaterialPtr(new Material());
+    ground_material->setDiffuse(vine::Colorf(0.8f, 0.8f, 0.8f, 1.0f));
+    // A BLACK specular again: the shadow scales the light's diffuse term, so a highlight would put a
+    // shadow-independent term into the pixels this phase compares.
+    ground_material->setSpecular(vine::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+    auto ground = makeGroundQuad(4.5f); // 9x9: the demo's footprint, the scale its bias is stated for
+    ground->setMaterial(ground_material);
+    ground->setName(u8"lit-face-ground");
+    root->addChild(ground);
+
+    auto box_material = MaterialPtr(new Material());
+    box_material->setDiffuse(vine::Colorf(0.85f, 0.85f, 0.85f, 1.0f));
+    box_material->setSpecular(vine::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+    auto box = makeBoxFaces(0.25f, 0.25f, 0.0f, 0.4f);
+    box->setMaterial(box_material);
+    box->setName(u8"lit-face-box");
+    root->addChild(box);
+
+    // A tall pillar, because a 0.5-unit box casts almost nothing this phase can use as a control: the
+    // demo's 0.005 bias is a 0.13-unit erosion along the light at this content size, so a small
+    // caster's ground shadow all but disappears. The pillar (2.0 tall) puts its shadow 2.0 * (0.6, 0.4)
+    // down-sun of its base - at (-1.4, -1.8), clear of the box, its top face and every probe here - so
+    // the phase can tell "the shadow term reached the picture" from "it did nothing".
+    auto pillar = makeBoxFaces(0.1f, 0.1f, 0.0f, 2.0f);
+    pillar->setMaterial(box_material);
+    pillar->setName(u8"lit-face-pillar");
+    auto pillar_place = vine::intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    pillar_place->setMatrix(vine::math::translate(vine::math::Vec3d(-2.6, 0.0, -2.6)));
+    pillar_place->addChild(pillar);
+    root->addChild(pillar_place);
+
+    content->setRoot(root);
+    // The demo's own sun and shadow numbers (AppShellDemo::addDemoLighting): travelling down and
+    // toward +x/+z, 1024 texels over the content, a 0.005 bias. Reusing them is the point - a gate
+    // measured at other numbers would not describe the picture the demo draws.
+    auto sun = LightPtr(Light::createDirectional(vine::math::Vec3d(0.6, -1.0, 0.4)));
+    sun->setName(u8"lit-face-sun");
+    sun->setCastShadow(true);
+    sun->setShadowResolution(1024);
+    sun->setShadowBias(0.005f);
+
+    // A FILL light with no shadow of its own, exactly as the demo has one (AppShellDemo::addDemoLighting):
+    // it travels down and toward -x/+z, so it lights the box's +z face - the face every vantage here can
+    // see, and the one the SUN cannot reach (its direction has no +z component to speak of). That makes
+    // the +z face the phase's second subject: its light comes from a lamp whose own map does not exist,
+    // so nothing about the sun's shadow may touch it. A shadow term that scales EVERY light's term (the
+    // terms are inserted inside the per-light loop) extinguishes this face wherever the sun is blocked -
+    // by the box itself - and the face goes dark in the shape of the sun's shadow.
+    auto fill = LightPtr(Light::createDirectional(vine::math::Vec3d(-0.2, -0.5, -1.0)));
+    fill->setName(u8"lit-face-fill");
+    fill->setIntensity(0.5f);
+    fill->setCastShadow(false);
+    // ANNOUNCED FIRST, so the sun lands in the block's SECOND directional slot: the shader has to name
+    // the light its map belongs to (`params.w`), and a term that names the wrong slot - or scales every
+    // light - fails here, while a caster in slot 0 would hide a wrong index. The single-light deferred
+    // and forward phases cover slot 0.
+    content->addLight(fill);
+    content->addLight(sun); // second: the caster has to be NAMED by the block, not assumed to be first
+
+    const int width  = 640;
+    const int height = 360;
+    // Two vantages onto the same box: the sun never moves, so the sun-lit/shadowed classification of a
+    // world point is the scene's, not the camera's. The third stands CLOSE, at the scale a host zooms to:
+    // one shadow-map texel spans ~8.7 mm of world (the demo's own number), so an artifact a few texels
+    // wide is sub-pixel from far away and plainly visible from here.
+    struct Vantage
+    {
+        vine::math::Vec3d eye;
+        vine::math::Vec3d target;
+    };
+    const Vantage vantages[3] = { { vine::math::Vec3d(0.0, 2.4, 3.4), vine::math::Vec3d(0.0, 0.3, 0.0) },
+                                  { vine::math::Vec3d(2.6, 2.1, 2.4), vine::math::Vec3d(0.0, 0.25, 0.0) },
+                                  { vine::math::Vec3d(0.5, 1.1, 1.3), vine::math::Vec3d(0.0, 0.35, 0.0) } };
+    // The probes. The box's top face is the surface under test; the two ground points are the
+    // controls that keep the phase from passing while the shadow term does nothing at all.
+    const float  top_uvs[3] = { -0.18f, 0.0f, 0.18f };
+    // The ground controls, stated as SETS rather than one computed point: the demo's 0.005 bias is a
+    // 0.13-unit erosion along the light at this content size, which eats most of a 0.5-unit box's
+    // shadow, so WHERE exactly the surviving sliver falls is the renderer's business - that nothing
+    // lands up-sun, and that the shadow does reach the picture, is the phase's.
+    const vine::math::Vec3d ground_up_sun[4] = { { -0.6, 0.0, -0.5 },
+                                                 { -1.0, 0.0, -0.5 },
+                                                 { -0.6, 0.0, -1.0 },
+                                                 { -1.0, 0.0, -1.0 } };
+
+    bool ok = true;
+    for (int v = 0; v < 3; ++v) {
+        auto camera = CameraPtr(new Camera());
+        camera->setViewMatrixAsLookAt(vantages[v].eye, vantages[v].target, vine::math::Vec3d(0.0, 1.0, 0.0));
+        camera->setProjectionMatrixAsPerspective(45.0, static_cast<double>(width) / static_cast<double>(height), 0.1,
+                                                 1000.0);
+
+        RenderPipelineBuilder builder(engine.get());
+        builder.setContent(content);
+        builder.setCamera(camera.get());
+        // An EMPTY transparent scene, exactly as the deferred phase above hands it over: that selects the
+        // composite branch, which is the one every demo view uses (the demo always has overlay content).
+        // NOT the standalone branch: measured on 2026-09-18 with this very scene, a pipeline built without
+        // transparent content darkens ZERO pixels when the shadow is switched on - its shadow block never
+        // resolves a map, so that branch renders unshadowed, and a phase for it has to wait for that
+        // defect to be fixed (see the report on the shadow resolver: it identifies a map by declared
+        // input ORDER, and `depth_sampleable` is true by DEFAULT).
+        builder.setTransparentContent(vine::intrusive_ptr<Scene>(new Scene()));
+        PipelineOptions options;
+        options.path             = ShadingPath::Deferred;
+        options.offscreen_width  = width;
+        options.offscreen_height = height;
+        auto pipeline            = builder.build(options);
+        if (pipeline == nullptr || pipeline->windowPass() == nullptr) {
+            std::fprintf(stderr, "[selftest] FAIL: the lit-face phase's deferred pipeline did not build\n");
+            pipeline = nullptr;
+            engine->shutdown();
+            return false;
+        }
+        // The standalone branch presents straight through its window pass, so it has no composite to
+        // read back: give that pass a target, exactly as the forward shadow phase does.
+        auto target = RenderTargetPtr(new RenderTarget());
+        target->setSize(width, height);
+        target->attachColor(RenderTarget::ColorFormat::RGBA8);
+        target->attachDepth(RenderTarget::DepthFormat::D24);
+        pipeline->windowPass()->setRenderTarget(target);
+
+        // The caller sets the flag: this only renders and reads back, so the two frames differ by the
+        // shadow term alone.
+        const auto render = [&](PixelImage& image) {
+            for (int i = 0; i < frames; ++i) {
+                engine->frame(1.0 / 60.0);
+            }
+            image.pixels.clear();
+            const bool read = backend->readColorBuffer(target.get(), 0, image.pixels);
+            image.width     = width;
+            image.height    = height;
+            return read;
+        };
+        PixelImage shadowed;
+        PixelImage plain;
+        sun->setCastShadow(true);
+        if (!render(shadowed)) {
+            std::fprintf(stderr, "[selftest] FAIL: the lit-face phase could not read its shadowed frame\n");
+            ok = false;
+            break;
+        }
+        sun->setCastShadow(false); // the same scene, the same camera: only the shadow term changes
+        if (!render(plain)) {
+            std::fprintf(stderr, "[selftest] FAIL: the lit-face phase could not read its unshadowed frame\n");
+            ok = false;
+            break;
+        }
+        sun->setCastShadow(true);
+
+        int       plain_up_sun     = 0;
+        std::fprintf(stderr, "[selftest] lit-face vantage %d: top face:", v);
+        for (int ix = 0; ix < 3; ++ix) {
+            for (int iz = 0; iz < 3; ++iz) {
+                const vine::math::Vec3d top_point(top_uvs[ix], 0.4, top_uvs[iz]);
+                const PixelImage::Point p       = pixelOfWorld(*camera, top_point, width, height);
+                const int               lit_sum = pixelSum(plain, p);
+                const int               sh_sum  = pixelSum(shadowed, p);
+                std::fprintf(stderr, " [%d,%d] %d->%d", ix, iz, lit_sum, sh_sum);
+                // The face is lit and must stay so: the sun reaches it and nothing here occludes it.
+                if (lit_sum < 450) {
+                    std::fprintf(stderr,
+                                 "\n[selftest] FAIL: the box's top face read %d (of 765) with the shadow OFF - the "
+                                 "probe is not on a lit surface, so this vantage measures nothing\n",
+                                 lit_sum);
+                    ok = false;
+                } else if (lit_sum - sh_sum > 24) {
+                    std::fprintf(stderr,
+                                 "\n[selftest] FAIL: the box's top face darkened from %d to %d when the shadow was "
+                                 "switched on: a surface the sun reaches, which nothing here can occlude, was "
+                                 "shadowed - the consuming pass is reading a map that is not the sun's\n",
+                                 lit_sum, sh_sum);
+                    ok = false;
+                }
+            }
+        }
+        std::fprintf(stderr, "\n");
+        // The fill-only face: the sun cannot reach it (so it is in the box's own sun shadow) and the
+        // fill has no map of its own, so its brightness must not move when the SUN's shadow is toggled.
+        std::fprintf(stderr, "[selftest]   fill-only face:");
+        for (int iy = 0; iy < 3; ++iy) {
+            for (int ix = 0; ix < 3; ++ix) {
+                const vine::math::Vec3d face_point(top_uvs[ix], 0.12 + 0.08 * static_cast<double>(iy), 0.25);
+                const PixelImage::Point p       = pixelOfWorld(*camera, face_point, width, height);
+                const int               lit_sum = pixelSum(plain, p);
+                const int               sh_sum  = pixelSum(shadowed, p);
+                std::fprintf(stderr, " [%d,%d] %d->%d", ix, iy, lit_sum, sh_sum);
+                if (lit_sum < 200) {
+                    std::fprintf(stderr,
+                                 "\n[selftest] FAIL: the box's fill-lit face read %d with the shadow OFF - the probe "
+                                 "is not on the face the fill light reaches, so this vantage measures nothing\n",
+                                 lit_sum);
+                    ok = false;
+                } else if (lit_sum - sh_sum > 24) {
+                    std::fprintf(stderr,
+                                 "\n[selftest] FAIL: the box's FILL-lit face darkened from %d to %d when the SUN's "
+                                 "shadow was switched on: the map of one light is being applied to another, so a "
+                                 "face the sun never reaches goes dark in the sun's shadow\n",
+                                 lit_sum, sh_sum);
+                    ok = false;
+                }
+            }
+        }
+        std::fprintf(stderr, "\n");
+        // Control A, geometry-free: the shadow term has to darken the picture somewhere, or this phase
+        // would pass on a shadow that does nothing. Counting changed pixels needs no hand-computed
+        // shadow position, which is unreliable at this content scale: the demo's 0.005 bias is a
+        // 0.13-unit shift along the light here, so most of a small caster's ground shadow is eroded
+        // away, and WHERE the surviving part falls is the renderer's business.
+        std::size_t darkened = 0;
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const PixelImage::Point p{ x, y };
+                if (pixelSum(plain, p) > pixelSum(shadowed, p) + 30) {
+                    ++darkened;
+                }
+            }
+        }
+        if (darkened < 50) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: switching the shadow on darkened only %zu pixels - the shadow term did "
+                         "not reach the picture, so this phase proves nothing\n",
+                         darkened);
+            ok = false;
+        }
+        // Control B: ground the sun reaches, up-sun of the box, must not darken at all.
+        for (const auto& point : ground_up_sun) {
+            const PixelImage::Point p       = pixelOfWorld(*camera, point, width, height);
+            const int               lit_sum = pixelSum(plain, p);
+            const int               sh_sum  = pixelSum(shadowed, p);
+            plain_up_sun                    = std::max(plain_up_sun, lit_sum);
+            if (lit_sum - sh_sum > 24) {
+                std::fprintf(stderr,
+                             "[selftest] FAIL: ground the sun reaches (%.2f,%.2f) darkened from %d to %d when the "
+                             "shadow was switched on - the shadow landed where it cannot belong\n",
+                             point.x, point.z, lit_sum, sh_sum);
+                ok = false;
+            }
+        }
+        std::fprintf(stderr, "[selftest]   up-sun ground lit %d, darkened pixels %zu\n", plain_up_sun, darkened);
+        pipeline = nullptr; // unregisters its passes from the engine before the next vantage
+    }
+
+    engine->shutdown();
+    return ok;
+}
+
 }  // namespace selftest

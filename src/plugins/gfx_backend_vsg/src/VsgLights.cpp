@@ -181,6 +181,30 @@ std::size_t fillVineLightsBlock(const vine::graphics::Camera*                   
     return collectViewSpaceLights(camera, lights, block.ambient, block.dirs, block.cols);
 }
 
+ShadowLightSlot shadowLightSlot(const std::vector<const vine::graphics::Light*>& lights)
+{
+    // The same walk collectViewSpaceLights makes: enabled directionals take slots 0..2 in announcement
+    // order, everything else is skipped, and a fourth directional is not lit at all. The shadow block's
+    // index has to mean the same slot the light block put the light in, or the term would scale another
+    // light (see the declaration).
+    ShadowLightSlot found;
+    std::size_t     slot = 0u;
+    for (const auto* light : lights) {
+        if (light == nullptr || !light->isEnabled() || light->type() != vine::graphics::LightType::Directional) {
+            continue;
+        }
+        if (light->castShadow()) {
+            found.light = light;
+            found.slot  = slot;
+            return found;
+        }
+        if (++slot >= 3u) {
+            break; // the block is full: a later caster has no slot a shader could name it by
+        }
+    }
+    return found;
+}
+
 } // namespace detail
 
 V_VSG_NS_END

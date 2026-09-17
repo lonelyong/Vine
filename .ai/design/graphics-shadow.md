@@ -189,3 +189,23 @@ virtual void setShadowMap(raw_ptr<const Light> light, raw_ptr<RenderTarget> shad
   已建 RT/相机，只差“采样接入”）。
 - 平面演示：加一块地面，验证阳光在地面上的立方体投影；主/离屏同源都应投影。
 
+
+## 11. 缺陷记录（2026-09-18）：影图不能作用于它不属于的灯
+
+- **现象**：demo 里盒子**背光面**（太阳照不到、只靠 `scene_fill` 补光的那一面）在开阴影后
+  整片变暗成"环境光灰"，看起来像"盒子给自己投了个影子，但位置莫名其妙"。
+- **根因**：`shadow_term`（`BuiltinShaders.cpp`）被插在**逐灯循环体内部**（
+  `builtin_deferred_lighting.frag` 与 `builtin_forward.frag` 的 `// VINE_SHADOW_TERM`），而它写的是
+  `ndl *= mix(1.0, lit, strength)` ⇒ 一张属于**一盏灯**的影图被乘到了**每盏灯**的 N·L 与高光上。
+  补光（它没有影图、也不该有）于是在"太阳被挡住"的地方被一起熄灭。
+- **修法**：`VineShadowBlock::params.w`（原 reserved）承载"这张图属于哪盏灯"在灯块里的**槽位**，
+  由 `detail::shadowLightSlot`（`VsgLights.cpp`，与 `collectViewSpaceLights` 同一打包规则）算出；
+  着色器守卫改为 `shadow.params.x > 0.5 && i == int(shadow.params.w)`，只缩放该灯的项。
+  投影灯若落在灯块三个方向槽之外（或被禁用）⇒ 块保持 disabled，而不是去缩放别的灯。
+- **守卫**：`vsg_backend_selftest` 新阶段 `runShadowedLitFacePhase` —— 场景含
+  castShadow 的太阳 + **不投影的补光**，断言：(1) 太阳照到的顶面在开/关阴影时不变；
+  (2) 太阳照不到、补光照到的面在开/关阴影时**不变**（修前实测 384→99，修后 384→384）；
+  (3) 受光地面不变、且开阴影确实让画面某处变暗（防空转）。
+  记录：该阶段初版用 `setTransparentContent(nullptr)`（standalone deferred 分支）时实测
+  "开阴影后变暗像素 = 0"，即该分支根本不出影（`resolveShadowInput` 按**声明顺序**挑图、
+  而 `depth_sampleable` 默认成立）；现按复合分支测量，standalone 分支的影缺失另案待修。

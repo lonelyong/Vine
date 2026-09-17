@@ -123,7 +123,10 @@ bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> pro
  * `map` is null when the pass declared no shadow (or the depth it declared cannot be sampled), and
  * `block.params.x` is 0 in that case: the ABI's switch is what lets one shader text take both
  * paths (see ShaderAbi.hpp), which the content path needs because its shader set is shared per
- * (target, depth mode) rather than per pass.
+ * (target, depth mode) rather than per pass. A DISABLED block with a non-null `map` is the third
+ * answer: a map was declared and produced, but the light it belongs to is not one the block's three
+ * directional slots can name (see shadowLightSlot), so the term must scale nothing rather than scale
+ * a light the map does not belong to.
  */
 struct ShadowInput
 {

@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include <vine/vsg/VsgRendererState.hpp>
+#include <vine/vsg/VsgLights.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -196,20 +197,16 @@ ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<cons
     // pipeline framed its light camera with (a private per-backend bias is exactly the convention the
     // L1 ABI exists to prevent). The first enabled shadow-casting light is the one whose pass was
     // built; with none announced the block stays DISABLED, which is the honest answer for a map that
-    // arrived without the light it belongs to.
-    float bias     = 0.002f;
-    float strength = 1.0f;
-    bool  have_light = false;
-    for (const auto* light : lights) {
-        if (light != nullptr && light->isEnabled() && light->castShadow()) {
-            bias       = static_cast<float>(light->shadowSettings().bias);
-            have_light = true;
-            break;
-        }
-    }
-    if (!have_light) {
+    // arrived without the light it belongs to. Its SLOT comes from the block's own packing order,
+    // because the shader's shadow term sits inside the per-light loop and has to name the one light the
+    // map scales - a caster the block cannot carry leaves the block disabled rather than scaling a
+    // light the map does not belong to.
+    const ShadowLightSlot caster = shadowLightSlot(lights);
+    if (caster.light == nullptr || caster.slot >= 3u) {
         return resolved;
     }
+    const float bias     = static_cast<float>(caster.light->shadowSettings().bias);
+    const float strength = 1.0f;
     // view -> light clip = (producer: light clip <- light view) * (view <- world) * (world <- THIS
     // view): the producer's view-projection maps ITS view-space position into light clip, and the
     // fragment the shader has is in the consuming pass' view space.
@@ -221,7 +218,7 @@ ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<cons
                 static_cast<float>(view_to_light(row, column));
         }
     }
-    resolved.block.params = { 1.0f, bias, strength, 0.0f };
+    resolved.block.params = { 1.0f, bias, strength, static_cast<float>(caster.slot) };
     return resolved;
 }
 
