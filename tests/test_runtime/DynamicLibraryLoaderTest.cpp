@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <string_view>
+
 #include <vine/runtime/DynamicLibraryLoader.hpp>
 
 using vine::String;
@@ -7,6 +9,15 @@ using vine::runtime::DynamicLibraryLoader;
 
 namespace
 {
+
+/** Absolute path of the fixture shared library, handed over by the build (see CMakeLists.txt).
+ *  The native path is ASCII on every platform this test runs on (forward slashes on Windows too),
+ *  so this is the same reinterpretation the plugin layer uses for native text, not a transcode.
+ */
+String fixturePath()
+{
+    return String(std::u8string_view(reinterpret_cast<const char8_t*>(V_RUNTIME_FIXTURE)));
+}
 
 TEST(DynamicLibraryLoaderTest, LoadMissingReturnsNull)
 {
@@ -17,11 +28,7 @@ TEST(DynamicLibraryLoaderTest, LoadMissingReturnsNull)
 TEST(DynamicLibraryLoaderTest, ReusesAlreadyLoadedLibrary)
 {
     DynamicLibraryLoader loader;
-#ifdef _WIN32
-    const String path = u8"kernel32.dll";
-#else
-    const String path = u8"/proc/self/exe";
-#endif
+    const String      path = fixturePath();
 
     auto* first  = loader.load(path);
     auto* second = loader.load(path);
@@ -50,32 +57,33 @@ TEST(DynamicLibraryLoaderTest, SharedInstanceIsSingle)
 TEST(DynamicLibraryLoaderTest, ResolvesKnownSymbol)
 {
     DynamicLibraryLoader loader;
-#ifdef _WIN32
-    auto* lib = loader.load(u8"kernel32.dll");
+    auto*                lib = loader.load(fixturePath());
     ASSERT_NE(lib, nullptr);
-    EXPECT_NE(lib->resolveSymbol<int()>(u8"GetModuleHandleW"), nullptr);
-#else
-    auto* lib = loader.load(u8"/proc/self/exe");
-    ASSERT_NE(lib, nullptr);
-    EXPECT_NE(lib->resolveSymbol<int()>(u8"main"), nullptr);
-#endif
+
+    // The fixture exports this one symbol; calling it proves resolveSymbol() hands back the real
+    // function rather than an address somewhere inside the library.
+    auto* answer = lib->resolveSymbol<int()>(u8"vine_test_fixture_answer");
+    ASSERT_NE(answer, nullptr);
+    EXPECT_EQ(answer(), 42);
+
+    // A name the fixture does not export resolves to nothing.
+    EXPECT_EQ(lib->resolveSymbol<int()>(u8"vine_test_fixture_missing"), nullptr);
 }
 
 TEST(DynamicLibraryLoaderTest, SearchPathResolvesAndDeduplicates)
 {
     DynamicLibraryLoader loader;
-#ifdef _WIN32
-    const String dir  = u8"C:/Windows/System32";
-    const String name = u8"kernel32.dll";
-#else
-    const String dir  = u8"/proc/self";
-    const String name = u8"exe";
-#endif
 
-    auto* direct = loader.load(dir + u8"/" + name);
+    const String path      = fixturePath();
+    const auto   slash     = path.rfind(u8'/');
+    ASSERT_NE(slash, String::npos);
+    const String directory = path.substr(0, slash);
+    const String name      = path.substr(slash + 1);
+
+    auto* direct = loader.load(path);
     ASSERT_NE(direct, nullptr);
 
-    loader.addSearchPath(dir);
+    loader.addSearchPath(directory);
     EXPECT_EQ(loader.searchPaths().size(), 1u);
     auto* via_search = loader.load(name);
     ASSERT_NE(via_search, nullptr);

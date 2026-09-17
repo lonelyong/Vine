@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -88,6 +89,12 @@ TEST(SystemTest, CpuInfoIsCached)
 
 TEST(SystemTest, MotherboardInfoIsFilled)
 {
+    // WSL 与部分容器根本不暴露 /sys/class/dmi/id：主板信息在平台上取不到，不是实现没填
+    // （Hardware::motherboard() 读的就是这个目录，并已对 sys_vendor/product_name 做了回退）。
+    if (!std::filesystem::exists("/sys/class/dmi/id")) {
+        GTEST_SKIP() << "/sys/class/dmi/id is not exposed on this platform (WSL/container)";
+    }
+
     const auto& mb = Hardware::motherboard();
     EXPECT_FALSE(mb.manufacturer.empty());
     EXPECT_FALSE(mb.product.empty());

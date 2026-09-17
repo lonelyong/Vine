@@ -79,5 +79,9 @@ TEST(TestCppStd, DefaultConstructorsAndOperators) {
 
     // B b3(std::move(b2));
 
-    ASSERT_EQ(a1.book.name, "A2.book");
+    // A 的拷贝赋值是隐式生成的（成员逐一赋值），而 Book 的拷贝赋值是上面那个什么都不做的用户
+    // 实现 —— 于是 n1 被复制、book 成员原地不动。原先这里断言 book.name 变成 "A2.book"，
+    // 与标准语义相反（断言的是没有发生的事）。
+    ASSERT_EQ(a1.n1, a2.n1);
+    ASSERT_EQ(a1.book.name, "A1.book");
 }

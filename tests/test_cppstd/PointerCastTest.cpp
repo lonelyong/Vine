@@ -40,9 +40,15 @@ TEST(TestCppStd, PointerCast) {
 
 
 
-    Base1*  b1 = (Base1*)&d;
-    Base2*  b2 = (Base2*)&d;
+    Base1* b1 = static_cast<Base1*>(&d);
+    Base2* b2 = static_cast<Base2*>(&d);
     std::cout << b1 << std::endl;
     std::cout << b2 << std::endl;
-    ASSERT_EQ((void*)b1, b2);
+
+    // 多继承下两个基类子对象地址不同：Base2 的子对象落在 Base1 之后（偏移 = sizeof(Base1)），
+    // 这正是 static_cast 会替你算偏移的原因；相等只在单继承/首基类时才成立。
+    ASSERT_NE(static_cast<void*>(b1), static_cast<void*>(b2));
+
+    // 标准真正保证的是另一个方向：从第二基类转回派生类，仍然指向同一个对象。
+    ASSERT_EQ(static_cast<Derived*>(b2), &d);
 }
