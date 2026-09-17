@@ -120,13 +120,12 @@ bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> pro
  * derivation the pipeline wrote when it built the light camera — never from a second light camera
  * fitted here, so the two cannot disagree about where the light was.
  *
- * `map` is null when the pass declared no shadow (or the depth it declared cannot be sampled), and
- * `block.params.x` is 0 in that case: the ABI's switch is what lets one shader text take both
- * paths (see ShaderAbi.hpp), which the content path needs because its shader set is shared per
- * (target, depth mode) rather than per pass. A DISABLED block with a non-null `map` is the third
- * answer: a map was declared and produced, but the light it belongs to is not one the block's three
- * directional slots can name (see shadowLightSlot), so the term must scale nothing rather than scale
- * a light the map does not belong to.
+ * `map` is null when the pass declares no target that is a light's shadow map (RenderTarget::setShadowOf),
+ * when that map has not been produced (yet) or its depth cannot be sampled, when its producer never stated
+ * a view-projection (a map nobody stated how to read is not mapped with the identity), when the light it
+ * belongs to stopped casting (Light::castShadow), or when that light is not one the block's three
+ * directional slots can carry. `block.params.x` is 0 in every one of those, so the shader's switch is off
+ * and nothing is scaled: a pass shades the shadow it declared, or none.
  */
 struct ShadowInput
 {
@@ -138,8 +137,10 @@ struct ShadowInput
  * @brief Resolves the shadow @p camera's pass declared (see @ref ShadowInput).
  *
  * The ONE rule every consumer of a shadow uses — the fullscreen lighting pass and a content slot
- * (forward shading) — so the two cannot drift. It reads the pass' announced inputs and the
- * per-target table, so it must be called between setPassInputs() and the draw it belongs to.
+ * (forward shading) - so the two cannot drift. It reads the pass' own declaration of what it shades
+ * (RenderPass::shadowSource) and the per-target table, so it must be called after beginPass() has
+ * announced the pass and after setPassInputs() has resolved its inputs, and before the draw it belongs
+ * to.
  *
  * The lights are an ARGUMENT rather than read from the session: a content draw call CONSUMES the
  * announced light list (VsgRenderer::render takes it), so by the time a slot resolves its shadow the

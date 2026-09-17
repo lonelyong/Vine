@@ -1,5 +1,7 @@
 ﻿#include <vine/graphics/RenderTarget.hpp>
 
+#include <vine/graphics/Light.hpp>
+
 V_GRAPHICS_NS_BEGIN
 
 V_OBJECT_META_IMPL(RenderTarget, vine::Object);
@@ -39,12 +41,28 @@ void RenderTarget::setDepthPromotion(bool promote)
 
 void RenderTarget::setProducerViewProjection(const Mat4d& view_projection)
 {
-    producer_view_projection_ = view_projection;
+    producer_view_projection_        = view_projection;
+    producer_view_projection_stated_ = true;
 }
 
 const Mat4d& RenderTarget::producerViewProjection() const
 {
     return producer_view_projection_;
+}
+
+bool RenderTarget::hasProducerViewProjection() const
+{
+    return producer_view_projection_stated_;
+}
+
+void RenderTarget::setShadowOf(intrusive_ptr<const Light> light)
+{
+    shadow_of_ = light;
+}
+
+raw_ptr<const Light> RenderTarget::shadowOf() const
+{
+    return shadow_of_.get();
 }
 
 raw_ptr<RenderTarget> RenderTarget::depthSource() const

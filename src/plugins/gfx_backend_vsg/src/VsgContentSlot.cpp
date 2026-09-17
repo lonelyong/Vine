@@ -363,9 +363,9 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         content.lights_data->dirty();
     }
 
-    // This slot's shadow: resolved from the PASS' own declared inputs by the one rule every shadow
-    // consumer uses (detail::resolveShadowInput — the fullscreen lighting pass calls it too), so the
-    // forward content and the deferred lighting cannot disagree about which map they are reading.
+    // This slot's shadow: resolved from the map's own statement of whose shadow it is
+    // (detail::resolveShadowInput - the fullscreen lighting pass calls it too), so the forward content and
+    // the deferred lighting cannot disagree about which map they read or which light it belongs to.
     if (content.shadow_data != nullptr && content.shadow_data->dataSize() >= sizeof(vine::graphics::VineShadowBlock)) {
         const detail::ShadowInput shadow = detail::resolveShadowInput(state, camera, lights);
         std::memcpy(content.shadow_data->dataPointer(), &shadow.block, sizeof(shadow.block));

@@ -176,41 +176,58 @@ ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<cons
     if (camera == nullptr) {
         return resolved; // no view to map a fragment from: nothing can be shaded with a map
     }
-    const vine::graphics::RenderTarget* source = nullptr;
+    // A shadow map says WHOSE it is (RenderTarget::setShadowOf) and the pass that reads it is a generic
+    // consumer: it declares targets as its inputs and nothing else. So the map is found by what the
+    // TARGET states, never by declaration order - a G-buffer has a depth too, and "the first declared
+    // input whose depth is sampleable" bound one as the sun's map for a whole deferred branch, shading a
+    // "shadow" that was a function of world position (see .ai/design/graphics-shadow.md).
+    const vine::graphics::RenderTarget* map    = nullptr;
+    const vine::graphics::Light*        light  = nullptr;
+    const VsgRenderTargetEntry*         chosen = nullptr;
     for (const auto& input : state.request.inputs) {
-        if (input == nullptr) {
-            continue;
+        if (input == nullptr || input->shadowOf() == nullptr) {
+            continue; // this input is not a shadow map: only a map states whose shadow it is
         }
-        const auto entry = state.targets.find(input);
-        if (entry == state.targets.end() || entry->second.depth_view == nullptr ||
-            !entry->second.depth_sampleable) {
-            continue; // declared but not produced, or its depth is not sampleable: nothing to bind
+        const auto found = state.targets.find(input);
+        if (found == state.targets.end() || found->second.depth_view == nullptr || !found->second.depth_sampleable) {
+            continue; // declared but not produced (yet), or its depth cannot be sampled
         }
-        resolved.map = entry->second.depth_view;
-        source       = input;
+        map    = input;
+        light  = input->shadowOf();
+        chosen = &found->second;
         break;
     }
-    if (source == nullptr) {
+    if (map == nullptr || light == nullptr) {
+        return resolved; // no usable shadow map is declared here: the ABI's switch stays off
+    }
+    // The pass says WHICH shadow it shades; the light says whether it casts one right now (Light owns
+    // that switch, together with the ShadowSettings the bias comes from). A light that stopped casting
+    // between two frames has to stop shading, or toggling it would change nothing at all.
+    if (!light->castShadow()) {
         return resolved;
     }
-    // The bias and the strength come from the light that casts it: the same ShadowSettings the
-    // pipeline framed its light camera with (a private per-backend bias is exactly the convention the
-    // L1 ABI exists to prevent). The first enabled shadow-casting light is the one whose pass was
-    // built; with none announced the block stays DISABLED, which is the honest answer for a map that
-    // arrived without the light it belongs to. Its SLOT comes from the block's own packing order,
-    // because the shader's shadow term sits inside the per-light loop and has to name the one light the
-    // map scales - a caster the block cannot carry leaves the block disabled rather than scaling a
-    // light the map does not belong to.
-    const ShadowLightSlot caster = shadowLightSlot(lights);
-    if (caster.light == nullptr || caster.slot >= 3u) {
+    // A map is only usable with the matrix its producer published. Without one it would be mapped with
+    // the identity, which shades a "shadow" that is a function of world position; shading nothing is the
+    // honest answer for a map nobody stated how to read.
+    if (!map->hasProducerViewProjection()) {
         return resolved;
     }
-    const float bias     = static_cast<float>(caster.light->shadowSettings().bias);
+    // The light has to be one the block can NAME. The shader's shadow term scales the light whose slot
+    // the block states, so a caster the block cannot carry (disabled, or a fourth directional) leaves
+    // the switch off rather than scaling a light the map does not belong to.
+    const std::size_t slot = directionalSlotOf(lights, light);
+    if (slot >= 3u) {
+        return resolved;
+    }
+    // The bias is the casting light's own (ShadowSettings): a private per-backend bias is exactly the
+    // convention this ABI exists to prevent.
+    const float bias     = static_cast<float>(light->shadowSettings().bias);
     const float strength = 1.0f;
+    resolved.map         = chosen->depth_view;
     // view -> light clip = (producer: light clip <- light view) * (view <- world) * (world <- THIS
     // view): the producer's view-projection maps ITS view-space position into light clip, and the
     // fragment the shader has is in the consuming pass' view space.
-    const vine::math::Mat4d view_to_light = source->producerViewProjection() * camera->viewMatrix().inverted();
+    const vine::math::Mat4d view_to_light = map->producerViewProjection() * camera->viewMatrix().inverted();
     // Column-major, the way the GLSL block reads it (mat4 is four columns of vec4).
     for (int column = 0; column < 4; ++column) {
         for (int row = 0; row < 4; ++row) {
@@ -218,7 +235,7 @@ ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<cons
                 static_cast<float>(view_to_light(row, column));
         }
     }
-    resolved.block.params = { 1.0f, bias, strength, static_cast<float>(caster.slot) };
+    resolved.block.params = { 1.0f, bias, strength, static_cast<float>(slot) };
     return resolved;
 }
 

@@ -181,28 +181,27 @@ std::size_t fillVineLightsBlock(const vine::graphics::Camera*                   
     return collectViewSpaceLights(camera, lights, block.ambient, block.dirs, block.cols);
 }
 
-ShadowLightSlot shadowLightSlot(const std::vector<const vine::graphics::Light*>& lights)
+std::size_t directionalSlotOf(const std::vector<const vine::graphics::Light*>& lights,
+                              const vine::graphics::Light*                    light)
 {
     // The same walk collectViewSpaceLights makes: enabled directionals take slots 0..2 in announcement
-    // order, everything else is skipped, and a fourth directional is not lit at all. The shadow block's
-    // index has to mean the same slot the light block put the light in, or the term would scale another
+    // order, everything else is skipped, and a fourth directional is not lit at all. A shadow block's
+    // index has to mean the slot the light block put that light in, or the term would scale another
     // light (see the declaration).
-    ShadowLightSlot found;
-    std::size_t     slot = 0u;
-    for (const auto* light : lights) {
-        if (light == nullptr || !light->isEnabled() || light->type() != vine::graphics::LightType::Directional) {
+    std::size_t slot = 0u;
+    for (const auto* candidate : lights) {
+        if (candidate == nullptr || !candidate->isEnabled() ||
+            candidate->type() != vine::graphics::LightType::Directional) {
             continue;
         }
-        if (light->castShadow()) {
-            found.light = light;
-            found.slot  = slot;
-            return found;
+        if (candidate == light) {
+            return slot;
         }
         if (++slot >= 3u) {
-            break; // the block is full: a later caster has no slot a shader could name it by
+            break; // the block is full: a later light has no slot a shader could name it by
         }
     }
-    return found;
+    return 3u;
 }
 
 } // namespace detail

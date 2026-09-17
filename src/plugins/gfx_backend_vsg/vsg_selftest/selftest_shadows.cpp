@@ -460,15 +460,16 @@ int pixelSum(const PixelImage& image, PixelImage::Point p)
 /**
  * @brief Asserts a shadow toggle cannot darken a face the sun reaches: a lit TOP face stays lit.
  *
- * The two phases above measure the GROUND, and that is what lets this class of bug through. A
- * consumer resolves its shadow map as "the first declared input whose depth is sampleable", and a
- * target's depth is sampleable BY DEFAULT: `RenderTarget::depth_promotion_` is true, and
- * `depth_sampleable` is derived from it (`has_depth && !borrowed && depthPromotion`). A pass that
- * declares another depth-bearing target BEFORE its shadow map therefore binds THAT target's depth
- * and maps a fragment with ITS producer view-projection - which no shadow pass ever stated, so the
- * matrix is the identity and "light clip" really means world position. The lighting then compares a
- * light-space value against an unrelated depth, and the shading follows wherever that comparison
- * crosses: on a flat, sun-facing surface it darkens a BAND, and the band moves with the CAMERA.
+ * The two phases above measure the GROUND, and that is what let this class of defect through: "the ground
+ * got darker" is satisfied by a shadow that is wrong in every other way. A map now states WHOSE it is
+ * (RenderTarget::setShadowOf, a fact about the map, not a concept on this generic pass) and the light
+ * states whether it casts,
+ * so nothing here has to be inferred - but the CONSEQUENCES still need pinning, and they are the ones the
+ * two defects behind this phase had: one light's map must scale ONE light's term (the term sits inside the
+ * per-light loop, and scaling the rest extinguished the demo's fill light wherever the sun was blocked),
+ * and the map must be the one its producer published (a G-buffer that merely had a sampleable depth was
+ * bound as the sun's map in a whole deferred branch, which shaded a "shadow" that was a function of world
+ * position and moved with the viewpoint).
  *
  * The ground alone cannot pin that down (a wrong map can darken "some ground" by accident), so this
  * phase measures the one thing a wrong map cannot get right: the box's TOP face, which the sun
@@ -477,22 +478,19 @@ int pixelSum(const PixelImage& image, PixelImage::Point p)
  * box has to be plainly darker - so the phase fails if a lit face is darkened AND fails if the
  * shadow term stopped reaching the ground at all.
  *
- * The pipeline is built with an EMPTY transparent scene, exactly as the deferred phase above hands it
- * over: that selects RenderPipelineBuilder's COMPOSITE branch, the one every demo view uses (the demo
- * always has overlay content), and the only one where the shadow term reaches the picture at all -
- * measured on 2026-09-18: that branch resolves the right map and slot and binds the right block, and
- * still draws no shadow at all - a defect of the branch itself, recorded in the design doc, which this
- * phase waits for rather than encoding a picture no demo view draws. Three camera vantages are used, the
- * last one CLOSE, because
- * the demo's own numbers put one shadow-map texel at ~8.7 mm of world: an artifact a few texels wide is
- * sub-pixel from far away and plainly visible at the scale a host zooms to.
+ * Both deferred branches are run, because they differ in where the lit image ends up (with an empty
+ * transparent scene the lighting pass bakes into a composite; without transparent content it presents
+ * through its window pass) and the second is where the inference that bound the G-buffer survived
+ * longest. Three camera vantages are used, the last one CLOSE, because the demo's own numbers put one
+ * shadow-map texel at ~8.7 mm of world: an artifact a few texels wide is sub-pixel from far away and
+ * plainly visible at the scale a host zooms to.
  *
  * @param backend The renderer to drive (a real device, lavapipe in CI).
  * @param frames  Frames to render per read-back, so every pass has been through its first-frame
  *                pipeline build.
  * @return true when a lit top face survives the shadow term and the ground shadow still lands.
  */
-bool runShadowedLitFacePhase(const vine::intrusive_ptr<RenderBackend>& backend, int frames)
+bool runShadowedLitFacePhase(const vine::intrusive_ptr<RenderBackend>& backend, int frames, bool standalone)
 {
     auto engine = vine::intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setBackend(backend);
@@ -599,11 +597,13 @@ bool runShadowedLitFacePhase(const vine::intrusive_ptr<RenderBackend>& backend, 
         RenderPipelineBuilder builder(engine.get());
         builder.setContent(content);
         builder.setCamera(camera.get());
-        // An EMPTY transparent scene selects the composite branch, which is the one every demo view uses
-        // (the demo always has overlay content). The other branch - no transparent content, the lighting
-        // pass presenting through its window pass - resolves the right map and slot and still draws no
-        // shadow at all (see the design doc's record); it has no demo view, so this gate waits for it.
-        builder.setTransparentContent(vine::intrusive_ptr<Scene>(new Scene()));
+        // An EMPTY transparent scene selects the composite branch (the one every demo view uses, since the
+        // demo always has overlay content); no transparent content at all selects the branch whose lighting
+        // pass presents through its window pass. Both are asserted: that second branch is where the
+        // resolver used to pick the G-buffer (its depth promotion stays on there) instead of the map.
+        if (!standalone) {
+            builder.setTransparentContent(vine::intrusive_ptr<Scene>(new Scene()));
+        }
         PipelineOptions options;
         options.path             = ShadingPath::Deferred;
         options.offscreen_width  = width;

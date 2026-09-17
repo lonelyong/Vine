@@ -1204,16 +1204,18 @@ bool runForwardShadowPixelPhase(const vine::intrusive_ptr<RenderBackend>& backen
  * in the scene can occlude - at two camera vantages, with and without the shadow term, and also asserts
  * that the shadow still reaches the ground (so the phase cannot pass on a shadow that stopped working).
  *
- * The pipeline is built with an EMPTY transparent scene (the composite branch, the one every demo view
- * uses). The standalone shape - no transparent content, the lighting pass presenting through its window
- * pass - is NOT asserted yet: measured 2026-09-18, that branch resolves the right map and binds the right
- * block and still draws no shadow (see graphics-shadow.md 11).
+ * The pipeline is built BOTH ways, because the two deferred branches differ in where the lit image ends
+ * up: with an EMPTY transparent scene the lighting pass bakes into a composite (the branch every demo view
+ * uses), and without transparent content it presents straight through its window pass - the branch where
+ * the resolver used to bind the G-buffer as if it were the shadow map (its depth promotion stays on
+ * there), so the phase runs it too.
  *
- * @param backend Backend under test (the engine initializes it: it must be down when called).
- * @param frames  Frames to drive per read-back.
+ * @param backend    Backend under test (the engine initializes it: it must be down when called).
+ * @param frames     Frames to drive per read-back.
+ * @param standalone Build without transparent content (the presenting deferred branch).
  * @return true when a lit top face survived the shadow term and the ground shadow still landed.
  */
-bool runShadowedLitFacePhase(const vine::intrusive_ptr<RenderBackend>& backend, int frames);
+bool runShadowedLitFacePhase(const vine::intrusive_ptr<RenderBackend>& backend, int frames, bool standalone);
 
 /** @brief Asserts that a session FOLLOWS the host's new window instead of being rebuilt (C1).
  *

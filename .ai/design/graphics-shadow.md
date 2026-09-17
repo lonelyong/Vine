@@ -207,14 +207,24 @@ virtual void setShadowMap(raw_ptr<const Light> light, raw_ptr<RenderTarget> shad
   (2) 太阳照不到、补光照到的面在开/关阴影时**不变**（修前实测 384→99，修后 384→384）；
   (3) 受光地面不变、且开阴影确实让画面某处变暗（防空转）。
   该阶段初版用 `setTransparentContent(nullptr)`（standalone deferred 分支）時实测"开阴影后变暗像素 = 0"。
-- **standalone 分支的缺陷已定位到一半（2026-09-18 仪器实测）**：
-  * 不是解析器的锅：该分支里 lighting pass 解析出的正是 `params = {1, 0.005, 1, 槽位}`（与复合分支一致），
-    且它的 slot 已绑定 `map=yes shadow_block=yes`；
-  * 不是"重定向窗口 pass"的锅：forward 相位用**同一手法**（把 window pass 重定向到离屏目标）是**正确出影**的
-    （31 vs 196）；
-  * 该分支自己的画面不对：近景 vantage 变暗像素 = 0，而另两个 vantage 又异常偏大（23k/35k）⇒ 下一步给该分支一个
-    **host 侧离屏目标**（而不是重定向），或把该分支 fragment 的输入（G-buffer 附件 3 / uv / depth）dump 出来对。
-  * 没有任何 demo 视图使用该分支，所以门禁先只钉复合分支（`main.cpp` 里的注释指向本条）。
-- **顺带实测到**一个"按声明顺序挑图"的实例：某个 content pass 选中了 640x360、producer 矩阵为**单位阵**的目标
-  （打印 `chosen 640x360 producerVP: m00=1 m33=1 …`）⇒ 该规则确实能挑到非阴影片（该 pass 今天不用其结果，故无害，
-  但它是"按来源而非顺序识别"那个改法的又一个理由）。
+- **standalone 分支（不调用 `setTransparentContent`）的缺陷：根因已定位并修复（2026-09-18）**
+  * 现象：该分支的 lighting pass 把地面大片变暗（实测一次近景 vantage 变暗像素 0，另两个 vantage 23k/35k），
+    而且明暗区随视点漂移；而 block 的 `enabled/bias/槽位`（`params=1,0.005,1,1`）与 slot 绑定
+    （`slot_map=yes shadow_block=yes`）看上去全部健康。
+  * 根因：`resolveShadowInput` 按“**第一个声明且深度可采样**的 input”挑图，而 `depth_sampleable` 默认成立。
+    复合分支里 builder 会 `gbuffer->setDepthPromotion(false)`（因为 composite 要借用 G-buffer 深度），所以 G-buffer
+    被跳过；**standalone 分支没人关这个开关**，于是该分支的 lighting pass（先声明 GBuffer、后声明 shadow_map）
+    挑中了 **G-buffer**，并用它的 producer 矩阵（**从未设过 = 单位阵**）做 `view_to_light` ⇒ “影子”变成世界坐标的函数 ⇒
+    大片且随视点漂移。仪器实测打印：`chosen 640x360 producerVP: m00=1 m33=1`。
+  * 修法（**业务归生产者，pass 保持通用**）：影图由**生产者**声明它属于谁 —— `RenderTarget::setShadowOf(light)`
+    （在 `buildShadowPass` 里，与 `setProducerViewProjection` 同一处，图一造出来就带上这个事实）；消费者（pass）仍然只做通用的事：
+    把这张图声明为自己的 input。后端找图靠"**哪个被声明的目标的 shadowOf() 非空**"，与声明顺序无关。
+    **是否投影仍由灯说**（`Light::castShadow()`，运行期开关，与 bias 的 `ShadowSettings` 同源）；灯的槽位由
+    `directionalSlotOf(lights, light)` 从灯块自己的打包规则查得。`RenderTarget::hasProducerViewProjection()`
+    是"这张图能不能被映射"的判据：没声明过 producer VP 的图**不参与着色**（宁可不出影，也不用单位阵乱投）。
+    **为什么不放在 `RenderPass` 上**：Design B 已定"引擎不认识阴影"，`RenderPass` 是通用阶段（camera/target/
+    inputs），业务配对应当随**图**走；否则下一个特性（级联、点光立方体图）会各自往 `RenderPass` 上加字段。
+  * 守卫：`runShadowedLitFacePhase` 现在**两种分支都跑**；修前 standalone 那一跑红，修后两者数字一致
+    （`2187 / 1979 / 13176`）。
+- 顺带记下一条与上面同源的证据：**任何**带深度、未显式关闭 `setDepthPromotion` 的目标都算“可采样”，
+  所以“按声明顺序挑图”在别的宿主管线里同样会挑错（复合分支只是恰好因为借用深度而绕过了它）。

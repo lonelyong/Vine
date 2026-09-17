@@ -379,12 +379,11 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         // Binding it as a sampled texture then would declare a layout the image
         // is not in (a descriptor/layout mismatch validation reports every
         // frame). The actual state is what decides.
-        // The shadow this pass declared (if any): the engine announced the pass' resolved inputs
-        // (RenderBackend::setPassInputs), and the shadow ABI says the first one is the map. Its
-        // matrix comes from the TARGET, not from a second derivation of the light camera: the
-        // pipeline that built that camera wrote its view-projection once
-        // (RenderTarget::setProducerViewProjection), and all that is missing here is the step from
-        // view space (where the shading has the fragment) into light clip.
+        // The shadow this pass' map declares: `RenderTarget::setShadowOf` names the light a target is the
+        // shadow of, and the resolver finds it among the announced inputs without any inference. Its matrix
+        // comes from the TARGET, not from a second derivation of the light camera: the pipeline that built
+        // that camera wrote its view-projection once (RenderTarget::setProducerViewProjection), and all that
+        // is missing here is the step from view space (where the shading has the fragment) into light clip.
         FullscreenShadowInput shadow;
         if (resolved_shadow.map != nullptr) {
             shadow.map = resolved_shadow.map;
