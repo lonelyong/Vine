@@ -12,6 +12,7 @@
   - `robotics-io-design.md` —— Robotics IO 设计（XML 序列化、VFS 打包、5 版本 API、材质库、无状态重构）。
   - `robotics-proximity-design.md` —— Robotics proximity 设计（接口清单、设计决策、VMR 对照、FCL 接入点、测试）。
   - `async-design.md` —— `src/base/async` 设计（三条必守规则、与 cppcoro/P2300 的差异对照、已知风险、验证配方）。
+  - `appfw-render-surface.md` —— appfw 渲染表面生命周期（RenderControl 自驱 attach 的状态机、平台回退、实测启动时序、Qt 容器事实）。
 - `bugs/` —— 已修复 Bug 记录（现象 / 根因 / 修复 / 涉及文件 / 验证）。
   - `vsg-embedded-init-crash.md` —— 嵌入式后端初始化崩溃（关闭窗口/Qt 重建 surface 时）。
   - `vsg-embedded-blank-render.md` —— 嵌入式渲染视图空白（SceneBridge 内容不显示）。

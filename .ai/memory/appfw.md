@@ -2,7 +2,8 @@
 
 > 详细设计按模块拆在 `.ai/design/`：`appfw-command-manager.md`（含 Command/执行链/历史/禁用）、
 > `appfw-userio.md`（UserIO/ConsoleUserIO/VisualUserIO）、`appfw-progress.md`（ProgressHost 与两个呈现者）、
-> `appfw-eventbus.md`、`appfw-plugin-system.md`、`appfw-config.md`。
+> `appfw-render-surface.md`（RenderControl 的表面生命周期）、`appfw-eventbus.md`、`appfw-plugin-system.md`、
+> `appfw-config.md`。
 > 本文件只放"跨这几篇、干活时必须立刻想起的规则"。
 
 ## 三条横切规则
@@ -46,6 +47,10 @@
   `Command is null` 这类保持英文。
 - `UserIO::parseInt()` 现在委托 `String::toInt()`（范围规则只有一处实现），它比 `toInt` 多出的唯一契约是
   **失败时不写 `value`**（重提示要保留用户已输入的值）。
+- **嵌入渲染表面不要猜延迟**（2026-09-18）：`RenderControl` 自己管生命周期（构造时隐藏表面 → 布局后自驱
+  attach，16/50/100/200/400/900ms 退避 → 首帧呈现后才显示表面），宿主只要 `new` + 放进布局；
+  要知道“什么时候才能出画面”或想做自己的占位/错误提示，订阅 `stateChanged`（`Pending/Attached/Presenting/Failed`），
+  不要用 `QTimer::singleShot` 猜。要自己掌握时机用 `setAutoInitialize(false)` + 幂等 `init()`。
 - **无头模式已经有进度显示了**（2026-09-18）：`ConsoleUserIO` 构造时挂一个 `ConsoleProgressReporter`，
   订阅 `ProgressHost::changed()` 后按"500ms 后首次出字、最小行距 200ms、百分比变 5% 才重画"出**一行一条**的
   `[进度] 42% 阶段名`，宿主结束后补一行 `[进度] 已结束`；要推自己的节奏就调 `poll()`（不需先 `start()`）。
@@ -73,4 +78,5 @@
 - `tests/test_progress/ProgressIndicatorTest.cpp`：9 例，只链 `vi::Progress vi::Core`（无 Qt）；
   `ProgressHost` 的 15 例搬到了 `tests/test_gui/ProgressHostTest.cpp`（宿主属于 appfw，测试跟着走）。
 - `ConsoleProgressReporter` 的 3 例在 `test_gui`（含一例直接构造私有 `ConsoleUserIO` 抽 stdout 的端到端）。
+- `tests/test_gui/RenderControlTest.cpp`：6 例，用假后端（无需 GPU）钉住渲染表面的自驱/退避/失败/状态机。
 - GUI 用例需要 `QT_QPA_PLATFORM=offscreen`；全量 GUI 套件约 8 s。

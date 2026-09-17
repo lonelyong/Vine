@@ -18,6 +18,8 @@
 
 #include <string>
 
+#include <chrono>
+
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -35,6 +37,45 @@ V_OBJECT_META_IMPL(RenderControl, Control)
 
 namespace
 {
+
+/// Delay before another attach attempt after the backend refused one: short, because a refusal
+/// usually comes from something that is still settling (a device being created, a window being
+/// mapped).
+constexpr int kAttachRetryDelayMs = 100;
+
+/// How many times a *usable* surface may fail backend initialization before the control gives up.
+/// A surface with a real handle and a real size that the backend still refuses is the "this is not
+/// going to work" case: waiting longer would only postpone telling the host.
+constexpr int kMaxAttachAttempts = 3;
+
+/**
+ * @brief Names a surface state for the log.
+ *
+ * @param state State to name.
+ * @return The state's name, without the enum's scope.
+ */
+const char* stateName(RenderControl::SurfaceState state)
+{
+    switch (state) {
+        case RenderControl::SurfaceState::Pending:    return "Pending";
+        case RenderControl::SurfaceState::Attached:   return "Attached";
+        case RenderControl::SurfaceState::Presenting: return "Presenting";
+        case RenderControl::SurfaceState::Failed:     return "Failed";
+    }
+    return "?";
+}
+
+/**
+ * @brief Milliseconds elapsed since a time point.
+ *
+ * @param from Time point to measure from.
+ * @return Elapsed milliseconds, rounded down.
+ */
+long long elapsedMs(std::chrono::steady_clock::time_point from)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - from).count();
+}
+
 
 /**
  * @brief Creates the host QWidget with a nested native QWindow render surface.
@@ -190,6 +231,7 @@ class SurfaceHostFilter : public QObject {
     VoidFn on_created;
     VoidFn on_destroyed;
     VoidFn on_update;
+    VoidFn on_shown;
 
   private:
     // Last size forwarded through on_resize, used to de-duplicate the host
@@ -241,6 +283,12 @@ class SurfaceHostFilter : public QObject {
             case QEvent::UpdateRequest: {
                 if (on_update) {
                     on_update();
+                }
+                break;
+            }
+            case QEvent::Show: {
+                if (on_shown) {
+                    on_shown();
                 }
                 break;
             }
@@ -314,6 +362,26 @@ struct RenderControl::Impl {
     bool wired = false;
     bool initialized = false;
     bool init_ok = false;
+    // Surface lifecycle, published through RenderControl::state()/stateChanged.
+    RenderControl::SurfaceState state = RenderControl::SurfaceState::Pending;
+    // Why the state reached Failed (empty otherwise).
+    String failure_reason;
+    // Whether the control attaches by itself once the surface is usable.
+    bool auto_initialize = true;
+    // Whether the native surface is shown. It starts hidden: an unpresented native window is
+    // a hole the compositor fills with whatever it likes, and attaching does not need it to
+    // be visible.
+    bool surface_shown = false;
+    // Set when the platform refused to attach to a hidden surface (a window system that
+    // wants the surface configured first): from then on the control shows it before
+    // attaching, which is the fallback the whole hidden-surface path exists to avoid.
+    bool needs_visible_surface = false;
+    // Backend initialize() refusals on a usable surface, against kMaxAttachAttempts.
+    int attach_attempts = 0;
+    // Whether a retry is already scheduled.
+    bool retry_scheduled = false;
+    // Whether the "waiting for a usable surface" line was already logged.
+    bool deferral_logged = false;
     // Whether a mouse button is currently held (drives drag refresh).
     bool mouse_down = false;
     // Right-button click tracking: distinguishes a plain right-click (opens
@@ -329,6 +397,8 @@ struct RenderControl::Impl {
     // Remaining display-synced settle frames owed after the last resize.
     int settle_frames = 0;
     void* initialized_handle = nullptr;
+    // Timings for the lifecycle log lines (construction -> attached -> first frame).
+    std::chrono::steady_clock::time_point created_at{};
 };
 
 RenderControl::RenderControl()
@@ -340,6 +410,18 @@ RenderControl::RenderControl()
     QWindow* surface = static_cast<QWindow*>(
         impl<QWidget>()->property("_vine_surface").value<void*>());
     d->surface = surface;
+
+    // The native surface starts hidden and is shown again as soon as the backend is bound to
+    // it (see initializeBackend()). Attaching does not need it to be visible: what it needs is
+    // a created platform window (nativeHandle() forces that) with a real size, and the size
+    // follows the container's layout whether or not the surface itself is shown (probe:
+    // 378x136 -> 398x146 while hidden on both xcb and offscreen). Showing it before the
+    // attach is exactly what left the startup with a transparent hole: until a frame goes in,
+    // a native window displays whatever the compositor decides. A window system that refuses
+    // to build a surface for an unmapped window says so by failing the first attach, and the
+    // control falls back to showing it first (needs_visible_surface).
+    surface->setVisible(false);
+    d->created_at = std::chrono::steady_clock::now();
     d->engine  = vine::intrusive_ptr<vine::graphics::RenderEngine>(
         new vine::graphics::RenderEngine());
     // Design B: RenderEngine starts empty (no passes) and is a pure
@@ -374,6 +456,22 @@ RenderControl::RenderControl()
                 break;
         }
     });
+
+    // The surface filter is installed here rather than in init(): it is the one thing the
+    // control uses to learn about its own surface at all, and it is what re-asserts "the
+    // surface stays hidden until the backend is bound" after Qt shows the embedded QWindow
+    // together with its container (measured: every show of the container - or of an ancestor -
+    // shows the QWindow again, on both xcb and offscreen). A host that shows its window before
+    // the control ever attaches would otherwise leave the unpresented native window on screen.
+    wireEvents();
+
+    // Auto-initialization needs a first trigger that does not come from the surface filter: a
+    // window that is not laid out yet fires no resize, and the filter is what delivers those.
+    // Deferring to the event loop also keeps the host's window open to configure the engine
+    // (setBackend(), pipeline assembly) right after constructing the control - and by then the
+    // widget it was put into has been laid out. Everything after this attempt is driven by
+    // surface events (onSurfaceResized) and the retry ladder.
+    QTimer::singleShot(0, impl<QWidget>(), [this] { ensureAttached(); });
 }
 
 RenderControl::~RenderControl()
@@ -412,9 +510,27 @@ double RenderControl::devicePixelRatio() const
     return (d->surface != nullptr) ? d->surface->devicePixelRatio() : 1.0;
 }
 
-bool RenderControl::surfaceVisible() const
+RenderControl::SurfaceState RenderControl::state() const
 {
-    return (d->surface != nullptr) && d->surface->isVisible();
+    return d->state;
+}
+
+String RenderControl::failureReason() const
+{
+    return d->failure_reason;
+}
+
+void RenderControl::setAutoInitialize(bool on)
+{
+    if (d->auto_initialize == on) {
+        return;
+    }
+    d->auto_initialize = on;
+    if (on) {
+        // The host just handed the timing back to the control: try on this call rather than
+        // waiting for a surface event, which may never come (the window may already be laid out).
+        ensureAttached();
+    }
 }
 
 bool RenderControl::init()
@@ -429,12 +545,27 @@ bool RenderControl::init()
         return false;
     }
 
+    if (d->state == SurfaceState::Failed) {
+        // An explicit init() is the host saying "try again": start the budget over so this
+        // attempt is not refused on the spot, and let the lifecycle retry afterwards.
+        d->attach_attempts = 0;
+        d->failure_reason.clear();
+        setState(SurfaceState::Pending);
+    }
+
     // Wire the backend + event handling once, then attach when the native
     // surface is usable (the host calls init() after the window is shown). If
     // the surface is not ready yet the attach is deferred: the host retries
     // init(), or a later surface/resize notice re-attaches, so we never fall
     // back to creating a separate window.
     wireEvents();
+
+    if (d->engine->backend() == nullptr) {
+        // Nothing to attach to at all: no render backend plugin is registered. Waiting will
+        // not change that, so say it once instead of staying Pending forever.
+        failAttach(u8"no render backend is registered");
+        return false;
+    }
 
     // Design B: the engine auto-registers no pipeline and is camera-agnostic.
     // The SceneView owns the primary view (camera + content scene +
@@ -543,6 +674,16 @@ void RenderControl::wireEvents()
     filter->on_created   = [this] { onSurfaceResized(); };
     filter->on_destroyed = [this] { onSurfaceDestroyed(); };
     filter->on_update    = [this] { onSurfaceUpdate(); };
+    // Qt shows the embedded QWindow together with its container, so a surface that is meant to
+    // stay hidden until the backend is bound has to be re-hidden here, after that show. Without
+    // it, adding the control to a window that is already on screen - which is what a plugin
+    // loading its UI into a shown main window does - would put the unpresented native window on
+    // screen, which is the transparent hole this lifecycle exists to avoid.
+    filter->on_shown     = [this] {
+        if (d->surface != nullptr) {
+            d->surface->setVisible(d->surface_shown);
+        }
+    };
 }
 
 void RenderControl::onSurfaceDestroyed()
@@ -561,6 +702,12 @@ void RenderControl::onSurfaceResized()
 {
     d->surface_ok = true;
     scheduleSurfaceUpdate();
+
+    // The surface just became (or changed) usable, which is the event the control's own
+    // lifecycle hangs off for everything after the first attempt (see the deferred trigger in
+    // the constructor). Cheap while something is attached: init() reports the current result
+    // without touching the backend.
+    ensureAttached();
 }
 
 void RenderControl::scheduleSurfaceUpdate()
@@ -591,11 +738,13 @@ void RenderControl::handleSurfaceUpdate()
     }
 
     if (!d->initialized || h != d->initialized_handle) {
-        // The native surface was recreated by Qt (new handle) or the backend
-        // is down after such a shutdown: attach again now that the surface is
-        // created and laid out.
-        initializeBackend();
-        requestSettleFrames();
+        // The native surface was recreated by Qt (new handle) or the backend is down after such
+        // a shutdown: attach again now that the surface is created and laid out. That is the
+        // lifecycle's own job - it applies the auto-initialization flag, counts failures and
+        // publishes the state - so this goes through it rather than calling the backend here.
+        if (d->auto_initialize) {
+            ensureAttached();
+        }
         return;
     }
 
@@ -659,6 +808,15 @@ void RenderControl::initializeBackend()
         // No usable native surface yet (Qt destroying/recreating the platform
         // window, or the window not laid out yet): defer so we never attach to
         // a dead or empty handle. Retried on SurfaceCreated/expose/resize.
+        if (!d->deferral_logged) {
+            // Once per session: this line is the answer to "why is my render area empty?".
+            // It also says how long the host's own startup kept the surface unusable.
+            d->deferral_logged = true;
+            vine::logging::defaultLogger().info("[RenderControl] waiting for a usable surface ({}x{}, {} ms after construction)",
+                                                surfaceWidth(),
+                                                surfaceHeight(),
+                                                elapsedMs(d->created_at));
+        }
         return;
     }
     if (d->initialized && h != d->initialized_handle) {
@@ -679,6 +837,13 @@ void RenderControl::initializeBackend()
     if (d->init_ok) {
         d->initialized = true;
         d->initialized_handle = h;
+        d->attach_attempts = 0;
+        setState(SurfaceState::Attached);
+        // The surface may only be shown once something can go into it: showing it before the
+        // attach is what left a transparent hole at startup (an unpresented native window
+        // shows whatever the compositor decides). Shown here, the first present follows
+        // within a frame.
+        setSurfaceShown(true);
         // Deliver the current surface size so the view's camera projection
         // aspect is set on the first frame (undistorted) and the backend
         // viewport tracks the surface.
@@ -694,6 +859,19 @@ void RenderControl::initializeBackend()
         // the view empty).
         requestSettleFrames();
     }
+    else if (!d->surface_shown && !d->needs_visible_surface) {
+        // The platform would not build a surface for an unmapped window (Wayland wants the
+        // surface configured first; X11 and Windows accept an unmapped one). Show the surface
+        // and let the retry below happen: shown-but-unpresented is the state the hidden-surface
+        // path exists to avoid, so this is the fallback, not the design - and it is said out
+        // loud, because it also explains a longer startup on that platform.
+        d->needs_visible_surface = true;
+        vine::logging::defaultLogger().info(
+            "[RenderControl] attaching to a hidden surface failed: this platform wants a visible window, showing the surface and retrying");
+        setSurfaceShown(true);
+    }
+    // A refusal that is not the hidden-surface fallback is counted by ensureAttached(), which is
+    // the one place that decides whether to try again or to give up.
     // On failure, initialized stays false so expose/resize can retry.
 }
 
@@ -740,9 +918,20 @@ void RenderControl::renderFrame()
     // Never run the vsg frame loop (acquire/present) against a stale or hidden
     // surface: acquireNextFrame() calls Window::resize() on a dead HWND and
     // spams validation errors. Only render while the backend is attached to
-    // the surface the QWindow currently reports and the window is visible.
+    // the surface the QWindow currently reports and the control is on screen.
+    //
+    // On screen is asked of the CONTAINER widget, not of the QWindow: Qt shows the
+    // embedded window together with its container, so the surface's own flags say
+    // "shown" even while the window hosting it is not visible - measured: a surface
+    // shown while its top-level window is hidden reports visible=1 and exposed=1 under
+    // the offscreen platform. That distinction is what lets the control attach while
+    // it is still invisible (the surface exists and has a size) without presenting into
+    // a window nobody can see.
     void* h = nativeHandle();
-    if (h == nullptr || !surfaceVisible()) {
+    if (h == nullptr || d->surface == nullptr) {
+        return;
+    }
+    if (!d->surface_shown || !impl<QWidget>()->isVisible()) {
         return;
     }
     if (d->initialized && h != d->initialized_handle) {
@@ -756,7 +945,118 @@ void RenderControl::renderFrame()
     }
     if (d->initialized) {
         d->engine->frame();
+        // A frame was handed to a visible, attached surface, so the area shows render output
+        // from here on. A backend that could not present reports that on the diagnostics
+        // channel rather than through this call, which is why the state is "a frame was
+        // submitted", not "the swapchain confirmed it".
+        setState(SurfaceState::Presenting);
     }
+}
+
+void RenderControl::setState(SurfaceState next)
+{
+    if (d->state == next) {
+        return;
+    }
+
+    const SurfaceState previous = d->state;
+    d->state                    = next;
+
+    // One line per transition, with the elapsed time: construction -> attached -> first frame is
+    // the number that says whether a startup needs the prewarm path (device and pipelines built
+    // before the window exists), and the surface flags say whether the platform let the control
+    // attach while hidden.
+    if (next == SurfaceState::Failed) {
+        vine::logging::defaultLogger().error("[RenderControl] surface {} -> {} after {} ms: {}",
+                                             stateName(previous),
+                                             stateName(next),
+                                             elapsedMs(d->created_at),
+                                             d->failure_reason.as_std_str());
+    }
+    else {
+        vine::logging::defaultLogger().info("[RenderControl] surface {} -> {} after {} ms (surface visible={}, exposed={})",
+                                            stateName(previous),
+                                            stateName(next),
+                                            elapsedMs(d->created_at),
+                                            d->surface != nullptr && d->surface->isVisible(),
+                                            d->surface != nullptr && d->surface->isExposed());
+    }
+
+    stateChanged.trigger(next);
+}
+
+void RenderControl::ensureAttached()
+{
+    if (!d->auto_initialize || d->surface == nullptr) {
+        return;
+    }
+    if (d->state == SurfaceState::Attached || d->state == SurfaceState::Presenting) {
+        return;
+    }
+    if (d->state == SurfaceState::Failed) {
+        // Terminal by itself: an explicit init() from the host is what starts a new budget.
+        return;
+    }
+
+    const bool usable = surfaceUsable();
+    if (init()) {
+        d->attach_attempts = 0;
+        return;
+    }
+
+    if (!usable) {
+        // Nothing to retry yet: the surface has no size. Its own events bring the control back
+        // (a resize or a created surface), and the "waiting for a usable surface" line says so
+        // in the log - so this does not poll.
+        return;
+    }
+
+    if (++d->attach_attempts >= kMaxAttachAttempts) {
+        failAttach(u8"the render backend would not initialize (its own reason is on the diagnostics channel, i.e. in the log)");
+        return;
+    }
+
+    scheduleAttachRetry();
+}
+
+void RenderControl::scheduleAttachRetry()
+{
+    if (d->retry_scheduled || !d->auto_initialize) {
+        return;
+    }
+    d->retry_scheduled = true;
+    // The host widget is the context object, so Qt drops the call if the control goes away.
+    QTimer::singleShot(kAttachRetryDelayMs, impl<QWidget>(), [this] {
+        d->retry_scheduled = false;
+        ensureAttached();
+    });
+}
+
+bool RenderControl::surfaceUsable() const
+{
+    return nativeHandle() != nullptr && surfaceWidth() > 0 && surfaceHeight() > 0;
+}
+
+void RenderControl::setSurfaceShown(bool shown)
+{
+    if (d->surface == nullptr || d->surface_shown == shown) {
+        return;
+    }
+    d->surface_shown = shown;
+    d->surface->setVisible(shown);
+
+    // Once per session per direction: this is the line that says when the area started showing
+    // render output (shown) and, on a platform that needs a visible window to attach, that the
+    // startup path had to give up its "stay hidden until attached" promise.
+    vine::logging::defaultLogger().info("[RenderControl] surface {} after {} ms",
+                                        shown ? "shown" : "hidden",
+                                        elapsedMs(d->created_at));
+}
+
+void RenderControl::failAttach(String reason)
+{
+    d->failure_reason = std::move(reason);
+    setState(SurfaceState::Failed);
 }
 
 V_APPFWGUI_NS_END

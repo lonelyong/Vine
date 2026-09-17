@@ -1,7 +1,5 @@
 #include "AppShellUi.hpp"
 
-#include <QTimer>
-
 #include <vine/appfw/gui/ConsolePanel.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
@@ -77,8 +75,11 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
     auto* left_panel = manager->createDockPanel(u8"项目", gui::DockAreas::Left);
     left_panel->setId(u8"dock_project");
 
-    // Render view in the central client area; init() picks the first
-    // registered render backend (e.g. "vsg") by default.
+    // Render view in the central client area. Nothing to schedule: the control attaches by
+    // itself once the central widget is laid out and the native surface is usable, retrying
+    // while the dock layout settles, and keeps its surface hidden until the backend is bound
+    // (so the area shows the panel background instead of an unpresented native window). The
+    // lifecycle - and its timings - are in RenderControl's log lines and its stateChanged.
     auto* render_control = new gui::RenderControl();
     manager->setCentralWidget(render_control);
 
@@ -91,11 +92,6 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
     // render engine/scene without depending on app shell internals.
     wnd->setPrimaryRenderControl(render_control);
     result.render_control = render_control;
-
-    // Initialize once the window is shown and the central widget is laid out:
-    // the backend attaches to the realized native surface. Deferred so the
-    // first layout pass has happened by the time init() runs.
-    QTimer::singleShot(100, [render_control] { render_control->init(); });
 
     auto* right_panel = manager->createDockPanel(u8"属性", gui::DockAreas::Right);
     right_panel->setId(u8"dock_properties");
