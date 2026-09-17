@@ -270,34 +270,17 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     const int                          surf_w     = overlay.surf_w;
     const int                          surf_h     = overlay.surf_h;
 
-    // Destination rectangle: the pass' sub-viewport, else the full surface
-    // (clamped into the surface - the fullscreen draw has no auto-fit).
-    int rect_x = 0, rect_y = 0, rect_w = surf_w, rect_h = surf_h;
-    if (viewport && viewport->width > 0 && viewport->height > 0) {
-        rect_x = viewport->x;
-        rect_y = viewport->y;
-        rect_w = viewport->width;
-        rect_h = viewport->height;
-    }
-    if (rect_x < 0) {
-        rect_w += rect_x;
-        rect_x = 0;
-    }
-    if (rect_y < 0) {
-        rect_h += rect_y;
-        rect_y = 0;
-    }
+    // Destination rectangle: the same geometry the content path uses (detail::passDrawRect), and the role
+    // this path can state - a program pass honours the rectangle it was given, which is what a preview, an
+    // axis gizmo or a HUD in a corner all rely on (see the declaration: the two kinds disagree about what
+    // "presenting" means, and that is named there rather than guessed at here).
+    const vine::graphics::Viewport rect = detail::passDrawRect(viewport, /*fills_target*/ false, surf_w, surf_h);
+    const int rect_x = rect.x;
+    const int rect_y = rect.y;
+    const int rect_w = rect.width;
+    const int rect_h = rect.height;
     if (rect_w <= 0 || rect_h <= 0) {
-        return;
-    }
-    if (rect_x + rect_w > surf_w) {
-        rect_w = surf_w - rect_x;
-    }
-    if (rect_y + rect_h > surf_h) {
-        rect_h = surf_h - rect_y;
-    }
-    if (rect_w <= 0 || rect_h <= 0) {
-        return;
+        return; // nothing to draw: the rule clamped this pass' rectangle away
     }
 
     // The shadow this pass declared (if any), resolved ONCE PER FRAME and used twice: the map is

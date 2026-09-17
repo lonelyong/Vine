@@ -239,6 +239,37 @@ ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<cons
     return resolved;
 }
 
+vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, bool fills_target,
+                                      int surf_w, int surf_h)
+{
+    vine::graphics::Viewport rect{ 0, 0, surf_w, surf_h };
+    if (!fills_target && viewport && viewport->width > 0 && viewport->height > 0) {
+        rect = *viewport;
+    }
+    // Clamped into the target: the caller has no auto-fit, and an origin outside it would draw nothing.
+    if (rect.x < 0) {
+        rect.width += rect.x;
+        rect.x = 0;
+    }
+    if (rect.y < 0) {
+        rect.height += rect.y;
+        rect.y = 0;
+    }
+    if (rect.x + rect.width > surf_w) {
+        rect.width = surf_w - rect.x;
+    }
+    if (rect.y + rect.height > surf_h) {
+        rect.height = surf_h - rect.y;
+    }
+    if (rect.width < 0) {
+        rect.width = 0;
+    }
+    if (rect.height < 0) {
+        rect.height = 0;
+    }
+    return rect;
+}
+
 } // namespace detail
 
 V_VSG_NS_END

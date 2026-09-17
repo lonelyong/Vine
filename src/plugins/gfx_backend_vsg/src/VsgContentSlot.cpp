@@ -53,16 +53,13 @@ namespace detail
 void updateSlotViewport(ContentSlot& content, bool presenting, const std::optional<vine::graphics::Viewport>& viewport,
                         int surf_w, int surf_h)
 {
-    int x = 0;
-    int y = 0;
-    int w = surf_w;
-    int h = surf_h;
-    if (!presenting && viewport && viewport->width > 0 && viewport->height > 0) {
-        x = viewport->x;
-        y = viewport->y;
-        w = viewport->width;
-        h = viewport->height;
-    }
+    // ONE geometry for every pass (detail::passDrawRect), with THIS slot's role: presenting content fills
+    // the target whatever it announced (pinned by ContentSlotViewportTest).
+    const vine::graphics::Viewport rect = passDrawRect(viewport, presenting, surf_w, surf_h);
+    const int                     x    = rect.x;
+    const int                     y    = rect.y;
+    const int                     w    = rect.width;
+    const int                     h    = rect.height;
     if (w <= 0 || h <= 0) {
         return; // no surface yet (a swapchain that is still 0x0): nothing to assert
     }

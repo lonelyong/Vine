@@ -115,3 +115,13 @@ gizmo->setEnabled(false);                   // 需要时隐藏
   才会纳入（删除文件不重配会让 ninja 报“No rule to make target”）。
 - 若 configure 因残留 `vsg_FOUND:INTERNAL=TRUE` 走错 "installed vsg" 分支：
   删除该行后 `cmake.configure`（强制）即回到 FetchContent vsg（`_deps/vsg-src`）。
+
+## 一个 pass 画进哪块矩形（2026-09-13）
+
+- 事实：内容槽与程序 pass **各有一份** clamp/回退的算术，而且对同一个问题给出不同答案——内容路径忽略"presenting pass"的 viewport，程序路径永远尊重它。
+- 收口：几何与"角色"合并进一个函数 `detail::passDrawRect(viewport, fills_target, w, h)`（`VsgBackendUtility`），两条路径共用；`RenderPass::setViewport` 的文档只留一条规则：**公告的矩形，未公告则整目标，clamp 进目标；device 像素、左上原点**。**清屏是另一件事**，故意不并进这条规则：clear 覆盖整个目标，draw 只在矩形内——这正是 PiP 模式（铺满目标 + 角落画预览）能成立的原因。
+- 为什么"填满"这个角色不能靠"clear 过"判定：把程序路径改成 `state.request.presenting` 之后，既有的 PiP 相位立刻变红——`the PiP changed 36864 pixel(s), expected exactly 5184 (the sub-rectangle)`。一个**清了屏的离屏** pass 什么也没 presenting。
+- 所以 `fills_target` 参数是**故意显式**的：内容槽的角色是"槽"的事实（`presenting`，被 `ContentSlotViewportTest.PresentingContentFillsTheTargetWhateverThePassAnnounced` 钉住），而程序 pass 今天只拿得到请求里"清过屏"的标记，两者同名不同义。
+- 未决（签名保留该参数就是为了让这道裂缝可见，而不是藏在两处调用点里）：把"presenting 者"变成由引擎公告的一个角色（pipeline 的 window pass / 目标的最终写者），取代两个同名标志。
+- 门禁：`vsg_backend_selftest`（6 个 lit-face vantage + PiP 相位）、`ctest` 23/23、`check_include_hygiene` / `check_doc_symbols` / `check_diagnostic_formats`。
+

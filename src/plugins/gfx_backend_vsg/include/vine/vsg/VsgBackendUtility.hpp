@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include <vine/vsg/vsg_global.hpp>
 
 // Internal header: the small free-function helpers every renderer translation
@@ -22,6 +23,7 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/raw_ptr.hpp>
+#include <vine/graphics/Viewport.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -154,6 +156,31 @@ struct ShadowInput
  */
 ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<const vine::graphics::Camera> camera,
                                const std::vector<const vine::graphics::Light*>& lights);
+
+/**
+ * @brief The ONE geometry for the rectangle a pass draws into, and the ONE place its role is applied.
+ *
+ * Both slot kinds use it, so the two cannot clamp or fall back differently: the pass' announced viewport
+ * (device pixels, top-left origin), or the whole target when it announced none, clamped into the target.
+ *
+ * @p fills_target is the ROLE: a pass that PRESENTS its target - the one whose picture it is - draws all
+ * of it whatever it announced, because a sub-rectangle would leave the rest holding something nobody asked
+ * for. What that role IS, however, is not the same fact in both slot kinds today, and this parameter is
+ * where the difference is visible instead of hidden: a content slot's role is the slot's (`presenting`,
+ * pinned by ContentSlotViewportTest), while a program pass only has the request's "this pass cleared"
+ * flag - and a cleared OFF-SCREEN pass that draws a preview into a corner (the PiP pattern the pixel
+ * phases pin) is not presenting anything. The program path therefore passes false; reconciling the two
+ * notions - one "presenter" role, announced by the engine, instead of two flags of the same name - is the
+ * open question this signature exists to keep in view.
+ *
+ * @param viewport     The pass' announced viewport (null when it announced none).
+ * @param fills_target Whether this pass presents its target (see above).
+ * @param surf_w       Target (or surface) width in device pixels.
+ * @param surf_h       Target (or surface) height in device pixels.
+ * @return The rectangle to draw into, in device pixels (never empty while the target has an extent).
+ */
+vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, bool fills_target,
+                                      int surf_w, int surf_h);
 
 /**
  * @brief Temporary test escape hatch: when VINE_VSG_OWN_WINDOW is set, the
