@@ -77,7 +77,7 @@ inline String doubleToStr(double value)
  */
 inline bool strToDouble(const String& str, double& out)
 {
-    std::string     text   = str.stdstr();
+    std::string     text   = str.as_std_str();
     double          value  = 0.0;
     const auto      result = std::from_chars(text.data(), text.data() + text.size(), value);
     if (result.ec == std::errc() && result.ptr == text.data() + text.size()) {
@@ -117,7 +117,7 @@ inline String qToStr(const kinematics::Q& q)
 inline bool strToQ(const String& str, kinematics::Q& out)
 {
     out = kinematics::Q{};
-    std::istringstream stream(str.stdstr());
+    std::istringstream stream(str.as_std_str());
     double             value = 0.0;
     while (stream >> value) {
         out.append(value);
@@ -133,8 +133,8 @@ inline bool strToQ(const String& str, kinematics::Q& out)
  */
 inline String vec3ToStr(const math::Vec3d& v)
 {
-    std::string out = std::string(doubleToStr(v.x).stdstr()) + ' ' + std::string(doubleToStr(v.y).stdstr())
-                      + ' ' + std::string(doubleToStr(v.z).stdstr());
+    std::string out = std::string(doubleToStr(v.x).as_std_str()) + ' ' + std::string(doubleToStr(v.y).as_std_str())
+                      + ' ' + std::string(doubleToStr(v.z).as_std_str());
     return String(reinterpret_cast<const char8_t*>(out.data()), out.size());
 }
 
@@ -148,7 +148,7 @@ inline String vec3ToStr(const math::Vec3d& v)
 inline bool strToVec3(const String& str, math::Vec3d& out)
 {
     double x = 0.0, y = 0.0, z = 0.0;
-    std::istringstream stream(str.stdstr());
+    std::istringstream stream(str.as_std_str());
     if (!(stream >> x >> y >> z)) {
         return false;
     }
@@ -164,7 +164,7 @@ inline bool strToVec3(const String& str, math::Vec3d& out)
  */
 inline String vfsParentDir(const String& path)
 {
-    const std::string text = path.stdstr();
+    const std::string text = path.as_std_str();
     const std::size_t pos  = text.find_last_of('/');
     if (pos == std::string::npos) {
         return String();
@@ -193,7 +193,7 @@ inline String pathLeafName(const std::filesystem::path& path)
  */
 inline bool endsWith(const String& text, const char* suffix)
 {
-    const std::string& t = text.stdstr();
+    const std::string& t = text.as_std_str();
     const std::string  s(suffix);
     return s.size() <= t.size() && t.compare(t.size() - s.size(), s.size(), s) == 0;
 }

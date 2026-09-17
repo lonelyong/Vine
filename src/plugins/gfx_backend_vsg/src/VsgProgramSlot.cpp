@@ -369,7 +369,7 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
                                formatDiagnostic(u8"drawScreenProgram: sampled target '%s' declares depth promotion, but a"
                                                 u8" pass of it preserves depth, so its depth is not sampleable and is not"
                                                 u8" bound (the program sees its colour attachments only)",
-                                                source->name().empty() ? "(unnamed)" : source->name().stdstr().c_str()));
+                                                source->name().empty() ? "(unnamed)" : source->name().as_std_str().c_str()));
         }
         // The source's depth is bound as a sampled texture ONLY when it really
         // ends in SHADER_READ_ONLY: the target's description

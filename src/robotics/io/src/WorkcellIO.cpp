@@ -64,7 +64,7 @@ std::unique_ptr<workcell::Workcell> WorkcellIO::loadVfs(vine::io::IMemoryVfs& vf
 {
     std::vector<unsigned char> bytes;
     if (!vfs.readFile(vfs_path, bytes)) {
-        throw std::runtime_error("WorkcellIO::loadXml, failed to read vfs file: " + vfs_path.stdstr());
+        throw std::runtime_error("WorkcellIO::loadXml, failed to read vfs file: " + vfs_path.as_std_str());
     }
     const String xml(reinterpret_cast<const char8_t*>(bytes.data()), bytes.size());
 
@@ -124,7 +124,7 @@ void WorkcellIO::exportToVfs(const workcell::Workcell& cell, vine::io::IMemoryVf
     tinyxml2::XMLPrinter printer;
     doc->Print(&printer);
     if (!vfs.writeFile(vfs_path, reinterpret_cast<const char8_t*>(printer.CStr()), printer.CStrSize() - 1)) {
-        throw std::runtime_error("WorkcellIO::savePkg, failed to write vfs file: " + vfs_path.stdstr());
+        throw std::runtime_error("WorkcellIO::savePkg, failed to write vfs file: " + vfs_path.as_std_str());
     }
 }
 
@@ -204,11 +204,11 @@ void WorkcellIO::exportDevice(ExportContext& ctx, const workcell::Device& dev, t
     std::vector<unsigned char> zip_bytes;
     if (!inner.save(zip_bytes)) {
         throw std::runtime_error("WorkcellIO::exportDevice, failed to build device package: "
-                                 + dev.name().stdstr());
+                                 + dev.name().as_std_str());
     }
     if (!ctx.vfs->writeFile(dev_path, zip_bytes)) {
         throw std::runtime_error("WorkcellIO::exportDevice, failed to write device package: "
-                                 + dev_path.stdstr());
+                                 + dev_path.as_std_str());
     }
     xe->SetAttribute("file", toCStr(rel));
 
@@ -254,7 +254,7 @@ void WorkcellIO::parseObject(ParseContext& ctx, raw_ptr<workcell::SceneObject> p
         object = std::move(rigid);
     }
     else {
-        throw std::runtime_error("WorkcellIO::parseObject, unknown object type: " + type.stdstr());
+        throw std::runtime_error("WorkcellIO::parseObject, unknown object type: " + type.as_std_str());
     }
 
     parseObjectCommon(ctx, *object, xe);
@@ -271,13 +271,13 @@ void WorkcellIO::parseObject(ParseContext& ctx, raw_ptr<workcell::SceneObject> p
             }
         }
         if (found == nullptr) {
-            throw std::runtime_error("WorkcellIO::parseObject, parent frame not found: " + parent_frame_name.stdstr());
+            throw std::runtime_error("WorkcellIO::parseObject, parent frame not found: " + parent_frame_name.as_std_str());
         }
         parent_frame = found;
     }
 
     if (ctx.cell->addSceneObject(std::move(object), parent_frame) == nullptr) {
-        throw std::runtime_error("WorkcellIO::parseObject, failed to add object: " + name.stdstr());
+        throw std::runtime_error("WorkcellIO::parseObject, failed to add object: " + name.as_std_str());
     }
 
     if (auto* const xe_children = xe->FirstChildElement("children")) {
@@ -311,11 +311,11 @@ std::unique_ptr<workcell::SceneObject> WorkcellIO::parseDevice(ParseContext& ctx
         std::vector<unsigned char> bytes;
         if (!ctx.vfs->readFile(dev_path, bytes)) {
             throw std::runtime_error("WorkcellIO::parseDevice, failed to read device package: "
-                                     + dev_path.stdstr());
+                                     + dev_path.as_std_str());
         }
         auto pkg = vine::io::ZipMemoryVfs::openZip(bytes.data(), bytes.size());
         if (pkg == nullptr) {
-            throw std::runtime_error("WorkcellIO::parseDevice, invalid device package: " + dev_path.stdstr());
+            throw std::runtime_error("WorkcellIO::parseDevice, invalid device package: " + dev_path.as_std_str());
         }
         dev = device_io.loadPkg(*pkg);
     }

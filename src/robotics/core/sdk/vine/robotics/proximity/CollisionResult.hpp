@@ -67,8 +67,8 @@ struct CollisionResult {
     {
         os << "CollisionResult{ done=" << is_done << " pairs=" << pairs.size() << " }\n";
         for (const auto& [pair, contacts] : pairs) {
-            os << "  pair: " << (pair.object1 ? pair.object1->name().stdstr() : "null") << " <-> "
-               << (pair.object2 ? pair.object2->name().stdstr() : "null") << " contacts=" << contacts.size() << "\n";
+            os << "  pair: " << (pair.object1 ? pair.object1->name().as_std_str() : "null") << " <-> "
+               << (pair.object2 ? pair.object2->name().as_std_str() : "null") << " contacts=" << contacts.size() << "\n";
         }
     }
 };

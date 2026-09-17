@@ -28,7 +28,7 @@ inline String normalizeVfsPath(const String& path)
     while (end > begin && path[end - 1] == u8'/') {
         --end;
     }
-    return String(path.stdu8str().substr(begin, end - begin));
+    return String(path.as_std_u8str().substr(begin, end - begin));
 }
 
 } // namespace detail

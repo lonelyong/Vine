@@ -428,7 +428,7 @@ void detail::dropDepthSamplingProgramSlots(VsgRendererState& state, const VsgDia
                                                 u8" revokes its depth promotion: the program sampling that depth is"
                                                 u8" dropped for this frame (its slot is rebuilt on the owner's next"
                                                 u8" draw)",
-                                                target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str()));
+                                                target->name().empty() ? "(unnamed)" : target->name().as_std_str().c_str()));
         }
     }
 }

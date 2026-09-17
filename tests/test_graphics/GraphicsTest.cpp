@@ -2371,7 +2371,7 @@ TEST(RenderEngineTest, ABackendThatCannotDrawTargetsIsToldOncePerEpisode)
     const RenderDiagnostic& diagnostic = reported[reported_before];
     EXPECT_EQ(diagnostic.severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(diagnostic.category, DiagnosticCategory::TargetBuildFailed);
-    EXPECT_NE(diagnostic.message.stdstr().find("GBuffer"), std::string::npos)
+    EXPECT_NE(diagnostic.message.as_std_str().find("GBuffer"), std::string::npos)
         << "the report names the pass the host has to fix";
 
     // ONCE: a host looping on frames cannot fix this by drawing another one, so it is an episode.
@@ -6314,11 +6314,11 @@ TEST(RenderEngineTest, TwoDistinctUnboundImagesAreNotACollision)
     ASSERT_EQ(received.size(), 2u);
     for (const auto& diagnostic : received) {
         EXPECT_EQ(diagnostic.category, DiagnosticCategory::ContentSkipped);
-        EXPECT_NE(diagnostic.message.stdstr().find("not bound to a target"), std::string::npos);
-        EXPECT_EQ(diagnostic.message.stdstr().find("claim"), std::string::npos);
+        EXPECT_NE(diagnostic.message.as_std_str().find("not bound to a target"), std::string::npos);
+        EXPECT_EQ(diagnostic.message.as_std_str().find("claim"), std::string::npos);
     }
     // The two messages are about their own image (each names its own label).
-    EXPECT_NE(received[0].message.stdstr(), received[1].message.stdstr());
+    EXPECT_NE(received[0].message.as_std_str(), received[1].message.as_std_str());
 }
 
 /**

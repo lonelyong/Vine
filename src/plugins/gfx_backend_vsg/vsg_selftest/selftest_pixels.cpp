@@ -99,7 +99,7 @@ bool runPixelReadbackPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& ca
                      diagnostic.category == vine::graphics::DiagnosticCategory::GeometryRejected ? "geometry rejected"
                      : diagnostic.category == vine::graphics::DiagnosticCategory::ShaderFallback ? "shader fallback"
                                                                                                : "other",
-                     diagnostic.message.stdstr().c_str());
+                     diagnostic.message.as_std_str().c_str());
     }
 
     std::vector<std::uint8_t> pixels;
@@ -327,7 +327,7 @@ bool runContentVariantProbe(vine::vsg::VsgRenderer& renderer, const CameraPtr& c
                      variant.name, at(128, 72, 0), at(128, 72, 1), at(128, 72, 2),
                      at(4, 4, 0), at(4, 4, 1), at(4, 4, 2), covered, pixels.size() / 4u, received.size());
         for (const auto& diagnostic : received) {
-            std::fprintf(stderr, "[selftest]   variant reported: %s\n", diagnostic.message.stdstr().c_str());
+            std::fprintf(stderr, "[selftest]   variant reported: %s\n", diagnostic.message.as_std_str().c_str());
         }
         renderer.setDiagnosticSink({});
     }

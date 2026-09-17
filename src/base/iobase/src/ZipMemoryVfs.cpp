@@ -24,7 +24,7 @@ std::unique_ptr<ZipMemoryVfs> ZipMemoryVfs::openZip(const std::filesystem::path&
     const auto names = ZipArchive::entryNames(path);
     auto       vfs   = std::make_unique<ZipMemoryVfs>();
     for (const String& name : names) {
-        if (!name.empty() && name.stdu8str().back() == u8'/') {
+        if (!name.empty() && name.as_std_u8str().back() == u8'/') {
             continue; // directory entry; directories are derived from paths
         }
         std::vector<unsigned char> bytes;
@@ -44,7 +44,7 @@ std::unique_ptr<ZipMemoryVfs> ZipMemoryVfs::openZip(const void* data, std::size_
     const auto names = ZipArchive::entryNames(data, size);
     auto       vfs   = std::make_unique<ZipMemoryVfs>();
     for (const String& name : names) {
-        if (!name.empty() && name.stdu8str().back() == u8'/') {
+        if (!name.empty() && name.as_std_u8str().back() == u8'/') {
             continue;
         }
         std::vector<unsigned char> bytes;
@@ -76,10 +76,10 @@ bool ZipMemoryVfs::isDirectory(const String& path) const
     if (norm.empty()) {
         return true; // the root
     }
-    const std::u8string prefix = norm.stdu8str() + u8"/";
+    const std::u8string prefix = norm.as_std_u8str() + u8"/";
     for (const auto& [key, entry] : entries_) {
         (void)entry;
-        if (key.stdu8str().compare(0, prefix.size(), prefix) == 0) {
+        if (key.as_std_u8str().compare(0, prefix.size(), prefix) == 0) {
             return true;
         }
     }
@@ -89,12 +89,12 @@ bool ZipMemoryVfs::isDirectory(const String& path) const
 std::vector<String> ZipMemoryVfs::list(const String& dir) const
 {
     const String          norm   = detail::normalizeVfsPath(dir);
-    const std::u8string   prefix = norm.empty() ? std::u8string() : norm.stdu8str() + u8"/";
+    const std::u8string   prefix = norm.empty() ? std::u8string() : norm.as_std_u8str() + u8"/";
     std::vector<String>   result;
     std::set<std::u8string> seen;
     for (const auto& [key, entry] : entries_) {
         (void)entry;
-        const std::u8string& k = key.stdu8str();
+        const std::u8string& k = key.as_std_u8str();
         if (k.empty()) {
             continue;
         }
@@ -121,10 +121,10 @@ bool ZipMemoryVfs::remove(const String& path)
     if (norm.empty()) {
         return false; // never remove the root
     }
-    const std::u8string& n = norm.stdu8str();
+    const std::u8string& n = norm.as_std_u8str();
     bool                 removed = false;
     for (auto it = entries_.begin(); it != entries_.end();) {
-        const std::u8string& k = it->first.stdu8str();
+        const std::u8string& k = it->first.as_std_u8str();
         if (k == n || k.compare(0, n.size() + 1, n + u8"/") == 0) {
             it = entries_.erase(it);
             removed = true;

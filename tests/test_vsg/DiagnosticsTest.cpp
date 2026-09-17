@@ -45,7 +45,7 @@ TEST(VsgDiagnostics, ReportReachesTheInstalledDownstream)
     ASSERT_EQ(captured.items.size(), 1u);
     EXPECT_EQ(captured.items[0].severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(captured.items[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_EQ(captured.items[0].message.stdstr(), message.stdstr());
+    EXPECT_EQ(captured.items[0].message.as_std_str(), message.as_std_str());
 }
 
 TEST(VsgDiagnostics, ReportWithoutADownstreamIsAccepted)
@@ -72,7 +72,7 @@ TEST(VsgDiagnostics, RouteForwardsAModulesReportsUnchanged)
     ASSERT_EQ(captured.items.size(), 1u);
     EXPECT_EQ(captured.items[0].severity, DiagnosticSeverity::Error);
     EXPECT_EQ(captured.items[0].category, DiagnosticCategory::TargetBuildFailed);
-    EXPECT_EQ(captured.items[0].message.stdstr(), std::string("a bridge's report: no depth"));
+    EXPECT_EQ(captured.items[0].message.as_std_str(), std::string("a bridge's report: no depth"));
 }
 
 TEST(VsgDiagnostics, ReplacingTheDownstreamStopsDeliveringToTheOldOne)

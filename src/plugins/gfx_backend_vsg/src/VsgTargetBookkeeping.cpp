@@ -351,8 +351,8 @@ bool resolveDepthBorrow(VsgRendererState& state, const VsgDiagnostics& diagnosti
                                vine::graphics::DiagnosticCategory::ContentSkipped,
                                formatDiagnostic(u8"shared-depth target '%s': source '%s' has no depth image yet;"
                                                 u8" this target builds its own depth and retries the borrow",
-                                                target.name().empty() ? "(unnamed)" : target.name().stdstr().c_str(),
-                                                depth_src->name().empty() ? "(unnamed)" : depth_src->name().stdstr().c_str()));
+                                                target.name().empty() ? "(unnamed)" : target.name().as_std_str().c_str(),
+                                                depth_src->name().empty() ? "(unnamed)" : depth_src->name().as_std_str().c_str()));
         }
         return false;
     }
@@ -373,8 +373,8 @@ bool resolveDepthBorrow(VsgRendererState& state, const VsgDiagnostics& diagnosti
     diagnostics.report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
                        formatDiagnostic(u8"shared-depth target '%s': source '%s' cannot be borrowed (%s); this target"
                                         u8" builds its own depth",
-                                        target.name().empty() ? "(unnamed)" : target.name().stdstr().c_str(),
-                                        depth_src->name().empty() ? "(unnamed)" : depth_src->name().stdstr().c_str(),
+                                        target.name().empty() ? "(unnamed)" : target.name().as_std_str().c_str(),
+                                        depth_src->name().empty() ? "(unnamed)" : depth_src->name().as_std_str().c_str(),
                                         reason));
     t.unusable_depth_source = vine::intrusive_ptr<const vine::graphics::RenderTarget>(depth_src);
     return false;
@@ -408,7 +408,7 @@ void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnos
                            formatDiagnostic(u8"render target '%s' has no size (%ux%u): no attachments are"
                                             u8" created, so the passes drawing into it draw nothing until it is"
                                             u8" sized (RenderTarget::setSize)",
-                                            target->name().empty() ? "(unnamed)" : target->name().stdstr().c_str(),
+                                            target->name().empty() ? "(unnamed)" : target->name().as_std_str().c_str(),
                                             w, h));
     }
     if (w == 0 || h == 0) {
@@ -477,7 +477,7 @@ void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnos
     // when the host changes any of it (see VsgRenderTargetEntry::BuildKey).
     t.build_key = VsgRenderTargetEntry::BuildKey::of(*target);
     V_LOGI("[VsgRenderer] EXPERIMENTAL off-screen target '{}' {}x{} attached",
-           target->name().empty() ? "(unnamed)" : target->name().stdstr(), w, h);
+           target->name().empty() ? "(unnamed)" : target->name().as_std_str(), w, h);
     ++state.offscreen_build_count;
     // NOTE: no compile here — no pass graph exists until the first pass into
     // this target asks for one (passGraph); setupContentSlot() compiles then.
@@ -608,8 +608,8 @@ void releaseRenderTarget(VsgRendererState& state, const VsgDiagnostics& diagnost
         }
         V_LOGW("[VsgRenderer] target '{}' borrowed the released target '{}' depth;"
                " dropping the borrow (it rebuilds with its own depth)",
-               entry.first->name().empty() ? "(unnamed)" : entry.first->name().stdstr(),
-               target->name().empty() ? "(unnamed)" : target->name().stdstr());
+               entry.first->name().empty() ? "(unnamed)" : entry.first->name().as_std_str(),
+               target->name().empty() ? "(unnamed)" : target->name().as_std_str());
         // Remember WHICH source became unusable instead of a global tombstone
         // set: a later shareDepth() naming a live source clears the condition (the
         // remembered one is a DIFFERENT object, and the entry owns it, so no new

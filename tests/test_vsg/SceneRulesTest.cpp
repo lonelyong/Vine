@@ -159,17 +159,17 @@ TEST(SceneRulesTest, ChannelShapeRejectsAChannelWhoseVertexCountDiffersFromTheMe
 
 TEST(SceneRulesTest, IgnoredChannelMessageNamesTheReasonAndTheLocation)
 {
-    const std::string components = ignoredChannelMessage(3u, channel(5u, 10u), 2u, ChannelShape::Components).stdstr();
+    const std::string components = ignoredChannelMessage(3u, channel(5u, 10u), 2u, ChannelShape::Components).as_std_str();
     EXPECT_NE(components.find("loc3"), std::string::npos);
     EXPECT_NE(components.find("components=5"), std::string::npos);
     EXPECT_NE(components.find("ignored"), std::string::npos);
 
     const std::string not_divisible =
-        ignoredChannelMessage(2u, channel(3u, 8u), 2u, ChannelShape::NotDivisible).stdstr();
+        ignoredChannelMessage(2u, channel(3u, 8u), 2u, ChannelShape::NotDivisible).as_std_str();
     EXPECT_NE(not_divisible.find("loc2"), std::string::npos);
     EXPECT_NE(not_divisible.find("8 floats"), std::string::npos);
 
-    const std::string vertex_count = ignoredChannelMessage(7u, channel(3u, 9u), 4u, ChannelShape::VertexCount).stdstr();
+    const std::string vertex_count = ignoredChannelMessage(7u, channel(3u, 9u), 4u, ChannelShape::VertexCount).as_std_str();
     EXPECT_NE(vertex_count.find("loc7"), std::string::npos);
     EXPECT_NE(vertex_count.find("expected 4"), std::string::npos);
 
@@ -435,7 +435,7 @@ TEST(SceneRulesTest, IgnoredNormalChannelMessageCarriesEachBranchesOwnNumbers)
     // of them, printing the component count where the float count belongs: pin each branch's own
     // numbers so a merged format string cannot come back.
     const std::string stride =
-        ignoredNormalChannelMessage(packed(2u, { 1.f, 2.f }), XyzUnpack::NotXyzStride).stdstr();
+        ignoredNormalChannelMessage(packed(2u, { 1.f, 2.f }), XyzUnpack::NotXyzStride).as_std_str();
     EXPECT_NE(stride.find("loc1"), std::string::npos);
     EXPECT_NE(stride.find("components=2"), std::string::npos);
     EXPECT_NE(stride.find("3 or 4"), std::string::npos);
@@ -443,7 +443,7 @@ TEST(SceneRulesTest, IgnoredNormalChannelMessageCarriesEachBranchesOwnNumbers)
     EXPECT_EQ(stride.find("floats"), std::string::npos);
 
     const std::string partial =
-        ignoredNormalChannelMessage(packed(3u, { 1.f, 2.f, 3.f, 4.f }), XyzUnpack::NotDivisible).stdstr();
+        ignoredNormalChannelMessage(packed(3u, { 1.f, 2.f, 3.f, 4.f }), XyzUnpack::NotDivisible).as_std_str();
     EXPECT_NE(partial.find("loc1"), std::string::npos);
     EXPECT_NE(partial.find("4 floats"), std::string::npos);
     EXPECT_NE(partial.find("components=3"), std::string::npos);

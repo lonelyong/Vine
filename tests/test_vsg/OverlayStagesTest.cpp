@@ -30,14 +30,14 @@ using namespace vine::vsg;
 namespace
 {
 
-/** @brief The GLSL source of @p program's first stage (a COPY: stdstr() returns by value). */
+/** @brief The GLSL source of @p program's first stage (a COPY: as_std_str() returns by value). */
 std::string stageSource(const vine::intrusive_ptr<vine::graphics::ShaderProgram>& program)
 {
     if (program == nullptr || program->stageCount() == 0u) {
         return {};
     }
     const auto* stage = program->stage(0);
-    return (stage != nullptr) ? stage->source.stdstr() : std::string{};
+    return (stage != nullptr) ? stage->source.as_std_str() : std::string{};
 }
 
 }  // namespace

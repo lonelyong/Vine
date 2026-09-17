@@ -226,8 +226,8 @@ CompiledStageTable& compiledStageTable()
                 const auto flag = stage_spec->type == vine::graphics::ShaderStageType::Vertex
                                       ? VK_SHADER_STAGE_VERTEX_BIT
                                       : VK_SHADER_STAGE_FRAGMENT_BIT;
-                auto       stage = ::vsg::ShaderStage::create(flag, stage_spec->entryPoint.stdstr(),
-                                                              stage_spec->source.stdstr());
+                auto       stage = ::vsg::ShaderStage::create(flag, stage_spec->entryPoint.as_std_str(),
+                                                              stage_spec->source.as_std_str());
                 if (!compiler->compile(stage)) {
                     stages.clear();
                     break;
@@ -718,7 +718,7 @@ const std::string& fullscreenVertexSource()
     // full-screen program to be compiled against a triangle the engine did not state.
     static const std::string source = [] {
         const auto program = vine::graphics::fullscreenVertexProgram();
-        return program->stage(0)->source.stdstr();
+        return program->stage(0)->source.as_std_str();
     }();
     return source;
 }
@@ -833,7 +833,7 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
         if (stage.type != vine::graphics::ShaderStageType::Fragment) {
             continue;
         }
-        for (const auto& [set, binding] : declaredBindings(stage.source.stdstr())) {
+        for (const auto& [set, binding] : declaredBindings(stage.source.as_std_str())) {
             if (set == 0u && binding == depth_binding) {
                 return true;
             }
@@ -876,7 +876,7 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
 
     const std::string vertex_source = fullscreenVertexSource();
 
-    auto shader_set = makeOverlayShaderSet(vertex_source, fs_spec->source.stdstr(), fs_spec->entryPoint.stdstr(), extent,
+    auto shader_set = makeOverlayShaderSet(vertex_source, fs_spec->source.as_std_str(), fs_spec->entryPoint.as_std_str(), extent,
                                            failure);
     if (shader_set == nullptr) {
         return ::vsg::ref_ptr<::vsg::Node>();
@@ -909,7 +909,7 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
         }
         return slots;
     }();
-    for (const auto& [set, binding] : declaredBindings(fs_spec->source.stdstr())) {
+    for (const auto& [set, binding] : declaredBindings(fs_spec->source.as_std_str())) {
         if (set != 0u || std::find(fillable.begin(), fillable.end(), binding) == fillable.end()) {
             if (failure != nullptr) {
                 *failure = ProgramNodeFailure::MissingDescriptorBinding;

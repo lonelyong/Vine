@@ -61,7 +61,7 @@ class CollisionMatrix final {
         }
         if (!registered_objects_.insert(object).second) {
             throw std::logic_error("CollisionMatrix::registerObject, object already registered: "
-                                   + object->name().stdstr());
+                                   + object->name().as_std_str());
         }
     }
 
@@ -217,7 +217,7 @@ class CollisionMatrix final {
     {
         if (!containsObject(object)) {
             throw std::logic_error("CollisionMatrix::ignoreAgainstAll, object not registered: "
-                                   + (object ? object->name().stdstr() : "null"));
+                                   + (object ? object->name().as_std_str() : "null"));
         }
         for (const auto* const other : registered_objects_) {
             if (other != object) {
@@ -253,8 +253,8 @@ class CollisionMatrix final {
         }
         if (!containsObject(object_a) || !containsObject(object_b)) {
             throw std::logic_error("CollisionMatrix, object not registered: "
-                                   + (object_a ? object_a->name().stdstr() : "null") + " / "
-                                   + (object_b ? object_b->name().stdstr() : "null"));
+                                   + (object_a ? object_a->name().as_std_str() : "null") + " / "
+                                   + (object_b ? object_b->name().as_std_str() : "null"));
         }
     }
 

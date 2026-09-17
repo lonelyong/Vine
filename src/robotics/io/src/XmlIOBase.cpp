@@ -153,14 +153,14 @@ void XmlIOBase::parseVersion(ParseContext& ctx, uint16_t& major, uint16_t& minor
     while (dot < version.size() && version[dot] != u8'.') {
         ++dot;
     }
-    String major_str = String(version.stdu8str().substr(0, dot));
-    String minor_str = dot + 1 < version.size() ? String(version.stdu8str().substr(dot + 1)) : String();
+    String major_str = String(version.as_std_u8str().substr(0, dot));
+    String minor_str = dot + 1 < version.size() ? String(version.as_std_u8str().substr(dot + 1)) : String();
     if (major_str.empty()) {
         throw std::runtime_error("XmlIOBase::parseVersion, invalid version string.");
     }
     try {
-        major = static_cast<uint16_t>(std::stoul(major_str.stdstr()));
-        minor = minor_str.empty() ? 0 : static_cast<uint16_t>(std::stoul(minor_str.stdstr()));
+        major = static_cast<uint16_t>(std::stoul(major_str.as_std_str()));
+        minor = minor_str.empty() ? 0 : static_cast<uint16_t>(std::stoul(minor_str.as_std_str()));
     }
     catch (const std::exception&) {
         throw std::runtime_error("XmlIOBase::parseVersion, invalid version string.");
@@ -189,7 +189,7 @@ void XmlIOBase::parsePose(ParseContext& ctx, math::Isometry3d& pose, const tinyx
     const String quat_str = attr(xe, "quat");
     if (!quat_str.empty()) {
         double x = 0.0, y = 0.0, z = 0.0, w = 1.0;
-        std::istringstream stream(quat_str.stdstr());
+        std::istringstream stream(quat_str.as_std_str());
         if (stream >> x >> y >> z >> w) {
             pose.rotation = math::Quatd(x, y, z, w);
         }
@@ -202,10 +202,10 @@ void XmlIOBase::exportPose(ExportContext& ctx, const math::Isometry3d& pose, tin
     const auto  origin   = xe->GetDocument()->NewElement("origin");
     const auto& t        = pose.translation;
     const auto& q        = pose.rotation;
-    std::string xyz      = std::string(detail::doubleToStr(t.x).stdstr()) + " " + std::string(detail::doubleToStr(t.y).stdstr())
-                     + " " + std::string(detail::doubleToStr(t.z).stdstr());
-    std::string quat     = std::string(detail::doubleToStr(q.x).stdstr()) + " " + std::string(detail::doubleToStr(q.y).stdstr())
-                     + " " + std::string(detail::doubleToStr(q.z).stdstr()) + " " + std::string(detail::doubleToStr(q.w).stdstr());
+    std::string xyz      = std::string(detail::doubleToStr(t.x).as_std_str()) + " " + std::string(detail::doubleToStr(t.y).as_std_str())
+                     + " " + std::string(detail::doubleToStr(t.z).as_std_str());
+    std::string quat     = std::string(detail::doubleToStr(q.x).as_std_str()) + " " + std::string(detail::doubleToStr(q.y).as_std_str())
+                     + " " + std::string(detail::doubleToStr(q.z).as_std_str()) + " " + std::string(detail::doubleToStr(q.w).as_std_str());
     origin->SetAttribute("xyz", xyz.c_str());
     origin->SetAttribute("quat", quat.c_str());
     xe->LinkEndChild(origin);
@@ -218,7 +218,7 @@ vine::intrusive_ptr<vine::geometry::Material> XmlIOBase::parseMaterial(ParseCont
     const String color_str = attr(xe, "color");
     if (!color_str.empty()) {
         double r = 0.0, g = 0.0, b = 0.0, a = 1.0;
-        std::istringstream stream(color_str.stdstr());
+        std::istringstream stream(color_str.as_std_str());
         if (stream >> r >> g >> b >> a) {
             return vine::make_intrusive<vine::geometry::ColorMaterial>(
                 vine::Colorf(static_cast<float>(r), static_cast<float>(g), static_cast<float>(b), static_cast<float>(a)));
@@ -240,7 +240,7 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
         double w = 0.0, h = 0.0, d = 0.0;
         // size is space-separated "w h d"
         const String        size_str = attr(child, "size");
-        std::istringstream  stream(size_str.stdstr());
+        std::istringstream  stream(size_str.as_std_str());
         if (!(stream >> w >> h >> d)) {
             return {};
         }
@@ -345,9 +345,9 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vine::geometry::Shape& 
             return;
         }
         auto        xe_box = xe->GetDocument()->NewElement("box");
-        std::string size   = std::string(detail::doubleToStr(box->width()).stdstr()) + " "
-                         + std::string(detail::doubleToStr(box->height()).stdstr()) + " "
-                         + std::string(detail::doubleToStr(box->depth()).stdstr());
+        std::string size   = std::string(detail::doubleToStr(box->width()).as_std_str()) + " "
+                         + std::string(detail::doubleToStr(box->height()).as_std_str()) + " "
+                         + std::string(detail::doubleToStr(box->depth()).as_std_str());
         xe_box->SetAttribute("size", size.c_str());
         xe_geom->LinkEndChild(xe_box);
         break;
@@ -390,9 +390,9 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vine::geometry::Shape& 
             return;
         }
         auto        xe_ell = xe->GetDocument()->NewElement("ellipsoid");
-        std::string radii  = std::string(detail::doubleToStr(ellipsoid->radiusX()).stdstr()) + " "
-                          + std::string(detail::doubleToStr(ellipsoid->radiusY()).stdstr()) + " "
-                          + std::string(detail::doubleToStr(ellipsoid->radiusZ()).stdstr());
+        std::string radii  = std::string(detail::doubleToStr(ellipsoid->radiusX()).as_std_str()) + " "
+                          + std::string(detail::doubleToStr(ellipsoid->radiusY()).as_std_str()) + " "
+                          + std::string(detail::doubleToStr(ellipsoid->radiusZ()).as_std_str());
         xe_ell->SetAttribute("radii", radii.c_str());
         xe_geom->LinkEndChild(xe_ell);
         break;
@@ -680,13 +680,13 @@ void XmlIOBase::exportJoint(ExportContext& ctx, const workcell::Joint& joint, ti
         // The dof origin is flattened as xyz / quat attributes on the <dof> node.
         const auto& t        = dof.origin.translation;
         const auto& q        = dof.origin.rotation;
-        std::string xyz      = std::string(detail::doubleToStr(t.x).stdstr()) + " "
-                         + std::string(detail::doubleToStr(t.y).stdstr()) + " "
-                         + std::string(detail::doubleToStr(t.z).stdstr());
-        std::string quat     = std::string(detail::doubleToStr(q.x).stdstr()) + " "
-                         + std::string(detail::doubleToStr(q.y).stdstr()) + " "
-                         + std::string(detail::doubleToStr(q.z).stdstr()) + " "
-                         + std::string(detail::doubleToStr(q.w).stdstr());
+        std::string xyz      = std::string(detail::doubleToStr(t.x).as_std_str()) + " "
+                         + std::string(detail::doubleToStr(t.y).as_std_str()) + " "
+                         + std::string(detail::doubleToStr(t.z).as_std_str());
+        std::string quat     = std::string(detail::doubleToStr(q.x).as_std_str()) + " "
+                         + std::string(detail::doubleToStr(q.y).as_std_str()) + " "
+                         + std::string(detail::doubleToStr(q.z).as_std_str()) + " "
+                         + std::string(detail::doubleToStr(q.w).as_std_str());
         xe_dof->SetAttribute("xyz", xyz.c_str());
         xe_dof->SetAttribute("quat", quat.c_str());
         setAttrDouble(xe_dof, "lower", dof.lower);

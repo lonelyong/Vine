@@ -253,11 +253,11 @@ TEST(ForwardShaderSetTest, TheFlatProgramReusesTheForwardStagesWithItsDefine)
     const auto* flat_vs  = flat->stage(0);
     ASSERT_NE(phong_vs, nullptr);
     ASSERT_NE(flat_vs, nullptr);
-    EXPECT_EQ(flat_vs->source.stdstr(), phong_vs->source.stdstr()); // same vertex stage
+    EXPECT_EQ(flat_vs->source.as_std_str(), phong_vs->source.as_std_str()); // same vertex stage
 
     const auto* flat_fs = flat->stage(1);
     ASSERT_NE(flat_fs, nullptr);
-    const std::string fragment = flat_fs->source.stdstr();
+    const std::string fragment = flat_fs->source.as_std_str();
     // A define BEFORE the version directive is not valid GLSL, so the order is the contract.
     const auto version_at = fragment.find("#version");
     const auto define_at  = fragment.find("#define VINE_FLAT");
@@ -343,7 +343,7 @@ TEST(ForwardShaderSetTest, ThePushRangeRealizesTheL1ViewAndDrawBlocks)
     ASSERT_EQ(program->stageCount(), 2u);
     const auto* vs_stage = program->stage(0);
     ASSERT_NE(vs_stage, nullptr);
-    const std::string vs = vs_stage->source.stdstr();
+    const std::string vs = vs_stage->source.as_std_str();
     // The block instance is named "pc" because that is the name vsg's matrix stacks
     // fill; the two members are the L1 subset named above.
     EXPECT_NE(vs.find("layout(push_constant) uniform PushConstants"), std::string::npos);
@@ -396,8 +396,8 @@ TEST(ForwardShaderSetTest, BothStagesGateTheSameInterfaceVariables)
     const auto* fs_stage = program->stage(1);
     ASSERT_NE(vs_stage, nullptr);
     ASSERT_NE(fs_stage, nullptr);
-    const std::string vs = vs_stage->source.stdstr();
-    const std::string fs = fs_stage->source.stdstr();
+    const std::string vs = vs_stage->source.as_std_str();
+    const std::string fs = fs_stage->source.as_std_str();
     for (const char* define : { "VINE_VERTEX_COLOR", "VINE_DIFFUSE_MAP" }) {
         const bool in_vs = vs.find(define) != std::string::npos;
         const bool in_fs = fs.find(define) != std::string::npos;
@@ -432,7 +432,7 @@ TEST(ForwardShaderSetTest, TheForwardStagesAskForEveryDefineTheBackendCanSet)
         for (std::size_t i = 0; i < program->stageCount(); ++i) {
             const auto* stage = program->stage(i);
             ASSERT_NE(stage, nullptr);
-            const std::string source = stage->source.stdstr();
+            const std::string source = stage->source.as_std_str();
             const auto        pragma = source.find("#pragma import_defines");
             ASSERT_NE(pragma, std::string::npos) << "stage " << i << " asks for no define at all";
             const auto        close = source.find(')', pragma);
@@ -483,7 +483,7 @@ TEST(ForwardShaderSetTest, ASampledTexcoordSlotMustStateItsKind)
     for (std::size_t i = 0; i < program->stageCount(); ++i) {
         const auto* stage = program->stage(i);
         ASSERT_NE(stage, nullptr);
-        const std::string source = stage->source.stdstr();
+        const std::string source = stage->source.as_std_str();
         const auto        flag   = (i == 0u) ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_FRAGMENT_BIT;
         EXPECT_FALSE(compiles(source, flag, { "VINE_DIFFUSE_MAP" }))
             << "stage " << i << " samples a slot whose kind is unstated";
@@ -631,7 +631,7 @@ TEST(ForwardShaderSetTest, TheFragmentStageScalesAlphaByTheDrawBlock)
     ASSERT_EQ(program->stageCount(), 2u);
     const auto* fs_stage = program->stage(1);
     ASSERT_NE(fs_stage, nullptr);
-    const std::string fragment = fs_stage->source.stdstr();
+    const std::string fragment = fs_stage->source.as_std_str();
     EXPECT_NE(fragment.find("float alpha = draw.params.x;"), std::string::npos);
     EXPECT_EQ(fragment.find("material.diffuse.a"), std::string::npos);
     EXPECT_EQ(fragment.find("alpha *= texel.a;"), std::string::npos);

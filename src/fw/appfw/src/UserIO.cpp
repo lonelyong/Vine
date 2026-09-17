@@ -1,10 +1,5 @@
 ﻿#include <vine/appfw/UserIO.hpp>
 
-#include <cerrno>
-#include <climits>
-#include <cstdlib>
-#include <string>
-
 V_APPFW_NS_BEGIN
 
 V_OBJECT_META_IMPL(UserIO, Object);
@@ -33,19 +28,16 @@ raw_ptr<CommandManager> UserIO::commandManager() const
 
 bool UserIO::parseInt(const String& text, int& value)
 {
-    const std::string trimmed = text.trimmed().stdstr();
-    if (trimmed.empty()) {
+    // toInt() is the single implementation of the "has to fit int" rule (it reports an
+    // out-of-range text as a failure instead of wrapping it); the extra contract this helper
+    // adds is that value stays untouched when parsing fails.
+    bool      ok     = false;
+    const int parsed = text.toInt(&ok);
+    if (!ok) {
         return false;
     }
 
-    errno                  = 0;
-    char*           end    = nullptr;
-    const long long parsed = std::strtoll(trimmed.c_str(), &end, 10);
-    if (end == trimmed.c_str() || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX) {
-        return false;
-    }
-
-    value = static_cast<int>(parsed);
+    value = parsed;
     return true;
 }
 

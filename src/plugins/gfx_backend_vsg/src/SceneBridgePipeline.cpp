@@ -137,8 +137,8 @@ namespace
     }
     for (const auto& stage_spec : program->stages()) {
         auto stage = ::vsg::ShaderStage::create(
-            stageFlag(stage_spec.type), stage_spec.entryPoint.stdstr(),
-            stage_spec.source.stdstr());
+            stageFlag(stage_spec.type), stage_spec.entryPoint.as_std_str(),
+            stage_spec.source.as_std_str());
         if (!compiler->compile(stage) || !stage->module || stage->module->code.empty()) {
             return ::vsg::ShaderStages();
         }
@@ -335,7 +335,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ShaderFallback,
                    formatDiagnostic(u8"program '%s' has no compiled stage (bad GLSL or no "
                                     u8"shader compiler); the built-in shader is used",
-                                    program->name().stdstr().c_str()));
+                                    program->name().as_std_str().c_str()));
         }
         // The entry owns the program (see OwnedCacheEntry): the key is its
         // address, and an entry that did not hold it could outlive a destroyed
@@ -360,7 +360,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
             report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::ShaderFallback,
                    formatDiagnostic(u8"program '%s' cannot be assembled: this slot has no shader set to build it "
                                     u8"on, so its content is NOT drawn",
-                                    program->name().empty() ? "(unnamed)" : program->name().stdstr().c_str()));
+                                    program->name().empty() ? "(unnamed)" : program->name().as_std_str().c_str()));
         }
         return {};
     }
@@ -381,7 +381,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ShaderFallback,
                formatDiagnostic(u8"program '%s' could not be assembled with %zu custom "
                                 u8"channel(s); the built-in shader is used",
-                                program->name().stdstr().c_str(), extra.size()));
+                                program->name().as_std_str().c_str(), extra.size()));
     }
     ProgramEntry entry;
     entry.layout     = layout;

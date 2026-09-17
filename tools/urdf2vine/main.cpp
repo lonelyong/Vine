@@ -83,7 +83,7 @@ double attrDouble(const tinyxml2::XMLElement* xe, const char* name, double def)
 bool parseVec3(const String& str, Vec3d& out)
 {
     double x = 0.0, y = 0.0, z = 0.0;
-    std::istringstream stream(str.stdstr());
+    std::istringstream stream(str.as_std_str());
     if (!(stream >> x >> y >> z)) {
         return false;
     }
@@ -138,7 +138,7 @@ Isometry3d parseOrigin(const tinyxml2::XMLElement* xe_origin)
     const String rpy = attr(xe_origin, "rpy");
     if (!rpy.empty()) {
         double r = 0.0, p = 0.0, y = 0.0;
-        std::istringstream stream(rpy.stdstr());
+        std::istringstream stream(rpy.as_std_str());
         if (stream >> r >> p >> y) {
             tf.rotation = rpyToQuat(r, p, y);
         }
@@ -189,7 +189,7 @@ void parseVisual(vine::meshio::MeshLoader&                                      
     if (xe_mesh) {
         const String filename = attr(xe_mesh, "filename");
         if (!filename.empty()) {
-            out.setShape(loadShape(loader, base_dir / filename.stdstr()));
+            out.setShape(loadShape(loader, base_dir / filename.as_std_str()));
         }
     }
     const auto* const xe_material = xe_visual->FirstChildElement("material");
@@ -199,7 +199,7 @@ void parseVisual(vine::meshio::MeshLoader&                                      
         const String rgba     = attr(xe_material->FirstChildElement("color"), "rgba");
         if (!rgba.empty()) {
             double r = 0.0, g = 0.0, b = 0.0, a = 1.0;
-            std::istringstream stream(rgba.stdstr());
+            std::istringstream stream(rgba.as_std_str());
             if (stream >> r >> g >> b >> a) {
                 auto material = vine::intrusive_ptr<vine::geometry::Material>(
                     new vine::geometry::ColorMaterial(vine::Colorf(static_cast<float>(r), static_cast<float>(g),
@@ -241,7 +241,7 @@ void parseCollision(vine::meshio::MeshLoader& loader, const tinyxml2::XMLElement
     if (xe_mesh) {
         const String filename = attr(xe_mesh, "filename");
         if (!filename.empty()) {
-            out.setShape(loadShape(loader, base_dir / filename.stdstr()));
+            out.setShape(loadShape(loader, base_dir / filename.as_std_str()));
         }
     }
 }
@@ -383,7 +383,7 @@ int main(int argc, char** argv)
     }
 
     const std::filesystem::path out_path = argc >= 3 ? std::filesystem::path(argv[2])
-                                                     : base_dir / (robot_name.stdstr() + ".vdevpkg");
+                                                     : base_dir / (robot_name.as_std_str() + ".vdevpkg");
 
     vine::robotics::io::DeviceIO io;
     io.savePkg(*device, out_path);

@@ -1,15 +1,20 @@
 ﻿#pragma once
 #include "core_global.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <climits>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <initializer_list>
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 V_CORE_NS_BEGIN
@@ -41,9 +46,12 @@ V_CORE_API size_t cstrlen<char16_t>(const char16_t* data);
 template <>
 V_CORE_API size_t cstrlen<char32_t>(const char32_t* data);
 
-/** String class that wraps std::string and provides additional functionality
+/** String class that wraps std::u8string and provides additional functionality
  *  such as encoding conversions, formatting, and splitting.
- *  its a utf-8 string, but the internal storage is std::string for simplicity and performance.
+ *  The storage is UTF-8 code units: as_std_str() and std_str_view() hand the same bytes out
+ *  without converting, and the fromXXX()/toXXX() helpers are the only places where the encoding changes.
+ *  Naming: the container accessors carry the as_ prefix because "std::string" does not say that nothing is copied,
+ *  while the view accessors do not need it - "_view" already means "aliases the storage, no copy".
  */
 class V_CORE_API String final {
 
@@ -136,8 +144,12 @@ class V_CORE_API String final {
       : stdstr_(ilist)
     {}
 
-    /** Copy constructor */
-    constexpr String(const String& other) noexcept
+    /** Copy constructor
+     *  @param other Source string
+     *  @note Not noexcept: deep copy can allocate, and a failed allocation must throw
+     *        std::bad_alloc instead of terminating.
+     */
+    constexpr String(const String& other)
       : stdstr_(other.stdstr_)
     {}
 
@@ -147,36 +159,45 @@ class V_CORE_API String final {
     {}
 
   public:
-    /** reinterpret_cast the internal std::u8string as a std::string
-     *  the encoding of the string is UTF-8
-     *  @return Reference to the internal std::u8string
+    /** The same UTF-8 bytes seen as a std::string, without converting or copying: std::u8string
+     *  and std::string are the same template over one-byte character types, and they lay out
+     *  identically on every standard library we support.
+     *  This is a deliberate reliance on that implementation detail, not something the C++
+     *  standard defines: a program may only access an object through its own type - or through
+     *  char / unsigned char / std::byte. The static_asserts next to the storage catch a layout
+     *  change at compile time, and StringTest compares the small-string object bytes of the two
+     *  instantiations at run time. If the storage type ever changes, this accessor is the first
+     *  thing to revisit.
+     *  @return Reference to the same bytes, typed as std::string
      */
-    std::string& stdstr()
-    {
-        return reinterpret_cast<std::string&>(stdstr_);
-    }
-
-    /** reinterpret_cast the internal std::u8string as a std::string
-     *  the encoding of the string is UTF-8
-     *  @return Const reference to the internal std::u8string
-     */
-    const std::string& stdstr() const
+    const std::string& as_std_str() const noexcept
     {
         return reinterpret_cast<const std::string&>(stdstr_);
     }
 
-    /** Get a reference to the internal std::u8string
-     *  @return Reference to the internal std::u8string
+    /** A view of the same UTF-8 bytes as char: what the std::string-shaped world (ostreams,
+     *  printf("%s"), Qt) wants. Fully defined - char may alias any object - and zero copy.
+     *  @return View over the internal buffer; NUL-terminated, because it points into std::u8string
+     *          storage, and valid until the string is modified
      */
-    constexpr std::u8string& stdu8str()
+    std::string_view std_str_view() const noexcept
+    {
+        return { reinterpret_cast<const char*>(stdstr_.data()), stdstr_.size() };
+    }
+
+    /** The internal UTF-8 storage itself, read-only - what encoding converters and
+     *  std::u8string-shaped APIs need. Prefer std_u8str_view() when a view is enough.
+     *  @return Const reference to the internal std::u8string
+     */
+    constexpr const std::u8string& as_std_u8str() const
     {
         return stdstr_;
     }
 
-    /** Get a const reference to the internal std::u8string
-     *  @return Const reference to the internal std::u8string
+    /** A view of the internal UTF-8 buffer as char8_t: the same type, no conversion at all.
+     *  @return View over the internal buffer, valid until the string is modified
      */
-    constexpr const std::u8string& stdu8str() const
+    constexpr std::u8string_view std_u8str_view() const noexcept
     {
         return stdstr_;
     }
@@ -805,26 +826,26 @@ class V_CORE_API String final {
         return stdstr_.erase(first, last);
     }
 
-    /** Get mutable reference to character at specified index
+    /** Get mutable reference to character at the specified index
      *  @param idx The index of the character
      *  @return Reference to the character
+     *  @throws std::out_of_range if idx >= size()
      *  @warning The returned reference becomes invalid if the string is modified through methods like
      *           assign(), insert(), replace(), clear(), resize(), or any operation that changes capacity.
      *           Do not use the reference after any such modification.
-     *  @note Does not perform bounds checking
      */
     constexpr value_type& at(size_type idx)
     {
         return stdstr_.at(idx);
     }
 
-    /** Get const reference to character at specified index
+    /** Get const reference to character at the specified index
      *  @param idx The index of the character
      *  @return Const reference to the character
+     *  @throws std::out_of_range if idx >= size()
      *  @warning The returned reference becomes invalid if the string is modified through methods like
      *           assign(), insert(), replace(), clear(), resize(), or any operation that changes capacity.
      *           Do not use the reference after any such modification.
-     *  @note Does not perform bounds checking
      */
     constexpr const value_type& at(size_type idx) const
     {
@@ -1120,8 +1141,9 @@ class V_CORE_API String final {
     /** Compare this string with another String lexicographically
      *  @param str String to compare with
      *  @return Negative if *this < str, zero if equal, positive if *this > str
+     *  @note Not noexcept: std::basic_string::compare(const basic_string&) is not.
      */
-    constexpr int compare(const String& str) const noexcept
+    constexpr int compare(const String& str) const
     {
         return stdstr_.compare(str.stdstr_);
     }
@@ -1249,6 +1271,8 @@ class V_CORE_API String final {
      *  @param other The string to compare with
      *  @param ignore_case If true, performs case-insensitive comparison (default: false)
      *  @return true if the strings are equal, false otherwise
+     *  @note ignore_case folds ASCII letters only, byte by byte: it is not a Unicode case
+     *        mapping, and non-ASCII bytes are compared as-is.
      */
     bool isEqual(const String& other, bool ignore_case = false) const
     {
@@ -1257,7 +1281,9 @@ class V_CORE_API String final {
 
         if (ignore_case) {
             return std::equal(stdstr_.begin(), stdstr_.end(), other.stdstr_.begin(), other.stdstr_.end(), [](char a, char b) {
-                return std::tolower(a) == std::tolower(b);
+                // tolower takes an int that must be representable as unsigned char or EOF:
+                // UTF-8 bytes above 0x7F are negative chars, which would be undefined.
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
             });
         }
         else {
@@ -1269,6 +1295,7 @@ class V_CORE_API String final {
      *  @param c The character to search for
      *  @param ignore_case If true, performs case-insensitive comparison (default: false)
      *  @return true if the string starts with the character, false otherwise
+     *  @note ignore_case folds ASCII letters only.
      */
     bool startsWith(value_type c, bool ignore_case = false) const
     {
@@ -1276,7 +1303,7 @@ class V_CORE_API String final {
             return false;
 
         if (ignore_case) {
-            return std::tolower(stdstr_[0]) == std::tolower(c);
+            return std::tolower(static_cast<unsigned char>(stdstr_[0])) == std::tolower(static_cast<unsigned char>(c));
         }
         else {
             return stdstr_[0] == c;
@@ -1287,6 +1314,7 @@ class V_CORE_API String final {
      *  @param str The prefix to check for
      *  @param ignore_case If true, performs case-insensitive comparison (default: false)
      *  @return true if the string starts with str, false otherwise
+     *  @note ignore_case folds ASCII letters only.
      */
     bool startsWith(const String& str, bool ignore_case = false) const
     {
@@ -1294,7 +1322,9 @@ class V_CORE_API String final {
             return false;
 
         if (ignore_case) {
-            return std::equal(str.stdstr_.begin(), str.stdstr_.end(), stdstr_.begin(), [](char a, char b) { return std::tolower(a) == std::tolower(b); });
+            return std::equal(str.stdstr_.begin(), str.stdstr_.end(), stdstr_.begin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+            });
         }
         else {
             return stdstr_.compare(0, str.size(), str.stdstr_) == 0;
@@ -1305,6 +1335,7 @@ class V_CORE_API String final {
      *  @param c The character to search for
      *  @param ignore_case If true, performs case-insensitive comparison (default: false)
      *  @return true if the string ends with the character, false otherwise
+     *  @note ignore_case folds ASCII letters only.
      */
     bool endsWith(value_type c, bool ignore_case = false) const
     {
@@ -1312,7 +1343,7 @@ class V_CORE_API String final {
             return false;
 
         if (ignore_case) {
-            return std::tolower(stdstr_.back()) == std::tolower(c);
+            return std::tolower(static_cast<unsigned char>(stdstr_.back())) == std::tolower(static_cast<unsigned char>(c));
         }
         else {
             return stdstr_.back() == c;
@@ -1323,6 +1354,7 @@ class V_CORE_API String final {
      *  @param str The suffix to check for
      *  @param ignore_case If true, performs case-insensitive comparison (default: false)
      *  @return true if the string ends with str, false otherwise
+     *  @note ignore_case folds ASCII letters only.
      */
     bool endsWith(const String& str, bool ignore_case = false) const
     {
@@ -1330,7 +1362,9 @@ class V_CORE_API String final {
             return false;
 
         if (ignore_case) {
-            return std::equal(str.stdstr_.rbegin(), str.stdstr_.rend(), stdstr_.rbegin(), [](char a, char b) { return std::tolower(a) == std::tolower(b); });
+            return std::equal(str.stdstr_.rbegin(), str.stdstr_.rend(), stdstr_.rbegin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+            });
         }
         else {
             return stdstr_.compare(stdstr_.size() - str.size(), str.size(), str.stdstr_) == 0;
@@ -1619,6 +1653,17 @@ class V_CORE_API String final {
         return stdstr_ > right.stdstr_;
     }
 
+    /** Three-way comparison operator
+     *  @param right The string to compare with
+     *  @return The ordering of this string against right
+     *  @note Comparing the UTF-8 bytes orders by code point, because UTF-8 preserves that order.
+     *        This operator also supplies <= and >=, which are not declared separately.
+     */
+    constexpr std::strong_ordering operator<=>(const String& right) const noexcept
+    {
+        return stdstr_ <=> right.stdstr_;
+    }
+
     /** String concatenation operator
      *  @param right The string to concatenate
      *  @return A new string containing this string followed by right
@@ -1642,30 +1687,33 @@ class V_CORE_API String final {
         return *this;
     }
 
-    /* Conversion operator to std::u8string
-     *  @return Reference to the internal std::u8string
-     *  @warning Modifying the returned reference will affect this String's content.
-     *           Any modification to the string through methods like assign(), insert(), replace(),
-     *           clear(), resize(), or any operation that changes capacity invalidates all references.
-     *           Do not use the reference after any such modification.
-     */
-    constexpr operator std::u8string&() noexcept
-    {
-        return stdstr_;
-    }
-
-    /* Conversion operator to const std::u8string
+    /** Implicit conversion to a read-only reference to the internal std::u8string
      *  @return Const reference to the internal std::u8string
+     *  @note The interpretation of a String as another type is read-only by design: handing out a
+     *        mutable std::u8string& would let any std::u8string& parameter change the size, the
+     *        capacity and the SSO/heap state of this String without going through its API.
+     *        Mutation stays possible, but element-wise and bounded, via data() plus resize().
      *  @warning Any modification to the string through methods like assign(), insert(), replace(),
      *           clear(), resize(), or any operation that changes capacity invalidates all references.
      *           Do not use the reference after any such modification.
      */
-    constexpr /*explicit*/ operator const std::u8string&() const noexcept
+    constexpr operator const std::u8string&() const noexcept
     {
         return stdstr_;
     }
 
   private:
+    /// Storage, and the layout assumption behind as_std_str().
+    ///
+    /// The two instantiations are the same template over one-byte character types; the asserts
+    /// below make a future divergence a compile error instead of silent memory corruption.
+    /// They are a tripwire, not a proof: the reinterpretation in as_std_str() stays a reliance
+    /// on the implementation, verified by the layout-fingerprint test in StringTest.
+    static_assert(sizeof(impl_type) == sizeof(std::string), "as_std_str() assumes std::u8string and std::string lay out alike");
+    static_assert(alignof(impl_type) == alignof(std::string), "as_std_str() assumes the two aliases have the same alignment");
+    static_assert(sizeof(value_type) == sizeof(char), "as_std_str() assumes one-byte character types");
+    static_assert(std::is_same_v<typename impl_type::traits_type::char_type, value_type>, "traits must belong to the storage type");
+
     std::u8string stdstr_; // Internal storage for string data
 };
 
@@ -1678,3 +1726,20 @@ size_t cstrlen(const T* data)
 }
 
 V_CORE_NS_END
+
+/** Hash support, so String can be a key of std::unordered_map / std::unordered_set.
+ *  Declared next to the type, like the standard library does for std::string and std::string_view.
+ */
+template <>
+struct std::hash<V_ROOT_NS::String>
+{
+    /** @brief Hashes the UTF-8 bytes of a String.
+     *
+     * @param str The string to hash.
+     * @return A hash value computed from the same bytes that operator== compares.
+     */
+    std::size_t operator()(const V_ROOT_NS::String& str) const noexcept
+    {
+        return std::hash<std::string_view>{}(str.std_str_view());
+    }
+};

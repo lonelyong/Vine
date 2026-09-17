@@ -58,7 +58,7 @@ vine::String readbackRefusalMessage(ReadbackRefusal refusal, const char* what,
     // The name is copied out first: a temporary's c_str() would dangle by the time the switch
     // below uses it.
     const std::string name =
-        (target != nullptr && !target->name().empty()) ? target->name().stdstr() : std::string("(unnamed)");
+        (target != nullptr && !target->name().empty()) ? target->name().as_std_str() : std::string("(unnamed)");
     switch (refusal) {
     case ReadbackRefusal::NoTarget:
         return formatDiagnostic(u8"%s: no target was given, so there is nothing to read", what);
@@ -349,7 +349,7 @@ bool readDepthBuffer(VsgRendererState& state, const VsgDiagnostics& diagnostics,
             diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                                vine::graphics::DiagnosticCategory::ContentSkipped,
                                formatDiagnostic(u8"readDepthBuffer: target '%s' has no depth attachment",
-                                                target->name().stdstr().c_str()));
+                                                target->name().as_std_str().c_str()));
         }
         return false;
     }

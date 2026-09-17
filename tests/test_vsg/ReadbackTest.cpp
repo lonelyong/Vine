@@ -117,7 +117,7 @@ TEST(Readback, ColourReadbackRefusesWithoutABuiltTargetAndSaysWhy)
     EXPECT_TRUE(pixels.empty());
     // A refused readback says why (the header's promise): the classification reaches the sink.
     ASSERT_EQ(captured.items.size(), 1u);
-    EXPECT_NE(captured.items[0].message.stdstr().find("no built attachments"), std::string::npos);
+    EXPECT_NE(captured.items[0].message.as_std_str().find("no built attachments"), std::string::npos);
     // ...and it refused BEFORE the wait: a refusal never stops the device.
     EXPECT_EQ(state.retireRing.waitCount(), 0u);
 }
@@ -136,7 +136,7 @@ TEST(Readback, DepthReadbackRefusesWithoutABuiltTargetAndSaysWhy)
     EXPECT_FALSE(readDepthBuffer(state, diagnostics, target.get(), depths));
     EXPECT_TRUE(depths.empty());
     ASSERT_EQ(captured.items.size(), 1u);
-    EXPECT_NE(captured.items[0].message.stdstr().find("no built attachments"), std::string::npos);
+    EXPECT_NE(captured.items[0].message.as_std_str().find("no built attachments"), std::string::npos);
     EXPECT_EQ(state.retireRing.waitCount(), 0u);
 }
 
@@ -151,14 +151,14 @@ TEST(Readback, ReadbackRefusesANullTargetAndSaysWhy)
     EXPECT_FALSE(readDepthBuffer(state, diagnostics, nullptr, depths));
     EXPECT_TRUE(depths.empty());
     ASSERT_EQ(captured.items.size(), 1u);
-    EXPECT_NE(captured.items[0].message.stdstr().find("no target was given"), std::string::npos);
+    EXPECT_NE(captured.items[0].message.as_std_str().find("no target was given"), std::string::npos);
 }
 
 TEST(Readback, EachRefusalKeepsItsOwnWording)
 {
     RenderTargetPtr target(new RenderTarget());
     const auto      message = [&target](ReadbackRefusal refusal) {
-        return readbackRefusalMessage(refusal, "readDepthBuffer", target.get()).stdstr();
+        return readbackRefusalMessage(refusal, "readDepthBuffer", target.get()).as_std_str();
     };
     const std::string no_target    = message(ReadbackRefusal::NoTarget);
     const std::string no_session   = message(ReadbackRefusal::NoSession);

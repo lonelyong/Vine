@@ -74,7 +74,7 @@ void ConsoleUserIO::putString(const String& str)
 {
     // stdout is shared: a command writes from whatever thread it resumed on.
     std::lock_guard lock(output_mutex_);
-    std::cout << str.stdstr() << std::endl;
+    std::cout << str.as_std_str() << std::endl;
 }
 
 void ConsoleUserIO::clear()

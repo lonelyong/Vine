@@ -146,7 +146,7 @@ std::unique_ptr<workcell::Device> DeviceIO::loadXmlFromVfs(vine::io::IMemoryVfs&
     ctx.vfs = &vfs;
     std::vector<unsigned char> bytes;
     if (!vfs.readFile(vfs_path, bytes)) {
-        throw std::runtime_error("DeviceIO::loadXml, failed to read vfs file: " + vfs_path.stdstr());
+        throw std::runtime_error("DeviceIO::loadXml, failed to read vfs file: " + vfs_path.as_std_str());
     }
     const String xml(reinterpret_cast<const char8_t*>(bytes.data()), bytes.size());
     return parseDoc(xml, ctx);
@@ -379,10 +379,10 @@ void DeviceIO::exportDeviceInternal(ExportContext& ctx, const workcell::Device& 
                     continue;
                 }
                 const auto& c     = color->color();
-                std::string rgba  = std::string(detail::doubleToStr(c.r).stdstr()) + " "
-                                  + std::string(detail::doubleToStr(c.g).stdstr()) + " "
-                                  + std::string(detail::doubleToStr(c.b).stdstr()) + " "
-                                  + std::string(detail::doubleToStr(c.a).stdstr());
+                std::string rgba  = std::string(detail::doubleToStr(c.r).as_std_str()) + " "
+                                  + std::string(detail::doubleToStr(c.g).as_std_str()) + " "
+                                  + std::string(detail::doubleToStr(c.b).as_std_str()) + " "
+                                  + std::string(detail::doubleToStr(c.a).as_std_str());
                 auto xe_mat = xe_device->GetDocument()->NewElement("material");
                 xe_mat->SetAttribute("name", toCStr(entry.name));
                 xe_mat->SetAttribute("color", rgba.c_str());

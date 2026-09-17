@@ -31,10 +31,10 @@ std::filesystem::path DirectoryVfs::toReal(const String& vfs_path) const
         return root_;
     }
     // Reject path traversal.
-    if (norm.stdu8str().find(u8"..") != std::u8string::npos) {
+    if (norm.as_std_u8str().find(u8"..") != std::u8string::npos) {
         return {};
     }
-    return root_ / std::filesystem::path(norm.stdu8str());
+    return root_ / std::filesystem::path(norm.as_std_u8str());
 }
 
 bool DirectoryVfs::exists(const String& path) const

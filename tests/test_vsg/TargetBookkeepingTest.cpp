@@ -99,8 +99,8 @@ TEST(TargetBookkeepingTest, BuildingATargetWithoutASizeIsReportedOnce)
     EXPECT_EQ(captured.items[0].severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(captured.items[0].category, DiagnosticCategory::TargetBuildFailed);
     // The message carries the fix (the size) and the consequence (nothing is drawn).
-    EXPECT_NE(captured.items[0].message.stdstr().find("no size"), std::string::npos);
-    EXPECT_NE(captured.items[0].message.stdstr().find("unsized"), std::string::npos);
+    EXPECT_NE(captured.items[0].message.as_std_str().find("no size"), std::string::npos);
+    EXPECT_NE(captured.items[0].message.as_std_str().find("unsized"), std::string::npos);
 
     // Nothing was built, so the entry stays without attachments: the passes drawing into this
     // target draw nothing, which is what the report explains.

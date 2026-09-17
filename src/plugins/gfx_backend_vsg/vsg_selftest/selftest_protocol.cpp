@@ -812,7 +812,7 @@ bool runDepthBorrowValidationPhase(vine::vsg::VsgRenderer& renderer, const Camer
         PixelImage image;
         if (!readTarget(renderer, borrower.get(), image)) {
             std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the borrowing target (%s)\n",
-                         what.stdstr().c_str());
+                         what.as_std_str().c_str());
             return false;
         }
         const PixelImage::Point centre = image.centre();
@@ -820,11 +820,11 @@ bool runDepthBorrowValidationPhase(vine::vsg::VsgRenderer& renderer, const Camer
             std::fprintf(stderr,
                          "[selftest] FAIL: the borrowing target (%s) centre is (%d,%d,%d); the NEAR quad must win, so"
                          " the target did not fall back to a working depth\n",
-                         what.stdstr().c_str(), image.at(centre, 0), image.at(centre, 1), image.at(centre, 2));
+                         what.as_std_str().c_str(), image.at(centre, 0), image.at(centre, 1), image.at(centre, 2));
             return false;
         }        if (image.blueDominant() != 0u) {
             std::fprintf(stderr, "[selftest] FAIL: %zu pixel(s) are blue although the far quad is behind (%s)\n",
-                         image.blueDominant(), what.stdstr().c_str());
+                         image.blueDominant(), what.as_std_str().c_str());
             return false;
         }
         renderer.releasePass(source_pass.get());

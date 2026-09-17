@@ -119,7 +119,7 @@ bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> p
         if (stage == nullptr) {
             continue;
         }
-        for (const auto& [declared_set, declared_binding] : declaredBindings(stage->source.stdstr())) {
+        for (const auto& [declared_set, declared_binding] : declaredBindings(stage->source.as_std_str())) {
             if (declared_set == set && declared_binding == binding) {
                 return true;
             }
@@ -138,7 +138,7 @@ bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> pro
         if (stage == nullptr) {
             continue;
         }
-        const std::string source = stage->source.stdstr();
+        const std::string source = stage->source.as_std_str();
         const std::size_t pragma = source.find("import_defines");
         if (pragma == std::string::npos) {
             continue;

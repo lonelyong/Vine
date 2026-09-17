@@ -361,7 +361,7 @@ RenderControl::RenderControl()
     // created later by initialize().
     d->engine->setDiagnosticSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
         auto&             logger  = vine::logging::defaultLogger();
-        const std::string message = diagnostic.message.stdstr();
+        const std::string message = diagnostic.message.as_std_str();
         switch (diagnostic.severity) {
             case vine::graphics::DiagnosticSeverity::Error:
                 logger.error("[graphics] {}", message);

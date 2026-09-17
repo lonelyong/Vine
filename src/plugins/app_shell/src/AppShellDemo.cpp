@@ -72,7 +72,7 @@ std::filesystem::path demoAssetDirectory()
     if (const char* override_dir = std::getenv("VINE_TEST_DATA_DIR"); override_dir != nullptr && *override_dir != '\0') {
         return std::filesystem::path(override_dir);
     }
-    const std::string exe = vine::system::Process::currentExecutablePath().stdstr();
+    const std::string exe = vine::system::Process::currentExecutablePath().as_std_str();
     if (exe.empty()) {
         return {};
     }

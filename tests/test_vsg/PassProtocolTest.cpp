@@ -233,7 +233,7 @@ TEST(PassProtocolTest, ADrawingCallOutsideAPassScopeIsRefusedAndReportedOnce)
     EXPECT_EQ(captured.items[0].severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(captured.items[0].category, DiagnosticCategory::PassProtocolViolation);
     // One format string per entry point: the host learns WHICH call was refused.
-    EXPECT_NE(captured.items[0].message.stdstr().find("render()"), std::string::npos);
+    EXPECT_NE(captured.items[0].message.as_std_str().find("render()"), std::string::npos);
 
     // A new frame is a new episode.
     renderer.beginFrame();
@@ -279,7 +279,7 @@ TEST(PassProtocolTest, DrawingOnAReleasedTargetIsRefusedAndReportedOnce)
     EXPECT_EQ(captured.items[0].severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(captured.items[0].category, DiagnosticCategory::PassProtocolViolation);
     // One format string per entry point: the host learns WHICH call was skipped.
-    EXPECT_NE(captured.items[0].message.stdstr().find("render()"), std::string::npos);
+    EXPECT_NE(captured.items[0].message.as_std_str().find("render()"), std::string::npos);
 
     // The rest of the episode is the same problem: refused, but not a second report...
     renderer.render(std::vector<RenderCommand>{}, nullptr);

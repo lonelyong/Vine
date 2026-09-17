@@ -58,9 +58,9 @@ TEST(GlslCompileTest, CompilesShaderProgramStagesToSpirv)
 
     std::size_t compiled = 0;
     for (const auto& stage : program.stages()) {
-        const std::string source = stage.source.stdstr();
+        const std::string source = stage.source.as_std_str();
         auto vstage = vsg::ShaderStage::create(toVkStage(stage.type),
-                                               stage.entryPoint.stdstr(), source);
+                                               stage.entryPoint.as_std_str(), source);
         ASSERT_TRUE(compiler.compile(vstage));
         ASSERT_NE(vstage->module, nullptr);
         if (vstage->module != nullptr && !vstage->module->code.empty()) {

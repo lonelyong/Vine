@@ -31,7 +31,7 @@ void VsgDiagnostics::report(vine::graphics::DiagnosticSeverity severity, vine::g
 {
     // The trace is this backend's built-in fallback: a host that installs no sink (and the
     // validation harness, which installs none) must still see that content was dropped.
-    std::fprintf(stderr, "[VsgRenderer] %s: %s\n", severityTraceTag(severity), message.stdstr().c_str());
+    std::fprintf(stderr, "[VsgRenderer] %s: %s\n", severityTraceTag(severity), message.as_std_str().c_str());
     if (downstream) {
         downstream(vine::graphics::RenderDiagnostic{ severity, category, message });
     }

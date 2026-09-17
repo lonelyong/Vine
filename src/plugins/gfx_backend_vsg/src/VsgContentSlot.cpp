@@ -42,7 +42,7 @@ void logContentSlotDiagnostics(const vine::graphics::RenderTarget* target, vine:
         return;
     }
     std::fprintf(stderr, "[MRT-DIAG] target=%s depth_mode=%d order=%d commands=%zu created=%zu rootChildren=%zu variants=%zu\n",
-                 target == nullptr ? "window" : (target->name().empty() ? "offscreen" : target->name().stdstr().c_str()),
+                 target == nullptr ? "window" : (target->name().empty() ? "offscreen" : target->name().as_std_str().c_str()),
                  static_cast<int>(depth_mode), order, commands, created, root_children, variants);
 }
 } // namespace

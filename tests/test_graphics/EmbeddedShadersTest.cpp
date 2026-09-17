@@ -192,7 +192,7 @@ TEST(EmbeddedShadersTest, TheDeferredProgramsUseTheEmbeddedSources)
         ASSERT_NE(at, std::string::npos) << "the shipped source carries the insertion markers";
         expected.erase(at, marker.size());
     }
-    EXPECT_EQ(light_fs->source.stdstr(), expected);
+    EXPECT_EQ(light_fs->source.as_std_str(), expected);
 }
 
 TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
@@ -215,7 +215,7 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
     // SEGMENT of the shipped file survives verbatim and in order: the inserted text has its own test
     // (TheForwardProgramDeclaresTheShadowAbiWhereTheContentSetBindsIt), and copying it here would be a
     // second copy to keep in step — the drift this test exists to catch.
-    expectDerivedFromSource(forward_fs->source.stdstr(), asByteString(kBuiltinForwardFrag), shadow_markers());
+    expectDerivedFromSource(forward_fs->source.as_std_str(), asByteString(kBuiltinForwardFrag), shadow_markers());
 
     // The flat program is the SAME stages with one define injected into the fragment source — which is
     // what makes it a different program (a different text), not a mode of another one. The vertex stage
@@ -229,16 +229,16 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
     ASSERT_NE(flat_fs, nullptr);
     EXPECT_EQ(flat_vs->source, vine::String(kBuiltinForwardVert));
     EXPECT_NE(flat_fs->source, vine::String(kBuiltinForwardFrag));
-    EXPECT_NE(flat_fs->source.stdstr().find("#define VINE_FLAT 1"), std::string::npos);
+    EXPECT_NE(flat_fs->source.as_std_str().find("#define VINE_FLAT 1"), std::string::npos);
     // ...and it is that text with nothing else changed: the define goes in after the version directive,
     // so dropping that one line has to give back the forward program EXACTLY. Two programs that share a
     // lighting must share its text too — otherwise the flat preset is a second copy that drifts.
-    std::string       flat_without_define = flat_fs->source.stdstr();
+    std::string       flat_without_define = flat_fs->source.as_std_str();
     const std::string define_line         = "#define VINE_FLAT 1\n";
     const std::size_t define_at           = flat_without_define.find(define_line);
     ASSERT_NE(define_at, std::string::npos);
     flat_without_define.erase(define_at, define_line.size());
-    EXPECT_EQ(flat_without_define, forward_fs->source.stdstr())
+    EXPECT_EQ(flat_without_define, forward_fs->source.as_std_str())
         << "the flat program is the forward text plus one define, not a second copy of the shading";
 }
 
@@ -295,14 +295,14 @@ TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceC
 
     const auto plain = deferredLightProgram();
     ASSERT_NE(plain, nullptr);
-    const std::string plain_text = plain->stage(0)->source.stdstr();
+    const std::string plain_text = plain->stage(0)->source.as_std_str();
     EXPECT_EQ(plain_text.find("VINE_SHADOW_"), std::string::npos)
         << "the unshadowed program must ask the pass for no shadow binding at all";
     EXPECT_EQ(plain_text.find("shadow_map"), std::string::npos);
 
     const auto shadowed = shadowedDeferredLightProgram();
     ASSERT_NE(shadowed, nullptr);
-    const std::string shadowed_text = shadowed->stage(0)->source.stdstr();
+    const std::string shadowed_text = shadowed->stage(0)->source.as_std_str();
     EXPECT_NE(shadowed_text.find("layout(binding = 5) uniform sampler2D shadow_map;"), std::string::npos);
     EXPECT_NE(shadowed_text.find("layout(binding = 6, std140) uniform VineShadowBlock"), std::string::npos)
         << "the block's GLSL type name is the L1 name (ShaderAbi.hpp)";
@@ -329,7 +329,7 @@ TEST(EmbeddedShadersTest, TheForwardProgramDeclaresTheShadowAbiWhereTheContentSe
     const auto forward = forwardProgram();
     ASSERT_NE(forward, nullptr);
     ASSERT_EQ(forward->stageCount(), 2u);
-    const std::string text = forward->stage(1)->source.stdstr();
+    const std::string text = forward->stage(1)->source.as_std_str();
     EXPECT_NE(text.find("layout(set = 0, binding = 3) uniform sampler2D shadow_map;"), std::string::npos);
     EXPECT_NE(text.find("layout(set = 0, binding = 4, std140) uniform VineShadowBlock"), std::string::npos)
         << "the block's GLSL type name is the L1 name (ShaderAbi.hpp)";
@@ -365,13 +365,13 @@ TEST(EmbeddedShadersTest, TheSkyboxProgramUsesTheEmbeddedSources)
     // on (see the header): both kinds and both branches have to be there, in the stages that declare
     // them. The names must be in the PRAGMA too - a define a source does not ask for is dropped in
     // silence - so a sky that never named the UV kind could not be built as a UV pair at all.
-    EXPECT_NE(skybox_vs->source.stdstr().find("VINE_TEXCOORD_CUBE"), std::string::npos)
+    EXPECT_NE(skybox_vs->source.as_std_str().find("VINE_TEXCOORD_CUBE"), std::string::npos)
         << "the vertex stage must name the define it branches on (a program that does not ask for it is "
            "never given it)";
-    EXPECT_NE(skybox_vs->source.stdstr().find("VINE_TEXCOORD_UV"), std::string::npos);
-    EXPECT_NE(skybox_fs->source.stdstr().find("VINE_TEXCOORD_UV"), std::string::npos);
-    EXPECT_NE(skybox_fs->source.stdstr().find("samplerCube skyMap"), std::string::npos);
-    EXPECT_NE(skybox_fs->source.stdstr().find("sampler2D skyMap"), std::string::npos);
+    EXPECT_NE(skybox_vs->source.as_std_str().find("VINE_TEXCOORD_UV"), std::string::npos);
+    EXPECT_NE(skybox_fs->source.as_std_str().find("VINE_TEXCOORD_UV"), std::string::npos);
+    EXPECT_NE(skybox_fs->source.as_std_str().find("samplerCube skyMap"), std::string::npos);
+    EXPECT_NE(skybox_fs->source.as_std_str().find("sampler2D skyMap"), std::string::npos);
 }
 
 TEST(EmbeddedShadersTest, TheNamedConstantsAreInTheTable)
