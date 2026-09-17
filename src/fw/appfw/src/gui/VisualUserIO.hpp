@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <atomic>
+#include <memory>
 
 #include <vine/Events.hpp>
 #include <vine/Signal.hpp>
@@ -54,6 +55,18 @@ class VisualUserIO : public UserIO {
         ~ReadScope() { self->endRead(); }
     };
 
+    /// Prompt bookkeeping of the read that is waiting for input.
+    ///
+    /// Read and written on the application thread only: the write happens inside
+    /// the marshalled UI call that shows the prompt, and the read inside
+    /// repromptError(). It is shared rather than a plain member so a posted UI call
+    /// can write it without capturing the UserIO itself, which may be gone by the
+    /// time the call runs (every other posted call in this file is written the same
+    /// way).
+    struct PromptState {
+        String current;
+    };
+
     /// Claims the single interaction slot and shows the prompt; false when another
     /// read is already waiting.
     bool beginRead(PendingRead kind, const String& prompt);
@@ -103,11 +116,13 @@ class VisualUserIO : public UserIO {
 
     ConsolePanel* console_{ nullptr };
     /// Handlers registered on the bound console, so a rebind can drop them again.
-    vine::Signal<const String&>::HandlerId line_handler_{ 0 };
-    vine::Signal<>::HandlerId              escape_handler_{ 0 };
-    /// Handler registered on the command manager's commandsChanged().
-    vine::Signal<vine::appfw::CommandManager&, vine::EventArgs&>::HandlerId commands_handler_{ 0 };
-    String                                                                 currentPrompt_;
+    vine::Signal<const String&>::Subscription line_handler_{};
+    vine::Signal<>::Subscription              escape_handler_{};
+    /// Subscription on the command manager's commandsChanged().
+    vine::Signal<vine::appfw::CommandManager&, vine::EventArgs&>::Subscription commands_handler_{};
+
+    /// Prompt bookkeeping of the current read; see PromptState.
+    std::shared_ptr<PromptState> prompt_{ std::make_shared<PromptState>() };
 };
 
 V_APPFWGUI_NS_END

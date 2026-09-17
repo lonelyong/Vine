@@ -125,13 +125,14 @@ class V_APPFW_API UserIO : public Object {
     /**
      * @brief Parses text as an integer that has to fit int.
      *
-     * String::toInt() is not usable for user input: it runs through strtol and casts
-     * the result to int, so text beyond the range of int silently wraps (which is how
-     * a value typed into the former int8_t read turned into a negative number).
+     * String::toInt() used to cast the saturated value, so text beyond the range of int wrapped
+     * around (which is how a value typed into the former int8_t read came out negative); it
+     * range-checks now, so this helper exists for one difference only: it leaves value untouched
+     * when parsing fails, which the re-prompt paths rely on to keep what the user already had.
      *
-     * @param text  Text to parse; surrounding whitespace is ignored, and trailing
-     *              characters after the number are accepted like toInt() does.
-     * @param value Receives the parsed value on success.
+     * @param text  Text to parse; leading whitespace is skipped and trailing characters after
+     *              the number are accepted, exactly like toInt().
+     * @param value Receives the parsed value on success, and is left untouched on failure.
      * @return true when text starts with an integer in the range of int.
      */
     static bool parseInt(const String& text, int& value);

@@ -20,11 +20,14 @@
  * revision (see PluginAbi), so a bump means "the plugins must be rebuilt" - which
  * is what such a change requires anyway.
  *
+ * 3u: ProgressHost moved from the base progress module into appfw, so plugs that
+ * reported progress through vine::progress::ProgressHost include it from here now.
+ *
  * The name says *plugin* ABI on purpose: it is not the release version (that is
  * V_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
  * the host's own binaries, which are built and rebuilt together with the framework.
  */
-#define V_APPFW_PLUGIN_ABI_VERSION 2u
+#define V_APPFW_PLUGIN_ABI_VERSION 3u
 
 V_APPFW_NS_BEGIN
 

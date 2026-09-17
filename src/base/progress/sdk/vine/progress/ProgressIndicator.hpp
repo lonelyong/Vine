@@ -3,6 +3,7 @@
 #include "progress_global.hpp"
 
 #include <atomic>
+#include <functional>
 #include <stop_token>
 
 V_PROGRESS_NS_BEGIN
@@ -19,6 +20,13 @@ class ProgressScope;
  * through isCancelled() or token(). Cancellation is requested through the
  * external std::stop_source that produced the token. position() and progress
  * increments are thread-safe; the scope/range graph is single-threaded.
+ *
+ * Position changes are published through the callback installed with
+ * setPositionCallback(), coalesced to whole percent steps: this is the path a
+ * reporting loop hits once per item, so the notification is what has to be cheap,
+ * not the update. The indicator itself has no opinion about who listens - the
+ * ambient host is the one caller that cares, and it turns the callback into its
+ * change signal.
  */
 class V_PROGRESS_API ProgressIndicator
 {
@@ -80,10 +88,50 @@ class V_PROGRESS_API ProgressIndicator
      */
     std::stop_token token() const;
 
+    /**
+     * @brief Installs the callback called when the reported position moves on.
+     *
+     * Called at most once per percent of the scale, when the position reaches its
+     * end, and when it is reset behind the announcer's back (a restarted
+     * indicator). Coalescing is what makes this affordable on the reporting path:
+     * the callback is one indirect call per percent step, not one per item.
+     *
+     * Called on the thread that reports the progress, with no lock held, so the
+     * callback must be safe to run concurrently with itself - the ambient host
+     * publishes an event from it.
+     *
+     * Install it before reporting starts (a host does it in its constructor); the
+     * reporting path reads it without a lock.
+     *
+     * @param callback Callback to install; empty to remove it.
+     */
+    void setPositionCallback(std::function<void()> callback);
+
   private:
     void increment(double step);
 
+    /// Calls the installed position callback, if there is one.
+    void announce();
+
+    /**
+     * @brief Announces the new position to observers when it is worth seeing.
+     *
+     * Coalescing lives here because increment() is the single writer of the
+     * position, and it is called once per reported item: a whole percent step, the
+     * end of the scale and a step backwards (a restarted indicator) are announced,
+     * and everything in between is not.
+     *
+     * @param new_position Position just stored.
+     */
+    void announceIfSignificant(double new_position);
+
     std::atomic<double>     position_{0.0};
+
+    /// Position last announced through the position callback.
+    std::atomic<double>     announced_{0.0};
+
+    /// Installed by setPositionCallback(); read by the reporting path.
+    std::function<void()>   on_position_;
 
     ProgressScope*          root_scope_{nullptr};
 

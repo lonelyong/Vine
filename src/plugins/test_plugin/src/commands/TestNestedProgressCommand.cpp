@@ -3,7 +3,7 @@
 #include <chrono>
 
 #include <vine/async/Sleep.hpp>
-#include <vine/progress/ProgressHost.hpp>
+#include <vine/appfw/ProgressHost.hpp>
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
 
@@ -13,7 +13,7 @@ V_OBJECT_META_IMPL(TestNestedProgressCommand, Command)
 
 vine::async::Task<CommandResult> TestNestedProgressCommand::execute(CommandExecutionContext* context)
 {
-    auto* host = vine::progress::ProgressHost::current();
+    auto* host = vine::appfw::ProgressHost::current();
     if (!host) {
         co_return CommandResult(CommandStatus::Failed, String(u8"无进度宿主"));
     }

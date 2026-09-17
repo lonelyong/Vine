@@ -44,7 +44,9 @@ class V_APPFW_API CommandExecutingEventArgs : public EventArgs {
  * Carries the command that ran and its execution result. The notification is
  * synchronous, so Handlers may inspect the command while they run; the
  * originating command is destroyed as soon as the outer execution returns, so
- * a handler must not retain the pointer.
+ * a handler must not retain the pointer. The result is referenced, not copied
+ * (its payload is a std::any that may be expensive to duplicate), and stays
+ * valid for the whole notification only.
  */
 class V_APPFW_API CommandExecutedEventArgs : public EventArgs {
     V_OBJECT_META_DECL
@@ -56,12 +58,14 @@ class V_APPFW_API CommandExecutedEventArgs : public EventArgs {
     /// The command that finished executing; valid only during the notification.
     raw_ptr<Command> command() const;
 
-    /// The execution result.
+    /// The execution result; valid only during the notification.
     const CommandResult& result() const;
 
   private:
     Command* command_;
-    CommandResult result_;
+
+    /// Result owned by the manager for the duration of the notification.
+    const CommandResult* result_;
 };
 
 /**
@@ -104,6 +108,9 @@ struct CommandHistoryEntry {
     TypeId command_class = nullptr;
 
     /// Outcome of the execution.
+    ///
+    /// The payload is not retained, so data() of a recorded result is always empty: the payload
+    /// of the run itself was handed to the caller of the entry point that started it.
     CommandResult result{ CommandStatus::Success };
 };
 
@@ -166,9 +173,10 @@ class V_APPFW_API CommandManager
      * The notification is synchronous and runs on the thread that started the
      * command. Handlers may call back into the manager (a nested execution, a
      * registration, adding or removing another handler) - nothing is locked while
-     * they run. The event itself is not thread-safe though, so a handler must be
-     * added or removed while no command can finish on another thread: subscribe
-     * during startup, not from a task that races another command's completion.
+     * they run. The event itself is thread-safe (vine::Signal publishes its handler
+     * table as an immutable snapshot), so subscribing or unsubscribing from any
+     * thread is safe even while commands finish elsewhere; what a handler must not
+     * do is touch a widget on a thread that is not the application thread.
      */
     Event<CommandManager, CommandExecutingEventArgs> executing;
 
@@ -184,8 +192,9 @@ class V_APPFW_API CommandManager
      * suspended), so a handler must not assume the application thread.
      *
      * Like executing, handlers may call back into the manager, and the handler list
-     * is not thread-safe across threads: subscribe during startup rather than while
-     * a command may finish elsewhere.
+     * is thread-safe: subscribing from any thread is safe while a command may finish
+     * elsewhere. Handlers, however, run on the thread that ended the command, so one
+     * that touches UI has to marshal itself.
      */
     Event<CommandManager, CommandExecutedEventArgs> executed;
 
@@ -224,6 +233,14 @@ class V_APPFW_API CommandManager
      * documents when that deadlocks); inside a coroutine prefer co_awaiting
      * executeCommandAsync(), which never blocks the thread the command runs on.
      *
+     * The name says what the caller pays for: AndWait, like cancelAllAndWait(). The three
+     * entry points differ in when the caller gets control back - executeCommandAsync()
+     * returns a lazy task, executeDetached() returns at once, this one returns a finished
+     * result and nothing else. Being blocking is why it has no production caller: a UI
+     * trigger that blocks the application thread freezes the window until the command
+     * finishes (or deadlocks outright when the command waits for UI input), so script and
+     * test code, and code already off the application thread, are its callers.
+     *
      * Exclusive commands first cancel the running command chain; when that
      * chain refuses to unwind within exclusiveDrainTimeout() the takeover is
      * rejected with a CommandStatus::Failed result instead of running next to
@@ -235,19 +252,19 @@ class V_APPFW_API CommandManager
      * @return The execution outcome; Failed when the command's name is registered
      *         and disabled, so this entry point cannot bypass setCommandEnabled().
      */
-    CommandResult executeCommand(Command* command);
+    CommandResult executeCommandAndWait(Command* command);
 
     /**
      * @brief Starts a registered command by name, blocking until it finishes.
      *
      * Creates a fresh instance through the registered factory and runs it as a
-     * top-level command, exactly like executeCommand(Command*): own chain,
+     * top-level command, exactly like executeCommandAndWait(Command*): own chain,
      * subject to the serialization gate, caller blocked.
      *
      * @param name Registered command name.
      * @return The execution outcome; Failed when the name is not registered.
      */
-    CommandResult executeCommand(const String& name);
+    CommandResult executeCommandAndWait(const String& name);
 
     /**
      * @brief Executes a command asynchronously.
@@ -497,10 +514,16 @@ class V_APPFW_API CommandManager
     bool setCommandEnabled(const String& name, bool enabled);
 
     /**
-     * @brief Returns whether a command is registered and enabled.
+     * @brief Returns whether a name can be executed.
+     *
+     * True for a registered, enabled command and for an alias that resolves
+     * (possibly through other aliases) to one; false for a disabled command and for
+     * a name that resolves to nothing (a cycle, a stale alias, an unknown name).
+     * This is the "can this be executed" predicate; isRegistered() only reports
+     * existence.
      *
      * @param name Command or alias name.
-     * @return true only for a name that resolves to a registered, enabled command.
+     * @return true when executing name runs a registered, enabled command.
      */
     bool isCommandEnabled(const String& name) const;
 
@@ -546,14 +569,15 @@ class V_APPFW_API CommandManager
     bool unregisterAlias(const String& alias);
 
     /**
-     * @brief Returns whether a name can be executed.
+     * @brief Returns whether a name is a registered command.
      *
-     * True for a registered, enabled command name and for an alias that resolves
-     * (possibly through other aliases) to one. A disabled command is still listed by
-     * names() and commandInfos(), but it cannot be executed.
+     * Registration is existence, not executability: a command the user disabled is
+     * still registered (and still listed by names()/commandInfos()), and an alias is
+     * not a registered command - it is a name that resolves to one. Ask
+     * isCommandEnabled() whether a name can actually be executed.
      *
-     * @param name Command or alias name.
-     * @return true if executing the name runs a registered, enabled command.
+     * @param name Canonical command name.
+     * @return true when name is a registered command.
      */
     bool isRegistered(const String& name) const;
 

@@ -2,13 +2,15 @@
 #include <vine/async/DetachedTask.hpp>
 #include <vine/async/SyncWait.hpp>
 #include <vine/async/Cancellation.hpp>
+#include <vine/async/Sleep.hpp>
 
 #include <vine/CancellationToken.hpp>
+#include <vine/appfw/MainThreadDispatcher.hpp>
 
 #include "async/Scheduler.hpp"
-#include "async/Sleep.hpp"
 
 #include <QCoreApplication>
+#include <QThread>
 #include <QTimer>
 
 #include <gtest/gtest.h>
@@ -61,14 +63,29 @@ TEST_F(QtAsyncTest, SchedulerResumesOnOwningThread)
     EXPECT_TRUE(ran);
 }
 
-TEST_F(QtAsyncTest, SleepRunsOnTimer)
+// 命令在任意线程恢复后要碰 UI 就得先回到应用线程：resumeOnMainThread() 把这段回归
+// 变成一行 co_await（回调式的 postToMain() 在协程里写起来很别扭）。
+//
+// 这里刻意走 sleepFor()：它在 base 的进程级定时器线程上恢复协程，于是到达那个
+// co_await 时确实不在应用线程上——正是命令里真实的形态。协程本身在应用线程创建，
+// 且创建它的帧在 exec() 返回前一直活着（不能在会退出的线程上创建并挂起协程：
+// 创建线程一退，帧所在的栈就没了，之后任何线程去恢复都是踩空）。
+TEST_F(QtAsyncTest, MainThreadDispatcherResumesOnApplicationThread)
 {
-    bool done = false;
-    auto start = std::chrono::steady_clock::now();
+    appfw::MainThreadDispatcher dispatcher;
+    QThread* const            app_thread = QCoreApplication::instance()->thread();
+
+    bool ran         = false;
+    bool off_app     = false;
+    bool back_on_app = false;
 
     auto task = [&]() -> async::DetachedTask {
-        co_await appfw::async::sleep(std::chrono::milliseconds(50));
-        done = true;
+        co_await async::sleepFor(std::chrono::milliseconds(1));
+        off_app = (QThread::currentThread() != app_thread);
+
+        co_await dispatcher.resumeOnMainThread();
+        back_on_app = (QThread::currentThread() == app_thread);
+        ran         = true;
         QCoreApplication::quit();
         co_return;
     }();
@@ -76,32 +93,7 @@ TEST_F(QtAsyncTest, SleepRunsOnTimer)
     QTimer::singleShot(5000, [] { QCoreApplication::quit(); });
     QCoreApplication::instance()->exec();
 
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-    EXPECT_TRUE(done);
-    EXPECT_GE(elapsed.count(), 40);
-}
-
-TEST_F(QtAsyncTest, SleepCancellationResumesEarly)
-{
-    vine::CancellationSource source;
-    bool cancelled = false;
-
-    auto task = [&]() -> async::DetachedTask {
-        try
-        {
-            co_await appfw::async::sleep(std::chrono::milliseconds(1000), source.get_token());
-        }
-        catch (const async::TaskCancelledException&)
-        {
-            cancelled = true;
-        }
-        QCoreApplication::quit();
-        co_return;
-    }();
-
-    QTimer::singleShot(50, [&] { source.request_stop(); });
-    QTimer::singleShot(5000, [] { QCoreApplication::quit(); });
-    QCoreApplication::instance()->exec();
-
-    EXPECT_TRUE(cancelled);
+    EXPECT_TRUE(ran);
+    EXPECT_TRUE(off_app);
+    EXPECT_TRUE(back_on_app);
 }

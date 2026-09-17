@@ -21,10 +21,9 @@ set_target_properties(${APPFW_TARGET_NAME} PROPERTIES
 )
 
 target_link_libraries(${APPFW_TARGET_NAME}
-    PUBLIC vi::Async vi::Core vi::Di vi::Math vi::Global vi::Graphics vi::Window
+    PUBLIC vi::Async vi::Core vi::Di vi::Math vi::Global vi::Graphics vi::Window vi::Progress
     PRIVATE
     vi::Logging
-    vi::Progress
     vi::Runtime
     tp::SARibbon
     tp::DockingPanes

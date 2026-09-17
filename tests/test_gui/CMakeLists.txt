@@ -10,7 +10,12 @@ set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 # 会与 DLL 内副本形成两份静态元对象，导致跨 DLL 边界的 qobject_cast 失败。
 # 这里只加头文件路径供 static_cast（impl<T>）使用，不用 qobject_cast 断言。
 target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/SARibbon
-                                             ${CMAKE_SOURCE_DIR}/third_party/DockingPanes/inc)
+                                             ${CMAKE_SOURCE_DIR}/third_party/DockingPanes/inc
+                                             # ConsoleUserIO is appfw-private (it lives in
+                                             # src/, not sdk/): the headless progress test
+                                             # constructs it directly, like test_asyncqt
+                                             # includes the private Qt coroutine glue.
+                                             ${CMAKE_SOURCE_DIR}/src/fw/appfw/src)
 
 # vi::ImageIO / vi::System: the PluginLifecycleTest cases load the REAL app_shell
 # plugin, and a plugin installed OUTSIDE the application directory (which is exactly what

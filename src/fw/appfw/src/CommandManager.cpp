@@ -29,7 +29,7 @@
 
 #include <vine/logging/Log.hpp>
 
-#include <vine/progress/ProgressHost.hpp>
+#include <vine/appfw/ProgressHost.hpp>
 
 V_APPFW_NS_BEGIN
 
@@ -48,7 +48,7 @@ V_OBJECT_META_IMPL(CommandExecutedEventArgs, EventArgs)
 
 CommandExecutedEventArgs::CommandExecutedEventArgs(Command* command, const CommandResult& result)
   : command_(command)
-  , result_(result)
+  , result_(&result)
 {}
 
 raw_ptr<Command> CommandExecutedEventArgs::command() const
@@ -58,7 +58,7 @@ raw_ptr<Command> CommandExecutedEventArgs::command() const
 
 const CommandResult& CommandExecutedEventArgs::result() const
 {
-    return result_;
+    return *result_;
 }
 
 namespace
@@ -80,12 +80,6 @@ struct RegisteredCommand {
     /// executable until it is enabled again.
     bool enabled{ true };
 };
-
-/// Returns whether a command flag set contains the given bit.
-constexpr bool hasFlag(CommandFlags value, CommandFlags bit) noexcept
-{
-    return (static_cast<std::uint32_t>(value) & static_cast<std::uint32_t>(bit)) != 0;
-}
 
 /// Views a String's UTF-8 bytes without allocating.
 ///
@@ -761,7 +755,7 @@ bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, ChainScope 
     // manager's mutex is held would nest the two (the manager never calls out
     // under its own lock). The ambient host only complements the gate flag; the
     // gate decision itself is still one atomic step with the flag update below.
-    const bool ambient_host_busy = vine::progress::ProgressHost::current() != nullptr;
+    const bool ambient_host_busy = vine::appfw::ProgressHost::current() != nullptr;
 
     std::lock_guard<std::mutex> lock(mutex);
     if (exclusive) {
@@ -779,7 +773,7 @@ bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, ChainScope 
     chain = std::make_shared<Chain>();
     foreground = chain;
     rememberChain(chain);
-    if (hasFlag(flags, CommandFlags::LongRunning)) {
+    if (testFlag(flags, CommandFlags::LongRunning)) {
         foreground_busy = true;
     }
     return true;
@@ -804,7 +798,10 @@ void CommandManager::Impl::recordHistory(const Command& command, const CommandRe
     // this manager's lock is held - and a record that cannot be built or appended is
     // only logged, never reported.
     try {
-        const CommandHistoryEntry      entry{ command.name(), command.getType(), result };
+        // The payload is deliberately not retained: the history answers "what ran and how did it
+        // end", and keeping the std::any would hold up to maxHistoryEntries() command results -
+        // possibly large buffers - alive for the lifetime of the manager.
+        const CommandHistoryEntry entry{ command.name(), command.getType(), CommandResult(result.status(), result.message()) };
         std::lock_guard<std::mutex> lock(mutex);
         if (history.size() >= CommandManager::maxHistoryEntries()) {
             history.pop_front();
@@ -946,6 +943,32 @@ class CommandManager::Context : public CommandExecutionContext {
         co_return co_await manager_->executeCommandAsyncImpl(command.get(), chain_, ChainScope::Nested);
     }
 
+    vine::async::Task<CommandResult> executeChild(std::unique_ptr<Command> command) override
+    {
+        if (command == nullptr) {
+            co_return failedResult(String(u8"Command is null"));
+        }
+
+        // Bounded like the name overload: a command that nests itself through instances has to
+        // exhaust the chain's budget, not the process's coroutine frames.
+        if (chain_->stackSize() >= CommandManager::maxChainDepth()) {
+            V_LOGE("Command nesting is too deep; refusing child command: {}", toUtf8View(command->name()));
+            co_return failedResult(String(u8"Command nesting is too deep"));
+        }
+
+        // The same back door rule the top-level instance entry applies: only a name that is
+        // registered and disabled is refused, so a command the user disabled cannot be run
+        // under that name through a parent either.
+        if (manager_->d->isDisabledRegistration(command->name())) {
+            V_LOGI("Command '{}' is disabled; refusing the nested caller-supplied instance", toUtf8View(command->name()));
+            co_return failedResult(refusalMessage(command->name(), /*disabled=*/true));
+        }
+
+        // The parameter lives in this frame, so the child stays alive for its whole execution and
+        // is destroyed when this coroutine returns.
+        co_return co_await manager_->executeCommandAsyncImpl(command.get(), chain_, ChainScope::Nested);
+    }
+
   private:
     CommandManager*        manager_;
     std::shared_ptr<Chain> chain_;
@@ -987,12 +1010,12 @@ raw_ptr<Application> CommandManager::application() const noexcept
     return d->app;
 }
 
-CommandResult CommandManager::executeCommand(Command* command)
+CommandResult CommandManager::executeCommandAndWait(Command* command)
 {
     return vine::async::syncWait(executeCommandAsync(command));
 }
 
-CommandResult CommandManager::executeCommand(const String& name)
+CommandResult CommandManager::executeCommandAndWait(const String& name)
 {
     return vine::async::syncWait(executeCommandAsync(name));
 }
@@ -1068,7 +1091,7 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
     }
 
     const CommandFlags flags     = command->flags();
-    const bool         exclusive = hasFlag(flags, CommandFlags::Exclusive);
+    const bool         exclusive = testFlag(flags, CommandFlags::Exclusive);
     const bool         top_level = scope == ChainScope::TopLevel;
 
     if (exclusive && top_level) {
@@ -1076,7 +1099,7 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
         case Impl::TakeOverOutcome::TakenOver:
             break;
         case Impl::TakeOverOutcome::StillStopping:
-            co_return failedResult(String(u8"Another operation is still stopping"));
+            co_return failedResult(String(u8"另一个操作仍在收尾，请稍后再试。"));
         case Impl::TakeOverOutcome::Cancelled:
             co_return cancelledResult();
         }
@@ -1086,13 +1109,13 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
         // Visible for the callers that cannot read the result: a detached command
         // that is refused would otherwise fail silently.
         V_LOGW("Command refused by the serialization gate: {}", toUtf8View(command->name()));
-        co_return failedResult(String(u8"Another operation is in progress"));
+        co_return failedResult(String(u8"另一个操作正在进行中，请稍候。"));
     }
 
     // Whether this run took the serialization gate (a top-level LongRunning
     // command) or the exclusive occupancy (a top-level Exclusive command); the guard
     // below releases whichever it is when the run ends.
-    const bool holds_gate      = top_level && hasFlag(flags, CommandFlags::LongRunning);
+    const bool holds_gate      = top_level && testFlag(flags, CommandFlags::LongRunning);
     const bool holds_exclusive = top_level && exclusive;
 
     // Declared before the progress host and the stack guard below, so it is
@@ -1128,9 +1151,9 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
     // coroutine-local: it lives for this command's execution and is destroyed
     // (popping the stack) when the command completes. All hosts in the chain
     // bind to the same chain-wide cancellation source.
-    std::unique_ptr<vine::progress::ProgressHost> progress_host;
-    if (hasFlag(flags, CommandFlags::LongRunning)) {
-        progress_host = std::make_unique<vine::progress::ProgressHost>(chain->stop_source);
+    std::unique_ptr<vine::appfw::ProgressHost> progress_host;
+    if (testFlag(flags, CommandFlags::LongRunning)) {
+        progress_host = std::make_unique<vine::appfw::ProgressHost>(chain->stop_source);
         progress_host->setForeground(true);
     }
 
@@ -1159,7 +1182,7 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
     // must stop the command: running it without a snapshot would make the later
     // undo restore a state the document never had.
     std::function<void()> snapshot_handler;
-    if (hasFlag(flags, CommandFlags::Undoable)) {
+    if (testFlag(flags, CommandFlags::Undoable)) {
         std::lock_guard<std::mutex> lock(d->mutex);
         snapshot_handler = d->snapshot_handler;
     }
@@ -1529,9 +1552,11 @@ bool CommandManager::unregisterAlias(const String& alias)
 
 bool CommandManager::isRegistered(const String& name) const
 {
+    // Existence only: no alias resolution (an alias is a name that resolves to a
+    // command, not a command) and no enabled check (a disabled command stays
+    // registered). isCommandEnabled() is the 'can this be executed' predicate.
     std::lock_guard<std::mutex> lock(d->registry_mutex);
-    const auto it = d->registry.find(d->resolveName(name));
-    return it != d->registry.end() && it->second.enabled;
+    return d->registry.find(name) != d->registry.end();
 }
 
 std::vector<String> CommandManager::names() const

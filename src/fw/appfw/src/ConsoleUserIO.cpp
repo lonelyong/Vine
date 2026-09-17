@@ -59,7 +59,10 @@ struct ConsoleUserIO::StdinReader {
 
 ConsoleUserIO::ConsoleUserIO()
   : reader_(std::make_shared<StdinReader>())
-{}
+  , progress_(new ConsoleProgressReporter([this](const String& line) { writeLine(line); }))
+{
+    progress_->start();
+}
 
 ConsoleUserIO::~ConsoleUserIO()
 {
@@ -71,6 +74,11 @@ ConsoleUserIO::~ConsoleUserIO()
 }
 
 void ConsoleUserIO::putString(const String& str)
+{
+    writeLine(str);
+}
+
+void ConsoleUserIO::writeLine(const String& str)
 {
     // stdout is shared: a command writes from whatever thread it resumed on.
     std::lock_guard lock(output_mutex_);

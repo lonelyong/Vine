@@ -21,7 +21,7 @@
 
 #include <vine/appfw/MainThreadDispatcher.hpp>
 
-#include <vine/progress/ProgressHost.hpp>
+#include <vine/appfw/ProgressHost.hpp>
 
 #include "ApplicationData.hpp"
 #include "ConsoleUserIO.hpp"
@@ -311,7 +311,7 @@ bool Application::isBusy() const
 {
     // Only the foreground operation blocks new commands; background hosts run
     // in parallel and do not make the application busy.
-    return vine::progress::ProgressHost::current() != nullptr;
+    return vine::appfw::ProgressHost::current() != nullptr;
 }
 
 raw_ptr<CommandManager> Application::commandManager() const

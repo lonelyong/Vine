@@ -1,23 +1,24 @@
 ﻿#include <vine/appfw/gui/ProgressPresenter.hpp>
 
 #include <chrono>
+#include <optional>
 
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QThread>
 #include <QTimer>
 
+#include <vine/Signal.hpp>
+
+#include <vine/appfw/ProgressHost.hpp>
 #include <vine/appfw/gui/UIElementData.hpp>
-#include <vine/progress/ProgressHost.hpp>
 
 V_APPFWGUI_NS_BEGIN
 
 namespace
 {
-
-/// Poll period for the ambient host.
-constexpr int kPollIntervalMs = 100;
 
 /// How long an operation runs before the bar appears.
 constexpr int kShowDelayMs = 400;
@@ -30,7 +31,7 @@ constexpr int kHideDelayMs = 300;
 V_OBJECT_META_IMPL(ProgressPresenter, Control)
 
 struct ProgressPresenter::Impl : public UIElementData {
-    /// Owning presenter, used by the poll timer to drive onTick().
+    /// Owning presenter, redrawn from the change handler.
     ProgressPresenter* self = nullptr;
 
     QProgressBar* bar             = nullptr;
@@ -39,13 +40,42 @@ struct ProgressPresenter::Impl : public UIElementData {
     QPushButton*  cancel          = nullptr;
     QTimer*       timer           = nullptr;
 
+    /// Subscription to ProgressHost::changed(); held so it is cancelled with the presenter.
+    vine::Signal<>::Subscription hosts_changed{};
+
     /// The tracked foreground host (drives the main bar), or nullptr.
-    vine::progress::ProgressHost* foreground = nullptr;
+    vine::appfw::ProgressHost* foreground = nullptr;
     std::chrono::steady_clock::time_point host_seen_at{};
     std::chrono::steady_clock::time_point hide_at{};
     bool bar_visible   = false;
     bool progress_seen = false;
     bool hide_pending  = false;
+
+    /// Redraws on every progress state change, whichever thread reported it.
+    ///
+    /// The registry is written by the operation, which reports from whatever thread it runs on,
+    /// while the widgets may only be touched on the application thread. Notifications that arrive
+    /// on the application thread redraw inline - that is the common case, and going through the
+    /// event loop would only delay it - and the rest are posted to the native widget. Posting to
+    /// the widget (rather than to the application) is what makes the posted call safe: Qt drops a
+    /// queued call whose receiver has been destroyed, and this presenter is destroyed with its
+    /// widget, so the call can neither outlive the widgets nor run after `self` is gone.
+    ///
+    /// @param data State to redraw.
+    static void onHostsChanged(Impl* data)
+    {
+        auto* const root = static_cast<QWidget*>(data->impl);
+        if (root == nullptr) {
+            return;
+        }
+
+        if (QThread::currentThread() == root->thread()) {
+            data->self->refresh();
+            return;
+        }
+
+        QMetaObject::invokeMethod(root, [data] { data->self->refresh(); }, Qt::QueuedConnection);
+    }
 };
 
 ProgressPresenter::ProgressPresenter(QWidget* parent)
@@ -86,8 +116,14 @@ ProgressPresenter::ProgressPresenter(QWidget* parent)
     });
 
     data->timer = new QTimer(root);
-    QObject::connect(data->timer, &QTimer::timeout, root, [data] { data->self->onTick(); });
-    data->timer->start(kPollIntervalMs);
+    data->timer->setSingleShot(true);
+    QObject::connect(data->timer, &QTimer::timeout, root, [data] { data->self->refresh(); });
+
+    data->hosts_changed = vine::appfw::ProgressHost::changed().subscribe([data] { Impl::onHostsChanged(data); });
+
+    // The bar is hidden until an operation shows up; pick up an operation that is already
+    // running, so that embedding the presenter mid-operation does not wait for the next change.
+    data->self->refresh();
 
     root->setVisible(false);
 }
@@ -100,18 +136,18 @@ ProgressPresenter::~ProgressPresenter()
 bool ProgressPresenter::isBusy() const
 {
     // Any active host (foreground or background) keeps the presenter engaged.
-    return vine::progress::ProgressHost::isActive();
+    return vine::appfw::ProgressHost::isActive();
 }
 
-void ProgressPresenter::onTick()
+void ProgressPresenter::refresh()
 {
     using namespace std::chrono;
 
-    auto* const data  = dptr();
-    const auto  now   = steady_clock::now();
-    auto* const fg    = vine::progress::ProgressHost::current();
-    const auto  hosts = vine::progress::ProgressHost::activeHosts();
-    const auto  chain = vine::progress::ProgressHost::foregroundStack();
+    auto* const data = dptr();
+    const auto  now  = steady_clock::now();
+    auto* const fg    = vine::appfw::ProgressHost::current();
+    const auto  hosts = vine::appfw::ProgressHost::activeHosts();
+    const auto  chain = vine::appfw::ProgressHost::foregroundStack();
     // 后台宿主 = 活跃宿主中不在前台栈里的（真正并行的任务）。
     const std::size_t bg_count = hosts.size() >= chain.size() ? hosts.size() - chain.size() : 0;
 
@@ -190,15 +226,39 @@ void ProgressPresenter::onTick()
         data->hide_pending = false;
         setVisible(true);
     }
-    else {
+    else if (visible()) {
         if (!data->hide_pending) {
             data->hide_pending = true;
             data->hide_at      = now + milliseconds(kHideDelayMs);
         }
         if (now >= data->hide_at) {
             setVisible(false);
+            data->hide_pending = false;
         }
     }
+    else {
+        // Already hidden: nothing to wait for, and arming a wakeup would only make an idle
+        // window wake up again to hide what is hidden.
+        data->hide_pending = false;
+    }
+
+    // Arm the one timer this presenter ever holds, for the deadline that is actually pending:
+    // the bar appearing, or the bar hiding. With none pending there is no timer at all.
+    std::optional<steady_clock::time_point> next_due;
+    if (fg != nullptr && !data->bar_visible) {
+        next_due = data->host_seen_at + milliseconds(kShowDelayMs);
+    }
+    if (data->hide_pending && (!next_due || data->hide_at < *next_due)) {
+        next_due = data->hide_at;
+    }
+
+    if (!next_due) {
+        data->timer->stop();
+        return;
+    }
+
+    const auto remaining = duration_cast<milliseconds>(*next_due - now).count();
+    data->timer->start(remaining > 0 ? static_cast<int>(remaining) : 1);
 }
 
 inline auto ProgressPresenter::dptr() -> Impl*

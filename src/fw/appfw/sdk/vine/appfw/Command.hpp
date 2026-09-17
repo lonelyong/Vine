@@ -4,6 +4,7 @@
 
 #include <any>
 #include <cstdint>
+#include <memory>
 #include <stop_token>
 
 #include <vine/Object.hpp>
@@ -76,6 +77,19 @@ enum class CommandFlags : std::uint32_t
      */
     LongRunning = 1 << 2
 };
+
+/**
+ * Bitwise operators, so a command can describe several characteristics at once
+ * (a long-running command that also modifies business data, for instance):
+ *
+ *     CommandFlags flags() const override
+ *     {
+ *         return CommandFlags::Undoable | CommandFlags::LongRunning;
+ *     }
+ *
+ * Test one bit with vine::testFlag(flags, CommandFlags::Undoable).
+ */
+V_ENABLE_ENUM_FLAGS(CommandFlags);
 
 /**
  * @brief Outcome of executing a Command.
@@ -207,14 +221,14 @@ class V_APPFW_API CommandExecutionContext
      *        execution.
      *
      * The child is created through the command registry exactly like
-     * CommandManager::executeCommand(name), joins this execution's chain
+     * CommandManager::executeCommandAndWait(name), joins this execution's chain
      * (sharing its cancellation source, so cancelCurrent() stops parent and
      * child together), and bypasses the serialization gate so it may run
      * inside a LongRunning parent. Every LongRunning command owns its own
      * ProgressHost, so a child takes over the progress bar for its own duration
      * and the parent's host is current again afterwards.
      * Use this — not
-     * application()->commandManager()->executeCommand() — to start a nested
+     * application()->commandManager()->executeCommandAndWait() — to start a nested
      * command: the manager cannot tell a nested call from a new top-level one
      * (both enter the same entry point and commands may hop threads), so
      * nesting must be marked explicitly through the execution context, and a
@@ -226,6 +240,32 @@ class V_APPFW_API CommandExecutionContext
      *         maxChainDepth() commands deep.
      */
     virtual vine::async::Task<CommandResult> executeChild(const String& name) = 0;
+
+    /**
+     * @brief Starts a caller-supplied child command as part of this execution.
+     *
+     * The instance shape of executeChild(const String&): the child joins this execution's chain
+     * (sharing its cancellation source, so cancelCurrent() stops parent and child together) and
+     * bypasses the serialization gate, exactly like a child created from the registry. What
+     * differs is where the instance comes from: use this overload for a child parameterised by
+     * the parent's own input, which cannot be pre-registered - registering it at run time would
+     * churn the global registry, fire commandsChanged() and enter the persisted disable
+     * preference.
+     *
+     * The execution owns the instance: move it in and do not use it afterwards, because the
+     * frame awaiting the returned task destroys it as soon as the child finishes.
+     * The disable rule matches CommandManager::executeCommandAndWait(Command*): a name that is
+     * registered and disabled refuses the child, while a name that is not registered is the
+     * caller's own business. The child shows up in executing/executed and in the history under
+     * the name it reports; it is not listed by commandInfos() unless it is registered.
+     *
+     * @param command Child command; must not be null.
+     * @return The child's execution outcome; Failed when command is null, when its name is a
+     *         disabled registration, or when the chain is already maxChainDepth() commands deep.
+     * @note Declared after the name overload on purpose: appending a virtual keeps the slot
+     *       indices of implementations compiled against an older header.
+     */
+    virtual vine::async::Task<CommandResult> executeChild(std::unique_ptr<Command> command) = 0;
 };
 
 /**

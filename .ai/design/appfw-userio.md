@@ -46,8 +46,17 @@
 - `getIntAsync()` 产出 **`int`**（旧签名是 `int8_t`：输入 1000 会变成 -24）。
 - 解析走 `UserIO::parseInt()`：`String::toInt()` 经 `strtol` 再转 `int`，超出范围会静默回绕，
   不能用于用户输入。`toDouble` 的结果还必须 `std::isfinite`。
-- 提示文本、`currentPrompt_` 与结果字段都只在应用线程上读写（编组之后）——除了
-  `cancelled_`/`pending_`，它们是原子的。
+- 提示文本（`PromptState::current`）只在**应用线程**读写：写入挪进了"显示提示"那条编组调用
+  （`onConsolePanel`），读点是应用线程上的 `repromptError()`。它不再是普通成员而是 `shared_ptr` 持有的小状态，
+  这样 posted 回调可以写它而**不必捕获 UserIO 自身**（后者可能在回调真正执行前就被拆了）。
+  结果字段由应用线程写入、由等待者线程在 `done_` 之后读取（`AsyncEvent` 的互斥建立 happens-before），
+  `cancelled_`/`pending_` 是原子的。
+  ⚠️ 旧文档曾写"提示文本只在应用线程读写"，但当时的写点在 `beginRead()`——它跑在**读发起线程**上，
+  而 `getXxxAsync` 可以由在定时器/IO 线程上恢复的命令调用；已于 2026-09-17 修正（见
+  `tests/test_gui` 的 `UserIOTest.ReadStartedOnAWorkerThreadIsMarshalledAndReprompts`，该用例先断言"读确实
+  在非应用线程发起"再验证整条链路）。
+- `onApplicationThread()` 带一条断言：有事件循环时，inline 路径必须在应用线程（否则就是拿控件在错线程上写）；
+  这是后续改动的保险丝。
 
 ### 输出与列表
 
@@ -57,6 +66,28 @@
   以跟上之后注册/卸载/改名的命令（旧实现只在绑定时刷一次，app_shell 之后加载的插件命令永远不进补全）。
 - 重新绑定面板会先摘掉旧面板上的两个 handler（旧实现每次都挂新的，同一个面板绑两次 ⇒ 一行输入
   被执行两次）。
+
+### 无头进度（2026-09-18）
+
+`LongRunning` 命令会建一个 ambient `ProgressHost`，GUI 侧由 `ProgressPresenter` 显示；无头侧过去
+**什么都不显示**。现在 `ConsoleUserIO` 自带一个 `ConsoleProgressReporter`
+（`sdk/vine/appfw/ConsoleProgressReporter.hpp`，构造时 `start()`）：
+
+- 语义是**一行一条**（`[进度] 42% 阶段名`，不覆盖已在屏幕上的行），不是往下堆日志；宿主结束后补一行
+  `[进度] 已结束`，`stop()` 返回之后不再有任何输出。
+- 节流三件套（`ConsoleProgressOptions`）：`show_delay{500ms}`（这么短就结束的操作干脆不显示，避免
+  "闪一下就没了"）、`interval{200ms}`（**最小行距**）、`step_percent{5}`（百分比变化不足 5% 不重画）。
+  标签变化或进度回退（新宿主/换阶段）会立即重画。
+- 它**订阅** `ProgressHost::changed()`，不轮询：唯一需要时钟的是 show_delay（跑到一段时间而没有任何
+  进度报告也该出一行），用 async 共享定时服务的一次性唤醒；空闲时没有待发唤醒。
+- `poll()` 是公开的：宿主自己的循环可以驱动它（不需要先 `start()`），用例也靠它做确定性断言
+  （把 `interval` 设成 0 即"不受最小行距限制"）。
+- 生命周期：消费者是 `ConsoleUserIO` 的**最后一个成员**（先析构，早于 `output_mutex_`），sink 走非虚的
+  `writeLine`——析构期间不能再碰虚函数 `putString`（对象已在销毁中）。
+- 状态共用既非默认选择：`ConsoleProgressReporter` 是唯一用 `shared_ptr<Impl>` 的 appfw PImpl（其余用
+  `unique_ptr`），因为一次性唤醒的帧得靠它活下去。
+- 直接构造 `ConsoleUserIO` 的用例需要 appfw 私有头：`test_gui` 的 CMake 单列了这个 include 目录，与
+  `test_asyncqt` 引私有 Qt 协程胶水同样的做法。
 
 ## 本轮审查（11 项）
 
@@ -68,7 +99,7 @@
 | U4 | `ConsoleUserIO` 阻塞 `std::getline` ⇒ `cancelPendingInput()` 无效，关机可能让命令恢复到已拆的管理器上 | 旧实现直接在等待者线程上 `getline` | 一个后台读线程 + 行缓冲 + 可唤醒的 `AsyncEvent`，取消后读取立即返回 |
 | U5 | 补全列表不刷新：绑定 console 之后注册的命令进不了补全 | `refreshCompletion` 只在 `setConsolePanel`/`setCommandManager` 调用；app_shell 在自己的 `load()` 里绑定，命令在加载期注册 | 新增 `CommandManager::commandsChanged` 事件（注册/取消/启用开关/别名，均在锁外触发），`VisualUserIO` 订阅后编组刷新 |
 | U6 | 交互状态无同步，而 `cancelPendingInput()` 可能来自别的线程 | `cancelled_`/`pending_` 是普通成员 | 两者改 `std::atomic`；`set()` 待在两个锁之外调用，避免"被唤醒的读又要拿锁"而死锁 |
-| U7 | 重复绑定面板会重复挂 handler → 一行输入执行两次 | `setConsolePanel` 只 `addHandler` | 保存 `HandlerId`，重绑时先移除；`UserIOTest.RebindingTheConsoleDoesNotRunALineTwice` |
+| U7 | 重复绑定面板会重复挂 handler → 一行输入执行两次 | `setConsolePanel` 只 `subscribe` | 保存 `Subscription` 成员，重绑时先 `unsubscribe()`（现在是 RAII 句柄，见 command-manager 设计文档）；`UserIOTest.RebindingTheConsoleDoesNotRunALineTwice` |
 | U8 | `GuiApplication::setConsolePanel` 用 `static_cast<VisualUserIO*>` | 子类换 `createUserIO()` 即 UB | 改 `obj_cast<VisualUserIO>` |
 | U9 | `ConsoleUserIO` 细节：stdout 可能交错、非 EOF 失败不区分 | 无锁 `std::cout`；只看 `eof()` | stdout 互斥；`eof`/`bad` 分开记录；两者都让读返回 `nullopt` |
 | U10 | `putString`/`clear`/`setCommandManager`/`cancelPendingInput` 缺线程契约 | 头文件没写 | 基类补齐（含"实现负责编组"与"槽位唯一"） |
@@ -85,6 +116,8 @@
 3. `cancelPendingInput()` 返回后，等待中的读一定会以 `std::nullopt` 结束（无头实现也不例外）。
 4. `getIntAsync()` 只会给出落在 `int` 范围内的值，绝不回绕。
 5. 补全列表在命令集变化后与 `CommandManager::commandInfos()` 保持一致。
+6. 读可以从任意线程发起，而提示记帐与面板写入只发生在应用线程上。
+7. 有前台进度时无头输出里一定会出现进度行（`LongRunning` 命令在无头模式下不再"默默跑"）。
 
 ## 测试映射（tests/test_gui/test_gui.cpp）
 
@@ -94,9 +127,13 @@
 | `UserIOTest.SecondReadIsRefusedWhileOneIsPending` | U3 |
 | `UserIOTest.IntReadKeepsItsValueAndRepromptsOnOverflow` | U2（1000 原样、超出 `int` 重新提示） |
 | `UserIOTest.RebindingTheConsoleDoesNotRunALineTwice` | U7 |
+| `UserIOTest.ReadStartedOnAWorkerThreadIsMarshalledAndReprompts` | E4：读在非应用线程发起（先 `sleepFor` 再提示），提示/重新提示/取值照常 |
 | `UserIOTest.CommandsChangedReportsRegistryAndAliasEdits` | U5 的机制 |
 | `GuiTest.CommandManager_PendingUserInputBlocksDrainUntilCancelled` | 取消与排空（原有） |
 | `GuiTest.CommandManager_DetachedFailureIsReportedOnTheApplicationThread` | 失败上报编组（原有） |
+| `ConsoleProgressReporterTest.WritesThrottledLinesWhileAForegroundOperationRuns` | 无头进度的节流/标签/收尾（确定性，`poll()` 直驱） |
+| `ConsoleProgressReporterTest.ChangeNotificationWritesLinesAndStops` | 订阅驱动的一次性唤醒、`stop()` 后无输出 |
+| `ConsoleProgressReporterTest.ConsoleUserIOPrintsTheProgressOfAForegroundOperation` | 端到端：无头 IO 构造即挂消费者，进度出现在 stdout |
 | `test_core String.NumericConversions` | `String::toInt` 范围检查 |
 
 ## 已评估但**未采纳**（留档）

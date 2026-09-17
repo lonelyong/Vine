@@ -35,6 +35,10 @@ void onApplicationThread(TFn&& fn)
     auto* app        = Application::current();
     auto* dispatcher = app ? app->mainThreadDispatcher() : nullptr;
     if (dispatcher == nullptr || dispatcher->isMainThread() || !dispatcher->hasEventLoop()) {
+        // Debug check on the invariant every caller relies on: with an event loop
+        // present, the inline path is only taken on the application thread. A
+        // widget touched from here would otherwise be written from a worker thread.
+        assert(dispatcher == nullptr || dispatcher->isMainThread() || !dispatcher->hasEventLoop());
         fn();
         return;
     }
@@ -78,8 +82,8 @@ void VisualUserIO::setConsolePanel(ConsolePanel* console)
         // Drop the handlers of the panel being left behind: binding a panel twice
         // would otherwise run every entered line through onLineEntered() twice, and
         // an idle line would start its command twice.
-        console_->lineEntered.removeHandler(line_handler_);
-        console_->escapePressed.removeHandler(escape_handler_);
+        line_handler_.unsubscribe();
+        escape_handler_.unsubscribe();
     }
 
     console_ = console;
@@ -87,24 +91,23 @@ void VisualUserIO::setConsolePanel(ConsolePanel* console)
     {
         return;
     }
-    line_handler_   = console_->lineEntered.addHandler([this](const String& text) { onLineEntered(text); });
-    escape_handler_ = console_->escapePressed.addHandler([this] { onEscape(); });
+    line_handler_   = console_->lineEntered.subscribe([this](const String& text) { onLineEntered(text); });
+    escape_handler_ = console_->escapePressed.subscribe([this] { onEscape(); });
     refreshCompletion();
 }
 
 void VisualUserIO::setCommandManager(vine::appfw::CommandManager* manager)
 {
     if (auto* previous = commandManager(); previous != nullptr && previous != manager) {
-        previous->commandsChanged.removeHandler(commands_handler_);
-        commands_handler_ = 0;
+        commands_handler_.unsubscribe();
     }
 
     UserIO::setCommandManager(manager);
 
-    if (manager != nullptr && commands_handler_ == 0) {
+    if (manager != nullptr && !commands_handler_.isActive()) {
         // The completion list is a snapshot: follow the command set so commands of
         // plugins that register after the console was bound still show up.
-        commands_handler_ = manager->commandsChanged.addHandler(
+        commands_handler_ = manager->commandsChanged.subscribe(
             [this](vine::appfw::CommandManager&, vine::EventArgs&) { refreshCompletion(); });
     }
     refreshCompletion();
@@ -193,7 +196,9 @@ bool VisualUserIO::beginRead(PendingRead kind, const String& prompt)
         return false;
     }
 
-    currentPrompt_ = prompt;
+    // The prompt itself is recorded where it is shown (waitForInput's marshalled UI
+    // call), so this method never touches application-thread state: it may run on
+    // the thread the reading command resumed on.
     cancelled_.store(false);
     done_.reset();
     return true;
@@ -215,7 +220,14 @@ vine::async::Task<bool> VisualUserIO::waitForInput(PendingRead kind, const Strin
     if (console_ != nullptr)
     {
         auto* panel = console_;
-        onConsolePanel(panel, [prompt](ConsolePanel* target) { target->beginInput(prompt); });
+        // The prompt is recorded here, inside the marshalled call, so the member it
+        // lives in is only ever touched on the application thread (repromptError()
+        // reads it there when the user enters something invalid).
+        auto state  = prompt_;
+        onConsolePanel(panel, [state, prompt](ConsolePanel* target) {
+            state->current = prompt;
+            target->beginInput(prompt);
+        });
     }
 
     co_await done_;
@@ -403,7 +415,7 @@ void VisualUserIO::repromptError(const String& message)
     }
 
     auto*        panel  = console_;
-    const String prompt = currentPrompt_;
+    const String prompt = prompt_->current;
     onConsolePanel(panel, [message, prompt](ConsolePanel* target) {
         target->append(ConsoleMessageType::Error, message);
         target->beginInput(prompt);

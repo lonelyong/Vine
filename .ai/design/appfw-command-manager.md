@@ -11,10 +11,10 @@
 
 | 入口 | 链 | 前台归属 | 串联门 | 取消源 | 阻塞调用线程 |
 | --- | --- | --- | --- | --- | --- |
-| `executeCommand(Command*)` / `(name)` | 新建 | 成为前台链 | 受门 | 新源 | 是（`syncWait`） |
+| `executeCommandAndWait(Command*)` / `(name)` | 新建 | 成为前台链 | 受门 | 新源 | 是（`syncWait`） |
 | `executeCommandAsync(Command*)` / `(name)` | 新建 | 成为前台链 | 受门 | 新源 | 否（惰性，await 后才跑） |
 | `executeDetached(name)` | 新建 | 成为前台链 | 受门 | 新源 | 否（立即跑到首次挂起） |
-| `context->executeChild(name)` | **共享父链** | 不变（同一条链） | **绕过** | **共享父链源** | 否（co_await） |
+| `context->executeChild(name)` / `(instance)` | **共享父链** | 不变（同一条链） | **绕过** | **共享父链源** | 否（co_await） |
 
 由此产生的实际后果（均已有用例固化）：
 
@@ -28,11 +28,11 @@
 - **前台不会“恢复”**：子链跑完后 `foreground` 仍指向那条已 drain 的子链，
   于是父命令还在跑而 `currentCommand()` 返回 nullptr、`runningCount()` 返回 0
   （`cancelAll()` 仍能触及父链，因为它在活跃链注册表里）。
-- 父命令是 `LongRunning`（持有门）时，内部调顶层入口会被拒（`Failed("Another operation is in progress")`）
+- 父命令是 `LongRunning`（持有门）时，内部调顶层入口会被拒（`Failed("另一个操作正在进行中，请稍候。")`）
   ⇒ 想嵌住跑子命令必须用 `executeChild()`。
 - 被门拒绝现在会记一条 warning（`Command refused by the serialization gate`）：
   `executeDetached` 的调用方拿不到返回值，否则拒绝会完全无声。
-- 命令内部**不要**用同步 `executeCommand()`：它阻塞当前线程，而该线程可能是 UI 线程或定时器线程
+- 命令内部**不要**用同步 `executeCommandAndWait()`：它阻塞当前线程，而该线程可能是 UI 线程或定时器线程
   （`syncWait` 自己的文档就警告：若该线程的事件循环是任务恢复所必需的，就会死锁）。
   命令内部应 `co_await executeCommandAsync(...)`，或直接用 `executeChild()`。
 
@@ -61,6 +61,160 @@
    -Wnon-virtual-dtor -Woverloaded-virtual -fsyntax-only` 检查本 TU ⇒ **0 警告**。
    剩余仅是全仓 `V_OBJECT_META_DECL;` 多一个分号的 `-Wextra-semi`（宏末尾自带 `;`，且仓库里两种写法并存），
    要统一得单独一轮、全仓改，不在本模块范围（项目并未启用该警告）。
+
+## 第八轮：API / 架构 / 线程安全三轴复核（2026-09-17）
+
+复核方式：读 `CommandManager`/`Command`/`UserIO` 三份头 + 实现 + 本设计文档 + UserIO 文档，写探针实测
+（`/tmp/async_probe2/probe_command_flags.cpp`、`probe_signal_threads.cpp`、`bench_signal.cpp`），基线
+`test_gui` 158/158。结论：**manager 自身的同步面是干净的**（`mutex`/`registry_mutex`/`Chain::mutex`/
+`cancel_generation` + "锁内不跑用户代码" + `admit()` 在临界区外采样 progress 宿主），三处需要动作的地方如下。
+
+| # | 问题 | 证据 | 处理 |
+| --- | --- | --- | --- |
+| E1 | `CommandFlags` 是位标志枚举却没有位运算 ⇒ 用户写不出"长时间且改数据"这种组合 | 编译探针：clang 报 `invalid operands to binary expression ... no implicit conversion for scoped enum`；加上 `V_ENABLE_ENUM_FLAGS` 后 `Undoable\|LongRunning == 5`、`vine::testFlag` 可判位（仓库已在 `RenderApi`/`MessageBoxButton`/`DockAreas`/`DockFeatures`/`ModifierKey` 上这么做，`CommandFlags` 是唯一漏网的） | `Command.hpp` 加 `V_ENABLE_ENUM_FLAGS(CommandFlags)`；删掉 `CommandManager.cpp` 里的本地 `hasFlag`，改用仓库的 `vine::testFlag`（5 处） |
+| E2 | `isRegistered()` 与 `isCommandEnabled()` 实现完全相同，且名字与语义相反（禁用的命令 `isRegistered` 返回 false，却仍在 `names()`/`commandInfos()` 里） | 两者实现是同一段；既有用例断言禁用后 `isRegistered == false` | `isRegistered()` 改为**存在性**（只查注册表：不解析别名、不看 enabled）；`isCommandEnabled()` 保留"能执行"语义并补齐文档。生产代码没有 `isRegistered` 调用者，只有 test_gui 的断言按新语义改写 |
+| E3 | `CommandExecutedEventArgs` 每次执行深拷贝一份 `CommandResult`（含 `std::any` 载荷） | 读码：值成员 `result_` | 改为持 `const CommandResult*`（同步通知，manager 在整个通知期间持有结果），`result()` 仍返回 `const CommandResult&`；文档写明只在通知期间有效。历史仍按值存（它要活得更久） |
+| E4 | `VisualUserIO::currentPrompt_` 跨线程读写：写在**读发起线程**（命令可在定时器/IO 线程恢复后调用 `getXxxAsync`），读在应用线程（`repromptError`） | 读码 + 新用例把"读在非应用线程发起"钉成事实（命令先 `sleepFor(1ms)` 再提示，断言发起线程 ≠ 应用线程） | 提示记帐改成 `PromptState`（`shared_ptr`，避免 posted 回调捕获 `this`），写入挪进"显示提示"那条编组调用 ⇒ 只在应用线程读写；`onApplicationThread` 加断言守住"有事件循环时 inline 路径必须在应用线程" |
+| E5 | `Signal` 本体无同步 ⇒ `executing/executed/commandsChanged` 三个**公开**事件表必须"订阅与命令完成错开" | TSan 探针：一边 `trigger` 一边 `add/removeHandler` ⇒ **12 条 data race**，进程不崩（静默 UB） | 见下节。这是本轮唯一"跨模块"的改动 |
+
+### E5 落实：`Signal` 线程安全化（`src/base/core/sdk/vine/Signal.hpp`）
+
+**做法**：handler 表是**不可变快照**（`std::vector<std::shared_ptr<Slot>>`，`Slot = {callback, atomic<bool> alive}`），
+`subscribe()` 返回 RAII 句柄 `Subscription`（`unsubscribe()`/`isActive()`/`release()`，与 appfw 的
+`EventBus::subscribe()`/`EventBus::Subscription` **同名同形**）。`subscribe/unsubscribeAll` 持一把 mutation mutex 复制-修改-发布；`trigger`
+**不加任何锁**：原子 load 出已发布的表，靠 `shared_ptr` 引用计数把表和槽稳稳持有到遍历结束，逐个检查 `alive`。
+取消一个订阅 = 一次原子写（O(1)，不再复制表）；已取消的槽在下一次 `subscribe()` 复制时顺手 `remove_if` 剔除。
+这与 Qt 的连接表一致（原子指针 + 引用计数的 connection data + 每条连接的失效标记），
+发火线程永远不会等一个订阅操作。
+原有语义全部保留（订阅顺序、发火期间新增的下一轮才生效、发火期间注销的不再被调用、handler 内可增删/
+可重入/可再发火），"一边订阅一边发火"变成有定义。
+
+| 场景（TSan） | 改前 | 改后 |
+| --- | --- | --- |
+| 单线程重入（handler 内 add/remove/再 `trigger`） | 干净，`outer=2 added=1` | **完全相同** |
+| 一边 `trigger` 一边 `add/remove` | **12 条 data race** | **0 条**（把 `alive` 变异成 `bool` 会回到 1 条） |
+
+代价与收益（`bench_signal.cpp`，2e6 次发火，-O2，`taskset` 绑核交替测量）：
+
+| handler 数 | trigger 改前（裸表，有竞争） | trigger 改后 | 订阅+注销 改前 → 改后 |
+| --- | --- | --- | --- |
+| 1 | 12.5 ns | 13.2 ns | 16.3 → 92 ns |
+| 3 | — | 13.6 ns | — → 100 ns |
+| 5 | 27.8 ns | **15.5 ns** | 20.8 → 106 ns |
+| 20 | 104.6 ns | **25.8 ns** | 20.1 → 147 ns |
+
+发火路径不再"每次分配一个 id vector"，遍历连续内存且不取锁；订阅路径按表大小复制（信号本就该在装配期
+订阅），这是刻意取舍。受益方是所有 `Signal` 使用者：`CommandManager` 三个事件、`ConsolePanel` 的
+`lineEntered`/`escapePressed`、`WindowContext` 的 mouse/key/resized、`GuiApplication::theme_changed` 等。
+
+#### 为什么行里存的是 `shared_ptr<Subscription>` 而不是裸 `handler`
+
+这个指针不是为了省一次间接访问，它承载的是"订阅"这个实体本身（早期版本叫 `HandlerNode`，但表已经是平铺的
+`vector<Entry>`，没有图可谈，改名后能自解释）：**订阅的生命周期必须长于任何一次快照**，
+而表只是一份索引。三个替代方案都试过（探针 `/tmp/async_probe2/probe_{b,c}.cpp`）：
+
+| 方案 | 结果 |
+| --- | --- |
+| B：`map<id, handler>` 值存 + 复制-修改-发布（无 `alive`） | **语义被破坏**：发火中注销的 handler 仍被调用（快照里存的是 `std::function` 的副本，删表动不了它）。探针实测 `YES <-- documented semantics violated`；这正是 `RemoveAnotherHandlerDuringEmitSkipsIt` / `ClearDuringEmitStopsTheRest` 钉住的行为 |
+| C：`map<id, {handler, atomic<bool> alive}>` 值存（表地址稳定，靠标记注销） | **编译不过**：`std::atomic` 不可复制/赋值 ⇒ `make_shared<Map>(*cur)` 这一步根本无法表达（`std::is_copy_constructible_v` 在 libstdc++ 上仍报 true，别信它，错误在实例化时才出现） |
+| D：`map<id, handler>` 原地增删 + `trigger` 全程持锁 | **用仓库自己的 `SignalTest.cpp` 实测过**：`std::mutex` 版在 `RemoveSelfDuringEmitIsSafe`（handler 注销自己）**挂死**（`timeout` = 124）；换成 `std::recursive_mutex` 后不死锁，但 `AddDuringEmitTakesEffectNextEmit` **失败**（`{1,100,2,200,200}` vs `{1,2,200}`：发火期间新增的 handler 在本轮就被走到了），`ClearDuringEmitStopsTheRest` **段错误**（139，原地 `clear()` 使遍历迭代器失效）。即：handler 内不允许增删/再发火才可能，而那是仓库已有用例钉住的契约 |
+
+所以：`Subscription` = 订阅的身份（`alive` 标志在快照之外，异步可见）+ 让每次改表的复制退化成 N 次
+`shared_ptr` 引用计数自增（不分配、不拷贝 `std::function`）。代价是每次订阅多一次小分配，
+在装配期路径上，可接受。
+
+同理，`Slot::alive` 必须是 `std::atomic<bool>`：读它的 `trigger()` 在遍历时**不持锁**，而写它的是
+`unsubscribe()`（纯原子写，连 mutation mutex 都不取，所以取消是 O(1)）与 `unsubscribeAll()`（持锁批量标记）——
+一把锁只保护"双方都拿它"的访问。实测（只把 `alive` 改成普通 `bool`，其余不动）：
+TSan 在 `probe_signal_threads` mode1 报 **1 条 data race**（`trigger` 读 / `removeHandler` 写），改回 atomic 后 **0 条**；
+而 -O2 基准两者相同（20 handler：60.6 vs 60.0 ns/次）——1 字节 lock-free，acquire load 在 x86 上就是普通 `mov`，
+去掉它换不来性能，只换来 UB。"加锁"两条路都不可行：锁包住整次遍历 ⇒ handler 自注销时自死锁
+（`probe_lock_during_trigger.cpp`，3 秒超时 = 124），锁只包住每次标志检查 ⇒ 每次发火 N 次 `lock/unlock`，
+且与 `add/remove` 抢同一把锁（发火线程之间也随之串行化）。
+
+#### 表的形状（`vector`）与发布方式（Qt 式原子发布）
+
+两种选择分别实测过，全部在同一台机上交替测量（`/tmp/async_probe2/`：`bench_qt` = 现方案，`bench_final` = 锁内取快照，
+`bench_old` = 第一版 `map` + `atomic<shared_ptr>`，变异脚本 `make_variant_{vec,vec2}.py`）：
+
+| 变体 | 发火 1 / 5 / 20 handler | 订阅+注销（20） | 说明 |
+| --- | --- | --- | --- |
+| `std::map` + `atomic<shared_ptr>`，发火零锁 | 13.1 / 17.7 / 59.7 ns | 562 ns/对 | 第一版：语义正确，但表是红黑树 |
+| `std::vector<Entry>` + 锁内取快照 | **6.6** / 11.2 / 27.2 ns | 110 ns/对 | 单线程最快，但发火要抢 `add/remove` 那把锁 |
+| `std::vector<Entry>` + `atomic<shared_ptr>` 发布（**现方案，Qt 同构**） | 13.2 / 15.5 / **24.8** ns | 147 ns/对 | 发火不取锁；空表/1 handler 多花 ~7 ns（libstdc++ 的 `atomic<shared_ptr>` 内部有自旋锁），20 handler 反而比锁内取快照快 2.4 ns |
+| `std::vector<SubscriptionPtr>`（id 放进 Subscription） | 6.8 / 12.0 / 27.6 ns | 108 ns/对 | 与 Entry 版等价（发火略差、订阅略好），按发火优先选 Entry |
+
+- **表用 vector**：id 单调递增，表只会被扫描和追加，红黑树（每次访问跳节点、每次复制重建整树）没有收益。
+  20 handler：发火 62.6 → 24.8 ns，订阅+注销 538 → 147 ns/对。`removeHandler` 退化成线性查找，
+  但那一次复制本来就是 O(H)，复杂度不变。
+- **发布用 Qt 同构的原子发布**（不用锁内取快照）：换来"发火永不取锁、永不等订阅"，代价是 1-5 handler 多 ~7 ns，
+  20 handler 反而更快。真实事件（1-3 个订阅者）两条路径都是十几 ns 量级，取语义与可预测性。
+- **并发**（20 handler）：2 线程 115 → 89 ns（原子发布更好），4 线程 106 → 123 ns（锁内取快照更好），
+  1 handler：2 线程 61 → 77、4 线程 67 → 117（锁内取快照更好）—— 两边的差异都在可容忍范围，没有单向胜负。
+- **试过但否决**：`make_shared<HandlerTable>` 换成 `shared_ptr(new HandlerTable)`（控制块与 vector 元数据不同 cache line）
+  ——2 线程 h=20 改善约 10%，但每次订阅 +12 ns，不划算。
+- **不用 `atomic<shared_ptr>` 的理由不成立**（上一轮曾据此改过一次，本轮按"与 Qt 一致"改回）：
+  `is_lock_free()` 确实是 false，但那只是"内部有自旋锁"，它不会阻塞在用户代码上、不会与 mutation mutex 互相等待，
+  也就不会死锁；Qt 的 `ConnectionDataPointer` 本质上也是同一套（原子指针 + 引用计数）。
+
+#### 与 Qt 的对应关系（"跟 Qt 保持一致"的落地清单）
+
+| Qt（`QObject` 内部） | 这里 |
+| --- | --- |
+| `QObjectPrivate::ConnectionData`：原子指针 + `ref` 引用计数 | `std::atomic<std::shared_ptr<const HandlerTable>>`：标准库形式的同一套（原子指针 + 引用计数），值语义更安全 |
+| `Connection` 自带 `ref`，发火期间被引用计数钉住 | `shared_ptr<Slot>`，快照持有它直到遍历结束 |
+| `disconnect()` 置 `c->receiver = nullptr`；发火中尚未走到的槽被跳过，正在跑的跑完 | `alive.store(false, release)`；`RemoveAnotherHandlerDuringEmitSkipsIt`/`ClearDuringEmitStopsTheRest` 钉住同一语义 |
+| `connect`/`disconnect` 取 `signalSlotLock`；`QMetaObject::activate` **不取锁** | `subscribe`/`unsubscribe`/`clear` 取 `mutation_mutex_`；`trigger` **不取锁** |
+| `blockSignals()` / `signalsBlocked()`（返回旧值） | `setBlocked()` / `isBlocked()`（同样返回旧值） |
+| 发火期间 `connect` 的新连接何时生效：实现定义、无文档保证 | 钉死为"下一轮才生效"（`AddDuringEmitTakesEffectNextEmit`） |
+| 连接句柄 `QMetaObject::Connection`（`isValid()`、可 `disconnect()`） | `Subscription`（`isActive()`、`unsubscribe()`）—— 与本仓库 `EventBus::Subscription` 同名同形 |
+
+#### RAII 断连：`subscribe()` 返回 `Subscription`（= appfw 的 `EventBus::Subscription`）
+
+只有一个入口 `subscribe()`，它返回**移动语义的 RAII 句柄** `Subscription`：析构即取消，`unsubscribe()` 幂等且可从
+handler 内部调用，`isActive()` 查询，`release()` 放弃管理但保留订阅（对象自己的内部接线用）。因为没有 id 了，
+**取消不再需要复制表**（旧 `removeHandler(id)` 要 `find_if` + 复制 + erase），现在只是一次原子写。
+
+| 行为 | 实现 | 钉住它的用例 |
+| --- | --- | --- |
+| 离开作用域即取消 | `~Subscription()` → `alive = false` | `SubscriptionCancelsOnDestruction` |
+| 可移动、**不可拷贝**（只有一个所有者会取消） | 手写 move + `weak_ptr` 成员 | `SubscriptionIsMovableAndUnsubscribeIsIdempotent` |
+| 给成员重新赋值 = 取消旧订阅（`handler_ = sig.subscribe(...)`） | move-assign 先 `unsubscribe()` | `AssigningASubscriptionCancelsThePreviousSubscription` |
+| `release()`：不管理但不取消 | `slot_.reset()` | `ReleasedSubscriptionStaysSubscribed` |
+| **Signal 先死也安全**：句柄只持 `weak_ptr<Slot>`，不持 Signal 指针 | `slot_.lock()` 失败即无操作 | `SubscriptionOutlivingTheSignalIsInert`（ASan 下跑） |
+| Signal 释放后**地址被新 Signal 复用**也无害：句柄认的是槽，不是地址 | 新 Signal 的槽是新的控制块，句柄仍 inert | `SubscriptionOfADestroyedSignalStaysInertOnAReusedAddress` |
+| **发火过程中 Signal 被销毁**（连 handler 里 `delete signal` 也算）：`trigger` 取到快照后不再碰 `this` | 表与槽由快照的引用计数保活，剩下的 handler 照常跑完 | `DestroyingTheSignalFromInsideAHandlerIsSafe`（ASan 下跑；把成员读取挪进遍历的变异版会报 heap-use-after-free） |
+| 反复订阅/取消不会让表变长 | `addSlot()` 复制表时顺手 `remove_if(!alive)` | — |
+
+**没被覆盖的**：另一个线程正在 `subscribe()`/`trigger()` 时析构 Signal——那是普通的对象生命周期 UB，与 Qt 相同：谁拥有对象谁负责协调
+（应用里的做法是订阅放成员 + 宿主析构前先 `setBlocked(true)` 并停线程）。
+
+三个变异验证（删掉析构里的 `unsubscribe()` / 删掉 move-assign 里的 `unsubscribe()` / 让 `trigger` 在遍历中再读成员）
+各自只打红对应的那一条用例。Signal 用例 8 → **16**，TSan 0 告警，ASan+LSan PASS。
+
+**`[[nodiscard]]` 是刻意的**：句柄即所有权，丢掉返回值 = 订阅完立刻取消，所以每条 `subscribe` 必须要么绑定句柄、
+要么显式 `release()`。仓库里真实调用点已全部迁移：`MainWindow`/`ConsolePanel`/`VisualUserIO`/`ConsoleLogRouter` 用
+成员或全局 `Subscription`（删掉了拆除路径里的 `removeHandler` 与 `Application::current()` 查找），
+`RibbonAction`/`RibbonButton`（给自己的信号接线）与 `test_window` 的各用例显式 `.release()`。
+
+**顺带发现的既有缺陷（未改）**：`MainWindowImpl::~MainWindowImpl()`、`ConsolePanel::~ConsolePanel()` 先
+`if (auto* app = obj_cast<GuiApplication>(Application::current()))` 再 `removeHandler` —— 若此刻
+`Application::current()` 已经为空（关闭顺序一变就会），handler 不会注销，而它捕获的正是正在析构的 `this`，
+下次 `theme_changed` 发火就会调到悬垂对象。改成 `Connection` 成员可根治：弱引用不依赖
+`Application::current()`，移除那两处 `removeHandler` 与 `obj_cast` 即可。
+- **试过但否决**：`make_shared<HandlerTable>` 换成 `shared_ptr(new HandlerTable)`（控制块与 vector 元数据分属不同
+  cache line）——2 线程 h=20 改善约 10%（121 → 104-117），但每次订阅 +12 ns（113 → 126），不划算。
+
+### 本轮评估但**未改**（记档）
+
+- **`commandsChanged` 不带载荷**：消费方（控制台补全）只能全量重取 `commandInfos()`；要增量更新就给
+  EventArgs 加 `kind/name`，属 API 扩展，等有实际痛点再做。
+- **`std::any` 作为命令结果**：跨插件 ABI 的类型擦除是刻意的（模板/variant 在 DLL 边界不友好），代价是运行时
+  类型检查 + 拷贝；本轮已去掉事件里那份拷贝。
+- **"manager 必须长于所有命令帧"仍是契约而非类型保证**：让 `ChainGuard`/`Context` 持 `shared_ptr<Impl>`
+  可把它变成类型保证，但要求 `Impl` 与 `CommandManager` 对象寿命解耦，属单独一轮的所有权改造。
+- **`Command::name()/group()/description()` 值返回**：`String` 有 SSO，短名不分配；改成 `const String&`/view
+  要动虚函数签名与插件 ABI，收益不抵成本。
 
 ## 第七轮：内部结构重构（2026-09-11，行为不变）
 
@@ -102,11 +256,12 @@
 | D16 | 两个排他命令从不同线程并发提交 | **真缺陷**（探针：`a=0 b=0 max_concurrent=2`）：排他命令本来就绕过串联门（这正是「接管」的含义），两个都过了门就并发跑，排他性失效 | 新增 `Impl::exclusive_busy`：与门检查同处一个临界区，运行中的顶层 Exclusive 持有、由它的 `ChainGuard` 释放。改后峰值并发 = 1（用例 `CommandManager_ExclusiveCommandsAreSerialized`；改前为 2，可判别）。**接管仍正常**：后到者先等前者收尾，再被放行——用例里两种结局都断言了 |
 | D17 | 工厂里重入注册表（注册/注销/列举/查询） | **安全**（探针 + 用例）：工厂在 `registry_mutex` 之外调用 | 已加用例 `CommandManager_ReentrantFactoryIsSafe` 钉住 |
 | D18 | `executed` 处理函数里再跑命令、注销刚跑完的命令、增删处理函数 | **安全**（探针 + 用例）：通知在所有锁之外；`Signal` 先取 id 快照再查找，所以同线程内重入增删是安全的（新增的本轮不生效、注销的不再调用） | 已加用例 `CommandManager_ReentrantEventHandlerIsSafe` 钉住 |
-| D19 | `executing`/`executed` 的事件表本身不是线程安全的（`Signal` 无锁，`trigger` 快照 + 查找） | **真约束**（读代码）：命令在任意线程结束，而订阅方在主线程 `addHandler` ⇒ 数据竞争 | 属仓库级 `Signal` 约定，本轮**只文档化**：两个事件的注释 + 本节明确「同线程内重入增删安全；跨线程且可能有命令正在结束时不行，订阅请放在启动期」。要根治得改 `Signal`（全仓）或改成总线事件（改语义） |
+| D19 | `executing`/`executed` 的事件表本身不是线程安全的（`Signal` 无锁，`trigger` 快照 + 查找） | **真约束**（读代码）：命令在任意线程结束，而订阅方在主线程 `subscribe` ⇒ 数据竞争 | 当时只文档化（「订阅请放在启动期」）。**已根治**：2026-09-17 把 `Signal` 本体改成线程安全（不可变快照 + 原子发布，与 Qt 连接表同构），见下节「第九轮」；事件注释里的启动期限制不再需要 |
 | D20 | `setCommandEnabled` 的读-改-写（读数组 → 改 → 写数组）不是原子的 | **真但极难触发**（只有 UI 线程调它；`ConfigManager` 自身读写是加锁的，所以无数据竞争，只有丢失更新） | **有意不加**管理器侧互斥：`ConfigManager::setStringArray()` 会在释放自身锁后触发 `changed`，处理器可能重入 `setCommandEnabled`，加一把跨该调用的锁会自锁。留档，建议将来在 ConfigManager 侧提供「原子增删数组元素」 |
 
 结论：**命令的虚函数、工厂、事件处理函数、快照回调在同线程内重入是安全的**（无锁 + Signal 快照语义），
-跨线程只有两条约束：事件表的增删要在无并发完成时进行（D19），禁用偏好的读写不要两个线程同时写（D20）。
+跨线程的约束只剩一条：禁用偏好的读写不要两个线程同时写（D20）——事件表的增删**已安全**（第九轮把 `Signal`
+本体改成线程安全，D19 根治）。
 
 ## 第五轮审查（边界情况，2026-09-11）
 
@@ -120,6 +275,7 @@
 | D12 | Exclusive 等待期间有新链被别的线程准入（快照之后） | 真（窗口收窄但未消除）：接管时看不到"稍后启动"的链 | 已知窗口，记档；要彻底消除需要"关门"状态（管理器拒绝新顶层命令），属于后续设计 |
 | D13 | `cancelAll()` 无法中断正在等待排空的 Exclusive 命令 | 真：等待方还没建链，不在活跃链注册表里，只能等满上界（关停时白等 2s） | **已修**：新增 `Impl::cancel_generation`（原子计数，`cancelAll()`/`cancelAllAndWait()` 自增）。接管在发出停止请求之后采样它，等待循环发现变化就以 `TakeOverOutcome::Cancelled` 提前返回（命令结果为 `Cancelled`），而不是 `StillStopping` 的 `Failed` |
 | D14 | `VisualUserIO::pending_` 跨线程读写（命令线程写、宿主/UI 线程读） | 真（既有竞争，非本轮引入）：`cancelPendingInput()` 只是多了一个读点 | 记档；修它要把 `pending_` 改成原子类型并改若干 switch，单独一轮做 |
+| D14′ | 同上 | 已在 UserIO 审查轮修掉（U6：`pending_`/`cancelled_` 改 `std::atomic`） | **本行已过时**，以上是当时的记档 |
 | D15 | 贴出的失败消息在关停期间投递 | 经核实**安全**：`ApplicationData` 的声明顺序保证 `main_dispatcher` 最后销毁、`user_io` 先于 `command_manager` 销毁，而消息只可能被应用线程在 `EventBus::shutdownGracefully()` 派发时消费，那时两者都还活着 | 无需改动 |
 
 ## 第四轮审查（8 点：缺陷 → 修复，2026-09-10）
@@ -133,7 +289,7 @@
 | D2 | Exclusive 只取消 `foreground` 链 ⇒ 被别的顶层命令顶出前台的后台链与之并发（不变量 8 失效） | 探针：`takeover=Success` 且后台链仍在跑 | `takeOverForeground()` 改为取活链快照、对**全部**活链 `request_stop()` 并等待全部收尾；超时仍以 `Failed` 拒绝 |
 | D3 | 被取消的嵌套子命令在 `throw` 上抛前不 `report()` ⇒ 没有 `executed` 事件、不进历史（可 `executing` 已经发出） | 探针：child `executing=1 executed=0`、`history=1` | 上抛前先 `report(..., Cancelled)` |
 | D4 | 关停时既不取消也不等待命令链；`~CommandManager` 也无保护 ⇒ 活帧在管理器销毁后恢复即 UAF | 代码：全仓无 `cancelAll()` 生产调用；`Application::shutdown()` 不碰管理器 | 新增 `cancelAllAndWait(timeout)`；`Application::shutdown()` 第一步调用（超时只记 warning）；`~CommandManager` 若发现活链则告警（不在析构里阻塞） |
-| D5 | `Impl::admit()` 持 `mutex` 调 `ProgressHost::current()`（取 progress 模块的**全局**锁），与"锁内不跑外部代码/不与 progress 锁嵌套"的注释矛盾 | 代码 | 进临界区前采样 `ambient_host_busy` |
+| D5 | `Impl::admit()` 持 `mutex` 调 `ProgressHost::current()`（取进度注册表的**全局**锁），与"锁内不跑外部代码/不与进度锁嵌套"的注释矛盾 | 代码 | 进临界区前采样 `ambient_host_busy` |
 | D6 | `waitDrained` 用 `withTimeout(AsyncEvent)` 做有界等待：超时会**从定时器线程销毁**仍排队的 waiter，而 `AsyncEvent::set()` 在弹出 waiter 后**锁外** resume ⇒ 可能 resume 已释放的帧（`async_global.hpp` 把该窗口明确划给调用方） | 代码（未复现，窗口为微秒级） | 删除 `Chain::drained`，改为 5ms 切片轮询 `runs`（`Impl::waitChainsDrained`） |
 | D7 | `setCommandEnabled()` 不解析别名 ⇒ 按别名禁用无效（执行路径会解析），而 `isCommandEnabled(别名)` 仍返回 true（API 自相矛盾） | 代码 | `resolveName()` 后再写偏好与标记 |
 | D8 | `executeCommandAsync(Command*)` 的 `command->name()`（虚函数 + `String` 拷贝）与 `isDisabledRegistration()` 在 try 之外 ⇒ 与不变量 7 冲突（会抛给 UI 调用方） | 代码 | 移入 try 块 |
@@ -142,7 +298,7 @@
 
 | # | 指控 | 核实结果 | 处理 |
 | --- | --- | --- | --- |
-| 1 | Exclusive 等待超时后静默放行 ⇒ 双链并发 | **真缺陷**：仅 `V_LOGW` 就继续执行，排他契约被破坏 | 改为 **Fail-Safe 拒绝**：`Failed("Another operation is still stopping")` + 错误日志 |
+| 1 | Exclusive 等待超时后静默放行 ⇒ 双链并发 | **真缺陷**：仅 `V_LOGW` 就继续执行，排他契约被破坏 | 改为 **Fail-Safe 拒绝**：`Failed("另一个操作仍在收尾，请稍后再试。")` + 错误日志 |
 | 2 | 串联门 `ProgressHost::current()` TOCTOU | **真缺陷**：检查与占用分离，两个顶层长任务可同时通过 | 门检查 + `foreground` 赋值 + 占用标志写入同一临界区 |
 | 3 | 链式别名只解析一层 | **真**（功能性缺陷，且环路会死循环） | `resolveName` 迭代解析 + visited 防环；列举按最终目标挂别名 |
 | 4 | `executeDetached` 异常导致 `std::terminate` | **真缺陷**（已核实 `DetachedTask::promise_type::unhandled_exception()` 无 handler 时直接 terminate；树内 `VisualUserIO::executeInput` 的 DetachedTask 无 try/catch） | 异常在**顶层入口收口**为 `Failed` 结果（含工厂、快照、事件回调），detached 包装再叠一层兵底 catch |
@@ -176,7 +332,7 @@
    `std::stop_token` 永远指向有效的源，不存在"令牌随源被替换而失效"。
 3. **历史与命令生命周期解耦**：历史只保存值快照；命令对象在协程返回时即销毁。
 4. **锁内不跑用户回调**：命令 `execute()`、工厂、快照回调、事件回调、命令虚函数（`name()`/`getType()`）
-   都在所有锁之外；`ProgressHost::current()`（progress 模块的全局锁）也在 `mutex` 之外采样。
+   都在所有锁之外；`ProgressHost::current()`（进度注册表的全局锁，宿主现在属于 appfw）也在 `mutex` 之外采样。
    锁内只做容器操作与存储值的拷贝（`String`/`std::any` 的值拷贝，属数据而非回调）。
 5. **链只有在自身帧彻底收尾后 `runs` 才归零**：先弹栈项、再析构 `ProgressHost`，最后才
    `leaveChain()`；门标志在归零前释放，所以轮询到零的等待者看到的是干净状态。
@@ -246,12 +402,12 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   - `isCommandEnabled(name)`：仅"已注册且启用"为 true。
   - `disabledCommands()` / `static disabledConfigKey()`（`commands.disabled` 字符串数组，
     与 `PluginManager::disabledConfigKey()` = `plugins.disabled` 对称）。
-  - ⚠️ `isRegistered()` 语义收紧为"**能执行**"：禁用的命令返回 false（禁用项仍在 `names()` /
-    `commandInfos()` 里，需要"存在性"请查这两者）。
+  - `isRegistered(name)`：**存在性**（只查注册表，不解析别名、不看 enabled）。禁用项仍在
+    `names()`/`commandInfos()` 里；"能不能执行"问 `isCommandEnabled()`。
 - **两个入口都要把关**：
-  - 按名字：`createCommandByName()`（顶层 `executeCommand(name)` 与 `context->executeChild(name)`
+  - 按名字：`createCommandByName()`（顶层 `executeCommandAndWait(name)` 与 `context->executeChild(name)`
     都走它）返回 nullptr，并通过 out 参数 `disabled` 区分"禁用"与"未注册"。
-  - 按实例：`executeCommand(Command*)` / `executeCommandAsync(Command*)` 本来完全绕过注册表，
+  - 按实例：`executeCommandAndWait(Command*)` / `executeCommandAsync(Command*)` 本来完全绕过注册表，
     禁用形同虚设；现在先查 `Impl::isDisabledRegistration(command->name())`——**只有"注册了且被禁用"**
     才拒绝（实例名未注册的临时命令照旧能跑，否则一堆本地命令会被误伤）。
 - **持久化路径**：`registerCommand()` 里读偏好（`Impl::isDisabled()`）决定新注册项的 `enabled`。
@@ -279,7 +435,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   `request_stop()`，再 `co_await Impl::waitChainsDrained(...)`：等待是**协作式**的
   （每 5ms 切片挂起本协程而不是阻塞线程），因此被取消的链仍能在原线程继续收尾；等待有上界
   `CommandManager::exclusiveDrainTimeout()`（默认 2s）。
-  超时 ⇒ 命令以 `Failed("Another operation is still stopping")` 拒绝，**不会**与旧链并发执行。
+  超时 ⇒ 命令以 `Failed("另一个操作仍在收尾，请稍后再试。")` 拒绝，**不会**与旧链并发执行。
   接管成功则在自己的新链上运行并绕过串联门。
   **只停前台链是不够的**：一条被 `executeDetached()` 启动、随后被别的顶层命令顶出前台的链
   不再是前台，但它仍在跑；只取消前台会让排他命令与它并发（第 4 轮审查 D2，已有用例
@@ -299,8 +455,15 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   被取消的嵌套子命令上失效。
   快照回调失败 ⇒ 不执行该 Undoable 命令（否则后续 undo 会回到不存在的状态）。
 - **嵌套深度**：`Context::executeChild` 在 `chain_->stackSize() >= maxChainDepth()` 时拒绝并返回 `Failed`，
-  自我递归命令最多 64 层。
-- **历史容量**：`deque` 满 `maxHistoryEntries()` 时 `pop_front()`，`historyAt(0)` 始终是“仍保留的最早一条”。
+  自我递归命令最多 64 层。两个重载（按名字 / 传入实例）走同一处检查。
+- **嵌套形态两种**（2026-09-17 新增第二种）：按名字（注册表建实例）与**传入实例**
+  （`executeChild(std::unique_ptr<Command>)`，参数由父命令给、无法预注册）。实例重载先拒 `nullptr`
+  （`Command is null`）与"名称已注册且被禁用"的实例（与顶层按实例入口同规则，防止绕过禁用），
+  并接过实例所有权：参数活在执行帧里，子命令结束后随帧析构。子命令以它自己报告的名字进
+  事件与历史，未注册则不出现在 `commandInfos()` 里。
+- **历史容量与内容**：`deque` 满 `maxHistoryEntries()` 时 `pop_front()`，`historyAt(0)` 始终是“仍保留的最早一条”。
+  历史**不保留结果载荷**（`CommandResult::data()` 的 `std::any`）：条目数有界时字节数才会随之有界，
+  否则"最近 1024 次运行的载荷之和"可以到 GB 级；载荷属于发起那次执行的调用方。
 - **活跃链注册表**：只在 `mutex` 下维护 `weak_ptr`（不延长链寿命），每次登记/取快照前
   顺带清理已结束项，因此注册表大小 = 活链数。`cancelAll()`、`cancelAllAndWait()` 与
   Exclusive 接管共用 `Impl::collectLiveChains()`。
@@ -341,6 +504,11 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   所在的链，永远等不到（只会在上界后返回 false，关停还会带着活帧往下走）。命令要退出应用时
   用 `Application::quit()`（停止主循环），由宿主在 `run()` 返回后收尾。
 
+- **跨线程碰 UI 的写法**：命令可能在任意线程恢复，要回到应用线程就用
+  `co_await app->mainThreadDispatcher()->resumeOnMainThread()`（2026-09-17 新增，见
+  `MainThreadDispatcher.hpp`；协程式，与事件处理函数里的"自己编组"是同一条规则）；
+  没有事件循环时它不挂起，直接在调用线程继续。回调式场景仍用 `postToMain()`。
+
 ## 测试映射（tests/test_gui/test_gui.cpp）
 
 - `CommandManager_HistoryRecordsValueSnapshots`：值快照、越界 `nullopt`、取消注册后仍可读
@@ -370,7 +538,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
 - `CommandManager_AsyncTopLevelCallInsideCommandOpensNewChain`：命令内部 `co_await` 异步顶层入口 ⇒
   子命令在新链上运行（深度 1）、运行期间它就是前台链；子链结束后前台**不恢复**成父链
   （父命令仍在跑但 `currentCommand()` 为 nullptr、`runningCount()` 为 0）。
-- `CommandManager_NestedSyncExecuteCommandDoesNotDeadlock`：命令/协程内同步调 `executeCommand` 不自锁（但仍建议用 `executeChild()`）。
+- `CommandManager_NestedSyncExecuteCommandDoesNotDeadlock`：命令/协程内同步调 `executeCommandAndWait` 不自锁（但仍建议用 `executeChild()`）。
 - `CommandManager_UndoableSnapshotHandlerRunsBeforeExecution`：快照先于命令体；快照抛异常 ⇒ 命令不执行且返回 Failed；
   清空回调后不再被调用。
 - `CommandManager_CommandExceptionBecomesFailedResult` 内含空 `what()` 的兑底消息验证。
@@ -388,6 +556,11 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   `CommandManager_CancelAllAndWaitFromInsideCommandCannotSucceed`（钉住 D10 的限制）、
   `CommandManager_CancelAllAbortsWaitingTakeOver`（等待接管的排他命令被 `cancelAll()` 立刻打断，
   结果为 Cancelled 且命令体未执行）。
+- 第 10 轮新增（2026-09-17）：`CommandManager_ExecuteChildRunsACallerSuppliedInstance`
+  （实例进父链：深度 2 而非 1；执行期实例活着、回到父命令时已随帧销毁；未注册名字不进列举）、
+  `CommandManager_ExecuteChildRefusesNullAndDisabledInstances`（null ⇒ `Command is null`；
+  用户禁用了某名字 ⇒ 父命令拿同名实例也不能绕过）、
+  `CommandManager_ExecuteChildBoundsInstanceNesting`（实例形态自我递归同样在 `maxChainDepth()` 处被拒）。
 - 第 6 轮新增：`CommandManager_ReentrantFactoryIsSafe`、`CommandManager_ReentrantEventHandlerIsSafe`（重入注册表/事件回调安全）、
   `CommandManager_ExclusiveCommandsAreSerialized`（并发提交的排他命令不重叠）。
 

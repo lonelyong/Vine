@@ -6,6 +6,7 @@
 #include <mutex>
 
 #include <vine/async/AsyncEvent.hpp>
+#include <vine/appfw/ConsoleProgressReporter.hpp>
 #include <vine/appfw/UserIO.hpp>
 
 V_APPFW_NS_BEGIN
@@ -62,6 +63,12 @@ class ConsoleUserIO : public UserIO {
     /// Waits for the next line of stdin; std::nullopt when the read was cancelled
     /// or the stream ended.
     vine::async::Task<std::optional<String>> readLineAsync(const String& prompt);
+    /// Writes one line of output.
+    ///
+    /// Non-virtual on purpose: the progress reporter is a member, so it is still
+    /// writing while the rest of this object is being destroyed - a virtual call
+    /// there would dispatch to UserIO::putString(), which is pure.
+    void writeLine(const String& str);
 
   private:
     std::shared_ptr<StdinReader> reader_;
@@ -71,6 +78,12 @@ class ConsoleUserIO : public UserIO {
     bool                         slot_busy_{ false };
     /// Guards stdout so concurrent writers cannot interleave half a line.
     std::mutex                   output_mutex_;
+    /// Prints the progress of a LongRunning command as throttled console lines:
+    /// the headless counterpart of the GUI presenter, and the only consumer of
+    /// the ambient progress registry in a host without a GUI.
+    ///
+    /// Declared last so it is destroyed first, while output_mutex_ is still usable.
+    std::unique_ptr<ConsoleProgressReporter> progress_;
 };
 
 V_APPFW_NS_END

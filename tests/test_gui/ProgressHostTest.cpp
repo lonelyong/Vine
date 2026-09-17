@@ -5,11 +5,11 @@
 #include <chrono>
 #include <thread>
 
-#include <vine/progress/ProgressHost.hpp>
+#include <vine/appfw/ProgressHost.hpp>
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
 
-using vine::progress::ProgressHost;
+using vine::appfw::ProgressHost;
 using vine::progress::ProgressRange;
 using vine::progress::ProgressScope;
 
@@ -40,7 +40,7 @@ TEST(ProgressHostTest, HostBecomesActiveAndClears)
 
 TEST(ProgressHostTest, ReportsProgressThroughScope)
 {
-    ProgressHost host;
+    ProgressHost  host;
     constexpr int n = 10;
     {
         ProgressScope scope(host.range(), "Exporting", n);
@@ -56,7 +56,7 @@ TEST(ProgressHostTest, ReportsProgressThroughScope)
 
 TEST(ProgressHostTest, CancelRequestsStop)
 {
-    ProgressHost host;
+    ProgressHost  host;
     ProgressScope scope(host.range(), "Cancel", 1);
     EXPECT_FALSE(scope.isCancelled());
 
@@ -187,7 +187,7 @@ TEST(ProgressHostTest, ForegroundStackPushRestoresOnDestroy)
 
 TEST(ProgressHostTest, PositionIsReadableFromOtherThread)
 {
-    ProgressHost     host;
+    ProgressHost      host;
     std::atomic<bool> done{ false };
 
     std::thread worker([&] {
@@ -208,6 +208,81 @@ TEST(ProgressHostTest, PositionIsReadableFromOtherThread)
 
     EXPECT_NEAR(host.indicator().position(), 1.0, 1e-9);
     EXPECT_GE(last, 0.0);
+}
+
+TEST(ProgressHostTest, ChangedFiresOnRegistrationLabelAndForeground)
+{
+    int  events  = 0;
+    auto handler = ProgressHost::changed().subscribe([&events] { ++events; });
+
+    ProgressHost host;
+    EXPECT_EQ(events, 1); // 注册
+
+    host.setLabel("导入");
+    EXPECT_EQ(events, 2);
+    host.setLabel("导入");
+    EXPECT_EQ(events, 2); // 标签没变：不打扰观察者
+
+    host.setForeground(true);
+    EXPECT_EQ(events, 3);
+    host.setForeground(true);
+    EXPECT_EQ(events, 3); // 已经在前台栈里：不重复通知
+
+    host.setForeground(false);
+    EXPECT_EQ(events, 4);
+}
+
+TEST(ProgressHostTest, ChangedFiresWhenTheLastHostIsGone)
+{
+    int  events  = 0;
+    auto handler = ProgressHost::changed().subscribe([&events] { ++events; });
+
+    {
+        ProgressHost host;
+        host.setForeground(true);
+        EXPECT_EQ(events, 2);
+    }
+
+    // 宿主析构要发通知，否则呈现者永远停在"还在跑"。
+    EXPECT_EQ(events, 3);
+    EXPECT_EQ(ProgressHost::current(), nullptr);
+}
+
+TEST(ProgressHostTest, ChangedIsCoalescedToPercentSteps)
+{
+    ProgressHost host;
+
+    int  events  = 0;
+    auto handler = ProgressHost::changed().subscribe([&events] { ++events; });
+
+    constexpr int kItems = 10'000;
+    {
+        ProgressScope scope = host.scope("coalesce", kItems);
+        for (int i = 0; i < kItems; ++i) {
+            scope.next(1);
+        }
+    }
+
+    // 一万个条目只该通知约 100 次（每个百分点一次），不是一万次。
+    EXPECT_GE(events, 100);
+    EXPECT_LE(events, 103);
+}
+
+TEST(ProgressHostTest, ChangedIsSilentAfterTheHandleIsGone)
+{
+    int events = 0;
+    {
+        auto handler = ProgressHost::changed().subscribe([&events] { ++events; });
+        {
+            ProgressHost host;
+            EXPECT_EQ(events, 1); // 注册
+        }
+        EXPECT_EQ(events, 2); // 注销，句柄还在
+    }
+
+    // 句柄析构即取消订阅：之后的变更不再打扰它。
+    ProgressHost other;
+    EXPECT_EQ(events, 2);
 }
 
 } // namespace

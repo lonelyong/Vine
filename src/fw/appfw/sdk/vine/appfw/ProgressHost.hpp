@@ -1,28 +1,32 @@
-﻿#pragma once
+#pragma once
 
-#include "progress_global.hpp"
+#include "appfw_global.hpp"
 
+#include <mutex>
 #include <stop_token>
 #include <string>
 #include <vector>
 
+#include <vine/Signal.hpp>
+
 #include <vine/progress/ProgressIndicator.hpp>
+#include <vine/progress/ProgressRange.hpp>
+#include <vine/progress/ProgressScope.hpp>
 
-V_PROGRESS_NS_BEGIN
-
-class ProgressRange;
-class ProgressScope;
+V_APPFW_NS_BEGIN
 
 /**
  * @brief Ambient per-operation progress host (RAII).
  *
  * A host wraps the progress state of one long-running operation: a
- * ProgressIndicator, an owned cancellation source and an optional stage label.
- * It registers itself in a process-wide registry for the duration of the
- * operation, so code running inside the operation can reach it and the UI can
- * observe all running operations.
+ * ProgressIndicator (the progress arithmetic lives in the progress module), an
+ * owned cancellation source and an optional stage label. It registers itself in a
+ * process-wide registry for the duration of the operation, so code running inside
+ * the operation can reach it and the UI can observe all running operations. That
+ * registry, the foreground stack and the change signal are application state, which
+ * is why the host lives here rather than next to the arithmetic it drives.
  *
- * Multiple hosts may be active concurrently. LongRunning operations form a
+ * Multiple hosts may be active concurrently. LongRunning commands form a
  * foreground stack: nested LongRunning commands push their host on top of the
  * parent's, so the innermost running command drives the main progress bar, and
  * when it ends the parent's host is restored automatically. Hosts outside the
@@ -30,10 +34,10 @@ class ProgressScope;
  * indicator. New hosts are background by default; the command layer promotes
  * LongRunning commands with setForeground(true).
  *
- * The host performs no presentation; the UI layer (e.g. a progress presenter)
- * polls current()/activeHosts() and the indicators from the main thread.
- * Position updates are thread-safe, so the operation may report progress from
- * a worker thread while the presenter renders on the main thread.
+ * The host performs no presentation; a presenter subscribes to changed() and
+ * renders current()/activeHosts() when it is called, so nothing has to poll.
+ * Position updates are thread-safe, so the operation may report progress from a
+ * worker thread while the presenter renders on the main thread.
  *
  * Operations report progress by carving scopes out of the root scale. Prefer
  * the scope() helper, which hides the one-shot ProgressRange entirely:
@@ -43,7 +47,7 @@ class ProgressScope;
  *         for (...) { scope.next(1); ... }
  *     }
  */
-class V_PROGRESS_API ProgressHost
+class V_APPFW_API ProgressHost
 {
   public:
     /**
@@ -71,7 +75,7 @@ class V_PROGRESS_API ProgressHost
     /**
      * @brief Returns the top of the foreground stack, or nullptr when empty.
      *
-     * This is the innermost running LongRunning operation — the one whose
+     * This is the innermost running LongRunning operation - the one whose
      * progress drives the main bar. Safe to call from any thread.
      *
      * @return The current foreground host, or nullptr.
@@ -86,6 +90,30 @@ class V_PROGRESS_API ProgressHost
      * @return true if at least one operation is running.
      */
     static bool isActive();
+
+    /**
+     * @brief Returns the signal fired whenever the observable state changes.
+     *
+     * Fired when a host registers or unregisters, when a host is pushed on or
+     * removed from the foreground stack, when a stage label is set, and when an
+     * indicator's position crosses a percent step (or reaches its end, or is reset
+     * by a new run). Position changes are coalesced at the source for exactly that
+     * reason - reporting one item at a time must not cost one notification per
+     * item.
+     *
+     * The signal carries no payload on purpose: the unregister notification is
+     * fired while that host is still being destroyed, so naming it would hand
+     * observers a dying object. A handler re-samples current() / activeHosts()
+     * instead, which costs no more than a look at the registry it was about to read
+     * anyway.
+     *
+     * Fired on the thread that changed the state, which is not necessarily the
+     * application thread, so a presentation handler marshals itself. It is fired
+     * with no lock held, and firing it costs nothing while nobody subscribed.
+     *
+     * @return The change signal; subscribe with the returned handle in a member.
+     */
+    static Signal<>& changed();
 
     /**
      * @brief Returns a snapshot of all active hosts.
@@ -134,14 +162,14 @@ class V_PROGRESS_API ProgressHost
      *
      * @return The indicator.
      */
-    ProgressIndicator& indicator();
+    progress::ProgressIndicator& indicator();
 
     /**
      * @brief Returns the progress indicator backing this host.
      *
      * @return The indicator.
      */
-    const ProgressIndicator& indicator() const;
+    const progress::ProgressIndicator& indicator() const;
 
     /**
      * @brief Returns the cancellation source of this operation.
@@ -171,7 +199,7 @@ class V_PROGRESS_API ProgressHost
      *
      * @return The root progress range.
      */
-    ProgressRange range();
+    progress::ProgressRange range();
 
     /**
      * @brief Creates the top-level scope covering the whole [0, 1] scale.
@@ -185,10 +213,13 @@ class V_PROGRESS_API ProgressHost
      * @param max Local range length.
      * @return The operation's top-level progress scope.
      */
-    ProgressScope scope(const std::string& name = {}, double max = 1.0);
+    progress::ProgressScope scope(const std::string& name = {}, double max = 1.0);
 
     /**
      * @brief Sets a human-readable label describing the current stage.
+     *
+     * Setting the label it already has changes nothing and does not notify, so a
+     * stage that re-announces its name is free.
      *
      * @param label Stage label, may be empty.
      */
@@ -197,15 +228,22 @@ class V_PROGRESS_API ProgressHost
     /**
      * @brief Returns the current stage label.
      *
+     * Returned by value on purpose: the label is written by the operation, which
+     * may be any thread, while observers read it from the thread they run on. The
+     * copy is what makes the read safe without making the caller hold a lock.
+     *
      * @return The stage label.
      */
-    const std::string& label() const;
+    std::string label() const;
 
   private:
     // stop_source_ is declared first so the indicator can bind to its token.
-    std::stop_source stop_source_;
-    ProgressIndicator indicator_;
-    std::string label_;
+    std::stop_source          stop_source_;
+    progress::ProgressIndicator indicator_;
+
+    /// Guards label_, which the operation writes and observers read.
+    mutable std::mutex label_mutex_;
+    std::string        label_;
 };
 
-V_PROGRESS_NS_END
+V_APPFW_NS_END
