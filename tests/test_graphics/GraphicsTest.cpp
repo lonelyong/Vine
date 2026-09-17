@@ -3504,8 +3504,10 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
     EXPECT_TRUE(gbuffer->hasColor());
     EXPECT_TRUE(gbuffer->hasDepth());
 
-    // Creator-maintained sizing: the handle resizes the G-buffer target.
-    pipeline->resize(1280, 720);
+    // Creator-maintained sizing: the handle resizes the G-buffer target (a ratio of 1 keeps the surface
+    // size and the target size the same number; the space split itself is pinned by
+    // ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumerNeeds).
+    pipeline->resize(1280, 720, 1.0);
     EXPECT_EQ(gbuffer->width(), 1280);
     EXPECT_EQ(gbuffer->height(), 720);
 }
@@ -3690,7 +3692,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     EXPECT_NE(std::find(inputs.begin(), inputs.end(), vine::String(u8"Composite")), inputs.end());
 
     // Sizing is creator-maintained for both off-screen targets together.
-    pipeline->resize(1280, 720);
+    pipeline->resize(1280, 720, 1.0);
     EXPECT_EQ(pipeline->offscreenTarget()->width(), 1280);
     EXPECT_EQ(pipeline->compositeTarget()->width(), 1280);
     EXPECT_EQ(pipeline->offscreenTarget()->height(), 720);
@@ -3787,8 +3789,57 @@ TEST(RenderPipelineBuilderTest, GizmoOverlayConfiguredOnPreset)
 
     // resize() re-anchors the gizmo even without an off-screen target; a
     // frame draws both the window and the gizmo without crashing.
-    pipeline->resize(1600, 900);
+    pipeline->resize(1600, 900, 2.0);
     engine->frame();
+}
+
+TEST(RenderPipelineBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumerNeeds)
+{
+    auto engine     = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content    = intrusive_ptr<Scene>(new Scene());
+    auto cam        = intrusive_ptr<Camera>(new Camera());
+    auto gbuf_prog  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    auto light_prog = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+
+    PipelineOptions opts;
+    opts.path                = ShadingPath::Deferred;
+    opts.offscreen_width     = 640;
+    opts.offscreen_height    = 360;
+    opts.gbuffer_program     = gbuf_prog;
+    opts.lighting_program    = light_prog;
+    opts.gizmo.source_camera = cam.get();
+    opts.gizmo.pixel_ratio   = 2.0;
+    opts.gizmo.box_size      = 128;
+
+    RenderPipelineBuilder builder(engine.get());
+    builder.setCamera(cam.get());
+    builder.setContent(content);
+    auto pipeline = builder.build(opts);
+    ASSERT_NE(pipeline, nullptr);
+    RenderTarget* gbuffer = pipeline->offscreenTarget();
+    ASSERT_NE(gbuffer, nullptr);
+    AxisGizmo* gizmo = pipeline->gizmo();
+    ASSERT_NE(gizmo, nullptr);
+
+    // ONE call states the surface size the host HAS (logical - the number Qt reports and the number a
+    // SceneView layout step hands over) plus the ratio, and the handle gives each consumer the space it
+    // reads: the G-buffer is DEVICE sized (the light pass samples it 1:1 with the swapchain), while the
+    // gizmo is laid out on the LOGICAL surface and applies the ratio itself.
+    //
+    // Both halves were wrong in opposite directions before: the signature offered no ratio, so a caller had
+    // to pre-scale for the target and then re-call the HUD passes with the logical size to undo the damage
+    // (which is what the app shell did). The old fixtures all ran at ratio 1.0, where the two spaces
+    // coincide - so neither half was visible.
+    pipeline->resize(800, 600, 2.0);
+
+    EXPECT_EQ(gbuffer->width(), 1600);
+    EXPECT_EQ(gbuffer->height(), 1200);
+
+    ASSERT_TRUE(gizmo->hasViewport());
+    const Viewport gizmo_rect = gizmo->viewport();
+    EXPECT_EQ(gizmo_rect.width, 128) << "the box is stated in device pixels and must not be scaled twice";
+    EXPECT_EQ(gizmo_rect.x, 16);
+    EXPECT_EQ(gizmo_rect.y, 600 * 2 - 16 - 128) << "anchored on the LOGICAL surface (600), ratio applied once";
 }
 
 // ============ HUD passes (top / overlay content) ============

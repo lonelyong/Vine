@@ -144,3 +144,12 @@ class V_GRAPHICS_API RenderPipelineBuilder {
 - AppShell（2026-09-08）：demo 收拢。`VINE_PIPELINE`（forward|deferred|forward_shadowed|deferred_shadowed）选主窗 preset（addDemoPipeline；旧 VINE_VSG_DEFERRED_FULL=deferred 别名）；deferred 用 `pipeline->offscreenTarget()!=nullptr` 判定并挂 addSurfaceLayout→resize 随窗。`VINE_VSG_GBUFFER` 逐附件预览已基于 canonical 重建（默认 program+target，4 个 ScreenPass 预览 0..3）。SlotOverlay/MultiSlot 等后端机制验证器保留（标注非 preset 示例）。
 - 阴影占位：ForwardShadowed/DeferredShadowed 现=无阴影版，预留 order<0 depth-only + 阴影化采样点。
 - test_graphics 129/129；全量构建绿。AppShell 手搓 deferred demo 暂未迁移（可后续 build(Deferred,{programs})）。
+
+## 2026-09-18 校：`Pipeline::resize` 一次说清两个空间
+
+- 事实：layout 步骤（`SceneView::addSurfaceLayout`）拿到的是**逻辑像素**（`RenderControl` 报的是 Qt 的 `surface->width()`），而 `RenderPass::setViewport` 要 **device 像素**；`Pipeline::resize(w, h)` 却把同一组数字同时给了 target（要 device，才能和 swapchain 1:1 采样）和 HUD pass（`AxisGizmo` / `FpsOverlay::onSurfaceResized` 收逻辑、自己乘 `pixel_ratio_`）⇒ **ratio ≠ 1 时必有一半是错的**。
+- 症状与掩盖：AppShell 的 workaround 是"先按 device 调 `resize`、再用逻辑各调一次 HUD"——同一个 pass 一帧内被摆两次，第一次是错的（2× 的盒子），只因"第二次在后"才没露出来。三个单测的 ratio 全是默认 `1.0`，两个空间重合 ⇒ 照不到。
+- 收口：`Pipeline::resize(width, height, pixel_ratio)` —— `(width, height)` 是宿主手里那个尺寸（逻辑），target = `×ratio`，HUD 收逻辑；AppShell 的 lambda 塌成一行。
+- 门禁：`RenderPipelineBuilderTest.ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumerNeeds`（`ratio = 2`，断言 gbuffer `1600×1200`、且 gizmo 按**逻辑** 600 定位）——把 device 尺寸喂给 HUD 的旧实现会红。
+- 顺带修的同类混用：`addOffscreenValidationPass` 的 PiP 锚点（device 矩形 + 逻辑 `surface_width` ⇒ 高 DPI 下画到窗口中间而不是角落）。文档原来集体写"device 像素"（`FrameContext::surface_*`、`SceneView::addSurfaceLayout`、`AxisGizmo`/`FpsOverlay::onSurfaceResized`、`RenderControl::surfaceWidth`），全部改成事实：**宿主报什么就是什么；要 device 的消费者自己乘 ratio**。
+- 未决（更大的一步，**要动公开 API**，本轮没做）：让宿主只报一种空间（device）——`RenderControl` announce device，`AxisGizmo`/`FpsOverlay` 不再自己乘（`setPixelRatio` 与 `PipelineOptions::gizmo/fps.pixel_ratio` 随之删除），`Pipeline::resize` 回到 `(w, h)`（本轮的 ratio 参数也一起消失）。那会**删掉 2 个公开 setter + 2 个 option 字段**，属于公开 API 变更，需明确要求。

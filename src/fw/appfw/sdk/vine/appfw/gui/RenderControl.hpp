@@ -242,10 +242,10 @@ class V_APPFW_API RenderControl : public Control {
     /** @brief Gets the native handle of the render surface (HWND on Windows). */
     void* nativeHandle() const;
 
-    /** @brief Gets the render surface width in pixels. */
+    /** @brief Gets the render surface width (Qt logical pixels, as the engine is told it). */
     int surfaceWidth() const;
 
-    /** @brief Gets the render surface height in pixels. */
+    /** @brief Gets the render surface height (Qt logical pixels, see surfaceWidth). */
     int surfaceHeight() const;
 
     struct Impl;

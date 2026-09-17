@@ -970,11 +970,17 @@ void addOffscreenValidationPass(gui::RenderControl* render_control)
     const int    pip_w  = static_cast<int>(320.0 * dpr);
     const int    pip_h  = static_cast<int>(180.0 * dpr);
 
-    // Bottom-right anchoring against the (current or default) surface size.
-    const auto anchorRect = [render_control, margin](int w, int h, int& out_x, int& out_y) {
+    // Bottom-right anchoring against the (current or default) surface size. The rectangle is a VIEWPORT,
+    // so it is in DEVICE pixels - and the surface it is anchored against has to be too. The frame context
+    // carries the size the HOST announced (Qt logical pixels, see RenderControl), which on a high-DPI
+    // display is half the drawing surface: anchoring device-sized numbers against it put the PiP in the
+    // middle of the window instead of its corner.
+    const auto anchorRect = [render_control, margin, dpr](int w, int h, int& out_x, int& out_y) {
         auto* engine_ptr = render_control->engine();
         int   sw         = (engine_ptr != nullptr) ? engine_ptr->frameContext().surface_width : 0;
         int   sh         = (engine_ptr != nullptr) ? engine_ptr->frameContext().surface_height : 0;
+        sw               = static_cast<int>(sw * dpr);
+        sh               = static_cast<int>(sh * dpr);
         if (sw <= 0 || sh <= 0) {
             // Surface not realized yet: anchor against the default viewport so
             // the PiP never briefly covers the whole surface.
@@ -1009,10 +1015,12 @@ void addOffscreenValidationPass(gui::RenderControl* render_control)
     }
 
     // Re-anchor once the backend surface is realized and sized.
-    QTimer::singleShot(600, [render_control, screen, pip_w, pip_h, margin] {
+    QTimer::singleShot(600, [render_control, screen, pip_w, pip_h, margin, dpr] {
         auto* engine_ptr = render_control->engine();
         int   sw         = (engine_ptr != nullptr) ? engine_ptr->frameContext().surface_width : 0;
         int   sh         = (engine_ptr != nullptr) ? engine_ptr->frameContext().surface_height : 0;
+        sw               = static_cast<int>(sw * dpr);   // the viewport below is device pixels (see anchorRect)
+        sh               = static_cast<int>(sh * dpr);
         if (sw <= 0 || sh <= 0) {
             sw = 1280;
             sh = 720;
@@ -1473,23 +1481,14 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
     }
 
     // One creator-managed layout step keeps the (deferred) G-buffer and the
-    // gizmo overlay in step with the window; it owns the pipeline handle.
-    // The deferred off-screen targets are sized at DEVICE pixels so the light
-    // pass samples them 1:1 with the swapchain (sizing them at the logical
-    // surface size made the whole deferred result a 2x-upscaled soft image).
-    // The gizmo / fps overlays take the LOGICAL size (they apply their own
-    // pixel_ratio internally), so they are re-laid-out at logical afterwards.
+    // gizmo overlay in step with the window; it owns the pipeline handle. The
+    // step receives the LOGICAL surface size (what Qt reports), and the pipeline
+    // turns it into the two spaces its consumers need: DEVICE pixels for the
+    // off-screen targets (so the light pass samples them 1:1 with the swapchain,
+    // instead of the 2x-upscaled soft image logical sizing produced) and the
+    // logical size for the HUD overlays (which apply the ratio themselves).
     view->addSurfaceLayout([pipeline, render_control](int width, int height) {
-        const double d  = render_control->devicePixelRatio();
-        const int    dw = static_cast<int>(width * d);
-        const int    dh = static_cast<int>(height * d);
-        pipeline->resize(dw, dh);
-        if (auto* g = pipeline->gizmo(); g != nullptr) {
-            g->onSurfaceResized(width, height);
-        }
-        if (auto* f = pipeline->fpsOverlay(); f != nullptr) {
-            f->onSurfaceResized(width, height);
-        }
+        pipeline->resize(width, height, render_control->devicePixelRatio());
     });
 }
 
