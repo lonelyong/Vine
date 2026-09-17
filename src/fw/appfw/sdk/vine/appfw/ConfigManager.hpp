@@ -48,8 +48,8 @@ class V_APPFW_API ConfigChangedEventArgs : public EventArgs {
  * @note All accessors are thread-safe: an internal shared mutex allows
  * concurrent readers while writers hold it exclusively; the changed event is
  * fired after releasing it, so handlers may safely call back into the manager.
- * Subscribing to and unsubscribing from changed are *not* thread-safe (the
- * signal has no lock), so wire up handlers before worker threads run.
+ * Subscribing and unsubscribing are thread-safe too (Signal has its own lock-free
+ * snapshot), so handlers may be wired up while worker threads are already running.
  */
 class V_APPFW_API ConfigManager {
   public:

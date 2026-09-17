@@ -73,15 +73,16 @@ RibbonButton::RibbonButton()
     }
 
     // When a command is configured, execute it on click so simple command
-    // buttons do not need a manually bound callback.
-    clicked.addHandler([](RibbonButton& self, EventArgs&) {
+    // buttons do not need a manually bound callback. release() because this is the
+    // widget wiring its own signal: the subscription lasts as long as the widget.
+    clicked.subscribe([](RibbonButton& self, EventArgs&) {
         const String cmd = self.command();
         if (!cmd.empty()) {
             if (auto* app = Application::current()) {
                 app->commandManager()->executeDetached(cmd);
             }
         }
-    });
+    }).release();
 }
 
 RibbonButton::~RibbonButton()

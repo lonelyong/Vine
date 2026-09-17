@@ -136,8 +136,8 @@ struct ConsolePanel::Impl : public UIElementData {
 
     ConsoleTheme theme = ConsoleTheme::dark();
 
-    /// Handler id of the GuiApplication::theme_changed subscription (0 = unset).
-    std::size_t theme_handler_id_{ 0 };
+    /// Subscription to the application theme; cancelling it is the handle's job.
+    vine::Signal<Theme>::Subscription theme_handler_{};
 
     CommandHistory   history;
     CommandCompleter completer;
@@ -214,16 +214,13 @@ ConsolePanel::ConsolePanel(QWidget* parent)
     // Follow the application theme for the semantic color scheme so the text
     // stays readable in both light and dark themes.
     if (auto* app = obj_cast<GuiApplication>(Application::current())) {
-        data->theme_handler_id_ = app->theme_changed.addHandler([this](Theme) { applyAppTheme(); });
+        data->theme_handler_ = app->theme_changed.subscribe([this](Theme) { applyAppTheme(); });
     }
     applyAppTheme();
 }
 
 ConsolePanel::~ConsolePanel()
 {
-    if (auto* app = obj_cast<GuiApplication>(Application::current())) {
-        app->theme_changed.removeHandler(dptr()->theme_handler_id_);
-    }
     if (auto* core_app = QCoreApplication::instance()) {
         core_app->removeEventFilter(dptr()->suggest_filter.get());
     }

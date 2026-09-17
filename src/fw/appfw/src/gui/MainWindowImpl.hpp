@@ -20,7 +20,9 @@ class MainWindowImpl : public SARibbonMainWindow {
     // Guards the one-shot default startup placement (open on the primary
     // screen) applied when the window is first shown.
     bool startup_placed_ = false;
-    Signal<Theme>::HandlerId theme_handler_id_{};
+
+    /// Subscription to the application theme; cancelling it is the handle's job.
+    Signal<Theme>::Subscription theme_handler_{};
 };
 
 V_APPFWGUI_NS_END

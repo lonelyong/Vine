@@ -40,11 +40,12 @@ logging::LogSink*& installedConsoleSink()
     return s_sink;
 }
 
-/// ConfigManager::changed handler id installed by installConsoleLogSink().
-std::size_t& installedConfigHandlerId()
+/// ConfigManager::changed subscription installed by installConsoleLogSink(); assigning to it
+/// cancels whatever was installed before.
+vine::Signal<ConfigManager&, ConfigChangedEventArgs&>::Subscription& installedConfigHandler()
 {
-    static std::size_t s_id = 0;
-    return s_id;
+    static vine::Signal<ConfigManager&, ConfigChangedEventArgs&>::Subscription s_subscription;
+    return s_subscription;
 }
 
 /**
@@ -101,7 +102,7 @@ void installConsoleLogSink(gui::ConsolePanel* panel, PluginLoadContext* context)
             cfg->setBool(key, true);
         }
         consoleLogEnabledState()->store(cfg->getBool(key, true), std::memory_order_relaxed);
-        installedConfigHandlerId() = cfg->changed.addHandler(
+        installedConfigHandler() = cfg->changed.subscribe(
             [alive = consoleLogEnabledState(), key](ConfigManager& mgr, ConfigChangedEventArgs& args) {
                 if (args.key() == key) {
                     alive->store(mgr.getBool(key, true), std::memory_order_relaxed);
@@ -142,10 +143,9 @@ void installConsoleLogSink(gui::ConsolePanel* panel, PluginLoadContext* context)
 
 void uninstallConsoleLogSink()
 {
-    if (auto* app = Application::current(); app != nullptr && app->configManager() != nullptr && installedConfigHandlerId() != 0) {
-        app->configManager()->changed.removeHandler(installedConfigHandlerId());
-        installedConfigHandlerId() = 0;
-    }
+    // No need to find the application or the manager first: the handle cancels the
+    // subscription itself, and is inert if either of them is already gone.
+    installedConfigHandler().unsubscribe();
     consoleLogEnabledState()->store(false, std::memory_order_relaxed);
 }
 

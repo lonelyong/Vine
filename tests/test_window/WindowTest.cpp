@@ -117,10 +117,10 @@ TEST(WindowContextTest, ResizeSignalFires)
     TestWindowContext context(&native);
     int captured_w = 0;
     int captured_h = 0;
-    context.resized.addHandler([&](int w, int h) {
+    context.resized.subscribe([&](int w, int h) {
         captured_w = w;
         captured_h = h;
-    });
+    }).release();
 
     context.resized.trigger(640, 480);
     EXPECT_EQ(captured_w, 640);
@@ -134,7 +134,7 @@ TEST(WindowContextTest, KeyEventDispatched)
     FakeNativeWindow native;
     TestWindowContext context(&native);
     KeyCode received = KeyCode::Unknown;
-    context.key.addHandler([&](const KeyEvent& e) { received = e.code; });
+    context.key.subscribe([&](const KeyEvent& e) { received = e.code; }).release();
 
     KeyEvent e;
     e.code = KeyCode::Escape;
@@ -148,7 +148,7 @@ TEST(WindowContextTest, KeyEventModifiers)
     FakeNativeWindow native;
     TestWindowContext context(&native);
     ModifierKey received = ModifierKey::None;
-    context.key.addHandler([&](const KeyEvent& e) { received = e.modifiers; });
+    context.key.subscribe([&](const KeyEvent& e) { received = e.modifiers; }).release();
 
     KeyEvent e;
     e.code = KeyCode::A;
@@ -166,10 +166,10 @@ TEST(WindowContextTest, MouseEventDispatched)
     TestWindowContext context(&native);
     MouseEvent received;
     bool fired = false;
-    context.mouse.addHandler([&](const MouseEvent& e) {
+    context.mouse.subscribe([&](const MouseEvent& e) {
         received = e;
-        fired = true;
-    });
+        fired    = true;
+    }).release();
 
     MouseEvent e;
     e.button = MouseButton::Left;
@@ -191,7 +191,7 @@ TEST(WindowContextTest, ScrollEventDispatched)
     FakeNativeWindow native;
     TestWindowContext context(&native);
     ScrollEvent received;
-    context.scroll.addHandler([&](const ScrollEvent& e) { received = e; });
+    context.scroll.subscribe([&](const ScrollEvent& e) { received = e; }).release();
 
     ScrollEvent e;
     e.deltaY = 3.0;
@@ -206,7 +206,7 @@ TEST(WindowContextTest, WindowEventDispatched)
     FakeNativeWindow native;
     TestWindowContext context(&native);
     WindowEvent::Type received = WindowEvent::Type::Resize;
-    context.windowEvent.addHandler([&](const WindowEvent& e) { received = e.type; });
+    context.windowEvent.subscribe([&](const WindowEvent& e) { received = e.type; }).release();
 
     WindowEvent e;
     e.type = WindowEvent::Type::FocusIn;

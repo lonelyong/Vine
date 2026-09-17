@@ -56,18 +56,13 @@ MainWindowImpl::MainWindowImpl(QWidget* parent)
     // Subscribe to the app theme: GuiApplication is the sole theme authority;
     // here we only map and apply it.
     if (auto* app = obj_cast<GuiApplication>(Application::current())) {
-        theme_handler_id_ = app->theme_changed.addHandler([this](Theme) { QTimer::singleShot(0, this, [this] { applyAppTheme(); }); });
+        theme_handler_ = app->theme_changed.subscribe([this](Theme) { QTimer::singleShot(0, this, [this] { applyAppTheme(); }); });
     }
 
     QTimer::singleShot(0, this, [this] { applyAppTheme(); });
 }
 
-MainWindowImpl::~MainWindowImpl()
-{
-    if (auto* app = obj_cast<GuiApplication>(Application::current())) {
-        app->theme_changed.removeHandler(theme_handler_id_);
-    }
-}
+MainWindowImpl::~MainWindowImpl() = default;
 
 void MainWindowImpl::applyAppTheme()
 {
