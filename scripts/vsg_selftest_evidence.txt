@@ -16,6 +16,7 @@
 [selftest] pixels: user program covered=5916/36864 centre=(255,51,51), diagnostics=0
 [selftest] pixels: RGBA16F attachment honestly reported unsupported
 [selftest] pixels: PiP rect 96x54 sampled both producer regions; deferred program filled the target with (140,153,166); diagnostics=0
+[selftest] pixels: a content pass drew in a 96x54 rectangle and left the rest of the target at its clear colour
 [selftest] program hotspot: in-place program edit rebuilt the fullscreen slot once and drew (204,51,102)
 [selftest] depth: near=0.0249 > far=0.0166 > cleared corner=0.0000 (reverse-Z ordering), Disabled centre=0.0000 (no depth written); packed D24 honestly unsupported
 [selftest] depth load: far quad over the same pixels left 0 blue pixel(s), centre stayed the LOAD pass' clear colour, depth unchanged at 0.0249 (loaded from the previous frame, not cleared); 1 build(s) over 4 frames
@@ -52,4 +53,22 @@
 [selftest] live program switch: the same slot drew 42 forward, 765 flat after the switch, and 42 forward again after switching back
 [selftest] deferred shadow: the ground in the sun's shadow read (31,31,31) against (196,196,196) beside it in the sun (columns 343/240 of row 196), so the built shadow pass reached the lighting
 [selftest] forward shadow: the ground in the sun's shadow read (31,31,31) against (196,196,196) beside it in the sun (columns 343/240 of row 196), so the content set's shadow binding reached the shading
+[selftest] lit-face vantage 0: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765
+[selftest]   fill-only face: [0,0] 384->384 [1,0] 384->384 [2,0] 384->384 [0,1] 384->384 [1,1] 384->384 [2,1] 384->384 [0,2] 384->384 [1,2] 384->384 [2,2] 384->384
+[selftest]   up-sun ground lit 723, darkened pixels 2187
+[selftest] lit-face vantage 1: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765
+[selftest]   fill-only face: [0,0] 384->384 [1,0] 384->384 [2,0] 384->384 [0,1] 384->384 [1,1] 384->384 [2,1] 384->384 [0,2] 384->384 [1,2] 384->384 [2,2] 384->384
+[selftest]   up-sun ground lit 765, darkened pixels 1979
+[selftest] lit-face vantage 2: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765
+[selftest]   fill-only face: [0,0] 384->384 [1,0] 384->384 [2,0] 384->384 [0,1] 384->384 [1,1] 384->384 [2,1] 384->384 [0,2] 384->384 [1,2] 384->384 [2,2] 384->384
+[selftest]   up-sun ground lit 765, darkened pixels 13176
+[selftest] lit-face vantage 0: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765
+[selftest]   fill-only face: [0,0] 384->384 [1,0] 384->384 [2,0] 384->384 [0,1] 384->384 [1,1] 384->384 [2,1] 384->384 [0,2] 384->384 [1,2] 384->384 [2,2] 384->384
+[selftest]   up-sun ground lit 723, darkened pixels 2187
+[selftest] lit-face vantage 1: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765
+[selftest]   fill-only face: [0,0] 384->384 [1,0] 384->384 [2,0] 384->384 [0,1] 384->384 [1,1] 384->384 [2,1] 384->384 [0,2] 384->384 [1,2] 384->384 [2,2] 384->384
+[selftest]   up-sun ground lit 765, darkened pixels 1979
+[selftest] lit-face vantage 2: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765
+[selftest]   fill-only face: [0,0] 384->384 [1,0] 384->384 [2,0] 384->384 [0,1] 384->384 [1,1] 384->384 [2,1] 384->384 [0,2] 384->384 [1,2] 384->384 [2,2] 384->384
+[selftest]   up-sun ground lit 765, darkened pixels 13176
 [selftest] done — no crash, no validation error expected

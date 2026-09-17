@@ -239,11 +239,10 @@ ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<cons
     return resolved;
 }
 
-vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, bool fills_target,
-                                      int surf_w, int surf_h)
+vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, int surf_w, int surf_h)
 {
     vine::graphics::Viewport rect{ 0, 0, surf_w, surf_h };
-    if (!fills_target && viewport && viewport->width > 0 && viewport->height > 0) {
+    if (viewport && viewport->width > 0 && viewport->height > 0) {
         rect = *viewport;
     }
     // Clamped into the target: the caller has no auto-fit, and an origin outside it would draw nothing.

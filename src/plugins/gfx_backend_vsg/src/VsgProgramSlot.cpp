@@ -270,11 +270,10 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     const int                          surf_w     = overlay.surf_w;
     const int                          surf_h     = overlay.surf_h;
 
-    // Destination rectangle: the same geometry the content path uses (detail::passDrawRect), and the role
-    // this path can state - a program pass honours the rectangle it was given, which is what a preview, an
-    // axis gizmo or a HUD in a corner all rely on (see the declaration: the two kinds disagree about what
-    // "presenting" means, and that is named there rather than guessed at here).
-    const vine::graphics::Viewport rect = detail::passDrawRect(viewport, /*fills_target*/ false, surf_w, surf_h);
+    // Destination rectangle: the ONE rule the content path uses too (detail::passDrawRect) - the rectangle
+    // this pass announced, or the whole target, clamped. A program pass honours what it was given, which is
+    // what a preview, an axis gizmo or a HUD in a corner all rely on.
+    const vine::graphics::Viewport rect = detail::passDrawRect(viewport, surf_w, surf_h);
     const int rect_x = rect.x;
     const int rect_y = rect.y;
     const int rect_w = rect.width;

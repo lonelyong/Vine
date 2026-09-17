@@ -114,8 +114,9 @@ struct VsgPassRequest
     int order = 0;
     /// Depth handling announced by setDepthMode(); explicit per pass.
     vine::graphics::DepthMode depth_mode = vine::graphics::DepthMode::TestAndWrite;
-    /// Set by clear(): this pass fills the target (the "presenting" pass
-    /// that seeds the window's default headlight). Independent of depth.
+    /// Set by clear(): this pass cleared its target, so it is that target's base layer (it seeds the
+    /// window's default headlight). Independent of depth, and NOT a statement about the viewport: what a
+    /// pass draws into is the rectangle it announced (see detail::passDrawRect).
     bool presenting = false;
     /// Depth-clear request of the clear() call above — a scope attribute
     /// like presenting, so every draw call of the scope keeps it. Each pass

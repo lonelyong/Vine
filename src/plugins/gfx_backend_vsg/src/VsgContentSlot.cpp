@@ -50,12 +50,14 @@ void logContentSlotDiagnostics(const vine::graphics::RenderTarget* target, vine:
 namespace detail
 {
 
-void updateSlotViewport(ContentSlot& content, bool presenting, const std::optional<vine::graphics::Viewport>& viewport,
-                        int surf_w, int surf_h)
+void updateSlotViewport(ContentSlot& content, const std::optional<vine::graphics::Viewport>& viewport, int surf_w,
+                        int surf_h)
 {
-    // ONE geometry for every pass (detail::passDrawRect), with THIS slot's role: presenting content fills
-    // the target whatever it announced (pinned by ContentSlotViewportTest).
-    const vine::graphics::Viewport rect = passDrawRect(viewport, presenting, surf_w, surf_h);
+    // ONE rule for every pass (detail::passDrawRect): the announced rectangle, or the whole target. What is
+    // REMEMBERED is the announcement — the rectangle is derived from it and the live surface size, so a
+    // resize re-derives it instead of holding a rectangle computed for the surface it used to have.
+    content.announced_viewport          = viewport;
+    const vine::graphics::Viewport rect = passDrawRect(viewport, surf_w, surf_h);
     const int                     x    = rect.x;
     const int                     y    = rect.y;
     const int                     w    = rect.width;
@@ -317,9 +319,9 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     // was compared, so storing it cannot be forgotten for an attribute someone adds later:
     //  - the depth policy is forwarded to the bridge (which rebuilds only the
     //    state wrappers, not the vertex data) and invalidates them on change;
-    //  - the explicit pipeline order moves the view to its new stacking slot;
-    //  - the presenting role drives the viewport each frame and re-seeds the
-    //    slot's default light when it flips.
+    //  - the explicit pipeline order moves the view to its new stacking slot.
+    // The viewport is not an applied attribute any more: it arrives with each drawing call (see below),
+    // and the presenting role now only re-seeds the slot's default light when it flips.
     if (content.applied != wanted) {
         if (content.applied.depth_mode != wanted.depth_mode) {
             // No device wait: the state wrappers being dropped are PARKED by the
@@ -342,10 +344,9 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     const int surf_w = (target_key == nullptr) ? static_cast<int>(state.window->extent2D().width) : t.width;
     const int surf_h = (target_key == nullptr) ? static_cast<int>(state.window->extent2D().height) : t.height;
 
-    // Keep the slot's vsg camera viewport in step with its role each frame (see
-    // updateSlotViewport): presenting content fills the target, other content carries
-    // its pass sub-viewport.
-    updateSlotViewport(content, content.applied.presenting, viewport, surf_w, surf_h);
+    // Keep the slot's vsg camera viewport in step with its pass each frame (see updateSlotViewport): the
+    // rectangle this drawing call announced, or the whole target.
+    updateSlotViewport(content, viewport, surf_w, surf_h);
 
     persistent.cameraBridge.apply(camera, content.vsg_camera);
 

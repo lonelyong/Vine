@@ -958,12 +958,11 @@ void VsgRenderer::resize(int announced_width, int announced_height)
     if (state.window != nullptr) {
         state.window->resize();
     }
-    // Every window presenting (full-target) content slot's camera viewport
-    // follows the live window size so the render graph's render area tracks a
-    // resize (renderContentSlot also re-derives each slot's viewport every
-    // frame; refreshing here keeps slots correct even before their next
-    // render). Other slots carry their own sub-viewport, re-set per frame by
-    // their pass.
+    // Every window content slot re-derives its rectangle here, so the render graph's render area tracks a
+    // resize (renderContentSlot also re-derives each slot's viewport every frame; refreshing here keeps
+    // slots correct even before their next render). The derivation uses the viewport the pass last
+    // announced, so a slot that announced none follows the new surface and a rect-owning one keeps its
+    // rectangle (re-clamped into the new surface).
     auto& window_target = state.entryFor(nullptr);
     if (state.window == nullptr) {
         return;
@@ -986,11 +985,12 @@ void VsgRenderer::resize(int announced_width, int announced_height)
     }
     for (auto& kv : window_target.content_slots) {
         auto& slot = kv.second;
-        if (slot.ready && slot.vsg_camera != nullptr && slot.applied.presenting) {
-            // Through the ONE slot-viewport implementation (see detail::updateSlotViewport): it updates
-            // the slot's existing ViewportState in place, so a resize does not allocate per slot either.
-            detail::updateSlotViewport(slot, /*presenting*/ true, std::nullopt,
-                                       static_cast<int>(extent.width), static_cast<int>(extent.height));
+        if (slot.ready && slot.vsg_camera != nullptr) {
+            // Through the ONE slot-viewport implementation (see detail::updateSlotViewport): it re-derives
+            // the rectangle from the announcement this slot last received and updates the slot's existing
+            // ViewportState in place, so a resize does not allocate per slot either.
+            detail::updateSlotViewport(slot, slot.announced_viewport, static_cast<int>(extent.width),
+                                       static_cast<int>(extent.height));
         }
     }
 }

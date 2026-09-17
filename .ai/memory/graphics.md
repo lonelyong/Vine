@@ -1024,8 +1024,8 @@
 > （发现并修掉 `tests/test_vsg/ProgramSamplingTest.cpp` 第 46 行的外来残留 `}-10/2=`，编译错误）。
 
 > 2026-09-12 **结构整理六（设计 §37；只改结构）**：`renderContentSlot`（内容槽的每帧热路径）
-> 223 → **120** 行。四个文件内 helper：`updateSlotViewport`（presenting 填满目标 / 否则 pass
-> 子视口 / 无子视口填满）、`seedSlotLight`（presenting 角色翻转时重置默认光 —— 方向光会把
+> 223 → **120** 行。四个文件内 helper：`updateSlotViewport`（公告的矩形 / 未公告则整目标 / clamp 进
+> 目标；2026-09-13 起不再看 presenting）、`seedSlotLight`（presenting 角色翻转时重置默认光 —— 方向光会把
 > gizmo 从斜角照黑）、`beginLightsDroppedEpisode`（“宣告的灯全被丢掉”是**场景**属性而非帧属性
 > ⇒ 每段只报一次，一旦有可用灯或本帧无灯立即重新武装；helper 只回答“现在要不要报”，真正的
 > `reportFailure` 留在调用方 —— §31 那条“helper 不能持有 renderer 状态”的延伸）、

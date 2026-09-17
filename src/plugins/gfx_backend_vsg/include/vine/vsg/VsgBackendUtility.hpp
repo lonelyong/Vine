@@ -158,29 +158,29 @@ ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<cons
                                const std::vector<const vine::graphics::Light*>& lights);
 
 /**
- * @brief The ONE geometry for the rectangle a pass draws into, and the ONE place its role is applied.
+ * @brief The ONE rule for the rectangle a pass draws into: the rectangle it announced, else the whole target.
  *
- * Both slot kinds use it, so the two cannot clamp or fall back differently: the pass' announced viewport
- * (device pixels, top-left origin), or the whole target when it announced none, clamped into the target.
+ * Both slot kinds use it - a content pass and a fullscreen program pass - because both make the SAME
+ * statement when they announce a viewport, and a host cannot be told two different things by two drawing
+ * calls. The rectangle is in device pixels with a top-left origin and is clamped into the target.
  *
- * @p fills_target is the ROLE: a pass that PRESENTS its target - the one whose picture it is - draws all
- * of it whatever it announced, because a sub-rectangle would leave the rest holding something nobody asked
- * for. What that role IS, however, is not the same fact in both slot kinds today, and this parameter is
- * where the difference is visible instead of hidden: a content slot's role is the slot's (`presenting`,
- * pinned by ContentSlotViewportTest), while a program pass only has the request's "this pass cleared"
- * flag - and a cleared OFF-SCREEN pass that draws a preview into a corner (the PiP pattern the pixel
- * phases pin) is not presenting anything. The program path therefore passes false; reconciling the two
- * notions - one "presenter" role, announced by the engine, instead of two flags of the same name - is the
- * open question this signature exists to keep in view.
+ * What a pass CLEARS is a different question, and deliberately not part of this rule: a clear covers the
+ * whole target while a draw stays inside this rectangle, which is what makes the PiP pattern work (fill
+ * the target, draw the picture into a corner of it).
  *
- * @param viewport     The pass' announced viewport (null when it announced none).
- * @param fills_target Whether this pass presents its target (see above).
- * @param surf_w       Target (or surface) width in device pixels.
- * @param surf_h       Target (or surface) height in device pixels.
+ * NEITHER DOES THE PASS' ROLE IN ITS TARGET NARROW THE RECTANGLE. A content pass that cleared its target
+ * (its base layer) used to fill that target whatever it announced - a rule that made
+ * RenderPass::setViewport mean one thing in a content pass and another in a ScreenPass, silently dropped a
+ * rectangle the host had asked for, and left "draw a second view into part of the target" impossible to
+ * express with a content pass at all. The role still matters, but only for what clearing means (the base
+ * layer's depth-on style and the window's default light) - see PassAttributes::presenting.
+ *
+ * @param viewport The pass' announced viewport (null when it announced none).
+ * @param surf_w   Target (or surface) width in device pixels.
+ * @param surf_h   Target (or surface) height in device pixels.
  * @return The rectangle to draw into, in device pixels (never empty while the target has an extent).
  */
-vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, bool fills_target,
-                                      int surf_w, int surf_h);
+vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, int surf_w, int surf_h);
 
 /**
  * @brief Temporary test escape hatch: when VINE_VSG_OWN_WINDOW is set, the
