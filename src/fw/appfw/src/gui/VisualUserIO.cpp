@@ -82,8 +82,8 @@ void VisualUserIO::setConsolePanel(ConsolePanel* console)
         // Drop the handlers of the panel being left behind: binding a panel twice
         // would otherwise run every entered line through onLineEntered() twice, and
         // an idle line would start its command twice.
-        line_handler_.unsubscribe();
-        escape_handler_.unsubscribe();
+        line_handler_.disconnect();
+        escape_handler_.disconnect();
     }
 
     console_ = console;
@@ -91,15 +91,15 @@ void VisualUserIO::setConsolePanel(ConsolePanel* console)
     {
         return;
     }
-    line_handler_   = console_->lineEntered.subscribe([this](const String& text) { onLineEntered(text); });
-    escape_handler_ = console_->escapePressed.subscribe([this] { onEscape(); });
+    line_handler_   = console_->lineEntered.connect([this](const String& text) { onLineEntered(text); });
+    escape_handler_ = console_->escapePressed.connect([this] { onEscape(); });
     refreshCompletion();
 }
 
 void VisualUserIO::setCommandManager(vine::appfw::CommandManager* manager)
 {
     if (auto* previous = commandManager(); previous != nullptr && previous != manager) {
-        commands_handler_.unsubscribe();
+        commands_handler_.disconnect();
     }
 
     UserIO::setCommandManager(manager);
@@ -107,7 +107,7 @@ void VisualUserIO::setCommandManager(vine::appfw::CommandManager* manager)
     if (manager != nullptr && !commands_handler_.isActive()) {
         // The completion list is a snapshot: follow the command set so commands of
         // plugins that register after the console was bound still show up.
-        commands_handler_ = manager->commandsChanged.subscribe(
+        commands_handler_ = manager->commandsChanged.connect(
             [this](vine::appfw::CommandManager&, vine::EventArgs&) { refreshCompletion(); });
     }
     refreshCompletion();

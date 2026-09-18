@@ -40,11 +40,11 @@ logging::LogSink*& installedConsoleSink()
     return s_sink;
 }
 
-/// ConfigManager::changed subscription installed by installConsoleLogSink(); assigning to it
+/// ConfigManager::changed connection installed by installConsoleLogSink(); assigning to it
 /// cancels whatever was installed before.
-vine::Signal<ConfigManager&, ConfigChangedEventArgs&>::Subscription& installedConfigHandler()
+vine::Connection& installedConfigHandler()
 {
-    static vine::Signal<ConfigManager&, ConfigChangedEventArgs&>::Subscription s_subscription;
+    static vine::Connection s_subscription;
     return s_subscription;
 }
 
@@ -102,7 +102,7 @@ void installConsoleLogSink(gui::ConsolePanel* panel, PluginLoadContext* context)
             cfg->setBool(key, true);
         }
         consoleLogEnabledState()->store(cfg->getBool(key, true), std::memory_order_relaxed);
-        installedConfigHandler() = cfg->changed.subscribe(
+        installedConfigHandler() = cfg->changed.connect(
             [alive = consoleLogEnabledState(), key](ConfigManager& mgr, ConfigChangedEventArgs& args) {
                 if (args.key() == key) {
                     alive->store(mgr.getBool(key, true), std::memory_order_relaxed);
@@ -145,7 +145,7 @@ void uninstallConsoleLogSink()
 {
     // No need to find the application or the manager first: the handle cancels the
     // subscription itself, and is inert if either of them is already gone.
-    installedConfigHandler().unsubscribe();
+    installedConfigHandler().disconnect();
     consoleLogEnabledState()->store(false, std::memory_order_relaxed);
 }
 

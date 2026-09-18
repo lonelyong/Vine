@@ -16,12 +16,15 @@
      纯回调场景用 `postToMain()`；
    - `Signal` **本身已经是线程安全的**（2026-09-17：不可变快照 `vector<Entry>` + 原子发布，`trigger` **不取任何锁**、
      不分配，与 Qt 连接表同构），
-     所以"订阅必须放在启动期"这条老限制**已作废**——任何线程都可以随时 `subscribe`/`unsubscribe`。
+     所以"订阅必须放在启动期"这条老限制**已作废**——任何线程都可以随时 `connect`/`disconnect`。
      实测：一边发火一边增删，TSan 从 12 条竞争降到 0；20 个 handler 时发火 104.6 → 25.8 ns；
      订阅+注销 147 ns/对（订阅要复制整表，仍属于装配期动作）。
-   - 订阅成员推荐用 **`Subscription` 句柄**：`theme_handler_ = app->theme_changed.subscribe(...)`，析构/赋值自动取消；
-     不需要管理时显式 `.release()`（`subscribe` 是 `[[nodiscard]]`，丢掉返回值 = 订阅完立刻取消）。
+   - 订阅成员推荐用 **`Connection` 句柄**：`theme_handler_ = app->theme_changed.connect(...)`，析构/赋值自动取消；
+     不需要管理时显式 `.detach()`（`connect` 是 `[[nodiscard]]`，丢掉返回值 = 订阅完立刻取消）。
      句柄只持 `weak_ptr`，Signal 先死也安全，所以拆除路径里不再需要 `removeHandler` + `Application::current()` 查找。
+     2026-09-18：句柄从 `Signal::Subscription` 外提为独立**非模板**类 `vine::Connection`；入口改名
+     `subscribe/unsubscribe/release/unsubscribeAll` → `connect/disconnect/detach/disconnectAll`（对齐 Qt），
+     `Signal::Slot` 改为继承 `Connection::State`。
 2. **锁内不跑用户代码**：`CommandManager` 的 `mutex`/`registry_mutex`、`Chain::mutex` 里只做容器操作与值拷贝；
    命令虚函数、工厂、快照回调、事件处理函数、`ProgressHost::current()`（progress 全局锁）都在锁外。
    `registry_mutex` 是叶子锁；`admit()` 在临界区**外**采样 progress 宿主。

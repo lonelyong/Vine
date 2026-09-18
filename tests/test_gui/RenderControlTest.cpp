@@ -161,7 +161,7 @@ TEST(RenderControlTest, ReportsTheLifecycleThroughStateChanged)
     HostedControl host;
 
     std::vector<RenderControl::SurfaceState> seen;
-    auto subscription = host.control()->stateChanged.subscribe([&seen](RenderControl::SurfaceState state) {
+    auto subscription = host.control()->stateChanged.connect([&seen](RenderControl::SurfaceState state) {
         seen.push_back(state);
     });
 

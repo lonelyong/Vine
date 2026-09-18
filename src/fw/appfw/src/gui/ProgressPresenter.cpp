@@ -40,8 +40,8 @@ struct ProgressPresenter::Impl : public UIElementData {
     QPushButton*  cancel          = nullptr;
     QTimer*       timer           = nullptr;
 
-    /// Subscription to ProgressHost::changed(); held so it is cancelled with the presenter.
-    vine::Signal<>::Subscription hosts_changed{};
+    /// Connection to ProgressHost::changed(); held so it is cancelled with the presenter.
+    vine::Connection hosts_changed{};
 
     /// The tracked foreground host (drives the main bar), or nullptr.
     vine::appfw::ProgressHost* foreground = nullptr;
@@ -119,7 +119,7 @@ ProgressPresenter::ProgressPresenter(QWidget* parent)
     data->timer->setSingleShot(true);
     QObject::connect(data->timer, &QTimer::timeout, root, [data] { data->self->refresh(); });
 
-    data->hosts_changed = vine::appfw::ProgressHost::changed().subscribe([data] { Impl::onHostsChanged(data); });
+    data->hosts_changed = vine::appfw::ProgressHost::changed().connect([data] { Impl::onHostsChanged(data); });
 
     // The bar is hidden until an operation shows up; pick up an operation that is already
     // running, so that embedding the presenter mid-operation does not wait for the next change.

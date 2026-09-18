@@ -690,7 +690,7 @@ TEST_F(GuiTest, RibbonButton_DropDownSeparator)
 TEST_F(GuiTest, RibbonButton_ClickedEvent)
 {
     int  clicks       = 0;
-    auto subscription = btnStyle->clicked.subscribe([&clicks](guifw::RibbonButton&, vine::EventArgs&) { ++clicks; });
+    auto subscription = btnStyle->clicked.connect([&clicks](guifw::RibbonButton&, vine::EventArgs&) { ++clicks; });
 
     auto* tb = btnStyle->impl<SARibbonToolButton>();
     ASSERT_NE(tb, nullptr);
@@ -700,7 +700,7 @@ TEST_F(GuiTest, RibbonButton_ClickedEvent)
     tb->click();
     EXPECT_EQ(clicks, 3);
 
-    subscription.unsubscribe();
+    subscription.disconnect();
     tb->click();
     EXPECT_EQ(clicks, 3); // 移除后不再触发
 }
@@ -953,11 +953,11 @@ TEST_F(GuiTest, ConfigManager_NotifiesOnlyOnRealChanges)
     int       events    = 0;
     bool      saw_empty = false;
     vine::String last_key;
-    cfg->changed.subscribe([&](ConfigManager&, ConfigChangedEventArgs& e) {
+    cfg->changed.connect([&](ConfigManager&, ConfigChangedEventArgs& e) {
         ++events;
         last_key  = e.key();
         saw_empty = e.key().empty();
-    }).release();
+    }).detach();
 
     // 同值写入 = 无变化 = 无事件：处理函数里回写同值不会自激
     cfg->setInt(u8"max", 100);
@@ -1431,7 +1431,7 @@ TEST_F(GuiTest, ConfigManager_ChangedEvent)
     auto*        cfg   = new vine::appfw::ConfigManager();
     int          fired = 0;
     vine::String lastKey;
-    auto         subscription = cfg->changed.subscribe([&](vine::appfw::ConfigManager&, vine::appfw::ConfigChangedEventArgs& args) {
+    auto         subscription = cfg->changed.connect([&](vine::appfw::ConfigManager&, vine::appfw::ConfigChangedEventArgs& args) {
         ++fired;
         lastKey = args.key();
     });
@@ -1448,7 +1448,7 @@ TEST_F(GuiTest, ConfigManager_ChangedEvent)
     EXPECT_EQ(fired, 6);
     EXPECT_TRUE(lastKey == u8"window.x");
 
-    subscription.unsubscribe();
+    subscription.disconnect();
     cfg->setInt(u8"after", 9);
     EXPECT_EQ(fired, 6); // 已移除 handler
 
@@ -3702,14 +3702,14 @@ TEST_F(GuiTest, CommandManager_NestedCancelledChildIsReported)
     std::atomic<int> child_executing{ 0 };
     std::atomic<int> child_executed{ 0 };
 
-    auto executing = cm->executing.subscribe(
+    auto executing = cm->executing.connect(
         [&](vine::appfw::CommandManager&, vine::appfw::CommandExecutingEventArgs& args) {
             const auto* c = args.command();
             if (c != nullptr && c->name() == child) {
                 ++child_executing;
             }
         });
-    auto executed = cm->executed.subscribe(
+    auto executed = cm->executed.connect(
         [&](vine::appfw::CommandManager&, vine::appfw::CommandExecutedEventArgs& args) {
             const auto* c = args.command();
             if (c != nullptr && c->name() == child) {
@@ -3730,8 +3730,8 @@ TEST_F(GuiTest, CommandManager_NestedCancelledChildIsReported)
     cm->cancelCurrent();
     runner.join();
 
-    executing.unsubscribe();
-    executed.unsubscribe();
+    executing.disconnect();
+    executed.disconnect();
 
     EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Cancelled);
     EXPECT_EQ(child_executing.load(), 1);
@@ -5807,7 +5807,7 @@ TEST(UserIOTest, CommandsChangedReportsRegistryAndAliasEdits)
     ASSERT_NE(cm, nullptr);
 
     int        changes = 0;
-    auto       handler = cm->commandsChanged.subscribe(
+    auto       handler = cm->commandsChanged.connect(
         [&changes](vine::appfw::CommandManager&, vine::EventArgs&) { ++changes; });
 
     const auto name = vine::String(u8"changedProbe");
@@ -5836,7 +5836,7 @@ TEST(UserIOTest, CommandsChangedReportsRegistryAndAliasEdits)
     EXPECT_TRUE(cm->setCommandEnabled(name, true)) << "未注册的命令只是记住偏好";
     EXPECT_EQ(changes, 5) << "注册表没变就不通知";
 
-    handler.unsubscribe();
+    handler.disconnect();
     cm->clearHistory();
 }
 
@@ -6118,8 +6118,8 @@ TEST_F(GuiTest, CommandManager_ReentrantEventHandlerIsSafe)
 
     // 处理函数在通知里增删处理函数：本轮新增的不应被调用，注销的也不应。
     std::atomic<int>                    late_handler_calls{ 0 };
-    decltype(cm->executed)::Subscription late_handler_id{};
-    auto                                subscription = cm->executed.subscribe(
+    vine::Connection late_handler_id{};
+    auto            subscription = cm->executed.connect(
         [&](vine::appfw::CommandManager& manager, vine::appfw::CommandExecutedEventArgs& args) {
             const auto* c = args.command();
             if (c == nullptr || c->name() != first) {
@@ -6131,20 +6131,20 @@ TEST_F(GuiTest, CommandManager_ReentrantEventHandlerIsSafe)
             // 重入：注销刚跑完的命令（实例与注册项是两回事，不应影响本次上报）。
             static_cast<void>(manager.unregisterCommand(first));
             // 重入：本轮新增的处理函数不应在本次通知里被调用。
-            late_handler_id = manager.executed.subscribe(
+            late_handler_id = manager.executed.connect(
                 [&late_handler_calls](vine::appfw::CommandManager&, vine::appfw::CommandExecutedEventArgs&) {
                     late_handler_calls.fetch_add(1);
                 });
         });
 
     const auto result = cm->executeCommandAndWait(first);
-    subscription.unsubscribe();
+    subscription.disconnect();
 
     // 触发期间新增的处理函数：本次不生效，但从下一条命令开始生效。
     const auto after = cm->executeCommandAndWait(second);
 
     // 它捕获的是本用例栈上的对象：用例结束前必须注销，否则会挂到下一条命令上。
-    late_handler_id.unsubscribe();
+    late_handler_id.disconnect();
 
     EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
     EXPECT_EQ(after.status(), vine::appfw::CommandStatus::Success);

@@ -136,8 +136,8 @@ struct ConsolePanel::Impl : public UIElementData {
 
     ConsoleTheme theme = ConsoleTheme::dark();
 
-    /// Subscription to the application theme; cancelling it is the handle's job.
-    vine::Signal<Theme>::Subscription theme_handler_{};
+    /// Connection to the application theme; cancelling it is the handle's job.
+    vine::Connection theme_handler_{};
 
     CommandHistory   history;
     CommandCompleter completer;
@@ -214,7 +214,7 @@ ConsolePanel::ConsolePanel(QWidget* parent)
     // Follow the application theme for the semantic color scheme so the text
     // stays readable in both light and dark themes.
     if (auto* app = obj_cast<GuiApplication>(Application::current())) {
-        data->theme_handler_ = app->theme_changed.subscribe([this](Theme) { applyAppTheme(); });
+        data->theme_handler_ = app->theme_changed.connect([this](Theme) { applyAppTheme(); });
     }
     applyAppTheme();
 }

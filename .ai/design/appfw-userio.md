@@ -99,7 +99,7 @@
 | U4 | `ConsoleUserIO` 阻塞 `std::getline` ⇒ `cancelPendingInput()` 无效，关机可能让命令恢复到已拆的管理器上 | 旧实现直接在等待者线程上 `getline` | 一个后台读线程 + 行缓冲 + 可唤醒的 `AsyncEvent`，取消后读取立即返回 |
 | U5 | 补全列表不刷新：绑定 console 之后注册的命令进不了补全 | `refreshCompletion` 只在 `setConsolePanel`/`setCommandManager` 调用；app_shell 在自己的 `load()` 里绑定，命令在加载期注册 | 新增 `CommandManager::commandsChanged` 事件（注册/取消/启用开关/别名，均在锁外触发），`VisualUserIO` 订阅后编组刷新 |
 | U6 | 交互状态无同步，而 `cancelPendingInput()` 可能来自别的线程 | `cancelled_`/`pending_` 是普通成员 | 两者改 `std::atomic`；`set()` 待在两个锁之外调用，避免"被唤醒的读又要拿锁"而死锁 |
-| U7 | 重复绑定面板会重复挂 handler → 一行输入执行两次 | `setConsolePanel` 只 `subscribe` | 保存 `Subscription` 成员，重绑时先 `unsubscribe()`（现在是 RAII 句柄，见 command-manager 设计文档）；`UserIOTest.RebindingTheConsoleDoesNotRunALineTwice` |
+| U7 | 重复绑定面板会重复挂 handler → 一行输入执行两次 | `setConsolePanel` 只 `connect` | 保存 `Connection` 成员，重绑时先 `disconnect()`（现在是 RAII 句柄，见 command-manager 设计文档）；`UserIOTest.RebindingTheConsoleDoesNotRunALineTwice` |
 | U8 | `GuiApplication::setConsolePanel` 用 `static_cast<VisualUserIO*>` | 子类换 `createUserIO()` 即 UB | 改 `obj_cast<VisualUserIO>` |
 | U9 | `ConsoleUserIO` 细节：stdout 可能交错、非 EOF 失败不区分 | 无锁 `std::cout`；只看 `eof()` | stdout 互斥；`eof`/`bad` 分开记录；两者都让读返回 `nullopt` |
 | U10 | `putString`/`clear`/`setCommandManager`/`cancelPendingInput` 缺线程契约 | 头文件没写 | 基类补齐（含"实现负责编组"与"槽位唯一"） |
