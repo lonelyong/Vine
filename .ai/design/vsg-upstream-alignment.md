@@ -101,8 +101,8 @@
    （脚本按 Linux/CI 提交为 LF，本机检出是 CRLF；自检二进制在 WSL 里没有可执行位），所以它的运行路径留给 CI；本机验证到的是它守护的事实
    （自检 6/30 帧与 app 的 VUID 都是 0）。
 3. D20/D21（真机 GPU 冒烟 / 离屏 multipass 在最新 showcase 下复验）：仍是**验证**缺口，不是设计缺口。
-4. D6/D8（固定 CCW + cull None、program 路径不吃 per-drawable opacity）：语义**契约**问题；要么写进契约文档，
-   要么像 B1 那样收敛成一条通道 ⇒ 需要产品侧拍板，不建议擅自改。
+4. ~~D6/D8（固定 CCW + cull None、program 路径不吃 per-drawable opacity）~~ **两条都已在 §7 落地（2026-09-19）**：
+   D6 是后端自己搞反了 front face（不是产品选择），D8 是程序**声明即可得**（声明填不上就拒绝）——都不需要产品侧拍板了。
 
 ---
 
@@ -120,14 +120,34 @@ Vulkan 则在**帧缓冲坐标**里判定。
 **修法**：`frontFace = VK_FRONT_FACE_CLOCKWISE`（与投影约定成对，两处文档都写明“改一个必须改另一个”）；
 门禁：`RenderStateMapperTest.DefaultStateReproducesBackendDefaults` 与 `…CullModeAndPolygonMap`（后者的注释钉住“掩码与 front face 是一个决定”）。
 
-### 7.2 D8：用户程序现在能拿到每 drawable 的值（🟡 → 可用）
+### 7.2 D8：用户程序现在能拿到每 drawable 的值（🟡 → 可用；采用远端并行实现的版本）
 
 **问题**：引擎的 ABI 说“不透明度是每 drawable 的值，在 `VineDrawBlock::params.x`”（B1 收敛后的唯一通道），
 但 `assembleProgramShaderSet`（程序路径）只声明 set 0 的 material/diffuseMap ⇒ 自定义着色器**根本读不到**它（`setOpacity` 无效且无人说）。
-**修法**：程序**自己声明** `layout(set = 1, binding = 0)` 时，其 ShaderSet 才声明 `vine_draw` + 每 drawable 的 set-1 布局
-（`programReadsDrawBlock` 扫源码，原则与 `programSamplesDepth` 同：文本就是合约）⇒ 桥按 dynamic offset 绑该 drawable 的槽；
-不声明就保持原来的单 set 布局（也避免默默占掉宿主给自己的 set 1/binding 0）。
-门禁：`ProgramDrawBlockTest.AProgramReachesThePerDrawableBlockOnlyByDeclaringIt`（声明/不声明/仅另一绑定/顶点阶段/空程序 5 种）。
+
+**修法（2026-09-19 合并后口径）**：程序路径先扫**程序自己的文本**得到它声明的全部 `(set, binding)` 对（`detail::declaredBindings`，逐阶段），
+再**按声明逐项兑现**——声明了才加到 ShaderSet，不声明就保持原样（也就不会默默占掉宿主留给自己的槽）：
+
+| 程序声明 | 兑现的东西 |
+| --- | --- |
+| `set=1, binding=0` | `vine_draw`（`UNIFORM_BUFFER_DYNAMIC`，形状与引擎自带 set 一致，见 `buildVineShaderSet`）+ 拥有 set 1 布局的 `DrawBlockSetBinding`（两个都要：声明才是把 set 1 放进 pipeline layout，而 layout 缺 set 是非法管线）⇒ **每 drawable 的 `params.x` 由此可达** |
+| `set=0, binding=2` | `vine_lights`（该槽的灯光块） |
+| `set=0, binding=3` | `shadow_map`（该 pass 声明为输入的贴图） |
+| `set=0, binding=4` | `vine_shadow`（把片元放进那张图的块） |
+
+material/diffuseMap（set 0 的 0/1）**始终**声明：程序 set 是挂在引擎材质路径上装配的，它们是 ABI 的一部分。
+引擎的每帧块用 `kProgramAbiStages = VK_SHADER_STAGE_ALL_GRAPHICS`（宿主程序可能任一阶段读它；比 SPIR-V 窄的掩码会直接校验失败）。
+
+**声明了却填不上 = 拒绝，而不是静默空绑**：`ProgramBindingRefusal{set, binding, refused}` 记下第一对填不上的声明并让调用方报出来
+（错的是程序的文本，不是“没能建起来的管线”）；理由是 pipeline layout 由这个 set 生成，SPIR-V 用了而 layout 没有的绑定不是“画错”，
+是**每帧都建不出管线**。全屏程序路径（`makeFullscreenProgramNode`）同样拒绝。
+
+**合并注记**：我的 `programReadsDrawBlock`（一个“程序是否读 draw block”的布尔）与 `ProgramDrawBlockTest` 被远端 `baf0e5c` 的
+per-binding 方案取代而删除——后者更严（逐对校验、填不上就拒绝、报出 (set,binding)），门禁也更全。
+
+**门禁**（`tests/test_vsg/ForwardShaderSetTest.cpp`）：`ThePerDrawBlockIsSetOneWithItsOwnBinding`、
+`AProgramThatDeclaresTheEnginesBlocksIsDrawnNotRefused`、`AProgramBindingNothingCanFillIsRefusedNotDroppedSilently`、
+`AForeignSetIsReportedInsteadOfQuietlyUnbound`。
 
 ### 7.3 D20/D21：真机 + 离屏 multipass 验证（本轮有实测）
 

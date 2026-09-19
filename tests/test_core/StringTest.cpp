@@ -295,26 +295,42 @@ TEST(String, AsStdStringAliasesTheStorage)
 
 TEST(String, StdStringAndU8StringLayOutIdentically)
 {
-    // Layout fingerprint behind as_std_str(): the two instantiations must produce byte-identical
-    // objects for equal content when they live at the same address. This catches an implementation
-    // change that keeps sizeof() equal but moves members around - exactly what the static_asserts
-    // in String.hpp cannot see.
+    // Layout fingerprint behind as_std_str(): the two instantiations must lay their members out
+    // identically for equal content when they live at the same address. This catches an
+    // implementation change that keeps sizeof() equal but moves members around - exactly what the
+    // static_asserts in String.hpp cannot see.
     //
     // Only the small-string shapes are compared. With a heap buffer the object holds a pointer to
     // a separately allocated block, so two independent allocations can never be at the same
     // address (ASan's quarantine guarantees they are not), and comparing those bytes would test
     // the allocator instead of the layout. The heap path is covered functionally below.
-    const auto same_bytes = [](const char* narrow, const std::u8string& wide) {
+    //
+    // The storage is zeroed before each placement-new and BOTH sides are built through the same
+    // constructor (content pointer in, so no copy constructor): a constructor only writes the bytes
+    // it owns, and comparing what two different construction paths happen to leave behind would test
+    // the paths rather than the layout. Without the zeroing the comparison also read the
+    // indeterminate tail of the small-string buffer, which made the outcome depend on the stack
+    // contents left by earlier tests.
+    //
+    // The first word is skipped: with debug iterators (the MSVC Debug default) every container
+    // starts with a _Container_proxy pointer, and two objects built at the same address are given
+    // different proxies, so that word legitimately differs. It is also the ONE word the aliasing in
+    // as_std_str() cannot care about - the content and the bookkeeping members all live after it,
+    // which is exactly what the comparison below pins.
+    constexpr std::size_t kIgnoredPrefix = sizeof(void*);
+    const auto same_bytes = [](const char* narrow, const char8_t* wide) {
         static_assert(sizeof(std::string) == sizeof(std::u8string));
-        alignas(std::string) unsigned char storage[sizeof(std::string)];
+        static_assert(kIgnoredPrefix < sizeof(std::string));
+        alignas(std::string) unsigned char storage[sizeof(std::string)]{};
         unsigned char                     snapshot[sizeof(std::string)];
 
         auto* a = ::new (static_cast<void*>(storage)) std::string(narrow);
         std::memcpy(snapshot, storage, sizeof(std::string));
         a->~basic_string();
 
-        auto* b = ::new (static_cast<void*>(storage)) std::u8string(wide);
-        const bool identical = std::memcmp(snapshot, storage, sizeof(std::string)) == 0;
+        auto* b  = ::new (static_cast<void*>(storage)) std::u8string(wide);
+        const bool identical = std::memcmp(snapshot + kIgnoredPrefix, storage + kIgnoredPrefix,
+                                           sizeof(std::string) - kIgnoredPrefix) == 0;
         b->~basic_string();
         return identical;
     };
