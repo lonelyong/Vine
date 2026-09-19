@@ -20,9 +20,8 @@
 #include <vine/appfw/ConfigCategory.hpp>
 #include <vine/appfw/ConfigGroup.hpp>
 
-#include <vine/appfw/gui/UIElementData.hpp>
-
 #include "Convert.hpp"
+#include "WindowData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
@@ -175,7 +174,7 @@ void writeEditorValue(QWidget* widget, const ConfigManager& config, const Config
 
 V_OBJECT_META_IMPL(ConfigWindow, Window)
 
-struct ConfigWindow::Impl : public UIElementData {
+struct ConfigWindow::Impl : public WindowData {
     /// One editable item: the editor widget and the ConfigManager key it shows.
     struct Editor {
         QWidget* widget = nullptr;

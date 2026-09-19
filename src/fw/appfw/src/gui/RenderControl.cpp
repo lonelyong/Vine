@@ -1,1062 +1,117 @@
 ﻿#include <vine/appfw/gui/RenderControl.hpp>
 
-#include <QAction>
-#include <QCursor>
-#include <QEvent>
-#include <QKeyEvent>
-#include <QMenu>
-#include <QMouseEvent>
-#include <QObject>
-#include <QPlatformSurfaceEvent>
-#include <QResizeEvent>
-#include <QSurface>
-#include <QTimer>
-#include <QVariant>
-#include <QWheelEvent>
+#include <QVBoxLayout>
 #include <QWidget>
-#include <QWindow>
 
-#include <string>
-
-#include <chrono>
-
-#include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderEngine.hpp>
-#include <vine/graphics/SceneView.hpp>
-#include <vine/logging/Log.hpp>
-
-#include <vine/window/InputEvent.hpp>
-#include <vine/window/KeyCode.hpp>
-#include <vine/window/MouseButton.hpp>
-
-#include <functional>
+#include "ControlData.hpp"
+#include "SurfaceWindow.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
 V_OBJECT_META_IMPL(RenderControl, Control)
 
-namespace
-{
-
-/// Delay before another attach attempt after the backend refused one: short, because a refusal
-/// usually comes from something that is still settling (a device being created, a window being
-/// mapped).
-constexpr int kAttachRetryDelayMs = 100;
-
-/// How many times a *usable* surface may fail backend initialization before the control gives up.
-/// A surface with a real handle and a real size that the backend still refuses is the "this is not
-/// going to work" case: waiting longer would only postpone telling the host.
-constexpr int kMaxAttachAttempts = 3;
-
-/**
- * @brief Names a surface state for the log.
- *
- * @param state State to name.
- * @return The state's name, without the enum's scope.
- */
-const char* stateName(RenderControl::SurfaceState state)
-{
-    switch (state) {
-        case RenderControl::SurfaceState::Pending:    return "Pending";
-        case RenderControl::SurfaceState::Attached:   return "Attached";
-        case RenderControl::SurfaceState::Presenting: return "Presenting";
-        case RenderControl::SurfaceState::Failed:     return "Failed";
-    }
-    return "?";
-}
-
-/**
- * @brief Milliseconds elapsed since a time point.
- *
- * @param from Time point to measure from.
- * @return Elapsed milliseconds, rounded down.
- */
-long long elapsedMs(std::chrono::steady_clock::time_point from)
-{
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - from).count();
-}
-
-
-/**
- * @brief Creates the host QWidget with a nested native QWindow render surface.
- *
- * The QWindow is the actual render surface the backend binds to; it is nested
- * inside a QWidget (QWidget::createWindowContainer) so the QWidget-based
- * Control can host it.
- *
- * @return The host QWidget (owned by the Control base).
- */
-QWidget* makeHost()
-{
-    auto* surface = new QWindow();
-    // Vulkan surface: Qt does not composite a raster backing store over the
-    // render surface, so the Vulkan content stays visible.
-    surface->setSurfaceType(QSurface::VulkanSurface);
-
-    auto* widget = QWidget::createWindowContainer(surface);
-
-    // Keep the surface pointer on the host so RenderControl can recover it:
-    // windowHandle() on a non-top-level container returns null, so the QWindow
-    // cannot be queried back reliably.
-    widget->setProperty("_vine_surface", QVariant::fromValue(static_cast<void*>(surface)));
-    return widget;
-}
-
-vine::window::ModifierKey toModifiers(Qt::KeyboardModifiers m)
-{
-    using namespace vine::window;
-    ModifierKey r = ModifierKey::None;
-    if (m & Qt::ShiftModifier) {
-        r |= ModifierKey::Shift;
-    }
-    if (m & Qt::ControlModifier) {
-        r |= ModifierKey::Control;
-    }
-    if (m & Qt::AltModifier) {
-        r |= ModifierKey::Alt;
-    }
-    if (m & Qt::MetaModifier) {
-        r |= ModifierKey::Super;
-    }
-    return r;
-}
-
-vine::window::MouseButton toMouseButton(Qt::MouseButton b)
-{
-    using namespace vine::window;
-    switch (b) {
-        case Qt::LeftButton:   return MouseButton::Left;
-        case Qt::RightButton:  return MouseButton::Right;
-        case Qt::MiddleButton: return MouseButton::Middle;
-        case Qt::XButton1:     return MouseButton::XButton1;
-        case Qt::XButton2:     return MouseButton::XButton2;
-        default:               return MouseButton::None;
-    }
-}
-
-vine::window::KeyCode toKeyCode(int key, bool numpad)
-{
-    using namespace vine::window;
-    using KC = KeyCode;
-
-    if (key >= Qt::Key_A && key <= Qt::Key_Z) {
-        return static_cast<KC>(static_cast<int>(KC::A) + (key - Qt::Key_A));
-    }
-    if (key >= Qt::Key_0 && key <= Qt::Key_9) {
-        return numpad ? static_cast<KC>(static_cast<int>(KC::Numpad0) + (key - Qt::Key_0))
-                      : static_cast<KC>(static_cast<int>(KC::D0) + (key - Qt::Key_0));
-    }
-    if (key >= Qt::Key_F1 && key <= Qt::Key_F12) {
-        return static_cast<KC>(static_cast<int>(KC::F1) + (key - Qt::Key_F1));
-    }
-
-    switch (key) {
-        case Qt::Key_Space:        return KC::Space;
-        case Qt::Key_Return:       return numpad ? KC::NumpadEnter : KC::Enter;
-        case Qt::Key_Enter:        return KC::NumpadEnter;
-        case Qt::Key_Tab:          return KC::Tab;
-        case Qt::Key_Backspace:    return KC::Backspace;
-        case Qt::Key_Delete:       return KC::Delete;
-        case Qt::Key_Insert:       return KC::Insert;
-        case Qt::Key_Home:         return KC::Home;
-        case Qt::Key_End:          return KC::End;
-        case Qt::Key_PageUp:       return KC::PageUp;
-        case Qt::Key_PageDown:     return KC::PageDown;
-        case Qt::Key_Left:         return KC::Left;
-        case Qt::Key_Right:        return KC::Right;
-        case Qt::Key_Up:           return KC::Up;
-        case Qt::Key_Down:         return KC::Down;
-        case Qt::Key_Shift:        return KC::Shift;
-        case Qt::Key_Control:      return KC::Control;
-        case Qt::Key_Alt:          return KC::Alt;
-        case Qt::Key_Meta:         return KC::Super;
-        case Qt::Key_Minus:        return numpad ? KC::NumpadSubtract : KC::Minus;
-        case Qt::Key_Equal:        return KC::Equal;
-        case Qt::Key_Plus:         return numpad ? KC::NumpadAdd : KC::Equal;
-        case Qt::Key_Asterisk:     return numpad ? KC::NumpadMultiply : KC::Unknown;
-        case Qt::Key_Slash:        return numpad ? KC::NumpadDivide : KC::Slash;
-        case Qt::Key_Period:       return numpad ? KC::NumpadDecimal : KC::Period;
-        case Qt::Key_BracketLeft:  return KC::BracketLeft;
-        case Qt::Key_BracketRight: return KC::BracketRight;
-        case Qt::Key_Backslash:    return KC::Backslash;
-        case Qt::Key_Semicolon:    return KC::Semicolon;
-        case Qt::Key_Apostrophe:   return KC::Apostrophe;
-        case Qt::Key_Comma:        return KC::Comma;
-        case Qt::Key_QuoteLeft:    return KC::Grave;
-        case Qt::Key_Escape:       return KC::Escape;
-        case Qt::Key_Print:        return KC::PrintScreen;
-        case Qt::Key_Pause:        return KC::Pause;
-        case Qt::Key_Menu:         return KC::Menu;
-        case Qt::Key_Context1:     return KC::ContextMenu;
-        case Qt::Key_CapsLock:     return KC::CapsLock;
-        case Qt::Key_NumLock:      return KC::NumLock;
-        case Qt::Key_ScrollLock:   return KC::ScrollLock;
-        default:                   break;
-    }
-    return KC::Unknown;
-}
-
-/**
- * @brief Translates Qt events from the render surface and its host widget.
- *
- * Installed as an event filter on the native QWindow render surface and on
- * the host QWidget. It forwards resizes and input events to RenderControl and
- * reports native-surface destruction through std::function callbacks, so the
- * render control handles Qt's native-window lifecycle directly (no separate
- * window-context object).
- */
-class SurfaceHostFilter : public QObject {
-  public:
-    using MouseFn  = std::function<void(const vine::window::MouseEvent&)>;
-    using KeyFn    = std::function<void(const vine::window::KeyEvent&)>;
-    using ScrollFn = std::function<void(const vine::window::ScrollEvent&)>;
-    using ResizeFn = std::function<void(int, int)>;
-    using VoidFn   = std::function<void()>;
-
-    SurfaceHostFilter(QObject* surface, QObject* host)
-      : QObject(nullptr)
-    {
-        if (surface != nullptr) {
-            surface->installEventFilter(this);
-        }
-        if (host != nullptr) {
-            host->installEventFilter(this);
-        }
-    }
-
-    MouseFn on_mouse;
-    KeyFn on_key;
-    ScrollFn on_scroll;
-    ResizeFn on_resize;
-    VoidFn on_created;
-    VoidFn on_destroyed;
-    VoidFn on_update;
-    VoidFn on_shown;
-
-  private:
-    // Last size forwarded through on_resize, used to de-duplicate the host
-    // and surface resize events of the same layout pass.
-    int last_w_ = -1;
-    int last_h_ = -1;
-
-  protected:
-    bool eventFilter(QObject* obj, QEvent* event) override
-    {
-        switch (event->type()) {
-            case QEvent::Resize: {
-                auto* e = static_cast<QResizeEvent*>(event);
-                const int w = e->size().width();
-                const int h = e->size().height();
-                // A container resize delivers a QResizeEvent to both the host
-                // QWidget and the nested surface QWindow with the same final
-                // size. Forward only the first so we do not rebuild/render
-                // twice per resize (an identical size needs no rebuild anyway).
-                if (w == last_w_ && h == last_h_) {
-                    break;
-                }
-                last_w_ = w;
-                last_h_ = h;
-                if (on_resize) {
-                    on_resize(w, h);
-                }
-                break;
-            }
-            case QEvent::PlatformSurface: {
-                auto* e = static_cast<QPlatformSurfaceEvent*>(event);
-                // Qt may destroy and recreate the native platform surface (new
-                // HWND) on layout changes. Report both phases: the backend is
-                // released on destruction and re-attached once the new surface
-                // is created and laid out.
-                if (e->surfaceEventType()
-                    == QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
-                    if (on_destroyed) {
-                        on_destroyed();
-                    }
-                } else if (e->surfaceEventType()
-                           == QPlatformSurfaceEvent::SurfaceCreated) {
-                    if (on_created) {
-                        on_created();
-                    }
-                }
-                break;
-            }
-            case QEvent::UpdateRequest: {
-                if (on_update) {
-                    on_update();
-                }
-                break;
-            }
-            case QEvent::Show: {
-                if (on_shown) {
-                    on_shown();
-                }
-                break;
-            }
-            case QEvent::MouseButtonPress:
-            case QEvent::MouseButtonRelease: {
-                auto* e = static_cast<QMouseEvent*>(event);
-                vine::window::MouseEvent me;
-                me.button    = toMouseButton(e->button());
-                me.modifiers = toModifiers(e->modifiers());
-                me.x         = e->position().x();
-                me.y         = e->position().y();
-                me.pressed   = (event->type() == QEvent::MouseButtonPress);
-                if (on_mouse) {
-                    on_mouse(me);
-                }
-                break;
-            }
-            case QEvent::MouseMove: {
-                auto* e = static_cast<QMouseEvent*>(event);
-                vine::window::MouseEvent me;
-                me.button    = vine::window::MouseButton::None;
-                me.modifiers = toModifiers(e->modifiers());
-                me.x         = e->position().x();
-                me.y         = e->position().y();
-                if (on_mouse) {
-                    on_mouse(me);
-                }
-                break;
-            }
-            case QEvent::Wheel: {
-                auto* e     = static_cast<QWheelEvent*>(event);
-                const auto delta = e->angleDelta();
-                vine::window::ScrollEvent se;
-                // Qt angleDelta is in 1/8-degree units; convert to notches/lines.
-                se.deltaX    = delta.x() / 120.0;
-                se.deltaY    = delta.y() / 120.0;
-                se.modifiers = toModifiers(e->modifiers());
-                if (on_scroll) {
-                    on_scroll(se);
-                }
-                break;
-            }
-            case QEvent::KeyPress:
-            case QEvent::KeyRelease: {
-                auto* e          = static_cast<QKeyEvent*>(event);
-                const bool numpad = bool(e->modifiers() & Qt::KeypadModifier);
-                vine::window::KeyEvent ke;
-                ke.code      = toKeyCode(e->key(), numpad);
-                ke.modifiers = toModifiers(e->modifiers());
-                ke.pressed   = (event->type() == QEvent::KeyPress);
-                ke.repeat    = e->isAutoRepeat();
-                if (on_key) {
-                    on_key(ke);
-                }
-                break;
-            }
-            default:
-                break;
-        }
-        return false;
-    }
-};
-
-}  // namespace
-
-struct RenderControl::Impl {
-    vine::intrusive_ptr<vine::graphics::RenderEngine> engine;
-    vine::intrusive_ptr<vine::graphics::SceneView> view;
-    QWindow* surface = nullptr;
-    QObject* surface_filter = nullptr;
-    bool wired = false;
-    bool initialized = false;
-    bool init_ok = false;
-    // Surface lifecycle, published through RenderControl::state()/stateChanged.
-    RenderControl::SurfaceState state = RenderControl::SurfaceState::Pending;
-    // Why the state reached Failed (empty otherwise).
-    String failure_reason;
-    // Whether the control attaches by itself once the surface is usable.
-    bool auto_initialize = true;
-    // Whether the native surface is shown. It starts hidden: an unpresented native window is
-    // a hole the compositor fills with whatever it likes, and attaching does not need it to
-    // be visible.
-    bool surface_shown = false;
-    // Set when the platform refused to attach to a hidden surface (a window system that
-    // wants the surface configured first): from then on the control shows it before
-    // attaching, which is the fallback the whole hidden-surface path exists to avoid.
-    bool needs_visible_surface = false;
-    // Backend initialize() refusals on a usable surface, against kMaxAttachAttempts.
-    int attach_attempts = 0;
-    // Whether a retry is already scheduled.
-    bool retry_scheduled = false;
-    // Whether the "waiting for a usable surface" line was already logged.
-    bool deferral_logged = false;
-    // Whether a mouse button is currently held (drives drag refresh).
-    bool mouse_down = false;
-    // Right-button click tracking: distinguishes a plain right-click (opens
-    // the context menu) from a right-drag (pan).
-    bool right_press_active = false;
-    double right_press_x = 0.0;
-    double right_press_y = 0.0;
-    // Whether the native surface currently exists and is laid out (cleared on
-    // SurfaceAboutToBeDestroyed, set again on resize/surface-created).
-    bool surface_ok = false;
-    // Coalesces resize/surface-created notices into one deferred update.
-    bool resize_pending = false;
-    // Remaining display-synced settle frames owed after the last resize.
-    int settle_frames = 0;
-    void* initialized_handle = nullptr;
-    // Timings for the lifecycle log lines (construction -> attached -> first frame).
-    std::chrono::steady_clock::time_point created_at{};
+struct RenderControl::Impl : public ControlData {
+    /// The surface and the render session on it. It is created bare and handed to the window
+    /// container, which owns it from then on, so it lives exactly as long as this control's widget
+    /// tree does.
+    SurfaceWindow* surface = nullptr;
 };
 
 RenderControl::RenderControl()
-  : Control(makeHost())
-  , d(new Impl())
+  : Control(new Impl(), new QWidget())
 {
-    // Recover the render surface QWindow stashed by makeHost (windowHandle()
-    // is unreliable for a non-top-level container widget).
-    QWindow* surface = static_cast<QWindow*>(
-        impl<QWidget>()->property("_vine_surface").value<void*>());
-    d->surface = surface;
+    auto* data = dptr();
 
-    // The native surface starts hidden and is shown again as soon as the backend is bound to
-    // it (see initializeBackend()). Attaching does not need it to be visible: what it needs is
-    // a created platform window (nativeHandle() forces that) with a real size, and the size
-    // follows the container's layout whether or not the surface itself is shown (probe:
-    // 378x136 -> 398x146 while hidden on both xcb and offscreen). Showing it before the
-    // attach is exactly what left the startup with a transparent hole: until a frame goes in,
-    // a native window displays whatever the compositor decides. A window system that refuses
-    // to build a surface for an unmapped window says so by failing the first attach, and the
-    // control falls back to showing it first (needs_visible_surface).
-    surface->setVisible(false);
-    d->created_at = std::chrono::steady_clock::now();
-    d->engine  = vine::intrusive_ptr<vine::graphics::RenderEngine>(
-        new vine::graphics::RenderEngine());
-    // Design B: RenderEngine starts empty (no passes) and is a pure
-    // scheduler - it holds no camera and no content scene. The interactive
-    // primary view - its camera, content scene and orbit manipulator - lives
-    // in a SceneView that borrows the engine and binds its content to the
-    // window pass it registers (SceneView::ensureWindowPass, called in
-    // init()).
-    d->view  = vine::intrusive_ptr<vine::graphics::SceneView>(
-        new vine::graphics::SceneView());
-    d->view->setEngine(d->engine.get());
+    // The surface is built here, where the control can simply keep it: Qt exposes no accessor for the
+    // window inside a QWindowContainer (the container is not the window, and its own windowHandle() is
+    // null), so a factory that only returned the host widget would leave the surface to be looked up
+    // again - a round-trip this does not need.
+    data->surface = new SurfaceWindow(impl<QWidget>());
 
-    // Backend diagnostics become log records. This is what makes a failing draw
-    // visible in a GUI app at all: the backend reports what it could not serve
-    // (a rejected geometry, a shader that fell back to the built-in one, an
-    // off-screen target it could not build) through the engine, and without a
-    // listener that information only ever reaches stderr, which a windowed app
-    // never shows. The engine stores the sink, so it also applies to the backend
-    // created later by initialize().
-    d->engine->setDiagnosticSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
-        auto&             logger  = vine::logging::defaultLogger();
-        const std::string message = diagnostic.message.as_std_str();
-        switch (diagnostic.severity) {
-            case vine::graphics::DiagnosticSeverity::Error:
-                logger.error("[graphics] {}", message);
-                break;
-            case vine::graphics::DiagnosticSeverity::Warning:
-                logger.warn("[graphics] {}", message);
-                break;
-            case vine::graphics::DiagnosticSeverity::Info:
-                logger.info("[graphics] {}", message);
-                break;
-        }
-    });
+    // A QWidget-based host embeds the surface through a window container, which is laid out to fill the
+    // host: the native window is then exactly the area this control was given, wherever the host puts it.
+    auto* container = QWidget::createWindowContainer(data->surface, impl<QWidget>());
+    auto* layout    = new QVBoxLayout(impl<QWidget>());
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(container);
 
-    // The surface filter is installed here rather than in init(): it is the one thing the
-    // control uses to learn about its own surface at all, and it is what re-asserts "the
-    // surface stays hidden until the backend is bound" after Qt shows the embedded QWindow
-    // together with its container (measured: every show of the container - or of an ancestor -
-    // shows the QWindow again, on both xcb and offscreen). A host that shows its window before
-    // the control ever attaches would otherwise leave the unpresented native window on screen.
-    wireEvents();
+    // The container reports its resizes and shows to the surface: a resize of the host is what covers a
+    // maximize, on which the embedded window misses its own resize.
+    container->installEventFilter(data->surface);
 
-    // Auto-initialization needs a first trigger that does not come from the surface filter: a
-    // window that is not laid out yet fires no resize, and the filter is what delivers those.
-    // Deferring to the event loop also keeps the host's window open to configure the engine
-    // (setBackend(), pipeline assembly) right after constructing the control - and by then the
-    // widget it was put into has been laid out. Everything after this attempt is driven by
-    // surface events (onSurfaceResized) and the retry ladder.
-    QTimer::singleShot(0, impl<QWidget>(), [this] { ensureAttached(); });
+    // Everything below is forwarding. The state signal is the one part of it that has to be relayed
+    // rather than merely passed on: transitions are decided on the surface, and the control re-publishes
+    // them so hosts keep the single subscription point this class documents.
+    data->surface->on_state_changed = [this](SurfaceState state) { stateChanged.trigger(state); };
 }
 
 RenderControl::~RenderControl()
 {
-    delete d->surface_filter;
-    delete d;
+    // Stop listening before the base destroys the widget: the window outlives this body by a moment,
+    // and its teardown reports the platform surface going away. Nothing is freed here - the Impl is
+    // the object UIElement keeps in its d and releases with the rest of the control.
+    auto* data = dptr();
+    if (data != nullptr && data->surface != nullptr) {
+        data->surface->on_state_changed = nullptr;
+    }
 }
 
 vine::graphics::RenderEngine* RenderControl::engine() const
 {
-    return d->engine.get();
+    return dptr()->surface->engine();
 }
 
 vine::graphics::SceneView* RenderControl::view() const
 {
-    return d->view.get();
-}
-
-void* RenderControl::nativeHandle() const
-{
-    return (d->surface != nullptr) ? reinterpret_cast<void*>(d->surface->winId()) : nullptr;
-}
-
-int RenderControl::surfaceWidth() const
-{
-    return (d->surface != nullptr) ? d->surface->width() : 0;
-}
-
-int RenderControl::surfaceHeight() const
-{
-    return (d->surface != nullptr) ? d->surface->height() : 0;
-}
-
-double RenderControl::devicePixelRatio() const
-{
-    return (d->surface != nullptr) ? d->surface->devicePixelRatio() : 1.0;
-}
-
-RenderControl::SurfaceState RenderControl::state() const
-{
-    return d->state;
-}
-
-String RenderControl::failureReason() const
-{
-    return d->failure_reason;
-}
-
-void RenderControl::setAutoInitialize(bool on)
-{
-    if (d->auto_initialize == on) {
-        return;
-    }
-    d->auto_initialize = on;
-    if (on) {
-        // The host just handed the timing back to the control: try on this call rather than
-        // waiting for a surface event, which may never come (the window may already be laid out).
-        ensureAttached();
-    }
+    return dptr()->surface->view();
 }
 
 bool RenderControl::init()
 {
-    // Idempotent: repeated calls are harmless and return the current result -- but only while the session is
-    // bound to the surface the window reports NOW: after Qt recreated the platform window this has to
-    // re-attach (a re-announce, so the backend can move) rather than report the old attach as current.
-    if (d->initialized && d->init_ok && nativeHandle() == d->initialized_handle) {
-        return true;
-    }
-    if (d->engine == nullptr || d->surface == nullptr) {
-        return false;
-    }
-
-    if (d->state == SurfaceState::Failed) {
-        // An explicit init() is the host saying "try again": start the budget over so this
-        // attempt is not refused on the spot, and let the lifecycle retry afterwards.
-        d->attach_attempts = 0;
-        d->failure_reason.clear();
-        setState(SurfaceState::Pending);
-    }
-
-    // Wire the backend + event handling once, then attach when the native
-    // surface is usable (the host calls init() after the window is shown). If
-    // the surface is not ready yet the attach is deferred: the host retries
-    // init(), or a later surface/resize notice re-attaches, so we never fall
-    // back to creating a separate window.
-    wireEvents();
-
-    if (d->engine->backend() == nullptr) {
-        // Nothing to attach to at all: no render backend plugin is registered. Waiting will
-        // not change that, so say it once instead of staying Pending forever.
-        failAttach(u8"no render backend is registered");
-        return false;
-    }
-
-    // Design B: the engine auto-registers no pipeline and is camera-agnostic.
-    // The SceneView owns the primary view (camera + content scene +
-    // manipulator); it registers the minimal default viewer - an order-0
-    // window pass drawing its content through its camera to the backbuffer -
-    // unless an application pass already presents that camera to the window
-    // (e.g. a deferred-lighting main pass carrying the view's camera). Apps
-    // assembling an explicit pipeline via addPass()/RenderPipelineBuilder keep
-    // full control; apps that only add helper / HUD passes (which draw
-    // through their own cameras) still get the default window pass.
-    d->view->ensureWindowPass();
-
-    if (nativeHandle() != nullptr) {
-        initializeBackend();
-    }
-    // Test hatch: force a platform-window recreation after VINE_RECREATE_SURFACE_MS milliseconds, which is
-    // the event the follow path above exists for. See recreateSurface().
-    if (const char* recreate_ms = std::getenv("VINE_RECREATE_SURFACE_MS"); recreate_ms != nullptr && *recreate_ms != '\0') {
-        const int delay_ms = std::atoi(recreate_ms);
-        QTimer::singleShot(delay_ms, d->surface, [this] { recreateSurface(); });
-    }
-    if (d->init_ok) {
-        // The deferred app_shell init() can land before the dock layout has
-        // fully settled, and Qt may still recreate the platform window right
-        // after. Re-check a few times so the backend ends up bound to and
-        // rendering at the live surface size; each check is a no-op when the
-        // surface is unchanged (handleSurfaceUpdate deduplicates via the
-        // coalescing flag).
-        QTimer::singleShot(150, d->surface, [this] { scheduleSurfaceUpdate(); });
-        QTimer::singleShot(400, d->surface, [this] { scheduleSurfaceUpdate(); });
-        QTimer::singleShot(900, d->surface, [this] { scheduleSurfaceUpdate(); });
-    }
-    return d->init_ok;
-}
-
-void RenderControl::wireEvents()
-{
-    if (d->wired) {
-        return;
-    }
-    d->wired = true;
-
-    // Default to the first registered render backend when none was attached
-    // by the caller through engine()->setBackend().
-    if (d->engine->backend() == nullptr) {
-        const auto entries = vine::graphics::RenderBackendRegistry::instance().entries();
-        if (!entries.empty()) {
-            d->engine->setBackend(
-                entries.front().factory->create());
-        }
-    }
-
-    // A default orbit manipulator (bound to the view's camera and scene) is
-    // provided lazily by the SceneView on first input / fit; the view forwards
-    // window input events to it, so nothing is wired here.
-
-    // The host widget is the Control's own QWidget; the surface QWindow is
-    // nested inside it. One filter observes both (resize on the host also
-    // covers maximize, on which the embedded QWindow misses its resize).
-    auto* filter = new SurfaceHostFilter(d->surface, impl<QWidget>());
-    d->surface_filter = filter;
-
-    // Qt-translated input is pushed to the view (whose manipulator drives the
-    // camera), then a frame is rendered so the view follows the interaction
-    // live. The Vulkan surface is render-on-demand: vsg only draws when
-    // renderFrame() runs, so without a refresh here orbit/pan/zoom would
-    // update the camera but never repaint. Pure hover moves are skipped (no
-    // button held => the manipulator does not change the view); press/release
-    // and scroll/key always refresh.
-    filter->on_mouse = [this](const vine::window::MouseEvent& e) {
-        // A right press starts a pan drag; a release close to the press (no
-        // movement) is a plain right-click and opens the context menu.
-        const bool is_right = e.button == vine::window::MouseButton::Right;
-        if (is_right) {
-            if (e.pressed) {
-                d->right_press_active = true;
-                d->right_press_x = e.x;
-                d->right_press_y = e.y;
-            } else if (d->right_press_active) {
-                d->right_press_active = false;
-                const double dx = e.x - d->right_press_x;
-                const double dy = e.y - d->right_press_y;
-                if ((dx * dx + dy * dy) < 36.0) {  // within 6 px: a click
-                    QTimer::singleShot(0, [this] { showContextMenu(); });
-                }
-            }
-        }
-        d->view->pushEvent(e);
-        if (e.button != vine::window::MouseButton::None) {
-            d->mouse_down = e.pressed;
-        }
-        if (e.button != vine::window::MouseButton::None || d->mouse_down) {
-            renderFrame();
-        }
-    };
-    filter->on_scroll = [this](const vine::window::ScrollEvent& e) {
-        d->view->pushEvent(e);
-        renderFrame();
-    };
-    filter->on_key = [this](const vine::window::KeyEvent& e) {
-        d->view->pushEvent(e);
-        renderFrame();
-    };
-
-    filter->on_resize    = [this](int, int) { onSurfaceResized(); };
-    filter->on_created   = [this] { onSurfaceResized(); };
-    filter->on_destroyed = [this] { onSurfaceDestroyed(); };
-    filter->on_update    = [this] { onSurfaceUpdate(); };
-    // Qt shows the embedded QWindow together with its container, so a surface that is meant to
-    // stay hidden until the backend is bound has to be re-hidden here, after that show. Without
-    // it, adding the control to a window that is already on screen - which is what a plugin
-    // loading its UI into a shown main window does - would put the unpresented native window on
-    // screen, which is the transparent hole this lifecycle exists to avoid.
-    filter->on_shown     = [this] {
-        if (d->surface != nullptr) {
-            d->surface->setVisible(d->surface_shown);
-        }
-    };
-}
-
-void RenderControl::onSurfaceDestroyed()
-{
-    // Qt destroys and recreates the native platform surface (a new HWND / xcb window) on layout changes,
-    // screen changes and reparents. The SESSION is not torn down for that: the surface is marked unusable so
-    // nothing renders into a dead window (renderFrame also compares the live handle against the bound one),
-    // and the backend is handed the NEW handle when it appears -- which is the move the SDK contract
-    // describes (RenderBackend::setWindowHandle "re-announce the handle to follow a new surface"), and which
-    // keeps the device and every compiled pipeline. Shutting the engine down here was what made every
-    // recreation cost a full session rebuild.
-    d->surface_ok = false;
-}
-
-void RenderControl::onSurfaceResized()
-{
-    d->surface_ok = true;
-    scheduleSurfaceUpdate();
-
-    // The surface just became (or changed) usable, which is the event the control's own
-    // lifecycle hangs off for everything after the first attempt (see the deferred trigger in
-    // the constructor). Cheap while something is attached: init() reports the current result
-    // without touching the backend.
-    ensureAttached();
-}
-
-void RenderControl::scheduleSurfaceUpdate()
-{
-    if (d->resize_pending) {
-        return;
-    }
-    d->resize_pending = true;
-    // Run after the current Qt layout pass, not synchronously inside the
-    // resize dispatch: the native child window must be at its final geometry
-    // before the backend rebuilds its swapchain (vsg's Win32 window resize()
-    // reads the real HWND client rect, so a rebuild mid-layout would keep the
-    // old size and the view would never refresh).
-    QTimer::singleShot(0, d->surface_filter, [this] { handleSurfaceUpdate(); });
-}
-
-void RenderControl::handleSurfaceUpdate()
-{
-    d->resize_pending = false;
-    void* h = nativeHandle();
-    const int w = surfaceWidth();
-    const int sh = surfaceHeight();
-
-    // Before init() has wired a backend, the host drives the first attach
-    // itself (via init()); never auto-initialize here.
-    if (!d->wired || !d->surface_ok || h == nullptr || w <= 0 || sh <= 0) {
-        return;
-    }
-
-    if (!d->initialized || h != d->initialized_handle) {
-        // The native surface was recreated by Qt (new handle) or the backend is down after such
-        // a shutdown: attach again now that the surface is created and laid out. That is the
-        // lifecycle's own job - it applies the auto-initialization flag, counts failures and
-        // publishes the state - so this goes through it rather than calling the backend here.
-        if (d->auto_initialize) {
-            ensureAttached();
-        }
-        return;
-    }
-
-    // Normal resize of the attached surface: rebuild the swapchain at the
-    // final native size, refresh the view's camera projection aspect, present,
-    // then request settle frames so the resized view is actually displayed.
-    //
-    // ONE frame, and no frame before the layout step. That step resizes the
-    // creator's off-screen chain (the deferred G-buffer, the composite target and
-    // every program slot that samples them), and the rebuild it triggers costs a
-    // frame's worth of work -- measured ~250 ms for the deferred demo on a
-    // maximize (six fullscreen programs and two off-screen targets). A frame
-    // presented BEFORE it is possible (the swapchain already follows the window,
-    // and a fullscreen program samples its source through vine_uv, so the
-    // previous picture would be scaled to the new size) and fills the window
-    // sooner -- but it fills it DISTORTED: the old picture stretched to the new
-    // aspect, then snapping back when this frame lands. That was tried on
-    // Windows and rejected: the picture is never distorted, and the part of the
-    // client area the window just grew by is simply filled when this frame
-    // lands. See .ai/memory/graphics.md (2026-09-17).
-    d->engine->resize(w, sh);
-    d->view->onSurfaceResized(w, sh);
-    renderFrame();
-    requestSettleFrames();
-}
-
-void RenderControl::requestSettleFrames()
-{
-    // A single present right after a size change can be dropped by the
-    // presentation pipeline while the native surface settles (e.g. Vulkan
-    // returns VK_ERROR_OUT_OF_DATE_KHR after a swapchain rebuild and, with
-    // render-on-demand, no later frame re-presents), leaving a stale image.
-    // This is backend-independent. Re-render on a few display-synced updates
-    // (QWindow::requestUpdate() -> QEvent::UpdateRequest); each frame also
-    // lets the backend re-sync to the current surface size.
-    d->settle_frames = 3;
-    if (d->surface != nullptr) {
-        d->surface->requestUpdate();
-    }
-}
-
-void RenderControl::onSurfaceUpdate()
-{
-    if (d->settle_frames > 0) {
-        --d->settle_frames;
-        renderFrame();
-        if (d->settle_frames > 0 && d->surface != nullptr) {
-            d->surface->requestUpdate();
-        }
-    }
-}
-
-void RenderControl::initializeBackend()
-{
-    void* h = nativeHandle();
-    if (d->initialized && d->init_ok && h != nullptr && h == d->initialized_handle) {
-        // Already bound to this very surface: nothing to do.
-        return;
-    }
-    if (h == nullptr || surfaceWidth() <= 0 || surfaceHeight() <= 0) {
-        // No usable native surface yet (Qt destroying/recreating the platform
-        // window, or the window not laid out yet): defer so we never attach to
-        // a dead or empty handle. Retried on SurfaceCreated/expose/resize.
-        if (!d->deferral_logged) {
-            // Once per session: this line is the answer to "why is my render area empty?".
-            // It also says how long the host's own startup kept the surface unusable.
-            d->deferral_logged = true;
-            vine::logging::defaultLogger().info("[RenderControl] waiting for a usable surface ({}x{}, {} ms after construction)",
-                                                surfaceWidth(),
-                                                surfaceHeight(),
-                                                elapsedMs(d->created_at));
-        }
-        return;
-    }
-    if (d->initialized && h != d->initialized_handle) {
-        // The platform window was recreated and this is the new one. Re-announce the handle instead of
-        // tearing the session down: setWindowHandle is the contract for "follow me onto this surface", so
-        // the backend moves -- the device and every compiled pipeline stay -- and rebuilds the session
-        // itself when it cannot serve the new window (a different swapchain format). Shutting the engine
-        // down here forced the expensive path on every recreation; the vsg backend's windowBuildCount() is
-        // what tells the two apart (flat after a move, +1 after a rebuild).
-        vine::logging::defaultLogger().info(
-            "[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
-    }
-    // Give the engine the native window the backend must attach to; the
-    // handle is refreshed here so a re-announce after a surface recreate uses
-    // the new handle (and a backend that can move does exactly that).
-    d->engine->setWindowHandle(h);
-    d->init_ok = d->engine->initialize();
-    if (d->init_ok) {
-        d->initialized = true;
-        d->initialized_handle = h;
-        d->attach_attempts = 0;
-        setState(SurfaceState::Attached);
-        // The surface may only be shown once something can go into it: showing it before the
-        // attach is what left a transparent hole at startup (an unpresented native window
-        // shows whatever the compositor decides). Shown here, the first present follows
-        // within a frame.
-        setSurfaceShown(true);
-        // Deliver the current surface size so the view's camera projection
-        // aspect is set on the first frame (undistorted) and the backend
-        // viewport tracks the surface.
-        d->engine->resize(surfaceWidth(), surfaceHeight());
-        d->view->onSurfaceResized(surfaceWidth(), surfaceHeight());
-        renderFrame();
-        // The first attach can land mid-layout (e.g. the deferred init from
-        // app_shell runs at 100ms, before the dock layout has settled), so the
-        // native surface may still be resized afterwards. Request settle frames
-        // so a few display-synced updates re-sync the swapchain to the final
-        // size and the first content is actually presented (a single present
-        // against a soon-to-resize surface can otherwise be dropped, leaving
-        // the view empty).
-        requestSettleFrames();
-    }
-    else if (!d->surface_shown && !d->needs_visible_surface) {
-        // The platform would not build a surface for an unmapped window (Wayland wants the
-        // surface configured first; X11 and Windows accept an unmapped one). Show the surface
-        // and let the retry below happen: shown-but-unpresented is the state the hidden-surface
-        // path exists to avoid, so this is the fallback, not the design - and it is said out
-        // loud, because it also explains a longer startup on that platform.
-        d->needs_visible_surface = true;
-        vine::logging::defaultLogger().info(
-            "[RenderControl] attaching to a hidden surface failed: this platform wants a visible window, showing the surface and retrying");
-        setSurfaceShown(true);
-    }
-    // A refusal that is not the hidden-surface fallback is counted by ensureAttached(), which is
-    // the one place that decides whether to try again or to give up.
-    // On failure, initialized stays false so expose/resize can retry.
-}
-
-void RenderControl::fitToScreen()
-{
-    if (d->view != nullptr) {
-        if (!d->view->fitToScreen()) {
-            d->view->home();
-        }
-    }
-    renderFrame();
-}
-
-void RenderControl::recreateSurface()
-{
-    if (d->surface == nullptr) {
-        return;
-    }
-    // destroy() + create() is how a platform window is recreated (the surface is nested in the host widget, so
-    // it comes back in the same place with a NEW handle); the follow path then does the work.
-    vine::logging::defaultLogger().info("[RenderControl] test hatch: recreating the render surface");
-    d->surface->destroy();
-    d->surface->create();
-    d->surface->show();
-    scheduleSurfaceUpdate();
-}
-
-void RenderControl::showContextMenu()
-{
-    if (d->view == nullptr) {
-        return;
-    }
-    QMenu menu(impl<QWidget>());
-    QAction* fit = menu.addAction(QString::fromUtf8("适应屏幕"));
-    QObject::connect(fit, &QAction::triggered, [this] { fitToScreen(); });
-    menu.exec(QCursor::pos());
+    return dptr()->surface->init();
 }
 
 void RenderControl::renderFrame()
 {
-    if (d->engine == nullptr || d->surface == nullptr) {
-        return;
-    }
-    // Never run the vsg frame loop (acquire/present) against a stale or hidden
-    // surface: acquireNextFrame() calls Window::resize() on a dead HWND and
-    // spams validation errors. Only render while the backend is attached to
-    // the surface the QWindow currently reports and the control is on screen.
-    //
-    // On screen is asked of the CONTAINER widget, not of the QWindow: Qt shows the
-    // embedded window together with its container, so the surface's own flags say
-    // "shown" even while the window hosting it is not visible - measured: a surface
-    // shown while its top-level window is hidden reports visible=1 and exposed=1 under
-    // the offscreen platform. That distinction is what lets the control attach while
-    // it is still invisible (the surface exists and has a size) without presenting into
-    // a window nobody can see.
-    void* h = nativeHandle();
-    if (h == nullptr || d->surface == nullptr) {
-        return;
-    }
-    if (!d->surface_shown || !impl<QWidget>()->isVisible()) {
-        return;
-    }
-    if (d->initialized && h != d->initialized_handle) {
-        // Qt recreated the native surface (new HWND) but no surface/resize
-        // notice was observed; rebind to the live window so we never keep
-        // presenting to a dead handle. initializeBackend() releases the old
-        // backend and renders the first frame on the new surface, then
-        // returns.
-        initializeBackend();
-        return;
-    }
-    if (d->initialized) {
-        d->engine->frame();
-        // A frame was handed to a visible, attached surface, so the area shows render output
-        // from here on. A backend that could not present reports that on the diagnostics
-        // channel rather than through this call, which is why the state is "a frame was
-        // submitted", not "the swapchain confirmed it".
-        setState(SurfaceState::Presenting);
-    }
+    dptr()->surface->renderFrame();
 }
 
-void RenderControl::setState(SurfaceState next)
+void RenderControl::fitToScreen()
 {
-    if (d->state == next) {
-        return;
-    }
-
-    const SurfaceState previous = d->state;
-    d->state                    = next;
-
-    // One line per transition, with the elapsed time: construction -> attached -> first frame is
-    // the number that says whether a startup needs the prewarm path (device and pipelines built
-    // before the window exists), and the surface flags say whether the platform let the control
-    // attach while hidden.
-    if (next == SurfaceState::Failed) {
-        vine::logging::defaultLogger().error("[RenderControl] surface {} -> {} after {} ms: {}",
-                                             stateName(previous),
-                                             stateName(next),
-                                             elapsedMs(d->created_at),
-                                             d->failure_reason.as_std_str());
-    }
-    else {
-        vine::logging::defaultLogger().info("[RenderControl] surface {} -> {} after {} ms (surface visible={}, exposed={})",
-                                            stateName(previous),
-                                            stateName(next),
-                                            elapsedMs(d->created_at),
-                                            d->surface != nullptr && d->surface->isVisible(),
-                                            d->surface != nullptr && d->surface->isExposed());
-    }
-
-    stateChanged.trigger(next);
+    dptr()->surface->fitToScreen();
 }
 
-void RenderControl::ensureAttached()
+double RenderControl::devicePixelRatio() const
 {
-    if (!d->auto_initialize || d->surface == nullptr) {
-        return;
-    }
-    if (d->state == SurfaceState::Attached || d->state == SurfaceState::Presenting) {
-        return;
-    }
-    if (d->state == SurfaceState::Failed) {
-        // Terminal by itself: an explicit init() from the host is what starts a new budget.
-        return;
-    }
-
-    const bool usable = surfaceUsable();
-    if (init()) {
-        d->attach_attempts = 0;
-        return;
-    }
-
-    if (!usable) {
-        // Nothing to retry yet: the surface has no size. Its own events bring the control back
-        // (a resize or a created surface), and the "waiting for a usable surface" line says so
-        // in the log - so this does not poll.
-        return;
-    }
-
-    if (++d->attach_attempts >= kMaxAttachAttempts) {
-        failAttach(u8"the render backend would not initialize (its own reason is on the diagnostics channel, i.e. in the log)");
-        return;
-    }
-
-    scheduleAttachRetry();
+    return dptr()->surface->devicePixelRatio();
 }
 
-void RenderControl::scheduleAttachRetry()
+RenderControl::SurfaceState RenderControl::state() const
 {
-    if (d->retry_scheduled || !d->auto_initialize) {
-        return;
-    }
-    d->retry_scheduled = true;
-    // The host widget is the context object, so Qt drops the call if the control goes away.
-    QTimer::singleShot(kAttachRetryDelayMs, impl<QWidget>(), [this] {
-        d->retry_scheduled = false;
-        ensureAttached();
-    });
+    return dptr()->surface->state();
 }
 
-bool RenderControl::surfaceUsable() const
+bool RenderControl::hasPresented() const
 {
-    return nativeHandle() != nullptr && surfaceWidth() > 0 && surfaceHeight() > 0;
+    // The two terminal states: a frame went to a visible surface, or the backend cannot come up at all. Both mean
+    // the caller stops waiting - see the declaration.
+    const SurfaceState current = state();
+    return current == SurfaceState::Presenting || current == SurfaceState::Failed;
 }
 
-void RenderControl::setSurfaceShown(bool shown)
+String RenderControl::failureReason() const
 {
-    if (d->surface == nullptr || d->surface_shown == shown) {
-        return;
-    }
-    d->surface_shown = shown;
-    d->surface->setVisible(shown);
-
-    // Once per session per direction: this is the line that says when the area started showing
-    // render output (shown) and, on a platform that needs a visible window to attach, that the
-    // startup path had to give up its "stay hidden until attached" promise.
-    vine::logging::defaultLogger().info("[RenderControl] surface {} after {} ms",
-                                        shown ? "shown" : "hidden",
-                                        elapsedMs(d->created_at));
+    return dptr()->surface->failureReason();
 }
 
-void RenderControl::failAttach(String reason)
+inline auto RenderControl::dptr() -> Impl*
 {
-    d->failure_reason = std::move(reason);
-    setState(SurfaceState::Failed);
+    return static_cast<Impl*>(UIElement::d);
+}
+
+inline auto RenderControl::dptr() const -> const Impl*
+{
+    return static_cast<const Impl*>(UIElement::d);
 }
 
 V_APPFWGUI_NS_END

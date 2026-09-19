@@ -13,7 +13,7 @@
 #include <vine/Signal.hpp>
 
 #include <vine/appfw/ProgressHost.hpp>
-#include <vine/appfw/gui/UIElementData.hpp>
+#include "ControlData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
@@ -30,7 +30,7 @@ constexpr int kHideDelayMs = 300;
 
 V_OBJECT_META_IMPL(ProgressPresenter, Control)
 
-struct ProgressPresenter::Impl : public UIElementData {
+struct ProgressPresenter::Impl : public ControlData {
     /// Owning presenter, redrawn from the change handler.
     ProgressPresenter* self = nullptr;
 

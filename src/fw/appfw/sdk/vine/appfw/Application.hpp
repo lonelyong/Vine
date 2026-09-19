@@ -19,6 +19,7 @@ class ConfigManager;
 class ConfigRegistry;
 class EventBus;
 class MainThreadDispatcher;
+class StartupProgress;
 class UserIO;
 class ApplicationData;
 
@@ -51,6 +52,16 @@ class V_APPFW_API Application : public Object {
      * @brief Creates and stores the application's UserIO.
      */
     void setupUserIO();
+
+    /**
+     * @brief Creates the startup progress sink when the application reports its boot.
+     *
+     * Idempotent, so an application may call it on the path where it decides to report a boot; the sink is destroyed by
+     * finishStartup(). Called by GuiApplication::init() when the configured startup frame is enabled.
+     *
+     * @return The application's startup progress sink.
+     */
+    StartupProgress* beginStartupProgress();
 
     /**
      * @brief Tears the application down after the main loop has stopped.
@@ -100,6 +111,31 @@ class V_APPFW_API Application : public Object {
      * @param code The exit code to return from run().
      */
     void exit(int code);
+
+    /**
+     * @brief Finishes the startup phase and reports it to the startup progress sink.
+     *
+     * The host calls this once when its startup work is done - after the plugins are loaded and after its own startup
+     * stages have run - and only then is the application considered started: a startup frame stays on screen until this
+     * call, and the startup progress sink is destroyed here. Calling it twice is harmless: there is no sink left to
+     * finish and nothing else is left to do.
+     *
+     * A host that enables a startup frame must call it before run(); otherwise the frame stays where it is, hiding the
+     * main window behind it (logged as a warning).
+     */
+    virtual void finishStartup();
+
+    /**
+     * @brief Returns the startup progress sink of the current boot, or nullptr when there is none.
+     *
+     * The sink is created when a startup frame is enabled (GuiApplication) or by a host that reports a headless
+     * boot itself, and it is destroyed by finishStartup(). Boot code - the framework's plugin loading as much as
+     * the host's own stages - reports into it through StartupProgress::current(), so a nullptr is simply "nobody is
+     * watching, report anyway".
+     *
+     * @return The sink, or nullptr when the application reports no startup progress.
+     */
+    StartupProgress* startupProgress() const;
 
     /**
      * @brief Returns the application's command manager.

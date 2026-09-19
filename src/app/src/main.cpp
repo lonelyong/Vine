@@ -14,6 +14,7 @@
 
 #include <vine/appfw/AppBuilder.hpp>
 #include <vine/appfw/PluginManager.hpp>
+#include <vine/appfw/StartupProgress.hpp>
 #include <vine/appfw/gui/GuiAppBuilder.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 
@@ -187,8 +188,16 @@ int main(int argc, char** argv)
     config.name = "Vine";
     // config.organization 留空以使用框架默认组织名。
     // config.built_in_plugin_dir 留空以使用默认的自带插件目录。
+    // 启动框：显示到 finishStartup() 为止，期间报告正在初始化界面/正在加载哪个插件。
+    config.splash.enabled = true;
 
     auto app = guifw::createGuiApplication(config, argc, argv);
+
+    // 应用自己的启动阶段：框架报的是"初始化界面"和"加载插件"，日志落在哪里只有应用知道。
+    // 没有启动进度口时（未启用启动框）这里是空操作。
+    if (auto* boot = app->startupProgress()) {
+        boot->stage("正在初始化日志");
+    }
 
     // 日志同时输出到控制台和数据目录下按日期滚动的文件。
     // main 只提供数据目录：日志落在 <data>/Vine/Vine/logs/vine.log（每日一文件）；
@@ -205,6 +214,9 @@ int main(int argc, char** argv)
     if (!app->pluginManager()->loadAll()) {
         std::cerr << "Some plugins failed to load" << std::endl;
     }
+
+    // 启动结束：关掉启动框并结束启动进度（未启用启动框时是空操作）。
+    app->finishStartup();
 
     return app->run();
 }

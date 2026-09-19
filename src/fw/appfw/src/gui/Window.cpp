@@ -3,18 +3,15 @@
 #include <QDialog>
 #include <QWidget>
 
-#include <vine/appfw/gui/UIElementData.hpp>
-
 #include "Convert.hpp"
+#include "WindowData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
 V_OBJECT_META_IMPL(Window, Control)
 
-struct Window::Impl : public UIElementData {};
-
 Window::Window(QWidget* native, bool owns)
-  : Control(new Impl(), native, owns)
+  : Control(new WindowData(), native, owns)
 {}
 
 Window::~Window()
@@ -133,15 +130,5 @@ bool Window::isActive() const
 Window::Window(UIElementData* data, QWidget* native, bool owns)
   : Control(data, native, owns)
 {}
-
-inline auto Window::dptr() -> Impl*
-{
-    return static_cast<Impl*>(UIElement::d);
-}
-
-inline auto Window::dptr() const -> const Impl*
-{
-    return static_cast<const Impl*>(UIElement::d);
-}
 
 V_APPFWGUI_NS_END

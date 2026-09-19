@@ -5,15 +5,22 @@
 #include <QPalette>
 #include <QStatusBar>
 #include <QStyleHints>
+#include <QTimer>
+#include <QWidget>
 
 #if defined(Q_OS_WIN) && QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
 #    include <QSettings>
 #endif
 
 #include <vine/appfw/gui/ConsolePanel.hpp>
+#include <vine/appfw/gui/BootSplash.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/ProgressPresenter.hpp>
+#include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/appfw/gui/StatusBar.hpp>
+
+#include <vine/appfw/StartupProgress.hpp>
+#include <vine/logging/Log.hpp>
 
 #include "GuiApplicationData.hpp"
 #include "VisualUserIO.hpp"
@@ -203,6 +210,20 @@ GuiApplication::GuiApplication(int argc, char** argv)
 GuiApplication::~GuiApplication()
 {
     auto* d = static_cast<GuiApplicationData*>(dptr());
+
+    if (d->boot_splash != nullptr) {
+        // The frame dies with the application either way, but a boot the host never ended also leaves the main window
+        // it was hiding unshown, which is exactly what the host has to be told about. A frame that is merely still
+        // waiting for the window (see finishStartup()) is not that, and dies quietly with the rest.
+        if (!d->boot_ended) {
+            V_LOGW("Startup frame is still showing as the application is destroyed: the host never called "
+                   "Application::finishStartup()");
+        }
+        d->frame_close_deadline.stop();
+        delete d->boot_splash;
+        d->boot_splash = nullptr;
+    }
+
     delete d->main_window;
     // d is deleted by Application::~Application()
 }
@@ -245,24 +266,190 @@ void GuiApplication::init()
 
     setupUserIO();
 
-    if (d->main_window == nullptr) {
-        d->main_window = new MainWindow();
-        d->main_window->show();
-
-        // Embed the automatic progress bar into the main window's status bar.
-        // Qt owns the native widget via the status bar; the presenter
-        // self-destructs with it (UIElement ownership model).
-        if (auto* status = d->main_window->statusBar()->impl<QStatusBar>()) {
-            auto* presenter = new ProgressPresenter();
-            status->addPermanentWidget(static_cast<QWidget*>(presenter->impl()));
-        }
+    if (d->main_window != nullptr) {
+        return;
     }
+
+    if (d->splash.enabled) {
+        // The frame comes first, so that the boot which follows - building the main window, loading the plugins - is
+        // covered by something that reports what is happening instead of by a window still growing its ribbon.
+        auto* boot = beginStartupProgress();
+        boot->stage("正在初始化界面");
+
+        d->boot_splash = new BootSplash(d->splash);
+        d->boot_splash->show();
+    }
+
+    d->main_window = new MainWindow();
+
+    // The window is shown while the frame reports the boot, not after it: an embedded render surface (RenderControl, the
+    // VSG backend) creates its swapchain from the native window of the top-level widget, and a window that was never
+    // shown has none - the surface then fails to initialize instead of waiting for the window. The frame is a
+    // stay-on-top splash, so it covers the window while the boot lasts.
+    d->main_window->show();
+
+    // Embed the automatic progress bar into the main window's status bar.
+    // Qt owns the native widget via the status bar; the presenter
+    // self-destructs with it (UIElement ownership model).
+    if (auto* status = d->main_window->statusBar()->impl<QStatusBar>()) {
+        auto* presenter = new ProgressPresenter();
+        status->addPermanentWidget(static_cast<QWidget*>(presenter->impl()));
+    }
+}
+
+namespace
+{
+
+/// How long the deferred close of the startup frame waits for the main window's render view to show a frame.
+///
+/// The measured settle time is ~0.7-0.9 s: the layout passes that give the native window its final size, the frame
+/// that follows them, and the device/swapchain/pipeline build behind that frame. The deadline is the safety net for
+/// a view that says nothing at all - one that cannot come up reports Failed, which closes the frame too.
+constexpr int kSurfaceWaitMs = 2000;
+
+} // namespace
+
+void GuiApplication::finishStartup()
+{
+    auto* d = static_cast<GuiApplicationData*>(dptr());
+
+    if (d->boot_ended) {
+        return; // Idempotent: the boot ends with the first call, whatever the frame does afterwards.
+    }
+    d->boot_ended = true;
+
+    // Whether a frame is going away decides whether the window has to be brought forward below: the frame is a
+    // stay-on-top window that was shown without activating the process, so the main window was shown underneath it and,
+    // on Windows, never became the foreground window - without an explicit raise it stays under whatever was in front at
+    // the time (the terminal the application was started from), which looks exactly like a window that never appeared.
+    const bool frame_was_showing = d->boot_splash != nullptr;
+
+    // The boot work is over here, and the startup progress ends with it: the sink goes back to following whatever runs
+    // next, whether or not the frame is still up.
+    Application::finishStartup();
+
+    if (!frame_was_showing) {
+        // Nothing to uncover: the window is what it is, and it only has to be up (a host that never showed it, or a
+        // boot that ran without a frame, ends here).
+        if (d->main_window != nullptr && !d->main_window->visible()) {
+            d->main_window->show();
+        }
+        return;
+    }
+
+    if (windowCanBeSeen()) {
+        closeStartupFrame();
+        return;
+    }
+
+    // The window is not ready to be uncovered, and the frame is what hides that: hand the close to the render view's
+    // own report, inside the event loop that will draw it.
+    deferStartupFrameClose();
+}
+
+bool GuiApplication::windowCanBeSeen() const
+{
+    const auto* d = static_cast<const GuiApplicationData*>(dptr());
+
+    auto* control = (d->main_window != nullptr) ? d->main_window->primaryRenderControl() : nullptr;
+
+    // A window without a render view has nothing that could be missing when it is uncovered; one with a view is as
+    // ready as that view is (see RenderControl::hasPresented()).
+    return control == nullptr || control->hasPresented();
+}
+
+void GuiApplication::deferStartupFrameClose()
+{
+    auto* d    = static_cast<GuiApplicationData*>(dptr());
+    auto* view = d->main_window->primaryRenderControl();
+
+    // One-shot, and no loop of its own: the loop being waited for is run()'s, and the surface reports its own
+    // transitions. The subscription is replaced (i.e. cancelled) by closeStartupFrame(), and dies with the
+    // application, so nothing here can outlive what it talks to.
+    d->frame_close_subscription = view->stateChanged.subscribe([this](RenderControl::SurfaceState) {
+        if (windowCanBeSeen()) {
+            closeStartupFrame();
+        }
+    });
+
+    d->frame_close_deadline.setSingleShot(true);
+    // The timer is its own context object: the application is not a QObject, and the connection has to die with the
+    // data it belongs to (it is dropped with GuiApplicationData).
+    QObject::connect(&d->frame_close_deadline, &QTimer::timeout, &d->frame_close_deadline, [this] {
+        if (!windowCanBeSeen()) {
+            // Says out loud what the empty area that follows comes from; the frame goes anyway, because holding the
+            // whole boot on a view that never speaks would be worse.
+            V_LOGW("the render view has not shown a frame after {} ms: closing the startup frame anyway", kSurfaceWaitMs);
+        }
+        closeStartupFrame();
+    });
+    d->frame_close_deadline.start(kSurfaceWaitMs);
+
+    V_LOGI("the startup frame stays up until the render view shows a frame (or {} ms pass)", kSurfaceWaitMs);
+}
+
+void GuiApplication::closeStartupFrame()
+{
+    auto* d = static_cast<GuiApplicationData*>(dptr());
+
+    // Both the view's report and the deadline can land; only the first one closes.
+    d->frame_close_deadline.stop();
+    d->frame_close_subscription = {};
+
+    if (d->boot_splash == nullptr) {
+        return;
+    }
+    delete d->boot_splash;
+    d->boot_splash = nullptr;
+
+    if (d->main_window != nullptr) {
+        if (!d->main_window->visible()) {
+            d->main_window->show();
+        }
+
+        // Diagnostic: tells "the window sat behind something" (visible but not active) apart from "the window was
+        // never shown", which are the two ways a frame that closes too early can look like a window that never
+        // appeared.
+        V_LOGI("Startup frame going away: main window visible={}, active={}", d->main_window->visible(), d->main_window->isActive());
+
+        if (auto* native = d->main_window->impl<QWidget>()) {
+            native->raise();
+        }
+        d->main_window->activate();
+    }
+}
+
+void GuiApplication::setSplashConfig(const SplashConfig& config)
+{
+    auto* d = static_cast<GuiApplicationData*>(dptr());
+    if (d->app != nullptr) {
+        // init() already ran, so whether a frame is shown has been decided; re-deciding it here would do nothing.
+        V_LOGW("GuiApplication::setSplashConfig() after init() is ignored: the startup frame is created during init()");
+        return;
+    }
+
+    d->splash = config;
+}
+
+raw_ptr<BootSplash> GuiApplication::bootSplash() const
+{
+    return static_cast<const GuiApplicationData*>(dptr())->boot_splash;
 }
 
 int GuiApplication::run()
 {
-    const auto* d    = static_cast<GuiApplicationData*>(dptr());
-    const int   code = d->app->exec();
+    const auto* d = static_cast<GuiApplicationData*>(dptr());
+
+    if (d->boot_splash != nullptr && !d->boot_ended) {
+        // The host never ended the startup phase: the frame keeps covering a main window that is still hidden, so the
+        // user has nothing to close and the application would sit in its main loop forever. The window is not shown here
+        // on purpose - the host asked for an explicit end of the startup phase - but it must not go unsaid. (A frame
+        // that outlives finishStartup() is not this: it is waiting for the window, and closes itself in this loop.)
+        V_LOGW("Startup frame is still showing and the main window is still hidden: the host must call "
+               "Application::finishStartup() before run()");
+    }
+
+    const int code = d->app->exec();
     // Same shutdown sequence as Application::run(): plugins unload, the bus
     // delivers what is still parked (bounded) and stops, and the configuration
     // is persisted - all before the UI is torn down.

@@ -24,6 +24,7 @@
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
+#include <vine/appfw/StartupProgress.hpp>
 #include <vine/logging/Log.hpp>
 #include <vine/runtime/DynamicLibraryLoader.hpp>
 
@@ -974,6 +975,14 @@ bool PluginManager::loadAll()
     }
     ScopedFlag loading_scope(d->loading);
 
+    // Startup progress is optional: without a startup frame (or a host that reports a headless boot) there is no sink
+    // and every report below is a no-op. The plugin load is the part of a boot that takes the longest and that nobody
+    // can guess, so it is the one worth counting.
+    StartupProgress* const startup = StartupProgress::current();
+    if (startup != nullptr) {
+        startup->stage("正在查找插件");
+    }
+
     // Discovery starts over on every scan so that plugins added or removed on
     // disk are reflected in pluginEntries().
     d->discovered.clear();
@@ -1190,9 +1199,22 @@ bool PluginManager::loadAll()
     // so a retry would reuse the same, half-initialized instance.
     std::vector<LoadedPlugin> created;
     created.reserve(planned.size());
+
+    // Plugins whose load() has returned: one unit of the plugin-load progress each.
+    std::size_t loaded_units = 0;
+
+    if (startup != nullptr) {
+        // One unit per plugin, reported while the heaviest pass (the load() phase below) runs; the phases around it only
+        // update the label, so the bar does not reach its end before the plugins are really up.
+        startup->stage("正在加载插件", static_cast<double>(planned.size()));
+    }
+
     try {
         for (const Candidate* candidate : planned) {
             const String& name = candidate->info->name;
+            if (startup != nullptr) {
+                startup->setLabel("正在创建插件 " + toUtf8(name));
+            }
             using CreateFn = Plugin* ();
             const auto create = candidate->lib->resolveSymbol<CreateFn>(u8"vinePluginCreate");
             if (!create) {
@@ -1241,11 +1263,21 @@ bool PluginManager::loadAll()
         for (const auto& lp : created) {
             RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
             PluginLoadContext context(Application::current(), lp.name);
+            if (startup != nullptr) {
+                startup->setLabel("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")");
+            }
             lp.plugin->load(&context);
+            if (startup != nullptr) {
+                ++loaded_units;
+                startup->advance(static_cast<double>(loaded_units));
+            }
         }
         for (const auto& lp : created) {
             RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
             PluginLoadContext context(Application::current(), lp.name);
+            if (startup != nullptr) {
+                startup->setLabel("正在收尾插件 " + toUtf8(lp.name));
+            }
             lp.plugin->postLoad(&context);
         }
     }

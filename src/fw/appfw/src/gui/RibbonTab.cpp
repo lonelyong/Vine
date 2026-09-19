@@ -5,7 +5,8 @@
 #include <vector>
 #include <vine/appfw/gui/RibbonGroup.hpp>
 
-#include <vine/appfw/gui/UIElementData.hpp>
+#include "ControlData.hpp"
+
 V_APPFWGUI_NS_BEGIN
 
 V_OBJECT_META_IMPL(RibbonTab, Control)
@@ -37,7 +38,7 @@ RibbonPanelLayoutMode fromSarPanelLayoutMode(SARibbonPanel::PanelLayoutMode m)
 
 } // namespace
 
-struct RibbonTab::Impl : public UIElementData {
+struct RibbonTab::Impl : public ControlData {
     String                    title;
     std::vector<RibbonGroup*> groups; // added groups (framework bookkeeping, for queries)
 };

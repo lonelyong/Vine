@@ -13,10 +13,9 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
-#include <vine/appfw/gui/UIElementData.hpp>
-
 #include "Convert.hpp"
 #include "TableStyle.hpp"
+#include "WindowData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
@@ -40,7 +39,7 @@ void greyOutRow(QTableWidget* table, int row)
 
 V_OBJECT_META_IMPL(CommandManagerDialog, Window)
 
-struct CommandManagerDialog::Impl : public UIElementData {
+struct CommandManagerDialog::Impl : public WindowData {
     vine::appfw::CommandManager* manager       = nullptr;
     QLineEdit*                   filter        = nullptr;
     QTableWidget*                table         = nullptr;

@@ -5,15 +5,14 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
-#include <vine/appfw/gui/UIElementData.hpp>
-
 #include "Convert.hpp"
+#include "WindowData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
 V_OBJECT_META_IMPL(AboutDialog, Window)
 
-struct AboutDialog::Impl : public UIElementData {
+struct AboutDialog::Impl : public WindowData {
     String app_name;
     String version;
     String description;

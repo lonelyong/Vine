@@ -6,7 +6,7 @@
 #include <vine/appfw/gui/RibbonAction.hpp>
 #include <vine/appfw/gui/RibbonButton.hpp>
 
-#include <vine/appfw/gui/UIElementData.hpp>
+#include "ControlData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
@@ -49,7 +49,7 @@ RibbonPanelLayoutMode fromSarPanelLayoutMode(SARibbonPanel::PanelLayoutMode m)
 
 } // namespace
 
-struct RibbonGroup::Impl : public UIElementData {
+struct RibbonGroup::Impl : public ControlData {
     String                  title;
     bool                    word_wrap   = false;
     RibbonAction*           option_item = nullptr;

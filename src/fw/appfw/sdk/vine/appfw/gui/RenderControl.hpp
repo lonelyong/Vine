@@ -24,31 +24,35 @@ V_APPFWGUI_NS_BEGIN
  * (it holds a QWidget) while the render layer gets the native QWindow it
  * needs.
  *
- * RenderControl owns the surface and the wiring: it creates the RenderEngine
- * and a SceneView (the interactive primary view holding the camera, content
- * scene and orbit manipulator) internally and defaults to the first
- * registered render backend on init() (an explicit backend can be attached
- * via engine()->setBackend() first); Qt events on the surface and its host
- * widget are translated and pushed to the view (view()->pushEvent()) for its
- * camera manipulator.
+ * This class is the widget-side wrapper: it embeds the surface in its widget
+ * tree and forwards the public interface below. The surface itself - the native
+ * QWindow a backend binds to, the RenderEngine and the SceneView (the
+ * interactive primary view holding the camera, content scene and orbit
+ * manipulator), the attach rules, the deferred resize path and the translation
+ * of Qt events into view input - lives in the private SurfaceWindow
+ * (src/gui/SurfaceWindow.hpp). Unless a backend was attached via
+ * engine()->setBackend(), the first backend registered in RenderBackendRegistry
+ * is used by default.
  *
- * THE CONTROL DRIVES ITS OWN LIFECYCLE. A render surface can only be attached
- * once its native window exists and has been laid out, which is later than the
- * moment the host builds its UI - and whether that has happened yet is not
- * something a host can guess, so it does not have to: the control watches its
- * own surface and window events and attaches by itself, retrying on a short
- * backoff ladder while the window is still settling. Adding a RenderControl to a
- * layout is therefore enough; init() remains as the explicit entry point for a
- * host that turned auto-initialization off, and is idempotent either way.
+ * THE HOST GIVES THE TIMING, THE CONTROL MAINTAINS THE SESSION. Nothing is
+ * attached until the host calls init(), at the moment it chooses (right after
+ * embedding the control, once the engine has the backend and the pipeline it is
+ * meant to run); a call that lands before the native window is laid out reports
+ * false instead of guessing, and calling again is the host's retry. What the
+ * control keeps for itself is an ESTABLISHED session: when Qt destroys and
+ * recreates the native platform window (a dock drag, a screen change, a
+ * reparent), the new handle is picked up and re-announced to the backend without
+ * the host having to notice.
  *
- * Until then the native surface stays HIDDEN, and the host's layout shows the
- * container's own background: an unpresented native window is a hole that the
- * compositor fills with whatever it likes, which is what used to make the render
- * area flicker transparent at startup. Attaching does not need the surface to be
- * shown (a window system that disagrees fails the attach, and the control falls
- * back to showing it first - see state()), so the surface appears only once a
- * frame can be put into it, and the whole startup path is observable through
- * state() / stateChanged.
+ * The native surface stays HIDDEN until the backend is bound to it, and is hidden
+ * again whenever the platform window goes away, so the host's layout shows the
+ * container's own background in the meantime: an unpresented native window is a
+ * hole that the compositor fills with whatever it likes, which is what used to
+ * make the render area flicker transparent at startup. Attaching does not need
+ * the surface to be shown (a window system that disagrees fails the attach, and
+ * the control falls back to showing it first - see state()), so the surface
+ * appears only once a frame can be put into it, and the whole path is observable
+ * through state() / stateChanged.
  */
 class V_APPFW_API RenderControl : public Control {
     V_OBJECT_META_DECL;
@@ -59,17 +63,19 @@ class V_APPFW_API RenderControl : public Control {
      *
      * The order is the order the states are reached in a healthy session:
      * Pending -> Attached -> Presenting. Failed replaces the tail when the
-     * backend cannot come up at all.
+     * backend cannot come up at all. A recreated platform window walks the
+     * sequence again from Pending: what changed is the surface, not the session.
      */
     enum class SurfaceState
     {
-        /// No usable native surface yet, or the host asked to wait; nothing is attached.
+        /// No usable native surface - not laid out yet, or a platform window that is being replaced -
+        /// so nothing is attached to one. The first attach starts here, and a recreation returns here.
         Pending,
         /// The backend is bound to a live surface, but nothing has reached the screen yet.
         Attached,
         /// A frame has been handed to a visible surface: the area shows render output.
         Presenting,
-        /// The surface is usable but the backend would not initialize; see failureReason().
+        /// The backend cannot come up at all (no render backend is registered); see failureReason().
         Failed,
     };
 
@@ -99,27 +105,25 @@ class V_APPFW_API RenderControl : public Control {
      */
     vine::graphics::SceneView* view() const;
 
-    /** @brief Wires the native surface into the engine and initializes it.
+    /** @brief Attaches the backend to the native surface and initializes it.
      *
-     * Called by the control's own lifecycle as soon as the surface is usable (see
-     * ensureAttached()), so a host that only embeds the control never calls it. When no
-     * backend was attached via engine()->setBackend(), the first registered render
-     * backend (RenderBackendRegistry) is used by default. The backend attaches to the
-     * native surface, which only has a usable size once the window is shown and laid
-     * out. Idempotent and re-entrant: when Qt later destroys and recreates the native
-     * surface, the backend is released via the surface-destroy event and the control
-     * re-attaches automatically once the new surface is created and laid out (calling
-     * init() remains safe). Resize and surface-created handling is deferred until after
-     * Qt's layout pass so the native window is at its final size when the swapchain is
-     * rebuilt.
+     * The host's entry point: call it after putting the control into its window, at the moment it
+     * wants the surface up (the engine may still be getting its backend and pipeline). A render
+     * surface can only be attached once its native window exists and has been laid out; a call
+     * that lands earlier reports false rather than guessing a delay, and calling again is the
+     * host's retry - the call is idempotent and cheap when the session is already bound to the
+     * live surface. When no backend was attached via engine()->setBackend(), the first registered
+     * render backend (RenderBackendRegistry) is used by default.
      *
-     * A host calls it to attach at a moment of its own choosing (with
-     * setAutoInitialize(false)), to ask for one more attempt after a Failed state, or to
-     * pre-check readiness.
+     * A session that is already established maintains itself: when Qt later destroys and recreates
+     * the native platform window, the control re-announces the new handle to the backend on its
+     * own (the backend moves, keeping its device and pipelines, or rebuilds when it cannot serve
+     * the new window). Resize and surface-created handling is deferred until after Qt's layout
+     * pass so the native window is at its final size when the swapchain is rebuilt.
      *
-     * @return true once the engine initialized successfully, false when the surface was
-     *         not ready yet or the backend refused (the control keeps retrying on its
-     *         own while auto-initialization is on).
+     * @return true once the engine initialized successfully, false when the surface was not ready
+     *         yet, no render backend is registered, or the backend refused the attach (the
+     *         surface stays hidden in that case).
      */
     bool init();
 
@@ -136,7 +140,7 @@ class V_APPFW_API RenderControl : public Control {
      * the native surface in device pixels, so HUD / sub-viewport positioning
      * (e.g. the axis gizmo) on high-DPI displays must scale by this factor.
      *
-     * @return Device pixel ratio (1.0 when the surface is not available).
+     * @return Device pixel ratio the surface reports.
      */
     double devicePixelRatio() const;
 
@@ -146,6 +150,17 @@ class V_APPFW_API RenderControl : public Control {
      * @return The current state, one of SurfaceState.
      */
     SurfaceState state() const;
+
+    /**
+     * @brief Whether a frame has reached the screen, or never will.
+     *
+     * The question a window that embeds this control asks before it lets itself be uncovered: until this is true
+     * the native surface is a hole in that window - the backend is up, but nothing has been drawn into it yet -
+     * which is what a startup frame covering the window is there to hide.
+     *
+     * @return true while state() is Presenting or Failed.
+     */
+    bool hasPresented() const;
 
     /**
      * @brief Gets why the surface reached Failed, or an empty string otherwise.
@@ -158,18 +173,6 @@ class V_APPFW_API RenderControl : public Control {
     String failureReason() const;
 
     /**
-     * @brief Sets whether the control attaches by itself once the surface is usable.
-     *
-     * On (the default) is what makes embedding the control a one-liner. Off hands the timing to
-     * the host, which then drives init() itself - to configure the engine or prepare content
-     * first, or to start rendering on a user action. Turning it on later attaches on the next
-     * opportunity.
-     *
-     * @param on true to attach automatically.
-     */
-    void setAutoInitialize(bool on);
-
-    /**
      * @brief Fired on every surface lifecycle transition, on the application thread.
      *
      * A host that wants its own presentation while the area is not rendering yet (a spinner, a
@@ -179,77 +182,9 @@ class V_APPFW_API RenderControl : public Control {
     Signal<SurfaceState> stateChanged;
 
   private:
-    /** @brief Publishes a lifecycle transition (silent when the state is unchanged). */
-    void setState(SurfaceState next);
-
-    /** @brief Attaches now when auto-initialization is on and nothing is attached yet. */
-    void ensureAttached();
-
-    /** @brief Schedules one more attach attempt after the backend refused. */
-    void scheduleAttachRetry();
-
-    /** @brief Whether the native surface exists and has a real size to attach to. */
-    bool surfaceUsable() const;
-
-    /** @brief Shows or hides the native surface (hidden until a frame can go into it). */
-    void setSurfaceShown(bool shown);
-
-    /** @brief Records a permanent attach failure and publishes it. */
-    void failAttach(String reason);
-
-    /** @brief One-time wiring of the default backend and the surface/host
-     * event filter. Idempotent. */
-    void wireEvents();
-
-    /** @brief Handles native-surface destruction (Qt recreated the HWND):
-     * releases the backend and clears the attach state. */
-    void onSurfaceDestroyed();
-
-    /** @brief Handles a surface resize/creation notice by scheduling a
-     * deferred update. */
-    void onSurfaceResized();
-
-    /** @brief Coalesces and defers a surface update until after Qt's layout
-     * pass. */
-    void scheduleSurfaceUpdate();
-
-    /** @brief Rebuilds/resizes the backend for the final surface size and
-     * requests settle frames. */
-    void handleSurfaceUpdate();
-
-    /** @brief Requests a few extra display-synced frames after a resize. */
-    void requestSettleFrames();
-
-    /** @brief Renders one display-synced settle frame (UpdateRequest). */
-    void onSurfaceUpdate();
-
-    /** @brief Initializes the engine once the native surface is exposed. */
-    void initializeBackend();
-
-    /** @brief Recreates the native render surface, forcing the host's follow path.
-     *
-     * ONLY a test hatch (VINE_RECREATE_SURFACE_MS, see init()): a window-system recreation -- a screen
-     * change, a reparent, a dock drag-out -- cannot be produced on demand from outside the process, and the
-     * host's answer to it (re-announce the new handle; the backend moves or rebuilds) is the thing worth
-     * gating. The backend's own self-test covers ITS half (VsgRenderer::moveSessionToHostSurface); this
-     * covers the host's.
-     */
-    void recreateSurface();
-
-    /** @brief Pops up the view context menu at the cursor position. */
-    void showContextMenu();
-
-    /** @brief Gets the native handle of the render surface (HWND on Windows). */
-    void* nativeHandle() const;
-
-    /** @brief Gets the render surface width in pixels. */
-    int surfaceWidth() const;
-
-    /** @brief Gets the render surface height in pixels. */
-    int surfaceHeight() const;
-
     struct Impl;
-    Impl* const d;
+    Impl*       dptr();
+    const Impl* dptr() const;
 };
 
 V_APPFWGUI_NS_END

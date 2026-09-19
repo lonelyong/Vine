@@ -21,10 +21,9 @@
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
-#include <vine/appfw/gui/UIElementData.hpp>
-
 #include "CommandCompleter.hpp"
 #include "CommandHistory.hpp"
+#include "ControlData.hpp"
 #include "Convert.hpp"
 
 V_APPFWGUI_NS_BEGIN
@@ -123,7 +122,7 @@ class SuggestCloseFilter : public QObject {
 
 V_OBJECT_META_IMPL(ConsolePanel, Control)
 
-struct ConsolePanel::Impl : public UIElementData {
+struct ConsolePanel::Impl : public ControlData {
     /// Owning panel, used by the input handlers to trigger signals.
     ConsolePanel*   panel  = nullptr;
     QPlainTextEdit* output = nullptr;

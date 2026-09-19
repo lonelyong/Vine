@@ -22,6 +22,7 @@
 #include <vine/appfw/MainThreadDispatcher.hpp>
 
 #include <vine/appfw/ProgressHost.hpp>
+#include <vine/appfw/StartupProgress.hpp>
 
 #include "ApplicationData.hpp"
 #include "ConsoleUserIO.hpp"
@@ -151,6 +152,29 @@ void Application::setupUserIO()
     if (dptr()->user_io == nullptr) {
         dptr()->user_io.reset(createUserIO());
         dptr()->user_io->setCommandManager(dptr()->command_manager.get());
+    }
+}
+
+StartupProgress* Application::beginStartupProgress()
+{
+    if (dptr()->startup_progress == nullptr) {
+        dptr()->startup_progress = std::make_unique<StartupProgress>();
+    }
+    return dptr()->startup_progress.get();
+}
+
+StartupProgress* Application::startupProgress() const
+{
+    return dptr()->startup_progress.get();
+}
+
+void Application::finishStartup()
+{
+    // The sink is destroyed, not just completed: a live host would stay in the foreground stack and shadow the progress
+    // of every command that runs afterwards.
+    if (dptr()->startup_progress != nullptr) {
+        dptr()->startup_progress->complete();
+        dptr()->startup_progress.reset();
     }
 }
 

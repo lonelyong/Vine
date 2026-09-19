@@ -1,13 +1,13 @@
 ﻿#include <vine/appfw/gui/StatusBar.hpp>
 
 #include <QStatusBar>
-#include <vine/appfw/gui/UIElementData.hpp>
+#include "ControlData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
 V_OBJECT_META_IMPL(StatusBar, Control)
 
-struct StatusBar::Impl : public UIElementData {};
+struct StatusBar::Impl : public ControlData {};
 
 StatusBar::StatusBar()
   : Control(new Impl(), new QStatusBar())

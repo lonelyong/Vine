@@ -23,8 +23,11 @@ V_APPFW_NS_BEGIN
  *
  * Lines typed while nothing was waiting are buffered and handed to the next read.
  * Only one read waits at a time, like every other implementation (see UserIO).
+ *
+ * @note Exported although the class is appfw-private (this header lives in src/, not in sdk/): the headless progress
+ * test constructs it directly to check what it writes to stdout, which needs the symbols in the shared library.
  */
-class ConsoleUserIO : public UserIO {
+class V_APPFW_API ConsoleUserIO : public UserIO {
     V_OBJECT_META_DECL;
     V_DISABLE_COPY_MOVE(ConsoleUserIO);
 

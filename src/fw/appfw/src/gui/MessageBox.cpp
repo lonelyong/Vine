@@ -6,9 +6,8 @@
 
 #include <functional>
 
-#include <vine/appfw/gui/UIElementData.hpp>
-
 #include "Convert.hpp"
+#include "WindowData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
@@ -159,7 +158,7 @@ runBox(Window* owner, const String& title, const String& text, MessageBoxIcon ic
 
 V_OBJECT_META_IMPL(MessageBox, Window)
 
-struct MessageBox::Impl : public UIElementData {
+struct MessageBox::Impl : public WindowData {
     String           text;
     MessageBoxIcon   icon            = MessageBoxIcon::None;
     MessageBoxButton buttons         = MessageBoxButton::Ok;

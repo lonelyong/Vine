@@ -53,13 +53,9 @@ class V_APPFW_API Window : public Control {
     bool isActive() const;
 
   protected:
-    // Derived classes pass custom Impl to keep the inheritance chain extensible.
+    // Derived classes pass their own data block, deriving from WindowData (see the private
+    // WindowData.hpp), so the data hierarchy mirrors the widget hierarchy.
     Window(UIElementData* data, QWidget* native, bool owns = true);
-
-  private:
-    struct Impl;
-    Impl*       dptr();
-    const Impl* dptr() const;
 };
 
 V_APPFWGUI_NS_END

@@ -3,8 +3,8 @@
 #include <DockingPaneContainer.h>
 #include <DockingPaneManager.h>
 
+#include "ControlData.hpp"
 #include "Convert.hpp"
-#include <vine/appfw/gui/UIElementData.hpp>
 
 V_APPFWGUI_NS_BEGIN
 
@@ -92,7 +92,7 @@ void rememberDockArea(DockingPaneContainer* container)
 
 } // namespace
 
-struct DockPanel::Impl : public UIElementData {
+struct DockPanel::Impl : public ControlData {
     DockFeatures features = DockFeatures::None;
     String       title;
     String       id;

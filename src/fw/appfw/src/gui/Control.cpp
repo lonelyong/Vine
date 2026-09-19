@@ -2,16 +2,14 @@
 
 #include <QWidget>
 
-#include <vine/appfw/gui/UIElementData.hpp>
+#include "ControlData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
 V_OBJECT_META_IMPL(Control, UIElement)
 
-struct Control::Impl : public UIElementData {};
-
 Control::Control(QWidget* native, bool owns)
-  : UIElement(new Impl(), native)
+  : UIElement(new ControlData(), native)
 {
     setOwnsImpl(owns);
 }
@@ -92,16 +90,6 @@ Control::Control(UIElementData* data, QWidget* native, bool owns)
   : UIElement(data, native)
 {
     setOwnsImpl(owns);
-}
-
-inline auto Control::dptr() -> Impl*
-{
-    return static_cast<Impl*>(UIElement::d);
-}
-
-inline auto Control::dptr() const -> const Impl*
-{
-    return static_cast<const Impl*>(UIElement::d);
 }
 
 V_APPFWGUI_NS_END

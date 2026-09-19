@@ -11,7 +11,7 @@
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/gui/RibbonAction.hpp>
 
-#include <vine/appfw/gui/UIElementData.hpp>
+#include "ControlData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
@@ -46,7 +46,7 @@ RibbonButtonStyle fromQtStyle(Qt::ToolButtonStyle s)
 
 V_OBJECT_META_IMPL(RibbonButton, Control)
 
-struct RibbonButton::Impl : public UIElementData {
+struct RibbonButton::Impl : public ControlData {
     void*          user       = nullptr;
     RibbonItemSize buttonSize = RibbonItemSize::Small;
     String         command;

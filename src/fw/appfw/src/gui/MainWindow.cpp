@@ -22,13 +22,13 @@
 #include <vine/appfw/gui/StatusBar.hpp>
 
 #include "MainWindowImpl.hpp"
-#include <vine/appfw/gui/UIElementData.hpp>
+#include "WindowData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
 V_OBJECT_META_IMPL(MainWindow, Window)
 
-struct MainWindow::Impl : public UIElementData {
+struct MainWindow::Impl : public WindowData {
     std::unique_ptr<RibbonBar>        ribbon_bar;
     std::unique_ptr<StatusBar>        status_bar;
     std::unique_ptr<DockPanelManager> dock_panel_mgr;

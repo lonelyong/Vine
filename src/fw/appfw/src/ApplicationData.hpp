@@ -16,6 +16,8 @@ class QCoreApplication;
 
 V_APPFW_NS_BEGIN
 
+class StartupProgress;
+
 struct ApplicationData {
     // Members are destroyed in reverse declaration order; the order below is
     // deliberately reversed so destruction matches the legacy explicit delete
@@ -29,6 +31,9 @@ struct ApplicationData {
     std::unique_ptr<PluginManager>        plugin_manager;
     std::unique_ptr<UserIO>               user_io;
     QCoreApplication*                     app = nullptr;
+
+    /// Startup progress sink of this boot; only alive between beginStartupProgress() and finishStartup().
+    std::unique_ptr<StartupProgress> startup_progress;
 
     int    argc = 0;
     char** argv = nullptr;

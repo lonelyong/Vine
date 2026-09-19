@@ -17,9 +17,8 @@
 #include <limits>
 
 #include <vine/appfw/gui/MessageBox.hpp>
-#include <vine/appfw/gui/UIElementData.hpp>
-
 #include "Convert.hpp"
+#include "WindowData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
@@ -169,7 +168,7 @@ bool readField(InputBox::Field& field, QWidget* editor, QString& error)
 
 V_OBJECT_META_IMPL(InputBox, Window)
 
-struct InputBox::Impl : public UIElementData {
+struct InputBox::Impl : public WindowData {
     /// One built row of the form.
     struct Entry {
         Field*   field;  ///< Borrowed field definition.

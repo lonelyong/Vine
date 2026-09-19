@@ -32,10 +32,9 @@
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigItem.hpp>
 #include <vine/appfw/Plugin.hpp>
-#include <vine/appfw/gui/UIElementData.hpp>
-
 #include "Convert.hpp"
 #include "TableStyle.hpp"
+#include "WindowData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
@@ -220,7 +219,7 @@ QString badgeStyle(const vine::appfw::PluginEntry* entry)
 
 V_OBJECT_META_IMPL(PluginManagerDialog, Window)
 
-struct PluginManagerDialog::Impl : public UIElementData {
+struct PluginManagerDialog::Impl : public WindowData {
     vine::appfw::PluginManager* manager        = nullptr;
     QLineEdit*                  filter         = nullptr;
     QListWidget*                list           = nullptr;

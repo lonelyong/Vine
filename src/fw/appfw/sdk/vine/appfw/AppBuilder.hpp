@@ -11,6 +11,31 @@ V_APPFW_NS_BEGIN
 class Application;
 
 /**
+ * @brief Startup frame ("splash screen") configuration.
+ *
+ * The frame belongs to the application, not to the framework: it is the application's identity that is shown, and only
+ * the application knows whether a frame is wanted at all (a short-lived tool or a test harness does not). It reports the
+ * boot itself - which plugins are loading, and what the application is doing around them - through StartupProgress, so
+ * nothing here configures the progress display.
+ *
+ * An application that enables the frame must end its startup phase explicitly with Application::finishStartup(): the
+ * frame stays until then, because the framework cannot know when the application is done starting up.
+ */
+struct SplashConfig {
+    /// Whether the application shows a startup frame while it boots.
+    bool enabled = false;
+
+    /// Title shown on the frame; empty uses AppConfig::name, which the GUI application builder resolves.
+    std::string title;
+
+    /// Second line under the title (version, vendor, ...); empty hides the line.
+    std::string subtitle;
+
+    /// Logo image drawn next to the title (SVG or a raster format); empty hides the logo.
+    std::filesystem::path logo;
+};
+
+/**
  * @brief Declarative configuration used to build an application.
  *
  * The factory functions apply the settings to the process-wide application: name
@@ -47,6 +72,9 @@ struct AppConfig {
 
     /// Locale placeholder reserved for i18n (not wired yet).
     std::string language;
+
+    /// Startup frame shown while the application boots; see SplashConfig.
+    SplashConfig splash;
 };
 
 /**

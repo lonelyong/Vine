@@ -48,14 +48,9 @@ class V_APPFW_API Control : public UIElement {
     void setSize(const Size& s);
 
   protected:
-    // Lets derived classes (RibbonButton, etc.) pass custom Impl to keep the
-    // inheritance chain extensible.
+    // Lets derived classes (RibbonButton, etc.) pass their own data block, deriving from ControlData
+    // (see the private ControlData.hpp), so the data hierarchy mirrors the widget hierarchy.
     Control(UIElementData* data, QWidget* native, bool owns = true);
-
-  private:
-    struct Impl;
-    Impl*       dptr();
-    const Impl* dptr() const;
 };
 
 V_APPFWGUI_NS_END

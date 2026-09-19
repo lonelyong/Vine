@@ -6,13 +6,13 @@
 #include <vine/appfw/gui/RibbonAction.hpp>
 #include <vine/appfw/gui/RibbonTab.hpp>
 
-#include <vine/appfw/gui/UIElementData.hpp>
+#include "ControlData.hpp"
 
 V_APPFWGUI_NS_BEGIN
 
 V_OBJECT_META_IMPL(RibbonBar, Control)
 
-struct RibbonBar::Impl : public UIElementData {
+struct RibbonBar::Impl : public ControlData {
     std::vector<RibbonTab*> tabs;
     MainWindow*             wnd;
     QMenu*                  application_menu = nullptr;
