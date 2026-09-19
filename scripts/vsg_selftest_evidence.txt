@@ -34,14 +34,14 @@
 [selftest] depth testonly: middle translucent quad won the centre (4,8,34), depth still the opaque pass' 0.0249 (tested, not written)
 [selftest] depth share order: borrower followed the source's own frame and image (AAA--- over 6 frames; A = probe drawn)
 [selftest] target description: a colour attachment added and a depth promotion turned on after the first frame both took effect, each with the rebuild confined to its change frame; attachment 1 read back transparent black and the promoted source's borrow was refused (1 report)
-[selftest] policy churn: 30 frame(s) flipping the colour clear, the depth clear, the depth mode and a pass' activity took 0 device wait(s), released 115 parked object(s) and built 2 target(s); 30 more frame(s) flipping an attachment shape rebuilt 29 target(s) with 29 teardown wait(s)
+[selftest] policy churn: 30 frame(s) flipping the colour clear, the depth clear, the depth mode and a pass' activity took 0 device wait(s), released 103 parked object(s) and built 2 target(s); 30 more frame(s) flipping an attachment shape rebuilt 29 target(s) with 29 teardown wait(s)
 [selftest] MRT attachment 0: centre=(34,6,2) covered=100/9216 [takes the pass clear colour (10,20,30)]
 [selftest] MRT attachment 1: centre=(0,0,0) covered=9216/9216 [transparent black by contract, clear colour ignored]
 [selftest] variant 'default shading + normals': centre=(34,6,2) corner=(10,20,30) covered=400/36864 diagnostics=0
 [selftest] variant 'default shading + loc3 channel': centre=(34,6,2) corner=(10,20,30) covered=400/36864 diagnostics=0
 [selftest] variant 'custom constant-colour program + normals': centre=(255,51,51) corner=(10,20,30) covered=5916/36864 diagnostics=0
 [selftest] variant 'custom constant-colour program + loc3 channel': centre=(255,51,51) corner=(10,20,30) covered=5916/36864 diagnostics=0
-[selftest] variant 'custom loc3-attribute program + normals + loc3 channel': centre=(230,38,13) corner=(10,20,30) covered=5916/36864 diagnostics=0
+[selftest] variant 'custom loc3-attribute program + normals + loc3 channel': centre=(229,38,13) corner=(10,20,30) covered=5916/36864 diagnostics=0
 [selftest] variant 'custom mid-depth (z=0.5) constant-colour program': centre=(255,51,51) corner=(10,20,30) covered=5916/36864 diagnostics=0
 [selftest] texture: the quad sampled its texture by UV — left half (255,_,0) = the red half, right half (0,_,255) = the blue half, over a clear corner (25,_,45)
 [selftest] cube map: all six faces sampled in CubeMap::Face order (+X,-X,+Y,-Y,+Z,-Z), one pixel read back per face (256x256 faces, 3 levels)
@@ -51,11 +51,12 @@
 [selftest] program shading: a program with no stages drew nothing (the centre is still the clear (10,20,30)) where the forward program drew (255,255,255), so an unusable program is declined and reported instead of substituted
 [selftest] program shading: the flat program followed the face normal (765) against the forward program's authored-normal 42 over the same quad
 [selftest] live program switch: the same slot drew 42 forward, 765 flat after the switch, and 42 forward again after switching back
+[selftest] resize: 2 target(s) resized in place with 1 off-screen build(s), 1 fullscreen slot build(s) and 0 device wait(s) on the resize frame; the source's red quad reached the consumer at the new size, 13 object(s) parked and released (ring released 419 so far), 2 compile context(s) and 3 pooled slot(s) reserved after the resize (unchanged), and a shape change still built once
 [selftest] deferred shadow: the ground in the sun's shadow read (31,31,31) against (196,196,196) beside it in the sun (columns 343/240 of row 196), so the built shadow pass reached the lighting
 [selftest] forward shadow: the ground in the sun's shadow read (31,31,31) against (196,196,196) beside it in the sun (columns 343/240 of row 196), so the content set's shadow binding reached the shading
 [selftest] lit-face vantage 0: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765
 [selftest]   fill-only face: [0,0] 384->384 [1,0] 384->384 [2,0] 384->384 [0,1] 384->384 [1,1] 384->384 [2,1] 384->384 [0,2] 384->384 [1,2] 384->384 [2,2] 384->384
-[selftest]   up-sun ground lit 723, darkened pixels 2187
+[selftest]   up-sun ground lit 723, darkened pixels 2186
 [selftest] lit-face vantage 1: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765
 [selftest]   fill-only face: [0,0] 384->384 [1,0] 384->384 [2,0] 384->384 [0,1] 384->384 [1,1] 384->384 [2,1] 384->384 [0,2] 384->384 [1,2] 384->384 [2,2] 384->384
 [selftest]   up-sun ground lit 765, darkened pixels 1979
@@ -64,7 +65,7 @@
 [selftest]   up-sun ground lit 765, darkened pixels 13176
 [selftest] lit-face vantage 0: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765
 [selftest]   fill-only face: [0,0] 384->384 [1,0] 384->384 [2,0] 384->384 [0,1] 384->384 [1,1] 384->384 [2,1] 384->384 [0,2] 384->384 [1,2] 384->384 [2,2] 384->384
-[selftest]   up-sun ground lit 723, darkened pixels 2187
+[selftest]   up-sun ground lit 723, darkened pixels 2186
 [selftest] lit-face vantage 1: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765
 [selftest]   fill-only face: [0,0] 384->384 [1,0] 384->384 [2,0] 384->384 [0,1] 384->384 [1,1] 384->384 [2,1] 384->384 [0,2] 384->384 [1,2] 384->384 [2,2] 384->384
 [selftest]   up-sun ground lit 765, darkened pixels 1979

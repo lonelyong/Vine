@@ -499,7 +499,7 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 
 | 路径 | 策略 |
 | --- | --- |
-| 状态变体交换、撤销深度提升、被丢弃的 program 节点、视图摘除 | **停放**（退役环，深度 4，**由提交令牌驱动推进**：只有已提交的一帧才能推一步，见 §4.1）⇒ 0 次设备等待 |
+| 状态变体交换、撤销深度提升、被丢弃的 program 节点、视图摘除 | **停放**（退役环，深度 = `kDeferredReleaseFrames`：**实测 8**，不是"槽数 + 1"——vsg 的 slot 数是 3，但相位背靠背提交时驱动跑得比槽数远；4 的实测结果是 2 帧运行 3/3 稳定报 `00873`/`00892`/`00765`，8 时 2/6 帧各 3 次全 0。**由提交令牌驱动推进**：只有已提交的一帧才能推一步，见 §4.1）⇒ 0 次设备等待 |
 | 全屏 program 槽丢弃（`detail::eraseProgramSlot`：摘 view + 停放 node + erase） | **停放** —— 它的 node 持有管线与描述符集（描述符集又握着被采样图像的 view），停放让它们活过在飞命令缓冲 |
 | 内容槽 teardown（`erasePassFromTarget` / `clearTargetAttachments`，都要 `bridge.clearCache()`）/ 目标重建 / `clearCache()` / depth 模式变更的状态重建 | **计数等待**（`VsgRetireRing::waitForIdle(viewer)`） |
 

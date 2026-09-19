@@ -30,9 +30,16 @@ V_VSG_NS_BEGIN
 
 /** @brief Frame advances a parked value waits before it is released.
  *
- * One more than the viewer's command-buffer slot count: the slot that could still reference a parked
- * value has had its fence waited (that wait happens before the slot is re-recorded) once this many
- * frames have been submitted after the park.
+ * More than the viewer's command-buffer slot count (vsg builds its RecordAndSubmitTask with 3, see
+ * vsg/app/Viewer.cpp) and more than the frames the driver may still hold: the slot count alone is not
+ * the bound, because a frame is only retired when its slot is re-recorded, and a phase that submits
+ * frames back to back runs arbitrarily far ahead of that.
+ *
+ * MEASURED, not chosen: at 4 the self-test destroyed a parked render pass, framebuffer and pipeline
+ * while a submitted command buffer named them (00873 / 00892 / 00765), reproducibly on a 2-frame run
+ * and intermittently at 6 and 30 frames. At 8 the same sweep is clean
+ * (VINE_SELFTEST_FRAMES=2/6/30, three runs each, validation layer on). The cost of the margin is
+ * memory held a few frames longer, which is the cheap side of the trade.
  *
  * THE DEPTH IS ONLY WORTH THIS MUCH IF THE PARK LANDS BEFORE THE FRAME'S ADVANCE. A value parked
  * after the advance enters the bucket the advance has just entered and is released one frame early:
@@ -40,7 +47,7 @@ V_VSG_NS_BEGIN
  * a submitted command buffer still named (00873 / 00892 / 00765). The advance is therefore the LAST
  * step of the frame, after every sweep that can park (see VsgRenderer::submitFrame).
  */
-inline constexpr std::size_t kDeferredReleaseFrames = 4;
+inline constexpr std::size_t kDeferredReleaseFrames = 8;
 
 /**
  * @brief Evidence that one frame HAS been committed (recorded, submitted and presented).

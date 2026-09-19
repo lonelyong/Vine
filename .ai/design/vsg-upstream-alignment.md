@@ -71,6 +71,25 @@
 而它此前只活在注释里、没有任何东西保证调用顺序（`FrameCommit` 只挡住"没提交就推进"）。修完后不变量写进了
 `VsgDeferredRelease` / `VsgRetireRing::advance` / `submitFrame` 三处文档，并被"VUID 归零"钉住。
 
+### 3.1 深度的第二半：4 不够（2026-09-19 合并后复测）
+
+合并后 30 帧自检又出现 8 × `VUID-vkUpdateDescriptorSets-None-03047`（在**程序 set** 的 binding 0/2/3/4 上更新，而命令缓冲还 pending），
+加上各 1 条 `00873`/`00892`/`00765`。
+
+**定位**：不是"漏了停放"——`SceneBridge::clearCache()`（把 `shared_objects_` 注册表整体停放 ✓）、`VsgPassMaterialiser`（停放 render pass / transient / framebuffer ✓）、
+`invalidateState()`（停放 state wrapper ✓）都在停 ✓。缺的是**深度**：
+
+| 深度 | 2 帧 ×3 | 6 帧 ×3 | 30 帧 ×3 |
+| --- | --- | --- | --- |
+| 4 | 3/3 报错（`00873`+`00892`+`00765`） | 间歇 | 11 条（含 8 × `03047`） |
+| **8** | **全 0** | **全 0** | **全 0，exit 0，38.3 s** |
+
+**为什么 4 不够**：文档原来的理由是"槽数 + 1"（vsg 的 `Viewer.cpp` 用 3 个命令缓冲槽）。但槽只在**被重录**时才退役，
+而自检的相位是背着背连发的（clear/resize/churn）——驱动可以拉得比槽数远，`03047` 正是"停放的注册表被释放得早了一点"。
+所以深度是**实测值**（8），不是从槽数推出来的值；代价只是多持几帧内存。
+
+**基线**：深度变了 ⇒ 自检的 `released N parked object(s)` 从 115 变 103 ⇒ `scripts/vsg_selftest_evidence.txt` 按脚本自己的 `--update` 语义重生。
+
 ## 4. 与上游不同、但**有意为之**（记录理由，避免下一轮又"顺手改回去"）
 
 | 差异 | 理由 | 现状 |

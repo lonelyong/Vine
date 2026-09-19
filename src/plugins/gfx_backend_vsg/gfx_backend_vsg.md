@@ -434,7 +434,9 @@ graph TD
 2. **保留 = 显式公告过的东西**（`setRenderTarget` 的 target、`beginPass` 的 pass、内容/程序槽），
    必须配对 `releaseRenderTarget` / `releasePass` 注销；长期驻留不随帧数增长。
 3. **在用对象不立即释放**：被换下的保留节点、槽池的槽、退役的 GPU 对象都进泊车环，
-   延后 `kDeferredReleaseFrames` 帧（提交过的帧）才真正释放。**推进必须是帧的最后一步**：
+   延后 `kDeferredReleaseFrames` 帧（提交过的帧）才真正释放。深度是**实测值 8**，不是"槽数 + 1"
+   （见 `include/vine/vsg/VsgDeferredRelease.hpp`：4 时 2 帧运行稳定报销毁在用的 00873/00892/00765）。
+   **推进必须是帧的最后一步**：
    在推进之后停放的，只拿到 `深度 - 1` 帧保护 —— 2026-09-19 修掉的那族 VUID
    （`00873`/`00892`/`00765`，自检 6 帧 5 条 / 30 帧 13 条）就是这一帧差的后果（见
    `.ai/design/vsg-upstream-alignment.md` §3）。
