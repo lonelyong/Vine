@@ -8,3 +8,10 @@
 *.geom text eol=lf
 *.tesc text eol=lf
 *.tese text eol=lf
+
+# The evidence baseline is compared line by line against a run by
+# scripts/vsg_selftest_evidence.sh, and that script is bash: a CRLF checkout would
+# make every baseline line differ and every script line a syntax error. Same
+# reason as the shaders above: the working tree has to match what the tool reads.
+scripts/vsg_selftest_evidence.txt text eol=lf
+*.sh text eol=lf
