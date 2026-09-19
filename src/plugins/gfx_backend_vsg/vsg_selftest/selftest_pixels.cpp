@@ -368,6 +368,17 @@ bool runCompositingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
     // draw, because the backend keys its compiled stages on the program object.
     auto copy_program = vine::graphics::screenCopyProgram();
 
+    // A second target for the CONTENT path's own rectangle: a content pass that clears and draws into a
+    // sub-rectangle leaves the rest of the target at the clear colour. Its clear colour appears nowhere
+    // else in this phase, so "outside the rectangle" is unambiguous.
+    const vine::Color rect_clear(30, 60, 90, 255);
+    auto             rect_consumer = RenderTargetPtr(new RenderTarget());
+    rect_consumer->setSize(256, 144);
+    rect_consumer->attachColor(RenderTarget::ColorFormat::RGBA8);
+    rect_consumer->attachDepth(RenderTarget::DepthFormat::D24);
+    auto      rect_pass = RenderPassPtr(new RenderPass());
+    const int rect_x = 16, rect_y = 16, rect_w = 96, rect_h = 54;
+
     std::vector<vine::graphics::RenderDiagnostic> received;
     renderer.setDiagnosticSink([&received](const vine::graphics::RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
@@ -394,6 +405,17 @@ bool runCompositingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
         {
             PassScope pass_scope(renderer, deferred_pass.get(), 0, deferred_consumer.get(), consumer_clear, true);
             renderer.drawScreenProgram(producer.get(), deferred_program.get(), camera.get());
+        }
+
+        // The CONTENT path's own rectangle: this pass CLEARS its target (it is that target's base layer)
+        // and draws the quad into the rectangle it announced. The base layer used to fill the whole target
+        // whatever it announced, which is exactly what made this picture impossible to ask a content pass
+        // for - and the assertions below catch that rule coming back: filling paints the quad at the
+        // TARGET's centre, which is outside this rectangle.
+        {
+            PassScope pass_scope(renderer, rect_pass.get(), 0, rect_consumer.get(), rect_clear, true);
+            renderer.setViewport(rect_x, rect_y, rect_w, rect_h);
+            renderer.render(std::vector<RenderCommand>{ producer_command }, camera.get());
         }
 
     }
@@ -467,6 +489,52 @@ bool runCompositingPixelPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr&
                          "[selftest] pixels: PiP rect %dx%d sampled both producer regions; deferred program filled"
                          " the target with (%d,%d,%d); diagnostics=%zu\n",
                          pip_w, pip_h, dr, dg, db, received.size());
+        }
+    }
+
+    // ---- The CONTENT path's sub-rectangle ----------------------------------
+    // The same picture the PiP phase pins for a program pass, asked of a content pass: what is inside the
+    // announced rectangle is drawn there, and what is outside it keeps the clear colour.
+    PixelImage rect_image;
+    if (!readTarget(renderer, rect_consumer.get(), rect_image)) {
+        std::fprintf(stderr, "[selftest] FAIL: readColorBuffer() refused the content-rectangle target\n");
+        ok = false;
+    }
+    else {
+        const int rect_centre_x = rect_x + rect_w / 2;
+        const int rect_centre_y = rect_y + rect_h / 2;
+        // Inside the rectangle: the quad, drawn where the pass was told to draw it.
+        if (rect_image.at(rect_centre_x, rect_centre_y, 0) <= rect_image.at(rect_centre_x, rect_centre_y, 2) + 20) {
+            std::fprintf(stderr, "[selftest] FAIL: the centre of the content pass' rectangle is (%d,%d,%d); the quad belongs there\n",
+                         rect_image.at(rect_centre_x, rect_centre_y, 0), rect_image.at(rect_centre_x, rect_centre_y, 1),
+                         rect_image.at(rect_centre_x, rect_centre_y, 2));
+            ok = false;
+        }
+        // The TARGET's centre is outside that rectangle and must be the clear colour. This is the assertion
+        // that separates the two rules: a base layer that filled its target painted the quad here instead.
+        if (rect_image.at(rect_image.centre(), 0) != 30 || rect_image.at(rect_image.centre(), 1) != 60 ||
+            rect_image.at(rect_image.centre(), 2) != 90) {
+            std::fprintf(stderr,
+                         "[selftest] FAIL: the content pass painted (%d,%d,%d) at the target centre, outside its"
+                         " rectangle; the clear colour (30,60,90) belongs there\n",
+                         rect_image.at(rect_image.centre(), 0), rect_image.at(rect_image.centre(), 1),
+                         rect_image.at(rect_image.centre(), 2));
+            ok = false;
+        }
+        // The CLEAR covered the whole target, not just the rectangle: a point inside the rectangle but off
+        // the quad keeps the clear colour too. That is what makes "a picture in a corner of a cleared
+        // target" one pattern for both kinds of pass.
+        if (rect_image.at(rect_x + 2, rect_y + 2, 2) != 90) {
+            std::fprintf(stderr, "[selftest] FAIL: the rectangle's corner is (%d,%d,%d), expected the clear colour (30,60,90)\n",
+                         rect_image.at(rect_x + 2, rect_y + 2, 0), rect_image.at(rect_x + 2, rect_y + 2, 1),
+                         rect_image.at(rect_x + 2, rect_y + 2, 2));
+            ok = false;
+        }
+        if (ok) {
+            std::fprintf(stderr,
+                         "[selftest] pixels: a content pass drew in a %dx%d rectangle and left the rest of the"
+                         " target at its clear colour\n",
+                         rect_w, rect_h);
         }
     }
 

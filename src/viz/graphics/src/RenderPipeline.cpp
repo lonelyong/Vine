@@ -47,16 +47,22 @@ raw_ptr<FpsOverlay> Pipeline::fpsOverlay() const
     return fps_overlay_.get();
 }
 
-void Pipeline::resize(int width, int height)
+void Pipeline::resize(int width, int height, double pixel_ratio)
 {
     if (width <= 0 || height <= 0) {
         return;
     }
+    // The ratio is stated once by the host and applied where it belongs (see the declaration): the
+    // off-screen targets are the consumer that wants device pixels, and the HUD overlays are laid out on
+    // the logical surface they were written against (they apply their own ratio).
+    const double ratio    = pixel_ratio > 0.0 ? pixel_ratio : 1.0;
+    const int    device_w = static_cast<int>(width * ratio);
+    const int    device_h = static_cast<int>(height * ratio);
     if (offscreen_target_ != nullptr) {
-        offscreen_target_->setSize(width, height);
+        offscreen_target_->setSize(device_w, device_h);
     }
     if (composite_target_ != nullptr) {
-        composite_target_->setSize(width, height);
+        composite_target_->setSize(device_w, device_h);
     }
     if (gizmo_ != nullptr) {
         gizmo_->onSurfaceResized(width, height);

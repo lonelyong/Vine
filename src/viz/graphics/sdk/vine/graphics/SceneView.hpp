@@ -195,16 +195,19 @@ class V_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     /** @brief Registers a creator-managed surface-layout step.
      *
-     * The callback receives the new surface size (device pixels) every time
-     * the view's surface changes and updates whatever that code owns - an
-     * off-screen target's size (target->setSize), a pass's viewport
-     * (pass->setViewport(Viewport{...})), etc. This keeps each pipeline's
-     * resize policy with its creator (deferred chains at native / fractional
-     * resolution, fixed shadow maps doing nothing, corner-anchored previews /
-     * gizmos re-anchoring) while the engine stays a pure scheduler.
+     * The callback receives the new surface size every time the view's surface changes and updates whatever
+     * that code owns - an off-screen target's size (target->setSize), a pass's viewport
+     * (pass->setViewport(Viewport{...})), etc. This keeps each pipeline's resize policy with its creator
+     * (deferred chains at native / fractional resolution, fixed shadow maps doing nothing, corner-anchored
+     * previews / gizmos re-anchoring) while the engine stays a pure scheduler.
      *
-     * @param layout Callback taking the new surface width and height in
-     *               device pixels.
+     * The size is in the space the HOST reports (for the Qt host, the LOGICAL size its widget has - see
+     * RenderControl). That matters because the consumers want different spaces: a pass viewport is in
+     * DEVICE pixels, while AxisGizmo / FpsOverlay are laid out on the logical size and apply the ratio
+     * themselves. A creator whose consumer needs device pixels therefore scales by the host's ratio here
+     * (see Pipeline::resize, which takes the ratio for exactly that reason).
+     *
+     * @param layout Callback taking the new surface width and height the host reported.
      */
     void addSurfaceLayout(std::function<void(int width, int height)> layout);
 

@@ -9,8 +9,10 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
+#include "Light.hpp"
 
 V_GRAPHICS_NS_BEGIN
+
 
 using vine::math::Mat4d;
 
@@ -204,6 +206,40 @@ class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarge
      */
     const Mat4d& producerViewProjection() const;
 
+    /** @brief Whether a producer ever STATED a view-projection for this target.
+     *
+     * The matrix alone cannot answer this (an unset one IS the identity), and the answer is what
+     * separates a target a camera-driven producer published - a shadow map is exactly that: the shadow
+     * pass writes the light camera's view-projection onto it - from one that merely happens to have a
+     * depth attachment. A consumer looking for a shadow map has to ask this rather than trust the order
+     * a pass declares its inputs in.
+     *
+     * @return true once setProducerViewProjection() has been called.
+     */
+    bool hasProducerViewProjection() const;
+
+    /** @brief States that this target IS the shadow map of @p light; gets whose map it is.
+     *
+     * A fact about the MAP, which is where the pairing belongs. The pass that reads it stays a generic
+     * consumer - it declares targets as its inputs and nothing else - and no consumer has to infer from
+     * declaration order which of its inputs is a shadow map, because a G-buffer has a depth too. A target
+     * is a light's shadow map for as long as that light says it casts (Light::castShadow, the runtime
+     * switch, next to the ShadowSettings a consumer reads the bias from).
+     *
+     * The target HOLDS the light: a map is useless without the light it belongs to, and both the map and
+     * its consumer can outlive the scene that built them (a retained backend target outliving a phase is
+     * exactly how a borrowed pointer here became a dangling one).
+     *
+     * @param light Light this target is the shadow of (null: this target is not a shadow map).
+     */
+    void setShadowOf(intrusive_ptr<const Light> light);
+
+    /** @brief Gets the light this target is a shadow map of.
+     *
+     * @return The light, or null when this target is not a shadow map.
+     */
+    raw_ptr<const Light> shadowOf() const;
+
   private:
     // Optional identity label for diagnostics and logs (see setName()).
     String name_;
@@ -216,6 +252,8 @@ class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarge
     // The view-projection the producer rendered this target with (see
     // setProducerViewProjection); identity until someone states one.
     Mat4d producer_view_projection_;
+    bool  producer_view_projection_stated_ = false;
+    intrusive_ptr<const Light> shadow_of_;   // whose shadow map this is, when it is one (held: see setShadowOf)
     int width_ = 1;
     int height_ = 1;
 };

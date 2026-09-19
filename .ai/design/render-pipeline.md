@@ -182,7 +182,7 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 - **读回**：前向路径presenting 到窗口，而窗口读不回来（`readColorBuffer` 拒绝 null target），
   所以相位**把 window pass 重定向**到自己的离屏 target。pass 列表、它依赖的阴影 pass、声明的输入、
   着色全是 builder 的，只有落点变了。（宿主想自己渲到离屏目前**没有**支持的口子，已记进 §6 不做清单。）
-- **变异**：删掉 `buildForwardPath` 里那行 `addInputTarget(shadow_map)` ⇒ 影内读到 196（红）。
+- **变异**：删掉 `buildForwardPath` 里那行 `pass->addInputTarget(shadow_map)` ⇒ 影内读到 196（红）。
   加上 S2a 的四个变异（关 `castShadow`、去掉 v 翻转、去掉 z 反转、相机改回裸指针），
   这十数行着色文本与两处 hand-off 都各有一条会红的路径。
 - **结构门禁**：`ARequestedShadowIsBuiltOnTheForwardPathToo`（阴影 pass 先画、内容 pass 落到窗口、

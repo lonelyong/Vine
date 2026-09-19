@@ -366,7 +366,7 @@ void GuiApplication::deferStartupFrameClose()
     // One-shot, and no loop of its own: the loop being waited for is run()'s, and the surface reports its own
     // transitions. The subscription is replaced (i.e. cancelled) by closeStartupFrame(), and dies with the
     // application, so nothing here can outlive what it talks to.
-    d->frame_close_subscription = view->stateChanged.subscribe([this](RenderControl::SurfaceState) {
+    d->frame_close_subscription = view->stateChanged.connect([this](RenderControl::SurfaceState) {
         if (windowCanBeSeen()) {
             closeStartupFrame();
         }

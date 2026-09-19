@@ -25,7 +25,6 @@
 #include <vine/vsg/VsgPipelineFactory.hpp>
 
 using vine::vsg::detail::programImportsDefine;
-using vine::vsg::detail::programReadsDrawBlock;
 using vine::vsg::detail::programSamplesDepth;
 
 namespace
@@ -92,49 +91,6 @@ TEST(ProgramSamplingTest, OnlyTheFragmentStageDecides)
 TEST(ProgramSamplingTest, NoProgramBindsNoDepth)
 {
     EXPECT_FALSE(programSamplesDepth(nullptr, /*color_count*/ 1));
-}
-
-TEST(ProgramDrawBlockTest, AProgramReachesThePerDrawableBlockOnlyByDeclaringIt)
-{
-    // Per-drawable values (VineDrawBlock: the drawable's opacity, and the model matrix beside it) are
-    // reachable from a user program through set 1, binding 0 and through nothing else, so whether a
-    // program's ShaderSet declares that set is decided by this scan -- the same "read the contract from
-    // the source" rule programSamplesDepth follows. Answering YES for a program that does not read it
-    // would hand it the engine's block (and take the slot a host program may have declared for its own
-    // uniform); answering NO would leave setOpacity with no effect and nothing saying so.
-    const auto declares = [](const char8_t* source) {
-        return programReadsDrawBlock(makeProgram(vine::graphics::ShaderStageType::Fragment, source).get());
-    };
-
-    const char8_t* const reads_the_block = u8R"(
-#version 450
-layout(set = 1, binding = 0) uniform VineDrawBlock { mat4 model; vec4 params; } draw;
-layout(location = 0) out vec4 outColor;
-void main() { outColor = vec4(vec3(draw.params.x), 1.0); }
-)";
-    EXPECT_TRUE(declares(reads_the_block));
-
-    // A program that only reads its material (set 0) or its texture keeps the one-set layout.
-    const char8_t* const material_only = u8R"(
-#version 450
-layout(set = 0, binding = 0) uniform VineMaterialBlock { vec4 diffuse; } material;
-layout(location = 0) out vec4 outColor;
-void main() { outColor = material.diffuse; }
-)";
-    EXPECT_FALSE(declares(material_only));
-
-    // The SLOT is what matters, not the set alone: set 1 binding 1 is a different binding, and set 0
-    // binding 0 (the material) is not the draw block.
-    EXPECT_FALSE(declares(u8"#version 450\nlayout(set = 1, binding = 1) uniform B { vec4 v; } b;\nvoid main(){}\n"));
-
-    // Any stage counts (the block carries the model matrix, which a vertex stage reads), and a null
-    // program reads nothing.
-    const auto vertex_stage =
-        makeProgram(vine::graphics::ShaderStageType::Vertex,
-                    u8"#version 450\nlayout(set = 1, binding = 0) uniform VineDrawBlock { mat4 model; } draw;\n"
-                    u8"void main() { gl_Position = draw.model * vec4(0.0); }\n");
-    EXPECT_TRUE(programReadsDrawBlock(vertex_stage.get()));
-    EXPECT_FALSE(programReadsDrawBlock(nullptr));
 }
 
 TEST(ProgramDefineImportTest, ThePragmaListDecidesWhichDefinesAProgramAsksFor)

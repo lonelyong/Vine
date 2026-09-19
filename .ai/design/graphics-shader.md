@@ -320,6 +320,7 @@ GLSL 与 HLSL 连**声明结构**都不同（`layout(binding = N)` vs `register(
 > **每 drawable** 的（动态偏移、每 draw 一个槽），而**材质值属于每材质**：材质按地址键缓存、跨 drawable 共享，
 > 值已经住在 `set0/b0` 的材质块里。把材质值搬进 `params` = 按 drawable 复制材质值，并和材质身份键打架 ——
 > 所以它**不该**成为参数表的触发理由。今天 `draw.params` 仍然只有 `.x`（opacity）一个活标量，`.yzw` 在渐变片里
-> 明写 reserved（阴影块那个 `params = {1.0, bias, strength, 0}` 是**另一个块**，不算）。⇒ 暂缓继续有效；
+> 明写 reserved（阴影块 `VineShadowBlock` 是**另一个块**，它自己的 ABI：其 `params.w` 自 2026-09-18 起承载
+> "这张图属于哪盏灯"在灯块里的槽位，所以那个块里没有 reserved 可用了）。⇒ 暂缓继续有效；
 > 真的出现第二个标量时，先问它是"每 drawable 的覆盖值"还是"每材质的值"。
 

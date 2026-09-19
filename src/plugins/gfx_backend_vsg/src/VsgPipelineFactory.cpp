@@ -1045,23 +1045,6 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
     return false;
 }
 
-bool programReadsDrawBlock(vine::raw_ptr<const vine::graphics::ShaderProgram> program)
-{
-    if (program == nullptr) {
-        return false;
-    }
-    // Which stage does not matter: the block carries the model matrix (a vertex-stage value) as well as
-    // the per-draw parameters, so any stage declaring its slot is a program that reads it.
-    for (const auto& stage : program->stages()) {
-        for (const auto& [set, binding] : declaredBindings(stage.source.as_std_str())) {
-            if (set == 1u && binding == 0u) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 ::vsg::ref_ptr<::vsg::Node> makeFullscreenProgramNode(
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
     const ::vsg::ImageViews&                          image_views,

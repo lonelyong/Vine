@@ -211,6 +211,7 @@ void RenderPass::clearInputs()
     bumpWiringRevision();
 }
 
+
 raw_ptr<ShaderProgram> RenderPass::programOverride() const
 {
     return program_override_.get();

@@ -97,12 +97,14 @@ class V_GRAPHICS_API FpsOverlay : public RenderPass {
      * new surface size.
      *
      * Called by the overlay's owner whenever the surface changes (e.g. from a
-     * SceneView surface-layout step / Pipeline::resize()). Sizes are in the
-     * same space as the other layout sizes (device pixels, top-left origin);
-     * the configured devicePixelRatio is applied when converting.
+     * SceneView surface-layout step / Pipeline::resize()). The size is the
+     * LOGICAL surface size the host reports - the same number it hands to
+     * SceneView::onSurfaceResized - and the configured devicePixelRatio is
+     * applied HERE, which is what turns it into the device-pixel rectangle a
+     * backend viewport needs. Handing it device pixels scales the box twice.
      *
-     * @param width  Surface width in pixels.
-     * @param height Surface height in pixels.
+     * @param width  Surface width in logical pixels.
+     * @param height Surface height in logical pixels.
      */
     void onSurfaceResized(int width, int height);
 

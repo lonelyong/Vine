@@ -221,9 +221,10 @@ namespace
  * are reported as unbuilt by reportRequestedShadows().
  *
  * @param content Content scene to scan (may be null).
- * @return The light that casts the shadow, or null when the content asks for none.
+ * @return A strong handle to the light that casts the shadow, or null when the content asks for none:
+ *         the shadow map states whose it is (RenderTarget::setShadowOf) and therefore holds it.
  */
-raw_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
+intrusive_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
 {
     if (content == nullptr) {
         return nullptr;
@@ -232,7 +233,7 @@ raw_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
     for (const auto& light : content->lights()) {
         if (light != nullptr && light->isEnabled() && light->castShadow() &&
             light->type() == LightType::Directional) {
-            return light.get();
+            return light;   // a strong handle: the map holds its light (RenderTarget::setShadowOf)
         }
     }
     return nullptr;
@@ -240,8 +241,12 @@ raw_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
 
 }  // namespace
 
-intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(Pipeline& pipeline, const Light& shadow_light)
+intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(Pipeline& pipeline,
+                                                                  const intrusive_ptr<const Light>& shadow_light_owner)
 {
+    // The map keeps the light it belongs to alive (RenderTarget::setShadowOf): a retained target can
+    // outlive the scene that built it, and a consumer reads the light through the map.
+    const Light& shadow_light = *shadow_light_owner;
     const int resolution = static_cast<int>(shadow_light.shadowSettings().resolution);
     auto      shadow_map = make_intrusive<RenderTarget>();
     shadow_map->setName(u8"shadow_map");
@@ -255,6 +260,10 @@ intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(Pipeline& pip
     // ONE derivation of the light camera: the pass renders through this camera and the target
     // STATES its view-projection, so the shading reads the same matrix instead of fitting a
     // second ortho box of its own (see .ai/design/render-pipeline.md §9).
+    // The map states what it IS, not who reads it: a consumer finds the shadow by asking the declared
+    // targets whose shadow they are (RenderTarget::setShadowOf), so nothing is inferred from declaration
+    // order and RenderPass stays a generic stage.
+    shadow_map->setShadowOf(shadow_light_owner);
     shadow_map->setProducerViewProjection(directionalShadowMatrix(shadow_light, content_->boundingBox(), *light_camera));
 
     auto shadow_pass = make_intrusive<RenderPass>();
@@ -276,13 +285,14 @@ bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
         return false;
     }
     // A shadow-casting light in the content is honoured on this path too, through the SAME pass the
-    // deferred path builds (one implementation, one light camera). The content pass then DECLARES
-    // the map as an input, and that declaration is the whole hand-off: the engine resolves it
-    // (RenderEngine::resolvePassInputs) and the backend binds it into the content set's shadow
-    // binding, where the forward program shades with it (ShadowAbi / ShaderAbi.hpp).
+    // deferred path builds (one implementation, one light camera). The content pass then STATES the
+    // shadow it shades - the map and the light it was cast by (RenderPass::ShadowSource) - and that
+    // declaration is the whole hand-off: the engine resolves it (RenderEngine::resolvePassInputs) and
+    // the backend binds it into the content set's shadow binding, where the forward program shades
+    // with it (ShadowAbi / ShaderAbi.hpp).
     intrusive_ptr<RenderTarget> shadow_map;
-    if (raw_ptr<const Light> shadow_light = requestedShadowLight(content_.get()); shadow_light != nullptr) {
-        shadow_map = buildShadowPass(pipeline, *shadow_light);
+    if (intrusive_ptr<const Light> shadow_light = requestedShadowLight(content_.get()); shadow_light != nullptr) {
+        shadow_map = buildShadowPass(pipeline, shadow_light);
     }
     // The forward content pass IS the lit result, so it lives at the shading
     // stage; there is no separate geometry pass to place.
@@ -320,7 +330,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     // (Light::castShadow, with its own resolution/bias in ShadowSettings), because a light outlives
     // any one pipeline and a scene may be drawn by several. Single directional light per content,
     // as the shadow design fixes it (graphics-shadow.md §8).
-    raw_ptr<const Light> shadow_light = requestedShadowLight(content_.get());
+    intrusive_ptr<const Light> shadow_light = requestedShadowLight(content_.get());
 
     // Programs default to the built-in temporary shaders so the preset works
     // out of the box; explicit programs in the options override them.
@@ -356,7 +366,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
         shadow_light = nullptr;
     }
     if (shadow_light != nullptr) {
-        shadow_map = buildShadowPass(pipeline, *shadow_light);
+        shadow_map = buildShadowPass(pipeline, shadow_light);
     }
 
     // Canonical G-buffer (shared factory): albedo (0), view normal +
@@ -392,8 +402,10 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
         // consumes is the target — one declaration instead of "name + attachment index".
         light->addInputTarget(gbuffer);
         if (shadow_map != nullptr) {
-            // The pass' declared inputs are what the backend binds (RenderBackend::setPassInputs);
-            // the shadow ABI puts this one at binding 5 (see BuiltinShaders::deferredLightProgram).
+            // The pass states the shadow it shades (see RenderPass::ShadowSource): the map, and the
+            // light it was cast by - which also puts the map among the pass' inputs, with the same
+            // ordering and lifetime guarantees. The shadow ABI puts its two bindings right after the
+            // source's own (see BuiltinShaders::deferredLightProgram).
             light->addInputTarget(shadow_map);
         }
         light->setProgram(std::move(light_program));

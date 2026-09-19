@@ -21,8 +21,8 @@ class MainWindowImpl : public SARibbonMainWindow {
     // screen) applied when the window is first shown.
     bool startup_placed_ = false;
 
-    /// Subscription to the application theme; cancelling it is the handle's job.
-    Signal<Theme>::Subscription theme_handler_{};
+    /// Connection to the application theme; cancelling it is the handle's job.
+    Connection theme_handler_{};
 };
 
 V_APPFWGUI_NS_END

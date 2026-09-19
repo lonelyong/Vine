@@ -143,7 +143,7 @@ struct BootSplash::Impl : public WindowData {
     QProgressBar* bar      = nullptr;
 
     /// Subscription to ProgressHost::changed(); held so it is cancelled with the frame.
-    vine::Signal<>::Subscription hosts_changed{};
+    vine::Connection  hosts_changed{};
 
     /// Status line as last reported, before elision.
     QString status;
@@ -263,7 +263,7 @@ BootSplash::BootSplash(const SplashConfig& config)
 
     data->applyConfig(config);
 
-    data->hosts_changed = vine::appfw::ProgressHost::changed().subscribe([data] { Impl::onStartupChanged(data); });
+    data->hosts_changed = vine::appfw::ProgressHost::changed().connect([data] { Impl::onStartupChanged(data); });
 
     // Pick up a boot that is already reporting, so a frame created after the first stage does not wait for the next one.
     refresh();

@@ -216,7 +216,7 @@ auto pipeline = builder.build(options);      // 或 options.path = ShadingPath::
 if (pipeline == nullptr) { return false; }
 
 // ⑤ 帧循环。
-pipeline->resize(width, height);   // 转发给离屏/合成 target，并通知 HUD 叠加
+pipeline->resize(width, height, dpr);   // 离屏/合成 target 按 device 像素，HUD 叠加按逻辑像素（ratio 一次说清）
 engine.frame(dt);                  // 收集 → 录制 → 提交 → present
 
 engine.shutdown();
@@ -377,18 +377,19 @@ options.offscreen_height = 0;
 options.gbuffer_program  = nullptr;    // 空 = 用内置的临时 G-buffer 几何 program
 options.lighting_program = nullptr;    // 空 = 用内置的临时延迟光照 program
 auto pipeline = builder.build(options);
-pipeline->resize(surface_w, surface_h);            // 同时管离屏 / 合成 target 与 HUD 叠加
+pipeline->resize(surface_w, surface_h, device_pixel_ratio);  // 同时管离屏 / 合成 target（device 像素）与 HUD 叠加（逻辑像素）
 
 // 内容着色：必须**显式指定**程序。没有 shader preset 枚举，也没有兜底——
 // 引擎默认用的是命名的 forward 程序（flat 是它的同一对 stage + `#define VINE_FLAT 1`）：
 engine.setDefaultContentProgram(flatForwardProgram());   // 会话默认：没写 program 的 drawable 用它
 engine.setDefaultContentProgram(forwardProgram());       // 回到默认前向着色
 
-// 离屏 + 画中画（内部就是 §3.3 的两个 pass）：
+// 离屏 + 画中画（内部就是 §3.3 的两个 pass）。注意最后那个矩形是 VIEWPORT ⇒ **device 像素**
+// （surface_w 是逻辑像素，所以高 DPI 下要各自乘 dpr；见 RenderPass::setViewport）：
 builder.addOffscreenToScreen(u8"preview", 512, 288,
                              RenderTarget::ColorFormat::RGBA8,
                              RenderTarget::DepthFormat::D24,
-                             surface_w - 320 - 8, 8, 320, 180);
+                             viewport_x, viewport_y, 320, 180);
 
 // 也可以自己加 HUD pass：AxisGizmo / FpsOverlay 本身就是 RenderPass。
 auto gizmo = make_intrusive<AxisGizmo>();

@@ -208,7 +208,7 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
     ConsoleProgressOptions options_;
 
     std::mutex                        mutex_;        ///< Guards everything below; the stop barrier.
-    vine::Signal<>::Subscription      subscription_; ///< Installed by start(), removed by stop().
+    vine::Connection                  subscription_; ///< Installed by start(), removed by stop().
     bool                              stopped_{ false };
     std::uint64_t                     generation_{ 0 }; ///< Bumped by stop(): stale wakeups bail.
     bool                              sleeping_{ false }; ///< A wakeup is already in flight.
@@ -241,7 +241,7 @@ void ConsoleProgressReporter::start()
         d->stopped_ = false;
 
         if (!d->subscription_.isActive()) {
-            d->subscription_ = ProgressHost::changed().subscribe([weak = std::weak_ptr<Impl>(d)] {
+            d->subscription_ = ProgressHost::changed().connect([weak = std::weak_ptr<Impl>(d)] {
                 // The state is kept alive by the reporter and by any wakeup in flight, so a
                 // notification that arrives after both are gone finds nothing to do.
                 if (auto impl = weak.lock()) {
@@ -265,7 +265,7 @@ void ConsoleProgressReporter::stop()
     // reporter, owns the closing line, so stopping mid-operation prints nothing here.
     d->stopped_ = true;
     ++d->generation_;
-    d->subscription_.unsubscribe();
+    d->subscription_.disconnect();
 }
 
 void ConsoleProgressReporter::poll()

@@ -428,34 +428,16 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     const int                          surf_w     = overlay.surf_w;
     const int                          surf_h     = overlay.surf_h;
 
-    // Destination rectangle: the pass' sub-viewport, else the full surface
-    // (clamped into the surface - the fullscreen draw has no auto-fit).
-    int rect_x = 0, rect_y = 0, rect_w = surf_w, rect_h = surf_h;
-    if (viewport && viewport->width > 0 && viewport->height > 0) {
-        rect_x = viewport->x;
-        rect_y = viewport->y;
-        rect_w = viewport->width;
-        rect_h = viewport->height;
-    }
-    if (rect_x < 0) {
-        rect_w += rect_x;
-        rect_x = 0;
-    }
-    if (rect_y < 0) {
-        rect_h += rect_y;
-        rect_y = 0;
-    }
+    // Destination rectangle: the ONE rule the content path uses too (detail::passDrawRect) - the rectangle
+    // this pass announced, or the whole target, clamped. A program pass honours what it was given, which is
+    // what a preview, an axis gizmo or a HUD in a corner all rely on.
+    const vine::graphics::Viewport rect = detail::passDrawRect(viewport, surf_w, surf_h);
+    const int rect_x = rect.x;
+    const int rect_y = rect.y;
+    const int rect_w = rect.width;
+    const int rect_h = rect.height;
     if (rect_w <= 0 || rect_h <= 0) {
-        return;
-    }
-    if (rect_x + rect_w > surf_w) {
-        rect_w = surf_w - rect_x;
-    }
-    if (rect_y + rect_h > surf_h) {
-        rect_h = surf_h - rect_y;
-    }
-    if (rect_w <= 0 || rect_h <= 0) {
-        return;
+        return; // nothing to draw: the rule clamped this pass' rectangle away
     }
 
     // The shadow this pass declared (if any), resolved ONCE PER FRAME and used twice: the map is
@@ -552,12 +534,11 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         // Binding it as a sampled texture then would declare a layout the image
         // is not in (a descriptor/layout mismatch validation reports every
         // frame). The actual state is what decides.
-        // The shadow this pass declared (if any): the engine announced the pass' resolved inputs
-        // (RenderBackend::setPassInputs), and the shadow ABI says the first one is the map. Its
-        // matrix comes from the TARGET, not from a second derivation of the light camera: the
-        // pipeline that built that camera wrote its view-projection once
-        // (RenderTarget::setProducerViewProjection), and all that is missing here is the step from
-        // view space (where the shading has the fragment) into light clip.
+        // The shadow this pass' map declares: `RenderTarget::setShadowOf` names the light a target is the
+        // shadow of, and the resolver finds it among the announced inputs without any inference. Its matrix
+        // comes from the TARGET, not from a second derivation of the light camera: the pipeline that built
+        // that camera wrote its view-projection once (RenderTarget::setProducerViewProjection), and all that
+        // is missing here is the step from view space (where the shading has the fragment) into light clip.
         FullscreenShadowInput shadow;
         if (resolved_shadow.map != nullptr) {
             shadow.map = resolved_shadow.map;

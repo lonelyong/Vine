@@ -29,16 +29,16 @@ RibbonAction::RibbonAction()
     }
 
     // When a command is configured, execute it when the action is triggered.
-    // release(): this is the widget wiring its own signal, so the subscription should last
+    // detach(): this is the widget wiring its own signal, so the subscription should last
     // exactly as long as the widget does.
-    triggered.subscribe([](RibbonAction& self, EventArgs&) {
+    triggered.connect([](RibbonAction& self, EventArgs&) {
         const String cmd = self.command();
         if (!cmd.empty()) {
             if (auto* app = Application::current()) {
                 app->commandManager()->executeDetached(cmd);
             }
         }
-    }).release();
+    }).detach();
 }
 
 RibbonAction::~RibbonAction()

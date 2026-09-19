@@ -116,10 +116,10 @@ class VisualUserIO : public UserIO {
 
     ConsolePanel* console_{ nullptr };
     /// Handlers registered on the bound console, so a rebind can drop them again.
-    vine::Signal<const String&>::Subscription line_handler_{};
-    vine::Signal<>::Subscription              escape_handler_{};
-    /// Subscription on the command manager's commandsChanged().
-    vine::Signal<vine::appfw::CommandManager&, vine::EventArgs&>::Subscription commands_handler_{};
+    vine::Connection line_handler_{};
+    vine::Connection escape_handler_{};
+    /// Connection on the command manager's commandsChanged().
+    vine::Connection commands_handler_{};
 
     /// Prompt bookkeeping of the current read; see PromptState.
     std::shared_ptr<PromptState> prompt_{ std::make_shared<PromptState>() };

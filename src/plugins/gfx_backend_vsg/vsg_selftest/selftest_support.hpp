@@ -1190,6 +1190,33 @@ bool runDeferredShadowPixelPhase(const vine::intrusive_ptr<RenderBackend>& backe
  */
 bool runForwardShadowPixelPhase(const vine::intrusive_ptr<RenderBackend>& backend, int frames);
 
+/**
+ * @brief Asserts a shadow cannot darken a face the sun reaches: a lit TOP face stays lit.
+ *
+ * Both phases above measure the GROUND, and that is what lets the map's identity go wrong unnoticed: a
+ * consumer resolves its shadow map as "the FIRST declared input whose depth is sampleable", and a
+ * target's depth is sampleable by DEFAULT, so a pass that declares another depth-bearing target before
+ * its shadow map binds that target's depth and maps a fragment with ITS producer view-projection - which
+ * no shadow pass ever stated. The lighting then compares a light-space value against an unrelated depth,
+ * and the shading follows wherever that comparison crosses: on a flat sun-facing surface it darkens a
+ * BAND, and the band moves with the CAMERA. A ground-only assertion can be satisfied by such a map by
+ * accident, which is why this phase samples the box's TOP face - which the sun reaches and nothing else
+ * in the scene can occlude - at two camera vantages, with and without the shadow term, and also asserts
+ * that the shadow still reaches the ground (so the phase cannot pass on a shadow that stopped working).
+ *
+ * The pipeline is built BOTH ways, because the two deferred branches differ in where the lit image ends
+ * up: with an EMPTY transparent scene the lighting pass bakes into a composite (the branch every demo view
+ * uses), and without transparent content it presents straight through its window pass - the branch where
+ * the resolver used to bind the G-buffer as if it were the shadow map (its depth promotion stays on
+ * there), so the phase runs it too.
+ *
+ * @param backend    Backend under test (the engine initializes it: it must be down when called).
+ * @param frames     Frames to drive per read-back.
+ * @param standalone Build without transparent content (the presenting deferred branch).
+ * @return true when a lit top face survived the shadow term and the ground shadow still landed.
+ */
+bool runShadowedLitFacePhase(const vine::intrusive_ptr<RenderBackend>& backend, int frames, bool standalone);
+
 /** @brief Asserts that a session FOLLOWS the host's new window instead of being rebuilt (C1).
  *
  * A host (Qt) hands the backend a native window and replaces it when the windowing system recreates it;

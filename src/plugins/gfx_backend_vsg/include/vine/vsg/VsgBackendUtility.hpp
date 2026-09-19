@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include <vine/vsg/vsg_global.hpp>
 
 // Internal header: the small free-function helpers every renderer translation
@@ -23,6 +24,7 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/raw_ptr.hpp>
+#include <vine/graphics/Viewport.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -121,10 +123,12 @@ bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> pro
  * derivation the pipeline wrote when it built the light camera — never from a second light camera
  * fitted here, so the two cannot disagree about where the light was.
  *
- * `map` is null when the pass declared no shadow (or the depth it declared cannot be sampled), and
- * `block.params.x` is 0 in that case: the ABI's switch is what lets one shader text take both
- * paths (see ShaderAbi.hpp), which the content path needs because its shader set is shared per
- * (target, depth mode) rather than per pass.
+ * `map` is null when the pass declares no target that is a light's shadow map (RenderTarget::setShadowOf),
+ * when that map has not been produced (yet) or its depth cannot be sampled, when its producer never stated
+ * a view-projection (a map nobody stated how to read is not mapped with the identity), when the light it
+ * belongs to stopped casting (Light::castShadow), or when that light is not one the block's three
+ * directional slots can carry. `block.params.x` is 0 in every one of those, so the shader's switch is off
+ * and nothing is scaled: a pass shades the shadow it declared, or none.
  */
 struct ShadowInput
 {
@@ -136,8 +140,10 @@ struct ShadowInput
  * @brief Resolves the shadow @p camera's pass declared (see @ref ShadowInput).
  *
  * The ONE rule every consumer of a shadow uses — the fullscreen lighting pass and a content slot
- * (forward shading) — so the two cannot drift. It reads the pass' announced inputs and the
- * per-target table, so it must be called between setPassInputs() and the draw it belongs to.
+ * (forward shading) - so the two cannot drift. It reads the pass' own declaration of what it shades
+ * (RenderPass::shadowSource) and the per-target table, so it must be called after beginPass() has
+ * announced the pass and after setPassInputs() has resolved its inputs, and before the draw it belongs
+ * to.
  *
  * The lights are an ARGUMENT rather than read from the session: a content draw call CONSUMES the
  * announced light list (VsgRenderer::render takes it), so by the time a slot resolves its shadow the
@@ -151,6 +157,31 @@ struct ShadowInput
  */
 ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<const vine::graphics::Camera> camera,
                                const std::vector<const vine::graphics::Light*>& lights);
+
+/**
+ * @brief The ONE rule for the rectangle a pass draws into: the rectangle it announced, else the whole target.
+ *
+ * Both slot kinds use it - a content pass and a fullscreen program pass - because both make the SAME
+ * statement when they announce a viewport, and a host cannot be told two different things by two drawing
+ * calls. The rectangle is in device pixels with a top-left origin and is clamped into the target.
+ *
+ * What a pass CLEARS is a different question, and deliberately not part of this rule: a clear covers the
+ * whole target while a draw stays inside this rectangle, which is what makes the PiP pattern work (fill
+ * the target, draw the picture into a corner of it).
+ *
+ * NEITHER DOES THE PASS' ROLE IN ITS TARGET NARROW THE RECTANGLE. A content pass that cleared its target
+ * (its base layer) used to fill that target whatever it announced - a rule that made
+ * RenderPass::setViewport mean one thing in a content pass and another in a ScreenPass, silently dropped a
+ * rectangle the host had asked for, and left "draw a second view into part of the target" impossible to
+ * express with a content pass at all. The role still matters, but only for what clearing means (the base
+ * layer's depth-on style and the window's default light) - see PassAttributes::presenting.
+ *
+ * @param viewport The pass' announced viewport (null when it announced none).
+ * @param surf_w   Target (or surface) width in device pixels.
+ * @param surf_h   Target (or surface) height in device pixels.
+ * @return The rectangle to draw into, in device pixels (never empty while the target has an extent).
+ */
+vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, int surf_w, int surf_h);
 
 /**
  * @brief Whether a session's window is this backend's HOST window (the one it adopted from the host).

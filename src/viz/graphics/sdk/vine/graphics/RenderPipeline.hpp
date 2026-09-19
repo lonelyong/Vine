@@ -289,17 +289,26 @@ class V_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
      */
     raw_ptr<FpsOverlay> fpsOverlay() const;
 
-    /** @brief Resizes the off-screen target and re-anchors the gizmo overlay.
+    /** @brief Resizes the off-screen targets and re-anchors the HUD overlays for a new surface size.
      *
-     * Creator-maintained sizing: the host calls this on surface changes (e.g.
-     * from a SceneView::addSurfaceLayout step) so a deferred G-buffer tracks
-     * the window (the backend rebuilds the off-screen attachments on the next
-     * frame) and an axis-gizmo overlay stays pinned to its corner.
+     * Creator-maintained sizing: the host calls this on surface changes (e.g. from a
+     * SceneView::addSurfaceLayout step) so a deferred G-buffer tracks the window (the backend rebuilds the
+     * off-screen attachments on the next frame) and an axis-gizmo overlay stays pinned to its corner.
      *
-     * @param width  New width in pixels (<= 0 is ignored).
-     * @param height New height in pixels (<= 0 is ignored).
+     * ONE call carries the surface size AND the ratio, because this handle's consumers read the same number
+     * in two different spaces: the off-screen targets are sized in DEVICE pixels (they are sampled 1:1 with
+     * the swapchain), while the HUD passes are laid out on the LOGICAL surface the host has - they apply the
+     * ratio themselves (see AxisGizmo::onSurfaceResized). The host owns the surface, so it is the only party
+     * that knows the ratio. Handing both consumers the same number is what this used to do, and it laid a
+     * gizmo out on the device size (twice its box on a high-DPI display) until the host undid it with a
+     * second call.
+     *
+     * @param width       New surface width in LOGICAL pixels (<= 0 is ignored), as reported to
+     *                    SceneView::onSurfaceResized.
+     * @param height      New surface height in LOGICAL pixels (<= 0 is ignored).
+     * @param pixel_ratio Device pixel ratio of that surface (<= 0 is treated as 1).
      */
-    void resize(int width, int height);
+    void resize(int width, int height, double pixel_ratio);
 
   private:
     /** @brief Registers a pass on the engine and remembers it.

@@ -79,11 +79,12 @@
 
 ### E5 落实：`Signal` 线程安全化（`src/base/core/sdk/vine/Signal.hpp`）
 
-**做法**：handler 表是**不可变快照**（`std::vector<std::shared_ptr<Slot>>`，`Slot = {callback, atomic<bool> alive}`），
-`subscribe()` 返回 RAII 句柄 `Subscription`（`unsubscribe()`/`isActive()`/`release()`，与 appfw 的
-`EventBus::subscribe()`/`EventBus::Subscription` **同名同形**）。`subscribe/unsubscribeAll` 持一把 mutation mutex 复制-修改-发布；`trigger`
+**做法**：handler 表是**不可变快照**（`std::vector<std::shared_ptr<Slot>>`，`Slot : Connection::State = {callback, atomic<bool> alive}`），
+`connect()` 返回 RAII 句柄 `Connection`（`disconnect()`/`isActive()`/`detach()`；句柄是独立于 Signal 的**非模板类**，
+形状与 appfw 的 `EventBus::Subscription` **同形**——移动语义、析构即取消——入口名则对齐 Qt 的 `QObject::connect()`）。
+`connect/disconnectAll` 持一把 mutation mutex 复制-修改-发布；`trigger`
 **不加任何锁**：原子 load 出已发布的表，靠 `shared_ptr` 引用计数把表和槽稳稳持有到遍历结束，逐个检查 `alive`。
-取消一个订阅 = 一次原子写（O(1)，不再复制表）；已取消的槽在下一次 `subscribe()` 复制时顺手 `remove_if` 剔除。
+取消一个订阅 = 一次原子写（O(1)，不再复制表）；已取消的槽在下一次 `connect()` 复制时顺手 `remove_if` 剔除。
 这与 Qt 的连接表一致（原子指针 + 引用计数的 connection data + 每条连接的失效标记），
 发火线程永远不会等一个订阅操作。
 原有语义全部保留（订阅顺序、发火期间新增的下一轮才生效、发火期间注销的不再被调用、handler 内可增删/
@@ -107,7 +108,7 @@
 订阅），这是刻意取舍。受益方是所有 `Signal` 使用者：`CommandManager` 三个事件、`ConsolePanel` 的
 `lineEntered`/`escapePressed`、`WindowContext` 的 mouse/key/resized、`GuiApplication::theme_changed` 等。
 
-#### 为什么行里存的是 `shared_ptr<Subscription>` 而不是裸 `handler`
+#### 为什么行里存的是 `shared_ptr<Slot>` 而不是裸 `handler`
 
 这个指针不是为了省一次间接访问，它承载的是"订阅"这个实体本身（早期版本叫 `HandlerNode`，但表已经是平铺的
 `vector<Entry>`，没有图可谈，改名后能自解释）：**订阅的生命周期必须长于任何一次快照**，
@@ -119,14 +120,14 @@
 | C：`map<id, {handler, atomic<bool> alive}>` 值存（表地址稳定，靠标记注销） | **编译不过**：`std::atomic` 不可复制/赋值 ⇒ `make_shared<Map>(*cur)` 这一步根本无法表达（`std::is_copy_constructible_v` 在 libstdc++ 上仍报 true，别信它，错误在实例化时才出现） |
 | D：`map<id, handler>` 原地增删 + `trigger` 全程持锁 | **用仓库自己的 `SignalTest.cpp` 实测过**：`std::mutex` 版在 `RemoveSelfDuringEmitIsSafe`（handler 注销自己）**挂死**（`timeout` = 124）；换成 `std::recursive_mutex` 后不死锁，但 `AddDuringEmitTakesEffectNextEmit` **失败**（`{1,100,2,200,200}` vs `{1,2,200}`：发火期间新增的 handler 在本轮就被走到了），`ClearDuringEmitStopsTheRest` **段错误**（139，原地 `clear()` 使遍历迭代器失效）。即：handler 内不允许增删/再发火才可能，而那是仓库已有用例钉住的契约 |
 
-所以：`Subscription` = 订阅的身份（`alive` 标志在快照之外，异步可见）+ 让每次改表的复制退化成 N 次
+所以：`Slot` = 订阅的身份（`alive` 标志在快照之外，异步可见）+ 让每次改表的复制退化成 N 次
 `shared_ptr` 引用计数自增（不分配、不拷贝 `std::function`）。代价是每次订阅多一次小分配，
 在装配期路径上，可接受。
 
-同理，`Slot::alive` 必须是 `std::atomic<bool>`：读它的 `trigger()` 在遍历时**不持锁**，而写它的是
-`unsubscribe()`（纯原子写，连 mutation mutex 都不取，所以取消是 O(1)）与 `unsubscribeAll()`（持锁批量标记）——
+同理，`Slot::alive`（实际定义在基类 `Connection::State` 里，句柄只认这一层）必须是 `std::atomic<bool>`：读它的 `trigger()` 在遍历时**不持锁**，而写它的是
+`disconnect()`（纯原子写，连 mutation mutex 都不取，所以取消是 O(1)）与 `disconnectAll()`（持锁批量标记）——
 一把锁只保护"双方都拿它"的访问。实测（只把 `alive` 改成普通 `bool`，其余不动）：
-TSan 在 `probe_signal_threads` mode1 报 **1 条 data race**（`trigger` 读 / `removeHandler` 写），改回 atomic 后 **0 条**；
+TSan 在 `probe_signal_threads` mode1 报 **1 条 data race**（`trigger` 读 / `disconnect` 写），改回 atomic 后 **0 条**；
 而 -O2 基准两者相同（20 handler：60.6 vs 60.0 ns/次）——1 字节 lock-free，acquire load 在 x86 上就是普通 `mov`，
 去掉它换不来性能，只换来 UB。"加锁"两条路都不可行：锁包住整次遍历 ⇒ handler 自注销时自死锁
 （`probe_lock_during_trigger.cpp`，3 秒超时 = 124），锁只包住每次标志检查 ⇒ 每次发火 N 次 `lock/unlock`，
@@ -164,38 +165,38 @@ TSan 在 `probe_signal_threads` mode1 报 **1 条 data race**（`trigger` 读 / 
 | `QObjectPrivate::ConnectionData`：原子指针 + `ref` 引用计数 | `std::atomic<std::shared_ptr<const HandlerTable>>`：标准库形式的同一套（原子指针 + 引用计数），值语义更安全 |
 | `Connection` 自带 `ref`，发火期间被引用计数钉住 | `shared_ptr<Slot>`，快照持有它直到遍历结束 |
 | `disconnect()` 置 `c->receiver = nullptr`；发火中尚未走到的槽被跳过，正在跑的跑完 | `alive.store(false, release)`；`RemoveAnotherHandlerDuringEmitSkipsIt`/`ClearDuringEmitStopsTheRest` 钉住同一语义 |
-| `connect`/`disconnect` 取 `signalSlotLock`；`QMetaObject::activate` **不取锁** | `subscribe`/`unsubscribe`/`clear` 取 `mutation_mutex_`；`trigger` **不取锁** |
+| `connect`/`disconnect` 取 `signalSlotLock`；`QMetaObject::activate` **不取锁** | `connect`/`disconnect`/`disconnectAll` 取 `mutation_mutex_`；`trigger` **不取锁** |
 | `blockSignals()` / `signalsBlocked()`（返回旧值） | `setBlocked()` / `isBlocked()`（同样返回旧值） |
 | 发火期间 `connect` 的新连接何时生效：实现定义、无文档保证 | 钉死为"下一轮才生效"（`AddDuringEmitTakesEffectNextEmit`） |
-| 连接句柄 `QMetaObject::Connection`（`isValid()`、可 `disconnect()`） | `Subscription`（`isActive()`、`unsubscribe()`）—— 与本仓库 `EventBus::Subscription` 同名同形 |
+| 连接句柄 `QMetaObject::Connection`（`isValid()`、可 `disconnect()`） | `Connection`（`isActive()`、`disconnect()`、`detach()`）—— 入口与 Qt 同名，句柄形状与本仓库 `EventBus::Subscription` 同形 |
 
-#### RAII 断连：`subscribe()` 返回 `Subscription`（= appfw 的 `EventBus::Subscription`）
+#### RAII 断连：`connect()` 返回 `Connection`（形状同 appfw 的 `EventBus::Subscription`）
 
-只有一个入口 `subscribe()`，它返回**移动语义的 RAII 句柄** `Subscription`：析构即取消，`unsubscribe()` 幂等且可从
-handler 内部调用，`isActive()` 查询，`release()` 放弃管理但保留订阅（对象自己的内部接线用）。因为没有 id 了，
+只有一个入口 `connect()`，它返回**移动语义的 RAII 句柄** `Connection`：析构即取消，`disconnect()` 幂等且可从
+handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订阅（对象自己的内部接线用）。因为没有 id 了，
 **取消不再需要复制表**（旧 `removeHandler(id)` 要 `find_if` + 复制 + erase），现在只是一次原子写。
 
 | 行为 | 实现 | 钉住它的用例 |
 | --- | --- | --- |
-| 离开作用域即取消 | `~Subscription()` → `alive = false` | `SubscriptionCancelsOnDestruction` |
-| 可移动、**不可拷贝**（只有一个所有者会取消） | 手写 move + `weak_ptr` 成员 | `SubscriptionIsMovableAndUnsubscribeIsIdempotent` |
-| 给成员重新赋值 = 取消旧订阅（`handler_ = sig.subscribe(...)`） | move-assign 先 `unsubscribe()` | `AssigningASubscriptionCancelsThePreviousSubscription` |
-| `release()`：不管理但不取消 | `slot_.reset()` | `ReleasedSubscriptionStaysSubscribed` |
-| **Signal 先死也安全**：句柄只持 `weak_ptr<Slot>`，不持 Signal 指针 | `slot_.lock()` 失败即无操作 | `SubscriptionOutlivingTheSignalIsInert`（ASan 下跑） |
+| 离开作用域即取消 | `~Connection()` → `alive = false` | `SubscriptionCancelsOnDestruction` |
+| 可移动、**不可拷贝**（只有一个所有者会取消） | 手写 move + `weak_ptr<Connection::State>` 成员 | `ConnectionIsMovableAndDisconnectIsIdempotent` |
+| 给成员重新赋值 = 取消旧订阅（`handler_ = sig.connect(...)`） | move-assign 先 `disconnect()` | `AssigningASubscriptionCancelsThePreviousSubscription` |
+| `detach()`：不管理但不取消 | `state_.reset()` | `DetachedSubscriptionStaysSubscribed` |
+| **Signal 先死也安全**：句柄只持 `weak_ptr<Connection::State>`，不持 Signal 指针 | `state_.lock()` 失败即无操作 | `SubscriptionOutlivingTheSignalIsInert`（ASan 下跑） |
 | Signal 释放后**地址被新 Signal 复用**也无害：句柄认的是槽，不是地址 | 新 Signal 的槽是新的控制块，句柄仍 inert | `SubscriptionOfADestroyedSignalStaysInertOnAReusedAddress` |
 | **发火过程中 Signal 被销毁**（连 handler 里 `delete signal` 也算）：`trigger` 取到快照后不再碰 `this` | 表与槽由快照的引用计数保活，剩下的 handler 照常跑完 | `DestroyingTheSignalFromInsideAHandlerIsSafe`（ASan 下跑；把成员读取挪进遍历的变异版会报 heap-use-after-free） |
 | 反复订阅/取消不会让表变长 | `addSlot()` 复制表时顺手 `remove_if(!alive)` | — |
 
-**没被覆盖的**：另一个线程正在 `subscribe()`/`trigger()` 时析构 Signal——那是普通的对象生命周期 UB，与 Qt 相同：谁拥有对象谁负责协调
+**没被覆盖的**：另一个线程正在 `connect()`/`trigger()` 时析构 Signal——那是普通的对象生命周期 UB，与 Qt 相同：谁拥有对象谁负责协调
 （应用里的做法是订阅放成员 + 宿主析构前先 `setBlocked(true)` 并停线程）。
 
-三个变异验证（删掉析构里的 `unsubscribe()` / 删掉 move-assign 里的 `unsubscribe()` / 让 `trigger` 在遍历中再读成员）
+三个变异验证（删掉析构里的 `disconnect()` / 删掉 move-assign 里的 `disconnect()` / 让 `trigger` 在遍历中再读成员）
 各自只打红对应的那一条用例。Signal 用例 8 → **16**，TSan 0 告警，ASan+LSan PASS。
 
-**`[[nodiscard]]` 是刻意的**：句柄即所有权，丢掉返回值 = 订阅完立刻取消，所以每条 `subscribe` 必须要么绑定句柄、
-要么显式 `release()`。仓库里真实调用点已全部迁移：`MainWindow`/`ConsolePanel`/`VisualUserIO`/`ConsoleLogRouter` 用
-成员或全局 `Subscription`（删掉了拆除路径里的 `removeHandler` 与 `Application::current()` 查找），
-`RibbonAction`/`RibbonButton`（给自己的信号接线）与 `test_window` 的各用例显式 `.release()`。
+**`[[nodiscard]]` 是刻意的**：句柄即所有权，丢掉返回值 = 订阅完立刻取消，所以每条 `connect` 必须要么绑定句柄、
+要么显式 `detach()`。仓库里真实调用点已全部迁移：`MainWindow`/`ConsolePanel`/`VisualUserIO`/`ConsoleLogRouter` 用
+成员或全局 `Connection`（删掉了拆除路径里的 `removeHandler` 与 `Application::current()` 查找），
+`RibbonAction`/`RibbonButton`（给自己的信号接线）与 `test_window` 的各用例显式 `.detach()`。
 
 **顺带发现的既有缺陷（未改）**：`MainWindowImpl::~MainWindowImpl()`、`ConsolePanel::~ConsolePanel()` 先
 `if (auto* app = obj_cast<GuiApplication>(Application::current()))` 再 `removeHandler` —— 若此刻

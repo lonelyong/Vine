@@ -194,8 +194,14 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
 
     /** @brief Restricts this pass to a sub-rectangle of the render target.
      *
-     * Used for sub-viewports such as an axis gizmo in a screen corner. The
-     * pass falls back to the full surface when no viewport is set.
+     * Used for sub-viewports such as an axis gizmo in a screen corner, a picture-in-picture preview, or a
+     * second view drawn into part of the target. One rule decides what a pass draws into, and EVERY pass
+     * follows it: this rectangle, or the whole target when none is set, clamped into the target - in DEVICE
+     * pixels with a top-left origin (what a host's devicePixelRatio() is for). What the pass CLEARS is a
+     * different question and is not affected: a clear covers the whole target while a draw stays inside
+     * this rectangle, which is what makes a preview in a corner work. A content pass used to be the
+     * exception - one that cleared its target filled it whatever it announced, so this rectangle was
+     * silently dropped - and the two kinds of pass honour it alike now.
      *
      * The announcement is PER DRAWING CALL (RenderBackend::setViewport): the base execute() announces
      * this rectangle once and draws once, so it covers the whole pass; a subclass that draws more than
@@ -221,8 +227,7 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
 
     /** @brief Gets the configured draw viewport.
      *
-     * Only meaningful when hasViewport() is true; otherwise the pass draws
-     * the full surface.
+     * Only meaningful when hasViewport() is true; otherwise the pass draws the whole target.
      *
      * @return The draw rectangle in device pixels.
      */

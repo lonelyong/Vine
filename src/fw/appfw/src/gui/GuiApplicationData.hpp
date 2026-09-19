@@ -31,7 +31,7 @@ struct GuiApplicationData : public ApplicationData {
     bool boot_ended = false;
 
     /// Closes the startup frame when the render view reports in; armed only while the frame waits for it.
-    Signal<RenderControl::SurfaceState>::Subscription frame_close_subscription{};
+    Connection frame_close_subscription{};
 
     /// Deadline of that wait, so a surface that never speaks cannot keep the frame up forever.
     QTimer frame_close_deadline;

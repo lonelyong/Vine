@@ -185,7 +185,9 @@ struct alignas(16) VineShadowBlock
 {
     std::array<float, 16> view_to_light{}; ///< View space -> the SDK's light clip, column-major (see
                                            ///< the conventions above before sampling a map with it).
-    std::array<float, 4>  params{};        ///< x = enabled, y = bias, z = strength, w = reserved.
+    std::array<float, 4>  params{};        ///< x = enabled, y = bias, z = strength, w = which of the block's
+                                           ///< directional lights the map belongs to (the map scales ONE
+                                           ///< light's term, never every light's - see the shadow term).
 };
 
 // The structs ARE the shader ABI: a member added here without updating the GLSL

@@ -273,7 +273,17 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      * @param shadow_light  The light that casts it (enabled, castShadow, directional).
      * @return The map the pass renders into (never null on this path).
      */
-    intrusive_ptr<RenderTarget> buildShadowPass(Pipeline& pipeline, const Light& shadow_light);
+    /**
+     * @brief Builds the depth-only shadow pass for @p shadow_light_owner and returns its map.
+     *
+     * The map states whose shadow it is (RenderTarget::setShadowOf) and HOLDS that light: a retained
+     * target can outlive the scene that built it, and a consumer reads the light through the map.
+     *
+     * @param pipeline          Pipeline the pass is added to.
+     * @param shadow_light_owner The light that casts the shadow (borrowed ownership is the map's).
+     * @return The shadow map target.
+     */
+    intrusive_ptr<RenderTarget> buildShadowPass(Pipeline& pipeline, const intrusive_ptr<const Light>& shadow_light_owner);
 
     /** @brief Adds the optional HUD overlays to @p pipeline.
      *

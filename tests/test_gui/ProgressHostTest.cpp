@@ -213,7 +213,7 @@ TEST(ProgressHostTest, PositionIsReadableFromOtherThread)
 TEST(ProgressHostTest, ChangedFiresOnRegistrationLabelAndForeground)
 {
     int  events  = 0;
-    auto handler = ProgressHost::changed().subscribe([&events] { ++events; });
+    auto handler = ProgressHost::changed().connect([&events] { ++events; });
 
     ProgressHost host;
     EXPECT_EQ(events, 1); // 注册
@@ -235,7 +235,7 @@ TEST(ProgressHostTest, ChangedFiresOnRegistrationLabelAndForeground)
 TEST(ProgressHostTest, ChangedFiresWhenTheLastHostIsGone)
 {
     int  events  = 0;
-    auto handler = ProgressHost::changed().subscribe([&events] { ++events; });
+    auto handler = ProgressHost::changed().connect([&events] { ++events; });
 
     {
         ProgressHost host;
@@ -253,7 +253,7 @@ TEST(ProgressHostTest, ChangedIsCoalescedToPercentSteps)
     ProgressHost host;
 
     int  events  = 0;
-    auto handler = ProgressHost::changed().subscribe([&events] { ++events; });
+    auto handler = ProgressHost::changed().connect([&events] { ++events; });
 
     constexpr int kItems = 10'000;
     {
@@ -272,7 +272,7 @@ TEST(ProgressHostTest, ChangedIsSilentAfterTheHandleIsGone)
 {
     int events = 0;
     {
-        auto handler = ProgressHost::changed().subscribe([&events] { ++events; });
+        auto handler = ProgressHost::changed().connect([&events] { ++events; });
         {
             ProgressHost host;
             EXPECT_EQ(events, 1); // 注册

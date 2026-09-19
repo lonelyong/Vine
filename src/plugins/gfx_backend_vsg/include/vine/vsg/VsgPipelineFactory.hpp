@@ -612,25 +612,6 @@ struct FullscreenShadowInput
 bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> program, std::size_t color_count);
 
 /**
- * @brief Returns whether a program's stages READ the engine's per-drawable block (set 1, binding 0).
- *
- * The engine's ABI serves per-DRAWABLE values in `VineDrawBlock` -- the drawable's opacity today --
- * through one dynamic-offset slot per drawn command (see VsgDrawBlockPool). The built-in forward stage
- * reads its opacity from that block, and a user program reaches the same value by declaring
- * `layout(set = 1, binding = 0)` and reading it (nothing else carries a per-drawable value: per-vertex
- * colour carries colour only). This is what decides whether a program's ShaderSet declares that set at
- * all, and it is answered from the SOURCE for the same reason programSamplesDepth is: the text is the
- * contract the compiler sees. A program that does not read the block therefore keeps the one-set
- * pipeline layout it had before this existed -- and a host program that declared set 1 binding 0 for
- * its own uniform is not silently handed the engine's block.
- *
- * @param program Program whose stages to scan (any stage may read the block: it carries the model
- *                matrix as well as the per-draw parameters).
- * @return true when a stage declares set 1, binding 0.
- */
-bool programReadsDrawBlock(vine::raw_ptr<const vine::graphics::ShaderProgram> program);
-
-/**
  * @brief The runtime GLSL (glslang) work the overlay path has paid for, process-wide.
  *
  * The overlay path compiles its stages with glslang every time it builds a node (see makeOverlayShaderSet):

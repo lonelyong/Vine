@@ -814,6 +814,124 @@ TEST(ForwardShaderSetTest, AProgramThatCannotShadeTheDeclaredShadowIsReported)
     EXPECT_TRUE(quiet.empty()) << "the engine's forward program declares the map its pass declared";
 }
 
+TEST(ForwardShaderSetTest, AProgramThatDeclaresTheEnginesBlocksIsDrawnNotRefused)
+{
+    // A program whose text declares the optional engine blocks (the lights, the shadow pair, the
+    // per-drawable block) is SERVED: its set declares them, so the drawable is built and drawn. The assembly
+    // used to declare the material and its texture only, so a program that USES those blocks - the engine's
+    // own forward program is one, and a host may name it for a drawable - ended up with a SPIR-V that
+    // references bindings its pipeline layout does not have: not a picture that looks wrong, an invalid
+    // pipeline.
+    //
+    // The bytes those bindings are filled with are the reader's business (the selftest's program-ABI pixel
+    // phase measures them on a device); what this pins is that a declaration is served rather than refused.
+    std::vector<vine::graphics::RenderDiagnostic> reported;
+    SceneBridge                                   bridge;
+    bridge.setShaderSet(makeForwardSet());
+    bridge.setDiagnosticSink([&reported](const vine::graphics::RenderDiagnostic& diagnostic) {
+        reported.push_back(diagnostic);
+    });
+    // The blocks a content slot always holds, so a declared binding is a descriptor the slot WRITES (a
+    // declared-but-unwritten descriptor is an invalid set, not a harmless one).
+    bridge.setLightsData(::vsg::ubyteArray::create(static_cast<std::uint32_t>(sizeof(VineLightsBlock))));
+    bridge.setShadowMap(::vsg::ImageInfo::create(), /*declared*/ true);
+    bridge.setShadowData(::vsg::ubyteArray::create(static_cast<std::uint32_t>(sizeof(vine::graphics::VineShadowBlock))));
+
+    auto program = vine::intrusive_ptr<vine::graphics::ShaderProgram>(new vine::graphics::ShaderProgram());
+    program->setName(u8"reads_the_engines_blocks");
+    {
+        vine::graphics::ShaderStage vertex;
+        vertex.type   = vine::graphics::ShaderStageType::Vertex;
+        vertex.source = vine::String(
+            u8"#version 450\n"
+            u8"layout(location = 0) in vec3 vine_Vertex;\n"
+            u8"layout(push_constant) uniform pc { mat4 projection; mat4 modelView; };\n"
+            u8"layout(set = 1, binding = 0, std140) uniform VineDrawBlock { mat4 model; vec4 params; } vine_draw;\n"
+            u8"void main() { gl_Position = projection * modelView * vine_draw.model * vec4(vine_Vertex, 1.0); }\n");
+        program->addStage(vertex);
+    }
+    {
+        vine::graphics::ShaderStage fragment;
+        fragment.type   = vine::graphics::ShaderStageType::Fragment;
+        fragment.source = vine::String(
+            u8"#version 450\n"
+            u8"layout(set = 0, binding = 2, std140) uniform VineLightsBlock { vec4 light0; vec4 light1; } vine_lights;\n"
+            u8"layout(set = 0, binding = 3) uniform sampler2D shadow_map;\n"
+            u8"layout(set = 0, binding = 4, std140) uniform VineShadowBlock { mat4 view_to_light; vec4 params; } vine_shadow;\n"
+            u8"layout(set = 1, binding = 0, std140) uniform VineDrawBlock { mat4 model; vec4 params; } vine_draw;\n"
+            u8"layout(location = 0) out vec4 out_color;\n"
+            u8"void main() { out_color = vine_lights.light0 + vine_shadow.params + vine_draw.params\n"
+            u8"                              + texture(shadow_map, vec2(0.5)); }\n");
+        program->addStage(fragment);
+    }
+
+    auto root     = ::vsg::Group::create();
+    auto material = vine::graphics::MaterialPtr(new vine::graphics::Material());
+    std::vector<vine::graphics::RenderCommand> commands;
+    commands.emplace_back(makeBareTriangle(), material, vine::math::Mat4d());
+    commands.front().program = program;
+    for (int i = 0; i < 3; ++i) {   // several syncs: the variant is built once
+        bridge.syncRenderCommands(commands, root.get(), nullptr);
+    }
+    EXPECT_EQ(root->children.size(), 1u) << "declaring the engine's own blocks is served, not refused";
+    EXPECT_TRUE(reported.empty()) << "and there is nothing to report about it";
+}
+
+TEST(ForwardShaderSetTest, AProgramBindingNothingCanFillIsRefusedNotDroppedSilently)
+{
+    // A declaration outside the content ABI (here: set 0 / binding 7) is REFUSED with the reason, and the
+    // drawable is NOT drawn: the pipeline layout is built from the program's set, so a binding its SPIR-V
+    // uses and the layout lacks is not a drawable that looks wrong - it is a pipeline that cannot be
+    // created, which a driver would report once per frame with nothing naming the program that asked. What
+    // the drawable must not become is a SUBSTITUTE either: shaded by the slot's set it is a picture the
+    // host did not ask for, and it hides that the shading it did name does not exist.
+    std::vector<vine::graphics::RenderDiagnostic> reported;
+    SceneBridge                                   bridge;
+    bridge.setShaderSet(makeForwardSet());
+    bridge.setDiagnosticSink([&reported](const vine::graphics::RenderDiagnostic& diagnostic) {
+        reported.push_back(diagnostic);
+    });
+
+    auto program = vine::intrusive_ptr<vine::graphics::ShaderProgram>(new vine::graphics::ShaderProgram());
+    program->setName(u8"asks_for_binding_seven");
+    {
+        vine::graphics::ShaderStage vertex;
+        vertex.type   = vine::graphics::ShaderStageType::Vertex;
+        vertex.source = vine::String(u8"#version 450\n"
+                                     u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                                     u8"void main() { gl_Position = vec4(vine_Vertex, 1.0); }\n");
+        program->addStage(vertex);
+    }
+    {
+        vine::graphics::ShaderStage fragment;
+        fragment.type   = vine::graphics::ShaderStageType::Fragment;
+        fragment.source = vine::String(u8"#version 450\n"
+                                       u8"layout(set = 0, binding = 7) uniform sampler2D of_my_own;\n"
+                                       u8"layout(location = 0) out vec4 out_color;\n"
+                                       u8"void main() { out_color = texture(of_my_own, vec2(0.5)); }\n");
+        program->addStage(fragment);
+    }
+
+    auto root     = ::vsg::Group::create();
+    auto material = vine::graphics::MaterialPtr(new vine::graphics::Material());
+    std::vector<vine::graphics::RenderCommand> commands;
+    commands.emplace_back(makeBareTriangle(), material, vine::math::Mat4d());
+    commands.front().program = program;
+    for (int i = 0; i < 3; ++i) {   // several syncs: one report, not one per frame
+        bridge.syncRenderCommands(commands, root.get(), nullptr);
+    }
+
+    EXPECT_TRUE(root->children.empty())
+        << "a program whose declarations cannot be served must not be drawn (nor shaded by something else)";
+    ASSERT_EQ(reported.size(), 1u) << "once per (program, layout, revision)";
+    EXPECT_EQ(reported.front().severity, vine::graphics::DiagnosticSeverity::Error);
+    EXPECT_EQ(reported.front().category, vine::graphics::DiagnosticCategory::UnsupportedRequest);
+    EXPECT_NE(reported.front().message.find(u8"binding 7"), vine::String::npos)
+        << "the message has to name what was declared";
+    EXPECT_NE(reported.front().message.find(u8"vine_lights"), vine::String::npos)
+        << "and what this backend does carry";
+}
+
 TEST(ForwardShaderSetTest, AForeignSetIsReportedInsteadOfQuietlyUnbound)
 {
     // The engine's own sets declare `vine_Vertex` (and the other three canonical names), and the bridge

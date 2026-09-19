@@ -671,3 +671,16 @@ binding 声明 —— 一个 ShaderSet 服务两种形状时，必须由阵列�
 2. **`vine_shader_check.sh` 用 glob 枚举生成头**：删掉 manifest 里的 owner 后，`build/generated/vine/vsg/EmbeddedShaders.hpp` 仍留在磁盘上，脚本继续检查一个**已经不存在的 owner**，于是报"screen_texture.frag: embedded but not found under src/"。修法：脚本改成**从 manifest 读 `OUTPUT` 行**（顺带让"验证清单里列出的每个 shader"这句话变成真的）。
 
 **顺带修的**：`RenderBackend::setDefaultContentProgram` 的 `@brief` 里还残留"Selects the shading-model preset"（上一个切片漏掉的）；以及 selftest 里屏幕画现在必须显式命名程序，所以 copy program 在相位里**只建一次**（后端按 program 对象缓存编译结果，每次调用新建 program = 每帧重新编译）。
+
+## 2026-09-18 校：自定义 program 的声明终于算数（+ 一条被漏掉的"不画"口径）
+
+- **事实**：内容 program 的 set 由 `assembleProgramShaderSet` 装配，它**只**声明 material (0/0)、diffuseMap (0/1)、顶点属性与 `pc`。于是：
+  1. 程序文本里写 `vine_lights`(0/2) / `shadow_map`(0/3) / `vine_shadow`(0/4) / `vine_draw`(1/0) **一个都拿不到**——绑定侧被 `shaderSet.getDescriptorBinding(name)` 门控，而 vsg 对未声明的名字**静默跳过**。把引擎自己的 `forwardProgram()` 当某个 drawable 的 program 用时，它的 SPIR-V 引用这四个绑定而布局没有 ⇒ **那本来就是一条非法的 pipeline**（新建管线就失败，驱动每帧报一条，没人指出是哪个 program）。
+  2. 更糟的是 `shadow_map`：`programDeclaresBinding(program, 0, 3)` 只用来"**文本里没写才报警**"⇒ 写了反而**静默无效**。
+- **收口**：装配时按**程序文本自己声明的 (set, binding)** 补齐 ABI——
+  - `0/2 vine_lights`（UBO `VineLightsBlock`）、`0/3 shadow_map`（sampler）、`0/4 vine_shadow`（UBO `VineShadowBlock`）：形状与 `buildVineShaderSet` 一致（同 sizeof、同类型），两边不可能再各说一套；
+  - `1/0 vine_draw`（`UNIFORM_BUFFER_DYNAMIC` + `DrawBlockSetBinding`）：这条声明才是把 set 1 放进 pipeline layout 的东西，于是自定义内容 program 也能读**每 drawable** 的值（opacity 就住在这个块里）；
+  - **填不了就拒绝**（返回空 set + 一条 Error，消息里列出它能承载的清单），不再留给驱动每帧报错。
+- **顺带修掉一条被漏掉的"不画"口径**：`shadingSetFor` 在 program 的 set 为空时**回落到槽的 set**（而它上面的注释与本文件"没有有效 shader ⇒ 不画（2026-09-13 口径）"都写的是 drop）⇒ 现在真的返回空 ⇒ drawable 不入图；两条报告里 "the built-in shader is used" 的假话也改成事实（"that drawable is NOT drawn (there is no substitution)"）。
+- **门禁**：`ForwardShaderSetTest.AProgramThatDeclaresTheEnginesBlocksIsDrawnNotRefused`（声明整套可选块 ⇒ 画得出来、无报告）＋ `AProgramBindingNothingCanFillIsRefusedNotDroppedSilently`（声明 0/7 ⇒ **不入图** + 恰好一条 Error，消息里同时有 `binding 7` 与承载清单）。发现这条的正是 `AProgramThatCannotShadeTheDeclaredShadowIsReported` 的后半段（"引擎自己的 program 走 program 路径必须安静"）——补齐前它是红的。
+- **未做（真门禁，值得下一步做）**：**设备侧像素相位**——自定义内容 program 读 `vine_lights`、随公告的灯变，证明"字节真的到了 GPU"。它需要 selftest 相位 + 一条证据行，照 `vine_draw` opacity 相位的先例。

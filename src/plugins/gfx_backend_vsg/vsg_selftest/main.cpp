@@ -451,6 +451,17 @@ int main()
         std::fprintf(stderr, "[selftest] FAILED — the forward shadow phase did not hold\n");
         return 1;
     }
+    // BOTH deferred branches: the composite one every demo view uses, and the standalone one whose
+    // lighting pass presents through its window pass - the branch that bound the G-buffer as its shadow
+    // map until the resolver learned to identify a map by where it came from.
+    if (!runShadowedLitFacePhase(backend, 3, /*standalone*/ false)) {
+        std::fprintf(stderr, "[selftest] FAILED — a lit face was darkened by the shadow term (composite)\n");
+        return 1;
+    }
+    if (!runShadowedLitFacePhase(backend, 3, /*standalone*/ true)) {
+        std::fprintf(stderr, "[selftest] FAILED — a lit face was darkened by the shadow term (standalone)\n");
+        return 1;
+    }
 
     std::fprintf(stderr, "[selftest] done — no crash, no validation error expected\n");
     return 0;

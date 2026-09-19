@@ -2093,8 +2093,8 @@ presenting 派生出的默认光）→ 视口维持 → 相机 + 灯光 → 命�
 
 **做法（全部是文件内 helper，不动公开头）**
 
-- `updateSlotViewport(camera, presenting, viewport, surf_w, surf_h)`：presenting 填满目标，其余带
-  pass 的子视口（没有子视口 = 填满）—— 原先是 if/else-if/else 三分支共 14 行；
+- `updateSlotViewport(content, viewport, surf_w, surf_h)`：一条规则（`passDrawRect`：公告的矩形，
+  未公告则整目标，clamp 进目标），**不再看 presenting** —— 原先是 if/else-if/else 三分支共 14 行；
 - `seedSlotLight(light_group, want_headlight, presenting)`：presenting 角色翻转时重置默认光
   （窗口 presenting 给 vsg headlight，其余给 ambient fill —— 方向光会把坐标轴 gizmo 从斜角照黑）；
 - `beginLightsDroppedEpisode(announced, attached, reported)`："宣告的灯全被丢掉"是**场景的属性**

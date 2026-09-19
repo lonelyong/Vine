@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <optional>
 #include <vector>
 
 #include <vsg/app/RenderGraph.h>
@@ -47,6 +48,7 @@
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Viewport.hpp>
 #include <vine/intrusive_ptr.hpp>
 
 #include <vine/vsg/SceneBridge.hpp>
@@ -87,13 +89,16 @@ inline constexpr float kReverseZFarPlane = 0.0f;
  * reads it from the same place.
  *
  * The per-DRAW-CALL state (the command stream, the announced lights, the sub-viewport) is deliberately not
- * here: it arrives with each call instead of being remembered.
+ * here: it arrives with each call instead of being remembered. The sub-viewport has ONE exception, and it
+ * is not a rectangle: the announcement the pass last made is kept on the slot
+ * (@ref ContentSlot::announced_viewport) because the renderer's resize() has to re-derive the slot's
+ * rectangle before the pass announces again.
  */
 struct PassAttributes
 {
     vine::graphics::DepthMode depth_mode = vine::graphics::DepthMode::TestAndWrite; ///< Depth policy for content that authored none.
     int                       order      = 0;     ///< The pass' explicit pipeline order (the slot's stacking position).
-    bool                      presenting = false; ///< True for the full-target pass that cleared the target.
+    bool                      presenting = false; ///< True for the pass that cleared the target: its base layer (what the window's default light follows).
 
     /** @brief Field-wise equality: the scale at which the slot has to re-apply its pass attributes. */
     friend bool operator==(const PassAttributes&, const PassAttributes&) noexcept = default;
@@ -145,11 +150,17 @@ struct ContentSlot {
     // on every recording anyway.
     ::vsg::ref_ptr<::vsg::ViewportState> viewport_state;
     // The rectangle @ref viewport_state currently holds, so "unchanged" costs four integer compares
-    // instead of reading them back out of the VkViewport / VkRect2D pair.
+    // instead of reading them back out of the VkViewport / VkRect2D pair. DERIVED, never the truth: the
+    // truth is @ref announced_viewport plus the live target size (see detail::passDrawRect).
     int                           viewport_x = 0;
     int                           viewport_y = 0;
     int                           viewport_w = 0;
     int                           viewport_h = 0;
+    // The viewport the owning pass LAST announced (RenderBackend::setViewport announces per drawing call).
+    // Kept so the renderer's resize() can re-derive this slot's rectangle from the new surface size before
+    // the pass announces again: a slot that announced none keeps following the whole target, and one that
+    // announced a rectangle keeps it (re-clamped) instead of being stretched across the surface.
+    std::optional<vine::graphics::Viewport> announced_viewport;
     ::vsg::ref_ptr<::vsg::Group>  root;        // retained content root
     // This slot's per-view light block, written from the pass' lights once per
     // frame (see fillVineLightsBlock) and bound at set 0 / binding 2 of the slot's shader set

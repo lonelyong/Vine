@@ -32,7 +32,6 @@
 
 #include <vsg/app/RenderGraph.h>
 #include <vsg/core/ref_ptr.h>
-#include <vsg/state/ViewportState.h>
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/DepthMode.hpp>
@@ -56,7 +55,7 @@ namespace detail
  * camera whose vsg::ViewportState vsg re-emits on every recording, so what a slot needs is its values
  * changed — not a new object. The state is created when the slot has none yet and written in place
  * afterwards; a non-positive @p w or @p h asserts nothing (a slot whose rectangle cannot be expressed
- * keeps the one it already records, which is what the content path's zero-size sub-viewport means).
+ * keeps the one it already records).
  *
  * @param state Slot's viewport state (created when null).
  * @param x     Rectangle origin x in device pixels.
@@ -66,28 +65,31 @@ namespace detail
  */
 void setSlotViewportRect(::vsg::ref_ptr<::vsg::ViewportState>& state, int x, int y, int w, int h);
 
-/** @brief Keeps a content slot's viewport (and its one vsg::ViewportState) in step with its role.
+/** @brief Keeps a content slot's viewport (and its one vsg::ViewportState) in step with its pass.
  *
- * The rectangular area a slot records into has two sources — the pass' announced sub-viewport, and the
- * target's own size when the pass presents full-target content — and two callers: the per-frame render
- * path, and the renderer's resize() (which refreshes the presenting slots before their next render).
- * One implementation, so the two cannot disagree about which rectangle a slot has.
+ * The rectangle comes from ONE rule (@ref passDrawRect): the rectangle the owning pass announced for this
+ * drawing call, or the whole target when it announced none, clamped into that target. There are two
+ * callers — the per-frame render path (which carries the announcement of the call being drawn) and the
+ * renderer's resize() (which re-derives before the pass announces again) — and one implementation, so the
+ * two cannot disagree about the rectangle a slot has.
+ *
+ * What the slot REMEMBERS is the announcement, never the rectangle it implies: a resize changes the target
+ * a rectangle without a source of its own is clamped into, so the truth has to stay re-derivable.
  *
  * The state is written IN PLACE when the rectangle changes and left alone when it does not: building a
  * fresh vsg::ViewportState per slot per frame allocated on every steady-state frame, and the object it
  * replaced was not even required — vsg re-emits vkCmdSetViewport from the state on every recording, so
  * re-asserting the same rectangle needs no new object.
  *
- * @param content    Slot whose camera viewport to update (its cached state is reused).
- * @param presenting Whether the slot presents full-target content (wins over @p viewport).
- * @param viewport   The pass' sub-viewport, when it announced one and is not presenting. A zero-size one
- *                   is not usable either, so the slot keeps the rule it always had and fills the target.
- * @param surf_w     Target (or live swapchain) width in pixels; a zero width (a surface with no size yet)
- *                   asserts nothing, leaving the rectangle the slot already records.
- * @param surf_h     Target (or live swapchain) height in pixels.
+ * @param content  Slot whose camera viewport to update (its cached state is reused).
+ * @param viewport The rectangle the owning pass announced for this drawing call, or empty for the whole
+ *                 target. A zero-size one is not a usable rectangle either and means the same thing.
+ * @param surf_w   Target (or live swapchain) width in pixels; a zero width (a surface with no size yet)
+ *                 asserts nothing, leaving the rectangle the slot already records.
+ * @param surf_h   Target (or live swapchain) height in pixels.
  */
-void updateSlotViewport(ContentSlot& content, bool presenting, const std::optional<vine::graphics::Viewport>& viewport,
-                        int surf_w, int surf_h);
+void updateSlotViewport(ContentSlot& content, const std::optional<vine::graphics::Viewport>& viewport, int surf_w,
+                        int surf_h);
 
 /** @brief Creates the content slot @p key identifies under @p request's target, if missing.
  *
@@ -118,9 +120,10 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
  * pass' explicit pipeline order, so several passes sharing one camera and one order stay
  * separate content. The request's depth policy is the explicit content depth handling
  * (independent of clearing; it fills the depth state of commands that did not author one), and
- * its presenting flag marks the full-target pass that cleared the target (such content fills
- * the whole target and seeds the window headlight when there is no scene light). Lights come
- * from the content scene each frame.
+ * its presenting flag marks the pass that cleared the target (the base layer: it seeds the
+ * window headlight when there is no scene light). It does NOT decide the rectangle — the
+ * viewport this drawing call announced does (see updateSlotViewport). Lights come from the
+ * content scene each frame.
  *
  * @param state       Session whose target table holds the slot.
  * @param persistent  Cross-session services the slot sync needs.

@@ -115,3 +115,16 @@ gizmo->setEnabled(false);                   // 需要时隐藏
   才会纳入（删除文件不重配会让 ninja 报“No rule to make target”）。
 - 若 configure 因残留 `vsg_FOUND:INTERNAL=TRUE` 走错 "installed vsg" 分支：
   删除该行后 `cmake.configure`（强制）即回到 FetchContent vsg（`_deps/vsg-src`）。
+
+## 一个 pass 画进哪块矩形（2026-09-13）
+
+- 事实：内容槽与程序 pass **各有一份** clamp/回退的算术，而且对同一个问题给出不同答案——内容路径忽略"presenting pass"的 viewport，程序路径永远尊重它。
+- 收口：几何与"角色"合并进一个函数 `detail::passDrawRect(viewport, fills_target, w, h)`（`VsgBackendUtility`），两条路径共用；`RenderPass::setViewport` 的文档只留一条规则：**公告的矩形，未公告则整目标，clamp 进目标；device 像素、左上原点**。**清屏是另一件事**，故意不并进这条规则：clear 覆盖整个目标，draw 只在矩形内——这正是 PiP 模式（铺满目标 + 角落画预览）能成立的原因。
+- 为什么"填满"这个角色不能靠"clear 过"判定：把程序路径改成 `state.request.presenting` 之后，既有的 PiP 相位立刻变红——`the PiP changed 36864 pixel(s), expected exactly 5184 (the sub-rectangle)`。一个**清了屏的离屏** pass 什么也没 presenting。
+- **当时的折中**：先加了一个显式 `fills_target` 参数，把"两个同名标志不同义"写在签名上（内容槽的角色来自槽，程序 pass 只有请求里"清过屏"的标记）。
+- **收口（同日，那个参数彻底删掉）**：证据指出这条规则**没有生产者**——`AxisGizmo` / `FpsOverlay` 都是**内容** pass + 子矩形，但 `setClearEnabled(false)`（本来就不受这条规则影响）；`RenderPipelineBuilder` 里唯一的 `setViewport` 是 PiP 的 `ScreenPass`；`addOffscreenToScreen` 的离屏内容 pass 没有矩形；窗口主 pass / G-buffer 都没有。唯一的"清屏的内容 pass + 矩形"只存在于它自己的单测里。⇒ 规则统一成一条：**公告的矩形，未公告则整目标，clamp 进目标**，两条路径共用一个 `passDrawRect(viewport, w, h)`，`RenderPass` 与 `ScreenPass` 对同一个 `setViewport` 终于同义。
+- 顺带解开一个真缺口：**内容 pass 原先根本画不进子矩形**（split-screen / 把第二个视图画进角上做不到），而 `ScreenPass` 可以。`SceneView::addSurfaceLayout` 的文档一直承诺"布局回调可以更新某个 pass 的 viewport"——对清屏的内容 pass 那句话是假的。
+- `presenting` 退回它真正的事实（"这个 pass 公告了清屏" = 该目标的基底层：depth-on 与窗口默认光），不再回答 viewport 问题（见 `PassAttributes::presenting`）。槽记住的是**公告**（`ContentSlot::announced_viewport`）而不是推导出的矩形，`resize()` 因此重新推导，而不是留着按旧表面算的矩形。
+- 门禁（**变异验证**）：新像素相位——内容 pass 清屏 + 只画进 96x54 的矩形，断言矩形中心是那支四边形、而**目标中心**是清屏色（旧的"填满"规则会把四边形画在目标中心 ⇒ 相位红，实测：`the content pass painted (34,6,2) at the target centre`）；`ContentSlotViewportTest` 里那条角色单测换成"公告的矩形（含 clamp）对每个 pass 都算数"；证据基线 55 → **74 行**（原基线自阴影那两笔起就没重基，18 行 lit-face 断言一直没进基线，本轮一并补上），其余 55 行逐字节不变。
+- 门禁：`vsg_backend_selftest`（6 个 lit-face vantage + PiP 相位）、`ctest` 23/23、`check_include_hygiene` / `check_doc_symbols` / `check_diagnostic_formats`。
+

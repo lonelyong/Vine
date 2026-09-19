@@ -312,6 +312,23 @@ TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceC
     EXPECT_EQ(shadowed_text.find("VINE_SHADOW_TERM"), std::string::npos);
 }
 
+TEST(EmbeddedShadersTest, TheShadowTermNamesTheLightItsMapBelongsTo)
+{
+    // The term is inserted INSIDE the loop over the block's directional lights, so the ownership guard is
+    // the only thing keeping one light's map from scaling every other light's term: `shadow.params.w` is
+    // the slot of the light the map belongs to (ShaderAbi.hpp), and the resolver writes it from the pass'
+    // own declaration (RenderPass::ShadowSource). A term without it shades a shadow onto lights that cast
+    // nothing - measured: a face the sun never reaches went to ambient-only in the shape of the sun's
+    // shadow, and the same file's single-light fixtures could not see the difference at all.
+    for (const auto& program : { shadowedDeferredLightProgram(), forwardProgram() }) {
+        ASSERT_NE(program, nullptr);
+        ASSERT_GT(program->stageCount(), 0u);
+        const std::string text = program->stage(program->stageCount() - 1u)->source.as_std_str();
+        EXPECT_NE(text.find("i == int(shadow.params.w)"), std::string::npos)
+            << "the term must guard on the light's own slot, not only on the ABI's on/off switch";
+    }
+}
+
 TEST(EmbeddedShadersTest, TheForwardProgramDeclaresTheShadowAbiWhereTheContentSetBindsIt)
 {
     // The forward program carries the shadow ABI UNCONDITIONALLY (unlike the deferred lighting

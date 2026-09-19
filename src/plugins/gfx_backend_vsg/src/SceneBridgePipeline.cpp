@@ -172,21 +172,43 @@ namespace
  * probe draws the same quad once at z = 0 and once at z = 0.5 and prints
  * "covered=0" against "covered=5916" pixels as the standing evidence.
  *
- * @param stages         Compiled SPIR-V stages (non-empty).
- * @param base_states    Default pipeline states to inherit (viewport etc.).
- * @param extra_channels Custom channels (location, components) whose bindings
- *                       the set must declare, in binding order (empty when the
- *                       geometry forwards none).
- * @param declares_draw_block Whether a stage of the program reads the engine's per-drawable block
- *                       (set 1, binding 0 — see programReadsDrawBlock); the set then declares it and
- *                       carries the per-draw layout.
- * @return Shader set, or null when assembly failed.
+ * @param stages            Compiled SPIR-V stages (non-empty).
+ * @param base_states       Default pipeline states to inherit (viewport etc.).
+ * @param extra_channels    Custom channels (location, components) whose bindings the set must declare, in
+ *                          binding order (empty when the geometry forwards none).
+ * @param program_bindings  The (set, binding) pairs the PROGRAM's own text declares, from every stage (see
+ *                          detail::declaredBindings). The engine's per-frame blocks are added to this set
+ *                          exactly when they appear here, which is what makes the slot's lights or the
+ *                          pass' shadow reachable from a host program: the binding side is gated on the
+ *                          set declaring a name, and vsg drops an undeclared one without a word.
+ * @param refusal           Set when a declaration was refused - the first pair nothing here can fill. The
+ *                          caller reports it, because what is wrong is the program's text, not the
+ *                          pipeline that failed to build. Untouched otherwise.
+ * @return Shader set, or null when assembly failed (empty stages, or a refused declaration).
  */
+/** @brief The stages the engine's OPTIONAL content blocks are declared for when a custom program asks.
+ *
+ * ALL_GRAPHICS rather than the fragment stage the engine's own set uses (buildVineShaderSet): a host
+ * program may read a block from either stage, and the pipeline layout has to carry every stage its SPIR-V
+ * uses. A wider mask costs nothing and cannot be wrong, while one narrower than the shader fails
+ * validation.
+ */
+constexpr VkShaderStageFlags kProgramAbiStages = VK_SHADER_STAGE_ALL_GRAPHICS;
+
+/** @brief A declaration in a custom program's text that this backend cannot fill. */
+struct ProgramBindingRefusal
+{
+    std::uint32_t set     = 0u;     ///< Set the program declared.
+    std::uint32_t binding = 0u;     ///< Binding it declared.
+    bool          refused = false;  ///< True when a declaration was refused (@ref set / @ref binding name it).
+};
+
 ::vsg::ref_ptr<::vsg::ShaderSet> assembleProgramShaderSet(
     const ::vsg::ShaderStages& stages,
     const ::vsg::GraphicsPipelineStates& base_states,
     const std::vector<std::pair<std::uint32_t, std::uint32_t>>& extra_channels,
-    bool declares_draw_block)
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>>& program_bindings,
+    ProgramBindingRefusal*                                     refusal)
 {
     if (stages.empty()) {
         return ::vsg::ref_ptr<::vsg::ShaderSet>();
@@ -244,20 +266,61 @@ namespace
     // Binding 1 of set 0, the first slot free after `material`.
     shader_set->addDescriptorBinding("diffuseMap", "", 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
                                      VK_SHADER_STAGE_FRAGMENT_BIT, {});
-    // Per-drawable values (VineDrawBlock: opacity, and the model matrix beside it), set 1 binding 0.
-    // Declared ONLY when a stage of this program reads it (see programReadsDrawBlock): the engine's
-    // built-in set declares it unconditionally because its own fragment stage reads the opacity from
-    // it, while a user program that declares nothing there keeps the single-set layout it had before
-    // (and a program that declared set 1 binding 0 for its own uniform is not silently handed ours --
-    // the new declaration would take that slot). With it declared, this set's set 1 IS the per-draw
-    // layout (DrawBlockSetBinding), so the bridge binds the drawable's own slot by dynamic offset and
-    // `setOpacity` reaches a program that reads it.
-    if (declares_draw_block) {
-        shader_set->addDescriptorBinding("vine_draw", "", 1, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1,
-                                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                         ::vsg::ubyteArray::create(static_cast<uint32_t>(
-                                             sizeof(vine::graphics::VineDrawBlock))));
-        shader_set->customDescriptorSetBindings.push_back(vine::vsg::detail::DrawBlockSetBinding::create());
+    // What the program DECLARES, and what can fill it. Material (0) and diffuseMap (1) are always
+    // declared above - a program's set is assembled on the engine's material path, so those two are part
+    // of the ABI whatever the text says. The engine's per-frame blocks are added exactly WHEN THE PROGRAM
+    // ASKS FOR THEM, with the shapes the engine's own set uses (buildVineShaderSet), so the two cannot
+    // disagree about a block's size or type. Declaring one of them used to be a silent no-op: the binding
+    // side is gated on the set declaring the name, and a name the set does not declare is dropped without
+    // a word - the custom shader read an unbound descriptor's worth of nothing and no diagnostic existed.
+    //
+    // A declaration nothing here fills is REFUSED rather than served empty: the pipeline layout is built
+    // from this set, so a binding the SPIR-V uses and the layout lacks is not a drawable that looks wrong,
+    // it is a pipeline that cannot be created (a driver error per frame, with nothing naming the cause).
+    // The fullscreen program path refuses the same way (makeFullscreenProgramNode).
+    for (const auto& [set, binding] : program_bindings) {
+        if (set == 1u && binding == 0u) {
+            // The per-DRAWABLE block, in the shape the engine's own set declares plus the custom binding
+            // that OWNS set 1's layout (the bind command is per drawable - see DrawBlockSetBinding). Both
+            // halves are needed: the declaration is what puts set 1 in the pipeline layout at all, and a
+            // shader that declares a set the layout lacks is an invalid pipeline. With them in place a
+            // host program reads what the pool binds there - a drawable's opacity lives in that block.
+            shader_set->addDescriptorBinding(
+                "vine_draw", "", 1, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+                ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(vine::graphics::VineDrawBlock))));
+            shader_set->customDescriptorSetBindings.push_back(detail::DrawBlockSetBinding::create());
+            continue;
+        }
+        if (set == 0u) {
+            switch (binding) {
+            case 0u: // material: declared above
+            case 1u: // diffuseMap: declared above
+                continue;
+            case 2u: // the slot's lights (VineLightsBlock)
+                shader_set->addDescriptorBinding(
+                    "vine_lights", "", 0, 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kProgramAbiStages,
+                    ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(detail::VineLightsBlock))));
+                continue;
+            case 3u: // the map the pass declared as an input
+                shader_set->addDescriptorBinding("shadow_map", "", 0, 3,
+                                                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kProgramAbiStages,
+                                                 {});
+                continue;
+            case 4u: // the block that places a fragment in that map (VineShadowBlock)
+                shader_set->addDescriptorBinding(
+                    "vine_shadow", "", 0, 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kProgramAbiStages,
+                    ::vsg::ubyteArray::create(static_cast<uint32_t>(sizeof(vine::graphics::VineShadowBlock))));
+                continue;
+            default:
+                break;
+            }
+        }
+        if (refusal != nullptr) {
+            refusal->set     = set;
+            refusal->binding = binding;
+            refusal->refused = true;
+        }
+        return ::vsg::ref_ptr<::vsg::ShaderSet>();
     }
     shader_set->addPushConstantRange("pc", "", VK_SHADER_STAGE_VERTEX_BIT, 0, 128);
     shader_set->defaultGraphicsPipelineStates = base_states;
@@ -354,7 +417,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         if (stages.empty()) {
             report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ShaderFallback,
                    formatDiagnostic(u8"program '%s' has no compiled stage (bad GLSL or no "
-                                    u8"shader compiler); the built-in shader is used",
+                                    u8"shader compiler); that drawable is NOT drawn (there is no substitution)",
                                     program->name().as_std_str().c_str()));
         }
         // The entry owns the program (see OwnedCacheEntry): the key is its
@@ -390,18 +453,52 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     for (const auto& ch : extra_channels) {
         extra.emplace_back(ch.location, ch.components);
     }
+    // The bindings the program's OWN TEXT declares, across every stage, deduplicated by hand: a program
+    // that declares one block in both stages (or that declares it twice) must not put two entries for the
+    // same (set, binding) into the set - a descriptor set layout with one binding number declared twice is
+    // invalid. Parsed here rather than cached: this whole function is cached per
+    // (program, layout, revision), so editing the program re-parses and re-assembles once (D10).
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> declared;
+    for (std::size_t i = 0; i < program->stageCount(); ++i) {
+        const auto* stage = program->stage(i);
+        if (stage == nullptr) {
+            continue;
+        }
+        for (const auto& binding : detail::declaredBindings(stage->source.as_std_str())) {
+            bool known = false;
+            for (const auto& seen : declared) {
+                known = known || seen == binding;
+            }
+            if (!known) {
+                declared.push_back(binding);
+            }
+        }
+    }
     // L1b: assemble the per-layout ShaderSet from the cached stages. A failed
     // assembly is cached too (null) so later geometry of this layout does not
     // rebuild it every frame.
-    auto shaderSet = assembleProgramShaderSet(sit->second.payload().stages, base_states, extra,
-                                             vine::vsg::detail::programReadsDrawBlock(program));
+    ProgramBindingRefusal refusal;
+    auto shaderSet = assembleProgramShaderSet(sit->second.payload().stages, base_states, extra, declared, &refusal);
+    // A declaration nothing can fill is reported with WHAT was declared and what this backend does carry:
+    // the drawable is not drawn (the set is null), so the reason has to be in the message rather than left
+    // to a driver error per frame. One report per (program, layout, revision).
+    if (refusal.refused) {
+        report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::UnsupportedRequest,
+               formatDiagnostic(u8"program '%s' declares set %u / binding %u, which this backend cannot fill: a "
+                                u8"content program's set carries set 0 material (0), diffuseMap (1), vine_lights "
+                                u8"(2), shadow_map (3), vine_shadow (4) and set 1's vine_draw (0). That drawable "
+                                u8"is NOT drawn, because a binding its shader uses and its layout lacks fails "
+                                u8"pipeline creation",
+                                program->name().empty() ? "(unnamed)" : program->name().as_std_str().c_str(),
+                                static_cast<unsigned>(refusal.set), static_cast<unsigned>(refusal.binding)));
+    }
     // A failed assembly (no stages, or vsg refused the hand-built set) is
     // reported for the same reason as a failed compile: the program silently
     // stops applying (D9). One report per (program, layout, revision).
-    if (shaderSet == nullptr && !sit->second.payload().stages.empty()) {
+    else if (shaderSet == nullptr && !sit->second.payload().stages.empty()) {
         report(vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ShaderFallback,
-               formatDiagnostic(u8"program '%s' could not be assembled with %zu custom "
-                                u8"channel(s); the built-in shader is used",
+               formatDiagnostic(u8"program '%s' could not be assembled with %zu custom channel(s); that drawable "
+                                u8"is NOT drawn (there is no substitution)",
                                 program->name().as_std_str().c_str(), extra.size()));
     }
     ProgramEntry entry;
@@ -582,9 +679,15 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // is reported (once per program/layout/revision, or once per bridge) and the drawable is
     // DROPPED from the frame rather than drawn with something the host did not ask for.
     if (program != nullptr) {
-        if (auto program_set = getProgramShaderSet(program, extra_channels)) {
-            return program_set;
-        }
+        // A program's set, or NOTHING: a program that cannot be compiled or assembled drops the drawable
+        // (the reason is reported where that failure is discovered, once per program/layout/revision)
+        // instead of being shaded with the slot's set. The substitution is a picture the host did not ask
+        // for, and it hides the thing that is actually wrong - the shading it DID name does not exist.
+        // That is the rule this path states everywhere else (the comment above, and
+        // .ai/design/vsg-custom-shader.md on "没有有效 shader 就不画"); this branch used to fall through to
+        // the slot's set, which made every one of those reports say "not drawn" while the drawable was
+        // drawn anyway, shaded by something else.
+        return getProgramShaderSet(program, extra_channels);
     }
     auto slot_set = baseShaderSet();
     if (slot_set == nullptr && no_shader_set_reported_.shouldReport()) {

@@ -14,13 +14,13 @@ TEST(Signal, RvalueEmitDeliveredToAllHandlers)
     std::string first;
     std::string second;
 
-    signal.subscribe([&](std::string value) {
+    signal.connect([&](std::string value) {
         first = value;
-    }).release();
+    }).detach();
 
-    signal.subscribe([&](std::string value) {
+    signal.connect([&](std::string value) {
         second = value;
-    }).release();
+    }).detach();
 
     signal.trigger(std::string("payload"));
 
@@ -35,15 +35,15 @@ TEST(Signal, RemoveSelfDuringEmitIsSafe)
 
     // A handle can cancel itself from inside the handler: the leftover variable is
     // assigned before the first firing, and the lambda captures it by reference.
-    vine::Signal<int>::Subscription self;
-    self = signal.subscribe([&](int value) {
+    vine::Connection self;
+    self = signal.connect([&](int value) {
         called.push_back(value * 10);
-        self.unsubscribe();
+        self.disconnect();
     });
 
-    signal.subscribe([&](int value) {
+    signal.connect([&](int value) {
         called.push_back(value);
-    }).release();
+    }).detach();
 
     signal.trigger(3);
     signal.trigger(4);
@@ -57,14 +57,14 @@ TEST(Signal, AddDuringEmitTakesEffectNextEmit)
     vine::Signal<int> signal;
     std::vector<int> called;
 
-    signal.subscribe([&](int value) {
+    signal.connect([&](int value) {
         called.push_back(value);
-        // release() because the handle is a temporary here: the subscription must
+        // detach() because the handle is a temporary here: the subscription must
         // outlive this statement to be seen by the next firing.
-        signal.subscribe([&](int next_value) {
+        signal.connect([&](int next_value) {
             called.push_back(next_value * 100);
-        }).release();
-    }).release();
+        }).detach();
+    }).detach();
 
     signal.trigger(1);
     signal.trigger(2);
@@ -78,9 +78,9 @@ TEST(Signal, BlockedSignalDoesNotEmit)
     vine::Signal<int> signal;
     int               called_count = 0;
 
-    signal.subscribe([&](int) {
+    signal.connect([&](int) {
         ++called_count;
-    }).release();
+    }).detach();
 
     signal.setBlocked(true);
     signal.trigger(42);
@@ -102,17 +102,17 @@ TEST(Signal, RemoveAnotherHandlerDuringEmitSkipsIt)
     vine::Signal<int> signal;
     std::vector<int>  called;
 
-    vine::Signal<int>::Subscription victim;
-    signal.subscribe([&](int) {
+    vine::Connection victim;
+    signal.connect([&](int) {
         called.push_back(1);
-        victim.unsubscribe();
-    }).release();
-    victim = signal.subscribe([&](int) {
+        victim.disconnect();
+    }).detach();
+    victim = signal.connect([&](int) {
         called.push_back(2);
     });
-    signal.subscribe([&](int) {
+    signal.connect([&](int) {
         called.push_back(3);
-    }).release();
+    }).detach();
 
     signal.trigger(0);
 
@@ -125,13 +125,13 @@ TEST(Signal, ClearDuringEmitStopsTheRest)
     vine::Signal<int> signal;
     std::vector<int>  called;
 
-    signal.subscribe([&](int) {
+    signal.connect([&](int) {
         called.push_back(1);
-        signal.unsubscribeAll();
-    }).release();
-    signal.subscribe([&](int) {
+        signal.disconnectAll();
+    }).detach();
+    signal.connect([&](int) {
         called.push_back(2);
-    }).release();
+    }).detach();
 
     signal.trigger(0);
 
@@ -157,10 +157,10 @@ TEST(Signal, ConcurrentSubscribeAndEmitIsWellDefined)
     std::atomic<int>   stable_calls{ 0 };
 
     // Subscribed before any thread starts: must be called by every firing.
-    signal.subscribe([&](int& v) {
+    signal.connect([&](int& v) {
         stable_calls.fetch_add(1);
         v += 1;
-    }).release();
+    }).detach();
 
     std::atomic<bool> stop{ false };
     std::thread       firer([&] {
@@ -174,8 +174,8 @@ TEST(Signal, ConcurrentSubscribeAndEmitIsWellDefined)
 
     for (int i = 0; i < 2000; ++i)
     {
-        auto subscription = signal.subscribe([&](int& v) { v += 100; });
-        subscription.unsubscribe();
+        auto subscription = signal.connect([&](int& v) { v += 100; });
+        subscription.disconnect();
     }
 
     stop.store(true, std::memory_order_relaxed);
@@ -194,14 +194,14 @@ TEST(Signal, SubscribeFromAHandlerOfTheSameSignalIsVisibleToTheNextFiring)
     int               outer = 0;
     int               inner = 0;
 
-    signal.subscribe([&](int) {
+    signal.connect([&](int) {
         ++outer;
         if (outer == 1)
         {
-            signal.subscribe([&](int) { ++inner; }).release();
+            signal.connect([&](int) { ++inner; }).detach();
             signal.trigger(0); // Re-entrant firing: sees the new handler.
         }
-    }).release();
+    }).detach();
 
     signal.trigger(0);
 
@@ -211,13 +211,13 @@ TEST(Signal, SubscribeFromAHandlerOfTheSameSignalIsVisibleToTheNextFiring)
 
 TEST(Signal, SubscriptionCancelsOnDestruction)
 {
-    // The RAII shape: there is no unsubscribe call anywhere in this test, the end of the
-    // scope is the unsubscribe.
+    // The RAII shape: there is no disconnect call anywhere in this test, the end of the
+    // scope is the disconnect.
     vine::Signal<int> signal;
     std::vector<int>  called;
 
     {
-        const vine::Signal<int>::Subscription subscription = signal.subscribe([&](int value) {
+        const vine::Connection subscription = signal.connect([&](int value) {
             called.push_back(value);
         });
 
@@ -231,12 +231,12 @@ TEST(Signal, SubscriptionCancelsOnDestruction)
     EXPECT_EQ(called, expected);
 }
 
-TEST(Signal, SubscriptionIsMovableAndUnsubscribeIsIdempotent)
+TEST(Signal, ConnectionIsMovableAndDisconnectIsIdempotent)
 {
     vine::Signal<int> signal;
     int               called = 0;
 
-    auto outer = signal.subscribe([&](int) { ++called; });
+    auto outer = signal.connect([&](int) { ++called; });
 
     {
         auto inner = std::move(outer);
@@ -245,8 +245,8 @@ TEST(Signal, SubscriptionIsMovableAndUnsubscribeIsIdempotent)
         EXPECT_FALSE(outer.isActive());
         signal.trigger(1); // Still subscribed after the move.
 
-        inner.unsubscribe();
-        inner.unsubscribe(); // Cancelling twice is harmless.
+        inner.disconnect();
+        inner.disconnect(); // Cancelling twice is harmless.
 
         EXPECT_FALSE(inner.isActive());
         signal.trigger(2); // No longer called.
@@ -263,8 +263,8 @@ TEST(Signal, AssigningASubscriptionCancelsThePreviousSubscription)
     int               first  = 0;
     int               second = 0;
 
-    auto subscription = signal.subscribe([&](int) { ++first; });
-    subscription      = signal.subscribe([&](int) { ++second; });
+    auto subscription = signal.connect([&](int) { ++first; });
+    subscription      = signal.connect([&](int) { ++second; });
 
     signal.trigger(0);
 
@@ -273,16 +273,16 @@ TEST(Signal, AssigningASubscriptionCancelsThePreviousSubscription)
     EXPECT_TRUE(subscription.isActive());
 }
 
-TEST(Signal, ReleasedSubscriptionStaysSubscribed)
+TEST(Signal, DetachedSubscriptionStaysSubscribed)
 {
     vine::Signal<int> signal;
     int               called = 0;
 
     {
-        // release() gives up management without cancelling: the handler stays subscribed
+        // detach() gives up management without cancelling: the handler stays subscribed
         // for as long as the Signal lives, which is what an object's own internal wiring
         // wants.
-        signal.subscribe([&](int) { ++called; }).release();
+        signal.connect([&](int) { ++called; }).detach();
     }
 
     signal.trigger(0);
@@ -296,24 +296,24 @@ TEST(Signal, SubscriptionOutlivingTheSignalIsInert)
     // harmless instead of dangling.
     auto subscription = [] {
         auto local = std::make_unique<vine::Signal<int>>();
-        auto owned = local->subscribe([](int) { });
+        auto owned = local->connect([](int) { });
         local.reset();
         return owned;
     }();
 
     EXPECT_FALSE(subscription.isActive());
 
-    subscription.unsubscribe(); // Must not touch the freed signal.
+    subscription.disconnect(); // Must not touch the freed signal.
 }
 
 TEST(Signal, DefaultSubscriptionOwnsNothing)
 {
-    vine::Signal<int>::Subscription subscription;
+    vine::Connection subscription;
 
     EXPECT_FALSE(subscription.isActive());
 
-    subscription.unsubscribe(); // Harmless.
-    subscription.release();     // Harmless.
+    subscription.disconnect(); // Harmless.
+    subscription.detach();     // Harmless.
     EXPECT_FALSE(subscription.isActive());
 }
 
@@ -326,12 +326,12 @@ TEST(Signal, DestroyingTheSignalFromInsideAHandlerIsSafe)
     std::vector<int> called;
     auto*            signal = new vine::Signal<int>();
 
-    signal->subscribe([&](int) {
+    signal->connect([&](int) {
         called.push_back(1);
         delete signal; // The firing lives on in its snapshot, not in the Signal.
         signal = nullptr;
-    }).release();
-    signal->subscribe([&](int) { called.push_back(2); }).release();
+    }).detach();
+    signal->connect([&](int) { called.push_back(2); }).detach();
 
     signal->trigger(0);
 
@@ -346,12 +346,12 @@ TEST(Signal, SubscriptionOfADestroyedSignalStaysInertOnAReusedAddress)
     std::vector<int> called;
     auto*            signal = new vine::Signal<int>();
 
-    auto subscription = signal->subscribe([&](int) { called.push_back(1); });
+    auto subscription = signal->connect([&](int) { called.push_back(1); });
     delete signal;
 
     auto* replacement = new vine::Signal<int>();
     EXPECT_FALSE(subscription.isActive());
-    subscription.unsubscribe(); // Must not touch the replacement signal.
+    subscription.disconnect(); // Must not touch the replacement signal.
     replacement->trigger(0);
 
     EXPECT_TRUE(called.empty());
