@@ -3,6 +3,11 @@
 > 模块：`src/plugins/gfx_backend_vsg`
 > 版本依据：2026-09-04 工作区代码（`git` 后状态）+ 本机 vsg v1.1.16。
 >
+> **运行期下限：Vulkan 1.3**（`detail::kRequiredVulkanVersion`，`VsgBackendUtility.hpp`）。低于它就**拒绝会话**
+> 并在诊断通道报出两个版本号（`VsgRenderer::initialize` 的 "checking the device's Vulkan version" 阶段）——
+> 后端有权依赖 1.3 的核心行为（扩展动态状态；dynamic rendering 落地后也是），把 1.2 设备"跑子集"当成
+> 可接受就会让宿主从帧深处的驱动报错里才知道。判据：`tests/test_vsg/DeviceRequirementsTest.cpp`。
+>
 > 本文件是模块的**导航与现状说明**：它回答"这个插件是什么、有哪些文件、类各自负责什么、图长什么样、线程约定是什么"，并指向每个主题的权威文档。
 >
 > **本文边界（谁写什么，2026-09-15）** —— 同一件事只写一处，其余给链接：
@@ -163,6 +168,11 @@ CMake 里显式 `target_compile_definitions(... PRIVATE V_VSG_LIB)` 让 `V_VSG_A
 
 ## 3. 构建与依赖
 
+- **运行期 Vulkan 下限 = 1.3**：实例版本由 vsg 的 `WindowTraits::defaults()` 用 `vkEnumerateInstanceVersion`
+  取 loader 支持的最高值（本机 1.4），但**算数的是设备自己的 `apiVersion`** —— 会话建立时用
+  `detail::supportsRequiredVulkanVersion()` 判，低了就 `shutdown()` + 返回 false 并在诊断通道报原因。
+  可用/不可用的 API 面看**系统头的版本**（本机 `VK_HEADER_VERSION 341`），vsg 那份 `include/vsg/vk/vulkan.h`
+  只是 `#include <vulkan/vulkan.h>` + 老头补丁。
 - `v_add_plugin(GFX_BACKEND_VSG_TARGET gfx_backend_vsg)`：MODULE 库。
 - `VINE_USE_FETCHCONTENT=ON`（推荐）：静态编译 glslang + vsg v1.1.16 打进插件；
   保留运行期 `vsg::ShaderCompiler`（程序路径需要）。

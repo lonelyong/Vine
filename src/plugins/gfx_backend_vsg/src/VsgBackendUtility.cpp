@@ -54,6 +54,15 @@ std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count,
     return order;
 }
 
+bool supportsRequiredVulkanVersion(std::uint32_t api_version) noexcept
+{
+    const std::uint32_t major = VK_API_VERSION_MAJOR(api_version);
+    const std::uint32_t minor = VK_API_VERSION_MINOR(api_version);
+    const std::uint32_t want_major = VK_API_VERSION_MAJOR(kRequiredVulkanVersion);
+    const std::uint32_t want_minor = VK_API_VERSION_MINOR(kRequiredVulkanVersion);
+    return major > want_major || (major == want_major && minor >= want_minor);
+}
+
 bool onHostWindow(const ::vsg::ref_ptr<::vsg::Window>& window)
 {
     return window != nullptr && window.cast<detail::VsgHostWindow>() != nullptr;

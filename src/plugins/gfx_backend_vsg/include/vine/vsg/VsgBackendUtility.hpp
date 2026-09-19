@@ -186,6 +186,30 @@ ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<cons
 vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, int surf_w, int surf_h);
 
 /**
+ * @brief The oldest Vulkan version a session may run on.
+ *
+ * A FLOOR, not a preference: the backend is allowed to rely on the core-1.3 features it names as it needs
+ * them (extended dynamic state; dynamic rendering when the layer lands). A device below it is REFUSED with
+ * a reason rather than served on the subset of the contract that happens to work — the same rule this
+ * backend follows for every other capability it cannot honour (see VsgRenderer::initialize), and the reason
+ * a version check exists at all rather than being left to a driver to fail later on a feature.
+ */
+inline constexpr std::uint32_t kRequiredVulkanVersion = VK_API_VERSION_1_3;
+
+/**
+ * @brief Whether @p api_version (a device's VkPhysicalDeviceProperties::apiVersion) may host a session.
+ *
+ * The DEVICE's version, not the instance's: the loader grants an instance version of its own choosing, and
+ * `WindowTraits::defaults()` already asks it for the highest it supports, so an instance can be newer than
+ * the device behind it. Compared major/minor rather than as the packed integer: the packing is what makes
+ * the numbers comparable, while the policy is about versions, and writing it this way says which.
+ *
+ * @param api_version Version a physical device reports.
+ * @return true when the device is at least detail::kRequiredVulkanVersion.
+ */
+[[nodiscard]] bool supportsRequiredVulkanVersion(std::uint32_t api_version) noexcept;
+
+/**
  * @brief Whether a session's window is this backend's HOST window (the one it adopted from the host).
  *
  * A session on vsg's OWN window is one the host announced no surface for (the self-test, a headless

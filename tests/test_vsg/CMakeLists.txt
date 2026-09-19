@@ -22,6 +22,7 @@ set(SRC_FILE_LIST
 	TargetBookkeepingTest.cpp
 	PassRenderPassPlanTest.cpp
 	PassClearValuesTest.cpp
+	DeviceRequirementsTest.cpp
 	ProgramSamplingTest.cpp
 	GraphOrderTest.cpp
 	DiagnosticsTest.cpp

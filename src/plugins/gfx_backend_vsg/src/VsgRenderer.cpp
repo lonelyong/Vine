@@ -472,6 +472,40 @@ bool VsgRenderer::initialize()
     // pipeline compiled against it, were kept".
     ++persistent.window_build_count;
 
+    // The session's floor: Vulkan 1.3 (see detail::kRequiredVulkanVersion). Checked HERE -- right after the
+    // device exists, and before anything session-scoped is created -- and refused with the two versions in
+    // the message, because a device below the floor is not "slower" or "missing an optimisation": the
+    // backend is allowed to rely on core-1.3 behaviour, so serving a 1.2 device would be a contract nobody
+    // can honour, and the host would learn it from a driver failure deep in a frame instead of from this
+    // line. Two facts the order encodes: the device has to be CREATED first (vsg builds it on demand, so
+    // the window alone has no physical device yet) and the version that counts is the DEVICE's own, not the
+    // instance's (the loader grants an instance version of its choosing).
+    init_stage = "creating the device";
+    const auto device = state.window->getOrCreateDevice();
+    if (device == nullptr) {
+        V_LOGE("[VsgRenderer] Window::getOrCreateDevice returned no device");
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
+                           formatDiagnostic(u8"initialize FAILED at '%s': no VkDevice (see the messages above)", init_stage));
+        shutdown();
+        return false;
+    }
+    init_stage = "checking the device's Vulkan version";
+    const auto physical_device = state.window->getPhysicalDevice();
+    const std::uint32_t api_version = physical_device != nullptr ? physical_device->getProperties().apiVersion : 0u;
+    if (!detail::supportsRequiredVulkanVersion(api_version)) {
+        V_LOGE("[VsgRenderer] device reports Vulkan {}.{}.{}; this backend requires {}.{} or newer",
+               VK_API_VERSION_MAJOR(api_version), VK_API_VERSION_MINOR(api_version), VK_API_VERSION_PATCH(api_version),
+               VK_API_VERSION_MAJOR(detail::kRequiredVulkanVersion), VK_API_VERSION_MINOR(detail::kRequiredVulkanVersion));
+        diagnostics.report(vine::graphics::DiagnosticSeverity::Error, vine::graphics::DiagnosticCategory::InitFailed,
+                           formatDiagnostic(u8"initialize FAILED at '%s': the device reports Vulkan %u.%u and this "
+                                            u8"backend requires %u.%u or newer",
+                                            init_stage, VK_API_VERSION_MAJOR(api_version), VK_API_VERSION_MINOR(api_version),
+                                            VK_API_VERSION_MAJOR(detail::kRequiredVulkanVersion),
+                                            VK_API_VERSION_MINOR(detail::kRequiredVulkanVersion)));
+        shutdown();
+        return false;
+    }
+
     // The session's texture cache, created before any slot exists so every slot's bridge uploads through this
     // ONE cache (see SceneBridge::setTextureCache): a texture sampled by several slots is staged once, not
     // once per slot. Session-scoped: the images reference the session's device, so shutdown() drops them with
