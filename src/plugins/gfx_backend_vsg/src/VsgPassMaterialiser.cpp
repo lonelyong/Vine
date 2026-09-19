@@ -148,6 +148,38 @@ void detail::revokeDepthPromotion(VsgRendererState& state, VsgRenderTargetEntry&
     t.depth_sampleable = false;
 }
 
+// The bodies are the moved definitions: their documentation lives on the declarations.
+
+std::vector<VkClearValue> detail::makePassClearValues(const VsgRenderTargetEntry& t, bool has_depth,
+                                                      const ::vsg::vec4& clear_color)
+{
+    std::vector<VkClearValue> clear_values;
+    clear_values.reserve(t.color_views.size() + (has_depth ? 1u : 0u));
+    for (std::size_t i = 0; i < t.color_views.size(); ++i) {
+        VkClearValue value = {};
+        if (i == 0u) {
+            value.color = VkClearColorValue{ { clear_color.r, clear_color.g, clear_color.b, clear_color.a } };
+        }
+        clear_values.push_back(value); // extra MRT attachments: transparent black
+    }
+    if (has_depth) {
+        VkClearValue value = {};
+        value.depthStencil = VkClearDepthStencilValue{ t.depth_clear_value, 0 };
+        clear_values.push_back(value);
+    }
+    return clear_values;
+}
+
+bool detail::setColorClearValue(std::vector<VkClearValue>& clear_values, bool has_color,
+                                const ::vsg::vec4& clear_color)
+{
+    if (!has_color || clear_values.empty()) {
+        return false;
+    }
+    clear_values[0].color = VkClearColorValue{ { clear_color.r, clear_color.g, clear_color.b, clear_color.a } };
+    return true;
+}
+
 ::vsg::ref_ptr<::vsg::RenderGraph> detail::makePassGraph(const VsgRenderTargetEntry& t, bool has_depth,
                                                          const ::vsg::vec4& clear_color)
 {
@@ -164,19 +196,7 @@ void detail::revokeDepthPromotion(VsgRendererState& state, VsgRenderTargetEntry&
     graph->windowResizeHandler = {};
     graph->viewportState = ::vsg::ViewportState::create(
         VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) });
-    graph->clearValues.clear();
-    for (std::size_t i = 0; i < t.color_views.size(); ++i) {
-        VkClearValue value = {};
-        if (i == 0u) {
-            value.color = VkClearColorValue{ { clear_color.r, clear_color.g, clear_color.b, clear_color.a } };
-        }
-        graph->clearValues.push_back(value);
-    }
-    if (has_depth) {
-        VkClearValue value = {};
-        value.depthStencil = VkClearDepthStencilValue{ t.depth_clear_value, 0 };
-        graph->clearValues.push_back(value);
-    }
+    graph->clearValues = makePassClearValues(t, has_depth, clear_color);
     return graph;
 }
 
@@ -196,12 +216,12 @@ void detail::revokeDepthPromotion(VsgRendererState& state, VsgRenderTargetEntry&
     if (objects.attachments_generation != attachments_generation) {
         return {};
     }
-    if (has_color && state.request.presenting && objects.clear_color != clear_color && objects.graph != nullptr &&
-        !objects.graph->clearValues.empty()) {
-        objects.clear_color                 = clear_color;
-        objects.graph->clearValues[0].color = VkClearColorValue{
-            { clear_color.r, clear_color.g, clear_color.b, clear_color.a }
-        };
+    if (state.request.presenting && objects.clear_color != clear_color && objects.graph != nullptr) {
+        // The colour entry only: a depth-only pass' single entry is its DEPTH value (see
+        // setColorClearValue), so the helper — not this call site — decides whether there is one.
+        if (setColorClearValue(objects.graph->clearValues, has_color, clear_color)) {
+            objects.clear_color = clear_color;
+        }
     }
     return objects.graph;
 }
@@ -393,13 +413,12 @@ detail::PassPlan detail::planPass(const VsgRendererState& state, const VsgRender
     // WindowResizeHandler (see makePassGraph), so nothing scales a rectangle behind this write.
     graph->renderArea = VkRect2D{ { 0, 0 },
                                   { static_cast<std::uint32_t>(t.width), static_cast<std::uint32_t>(t.height) } };
-    if (plan.has_color && !graph->clearValues.empty()) {
-        // The colour clear value follows the pass' current request (a rebuilt
-        // pass may have just STARTED clearing). The depth entry — if any — keeps
-        // the target's depth clear value.
-        graph->clearValues[0].color = VkClearColorValue{
-            { clear_color.r, clear_color.g, clear_color.b, clear_color.a }
-        };
+    if (plan.has_color) {
+        // The colour clear value follows the pass' current request (a rebuilt pass may have just STARTED
+        // clearing) — through the ONE writer of that entry, which is also what keeps a depth-only pass'
+        // depth entry (the vector's only entry) out of reach. The depth entry keeps the target's own
+        // depth clear value (makePassClearValues).
+        setColorClearValue(graph->clearValues, plan.has_color, clear_color);
     }
 
     VsgRenderTargetEntry::PassObjects objects;

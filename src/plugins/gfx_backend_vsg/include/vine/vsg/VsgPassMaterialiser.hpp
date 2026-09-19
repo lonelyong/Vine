@@ -144,18 +144,46 @@ makePassObjects(const VsgRendererState& state, const VsgRenderTargetEntry& t, co
                                                                     const PassAttachments& att,
                                                                     const ::vsg::ref_ptr<::vsg::RenderPass>& render_pass);
 
+/** @brief The clear values of one pass' graph, in ATTACHMENT ORDER.
+ *
+ * The rule, in one place because three writers used to spell it out (the new-pass builder and the two
+ * "the pass' request changed" updates), and because getting it wrong is INVISIBLE: VkClearValue is a
+ * union, so a colour written into the depth entry (or the reverse) validates clean and clears to a bit
+ * pattern nobody asked for — the D48 defect. Attachment 0 carries THIS pass' colour, any extra colour
+ * attachment (MRT / G-buffer) stays transparent black (its region is black until a fragment writes it),
+ * and the depth attachment — when the pass has one — is LAST, carrying the target's own depth clear
+ * value (the reverse-Z far plane for every target, see buildOffscreenTarget).
+ *
+ * @param t           Target whose colour attachments and depth clear value the list describes.
+ * @param has_depth   Whether the pass' render pass carries a depth attachment (its entry is appended).
+ * @param clear_color Colour attachment 0 is cleared to (the pass' own request).
+ * @return One entry per attachment, in the attachment order the framebuffer was built with.
+ */
+[[nodiscard]] std::vector<VkClearValue> makePassClearValues(const VsgRenderTargetEntry& t, bool has_depth,
+                                                            const ::vsg::vec4& clear_color);
+
+/** @brief Writes @p clear_color into the COLOUR entry of an existing pass' clear values.
+ *
+ * The colour entry is attachment 0 and it exists only when the pass HAS a colour attachment: a
+ * depth-only pass' single entry is its DEPTH value, and VkClearValue is a union, so writing there would
+ * clear the depth to a colour's bit pattern. "Does this pass have colour" is therefore an argument
+ * rather than something re-derived from the vector's size — one decision, at one place.
+ *
+ * @param clear_values The graph's clear values, in attachment order (see makePassClearValues).
+ * @param has_color    Whether the pass has a colour attachment at all.
+ * @param clear_color  Colour to write.
+ * @return true when a colour entry was written, false when the pass has no colour to write it to.
+ */
+bool setColorClearValue(std::vector<VkClearValue>& clear_values, bool has_color, const ::vsg::vec4& clear_color);
+
 /** @brief Creates the render graph of a NEW pass, with its clear values.
  *
  * One graph per pass (§28): a pass owns the load-ops of its own scope and therefore
  * cannot record into its target's graph. Everything the graph needs is derived from
  * the target's built attachments.
  *
- * The clear values follow the ATTACHMENT ORDER the framebuffer was built with —
- * colour attachments in order, then depth — as VkRenderPassBeginInfo requires:
- * attachment 0 carries THIS pass' clear colour, the extra MRT attachments stay
- * transparent black (their regions stay black until a fragment writes them), and the
- * depth entry carries the target's depth clear value, the reverse-Z far plane for
- * every target (see buildOffscreenTarget).
+ * The clear values come from makePassClearValues() — attachment order, colour entry first, depth last —
+ * and follow the ATTACHMENT ORDER the framebuffer was built with, as VkRenderPassBeginInfo requires.
  *
  * @param t           Target entry whose attachments the graph renders into.
  * @param has_depth   Whether the framebuffer has a depth attachment (its clear value
