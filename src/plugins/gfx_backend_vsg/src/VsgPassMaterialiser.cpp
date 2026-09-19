@@ -155,6 +155,13 @@ void detail::revokeDepthPromotion(VsgRendererState& state, VsgRenderTargetEntry&
     graph->renderArea =
         VkRect2D{ { 0, 0 }, { static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) } };
     graph->contents      = VK_SUBPASS_CONTENTS_INLINE;
+    // Same opt-out as the window graph (see VsgRenderer::initialize): installed, vsg's resize handler
+    // scales the views' sub-viewport rectangles when the graph's extent changes, while every rectangle
+    // this backend owns is re-derived from the target's current size (detail::updateSlotViewport per
+    // slot, and this graph's renderArea below). The graph-level viewportState stays -- it is what
+    // RenderGraph::accept pushes for commands that are not under a View -- but it is re-synced from
+    // `renderArea` on every record, so it never needs a second writer either.
+    graph->windowResizeHandler = {};
     graph->viewportState = ::vsg::ViewportState::create(
         VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) });
     graph->clearValues.clear();
@@ -382,14 +389,10 @@ detail::PassPlan detail::planPass(const VsgRendererState& state, const VsgRender
     // this graph was made, in which case the graph (and the pass' views under it) is kept while the
     // images under it are new: the render area has to follow the size those images were made at, or
     // the record would name a rectangle the framebuffer does not have (VUID-vkCmdBeginRenderPass-
-    // pRenderArea-00063). `previous_extent` is set in step for the same reason the window graph does
-    // it (see VsgRenderer::resize): vsg's own resize handling scales a graph's sub-viewport rectangles
-    // when it notices an extent change, and every slot's rectangle is already re-derived from the
-    // target's size each frame.
+    // pRenderArea-00063). No `previous_extent` bookkeeping is needed for it: this graph has no
+    // WindowResizeHandler (see makePassGraph), so nothing scales a rectangle behind this write.
     graph->renderArea = VkRect2D{ { 0, 0 },
                                   { static_cast<std::uint32_t>(t.width), static_cast<std::uint32_t>(t.height) } };
-    graph->previous_extent =
-        VkExtent2D{ static_cast<std::uint32_t>(t.width), static_cast<std::uint32_t>(t.height) };
     if (plan.has_color && !graph->clearValues.empty()) {
         // The colour clear value follows the pass' current request (a rebuilt
         // pass may have just STARTED clearing). The depth entry — if any — keeps

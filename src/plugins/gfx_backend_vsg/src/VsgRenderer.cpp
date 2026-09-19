@@ -521,6 +521,16 @@ bool VsgRenderer::initialize()
     // child of it.
     auto renderGraph      = ::vsg::RenderGraph::create(state.window);
     renderGraph->contents = VK_SUBPASS_CONTENTS_INLINE;
+    // vsg's own resize handling is OFF for this graph -- and for every pass graph (see
+    // detail::makePassGraph). Installed, it scales the SUB-VIEWPORT rectangles of the views under the
+    // graph when it notices an extent change (RenderGraph::resized -> WindowResizeHandler::apply), and
+    // this backend already re-derives every rectangle it owns from the target's current size
+    // (VsgRenderer::resize for the window graph, detail::updateSlotViewport for each slot): two writers
+    // for one rectangle is what produced the measured 3x HUD rectangles on a maximize. The
+    // upstream-supported opt-out removes the second writer instead of keeping `previous_extent` in step
+    // with it -- RenderGraph::accept re-stamps `previous_extent` when no handler is installed, so the
+    // extent it compares against is always the one just recorded.
+    renderGraph->windowResizeHandler = {};
     state.entryFor(nullptr).graph = renderGraph;
     auto commandGraph     = ::vsg::CommandGraph::create(state.window);
     commandGraph->addChild(renderGraph);
@@ -1111,20 +1121,14 @@ void VsgRenderer::resize(int announced_width, int announced_height)
         return;
     }
     const auto extent = state.window->extent2D();
-    // The window's shared render graph follows the window HERE, not when vsg notices: vsg's own resize
-    // handling runs while a frame is being RECORDED (its RenderGraph::accept compares the window extent
-    // against the one it saw last), so a frame recorded in between still names the OLD render area -- and
-    // the part of the client area the window just grew by is then neither cleared nor drawn, which is
-    // what leaves it black until a later frame presents. `previous_extent` is kept in step with what is
-    // written here so that handler does not scale a rectangle that is already right (it scales the views'
-    // sub-viewports too: measured on a maximize, the HUD overlays' rectangles came back 3x their size and
-    // off the window).
+    // The window's shared render graph follows the window HERE, not when vsg notices: with the graph's
+    // WindowResizeHandler off (see initialize) this write is the ONLY source of its render area, and a
+    // frame recorded before it would name the OLD rectangle -- leaving the part of the client area the
+    // window just grew by neither cleared nor drawn until a later frame presents. The graph's
+    // `viewportState` is not written here: RenderGraph::accept re-syncs it from `renderArea` on every
+    // record, so writing it would be a second, dead statement of the same rectangle.
     if (window_target.graph != nullptr) {
         window_target.graph->renderArea = VkRect2D{ { 0, 0 }, extent };
-        window_target.graph->previous_extent = extent;
-        if (window_target.graph->viewportState != nullptr) {
-            window_target.graph->viewportState->set(0, 0, extent.width, extent.height);
-        }
     }
     for (auto& kv : window_target.content_slots) {
         auto& slot = kv.second;
