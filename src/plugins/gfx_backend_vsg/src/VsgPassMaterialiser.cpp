@@ -112,6 +112,15 @@ bool detail::depthStillPromoted(const VsgRendererState& state, const VsgRenderTa
             continue; // this pass itself, or one that records after it
         }
         if (state.passes_active_this_frame.contains(other.first.owner)) {
+            // It ran first this frame, so what the image holds is THAT pass' variant — but WHICH layout
+            // that variant left is not asked here, and the answer given is the conservative one. That is
+            // sound only because of the pairing with revokeDepthPromotion: the guard above proves
+            // promotion was in force, and a pass that LOADs depth reaches the revoke cascade before
+            // anything is recorded, which rebuilds this earlier pass WITHOUT promotion — making the
+            // "not promoted" answer true by the time the frame is recorded. A predicate that asked
+            // "did the earlier pass leave SHADER_READ_ONLY" would need that revoke decision taken BEFORE
+            // the plan, which is not where it is taken (see planPass' notes): do not change one without
+            // the other.
             return false; // it ran first this frame and left its own layout
         }
     }

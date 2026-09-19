@@ -266,8 +266,14 @@ void publishPass(VsgRenderTargetEntry& t, const SlotKey& key, const VsgRenderTar
  * @param t       Target entry the pass belongs to.
  * @param current The pass being built (skipped; null when it has no objects yet).
  * @param order   This pass' explicit record order.
- * @return true when the depth is still promoted, so a LOAD must name that layout.
- */
+ * @return true when the depth is still promoted, so a LOAD must name that layout. *
+ * @note Which layout that earlier pass LEFT is deliberately not asked here: the answer is the
+ *       conservative "not promoted", and it is sound only in this pair with revokeDepthPromotion().
+ *       The caller runs the revoke for exactly this situation (promotion in force plus a pass that
+ *       LOADs depth) and it rebuilds the earlier pass WITHOUT promotion before anything is recorded, so
+ *       the answer becomes true by the time the frame records. A predicate that answered "the earlier
+ *       pass promoted" would have to run AFTER that revoke rather than before it — the two move
+ *       together or not at all. */
 [[nodiscard]] bool depthStillPromoted(const VsgRendererState& state, const VsgRenderTargetEntry& t,
                                       const VsgRenderTargetEntry::PassObjects* current, int order);
 
