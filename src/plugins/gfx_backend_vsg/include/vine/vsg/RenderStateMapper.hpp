@@ -257,6 +257,45 @@ inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
 }
 
 /**
+ * @brief Collapses the dynamically delivered items of @p mapped to what a pipeline bakes.
+ *
+ * Under the dynamic-state layer a pipeline must not be a function of these four states any more: two
+ * drawables that differ only in depth policy, culling side, front face or topology have to be served by ONE
+ * pipeline, or the layer has bought nothing (vsg content-dedups pipelines, so different create-info values
+ * are different VkPipelines). So the depth, rasterisation and input-assembly objects become the constants
+ * named in VsgDynamicState.hpp — the SAME values the command starts from — and the delivered ones come from
+ * the command each drawable carries.
+ *
+ * The colour blend state and the rasterisation POLYGON MODE stay as mapped: they are not core-1.3 dynamic
+ * state, so they are still pipeline state and still part of the variant identity (see VsgDynamicState.hpp).
+ *
+ * @param mapped State objects mapped from a resolved state (see makeRenderStateObjects()).
+ * @return The state objects to install on a configurator.
+ */
+[[nodiscard]] inline RenderStateObjects makePipelineStateObjects(const RenderStateObjects& mapped)
+{
+    RenderStateObjects baked = mapped;
+
+    auto depth                     = ::vsg::DepthStencilState::create();
+    depth->depthTestEnable         = detail::kBakedDepthTestEnable;
+    depth->depthWriteEnable        = detail::kBakedDepthWriteEnable;
+    depth->depthCompareOp          = detail::kBakedCompareOp;
+
+    auto raster            = ::vsg::RasterizationState::create();
+    raster->cullMode       = detail::kBakedCullMode;
+    raster->frontFace      = detail::kBakedFrontFace;
+    raster->polygonMode    = mapped.rasterization->polygonMode;  // still baked: not core-1.3 dynamic state
+
+    auto assembly    = ::vsg::InputAssemblyState::create();
+    assembly->topology = detail::kBakedTopology;
+
+    baked.depthStencil  = depth;
+    baked.rasterization = raster;
+    baked.inputAssembly = assembly;
+    return baked;
+}
+
+/**
  * @brief Builds the dynamic-state command for a mapped state (see VsgDynamicState.hpp).
  *
  * Every field is read from @p states — the very objects applyRenderStateObjects() installs on the

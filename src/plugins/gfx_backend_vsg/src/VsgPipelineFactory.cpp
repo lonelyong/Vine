@@ -124,30 +124,38 @@ namespace detail
     return ::vsg::ColorBlendState::create(blend_attachments);
 }
 
-::vsg::GraphicsPipelineStates makeScenePipelineStates(const VkExtent2D& extent, bool depth_test, bool depth_write,
-                                                    int color_count)
+::vsg::GraphicsPipelineStates makeScenePipelineStates(const VkExtent2D& extent, int color_count)
 {
+    // The depth / culling / front-face / topology values here are the BAKED constants, not a policy: those
+    // four states are delivered per drawable (see VsgDynamicState.hpp), so a pipeline that carried anything
+    // else would be a second pipeline for no reason. Named constants rather than literals so the bake and
+    // the command's own defaults cannot drift.
     auto raster_state      = ::vsg::RasterizationState::create();
-    raster_state->cullMode = VK_CULL_MODE_NONE; // tolerate either winding order
+    raster_state->cullMode = kBakedCullMode;
+    raster_state->frontFace = kBakedFrontFace;
     auto depth_state       = ::vsg::DepthStencilState::create();
-    depth_state->depthTestEnable  = depth_test ? VK_TRUE : VK_FALSE;
-    depth_state->depthWriteEnable = depth_write ? VK_TRUE : VK_FALSE;
+    depth_state->depthTestEnable  = kBakedDepthTestEnable;
+    depth_state->depthWriteEnable = kBakedDepthWriteEnable;
+    depth_state->depthCompareOp   = kBakedCompareOp;
     // The blend state follows the render pass' colour attachment count (see makeColorBlendState): one code
     // path covers 0 / 1 / N, and a DEPTH-ONLY pass (color_count == 0) declares NONE rather than the single
     // attachment vsg's default would declare, which would make the pipeline unbuildable against it.
     auto blend_state = makeColorBlendState(color_count);
+    auto input_assembly  = ::vsg::InputAssemblyState::create();
+    input_assembly->topology = kBakedTopology;
     ::vsg::GraphicsPipelineStates states{
         depth_state,
         raster_state,
         blend_state,
-        ::vsg::InputAssemblyState::create(),
+        input_assembly,
         ::vsg::MultisampleState::create(),
         ::vsg::ViewportState::create(extent),
     };
-    // Every pipeline built from this set delivers the state above dynamically (see VsgDynamicState.hpp):
-    // the values stay in the create-info (Vulkan needs the structs), but the driver takes the effective
-    // ones from the SetDynamicState the bridge emits per variant. There is no opt-out — a set that baked
-    // the state would need one pipeline per state, which is what this layer exists to remove.
+    // Every pipeline built from this set DELIVERS those four states dynamically (see VsgDynamicState.hpp):
+    // the values above stay in the create-info (Vulkan needs the structs) and are the constants the command
+    // starts from, so every pipeline of the set is content-identical and the driver takes the effective
+    // values from the SetDynamicState each drawable carries. There is no opt-out — a set that baked the
+    // state would need one pipeline per state combination, which is what this layer exists to remove.
     states.push_back(makeDynamicStateDeclaration());
     return states;
 }
@@ -327,7 +335,7 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     return {};
 }
 
-::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
+::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program, const VkExtent2D& extent, int color_count)
 {
     // The stages come from the program the caller named (the engine's own texts live in the SDK,
     // BuiltinShaders.hpp). A program that has no stages, or that glslang refuses, DECLINES here: the
@@ -416,11 +424,11 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     // IMPLEMENTATION of the L1 pair, not the contract itself: a backend without a
     // push range binds the blocks.
     shader_set->addPushConstantRange("pc", "", VK_SHADER_STAGE_VERTEX_BIT, 0, 128);
-    shader_set->defaultGraphicsPipelineStates = makeScenePipelineStates(extent, depth_test, depth_write, color_count);
+    shader_set->defaultGraphicsPipelineStates = makeScenePipelineStates(extent, color_count);
     return shader_set;
 }
 
-::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
+::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program, const VkExtent2D& extent, int color_count)
 {
     // EVERY content set this backend builds is ours. vsg's built-in sets
     // (createPhongShaderSet / createFlatShadedShaderSet) are deliberately not used
@@ -433,7 +441,7 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     // substitution. The caller reports it and draws nothing: shading it with another program (ours or
     // a library's) would show the host a picture it did not ask for and cannot tell apart from the one
     // it did, which is worse than an empty frame it can see the reason for.
-    return buildVineShaderSet(std::move(program), extent, depth_test, depth_write, color_count);
+    return buildVineShaderSet(std::move(program), extent, color_count);
 }
 
 DepthTestWrite depthTestWrite(vine::graphics::DepthMode mode) noexcept
@@ -449,22 +457,6 @@ DepthTestWrite depthTestWrite(vine::graphics::DepthMode mode) noexcept
         return DepthTestWrite{ /*test*/ true, /*write*/ true };
     }
     return DepthTestWrite{ /*test*/ true, /*write*/ true };
-}
-
-::vsg::ref_ptr<::vsg::ShaderSet>& shaderSetFor(vine::graphics::DepthMode mode,
-                                               ::vsg::ref_ptr<::vsg::ShaderSet>& depth_on,
-                                               ::vsg::ref_ptr<::vsg::ShaderSet>& depth_testonly,
-                                               ::vsg::ref_ptr<::vsg::ShaderSet>& depth_off) noexcept
-{
-    switch (mode) {
-    case vine::graphics::DepthMode::Disabled:
-        return depth_off;
-    case vine::graphics::DepthMode::TestOnly:
-        return depth_testonly;
-    case vine::graphics::DepthMode::TestAndWrite:
-        return depth_on;
-    }
-    return depth_off;
 }
 
 VkFormat toColorFormat(vine::graphics::RenderTarget::ColorFormat f)

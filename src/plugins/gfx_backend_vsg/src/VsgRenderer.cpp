@@ -554,9 +554,7 @@ bool VsgRenderer::initialize()
     // earlier content (HUD). Off-screen targets bake their own per-size sets
     // lazily.
     init_stage = "building window shader sets";
-    state.depth_on_shader_set        = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), true, true);
-    state.depth_testonly_shader_set  = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), true, false);
-    state.depth_off_shader_set       = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), false, false);
+    state.content_shader_set = makeContentShaderSet(persistent.default_content_program, state.window->extent2D());
 
     // The primary window layer is created lazily on the first window render
     // (the first pass that clears and draws the scene into the backbuffer).
@@ -1149,9 +1147,7 @@ void VsgRenderer::setDefaultContentProgram(vine::intrusive_ptr<const vine::graph
     // attachments, the pass graphs and the depth history stay untouched, so the
     // content is shaded differently rather than the target starting over.
     const auto extent = state.window->extent2D();
-    state.depth_on_shader_set       = makeContentShaderSet(persistent.default_content_program, extent, true, true);
-    state.depth_testonly_shader_set = makeContentShaderSet(persistent.default_content_program, extent, true, false);
-    state.depth_off_shader_set      = makeContentShaderSet(persistent.default_content_program, extent, false, false);
+    state.content_shader_set = makeContentShaderSet(persistent.default_content_program, extent);
     detail::resetContentShaderSlots(state);
 }
 

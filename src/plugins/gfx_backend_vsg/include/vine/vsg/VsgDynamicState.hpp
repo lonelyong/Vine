@@ -15,6 +15,22 @@ namespace detail
 {
 
 /**
+ * @brief The values a pipeline BAKES for the states this backend delivers dynamically.
+ *
+ * A pipeline still has to carry valid values in its create-info (Vulkan needs the structs); with the states
+ * declared dynamic the driver ignores them, so which values they are does not matter — as long as every
+ * pipeline of a set carries the SAME ones. They are the command's own defaults, named here so the bake and
+ * the command cannot drift: a pipeline built with anything else would be a pipeline that differs from its
+ * neighbours for no reason, i.e. one VkPipeline per state combination again.
+ */
+inline constexpr VkBool32            kBakedDepthTestEnable  = VK_TRUE;
+inline constexpr VkBool32            kBakedDepthWriteEnable = VK_TRUE;
+inline constexpr VkCompareOp         kBakedCompareOp        = VK_COMPARE_OP_GREATER;
+inline constexpr VkCullModeFlags     kBakedCullMode         = VK_CULL_MODE_NONE;
+inline constexpr VkFrontFace         kBakedFrontFace        = VK_FRONT_FACE_CLOCKWISE;
+inline constexpr VkPrimitiveTopology kBakedTopology         = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+/**
  * @brief The state slot (StateCommand::slot) this backend's dynamic-state command occupies.
  *
  * A slot is the identity of a STATE STACK, not a priority: vsg pushes every command of a state group onto
@@ -101,12 +117,23 @@ class SetDynamicState : public ::vsg::Inherit<::vsg::StateCommand, SetDynamicSta
     {
     }
 
-    VkBool32            depth_test_enable  = VK_TRUE;
-    VkBool32            depth_write_enable = VK_TRUE;
-    VkCompareOp         compare_op         = VK_COMPARE_OP_GREATER;
-    VkCullModeFlags     cull_mode          = VK_CULL_MODE_NONE;
-    VkFrontFace         front_face         = VK_FRONT_FACE_CLOCKWISE;
-    VkPrimitiveTopology topology           = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkBool32            depth_test_enable  = kBakedDepthTestEnable;
+    VkBool32            depth_write_enable = kBakedDepthWriteEnable;
+    VkCompareOp         compare_op         = kBakedCompareOp;
+    VkCullModeFlags     cull_mode          = kBakedCullMode;
+    VkFrontFace         front_face         = kBakedFrontFace;
+    VkPrimitiveTopology topology           = kBakedTopology;
+
+    /// @brief Orders two commands by their values (content equality, what vsg::SharedObjects dedups by).
+    ///
+    /// Required, not cosmetic: the bridge shares these commands through its SharedObjects so that consecutive
+    /// drawables of one state share one object and the state stack can skip re-recording it. Without a
+    /// value-aware compare() every command would compare equal, and sharing would hand out the FIRST
+    /// command's values for every state — a silently wrong picture.
+    ///
+    /// @param rhs_object Command to compare against.
+    /// @return Negative, zero or positive, per vsg's compare convention.
+    int compare(const ::vsg::Object& rhs_object) const override;
 
     /// @brief Applies the state to @p commandBuffer (vkCmdSetDepthTestEnable & friends).
     void record(::vsg::CommandBuffer& commandBuffer) const override;

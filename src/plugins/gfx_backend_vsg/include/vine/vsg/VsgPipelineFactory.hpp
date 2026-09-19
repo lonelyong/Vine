@@ -166,8 +166,7 @@ inline constexpr std::size_t kMaxOverlayStageEntries = 16;
 [[nodiscard]] std::size_t compiledStageCacheCount() noexcept;
 
 ::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program,
-                                                     const VkExtent2D& extent, bool depth_test, bool depth_write,
-                                                     int color_count = 1);
+                                                     const VkExtent2D& extent, int color_count = 1);
 
 /**
  * @brief The per-draw block as a CUSTOM descriptor set (set 1), bound per drawable.
@@ -238,8 +237,6 @@ struct V_VSG_API DrawBlockSetBinding : public ::vsg::Inherit<::vsg::CustomDescri
  * @param program     Program to shade the slot's program-less content with (null yields null: the
  *                    caller reports it and draws nothing rather than shading with a guess).
  * @param extent      Initial viewport the default pipeline states carry.
- * @param depth_test  Whether the pipeline tests depth.
- * @param depth_write Whether it writes depth.
  * @param color_count Colour attachments the pipeline renders (MRT passes > 1).
  * @return The set to draw the slot's content with (null when the program cannot be compiled).
  *
@@ -249,15 +246,14 @@ struct V_VSG_API DrawBlockSetBinding : public ::vsg::Inherit<::vsg::CustomDescri
  * per variant instead of a new pipeline.
  */
 ::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program,
-                                                     const VkExtent2D& extent, bool depth_test, bool depth_write,
-                                                     int color_count = 1);
+                                                     const VkExtent2D& extent, int color_count = 1);
 
 /** @brief What a pass-level depth policy means to a pipeline.
  *
- * The pair makeContentShaderSet bakes into a set's pipeline states. ONE derivation for both
- * consumers — the slot's set selection and SceneBridge::effectiveCommandState, which folds the same
- * policy onto the commands that authored none — because two copies of "test = not Disabled, write =
- * TestAndWrite" is how a fourth DepthMode ends up honoured in one place and not the other.
+ * What a pass-level depth policy means to CONTENT that authored none of its own. The policy is folded into
+ * each such command's resolved state (SceneBridge::setContentDepthMode), and from there into the dynamic
+ * state the drawable delivers — it is NOT a shader-set choice any more (see VsgDynamicState.hpp): one set
+ * serves every policy, so which policy a pass asked for costs no pipeline.
  */
 struct DepthTestWrite
 {
@@ -267,34 +263,13 @@ struct DepthTestWrite
 
 /** @brief Derives (test, write) from a pass-level depth policy.
  *
- * A switch with NO default arm on purpose: adding a DepthMode then makes the compiler say so here
- * (and in shaderSetFor below) instead of letting the new mode fall through to the "off" arm.
+ * A switch with NO default arm on purpose: adding a DepthMode then makes the compiler say so here instead
+ * of letting the new mode fall through to the "off" arm.
  *
  * @param mode Pass-level depth policy.
  * @return The pipeline's depth test / write pair.
  */
 [[nodiscard]] DepthTestWrite depthTestWrite(vine::graphics::DepthMode mode) noexcept;
-
-/** @brief The shader-set slot a depth policy selects, among one target's three.
- *
- * The three sets differ only in the depth states baked into them, so "which one" is a function of
- * the policy and nothing else — and it is written ONCE: this used to be the same nested ternary in
- * the window and the off-screen branch of setupContentSlot, which is two chances to update one of
- * them when a mode is added. The caller passes the three slots (a session's or a target's); the
- * reference is returned so the off-screen path can lazily build the set it gets.
- *
- * A switch with no default arm, like depthTestWrite.
- *
- * @param mode           Pass-level depth policy.
- * @param depth_on       Slot for TestAndWrite.
- * @param depth_testonly Slot for TestOnly.
- * @param depth_off      Slot for Disabled.
- * @return The slot this policy uses.
- */
-[[nodiscard]] ::vsg::ref_ptr<::vsg::ShaderSet>& shaderSetFor(vine::graphics::DepthMode mode,
-                                                             ::vsg::ref_ptr<::vsg::ShaderSet>& depth_on,
-                                                             ::vsg::ref_ptr<::vsg::ShaderSet>& depth_testonly,
-                                                             ::vsg::ref_ptr<::vsg::ShaderSet>& depth_off) noexcept;
 
 /**
  * @brief The two subpass-external dependencies every variant of a colour/depth pass shares.

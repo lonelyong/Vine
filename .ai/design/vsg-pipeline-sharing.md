@@ -27,11 +27,12 @@
 |---|---|---|
 | RenderTarget（窗/离屏/MRT/depth-only、color_count） | render pass / subpass | 槽位分区（每个 content slot 一个 `SceneBridge`） |
 | Shader（内置 Phong/Flat 或用户 program） | stages + descriptor layout + pipeline layout | **L1 program 缓存**（一"族"一 ShaderSet） |
-| StateNode 折叠后的 `ResolvedRenderState` | depth/cull/polygon/blend/拓扑 | **L2 变体键**组件 |
+| StateNode 折叠后的 `ResolvedRenderState` | 只剩 **blend + polygonMode** | **L2 变体键**组件；depth/cull/frontFace/topology 已改为**逐 drawable 动态状态**（§2.2），不进管线 |
 | 材质**值** | UBO 内容 | **DS**（`VsgMaterialManager` 按 `Material*` 缓存），不进管线键 |
 | Matrix / opacity / 顶点数据 | 逐几何 retained 数据 | 不变 |
 
-管线键（内容级）≈ `(program, ResolvedRenderState, subpass/color_count)`；
+管线键（内容级）≈ `(program, blend, polygonMode, subpass/color_count)`（§2.2 起 depth/cull/frontFace/
+topology 已不是管线维度，而是每条 drawable 的动态状态）；
 **材质、矩阵、透明度、几何缓冲都不是管线维度。**
 
 ### 2.1 StateNode 状态动态化：core 1.3（里程碑 A/A+ 已落地）
@@ -78,6 +79,35 @@ depth test/write/compare、cull mode、front face、primitive topology 都是**�
 - **仍未做（里程碑 B）**：三份按 depth 策略区分的 ShaderSet 仍在、depth/cull/polygon/blend/topology 仍在
   变体键与 `shaderSetFor` 里。B = 把前四者（已动态化）从变体身份移除，使状态变化 = 一条命令而不是重建；
   后两者按上面理由留在身份里。
+
+### 2.2 状态不再进管线：逐 drawable 交付（里程碑 B 已落地）
+
+`VsgDynamicState.hpp` 的四项状态既然是动态的，就**不能再进管线身份**，否则"动态"买不到任何东西（vsg 按内容
+去重管线，create-info 不同就是不同的 `VkPipeline`）。B 把这条走完：
+
+- **管线烘焙常量**：`makePipelineStateObjects()`（`RenderStateMapper.hpp`）把 depth/raster/input-assembly
+  折叠成 `VsgDynamicState.hpp` 里具名的 `kBaked*` 常量（与命令自身的默认值同一处定义，防漂移）；**blend 与
+  polygonMode 仍按 resolved state 烘焙**（它们不是 core-1.3 动态状态，见 §2.1）。
+- **状态变成"逐 drawable 的贡献"**：`SceneBridge::appendDrawableState()` 在**模板命令之后**追加
+  `SetDynamicState` + per-draw 绑定；`cacheStateVariant()` 只缓存模板 ⇒ **顺序是契约**：先 cache、后 append。
+  ⚠️ 反了会怎样：模板里带上第一条 drawable 的命令，后续 drawable 从模板拷一份、再追加自己的一份，
+  `StateStack` 只录同 slot 的**栈顶**——于是**所有 drawable 都用"建模板那条"的状态**画。这个顺序错误是被
+  测试 `DeliveredStateSharesOnePipelineAndTravelsPerDrawable` 当场抓住的。
+- **命令按内容共享**：`SetDynamicState` 实现了按值 `compare()`，桥把它过 `shared_objects_->share()`
+  ⇒ **同一状态只有一个命令对象**，连续 drawable 命中 vsg 状态栈的"与上次相同就不重录"memo（否则每条 draw 都
+  要重发 6 条 `vkCmdSet*`）。没有按值 `compare()` 时共享会**串值**（所有状态都拿到第一条的值），所以两者是
+  一套的。
+- **变体身份收窄**：`hashStateVariant()` 只混 blend + polygonMode（+ program/material/texture/layout）；
+  命中判定 `sameVariantIdentity()` 与它同一规则（哈希碰撞要拒、只差交付项要收）。**三条建 set 路径同步收窄**：
+  `makeContentShaderSet`/`buildVineShaderSet`/`makeScenePipelineStates` 丢掉 `depth_test/depth_write` 参数，
+  `detail::shaderSetFor()`（三选一）与其三个 set 成员全部删除 ⇒ 现在**一个 (program, 尺寸, 颜色附件数) 一个 set**。
+- **收益（由单测钉住，不是推断）**：100 个只有 topology 不同的 drawable ⇒ `pipelineVariantCount() == 1`、
+  reuse 99、两条命令值各自正确、命令对象只有 2 个；`setContentDepthMode(TestOnly/Disabled)` 任意翻 ⇒ 包装重建
+  但**管线数不变**（`ContentDepthModeAppliesAndRebuildsState`）。这条正是"深度策略变化不再重建管线"。
+- **判据**：证据 30 帧与 B 之前**逐字节相同**（只差已知漂移计数）、`test_vsg` 318 / `test_graphics` 275、
+  syncval 0/0/0。另外 `SceneRulesTest.VariantHashHoldsWhatThePipelineBakesAndNothingElse` 把"哪些进键"钉成
+  契约（blend/polygonMode ≠、depth/cull/topology ==）。
+- **边界（有意留在键里）**：polygonMode 与 blend（理由见 §2.1）；材质/纹理/顶点布局；`subpass/color_count`。
 
 ## 3. 机制
 

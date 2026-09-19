@@ -351,6 +351,20 @@ bool isPerDrawSetLayout(const ::vsg::DescriptorSetLayout& layout)
 
 }  // namespace
 
+void SceneBridge::appendDrawableState(::vsg::StateGroup& state_group, const RenderStateObjects& states,
+                                      ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout,
+                                      const VsgDrawBlockPool::Lease& draw_slot)
+{
+    auto command = makeDynamicState(states);
+    // Shared by content (see the declaration): identical states must hand out ONE command object, or every
+    // draw re-records six vkCmdSet calls that the state stack would otherwise skip.
+    if (shared_objects_ != nullptr) {
+        shared_objects_->share(command);
+    }
+    state_group.stateCommands.push_back(command);
+    appendDrawBlockBind(state_group, std::move(pipeline_layout), draw_slot);
+}
+
 void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
                                       ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout,
                                       const VsgDrawBlockPool::Lease& draw_slot)
@@ -560,6 +574,19 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
                                        (sampling.drop_color ? 0u : 1u) | (sampling.drop_uv ? 0u : 2u) |
                                            (sampling.three_scalar_texcoords ? 4u : 0u));
 
+    // The drawable's state, mapped ONCE: the pipeline gets the collapsed form (see makePipelineStateObjects)
+    // and the drawable itself carries the delivered values (see appendDrawableState below). Mapping it before
+    // the cache lookup is what lets the reuse path do the same.
+    RenderStateObjects states = makeRenderStateObjects(state);
+    // MRT: a pipeline recorded into a slot with several colour attachments must write all of them (mrt > 1),
+    // and a G-buffer is written unblended — both rules live in the two helpers (see colourAttachmentCount /
+    // applyOpaqueBlendForAttachments). They shape the BAKED blend state (blend is not dynamic), so they run
+    // before the collapse.
+    const int mrt = colourAttachmentCount(shader_set_);
+    if (mrt > 1) {
+        applyOpaqueBlendForAttachments(states, mrt);
+    }
+
     // L2 variant reuse: an identical (program, material, resolved-state,
     // vertex-layout) variant built earlier contributes its reusable bind
     // commands (the shared pipeline bind + the per-material descriptor bind).
@@ -569,7 +596,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     if (variant_it != variant_cache_.end() && variant_it->second.payload() != nullptr &&
         variant_it->second.firstKey() == program &&
         variant_it->second.secondKey() == material &&
-        variant_it->second.payload()->state == state &&
+        detail::sameVariantIdentity(variant_it->second.payload()->state, state) &&
         variant_it->second.payload()->layout == layout) {
         ++variant_reuses_;
         auto stateGroup = ::vsg::StateGroup::create();
@@ -577,8 +604,8 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
             stateGroup->stateCommands.push_back(sc);
         }
         stateGroup->prototypeArrayState = variant_it->second.payload()->prototype_array_state;
-        // The template is shared, the drawable's own per-draw bind is not (see below).
-        appendDrawBlockBind(*stateGroup, variant_it->second.payload()->pipeline_layout, draw_slot);
+        // The template is shared; what the DRAWABLE contributes is not (see appendDrawableState).
+        appendDrawableState(*stateGroup, states, variant_it->second.payload()->pipeline_layout, draw_slot);
         return stateGroup;
     }
 
@@ -615,22 +642,12 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     assignVariantBindings(*config, *shaderSet, arrays, extra_channels, material_data, sampling);
     assignSlotDescriptors(*config, *shaderSet, program);
 
-    // Assemble the pipeline from the geometry's effective render state. The
-    // mapped color blend keeps alpha blending enabled on every pipeline (the
-    // per-vertex opacity alpha may drop below 1 at any time without a rebuild);
-    // depth, culling, polygon mode, blend factors and topology come from the
-    // StateNode fold carried by the command.
-    RenderStateObjects states = makeRenderStateObjects(state);
-
-    // MRT: a pipeline recorded into a slot with several colour attachments must
-    // write all of them (mrt > 1), and a G-buffer is written unblended — both
-    // rules live in the two helpers (see colourAttachmentCount /
-    // applyOpaqueBlendForAttachments).
-    const int mrt = colourAttachmentCount(shader_set_);
-    if (mrt > 1) {
-        applyOpaqueBlendForAttachments(states, mrt);
-    }
-    applyRenderStateObjects(*config, states);
+    // The pipeline bakes the COLLAPSED state: depth, culling, front face and topology are delivered per
+    // drawable now (see makePipelineStateObjects), so every drawable of this set shares one pipeline. The
+    // BAKED blend still comes from the resolved state — the mapped color blend keeps alpha blending enabled
+    // (the per-vertex opacity alpha may drop below 1 at any time without a rebuild), and blend factors plus
+    // polygon mode stay pipeline state because they are not core-1.3 dynamic state.
+    applyRenderStateObjects(*config, makePipelineStateObjects(states));
 
     config->init();
 
@@ -642,11 +659,6 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     const auto local_bind = config->bindGraphicsPipeline;
     auto       stateGroup = ::vsg::StateGroup::create();
     config->copyTo(stateGroup, shared_objects_);
-    // The state this variant would otherwise BAKE (see VsgDynamicState.hpp), read from the SAME mapped
-    // objects the configurator was just given — which is what makes emitting it behaviour-neutral. It
-    // belongs to the variant's shared template commands rather than to the per-drawable ones, because the
-    // resolved state is part of the variant's identity (that identity is what the next step drops).
-    stateGroup->stateCommands.push_back(makeDynamicState(states));
     if (config->bindGraphicsPipeline == nullptr) {
         // No pipeline means nothing can be drawn for this variant. It used to
         // be returned as a (useless) state group and recorded as a drawable,
@@ -661,14 +673,16 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
         ++pipeline_variants_;
     }
 
-    // The drawable's per-draw values (VineDrawBlock) live in a pool slot, and the slot's OFFSET
-    // is what the wrapper binds, so set 1 is bound HERE — after the shared template commands
-    // (the pipeline and the set-0 binds) and per drawable. It is the one state command a variant
-    // cannot share: the offset differs per drawable while the descriptor set it selects from is
-    // one per pool chunk.
-    appendDrawBlockBind(*stateGroup, config->layout, draw_slot);
-
+    // The TEMPLATE is what gets cached, so it is cached BEFORE the drawable's own commands are appended:
+    // caching them would make the next drawable of this variant copy them from the template and then append
+    // its own, and the state stack records the FIRST command of that slot — i.e. every drawable would draw
+    // with the state of the drawable that happened to build the template. (That is not hypothetical: this
+    // ordering is what the delivered-state test caught.)
     cacheStateVariant(hash_key, program, material, state, layout, *stateGroup, config->layout);
+
+    // What this DRAWABLE contributes after the shared template: the state it delivers dynamically, and its
+    // per-draw bind (see appendDrawableState).
+    appendDrawableState(*stateGroup, states, config->layout, draw_slot);
 
     return stateGroup;
 }

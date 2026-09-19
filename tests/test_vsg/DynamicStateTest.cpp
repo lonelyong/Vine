@@ -99,21 +99,13 @@ TEST(DynamicStateTest, TheDeclarationNamesExactlyTheStatesTheCommandRecords)
 TEST(DynamicStateTest, EveryContentSetTheBackendBuildsDeclaresTheLayer)
 {
     // The mandatory half of "no session flag": whatever shape a set is built for, it declares the state the
-    // command delivers. Built here for the three shapes the backend asks for — a presenting target, a
-    // depth-only pass and an MRT pass — through the same factory the renderer uses.
-    struct Shape
-    {
-        bool depth_test;
-        bool depth_write;
-        int  color_count;
-    };
-    for (const Shape shape : { Shape{ true, true, 1 }, Shape{ true, false, 1 }, Shape{ false, false, 0 },
-                               Shape{ true, true, 3 } }) {
-        const auto set = vine::vsg::detail::makeContentShaderSet(vine::graphics::forwardProgram(),
-                                                                 VkExtent2D{ 640, 360 }, shape.depth_test,
-                                                                 shape.depth_write, shape.color_count);
-        ASSERT_NE(set, nullptr) << shape.color_count;
-        EXPECT_TRUE(setDeclaresTheLayer(*set)) << shape.color_count;
+    // command delivers. Built here for the three attachment shapes the backend asks for — a single colour
+    // attachment, a depth-only pass and an MRT pass — through the same factory the renderer uses.
+    for (const int color_count : { 1, 0, 3 }) {
+        const auto set =
+            vine::vsg::detail::makeContentShaderSet(vine::graphics::forwardProgram(), VkExtent2D{ 640, 360 }, color_count);
+        ASSERT_NE(set, nullptr) << color_count;
+        EXPECT_TRUE(setDeclaresTheLayer(*set)) << color_count;
     }
 }
 

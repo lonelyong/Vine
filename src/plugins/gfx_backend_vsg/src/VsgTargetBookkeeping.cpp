@@ -142,9 +142,7 @@ void resetTargetAttachments(VsgRenderTargetEntry& t)
     t.depth_sampleable     = false;
     t.depth_borrow_pending_reported.rearm();
     t.graph                = {};
-    t.depth_on_shader_set  = {};
-    t.depth_testonly_shader_set = {};
-    t.depth_off_shader_set = {};
+    t.content_shader_set = {};
     t.width     = 0;
     t.height    = 0;
     t.build_key = {};
@@ -337,9 +335,7 @@ void resetContentShaderSlots(VsgRendererState& state)
         t.content_slots.clear();
         // The per-size sets a target bakes for its own slots follow the program
         // too, so they are forgotten with the slots that used them.
-        t.depth_on_shader_set       = {};
-        t.depth_testonly_shader_set = {};
-        t.depth_off_shader_set      = {};
+        t.content_shader_set = {};
     }
 }
 

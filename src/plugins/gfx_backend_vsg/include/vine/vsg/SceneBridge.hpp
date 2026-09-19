@@ -1187,6 +1187,26 @@ class V_VSG_API SceneBridge {
                              ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout,
                              const VsgDrawBlockPool::Lease& draw_slot);
 
+    /** @brief Appends what a DRAWABLE contributes after the variant's shared template commands.
+     *
+     * Two things, and neither can be shared: the dynamic state this drawable resolves to (two drawables of
+     * one variant differ in it now — see VsgDynamicState.hpp) and its own per-draw bind (the pool offset
+     * differs while the descriptor set the bind names is one per pool chunk). The command itself IS shared,
+     * through the bridge's SharedObjects: two drawables that resolve to the same state get one command
+     * object, and vsg's state stack records a command only when it differs from the last one recorded for
+     * its slot — which is what keeps the layer's cost at "one set of calls per state change" instead of
+     * "per draw" (a shared template is what makes the pipeline bind and the set-0 binds that cheap too).
+     *
+     * @param state_group     Wrapper being assembled.
+     * @param states          The drawable's mapped state (see makeRenderStateObjects()).
+     * @param pipeline_layout The variant's pipeline layout (null or set-less for the sets that declare no
+     *                        per-draw block: nothing is appended for the bind then).
+     * @param draw_slot       The drawable's lease on a slot (an empty lease appends no bind).
+     */
+    void appendDrawableState(::vsg::StateGroup& state_group, const RenderStateObjects& states,
+                             ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout,
+                             const VsgDrawBlockPool::Lease& draw_slot);
+
     /** @brief Rebuilds the undrawn candidate list from this sync's drawings.
      *
      * The list is what releaseAbandonedGeometries walks and (with drawn_) the keys of the geometry

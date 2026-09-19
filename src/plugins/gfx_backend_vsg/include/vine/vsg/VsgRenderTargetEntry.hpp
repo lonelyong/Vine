@@ -603,11 +603,10 @@ struct VsgRenderTargetEntry {
     // borrow would stay refused for the rest of the session (the same
     // address-reuse rule the entry's own `owner` follows — see D34).
     vine::intrusive_ptr<const vine::graphics::RenderTarget> unusable_depth_source;
-    // Per-size shader sets for off-screen slots (window slots share the
-    // renderer's depth_on / depth_test only / depth_off shader sets). Built lazily.
-    ::vsg::ref_ptr<::vsg::ShaderSet> depth_on_shader_set;
-    ::vsg::ref_ptr<::vsg::ShaderSet> depth_testonly_shader_set;
-    ::vsg::ref_ptr<::vsg::ShaderSet> depth_off_shader_set;
+    // The default content program's set for THIS target's size (window slots share the renderer's own,
+    // which is built at window size). One set, not one per depth policy — the policy is delivered per
+    // drawable now (see VsgDynamicState.hpp). Built lazily on the target's first slot.
+    ::vsg::ref_ptr<::vsg::ShaderSet> content_shader_set;
     int width  = 0; // off-screen logical size
     int height = 0;
     // The attachment / pass shape these attachments were built from (see

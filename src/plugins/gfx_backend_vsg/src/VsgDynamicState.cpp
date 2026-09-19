@@ -1,11 +1,27 @@
 #include <vine/vsg/VsgDynamicState.hpp>
 
+#include <vsg/core/compare.h>
 #include <vsg/vk/CommandBuffer.h>
 
 V_VSG_NS_BEGIN
 
 namespace detail
 {
+
+int SetDynamicState::compare(const ::vsg::Object& rhs_object) const
+{
+    int result = StateCommand::compare(rhs_object);
+    if (result != 0) {
+        return result;
+    }
+    const auto& rhs = static_cast<const SetDynamicState&>(rhs_object);
+    if ((result = ::vsg::compare_value(depth_test_enable, rhs.depth_test_enable)) != 0) return result;
+    if ((result = ::vsg::compare_value(depth_write_enable, rhs.depth_write_enable)) != 0) return result;
+    if ((result = ::vsg::compare_value(compare_op, rhs.compare_op)) != 0) return result;
+    if ((result = ::vsg::compare_value(cull_mode, rhs.cull_mode)) != 0) return result;
+    if ((result = ::vsg::compare_value(front_face, rhs.front_face)) != 0) return result;
+    return ::vsg::compare_value(topology, rhs.topology);
+}
 
 void SetDynamicState::record(::vsg::CommandBuffer& commandBuffer) const
 {

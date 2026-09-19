@@ -565,6 +565,22 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program, con
                                const vine::graphics::ResolvedRenderState& state, std::uint64_t layout);
 
 /**
+ * @brief Whether two resolved states are the SAME variant (see hashStateVariant).
+ *
+ * A variant is what a pipeline and its shared commands are built from, so this answers exactly the question
+ * the hash key answers: the two items that are still pipeline state (colour blend, polygon mode) are equal.
+ * Depth, culling, front face and topology are delivered per drawable (see VsgDynamicState.hpp), so states
+ * that differ only in them ARE the same variant — the cache lookup uses this after a hash hit, and a hash
+ * collision between genuinely different variants is rejected here.
+ *
+ * @param lhs One resolved state.
+ * @param rhs The other resolved state.
+ * @return true when both belong to the same variant.
+ */
+[[nodiscard]] bool sameVariantIdentity(const vine::graphics::ResolvedRenderState& lhs,
+                                       const vine::graphics::ResolvedRenderState& rhs) noexcept;
+
+/**
  * @brief How many colour attachments the slot's shader set declares.
  *
  * A pipeline recorded into a target must carry one colour-blend entry per colour

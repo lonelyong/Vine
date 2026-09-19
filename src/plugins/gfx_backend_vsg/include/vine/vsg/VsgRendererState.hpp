@@ -385,9 +385,10 @@ struct VsgRendererState {
     // is what makes "you named no program" visible without becoming per-slot noise. Session state,
     // so a re-init tells the new session's host as well.
     ReportOnce                          no_default_default_content_program_reported;
-    ::vsg::ref_ptr<::vsg::ShaderSet>    depth_on_shader_set;
-    ::vsg::ref_ptr<::vsg::ShaderSet>    depth_testonly_shader_set;
-    ::vsg::ref_ptr<::vsg::ShaderSet>    depth_off_shader_set;
+    // The default content program's set for the window, at window size. ONE set, not one per depth policy:
+    // the depth states are delivered per drawable (see VsgDynamicState.hpp), so a policy no longer needs a
+    // set of its own. Built in initialize() / setDefaultContentProgram().
+    ::vsg::ref_ptr<::vsg::ShaderSet>    content_shader_set;
     bool                                initialized = false;
     // The device report is logged once, from the first submitted frame: the
     // window's Vulkan device / swapchain only materialises when it is first

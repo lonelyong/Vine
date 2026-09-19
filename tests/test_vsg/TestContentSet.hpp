@@ -30,5 +30,5 @@ inline ::vsg::ref_ptr<::vsg::ShaderSet> testContentSet()
     // would have glslang recompile the same GLSL once per test. The SET is rebuilt per call: it is a
     // cheap interface declaration, and no test shares one.
     static const vine::intrusive_ptr<const vine::graphics::ShaderProgram> program = vine::graphics::forwardProgram();
-    return vine::vsg::detail::makeContentShaderSet(program, VkExtent2D{ 640, 360 }, true, true, 1);
+    return vine::vsg::detail::makeContentShaderSet(program, VkExtent2D{ 640, 360 }, 1);
 }

@@ -93,7 +93,7 @@ const ::vsg::DescriptorBinding* findDescriptor(const ::vsg::ShaderSet& shader_se
  */
 ::vsg::ref_ptr<::vsg::ShaderSet> makeForwardSet()
 {
-    return buildVineShaderSet(vine::graphics::forwardProgram(), VkExtent2D{ 640, 360 }, true, true, 1);
+    return buildVineShaderSet(vine::graphics::forwardProgram(), VkExtent2D{ 640, 360 }, 1);
 }
 
 /**
@@ -225,13 +225,13 @@ TEST(ForwardShaderSetTest, OnlyProgramsWithUsableStagesGetASet)
 {
     // A program the backend cannot compile into a set must be refused rather than shaded as phong:
     // a silently wrong shading model is worse than nothing drawn.
-    EXPECT_NE(buildVineShaderSet(vine::graphics::forwardProgram(), VkExtent2D{ 640, 360 }, true, true, 1), nullptr);
-    EXPECT_NE(buildVineShaderSet(vine::graphics::flatForwardProgram(), VkExtent2D{ 640, 360 }, true, true, 1), nullptr);
-    EXPECT_EQ(buildVineShaderSet(nullptr, VkExtent2D{ 640, 360 }, true, true, 1), nullptr);
+    EXPECT_NE(buildVineShaderSet(vine::graphics::forwardProgram(), VkExtent2D{ 640, 360 }, 1), nullptr);
+    EXPECT_NE(buildVineShaderSet(vine::graphics::flatForwardProgram(), VkExtent2D{ 640, 360 }, 1), nullptr);
+    EXPECT_EQ(buildVineShaderSet(nullptr, VkExtent2D{ 640, 360 }, 1), nullptr);
     // A program that exists but carries no stages (nothing to compile) is declined the same way:
     // the caller reports it and nothing is drawn, rather than a shading the host never named.
     auto stageless = vine::intrusive_ptr<vine::graphics::ShaderProgram>(new vine::graphics::ShaderProgram());
-    EXPECT_EQ(buildVineShaderSet(stageless, VkExtent2D{ 640, 360 }, true, true, 1), nullptr);
+    EXPECT_EQ(buildVineShaderSet(stageless, VkExtent2D{ 640, 360 }, 1), nullptr);
     EXPECT_NE(makeForwardSet(), nullptr);
 }
 
@@ -371,9 +371,10 @@ TEST(ForwardShaderSetTest, InheritsTheScenePipelineStates)
     EXPECT_EQ(static_cast<const ::vsg::DepthStencilState*>(depth->get())->depthWriteEnable, VK_TRUE);
 
     // The same parity check, against the engine's OTHER depth variant of the same
-    // program: the two variants must carry the same state list (their difference is
-    // the depth policy alone).
-    const auto sibling = makeContentShaderSet(vine::graphics::forwardProgram(), VkExtent2D{ 640, 360 }, true, false, 1);
+    // program: the same program at the same size is the SAME set, whatever depth policy a pass asked for —
+    // the policy is delivered per drawable (see VsgDynamicState.hpp), so a depth-only sibling would have to
+    // be content-identical. Built by asking for it the same way the renderer does.
+    const auto sibling = makeContentShaderSet(vine::graphics::forwardProgram(), VkExtent2D{ 640, 360 }, 1);
     ASSERT_NE(sibling, nullptr);
     EXPECT_EQ(states.size(), sibling->defaultGraphicsPipelineStates.size());
     for (std::size_t i = 0; i < states.size(); ++i) {
@@ -520,19 +521,19 @@ TEST(ForwardShaderSetTest, AProgramWithNoUsableStagesIsDeclinedNotSubstituted)
     // than an empty frame whose reason it can read.
     const VkExtent2D extent{ 640, 360 };
     auto stageless = vine::intrusive_ptr<vine::graphics::ShaderProgram>(new vine::graphics::ShaderProgram());
-    for (const bool depth_test : { true, false }) {
-        for (const bool depth_write : { true, false }) {
+    {
+        {
             for (const int color_count : { 0, 1, 3 }) {
                 for (const auto& program : { vine::intrusive_ptr<const vine::graphics::ShaderProgram>(
                                                   vine::graphics::forwardProgram()),
                                               vine::intrusive_ptr<const vine::graphics::ShaderProgram>(
                                                   vine::graphics::flatForwardProgram()) }) {
-                    EXPECT_NE(makeContentShaderSet(program, extent, depth_test, depth_write, color_count), nullptr)
-                        << "depth_test " << depth_test << " color_count " << color_count;
+                    EXPECT_NE(makeContentShaderSet(program, extent, color_count), nullptr)
+                        << "color_count " << color_count;
                 }
                 for (const auto& unusable : { vine::intrusive_ptr<const vine::graphics::ShaderProgram>(nullptr),
                                               vine::intrusive_ptr<const vine::graphics::ShaderProgram>(stageless) }) {
-                    EXPECT_EQ(makeContentShaderSet(unusable, extent, depth_test, depth_write, color_count), nullptr)
+                    EXPECT_EQ(makeContentShaderSet(unusable, extent, color_count), nullptr)
                         << "a program the backend cannot compile into a set must be declined (the caller reports "
                         << "it and draws nothing)";
                 }
@@ -547,7 +548,7 @@ TEST(ForwardShaderSetTest, EveryContentSetIsTheEnginesOwn)
     // layout declares the vine_lights binding (vsg's built-in sets are not used at all — a set of
     // theirs carries their declarations, attribute locations and light source, a second shading ABI
     // to keep in step). There is no substitute for a program that cannot be used.
-    const auto set = makeContentShaderSet(vine::graphics::forwardProgram(), VkExtent2D{ 640, 360 }, true, true, 1);
+    const auto set = makeContentShaderSet(vine::graphics::forwardProgram(), VkExtent2D{ 640, 360 }, 1);
     ASSERT_NE(set, nullptr);
     // getDescriptorBinding reports "not declared" through its bool conversion.
     EXPECT_TRUE(static_cast<bool>(set->getDescriptorBinding("vine_lights")));
@@ -557,7 +558,7 @@ TEST(ForwardShaderSetTest, EveryContentSetIsTheEnginesOwn)
     // unexplained picture on screen. That a slot actually reports and skips is pinned in
     // SceneBridgeCacheOwnershipTest.
     auto stageless = vine::intrusive_ptr<vine::graphics::ShaderProgram>(new vine::graphics::ShaderProgram());
-    EXPECT_EQ(makeContentShaderSet(stageless, VkExtent2D{ 640, 360 }, true, true, 1), nullptr)
+    EXPECT_EQ(makeContentShaderSet(stageless, VkExtent2D{ 640, 360 }, 1), nullptr)
         << "no usable stages means no set, not somebody else's";
 }
 
@@ -685,7 +686,7 @@ TEST(ForwardShaderSetTest, EveryProgramTheEngineBuildsReadsItsOwnLightBlock)
     // forward programs, checked the way the slot checks it — the declared binding.
     for (const auto& program :
          { vine::graphics::forwardProgram(), vine::graphics::flatForwardProgram() }) {
-        const auto set = makeContentShaderSet(program, VkExtent2D{ 640, 360 }, true, true, 1);
+        const auto set = makeContentShaderSet(program, VkExtent2D{ 640, 360 }, 1);
         ASSERT_NE(set, nullptr) << "the engine's own programs get an engine set";
         const auto lights = set->getDescriptorBinding("vine_lights");
         ASSERT_TRUE(static_cast<bool>(lights)) << "without the block the slot's lights reach nothing";
@@ -998,13 +999,13 @@ TEST(ForwardShaderSetTest, TheCompiledStageTableIsBoundedAndStillUsableAfterATri
     // bound costs a recompile, never the answer).
     const VkExtent2D extent{ 640, 360 };
     const auto       first  = makeMinimalProgram();
-    ASSERT_NE(makeContentShaderSet(first, extent, true, true, 1), nullptr);
+    ASSERT_NE(makeContentShaderSet(first, extent, 1), nullptr);
 
     std::vector<vine::intrusive_ptr<const vine::graphics::ShaderProgram>> churn;
     churn.reserve(kMaxCompiledStageEntries + 2u);
     for (std::size_t i = 0; i < kMaxCompiledStageEntries + 2u; ++i) {
         churn.push_back(makeMinimalProgram());
-        ASSERT_NE(makeContentShaderSet(churn.back(), extent, true, true, 1), nullptr) << "program " << i;
+        ASSERT_NE(makeContentShaderSet(churn.back(), extent, 1), nullptr) << "program " << i;
     }
 
     EXPECT_LE(compiledStageCacheCount(), kMaxCompiledStageEntries)
@@ -1015,7 +1016,7 @@ TEST(ForwardShaderSetTest, TheCompiledStageTableIsBoundedAndStillUsableAfterATri
 
     // The trimmed program is asked for again: a trimmed entry must recompile rather than be answered
     // with a stale or empty stage list.
-    EXPECT_NE(makeContentShaderSet(first, extent, true, true, 1), nullptr)
+    EXPECT_NE(makeContentShaderSet(first, extent, 1), nullptr)
         << "a trimmed program must still build a set";
 }
 

@@ -14,7 +14,13 @@
 #include <vsg/core/Array.h>
 #include <vsg/io/Options.h>
 #include <vsg/nodes/Group.h>
+#include <set>
+
+#include <vsg/nodes/StateGroup.h>
 #include <vsg/utils/ShaderSet.h>
+
+#include <vine/vsg/VsgDynamicState.hpp>
+
 #include "TestContentSet.hpp"
 
 using namespace vine::graphics;
@@ -48,6 +54,38 @@ GeometryPtr makeTriangle(int index)
     normals.emplace_back(0.0f, 0.0f, 1.0f);
     geom->setNormals(packAttribute(normals));
     return geom;
+}
+
+/**
+ * @brief Finds the first dynamic-state command under a retained subtree.
+ *
+ * What the layer under test actually delivers: the command a drawable's wrapper carries (see
+ * VsgDynamicState.hpp). Its VALUES are the state that used to be baked into a pipeline, which is why a test
+ * can read them here.
+ *
+ * @param node Root of the subtree to walk.
+ * @return The command, or null when the subtree carries none.
+ */
+vine::vsg::detail::SetDynamicState* findDynamicState(vsg::Node* node)
+{
+    if (node == nullptr) {
+        return nullptr;
+    }
+    if (auto state_group = node->cast<vsg::StateGroup>()) {
+        for (const auto& command : state_group->stateCommands) {
+            if (auto* hit = dynamic_cast<vine::vsg::detail::SetDynamicState*>(command.get())) {
+                return hit;
+            }
+        }
+    }
+    if (auto group = node->cast<vsg::Group>()) {
+        for (const auto& child : group->children) {
+            if (auto* hit = findDynamicState(child.get())) {
+                return hit;
+            }
+        }
+    }
+    return nullptr;
 }
 
 /**
@@ -270,12 +308,18 @@ TEST(SceneBridgePipelineSharingTest, ManyMaterialsKeepOnePipeline)
  * pipeline variants and each adds its own pipeline — sharing only collapses
  * geometry that truly resolves to the same state.
  */
-TEST(SceneBridgePipelineSharingTest, StateVariantsAddPipelines)
+TEST(SceneBridgePipelineSharingTest, DeliveredStateSharesOnePipelineAndTravelsPerDrawable)
 {
+    // A hundred geometries, half of them asking for a different topology. Topology is DELIVERED per drawable
+    // (see VsgDynamicState.hpp), so all hundred resolve to ONE variant and ONE pipeline — where this test used
+    // to pin "two distinct variants, because the two topologies were baked". What each drawable contributes is
+    // its own command, and the command is shared by CONTENT: one object per distinct state, so vsg's state
+    // stack skips re-recording it while consecutive drawables agree (that is what keeps a scene of one state
+    // as cheap as it was before the layer existed).
     vine::vsg::SceneBridge bridge;
     bridge.setShaderSet(testContentSet());
-    auto  root   = vsg::Group::create();
-    auto  material = MaterialPtr(new Material());
+    auto root     = vsg::Group::create();
+    auto material = MaterialPtr(new Material());
 
     constexpr int kCount = 100;
     std::vector<RenderCommand> commands;
@@ -292,10 +336,25 @@ TEST(SceneBridgePipelineSharingTest, StateVariantsAddPipelines)
     bridge.syncRenderCommands(commands, root.get(), &created);
 
     ASSERT_EQ(root->children.size(), static_cast<std::size_t>(kCount));
-    // Two distinct variants: default triangles + points. Each variant is built
-    // once; the remaining geometry reuses its template.
-    EXPECT_EQ(bridge.pipelineVariantCount(), 2u);
-    EXPECT_EQ(bridge.variantReuseCount(), static_cast<std::size_t>(kCount - 2));
+    EXPECT_EQ(bridge.pipelineVariantCount(), 1u) << "one state dimension less must mean one pipeline";
+    EXPECT_EQ(bridge.variantReuseCount(), static_cast<std::size_t>(kCount - 1));
+
+    std::size_t                points = 0;
+    std::size_t                triangles = 0;
+    std::set<const void*>      distinct_commands;
+    for (const auto& child : root->children) {
+        auto* state = findDynamicState(child.get());
+        ASSERT_NE(state, nullptr) << "every drawable carries the state it was resolved with";
+        if (state->topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST) {
+            ++points;
+        } else if (state->topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST) {
+            ++triangles;
+        }
+        distinct_commands.insert(state);
+    }
+    EXPECT_EQ(points, static_cast<std::size_t>(kCount / 2));
+    EXPECT_EQ(triangles, static_cast<std::size_t>(kCount / 2));
+    EXPECT_EQ(distinct_commands.size(), 2u) << "equal states must share one command object, not one per geometry";
 }
 
 /**
@@ -697,40 +756,55 @@ TEST(SceneBridgePipelineSharingTest, StateEditRebuildsStateReusesData)
     std::vector<vsg::ref_ptr<vsg::Node>> created;
     bridge.syncRenderCommands(commands, root.get(), &created);
     ASSERT_EQ(created.size(), 1u);
-    const auto first_root  = created[0];
-    auto*      first_bind  = findBindVertexBuffers(first_root.get());
+    const auto first_root = created[0];
+    auto*      first_bind = findBindVertexBuffers(first_root.get());
     ASSERT_NE(first_bind, nullptr);
     const auto first_vertex_data = first_bind->arrays[0]->data;
     ASSERT_EQ(bridge.pipelineVariantCount(), 1u);
+    ASSERT_NE(findDynamicState(first_root.get()), nullptr);
+    EXPECT_EQ(findDynamicState(first_root.get())->depth_test_enable, VK_TRUE);
 
     // The depth item is marked as authored here, exactly as the scene
     // collector does for a command under a StateNode that sets depth: an
     // authored depth item overrides the pass-level depth policy
     // (SceneBridge::setContentDepthMode), while an un-authored one is filled
     // from it.
-    commands[0].depthExplicit          = true;
-    // Disable the depth test: a state edit, not a material/data edit.
-    commands[0].renderState.depth.test = false;
+    commands[0].depthExplicit           = true;
+    // Disable depth entirely: a state edit, not a material/data edit.
+    commands[0].renderState.depth.test  = false;
+    commands[0].renderState.depth.write = false;
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
     ASSERT_EQ(created.size(), 1u);
-    EXPECT_EQ(created[0].get(), first_root.get())
-        << "state edit must keep the retained transform";
+    EXPECT_EQ(created[0].get(), first_root.get()) << "state edit must keep the retained transform";
     auto* second_bind = findBindVertexBuffers(created[0].get());
     ASSERT_NE(second_bind, nullptr);
-    EXPECT_EQ(second_bind->arrays[0]->data, first_vertex_data)
-        << "state edit must not re-materialise vertex data";
-    EXPECT_EQ(bridge.pipelineVariantCount(), 2u)
-        << "new resolved state must add its own pipeline variant";
+    EXPECT_EQ(second_bind->arrays[0]->data, first_vertex_data) << "state edit must not re-materialise vertex data";
+    // The wrapper is rebuilt (the values live in it), but the PIPELINE is not: depth is delivered per
+    // drawable now, so this edit costs a state group instead of a pipeline.
+    EXPECT_EQ(bridge.pipelineVariantCount(), 1u) << "a delivered state edit must not add a pipeline";
+    auto* edited = findDynamicState(created[0].get());
+    ASSERT_NE(edited, nullptr);
+    EXPECT_EQ(edited->depth_test_enable, VK_FALSE) << "the edit must reach the command";
+    EXPECT_EQ(edited->depth_write_enable, VK_FALSE);
 
-    // Re-enable depth: the original variant template is still cached, so this
-    // is a template REUSE, not a third pipeline.
+    // Re-enable depth: the original variant template is still cached, and the state is a value of the
+    // drawable, so this is a rebuild of the wrapper with the same single pipeline.
     commands[0].renderState.depth.test = true;
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
     ASSERT_EQ(created.size(), 1u);
-    EXPECT_EQ(bridge.pipelineVariantCount(), 2u);
-    EXPECT_GT(bridge.variantReuseCount(), 0u);
+    EXPECT_EQ(bridge.pipelineVariantCount(), 1u);
+    ASSERT_NE(findDynamicState(created[0].get()), nullptr);
+    EXPECT_EQ(findDynamicState(created[0].get())->depth_test_enable, VK_TRUE);
+
+    // A BAKED item is the boundary of the layer and must still add a pipeline: the polygon mode is not
+    // core-1.3 dynamic state (see VsgDynamicState.hpp), so a wireframe edit is a new variant.
+    commands[0].renderState.polygonMode = PolygonMode::Line;
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+    EXPECT_EQ(bridge.pipelineVariantCount(), 2u) << "a baked state edit still needs its own pipeline";
 }
 
 /**
@@ -763,42 +837,66 @@ TEST(SceneBridgePipelineSharingTest, ContentDepthModeAppliesAndRebuildsState)
     ASSERT_NE(first_bind, nullptr);
     const auto first_vertex_data = first_bind->arrays[0]->data;
     ASSERT_EQ(bridge.pipelineVariantCount(), 1u);
+    auto* policy = findDynamicState(first_root.get());
+    ASSERT_NE(policy, nullptr);
+    EXPECT_EQ(policy->depth_test_enable, VK_TRUE);
+    EXPECT_EQ(policy->depth_write_enable, VK_TRUE);
 
-    // TestOnly (translucent: test on, write off) differs from the default
-    // TestAndWrite, so it must add a variant - and only a state rebuild.
+    // TestOnly (translucent: test on, write off) differs from the default TestAndWrite. The policy fills the
+    // depth item of every un-authored command, so the wrappers are rebuilt — but NO pipeline is added: the
+    // depth policy is a delivered value now, which is what makes a policy change cheap for a scene.
     bridge.setContentDepthMode(vine::graphics::DepthMode::TestOnly);
     bridge.invalidateState();
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
     ASSERT_EQ(created.size(), 1u);
-    EXPECT_EQ(created[0].get(), first_root.get())
-        << "a depth-policy change must keep the retained transform";
+    EXPECT_EQ(created[0].get(), first_root.get()) << "a depth-policy change must keep the retained transform";
     auto* second_bind = findBindVertexBuffers(created[0].get());
     ASSERT_NE(second_bind, nullptr);
     EXPECT_EQ(second_bind->arrays[0]->data, first_vertex_data)
         << "a depth-policy change must not re-materialise vertex data";
-    EXPECT_EQ(bridge.pipelineVariantCount(), 2u);
+    EXPECT_EQ(bridge.pipelineVariantCount(), 1u) << "the policy must not add a pipeline any more";
+    auto* test_only = findDynamicState(created[0].get());
+    ASSERT_NE(test_only, nullptr);
+    EXPECT_EQ(test_only->depth_test_enable, VK_TRUE);
+    EXPECT_EQ(test_only->depth_write_enable, VK_FALSE) << "TestOnly means test, do not write";
 
-    // Disabled (HUD: no test, no write) is a third distinct state.
+    // Disabled (HUD: no test, no write) is a third policy: still the same single pipeline.
     bridge.setContentDepthMode(vine::graphics::DepthMode::Disabled);
     bridge.invalidateState();
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
     ASSERT_EQ(created.size(), 1u);
-    EXPECT_EQ(bridge.pipelineVariantCount(), 3u);
+    EXPECT_EQ(bridge.pipelineVariantCount(), 1u);
+    auto* disabled = findDynamicState(created[0].get());
+    ASSERT_NE(disabled, nullptr);
+    EXPECT_EQ(disabled->depth_test_enable, VK_FALSE);
+    EXPECT_EQ(disabled->depth_write_enable, VK_FALSE);
 
     // An authored depth item wins over the pass policy; authoring exactly what
     // the current policy would derive reuses the same variant (the policy
     // folds into the same state space, not a parallel one).
-    commands[0].depthExplicit          = true;
-    commands[0].renderState.depth.test = true;
+    commands[0].depthExplicit           = true;
+    commands[0].renderState.depth.test  = true;
     commands[0].renderState.depth.write = false; // == the previous policy
     bridge.invalidateState();
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
     ASSERT_EQ(created.size(), 1u);
-    EXPECT_EQ(bridge.pipelineVariantCount(), 3u)
-        << "an authored state equal to the derived one must reuse its variant";
+    EXPECT_EQ(bridge.pipelineVariantCount(), 1u);
+
+    // An authored depth item that the policy would NOT have derived is a different command, and still not a
+    // different pipeline.
+    bridge.setContentDepthMode(vine::graphics::DepthMode::TestAndWrite);
+    bridge.invalidateState();
+    created.clear();
+    bridge.syncRenderCommands(commands, root.get(), &created);
+    ASSERT_EQ(created.size(), 1u);
+    EXPECT_EQ(bridge.pipelineVariantCount(), 1u);
+    auto* authored = findDynamicState(created[0].get());
+    ASSERT_NE(authored, nullptr);
+    EXPECT_EQ(authored->depth_test_enable, VK_TRUE);
+    EXPECT_EQ(authored->depth_write_enable, VK_FALSE) << "the authored item must win over the policy";
 }
 
 /**

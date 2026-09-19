@@ -170,24 +170,20 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     // incompatible render pass. Measured: sharing the table breaks the
     // policy-churn phase's depth invariant (scripts/vsg_selftest_evidence.sh).
     if (target == nullptr) {
-        // Window slots share the renderer's (window-sized) shader sets. Which of the three a policy
-        // means is one rule (see detail::shaderSetFor), not a ternary per target kind.
-        content.bridge.setShaderSet(detail::shaderSetFor(content.applied.depth_mode, state.depth_on_shader_set,
-                                                         state.depth_testonly_shader_set, state.depth_off_shader_set));
+        // Window slots share the renderer's (window-sized) shader set. Which depth policy the pass asked
+        // for is not a property of the set any more: the depth state is delivered per drawable (see
+        // VsgDynamicState.hpp), and the policy reaches it through the command's resolved state.
+        content.bridge.setShaderSet(state.content_shader_set);
     }
     else {
-        // Off-screen slots get a per-target shader set baked at the target's
-        // size (created lazily).
-        auto& set_ref = detail::shaderSetFor(content.applied.depth_mode, t.depth_on_shader_set,
-                                             t.depth_testonly_shader_set, t.depth_off_shader_set);
-        if (set_ref == nullptr) {
-            const detail::DepthTestWrite depth = detail::depthTestWrite(content.applied.depth_mode);
-            set_ref = makeContentShaderSet(persistent.default_content_program,
-                                           VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) },
-                                           depth.test, depth.write,
-                                           target->colorCount());
+        // Off-screen slots get a shader set built at the target's size, created lazily (the pipeline bakes
+        // the target's colour attachment count, and the viewport it carries is the target's size).
+        if (t.content_shader_set == nullptr) {
+            t.content_shader_set = makeContentShaderSet(
+                persistent.default_content_program,
+                VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) }, target->colorCount());
         }
-        content.bridge.setShaderSet(set_ref);
+        content.bridge.setShaderSet(t.content_shader_set);
     }
     // A session with NO default content program has no set to build a slot with: the slot's bridge
     // reports it
