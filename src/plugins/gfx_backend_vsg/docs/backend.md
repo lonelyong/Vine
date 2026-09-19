@@ -44,6 +44,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgPipelineFactory.cpp` | 状态对象与变体决策：`makeRenderStateObjects`、`planPassVariant` / `passVariantIsStale`（纯函数）、清屏附件数与 opaque blend 规则 |
 | `VsgDynamicState.hpp` / `VsgDynamicState.cpp` | **逐 drawable 的动态状态命令** `detail::SetDynamicState`（StateNode 的 depth / cull / frontFace / topology / polygonMode / blend 全部走它，没有开关）+ `makeDynamicStateDeclaration()`；`compare()` 覆盖全部 9 项与每附件 blend 项，所以共享池按值去重不会把第一条命令的值发出去 |
 | `VsgVulkanEntryPoints.hpp` / `VsgVulkanEntryPoints.cpp` | `detail::DynamicStateEntryPoints`（三个 loader **不导出**的扩展命令指针）+ `fetchDynamicStateEntryPoints(VkDevice, VkInstance)`；后者是**全插件唯一包含 `volk.h` 的 TU**（见 §5.6） |
+| `VsgGpuProfile.hpp` / `VsgGpuProfile.cpp` | **设备侧度量**：`VsgGpuProfile`（逐 pass GPU 毫秒）+ `detail::readGpuProfile` / `describeGraph`；由 `VINE_VSG_PROFILE` 开关，读上游 `vsg::Profiler` 的日志（见 §5.7） |
 | `SceneBridge.cpp/.hpp` | **Vine 场景 → vsg 节点的保留缓存**：逐 drawable 的脏检查、重建、停放；每个桥自持一个 `vsg::SharedObjects`（`clearCache()` 清它） |
 | `SceneBridgeGeometry.cpp` | 几何物化：属性通道 → 真 vsg 数组（**别名模型内存**）、索引、诊断 |
 | `SceneBridgePipeline.cpp` | 状态物化：状态变体（管线）、描述符绑定、材质值、纹理 |
@@ -679,6 +680,24 @@ vendored：header v363、上游 `54fc0d7a`、MIT，两个文件 + 自己的 LICE
 **判据**：30 帧证据与改动前**逐字节相同**（只差已知的 `ring released` 漂移计数）、0 FAIL；`test_vsg` 321、
 `test_graphics` 275；syncval 0 SYNC-HAZARD / 0 VUID / 0 FAIL；两次变异证明"volk 取到的指针"确实是被调的那一个
 （`set_polygon_mode` 强制 `VK_POLYGON_MODE_LINE` ⇒ 45 条 FAIL；`blendEnable` 强制关 ⇒ 3 条 FAIL）。
+
+### 5.7 GPU 侧的度量：逐 pass 时间（R6）
+
+`VsgBuildProfile` 量的是**我们**花的时间（attach / compile / record / present），答不出"**设备**拿这些活干了多久、花在哪个 pass"。这一半现在有了，**开关是环境变量**（会话建立时读，和别的 hatch 一样）：
+
+| 变量 | 作用 |
+| --- | --- |
+| `VINE_VSG_PROFILE=1` | 给会话装一个上游 `vsg::Profiler`，并把每个 pass 的 render graph 包进**具名** `vsg::InstrumentationNode` |
+| `VINE_VSG_PROFILE_CPU=<n>` | Profiler 的 CPU 级别（默认 **0**：CPU 侧我们自己的 profile 更具体） |
+| `VINE_VSG_PROFILE_GPU=<n>` | Profiler 的 GPU 级别（默认 **1**＝逐 pass。**≥2 会给每个被录制的节点写 timestamp**，而 Profiler 的池只有 1024 个查询、超了**静默丢弃** ⇒ 别当默认用） |
+
+- **为什么需要那层"具名包装"**：逐 pass 的 GPU 区间上游**本来就在取**（`RenderGraph::record` 里的 level-1 钩子，而本后端"一个 pass 就是一个 RenderGraph"），但它传的 `object` 是 **nullptr**、名字字面量是 `"RenderGraph"` ⇒ 那条区间**没有身份**，读回来也不知道属于谁。包装节点把**图自己**当 object 传下去，于是日志条目能与会话的目标表对上；名字（`<pass>@<target>`）只给人看 vsg 自己的报告，**身份靠指针匹配**。
+- **归属只信活着的图**：日志里存的是**裸指针**（指进可能已被销毁的节点），所以读取时**只拿它与当前会话的目标表比对指针，绝不解引用**：图已经被换掉的条目直接跳过（那个 pass 已经不在会话里了）。这就是"释放掉的目标会从下一帧的样本里消失"能成立的原因。
+- **读不等待**：Profiler 回读用 `VK_QUERY_RESULT_64_BIT`、**不带** `VK_QUERY_RESULT_WAIT_BIT`，某帧的查询没就绪就下一帧再读 ⇒ 样本描述的是**最新一个已就绪的帧**，因此永远落后几帧（`VsgGpuProfile::age_frames` 说差多远；**0 就说明在读之前等了设备**，本后端不允许）。
+- **量的是哪一段**：一个 render pass 从 begin 到 end（含它的附件 load/store 与其中的 draw），不含提交；窗口图**也是**一个样本（窗口的每个 pass 是那个共享图的 view ⇒ 没有单个 pass 可点名，它量的是整个呈现路径）；`frame_gpu_ms` 是命令缓冲自身的区间。
+- **值出口**：`VsgRenderer::gpuProfile()`（内部访问器，像 `retentionStats()`；不给 SDK 加接口）。关着的时候**零代价**：没有包装节点、没有查询池、没有回读。
+
+**判据（自检相位 `gpu profile`，它自己开会话）**：①同一帧里 1 个全屏 quad 与 1024 个同尺寸全屏 quad（深度关，**否则早深度剔除会让 64 次画只花一次的价钱**）⇒ 重的那个 GPU 时间**更大**（实测 ≈×4，轻的 ≈2.2 ms、重的 ≈8.6 ms；**64 次时两者在噪声里（×0.8）**，因为软件设备上一个 render pass 自身就有 ≈2 ms 的固定开销 ⇒ 相位用一整个数量级的差距）；②样本点名的正是公告过的 pass 与 target；③释放掉的目标从下一帧的样本里消失、活着的还在；④读它 **不增加设备等待**，且样本**落后于会话**（`age_frames ≥ 1`）；⑤**对照**：不设 `VINE_VSG_PROFILE` 的会话 `enabled == false`、样本为空。数字本身打成 `[gpu-profile]` **trace 行**（不是 `[selftest]` 证据行）：证据基线必须保持逐字节可比，把测量值烧进基线等于又添一条永久漂移。
 
 ## 6. 诊断与验证
 

@@ -45,6 +45,7 @@
 #include <vine/vsg/CameraBridge.hpp>
 #include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgDiagnostics.hpp>
+#include <vine/vsg/VsgGpuProfile.hpp>
 #include <vine/vsg/VsgMaterialManager.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgRendererState.hpp>
@@ -461,6 +462,23 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * @return The session's retention counters (see VsgRetentionStats for each field's meaning).
      */
     [[nodiscard]] VsgRetentionStats retentionStats() const noexcept;
+
+    /** @brief Gets the session's GPU profile: what the device spent per pass (see VsgGpuProfile).
+     *
+     * Empty unless the session was started with VINE_VSG_PROFILE: that switch is what pays for the
+     * measurement (a named wrapper around every pass' render graph plus the profiler's timestamp queries),
+     * and a session that did not ask for it records exactly what it recorded before. What it answers is the
+     * question the CPU-side profile cannot -- whether a frame's cost is in the work the device was given
+     * (and in WHICH pass), or in the backend's own building of it (see VsgBuildProfile).
+     *
+     * The samples describe the newest frame whose timestamps have been read back, which is a few frames
+     * behind the session: reading them never waits for the device, and VsgGpuProfile::age_frames says how
+     * far behind. Call it as often as the host likes -- it reads the profiler's log and allocates only the
+     * value it returns.
+     *
+     * @return The per-pass GPU times of the newest measured frame (see VsgGpuProfile for each field).
+     */
+    [[nodiscard]] VsgGpuProfile gpuProfile() const;
 
   private:
 

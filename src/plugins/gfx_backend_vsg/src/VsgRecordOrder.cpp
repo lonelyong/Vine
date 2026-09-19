@@ -6,15 +6,52 @@
 
 #include <vsg/app/RenderGraph.h>
 #include <vsg/core/ref_ptr.h>
+#include <vsg/nodes/InstrumentationNode.h>
 
 #include <vine/graphics/RenderTarget.hpp>
 
 #include <vine/vsg/VsgBackendUtility.hpp>
+#include <vine/vsg/VsgGpuProfile.hpp>
 
 V_VSG_NS_BEGIN
 
 namespace detail
 {
+
+namespace
+{
+
+/**
+ * @brief One pass' graph as the command graph should record it.
+ *
+ * A session that measures the GPU (VINE_VSG_PROFILE, see VsgGpuProfile.hpp) records every pass through a
+ * named `vsg::InstrumentationNode`: the profiler's timestamp interval for that graph then carries the GRAPH
+ * as its object, which is what lets a measurement be attributed to the pass behind it -- upstream's own
+ * per-graph interval passes no object at all, so its entries cannot be attributed to anything. The name is
+ * only for a human reading vsg's report; the reader matches on the graph.
+ *
+ * @param state Session state (its profiler decides whether a wrapper is needed).
+ * @param target Target the graph renders into (nullptr = the window target).
+ * @param graph  The pass' render graph.
+ * @return The child to record; the graph itself when the session is not measuring.
+ */
+::vsg::ref_ptr<::vsg::Node> recordedChild(const VsgRendererState& state, vine::graphics::RenderTarget* target,
+                                         const ::vsg::ref_ptr<::vsg::RenderGraph>& graph)
+{
+    if (state.profiler == nullptr || graph == nullptr) {
+        return graph;
+    }
+    std::string name = "pass";
+    if (const auto found = state.targets.find(target); found != state.targets.end()) {
+        const VsgGpuPassSample sample = describeGraph(target, found->second, graph.get());
+        name                          = sample.pass + "@" + sample.target;
+    }
+    auto wrapper = ::vsg::InstrumentationNode::create(graph);
+    wrapper->setName(name);
+    return wrapper;
+}
+
+} // namespace
 
 void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan)
 {
@@ -67,11 +104,12 @@ void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan)
         // the ones created since the last reconcile.
         std::vector<::vsg::ref_ptr<::vsg::RenderGraph>> graphs;
         for (const auto& child : children) {
-            if (child == plan.window_graph) {
+            const auto* recorded = detail::underlyingGraph(child.get());
+            if (recorded == nullptr || recorded == plan.window_graph.get()) {
                 continue;
             }
             for (const auto& pass : entry.second.passes) {
-                if (pass.second.graph == child && pass_records(entry.second, pass.first, pass.second)) {
+                if (pass.second.graph.get() == recorded && pass_records(entry.second, pass.first, pass.second)) {
                     graphs.push_back(pass.second.graph);
                     break;
                 }
@@ -95,11 +133,16 @@ void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan)
     // The state.targets recorded RIGHT NOW, in child order: the stable tie-break seed.
     std::set<vine::graphics::RenderTarget*> seen;
     for (const auto& child : children) {
-        if (child == plan.window_graph) {
+        const auto* recorded = detail::underlyingGraph(child.get());
+        if (recorded == nullptr || recorded == plan.window_graph.get()) {
             continue;
         }
         for (const auto& entry : plan.graphs_of) {
-            if (std::find(entry.second.begin(), entry.second.end(), child) == entry.second.end()) {
+            const bool holds = std::any_of(entry.second.begin(), entry.second.end(),
+                                           [recorded](const ::vsg::ref_ptr<::vsg::RenderGraph>& graph) {
+                                               return graph.get() == recorded;
+                                           });
+            if (!holds) {
                 continue;
             }
             if (seen.insert(entry.first).second) {
@@ -190,7 +233,7 @@ void applyRecordPlan(VsgRendererState& state, const RecordPlan& plan)
             continue;
         }
         for (const auto& graph : graphs->second) {
-            children.push_back(graph);
+            children.push_back(recordedChild(state, t, graph));
         }
         // After the LAST pass graph of a target whose depth another target borrows,
         // insert that borrower's depth-share barrier so its LOAD / depth test sees
@@ -208,7 +251,7 @@ void applyRecordPlan(VsgRendererState& state, const RecordPlan& plan)
             }
         }
     }
-    children.push_back(plan.window_graph);
+    children.push_back(recordedChild(state, nullptr, plan.window_graph));
 }
 
 void reconcileOffscreenOrder(VsgRendererState& state)

@@ -52,6 +52,7 @@
 [selftest] program shading: the flat program followed the face normal (765) against the forward program's authored-normal 42 over the same quad
 [selftest] live program switch: the same slot drew 42 forward, 765 flat after the switch, and 42 forward again after switching back
 [selftest] resize: 2 target(s) resized in place with 1 off-screen build(s), 1 fullscreen slot build(s) and 0 device wait(s) on the resize frame; the source's red quad reached the consumer at the new size, 13 object(s) parked and released (ring released 419 so far), 2 compile context(s) and 3 pooled slot(s) reserved after the resize (unchanged), and a shape change still built once
+[selftest] gpu profile: 3 pass(es) measured in one frame, the heavier workload cost more, a released target left the profile, reading it cost no device wait, and without VINE_VSG_PROFILE the session measures nothing
 [selftest] deferred shadow: the ground in the sun's shadow read (31,31,31) against (196,196,196) beside it in the sun (columns 343/240 of row 196), so the built shadow pass reached the lighting
 [selftest] forward shadow: the ground in the sun's shadow read (31,31,31) against (196,196,196) beside it in the sun (columns 343/240 of row 196), so the content set's shadow binding reached the shading
 [selftest] lit-face vantage 0: top face: [0,0] 765->765 [0,1] 765->765 [0,2] 765->765 [1,0] 765->765 [1,1] 765->765 [1,2] 765->765 [2,0] 765->765 [2,1] 765->765 [2,2] 765->765

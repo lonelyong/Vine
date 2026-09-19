@@ -24,6 +24,13 @@
 
 ## 0. 已核实的机制（避免重复调研）
 
+> **R6 已落地（2026-09-19）：设备侧逐 pass GPU 时间。** 开关 `VINE_VSG_PROFILE=1`（会话建立时读），
+> 值出口 `VsgRenderer::gpuProfile()`，机制与判据见 `src/plugins/gfx_backend_vsg/docs/backend.md` §5.7。
+> **做任何 GPU 侧结论前先用它**。两条实测前提：①样本**永远落后几帧**（回读不等待设备，`age_frames ≥ 1`）；
+> ②**软件设备上每个 render pass 自身就有 ≈2 ms 固定开销** —— 1 个全屏 quad ≈2.1 ms、1024 个全屏 quad
+> ≈7.7–8.6 ms（×3.6–4.0），而 64 个落在噪声里（×0.8）：**测 GPU 工作量差异要拉开一个数量级**，
+> 否则量到的是 render pass 的地板而不是内容。
+
 | 事实 | 依据 | 后果 |
 | --- | --- | --- |
 | 收集的 memo 键 = `(projection×view, eye, 场景内容版本)`，每帧边界失效 | `src/viz/graphics/src/Scene.cpp:398-420` | **相机一动每帧必 miss** ⇒ 每帧一次全树走 + 剔除 + 排序 |

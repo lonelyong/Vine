@@ -133,6 +133,7 @@ src/plugins/gfx_backend_vsg/
                                   # depth/cull/frontFace/topology/polygonMode/blend 全走它）
     VsgPipelineFactory.hpp        # vsg 对象工厂 + detail（格式转换 / 渲染通道 / 着色器集 / 管线态）
     VsgVulkanEntryPoints.hpp      # detail：三个 loader 不导出的扩展命令入口点（值，随命令携带）
+    VsgGpuProfile.hpp             # detail::VsgGpuProfile：设备侧逐 pass GPU 时间（VINE_VSG_PROFILE 开关）
     VsgBackendUtility.hpp         # detail：图手术、设备同步、会话策略查询
     VsgUtils.hpp                  # detail::toVsg(Mat4d→dmat4)
     GfxBackendVsgPlugin.hpp       # 插件入口声明
@@ -152,6 +153,7 @@ src/plugins/gfx_backend_vsg/
     VsgSceneRules.cpp             # detail：通道形状判定 + 缓存键哈希 + opaque 多附件写
     VsgDynamicState.cpp           # detail::SetDynamicState 的 compare/record + 动态状态声明
     VsgVulkanEntryPoints.cpp      # 唯一包含 volk.h 的 TU：volk 装载 device 表并取出三个入口点
+    VsgGpuProfile.cpp             # 读 vsg::Profiler 的日志：哪张图属于哪个 pass + 逐 pass 毫秒
     VsgRendererPasses.cpp         # pass 协议（begin/end/releasePass、退役）
     SceneBridge.cpp               # 保留 Item 缓存 / buildGeometry / syncRenderCommands
     SceneBridgeGeometry.cpp       # 顶点/索引上传与通道处理

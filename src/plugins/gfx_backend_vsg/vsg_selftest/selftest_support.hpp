@@ -1235,6 +1235,20 @@ bool runShadowedLitFacePhase(const vine::intrusive_ptr<RenderBackend>& backend, 
  */
 bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames);
 
+/**
+ * @brief Measures per-pass GPU time and proves the measurement follows the work — see selftest_profile.cpp.
+ *
+ * Runs its own session (the VINE_VSG_PROFILE switch is read when a session comes up), drives a light pass and
+ * a heavy pass in it, checks the samples against the announced passes, and ends with a control session that
+ * must measure nothing. A device without timestamps reports that and is not a failure.
+ *
+ * @param renderer Renderer under test (it is shut down and brought up again by the phase).
+ * @param camera   Camera to draw the measured passes through.
+ * @param frames   Ignored: a measurement needs the phase's own frame count (the read-back lag).
+ * @return true when the profile followed the work, named what was announced and cost no device wait.
+ */
+bool runGpuProfilePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames);
+
 /** @brief Asserts that editing one channel of an ALREADY-DRAWN geometry is served in place.
  *
  * The incremental path (P6) keeps a per-stream identity for every geometry, so an edit that only

@@ -167,6 +167,7 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_textures.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_shadows.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_hostsurface.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_profile.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_datarefresh.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_resize.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridge.cpp
@@ -192,6 +193,7 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgLights.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgBackendUtility.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgDynamicState.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgGpuProfile.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgVulkanEntryPoints.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgHostWindow.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPipelineFactory.cpp)

@@ -428,6 +428,15 @@ int main()
         return 1;
     }
 
+    // ---- GPU profiling (R6, its own session) -------------------------------
+    // The switch is read when a session comes up, so the phase brings its own up (and takes it down again). It
+    // runs AFTER every counting phase: the frames it drives would otherwise land in a phase that reports the
+    // parked / released counts.
+    if (!runGpuProfilePhase(*renderer, camera, 3)) {
+        std::fprintf(stderr, "[selftest] FAILED — the GPU profile did not follow the work\n");
+        return 1;
+    }
+
     // ---- Host surface move (C1, its own session) ---------------------------
     // The session driven above ran on vsg's own window; this phase replaces it with one attached to a
     // host window (what a host hands this backend) and asserts that the session MOVES when the host

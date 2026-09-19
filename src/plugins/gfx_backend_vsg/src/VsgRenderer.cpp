@@ -8,8 +8,10 @@
 
 #include <vine/vsg/VsgUtils.hpp>
 #include <vine/vsg/VsgBackendUtility.hpp>
+#include <vine/vsg/VsgGpuProfile.hpp>
 #include <vine/vsg/VsgHostWindow.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
+#include <vine/vsg/VsgRecordOrder.hpp>
 #include <vine/vsg/VsgTargetBookkeeping.hpp>
 
 #include <cstdint>
@@ -29,6 +31,7 @@
 #include <vsg/app/RenderGraph.h>
 #include <vsg/app/View.h>
 #include <vsg/app/Viewer.h>
+#include <vsg/utils/Profiler.h>
 #include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/BindVertexBuffers.h>
 #include <vsg/commands/Commands.h>
@@ -98,6 +101,27 @@ using namespace detail;
 
 namespace
 {
+
+/**
+ * @brief Reads an instrumentation level out of the environment.
+ *
+ * @param name     Variable to read (VINE_VSG_PROFILE_CPU / _GPU).
+ * @param fallback Level to use while it is unset or does not start with a number.
+ * @return The level; the profiler compares it against each hook's own level.
+ */
+std::uint32_t envLevel(const char* name, std::uint32_t fallback)
+{
+    const char* const text = std::getenv(name);
+    if (text == nullptr || *text == '\0') {
+        return fallback;
+    }
+    char*               end   = nullptr;
+    const unsigned long value = std::strtoul(text, &end, 10);
+    if (end == text) {
+        return fallback;
+    }
+    return static_cast<std::uint32_t>(value);
+}
 
 /**
  * @brief Returns a diagnostic description of the exception currently being
@@ -616,6 +640,23 @@ bool VsgRenderer::initialize()
     commandGraph->addChild(renderGraph);
     state.command_graph = commandGraph;
     state.viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ commandGraph });
+
+    // The session's GPU profiler, when the switch asked for one (see VsgGpuProfile): installed AFTER the
+    // record-and-submit task, because the task is what the viewer propagates instrumentation through.
+    if (std::getenv("VINE_VSG_PROFILE") != nullptr) {
+        auto settings                       = ::vsg::Profiler::Settings::create();
+        settings->cpu_instrumentation_level = envLevel("VINE_VSG_PROFILE_CPU", 0);
+        // Level 1 is the level the backend's own wrapper nodes carry (the per-pass measurements). A higher
+        // level timestamps every recorded node instead, and the profiler's query pool then drops what does
+        // not fit -- silently, which is why the default is documented as the pass level.
+        settings->gpu_instrumentation_level = envLevel("VINE_VSG_PROFILE_GPU", 1);
+        state.profiler                      = ::vsg::Profiler::create(settings);
+        state.viewer->assignInstrumentation(state.profiler);
+        // Re-apply the record order so the graphs already in the command graph are measured too: this is
+        // the one place the child list is built besides the reconciles a host's own changes trigger, and a
+        // session whose only graph is the window's would otherwise never be wrapped.
+        detail::reconcileOffscreenOrder(state);
+    }
 
     // The session's compile manager is this backend's own, installed BEFORE the first compile: vsg
     // creates one lazily inside Viewer::compile(), and only if none is set -- and this backend's is the
@@ -1330,6 +1371,11 @@ std::size_t VsgRenderer::deviceWaitCount() const noexcept
 std::size_t VsgRenderer::retiredObjectCount() const noexcept
 {
     return counters().released_objects;
+}
+
+VsgGpuProfile VsgRenderer::gpuProfile() const
+{
+    return detail::readGpuProfile(state);
 }
 
 VsgRetentionStats VsgRenderer::retentionStats() const noexcept

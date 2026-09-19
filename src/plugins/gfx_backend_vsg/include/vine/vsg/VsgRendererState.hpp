@@ -343,6 +343,11 @@ struct VsgRendererState {
     ::vsg::ref_ptr<::vsg::Window>       window;
     ::vsg::ref_ptr<::vsg::Viewer>       viewer;
     ::vsg::ref_ptr<::vsg::CommandGraph> command_graph;
+    // The session's GPU profiler, installed on the viewer when VINE_VSG_PROFILE asked for one (see
+    // VsgGpuProfile.hpp). Session-scoped like the rest of this state: it holds the timestamp query pools the
+    // commands were recorded with, so it belongs to the device they were recorded against -- and replacing
+    // this state wholesale on shutdown() is what drops it.
+    ::vsg::ref_ptr<::vsg::Profiler> profiler;
     // The session's texture-resource cache, injected into every content slot's bridge (see
     // SceneBridge::setTextureCache): one texture sampled by several slots is staged ONCE instead of once per
     // slot. Held through a pointer because the cache is not copyable and this state is assigned over

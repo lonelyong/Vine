@@ -6,6 +6,9 @@
 #include <cstdio>
 #include <cstring>
 
+#include <vsg/app/RenderGraph.h>
+#include <vsg/nodes/InstrumentationNode.h>
+
 #include <vine/vsg/VsgHostWindow.hpp>
 #include <vine/vsg/VsgRendererState.hpp>
 #include <vine/vsg/VsgLights.hpp>
@@ -68,17 +71,33 @@ bool onHostWindow(const ::vsg::ref_ptr<::vsg::Window>& window)
     return window != nullptr && window.cast<detail::VsgHostWindow>() != nullptr;
 }
 
-void removeGraphChild(::vsg::Group* graph, const ::vsg::ref_ptr<::vsg::Node>& node)
+const ::vsg::RenderGraph* underlyingGraph(const ::vsg::Node* child) noexcept
 {
-    if (graph == nullptr) {
+    if (child == nullptr) {
+        return nullptr;
+    }
+    if (const auto* graph = dynamic_cast<const ::vsg::RenderGraph*>(child)) {
+        return graph;
+    }
+    if (const auto* wrapper = dynamic_cast<const ::vsg::InstrumentationNode*>(child)) {
+        return dynamic_cast<const ::vsg::RenderGraph*>(wrapper->child.get());
+    }
+    return nullptr;
+}
+
+void removeGraphChild(::vsg::Group* graph, const ::vsg::ref_ptr<::vsg::Node>& node)
+{    if (graph == nullptr) {
         return;
     }
     auto& children = graph->children;
-    children.erase(
-        std::remove_if(children.begin(),
-                       children.end(),
-                       [&node](const ::vsg::ref_ptr<::vsg::Node>& child) { return child.get() == node.get(); }),
-        children.end());
+    // Matched THROUGH a profiling wrapper (see underlyingGraph): a profiled session's command graph holds
+    // wrappers, and a pass being retired must still be found and detached by the graph it stands for.
+    children.erase(std::remove_if(children.begin(), children.end(),
+                                  [&node](const ::vsg::ref_ptr<::vsg::Node>& child) {
+                                      return child.get() == node.get() ||
+                                             underlyingGraph(child.get()) == node.get();
+                                  }),
+                   children.end());
 }
 
 std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std::string& source)

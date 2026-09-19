@@ -27,6 +27,8 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/graphics/Viewport.hpp>
 
+#include <vine/vsg/VsgFwd.hpp>
+
 V_VSG_NS_BEGIN
 
 struct VsgRendererState;
@@ -62,6 +64,19 @@ struct GraphOrderEdge
  */
 std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count,
                                                 const std::vector<GraphOrderEdge>& edges);
+
+/**
+ * @brief The render graph @p child stands for, whether it is the graph itself or a wrapper around it.
+ *
+ * A session started with VINE_VSG_PROFILE puts a named `vsg::InstrumentationNode` in front of every pass'
+ * render graph in the command graph (see detail::applyRecordPlan and VsgGpuProfile.hpp), so the graph a
+ * child list entry MEANS is one level down in that case. Everything that matches a child against a graph
+ * asks this instead of comparing pointers, which keeps the wrapping invisible to the record order.
+ *
+ * @param child Child of a command graph (may be null).
+ * @return The render graph it stands for, or nullptr when it is not one.
+ */
+[[nodiscard]] const ::vsg::RenderGraph* underlyingGraph(const ::vsg::Node* child) noexcept;
 
 /**
  * @brief Detaches a child node from a vsg group (command graph / render
