@@ -23,6 +23,7 @@ set(SRC_FILE_LIST
 	PassRenderPassPlanTest.cpp
 	PassClearValuesTest.cpp
 	DeviceRequirementsTest.cpp
+	DynamicDepthTest.cpp
 	ProgramSamplingTest.cpp
 	GraphOrderTest.cpp
 	DiagnosticsTest.cpp
@@ -107,6 +108,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgProgramSlot.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgLights.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgBackendUtility.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgDynamicDepth.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgPipelineFactory.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/CameraBridge.cpp)
 target_include_directories(${TEST_NAME} PRIVATE

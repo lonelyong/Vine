@@ -34,6 +34,46 @@
 管线键（内容级）≈ `(program, ResolvedRenderState, subpass/color_count)`；
 **材质、矩阵、透明度、几何缓冲都不是管线维度。**
 
+### 2.1 深度状态的归位：core 1.3 扩展动态状态（里程碑 A 已落地）
+
+depth test / write / compare 属**管线创建状态**（core 1.1），所以"深度策略"曾是管线维度
+：一个 slot 按 `DepthMode` 选三份 ShaderSet 之一（`VsgRenderer.cpp` 的
+`depth_on/depth_testonly/depth_off_shader_set`），策略一变就要 `setContentDepthMode`
++ `invalidateState` 重建变体。core 1.3 把这三种状态变成**动态状态**，于是"同一管线服务
+所有深度策略"成立，策略变化降级为每条 draw 一条命令。
+
+- 落地物：`VsgDynamicDepth.hpp/.cpp`（`SetDepthState` 命令、`makeDynamicDepthState`
+  声明、`declaresDynamicDepth` 判定、`kDynamicDepth` 常量）。三条建 set 的路径
+  （`VsgRenderer` 窗口 set、`VsgTargetBookkeeping` 每 target、`VsgContentSlot` 懒建）
+  都传 `kDynamicDepth`，避免三处漂移。
+- **无需申请任何 device feature**：registry 里 `VK_EXT_extended_dynamic_state` 标
+  `promotedto="VK_VERSION_1_3"`，其 feature 结构体标 `comment="Not promoted to 1.3"`
+  ——`VkPhysicalDeviceVulkan13Features` **没有** `extendedDynamicState` 成员（写它编不过
+  ），EXT 结构体则属 pre-1.3 的写法。真正兜底的是本后端的版本地板
+  （`detail::kRequiredVulkanVersion = 1.3`，见 `VsgRenderer::initialize` 的拒绝路径）。
+- ⚠️ **`StateCommand::slot` 是"状态栈身份"而不是优先级**：vsg 把同组状态命令按 slot 压栈，
+  `StateStack::record` **只录制栈顶**，同 slot 的后一条会把前一条**彻底遮蔽**（前一条从不
+  录制）。vsg 自身分配：`0` 管线绑定、`1 + firstSet` 描述符绑定、`2` view-dependent
+  state / push constants。`SetDepthState` 因此取 `kDepthStateSlot = 15`（`STATESTACK_SIZE`
+  上限），而不是"最小空闲槽"——描述符 set 索引由 program 决定，`1 + firstSet` 会随之上移。
+  **第一版用了默认 slot 0**：结果整组丢掉了管线绑定（validation layer 报
+  `VUID-vkCmdDrawIndexed-None-08606`，lavapipe 随即崩溃）。
+- `slot` 还必须被 `CollectResourceRequirements` 收集（它按每条 `StateCommand::slot` 抬
+  `maxSlots.state`，`State::stateStacks` 依此 sizing；超出者既不录制也会越界索引）。实测
+  probe：`stateStacks.size() == 16`、`maxSlots.state == 15`，即收集确实看到变体组里的这
+  条命令。
+- 声明判定用**并集**（`declaresDynamicDepth` 跨 `DynamicState` 对象累计三个名字）：vsg 的
+  `mergeGraphicsPipelineStates` 对同类型管线状态做"同类型替换 / DynamicState 取并集"，而
+  `Context` 默认注入 `DynamicState(VIEWPORT, SCISSOR)`（见 §7），故本 set 的声明在
+  compile 期必然与它合并。若只查单个对象就会误判集合（保守拒绝一个驱动本来认账的 set）。
+- 里程碑 A 是**行为中立**的管线：命令携带的值正是原本烘焙进 create-info 的值，因此证据
+  与改动前逐字节一致（除两个已知漂移计数）。有效性用**变异**证明：把发出的命令强制
+  `depthTestEnable = VK_FALSE`（烘焙值不变）⇒ 深度相 21 项断言 FAIL（"nothing wrote depth
+  in stage 1" 等），说明生效值确实来自该命令；随后还原。
+- 仍未做（**里程碑 B**）：三份按 depth 策略区分的 ShaderSet 仍在、`depth` 仍在变体键/
+  `shaderSetFor` 里——B 要把 depth 维度从变体身份中移除，使策略变化 = 每条 draw 一条命令，
+  而不再走 `setContentDepthMode` + `invalidateState` 重建。
+
 ## 3. 机制
 
 ### 3.1 SharedObjects 内容级共享（基础层）
