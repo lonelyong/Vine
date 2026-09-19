@@ -13,7 +13,6 @@
 
 #include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgDiagnostics.hpp>
-#include <vine/vsg/VsgDynamicDepth.hpp>
 #include <vine/vsg/VsgProgramSlot.hpp>
 #include <vine/vsg/VsgLights.hpp>
 #include <vine/vsg/VsgPassMaterialiser.hpp>
@@ -186,7 +185,7 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
             set_ref = makeContentShaderSet(persistent.default_content_program,
                                            VkExtent2D{ static_cast<uint32_t>(t.width), static_cast<uint32_t>(t.height) },
                                            depth.test, depth.write,
-                                           target->colorCount(), detail::kDynamicDepth);
+                                           target->colorCount());
         }
         content.bridge.setShaderSet(set_ref);
     }

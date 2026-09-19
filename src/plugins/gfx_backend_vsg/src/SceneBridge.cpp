@@ -1,6 +1,5 @@
 ﻿#include <vine/vsg/SceneBridge.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
-#include <vine/vsg/VsgDynamicDepth.hpp>
 #include <vine/vsg/SceneBridgeInternals.hpp>
 #include <algorithm>
 #include <cmath>
@@ -104,10 +103,6 @@ SceneBridge::~SceneBridge()
 void SceneBridge::setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet)
 {
     shader_set_ = shaderSet;
-    // Whether THIS set asks for the depth states to be delivered per draw (see VsgDynamicDepth.hpp):
-    // asked once per injected set, because the set is the only object that can answer — it carries the
-    // pipeline states, and every pipeline built from it inherits the declaration.
-    dynamic_depth_ = shader_set_ != nullptr && detail::declaresDynamicDepth(*shader_set_);
     // Our own forward set is the only one that reads per-drawable values from a draw
     // block (`vine_draw`); a set without one has no per-drawable slot at all, so the
     // slot is only reserved, bound and written for the set that reads it.

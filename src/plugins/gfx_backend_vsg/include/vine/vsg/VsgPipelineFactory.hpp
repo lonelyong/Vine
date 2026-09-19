@@ -167,7 +167,7 @@ inline constexpr std::size_t kMaxOverlayStageEntries = 16;
 
 ::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program,
                                                      const VkExtent2D& extent, bool depth_test, bool depth_write,
-                                                     int color_count = 1, bool dynamic_depth = false);
+                                                     int color_count = 1);
 
 /**
  * @brief The per-draw block as a CUSTOM descriptor set (set 1), bound per drawable.
@@ -241,16 +241,16 @@ struct V_VSG_API DrawBlockSetBinding : public ::vsg::Inherit<::vsg::CustomDescri
  * @param depth_test  Whether the pipeline tests depth.
  * @param depth_write Whether it writes depth.
  * @param color_count Colour attachments the pipeline renders (MRT passes > 1).
- * @param dynamic_depth Whether the set declares depth test / write / compare as DYNAMIC state (see
- *                    VsgDynamicDepth.hpp): one pipeline then serves every depth policy, and the depth
- *                    values are delivered per draw by SetDepthState. Core Vulkan 1.3 with no feature
- *                    bit to enable — the promoted extension's feature struct was not promoted, so what
- *                    backs this is the backend's 1.3 floor (see VsgDynamicDepth.hpp).
  * @return The set to draw the slot's content with (null when the program cannot be compiled).
+ *
+ * Every set this function builds declares the state a StateNode configures as DYNAMIC state (see
+ * VsgDynamicState.hpp) — there is no way to ask for a set that bakes it: one pipeline then serves every
+ * depth policy, culling side, wireframe mode, blend choice and topology, and a change of one is a command
+ * per variant instead of a new pipeline.
  */
 ::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program,
                                                      const VkExtent2D& extent, bool depth_test, bool depth_write,
-                                                     int color_count = 1, bool dynamic_depth = false);
+                                                     int color_count = 1);
 
 /** @brief What a pass-level depth policy means to a pipeline.
  *

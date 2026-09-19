@@ -34,45 +34,50 @@
 管线键（内容级）≈ `(program, ResolvedRenderState, subpass/color_count)`；
 **材质、矩阵、透明度、几何缓冲都不是管线维度。**
 
-### 2.1 深度状态的归位：core 1.3 扩展动态状态（里程碑 A 已落地）
+### 2.1 StateNode 状态动态化：core 1.3（里程碑 A/A+ 已落地）
 
-depth test / write / compare 属**管线创建状态**（core 1.1），所以"深度策略"曾是管线维度
-：一个 slot 按 `DepthMode` 选三份 ShaderSet 之一（`VsgRenderer.cpp` 的
-`depth_on/depth_testonly/depth_off_shader_set`），策略一变就要 `setContentDepthMode`
-+ `invalidateState` 重建变体。core 1.3 把这三种状态变成**动态状态**，于是"同一管线服务
-所有深度策略"成立，策略变化降级为每条 draw 一条命令。
+depth test/write/compare、cull mode、front face、primitive topology 都是**管线创建状态**，所以"状态"
+曾是管线维度（一个 slot 按 `DepthMode` 选三份 ShaderSet；变体键含 depth/cull/… 全字段），状态一变就要
+`setContentDepthMode` + `invalidateState` 重建包装。core 1.3 把这四种状态变成**动态状态**，于是"一条管线
+服务所有状态组合"成立，变化降级为每条 draw/每变体一条命令。
 
-- 落地物：`VsgDynamicDepth.hpp/.cpp`（`SetDepthState` 命令、`makeDynamicDepthState`
-  声明、`declaresDynamicDepth` 判定、`kDynamicDepth` 常量）。三条建 set 的路径
-  （`VsgRenderer` 窗口 set、`VsgTargetBookkeeping` 每 target、`VsgContentSlot` 懒建）
-  都传 `kDynamicDepth`，避免三处漂移。
-- **无需申请任何 device feature**：registry 里 `VK_EXT_extended_dynamic_state` 标
-  `promotedto="VK_VERSION_1_3"`，其 feature 结构体标 `comment="Not promoted to 1.3"`
-  ——`VkPhysicalDeviceVulkan13Features` **没有** `extendedDynamicState` 成员（写它编不过
-  ），EXT 结构体则属 pre-1.3 的写法。真正兜底的是本后端的版本地板
-  （`detail::kRequiredVulkanVersion = 1.3`，见 `VsgRenderer::initialize` 的拒绝路径）。
-- ⚠️ **`StateCommand::slot` 是"状态栈身份"而不是优先级**：vsg 把同组状态命令按 slot 压栈，
-  `StateStack::record` **只录制栈顶**，同 slot 的后一条会把前一条**彻底遮蔽**（前一条从不
-  录制）。vsg 自身分配：`0` 管线绑定、`1 + firstSet` 描述符绑定、`2` view-dependent
-  state / push constants。`SetDepthState` 因此取 `kDepthStateSlot = 15`（`STATESTACK_SIZE`
-  上限），而不是"最小空闲槽"——描述符 set 索引由 program 决定，`1 + firstSet` 会随之上移。
-  **第一版用了默认 slot 0**：结果整组丢掉了管线绑定（validation layer 报
-  `VUID-vkCmdDrawIndexed-None-08606`，lavapipe 随即崩溃）。
-- `slot` 还必须被 `CollectResourceRequirements` 收集（它按每条 `StateCommand::slot` 抬
-  `maxSlots.state`，`State::stateStacks` 依此 sizing；超出者既不录制也会越界索引）。实测
-  probe：`stateStacks.size() == 16`、`maxSlots.state == 15`，即收集确实看到变体组里的这
-  条命令。
-- 声明判定用**并集**（`declaresDynamicDepth` 跨 `DynamicState` 对象累计三个名字）：vsg 的
-  `mergeGraphicsPipelineStates` 对同类型管线状态做"同类型替换 / DynamicState 取并集"，而
-  `Context` 默认注入 `DynamicState(VIEWPORT, SCISSOR)`（见 §7），故本 set 的声明在
-  compile 期必然与它合并。若只查单个对象就会误判集合（保守拒绝一个驱动本来认账的 set）。
-- 里程碑 A 是**行为中立**的管线：命令携带的值正是原本烘焙进 create-info 的值，因此证据
-  与改动前逐字节一致（除两个已知漂移计数）。有效性用**变异**证明：把发出的命令强制
-  `depthTestEnable = VK_FALSE`（烘焙值不变）⇒ 深度相 21 项断言 FAIL（"nothing wrote depth
-  in stage 1" 等），说明生效值确实来自该命令；随后还原。
-- 仍未做（**里程碑 B**）：三份按 depth 策略区分的 ShaderSet 仍在、`depth` 仍在变体键/
-  `shaderSetFor` 里——B 要把 depth 维度从变体身份中移除，使策略变化 = 每条 draw 一条命令，
-  而不再走 `setContentDepthMode` + `invalidateState` 重建。
+- 落地物：`VsgDynamicState.hpp/.cpp`（`SetDynamicState` 命令、`makeDynamicStateDeclaration` 声明、
+  `kDynamicStateSlot`）。映射只有一处：`makeDynamicState(RenderStateObjects)`（`RenderStateMapper.hpp`）
+  从**管线 create-info 用的同一批对象**读值，所以"动态值 = 烘焙值"是构造上成立的（见下"行为中立"）。
+- **没有开关**：三条建 set 的路径（`VsgRenderer` 窗口 set、`VsgTargetBookkeeping` 每 target、
+  `VsgContentSlot` 懒建）一律声明；每个变体一律发命令。`kDynamicDepth` 这类常量/参数已删除。
+- **不需要申请任何 device feature/extension**：这四种状态来自 `VK_EXT_extended_dynamic_state`，registry
+  标 `promotedto="VK_VERSION_1_3"` 且其 feature 结构体标 `comment="Not promoted to 1.3"`
+  （`VkPhysicalDeviceVulkan13Features` **没有**对应成员，写了编不过）。兜底的是版本地板
+  （`detail::kRequiredVulkanVersion = 1.3`）。`vkCmdSetCullMode/FrontFace/PrimitiveTopology` 都是 loader
+  直接导出的 core 符号，正常链接。
+- ⚠️ **`StateCommand::slot` 是"状态栈身份"而不是优先级**：`State::push` 按 slot 压栈，`StateStack::record`
+  **只录制栈顶**，同 slot 的后一条把前一条**彻底遮蔽**。vsg 分配：`0` 管线绑定 / `1+firstSet` 描述符绑定 /
+  `2` view-dependent state+push constants。故命令取 `kDynamicStateSlot = 15`（`STATESTACK_SIZE` 上限），
+  而不是"最小空闲槽"（`1+firstSet` 随 program 的 set 数上移）。**两处踩坑**：①第一版用默认 slot 0 ⇒
+  整组丢掉管线绑定（`VUID-vkCmdDrawIndexed-None-08606` + lavapipe 段错误）；②把它改成 `= default` 构造
+  后又复发一次（同一个坑），被单测 `DynamicStateTest.TheCommandHasItsOwnStateSlotAtTheTopOfTheStack` 当场
+  抓住 ⇒ 默认构造函数必须显式 `Inherit(kDynamicStateSlot)`（现在有注释说明为什么不写 `= default`）。
+- `slot` 还必须被 `CollectResourceRequirements` 收集（它按每条 `StateCommand::slot` 抬 `maxSlots.state`，
+  `State::stateStacks` 依此 sizing；超出者既不录制也会越界索引）。实测 probe：`stateStacks.size() == 16`、
+  `maxSlots.state == 15` ⇒ 收集确实看到**懒建**的变体状态组。
+- **故意不动态化的两项**（`ResolvedRenderState` 里剩下的 state）：polygon mode（`VK_DYNAMIC_STATE_POLYGON_MODE_EXT`）
+  与 colour blend enable/factors（`VK_DYNAMIC_STATE_COLOR_BLEND_*_EXT`）。它们**不是** core 1.3 状态：
+  `VK_EXT_extended_dynamic_state2` 的 1.3 提升**排除了** polygonMode（registry 原文 "Feature struct and
+  optional state are not promoted"，只提升 rasterizerDiscard/depthBiasEnable/primitiveRestart），
+  `VK_EXT_extended_dynamic_state3` 整体未提升。要用它们得同时付三笔代价：①可选 feature 位（1.3 设备**不保证**
+  有 ⇒ 等于把设备要求抬到 1.3 之上）；②设备创建时启用这两个扩展；③**函数入口 loader 不导出** ——
+  `nm -D libvulkan.so.1` 里没有 `vkCmdSetPolygonModeEXT`／`vkCmdSetColorBlendEnableEXT`／`vkCmdSetColorBlendEquationEXT`
+  （core 提升名如 `vkCmdSetCullMode` 有），直接调用**在 Windows 能链接、在 Linux 链接失败**，正解是用
+  `vkGetDeviceProcAddr` 取指针并维护 per-device 指针表。三笔代价换两个很少变的状态 ⇒ 留在管线里（变体键也留着）。
+  触发条件 = 状态切换频率真的成为瓶颈（里程碑 B 落地后看剩下的身份维度），或决定把设备要求抬到 EDS2/EDS3。
+- **行为中立**：命令携带的值正是原本烘焙的值。判据：证据 30 帧对基线逐字节相同（除两个已知漂移计数）+ 0 FAIL；
+  `test_vsg` 318（新增 5 例 `DynamicStateTest`）、`test_graphics` 275；syncval 0/0/0。**有效性用变异证明**：
+  ①把发出的 depth test 强制 `VK_FALSE` ⇒ 深度相 **21** 条 FAIL；②把发出的 topology 强制 `LINE_LIST`
+  （烘焙值仍 TRIANGLE_LIST）⇒ **44** 条 FAIL（画面确实按命令的拓扑光栅化）。两次都已还原。
+- **仍未做（里程碑 B）**：三份按 depth 策略区分的 ShaderSet 仍在、depth/cull/polygon/blend/topology 仍在
+  变体键与 `shaderSetFor` 里。B = 把前四者（已动态化）从变体身份移除，使状态变化 = 一条命令而不是重建；
+  后两者按上面理由留在身份里。
 
 ## 3. 机制
 

@@ -1,5 +1,5 @@
 #include <vine/vsg/VsgBackendUtility.hpp>
-#include <vine/vsg/VsgDynamicDepth.hpp>
+#include <vine/vsg/VsgDynamicState.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/OwnedCache.hpp>
 
@@ -125,7 +125,7 @@ namespace detail
 }
 
 ::vsg::GraphicsPipelineStates makeScenePipelineStates(const VkExtent2D& extent, bool depth_test, bool depth_write,
-                                                    int color_count, bool dynamic_depth)
+                                                    int color_count)
 {
     auto raster_state      = ::vsg::RasterizationState::create();
     raster_state->cullMode = VK_CULL_MODE_NONE; // tolerate either winding order
@@ -144,12 +144,11 @@ namespace detail
         ::vsg::MultisampleState::create(),
         ::vsg::ViewportState::create(extent),
     };
-    if (dynamic_depth) {
-        // Declares the three depth states dynamic for every pipeline built from this set (see
-        // VsgDynamicDepth.hpp): the depth values above stay in the create-info (Vulkan needs the struct), but
-        // the driver takes the effective ones from the SetDepthState the bridge emits per variant.
-        states.push_back(makeDynamicDepthState());
-    }
+    // Every pipeline built from this set delivers the state above dynamically (see VsgDynamicState.hpp):
+    // the values stay in the create-info (Vulkan needs the structs), but the driver takes the effective
+    // ones from the SetDynamicState the bridge emits per variant. There is no opt-out — a set that baked
+    // the state would need one pipeline per state, which is what this layer exists to remove.
+    states.push_back(makeDynamicStateDeclaration());
     return states;
 }
 
@@ -328,7 +327,7 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     return {};
 }
 
-::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count, bool dynamic_depth)
+::vsg::ref_ptr<::vsg::ShaderSet> buildVineShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
 {
     // The stages come from the program the caller named (the engine's own texts live in the SDK,
     // BuiltinShaders.hpp). A program that has no stages, or that glslang refuses, DECLINES here: the
@@ -417,12 +416,11 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     // IMPLEMENTATION of the L1 pair, not the contract itself: a backend without a
     // push range binds the blocks.
     shader_set->addPushConstantRange("pc", "", VK_SHADER_STAGE_VERTEX_BIT, 0, 128);
-    shader_set->defaultGraphicsPipelineStates =
-        makeScenePipelineStates(extent, depth_test, depth_write, color_count, dynamic_depth);
+    shader_set->defaultGraphicsPipelineStates = makeScenePipelineStates(extent, depth_test, depth_write, color_count);
     return shader_set;
 }
 
-::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count, bool dynamic_depth)
+::vsg::ref_ptr<::vsg::ShaderSet> makeContentShaderSet(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program, const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
 {
     // EVERY content set this backend builds is ours. vsg's built-in sets
     // (createPhongShaderSet / createFlatShadedShaderSet) are deliberately not used
@@ -435,7 +433,7 @@ bool DrawBlockSetBinding::compatibleDescriptorSetLayout(const ::vsg::DescriptorS
     // substitution. The caller reports it and draws nothing: shading it with another program (ours or
     // a library's) would show the host a picture it did not ask for and cannot tell apart from the one
     // it did, which is worse than an empty frame it can see the reason for.
-    return buildVineShaderSet(std::move(program), extent, depth_test, depth_write, color_count, dynamic_depth);
+    return buildVineShaderSet(std::move(program), extent, depth_test, depth_write, color_count);
 }
 
 DepthTestWrite depthTestWrite(vine::graphics::DepthMode mode) noexcept

@@ -8,7 +8,6 @@
 
 #include <vine/vsg/VsgUtils.hpp>
 #include <vine/vsg/VsgBackendUtility.hpp>
-#include <vine/vsg/VsgDynamicDepth.hpp>
 #include <vine/vsg/VsgHostWindow.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgTargetBookkeeping.hpp>
@@ -324,12 +323,29 @@ class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer> {
     // never asked for is a validation error (VUID-VkSamplerCreateInfo-anisotropyEnable-01070), so leaving
     // this out does not degrade to isotropic filtering — it fails.
     traits->deviceFeatures->get().samplerAnisotropy = VK_TRUE;
-    // Nothing is requested for the dynamic depth states (VK_EXT_extended_dynamic_state, see
-    // VsgDynamicDepth.hpp): the registry promotes the extension to Vulkan 1.3 with the note "Feature struct
-    // is not promoted", i.e. VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE & friends are core 1.3 with no feature bit to
-    // enable — there is no member for it in VkPhysicalDeviceVulkan13Features, and asking for the EXT struct
-    // instead would be asking for the pre-1.3 spelling of something the device already has by version. What
-    // makes it valid is the 1.3 floor this backend refuses to run without (detail::kRequiredVulkanVersion).
+    // TEMP PROBE 2: enable the two extensions whose dynamic-state features the layer would need.
+    traits->deviceExtensionNames.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME);
+    traits->deviceExtensionNames.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+    traits->deviceFeatures->get<VkPhysicalDeviceExtendedDynamicState2FeaturesEXT,
+                                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT>()
+        .extendedDynamicState2 = VK_TRUE;
+    traits->deviceFeatures->get<VkPhysicalDeviceExtendedDynamicState3FeaturesEXT,
+                                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT>()
+        .extendedDynamicState3ColorBlendEnable = VK_TRUE;
+    traits->deviceFeatures->get<VkPhysicalDeviceExtendedDynamicState3FeaturesEXT,
+                                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT>()
+        .extendedDynamicState3ColorBlendEquation = VK_TRUE;
+    // END TEMP PROBE 2
+    // Nothing at all is requested for the dynamic state layer (see VsgDynamicState.hpp): the four states it
+    // delivers — depth test / write / compare, cull mode, front face, primitive topology — are core 1.3 with
+    // no feature bit to enable, because VK_EXT_extended_dynamic_state was promoted to 1.3 WITHOUT its
+    // feature struct (the registry says "Not promoted to 1.3" on it, and VkPhysicalDeviceVulkan13Features
+    // has no member for it — writing one does not compile). What backs them is the 1.3 floor this backend
+    // refuses to run below (detail::kRequiredVulkanVersion). The two ResolvedRenderState items that are NOT
+    // core-1.3 state — polygon mode and the colour blend enable/factors — would each need an optional
+    // feature bit, the extension enabled here, and a function pointer fetched with vkGetDeviceProcAddr
+    // (their entry points are extension-only, so the loader exports no symbol for them and a direct call
+    // fails to link on Linux); they stay baked in the pipeline instead.
 
     if (host_handle != nullptr) {
 #ifdef _WIN32
@@ -538,9 +554,9 @@ bool VsgRenderer::initialize()
     // earlier content (HUD). Off-screen targets bake their own per-size sets
     // lazily.
     init_stage = "building window shader sets";
-    state.depth_on_shader_set        = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), true, true, 1, kDynamicDepth);
-    state.depth_testonly_shader_set  = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), true, false, 1, kDynamicDepth);
-    state.depth_off_shader_set       = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), false, false, 1, kDynamicDepth);
+    state.depth_on_shader_set        = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), true, true);
+    state.depth_testonly_shader_set  = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), true, false);
+    state.depth_off_shader_set       = makeContentShaderSet(persistent.default_content_program, state.window->extent2D(), false, false);
 
     // The primary window layer is created lazily on the first window render
     // (the first pass that clears and draws the scene into the backbuffer).
@@ -1133,9 +1149,9 @@ void VsgRenderer::setDefaultContentProgram(vine::intrusive_ptr<const vine::graph
     // attachments, the pass graphs and the depth history stay untouched, so the
     // content is shaded differently rather than the target starting over.
     const auto extent = state.window->extent2D();
-    state.depth_on_shader_set       = makeContentShaderSet(persistent.default_content_program, extent, true, true, 1, kDynamicDepth);
-    state.depth_testonly_shader_set = makeContentShaderSet(persistent.default_content_program, extent, true, false, 1, kDynamicDepth);
-    state.depth_off_shader_set      = makeContentShaderSet(persistent.default_content_program, extent, false, false, 1, kDynamicDepth);
+    state.depth_on_shader_set       = makeContentShaderSet(persistent.default_content_program, extent, true, true);
+    state.depth_testonly_shader_set = makeContentShaderSet(persistent.default_content_program, extent, true, false);
+    state.depth_off_shader_set      = makeContentShaderSet(persistent.default_content_program, extent, false, false);
     detail::resetContentShaderSlots(state);
 }
 

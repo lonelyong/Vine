@@ -1241,11 +1241,6 @@ class V_VSG_API SceneBridge {
     // (see setContentDepthMode); part of the retained state identity, so
     // changing it invalidates the state wrappers.
     vine::graphics::DepthMode content_depth_mode_ = vine::graphics::DepthMode::TestAndWrite;
-    // Whether the set this bridge was given declares the depth states DYNAMIC (see VsgDynamicDepth.hpp):
-    // detected once in setShaderSet, and read where a variant's state commands are built — a set that asks
-    // for it must be driven by a SetDepthState per variant, or the values the pipeline baked would be the
-    // ones the driver kept.
-    bool dynamic_depth_ = false;
     // Shares layout / pipeline / descriptor-set content across every geometry
     // this bridge builds: GraphicsPipelineConfigurator::copyTo() deduplicates
     // through SharedObjects (content equality), so geometry that resolves to

@@ -11,6 +11,7 @@
 #include <vsg/utils/GraphicsPipelineConfigurator.h>
 
 #include <vine/graphics/StateNode.hpp>
+#include <vine/vsg/VsgDynamicState.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -253,6 +254,37 @@ inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
     pipeline_states.push_back(states.rasterization);
     pipeline_states.push_back(states.colorBlend);
     pipeline_states.push_back(states.inputAssembly);
+}
+
+/**
+ * @brief Builds the dynamic-state command for a mapped state (see VsgDynamicState.hpp).
+ *
+ * Every field is read from @p states — the very objects applyRenderStateObjects() installs on the
+ * configurator — which is what makes the dynamic command and the pipeline's baked state agree by
+ * construction: there is one mapping from a resolved state to Vulkan values, and both consumers read its
+ * output. A field the command has and this function forgets would be a state the driver takes from the
+ * create-info, so the tests pin the correspondence field by field.
+ *
+
+ * @param states Mapped state objects (see makeRenderStateObjects()).
+ * @return The command a variant carries ahead of its draws.
+ */
+[[nodiscard]] inline ::vsg::ref_ptr<detail::SetDynamicState> makeDynamicState(const RenderStateObjects& states)
+{
+    auto command = detail::SetDynamicState::create();
+
+    command->depth_test_enable  = states.depthStencil->depthTestEnable;
+    command->depth_write_enable = states.depthStencil->depthWriteEnable;
+    command->compare_op         = states.depthStencil->depthCompareOp;
+
+    command->cull_mode  = states.rasterization->cullMode;
+    command->front_face = states.rasterization->frontFace;
+
+    command->topology = states.inputAssembly->topology;
+
+    // Deliberately NOT mapped: polygonMode and the colour blend state. They are not core-1.3 dynamic state
+    // (see VsgDynamicState.hpp), so they stay in the pipeline create-info and in the variant identity.
+    return command;
 }
 
 V_VSG_NS_END

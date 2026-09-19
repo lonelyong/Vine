@@ -19,7 +19,7 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/RenderStateMapper.hpp>
-#include <vine/vsg/VsgDynamicDepth.hpp>
+#include <vine/vsg/VsgDynamicState.hpp>
 #include <vine/vsg/SceneBridgeInternals.hpp>
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgSceneRules.hpp>
@@ -642,16 +642,11 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     const auto local_bind = config->bindGraphicsPipeline;
     auto       stateGroup = ::vsg::StateGroup::create();
     config->copyTo(stateGroup, shared_objects_);
-    if (dynamic_depth_) {
-        // The depth state this variant would otherwise BAKE (see VsgDynamicDepth.hpp): the set declared the
-        // three states dynamic, so the effective values come from here. They are read from the SAME mapped
-        // DepthStencilState the pipeline create-info carries, which is what makes introducing this command
-        // behaviour-neutral — and they belong to the variant's shared template commands rather than to the
-        // per-drawable ones, because the resolved state is part of the variant's identity.
-        stateGroup->stateCommands.push_back(detail::SetDepthState::create(states.depthStencil->depthTestEnable,
-                                                                          states.depthStencil->depthWriteEnable,
-                                                                          states.depthStencil->depthCompareOp));
-    }
+    // The state this variant would otherwise BAKE (see VsgDynamicState.hpp), read from the SAME mapped
+    // objects the configurator was just given — which is what makes emitting it behaviour-neutral. It
+    // belongs to the variant's shared template commands rather than to the per-drawable ones, because the
+    // resolved state is part of the variant's identity (that identity is what the next step drops).
+    stateGroup->stateCommands.push_back(makeDynamicState(states));
     if (config->bindGraphicsPipeline == nullptr) {
         // No pipeline means nothing can be drawn for this variant. It used to
         // be returned as a (useless) state group and recorded as a drawable,
