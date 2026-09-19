@@ -250,6 +250,60 @@ Task<void> whenRace(WhenMode mode, std::vector<AnyTask> tasks, CancellationToken
     }
 }
 
+/**
+ * @brief Result container a whenAll(std::vector<Task<T>>) produces.
+ *
+ * The void case never reaches a coroutine body - the overload's constraint rejects it - and it is not
+ * here for the result, it is here for the declaration: substituting T=void into it must stay
+ * well-formed. std::vector<void> is a hard error rather than a substitution failure, and a compiler
+ * may form the return type before it looks at the requires-clause (MSVC does), which would break the
+ * overload set of a call it is not even meant to win - whenAll(std::vector<AnyTask>), where AnyTask
+ * is Task<void> and the plain non-template overload is the one that should be chosen.
+ */
+template<typename T, bool IsVoid = std::is_void_v<T>>
+struct VectorResult
+{
+    using type = std::vector<T>;
+};
+
+template<typename T>
+struct VectorResult<T, true>
+{
+    using type = void;
+};
+
+/**
+ * @brief Placeholder for a void slot of the tuple a variadic whenAll produces.
+ *
+ * Never observed - the overloads producing that tuple reject void argument types - and here for the
+ * same reason as the void case of VectorResult: it keeps their declarations substitutable for
+ * Task<void> arguments instead of failing on std::tuple<void> while forming them.
+ */
+struct VoidResult
+{
+};
+
+/**
+ * @brief One slot of that tuple: the task's result type, or the placeholder for a void task.
+ */
+template<typename T, bool IsVoid = std::is_void_v<T>>
+struct TupleResult
+{
+    using type = T;
+};
+
+template<typename T>
+struct TupleResult<T, true>
+{
+    using type = VoidResult;
+};
+
+/**
+ * @brief Tuple a variadic whenAll produces, substitutable for void argument types.
+ */
+template<typename... Ts>
+using TupleResults = std::tuple<typename TupleResult<Ts>::type...>;
+
 } // namespace detail
 
 /**
@@ -559,7 +613,7 @@ std::vector<AnyTask> toAnyTasks(Task<Ts>... tasks)
 template<typename... Ts>
     requires (sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
 [[nodiscard]]
-Task<std::tuple<Ts...>> whenAll(Task<Ts>... tasks)
+Task<detail::TupleResults<Ts...>> whenAll(Task<Ts>... tasks)
 {
     co_return co_await detail::whenAllImpl(CancellationToken{}, std::move(tasks)...);
 }
@@ -567,7 +621,7 @@ Task<std::tuple<Ts...>> whenAll(Task<Ts>... tasks)
 template<typename... Ts>
     requires (sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
 [[nodiscard]]
-Task<std::tuple<Ts...>> whenAll(CancellationToken token, Task<Ts>... tasks)
+Task<detail::TupleResults<Ts...>> whenAll(CancellationToken token, Task<Ts>... tasks)
 {
     co_return co_await detail::whenAllImpl(std::move(token), std::move(tasks)...);
 }
@@ -624,7 +678,7 @@ Task<void> whenAll(CancellationToken token, Task<Ts>... tasks)
 template<typename T>
     requires (!std::is_void_v<T>)
 [[nodiscard]]
-Task<std::vector<T>> whenAll(std::vector<Task<T>> tasks, CancellationToken token = {})
+Task<typename detail::VectorResult<T>::type> whenAll(std::vector<Task<T>> tasks, CancellationToken token = {})
 {
     throwIfCancelled(token);
 
