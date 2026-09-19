@@ -99,29 +99,29 @@ void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan)
     }
 }
 
-void orderRecordPlan(const VsgRendererState& state, RecordPlan& plan)
+std::vector<GraphOrderEdge> collectOrderEdges(const VsgRendererState& state,
+                                              const std::vector<vine::graphics::RenderTarget*>& recorded_now)
 {
-    // Sampling edges: a consumer depends on every source it samples (a program slot's
-    // key carries the sampled target). Self-sampling
-    // is rejected on attach and mutual same-frame sampling (ping-pong inside one
-    // frame) is not a supported pattern, so the edge graph is acyclic in practice; a
-    // cycle would only leave state.targets in their current order.
+    // Sampling edges: a consumer depends on every source it samples. Self-sampling is rejected on
+    // attach and mutual same-frame sampling (ping-pong inside one frame) is not a supported pattern,
+    // so the edge graph is acyclic in practice; a cycle would only leave the targets in their current
+    // order.
     std::map<vine::graphics::RenderTarget*, std::size_t> index_of;
-    for (std::size_t i = 0; i < plan.recorded_now.size(); ++i) {
-        index_of.emplace(plan.recorded_now[i], i);
+    for (std::size_t i = 0; i < recorded_now.size(); ++i) {
+        index_of.emplace(recorded_now[i], i);
     }
     std::vector<GraphOrderEdge> edges;
-    for (auto* t : plan.recorded_now) {
+    for (auto* t : recorded_now) {
         const auto entry = state.targets.find(t);
         if (entry == state.targets.end()) {
             continue;
         }
         const auto& target     = entry->second;
-        const auto  add_source = [&](vine::graphics::RenderTarget* source) {
+        const auto  add_source = [&](const vine::graphics::RenderTarget* source) {
             if (source == nullptr || source == t) {
                 return;
             }
-            const auto src = index_of.find(source);
+            const auto src = index_of.find(const_cast<vine::graphics::RenderTarget*>(source));
             if (src == index_of.end()) {
                 return; // the source is not recorded this frame: no edge
             }
@@ -143,10 +143,26 @@ void orderRecordPlan(const VsgRendererState& state, RecordPlan& plan)
         // is not recorded, so it contributes no edge.
         for (const auto& slot : target.program_slots) {
             if (!slot.second.detached) {
-                add_source(const_cast<vine::graphics::RenderTarget*>(slot.second.source_target));
+                add_source(slot.second.source_target);
+            }
+        }
+        // A CONTENT slot samples a target too — the shadow map its shader reads, resolved from the map's
+        // own statement of whose shadow it is (see resolveShadowInput) — and that is the same
+        // dependency, because a shadow pass is an ordinary pass on an ordinary target. It went missing
+        // here while the content path resolved its shadow at slot-setup time, which is exactly why
+        // ContentSlot::sampled_target records the producer.
+        for (const auto& slot : target.content_slots) {
+            if (!slot.second.detached) {
+                add_source(slot.second.sampled_target);
             }
         }
     }
+    return edges;
+}
+
+void orderRecordPlan(const VsgRendererState& state, RecordPlan& plan)
+{
+    const std::vector<GraphOrderEdge> edges = collectOrderEdges(state, plan.recorded_now);
     plan.record_order.reserve(plan.recorded_now.size());
     for (const std::size_t index : stableTopologicalOrder(plan.recorded_now.size(), edges)) {
         plan.record_order.push_back(plan.recorded_now[index]);

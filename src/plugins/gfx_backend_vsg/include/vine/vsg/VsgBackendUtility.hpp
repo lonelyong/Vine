@@ -21,6 +21,7 @@
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Light.hpp>
+#include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/raw_ptr.hpp>
@@ -133,6 +134,7 @@ bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> pro
 struct ShadowInput
 {
     ::vsg::ref_ptr<::vsg::ImageView> map;   ///< The map's depth view, or null when no shadow was declared.
+    const vine::graphics::RenderTarget* source = nullptr; ///< Target @ref map is the depth of, or null when no shadow was declared.
     vine::graphics::VineShadowBlock  block; ///< The block matching @ref map (params.x == 0 when none).
 };
 

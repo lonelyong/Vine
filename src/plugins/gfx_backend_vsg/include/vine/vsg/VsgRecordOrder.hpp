@@ -33,6 +33,7 @@
 
 #include <vine/graphics/RenderTarget.hpp>
 
+#include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgRendererState.hpp>
 
 V_VSG_NS_BEGIN
@@ -71,15 +72,34 @@ void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan);
 
 /** @brief Turns @p plan's current order into a dependency-valid one (phase 2).
  *
- * Edges: a target's off-screen SAMPLING sources (its non-detached screen /
- * program slots' source_target) and its DEPTH BORROW source (a borrower's pass
- * LOADs the depth its source writes this frame). The order itself is the pure
+ * Edges: a target's off-screen SAMPLING sources (its non-detached content / program slots' sampled target)
+ * and its DEPTH BORROW source (a borrower's pass LOADs the depth its source writes this frame). The
+ * order itself is the pure
  * stableTopologicalOrder(), so unrelated targets keep their relative position.
  *
  * @param state Session whose target table the edges are read from.
  * @param plan  Plan whose graphs_of / present are filled.
  */
 void orderRecordPlan(const VsgRendererState& state, RecordPlan& plan);
+
+/** @brief Every dependency edge among @p recorded_now's targets (phase 2's rule, as a pure value).
+ *
+ * Edges: a target's SAMPLING sources — a content slot's resolved shadow map (sampled_target) and a
+ * program slot's sampled target — and its DEPTH BORROW source (a borrower's pass LOADs the depth its
+ * source writes this frame). A retired (detached) slot contributes nothing: its view is not recorded,
+ * so it samples nothing. A source that is not itself recorded this frame contributes nothing either
+ * (there is nothing to order against), which is why the caller passes the same vector it will order.
+ *
+ * Factored out of orderRecordPlan() so the rules are device-free and testable: a missing edge is
+ * invisible to every layer (the image layouts agree), and its only symptom is a consumer that shades
+ * against the previous frame.
+ *
+ * @param state        Session whose target table the edges are read from.
+ * @param recorded_now Targets recording this frame, in current order (indices are the edge ids).
+ * @return One edge per dependency: the index of the consumer and the index of its source.
+ */
+[[nodiscard]] std::vector<GraphOrderEdge> collectOrderEdges(
+    const VsgRendererState& state, const std::vector<vine::graphics::RenderTarget*>& recorded_now);
 
 /** @brief Rewrites the command graph's children from @p plan (phase 3).
  *

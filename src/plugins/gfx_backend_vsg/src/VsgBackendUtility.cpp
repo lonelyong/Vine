@@ -224,6 +224,7 @@ ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<cons
     const float bias     = static_cast<float>(light->shadowSettings().bias);
     const float strength = 1.0f;
     resolved.map         = chosen->depth_view;
+    resolved.source      = map;
     // view -> light clip = (producer: light clip <- light view) * (view <- world) * (world <- THIS
     // view): the producer's view-projection maps ITS view-space position into light clip, and the
     // fragment the shader has is in the consuming pass' view space.

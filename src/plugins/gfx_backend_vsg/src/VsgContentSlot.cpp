@@ -377,6 +377,10 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
         const detail::ShadowInput shadow = detail::resolveShadowInput(state, camera, lights);
         std::memcpy(content.shadow_data->dataPointer(), &shadow.block, sizeof(shadow.block));
         content.shadow_data->dirty();
+        // Which target this slot's shader shades the depth OF: the record-order plan needs it as a
+        // dependency edge, and it is re-resolved every frame because a pass can stop or start declaring
+        // a shadow (see resolveShadowInput).
+        content.sampled_target = shadow.source;
         if (content.shadow_view != shadow.map) {
             // The descriptor's image view cannot be re-pointed in place, so the new map is a new
             // descriptor: drop the cached variants and let the next build assign it. Seed-only

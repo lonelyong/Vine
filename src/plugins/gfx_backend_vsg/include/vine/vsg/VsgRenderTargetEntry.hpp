@@ -178,6 +178,13 @@ struct ContentSlot {
     ::vsg::ref_ptr<::vsg::ImageView> shadow_view;
     ::vsg::ref_ptr<::vsg::Sampler>   shadow_sampler;
     ::vsg::ref_ptr<::vsg::ImageInfo> shadow_placeholder;
+    // The target @ref shadow_view is the depth of (the producer of the map this slot reads), or null
+    // when no shadow reaches this slot. Set where the shadow is resolved, and read by the record-order
+    // plan: a content pass that SAMPLES another target carries the same dependency a program slot does,
+    // and without the edge the order came from the build order alone — a consumer whose graph was
+    // created before its map's shaded against the previous frame's map, silently (the image layouts
+    // agree, so no layer reports it; only the write->read dependency is missing).
+    const vine::graphics::RenderTarget* sampled_target = nullptr;
     ::vsg::ref_ptr<::vsg::View>   view;
     // D22: this slot's registration with the session's compile manager (VsgCompileRegistration). It is held
     // HERE so that the release happens where the slot dies, and it is declared after `view` on purpose:
