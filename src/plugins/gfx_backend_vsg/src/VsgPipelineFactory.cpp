@@ -480,38 +480,42 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
     return VK_FORMAT_D32_SFLOAT;
 }
 
-/**
- * @brief The two subpass dependencies every COLOUR+DEPTH variant shares.
- *
- * They are built once and reused by every variant of a pass because the Vulkan
- * spec's Render Pass Compatibility rules exempt initial/final layouts and
- * load/store ops, but NOT subpass dependencies: two render passes are only
- * compatible (and a pass may therefore swap between them at run time, keeping its
- * pipelines) when their dependencies match field for field. Reusing this helper
- * is what makes that structural — the masks are deliberately independent of the
- * load ops, since the pass lifecycle picks them later.
- *
- * @return The subpass-external dependencies (writes in, reads out).
- */
-::vsg::RenderPass::Dependencies makeColorDepthDependencies()
+// The body is the moved definition: its documentation lives on the declaration.
+
+::vsg::RenderPass::Dependencies makePassDependencies(bool has_color, bool has_depth)
 {
-    constexpr VkPipelineStageFlags k_attachments =
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    constexpr VkAccessFlags k_attachment_writes =
-        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    const VkPipelineStageFlags stages =
+        static_cast<VkPipelineStageFlags>((has_color ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT : 0u)) |
+        static_cast<VkPipelineStageFlags>((has_depth ? (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                                        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT)
+                                                     : 0u));
+    const VkAccessFlags writes =
+        static_cast<VkAccessFlags>((has_color ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT : 0u)) |
+        static_cast<VkAccessFlags>((has_depth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT : 0u));
+    const VkAccessFlags reads =
+        static_cast<VkAccessFlags>((has_color ? VK_ACCESS_COLOR_ATTACHMENT_READ_BIT : 0u)) |
+        static_cast<VkAccessFlags>((has_depth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT : 0u));
+
+    // What earlier submissions may have done with the image: produced it (attachment writes) or
+    // SAMPLED it (fragment-shader reads). Both belong in the source scope — the second because the
+    // layout transition this dependency performs is a write to the image, and the consumer that
+    // sampled it (an overlay / lighting / shadow pass) is exactly the case this backend has (see the
+    // declaration).
+    const VkPipelineStageFlags src_stages = stages | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    const VkAccessFlags        src_access = writes | VK_ACCESS_SHADER_READ_BIT;
 
     ::vsg::RenderPass::Dependencies dependencies;
 
-    // External -> subpass: the previous frames' attachment writes are made
-    // available before this subpass CLEARs or LOADs the attachments.
+    // External -> subpass: what earlier submissions left in the image is made available before this
+    // subpass CLEARs or LOADs the attachments. The destination access includes READ because a LOAD
+    // reads the previous contents.
     ::vsg::SubpassDependency ext_to_sub = {};
     ext_to_sub.srcSubpass               = VK_SUBPASS_EXTERNAL;
     ext_to_sub.dstSubpass               = 0;
-    ext_to_sub.srcStageMask             = k_attachments;
-    ext_to_sub.dstStageMask             = k_attachments;
-    ext_to_sub.srcAccessMask            = k_attachment_writes;
-    ext_to_sub.dstAccessMask            = k_attachment_writes;
+    ext_to_sub.srcStageMask             = src_stages;
+    ext_to_sub.srcAccessMask            = src_access;
+    ext_to_sub.dstStageMask             = stages;
+    ext_to_sub.dstAccessMask            = reads | writes;
     dependencies.push_back(ext_to_sub);
 
     // Subpass -> external: the colour (and depth) writes become visible to a
@@ -519,9 +523,9 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
     ::vsg::SubpassDependency sub_to_ext = {};
     sub_to_ext.srcSubpass               = 0;
     sub_to_ext.dstSubpass               = VK_SUBPASS_EXTERNAL;
-    sub_to_ext.srcStageMask             = k_attachments;
+    sub_to_ext.srcStageMask             = stages;
     sub_to_ext.dstStageMask             = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    sub_to_ext.srcAccessMask            = k_attachment_writes;
+    sub_to_ext.srcAccessMask            = writes;
     sub_to_ext.dstAccessMask            = VK_ACCESS_SHADER_READ_BIT;
     dependencies.push_back(sub_to_ext);
 
@@ -595,7 +599,7 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
     }
 
     return ::vsg::RenderPass::create(device, attachments, ::vsg::RenderPass::Subpasses{ subpass },
-                                     makeColorDepthDependencies());
+                                     makePassDependencies(/*has_color*/ true, has_depth));
 }
 
 ::vsg::ref_ptr<::vsg::RenderPass> makeDepthOnlyRenderPass(::vsg::Device* device, VkFormat depth_format,
@@ -625,28 +629,11 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat f)
     subpass.pipelineBindPoint         = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.depthStencilAttachments.emplace_back(depth_ref);
 
-    ::vsg::RenderPass::Dependencies dependencies;
-    // UNDEFINED -> DEPTH_STENCIL_ATTACHMENT before the subpass.
-    ::vsg::SubpassDependency ext_to_sub = {};
-    ext_to_sub.srcSubpass               = VK_SUBPASS_EXTERNAL;
-    ext_to_sub.dstSubpass               = 0;
-    ext_to_sub.srcStageMask             = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    ext_to_sub.dstStageMask             = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    ext_to_sub.dstAccessMask            = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    dependencies.push_back(ext_to_sub);
-
-    // After the subpass, transition to SHADER_READ_ONLY and make the depth
-    // writes visible to a later pass that samples the shadow map.
-    ::vsg::SubpassDependency sub_to_ext = {};
-    sub_to_ext.srcSubpass               = 0;
-    sub_to_ext.dstSubpass               = VK_SUBPASS_EXTERNAL;
-    sub_to_ext.srcStageMask             = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    sub_to_ext.dstStageMask             = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    sub_to_ext.srcAccessMask            = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    sub_to_ext.dstAccessMask            = VK_ACCESS_SHADER_READ_BIT;
-    dependencies.push_back(sub_to_ext);
-
-    return ::vsg::RenderPass::create(device, attachments, ::vsg::RenderPass::Subpasses{ subpass }, dependencies);
+    // The same dependency pair every colour+depth variant carries, with the colour bits left out and
+    // the depth bits kept: one builder, so a variant of either shape can never disagree with its
+    // siblings about a mask (see the declaration for what each scope carries).
+    return ::vsg::RenderPass::create(device, attachments, ::vsg::RenderPass::Subpasses{ subpass },
+                                     makePassDependencies(/*has_color*/ false, /*has_depth*/ true));
 }
 
 // The body is the moved definition: its documentation lives on the declaration.

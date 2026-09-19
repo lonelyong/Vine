@@ -292,6 +292,38 @@ struct DepthTestWrite
                                                              ::vsg::ref_ptr<::vsg::ShaderSet>& depth_off) noexcept;
 
 /**
+ * @brief The two subpass-external dependencies every variant of a colour/depth pass shares.
+ *
+ * ONE builder for both pass shapes (colour+depth and depth-only). A pass' subpass dependencies are
+ * part of render-pass COMPATIBILITY — the spec exempts load/store ops and initial/final layouts, but
+ * NOT dependencies — so "every variant of a pass carries the same dependencies" is what lets a pass
+ * swap its render pass at run time and keep the pipelines it already compiled
+ * (VsgRenderer::passGraph). Two hand-written copies of this used to exist and they disagreed: the
+ * depth-only one left `srcAccessMask` at zero, and neither destination scope named the READ a LOAD
+ * performs. Two further requirements are baked in, each of which fails silently:
+ *
+ *  - the SOURCE scope carries the fragment-shader READS of a pass that SAMPLED the image, not only
+ *    the attachment writes of the pass that produced it. Every image a LOAD variant names is left in
+ *    SHADER_READ_ONLY_OPTIMAL by the consumer that sampled it (this backend's consumers always
+ *    hand images back in it), and the layout transition this dependency performs is a write to the
+ *    image — a write-after-read hazard against those reads, which may still be executing in an
+ *    earlier submission, unless they are in the source scope. A CLEAR variant discards the contents
+ *    but is equally a write to the image, so the same scope serves both;
+ *  - the DESTINATION scope carries READ as well as WRITE, because VK_ATTACHMENT_LOAD_OP_LOAD reads
+ *    the previous contents (vsg's own pair names it the same way: vk/RenderPass.cpp,
+ *    createRenderPass).
+ *
+ * The masks deliberately do NOT depend on the load ops: which variant a pass records is decided per
+ * frame (planPassVariant) and must not change the dependencies — that is exactly the compatibility
+ * the pass lifecycle relies on.
+ *
+ * @param has_color Whether the pass carries colour attachments.
+ * @param has_depth Whether the pass carries a depth attachment.
+ * @return The two dependencies: external -> subpass, then subpass -> external.
+ */
+[[nodiscard]] ::vsg::RenderPass::Dependencies makePassDependencies(bool has_color, bool has_depth);
+
+/**
  * @brief Builds the colour(+depth) render pass ONE pass records into.
  *
  * vsg::createRenderPass() leaves the colour attachment in PRESENT_SRC_KHR
@@ -308,7 +340,7 @@ struct DepthTestWrite
  * rules exempt — while the attachment set, the subpass and (critically) the
  * subpass DEPENDENCIES stay identical, which is what lets a pass swap its render
  * pass at run time and keep the pipelines it already compiled (see
- * VsgRenderer::passGraph and makeColorDepthDependencies()).
+ * VsgRenderer::passGraph and makePassDependencies()).
  *
  * @param device        Device the render pass is created on.
  * @param color_formats Colour attachment formats, one per attachment (in

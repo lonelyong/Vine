@@ -599,7 +599,9 @@ INE_HOST_MOVE_FORMAT_MISMATCH` 令那次比较失败——**走的是同一条�
 - 每个 pass 的 render pass / framebuffer 由 **`planPassVariant()`**（纯函数）决定：清屏请求（颜色/深度）
   与深度提升状态是变体身份；稳态复用（`reuseSteadyPass()`）只做"变体是否过期 + 更新清屏值"。
 - 变体之间必须 **render pass 兼容**，包括**子通道依赖逐字段相同**（否则 `renderPass-02684`）——
-  `makeColorDepthRenderPass()` 把依赖块收成一处置，就是为了让这条从约定变成结构性。
+  `makePassDependencies(has_color, has_depth)` 是**唯一**的依赖构造器（colour+depth 与 depth-only 两个工厂都调它），
+  就是为了让这条从约定变成结构性：两份手写副本曾经不一致（depth-only 那份 `srcAccessMask` 为 0，且两者的目的作用域都漏了
+  LOAD 会做的 READ）。
 - 一次性变体（bootstrap / 需要特定初始布局）**提交之后**才换回稳态。
 
 ### 5.5 剔除与离场（culled / hidden / moved away）

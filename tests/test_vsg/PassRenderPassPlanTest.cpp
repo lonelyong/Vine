@@ -14,13 +14,19 @@
  *    layout it cannot use;
  *  - a LOAD needs a DEFINED image, so an unseeded target requests a one-frame
  *    seed (the CLEAR variant) first;
- *  - a borrowed depth belongs to its source's policy: LOAD, unpromoted, unseeded.
+ *  - a borrowed depth belongs to its source's policy: LOAD, unpromoted, unseeded;
+ *  - both pass shapes (colour+depth and depth-only) get their subpass-external
+ *    dependencies from ONE builder, whose scopes name what the image was left by:
+ *    the producing pass' attachment writes, the SAMPLING consumer's shader reads
+ *    (the layout transition is a write to the image), and — on the way in — the
+ *    READ a LOAD performs.
  */
 
 #include <gtest/gtest.h>
 
 #include <vine/vsg/VsgPipelineFactory.hpp>
 
+using vine::vsg::detail::makePassDependencies;
 using vine::vsg::detail::planPassRenderPass;
 using vine::vsg::detail::planPassVariant;
 using vine::vsg::detail::passVariantIsStale;
@@ -199,4 +205,66 @@ TEST(PassRenderPassPlanTest, StaleComparesRequestsNotMaterialisedLoadOps)
     // A run-time policy change IS a request change, and has to rebuild.
     EXPECT_TRUE(passVariantIsStale(false, false, true, false));
     EXPECT_TRUE(passVariantIsStale(true, false, true, true));
+}
+
+TEST(PassRenderPassPlanTest, BothPassShapesShareOneDependencyPair)
+{
+    // ONE builder, two callers. A pass' subpass dependencies are part of render-pass COMPATIBILITY
+    // (the spec exempts load/store ops and initial/final layouts, but not dependencies), so a variant
+    // that disagreed with its siblings about a single bit would make the run-time render-pass swap
+    // illegal. Two hand-written pairs is how the colour+depth and depth-only passes came to disagree
+    // about `srcAccessMask`; this pins the pair and the order of the two dependencies.
+    const auto color_depth = makePassDependencies(true, true);
+    const auto depth_only  = makePassDependencies(false, true);
+    ASSERT_EQ(color_depth.size(), 2u);
+    ASSERT_EQ(depth_only.size(), 2u);
+    for (const auto* deps : { &color_depth, &depth_only }) {
+        const auto& ext_to_sub = deps->at(0);
+        const auto& sub_to_ext = deps->at(1);
+        EXPECT_EQ(ext_to_sub.srcSubpass, VK_SUBPASS_EXTERNAL);
+        EXPECT_EQ(ext_to_sub.dstSubpass, 0u);
+        EXPECT_EQ(sub_to_ext.srcSubpass, 0u);
+        EXPECT_EQ(sub_to_ext.dstSubpass, VK_SUBPASS_EXTERNAL);
+        // The depth writes of the pass that produced the image are in the source scope of BOTH
+        // directions of the pair.
+        EXPECT_NE(ext_to_sub.srcAccessMask & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 0u);
+        EXPECT_NE(sub_to_ext.srcAccessMask & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 0u);
+        // A LOAD is a READ of the previous contents: the incoming dependency names it.
+        EXPECT_NE(ext_to_sub.dstAccessMask & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT, 0u);
+        EXPECT_NE(ext_to_sub.dstAccessMask & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 0u);
+        // The outward half hands the writes to the pass that SAMPLES the image.
+        EXPECT_NE(sub_to_ext.dstStageMask & VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0u);
+        EXPECT_NE(sub_to_ext.dstAccessMask & VK_ACCESS_SHADER_READ_BIT, 0u);
+    }
+}
+
+TEST(PassRenderPassPlanTest, TheSourceScopeNamesASamplingConsumerToo)
+{
+    // The image a LOAD variant names is in SHADER_READ_ONLY_OPTIMAL because a consumer SAMPLED it (an
+    // overlay / lighting / shadow pass), and the layout transition this dependency performs is a write
+    // to that image: without the reader in the source scope the transition is a write-after-read
+    // hazard against a read that an earlier submission may still be executing. A CLEAR variant discards
+    // the contents but performs the same write, so one scope covers both shapes.
+    for (const auto& deps : { makePassDependencies(true, true), makePassDependencies(false, true) }) {
+        const auto& ext_to_sub = deps.front();
+        EXPECT_NE(ext_to_sub.srcStageMask & VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0u);
+        EXPECT_NE(ext_to_sub.srcAccessMask & VK_ACCESS_SHADER_READ_BIT, 0u);
+    }
+}
+
+TEST(PassRenderPassPlanTest, TheMasksFollowTheAttachmentsThePassCarries)
+{
+    // The masks are a function of the attachment SET (which is what makes "same shape => same
+    // dependencies" hold), so a depth-only pass must not claim colour access it has no attachment for,
+    // and a colour-only pass must not claim depth access.
+    const auto depth_only = makePassDependencies(false, true).front();
+    EXPECT_EQ(depth_only.srcStageMask & VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0u);
+    EXPECT_EQ(depth_only.srcAccessMask & VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0u);
+    EXPECT_EQ(depth_only.dstAccessMask & VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0u);
+
+    const auto color_only = makePassDependencies(true, false).front();
+    EXPECT_EQ(color_only.srcStageMask & VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0u);
+    EXPECT_EQ(color_only.srcAccessMask & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 0u);
+    EXPECT_EQ(color_only.dstAccessMask & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 0u);
+    EXPECT_NE(color_only.dstAccessMask & VK_ACCESS_COLOR_ATTACHMENT_READ_BIT, 0u);
 }
