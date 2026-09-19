@@ -67,7 +67,7 @@ find_package(vsg CONFIG QUIET)
 # write registration files into the user's real data directory.
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Core)
 
-target_link_libraries(${TEST_NAME} vi::Appfw vi::Graphics vi::Logging Qt6::Core)
+target_link_libraries(${TEST_NAME} vi::Appfw vi::Graphics vi::Logging Qt6::Core tp::volk)
 
 # VsgHostWindow creates the host surface itself; vsg builds the same code but links xcb PRIVATE, so its
 # include directories do not reach this target.
@@ -109,6 +109,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgLights.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgBackendUtility.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgDynamicState.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgVulkanEntryPoints.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgPipelineFactory.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/CameraBridge.cpp)
 target_include_directories(${TEST_NAME} PRIVATE

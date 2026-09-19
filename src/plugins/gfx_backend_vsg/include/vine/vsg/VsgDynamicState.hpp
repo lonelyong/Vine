@@ -7,8 +7,9 @@
 
 #include <vsg/core/ref_ptr.h>
 #include <vsg/state/DynamicState.h>
-#include <vsg/vk/Device.h>
 #include <vsg/state/StateCommand.h>
+
+#include <vine/vsg/VsgVulkanEntryPoints.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -44,43 +45,6 @@ inline constexpr VkBlendFactor       kBakedBlendFactor      = VK_BLEND_FACTOR_ON
  * bake is constant too, so only the entries the command carries decide anything.
  */
 inline constexpr std::uint32_t kMaxDynamicAttachments = 8u;
-
-/**
- * @brief The extension entry points the blend and polygon-mode halves of this command need.
- *
- * These three are the only calls this layer makes that the LOADER DOES NOT EXPORT: `vkCmdSetPolygonModeEXT`
- * (VK_EXT_extended_dynamic_state2), `vkCmdSetColorBlendEnableEXT` and `vkCmdSetColorBlendEquationEXT`
- * (VK_EXT_extended_dynamic_state3). A direct call to any of them links on Windows and fails to link on
- * Linux — measured, not assumed: `nm -D libvulkan.so.1` has the promoted names (`vkCmdSetCullMode`,
- * `vkCmdSetDepthTestEnable`, `vkCmdSetPrimitiveTopology`) and none of these three. Extension commands are
- * meant to be fetched, so they are: vsg::Device::getProcAddr does exactly that, and its own documentation
- * says the pointer is null when the extension was not enabled at device creation.
- *
- * Hence a value carried by the command (fetched once per session, see
- * fetchDynamicStateEntryPoints), not a global table: the pointers belong to ONE device, and a second
- * session on another device must not inherit them.
- */
-struct DynamicStateEntryPoints
-{
-    PFN_vkCmdSetPolygonModeEXT        set_polygon_mode         = nullptr;
-    PFN_vkCmdSetColorBlendEnableEXT   set_color_blend_enable   = nullptr;
-    PFN_vkCmdSetColorBlendEquationEXT set_color_blend_equation = nullptr;
-
-    /// @brief Whether every entry point is present (a device that cannot deliver these states is refused).
-    [[nodiscard]] bool complete() const noexcept
-    {
-        return set_polygon_mode != nullptr && set_color_blend_enable != nullptr && set_color_blend_equation != nullptr;
-    }
-};
-
-/**
- * @brief Fetches the three entry points from @p device.
- *
- * @param device Device they are fetched from (the extensions must have been enabled at its creation).
- * @return The entry points; any that the device does not offer are null (see
- * DynamicStateEntryPoints::complete).
- */
-[[nodiscard]] DynamicStateEntryPoints fetchDynamicStateEntryPoints(const ::vsg::Device& device);
 
 /**
  * @brief The state slot (StateCommand::slot) this backend's dynamic-state command occupies.

@@ -42,6 +42,8 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgRendererPasses.cpp` | pass 协议：`beginPass`/`endPass`/`isPassScopeOpen`、未公告 pass 的退役、`releasePass`、协议误用的**唯一**上报点 `reportPassMisuse` |
 | `VsgDeferredRelease.hpp` | 延迟释放的**时钟**与它的**提交令牌** `FrameCommit`（见下行的三个用户） |
 | `VsgPipelineFactory.cpp` | 状态对象与变体决策：`makeRenderStateObjects`、`planPassVariant` / `passVariantIsStale`（纯函数）、清屏附件数与 opaque blend 规则 |
+| `VsgDynamicState.hpp` / `VsgDynamicState.cpp` | **逐 drawable 的动态状态命令** `detail::SetDynamicState`（StateNode 的 depth / cull / frontFace / topology / polygonMode / blend 全部走它，没有开关）+ `makeDynamicStateDeclaration()`；`compare()` 覆盖全部 9 项与每附件 blend 项，所以共享池按值去重不会把第一条命令的值发出去 |
+| `VsgVulkanEntryPoints.hpp` / `VsgVulkanEntryPoints.cpp` | `detail::DynamicStateEntryPoints`（三个 loader **不导出**的扩展命令指针）+ `fetchDynamicStateEntryPoints(VkDevice, VkInstance)`；后者是**全插件唯一包含 `volk.h` 的 TU**（见 §5.6） |
 | `SceneBridge.cpp/.hpp` | **Vine 场景 → vsg 节点的保留缓存**：逐 drawable 的脏检查、重建、停放；每个桥自持一个 `vsg::SharedObjects`（`clearCache()` 清它） |
 | `SceneBridgeGeometry.cpp` | 几何物化：属性通道 → 真 vsg 数组（**别名模型内存**）、索引、诊断 |
 | `SceneBridgePipeline.cpp` | 状态物化：状态变体（管线）、描述符绑定、材质值、纹理 |
@@ -632,6 +634,51 @@ p-vertex 测试整棵子树剪掉，每节点世界盒经 `BoundsCache` 只算�
 | 剔除 / 隐藏 / 移走，后端看不出区别 | 三者都表现为“这一帧没有它的命令”，所以后端**不能**拿“没画”当删除信号 —— 这正是释放判据改成“外侧是否仍持有”的原因 |
 | 内存上界 | 条目数 = 曾经画过、且缓存之外仍有人持有的几何数；释放途径是**从场景摘掉并丢掉句柄**（或 `clearCache()`），不是等时间 |
 | 一个条目会钉住它用过的材质 / 程序 / 纹理 | `Item` **按引用**持有 `material` / `program` / `texture`（地址即身份，不能只存裸指针），而这些引用**不计入份额**（份额只数缓存条目）⇒ 应用丢弃的材质 / 程序 / 纹理要等**它所在的几何条目也消失**才回收：被持有但不画的几何会一直钉住它们。**有界**（材质 `kMaxEntries`、纹理 `kMaxEntries`、程序 64/64/256、变体 256 的 FIFO），但不是“立即” —— 删掉 600 帧窗口后这条耦合从“最长 600 帧”变成“应用持有该几何多久就多久”。要更早释放：把几何从场景摘掉并丢掉句柄 |
+
+### 5.6 状态投递：动态状态 + 扩展入口点（volk）
+
+StateNode 折叠出的 `ResolvedRenderState` **六项全部动态**（depth test/write/compare、cull、frontFace、
+topology、polygonMode、blend），**没有开关**：管线里对应的是 `kBaked*` 常量，真实值由 `detail::SetDynamicState`
+逐 drawable 发出。三个不变式值得单列，因为都不是编译期能替你看出来的：
+
+- **槽必须显式给**：`SetDynamicState` 占 `kDynamicStateSlot = 15`。`vsg::StateCommand` 的默认槽是 0，而槽 0
+  是管线绑定槽；同槽的两条命令 vsg 只录制**栈顶**那条（`StateStack::record` 按命令对象身份记忆化）⇒ 默认构造会
+  静默丢掉管线绑定（症状是 `VUID-vkCmdDrawIndexed-None-08606` + lavapipe 在 JIT 里崩）。所以
+  `SetDynamicState()` 写成显式 `Inherit(kDynamicStateSlot)`，**不是** `= default`。
+- **按值共享**：命令和别的 vsg 对象一样进 `SharedObjects`，去重用内容比较 ⇒ `compare()` 必须逐值比较（否则第一条
+  命令的值会发给所有 drawable）；入口指针按**地址**比较（对函数指针做有序比较不是语言定义的行为，clang 会警告）。
+  `makeDynamicStateDeclaration()` 声明的 9 项与 `record()` 发出的 9 组调用一一对应；"声明是否覆盖"的判据必须对
+  StateStack 里**全部**对象求并集，因为 vsg 会合并 `DynamicState` 列表、Context 还会注入 VIEWPORT/SCISSOR。
+- **缓存顺序是契约**：`buildStateGroup` 必须**先** `cacheStateVariant` 再 `appendDrawableState`。反过来的话，
+  后一个 drawable 复制模板时会连模板 builder 的状态命令一起复制并先记录，于是它的真实状态被压在栈下、永远不生效
+  （只有栈顶被录制）。这条由 `SceneBridgePipelineSharingTest.DeliveredStateSharesOnePipelineAndTravelsPerDrawable`
+  钉住。
+
+三条扩展命令（`vkCmdSetPolygonModeEXT`、`vkCmdSetColorBlendEnableEXT`、`vkCmdSetColorBlendEquationEXT`）是
+**loader 不导出**的名字：`nm -D libvulkan.so.1` 里 core 提升名有（`vkCmdSetCullMode` 等），这三个没有——所以
+直接按名调在 Windows 链接得过、在 Linux 链接失败。它们只能取指针，现在由 **volk** 取（`third_party/volk/`，
+vendored：header v363、上游 `54fc0d7a`、MIT，两个文件 + 自己的 LICENSE）。两个构建选项都是承重的，理由写在
+`third_party/volk/CMakeLists.txt` 里：
+
+- `VOLK_NAMESPACE`（PUBLIC）：不加的话 volk 把**每个** Vulkan 入口点定义成与函数同名的**全局数据**符号；本插件
+  与按名字解析 Vulkan 的 vsg 同进程 ⇒ 那些查找可能命中我们的数据对象，是崩溃而不是取值错误。加了命名空间后这些
+  定义是 mangled 符号（实测：构建出的插件 `nm -D` 里"名为 Vulkan 入口点的导出符号" = 0，volk 自己的形如
+  `_ZN4volk...`），而 `volk.h` 末尾的 `using namespace volk;` 让调用点照旧自然。代价是 volk.c 要以 C++ 编译。
+- `VOLK_NO_DEVICE_PROTOTYPES`（**INTERFACE**，只给消费者）：device 级全局被藏起来 ⇒ 只能通过 `VolkDeviceTable`
+  到 device 命令，"忘了装表"从空指针调用变成编译错误。**不能**设成 PUBLIC：volk.c 自己必须看得见那些全局才能填它们。
+- `fetchDynamicStateEntryPoints(device, instance)`（`VsgVulkanEntryPoints.cpp`）是全插件**唯一**包含 `volk.h`
+  的 TU，因此它收**裸句柄**：volk.h 定义 `VK_NO_PROTOTYPES` 并以 `using namespace volk;` 收尾，和 vsg 的头同
+  TU 混用会让 vsg 自己的非限定调用变歧义（实测 `reference to 'vkGetInstanceProcAddr' is ambiguous`）。
+- 装载顺序由 volk 定：`volkInitialize()`（dlopen loader）→ `volkLoadInstanceOnly(instance)`（填 instance 表，
+  volk 自己的 `vkGetDeviceProcAddr` 出自这里）→ `volkLoadDeviceTable(&table, device)`。表是**调用内局部**的：
+  调用方要带走的是一个值（三个指针），不是一个 device 的表。
+- **不委派的部分**：扩展与 feature **策略**仍手写在 `VsgRenderer.cpp` 的 `makeWindowTraits`（要哪个扩展、要哪个
+  feature 位、以及"polygon mode 的 enum 住在 EDS2 块里但 gate 它的是 `extendedDynamicState3PolygonMode`"这
+  条踩过坑的区别），volk 只负责取指针。
+
+**判据**：30 帧证据与改动前**逐字节相同**（只差已知的 `ring released` 漂移计数）、0 FAIL；`test_vsg` 321、
+`test_graphics` 275；syncval 0 SYNC-HAZARD / 0 VUID / 0 FAIL；两次变异证明"volk 取到的指针"确实是被调的那一个
+（`set_polygon_mode` 强制 `VK_POLYGON_MODE_LINE` ⇒ 45 条 FAIL；`blendEnable` 强制关 ⇒ 3 条 FAIL）。
 
 ## 6. 诊断与验证
 

@@ -95,15 +95,6 @@ void SetDynamicState::record(::vsg::CommandBuffer& commandBuffer) const
     }
 }
 
-DynamicStateEntryPoints fetchDynamicStateEntryPoints(const ::vsg::Device& device)
-{
-    DynamicStateEntryPoints entry_points;
-    device.getProcAddr(entry_points.set_polygon_mode, "vkCmdSetPolygonModeEXT");
-    device.getProcAddr(entry_points.set_color_blend_enable, "vkCmdSetColorBlendEnableEXT");
-    device.getProcAddr(entry_points.set_color_blend_equation, "vkCmdSetColorBlendEquationEXT");
-    return entry_points;
-}
-
 ::vsg::ref_ptr<::vsg::DynamicState> makeDynamicStateDeclaration()
 {
     return ::vsg::DynamicState::create(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,

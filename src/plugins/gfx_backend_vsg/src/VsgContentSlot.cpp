@@ -136,7 +136,9 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
         // are fetched from it here, next to the anisotropy limit, for the same reason: a device fact the
         // bridge cannot know.
         if (auto device = state.window->getOrCreateDevice()) {
-            content.bridge.setDynamicStateEntryPoints(detail::fetchDynamicStateEntryPoints(*device));
+            const auto* instance = device->getInstance();
+            content.bridge.setDynamicStateEntryPoints(detail::fetchDynamicStateEntryPoints(
+                device->vk(), instance != nullptr ? instance->vk() : VK_NULL_HANDLE));
         }
     }
     // The graph this pass records into: the window session's single swapchain

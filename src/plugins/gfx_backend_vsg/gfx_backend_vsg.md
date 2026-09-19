@@ -3,10 +3,12 @@
 > 模块：`src/plugins/gfx_backend_vsg`
 > 版本依据：2026-09-04 工作区代码（`git` 后状态）+ 本机 vsg v1.1.16。
 >
-> **运行期下限：Vulkan 1.3**（`detail::kRequiredVulkanVersion`，`VsgBackendUtility.hpp`）。低于它就**拒绝会话**
+> **运行期下限：Vulkan 1.4**（`detail::kRequiredVulkanVersion`，`VsgBackendUtility.hpp`）。低于它就**拒绝会话**
 > 并在诊断通道报出两个版本号（`VsgRenderer::initialize` 的 "checking the device's Vulkan version" 阶段）——
-> 后端有权依赖 1.3 的核心行为（扩展动态状态；dynamic rendering 落地后也是），把 1.2 设备"跑子集"当成
-> 可接受就会让宿主从帧深处的驱动报错里才知道。判据：`tests/test_vsg/DeviceRequirementsTest.cpp`。
+> 后端有权依赖 1.4 的核心行为（扩展动态状态、dynamic rendering 的 local read），把低版本设备"跑子集"当成
+> 可接受就会让宿主从帧深处的驱动报错里才知道。**抬到 1.4 不是为了 polygon mode / blend**：那两项 1.4 也没收
+> （见 §2.3 与 `.ai/design/vsg-pipeline-sharing.md`），仍要 `VK_EXT_extended_dynamic_state3` 的 feature 位。
+> 判据：`tests/test_vsg/DeviceRequirementsTest.cpp`。
 >
 > 本文件是模块的**导航与现状说明**：它回答"这个插件是什么、有哪些文件、类各自负责什么、图长什么样、线程约定是什么"，并指向每个主题的权威文档。
 >
@@ -127,7 +129,10 @@ src/plugins/gfx_backend_vsg/
     VsgProgramSlot.hpp           # 全屏 program 槽：目的目标解析/摆放
     VsgLights.hpp                # detail：光照块填充（世界→视图，两路共用）
     VsgSceneRules.hpp             # detail：设备无关规则（通道形状、缓存键哈希、颜色附件/opaque 写）
+    VsgDynamicState.hpp           # detail::SetDynamicState：逐 drawable 的动态状态命令（StateNode 的
+                                  # depth/cull/frontFace/topology/polygonMode/blend 全走它）
     VsgPipelineFactory.hpp        # vsg 对象工厂 + detail（格式转换 / 渲染通道 / 着色器集 / 管线态）
+    VsgVulkanEntryPoints.hpp      # detail：三个 loader 不导出的扩展命令入口点（值，随命令携带）
     VsgBackendUtility.hpp         # detail：图手术、设备同步、会话策略查询
     VsgUtils.hpp                  # detail::toVsg(Mat4d→dmat4)
     GfxBackendVsgPlugin.hpp       # 插件入口声明
@@ -145,6 +150,8 @@ src/plugins/gfx_backend_vsg/
     VsgProgramSlot.cpp           # 全屏用户程序（视图编译、摆放）
     VsgLights.cpp                # detail：光照块填充（viewRotation + 两个块）
     VsgSceneRules.cpp             # detail：通道形状判定 + 缓存键哈希 + opaque 多附件写
+    VsgDynamicState.cpp           # detail::SetDynamicState 的 compare/record + 动态状态声明
+    VsgVulkanEntryPoints.cpp      # 唯一包含 volk.h 的 TU：volk 装载 device 表并取出三个入口点
     VsgRendererPasses.cpp         # pass 协议（begin/end/releasePass、退役）
     SceneBridge.cpp               # 保留 Item 缓存 / buildGeometry / syncRenderCommands
     SceneBridgeGeometry.cpp       # 顶点/索引上传与通道处理
@@ -168,7 +175,7 @@ CMake 里显式 `target_compile_definitions(... PRIVATE V_VSG_LIB)` 让 `V_VSG_A
 
 ## 3. 构建与依赖
 
-- **运行期 Vulkan 下限 = 1.3**：实例版本由 vsg 的 `WindowTraits::defaults()` 用 `vkEnumerateInstanceVersion`
+- **运行期 Vulkan 下限 = 1.4**：实例版本由 vsg 的 `WindowTraits::defaults()` 用 `vkEnumerateInstanceVersion`
   取 loader 支持的最高值（本机 1.4），但**算数的是设备自己的 `apiVersion`** —— 会话建立时用
   `detail::supportsRequiredVulkanVersion()` 判，低了就 `shutdown()` + 返回 false 并在诊断通道报原因。
   可用/不可用的 API 面看**系统头的版本**（本机 `VK_HEADER_VERSION 341`），vsg 那份 `include/vsg/vk/vulkan.h`

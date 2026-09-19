@@ -143,6 +143,9 @@ target_link_libraries(${GFX_BACKEND_VSG_TARGET} PRIVATE
     vi::Imaging
     vi::Logging
     vsg::vsg
+    # The meta-loader this backend reaches extension commands through (see VsgVulkanEntryPoints): the
+    # loader exports no symbol for those, and volk is what loads them without naming each one.
+    tp::volk
     ${_gfx_backend_vsg_host_surface_libs})
 
 # The backend has no GLSL of its own: every stage it compiles comes from the SDK
@@ -189,6 +192,7 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgLights.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgBackendUtility.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgDynamicState.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgVulkanEntryPoints.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgHostWindow.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPipelineFactory.cpp)
 target_compile_definitions(vsg_backend_selftest PRIVATE V_VSG_LIB)
@@ -201,6 +205,6 @@ if(MSVC)
 endif()
 target_include_directories(vsg_backend_selftest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(vsg_backend_selftest PRIVATE vi::Graphics vi::Logging vsg::vsg
+target_link_libraries(vsg_backend_selftest PRIVATE vi::Graphics vi::Logging vsg::vsg tp::volk
     ${_gfx_backend_vsg_host_surface_libs})
 set_target_properties(vsg_backend_selftest PROPERTIES FOLDER third_party)

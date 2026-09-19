@@ -65,7 +65,7 @@ depth test/write/compare、cull mode、front face、primitive topology 都是**�
 - `slot` 还必须被 `CollectResourceRequirements` 收集（它按每条 `StateCommand::slot` 抬 `maxSlots.state`，
   `State::stateStacks` 依此 sizing；超出者既不录制也会越界索引）。实测 probe：`stateStacks.size() == 16`、
   `maxSlots.state == 15` ⇒ 收集确实看到**懒建**的变体状态组。
-- **故意不动态化的两项**（`ResolvedRenderState` 里剩下的 state）：polygon mode（`VK_DYNAMIC_STATE_POLYGON_MODE_EXT`）
+- **（历史，已由里程碑 C 推翻）当时“故意不动态化的两项”**（`ResolvedRenderState` 里剩下的 state）：polygon mode（`VK_DYNAMIC_STATE_POLYGON_MODE_EXT`）
   与 colour blend enable/factors（`VK_DYNAMIC_STATE_COLOR_BLEND_*_EXT`）。它们**不是** core 1.3 状态：
   `VK_EXT_extended_dynamic_state2` 的 1.3 提升**排除了** polygonMode（registry 原文 "Feature struct and
   optional state are not promoted"，只提升 rasterizerDiscard/depthBiasEnable/primitiveRestart），
@@ -73,15 +73,17 @@ depth test/write/compare、cull mode、front face、primitive topology 都是**�
   有 ⇒ 等于把设备要求抬到 1.3 之上）；②设备创建时启用这两个扩展；③**函数入口 loader 不导出** ——
   `nm -D libvulkan.so.1` 里没有 `vkCmdSetPolygonModeEXT`／`vkCmdSetColorBlendEnableEXT`／`vkCmdSetColorBlendEquationEXT`
   （core 提升名如 `vkCmdSetCullMode` 有），直接调用**在 Windows 能链接、在 Linux 链接失败**，正解是用
-  `vkGetDeviceProcAddr` 取指针并维护 per-device 指针表。三笔代价换两个很少变的状态 ⇒ 留在管线里（变体键也留着）。
+  取指针（当时设想用 `vkGetDeviceProcAddr` 手工维护 per-device 指针表）。当时三笔代价换两个很少变的状态 ⇒ 留在管线里（变体键也留着）。
+  **这个账在里程碑 C 重算了**（用户决定抬地板到 1.4，但不为这两项遮遮掩掩）：三项代价照付，状态进命令、
+  **退出变体身份**，实现见 §2.3；入口层后来改由 volk 承担（里程碑 D，同见 §2.3）。
   触发条件 = 状态切换频率真的成为瓶颈（里程碑 B 落地后看剩下的身份维度），或决定把设备要求抬到 EDS2/EDS3。
 - **行为中立**：命令携带的值正是原本烘焙的值。判据：证据 30 帧对基线逐字节相同（除两个已知漂移计数）+ 0 FAIL；
   `test_vsg` 318（新增 5 例 `DynamicStateTest`）、`test_graphics` 275；syncval 0/0/0。**有效性用变异证明**：
   ①把发出的 depth test 强制 `VK_FALSE` ⇒ 深度相 **21** 条 FAIL；②把发出的 topology 强制 `LINE_LIST`
   （烘焙值仍 TRIANGLE_LIST）⇒ **44** 条 FAIL（画面确实按命令的拓扑光栅化）。两次都已还原。
-- **仍未做（里程碑 B）**：三份按 depth 策略区分的 ShaderSet 仍在、depth/cull/polygon/blend/topology 仍在
+- **仍未做（里程碑 B，已落地，见 §2.2）**：三份按 depth 策略区分的 ShaderSet 仍在、depth/cull/polygon/blend/topology 仍在
   变体键与 `shaderSetFor` 里。B = 把前四者（已动态化）从变体身份移除，使状态变化 = 一条命令而不是重建；
-  后两者按上面理由留在身份里。
+  后两者当时打算留在身份里（C 又推翻了）。
 
 ### 2.2 状态不再进管线：逐 drawable 交付（里程碑 B 已落地）
 
@@ -89,8 +91,9 @@ depth test/write/compare、cull mode、front face、primitive topology 都是**�
 去重管线，create-info 不同就是不同的 `VkPipeline`）。B 把这条走完：
 
 - **管线烘焙常量**：`makePipelineStateObjects()`（`RenderStateMapper.hpp`）把 depth/raster/input-assembly
-  折叠成 `VsgDynamicState.hpp` 里具名的 `kBaked*` 常量（与命令自身的默认值同一处定义，防漂移）；**blend 与
-  polygonMode 仍按 resolved state 烘焙**（它们不是 core-1.3 动态状态，见 §2.1）。
+  折叠成 `VsgDynamicState.hpp` 里具名的 `kBaked*` 常量（与命令自身的默认值同一处定义，防漂移）；当时 blend 与
+  polygonMode 仍按 resolved state 烘焙（它们不是 core-1.3 动态状态，见 §2.1）——**里程碑 C 之后这两项也折成常量、
+  并按 per-drawable 命令交付（见 §2.3），所以“`ResolvedRenderState` 六项全不进管线”是现在的状态**。
 - **状态变成"逐 drawable 的贡献"**：`SceneBridge::appendDrawableState()` 在**模板命令之后**追加
   `SetDynamicState` + per-draw 绑定；`cacheStateVariant()` 只缓存模板 ⇒ **顺序是契约**：先 cache、后 append。
   ⚠️ 反了会怎样：模板里带上第一条 drawable 的命令，后续 drawable 从模板拷一份、再追加自己的一份，
@@ -112,7 +115,7 @@ depth test/write/compare、cull mode、front face、primitive topology 都是**�
   契约（blend/polygonMode ≠、depth/cull/topology ==）。
 - **边界**：材质/纹理/顶点布局、`subpass/color_count` 仍在键里（它们的差异确实要求不同管线，见 §2）；状态没有边界了。
 
-### 2.3 polygon mode 与 blend 也动态化（里程碑 C 已落地）
+### 2.3 polygon mode 与 blend 也动态化（里程碑 C 已落地；入口层改由 volk 承担，里程碑 D）
 
 这两项是 `ResolvedRenderState` 里最后两个"不是 core 状态"的东西，所以需要额外机制：
 
@@ -126,10 +129,20 @@ depth test/write/compare、cull mode、front face、primitive topology 都是**�
   `VUID-vkCmdSetPolygonModeEXT-None-09423`，报文原话点名要 EDS3 的那个位）⇒ 改成申请 EDS3 的三个位 + 只启用
   EDS3 扩展后归零。
 - **入口符号仍然不导出**：这三个命令是这一层唯一不能按名字调的（loader 只导出 core 提升名）。做法 =
-  `DynamicStateEntryPoints`（三个函数指针 + `complete()`）+ `detail::fetchDynamicStateEntryPoints(device)`
-  （走 `vsg::Device::getProcAddr`），**每 device 取一次、随命令携带**（值语义，不搞全局表：指针属于一个 device）；
-  桥通过新增的 `SceneBridge::setDynamicStateEntryPoints()` 在 `setupContentSlot` 里注入（与 `setTextureAnisotropy`
+  `DynamicStateEntryPoints`（三个函数指针 + `complete()`）+ `detail::fetchDynamicStateEntryPoints(VkDevice, VkInstance)`，
+  **每 device 取一次、随命令携带**（值语义，不搞全局表：指针属于一个 device）；桥通过新增的
+  `SceneBridge::setDynamicStateEntryPoints()` 在 `setupContentSlot` 里注入（与 `setTextureAnisotropy`
   同一处、同一理由：一个桥自己不知道的 device 事实）。没注入的桥（设备无关测试）不调用、不崩。
+- **指针由 volk 取（里程碑 D，2026-09-19）**：vendored 到 `third_party/volk/`（header v363、上游 `54fc0d7a`、MIT），
+  **只做入口层**：`volkInitialize()` → `volkLoadInstanceOnly()` → `volkLoadDeviceTable()`，表是调用内局部，从里面拷出三个
+  指针。两个构建选项都承重且都有实测理由：`VOLK_NAMESPACE`（否则 volk 导出 ~400 个与 Vulkan 入口点同名的全局**数据**
+  符号，而插件与按名字解析 Vulkan 的 vsg 同进程 ⇒ 查找可能命中我们的数据对象；加命名空间后是 mangled 符号，实测插件
+  `nm -D` 中"名为入口点的导出符号" = 0），`VOLK_NO_DEVICE_PROTOTYPES`（**INTERFACE-only**：VOLK.c 自己必须看得见那些
+  全局才能填它们，设成 PUBLIC 直接编译不过；对消费者则让"没装表就调 device 命令"成为编译错误）。volk 只活在一个 TU
+  里（`VsgVulkanEntryPoints.cpp`），且该 TU 收**裸句柄**——volk.h 定义 `VK_NO_PROTOTYPES` 并以 `using namespace volk;`
+  收尾，和 vsg 的头同 TU 混用会让 vsg 自己的非限定调用变歧义（实测 `reference to 'vkGetInstanceProcAddr' is ambiguous`）。
+  **扩展/feature 策略仍手写在 `VsgRenderer.cpp` 的 `makeWindowTraits`**（不委派给 volk）：要哪个扩展、要哪个 feature 位、
+  以及 polygon mode 那条踩过坑的区别（enum 住在 EDS2 块里，gate 它的是 EDS3 的位）。
 - **管线烘焙常量、值逐 drawable 交付**：`makePipelineStateObjects()` 把 polygonMode 折成 `kBakedPolygonMode`、
   blend 折成"每附件一个 opaque 常量项"（**数量必须等于 subpass 的颜色附件数**，`renderPass-07609`）；命令携带
   resolved 值（blend 是数组，`kMaxDynamicAttachments = 8`，超出部分保持常量——反正常量不决定任何东西）。
