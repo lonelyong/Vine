@@ -88,12 +88,17 @@
 - ⚠️ **启动框关掉时要把主窗口 `raise()` + `activate()`**：`Qt::SplashScreen` 置顶且不激活进程地显示，
   Windows 的前台激活名额被它占掉，随后 show() 的主窗口就压在终端/IDE 后面（看起来像“没显示出来”）。
   `finishStartup()` 只“确实有框”时做，那一刻会打一行 `main window visible=…, active=…` 供区分。
-- ⚠️ **框关掉时窗口必须已经能画**（2026-09-19 改，等待归 `finishStartup()`）：`SplashConfig::wait_for_first_frame`
+- ⚠️ **框关掉时窗口必须已经能画**（2026-09-19 改，关框推迟到渲染视图出帧）：`SplashConfig::wait_for_first_frame`
   仍是删掉的（按固定时长 = 猜），但有界、信号驱动的等待归框架 —— `finishStartup()` 只在主窗口的
-  `primaryRenderControl()` 处于 `Attached`（后端已起、一帧没上屏）时开一个嵌套事件循环，等 `stateChanged`
-  报 `Presenting`/`Failed`，或 2000 ms 到点（到点 warning 后照旧关框）。跑那圈循环正是要等的工作
-  （布局几拍 + 首帧 + 设备/管线），不是轮询；框全程不动。实测 waited 759 ms，框比首帧晚 2 ms 消失
-  （修前：框先关，756–903 ms 渲染区空着）。`Pending`（宿主还没 attach）不等待。契约不变：
+  `primaryRenderControl()` 已经 `hasPresented()`（或没有视图）时立刻关框，否则**订阅 `stateChanged`**、
+  等 `Presenting`/`Failed` 才关，另加 2000 ms 一次性 `QTimer` 兜底（到点 warning 后照旧关框）。
+  **不是嵌套事件循环**：跑循环的是 `run()`（`GuiApplication.cpp` 的 `windowCanBeSeen` /
+  `deferStartupFrameClose` / `closeStartupFrame` 三个私有方法就是这条路径）。框全程不动。实测（本机 xcb +
+  lavapipe）：`Attached` 后 21 ms 武装推迟，首帧建 `shadow_map`/`gbuffer`/`composite` 与 3 个 program slot
+  花 ~180 ms，框与 `Presenting` 同毫秒关（Windows + RTX 4060 基准：等待 759 ms，框晚 2 ms 关；
+  修前：框先关，756–903 ms 渲染区空着）。`Pending`（宿主还没 attach）不等待。**“init 时把管线建好”不是替代品**：
+  `RenderControl::init()` 的预热建在退化尺寸上（实测 `pre-frame` 的 extent `100x30`），首帧仍要建
+  target/slot，真实尺寸更晚才到（`378x247` → `1178x479`）。契约不变：
   **插件从 `load()` 返回即表示其子系统可用**，`finishStartup()` 仍是“宿主 + 插件的活都干完了”，
   变的只是“框什么时候消失”。
 - ⚠️ **`ConsoleUserIO` 现带 `V_APPFW_API`**（类仍私有，头在 `src/`）：`test_gui` 直接构造它抽 stdout，

@@ -70,9 +70,11 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
 - 对外接口：`SurfaceState { Pending, Attached, Presenting, Failed }` + `state()` + `stateChanged` 信号
   + `failureReason()`。
 - **首帧与启动框**（2026-09-19）：`Attached` 之后的第一帧要等窗口系统把最终尺寸交给事件循环（布局几拍），
-  所以它必然落在 `finishStartup()` 之后 —— 由 `GuiApplication::finishStartup()` 做一次有界等待
-  （只在 `Attached` 时、等 `stateChanged` 的 `Presenting`/`Failed`，上限 2000 ms）把框留到那一刻。
-  实测：框 waited 759 ms，首帧的图在 752x480 只建一次，框比 `Presenting` 晚 2 ms 关。
+  所以它必然落在 `finishStartup()` 之后 —— 那一刻窗口还不能露时，`GuiApplication::finishStartup()`
+  **不立刻关框**，而是订阅本类的 `stateChanged`、等 `Presenting`/`Failed`（`hasPresented()` 成立）才关，
+  另加 2000 ms 一次性定时器兜底；跑循环的是 `run()`，不是嵌套循环。实测（本机 xcb + lavapipe）：
+  `Attached` 后 21 ms 武装，首帧自身 ~180 ms（其间建 `shadow_map`/`gbuffer`/`composite` 与 3 个 program
+  slot），框与 `Presenting` 同毫秒关；Windows + RTX 4060 基准：等待 759 ms，框晚 2 ms 关。
   见 `.ai/design/appfw-startup-splash.md`。
 - app_shell：`new RenderControl()` → `setCentralWidget()` → demo.install() → `init()`。
 
