@@ -68,6 +68,81 @@ namespace detail
 void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnostics,
                           vine::graphics::RenderTarget* target);
 
+/**
+ * @brief Brings a target's attachments in line with its description: build when its SHAPE changed,
+ * resize in place when only its SIZE did.
+ *
+ * THE decision about an off-screen target's attachments, in one place, because it is asked from two —
+ * the pass path (VsgRenderer::render, for the target a pass draws into) and the fullscreen-program path
+ * (resolveProgramSlotDestination, for the target a program draws INTO) — and the two used to answer it
+ * with the same "rebuild everything" code copied out. Which path applies is a fact about what moved:
+ *
+ *  - the target's shape (attachment count / formats / depth policy), or the borrow itself: EVERYTHING
+ *    anchored on it is rebuilt (buildOffscreenTarget);
+ *  - its size, or the image its borrowed depth points at: the passes, slots and pipelines stay and only
+ *    the attachments, framebuffers and descriptor bindings are replaced (resizeOffscreenTarget).
+ *
+ * @param state       Session that owns the target's entry.
+ * @param diagnostics Route a refused build / unusable size is reported on.
+ * @param target      Off-screen target to sync (null is the window target: nothing to do).
+ * @return true when the target has usable attachments afterwards.
+ */
+[[nodiscard]] bool syncOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnostics,
+                                       vine::graphics::RenderTarget* target);
+
+/**
+ * @brief Resizes an off-screen target's attachments IN PLACE: same passes, same slots, same pipelines —
+ * new images.
+ *
+ * The sibling of buildOffscreenTarget, and the difference is the whole point (§0 of
+ * .ai/design/vsg-target-resize-in-place.md): a build answers "this target's SHAPE changed" (attachment
+ * count / formats / depth policy) and therefore tears everything anchored on it down (passes, graphs,
+ * slots, per-size shader sets); a resize answers "the same target, at a new size" and keeps ALL of that,
+ * because none of it is size-bound:
+ *
+ *  - a render pass declares attachment FORMATS and sample counts, never a size ⇒ the passes stay, and
+ *    they stay compatible with the pipelines compiled against them (VUID-vkCmdDraw-renderPass-02684);
+ *  - a pipeline is cached on the NODE object, per viewID (GraphicsPipeline::compile) ⇒ keeping the
+ *    slots' views and nodes is what keeps their compiled pipelines;
+ *  - a framebuffer DOES name the attachments ⇒ each pass' framebuffer is replaced (by its own passGraph
+ *    call on the next draw, from the target's new attachments);
+ *  - a descriptor set DOES name the sampled image views ⇒ what samples this target re-points (the
+ *    program slots' own generation check, see .ai/design/vsg-target-resize-in-place.md §3.3);
+ *  - the new images are UNDEFINED ⇒ the first pass of the target seeds them again for one frame, which
+ *    is why every pass' recorded variant is sent back through the plan (attachments_generation).
+ *
+ * The replaced images / views / barrier are PARKED, never destroyed in place, and this path takes no
+ * device wait: a submitted command buffer may still name them, and parking is what this backend does
+ * instead of stopping the device (see VsgRetireRing) — that is also what makes a resize cheap enough
+ * to run on every window resize.
+ *
+ * @param state       Session that owns the target's entry and its retire ring.
+ * @param diagnostics Route an unusable size is reported on.
+ * @param target      Off-screen target to resize (null, unbuilt or unchanged is a no-op).
+ */
+void resizeOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnostics,
+                           vine::graphics::RenderTarget* target);
+
+/** @brief Whether a target's BORROWED depth is no longer the source's current image.
+ *
+ * The third thing that can go stale about a target's attachments, next to its own size and its shape: a
+ * target that borrows another's depth (RenderTarget::shareDepth) has that image baked into its
+ * framebuffers, so the source replacing it (a resize of the source) leaves the borrower recording
+ * against an image nothing writes any more. The borrower is then resized in place for the same reason
+ * the source was — its own attachments have to be remade against the new image.
+ *
+ * Deliberately narrow: only the case where the borrow itself is unchanged and only the painted image
+ * moved. A borrow that is still waiting for its source, or one that has become unusable, is a change of
+ * the target's ATTACHMENT SHAPE and is left to buildOffscreenTarget (see borrowNeedsRebuild).
+ *
+ * @param state      Session whose target table holds both entries.
+ * @param t          Target entry whose borrow is being judged.
+ * @param target_key The target's own description (null for the window, which never borrows).
+ * @return true when the borrow is in force but points at an image the source no longer has.
+ */
+[[nodiscard]] bool borrowPointsAtAnotherImage(const VsgRendererState& state, const VsgRenderTargetEntry& t,
+                                              const vine::graphics::RenderTarget* target_key);
+
 /** @brief Decides whether a target's shared depth can be borrowed.
  *
  * RenderTarget::shareDepth points a target at another target's depth image so
@@ -134,26 +209,58 @@ void createTargetAttachments(VsgRendererState& state, VsgRenderTargetEntry& t, :
 [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineBarrier> makeDepthShareBarrier(const VsgRendererState& state,
                                                                           vine::graphics::RenderTarget* source);
 
+/** @brief What a target's depth borrow would do RIGHT NOW (see borrowVerdict).
+ *
+ * The values that matter to a caller are "honoured" and "not": the refused ones are separated because
+ * the two families are handled differently — a source that is gone or not ready yet is retried, while a
+ * size mismatch or a sampled depth is a property of the setup that is remembered and reported once
+ * (see resolveDepthBorrow).
+ */
+enum class BorrowVerdict
+{
+    None,              ///< No borrow was asked for (RenderTarget::depthSource is null).
+    Honoured,          ///< The source's depth can be attached: the borrow is (or becomes) in force.
+    SourceGone,        ///< The source is not in the session's table: it was released, or never rendered.
+    SourceNotReady,    ///< The source has no depth image YET (its pass has not built this frame).
+    SourceSizeMismatch, ///< Different extents: a framebuffer attachment must have the framebuffer's dimensions.
+    SourceSampled,     ///< The source promoted its depth to a sampled texture: a sampled depth cannot be attached.
+};
+
+/** @brief The ONE rule for whether a depth field can be shared, asked by both the build and its predicate.
+ *
+ * A depth borrow is decided twice per session: once by the BUILD (resolveDepthBorrow, which attaches the
+ * source's image) and once by the REBUILD PREDICATE (borrowNeedsRebuild, which has to notice that the
+ * answer changed without a build ever happening). Written twice, the two drift — and the drift is
+ * invisible: the borrower keeps a framebuffer attached to an image the source no longer writes, or it
+ * rebuilds every frame for a borrow that is perfectly fine. So the checks live here, and both callers
+ * ask this function.
+ *
+ * @param state      Session that owns the target table.
+ * @param source     Target whose depth would be borrowed (the caller checks this for null).
+ * @param width      Width the borrower would be built at.
+ * @param height     Height the borrower would be built at.
+ * @return What the borrow would do now, and (when it is refused) why.
+ */
+[[nodiscard]] BorrowVerdict borrowVerdict(const VsgRendererState& state, vine::graphics::RenderTarget* source,
+                                          int width, int height);
+
 /** @brief Whether a target's recorded attachments have to be (re)built because of its
  * DEPTH BORROW.
  *
- * Two separate ways a borrowed depth outlives its usefulness, answered together because
- * they mean the same thing to the caller: the framebuffer recorded for this target no
- * longer matches the source it has to test against.
+ * The borrower's framebuffer bakes the source's depth: a borrow that is no longer the one a build would
+ * take has to be rebuilt, and the only question is whether the borrow's DECISION changed or only the
+ * image it names. Two cases, answered together because they mean the same thing to this caller:
  *
- *  - PENDING: the requested borrow could not be honoured yet (the source had no depth
- *    image when this target was built), so the baked borrow differs from the requested one
- *    and is retried as soon as the source has an image. A source that is permanently
- *    unusable is remembered as such (@ref VsgRenderTargetEntry::unusable_depth_source), so this retries
- *    only while the borrow is merely WAITING — a disabled or never-built producer costs one
- *    map lookup per frame, not a rebuild loop.
- *  - STALE: an honoured borrow attaches the source's depth VIEW, and a source that is
- *    rebuilt (a size change, or the depth-policy change this same predicate watches for its
- *    own targets) replaces its depth image. The borrower's framebuffer would go on testing
- *    the replaced image, which nobody writes any more: the borrowed depth silently freezes
- *    while the old image stays alive. Comparing the source's current view against the one
- *    this target was baked with detects that, and the rebuild re-runs the borrow validation
- *    against the new image.
+ *  - the decision would change (borrowVerdict): a disabled producer that produced its depth, a source
+ *    that started promoting its depth to a sampled texture or changed size, or a source that was
+ *    released — each of those is a different attachment set, and one of them (the promotion) makes the
+ *    borrowed image one no render pass may attach at all;
+ *  - the borrow itself moved (RenderTarget::shareDepth now names a different source, or none), which is
+ *    a different barrier and a different image.
+ *
+ * A source that merely REPLACED its image while the decision stayed the same (a resize in place) is
+ * deliberately NOT a rebuild: the borrow is unchanged, so the borrower is resized in place as well and
+ * its framebuffers are remade against the source's new image (see borrowPointsAtAnotherImage).
  *
  * @param t          Target entry to inspect.
  * @param target_key The target itself (nullptr = the window, which never borrows).
@@ -161,6 +268,22 @@ void createTargetAttachments(VsgRendererState& state, VsgRenderTargetEntry& t, :
  */
 [[nodiscard]] bool borrowNeedsRebuild(const VsgRendererState& state, const VsgRenderTargetEntry& t,
                                       const vine::graphics::RenderTarget* target_key);
+
+/** @brief Whether an honoured borrow names an image the source has since replaced (a resize in place).
+ *
+ * The other half of the borrow rule: the decision (borrowVerdict) is still "honoured" and the source is
+ * still the one asked for, so nothing has to be rebuilt — but the framebuffer currently attaches the
+ * source's PREVIOUS depth view, and the rendered image no longer writes to it. The caller replaces the
+ * borrower's attachments against the source's current image (resizeOffscreenTarget), which keeps its
+ * passes, its slots and their compiled pipelines.
+ *
+ * @param state      Session that owns the target table.
+ * @param t          Target entry to inspect.
+ * @param target_key The target itself (nullptr = the window, which never borrows).
+ * @return true when the borrower has to be resized in place.
+ */
+[[nodiscard]] bool borrowPointsAtAnotherImage(const VsgRendererState& state, const VsgRenderTargetEntry& t,
+                                             const vine::graphics::RenderTarget* target_key);
 
 /** @brief Forgets a target's attachments and everything that hangs off them — ONE call, ONE order.
  *

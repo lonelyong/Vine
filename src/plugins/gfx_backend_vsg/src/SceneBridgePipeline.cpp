@@ -20,6 +20,7 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/RenderStateMapper.hpp>
 #include <vine/vsg/SceneBridgeInternals.hpp>
+#include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/VsgSceneRules.hpp>
 #include <vine/vsg/VsgUtils.hpp>
 
@@ -176,12 +177,16 @@ namespace
  * @param extra_channels Custom channels (location, components) whose bindings
  *                       the set must declare, in binding order (empty when the
  *                       geometry forwards none).
+ * @param declares_draw_block Whether a stage of the program reads the engine's per-drawable block
+ *                       (set 1, binding 0 — see programReadsDrawBlock); the set then declares it and
+ *                       carries the per-draw layout.
  * @return Shader set, or null when assembly failed.
  */
 ::vsg::ref_ptr<::vsg::ShaderSet> assembleProgramShaderSet(
     const ::vsg::ShaderStages& stages,
     const ::vsg::GraphicsPipelineStates& base_states,
-    const std::vector<std::pair<std::uint32_t, std::uint32_t>>& extra_channels)
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>>& extra_channels,
+    bool declares_draw_block)
 {
     if (stages.empty()) {
         return ::vsg::ref_ptr<::vsg::ShaderSet>();
@@ -239,6 +244,21 @@ namespace
     // Binding 1 of set 0, the first slot free after `material`.
     shader_set->addDescriptorBinding("diffuseMap", "", 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
                                      VK_SHADER_STAGE_FRAGMENT_BIT, {});
+    // Per-drawable values (VineDrawBlock: opacity, and the model matrix beside it), set 1 binding 0.
+    // Declared ONLY when a stage of this program reads it (see programReadsDrawBlock): the engine's
+    // built-in set declares it unconditionally because its own fragment stage reads the opacity from
+    // it, while a user program that declares nothing there keeps the single-set layout it had before
+    // (and a program that declared set 1 binding 0 for its own uniform is not silently handed ours --
+    // the new declaration would take that slot). With it declared, this set's set 1 IS the per-draw
+    // layout (DrawBlockSetBinding), so the bridge binds the drawable's own slot by dynamic offset and
+    // `setOpacity` reaches a program that reads it.
+    if (declares_draw_block) {
+        shader_set->addDescriptorBinding("vine_draw", "", 1, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1,
+                                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                         ::vsg::ubyteArray::create(static_cast<uint32_t>(
+                                             sizeof(vine::graphics::VineDrawBlock))));
+        shader_set->customDescriptorSetBindings.push_back(vine::vsg::detail::DrawBlockSetBinding::create());
+    }
     shader_set->addPushConstantRange("pc", "", VK_SHADER_STAGE_VERTEX_BIT, 0, 128);
     shader_set->defaultGraphicsPipelineStates = base_states;
     return shader_set;
@@ -373,7 +393,8 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // L1b: assemble the per-layout ShaderSet from the cached stages. A failed
     // assembly is cached too (null) so later geometry of this layout does not
     // rebuild it every frame.
-    auto shaderSet = assembleProgramShaderSet(sit->second.payload().stages, base_states, extra);
+    auto shaderSet = assembleProgramShaderSet(sit->second.payload().stages, base_states, extra,
+                                             vine::vsg::detail::programReadsDrawBlock(program));
     // A failed assembly (no stages, or vsg refused the hand-built set) is
     // reported for the same reason as a failed compile: the program silently
     // stops applying (D9). One report per (program, layout, revision).

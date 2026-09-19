@@ -226,6 +226,17 @@ struct ProgramSlot {
     // step is a function of the live camera — see drawScreenProgram.
     ::vsg::ref_ptr<::vsg::ImageView> shadow_view;
     ::vsg::ref_ptr<::vsg::Data>      shadow_block;
+    // The descriptor set (set 0) the node's sampled-source bindings live in, and the source's
+    // attachments GENERATION it was built against.
+    //
+    // A source that is resized in place (see resizeOffscreenTarget) replaces its images and views
+    // but keeps everything else, so this slot's node, view and pipeline stay valid — what has to
+    // follow is which image views the set names. Keeping the set lets that be done without
+    // rebuilding the node (which is the only way to keep the compiled pipeline: vsg caches the
+    // VkPipeline on the node object, per viewID — see VsgProgramSlot).
+    ::vsg::ref_ptr<::vsg::DescriptorSet> source_set;
+    /// The source's attachments generation this slot was built (or re-pointed) for.
+    std::uint64_t                    source_generation = 0;
     // The program the node was compiled from, HELD (not merely compared):
     // the address is the slot's identity, so a released program replaced at
     // the same address must not read as "unchanged" (the ownership rule
@@ -382,6 +393,15 @@ struct VsgRenderTargetEntry {
         /// submitFrame() swaps the graph to the steady variant afterwards,
         /// once that frame has made the depth attachment-optimal again.
         bool        transient   = false;
+        /// The target's @ref VsgRenderTargetEntry::attachments_generation this variant was planned
+        /// under.
+        ///
+        /// A resize keeps the passes (there is nothing wrong with them) while REPLACING the images
+        /// they attach, and the new images are UNDEFINED again — so which variant a pass must record
+        /// has to be decided again, for one frame. That is what this value is compared for (see
+        /// reuseSteadyPass): a variant recorded against the previous attachment set describes images
+        /// that no longer exist.
+        std::uint64_t attachments_generation = 0;
     };
 
     // Per-pass objects, keyed by the owning pass (address-stable map so a
@@ -391,6 +411,15 @@ struct VsgRenderTargetEntry {
     // True once this target's images / views exist: the per-pass model's
     // "target is built" test (there is no single target-level graph).
     bool attachments_built = false;
+    // Bumped every time this target's images / views are (re)created — by a build or by an in-place
+    // resize.
+    //
+    // It is the ONE fact a consumer needs to tell "the images I bound are still the current ones"
+    // from "they were replaced", and it is deliberately not a list of image pointers: a program slot
+    // stores the generation it was built for (see ProgramSlot::source_generation) and re-points its
+    // descriptor when it differs, and a pass stores the generation its variant was planned under
+    // (see PassObjects::attachments_generation) so a resize sends it back through the plan.
+    std::uint64_t attachments_generation = 0;
     // True once this target's depth image has been defined (cleared) at
     // least once, so a LOAD pass may load it — an UNDEFINED image cannot be
     // loaded. Target-level, because the image is shared by every pass.
@@ -535,12 +564,17 @@ struct VsgRenderTargetEntry {
     // this framebuffer borrows (null = owns its depth) plus the command
     // barrier that makes that depth visible between the two render graphs.
     vine::graphics::RenderTarget*    depth_source = nullptr;
-    // The source's depth VIEW this framebuffer was baked with. A source
-    // that is rebuilt (size or depth-policy change) replaces its depth
-    // image, and the baked framebuffer would go on testing the replaced
-    // image — which nobody writes any more — so render() rebuilds this
-    // target as soon as the two differ and runs the borrow validation again.
+    // The source's depth VIEW this framebuffer was baked with. A source that replaced its image keeps
+    // the borrow (the decision is the same) but not the image, and the baked framebuffer would go on
+    // testing the replaced one — which nobody writes any more — so the borrower is resized in place
+    // against the source's CURRENT view (see borrowPointsAtAnotherImage, which compares the two).
     ::vsg::ref_ptr<::vsg::ImageView> depth_source_view;
+    /// Set when something OUTSIDE this target's own description invalidated its attachments — today
+    /// only "the depth source it borrowed was released" (see releaseRenderTarget) — so the next draw
+    /// has to build rather than resize them. A build clears it (see resetTargetAttachments), which is
+    /// what makes it a one-shot signal instead of a mode: it used to be spelled as "the recorded size
+    /// is zero", which the resize path reads as a size change.
+    bool attachments_invalidated = false;
     ::vsg::ref_ptr<::vsg::PipelineBarrier> depth_share_barrier;
     // Set when the borrowed source above was RELEASED while still borrowed:
     // its VkImage is gone, so the borrow cannot be honoured and this target

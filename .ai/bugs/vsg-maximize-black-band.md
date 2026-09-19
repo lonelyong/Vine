@@ -60,3 +60,12 @@
   ~180 ms + 2 个 target ~40 ms；其中 **glslang 只占 ~50 ms**，其余是 vsg 每节点建管线/描述符）。这段期间
   屏上是旧画面（不变形），窗口新长出来的部分到该帧落地时才填上。要再缩短得改槽的重建策略（原地
   re-point 描述符 + 动态 viewport 状态），因为 resize 后**源的图像视图换了**、节点必须重建。
+
+  > **H9 已修（2026-09-19）——这段“仍剩”现在只剩 22 ms**：槽的重建策略换成了“目标原地改尺寸 + 采样方
+  > re-point 描述符”，与本节末尾的猜测一致；但**那半句“节点必须重建”是错的**：`GraphicsPipeline::compile`
+  > 在同一个 `GraphicsPipeline` 对象内按 pipeline states 复用实现（比较里**不含 render pass**）⇒ 保节点/保 View
+  > 就是早退，管线不重建。实测：最大化 752x480 → 2352x888 **225.5 → 36.4–51.4 ms**（`targets 0`、
+  > `target resizes 2`、`rebind compiles 1`，其中 22–36 ms 是**新面板首次可见**建的一个槽，与 resize 无关）、
+  > 还原 **→ 2.2 ms**、`device_waits` 不涨。像素侧由自检新相位 `runTargetResizePhase` 覆盖（拷贝程序铺满新尺寸、
+  > 中心/边角都对）；设计与实测见 `.ai/design/vsg-target-resize-in-place.md`，`H9` 行的收尾见
+  > `.ai/memory/graphics-perf-backlog.md`。

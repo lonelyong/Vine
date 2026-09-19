@@ -46,6 +46,7 @@
 #include <vsg/core/ref_ptr.h>
 #include <vsg/maths/vec4.h>
 
+#include <vine/vsg/VsgBuildProfile.hpp>
 #include <vine/vsg/VsgDrawBlockPool.hpp>
 #include <vine/vsg/VsgFwd.hpp>
 #include <vine/vsg/VsgMeshResourceCache.hpp>
@@ -434,10 +435,31 @@ struct VsgRendererState {
     // Successful off-screen target builds (diagnostic; see
     // VsgRenderer::offscreenBuildCount()).
     std::size_t offscreen_build_count = 0;
+    // Successful off-screen target resizes IN PLACE (diagnostic; see
+    // VsgRenderer::offscreenResizeCount()): the same passes / slots / pipelines, new attachments.
+    std::size_t offscreen_resize_count = 0;
+    // Set when something swapped a descriptor set the GPU has already recorded against (a program slot
+    // re-pointing at a resized source's fresh views, see VsgProgramSlot): the replacement set has no
+    // Vulkan objects until a compile traversal visits it, so the frame SUBMITS one compile before it
+    // records — the flag is on the session because several slots can re-point in one frame and one
+    // compile serves them all.
+    bool compile_needed = false;
     // Successful fullscreen-program slot builds (diagnostic; see
     // VsgRenderer::programSlotBuildCount()). Counted in drawScreenProgram when
     // a slot becomes ready, so a program hot-reload is observable.
     std::size_t program_slot_build_count = 0;
+
+    // What the CURRENT frame spent on the work it had to build, by phase (see VsgBuildProfile). Filled by
+    // the paths above, reported and reset once per episode by reportBuildProfile(): the two moments it is
+    // read are the ones a startup or a resize is judged at, and the phases in it are what say which of
+    // them dominates. Reported OUTSIDE a frame as well -- the engine's warm-up runs passes before any
+    // beginFrame(), and reporting that work as part of the first frame would credit it to the frame that
+    // paid only part of the cost.
+    VsgBuildProfile build_profile;
+    // True once a frame that built nothing and missed the display's frame budget was reported: that is an
+    // EPISODE -- one line per episode, re-armed by a frame back inside the budget -- so a stalled session
+    // (a window that stopped presenting, say) does not print a line per frame.
+    ReportOnce build_profile_slow_reported;
 
     // ---- Retiring replaced GPU objects without stopping the device ---------
 

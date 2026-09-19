@@ -7,7 +7,7 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
-#include <vine/graphics/Node.hpp>
+#include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/geometry/Array.hpp>
@@ -77,6 +77,19 @@ struct BarSpec
 {
     double dx, dy, hx, hy;
 };
+
+/// Three digits, seven segments each: the row's bars, in the order the pattern bits use.
+constexpr std::size_t kSegmentCount = 3u * 7u;
+/// Vertices one bar contributes (six flat faces of four corners).
+constexpr std::size_t kVerticesPerBar = 24u;
+/// Indices one bar contributes (six quads = twelve triangles).
+constexpr std::size_t kIndicesPerBar = 36u;
+
+/// The colour a lit bar shows. Ambient-only lighting makes the material's diffuse the colour that
+/// reaches the frame, so this IS the readout's on-screen colour: a BRIGHT near-white green, because the
+/// readout is drawn over whatever the scene shows -- a dim or saturated green gets lost against a bright
+/// sky or a mid-tone surface.
+constexpr Colorf kLit{ 0.70f, 1.00f, 0.75f, 1.0f };
 
 }  // namespace
 
@@ -182,8 +195,9 @@ void FpsOverlay::updateReadout(double dt)
     const double inst = (dt > 1e-6) ? (1.0 / dt) : 0.0;
     fps_smoothed_ = (fps_smoothed_ <= 0.0) ? inst : 0.2 * inst + 0.8 * fps_smoothed_;
 
-    // Throttle the digit flips (~ every 0.15 s); flipping only on change keeps
-    // the shared-material hot path quiet in steady state.
+    // Throttle the readout changes (~ every 0.15 s); acting only on change keeps the cost quiet in
+    // steady state: a change rewrites ONE geometry's positions and announces it (see writePattern), and a
+    // value that does not change costs nothing at all.
     readout_elapsed_ += dt;
     if (readout_elapsed_ < 0.15) {
         return;
@@ -202,19 +216,45 @@ void FpsOverlay::updateReadout(double dt)
     // abcdefg bitmaps, bit 0 = a.
     static const std::uint8_t kDigitSegments[10] = { 0x3F, 0x06, 0x5B, 0x4F, 0x66,
                                                      0x6D, 0x7D, 0x07, 0x7F, 0x6F };
-    static const Colorf kLit(0.25f, 1.00f, 0.40f, 1.0f);
-    static const Colorf kDim(0.08f, 0.08f, 0.09f, 1.0f);
-
     const int digit_values[3] = { (value / 100) % 10, (value / 10) % 10, value % 10 };
+    std::uint32_t pattern = 0u;
     for (int d = 0; d < 3; ++d) {
-        const std::uint8_t segs = kDigitSegments[digit_values[d]];
-        for (int s = 0; s < 7; ++s) {
-            const std::size_t idx = static_cast<std::size_t>(d * 7 + s);
-            if (idx < segment_materials_.size()) {
-                segment_materials_[idx]->setDiffuse((segs & (1u << s)) ? kLit : kDim);
-            }
+        pattern |= static_cast<std::uint32_t>(kDigitSegments[digit_values[d]]) << (d * 7);
+    }
+    writePattern(pattern);
+}
+
+void FpsOverlay::writePattern(std::uint32_t pattern)
+{
+    if (readout_ == nullptr || row_positions_.empty()) {
+        return;
+    }
+    // AN OFF BAR IS COLLAPSED ONTO ITS FIRST CORNER, not left where it is: a box whose corners all
+    // coincide covers no pixels, so a segment the digit does not light is not drawn at all. That is the
+    // picture the per-segment visibility gate used to produce (no dark "8" behind the number), reached
+    // this way because the row is ONE geometry: what a segment can do individually is contribute its
+    // vertices, and the honest way to contribute nothing is to contribute no area.
+    std::vector<vine::math::Vec3f> positions = row_positions_;
+    for (std::size_t seg = 0; seg < kSegmentCount; ++seg) {
+        if ((pattern & (1u << seg)) != 0u) {
+            continue;
+        }
+        const std::size_t       base      = seg * kVerticesPerBar;
+        const vine::math::Vec3f collapsed = positions[base];
+        for (std::size_t v = 0; v < kVerticesPerBar; ++v) {
+            positions[base + v] = collapsed;
         }
     }
+
+    // The vertex count is the one the geometry was built with, so this is a DATA edit of a drawn
+    // geometry: the backend re-points the position stream instead of building the node again. Announcing
+    // it is the caller's job (see Geometry::setRevision), and a forgotten announcement is silent -- the
+    // renderer would keep drawing the digits it uploaded first.
+    readout_->setPositions(packAttribute(positions));
+    readout_->bumpRevision();
+    // Nothing is drawn while the row is hidden, and the first measurement is what un-hides it (the row
+    // starts blank rather than showing a dark three-eights behind the number).
+    readout_->setVisible(true);
 }
 
 void FpsOverlay::rebuild()
@@ -242,12 +282,15 @@ void FpsOverlay::rebuild()
     const double x0        = -row_width / 2.0;
     const double y0        = -kCellH / 2.0;
 
-    static const Colorf kDim(0.08f, 0.08f, 0.09f, 1.0f);
-
-    auto scene = make_intrusive<Scene>();
-    auto root  = make_intrusive<Group>();
-    segment_materials_.clear();
-    segment_materials_.reserve(3u * 7u);
+    // The row is built with EVERY segment lit: this is the template writePattern() copies its lit bars
+    // from, and it is what fixes the geometry's vertex and index count for the rest of its life -- what a
+    // change edits is which of those bars carry area, never how many vertices exist.
+    vine::geometry::Vec3fArray positions;
+    vine::geometry::Vec3fArray normals;
+    vine::geometry::UInt32Array indices;
+    positions.reserve(kSegmentCount * kVerticesPerBar);
+    normals.reserve(kSegmentCount * kVerticesPerBar);
+    indices.reserve(kSegmentCount * kIndicesPerBar);
 
     for (int d = 0; d < 3; ++d) {
         const double ox = x0 + static_cast<double>(d) * (kCellW + kGap);
@@ -255,35 +298,38 @@ void FpsOverlay::rebuild()
             const auto& bar = kSegments[s];
             const Vec3f centre(static_cast<float>(ox + bar.dx), static_cast<float>(y0 + bar.dy), 0.0f);
             const Vec3f half(static_cast<float>(bar.hx), static_cast<float>(bar.hy), static_cast<float>(kBarD / 2.0));
-
-            vine::geometry::Vec3fArray positions;
-            vine::geometry::Vec3fArray normals;
-            vine::geometry::UInt32Array indices;
             appendBox(positions, normals, indices, centre - half, centre + half);
-
-            auto geometry = make_intrusive<Geometry>();
-            geometry->setPositions(packAttribute(positions));
-            geometry->setNormals(packAttribute(normals));
-            geometry->setIndices(packIndices(indices));
-
-            auto material = make_intrusive<Material>();
-            material->setDiffuse(kDim);
-            // On-top HUD content is lit by a pure ambient light: a WHITE
-            // ambient material makes ambientColor == diffuse == the segment
-            // colour, so flipping setDiffuse lights/dims the segment; black
-            // specular avoids highlights.
-            material->setAmbient(Colorf(1.0f, 1.0f, 1.0f, 1.0f));
-            material->setSpecular(Colorf(0.0f, 0.0f, 0.0f, 1.0f));
-            geometry->setMaterial(material);
-            segment_materials_.push_back(material);
-
-            auto group = make_intrusive<Group>();
-            group->addChild(geometry);
-            root->addChild(group);
         }
     }
+
+    auto geometry = make_intrusive<Geometry>();
+    geometry->setPositions(packAttribute(positions));
+    geometry->setNormals(packAttribute(normals));
+    geometry->setIndices(packIndices(indices));
+
+    // ONE material for the whole row: the bar colour lives here, not per segment, because the row is one
+    // draw -- an off segment is expressed by GEOMETRY (no area), never by a colour.
+    auto material = make_intrusive<Material>();
+    material->setDiffuse(kLit);
+    // On-top HUD content is lit by a pure ambient light: a WHITE ambient material makes
+    // ambientColor == diffuse == the bar colour, so this IS the readout's on-screen colour; black
+    // specular avoids highlights.
+    material->setAmbient(Colorf(1.0f, 1.0f, 1.0f, 1.0f));
+    material->setSpecular(Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+    geometry->setMaterial(material);
+    // Hidden until the first measurement: the readout draws the digits' LIT segments only (see
+    // writePattern), so it starts blank rather than showing a dark three-eights behind the number.
+    geometry->setVisible(false);
+
+    auto root = make_intrusive<Group>();
+    root->addChild(geometry);
+    auto scene = make_intrusive<Scene>();
     scene->setRoot(root);
     content_ = std::move(scene);
+
+    readout_       = geometry;
+    row_positions_ = std::move(positions);
+    shown_value_   = -1;
 }
 
 V_GRAPHICS_NS_END

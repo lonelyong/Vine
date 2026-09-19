@@ -125,6 +125,25 @@ namespace detail
 makePassObjects(const VsgRendererState& state, const VsgRenderTargetEntry& t, const PassAttachments& att,
                 bool pass_color_clear, bool depth_load, bool promote, VkImageLayout depth_initial);
 
+/** @brief Creates the framebuffer a pass records into, over the target's CURRENT attachments.
+ *
+ * The framebuffer is the only object of a pass that names the target's images, so it is the one that
+ * has to follow a target whose attachments were replaced at a new size (see resizeOffscreenTarget):
+ * the render pass stays (an attachment's format / sample count is what a render pass declares, and a
+ * size change leaves both alone ⇒ it stays COMPATIBLE with the pipelines compiled against it — see
+ * makePassObjects' notes and VUID-vkCmdDraw-renderPass-02684).
+ *
+ * @param state       Session the pass is materialised against (borrow-source lookup for a shared depth).
+ * @param t           Target entry whose attachments are attached.
+ * @param att         Its attachment description (see passAttachments).
+ * @param render_pass The pass' render pass (the framebuffer is created for it).
+ * @return The framebuffer, sized to the target's built size.
+ */
+[[nodiscard]] ::vsg::ref_ptr<::vsg::Framebuffer> makePassFramebuffer(const VsgRendererState& state,
+                                                                    const VsgRenderTargetEntry& t,
+                                                                    const PassAttachments& att,
+                                                                    const ::vsg::ref_ptr<::vsg::RenderPass>& render_pass);
+
 /** @brief Creates the render graph of a NEW pass, with its clear values.
  *
  * One graph per pass (§28): a pass owns the load-ops of its own scope and therefore
@@ -170,13 +189,17 @@ makePassObjects(const VsgRendererState& state, const VsgRenderTargetEntry& t, co
  *                          writing .color there would clear the depth to a colour's
  *                          bit pattern).
  * @param clear_color       The colour the pass clears to (its own request).
+ * @param attachments_generation The target's attachment generation this call is planning for (see
+ *                          VsgRenderTargetEntry::attachments_generation): a variant recorded against
+ *                          the previous set cannot be reused, because its attachments are gone.
  * @return The pass' graph, or null when the pass changed its clear policy and its
  *         variant has to be rebuilt.
  */
 [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> reuseSteadyPass(const VsgRendererState& state,
                                                               VsgRenderTargetEntry::PassObjects& objects,
                                                               bool want_color_clear, bool want_depth_clear,
-                                                              bool has_color, const ::vsg::vec4& clear_color);
+                                                              bool has_color, const ::vsg::vec4& clear_color,
+                                                              std::uint64_t attachments_generation);
 
 /** @brief Records a (re)built pass and what it establishes for its target.
  *

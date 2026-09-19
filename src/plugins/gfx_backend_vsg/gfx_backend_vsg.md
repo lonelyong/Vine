@@ -434,7 +434,10 @@ graph TD
 2. **保留 = 显式公告过的东西**（`setRenderTarget` 的 target、`beginPass` 的 pass、内容/程序槽），
    必须配对 `releaseRenderTarget` / `releasePass` 注销；长期驻留不随帧数增长。
 3. **在用对象不立即释放**：被换下的保留节点、槽池的槽、退役的 GPU 对象都进泊车环，
-   延后 `kDeferredReleaseFrames` 帧（提交过的帧）才真正释放。
+   延后 `kDeferredReleaseFrames` 帧（提交过的帧）才真正释放。**推进必须是帧的最后一步**：
+   在推进之后停放的，只拿到 `深度 - 1` 帧保护 —— 2026-09-19 修掉的那族 VUID
+   （`00873`/`00892`/`00765`，自检 6 帧 5 条 / 30 帧 13 条）就是这一帧差的后果（见
+   `.ai/design/vsg-upstream-alignment.md` §3）。
 4. **重初始化前必须把会话资源清干净**（否则新 `Window::create()` 撞 `VSG_MAX_DEVICES == 1`）：
    做法是 `state = VsgRendererState{}` 整体替换，而不是手写拆卸清单。
 
@@ -490,7 +493,7 @@ graph TD
   新露出的部分既没清也没画 ⇒ 黑带（2026-09-17 实测：最大化后 250–320 ms）。同步 `previous_extent` 顺带
   关掉了 vsg 的缩放路径（它会把已经正确的矩形再缩一次：HUD overlay 跑到窗口外）。
 
-**宿主侧顺序保持一帧**（`src/fw/appfw/src/gui/RenderControl.cpp::handleSurfaceUpdate`）：`engine->resize()` →
+**宿主侧顺序保持一帧**（`src/fw/appfw/src/gui/SurfaceWindow.cpp::handleUpdate`）：`engine->resize()` →
 `view->onSurfaceResized()`（重建离屏链）→ `renderFrame()` → settle。“先呈现一帧再重建”（旧画面被拉伸填满
 新窗口，实测 26 ms 就上屏）**试过又撤了**：它把画面拉伸变形，比“新区域晚 ~240 ms 才填上”更难接受 ⇒
 **约定：画面任何时刻不变形**；重建帧覆盖整个新窗口（因为 `renderArea` 已当场写对，见上）。重建帧 ~240 ms
@@ -550,7 +553,7 @@ graph TD
 | UB-11 | `materialManager` 在 `VsgRendererPersistent`，dock 于所有 bridge 之上（接口约定：manager 必须活得比 bridge 久）—— 只要 bridge 析构不碰 manager 就安全 | 约定：别在 bridge 析构里用 manager |
 | UB-12 | 帧中途结构变化触发编译（增量，必要时全图回落） | 规避 = initialize / enable 后预热；稳态帧零编译 |
 | UB-13 | 非 Windows 下宿主窗口句柄（`QWindow::winId()`）窄化为 `uint32_t xcb_window_t`；`nativeWindow` 用 `std::any` 按**精确类型**匹配，存错类型 → `bad_any_cast` 抛异常 | `initialize()` 有注释；若窗口 id 高 32 位非零会丢位（罕见） |
-| UB-14 | `frontFace` 固定 CCW + `cullMode` 默认 None；“两种绕序兼容”只在 cull=None 成立；开 cull 后绕序错即整面消隐 | RenderStateMapper |
+| UB-14 | `frontFace` 固定 CCW + `cullMode` 默认 None；“两种绕序兼容”只在 cull=None 成立；开 cull 后绕序错即整面消隐。**已修（2026-09-19）**：`frontFace` 改为 `VK_FRONT_FACE_CLOCKWISE`（vsg 投影反 Y ⇒ 帧缓冲里 SDK 的 CCW 正面是 CW；见 `RenderStateMapper.hpp` 与 §7.1） | RenderStateMapper |
 
 ### 14.5 线程
 
@@ -558,7 +561,7 @@ graph TD
 |---|---|
 | UB-15 | 后端方法非线程安全；从非宿主线程调 = 数据竞争（vsg 场景/图并发改写） |
 | UB-16 | 函数内 `static`（诊断计数 `s_sync_diag`、`s_dumped`、`static s_factory`）非同步；单线程约定下无碍，多线程引渲染器会竞争 |
-| UB-17 | `EmbeddedViewer::pollEvents` 覆盖依赖 Qt 主循环不回灌事件；若在无 Qt 主循环环境用独立窗口路径（`VINE_VSG_OWN_WINDOW`）事件需自理 |
+| UB-17 | `EmbeddedViewer::pollEvents` 覆盖依赖 Qt 主循环不回灌事件；无宿主表面的会话（后端自建窗口）事件需自理 |
 
 ### 14.6 其它
 
@@ -567,9 +570,10 @@ graph TD
 - 内容槽装配（`setupContentSlot`）失败不留半初始化槽：目标没有可录制的图时上报
   `TargetBuildFailed`、相机桥创建失败时上报 `ContentSkipped`，两种情况都丢掉该槽
   （`VsgContentSlot.cpp:105-124`）。
-- `forceOwnWindow()`（`VINE_VSG_OWN_WINDOW`）：后端自建独立 vsg 窗口绕过 Qt 子窗口合成；
-  C6 起不再注入红三角 demo，独立窗口内容随引擎逐 pass 驱动（无 pass 则空帧）。
-  已删：`makeRawDemoNode` / `VINE_VSG_PROBE_BUILDER_BOX` 及 `raw_layout.txt` 副作用写文件。
+- 窗口模式只有一种：有宿主句柄 ⇒ `VsgHostWindow`（采纳，绝不销毁）；无宿主句柄 ⇒ vsg 自建窗口（自己销毁）。
+  已删：`makeRawDemoNode` / `VINE_VSG_PROBE_BUILDER_BOX` 及 `raw_layout.txt` 副作用写文件，以及
+  `forceOwnWindow()`（`VINE_VSG_OWN_WINDOW` 临时逃生口）——它只是把“本次会话有没有宿主窗口”
+  换成一个 env 开关，2026-09-19 起直接问会话自己（`onHostWindow()`）。
 
 ## 15. 缺陷与待办登记（只指向唯一登记）
 
@@ -577,6 +581,7 @@ graph TD
 —— D13、D14、D1 等项的“现状”在不同文档里同时存在“已修”与“未修”两个版本。现在：
 
 - **当前待办**（含优先级与实测依据）：`.ai/memory/graphics-perf-backlog.md`。
+- **与上游（vsg 1.1.16）的对齐审查**（哪些是上游机制、哪些是有意不同、文献漂移、当前唯一真缺陷）：`.ai/design/vsg-upstream-alignment.md`（2026-09-19）。
 - **历史登记（D1–D28，含已修项与其原因）**：`docs/data-flow.md` §13，带日期，**不再更新**。
 - **设计层未做项**（逐项设计已写好）：`.ai/design/vsg-pass-lifecycle.md` §9。
 
@@ -589,7 +594,6 @@ D14 裸指针键滞留窗、D22 全图 compile、B1 析构残留 `delete d;`、`
 
 | 开关 | 行为 | 性质 |
 |---|---|---|
-| `VINE_VSG_OWN_WINDOW` | 后端自建独立 vsg 窗口（绕过 Qt 子窗口合成），内容随引擎逐 pass 驱动 | TEMP 测试逃生口 |
 | `VINE_VSG_SLOT_DEMO` | AppShell 在主相机上注册第二个 content slot 的覆盖层（亮盒叠画，验证 C6.3b 同视角多槽） | 演示开关 |
 | `VINE_VSG_OFFSCREEN` | AppShell 离屏 RT → PiP 验证链（单内容槽） | 演示/验证 |
 | `VINE_VSG_OFFSCREEN_MULTISLOT` | AppShell 把**同一个** 640x360 离屏 RT 烘两个内容槽（主场景 depth-on 槽0 + 异场景 on-top 槽1），ScreenPass 以 PiP 显示（验证 C6.4 离屏多槽；日志“off-screen content slot N added … now N slot view(s)”） | 演示/验证 |

@@ -165,6 +165,7 @@ add_executable(vsg_backend_selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_shadows.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_hostsurface.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_datarefresh.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_resize.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgeGeometry.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgePipeline.cpp

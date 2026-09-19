@@ -143,6 +143,130 @@ std::string describeCurrentException()
     }
 }
 
+// A frame slower than this is reported even when it built nothing: a frame that only recorded but took this
+// long is a symptom in its own right, and the profile line says which phase the time went into.
+//
+// The number separates a STALL from a slow frame, which is what it has to do: a steady frame of the deferred
+// demo is far below it (measured at 2352x888 in a Debug build -- 5-6 ms typical, up to ~41 ms when a burst of
+// content is recorded), while the stalls this clause exists for are orders of magnitude above it (measured
+// 4.3 s of recording on a window that had stopped presenting). Three 60 Hz periods is the boundary: a frame
+// that misses three deadlines in a row without building anything is not a frame, it is a stall. At 5 ms --
+// which is BELOW a steady frame's record time here -- this gate reported a line per frame for as long as the
+// camera was moved, which is exactly what reportBuildProfile's early return exists to prevent.
+constexpr std::uint64_t kBuildProfileReportNs = 50'000'000;
+
+/**
+ * @brief Nanoseconds @p ns as milliseconds (the unit the profile line is read in).
+ *
+ * @param ns A duration in nanoseconds.
+ * @return The same duration in milliseconds.
+ */
+double msOf(std::uint64_t ns)
+{
+    return static_cast<double>(ns) / 1.0e6;
+}
+
+/**
+ * @brief The overlay compile totals as of the last reported line (see OverlayCompileTotals).
+ *
+ * A reporting line has to show the work of ONE episode, and those totals are process-wide, so what
+ * reportBuildProfile logs is the difference against this snapshot.
+ *
+ * @return The snapshot the next report is measured from.
+ */
+OverlayCompileTotals& lastOverlayCompileTotals()
+{
+    static OverlayCompileTotals totals;
+    return totals;
+}
+
+/**
+ * @brief The overlay pipeline built-count as of the last reported line (see OverlayPipelineTotals).
+ *
+ * Same reason as the compile snapshot above: the count is process-wide, and what a line has to show is the
+ * work of ONE episode. The DISTINCT key count is reported as-is (it is a level, not a total) because that is
+ * the number the sharing question is asked about: built-versus-distinct on the same line says how many of
+ * this episode's pipelines were duplicates of one another.
+ *
+ * @return The snapshot the next report is measured from.
+ */
+std::size_t& lastOverlayPipelinesBuilt()
+{
+    static std::size_t built = 0;
+    return built;
+}
+
+/**
+ * @brief Logs the accumulated build profile (see VsgBuildProfile) and clears it.
+ *
+ * Called at the two moments the profile is worth reading: the end of a submitted frame, and the start of the
+ * first frame that follows work done OUTSIDE one. The second site is not redundant -- the engine's pre-frame
+ * warm-up runs its passes before any beginFrame(), so reporting that work as part of the first frame would
+ * credit the frame that paid only part of the cost. Frames that built nothing and stayed fast are not
+ * reported: one line per frame is not a measurement.
+ *
+ * The profile is the work of ONE episode and is emptied on EVERY path out of here, so what a line shows is
+ * the frame it names. Left to accumulate (which is what it did), the record/present times of several frames
+ * add up into one line, and the "no build work" test below -- a test about ONE frame -- then fires on
+ * perfectly steady ones: measured, 62 lines in a 20 s run of the demo, nearly all of them empty frames whose
+ * total had merely crossed the 5 ms gate that used to sit below a single frame's record time (5-6 ms here).
+ *
+ * A frame that is THAT slow while building nothing is a STALL (a window that stopped presenting, say), and
+ * it hits every frame for as long as it lasts: the first one says which phase the time went into, and the
+ * rest are silent until a frame is back under the threshold. See the class note in VsgReportOnce.
+ *
+ * @param state Session whose profile is reported and then cleared.
+ * @param phase Label naming the work being reported ("frame" or "pre-frame").
+ */
+void reportBuildProfile(VsgRendererState& state, const char* phase)
+{
+    const VsgBuildProfile& profile = state.build_profile;
+    if (!profile.builtAnything()) {
+        if (profile.total_ns() < kBuildProfileReportNs) {
+            // Nothing built and no stall: nothing to say, and this is what ENDS the stall episode -- the next
+            // stalled frame reports again.
+            state.build_profile_slow_reported.rearm();
+            state.build_profile.reset();
+            return;
+        }
+        if (!state.build_profile_slow_reported.shouldReport()) {
+            // Still stalled, still nothing built, already said: which phase the time went into does not
+            // change frame to frame, so the repeat is dropped (and this frame's own times go with it, so the
+            // next line is about the frame that reports it).
+            state.build_profile.reset();
+            return;
+        }
+    }
+    const VkExtent2D extent = state.window != nullptr ? state.window->extent2D() : VkExtent2D{ 0, 0 };
+    // The overlay path's glslang work is counted process-wide and re-paid on every program-slot build (see
+    // OverlayCompileTotals), so what belongs in THIS line is the work since the last one: that difference is
+    // what separates the compile from the node assembly and pipeline creation inside the slot time above.
+    const OverlayCompileTotals overlay_now = detail::overlayCompileTotals();
+    const OverlayCompileTotals overlay_was = lastOverlayCompileTotals();
+    lastOverlayCompileTotals()        = overlay_now;
+    const std::size_t   overlay_compiles = overlay_now.compiles - overlay_was.compiles;
+    const std::uint64_t overlay_ns       = overlay_now.ns - overlay_was.ns;
+    // The overlay path's PIPELINES are counted for the same reason its compiles are (see
+    // OverlayPipelineTotals): built against distinct keys tells whether the frame made the same pipeline
+    // twice, which is what a sharing table would remove.
+    const detail::OverlayPipelineTotals pipelines_now = detail::overlayPipelineTotals();
+    std::size_t&                       pipelines_was = lastOverlayPipelinesBuilt();
+    const std::size_t                  overlay_pipelines = pipelines_now.built - pipelines_was;
+    pipelines_was                                      = pipelines_now.built;
+    V_LOGI("[VsgRenderer] build profile ({}): extent {}x{}, targets {} ({:.1f} ms), target resizes {} ({:.1f} ms),"
+           " pass graphs {} ({:.1f} ms), rebind compiles {} ({:.1f} ms),"
+           " program slots {} ({:.1f} ms: nodes {:.1f} ms, view compiles {:.1f} ms, overlay glslang {} ({:.1f} ms),"
+           " overlay pipelines {} of {} distinct key(s)),"
+           " compile {:.1f} ms, record {:.1f} ms, present {:.1f} ms, total {:.1f} ms",
+           phase, extent.width, extent.height, profile.targets, msOf(profile.targets_ns), profile.target_resizes,
+           msOf(profile.target_resizes_ns), profile.graphs, msOf(profile.graphs_ns), profile.rebinds,
+           msOf(profile.rebinds_ns), profile.slots, msOf(profile.slots_ns), msOf(profile.slots_node_ns),
+           msOf(profile.slots_view_ns), overlay_compiles, msOf(overlay_ns), overlay_pipelines,
+           pipelines_now.distinct, msOf(profile.compile_ns), msOf(profile.record_ns), msOf(profile.present_ns),
+           msOf(profile.total_ns()));
+    state.build_profile.reset();
+}
+
 /**
  * @brief vsg::Viewer whose pollEvents() does not pump the native message queue.
  *
@@ -255,10 +379,11 @@ bool VsgRenderer::moveSessionToHostSurface(void* native_handle)
         return false;
     }
     // Only a session on THIS backend's host window can follow a host surface: a session on vsg's own window
-    // (one this backend created -- the VINE_VSG_OWN_WINDOW hatch, or a session initialized with no host
-    // handle) has no host surface to move to.
+    // (a session initialized with no host handle) has no host surface to move to. The predicate is named
+    // because "is this session on a host window" is also what tells the window modes apart (see
+    // VsgBackendUtility::onHostWindow).
     auto host_window = state.window.cast<detail::VsgHostWindow>();
-    if (host_window == nullptr) {
+    if (!detail::onHostWindow(state.window)) {
         diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                            vine::graphics::DiagnosticCategory::UnsupportedRequest,
                            u8"this session is not on a host window of this backend, so it has no host surface to move:"
@@ -320,16 +445,11 @@ bool VsgRenderer::initialize()
     // instead of opening our own; the traits carry the size, the validation-layer
     // switch and the requested device features (see makeWindowTraits).
     void* host_handle = persistent.bound_handle;
-    if (forceOwnWindow()) {
-        // Temporary test path: create vsg's own window, ignoring the Qt-hosted
-        // surface handle, to verify rendering independent of Qt compositing.
-        host_handle = nullptr;
-    }
     auto traits = makeWindowTraits(host_handle);
     // A host surface is served by this backend's OWN window class, because vsg's platform window would
     // destroy the window it adopted (and could not follow it to the next one) -- see VsgHostWindow. A
-    // session with no host window keeps vsg's own window, which is what the VINE_VSG_OWN_WINDOW test
-    // hatch asks for.
+    // session with no host window (no surface announced: the self-test, a headless run) keeps vsg's own
+    // window, which destroys itself and is therefore the honest owner of a surface no host gave us.
     state.window = host_handle != nullptr ? ::vsg::ref_ptr<::vsg::Window>(detail::VsgHostWindow::create(traits))
                                           : ::vsg::Window::create(traits);
     if (state.window == nullptr) {
@@ -480,6 +600,10 @@ void VsgRenderer::shutdown()
 
 void VsgRenderer::beginFrame()
 {
+    // Work done outside a submitted frame is reported HERE, before this frame's profile starts (see
+    // reportBuildProfile): the engine's pre-frame warm-up executes its passes before the first beginFrame(),
+    // and its cost is a startup cost in its own right, not part of the frame that follows it.
+    reportBuildProfile(state, "pre-frame");
     // A new frame: the passes active this frame are re-announced by beginPass()
     // as the engine runs them, so the activity set starts empty. A frame in which every pass is
     // disabled therefore announces nothing — and STILL retires the retained views of the passes
@@ -674,26 +798,14 @@ void VsgRenderer::render(const std::vector<vine::graphics::RenderCommand>& comma
     // slot so it stops drawing there (H2).
     detail::retargetPass(state, state.request.pass, target_key);
 
-    auto& target = state.entryFor(target_key);
-    // A depth borrow that is merely WAITING or whose baked source image was replaced means the
-    // recorded attachments no longer match the source they have to test against (see
-    // detail::borrowNeedsRebuild for both cases).
-    const bool borrow_needs_rebuild = detail::borrowNeedsRebuild(state, target, target_key);
-    if (target_key != nullptr &&
-        (!target.attachments_built || target.width != target_key->width() ||
-         target.height != target_key->height() || borrow_needs_rebuild ||
-         !target.build_key.matches(*target_key))) {
-        // First render into this off-screen target, or it was resized, or its
-        // attachment shape changed (colour attachments, depth format, depth
-        // promotion — see VsgRenderTargetEntry::BuildKey), or its depth borrow changed: build
-        // (or rebuild) its attachments. Each pass then creates its own render
-        // pass from its own clear request (see passGraph), so a depth-policy
-        // change needs no rebuild. Any content slots compiled against the old
-        // attachments are dropped by buildOffscreenTarget.
-        detail::buildOffscreenTarget(state, diagnostics, target_key);
-        if (!target.attachments_built) {
-            return; // off-screen target could not be built
-        }
+    // The ONE place an off-screen target's attachments are brought in line with its description: a SHAPE
+    // change (attachment count / formats / depth policy, or the borrow itself) rebuilds it — a render pass
+    // bakes the formats a pipeline was compiled against — while a SIZE change (or a borrowed depth whose
+    // source replaced its image) resizes it in place, keeping its passes, slots and pipelines (see
+    // detail::syncOffscreenTarget and .ai/design/vsg-target-resize-in-place.md). A pass therefore does not
+    // have to know which one applies to the target it draws into.
+    if (!detail::syncOffscreenTarget(state, diagnostics, target_key)) {
+        return; // off-screen target could not be built
     }
 
     // Render into the content slot this pass owns under the active target —
@@ -820,22 +932,53 @@ void VsgRenderer::submitFrame()
     // longer registered) BEFORE submitting: such a pass must stop being drawn, and the removal
     // needs a presented frame or its stale content would stay on screen.
     retireInactivePassSlots();
+    // A re-pointed descriptor set (a program slot that followed a resized source, see VsgProgramSlot)
+    // exists as a node but has no Vulkan objects yet: one compile traversal is what allocates and writes
+    // it. Done HERE, before the record, and once for the whole frame: several slots can re-point in one
+    // frame, and the compile is a no-op for everything already compiled (measured ~1 ms).
+    if (state.compile_needed) {
+        state.compile_needed = false;
+        const auto rebind_start = std::chrono::steady_clock::now();
+        state.viewer->compile();
+        ++state.build_profile.rebinds;
+        state.build_profile.rebinds_ns += elapsedNs(rebind_start);
+    }
     // Compile any geometry synced this frame before the record. A frame that never submits
     // keeps the queue for the next one (nothing was presented in between).
+    const auto compile_start = std::chrono::steady_clock::now();
     detail::compilePendingViews(state, diagnostics);
+    state.build_profile.compile_ns += elapsedNs(compile_start);
     // The frame is submitted even when nothing was drawn: beginFrame() already ACQUIRED a
     // swapchain image, and an acquired image is only returned to the presentation engine by
     // presenting it — skipping the submission (nothing to draw / every pass disabled) leaks
     // one image per frame, which validation reports as
     // VUID-vkAcquireNextImageKHR-surface-07783, and the swapchain eventually starves.
     // Re-recording an unchanged graph is cheap (vsg records the command graph every frame).
+    const auto record_start = std::chrono::steady_clock::now();
     state.viewer->recordAndSubmit();
+    state.build_profile.record_ns += elapsedNs(record_start);
+    const auto present_start = std::chrono::steady_clock::now();
     state.viewer->present();
-    settleSubmittedFrame(*commit);
+    state.build_profile.present_ns += elapsedNs(present_start);
 
     // Everything the app let go of, judged by counts collected for this moment (see the
     // declaration: a slot dropped during the frame must not leave the picture over-counted).
     releaseAbandonedContent();
+
+    // The rings advance LAST, after every step of the frame that can park something. The depth
+    // (kDeferredReleaseFrames) counts the frames that can still name a parked object, and a park is
+    // only worth the full count if it lands BEFORE this frame's advance: parked after it, the object
+    // enters the bucket the advance has just entered and is released one frame early -- measured as
+    // vkDestroyRenderPass-00873 / vkDestroyFramebuffer-00892 / vkDestroyPipeline-00765 on objects a
+    // submitted command buffer still named, in the self-test's pass-lifecycle phases (5 VUIDs at 6
+    // frames, 13 at 30). The sweep above is exactly such a step: it drops abandoned slots and parks
+    // their nodes, so advancing before it handed those nodes three frames of protection instead of
+    // four. Nothing depends on the advance happening earlier: it releases what was parked on OLDER
+    // frames, and everything it could release was parked at least one advance ago either way.
+    settleSubmittedFrame(*commit);
+    // The frame is over and its work is done: this is where a startup or a resize is measured, so the
+    // profile of the frame that paid for it is reported here (see reportBuildProfile).
+    reportBuildProfile(state, "frame");
 }
 
 void VsgRenderer::setClearPolicy(const vine::graphics::ClearPolicy& policy)
@@ -1047,6 +1190,7 @@ VsgRendererCounters VsgRenderer::counters() const noexcept
 {
     VsgRendererCounters counters;
     counters.offscreen_builds    = state.offscreen_build_count;
+    counters.offscreen_resizes   = state.offscreen_resize_count;
     counters.window_builds       = persistent.window_build_count;
     counters.program_slot_builds = state.program_slot_build_count;
     counters.device_waits        = state.retireRing.waitCount();
@@ -1074,6 +1218,11 @@ VsgRendererCounters VsgRenderer::counters() const noexcept
 std::size_t VsgRenderer::offscreenBuildCount() const noexcept
 {
     return counters().offscreen_builds;
+}
+
+std::size_t VsgRenderer::offscreenResizeCount() const noexcept
+{
+    return counters().offscreen_resizes;
 }
 
 std::size_t VsgRenderer::windowBuildCount() const noexcept

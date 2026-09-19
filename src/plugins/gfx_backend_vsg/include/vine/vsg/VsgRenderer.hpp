@@ -396,6 +396,18 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      */
     [[nodiscard]] std::size_t offscreenBuildCount() const noexcept;
 
+    /** @brief Gets how many off-screen targets this backend has RESIZED in place.
+     *
+     * A resize keeps the target's passes, slots and pipelines and replaces only its attachments, its
+     * framebuffers and the descriptor bindings that named them (see
+     * .ai/design/vsg-target-resize-in-place.md), so it is counted apart from the builds: a host that
+     * animates a target's size shows this one climbing while offscreen_builds and program_slot_builds
+     * stay flat.
+     *
+     * @return offscreen_resizes (see VsgRendererCounters).
+     */
+    [[nodiscard]] std::size_t offscreenResizeCount() const noexcept;
+
     /** @brief Gets how many geometry data edits were served by re-pointing the changed stream IN PLACE.
      *
      * @return streams_refreshed (see VsgRendererCounters).
@@ -491,7 +503,7 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
      * @return true when the session is on @p native_handle afterwards -- either because it moved onto it, or
      *         because it was already there (re-announcing the same window keeps the session, it does not
      *         rebuild it); false when the session cannot serve it -- a null handle, a session that is not on
-     *         this backend's own host window (vsg's own window / the VINE_VSG_OWN_WINDOW hatch), or a new
+     *         this backend's own host window (vsg's own window when no surface was announced), or a new
      *         window whose swapchain format cannot serve this session's render pass -- and the caller starts
      *         a fresh session instead. Each refusal reports a Warning / UnsupportedRequest, because each one
      *         costs a full session rebuild (see windowBuildCount).

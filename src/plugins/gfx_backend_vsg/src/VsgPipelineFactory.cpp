@@ -2,11 +2,14 @@
 #include <vine/vsg/VsgPipelineFactory.hpp>
 #include <vine/vsg/OwnedCache.hpp>
 
+#include <vine/vsg/VsgBuildProfile.hpp>
+
 // The definitions below are the moved bodies: their documentation and default
 // arguments live on the declarations in the header.
 
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <string>
@@ -32,6 +35,7 @@
 #include <vsg/state/ColorBlendState.h>
 #include <vsg/state/DepthStencilState.h>
 #include <vsg/state/DescriptorImage.h>
+#include <vsg/state/DescriptorSet.h>
 #include <vsg/state/Image.h>
 #include <vsg/state/ImageInfo.h>
 #include <vsg/state/ImageView.h>
@@ -88,20 +92,20 @@ namespace detail
  * @param color_count Colour attachment count (0 for a depth-only pass).
  * @return The default states.
  */
-::vsg::GraphicsPipelineStates makeScenePipelineStates(const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
+/**
+ * @brief The colour-blend state for a pipeline whose render pass has @p color_count colour attachments.
+ *
+ * One attachment per COLOUR ATTACHMENT the render pass declares, blending off and writing every channel.
+ * The count must EQUAL the render pass' colourAttachmentCount or pipeline creation fails
+ * (VUID-VkGraphicsPipelineCreateInfo-renderPass-07609), so this cannot be vsg's default: that one declares
+ * exactly one, which is wrong for a depth-only pass (0) and for every pass whose destination has several
+ * (a G-buffer, or an overlay compositing into a target with more than one attachment).
+ *
+ * @param color_count Colour attachments the render pass declares (0 = depth-only).
+ * @return The colour-blend state, sized to match.
+ */
+::vsg::ref_ptr<::vsg::ColorBlendState> makeColorBlendState(int color_count)
 {
-    auto raster_state      = ::vsg::RasterizationState::create();
-    raster_state->cullMode = VK_CULL_MODE_NONE; // tolerate either winding order
-    auto depth_state       = ::vsg::DepthStencilState::create();
-    depth_state->depthTestEnable  = depth_test ? VK_TRUE : VK_FALSE;
-    depth_state->depthWriteEnable = depth_write ? VK_TRUE : VK_FALSE;
-    // One colour-blend attachment per COLOUR ATTACHMENT this pass has, blending
-    // off and writing every channel. The count must match the render pass'
-    // colourAttachmentCount or pipeline creation fails
-    // (VUID-VkGraphicsPipelineCreateInfo-renderPass-06055), so a DEPTH-ONLY pass
-    // (color_count == 0) declares NONE — declaring vsg's default single
-    // attachment would make the pipeline unbuildable against a depth-only
-    // render pass. One code path covers 0 / 1 / N.
     ::vsg::ColorBlendState::ColorBlendAttachments blend_attachments;
     blend_attachments.reserve(static_cast<std::size_t>(color_count));
     for (int i = 0; i < color_count; ++i) {
@@ -116,7 +120,20 @@ namespace detail
         attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         blend_attachments.push_back(attachment);
     }
-    auto blend_state = ::vsg::ColorBlendState::create(blend_attachments);
+    return ::vsg::ColorBlendState::create(blend_attachments);
+}
+
+::vsg::GraphicsPipelineStates makeScenePipelineStates(const VkExtent2D& extent, bool depth_test, bool depth_write, int color_count)
+{
+    auto raster_state      = ::vsg::RasterizationState::create();
+    raster_state->cullMode = VK_CULL_MODE_NONE; // tolerate either winding order
+    auto depth_state       = ::vsg::DepthStencilState::create();
+    depth_state->depthTestEnable  = depth_test ? VK_TRUE : VK_FALSE;
+    depth_state->depthWriteEnable = depth_write ? VK_TRUE : VK_FALSE;
+    // The blend state follows the render pass' colour attachment count (see makeColorBlendState): one code
+    // path covers 0 / 1 / N, and a DEPTH-ONLY pass (color_count == 0) declares NONE rather than the single
+    // attachment vsg's default would declare, which would make the pipeline unbuildable against it.
+    auto blend_state = makeColorBlendState(color_count);
     return ::vsg::GraphicsPipelineStates{
         depth_state,
         raster_state,
@@ -250,6 +267,24 @@ std::size_t compiledStageCacheCount() noexcept
     // The table is process-wide, so it has no session to ask and no owner to count it: this is the
     // only witness of the bound (see kMaxCompiledStageEntries) that the table holds to.
     return compiledStageTable().entries.size();
+}
+
+namespace
+{
+
+// Process-wide for the same reason the compiled-stage table above is (see OverlayCompileTotals): the overlay
+// path has no session to report into. Private to this file so the header's accessor is the only way in.
+OverlayCompileTotals& overlayCompileTotalsRef()
+{
+    static OverlayCompileTotals totals;
+    return totals;
+}
+
+}  // namespace
+
+OverlayCompileTotals overlayCompileTotals() noexcept
+{
+    return overlayCompileTotalsRef();
 }
 
 DrawBlockSetBinding::DrawBlockSetBinding() :
@@ -723,21 +758,187 @@ const std::string& fullscreenVertexSource()
     return source;
 }
 
-::vsg::GraphicsPipelineStates makeOverlayPipelineStates(const VkExtent2D& extent)
+::vsg::GraphicsPipelineStates makeOverlayPipelineStates(const VkExtent2D& extent, int color_count)
 {
     auto raster      = ::vsg::RasterizationState::create();
     raster->cullMode = VK_CULL_MODE_NONE;
     auto depth_state = ::vsg::DepthStencilState::create();
     depth_state->depthTestEnable  = VK_FALSE;
     depth_state->depthWriteEnable = VK_FALSE;
+    // One colour-blend attachment per COLOUR ATTACHMENT of the DESTINATION's render pass (see
+    // makeColorBlendState): vsg's default declares exactly one, which is a pipeline/render-pass mismatch
+    // (VUID-VkGraphicsPipelineCreateInfo-renderPass-07609) as soon as the draw composites into a target
+    // with a different count -- measured on a target whose colour attachments changed shape, where the
+    // pipeline creation reported attachmentCount 1 against a render pass with 2.
     return ::vsg::GraphicsPipelineStates{
         depth_state,
         raster,
-        ::vsg::ColorBlendState::create(),
+        makeColorBlendState(color_count),
         ::vsg::InputAssemblyState::create(),
         ::vsg::MultisampleState::create(),
         ::vsg::ViewportState::create(extent),
     };
+}
+
+/**
+ * @brief The process-wide table of compiled OVERLAY stages (its bound lives on kMaxOverlayStageEntries).
+ *
+ * The sibling of the compiled-stage table above, for the fullscreen-program path: the same fragment text
+ * belongs to one SPIR-V, and a slot is rebuilt whenever the source it samples is (a resize, a clear-policy
+ * change), so without this table every rebuild re-ran glslang over a text it had already translated.
+ *
+ * Keyed by (fragment source, entry point) rather than by program identity: this path is handed the TEXT
+ * (the node builder has the program, the shader set builder does not) and the text is the honest key anyway
+ * -- two programs with the same text compile to the same SPIR-V, and an edited program arrives with
+ * different text. The vertex stage is the SDK's single canonical fullscreen triangle
+ * (see fullscreenVertexSource), so it does not enter the key.
+ */
+struct OverlayStageTable
+{
+    /// One compiled overlay program: its stages, and WHY they are unusable when they are.
+    struct Entry
+    {
+        std::uint64_t       inserted = 0;
+        ::vsg::ShaderStages stages;
+        ProgramNodeFailure  failure = ProgramNodeFailure::None;
+
+        /** @brief Gets the insertion sequence (FIFO order for the capacity trim). */
+        std::uint64_t sequence() const noexcept { return inserted; }
+    };
+
+    std::map<std::pair<std::string, std::string>, Entry> entries; ///< Keyed by (fragment source, entry).
+    InsertionClock                                       clock;   ///< FIFO order for the capacity trim.
+};
+
+/**
+ * @brief Gets the table (see @ref OverlayStageTable).
+ *
+ * @return The process-wide overlay-stage table.
+ */
+OverlayStageTable& overlayStageTable()
+{
+    static OverlayStageTable table;
+    return table;
+}
+
+/**
+ * @brief The process-wide count of overlay pipelines, by the key that decides whether they are the same.
+ *
+ * The measurement half of OverlayPipelineTotals: a key seen once per node is a pipeline nothing can share,
+ * a key seen N times is N-1 pipelines a sharing table would remove (see the struct's doc for why the key
+ * holds what it holds). Bounded like every other table in this file -- the count is a diagnostic, and a host
+ * that builds thousands of distinct programs must not grow it without end.
+ */
+struct OverlayPipelineTable
+{
+    static constexpr std::size_t kMaxKeys = 64; ///< Distinct keys kept before the table is dropped.
+
+    std::map<std::string, std::uint32_t> counts; ///< Key -> how many pipelines were built for it.
+    std::size_t                          built = 0;
+};
+
+/**
+ * @brief Gets the table (see @ref OverlayPipelineTable).
+ *
+ * @return The process-wide overlay-pipeline table.
+ */
+OverlayPipelineTable& overlayPipelineTable()
+{
+    static OverlayPipelineTable table;
+    return table;
+}
+
+/**
+ * @brief Builds the identity of the pipeline an overlay node needs (see @ref OverlayPipelineTable).
+ *
+ * @param fragment_source Fragment stage source.
+ * @param fragment_entry  Fragment entry point name.
+ * @param color_count     Colour attachments the pass samples.
+ * @param has_depth       Whether the pass binds the source's depth.
+ * @param has_shadow      Whether the pass binds a shadow map and block.
+ * @param extent          Extent the pipeline states bake.
+ * @return The key.
+ */
+std::string overlayPipelineKey(const std::string& fragment_source, const std::string& fragment_entry,
+                               std::uint32_t color_count, bool has_depth, bool has_shadow,
+                               std::uint32_t destination_color_count, const VkExtent2D& extent)
+{
+    // FNV-1a over the text: the key is compared for equality, never printed as text, and a collision only
+    // makes the count conservative (two different programs counted as one).
+    std::uint64_t hash = 1469598103934665603ull;
+    for (const char c : fragment_source) {
+        hash = (hash ^ static_cast<std::uint8_t>(c)) * 1099511628211ull;
+    }
+    for (const char c : fragment_entry) {
+        hash = (hash ^ static_cast<std::uint8_t>(c)) * 1099511628211ull;
+    }
+    // The DESTINATION's colour-attachment count is part of the key: it is what the pipeline's colour-blend
+    // state is sized by, so two draws that differ in it are two different pipelines.
+    char buffer[96] = {};
+    std::snprintf(buffer, sizeof(buffer), "%016llx:c%u:d%d:s%d:t%u:%ux%u", static_cast<unsigned long long>(hash),
+                  color_count, has_depth ? 1 : 0, has_shadow ? 1 : 0, destination_color_count, extent.width,
+                  extent.height);
+    return std::string(buffer);
+}
+
+OverlayPipelineTotals overlayPipelineTotals() noexcept
+{
+    const OverlayPipelineTable& table = overlayPipelineTable();
+    return OverlayPipelineTotals{ table.built, table.counts.size() };
+}
+
+/**
+ * @brief Compiles an overlay drawable's stages, once per (fragment source, entry point).
+ *
+ * A failure is remembered WITH its reason (a missing compiler and a shader that does not compile are
+ * different problems the host is told apart), so a rebuild reports the same thing again instead of
+ * re-running a compile that cannot succeed.
+ *
+ * @param vertex_source   Vertex stage source (see fullscreenVertexSource).
+ * @param fragment_source Fragment stage source.
+ * @param fragment_entry  Fragment entry point name.
+ * @param failure         Receives why the stages are unusable (None when they are).
+ * @return The compiled stages, or an empty list when they could not be built.
+ */
+::vsg::ShaderStages compiledOverlayStages(const std::string& vertex_source, const std::string& fragment_source,
+                                          const std::string& fragment_entry, ProgramNodeFailure* failure)
+{
+    auto&      table = overlayStageTable();
+    const auto key   = std::make_pair(fragment_source, fragment_entry);
+    if (const auto it = table.entries.find(key); it != table.entries.end()) {
+        if (failure != nullptr) {
+            *failure = it->second.failure;
+        }
+        return it->second.stages;
+    }
+
+    ::vsg::ShaderStages stages;
+    ProgramNodeFailure  why = ProgramNodeFailure::NoCompiler;
+    auto                compiler = ::vsg::ShaderCompiler::create();
+    if (compiler != nullptr && compiler->supported()) {
+        auto vs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_VERTEX_BIT, "main", vertex_source);
+        auto fs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, fragment_entry, fragment_source);
+        // Timed as its own cost (see OverlayCompileTotals): this is where the overlay path's glslang work
+        // lands, and the table above is what stops a rebuild from paying it again.
+        const auto glslang_start = std::chrono::steady_clock::now();
+        const bool vs_ok         = compiler->compile(vs);
+        const bool fs_ok         = compiler->compile(fs);
+        overlayCompileTotalsRef().compiles += 2;
+        overlayCompileTotalsRef().ns += elapsedNs(glslang_start);
+        if (vs_ok && fs_ok) {
+            stages = ::vsg::ShaderStages{ vs, fs };
+            why    = ProgramNodeFailure::None;
+        }
+        else {
+            why = ProgramNodeFailure::CompileFailed;
+        }
+    }
+    table.entries.emplace(key, OverlayStageTable::Entry{ table.clock.tick(), stages, why });
+    trimToCapacity(table.entries, kMaxOverlayStageEntries);
+    if (failure != nullptr) {
+        *failure = why;
+    }
+    return stages;
 }
 
 /**
@@ -747,6 +948,10 @@ const std::string& fullscreenVertexSource()
  * write off, blending off, the pass' own viewport, its samples bound to set 0 and its shader
  * modules compiled at run time. This is the half that does not depend on WHAT is sampled; the
  * caller adds the descriptor bindings and textures.
+ *
+ * The ShaderSet around the stages is per NODE on purpose -- the caller adds the bindings of ITS pass to
+ * it, so a shared one would hand the next pass another pass' descriptors -- while the compile inside is
+ * shared (see compiledOverlayStages).
  *
  * @param vertex_source   Vertex stage source (see fullscreenVertexSource).
  * @param fragment_source Fragment stage source.
@@ -758,27 +963,15 @@ const std::string& fullscreenVertexSource()
 ::vsg::ref_ptr<::vsg::ShaderSet> makeOverlayShaderSet(const std::string& vertex_source,
                                                      const std::string& fragment_source,
                                                      const std::string& fragment_entry, const VkExtent2D& extent,
-                                                     ProgramNodeFailure* failure)
+                                                     int destination_color_count, ProgramNodeFailure* failure)
 {
-    auto vs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_VERTEX_BIT, "main", vertex_source);
-    auto fs = ::vsg::ShaderStage::create(VK_SHADER_STAGE_FRAGMENT_BIT, fragment_entry, fragment_source);
-
-    auto compiler = ::vsg::ShaderCompiler::create();
-    if (compiler == nullptr || !compiler->supported()) {
-        if (failure != nullptr) {
-            *failure = ProgramNodeFailure::NoCompiler;
-        }
-        return {};
-    }
-    if (!compiler->compile(vs) || !compiler->compile(fs)) {
-        if (failure != nullptr) {
-            *failure = ProgramNodeFailure::CompileFailed;
-        }
+    const ::vsg::ShaderStages stages = compiledOverlayStages(vertex_source, fragment_source, fragment_entry, failure);
+    if (stages.empty()) {
         return {};
     }
     auto shaderSet    = ::vsg::ShaderSet::create();
-    shaderSet->stages = ::vsg::ShaderStages{ vs, fs };
-    shaderSet->defaultGraphicsPipelineStates = makeOverlayPipelineStates(extent);
+    shaderSet->stages = stages;
+    shaderSet->defaultGraphicsPipelineStates = makeOverlayPipelineStates(extent, destination_color_count);
     return shaderSet;
 }
 
@@ -791,11 +984,21 @@ const std::string& fullscreenVertexSource()
  * @return The state group holding the pipeline and the fullscreen triangle draw.
  */
 ::vsg::ref_ptr<::vsg::StateGroup> makeOverlayStateGroup(const ::vsg::ref_ptr<::vsg::GraphicsPipelineConfigurator>& config,
-                                                       const ::vsg::ref_ptr<::vsg::Data>& push_data)
+                                                       const ::vsg::ref_ptr<::vsg::Data>& push_data,
+                                                       ::vsg::ref_ptr<::vsg::DescriptorSet>* source_set)
 {
     config->init();
     auto state_group = ::vsg::StateGroup::create();
     config->copyTo(state_group, ::vsg::ref_ptr<::vsg::SharedObjects>());
+    if (source_set != nullptr) {
+        // The set the sampled source's attachments are bound in, handed out so its owner can re-point it
+        // without rebuilding this node (see makeFullscreenProgramNode's @param source_set). The
+        // configurator indexes its sets by SET NUMBER and this node declares exactly one.
+        *source_set = {};
+        if (config->descriptorConfigurator != nullptr && !config->descriptorConfigurator->descriptorSets.empty()) {
+            *source_set = config->descriptorConfigurator->descriptorSets[0];
+        }
+    }
     auto draw_commands = ::vsg::Commands::create();
     if (push_data != nullptr) {
         // The per-frame block is recorded from push_data's CURRENT bytes, so the
@@ -842,13 +1045,32 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
     return false;
 }
 
+bool programReadsDrawBlock(vine::raw_ptr<const vine::graphics::ShaderProgram> program)
+{
+    if (program == nullptr) {
+        return false;
+    }
+    // Which stage does not matter: the block carries the model matrix (a vertex-stage value) as well as
+    // the per-draw parameters, so any stage declaring its slot is a program that reads it.
+    for (const auto& stage : program->stages()) {
+        for (const auto& [set, binding] : declaredBindings(stage.source.as_std_str())) {
+            if (set == 1u && binding == 0u) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 ::vsg::ref_ptr<::vsg::Node> makeFullscreenProgramNode(
     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
     const ::vsg::ImageViews&                          image_views,
     ::vsg::ref_ptr<::vsg::ImageView>                  depth_view,
     const FullscreenShadowInput&                      shadow,
     const VkExtent2D&                                 extent,
+    int                                               destination_color_count,
     ::vsg::ref_ptr<::vsg::Data>                       push_data,
+    ::vsg::ref_ptr<::vsg::DescriptorSet>*             source_set,
     ProgramNodeFailure*                               failure)
 {
     // The caller reports (it knows the pass and the sink); this helper only says
@@ -877,7 +1099,7 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
     const std::string vertex_source = fullscreenVertexSource();
 
     auto shader_set = makeOverlayShaderSet(vertex_source, fs_spec->source.as_std_str(), fs_spec->entryPoint.as_std_str(), extent,
-                                           failure);
+                                           destination_color_count, failure);
     if (shader_set == nullptr) {
         return ::vsg::ref_ptr<::vsg::Node>();
     }
@@ -895,6 +1117,22 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
     const std::uint32_t        shadow_map_slot = color_count + 1u;
     const std::uint32_t        shadow_block_slot = color_count + 2u;
     const bool                 has_shadow      = shadow.map != nullptr && shadow.block != nullptr;
+    // Count the pipeline this node needs against the keys already seen (see OverlayPipelineTotals): the
+    // difference between what was built and what was distinct is the number of pipelines a sharing table
+    // would remove, and whether it is non-zero is a fact about the app rather than about this code.
+    {
+        OverlayPipelineTable& table = overlayPipelineTable();
+        const std::string     key   = overlayPipelineKey(fs_spec->source.as_std_str(), fs_spec->entryPoint.as_std_str(),
+                                                         color_count, depth_view != nullptr, has_shadow,
+                                                         static_cast<std::uint32_t>(destination_color_count), extent);
+        if (table.counts.find(key) == table.counts.end() && table.counts.size() >= OverlayPipelineTable::kMaxKeys) {
+            // A diagnostic, not a cache: dropping it keeps a host that builds many programs from growing this
+            // table without end, and the count it reports is only ever conservative afterwards.
+            table.counts.clear();
+        }
+        ++table.counts[key];
+        ++table.built;
+    }
     const std::vector<std::uint32_t> fillable  = [&] {
         std::vector<std::uint32_t> slots;
         for (std::uint32_t i = 0; i < color_count; ++i) {
@@ -970,7 +1208,7 @@ bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> prog
         config->assignTexture("shadow_map", ::vsg::ImageInfoList{ shadow_info });
         config->assignDescriptor("shadow_block", shadow.block);
     }
-    return makeOverlayStateGroup(config, push_data);
+    return makeOverlayStateGroup(config, push_data, source_set);
 }
 
 } // namespace detail

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include <vine/vsg/VsgHostWindow.hpp>
 #include <vine/vsg/VsgRendererState.hpp>
 
 V_VSG_NS_BEGIN
@@ -52,10 +53,9 @@ std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count,
     return order;
 }
 
-bool forceOwnWindow()
+bool onHostWindow(const ::vsg::ref_ptr<::vsg::Window>& window)
 {
-    const char* value = std::getenv("VINE_VSG_OWN_WINDOW");
-    return value != nullptr && value[0] != '\0';
+    return window != nullptr && window.cast<detail::VsgHostWindow>() != nullptr;
 }
 
 void removeGraphChild(::vsg::Group* graph, const ::vsg::ref_ptr<::vsg::Node>& node)

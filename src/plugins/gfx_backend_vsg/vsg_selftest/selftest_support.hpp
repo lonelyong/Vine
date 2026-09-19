@@ -1224,4 +1224,32 @@ bool runHostSurfaceMovePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& 
  */
 bool runDataRefreshPhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames);
 
+/**
+ * @brief Asserts that a target which only changed SIZE keeps its passes, slots and pipelines.
+ *
+ * The in-place resize (.ai/design/vsg-target-resize-in-place.md) is the difference between a window
+ * grow that re-bakes the frame (~225 ms on a maximize, measured) and one that replaces three
+ * attachments. The two are indistinguishable from outside — same picture, no crash, no validation
+ * error — so the phase reads the three things that tell them apart, on a deferred pair (a producer with
+ * colour + depth, and a fullscreen program copying it into a second off-screen target):
+ *
+ *  1. offscreenResizeCount() climbs by two while offscreenBuildCount() and programSlotBuildCount() stay
+ *     flat. A pixel-only check would stay green with the rebuild path restored; a counter-only check
+ *     would stay green with the slot still sampling the OLD attachments, hence (2);
+ *  2. the consumer is a COPY, so its readback mirrors the producer's CURRENT image — the quad's red in
+ *     the middle, the producer's clear at the edge — and covers the whole NEW extent (the band the
+ *     resize exposed is drawn, not left at the consumer's clear colour);
+ *  3. the replaced attachments are parked, not waited for (deviceWaitCount() flat) and not held forever
+ *     (the parked count is back to its pre-resize level once the frames in flight have passed).
+ *
+ * A last episode pins the other half of the rule: a target whose SHAPE changed (a colour attachment
+ * added) still goes through the build path, and so does the slot that compiled against it.
+ *
+ * @param renderer Renderer under test.
+ * @param camera   Camera the producer's quad is drawn through.
+ * @param frames   Frames driven per episode (at least two).
+ * @return true when both directions of the resize rule held.
+ */
+bool runTargetResizePhase(vine::vsg::VsgRenderer& renderer, const CameraPtr& camera, int frames);
+
 }  // namespace selftest

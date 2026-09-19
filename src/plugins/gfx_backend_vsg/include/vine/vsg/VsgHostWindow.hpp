@@ -23,8 +23,8 @@
  *     VkInstance and the swapchain is rebuilt against it, so the device, every compiled pipeline and the
  *     content stay.
  *
- * A session with no host window does NOT use this class: it keeps vsg's own window, which is also what the
- * VINE_VSG_OWN_WINDOW test hatch asks for.
+ * A session with no host window does NOT use this class: it keeps vsg's own window, whose destructor
+ * destroys the surface nobody else owns (see VsgBackendUtility::onHostWindow).
  */
 
 #include <vine/vsg/vsg_global.hpp>

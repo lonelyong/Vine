@@ -72,6 +72,17 @@ std::pair<::vsg::ref_ptr<::vsg::RenderPass>, ::vsg::ref_ptr<::vsg::Framebuffer>>
         render_pass = makeColorDepthRenderPass(att.device.get(), att.color_formats, att.depth_format,
                                                VK_IMAGE_LAYOUT_UNDEFINED, promote, pass_color_clear);
     }
+    return std::pair{ render_pass, makePassFramebuffer(state, t, att, render_pass) };
+}
+
+::vsg::ref_ptr<::vsg::Framebuffer> detail::makePassFramebuffer(const VsgRendererState& state,
+                                                              const VsgRenderTargetEntry& t,
+                                                              const detail::PassAttachments& att,
+                                                              const ::vsg::ref_ptr<::vsg::RenderPass>& render_pass)
+{
+    if (render_pass == nullptr) {
+        return {};
+    }
     // The attachment order the render pass declares: colour attachments in order,
     // then depth — borrowed depth is the SOURCE's view (the borrow was validated
     // in buildOffscreenTarget).
@@ -84,9 +95,8 @@ std::pair<::vsg::ref_ptr<::vsg::RenderPass>, ::vsg::ref_ptr<::vsg::Framebuffer>>
         const auto source = state.targets.find(t.depth_source);
         attachments.push_back(att.borrowed && source != state.targets.end() ? source->second.depth_view : t.depth_view);
     }
-    return std::pair{ render_pass,
-                      ::vsg::Framebuffer::create(render_pass, attachments, static_cast<uint32_t>(t.width),
-                                                 static_cast<uint32_t>(t.height), 1) };
+    return ::vsg::Framebuffer::create(render_pass, attachments, static_cast<uint32_t>(t.width),
+                                      static_cast<uint32_t>(t.height), 1);
 }
 
 bool detail::depthStillPromoted(const VsgRendererState& state, const VsgRenderTargetEntry& t,
@@ -166,10 +176,18 @@ void detail::revokeDepthPromotion(VsgRendererState& state, VsgRenderTargetEntry&
 ::vsg::ref_ptr<::vsg::RenderGraph> detail::reuseSteadyPass(const VsgRendererState& state,
                                                            VsgRenderTargetEntry::PassObjects& objects,
                                                            bool want_color_clear, bool want_depth_clear,
-                                                           bool has_color, const ::vsg::vec4& clear_color)
+                                                           bool has_color, const ::vsg::vec4& clear_color,
+                                                           std::uint64_t attachments_generation)
 {
     if (passVariantIsStale(objects.want_color_clear, objects.want_depth_clear, want_color_clear, want_depth_clear)) {
         return {}; // clear policy changed: the variant has to be rebuilt
+    }
+    // The target's attachments were replaced (a resize in place): the variant this pass recorded
+    // describes images that no longer exist, and the new ones are UNDEFINED again, so which variant
+    // the pass has to record (CLEAR seed / promote / plain LOAD) has to be decided again — for ONE
+    // frame, which is what the plan then records (see planPassVariant).
+    if (objects.attachments_generation != attachments_generation) {
+        return {};
     }
     if (has_color && state.request.presenting && objects.clear_color != clear_color && objects.graph != nullptr &&
         !objects.graph->clearValues.empty()) {
@@ -268,7 +286,7 @@ detail::PassPlan detail::planPass(const VsgRendererState& state, const VsgRender
         // each frame; the load-ops have to follow suit, or a pass that starts clearing keeps
         // LOADing and its request is silently ignored.
         if (auto graph = detail::reuseSteadyPass(state, built->second, plan.want_color_clear, plan.want_depth_clear,
-                                               plan.has_color, state.request.clear_color)) {
+                                               plan.has_color, state.request.clear_color, t.attachments_generation)) {
             return graph;
         }
     }
@@ -360,6 +378,18 @@ detail::PassPlan detail::planPass(const VsgRendererState& state, const VsgRender
     }
     graph->renderPass  = plan.variant.transient ? render_pass_transient : render_pass;
     graph->framebuffer = framebuffer;
+    // The graph follows the target's attachments — and the target may have been RESIZED in place since
+    // this graph was made, in which case the graph (and the pass' views under it) is kept while the
+    // images under it are new: the render area has to follow the size those images were made at, or
+    // the record would name a rectangle the framebuffer does not have (VUID-vkCmdBeginRenderPass-
+    // pRenderArea-00063). `previous_extent` is set in step for the same reason the window graph does
+    // it (see VsgRenderer::resize): vsg's own resize handling scales a graph's sub-viewport rectangles
+    // when it notices an extent change, and every slot's rectangle is already re-derived from the
+    // target's size each frame.
+    graph->renderArea = VkRect2D{ { 0, 0 },
+                                  { static_cast<std::uint32_t>(t.width), static_cast<std::uint32_t>(t.height) } };
+    graph->previous_extent =
+        VkExtent2D{ static_cast<std::uint32_t>(t.width), static_cast<std::uint32_t>(t.height) };
     if (plan.has_color && !graph->clearValues.empty()) {
         // The colour clear value follows the pass' current request (a rebuilt
         // pass may have just STARTED clearing). The depth entry — if any — keeps
@@ -380,6 +410,7 @@ detail::PassPlan detail::planPass(const VsgRendererState& state, const VsgRender
     objects.clear_color           = clear_color;
     objects.order                 = state.request.order;
     objects.transient             = plan.variant.transient;
+    objects.attachments_generation = t.attachments_generation;
     detail::publishPass(t, key, objects, plan.has_color);
 
     if (state.command_graph != nullptr) {

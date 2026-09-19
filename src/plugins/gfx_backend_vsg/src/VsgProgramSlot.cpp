@@ -48,6 +48,51 @@ namespace
 {
 
 /**
+ * @brief Why a retained fullscreen-program slot cannot be reused as it is.
+ *
+ * The rebuild predicate is asked for a yes/no answer, but what a resize has to get right is which of the
+ * answers apply: a slot that rebuilds because the SOURCE's shape or policy changed must, while the same
+ * source's attachments being replaced at the same shape must not (see repointProgramSlotSource). Naming
+ * the reason keeps that distinction visible in the log instead of in a bisect.
+ *
+ * @param previous          Slot retained from an earlier frame (null when there is none yet).
+ * @param source            Target this slot samples.
+ * @param src               That target's entry now.
+ * @param shadow_map        Shadow map this pass resolved, or null when it declared none.
+ * @param program           Program this pass draws through.
+ * @param program_revision  Revision of @p program now.
+ * @return A short reason, or an empty string when the slot can be reused.
+ */
+const char* programSlotStaleReason(const ProgramSlot* previous, vine::raw_ptr<const vine::graphics::RenderTarget> source,
+                                   const VsgRenderTargetEntry& src, const ::vsg::ref_ptr<::vsg::ImageView>& shadow_map,
+                                   vine::raw_ptr<const vine::graphics::ShaderProgram> program,
+                                   std::uint64_t program_revision)
+{
+    if (previous == nullptr) {
+        return "no slot yet";
+    }
+    if (!previous->ready) {
+        return "previous attempt did not finish";
+    }
+    if (previous->source_target != source) {
+        return "another source target";
+    }
+    if (previous->source_depth_sampleable != src.depth_sampleable) {
+        return "source depth sampleability changed";
+    }
+    if (shadow_map != nullptr && previous->shadow_view != shadow_map) {
+        return "another shadow map";
+    }
+    if (previous->program.get() != program) {
+        return "another program object";
+    }
+    if (previous->program_revision != program_revision) {
+        return "the program was edited";
+    }
+    return "";
+}
+
+/**
  * @brief Builds and compiles an overlay View for a full-screen node.
  *
  * Wraps @p content in its own View (a dedicated camera carrying the sub-rect
@@ -137,9 +182,11 @@ ProgramSlotDestination resolveProgramSlotDestination(VsgRendererState& state, co
                                    u8"%s: destination target has no usable colour attachment: the pass draws nothing", what));
             return out;
         }
-        if (!dest_entry.attachments_built || dest_entry.width != dest->width() || dest_entry.height != dest->height()) {
-            detail::buildOffscreenTarget(state, diagnostics, dest);
-            if (!dest_entry.attachments_built) {
+        if (dest_entry.width != dest->width() || dest_entry.height != dest->height() ||
+            !dest_entry.attachments_built || !dest_entry.build_key.matches(*dest)) {
+            // Through the ONE decision (see syncOffscreenTarget): a destination at a new size is resized
+            // in place, so the slots drawing into it — and the pipelines they compiled — stay.
+            if (!detail::syncOffscreenTarget(state, diagnostics, dest)) {
                 return out;
             }
         }
@@ -153,6 +200,11 @@ ProgramSlotDestination resolveProgramSlotDestination(VsgRendererState& state, co
     out.target = dest;
     out.surf_w = (dest == nullptr) ? static_cast<int>(state.window->extent2D().width) : dest_entry.width;
     out.surf_h = (dest == nullptr) ? static_cast<int>(state.window->extent2D().height) : dest_entry.height;
+    // The colour attachment count of the DESTINATION's render pass, which is what the draw's pipeline is
+    // created against: the swapchain pass has one attachment, and an off-screen destination has as many as
+    // its (just synced) entry holds -- a count that changes with the target's SHAPE, which is exactly why
+    // this is read here rather than baked into the node's program.
+    out.color_count = (dest == nullptr) ? 1 : static_cast<int>(dest_entry.color_views.size());
 
     // The pass owns its slot under this destination; if it drew elsewhere before
     // (its render target changed), drop that stale slot so it stops compositing
@@ -219,6 +271,112 @@ bool installProgramSlotView(VsgRendererState& state, const VsgDiagnostics& diagn
     return true;
 }
 
+namespace
+{
+
+/**
+ * @brief Re-points a slot's sampled-source bindings at a source whose attachments were replaced.
+ *
+ * A source that was resized IN PLACE (see resizeOffscreenTarget) replaced its images, so the descriptor
+ * set this slot's node samples through names views that are gone — while everything else about the slot
+ * (the node, its shader set, its pipeline, its view and its command buffer) is still exactly right. The
+ * pipeline is the part that cannot be had again for free: vsg caches a VkPipeline on the NODE object,
+ * per viewID, so keeping the node and the view is what keeps the compiled pipeline (see
+ * GraphicsPipeline::compile).
+ *
+ * What this does, then, is the ONE thing that has to change: a replacement descriptor set with the same
+ * layout, the same samplers and the same non-image descriptors (the shadow block is size-free), and the
+ * source's CURRENT views in the image bindings. It is swapped into the node's state group (the set object
+ * AND the BindDescriptorSet naming it), and the set it replaced is PARKED: a submitted command buffer may
+ * still name its VkDescriptorSet, and it owns the old views.
+ *
+ * A replacement set has no Vulkan objects until a compile traversal visits it, so the session is flagged
+ * (see VsgRendererState::compile_needed) and the frame runs one compile before it records.
+ *
+ * @param state Session the slot belongs to (its retire ring parks the replaced set).
+ * @param slot  Slot whose source bindings to re-point.
+ * @param src   The sampled source's entry, as it reads now.
+ * @return true when the slot samples the source's current attachments; false when this set names nothing
+ *         the source owns (the slot has to be rebuilt to describe it — the caller's old path).
+ */
+bool repointProgramSlotSource(VsgRendererState& state, ProgramSlot& slot, const VsgRenderTargetEntry& src)
+{
+    if (slot.source_set == nullptr || slot.node == nullptr) {
+        return false;
+    }
+    auto state_group = slot.node.cast<::vsg::StateGroup>();
+    if (state_group == nullptr) {
+        return false;
+    }
+    const std::size_t color_count = src.color_views.size();
+    ::vsg::Descriptors descriptors;
+    descriptors.reserve(slot.source_set->descriptors.size());
+    bool repointed = false;
+    for (const auto& descriptor : slot.source_set->descriptors) {
+        const auto image = descriptor.cast<::vsg::DescriptorImage>();
+        if (image == nullptr) {
+            descriptors.push_back(descriptor); // a buffer binding (the shadow block): it has no size, kept as it is
+            continue;
+        }
+        const std::uint32_t  binding = image->dstBinding;
+        ::vsg::ImageInfoList infos   = image->imageInfoList;
+        if (binding < color_count) {
+            for (auto& info : infos) {
+                info = ::vsg::ImageInfo::create(info->sampler, src.color_views[binding], info->imageLayout);
+            }
+            repointed = true;
+        }
+        else if (binding == color_count && slot.binds_source_depth && src.depth_view != nullptr) {
+            // The depth binding follows the ABI (binding == the colour count) and only exists while the
+            // source's depth is sampleable — which the caller's staleness check keeps true across a resize.
+            for (auto& info : infos) {
+                info = ::vsg::ImageInfo::create(info->sampler, src.depth_view, info->imageLayout);
+            }
+            repointed = true;
+        }
+        descriptors.push_back(
+            ::vsg::DescriptorImage::create(infos, binding, image->dstArrayElement, image->descriptorType));
+    }
+    if (!repointed) {
+        return false; // this set names none of the source's attachments: rebuilding is the honest answer
+    }
+    auto replacement = ::vsg::DescriptorSet::create(slot.source_set->setLayout, descriptors);
+    // The set reaches the record through the BindDescriptorSet that NAMES it (a state group holds state
+    // COMMANDS, and a DescriptorSet is not one), and the command itself has to be REPLACED rather than
+    // re-pointed: vsg's BindDescriptorSet::compile() CACHES the VkDescriptorSet handle in the command and
+    // returns early once it is compiled, and record() binds that cached handle (see vsg/state/
+    // BindDescriptorSet.cpp). Assigning `bind->descriptorSet` alone therefore changes nothing the frame
+    // records — measured in the app as vkDestroyImageView-01026 (the replaced set kept being bound) followed
+    // by a per-frame vkCmdDraw-None-08114 for the destroyed views it still named, which is a black picture.
+    // A fresh command has no cached handle, so the frame's compile (state.compile_needed, below) is what
+    // fills it in with the replacement.
+    // No command naming this set means this node records it through something else entirely, and a rebuild
+    // is the honest answer.
+    bool rebound = false;
+    for (auto& command : state_group->stateCommands) {
+        auto bind = command.cast<::vsg::BindDescriptorSet>();
+        if (bind == nullptr || bind->descriptorSet != slot.source_set) {
+            continue;
+        }
+        auto follow = ::vsg::BindDescriptorSet::create(bind->pipelineBindPoint, bind->layout, bind->firstSet,
+                                                       replacement);
+        follow->dynamicOffsets = bind->dynamicOffsets;
+        command                = follow;
+        rebound                = true;
+    }
+    if (!rebound) {
+        return false;
+    }
+    state.retireRing.park(slot.source_set);
+    slot.source_set        = replacement;
+    slot.source_w          = src.width;
+    slot.source_h          = src.height;
+    slot.source_generation = src.attachments_generation;
+    state.compile_needed   = true;
+    return true;
+}
+
+} // namespace
 
 void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostics, vine::graphics::RenderTarget* source,
                        vine::raw_ptr<const vine::graphics::ShaderProgram> program,
@@ -310,10 +468,17 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     const detail::ShadowInput resolved_shadow = detail::resolveShadowInput(state, camera, state.request.lights);
 
     // (Re)build the retained slot when it is missing, the sampled source
-    // changed (or was resized: its colour views were rebuilt), the program changed, a DIFFERENT shadow
+    // changed, the program changed, a DIFFERENT shadow
     // map arrived, or the source's depth
     // stopped being sampleable (a pass of the source that preserves depth revokes the
     // promotion, so the depth binding has to go with it).
+    //
+    // A source whose attachments were replaced AT THE SAME SHAPE (a resize in place — see
+    // resizeOffscreenTarget) is deliberately NOT in that list: its colour views are new objects, but the
+    // binding SET is the same, so what the slot needs is a re-pointed descriptor (below) rather than a
+    // rebuilt node — and keeping the node is what keeps the compiled pipeline, because vsg caches it on
+    // the node object, per viewID (GraphicsPipeline::compile; measured ~26 ms per slot to make another).
+    // The source's attachments_generation is what tells the two apart.
     //
     // The DESTINATION SURFACE's size is deliberately NOT part of that list, though the node is still
     // built with it (the baked default viewport, see makeFullscreenProgramNode). The node's geometry is
@@ -332,14 +497,18 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
     // below by writing a disabled block — rebuilding for it would make a program that declares the
     // shadow ABI refuse to build (and so draw nothing) over a shadow it can simply skip.
     const std::uint64_t program_revision = program->revision();
-    const auto          existing         = dest_entry.program_slots.find(slot_key);
-    const ProgramSlot*  previous = existing == dest_entry.program_slots.end() ? nullptr : &existing->second;
-    const bool stale = previous == nullptr || !previous->ready || previous->source_target != source ||
-                       previous->source_w != src.width || previous->source_h != src.height ||
-                       previous->source_depth_sampleable != src.depth_sampleable ||
-                       (resolved_shadow.map != nullptr && previous->shadow_view != resolved_shadow.map) ||
-                       previous->program.get() != program || previous->program_revision != program_revision;
-    if (stale) {
+    const auto   existing = dest_entry.program_slots.find(slot_key);
+    ProgramSlot* previous = existing == dest_entry.program_slots.end() ? nullptr : &existing->second;
+    const char*  stale_reason = programSlotStaleReason(previous, source, src, resolved_shadow.map, program, program_revision);
+    const bool   stale        = *stale_reason != '\0';
+    // The source's attachments were replaced (a resize in place — see resizeOffscreenTarget). The slot
+    // keeps its node, its view and its compiled pipeline, and follows by re-pointing the descriptor set
+    // it samples through; when that cannot describe the source, the slot is rebuilt (the old path) rather
+    // than left sampling views that are gone.
+    const bool source_replaced =
+        !stale && previous != nullptr && previous->source_generation != src.attachments_generation;
+    const bool repointed = source_replaced && repointProgramSlotSource(state, *previous, src);
+    if (stale || (source_replaced && !repointed)) {
         // The previous slot goes through the ONE drop (eraseProgramSlot): its view stops being
         // recorded and its NODE is PARKED on the retire ring instead of being destroyed here. A
         // submitted command buffer may still name that node's pipeline / descriptor sets (the
@@ -347,6 +516,10 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         // did — destroyed them in flight. The slot reference below is taken AFTER the drop
         // because the erasure invalidates the entry the map held.
         eraseProgramSlot(state, dest_entry, dest, slot_key);
+        // Timed from the drop to the slot becoming ready (see VsgBuildProfile): the node's construction,
+        // its glslang translation and its VkPipeline are one indivisible cost at this granularity, because
+        // vsg creates the pipeline while compiling the view (GraphicsPipeline::compile).
+        const auto slot_build_start = std::chrono::steady_clock::now();
         ProgramSlot& rebuilt = dest_entry.program_slots[slot_key];
         // Capture the pass's explicit order (announced by the engine before
         // this pass) so the fullscreen view stacks at its pipeline position
@@ -397,9 +570,15 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
             data->properties.dataVariance = ::vsg::DYNAMIC_DATA;
             shadow.block                  = std::move(data);
         }
+        const auto node_build_start = std::chrono::steady_clock::now();
+        // The node's descriptor set is handed back so this slot can re-point it later (see
+        // repointProgramSlotSource) instead of rebuilding the node for a new set of source views.
+        ::vsg::ref_ptr<::vsg::DescriptorSet> node_source_set;
         auto node = makeFullscreenProgramNode(program, src.color_views,
                                               src.depth_sampleable ? src.depth_view : ::vsg::ref_ptr<::vsg::ImageView>(),
-                                              shadow, surface, rebuilt.push_data, &program_failure);
+                                              shadow, surface, overlay.color_count, rebuilt.push_data, &node_source_set,
+                                              &program_failure);
+        state.build_profile.slots_node_ns += elapsedNs(node_build_start);
         if (node == nullptr) {
             const vine::String why =
                 program_failure == ProgramNodeFailure::NoCompiler
@@ -436,6 +615,10 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         rebuilt.program          = vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program);
         rebuilt.program_revision = program_revision;
         rebuilt.node             = node;
+        // What this slot samples through, and which source attachments it was built for (see
+        // repointProgramSlotSource).
+        rebuilt.source_set        = node_source_set;
+        rebuilt.source_generation = src.attachments_generation;
         // Keep the shadow the node bound: its map is the rebuild identity (see `stale` above) and
         // its block is the object the per-frame refresh rewrites (it is the same object the
         // descriptor was assigned, so mutating its bytes + dirty() is what reaches the GPU).
@@ -445,9 +628,11 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         // Create + compile the fullscreen view against this target's render pass
         // (inserted provisionally at the front so the compile sees it), then move
         // it to its explicit-order position.
-        if (!installProgramSlotView(state, diagnostics, overlay, rebuilt, node, rect_x, rect_y, rect_w, rect_h,
-                               /*front*/ true,
-                               "fullscreen program")) {
+        const auto view_compile_start = std::chrono::steady_clock::now();
+        const bool view_installed = installProgramSlotView(state, diagnostics, overlay, rebuilt, node, rect_x, rect_y,
+                                                          rect_w, rect_h, /*front*/ true, "fullscreen program");
+        state.build_profile.slots_view_ns += elapsedNs(view_compile_start);
+        if (!view_installed) {
             // The compile already reported (when it was the compile): drop the
             // half-made slot so the next frame retries. This one was never recorded, and the drop
             // is the same one home as above.
@@ -455,8 +640,10 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
             return;
         }
         ++state.program_slot_build_count;
-        V_LOGI("[VsgRenderer] EXPERIMENTAL deferred fullscreen program {}x{} -> {} {},{},{}x{} attached", src.width,
-               src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h);
+        ++state.build_profile.slots;
+        state.build_profile.slots_ns += elapsedNs(slot_build_start);
+        V_LOGI("[VsgRenderer] EXPERIMENTAL deferred fullscreen program {}x{} -> {} {},{},{}x{} attached ({})", src.width,
+               src.height, dest == nullptr ? "window" : "offscreen", rect_x, rect_y, rect_w, rect_h, stale_reason);
     }
 
     // The slot this pass owns, now that it exists in every path that reaches here.
@@ -494,8 +681,12 @@ void drawScreenProgram(VsgRendererState& state, const VsgDiagnostics& diagnostic
         slot.detached = false;
     }
 
-    // Follow the requested sub-viewport each frame.
-    slot.camera->viewportState = ::vsg::ViewportState::create(rect_x, rect_y, static_cast<uint32_t>(rect_w), static_cast<uint32_t>(rect_h));
+    // Follow the requested sub-viewport each frame — IN PLACE (see setSlotViewportRect): a fresh
+    // vsg::ViewportState per frame per slot allocated for a rectangle vsg re-emits from the state it
+    // already records, which is the same bargain the content path makes (see updateSlotViewport).
+    if (slot.camera != nullptr) {
+        detail::setSlotViewportRect(slot.camera->viewportState, rect_x, rect_y, rect_w, rect_h);
+    }
 }
 
 } // namespace detail

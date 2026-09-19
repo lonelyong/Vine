@@ -32,6 +32,7 @@
 
 #include <vsg/app/RenderGraph.h>
 #include <vsg/core/ref_ptr.h>
+#include <vsg/state/ViewportState.h>
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/DepthMode.hpp>
@@ -48,6 +49,22 @@ V_VSG_NS_BEGIN
 
 namespace detail
 {
+
+/** @brief Writes one rectangle into a slot's viewport state, in place.
+ *
+ * The ONE place a slot's vkCmdSetViewport arguments are written: both slot kinds record through a
+ * camera whose vsg::ViewportState vsg re-emits on every recording, so what a slot needs is its values
+ * changed — not a new object. The state is created when the slot has none yet and written in place
+ * afterwards; a non-positive @p w or @p h asserts nothing (a slot whose rectangle cannot be expressed
+ * keeps the one it already records, which is what the content path's zero-size sub-viewport means).
+ *
+ * @param state Slot's viewport state (created when null).
+ * @param x     Rectangle origin x in device pixels.
+ * @param y     Rectangle origin y in device pixels.
+ * @param w     Rectangle width in device pixels.
+ * @param h     Rectangle height in device pixels.
+ */
+void setSlotViewportRect(::vsg::ref_ptr<::vsg::ViewportState>& state, int x, int y, int w, int h);
 
 /** @brief Keeps a content slot's viewport (and its one vsg::ViewportState) in step with its role.
  *

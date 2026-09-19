@@ -53,6 +53,8 @@ struct ProgramSlotDestination
     ::vsg::ref_ptr<::vsg::RenderGraph> graph;            ///< Graph the view records into; null = refuse to draw.
     int                                surf_w = 0;        ///< Surface width the rectangle is clamped to.
     int                                surf_h = 0;        ///< Surface height the rectangle is clamped to.
+    int color_count = 1; ///< Colour attachments the destination's render pass declares (what the draw's
+                         ///< pipeline is created against; the swapchain target has one).
 };
 
 namespace detail

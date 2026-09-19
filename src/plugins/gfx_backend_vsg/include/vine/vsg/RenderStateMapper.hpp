@@ -65,9 +65,13 @@ inline VkCompareOp mapCompareOp(vine::graphics::CompareOp op)
 /**
  * @brief Maps a face-culling mode to a Vulkan cull-mode bit mask.
  *
- * Front faces are declared counter-clockwise (the winding the Vine mesh
- * authoring uses after vsg's Y-flipping projection); a scene without
- * StateNodes keeps today's two-sided (VK_CULL_MODE_NONE) behaviour.
+ * The mask is the SDK's meaning, and `frontFace` is what makes it that: the SDK calls a triangle front
+ * when its vertices read counter-clockwise in WORLD space, and this backend declares its front faces
+ * CLOCKWISE in framebuffer space because vsg's projection inverts Y (see makeRenderStateObjects). The two
+ * lines are one decision — a mode mapped without the matching front face culls the wrong side — so a
+ * backend that changed the projection convention has to change both.
+ *
+ * A scene without StateNodes keeps today's two-sided (VK_CULL_MODE_NONE) behaviour.
  *
  * @param mode Face-culling mode.
  * @return Vulkan cull-mode flag (VK_CULL_MODE_NONE when no culling).
@@ -178,7 +182,17 @@ inline RenderStateObjects makeRenderStateObjects(
     // Culling + polygon rasterisation.
     out.rasterization = ::vsg::RasterizationState::create();
     out.rasterization->cullMode = detail::mapCullMode(state.cullMode);
-    out.rasterization->frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    // FRONT FACES ARE DECLARED CLOCKWISE, and the sign is the whole point: the SDK's rule is that a
+    // triangle is front-facing when its vertices read counter-clockwise in world space (StateNode.hpp),
+    // while Vulkan decides that in FRAMEBUFFER space -- and vsg's projection INVERTS Y (see
+    // vsg/maths/transform.h: `perspective` negates the m[1][1] term, documented as "Y NDC coordinates
+    // are inverted in Vulkan"). The inversion flips the screen-space orientation, so the SDK's front
+    // faces arrive here as clockwise ones. Declaring COUNTER_CLOCKWISE -- what this line did until
+    // 2026-09-19 -- made every mapped cull mode act on the WRONG faces (the demo's `cullMode = Back`
+    // box drew its interior: its outward faces, wound CCW by construction, were the ones culled), with
+    // no validation error and nothing to report: exactly the silent failure the SDK's contract warns
+    // about. A backend that renders without the Y inversion would declare counter-clockwise here.
+    out.rasterization->frontFace = VK_FRONT_FACE_CLOCKWISE;
     out.rasterization->polygonMode = detail::mapPolygonMode(state.polygonMode);
 
     // Blending: always-on for the per-vertex opacity path; the StateNode

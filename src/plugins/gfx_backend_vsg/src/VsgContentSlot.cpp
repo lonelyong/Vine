@@ -50,6 +50,26 @@ void logContentSlotDiagnostics(const vine::graphics::RenderTarget* target, vine:
 namespace detail
 {
 
+void setSlotViewportRect(::vsg::ref_ptr<::vsg::ViewportState>& state, int x, int y, int w, int h)
+{
+    if (w <= 0 || h <= 0) {
+        return; // a rectangle that cannot be expressed asserts nothing (see the declaration)
+    }
+    if (state == nullptr) {
+        state = ::vsg::ViewportState::create(x, y, static_cast<uint32_t>(w), static_cast<uint32_t>(h));
+        return;
+    }
+    // In place: the slot's graph already records THIS object, so only its values change.
+    auto& vk_viewport  = state->getViewport();
+    vk_viewport.x      = static_cast<float>(x);
+    vk_viewport.y      = static_cast<float>(y);
+    vk_viewport.width  = static_cast<float>(w);
+    vk_viewport.height = static_cast<float>(h);
+    auto& scissor      = state->getScissor();
+    scissor.offset     = VkOffset2D{ x, y };
+    scissor.extent     = VkExtent2D{ static_cast<uint32_t>(w), static_cast<uint32_t>(h) };
+}
+
 void updateSlotViewport(ContentSlot& content, bool presenting, const std::optional<vine::graphics::Viewport>& viewport,
                         int surf_w, int surf_h)
 {
@@ -70,20 +90,9 @@ void updateSlotViewport(ContentSlot& content, bool presenting, const std::option
         content.viewport_w == w && content.viewport_h == h) {
         return; // same rectangle: the recorded state is already the right one
     }
-    if (content.viewport_state == nullptr) {
-        content.viewport_state = ::vsg::ViewportState::create(x, y, static_cast<uint32_t>(w), static_cast<uint32_t>(h));
+    setSlotViewportRect(content.viewport_state, x, y, w, h);
+    if (content.vsg_camera != nullptr) {
         content.vsg_camera->viewportState = content.viewport_state;
-    }
-    else {
-        // In place: the view already records this object, so only its values change.
-        auto& vk_viewport  = content.viewport_state->getViewport();
-        vk_viewport.x      = static_cast<float>(x);
-        vk_viewport.y      = static_cast<float>(y);
-        vk_viewport.width  = static_cast<float>(w);
-        vk_viewport.height = static_cast<float>(h);
-        auto& scissor      = content.viewport_state->getScissor();
-        scissor.offset     = VkOffset2D{ x, y };
-        scissor.extent     = VkExtent2D{ static_cast<uint32_t>(w), static_cast<uint32_t>(h) };
     }
     content.viewport_x = x;
     content.viewport_y = y;
@@ -266,7 +275,14 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
     placeViewByOrder(state, graph, target, content.view, content.applied.order);
     content.ready = true;
     if (state.viewer != nullptr) {
+        // The FULL compile a newly materialised pass graph costs, timed as its own phase (see
+        // VsgBuildProfile): this is where the new target's images are allocated and where every view already
+        // in the command graph has its pipelines created against the new render pass (vsg creates a
+        // VkPipeline while compiling its view, so a new render pass is a pipeline rebuild for its siblings).
+        const auto graph_compile_start = std::chrono::steady_clock::now();
         state.viewer->compile();
+        ++state.build_profile.graphs;
+        state.build_profile.graphs_ns += elapsedNs(graph_compile_start);
     }
 }
 
@@ -400,34 +416,35 @@ void renderContentSlot(VsgRendererState& state, VsgRendererPersistent& persisten
     }
 
     // The command stream is the source of truth: reconcile the retained slot
-    // root against it (in-place for moves/material edits). The legacy own-
-    // window debug path skips syncing the window's presenting slot.
-    if (!(state.request.target == nullptr && forceOwnWindow() && content.applied.presenting)) {
-        std::vector<::vsg::ref_ptr<::vsg::Node>> created;
-        content.bridge.syncRenderCommands(commands, content.root.get(), &created,
-                                          &state.retained_shares);
-        if (!created.empty()) {
-            // Queue this slot's VIEW for an incremental (re)compile in
-            // submitFrame(): traversing the View sets the correct viewID, so
-            // the new/rebuild subtrees compile for the view they will be
-            // recorded under (D22). One entry per view per frame, and the entry
-            // carries WHERE the view is recorded (this is the queue's only
-            // producer), so the compiler needs no search (see PendingCompileView).
-            auto& pending = state.pending_compile_views;
-            const auto known = std::find_if(pending.begin(), pending.end(), [&content](const PendingCompileView& entry) {
-                return entry.view == content.view;
-            });
-            if (known == pending.end()) {
-                pending.push_back(PendingCompileView{ content.view, state.request.target, key });
-            }
+    // root against it (in-place for moves/material edits). EVERY slot is synced, including the presenting
+    // one: the window target's content is as much a picture the host asked for as any off-screen target's,
+    // and the self-test drives its diagnostics and pixel phases through exactly that slot. (The
+    // VINE_VSG_OWN_WINDOW escape hatch used to skip it; the hatch was deleted on 2026-09-19 because the
+    // mode it forced is the one a session with no announced surface is already in.)
+    std::vector<::vsg::ref_ptr<::vsg::Node>> created;
+    content.bridge.syncRenderCommands(commands, content.root.get(), &created,
+                                      &state.retained_shares);
+    if (!created.empty()) {
+        // Queue this slot's VIEW for an incremental (re)compile in
+        // submitFrame(): traversing the View sets the correct viewID, so
+        // the new/rebuild subtrees compile for the view they will be
+        // recorded under (D22). One entry per view per frame, and the entry
+        // carries WHERE the view is recorded (this is the queue's only
+        // producer), so the compiler needs no search (see PendingCompileView).
+        auto& pending = state.pending_compile_views;
+        const auto known = std::find_if(pending.begin(), pending.end(), [&content](const PendingCompileView& entry) {
+            return entry.view == content.view;
+        });
+        if (known == pending.end()) {
+            pending.push_back(PendingCompileView{ content.view, state.request.target, key });
         }
-        // TEMP diagnostics, env-gated: how many commands this slot collected, how
-        // many subtrees were built and how many pipeline variants exist (see
-        // logContentSlotDiagnostics).
-        logContentSlotDiagnostics(target_key, wanted.depth_mode, wanted.order, commands.size(),
-                                  created.size(), content.root->children.size(),
-                                  content.bridge.pipelineVariantCount());
     }
+    // TEMP diagnostics, env-gated: how many commands this slot collected, how
+    // many subtrees were built and how many pipeline variants exist (see
+    // logContentSlotDiagnostics).
+    logContentSlotDiagnostics(target_key, wanted.depth_mode, wanted.order, commands.size(),
+                              created.size(), content.root->children.size(),
+                              content.bridge.pipelineVariantCount());
 }
 void placeViewByOrder(VsgRendererState& state, ::vsg::ref_ptr<::vsg::RenderGraph> graph,
                        vine::graphics::RenderTarget* target,

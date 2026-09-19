@@ -37,11 +37,16 @@ TEST(RenderStateMapperTest, DefaultStateReproducesBackendDefaults)
     EXPECT_EQ(o.depthStencil->depthWriteEnable, VK_TRUE);
     EXPECT_EQ(o.depthStencil->depthCompareOp, VK_COMPARE_OP_GREATER);
 
-    // Rasterisation: two-sided (no culling), filled, CCW front faces.
+    // Rasterisation: two-sided (no culling), filled, and CLOCKWISE front faces. The sign is the
+    // backend's answer to vsg's Y-inverting projection: the SDK's rule is "front = counter-clockwise in
+    // world space" (StateNode.hpp), the projection flips the screen-space orientation
+    // (vsg/maths/transform.h: `perspective` negates the Y term, "Y NDC coordinates are inverted in
+    // Vulkan"), so declaring the framebuffer-space front faces CLOCKWISE is what keeps cullMode meaning
+    // what the SDK says. Pinned with the cull modes below because the two lines are one decision.
     ASSERT_NE(o.rasterization, nullptr);
     EXPECT_EQ(o.rasterization->cullMode, VK_CULL_MODE_NONE);
     EXPECT_EQ(o.rasterization->polygonMode, VK_POLYGON_MODE_FILL);
-    EXPECT_EQ(o.rasterization->frontFace, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+    EXPECT_EQ(o.rasterization->frontFace, VK_FRONT_FACE_CLOCKWISE);
 
     // Blending: always on (per-vertex opacity path) with the standard alpha
     // equation when no StateNode opts into custom factors.
@@ -97,6 +102,10 @@ TEST(RenderStateMapperTest, CullModeAndPolygonMap)
     auto o = makeRenderStateObjects(state);
     EXPECT_EQ(o.rasterization->cullMode, VK_CULL_MODE_BACK_BIT);
     EXPECT_EQ(o.rasterization->polygonMode, VK_POLYGON_MODE_LINE);
+    // The mask means what the SDK says only PAIRED with the front face (see the default-state test): with
+    // the declaration flipped, "cull back" would cull the SDK's front faces -- the demo's single-sided box
+    // would draw its interior instead of its outside, silently.
+    EXPECT_EQ(o.rasterization->frontFace, VK_FRONT_FACE_CLOCKWISE);
 
     state.cullMode = CullMode::Front;
     state.polygonMode = PolygonMode::Point;

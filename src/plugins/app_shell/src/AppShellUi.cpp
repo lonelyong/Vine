@@ -75,18 +75,25 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
     auto* left_panel = manager->createDockPanel(u8"项目", gui::DockAreas::Left);
     left_panel->setId(u8"dock_project");
 
-    // Render view in the central client area. Nothing to schedule: the control attaches by
-    // itself once the central widget is laid out and the native surface is usable, retrying
-    // while the dock layout settles, and keeps its surface hidden until the backend is bound
-    // (so the area shows the panel background instead of an unpresented native window). The
-    // lifecycle - and its timings - are in RenderControl's log lines and its stateChanged.
+    // Render view in the central client area. The control goes into the window first (its surface starts at the
+    // degenerate size a fresh QWindow has and the layout gives it the real one), then init() brings the backend up
+    // synchronously - device and pipelines built inside load(), instead of in the first turn of the event loop, which is
+    // the window between "the startup frame closes" and "the window can be painted". The size the surface has right now
+    // does not matter: the resize path rebuilds the swapchain at the real size once the layout has run.
+    // The control attaches when it is asked to and not before (see RenderControl: the host owns the timing, the
+    // control only maintains an established session), so this line is the one that decides when the device and
+    // the pipelines are built. The rest of the lifecycle - and its timings - are in RenderControl's log lines and
+    // its stateChanged.
     auto* render_control = new gui::RenderControl();
     manager->setCentralWidget(render_control);
 
     // The default demo (content, overlays, diagnostic passes, pipeline) lives in
-    // AppShellDemo; the shell only hands it the render control.
+    // AppShellDemo; the shell only hands it the render control. It installs before init(), which is what creates the
+    // orbit manipulator that takes its home vantage from the camera the demo just positioned.
     AppShellDemo demo(render_control);
     demo.install();
+
+    render_control->init();
 
     // Register the 3D view so other plugins (tests/editors) can reach the
     // render engine/scene without depending on app shell internals.

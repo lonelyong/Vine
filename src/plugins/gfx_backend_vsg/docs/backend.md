@@ -16,6 +16,8 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 > - **内存可观测**：`VsgDrawBlockPool::Stats::bytes` 与 `VsgRetentionStats::{slot_bytes,mesh_streams,textures}`；
 >   每 drawable 槽的重复归还会被 `SlotAllocator` 拒绝并计入 `Stats::refused`（必须恒为 0）。
 > - **计数器可观测（2026-09-17，R4）**：`VsgRenderer::counters()` 一次给出全部八个构建/行为计数（`VsgRendererCounters`：离屏图 / 窗口 / 全屏槽构建数、原地刷新数、数据节点构建数、挂起视图数、停设备次数、退役环释放数）。两个聚合（它与 `retentionStats()`）在重叠处必须一致，由 policy-churn 相位断言（`[counters]` 行；变异：把两个字段的来源互换 ⇒ 立刻报 301 对 148）。
+> - **构建耗时可观测（2026-09-19）**：`VsgBuildProfile`（`VsgRendererState::build_profile`）把一帧里"需要现造的东西"按阶段分开计时——`targets` / 目标的原地改尺寸（`target_resizes`）/ 全量 `viewer->compile()`（`graphs`，其中"只是让新描述符集落地"的那次记在 `rebinds`）/ 全屏程序槽（`slots`，再分 `slots_node_ns` 与 `slots_view_ns`）/ `compile` / `record` / `present`——由 `reportBuildProfile()` 在**提交完一帧**与**第一帧之前**（引擎 warm-up 在 `beginFrame()` 之前跑，记到第一帧头上会掩盖启动成本）各打一行：**造了东西就报**，没造东西只在**卡顿**时报（耗时 > 50 ms = 三个 60 Hz 周期，且每段卡顿只报一次——第一个说清了时间花在哪一段，重报每帧一次没有信息）。profile 是**一段**的量（每帧边界清空），否则几帧的 `record` 会加到一起、把"这一段慢不慢"的判据在小事上点着：实测 5 ms 的旧闸门低于本机一帧的 record 时间（5–6 ms），于是操作相机时每帧一行、20 s 打出 62 行。同一行另给两个**进程级**计数的增量：`detail::overlayCompileTotals()`（glslang 的编译次数与耗时，按"相对上次报告"的增量）与 `detail::overlayPipelineTotals()`（全屏程序节点建了几条管线 / 一共几个**不同**的键——键 = fragment 文本 + 入口 + 采样的颜色附件数 + 是否绑深度 + 是否绑 shadow block + baked extent；`built == distinct` 就表示没有重复管线可共享，本仓库实测为 **5/5 不同**，见 `.ai/memory/graphics-perf-backlog.md`）。这不是策略，是量具：缓存/预热/共享该不该做，由这一行决定。
+> - **目标改尺寸"原地化"（2026-09-19）**：目标只是**换了尺寸**（形状键 `BuildKey` 不变）时不再整体重建，而是换图像/视图/帧缓冲 + 重指向描述符，保留 pass 图、内容槽、程序槽、视图与节点 ⇒ 一次最大化从 225.5 ms 降到 36–51 ms、还原 2.2 ms。决定只有一处（`detail::syncOffscreenTarget`，`VsgRenderer::render` 与 `resolveProgramSlotDestination` 共用），借用深度的判定也只有一处（`detail::borrowVerdict`，build 的 `resolveDepthBorrow` 与重建谓词共用）；计数 `offscreen_resizes` 与日志行 `off-screen target 'X' resized WxH -> W2xH2 in place` 是门禁。设计与实测见 `.ai/design/vsg-target-resize-in-place.md`。**保留了槽 ⇒ 连管线都不重建**（`GraphicsPipeline::compile` 在同一个 `GraphicsPipeline` 对象内按 pipeline states 复用实现，比较里不含 render pass）——profile 里的 `rebind compiles` 是遍历 + 新描述符集的分配/写入。
 
 > **本文边界（谁写什么，2026-09-15）** —— 同一件事只写一处：
 >
@@ -61,7 +63,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `VsgDeferredRelease.hpp` | 延迟释放的**时钟**：一个模板（`park` / `advance` / `parkedCount`），三个用户共用 —— 退役环（被换下的对象）、`VsgDrawBlockPool`（每 drawable 的槽）、每个内容槽的桥（保留节点）。深度只有一处（`kDeferredReleaseFrames`），`VsgRetireRing::kRetireRingDepth` 是它的历史别名 |
 | `VsgReadback.cpp` | 颜色/深度回读（一次性提交） |
 | `CameraBridge.hpp/.cpp` | Vine 相机 → vsg 相机/view（overlay 的两种绘制共用） |
-| `VsgBackendUtility.cpp` | 窗口句柄/自建窗口等环境相关的小工具（含 `VINE_VSG_OWN_WINDOW` 逃生口） |
+| `VsgBackendUtility.cpp` | 窗口句柄/宿主窗口判定（`onHostWindow`）等环境相关的小工具 |
 | `VsgDiagnostics.cpp` | 诊断路由：本插件的报告 → SDK 的 sink |
 | 插件 CMakeLists（`v_add_plugin`） | `include/` 是 PUBLIC、`src/` 是 PRIVATE；源文件靠 `GLOB_RECURSE`（**无 `CONFIGURE_DEPENDS`**）⇒ 新增 `src/` 文件必须重新 configure；`shaders/` 不在 glob 里，靠 `v_use_embedded_shaders` 挂生成头文件 |
 
@@ -268,6 +270,7 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
 | 被换下的旧节点 | **退役环**（`VsgRetireRing`，深度 `kRetireRingDepth = 4`） | 可能还在飞行的命令缓冲里；提交之后推进环 |
 | `vsg::Image`/`ImageView`/采样器（纹理） | **会话**的 `VsgTextureCache`（`VsgRendererState::texture_cache`，经 `SceneBridge::setTextureCache()` 注入每个内容槽） | 每张纹理**一条**：同一张纹理被 N 个槽采样只上传一次（在此之前缓存是每 bridge 一份 ⇒ N 份 image + N 次上传）；按容量裁剪（`trimToCapacity`，上界 256），App 放手的条目由**帧级清扫**（`SceneBridge::releaseAbandonedCaches()` → `textureCache().releaseAbandoned()`）释放 |
 | 共享网格流（`BindVertexBuffers` / `BindIndexBuffer`） | **会话**的 `VsgMeshResourceCache`（`VsgRendererState::mesh_cache`，经 `SceneBridge::setMeshResourceCache()` 注入；没有注入时退化成该 bridge 自己的一份） | 每条**别名自模型缓冲**的流一条：k 个 drawable 读同一份顶点/索引只上传一次（在此之前每 drawable 一份 bind ⇒ 池区间与上传各一套）；按容量 FIFO 裁剪（上界 512），无人再读的条目由同一次帧级清扫释放（§5.1.2） |
+| 全屏 program 的**编译产物**（`vsg::ShaderStages`，即 glslang 出来的 SPIR-V） | **进程级**表（`VsgPipelineFactory.cpp` 的 `overlayStageTable()`，上界 `kMaxOverlayStageEntries = 16`） | 键是 (fragment 源码, entry point)——**与尺寸无关**，所以源目标一换尺寸（槽重建）不再重跑 glslang；表属于进程是因为全屏程序是宿主自己的、会话之间没有意义重编。**`ShaderSet` 不共享**（每个节点一份：调用方要往上加自己那一遍的 descriptor 绑定） |
 | `VineMaterialBlock`（`vsg::ubyteArray`） | `VsgMaterialManager` 的条目（条目持有 `Material` 的引用） | 每帧 `releaseAbandoned()` 回收已死材质 |
 | 渲染目标、附件、pass 图 | `VsgRendererState::targets` | 目标级不变量（`color_seeded`/`depth_seeded`/`any_load_pass`/`depth_sampleable`）随目标一起重置 |
 | 内容槽 | 目标账本 | 槽持有 view / 节点 / 编译队列条目 |
@@ -557,9 +560,9 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 - **搬移**：`moveToHostSurface(native_handle)` 丢掉 `_swapchain/_frames/_indices/_depth*/_multisample*/_surface`，**继承的** `_initSurface()` 在**同一个** instance 上重建 surface，`_initFormats()` 复核格式——`_imageFormat.format` 变了就**拒绝**（返回 false，让调用方退回重建），否则**继承的** `resize()`（重查几何 + `buildSwapchain()`）接手。device、render pass、已编译管线全部留用。
   **丢哪些成员是有门禁的**：`scripts/check_vsg_window_surface_state.py` 把 `vsg::Window` 的 protected 状态**全部 22 个成员**分成"搬移要丢弃 / 被 vsg 刷新 / 必须保留"三类（每个都带理由），并**双向**校验 —— 该丢的必须在 `moveToHostSurface()` 里真的被 reset，被 vsg 刷新或必须保留的**不得**被 reset；分类所依赖的三条 vsg 行为（`_frames`/`_indices` 是 **append**、`Framebuffer::create(_renderPass` 是**解引用**）另去 `Window.cpp` 里核实，所以升级 vsg 会让它自己红。**实测的教训**：把 `_renderPass` 加进丢弃清单 ⇒ host-surface 相位在 `Framebuffer` 构造函数里**段错误**（vsg 不会重建它），所以它必须留 —— 这也是这条门禁存在的理由：清单本身的"为什么"以前只活在注释里。
 - **为什么不是重写**：C1 第一版自己实现平台窗口，结果漏了 `valid()`/`visible()`（见下），于是黑屏且零 validation error。派生之后“漏一个虚函数”的整类风险消失，两个文件从 **567 行降到 315 行**（−252，约 −44%，含两个平台分支与注释）；**2026-09-16 晚再收成一份**：两个平台分支本是逐字重复（真正不同的只有 3 处 handle 转换），现在合成一份 ⇒ `VsgHostWindow.cpp` **315 → 110 行**、`.cpp` 里**零** `#if`（平台差异只剩头文件的 `VsgHostHandle` typedef + `hostHandleFromVoid()` 的 4 行）。
-- **宿主真的开始跟着走了（2026-09-16 晚，H4）**：两处 shutdown 都删掉 —— `onSurfaceDestroyed()` 只标记 `surface_ok=false`（渲染由 `renderFrame()` 的可见性/句柄比较拦住），新句柄到来时 `initializeBackend()` **重新公告**（`setWindowHandle` + `initialize`），由后端的 `initialize()` 自己决定搬还是重建；`init()` 的幂等返回改成“句柄匹配才算已绑定”。**可判性**：新测试钩子 `VINE_RECREATE_SURFACE_MS`（`RenderControl::recreateSurface()`：`QWindow::destroy()+create()+show()`）把那个本来只能靠换屏/重新 parent/拖出 dock 触发的事件变成可按需触发，app 阶段默认 `VINE_APP_RECREATE_MS=1200` 并断言 `moved to the host's new window ≥ 1` **且** `attached to the host window == 1`。**实测**：`0x60004a` → 钩子 → `[RenderControl] … re-announcing` → `moved to the host's new window 0x600051`，渲染区（**采的就是新窗口**）84.90% 非黑；**变异**（把 shutdown 放回 `onSurfaceDestroyed()`）⇒ `follow it (0 moved)` + `rebuilt the session (2 attached)` + 像素阶段读旧窗口失败，三条红。
+- **宿主真的开始跟着走了（2026-09-16 晚，H4）**：两处 shutdown 都删掉 —— `onSurfaceDestroyed()` 只标记 `surface_ok=false`（渲染由 `renderFrame()` 的可见性/句柄比较拦住），新句柄到来时 `initializeBackend()` **重新公告**（`setWindowHandle` + `initialize`），由后端的 `initialize()` 自己决定搬还是重建；`init()` 的幂等返回改成“句柄匹配才算已绑定”。**可判性**：新测试钩子 `VINE_RECREATE_SURFACE_MS`（私有 `SurfaceWindow::recreateSurface()`：`QWindow::destroy()+create()+show()`）把那个本来只能靠换屏/重新 parent/拖出 dock 触发的事件变成可按需触发，app 阶段默认 `VINE_APP_RECREATE_MS=1200` 并断言 `moved to the host's new window ≥ 1` **且** `attached to the host window == 1`。**实测**：`0x60004a` → 钩子 → `[RenderControl] … re-announcing` → `moved to the host's new window 0x600051`，渲染区（**采的就是新窗口**）84.90% 非黑；**变异**（把 shutdown 放回 `onSurfaceDestroyed()`）⇒ `follow it (0 moved)` + `rebuilt the session (2 attached)` + 像素阶段读旧窗口失败，三条红。
 - **一处代价要知道**：vsg 平台窗口的构造里会调 `_initXdnd()`（在**宿主窗口**上写 XdndAware 属性）。Qt 在 X11 上本来也用 XDND，属性是幂等的；而且我们从不 `pollEvents()`（采纳路径不会选事件掩码 ⇒ 我们这条连接收不到 X 事件），所以不会偷 Qt 的事件。
-- `VINE_VSG_OWN_WINDOW` 仍是测试逃生口（后端自建窗口），不是生产路径。
+- **窗口模式只有两种，由会话自己决定**（2026-09-19 起）：公告了宿主句柄 ⇒ `VsgHostWindow`（采纳，绝不销毁）；没公告 ⇒ vsg 自建窗口（自己销毁）。以前那个 `VINE_VSG_OWN_WINDOW` 逃生口只是把“有没有宿主句柄”换成 env 开关，没有人用，已删：判据现在是 `detail::onHostWindow(state.window)`。
 
 **搬移的入口与判据**：`VsgRenderer::moveSessionToHostSurface(void*)` **先认同一句柄**——公告的正是会话已经在的那一个 ⇒ 返回 true 并把会话留着（2026-09-16 复核：以前这里当拒答，而拒答的代价是整会话重建，等于对"显示/缩放事件重复公告同一窗口"收全价）；否则对被拒的三种情形返回 false：**公告 `nullptr`**（宿主没有窗口可给）、**会话不在本后端的宿主窗口上**（vsg 自建窗口 / `VINE_VSG_OWN_WINDOW`）、**新窗口的 swapchain 格式不能服务本会话的 render pass**（`_imageFormat.format` 搬前后不一致，由 `VsgHostWindow::moveToHostSurface` 判）。**三种都发一条 `DiagnosticSeverity::Warning` + `DiagnosticCategory::UnsupportedRequest`**（2026-09-16 补：前两种原本静默，而它们的代价同样是整会话重建，宿主却听不到）；真正搬之前先 `retireRing.waitForIdle(state.viewer)`（计数等待，飞行中的 work 可能还指着旧表面/交换链/深度图）。`initialize()` 的"会话还活着"分支因此变成**先搬、搬不动才重建**。新增可观测量 `VsgRenderer::windowBuildCount()`：**没有新建窗口 ⇒ 没有新 instance / physical device / device ⇒ 管线没被丢掉**，这就是"搬"与"重建"在测试里的分别。**三条拒答都由自检相位各钉一条断言**（被拒 ⇒ 上报 + 重建；2026-09-17 补：第三条要
 两个视觉映射到不同 swapchain 格式的窗口，是驱动属性而非调用方行为，于是由测试档 `V
@@ -660,8 +663,8 @@ p-vertex 测试整棵子树剪掉，每节点世界盒经 `BoundsCache` 只算�
 5. **一个 drawable 三层串联**（`MatrixTransform → StateGroup → Commands`）；手工拼 `VertexIndexDraw` 不会
    被光栅化，必须用显式 bind/draw 命令。
 6. **`RenderTarget` 默认尺寸是 1×1**（不是 0）：想表达"没有尺寸"要显式 `setSize(0,0)`。
-7. **`VINE_VSG_OWN_WINDOW`** 是临时逃生口（后端自建窗口，忽略公告的表面尺寸），只用于测试；
-   `VINE_HOST_MOVE_FORMAT_MISMATCH` 同理（令搬移时那次格式比较失败，驱动第三条拒答）。
+7. **无宿主表面的会话**（后端自建窗口）现在就是“没公告句柄”这一种情形（`VINE_VSG_OWN_WINDOW` 逃生口 2026-09-19 已删）；
+   `VINE_HOST_MOVE_FORMAT_MISMATCH` 仍在（令搬移时那次格式比较失败，驱动第三条拒答）。
 8. **新增 `src/` 文件后必须重新 `cmake -S . -B build`**（插件源文件列表是 `GLOB_RECURSE` 且无
    `CONFIGURE_DEPENDS`）；`tests/*/CMakeLists.txt` 的条目用 **tab** 缩进。
 9. **新增 shader 文件除了重新 configure，还要进 `cmake/VineShaders.cmake` 的清单**：清单漏了则

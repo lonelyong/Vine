@@ -305,12 +305,12 @@ int main()
             backend->endFrame();
             backend->swapBuffers();
         }
-        // A is resized mid-chain: this REBUILDS producer A's graph +
-        // attachments while consumer B (and the window PiP) already sample it.
-        // The ordering fix must drop B's stale slot (it holds A's OLD image
-        // views) so the next screen draw reattaches to the NEW A, and
-        // re-order the command graph so A is still recorded before B — without
-        // it, B would keep sampling a frozen, no-longer-drawn A image.
+        // A is resized mid-chain: A's attachments are replaced IN PLACE and the consumers sampling it
+        // follow by re-pointing the descriptors that named them (see
+        // .ai/design/vsg-target-resize-in-place.md, and runTargetResizePhase below for the counters and
+        // pixels that pin it). This chain drives that path through the command graph: A must still be
+        // recorded before B without either being rebuilt, and B must sample A's NEW images — a stale or
+        // frozen A is what the ordering rule exists to prevent.
         mrt->setSize(480, 270);
         for (int i = 0; i < 5; ++i) {
             backend->beginFrame();
@@ -416,6 +416,15 @@ int main()
     // node" by the counter pair (they draw the same picture).
     if (!runDataRefreshPhase(*renderer, camera, 3)) {
         std::fprintf(stderr, "[selftest] FAILED — a data edit was not served by the incremental path\n");
+        return 1;
+    }
+
+    // ---- A target that only changed size is resized in place ------------------
+    // Also after every reporting phase, for the reason the texture and opacity phases are: it resizes
+    // two targets and parks what it replaces, so it must not stand next to a phase that reports the
+    // parked count (see the note above runTexturePhase).
+    if (!runTargetResizePhase(*renderer, camera, 3)) {
+        std::fprintf(stderr, "[selftest] FAILED — a target resize did not stay in place\n");
         return 1;
     }
 

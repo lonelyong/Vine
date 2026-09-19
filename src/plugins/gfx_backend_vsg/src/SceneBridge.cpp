@@ -518,13 +518,20 @@ void SceneBridge::clearCache()
     program_shader_sets_.clear();
     program_stages_.clear();
     variant_cache_.clear();
-    // Forget the shared-object registry (releases the registered pipeline /
-    // layout / descriptor-set objects) when the slot's content is released.
-    // Retained geometry nodes still hold ref_ptr to the shared objects until
-    // they are destroyed, so clearing only drops the registry, never leaves a
-    // dangling reference.
+    // Forget the shared-object registry (the registered pipeline / layout / descriptor-set objects)
+    // when the slot's content is released. PARKED, never cleared in place: this path runs MID-FRAME
+    // (a slot rebuilt after a policy change, a shader set swapped, a shadow seed that changed), so a
+    // command buffer that was submitted before it may still name what the registry holds — and
+    // clearing in place destroyed them while in flight. Measured in the self-test's pass-protocol
+    // phase with the validation layer on: `VUID-vkDestroyPipeline-pipeline-00765` together with the
+    // render pass / framebuffer pair beside it (`-vkDestroyRenderPass-00873`, `-vkDestroyFramebuffer-00892`),
+    // none of which the runs without the layer could see. The registry OWNS what it holds, so parking
+    // it keeps all of it alive for exactly the frames that may still reference it (see VsgRetireRing),
+    // and a fresh registry takes its place for the slot's next build (which is what the in-place
+    // `clear()` used to leave behind, now as a new object).
     if (shared_objects_ != nullptr) {
-        shared_objects_->clear();
+        retire_ring_.park(shared_objects_);
+        shared_objects_ = ::vsg::SharedObjects::create();
     }
     pipeline_variants_ = 0;
     variant_reuses_   = 0;

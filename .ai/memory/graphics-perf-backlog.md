@@ -50,6 +50,14 @@
 | `VsgTextureCache::releaseAbandoned()` **原本没有生产调用点**；`SceneBridge::clearCache()` 也不清纹理缓存 | `VsgTextureCache.cpp:400`（实现）、`tests/test_vsg/TextureCacheTest.cpp:127`（单测）、`SceneBridge.cpp:228-245`（clearCache） | 原本：不再使用的纹理只等 256 容量 FIFO 淘汰或拆槽才释放。**已接线（P8）**：帧级 `releaseAbandonedCaches()` → `textureCache().releaseAbandoned()` |
 | **跨槽共享 `shared_objects_` 不可行（实测）**：vsg 的 `GraphicsPipeline::compile` 复用已有实现时**只比 `_pipelineStates`，不比 render pass**（`build/_deps/vsg-src/src/vsg/state/GraphicsPipeline.cpp:177`，实现用 `context.renderPass` 创建于 `:218`），而后端刻意按 pass 变体建不同的 `VkRenderPass`（§5.4） | 实验：把会话级 `SharedObjects` 注入每个槽的 bridge 后，`scripts/vsg_selftest_evidence.sh` 的 policy-churn 相位失败（“depth target's centre holds 0.0000, expected ~0.0249”）；回退后 `RESULT: PASS`（47 行一致） | 第二个 view 会拿到用不兼容 render pass 编译的 pipeline ⇒ **槽的管线注册表必须私有**（已把原因写进 `VsgContentSlot.cpp` / `VsgContentSlot.hpp` / `VsgRenderTargetEntry.hpp` 的注释） |
 | **在库负载（demo / 自检）从不编辑一个已建好的几何体**：`SceneBridge::refreshChangedStreams` 进入 **46 次（app 30 s）/ 162 次（自检 30 帧），其中带过快照的 = 0** ⇒ 那些进入全是**首次构建**，快路径的适用条件从未成立 | gdb 断点计数（见 V6 行；**注意每个断点都要带 `silent; continue`**，否则 gdb 停在第一个命中处、报的 “hit 1” 只是“停下来了”） | **增量更新那一族（P5/P6/P7/P9/P10 + 保留/清扫）只被 `test_vsg` 覆盖**；app 与自检门禁碰不到它 ⇒ 见 V7 |
+| **每槽的整图 `viewer->compile()` 合并成一次省不下来（2026-09-19 核查，未改代码）**：那 5 次 compile 的成本几乎全是**建对象**（管线/图像/渲染通道），走查本身只 ~1 ms | 同一份 `VsgBuildProfile`：`pass graphs 5 (118.9 ms)`、`program slots 5 (view compiles 137.5 ms)`；对照 `rebind compiles 1 (1.0–1.6 ms)` = 对**已编译**图跑一次整图 compile 的价钱 | 合并成"上游那样的一次"只省 ~4 次走查（≈5–8 ms / ~300 ms 启动）⇒ **不值得重构**；而且"延后到帧里再 compile"**不安全**：`BindGraphicsPipeline::record` 直接解引用 `_implementation[viewID]`（未编译 = 裸空指针） |
+| ✅ **已修（2026-09-19）：在用的对象被销毁** | 自检修前：6 帧 **5** 条 VUID（`00873`/`00892`/`00765`）、30 帧 **13** 条（+`03047`），而断言 0 失败；定位实验：`kDeferredReleaseFrames` 4→8 时 VUID 归 0 ⇒ 指向"释放早了一帧" | **根因**：`submitFrame` 里推进延迟释放环（`settleSubmittedFrame`）写在 `releaseAbandonedContent()` **之前**，而后者会**停放**被放手的槽/节点 ⇒ 推进后停放的只等到 `深度-1` 帧。**修法**：推进移到扫尾之后（帧的最后一步），深度仍 4。**实测**：自检 6 帧 5→**0**、30 帧 13→**0**，app（最大化/还原探针）**0**；三条测试套件全绿。规则写进 `VsgDeferredRelease`/`VsgRetireRing::advance`/`submitFrame` 三处 |
+| ✅ **已修（2026-09-19）：`frontFace` 与 vsg 的 Y 翻转反了（D6）** | SDK 合约：世界空间 CCW = 正面（`StateNode.hpp:32-41`）；vsg 投影反 Y（`vsg/maths/transform.h:140` 的 `-f` 项 + “Y NDC coordinates are inverted in Vulkan”）⇒ 帧缓冲里 SDK 的正面是 CW | `RenderStateMapper.hpp:181` 原来写死 `COUNTER_CLOCKWISE` ⇒ `CullMode::Back` 剔掉 SDK 的正面（demo 的 `culled_box` 画的是内壁，零报告）。**修法**：改为 `VK_FRONT_FACE_CLOCKWISE`；门禁 `RenderStateMapperTest.*`（注释钉住“掩码与 front face 是一个决定”） |
+| ✅ **已完成（2026-09-19）：program 路径能拿每 drawable 的值（D8）** | 程序 ShaderSet 原来不声明 `vine_draw` ⇒ 自定义着色器读不到 `params.x`，`setOpacity` 无声失效 | 程序声明 `set=1,binding=0` 时才声明 `vine_draw` + 每 drawable 的 set-1 布局（`programReadsDrawBlock` 扫源码，同 `programSamplesDepth` 的原则）；门禁 `ProgramDrawBlockTest.*` |
+| ✅ **已完成（2026-09-19）：真机 + 离屏 multipass（D20/D21 的验证缺口）** | `VINE_VSG_OFFSCREEN=1 VINE_VSG_OFFSCREEN_MULTISLOT=1 VINE_VSG_SLOT_DEMO=1` + 最大化/还原 + 层：4 目标 / 7 程序槽 / 就地 resize 10.2 ms、还原 0.4 ms / **VUID = 0**（含关停路径） | 新数据点：同一轮 `overlay pipelines 7 of 6 distinct key(s)` ⇒ “按 render pass 分表共享”的触发条件比原估更近（每重复 1 条 ≈ 20 ms） |
+| **overlay 管线"能不能共享"已有实测答案：本应用 0 条可去重** | `OverlayPipelineTotals`（`VsgPipelineFactory.cpp` 的 `overlayPipelineKey` + 启动那行 `overlay pipelines 5 of 5 distinct key(s)`） | 键含 fragment 文本 / 源颜色数 / 是否采样深度 / 是否绑阴影 / **目标附件数** / **extent**（extent 决定 `ViewportState`）⇒ 5 条管线 5 个不同键，共享表省 0 条；这个方向没有收益，别再查 |
+| **上游对齐审查（2026-09-19）**：矩形/视口、阶段缓存、编译模型、管线静态 viewport 四条**与上游同构**；跨槽共享只差"按 render pass 分表"这个安全版本（收益有上限，触发条件未到） | `.ai/design/vsg-upstream-alignment.md` §1（逐条 file:line，含 vsg 侧 `RenderGraph.h:71` 默认 `DYNAMIC_VIEWPORTSTATE`、`State.cpp:68` pushView、`Context.cpp:134`、`CompileTraversal.cpp:95/171`、`GraphicsPipeline.cpp:167-179`） | 这一族别再当成"可疑用法"重新调研；要动只有 §4 那一个安全版本 |
+| 🔴 **在用的对象被销毁（唯一真缺陷，2026-09-19 发现 → 同日修）**：见上一条 ✅ 行的根因与实测 | `.ai/design/vsg-upstream-alignment.md` §3 | 已闭环；防范：建议给 `scripts/vsg_selftest_evidence.sh` 加一条 `Validation Error == 0` 门禁（现在只数失败断言） |
 
 ## 1. 待办项（按建议顺序）
 
@@ -104,7 +112,24 @@
 | **H8** | **glslang 的 finalize/init epoch 为什么是 29 对 17**（H7 的续） | `vsg::Context::getOrCreateShaderCompiler()` 每个 Context 一个 `ShaderCompiler`，vsg 用静态计数在**归零时** `glslang::FinalizeProcess()` —— 而它会丢掉 glslang 的内建符号表缓存（下次编译从头重建，每次约 50 ms）。实测 A 17 / B 29 个 epoch，但 **Context（85）、CompileTraversal（3/111）、ShaderCompiler 构造（121）两边完全相同** ⇒ 差在**持有者的死亡时机**（B 新增 `VsgCompileManager::forget()` 91 次） | 在 `Context::getOrCreateShaderCompiler()` 与 `~ShaderCompiler()` 上计数"活着几个"并按时间打点，找出 B 多出来的 12 次归零落在哪个相位 | **已量清，结论是“不修”**：同一探针量两处 —— **自检（6 帧）`init=31 finalize=31`，GUI 应用跑 25 秒只有 `init=2 finalize=1`** ⇒ **交付的应用根本不付这笔钱**（只建一次会话）。那 +0.6 s 是“自检反复建/拆会话”这个**工作负载**的产物（A 17 / B 29 / HEAD 31），不是改动带给产品的回归 ⇒ **不做常驻编译器改动**；只在“有负载真的反复重建会话”时才有用（每个 epoch 约 50 ms）。另：`forget()` 与 epoch 的因果**未证实**（前 7 次 finalize 之前没有任何 forget） | **已完成（2026-09-16 深夜）——结论：无需修复** |
 | **H6** | 宿主表面这条线的**小收尾（四项）** | ① 自检相位里 `at(128u, 72u, …)`／`256u`/`144u` 与 `pixels_target` 尺寸重复；② 三条**拒答路径零覆盖**（null 句柄 / 非本后端窗口 / 搬移被拒）连同 `Warning` + `UnsupportedRequest` 诊断无断言；③ `VsgRenderer::resize(int,int)` 忽略参数（设计如此，但签名易误读）；④ **app 门禁仍只看 stderr** ⇒ 当天的黑屏被完整放过 | ①从 target 取尺寸或提常量；②各加一条断言（诊断用 `setDiagnosticSink` 收）；③标 `[[maybe_unused]]` 或改注释；④把“渲染区非黑比例 ≥ 阈值”接进 app 阶段（用已入库的 `scripts/xwd2ppm.py`，跨 X 环境可能不稳 ⇒ 做成可选档） | 都是小改动；④有一个阈值选取问题 | **已完成（2026-09-16 四条；2026-09-17 第三条拒答路径也钉上断言 ⇒ 本条全清）**，过程见 `.ai/memory/graphics.md` 顶部：①尺寸提成 `kPixelsWidth/kPixelsHeight`，采样点由它派生；②两条**可达**拒答路径（公告 null 句柄 / 会话不在本后端宿主窗口）原本**静默**，现在各自上报 `Warning` + `UnsupportedRequest`，自检相位各加一条断言（**两条都做过变异**：各自静音 ⇒ 恰好对应那条红）；**第三条**（新窗口的 swapchain 格式不可用）原本无断言——它要两个视觉映射到不同格式的窗口，那是驱动属性而非调用方行为，由测试档 `VINE_HOST_MOVE_FORMAT_MISMATCH` 令那次比较失败来驱动（同一条代码路径），**也已钉断言**并把两半各变异一次（静音上报 ⇒ 只诊断那半红；令窗口不再拒答 ⇒ 重建数与诊断数同时不增，相位报 FAIL）；③覆写改成 `announced_width/announced_height` + 文档写明“公告是 advisory”（SDK 契约本就是 surface > announcement > default）；④app 阶段现在读**渲染区像素**（后端日志带上它渲染的那个窗口句柄；`scripts/xwin2ppm.py` 改为**只依赖 libX11**；app 改**后台**跑以趁活着采样）。判据：`84.90% ≥ 30%`；**变异**（`visible() → false`，即当天黑屏根因）⇒ `0.00%` + `RESULT: FAIL` |
 
-| **H9** | 放大窗口后**重建帧**期间新露出的区域晚 ~240 ms 才有内容（2026-09-17，三处 resize 修之后剩下的） | 已做：窗口图 `renderArea`/`viewportState`/`previous_extent` 在 `VsgRenderer::resize()` 里当场写（修前中间帧按旧矩形清/画 ⇒ 既黑又漏画）、程序槽 identity 去掉目标表面尺寸、HUD overlay 矩形不再被 vsg 缩放弄到窗口外；**“先呈现一帧（拉伸填充）”试过并已撤**（实机看过，拉伸变形不能接受）⇒ 现在只停一帧重建（~240 ms），画面**不变形**，新区域到重建帧落地时填上 | 缩短那 240 ms：6 个全屏程序节点 ~180 ms（glslang 仅 ~50 ms，其余是 vsg 每节点建管线/描述符）+ 2 个 target ~40 ms。方向：原地改描述符（resize 后**源图像视图换了**，现在整节点重建）+ 让 overlay 管线用动态 viewport 从而与 extent 无关 | 大（要改重建策略与描述符生命周期）；需先确认 vsg 的 descriptor 能否原地 re-point（本模块注释现认为不能） | 待办 |
+| **H9** | 放大窗口后**重建帧**期间新露出的区域晚 ~240 ms 才有内容（2026-09-17，三处 resize 修之后剩下的） | 已做：窗口图 `renderArea`/`viewportState`/`previous_extent` 在 `VsgRenderer::resize()` 里当场写（修前中间帧按旧矩形清/画 ⇒ 既黑又漏画）、程序槽 identity 去掉目标表面尺寸、HUD overlay 矩形不再被 vsg 缩放弄到窗口外；**“先呈现一帧（拉伸填充）”试过并已撤**（实机看过，拉伸变形不能接受）⇒ 现在只停一帧重建（~240 ms），画面**不变形**，新区域到重建帧落地时填上 | 缩短那 240 ms：6 个全屏程序节点 ~180 ms（glslang 仅 ~50 ms，其余是 vsg 每节点建管线/描述符）+ 2 个 target ~40 ms。方向：原地改描述符（resize 后**源图像视图换了**，现在整节点重建）+ 让 overlay 管线用动态 viewport 从而与 extent 无关 | 大（要改重建策略与描述符生命周期）；需先确认 vsg 的 descriptor 能否原地 re-point（本模块注释现认为不能） | **已修（2026-09-19）**，见下 |
+
+**H9 的收尾（2026-09-19，实测）**：按它写的方向做了"原地化"，但**两个方向的实际价值与它写的不同**：
+
+- ✅ **"原地改描述符"是对的**，而且是最大的一笔。实现：`resizeOffscreenTarget` 换图/视图/帧缓冲（旧的 park），采样方
+  `repointProgramSlotSource` 用旧集合的 `setLayout` + 描述符造一份新集合、把节点里的 `BindDescriptorSet` 改指它，
+  并置 `state.compile_needed` 让这一帧跑一次编译。**实测**：最大化 752x480 → 2352x888 **225.5 → 36.4–51.4 ms**，
+  还原 **→ 2.2 ms**（`targets 0`、`target resizes 2`、`rebind compiles 1`）。
+- ❌ **"resize 后源的图像视图换了 ⇒ 节点必须重建"是错的**（该行与新写的设计文档都这么假设过）：
+  `GraphicsPipeline::compile` 在**同一个 `GraphicsPipeline` 对象**内按 pipeline states 复用实现（**不含 render pass**，
+  `vsg-src/src/vsg/state/GraphicsPipeline.cpp:160-219`）⇒ 保节点/保 View 就是早退，管线**不重建**。
+- ❌ **"让 overlay 管线与 extent 无关"现在没有价值**：槽跨 resize **保留**了（`program slots 0`），baked extent 根本轮不到
+  再出现；而且 overlay 管线本来就是**动态 viewport**（`DYNAMIC_VIEWPORTSTATE`），baked 值只是初值。
+  （新量具 `overlay pipelines N of M distinct key(s)` 保留了它作为键的一部分：若将来有槽在**新尺寸**下重建，它会体现在这个计数上。）
+- **剩下没消的**（已登记为独立条目）：新面板首次可见要建一个槽 = **22.2 ms**（nodes 8.6 含 glslang 8.4 + view compiles 13.5），
+  要压掉需要后台预建 + `Switch`；以及 app 启动时先用 200x60 临时尺寸跑首帧（样例的窗口都是先定尺寸再进第一帧）。
+- 门禁：`test_vsg` 的 `TargetBookkeepingTest`（借用判定五种拒绝 + 原地/重建分叉 + 同帧两边长大）+ selftest `runTargetResizePhase`
+  （计数 + 像素 + 0 设备等待 + parked 回落 + resize 不注册 compile context / 不多留池化槽 + 形状变化仍重建）。
 
 两条当日踩到的坑（非性能，值钱）：① `cmake --build . --target Vine` **不重建插件** `build/plugins/vine/gfx_backend_vsgd.so`（app 运行时 dlopen 它）⇒ 二进制级结论要 `nm -DC <产物> | grep <symbol>` + 时间戳，只验 `bin/Vine` 会得到假阳性；② **抓图工具原来依赖 `xwd`/`xwininfo`（x11-apps），本机没有、`sudo` 又要密码装不上** ⇒ 门禁会在最需要它的地方静默跳过。已改：`scripts/xwin2ppm.py` 经 libX11 `XGetImage` 自己抓（名字从 `xwd2ppm.py` 改过来就是因为它不再用 xwd），`xwd -root` 在 XWayland 下 BadMatch、`-out -` 不支持这些坑随之消失。
 
@@ -141,6 +166,82 @@
 | **P18** | **剔除的盒成本：为了知道容器"在外"，必须先把它整棵子树的盒并起来**（场景图规模化的墙） | `Scene.cpp:239` 的早退只省**下降**；`BoundsCache::worldBound` 对容器是**后代盒的并集** ⇒ 每次收集（每相机每帧，相机一动就 miss）都要给**所有可达节点**算世界盒，与可见量无关。实测：99% 被剔内容挂成**一个视锥外 Group**（下降与逐节点测试全省掉）只比散落兄弟快 **~4%** ⇒ 其余成本全是盒 | **持久化世界 AABB（版本键校验）**：被剔子树 O(1)；前置 = 局部盒（数据身份）/世界盒（摆放）拆开、walk 用自己已算好的矩阵 | 见 `.ai/design/graphics-scene-graph.md` §9/§10：静态内容+相机在动=**全额收益**；内容也动时要"不可见数 ≫ 改动数"；48 B/节点；风险=失效 sound 性（自定义节点重写虚函数）+ 漏失效 ⇒ 剔错 ⇒ **物体消失** | **已论证（2026-09-17 实测），按规模触发**：Release 下**每个"存在但不可见"节点、每次收集 ≈ 250 ns**（100k 节点 / 可见 95 条 ⇒ **24.7 ms/帧**；理想持久化代理 0.19 ms ⇒ 上限 **~99%**），Debug 同比值（3.4 µs）。触发条件：存在但不可见的节点数 ≫ 可见数。测试配方 + 设计见 `.ai/design/graphics-scene-graph.md` §9/§10 |
 
 **同轮确认不必动的**：`VsgHostWindow` 析构把 `_window` 置空以阻止基类 `xcb_destroy_window` / `DestroyWindow` + `UnregisterClass`（同样是内部约定，但已有 H4/`selftest_hostsurface` 的端到端门禁兜底，且 `VINE_VSG_OWN_WINDOW` 那条路径不在此列）；`VsgCompileRegistration` 把释放点绑在槽的析构上（H7 已查明它是**行为了正确性**的设计，代价只是自检负载多几个 glslang epoch，见 H8）。
+
+### 2026-09-19 登记：启动/改尺寸的"现造的东西"值多少（一条已做、一条已否决）
+
+> 量具：`VsgBuildProfile` + `reportBuildProfile()`（`VsgRendererState::build_profile`；行格式与用法见
+> `src/plugins/gfx_backend_vsg/docs/backend.md` 顶部）。数字是本机 Debug + RTX 4060 + `Vine.exe`（默认 deferred + shadowed 管道），
+> 只在该帧真造了东西或总耗时 > 5 ms 时打一行，稳态帧不打。
+
+| 阶段 | 启动首帧 752x480 | 最大化 2352x888 |
+| --- | --- | --- |
+| 全量 `viewer->compile()`（新 pass 图） | 5 次 / 123.0 ms | 2 次 / 10.4 ms |
+| 全屏程序槽 | 5 个 / 179.0 ms | 6 个 / 183.0 ms |
+| └ 其中 overlay glslang | 45.3 ms | 50.5 ms |
+| └ 其中 view compile（管线 + 布局 + 描述符 + 命令缓冲） | 132.9 ms | 131.5 ms |
+| └ 其中我们自己的节点组装 | ~0.8 ms | ~0.9 ms |
+| targets / record / present | 8.7 / 6.5 / 0.2 ms | 21.9 / 9.3 / 0.3 ms |
+| **合计** | **319.5 ms** | **225.5 ms** |
+
+- **已做（2026-09-19）**：全屏 program 的 SPIR-V 按 (fragment 源码, entry point) **进程级缓存**
+  （`VsgPipelineFactory.cpp` 的 `overlayStageTable()`，上界 `kMaxOverlayStageEntries = 16`）。键与尺寸无关，所以源目标一换尺寸
+  （槽重建）不再重跑 glslang。**实测**：最大化 **225.5 → 149.6 ms**（槽 183.0 → 133.4；里面 glslang 50.5 → **0**、
+  node 组装 51.5 → 1.0），启动 **319.5 → 300.7 ms**（首帧那 5 个槽文本各不相同，只省掉其中一次重复）。
+  `ShaderSet` **不**共享：每个节点要往上加自己那一遍的 descriptor 绑定，共享会串味。
+- **已否决并登记理由**：resize 时"只换描述符、保留 node 与管线"。源目标换尺寸只是换了它的 image view，理论上只该重写描述符集
+  （vsg 的 `DescriptorSet::compile` 只在首次写入 ⇒ 现在整槽重造）。**探针实测上限 = 121.7 ms**（临时让槽跨源重建存活：6 个槽里只有
+  2 个真需要重建 —— 直写离屏目标那个（目标 pass 换了）+ 深度可采样性翻转那个），即在 149.6 上**再省 ~28 ms**，代价却是：
+  `DescriptorSet::descriptors` 不可达（要靠 `config->descriptorConfigurator->descriptorSets` + `config->layout->setLayouts[0]` 等价重建）、
+  旧描述符集得进退役环停放（在飞命令缓冲可能还指着它）、程序槽还要有自己的编译上下文注册才能只编一个 view。⇒ **不做**（收益 ~28 ms，风险与代码量不成比例）。
+  > **2026-09-19 当晚修订**：上面那条"收益 ~28 ms"是从**探针**推的，探针里目标仍是**整体重建**的（所以还有
+  > `targets` 14 ms + `graphs` 8 ms + 两个槽 96.7 ms 要付），而且当时还不知道两件事：**空转的全量 `viewer->compile()` 只要
+  > 1.0–1.6 ms**（所以"一次 resize 一次编译"是免费的），以及 **`DescriptorSet::setLayout/descriptors`、
+  > `DescriptorImage::imageInfoList`、`ImageInfo::imageView`、`PipelineLayout::setLayouts` 全是 public**
+  > （所以不必"绕过 vsg 内部"，可以照旧集合造等价新集合）。真正的收益也不是"再省 28 ms"，而是**目标侧与采样侧一起原地化**
+  > ⇒ 预期 149.6 → **~20–35 ms**。设计与分步见 `.ai/design/vsg-target-resize-in-place.md`（**待评审**，未实现）。
+  > **2026-09-19 收尾（已实现）**：该否决**已被推翻并实现**——不是"再省 28 ms"，而是把"改尺寸 = 这个目标从未存在过"
+  > 这条规则本身换掉。实测（同一台机器、同一管道）：
+  >
+  > | 场景 | 之前 | 之后（profile 行） |
+  > | --- | --- | --- |
+  > | 最大化 752x480 → 2352x888 | 225.5 ms（glslang 缓存后 149.6） | **36.4–51.4 ms**：`targets 0`、`target resizes 2 (5–6 ms)`、`rebind compiles 1 (1–2 ms)`、`program slots 1` |
+  > | 还原 2352x888 → 752x480 | ~200 ms | **2.2 ms**：`target resizes 2 (0.3 ms)`、`program slots 0` |
+  >
+  > 剩下的那 1 个槽是**新内容第一次可见**（原因串为 `no slot yet`，不是重建），28–36 ms，与 resize 无关。
+  > 门禁：`test_vsg` 的 `TargetBookkeepingTest`（借用判定，设备无关）+ `selftest_resize.cpp` 相位（计数 + 像素 +
+  > 零设备等待 + parked 回落 + 形状变化仍重建）。**新的待办**：那 28–36 ms 的"首次可见建槽"要不要后台预建，
+  > 以及"原地化后仍要为保留的节点重建 VkPipeline"（`rebind compiles`，1–2 ms/次，SPIR-V 已缓存）是否值得避免。
+
+- **顺带把数字挂给 V3**：一次改尺寸的 6 个槽 = 6 次 `vkCreateGraphicsPipelines` + 6 套 pipeline/descriptor 布局 +
+  6 个描述符集 + 6 个命令缓冲 ≈ **131 ms**，而**管线状态一个字节都没变**（vsg 把管线绑在 render pass 对象上，窗口的 render pass
+  在 swapchain 重建时**不重建** ⇒ 原管线本来有效）。这就是"上游给 `VkPipelineCache` / 管线跨视图复用"的价值量级，且它**每次改尺寸都付**，不只冷启动。
+- **给"启动预热"的结论**：启动那 300 ms 里 glslang 只剩 37 ms（且 5 个槽文本各异，缓存救不了首帧），大头是 vsg 编译**全新 view**
+  （132.9 ms，建管线/布局，与尺寸无关但只在那一个 view 上付一次）与 5 次新 pass 图的全量编译（123.0 ms，含镜像分配与内容管线）。
+  "尺寸不对先渲一帧"因此**当时是净亏**：源目标一换尺寸，`dropConsumersSampling` + 尺寸谓词会把槽全丢掉重造。
+  > **2026-09-19 重估（原地化落地后，代价模型变了）**：那次 resize 的**惩罚**从 ~200 ms 降到 **2.2–6 ms**
+  > （换图/视图/帧缓冲 + 一次 re-point 编译，槽不丢），所以"预热帧"在**代价**上已经不再是净亏。
+  > 但本轮**仍不建议 app 做**：它省不下总工作量（预热帧要做的是同一批编译/建管线，只是提前）、
+  > 而 app 的启动窗口已被 splash 盖住（`GuiApplication` 的 startup frame 一直挂到渲染视图出帧），
+  > 于是"提前做"换不到可见收益。真正有用的场景是**没有 splash 的宿主**：它现在可以按"小尺寸先出一帧
+  > 反馈，再在最终尺寸下花 2–6 ms 原地变大"来做，而不必像 2026-09-17 时那样顾虑 200 ms 的重建。
+  > 触发重评的条件：有人把 splash 拿掉，或某个宿主需要"立刻出画面"。
+
+### 2026-09-19 登记（第二轮）：两条"看着该做"的优化，实测后否决
+
+量具：上面那一行的新计数 `overlay pipelines N of M distinct key(s)`（`detail::overlayPipelineTotals()`）。
+
+1. **"同 program 的 overlay 槽共享一条管线"（照 `utils/vsgdynamicstate/vsgdynamicstate.cpp` 的 `sharedObjects->share(config, init)` + `copyTo(group, sharedObjects)`）——实测无收益，不做。**
+   机制上确实成立（`GraphicsPipeline::compile` 只在**同一个 `GraphicsPipeline` 对象**内按 pipeline states 复用实现，所以两个各自建节点的槽必然各建一条管线；把 configurator 放进一张共享表就能省掉重复的那几条）。
+   但 **Vine.exe 实测 `overlay pipelines 5 of 5 distinct key(s)`**（启动 5 个槽 5 个不同键；最大化时新面板是第 6 个键）：键 = fragment 文本 + 入口 + 采样颜色数 + 是否绑深度 + 是否绑 shadow block + baked extent，
+   这个 app 的 5 个 overlay pass **不存在同键的两个槽**（不同 program，或同 program 但 ABI 不同：一个采深度、一个不采；shadowed 的还多两个绑定）⇒ 没有可省的重复。
+   顺带查实：`shadow_block` 的字节是**每槽**的（`VsgProgramSlot.cpp` 每个槽自己 `ubyteArray::create`），所以带 shadow 的槽**永远**不能共享 configurator——共享表只对"无 shadow + 同 program + 同源形状 + 同尺寸"成立。
+2. **"用 `compileManager->compile(graph, predicate)` 取代 `viewer->compile()`"（照 `threading/vsgdynamicviews`）——当前不值得，留作大场景的保险。**
+   实测**空转的全量 `viewer->compile()` = 1.0–1.6 ms**，所以"每次新建 pass 图跑一次全量编译"里的遍历部分最多值这么多：启动 5 次新 pass 图 = `pass graphs 5 (115.9–123.0 ms)`，
+   其中真正的工作（镜像分配 + 内容管线）是 predicate 也省不掉的 ⇒ 现在最多省 ~5–8 ms。它值得做的条件是**编译对象数量级增长**（遍历成本随之涨），届时按 `graphs` 桶的数字再判。
+
+**仍然开着的两条**（都有明确门禁，见设计文档 §8）：① 新面板首次可见要建一个槽（实测 22.2 ms：nodes 8.6 含 glslang 8.4 + view compiles 13.5）——要压掉需要后台预建 + `Switch` 切换；
+② app 侧启动时先用 200x60 的临时尺寸跑首帧（样例的窗口都是先定尺寸再进第一帧），那一次 resize + 重指向 + 编译本来可以不付。
+
 
 ## 2. 需要实测的数字（还没有）
 

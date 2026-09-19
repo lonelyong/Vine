@@ -13,6 +13,7 @@
 #include <vine/graphics/MaterialManager.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/CameraMirror.hpp>
+#include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/Ray.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -37,9 +38,11 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <functional>
 #include <set>
 #include <stdexcept>
+#include <thread>
 
 using namespace vine::graphics;
 using vine::intrusive_ptr;
@@ -3873,6 +3876,38 @@ TEST(HudPassTest, SubViewportAndClearPolicy)
     // Only the window pass cleared (HUD clear is disabled), so exactly one
     // clear happens for this frame.
     EXPECT_EQ(backend->clear_calls - before, 1);
+}
+
+TEST(FpsOverlayTest, TheReadoutIsASingleCommandAndBlankUntilItHasAValue)
+{
+    // The readout is ONE geometry with ONE material, not one node per bar: a bar a digit does not light
+    // is written as a bar of no area (see FpsOverlay::writePattern), so the collector sees a single
+    // command whatever the digits are -- where seven nodes per digit were 7 to 21 draw commands, and
+    // hiding the off ones was the only way to keep a dark "8" out of the picture. What this pins is that
+    // the whole readout is one draw, that every bar is always present as vertices, and that it stays out
+    // of the frame until it has a value.
+    auto overlay = intrusive_ptr<FpsOverlay>(new FpsOverlay());
+    Camera camera;
+    setupLookAtCamera(camera);
+
+    // No measurement yet, no readout: a blank row is not collected at all (rather than collected as a
+    // dark three-eights behind the number).
+    EXPECT_TRUE(commandsOf(overlay->content()->root(), camera).empty());
+
+    // Two executes: the first only arms the clock (a frame rate needs two samples), the second measures
+    // dt and writes the value. The throttle it must also pass is 0.15 s, which the sleep covers, and
+    // which value comes out of a wall-clock measurement is not what this asks -- only that a value did.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    overlay->execute(nullptr, backend.get());
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    overlay->execute(nullptr, backend.get());
+
+    const auto commands = commandsOf(overlay->content()->root(), camera);
+    ASSERT_EQ(commands.size(), 1u);
+    // Three digits x seven bars x six flat faces of four corners: a change rewrites WHICH of these
+    // carry area, never how many exist -- which is what lets the backend serve it as one in-place
+    // stream refresh instead of a geometry rebuild.
+    EXPECT_EQ(commands[0].geometry->vertexCount(), 21u * 24u);
 }
 
 TEST(CameraMirrorTest, OrientationKeepsFraming)

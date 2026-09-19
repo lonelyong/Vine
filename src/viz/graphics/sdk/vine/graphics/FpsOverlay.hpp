@@ -2,13 +2,15 @@
 #include "graphics_global.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <vector>
 
 #include <vine/Colorf.hpp>
 #include <vine/intrusive_ptr.hpp>
+#include <vine/math/Vector3.hpp>
 #include <vine/raw_ptr.hpp>
 
-#include "Material.hpp"
+#include "Geometry.hpp"
 #include "RenderPass.hpp"
 
 V_GRAPHICS_NS_BEGIN
@@ -23,9 +25,17 @@ class Scene;
  * scene holding a 3-digit seven-segment display built from thin bars, rendered
  * into a sub-viewport anchored to the BOTTOM-RIGHT corner of the surface
  * (device pixels). Each execute() it measures the actual render-loop frame
- * rate (steady clock), EMA-smooths it and, at a throttled cadence, lights or
- * dims each segment's material colour — riding the shared-material hot path
- * (the backend rewrites the DYNAMIC Phong UBO in place; no geometry rebuild).
+ * rate (steady clock), EMA-smooths it and, at a throttled cadence, writes the
+ * value into the row of bars.
+ *
+ * The row is ONE geometry with ONE material, so the whole readout is one draw — the shape a HUD has
+ * everywhere else. Seven bars per digit as seven nodes with seven materials was 7 to 21 draw commands
+ * (and as many material blocks) for what is at most 21 flat bars. A bar its digit does not light is
+ * collapsed onto a single point instead of being drawn: it covers no pixels, so the picture is the one
+ * the previous per-segment visibility gate produced (no dark "8" behind the number), while the vertex
+ * count never changes — which is what lets a change be served as ONE in-place stream refresh
+ * (Geometry::bumpRevision) rather than a geometry rebuild. A change therefore costs one packed position
+ * buffer and one revision bump, whatever the digits are.
  *
  * The overlay needs no source camera: it uses its own static framing camera,
  * so the digits stay pinned to the corner while the scene camera orbits.
@@ -47,7 +57,7 @@ class V_GRAPHICS_API FpsOverlay : public RenderPass {
     V_OBJECT_META_DECL;
 
   public:
-    /** @brief Constructs a readout with a dim 3-digit seven-segment display.
+    /** @brief Constructs a readout whose digits are hidden until the first measurement.
      *
      * The pass never clears (it draws over the previous content). Its
      * sub-viewport defaults to a box at the origin corner until its owner
@@ -112,15 +122,37 @@ class V_GRAPHICS_API FpsOverlay : public RenderPass {
     /** @brief Rebuilds the seven-segment content scene. */
     void rebuild();
 
-    /** @brief Updates the displayed value from the smoothed frame rate. */
+    /** @brief Updates the displayed value from the smoothed frame rate.
+     *
+     * Writes the shown digits into the row of bars (see writePattern) and does nothing while the value
+     * does not change, so a steady frame rate costs no data work at all.
+     *
+     * @param dt Seconds since the previous call.
+     */
     void updateReadout(double dt);
+
+    /** @brief Writes the segments @p pattern lights into the row of bars.
+     *
+     * Bar i of the row is bit i of the pattern: digit d occupies bits d * 7 .. d * 7 + 6, bit 0 being
+     * segment a, the way a seven-segment decoder orders them. A lit bar keeps the box the template
+     * holds, an unlit one is collapsed onto its first corner: the geometry's positions are rewritten and
+     * the revision bumped, so the backend serves the edit in place.
+     *
+     * @param pattern The 21 segment bits to light.
+     */
+    void writePattern(std::uint32_t pattern);
 
     // Framing camera (owned so the pass' raw camera pointer never dangles).
     intrusive_ptr<Camera> camera_;
-    // Content scene holding the digit bars (owned).
+    // Content scene holding the row of bars (owned).
     intrusive_ptr<Scene> content_;
-    // One material per (digit, segment); colour flips light/dim a segment.
-    std::vector<intrusive_ptr<Material>> segment_materials_;
+    // The row itself: all three digits' bars in ONE geometry (see the class note). Held so a change can
+    // rewrite its positions without walking the scene.
+    intrusive_ptr<Geometry> readout_;
+    // The row's positions with EVERY segment lit -- the template writePattern() copies its lit bars
+    // from. Keeping it is what makes a change a memcpy of the boxes to keep plus one collapsed point per
+    // box to drop, instead of a mesh built from a bar spec.
+    std::vector<vine::math::Vec3f> row_positions_;
 
     double pixel_ratio_ = 1.0;
     int    box_width_px_ = 105;

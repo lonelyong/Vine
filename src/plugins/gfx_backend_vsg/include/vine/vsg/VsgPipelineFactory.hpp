@@ -13,6 +13,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -143,6 +144,16 @@ static_assert(alignof(VineLightsBlock) == 16, "VineLightsBlock must stay std140-
  * bounded and trims its oldest entry (the module's own capacity rule: only the fast path is lost).
  */
 inline constexpr std::size_t kMaxCompiledStageEntries = 16;
+
+/**
+ * @brief How many overlay programs' compiled stages the process-wide table remembers.
+ *
+ * The bound of kMaxCompiledStageEntries, for the overlay path: the table is process-wide (the fullscreen
+ * programs a session draws are the host's own, and every rebuild of a slot asks for the same text again),
+ * so a host that churns program texts has to be bounded the same way -- the oldest entry is trimmed, and
+ * only the fast path is lost.
+ */
+inline constexpr std::size_t kMaxOverlayStageEntries = 16;
 
 /**
  * @brief Gets how many programs' compiled stages the process-wide table remembers.
@@ -506,9 +517,12 @@ const std::string& fullscreenVertexSource();
  * opaque default because the pass replaces the sub-viewport it owns.
  *
  * @param extent Surface extent for the baked static viewport.
+ * @param destination_color_count Colour attachments the DESTINATION's render pass declares: the colour-blend
+ *        state must declare exactly that many, or pipeline creation fails
+ *        (VUID-VkGraphicsPipelineCreateInfo-renderPass-07609).
  * @return The default GraphicsPipelineStates.
  */
-::vsg::GraphicsPipelineStates makeOverlayPipelineStates(const VkExtent2D& extent);
+::vsg::GraphicsPipelineStates makeOverlayPipelineStates(const VkExtent2D& extent, int destination_color_count);
 
 /**
  * @brief The shadow a fullscreen program declared, ready to bind.
@@ -559,7 +573,14 @@ struct FullscreenShadowInput
  * @param shadow      Shadow map + block the program declared, or a null map when
  *                    it declares no shadow (see FullscreenShadowInput).
  * @param extent     Surface extent for the baked static viewport.
+ * @param destination_color_count Colour attachments of the DESTINATION's render pass (the node is recorded
+ *                   against it, and its pipeline's colour-blend state is sized by it).
  * @param push_data  Per-frame push-constant bytes (mutated before each record).
+ * @param source_set Receives the descriptor set the sampled source's attachments are bound in (set 0),
+ *                    or a null pointer. The caller keeps it so a source that replaced its image views
+ *                    (a resize in place) can be followed by re-pointing that set instead of rebuilding
+ *                    this node -- which is the only way to keep the compiled pipeline, because vsg caches
+ *                    it on the NODE object, per viewID (see .ai/design/vsg-target-resize-in-place.md §3.3).
  * @param failure     Receives why the node could not be built (see
  *                    ProgramNodeFailure), or null when the caller does not ask.
  * @return The drawable state-group, or null when shader compilation failed.
@@ -570,8 +591,10 @@ struct FullscreenShadowInput
     ::vsg::ref_ptr<::vsg::ImageView>                  depth_view,
     const FullscreenShadowInput&                      shadow,
     const VkExtent2D&                                 extent,
+    int                                               destination_color_count,
     ::vsg::ref_ptr<::vsg::Data>                       push_data,
-    ProgramNodeFailure*                               failure = nullptr);
+    ::vsg::ref_ptr<::vsg::DescriptorSet>*             source_set = nullptr,
+    ProgramNodeFailure*                               failure    = nullptr);
 
 /**
  * @brief Returns whether a full-screen program SAMPLES the source's depth.
@@ -587,6 +610,83 @@ struct FullscreenShadowInput
  * @return true when the fragment stage declares the depth binding.
  */
 bool programSamplesDepth(vine::raw_ptr<const vine::graphics::ShaderProgram> program, std::size_t color_count);
+
+/**
+ * @brief Returns whether a program's stages READ the engine's per-drawable block (set 1, binding 0).
+ *
+ * The engine's ABI serves per-DRAWABLE values in `VineDrawBlock` -- the drawable's opacity today --
+ * through one dynamic-offset slot per drawn command (see VsgDrawBlockPool). The built-in forward stage
+ * reads its opacity from that block, and a user program reaches the same value by declaring
+ * `layout(set = 1, binding = 0)` and reading it (nothing else carries a per-drawable value: per-vertex
+ * colour carries colour only). This is what decides whether a program's ShaderSet declares that set at
+ * all, and it is answered from the SOURCE for the same reason programSamplesDepth is: the text is the
+ * contract the compiler sees. A program that does not read the block therefore keeps the one-set
+ * pipeline layout it had before this existed -- and a host program that declared set 1 binding 0 for
+ * its own uniform is not silently handed the engine's block.
+ *
+ * @param program Program whose stages to scan (any stage may read the block: it carries the model
+ *                matrix as well as the per-draw parameters).
+ * @return true when a stage declares set 1, binding 0.
+ */
+bool programReadsDrawBlock(vine::raw_ptr<const vine::graphics::ShaderProgram> program);
+
+/**
+ * @brief The runtime GLSL (glslang) work the overlay path has paid for, process-wide.
+ *
+ * The overlay path compiles its stages with glslang every time it builds a node (see makeOverlayShaderSet):
+ * it has no session to report into and no compiled-stage table to ask, so its cost is a cost of the PROCESS
+ * rather than of one frame. These totals are what makes it visible next to a frame's phases (see
+ * VsgBuildProfile): the difference between the program-slot time and this is what the node assembly, the
+ * pipeline layout and the pipeline creation cost -- the split a caching decision has to be made on.
+ */
+struct OverlayCompileTotals
+{
+    /// glslang compilations (one per stage), since the process started.
+    std::size_t compiles = 0;
+    /// Time spent inside them, in nanoseconds.
+    std::uint64_t ns = 0;
+};
+
+/**
+ * @brief Reads the process-wide overlay compile totals (see OverlayCompileTotals).
+ *
+ * @return The totals as of this call.
+ */
+OverlayCompileTotals overlayCompileTotals() noexcept;
+
+/**
+ * @brief How many overlay PIPELINES the fullscreen path built, and how many of them were distinct.
+ *
+ * `GraphicsPipeline::compile` reuses a pipeline only within ONE `GraphicsPipeline` object (it looks for an
+ * existing implementation whose pipeline states compare equal, `build/_deps/vsg-src/src/vsg/state/GraphicsPipeline.cpp`),
+ * and the overlay path builds one such object per node. Two slots that draw the same program over the same
+ * source shape into the same destination therefore create the same pipeline twice -- which is exactly the
+ * kind of duplication the upstream examples avoid by sharing one configurator through a `SharedObjects`
+ * table (see `utils/vsgdynamicstate/vsgdynamicstate.cpp`).
+ *
+ * Whether that duplication HAPPENS is a fact about an app's pipeline (how many passes sample the same
+ * source with the same program), so it is counted rather than assumed: @ref built minus @ref distinct is the
+ * number of pipelines a sharing table would remove, and the build profile reports the pair.
+ *
+ * The key is what the pipeline depends on: the fragment text (the same text is the same SPIR-V), the entry
+ * point, the source's colour-attachment count, whether a depth is bound, whether a shadow block is bound
+ * (its bytes are PER SLOT, so a shadowed node can never share one, see makeFullscreenProgramNode), and the
+ * extent the pipeline states bake (the viewport is dynamic, but its initial value is not).
+ */
+struct OverlayPipelineTotals
+{
+    /// Nodes built, i.e. pipelines created (or duplicated) by the overlay path, since the process started.
+    std::size_t built = 0;
+    /// Distinct keys among them (see the struct's doc).
+    std::size_t distinct = 0;
+};
+
+/**
+ * @brief Reads the process-wide overlay pipeline totals (see OverlayPipelineTotals).
+ *
+ * @return The totals as of this call.
+ */
+OverlayPipelineTotals overlayPipelineTotals() noexcept;
 
 } // namespace detail
 

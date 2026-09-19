@@ -53,6 +53,33 @@ bool beginTargetSizeMissingEpisode(std::uint32_t width, std::uint32_t height, Re
     return reported.shouldReport();
 }
 
+BorrowVerdict borrowVerdict(const VsgRendererState& state, vine::graphics::RenderTarget* source, int width,
+                            int height)
+{
+    if (source == nullptr) {
+        return BorrowVerdict::None;
+    }
+    // Non-const source: the targets table is keyed by the plain pointer (and the SDK's accessor returns
+    // one even through a const target).
+    const auto src_it = state.targets.find(source);
+    if (src_it == state.targets.end()) {
+        // Not in the table: released (releaseRenderTarget erased it) or never rendered. Either way this
+        // target has no image to attach, and the caller decides whether that is worth remembering.
+        return BorrowVerdict::SourceGone;
+    }
+    const auto& src = src_it->second;
+    if (src.depth_view == nullptr) {
+        return BorrowVerdict::SourceNotReady;
+    }
+    if (src.width != width || src.height != height) {
+        return BorrowVerdict::SourceSizeMismatch;
+    }
+    if (src.depth_sampleable) {
+        return BorrowVerdict::SourceSampled;
+    }
+    return BorrowVerdict::Honoured;
+}
+
 bool borrowNeedsRebuild(const VsgRendererState& state, const VsgRenderTargetEntry& t,
                       const vine::graphics::RenderTarget* target_key)
 {
@@ -61,21 +88,22 @@ bool borrowNeedsRebuild(const VsgRendererState& state, const VsgRenderTargetEntr
     }
     // Non-const: the targets table is keyed by the plain pointer (and the SDK's accessor
     // returns one even through a const target).
-    vine::graphics::RenderTarget* const wanted_source = target_key->depthSource();
-    if (wanted_source != nullptr && t.depth_source != wanted_source &&
-        t.unusable_depth_source.get() != wanted_source) {
-        const auto src_it = state.targets.find(wanted_source);
-        if (src_it != state.targets.end() && src_it->second.depth_view != nullptr) {
-            return true; // the borrow was only WAITING for its source
-        }
+    vine::graphics::RenderTarget* const wanted = target_key->depthSource();
+    // Asked at the target's CURRENT size, not the size its attachments were built at: a borrower that
+    // resized (in place) asks whether the borrow it has would be taken again NOW, and "both grew on the
+    // same frame" is exactly the answer that keeps it honoured.
+    const BorrowVerdict verdict = borrowVerdict(state, wanted, target_key->width(), target_key->height());
+    const bool borrow_in_force =
+        t.depth_source != nullptr && t.unusable_depth_source.get() != t.depth_source;
+    if (!borrow_in_force) {
+        // No borrow in force: this target built with its own depth (or never borrowed), so a build is
+        // what it needs as soon as the borrow WOULD be honoured — the only way it gains one, and how a
+        // transient refusal ("the source has no depth image yet") is retried.
+        return verdict == BorrowVerdict::Honoured;
     }
-    if (t.depth_source != nullptr && t.unusable_depth_source.get() != t.depth_source) {
-        const auto src_it = state.targets.find(t.depth_source);
-        if (src_it == state.targets.end() || src_it->second.depth_view != t.depth_source_view) {
-            return true; // the image this framebuffer borrowed is gone
-        }
-    }
-    return false;
+    // A borrow is in force. A different source is a different borrow — a different image and a different
+    // barrier — and the same source has to still be one the rule honours.
+    return wanted != t.depth_source || verdict != BorrowVerdict::Honoured;
 }
 
 namespace
@@ -109,6 +137,7 @@ void resetTargetAttachments(VsgRenderTargetEntry& t)
     t.color_seeded      = false;
     t.depth_source      = nullptr;
     t.depth_source_view    = {};
+    t.attachments_invalidated = false;
     t.depth_share_barrier  = {};
     t.depth_sampleable     = false;
     t.depth_borrow_pending_reported.rearm();
@@ -325,27 +354,40 @@ bool resolveDepthBorrow(VsgRendererState& state, const VsgDiagnostics& diagnosti
     if (depth_src == nullptr || t.unusable_depth_source.get() == depth_src) {
         return false;
     }
-    // Three ways a borrow is unusable, each of which was silent before:
+    // Whether a borrow can be honoured is ONE rule (see borrowVerdict), asked here and by the rebuild
+    // predicate that has to notice the answer changing between builds. It exists because every refusal
+    // below used to be silent, and each one reached vkCreateFramebuffer or the frame's barriers:
     //  - the source has not rendered yet this frame (no depth image yet);
     //  - the extents differ: Vulkan requires every framebuffer attachment to have
     //    the framebuffer's dimensions, so a half-resolution composite borrowing a
     //    full-resolution depth built an INVALID framebuffer
-    //    (VUID-VkFramebufferCreateInfo-pAttachments-00880) and then rendered
-    //    undefined;
+    //    (VUID-VkFramebufferCreateInfo-pAttachments-00880) and then rendered undefined;
     //  - the source promoted its depth to a sampled texture: its image is in
     //    SHADER_READ_ONLY_OPTIMAL, which no render pass may attach, so every frame
     //    tripped VUID-VkImageMemoryBarrier-oldLayout-01197 (the depth-share barrier
     //    assumes the attachment layout) and drew nothing.
-    const auto  src_it    = state.targets.find(depth_src);
-    const bool  src_ready = src_it != state.targets.end() && src_it->second.depth_view != nullptr;
-    const char* reason    = nullptr;
-    if (!src_ready) {
+    const auto verdict = borrowVerdict(state, depth_src, static_cast<int>(w), static_cast<int>(h));
+    if (verdict == BorrowVerdict::Honoured) {
+        // Honoured (or nothing to retry): re-arm the transient report.
+        t.depth_borrow_pending_reported.rearm();
+        return true;
+    }
+    // The reason a borrow is refused FOR GOOD, as opposed to the ones that are retried: a size mismatch
+    // and a sampled depth are properties of the setup, and both used to reach vkCreateFramebuffer.
+    const char* reason = nullptr;
+    if (verdict == BorrowVerdict::SourceSizeMismatch) {
+        reason = "its source has a different size (a framebuffer attachment must have the framebuffer's dimensions)";
+    }
+    else if (verdict == BorrowVerdict::SourceSampled) {
+        reason = "its source promoted its depth to a sampled texture (a sampled depth cannot be attached)";
+    }
+    if (reason == nullptr) {
         // TRANSIENT: the source has no depth image yet (its pass has not built this
         // frame — e.g. an engine warm-up that ran this target's consumer before the
-        // producer). Not remembered as unusable: this frame builds with its own
-        // depth and the borrow is retried as soon as the source exists (render()'s
-        // rebuild predicate). Reported once per episode, so a source that never
-        // arrives is not silent either.
+        // producer), or it is not in the table at all (released / never rendered). Not remembered as
+        // unusable: this frame builds with its own depth and the borrow is retried as soon as the source
+        // exists (render()'s rebuild predicate, which asks the same rule). Reported once per episode, so a
+        // source that never arrives is not silent either.
         if (t.depth_borrow_pending_reported.shouldReport()) {
             diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
                                vine::graphics::DiagnosticCategory::ContentSkipped,
@@ -355,17 +397,6 @@ bool resolveDepthBorrow(VsgRendererState& state, const VsgDiagnostics& diagnosti
                                                 depth_src->name().empty() ? "(unnamed)" : depth_src->name().as_std_str().c_str()));
         }
         return false;
-    }
-    if (src_it->second.width != static_cast<int>(w) || src_it->second.height != static_cast<int>(h)) {
-        reason = "its source has a different size (a framebuffer attachment must have the framebuffer's dimensions)";
-    }
-    else if (src_it->second.depth_sampleable) {
-        reason = "its source promoted its depth to a sampled texture (a sampled depth cannot be attached)";
-    }
-    if (reason == nullptr) {
-        // Honoured (or nothing to retry): re-arm the transient report.
-        t.depth_borrow_pending_reported.rearm();
-        return true;
     }
     // PERSISTENT: a property of the setup, not of this frame — the same source stays
     // unusable until the host changes it, so it is remembered (reported once) and
@@ -390,6 +421,9 @@ void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnos
     if (target == nullptr) {
         return;
     }
+    // The attach is timed as its own phase (see VsgBuildProfile): it builds vsg nodes only -- the images
+    // are allocated when the graph using them is compiled (see the compile phase in setupContentSlot).
+    const auto attach_start = std::chrono::steady_clock::now();
     auto& t = state.entryFor(target);
 
     // A rebuild (target resized or its attachment shape changed) first stops the previous pass
@@ -476,11 +510,141 @@ void buildOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnos
     // Record the shape these attachments were built from, so render() rebuilds
     // when the host changes any of it (see VsgRenderTargetEntry::BuildKey).
     t.build_key = VsgRenderTargetEntry::BuildKey::of(*target);
+    // Fresh images: what sampled the previous ones (program slots) and what recorded into them (this
+    // target's passes) can tell they were replaced without comparing a single image pointer.
+    ++t.attachments_generation;
+    ++state.offscreen_build_count;
+    ++state.build_profile.targets;
+    state.build_profile.targets_ns += elapsedNs(attach_start);
     V_LOGI("[VsgRenderer] EXPERIMENTAL off-screen target '{}' {}x{} attached",
            target->name().empty() ? "(unnamed)" : target->name().as_std_str(), w, h);
-    ++state.offscreen_build_count;
     // NOTE: no compile here — no pass graph exists until the first pass into
     // this target asks for one (passGraph); setupContentSlot() compiles then.
+}
+
+bool syncOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnostics,
+                         vine::graphics::RenderTarget* target)
+{
+    if (target == nullptr) {
+        return true; // the window target: its attachments are the swapchain's (see VsgRenderer::resize)
+    }
+    VsgRenderTargetEntry& t = state.entryFor(target);
+    if (!t.attachments_built || t.attachments_invalidated || !t.build_key.matches(*target) ||
+        borrowNeedsRebuild(state, t, target)) {
+        buildOffscreenTarget(state, diagnostics, target);
+        return t.attachments_built;
+    }
+    if (t.width != target->width() || t.height != target->height() ||
+        borrowPointsAtAnotherImage(state, t, target)) {
+        resizeOffscreenTarget(state, diagnostics, target);
+    }
+    return t.attachments_built;
+}
+
+bool borrowPointsAtAnotherImage(const VsgRendererState& state, const VsgRenderTargetEntry& t,
+                                const vine::graphics::RenderTarget* target_key)
+{
+    if (target_key == nullptr || !t.attachments_built) {
+        return false; // the window never borrows, and a target with no attachments has nothing to re-point
+    }
+    if (t.depth_source == nullptr || target_key->depthSource() != t.depth_source) {
+        return false; // the borrow itself moved: that is a change of SHAPE, handled by buildOffscreenTarget
+    }
+    if (t.unusable_depth_source.get() == t.depth_source) {
+        return false; // the borrow is not in force (this target built its own depth instead)
+    }
+    if (borrowVerdict(state, t.depth_source, target_key->width(), target_key->height()) != BorrowVerdict::Honoured) {
+        return false; // the same decision would no longer honour it, which is a rebuild (borrowNeedsRebuild)
+    }
+    const auto source = state.targets.find(t.depth_source);
+    return source != state.targets.end() && source->second.depth_view != t.depth_source_view;
+}
+
+void resizeOffscreenTarget(VsgRendererState& state, const VsgDiagnostics& diagnostics,
+                           vine::graphics::RenderTarget* target)
+{
+    if (target == nullptr || state.window == nullptr) {
+        return;
+    }
+    auto& t = state.entryFor(target);
+    if (!t.attachments_built) {
+        return; // never built: the build path owns the first size
+    }
+    const std::uint32_t w = static_cast<std::uint32_t>(target->width());
+    const std::uint32_t h = static_cast<std::uint32_t>(target->height());
+    if (w == 0u || h == 0u) {
+        if (beginTargetSizeMissingEpisode(w, h, t.size_missing_reported)) {
+            diagnostics.report(vine::graphics::DiagnosticSeverity::Warning,
+                               vine::graphics::DiagnosticCategory::TargetBuildFailed,
+                               formatDiagnostic(u8"render target '%s' has no size (%ux%u): its attachments keep"
+                                                u8" the size they were built at until it is sized"
+                                                u8" (RenderTarget::setSize)",
+                                                target->name().empty() ? "(unnamed)" : target->name().as_std_str().c_str(),
+                                                w, h));
+        }
+        return;
+    }
+    // A borrowed depth has to be the source's CURRENT image. A source that has none yet (released, or not
+    // built this frame) is not something this path can invent: leaving the target alone is what lets its
+    // own rebuild path (borrowNeedsRebuild) answer, because that is a change of the borrow's shape.
+    if (t.depth_source != nullptr) {
+        const auto source = state.targets.find(t.depth_source);
+        if (source == state.targets.end() || source->second.depth_view == nullptr) {
+            return;
+        }
+    }
+
+    const auto  resize_start = std::chrono::steady_clock::now();
+    const int   previous_w   = t.width;
+    const int   previous_h   = t.height;
+    auto        device       = state.window->getOrCreateDevice();
+    const bool  has_depth    = target->hasDepth();
+    const bool  borrowed     = t.depth_source != nullptr;
+
+    // The replaced images / views / barrier are PARKED, never destroyed here: a submitted command buffer
+    // may still name them (so may the old framebuffers and this target's slots' descriptors), and this
+    // path takes NO device wait — parking is what this backend does instead (see VsgRetireRing), and it
+    // is the reason a resize is cheap enough to run on every window resize.
+    for (auto& image : t.color_images) {
+        state.retireRing.park(image);
+    }
+    for (auto& view : t.color_views) {
+        state.retireRing.park(view);
+    }
+    state.retireRing.park(t.depth_image);
+    state.retireRing.park(t.depth_view);
+    state.retireRing.park(t.depth_share_barrier);
+
+    // The same attachments, at the new size — created (and, through createImageView, allocated and bound)
+    // exactly as a first build creates them.
+    createTargetAttachments(state, t, device.get(), *target, w, h, t.depth_source);
+    t.width  = static_cast<int>(w);
+    t.height = static_cast<int>(h);
+
+    // The new images are UNDEFINED, so the target's first pass has to CLEAR them (the colour bootstrap
+    // and the depth seed) for one frame, exactly as after a first build — and every pass of this target
+    // has to be planned again for it: the generation is what tells the next plan that the variant it
+    // recorded describes images that no longer exist (see PassObjects::attachments_generation).
+    t.color_seeded = false;
+    t.depth_seeded = false;
+    // `depth_sampleable` is deliberately NOT recomputed from the description here, unlike a first build:
+    // it says what this target's PASSES do (a pass that LOADs depth leaves it in the attachment layout
+    // and revokes promotion for the whole target, see publishPass), not what its description asks for —
+    // and a resize changes neither. Writing the description's answer again is what made a target whose
+    // depth a pass preserves advertise a sampleable depth: the sampler then named an image that is still
+    // VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL while the descriptor was written for
+    // SHADER_READ_ONLY (VUID-vkCmdDraw-None-09600, measured in the self-test). The plan and publish of
+    // this frame's passes decide it again, exactly as they do on any other frame.
+    t.depth_share_barrier =
+        borrowed ? makeDepthShareBarrier(state, t.depth_source) : ::vsg::ref_ptr<::vsg::PipelineBarrier>();
+    ++t.attachments_generation;
+
+    ++state.offscreen_resize_count;
+    ++state.build_profile.target_resizes;
+    state.build_profile.target_resizes_ns += elapsedNs(resize_start);
+    V_LOGI("[VsgRenderer] EXPERIMENTAL off-screen target '{}' resized {}x{} -> {}x{} in place",
+           target->name().empty() ? "(unnamed)" : target->name().as_std_str(), previous_w, previous_h,
+           static_cast<int>(w), static_cast<int>(h));
 }
 
 void erasePassFromTarget(VsgRendererState& state, vine::graphics::RenderTarget* target,
@@ -618,9 +782,12 @@ void releaseRenderTarget(VsgRendererState& state, const VsgDiagnostics& diagnost
         other.unusable_depth_source = vine::intrusive_ptr<const vine::graphics::RenderTarget>(target);
         other.depth_source          = nullptr;
         other.depth_share_barrier   = {};
-        other.width                 = 0;
-        other.height                = 0;
-        released                    = true;
+        // The borrow is gone and the framebuffer still attaches a dead image, so the next draw has to
+        // BUILD this target rather than resize it. Said as its own flag: the predicate cannot tell "the
+        // recorded size is zero" (a resized-to-nothing target) from "someone invalidated my attachments",
+        // and a resize in place would keep the dead attachment.
+        other.attachments_invalidated = true;
+        released                      = true;
     }
     // A slot that SAMPLES the removed target (a program slot lives under the target that DRAWS
     // it, and its source is a slot attribute) would keep a dead image bound: drop it wherever it

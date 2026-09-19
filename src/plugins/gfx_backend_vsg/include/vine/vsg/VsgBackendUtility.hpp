@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include <vsg/app/Window.h>
 #include <vsg/core/ref_ptr.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>
@@ -152,15 +153,17 @@ ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<cons
                                const std::vector<const vine::graphics::Light*>& lights);
 
 /**
- * @brief Temporary test escape hatch: when VINE_VSG_OWN_WINDOW is set, the
- * backend creates its own independent vsg window instead of binding to the
- * Qt-hosted surface.
+ * @brief Whether a session's window is this backend's HOST window (the one it adopted from the host).
  *
- * Used to verify rendering end-to-end independent of the Qt child-window
- * compositing path (see design notes). Remove once the on-screen path is
- * decided.
+ * A session on vsg's OWN window is one the host announced no surface for (the self-test, a headless
+ * run): it is a plain ::vsg::Window, has no host surface to move to, and its presenting slot is not
+ * synced (see renderContentSlot). Asking the window object is the honest spelling of that -- the
+ * distinction is a property of the session, not a switch a caller can throw.
+ *
+ * @param window Window of the session (null is not a host window).
+ * @return true when @p window is a VsgHostWindow.
  */
-bool forceOwnWindow();
+bool onHostWindow(const ::vsg::ref_ptr<::vsg::Window>& window);
 
 } // namespace detail
 

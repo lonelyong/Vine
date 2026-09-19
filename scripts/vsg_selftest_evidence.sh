@@ -92,6 +92,22 @@ if [ "$rc" -ne 0 ]; then
     tail -20 "$RAW" >&2
     exit 1
 fi
+# Validation errors are FAILURES of their own, and they are the one class of defect this gate used to miss
+# entirely: on 2026-09-19 the self-test ran with 0 assertion failures while its teardown destroyed render
+# passes / framebuffers / pipelines a submitted command buffer still named (VUID-vkDestroyRenderPass-00873
+# and friends -- 5 of them at 6 frames, 13 at 30). Every pixel and every structural count was right.
+#
+# The gate only has teeth when the run asked for the layer (VINE_VSG_DEBUG_LAYER=1: the backend then
+# requests VK_LAYER_KHRONOS_validation and its messages land in the same stream). This script does NOT
+# force that flag -- an environment without the layer installed would fail to create the instance at all --
+# so it judges what a layer-enabled run needs to be judged on, and a run without the layer passes this
+# check with nothing to see.
+VUID_COUNT="$(grep -c 'VUID-vk' "$RAW" || true)"
+if [ "$VUID_COUNT" != "0" ]; then
+    echo "vsg_selftest_evidence.sh: $VUID_COUNT Vulkan validation error(s) in the run (the assertions can all pass while an object in use is destroyed -- see .ai/design/vsg-upstream-alignment.md 3):" >&2
+    grep 'VUID-vk' "$RAW" | head -10 >&2
+    exit 1
+fi
 grep '^\[selftest\]' "$RAW" > "$CURRENT"
 # NOT named LINES: bash's LINES/COLUMNS are the terminal height/width, and it re-reads them after every
 # external command — so a count kept in LINES is silently replaced by the terminal's row count (measured:

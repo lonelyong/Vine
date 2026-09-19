@@ -66,7 +66,7 @@ clear() 判定；**C6.3a** `RenderPass::setProgramOverride`（引擎）；**C6.3
 - `RenderBackendFactory::create(raw_ptr<Scene>, raw_ptr<Camera>)`（纯虚，graphics sdk）。
 - `RenderBackendRegistry::create(name, scene, camera)`（sdk）+ doc。
 - `VsgRenderBackendFactory::create` override（vsg 插件）。
-- `RenderControl::wireEvents()`：`entries.front().factory->create(engine->scene(), engine->masterCamera())`（appfw）。
+- `RenderControl::useDefaultBackend()`：`entries.front().factory->create(engine->scene(), engine->masterCamera())`（appfw）。
 - `tests/test_vsg` `CreateBackendByName`：`registry.create(u8"vsg", scene.get(), camera.get())`。
 - `tests/test_graphics` `MockBackendFactory::create(scene, camera)` override。
 - 全仓 RenderBackendFactory 实现仅 vsg + 测试 Mock（无其它真后端）。
@@ -100,7 +100,7 @@ targets[ TargetKey ]                 // TargetKey：窗口=专用键；离屏=Re
 | `RenderBackendRegistry::create` | `create(name, scene, camera)` | `create(name)` |
 | `VsgRenderBackendFactory::create` | 带参 override | 无参 override |
 | `VsgRenderer` ctor | `(Scene*, Camera*)` | 无参（或仅保留 kind 引导，无 Vine 对象） |
-| `RenderControl::wireEvents()` | `factory->create(scene, masterCamera)` | `factory->create()` |
+| `RenderControl::useDefaultBackend()` | `factory->create(scene, masterCamera)` | `factory->create()` |
 | `vsgCamera()/vsgScene()` | 主层别名访问器 | 保留（指向主呈现槽）或删除（无外部调用） |
 
 > 引擎 `setBackend`/`addPass` 等 graphics SDK 不受影响（scene/camera 仍是引擎级状态）。
@@ -143,7 +143,7 @@ targets[ TargetKey ]                 // TargetKey：窗口=专用键；离屏=Re
 | `src/plugins/gfx_backend_vsg/include/vine/vsg/VsgRenderer.hpp` | ctor 去参；Impl 去 scene/camera；槽/风格 API（**注：该头一度于 §44 被删除、类定义并入内部头，又于 §45 以“整个类定义”的身份回到该路径；其状态于 §47 搬进 `VsgRendererState.hpp`，原 `Impl` 更名**） |
 | `src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp` | 最大改动：Impl、initialize、render 路由、offscreen/screen、setupWindowLayer、release、frame()、访问器 |
 | `src/plugins/gfx_backend_vsg/include/vine/vsg/VsgRenderBackendFactory.hpp` + `.cpp` | create 无参 |
-| `src/fw/appfw/src/gui/RenderControl.cpp`（wireEvents） | factory->create() 无参 |
+| `src/fw/appfw/src/gui/RenderControl.cpp`（useDefaultBackend） | factory->create() 无参 |
 | `src/fw/appfw/sdk/vine/appfw/gui/RenderControl.hpp` | 注释（如有 scene/camera 说明） |
 | `tests/test_vsg/GfxBackendVsgPluginTest.cpp` | create(name) 无 scene/camera |
 | `tests/test_graphics/GraphicsTest.cpp` | MockBackendFactory::create() 无参 |

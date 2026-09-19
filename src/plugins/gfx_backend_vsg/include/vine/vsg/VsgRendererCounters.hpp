@@ -35,6 +35,17 @@ struct VsgRendererCounters
      */
     std::size_t offscreen_builds = 0;
 
+    /** @brief Off-screen targets RESIZED in place: the same attachments, at a new size.
+     *
+     * Diagnostic, and the sibling of offscreen_builds: a resize that only changes the target's size
+     * keeps its passes, its slots and their pipelines and replaces the images / framebuffers and the
+     * descriptor bindings that named them (see .ai/design/vsg-target-resize-in-place.md), so it is
+     * deliberately not counted as a build. A host that animates a target's size shows this count
+     * climbing while offscreen_builds and program_slot_builds stay flat -- which is exactly the
+     * difference the in-place path exists to make.
+     */
+    std::size_t offscreen_resizes = 0;
+
     /** @brief Windows built.
      *
      * Diagnostic: a session owns one window, and that window owns the VkInstance, the physical

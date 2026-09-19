@@ -33,6 +33,12 @@ V_VSG_NS_BEGIN
  * One more than the viewer's command-buffer slot count: the slot that could still reference a parked
  * value has had its fence waited (that wait happens before the slot is re-recorded) once this many
  * frames have been submitted after the park.
+ *
+ * THE DEPTH IS ONLY WORTH THIS MUCH IF THE PARK LANDS BEFORE THE FRAME'S ADVANCE. A value parked
+ * after the advance enters the bucket the advance has just entered and is released one frame early:
+ * that is how the self-test's pass-lifecycle phases destroyed render passes / framebuffers / pipelines
+ * a submitted command buffer still named (00873 / 00892 / 00765). The advance is therefore the LAST
+ * step of the frame, after every sweep that can park (see VsgRenderer::submitFrame).
  */
 inline constexpr std::size_t kDeferredReleaseFrames = 4;
 

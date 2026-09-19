@@ -66,6 +66,11 @@ struct VsgRetireRing
      * objects has been re-recorded since — and the recording that replaced it waited on that slot's
      * fence before starting.
      *
+     * IT IS THE FRAME'S LAST STEP. An object parked after this call enters the bucket entered now and
+     * is released one frame early — which is how this backend once destroyed render passes /
+     * framebuffers / pipelines a submitted command buffer still named (see VsgDeferredRelease: the
+     * depth is only worth its full count if the park lands before the advance).
+     *
      * @param commit Evidence that the frame this advance accounts for was committed (see
      *               @ref FrameCommit: the advance is only legal after the submit).
      */
