@@ -7,6 +7,7 @@
 
 #include <vsg/core/ref_ptr.h>
 #include <vsg/state/DynamicState.h>
+#include <vsg/vk/Device.h>
 #include <vsg/state/StateCommand.h>
 
 V_VSG_NS_BEGIN
@@ -29,6 +30,57 @@ inline constexpr VkCompareOp         kBakedCompareOp        = VK_COMPARE_OP_GREA
 inline constexpr VkCullModeFlags     kBakedCullMode         = VK_CULL_MODE_NONE;
 inline constexpr VkFrontFace         kBakedFrontFace        = VK_FRONT_FACE_CLOCKWISE;
 inline constexpr VkPrimitiveTopology kBakedTopology         = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+inline constexpr VkPolygonMode       kBakedPolygonMode      = VK_POLYGON_MODE_FILL;
+inline constexpr VkBool32            kBakedBlendEnable      = VK_FALSE;
+inline constexpr VkBlendFactor       kBakedBlendFactor      = VK_BLEND_FACTOR_ONE;
+
+/**
+ * @brief The most colour attachments the blend half of this command can carry.
+ *
+ * `vkCmdSetColorBlendEnableEXT` / `vkCmdSetColorBlendEquationEXT` take an array, so the command holds one
+ * entry per attachment (see SetDynamicState). Eight is what the desktop class guarantees and far above what
+ * a pass in this engine uses (MRT passes here write three); a variant with more attachments keeps the ones
+ * past this bound at the values the pipeline was created with — which are the same constants, because the
+ * bake is constant too, so only the entries the command carries decide anything.
+ */
+inline constexpr std::uint32_t kMaxDynamicAttachments = 8u;
+
+/**
+ * @brief The extension entry points the blend and polygon-mode halves of this command need.
+ *
+ * These three are the only calls this layer makes that the LOADER DOES NOT EXPORT: `vkCmdSetPolygonModeEXT`
+ * (VK_EXT_extended_dynamic_state2), `vkCmdSetColorBlendEnableEXT` and `vkCmdSetColorBlendEquationEXT`
+ * (VK_EXT_extended_dynamic_state3). A direct call to any of them links on Windows and fails to link on
+ * Linux — measured, not assumed: `nm -D libvulkan.so.1` has the promoted names (`vkCmdSetCullMode`,
+ * `vkCmdSetDepthTestEnable`, `vkCmdSetPrimitiveTopology`) and none of these three. Extension commands are
+ * meant to be fetched, so they are: vsg::Device::getProcAddr does exactly that, and its own documentation
+ * says the pointer is null when the extension was not enabled at device creation.
+ *
+ * Hence a value carried by the command (fetched once per session, see
+ * fetchDynamicStateEntryPoints), not a global table: the pointers belong to ONE device, and a second
+ * session on another device must not inherit them.
+ */
+struct DynamicStateEntryPoints
+{
+    PFN_vkCmdSetPolygonModeEXT        set_polygon_mode         = nullptr;
+    PFN_vkCmdSetColorBlendEnableEXT   set_color_blend_enable   = nullptr;
+    PFN_vkCmdSetColorBlendEquationEXT set_color_blend_equation = nullptr;
+
+    /// @brief Whether every entry point is present (a device that cannot deliver these states is refused).
+    [[nodiscard]] bool complete() const noexcept
+    {
+        return set_polygon_mode != nullptr && set_color_blend_enable != nullptr && set_color_blend_equation != nullptr;
+    }
+};
+
+/**
+ * @brief Fetches the three entry points from @p device.
+ *
+ * @param device Device they are fetched from (the extensions must have been enabled at its creation).
+ * @return The entry points; any that the device does not offer are null (see
+ * DynamicStateEntryPoints::complete).
+ */
+[[nodiscard]] DynamicStateEntryPoints fetchDynamicStateEntryPoints(const ::vsg::Device& device);
 
 /**
  * @brief The state slot (StateCommand::slot) this backend's dynamic-state command occupies.
@@ -74,26 +126,26 @@ inline constexpr uint32_t kDynamicStateSlot = 15u;
  * That is what made it possible to introduce the plumbing first and drop the state from the variant
  * identity afterwards.
  *
- * WHAT IT CARRIES: the whole of what a StateNode can move that core 1.3 makes dynamic with nothing to
- * enable — depth test / write / compare, cull mode, front face and primitive topology. All four come from
- * VK_EXT_extended_dynamic_state, promoted to 1.3 with its feature struct NOT promoted: core 1.3 has these
- * states and no bit for them, which is what the 1.3 version floor backs. Nothing is requested in the
- * device-feature chain for any of them.
- *
- * WHAT IT DOES NOT CARRY, and why — the two items of ResolvedRenderState that are NOT core-1.3 state:
- *  * polygon mode (VK_DYNAMIC_STATE_POLYGON_MODE_EXT): VK_EXT_extended_dynamic_state2 was promoted to 1.3
- *    without it ("Feature struct and optional state are not promoted"), so it needs the extension's
- *    feature bit; LINE/POINT also need fillModeNonSolid (requested).
- *  * colour blend enable / factors (VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT, ..._EQUATION_EXT):
- *    VK_EXT_extended_dynamic_state3 is not promoted at all, so these need its two feature bits.
- * Each of those means three things at once: an optional feature bit a 1.3 device may not have, the
- * extension enabled at device creation, and — the trap that settled it — ENTRY POINTS THE LOADER DOES NOT
- * EXPORT. `vkCmdSetPolygonModeEXT` and `vkCmdSetColorBlendEnableEXT`/`...EquationEXT` have no symbol in
- * libvulkan.so (unlike the promoted names, which do), so calling them directly links on Windows and fails
- * to link on Linux; using them properly means fetching them with vkGetDeviceProcAddr and carrying a
- * per-device pointer table. That is a mechanism of its own for two states that change rarely, so they stay
- * in the pipeline: see the variant identity in SceneBridgePipeline (milestone B keeps them there
- * deliberately).
+ * WHAT IT CARRIES — everything a StateNode can move, so nothing of the resolved state is pipeline state
+ * any more:
+ *  * depth test / write / compare, cull mode, front face, primitive topology: core 1.3 via
+ *    VK_EXT_extended_dynamic_state, whose feature struct was NOT promoted — the states are core and there is
+ *    no bit to enable. Nothing is requested in the device-feature chain for them.
+ *  * polygon mode (VK_DYNAMIC_STATE_POLYGON_MODE_EXT) and colour blend enable + factors
+ *    (VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT / ..._EQUATION_EXT): all three belong to
+ *    VK_EXT_extended_dynamic_state3, which is not promoted to any core version (1.4 does not absorb it
+ *    either), so its feature bits are what make them available. ⚠ The polygon-mode enum is DEFINED in the
+ *    VK_EXT_extended_dynamic_state2 block — which is why 1.3's promotion note says "Feature struct and
+ *    optional state are not promoted" — but the bit that gates it is
+ *    `extendedDynamicState3PolygonMode`, not `extendedDynamicState2`: the validator says so by name
+ *    (VUID-VkGraphicsPipelineCreateInfo-extendedDynamicState3PolygonMode-07372), so that is what
+ *    makeWindowTraits requests. LINE / POINT still need fillModeNonSolid, which this backend already
+ *    requests. The blend OPS and the write mask stay baked: nothing in the engine can change them.
+ * The extension is enabled and its three feature bits requested unconditionally in makeWindowTraits,
+ * together with the optional core-1.0 features this backend already required: a device that cannot deliver
+ * the state the engine configures is refused when the device is created rather than served on a subset that
+ * would draw something else. The three COMMANDS that go with it are the only ones this layer cannot call by
+ * name (see DynamicStateEntryPoints).
  *
  * It derives from vsg::StateCommand — not from vsg::Command — because a variant carries it in its
  * StateGroup's stateCommands (alongside the pipeline and descriptor binds), and that list holds
@@ -122,7 +174,14 @@ class SetDynamicState : public ::vsg::Inherit<::vsg::StateCommand, SetDynamicSta
     VkCompareOp         compare_op         = kBakedCompareOp;
     VkCullModeFlags     cull_mode          = kBakedCullMode;
     VkFrontFace         front_face         = kBakedFrontFace;
+    VkPolygonMode       polygon_mode       = kBakedPolygonMode;
     VkPrimitiveTopology topology           = kBakedTopology;
+    /// The colour attachments of the draw the command precedes (0 = a depth-only pass: no blend at all).
+    std::uint32_t color_attachment_count = 0u;
+    /// Per-attachment blend state: only the entries below color_attachment_count are recorded.
+    std::array<VkPipelineColorBlendAttachmentState, kMaxDynamicAttachments> blend{};
+    /// The extension entry points record() calls through (see DynamicStateEntryPoints).
+    DynamicStateEntryPoints entry_points;
 
     /// @brief Orders two commands by their values (content equality, what vsg::SharedObjects dedups by).
     ///
@@ -136,6 +195,11 @@ class SetDynamicState : public ::vsg::Inherit<::vsg::StateCommand, SetDynamicSta
     int compare(const ::vsg::Object& rhs_object) const override;
 
     /// @brief Applies the state to @p commandBuffer (vkCmdSetDepthTestEnable & friends).
+    ///
+    /// The polygon-mode and blend calls go through entry_points (see DynamicStateEntryPoints) — they are the
+    /// three commands this layer cannot name directly. A session always has them (a device without the two
+    /// extensions fails device creation), so a null entry point means a bridge that was never given them
+    /// (device-free tests): the calls are then skipped rather than made through a null pointer.
     void record(::vsg::CommandBuffer& commandBuffer) const override;
 };
 

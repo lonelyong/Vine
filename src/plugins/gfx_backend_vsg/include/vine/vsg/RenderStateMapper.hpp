@@ -266,8 +266,11 @@ inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
  * named in VsgDynamicState.hpp — the SAME values the command starts from — and the delivered ones come from
  * the command each drawable carries.
  *
- * The colour blend state and the rasterisation POLYGON MODE stay as mapped: they are not core-1.3 dynamic
- * state, so they are still pipeline state and still part of the variant identity (see VsgDynamicState.hpp).
+ * The colour blend state and the rasterisation polygon mode are collapsed too: they are delivered as well
+ * (they need the two extension-backed states — see VsgDynamicState.hpp — and this backend requires them).
+ * Their attachment COUNT is kept from the mapped state, because a pipeline must declare one blend entry per
+ * colour attachment of its subpass (VUID-VkGraphicsPipelineCreateInfo-renderPass-07609); the values in those
+ * entries are the constants.
  *
  * @param mapped State objects mapped from a resolved state (see makeRenderStateObjects()).
  * @return The state objects to install on a configurator.
@@ -284,10 +287,29 @@ inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
     auto raster            = ::vsg::RasterizationState::create();
     raster->cullMode       = detail::kBakedCullMode;
     raster->frontFace      = detail::kBakedFrontFace;
-    raster->polygonMode    = mapped.rasterization->polygonMode;  // still baked: not core-1.3 dynamic state
+    raster->polygonMode    = detail::kBakedPolygonMode;
 
     auto assembly    = ::vsg::InputAssemblyState::create();
     assembly->topology = detail::kBakedTopology;
+
+    // One entry per attachment, all of them the constants: the count is what the pipeline must match, the
+    // values are delivered per drawable.
+    const auto            attachment_count = mapped.colorBlend->attachments.size();
+    ::vsg::ColorBlendState::ColorBlendAttachments baked_blend;
+    baked_blend.reserve(attachment_count);
+    for (std::size_t i = 0; i < attachment_count; ++i) {
+        VkPipelineColorBlendAttachmentState entry{};
+        entry.blendEnable         = detail::kBakedBlendEnable;
+        entry.srcColorBlendFactor = detail::kBakedBlendFactor;
+        entry.dstColorBlendFactor = detail::kBakedBlendFactor;
+        entry.colorBlendOp        = VK_BLEND_OP_ADD;
+        entry.srcAlphaBlendFactor = detail::kBakedBlendFactor;
+        entry.dstAlphaBlendFactor = detail::kBakedBlendFactor;
+        entry.alphaBlendOp        = VK_BLEND_OP_ADD;
+        entry.colorWriteMask      = mapped.colorBlend->attachments[i].colorWriteMask;
+        baked_blend.push_back(entry);
+    }
+    baked.colorBlend = ::vsg::ColorBlendState::create(baked_blend);
 
     baked.depthStencil  = depth;
     baked.rasterization = raster;
@@ -316,13 +338,19 @@ inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
     command->depth_write_enable = states.depthStencil->depthWriteEnable;
     command->compare_op         = states.depthStencil->depthCompareOp;
 
-    command->cull_mode  = states.rasterization->cullMode;
-    command->front_face = states.rasterization->frontFace;
+    command->cull_mode    = states.rasterization->cullMode;
+    command->front_face   = states.rasterization->frontFace;
+    command->polygon_mode = states.rasterization->polygonMode;
 
     command->topology = states.inputAssembly->topology;
 
-    // Deliberately NOT mapped: polygonMode and the colour blend state. They are not core-1.3 dynamic state
-    // (see VsgDynamicState.hpp), so they stay in the pipeline create-info and in the variant identity.
+    // The blend half is delivered per attachment (the API takes an array): the count is the pipeline's, and
+    // the entries past what the command can carry keep the pipeline's constants.
+    command->color_attachment_count = static_cast<std::uint32_t>(states.colorBlend->attachments.size());
+    const auto carried = std::min<std::size_t>(states.colorBlend->attachments.size(), detail::kMaxDynamicAttachments);
+    for (std::size_t i = 0; i < carried; ++i) {
+        command->blend[i] = states.colorBlend->attachments[i];
+    }
     return command;
 }
 

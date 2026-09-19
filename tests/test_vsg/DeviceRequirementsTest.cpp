@@ -1,9 +1,10 @@
 /**
  * @brief What the backend requires of a device: the Vulkan floor, as a device-free rule.
  *
- * The backend is allowed to rely on core-1.3 behaviour (extended dynamic state today, dynamic rendering
- * when that layer lands), so a device below it is refused with a reason instead of being served on the
- * subset of the contract that happens to work. Both the floor and the comparison are values, so the
+ * The backend is allowed to rely on core-1.4 behaviour (dynamic rendering's local read, maintenance5/6,
+ * host image copy, on top of the 1.3 states it already delivers dynamically — see VsgDynamicState.hpp for
+ * which of those are 1.3 core and which need an extension), so a device below it is refused with a reason
+ * instead of being served on the subset of the contract that happens to work. Both the floor and the comparison are values, so the
  * policy is pinned here rather than only inside a session that needs a device to exist:
  *
  *  * the version that counts is the DEVICE's (`VkPhysicalDeviceProperties::apiVersion`) — the loader
@@ -23,10 +24,10 @@
 using vine::vsg::detail::kRequiredVulkanVersion;
 using vine::vsg::detail::supportsRequiredVulkanVersion;
 
-TEST(DeviceRequirementsTest, TheFloorIsVulkan13)
+TEST(DeviceRequirementsTest, TheFloorIsVulkan14)
 {
     EXPECT_EQ(VK_API_VERSION_MAJOR(kRequiredVulkanVersion), 1u);
-    EXPECT_EQ(VK_API_VERSION_MINOR(kRequiredVulkanVersion), 3u);
+    EXPECT_EQ(VK_API_VERSION_MINOR(kRequiredVulkanVersion), 4u);
 }
 
 TEST(DeviceRequirementsTest, DevicesBelowTheFloorAreRefused)
@@ -34,18 +35,18 @@ TEST(DeviceRequirementsTest, DevicesBelowTheFloorAreRefused)
     EXPECT_FALSE(supportsRequiredVulkanVersion(VK_API_VERSION_1_0));
     EXPECT_FALSE(supportsRequiredVulkanVersion(VK_API_VERSION_1_1));
     EXPECT_FALSE(supportsRequiredVulkanVersion(VK_API_VERSION_1_2));
-    // A driver that packs a patch level into 1.2 is still 1.2.
-    EXPECT_FALSE(supportsRequiredVulkanVersion(VK_MAKE_API_VERSION(0, 1, 2, 999)));
+    EXPECT_FALSE(supportsRequiredVulkanVersion(VK_API_VERSION_1_3));
+    // A driver that packs a patch level into 1.3 is still 1.3.
+    EXPECT_FALSE(supportsRequiredVulkanVersion(VK_MAKE_API_VERSION(0, 1, 3, 999)));
 }
 
 TEST(DeviceRequirementsTest, TheFloorItselfAndEverythingNewerAreServed)
 {
-    // Exactly the floor is enough: the features the backend relies on are part of 1.3, not of a patch
-    // release of it.
-    EXPECT_TRUE(supportsRequiredVulkanVersion(VK_API_VERSION_1_3));
-    // What a real device reports (the patch field carries the driver's own numbering).
-    EXPECT_TRUE(supportsRequiredVulkanVersion(VK_MAKE_API_VERSION(0, 1, 3, 280)));
+    // Exactly the floor is enough: what the backend relies on is part of 1.4, not of a patch release of it.
     EXPECT_TRUE(supportsRequiredVulkanVersion(VK_API_VERSION_1_4));
+    // What a real device reports (the patch field carries the driver's own numbering).
+    EXPECT_TRUE(supportsRequiredVulkanVersion(VK_MAKE_API_VERSION(0, 1, 4, 335)));
+    EXPECT_TRUE(supportsRequiredVulkanVersion(VK_MAKE_API_VERSION(0, 1, 5, 0)));
 }
 
 TEST(DeviceRequirementsTest, TheMajorMinorRuleAgreesWithThePackedOrderForRealVersions)

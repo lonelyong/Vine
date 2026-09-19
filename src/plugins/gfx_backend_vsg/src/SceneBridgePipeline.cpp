@@ -356,8 +356,11 @@ void SceneBridge::appendDrawableState(::vsg::StateGroup& state_group, const Rend
                                       const VsgDrawBlockPool::Lease& draw_slot)
 {
     auto command = makeDynamicState(states);
+    // The device's entry points for the three calls that cannot be named directly (see
+    // DynamicStateEntryPoints), fetched once per session and injected into this bridge.
+    command->entry_points = dynamic_state_entry_points_;
     // Shared by content (see the declaration): identical states must hand out ONE command object, or every
-    // draw re-records six vkCmdSet calls that the state stack would otherwise skip.
+    // draw re-records nine vkCmdSet* calls that the state stack would otherwise skip.
     if (shared_objects_ != nullptr) {
         shared_objects_->share(command);
     }
@@ -580,8 +583,8 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     RenderStateObjects states = makeRenderStateObjects(state);
     // MRT: a pipeline recorded into a slot with several colour attachments must write all of them (mrt > 1),
     // and a G-buffer is written unblended — both rules live in the two helpers (see colourAttachmentCount /
-    // applyOpaqueBlendForAttachments). They shape the BAKED blend state (blend is not dynamic), so they run
-    // before the collapse.
+    // applyOpaqueBlendForAttachments). They shape the values the command DELIVERS (blend is dynamic now), so
+    // they run before the mapping is used for anything.
     const int mrt = colourAttachmentCount(shader_set_);
     if (mrt > 1) {
         applyOpaqueBlendForAttachments(states, mrt);
@@ -596,8 +599,10 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     if (variant_it != variant_cache_.end() && variant_it->second.payload() != nullptr &&
         variant_it->second.firstKey() == program &&
         variant_it->second.secondKey() == material &&
-        detail::sameVariantIdentity(variant_it->second.payload()->state, state) &&
         variant_it->second.payload()->layout == layout) {
+        // No state comparison: the resolved state is not part of a variant any more (see VariantEntry) — the
+        // drawable carries its own state command, so a template that agrees on program / material / vertex
+        // layout is the right template whatever state this drawable resolved to.
         ++variant_reuses_;
         auto stateGroup = ::vsg::StateGroup::create();
         for (const auto& sc : variant_it->second.payload()->state_commands) {
@@ -678,7 +683,7 @@ void SceneBridge::appendDrawBlockBind(::vsg::StateGroup& state_group,
     // its own, and the state stack records the FIRST command of that slot — i.e. every drawable would draw
     // with the state of the drawable that happened to build the template. (That is not hypothetical: this
     // ordering is what the delivered-state test caught.)
-    cacheStateVariant(hash_key, program, material, state, layout, *stateGroup, config->layout);
+    cacheStateVariant(hash_key, program, material, layout, *stateGroup, config->layout);
 
     // What this DRAWABLE contributes after the shared template: the state it delivers dynamically, and its
     // per-draw bind (see appendDrawableState).
@@ -925,8 +930,7 @@ void SceneBridge::assignSlotDescriptors(::vsg::GraphicsPipelineConfigurator& con
 
 void SceneBridge::cacheStateVariant(std::uint64_t hash_key,
                                     vine::raw_ptr<const vine::graphics::ShaderProgram> program,
-                                    vine::raw_ptr<vine::graphics::Material> material,
-                                    const vine::graphics::ResolvedRenderState& state, std::uint64_t layout,
+                                    vine::raw_ptr<vine::graphics::Material> material, std::uint64_t layout,
                                     const ::vsg::StateGroup& state_group,
                                     ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout)
 {
@@ -935,7 +939,6 @@ void SceneBridge::cacheStateVariant(std::uint64_t hash_key,
     // the displaced variant rebuilds fresh on its next appearance (still
     // correct, just uncached).
     auto entry = std::make_unique<VariantEntry>();
-    entry->state                 = state;
     entry->layout                = layout;
     entry->state_commands        = state_group.stateCommands;
     entry->prototype_array_state = state_group.prototypeArrayState;

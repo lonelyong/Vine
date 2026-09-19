@@ -798,13 +798,17 @@ TEST(SceneBridgePipelineSharingTest, StateEditRebuildsStateReusesData)
     ASSERT_NE(findDynamicState(created[0].get()), nullptr);
     EXPECT_EQ(findDynamicState(created[0].get())->depth_test_enable, VK_TRUE);
 
-    // A BAKED item is the boundary of the layer and must still add a pipeline: the polygon mode is not
-    // core-1.3 dynamic state (see VsgDynamicState.hpp), so a wireframe edit is a new variant.
+    // The last item a StateNode can move — the polygon mode — is delivered too (it needs an extension-backed
+    // state, see VsgDynamicState.hpp), so a wireframe edit is still the same single pipeline: the layer now
+    // covers the whole resolved state, which is why nothing of it is in the variant identity.
     commands[0].renderState.polygonMode = PolygonMode::Line;
     created.clear();
     bridge.syncRenderCommands(commands, root.get(), &created);
     ASSERT_EQ(created.size(), 1u);
-    EXPECT_EQ(bridge.pipelineVariantCount(), 2u) << "a baked state edit still needs its own pipeline";
+    EXPECT_EQ(bridge.pipelineVariantCount(), 1u) << "the polygon mode is delivered, not baked";
+    auto* wireframe = findDynamicState(created[0].get());
+    ASSERT_NE(wireframe, nullptr);
+    EXPECT_EQ(wireframe->polygon_mode, VK_POLYGON_MODE_LINE) << "the edit must reach the command";
 }
 
 /**

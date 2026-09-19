@@ -37,7 +37,9 @@ V_VSG_NS_BEGIN
  * compared against cannot be recycled from under it.
  */
 struct SceneBridge::VariantEntry {
-    vine::graphics::ResolvedRenderState state;
+    // NOT the resolved state: it is delivered per drawable now (see VsgDynamicState.hpp), so a variant is
+    // (program, material, texture, vertex layout) and nothing else — two drawables whose states differ share
+    // this template and carry their own commands.
     std::uint64_t layout = 0; // custom-channel hash (see hashStateVariant)
     ::vsg::StateCommands state_commands;
     ::vsg::ref_ptr<::vsg::ArrayState> prototype_array_state;

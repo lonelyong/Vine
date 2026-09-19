@@ -100,6 +100,11 @@ SceneBridge::~SceneBridge()
     cache_.clear();
 }
 
+void SceneBridge::setDynamicStateEntryPoints(const detail::DynamicStateEntryPoints& entry_points)
+{
+    dynamic_state_entry_points_ = entry_points;
+}
+
 void SceneBridge::setShaderSet(::vsg::ref_ptr<::vsg::ShaderSet> shaderSet)
 {
     shader_set_ = shaderSet;

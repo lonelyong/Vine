@@ -22,6 +22,7 @@
 
 using vine::graphics::AttributeChannel;
 using vine::graphics::BlendFactor;
+using vine::graphics::BlendState;
 using vine::graphics::CompareOp;
 using vine::graphics::CullMode;
 using vine::graphics::PolygonMode;
@@ -46,7 +47,6 @@ using vine::vsg::detail::makeIndexedNormals;
 using vine::vsg::detail::makeNormals;
 using vine::vsg::detail::makeWhiteColors;
 using vine::vsg::detail::normalIsUsable;
-using vine::vsg::detail::sameVariantIdentity;
 using vine::vsg::detail::sampleVertexData;
 using vine::vsg::detail::stageFlag;
 using vine::vsg::detail::unpackXyz;
@@ -209,81 +209,76 @@ TEST(SceneRulesTest, VertexLayoutHashDependsOnLocationComponentsAndOrder)
 }
 
 /**
- * @brief What the variant key holds NOW: the items the pipeline bakes, and nothing else.
+ * @brief What the variant key holds NOW: the state holds nothing of it any more.
  *
- * A variant is what a pipeline and its shared commands are built from. Depth test / write / compare, culling,
- * front face and topology are delivered per drawable (see VsgDynamicState.hpp), so states that differ only in
- * them MUST land in the same variant — folding them in would give every combination its own VkPipeline and
- * the layer would buy nothing. The colour blend and the polygon mode are still baked, so a difference in
- * either MUST land in a different variant.
+ * A variant is what a pipeline and its shared commands are built from, and every item of the resolved state
+ * is delivered per drawable (see VsgDynamicState.hpp) — so a difference ANYWHERE in the state, in any of the
+ * items a StateNode can move, must land in the SAME variant: one pipeline serves them all, which is the
+ * whole point of the layer. This test used to pin the opposite for four of the items and then for six; every
+ * one of those assertions is now an equality, which is what "the state stopped being a pipeline dimension"
+ * means when written down.
  *
- * sameVariantIdentity() answers exactly the same question, because the cache uses it after a hash hit: a hash
- * collision between different variants has to be rejected, and a state that only differs in a delivered item
- * has to be accepted.
+ * What must still move the key is what a pipeline really is a function of: the vertex layout (a different
+ * binding set needs different SPIR-V and a different vertex-input state) — pinned here — plus the program,
+ * the material and the bound texture resource (pinned by the bridging tests with real geometry).
  */
-TEST(SceneRulesTest, VariantHashHoldsWhatThePipelineBakesAndNothingElse)
+TEST(SceneRulesTest, VariantHashHoldsOnlyWhatAPipelineIsAFunctionOf)
 {
     const ResolvedRenderState base;
     const std::uint64_t      base_hash = variantHash(base);
     // A state equal to the base hashes the same: the key must be a function of the state.
     EXPECT_EQ(variantHash(ResolvedRenderState()), base_hash);
 
-    // BAKED (blend, polygon mode): a different pipeline, so a different variant.
+    // Every item a StateNode can move is DELIVERED, so none of them may move the variant.
     ResolvedRenderState changed = base;
-    changed.blend.enabled       = !base.blend.enabled;
-    EXPECT_NE(variantHash(changed), base_hash);
-    EXPECT_FALSE(sameVariantIdentity(base, changed));
-
-    changed           = base;
-    changed.blend.src = BlendFactor::OneMinusDstColor;
-    EXPECT_NE(variantHash(changed), base_hash);
-    EXPECT_FALSE(sameVariantIdentity(base, changed));
-
-    changed           = base;
-    changed.blend.dst = BlendFactor::One;
-    EXPECT_NE(variantHash(changed), base_hash);
-    EXPECT_FALSE(sameVariantIdentity(base, changed));
-
-    changed             = base;
-    changed.polygonMode = PolygonMode::Line;
-    EXPECT_NE(variantHash(changed), base_hash);
-    EXPECT_FALSE(sameVariantIdentity(base, changed));
-
-    // DELIVERED (depth, culling, topology): one pipeline serves them all, so the variant must not move.
-    changed            = base;
-    changed.depth.test = !base.depth.test;
-    EXPECT_EQ(variantHash(changed), base_hash) << "depth test is delivered per drawable now";
-    EXPECT_TRUE(sameVariantIdentity(base, changed));
+    changed.depth.test          = !base.depth.test;
+    EXPECT_EQ(variantHash(changed), base_hash) << "depth test is delivered per drawable";
 
     changed             = base;
     changed.depth.write = !base.depth.write;
     EXPECT_EQ(variantHash(changed), base_hash);
-    EXPECT_TRUE(sameVariantIdentity(base, changed));
 
     changed               = base;
     changed.depth.compare = CompareOp::Greater;
     EXPECT_EQ(variantHash(changed), base_hash);
-    EXPECT_TRUE(sameVariantIdentity(base, changed));
 
     changed          = base;
     changed.cullMode = CullMode::Back;
     EXPECT_EQ(variantHash(changed), base_hash);
-    EXPECT_TRUE(sameVariantIdentity(base, changed));
+
+    changed             = base;
+    changed.polygonMode = PolygonMode::Line;
+    EXPECT_EQ(variantHash(changed), base_hash) << "the polygon mode needs an extension, and this backend requires it";
 
     changed          = base;
     changed.topology = Topology::Lines;
     EXPECT_EQ(variantHash(changed), base_hash);
-    EXPECT_TRUE(sameVariantIdentity(base, changed));
 
-    // A delivered difference must not MASK a baked one: both change, so the variant changes.
-    ResolvedRenderState both  = base;
-    both.depth.test           = !base.depth.test;
-    both.polygonMode          = PolygonMode::Line;
-    EXPECT_NE(variantHash(both), base_hash);
-    EXPECT_FALSE(sameVariantIdentity(base, both));
+    changed               = base;
+    changed.blend.enabled = !base.blend.enabled;
+    EXPECT_EQ(variantHash(changed), base_hash) << "the blend enable is delivered per drawable too";
 
-    // The vertex layout is folded in too, so geometry with a different binding set never shares
-    // the base state's variant template.
+    changed           = base;
+    changed.blend.src = BlendFactor::OneMinusDstColor;
+    EXPECT_EQ(variantHash(changed), base_hash);
+
+    changed           = base;
+    changed.blend.dst = BlendFactor::One;
+    EXPECT_EQ(variantHash(changed), base_hash);
+
+    // Everything at once, to be sure no item is only accidentally out.
+    ResolvedRenderState all = base;
+    all.depth.test          = !base.depth.test;
+    all.depth.write         = !base.depth.write;
+    all.depth.compare       = CompareOp::Greater;
+    all.cullMode            = CullMode::Back;
+    all.polygonMode         = PolygonMode::Line;
+    all.topology            = Topology::Points;
+    all.blend               = BlendState{ true, BlendFactor::One, BlendFactor::Zero };
+    EXPECT_EQ(variantHash(all), base_hash);
+
+    // The vertex layout is still folded in: geometry with a different binding set never shares the base
+    // state's variant template.
     EXPECT_NE(variantHash(base, kLayoutSeed + 1u), base_hash);
 }
 

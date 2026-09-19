@@ -27,12 +27,12 @@
 |---|---|---|
 | RenderTarget（窗/离屏/MRT/depth-only、color_count） | render pass / subpass | 槽位分区（每个 content slot 一个 `SceneBridge`） |
 | Shader（内置 Phong/Flat 或用户 program） | stages + descriptor layout + pipeline layout | **L1 program 缓存**（一"族"一 ShaderSet） |
-| StateNode 折叠后的 `ResolvedRenderState` | 只剩 **blend + polygonMode** | **L2 变体键**组件；depth/cull/frontFace/topology 已改为**逐 drawable 动态状态**（§2.2），不进管线 |
+| StateNode 折叠后的 `ResolvedRenderState` | **全部六项**（depth/cull/frontFace/topology/polygonMode/blend） | **不进管线**：逐 drawable 动态状态（§2.2） |
 | 材质**值** | UBO 内容 | **DS**（`VsgMaterialManager` 按 `Material*` 缓存），不进管线键 |
 | Matrix / opacity / 顶点数据 | 逐几何 retained 数据 | 不变 |
 
-管线键（内容级）≈ `(program, blend, polygonMode, subpass/color_count)`（§2.2 起 depth/cull/frontFace/
-topology 已不是管线维度，而是每条 drawable 的动态状态）；
+管线键（内容级）≈ `(program, 顶点布局, subpass/color_count)`（§2.2 起**整个 ResolvedRenderState** 都不是管线
+维度，而是每条 drawable 的动态状态）；
 **材质、矩阵、透明度、几何缓冲都不是管线维度。**
 
 ### 2.1 StateNode 状态动态化：core 1.3（里程碑 A/A+ 已落地）
@@ -47,11 +47,14 @@ depth test/write/compare、cull mode、front face、primitive topology 都是**�
   从**管线 create-info 用的同一批对象**读值，所以"动态值 = 烘焙值"是构造上成立的（见下"行为中立"）。
 - **没有开关**：三条建 set 的路径（`VsgRenderer` 窗口 set、`VsgTargetBookkeeping` 每 target、
   `VsgContentSlot` 懒建）一律声明；每个变体一律发命令。`kDynamicDepth` 这类常量/参数已删除。
-- **不需要申请任何 device feature/extension**：这四种状态来自 `VK_EXT_extended_dynamic_state`，registry
+- **这四种状态不需要申请任何 device feature/extension**：它们来自 `VK_EXT_extended_dynamic_state`，registry
   标 `promotedto="VK_VERSION_1_3"` 且其 feature 结构体标 `comment="Not promoted to 1.3"`
-  （`VkPhysicalDeviceVulkan13Features` **没有**对应成员，写了编不过）。兜底的是版本地板
-  （`detail::kRequiredVulkanVersion = 1.3`）。`vkCmdSetCullMode/FrontFace/PrimitiveTopology` 都是 loader
-  直接导出的 core 符号，正常链接。
+  （`VkPhysicalDeviceVulkan13Features` **没有**对应成员，写了编不过）。`vkCmdSetCullMode/FrontFace/PrimitiveTopology`
+  都是 loader 直接导出的 core 符号，正常链接。（polygon mode / blend 见 §2.3，它们要 EDS3 的 feature 位。）
+- **版本地板现在是 1.4**（`detail::kRequiredVulkanVersion = VK_API_VERSION_1_4`）：这是**策略**选择，不是这两项
+  状态的要求（1.4 没吸收它们，见 §2.3）——目的是能用 1.4 的核心接口（dynamic rendering 的 local read、
+  maintenance5/6、host image copy）而不必为每个功能另加一次检查；本后端的开发目标（桌面驱动 + 软件光栅化器）都是
+  1.4，成本为零。
 - ⚠️ **`StateCommand::slot` 是"状态栈身份"而不是优先级**：`State::push` 按 slot 压栈，`StateStack::record`
   **只录制栈顶**，同 slot 的后一条把前一条**彻底遮蔽**。vsg 分配：`0` 管线绑定 / `1+firstSet` 描述符绑定 /
   `2` view-dependent state+push constants。故命令取 `kDynamicStateSlot = 15`（`STATESTACK_SIZE` 上限），
@@ -97,7 +100,7 @@ depth test/write/compare、cull mode、front face、primitive topology 都是**�
   ⇒ **同一状态只有一个命令对象**，连续 drawable 命中 vsg 状态栈的"与上次相同就不重录"memo（否则每条 draw 都
   要重发 6 条 `vkCmdSet*`）。没有按值 `compare()` 时共享会**串值**（所有状态都拿到第一条的值），所以两者是
   一套的。
-- **变体身份收窄**：`hashStateVariant()` 只混 blend + polygonMode（+ program/material/texture/layout）；
+- **变体身份收窄**：`hashStateVariant()` 只混 program/material/texture/**顶点布局**（resolved state 一位都不混）；
   命中判定 `sameVariantIdentity()` 与它同一规则（哈希碰撞要拒、只差交付项要收）。**三条建 set 路径同步收窄**：
   `makeContentShaderSet`/`buildVineShaderSet`/`makeScenePipelineStates` 丢掉 `depth_test/depth_write` 参数，
   `detail::shaderSetFor()`（三选一）与其三个 set 成员全部删除 ⇒ 现在**一个 (program, 尺寸, 颜色附件数) 一个 set**。
@@ -107,7 +110,35 @@ depth test/write/compare、cull mode、front face、primitive topology 都是**�
 - **判据**：证据 30 帧与 B 之前**逐字节相同**（只差已知漂移计数）、`test_vsg` 318 / `test_graphics` 275、
   syncval 0/0/0。另外 `SceneRulesTest.VariantHashHoldsWhatThePipelineBakesAndNothingElse` 把"哪些进键"钉成
   契约（blend/polygonMode ≠、depth/cull/topology ==）。
-- **边界（有意留在键里）**：polygonMode 与 blend（理由见 §2.1）；材质/纹理/顶点布局；`subpass/color_count`。
+- **边界**：材质/纹理/顶点布局、`subpass/color_count` 仍在键里（它们的差异确实要求不同管线，见 §2）；状态没有边界了。
+
+### 2.3 polygon mode 与 blend 也动态化（里程碑 C 已落地）
+
+这两项是 `ResolvedRenderState` 里最后两个"不是 core 状态"的东西，所以需要额外机制：
+
+- **不是任何核心版本的状态**：registry 里 `VK_DYNAMIC_STATE_POLYGON_MODE_EXT` / `..._COLOR_BLEND_ENABLE_EXT` /
+  `..._COLOR_BLEND_EQUATION_EXT` 只出现在扩展块里，**1.4 核心也没有收**（实测：`VK_VERSION_1_4` 的 require 块里
+  一个都没有）⇒ 抬版本到 1.4 对这两项零帮助，还是得启用 `VK_EXT_extended_dynamic_state3` 并要它的 feature 位。
+- ⚠️ **哪个 feature 位管 polygon mode 与 enum 的家不同**：enum 定义在 `VK_EXT_extended_dynamic_state2` 块里
+  （所以 1.3 的提升注释是 "Feature struct and optional state are not promoted"），但**真正 gate 它的是
+  `extendedDynamicState3PolygonMode`**。我按 enum 的家申请了 `extendedDynamicState2`，syncval 门禁立刻报
+  **120 条 VUID**（`VUID-VkGraphicsPipelineCreateInfo-extendedDynamicState3PolygonMode-07372` +
+  `VUID-vkCmdSetPolygonModeEXT-None-09423`，报文原话点名要 EDS3 的那个位）⇒ 改成申请 EDS3 的三个位 + 只启用
+  EDS3 扩展后归零。
+- **入口符号仍然不导出**：这三个命令是这一层唯一不能按名字调的（loader 只导出 core 提升名）。做法 =
+  `DynamicStateEntryPoints`（三个函数指针 + `complete()`）+ `detail::fetchDynamicStateEntryPoints(device)`
+  （走 `vsg::Device::getProcAddr`），**每 device 取一次、随命令携带**（值语义，不搞全局表：指针属于一个 device）；
+  桥通过新增的 `SceneBridge::setDynamicStateEntryPoints()` 在 `setupContentSlot` 里注入（与 `setTextureAnisotropy`
+  同一处、同一理由：一个桥自己不知道的 device 事实）。没注入的桥（设备无关测试）不调用、不崩。
+- **管线烘焙常量、值逐 drawable 交付**：`makePipelineStateObjects()` 把 polygonMode 折成 `kBakedPolygonMode`、
+  blend 折成"每附件一个 opaque 常量项"（**数量必须等于 subpass 的颜色附件数**，`renderPass-07609`）；命令携带
+  resolved 值（blend 是数组，`kMaxDynamicAttachments = 8`，超出部分保持常量——反正常量不决定任何东西）。
+- **按值共享仍然成立**：命令的 `compare()` 覆盖全部 9 项 + 每附件 blend 项 + 三个入口指针（指针按**地址**比较——
+  对函数指针做有序比较不是语言定义的行为，clang 会警告）。
+- **判据**：证据 30 帧与改动前**逐字节相同**（只差漂移计数）、0 FAIL；`test_vsg` **321**、`test_graphics` 275、
+  syncval **0/0/0**；两次变异各自证明生效：发出的 polygon mode 强制 `LINE`（烘焙值 FILL）⇒ **45** 条 FAIL（整场景
+  变线框 ⇒ 同时证明 `vkCmdSetPolygonModeEXT` 真的被调到）；发出的 `blendEnable` 强制关 ⇒ 不透明度相位 **3** 条
+  FAIL（"opacity did not reach the framebuffer through the blend equation"）。
 
 ## 3. 机制
 

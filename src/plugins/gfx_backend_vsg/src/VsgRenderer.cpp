@@ -324,6 +324,42 @@ class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer> {
     // this out does not degrade to isotropic filtering — it fails.
     traits->deviceFeatures->get().samplerAnisotropy = VK_TRUE;
     // TEMP PROBE 2: enable the two extensions whose dynamic-state features the layer would need.
+    traits->deviceExtensionNames.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+    traits->deviceFeatures->get<VkPhysicalDeviceExtendedDynamicState3FeaturesEXT,
+                                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT>()
+        .extendedDynamicState3PolygonMode = VK_TRUE;
+    traits->deviceFeatures->get<VkPhysicalDeviceExtendedDynamicState3FeaturesEXT,
+                                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT>()
+        .extendedDynamicState3ColorBlendEnable = VK_TRUE;
+    traits->deviceFeatures->get<VkPhysicalDeviceExtendedDynamicState3FeaturesEXT,
+                                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT>()
+        .extendedDynamicState3ColorBlendEquation = VK_TRUE;
+    // END TEMP PROBE 2
+    // The dynamic state layer needs ONE extension and three feature bits, because two of the states a
+    // StateNode can move are not core on ANY version (see VsgDynamicState.hpp): the colour blend
+    // enable/equation and the polygon mode all belong to VK_EXT_extended_dynamic_state3, which was never
+    // promoted — not even into 1.4 (checked in the registry: those three VkDynamicState names appear only
+    // inside extension blocks, and the 1.4 core block does not name them).
+    //
+    // ⚠ WHICH feature bit controls polygon mode is not what the enum's home suggests: the state is DEFINED
+    // in the VK_EXT_extended_dynamic_state2 block, which is why the 1.3 promotion note says "Feature struct
+    // and optional state are not promoted", but the bit that gates it is
+    // extendedDynamicState3PolygonMode — the validator says so by name
+    // (VUID-VkGraphicsPipelineCreateInfo-extendedDynamicState3PolygonMode-07372 and
+    // VUID-vkCmdSetPolygonModeEXT-None-09423) and requesting extendedDynamicState2 instead leaves both
+    // firing on every pipeline and every draw. So the extension enabled and the bits requested are EDS3's,
+    // unconditionally, the way the optional core-1.0 features above are: a device that cannot deliver the
+    // state the engine configures is refused when the device is created rather than served on the constants
+    // the pipelines bake.
+    //
+    // The four states that need none of this — depth test / write / compare, cull mode, front face and
+    // primitive topology — are core 1.3 with no feature bit to enable, because VK_EXT_extended_dynamic_state
+    // was promoted WITHOUT its feature struct (no member for it exists in any core features struct, so
+    // writing one does not compile); the version floor covers them.
+    //
+    // The three COMMANDS that go with these extensions are the ones the loader does not export, so the
+    // backend reaches them through pointers fetched from the device (see DynamicStateEntryPoints) rather
+    // than by name.
     traits->deviceExtensionNames.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME);
     traits->deviceExtensionNames.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
     traits->deviceFeatures->get<VkPhysicalDeviceExtendedDynamicState2FeaturesEXT,
@@ -335,17 +371,6 @@ class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer> {
     traits->deviceFeatures->get<VkPhysicalDeviceExtendedDynamicState3FeaturesEXT,
                                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT>()
         .extendedDynamicState3ColorBlendEquation = VK_TRUE;
-    // END TEMP PROBE 2
-    // Nothing at all is requested for the dynamic state layer (see VsgDynamicState.hpp): the four states it
-    // delivers — depth test / write / compare, cull mode, front face, primitive topology — are core 1.3 with
-    // no feature bit to enable, because VK_EXT_extended_dynamic_state was promoted to 1.3 WITHOUT its
-    // feature struct (the registry says "Not promoted to 1.3" on it, and VkPhysicalDeviceVulkan13Features
-    // has no member for it — writing one does not compile). What backs them is the 1.3 floor this backend
-    // refuses to run below (detail::kRequiredVulkanVersion). The two ResolvedRenderState items that are NOT
-    // core-1.3 state — polygon mode and the colour blend enable/factors — would each need an optional
-    // feature bit, the extension enabled here, and a function pointer fetched with vkGetDeviceProcAddr
-    // (their entry points are extension-only, so the loader exports no symbol for them and a direct call
-    // fails to link on Linux); they stay baked in the pipeline instead.
 
     if (host_handle != nullptr) {
 #ifdef _WIN32
@@ -495,7 +520,7 @@ bool VsgRenderer::initialize()
     // pipeline compiled against it, were kept".
     ++persistent.window_build_count;
 
-    // The session's floor: Vulkan 1.3 (see detail::kRequiredVulkanVersion). Checked HERE -- right after the
+    // The session's floor: Vulkan 1.4 (see detail::kRequiredVulkanVersion). Checked HERE -- right after the
     // device exists, and before anything session-scoped is created -- and refused with the two versions in
     // the message, because a device below the floor is not "slower" or "missing an optimisation": the
     // backend is allowed to rely on core-1.3 behaviour, so serving a 1.2 device would be a contract nobody

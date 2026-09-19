@@ -339,6 +339,20 @@ class V_VSG_API SceneBridge {
      */
     void setTextureAnisotropy(float device_limit);
 
+    /** @brief Gives the bridge the extension entry points its dynamic-state commands call through.
+     *
+     * The three calls that need them (see detail::DynamicStateEntryPoints) cannot be named directly — their
+     * entry points are the only ones the loader does not export — and the pointers belong to ONE device. So
+     * they are fetched from the device the session renders with and handed to the bridge here, the way the
+     * bridge is given its other session collaborators. A bridge that never gets them still builds and
+     * records; its commands skip those three calls (device-free tests, which never record), and a real
+     * session always sets them (a device without the two extensions is refused at device creation).
+     *
+     * @param entry_points Entry points fetched from the session's device (see
+     * detail::fetchDynamicStateEntryPoints).
+     */
+    void setDynamicStateEntryPoints(const detail::DynamicStateEntryPoints& entry_points);
+
     /** @brief Gets how many times the shared-objects table was pruned.
      *
      * A variant registered with the shared-objects cache is HELD by that table,
@@ -963,8 +977,7 @@ class V_VSG_API SceneBridge {
      * @param pipeline_layout The variant's pipeline layout (what a reuse binds the per-draw block with).
      */
     void cacheStateVariant(std::uint64_t hash_key, vine::raw_ptr<const vine::graphics::ShaderProgram> program,
-                           vine::raw_ptr<vine::graphics::Material> material,
-                           const vine::graphics::ResolvedRenderState& state, std::uint64_t layout,
+                           vine::raw_ptr<vine::graphics::Material> material, std::uint64_t layout,
                            const ::vsg::StateGroup& state_group, ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline_layout);
 
     /** @brief Builds (or rebuilds) the state wrapper around a data node.
@@ -1261,6 +1274,9 @@ class V_VSG_API SceneBridge {
     // (see setContentDepthMode); part of the retained state identity, so
     // changing it invalidates the state wrappers.
     vine::graphics::DepthMode content_depth_mode_ = vine::graphics::DepthMode::TestAndWrite;
+    // The session device's entry points for the three extension-backed dynamic-state calls (see
+    // setDynamicStateEntryPoints): every command this bridge builds carries a copy.
+    detail::DynamicStateEntryPoints dynamic_state_entry_points_;
     // Shares layout / pipeline / descriptor-set content across every geometry
     // this bridge builds: GraphicsPipelineConfigurator::copyTo() deduplicates
     // through SharedObjects (content equality), so geometry that resolves to

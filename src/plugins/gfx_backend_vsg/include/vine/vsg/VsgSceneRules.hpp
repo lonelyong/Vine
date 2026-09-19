@@ -556,29 +556,14 @@ template <class ChannelRange> std::uint64_t vertexLayoutHash(const ChannelRange&
  * @param material Bound material (may be null).
  * @param texture_resource Identity of the backend resource @p material's texture resolved to, or null
  *                 when it resolved to the shared white fallback.
- * @param state    Resolved render state the pipeline honours.
+ * @param state    Resolved render state this drawable resolved to. NOT mixed into the key (see the
+ *                 implementation): the state is delivered per drawable, so it is not a variant dimension.
  * @param layout   Hash of the geometry's forwarded custom channels (see vertexLayoutHash).
  * @return The content hash used as the variant cache key.
  */
 std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program, const vine::graphics::Material* material,
                                const void* texture_resource,
                                const vine::graphics::ResolvedRenderState& state, std::uint64_t layout);
-
-/**
- * @brief Whether two resolved states are the SAME variant (see hashStateVariant).
- *
- * A variant is what a pipeline and its shared commands are built from, so this answers exactly the question
- * the hash key answers: the two items that are still pipeline state (colour blend, polygon mode) are equal.
- * Depth, culling, front face and topology are delivered per drawable (see VsgDynamicState.hpp), so states
- * that differ only in them ARE the same variant — the cache lookup uses this after a hash hit, and a hash
- * collision between genuinely different variants is rejected here.
- *
- * @param lhs One resolved state.
- * @param rhs The other resolved state.
- * @return true when both belong to the same variant.
- */
-[[nodiscard]] bool sameVariantIdentity(const vine::graphics::ResolvedRenderState& lhs,
-                                       const vine::graphics::ResolvedRenderState& rhs) noexcept;
 
 /**
  * @brief How many colour attachments the slot's shader set declares.

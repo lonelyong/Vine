@@ -188,13 +188,21 @@ vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewpo
 /**
  * @brief The oldest Vulkan version a session may run on.
  *
- * A FLOOR, not a preference: the backend is allowed to rely on the core-1.3 features it names as it needs
- * them (extended dynamic state; dynamic rendering when the layer lands). A device below it is REFUSED with
- * a reason rather than served on the subset of the contract that happens to work — the same rule this
- * backend follows for every other capability it cannot honour (see VsgRenderer::initialize), and the reason
- * a version check exists at all rather than being left to a driver to fail later on a feature.
+ * A FLOOR, not a preference: the backend is allowed to rely on core-1.4 behaviour where that is the
+ * simplest thing to do, and the states it delivers dynamically are the core ones it names (extended dynamic
+ * state, §2.2 of the pipeline-sharing design). A device below it is REFUSED with a reason rather than served
+ * on the subset of the contract that happens to work — the same rule this backend follows for every other
+ * capability it cannot honour (see VsgRenderer::initialize), and the reason a version check exists at all
+ * rather than being left to a driver to fail later on a feature.
+ *
+ * 1.4 rather than 1.3 is a POLICY choice, not a requirement of the state layer: the four core states it
+ * delivers are 1.3 (and the two extension-backed ones it gained later need their extensions and feature
+ * bits on any version — see VsgDynamicState.hpp, which is where that boundary is written down). What the
+ * floor buys is the freedom to use 1.4 core interfaces (dynamic rendering's local read, maintenance5/6,
+ * host image copy) without a second check, and it costs nothing on this backend's targets: both the
+ * desktop driver and the software rasteriser it is developed against report 1.4.
  */
-inline constexpr std::uint32_t kRequiredVulkanVersion = VK_API_VERSION_1_3;
+inline constexpr std::uint32_t kRequiredVulkanVersion = VK_API_VERSION_1_4;
 
 /**
  * @brief Whether @p api_version (a device's VkPhysicalDeviceProperties::apiVersion) may host a session.

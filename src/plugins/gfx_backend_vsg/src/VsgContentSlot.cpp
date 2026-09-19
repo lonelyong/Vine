@@ -131,6 +131,13 @@ void setupContentSlot(VsgRendererState& state, VsgRendererPersistent& persistent
         if (physical != nullptr) {
             content.bridge.setTextureAnisotropy(physical->getProperties().limits.maxSamplerAnisotropy);
         }
+        // The dynamic-state layer's three extension-backed calls are the only ones this backend cannot make
+        // by name (see DynamicStateEntryPoints), and the pointers belong to the session's device — so they
+        // are fetched from it here, next to the anisotropy limit, for the same reason: a device fact the
+        // bridge cannot know.
+        if (auto device = state.window->getOrCreateDevice()) {
+            content.bridge.setDynamicStateEntryPoints(detail::fetchDynamicStateEntryPoints(*device));
+        }
     }
     // The graph this pass records into: the window session's single swapchain
     // graph, or an off-screen graph created for THIS pass from its own clear

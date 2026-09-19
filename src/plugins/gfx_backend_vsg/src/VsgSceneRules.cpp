@@ -471,25 +471,13 @@ std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program, con
     // images never share a descriptor bind.
     mix_ptr(texture_resource);
     h = hashCombine(h, layout);
-    // What is left of the resolved state in the identity: the two items that are still PIPELINE state —
-    // the colour blend and the polygon mode (see VsgDynamicState.hpp for why those two are not delivered
-    // dynamically). Depth, culling, front face and topology are deliberately NOT mixed in: they are
-    // delivered per drawable, so two drawables that differ only in them must share one variant (and one
-    // VkPipeline), which is the whole point of the layer.
-    h = hashCombine(h, static_cast<std::uint64_t>(state.blend.enabled));
-    h = hashCombine(h, static_cast<std::uint64_t>(state.blend.src));
-    h = hashCombine(h, static_cast<std::uint64_t>(state.blend.dst));
-    h = hashCombine(h, static_cast<std::uint64_t>(state.polygonMode));
+    // NO part of the resolved state is mixed in: every item of it is delivered per drawable now (see
+    // VsgDynamicState.hpp), so the state a drawable resolves to must not move it between variants — one
+    // pipeline serves them all, which is the whole point of the layer. What is left is what a pipeline is
+    // really a function of: the program (and its revision), the material, the bound texture resource and the
+    // geometry's vertex layout.
+    (void)state;
     return h;
-}
-
-bool sameVariantIdentity(const vine::graphics::ResolvedRenderState& lhs,
-                         const vine::graphics::ResolvedRenderState& rhs) noexcept
-{
-    // The same two items hashStateVariant mixes in — one rule, two consumers: the hash decides WHICH bucket a
-    // drawable lands in, this decides whether an entry in it really is the variant (a hash collision must be
-    // rejected, and a state that only differs in a delivered item must NOT be).
-    return lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode;
 }
 
 int colourAttachmentCount(const ::vsg::ref_ptr<::vsg::ShaderSet>& shader_set)
