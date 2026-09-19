@@ -890,6 +890,11 @@ void VsgRenderer::settleSubmittedFrame(FrameCommit commit)
             if (pass.second.transient && pass.second.graph != nullptr && pass.second.render_pass != nullptr) {
                 pass.second.graph->renderPass = pass.second.render_pass;
                 pass.second.transient         = false;
+                // The ONE-FRAME variant is what the frame just submitted recorded, so it goes through the
+                // ring like every other replaced render pass instead of staying reachable from here until
+                // the pass is rebuilt — which, for a pass that has reached its steady state, is never.
+                state.retireRing.park(pass.second.render_pass_transient);
+                pass.second.render_pass_transient = {};
             }
         }
     }

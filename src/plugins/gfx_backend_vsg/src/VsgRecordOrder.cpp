@@ -25,7 +25,18 @@ void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan)
     // execute that pass' load-ops every frame with NO content — a disabled clearing
     // pass would go on clearing a target the active passes just drew into, which is
     // the opposite of retiring it (see retireInactivePassSlots).
-    const auto pass_records = [](const VsgRenderTargetEntry& owner, const SlotKey& key) {
+    const auto pass_records = [](const VsgRenderTargetEntry& owner, const SlotKey& key,
+                                 const VsgRenderTargetEntry::PassObjects& objects) {
+        // A pass the target was RESIZED out from under must not record. Its framebuffer names the views
+        // of the images that resize replaced, and the rebuild that re-plans it has not run (an in-place
+        // resize bumps the target's attachments_generation and every variant built against the old one
+        // is sent back through the plan — see VsgTargetBookkeeping). Recording it would draw into images
+        // the retire ring is about to release and then name destroyed views, with no validation error
+        // while they are still alive. Skipping it for THIS frame keeps the images and the objects that
+        // name them on one generation; the pass' next build re-plans it.
+        if (objects.attachments_generation != owner.attachments_generation) {
+            return false;
+        }
         if (const auto it = owner.content_slots.find(key); it != owner.content_slots.end()) {
             return !it->second.detached;
         }
@@ -60,14 +71,14 @@ void fillRecordPlan(const VsgRendererState& state, RecordPlan& plan)
                 continue;
             }
             for (const auto& pass : entry.second.passes) {
-                if (pass.second.graph == child && pass_records(entry.second, pass.first)) {
+                if (pass.second.graph == child && pass_records(entry.second, pass.first, pass.second)) {
                     graphs.push_back(pass.second.graph);
                     break;
                 }
             }
         }
         for (const auto& pass : entry.second.passes) {
-            if (pass.second.graph != nullptr && pass_records(entry.second, pass.first) &&
+            if (pass.second.graph != nullptr && pass_records(entry.second, pass.first, pass.second) &&
                 std::find(graphs.begin(), graphs.end(), pass.second.graph) == graphs.end()) {
                 graphs.push_back(pass.second.graph);
             }
@@ -184,6 +195,12 @@ void applyRecordPlan(VsgRendererState& state, const RecordPlan& plan)
         // After the LAST pass graph of a target whose depth another target borrows,
         // insert that borrower's depth-share barrier so its LOAD / depth test sees
         // this target's writes (both share one depth image in the attachment layout).
+        //
+        // A borrower whose source records NOTHING this frame (all of its passes retired) is deliberately
+        // left alone: the barrier has no writes to order, and the image still holds what the source last
+        // wrote, which is the only self-consistent content available — nobody wrote it this frame, so
+        // there is no race, only content that stopped advancing while the producer is off. Refusing the
+        // borrow here would drop a pass whose host disabled the producer on purpose.
         for (const auto& entry : state.targets) {
             const auto& other = entry.second;
             if (other.depth_source == t && other.depth_share_barrier != nullptr) {
