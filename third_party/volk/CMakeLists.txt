@@ -30,8 +30,7 @@
 #    load the table" from a null-pointer call into a compile error.
 #
 # The remaining options upstream offers (VOLK_PULL_IN_VULKAN, VOLK_STATIC_DEFINES,
-# VOLK_HEADERS_ONLY) are left at their defaults: Vulkan headers come from the system /
-# vsg as everywhere else in this tree.
+# VOLK_HEADERS_ONLY) are left at their defaults.
 add_library(volk STATIC volk.c volk.h)
 add_library(tp::volk ALIAS volk)
 
@@ -52,6 +51,14 @@ set_source_files_properties(volk.c PROPERTIES LANGUAGE CXX)
 target_include_directories(volk PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
 )
+
+# Vulkan headers: volk.c includes <volk.h>, which includes <vulkan/vk_platform.h>. On Linux those headers sit in the
+# default include path, which is why this target used to need nothing; Windows has no such directory - they exist only
+# inside the SDK (%VULKAN_SDK%\include) - and volk.c then fails with "cannot open include file:
+# vulkan/vk_platform.h" while every other target in the tree gets them through the Vulkan package. Linking the
+# interface target FindVulkan provides puts the same directory on this target's include path.
+find_package(Vulkan REQUIRED)
+target_link_libraries(volk PUBLIC Vulkan::Headers)
 
 # volkInitialize() dlopens the loader itself (libvulkan.so.1 / vulkan-1.dll).
 if(NOT WIN32)
