@@ -57,11 +57,20 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
   插件**（等下去也不会变）；后端拒绝只是让 `init()` 返回 `false`，何时再试由宿主决定。
 - **没建立过的会话不被接管**：`handleUpdate()` 只在 `has_session == true`（宿主真的 attach 成功过）
   时才重新 attach；从没 attach 过的表面只等宿主的 `init()`。
-- **先 attach，再显示，后 present**：attach 只需要句柄+尺寸（不需要表面可见），所以表面一直隐藏到
-  后端绑上；present 要求窗口真的在屏幕上，判据用容器控件的 `isVisible()`（见“Qt 事实”）。
-- **句柄换了也一样“初始化好后才可见”**（用户 2026-09-19 要求）：`handleDestroyed()` 清掉
-  `surface_shown`（只清 flag，不动正在销毁的窗口）——新窗口随容器一起被 Qt show，但 `SurfaceWindow::showEvent`
-  按这个 flag 把它重新隐藏；后端绑上新句柄（`initializeBackend()` 成功）时才再显示。
+- **先 attach，不显示，首帧才显示**（2026-09-20 定稿）：attach 只需要句柄+尺寸（不需要表面可见），
+  present 要求窗口真的在屏幕上（判据用容器控件的 `isVisible()`，见“Qt 事实”）。**“显示”这件事归容器控件**：
+  `RenderControl` 把容器隐藏着，`initializeBackend()` 成功只到 `Attached`，等首帧 present 进表面、
+  `setState(Presenting)` 报到 `on_state_changed` 时容器才 `setVisible(true)`。规则的实质是
+  “**露出来 = 有东西可看**” —— 未 present 的原生窗口是一块洞（旧版在 attach 时就显示它，那 1 s 全靠启动框盖着），
+  而可见的容器会被 Qt 把它的矩形抹成透明（见“可见性规则归容器控件”），所以容器就是那个开关。
+  表面自己**从不**碰自己的可见性（Qt 文档：容器管嵌入窗口的几何与可见性）。
+- **句柄换了照样成立**：`handleDestroyed()` 只把状态打回 `Pending`；新窗口随容器一起被 Qt 收进来，
+  而容器因为状态不再是 `Presenting` 而被控件重新隐藏，新窗口里落下第一帧后才再显示。
+- **预热帧**（2026-09-20）：attach 成功时控件还不在屏上（启动框还盖着）就渲一帧把设备/管线开销付掉。
+- **“表面能画了”是三个事件报的，不是定时器**（2026-09-20）：容器的 show（`eventFilter` 的
+  `QEvent::Show` 里 `scheduleUpdate()`）、容器的 resize（`handleResized()`）、平台窗口重建（`noteSurfaceUsable()`）。
+  `init()` 里那串 `singleShot(150/400/900)` 的“布局可能还没稳”重试梯子已删 —— 和当年删 attach 的退避梯子
+  同一个理由：定时器是猜，事件是事实。
 - **状态跟着现实走**：`handleDestroyed()` 同时把状态打回 `Pending`——`Presenting` 的语义是“已经往可见
   表面出过帧”，窗口在换的时候不成立；重建后重新走一遍 `Pending → Attached → Presenting`（会话本身没变）。
   订阅 `stateChanged` 的宿主（占位图/缓存暂停之类）拿到的是真话。
@@ -69,13 +78,36 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
   `QWidget::createWindowContainer(surface, host)` 出来的容器；容器把 resize/show 报给表面（`installEventFilter`），因为 maximize 时嵌入窗口收不到自己的 resize。
 - 对外接口：`SurfaceState { Pending, Attached, Presenting, Failed }` + `state()` + `stateChanged` 信号
   + `failureReason()`。
-- **首帧与启动框**（2026-09-19）：`Attached` 之后的第一帧要等窗口系统把最终尺寸交给事件循环（布局几拍），
-  所以它必然落在 `finishStartup()` 之后 —— 那一刻窗口还不能露时，`GuiApplication::finishStartup()`
-  **不立刻关框**，而是订阅本类的 `stateChanged`、等 `Presenting`/`Failed`（`hasPresented()` 成立）才关，
-  另加 2000 ms 一次性定时器兜底；跑循环的是 `run()`，不是嵌套循环。实测（本机 xcb + lavapipe）：
-  `Attached` 后 21 ms 武装，首帧自身 ~180 ms（其间建 `shadow_map`/`gbuffer`/`composite` 与 3 个 program
-  slot），框与 `Presenting` 同毫秒关；Windows + RTX 4060 基准：等待 759 ms，框晚 2 ms 关。
-  见 `.ai/design/appfw-startup-splash.md`。
+- **可见性规则归容器控件**（2026-09-20，用户拍板）：`RenderControl` 把窗口容器**隐藏**着，直到 `stateChanged` 报到
+  `Presenting` 才显示它。理由是 Qt 的 window container 在每次 paint 里把自己的矩形用 `CompositionMode_Source`
+  抹成 `Qt::TRANSPARENT`（给内嵌原生窗口挖洞），所以：**可见的容器 + 还没帧 = 一块透到桌面后面的洞**
+  （给它 `setAutoFillBackground(true)` 也没用：先填的背景在同一趟里被抹掉）；**隐藏的容器则根本不被 paint** —— 
+  没洞，那一格就是主窗口自己的背景。原生子窗口在容器显示/隐藏时会跟着 Qt 一起变化（文档：容器管嵌入窗口的几何
+  与可见性，不要自己调 `show()/hide()`），所以 `SurfaceWindow` 不再管自己的可见性：`surface_shown` /
+  `setSurfaceShown()` / `handleShown()` / `showEvent()` 全删。
+- **首帧与启动框**（2026-09-20）：框架不再为“窗口能不能露”做任何等待 ——
+  `windowCanBeSeen()` / `deferStartupFrameClose()` / `closeStartupFrame()`（2026-09-19 那版）连同 2000 ms 定时器
+  全删了，`GuiApplication::finishStartup()` 无条件关框。让它成立的是本类的可见性规则（上一节）：容器藏着就不上屏，
+  所以窗口任何时候都可露，首帧之前那一格是**主窗口自己的背景** —— 不是洞，也不是“控件底色被画进去”：
+  早期版把容器 `setAutoFillBackground(true)` 当成机制写在这里，是错的（那个背景与洞在同一趟 paint 里被抹掉，
+  该调用已删）。
+- **首帧提前（prewarm）**（2026-09-20）：attach 成功时若控件还不在屏上（还停在启动框后面），
+  就按当时的表面尺寸渲染一帧（`prewarmFrame()`），把设备/管线/程序槽的一次性开销付在启动框还盖着的时候；
+  这一帧不发布、不上屏、不改状态。窗口上屏后的那一帧走**就地改尺寸**
+  （见 `vsg-target-resize-in-place.md`），所以预热的尺寸不是浪费。
+- **实测（本机 Windows + RTX 4060，2026-09-20）**：`Pending -> Attached` 在插件 `load()` 里，
+  紧随其后的预热帧 `build profile (frame): extent 320x320, targets 3, program slots 3 (132.1 ms: nodes 23.9,
+  view compiles 108.2, overlay glslang 4), total 142.3 ms`（2642 ms）→ 69 ms 后
+  `Startup frame going away: main window visible=true, active=true`（2711 ms）→ 392 ms 后
+  `Attached -> Presenting`，这一帧 `extent 200x60, target resizes 2 (0.4 ms), program slots 0, total 3.8 ms` →
+  随后稳定帧 `extent 752x480, target resizes 2 (0.2 ms), program slots 2 (40.7 ms), total 43.8 ms`。
+  对照旧版：框到 `Presenting` 759 ms（现 392 ms），窗口上屏后的首帧 183.6 ms（现 3.8 ms）。
+- **那一格是背景，不是洞**（2026-09-20，像素证据）：把一块品红全屏窗口放到主窗口正后方，再给主窗口
+  `PrintWindow`（`PW_RENDERFULLCONTENT`，截的是窗口自己的合成，与 z 序无关）：关框那一刻渲染区是主题背景色，
+  `Presenting` 之后同一区域是画面，品红一次都没露出来。
+  见 `.ai/design/appfw-startup-splash.md`（那里有一节专门算这笔账）。
+- `hasPresented()`：留在公开接口上（宿主问“画面出没出来”仍然合法），但它不再是“窗口能不能露”的前置条件 ——
+  控件不会把空的原生窗口留在屏幕上。
 - app_shell：`new RenderControl()` → `setCentralWidget()` → demo.install() → `init()`。
 
 ## 实测（本机 xcb + lavapipe，2026-09-18）
@@ -120,11 +152,12 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
 ## 测试
 
 `tests/test_gui/RenderControlTest.cpp`（8 例，假后端，无需 GPU）：没人调 `init()` 就一直 `Pending`
-（后端一次都没被碰过、表面不显示）、`init()` 后 attach 且表面才显示、`stateChanged` 的
-`Pending→Attached→Presenting` 序列且不重复、后端拒绝 ⇒ `init()` 返回 `false` 且**没有人在背后重试**、
-宿主再 `init()` 可恢复、没注册后端插件 ⇒ `Failed` + 原因、窗口未显示时先热起来但状态停在 `Attached`
-（不 present）、**平台窗口重建后控件自己跟过去**（新句柄被重新公告，宿主零调用；`stateChanged` 序列
-钐住 `Pending → Attached → Presenting`，即重建期间状态会退回 `Pending`）。
+（后端一次都没被碰过、表面不显示）、宿主上屏时一次 `init()` 就 attach **并在同一调用里出首帧**
+（`Presenting` + 表面这时才可见）、`stateChanged` 的 `Pending→Attached→Presenting` 序列且不重复、
+后端拒绝 ⇒ `init()` 返回 `false` 且**没有人在背后重试**、宿主再 `init()` 可恢复、没注册后端插件 ⇒ `Failed` + 原因、
+窗口未显示时先热起来但状态停在 `Attached` 且**表面不上屏**（`WarmsUpWhileInvisibleAndPutsTheSurfaceOnScreenWithItsFirstFrame`：
+`show()` 之后靠 show 事件自己把首帧做出来）、**平台窗口重建后控件自己跟过去**（新句柄被重新公告，宿主零调用；
+`stateChanged` 序列钐住 `Pending → Attached → Presenting`，即重建期间状态会退回 `Pending`）。
 
 ## 为什么没有更复杂的机制（曾实现过，已删）
 
@@ -160,7 +193,8 @@ render_control->init();                      // 设备 + 管线在这个同步�
 机器上这段应变成 `Pending -> Attached` 落在 `load()` 内。
 
 **测试**：`RenderControlTest.HostCanAttachRightAfterEmbeddingBeforeTheLayoutSettles`
-（嵌入后立刻 `init()` → 不等事件循环就 attach；布局落下后按真实尺寸重建并 `Presenting`）。
+（嵌入后立刻 `init()` → 不等事件循环就 attach；之后宿主改窗口尺寸，**没有定时器兜底**，靠容器 resize 事件
+把后端对齐到表面真实尺寸）。
 
 ## 已评估但未采纳
 

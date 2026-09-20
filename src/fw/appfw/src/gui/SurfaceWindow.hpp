@@ -13,7 +13,6 @@ class QKeyEvent;
 class QMouseEvent;
 class QObject;
 class QResizeEvent;
-class QShowEvent;
 class QWheelEvent;
 class QWidget;
 
@@ -40,7 +39,9 @@ V_APPFWGUI_NS_BEGIN
  *
  * The host gives the timing, the surface maintains the session: nothing is attached until
  * RenderControl::init() asks for it, and an established session follows a platform window Qt
- * destroyed and recreated on its own.
+ * destroyed and recreated on its own. The surface does NOT manage its own visibility: the widget
+ * that holds it (the control's window container) is what the host sees, and RenderControl shows it
+ * exactly when a frame is in the surface.
  *
  * @note This is a private header: the class is an implementation detail of RenderControl and is
  * not installed. The lifecycle lines it logs keep the "[RenderControl]" tag - the surface is that
@@ -53,11 +54,12 @@ class SurfaceWindow : public QWindow {
 
   public:
     /**
-     * @brief Creates a hidden surface and the engine and view that render into it.
+     * @brief Creates the surface and the engine and view that render into it.
      *
      * @param host Widget the surface is embedded in. Asked whether the control is on screen, which
      *             the surface cannot answer for itself (its own flags report visible while the
-     *             hosting window is hidden); also the parent of the context menu.
+     *             hosting window is hidden); its show is reported here as the moment a frame became
+     *             possible, and it is the parent of the context menu.
      */
     explicit SurfaceWindow(QWidget* host);
     ~SurfaceWindow() override;
@@ -85,7 +87,8 @@ class SurfaceWindow : public QWindow {
      */
     bool init();
 
-    /** @brief Renders one frame through the engine. */
+    /** @brief Renders one frame through the engine. The first frame of a session is also what puts the surface
+     * on screen (it is hidden until then, see initializeBackend()). */
     void renderFrame();
 
     /** @brief Fits the whole scene into the view (falling back to the home view when the scene is
@@ -111,13 +114,15 @@ class SurfaceWindow : public QWindow {
     /// a surface without a listener simply keeps its own state.
     std::function<void(SurfaceState)> on_state_changed;
 
+    /// Fired when the platform refused to attach to a surface that is not on screen, so the control has to put
+    /// it on screen before the next attempt can work (see initializeBackend()).
+    std::function<void()> on_needs_visible_surface;
+
   protected:
     /** @brief Reports the platform-surface phases and the display-synced update ticks. */
     bool event(QEvent* event) override;
     /** @brief Reports a resize of the window itself. */
     void resizeEvent(QResizeEvent* event) override;
-    /** @brief Re-asserts the visibility rule after Qt showed the window. */
-    void showEvent(QShowEvent* event) override;
     /** @brief Reports a resize or a show of the hosting container widget. */
     bool eventFilter(QObject* watched, QEvent* event) override;
     /** @brief Reports a mouse button press. */
@@ -145,11 +150,9 @@ class SurfaceWindow : public QWindow {
     void handleResized(int width, int height);
     /** @brief Marks the native surface usable and schedules the update that follows it. */
     void noteSurfaceUsable();
-    /** @brief Handles native-surface destruction: marks the surface unusable and hides it until the
-     * backend is bound to the new one. */
+    /** @brief Handles native-surface destruction: marks the surface unusable and takes the state back to
+     * Pending, so the control stops showing an area that has nothing to show. */
     void handleDestroyed();
-    /** @brief Re-asserts the surface's visibility after Qt showed it with its container. */
-    void handleShown();
     /** @brief Coalesces and defers a surface update until after Qt's layout pass. */
     void scheduleUpdate();
     /** @brief Settles a deferred surface update: follows a recreated platform window onto its new
@@ -161,12 +164,24 @@ class SurfaceWindow : public QWindow {
     void requestSettleFrames();
     /** @brief Binds the backend to the live native surface (and re-announces a new handle). */
     void initializeBackend();
+    /** @brief Renders the frame that pays a session's one-time build cost, before the control is on screen.
+     *
+     * Called once per attach when the control is not on screen yet (the host calls init() from a plugin's load(),
+     * before the host has run a layout pass): the pass graphs, the program slots and the compiled pipelines are
+     * built here, at whatever size the platform window has at that moment, and the size change that follows is
+     * served in place (see the backend's resize path) - so the first frame the user can see costs a resize and a
+     * record instead of a from-scratch build.
+     *
+     * It publishes nothing and shows nothing: a frame that was not rendered for the size the surface has now is
+     * not something to put on screen, and only this class' state does that (see renderFrame()).
+     */
+    void prewarmFrame();
     /** @brief Picks the first registered render backend unless the host attached one. Idempotent. */
     void useDefaultBackend();
     /** @brief Publishes a lifecycle transition (silent when the state is unchanged). */
     void setState(SurfaceState next);
-    /** @brief Shows or hides the native surface (hidden until a frame can go into it). */
-    void setSurfaceShown(bool shown);
+    /** @brief Whether the control this surface belongs to is on screen (asked of the host widget). */
+    bool isOnScreen() const;
     /** @brief Records a permanent attach failure and publishes it. */
     void failAttach(String reason);
     /** @brief Pops up the view context menu at the cursor position. */

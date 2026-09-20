@@ -46,17 +46,12 @@ class V_APPFW_API GuiApplication : public Application {
      * goes, because a stay-on-top frame is shown without activating the process and the window would otherwise stay
      * under whatever was in front when it appeared.
      *
-     * The host calls it once its startup work is done, and that includes the work plugins do in load(). What may not be
-     * done is the window's ability to SHOW something: a render view attached during loading is up but still empty, and
-     * the frame a native surface gets the size of its window from the window system, which needs the event loop - so the
-     * first frame lands a moment after the boot work ends (~0.7-0.9 s measured, the device/swapchain/pipeline build
-     * included). The frame is what hides exactly that, so when the window is not ready to be uncovered the close is
-     * DEFERRED to the render view's own report and happens inside the event loop that produced it (run()'s), bounded by
-     * a deadline. An application without a render view, or with one that has already drawn, takes the immediate path it
-     * always did.
-     *
-     * The host does not observe the difference: `finishStartup()` still means "the boot work is over", and a frame that
-     * outlives the call is the window still coming up, not a host that forgot it.
+     * The host calls it once its startup work is done, and that includes the work plugins do in load(). What it may
+     * leave undone is the window's ability to show something: a render view attached during loading has its device and
+     * pipelines up but no frame yet, and the first frame lands a moment later, in the event loop run() owns. That gap
+     * is the render view's own business, not the frame's - the view keeps its native surface off screen until a frame
+     * is in it (see RenderControl), so the area it occupies shows the plain widget background until the picture
+     * arrives, and uncovering the window here can never reveal an empty native window.
      */
     void finishStartup() override;
 
@@ -136,15 +131,6 @@ class V_APPFW_API GuiApplication : public Application {
 
   private:
     void applyTheme(Theme theme);
-
-    /** @brief Whether the window has something to show: its render view has drawn a frame, or it has none. */
-    bool windowCanBeSeen() const;
-
-    /** @brief Closes the startup frame and brings the window it covered forward. Idempotent. */
-    void closeStartupFrame();
-
-    /** @brief Arms the one-shot close that follows the render view's own report (see finishStartup()). */
-    void deferStartupFrameClose();
 };
 
 V_APPFWGUI_NS_END

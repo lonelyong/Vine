@@ -55,8 +55,8 @@
   `new` + `setCentralWidget()` + `demo.install()` 之后立刻调一次。**已建立的会话自己维护**：Qt 重建
   平台窗口（换屏/reparent/拖 dock）后新句柄由控件自己重新公告、自己重新显示，宿主零调用；重建期间
   状态退回 `Pending` 再走 `Attached → Presenting`（`Presenting` 只在真的往可见表面出过帧时成立）。
-  表面**隐藏到后端绑上为止**，句柄换了也一样（`handleDestroyed()` 清 `surface_shown`，`SurfaceWindow::showEvent`
-  重新隐藏）。**2026-09-19 拆分**：会话逻辑全在私有 `SurfaceWindow`（`src/gui/SurfaceWindow.hpp/.cpp`），
+  表面**由控件持有的容器控制可见性**（容器藏着直到首帧 present，句柄换了也重新藏，`handleDestroyed()`
+  只把状态打回 `Pending`）。**2026-09-19 拆分**：会话逻辑全在私有 `SurfaceWindow`（`src/gui/SurfaceWindow.hpp/.cpp`），
   `RenderControl` 只剩封装（嵌 surface + 转发公开 API，`stateChanged` 用 `on_state_changed` 回调中继），
   日志前缀仍是 `[RenderControl]`；公开 API 与用例不变，详见 `.ai/design/appfw-render-surface.md` 的“文件划分”。
   `setAutoInitialize`/重试阶梯/构造里的首触发已删；`Failed` 现在只有“没注册后端插件”一种来源。
@@ -88,19 +88,22 @@
 - ⚠️ **启动框关掉时要把主窗口 `raise()` + `activate()`**：`Qt::SplashScreen` 置顶且不激活进程地显示，
   Windows 的前台激活名额被它占掉，随后 show() 的主窗口就压在终端/IDE 后面（看起来像“没显示出来”）。
   `finishStartup()` 只“确实有框”时做，那一刻会打一行 `main window visible=…, active=…` 供区分。
-- ⚠️ **框关掉时窗口必须已经能画**（2026-09-19 改，关框推迟到渲染视图出帧）：`SplashConfig::wait_for_first_frame`
-  仍是删掉的（按固定时长 = 猜），但有界、信号驱动的等待归框架 —— `finishStartup()` 只在主窗口的
-  `primaryRenderControl()` 已经 `hasPresented()`（或没有视图）时立刻关框，否则**订阅 `stateChanged`**、
-  等 `Presenting`/`Failed` 才关，另加 2000 ms 一次性 `QTimer` 兜底（到点 warning 后照旧关框）。
-  **不是嵌套事件循环**：跑循环的是 `run()`（`GuiApplication.cpp` 的 `windowCanBeSeen` /
-  `deferStartupFrameClose` / `closeStartupFrame` 三个私有方法就是这条路径）。框全程不动。实测（本机 xcb +
-  lavapipe）：`Attached` 后 21 ms 武装推迟，首帧建 `shadow_map`/`gbuffer`/`composite` 与 3 个 program slot
-  花 ~180 ms，框与 `Presenting` 同毫秒关（Windows + RTX 4060 基准：等待 759 ms，框晚 2 ms 关；
-  修前：框先关，756–903 ms 渲染区空着）。`Pending`（宿主还没 attach）不等待。**“init 时把管线建好”不是替代品**：
-  `RenderControl::init()` 的预热建在退化尺寸上（实测 `pre-frame` 的 extent `100x30`），首帧仍要建
-  target/slot，真实尺寸更晚才到（`378x247` → `1178x479`）。契约不变：
-  **插件从 `load()` 返回即表示其子系统可用**，`finishStartup()` 仍是“宿主 + 插件的活都干完了”，
-  变的只是“框什么时候消失”。
+- ⚠️ **“框关掉时窗口必须已经能画”这条责任 2026-09-20 挪回渲染视图**：框架那套等待
+  （`windowCanBeSeen()` / `deferStartupFrameClose()` / `closeStartupFrame()` + 2000 ms 定时器）**已整个删除**
+  （`GuiApplicationData` 的两个字段、常量也一并删），`finishStartup()` 无条件关框。取代它的是 `RenderControl`
+  的规则：**窗口容器藏着，直到 `stateChanged` 报到 `Presenting`** —— 可见的容器会被 Qt 用
+  `CompositionMode_Source` + `Qt::TRANSPARENT` 抹成洞（嵌入窗口的洞），隐藏的容器不被 paint，所以那一格是
+  主窗口自己的背景；表面自己不再管可见性（`surface_shown`/`setSurfaceShown()`/`handleShown()`/`showEvent()`
+  全删，容器 `setAutoFillBackground(true)` 是错的机制、已删）。首帧提前：`initializeBackend()` 里控件不在屏上
+  就 `prewarmFrame()`（按当时尺寸渲一帧，付掉设备/管线开销，不发布），上屏后的首帧走就地改尺寸。
+  同时删掉 `init()` 里 `singleShot(150/400/900)` 的重试梯子：“表面现在能画了”由容器上屏
+  （`eventFilter` 的 `QEvent::Show` 补 `scheduleUpdate()`）/ 容器 resize / SurfaceCreated 三个事件上报。
+  实测（Windows + RTX 4060，2026-09-20）：`Pending -> Attached` 在 `load()` 里（2642 ms）→ 预热帧
+  `extent 320x320, targets 3, program slots 3, total 142.3 ms` → 69 ms 后关框（2711 ms）→ 392 ms 后
+  `Attached -> Presenting`，这一帧 `total 3.8 ms`（旧版 183.6 ms）→ 稳定帧 `extent 752x480, program slots 2,
+  total 43.8 ms`。**框到 Presenting：759 ms → 392 ms**。像素证据：品红窗口垫在主窗口背后 + `PrintWindow`
+  （与 z 序无关）—— 那一格是主题背景色，`Presenting` 后是画面，品红没露过。契约不变：
+  **插件从 `load()` 返回即表示其子系统可用**，`finishStartup()` 仍是“宿主 + 插件的活都干完了”。
 - ⚠️ **`ConsoleUserIO` 现带 `V_APPFW_API`**（类仍私有，头在 `src/`）：`test_gui` 直接构造它抽 stdout，
   不导出就 LNK2019（`6ec0e4d` 起 `test_gui` 一直链不上，2026-09-18 修）。
 - 命令不能在自身上 `cancelAllAndWait()`（必定失败，用例钉住）；要退出应用用 `Application::quit()`。

@@ -126,6 +126,11 @@ class HostedControl
 
     void show() { window_.show(); }
 
+    /// Resizes the window the control lives in (the layout then gives the surface the new area).
+    /// @param w New window width.
+    /// @param h New window height.
+    void resizeWindow(int w, int h) { window_.resize(w, h); }
+
     RenderControl* control() const { return control_; }
     StubBackend*   stub() const { return stub_; }
     QWindow*       surface() const { return surface_; }
@@ -151,14 +156,15 @@ TEST(RenderControlTest, NothingAttachesBeforeTheHostAsks)
     ASSERT_NE(host.surface(), nullptr);
     EXPECT_FALSE(host.surface()->isVisible()); // 还没绑上，表面就不该占屏幕
 
-    // 宿主给出时机：一次 init() 就 attach。
+    // 宿主给出时机：一次 init() 就 attach。控件已经在屏幕上，所以这一帧也在 init() 里落进表面。
     EXPECT_TRUE(pumpUntil([&] { return host.control()->init(); }, 3000));
     EXPECT_GT(host.stub()->initialize_calls, 0);
     EXPECT_NE(host.stub()->last_handle, nullptr);
     EXPECT_GT(host.stub()->width, 0);
     EXPECT_GT(host.stub()->height, 0);
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
 
-    // 表面只在后端绑上之后才显示：显示的窗口期不再是"一个还没画过东西的原生窗口"。
+    // 表面跟着首帧上屏：显示的窗口期里它一直是“有东西可看”的，不再是“一个还没画过东西的原生窗口”。
     ASSERT_NE(host.surface(), nullptr);
     EXPECT_TRUE(host.surface()->isVisible());
 }
@@ -228,8 +234,9 @@ TEST(RenderControlTest, ReportsFailedWhenNoRenderBackendIsRegistered)
     EXPECT_FALSE(host.control()->failureReason().empty());
 }
 
-// 窗口还没显示就能先把后端热起来（attach 只需要句柄+尺寸），但不会往还看不到的表面里 present。
-TEST(RenderControlTest, WarmsUpWhileInvisibleAndPresentsOnlyWhenShown)
+// 控件还没上屏就能先把后端热起来（attach 只需要句柄+尺寸），但表面一直不在屏幕上：
+// 本机推不动帧（推了也没人看得见），而没有帧的表面就是一块洞，不能露。
+TEST(RenderControlTest, WarmsUpWhileInvisibleAndPutsTheSurfaceOnScreenWithItsFirstFrame)
 {
     HostedControl host; // 布局好了，但窗口还没 show()
 
@@ -237,15 +244,17 @@ TEST(RenderControlTest, WarmsUpWhileInvisibleAndPresentsOnlyWhenShown)
 
     EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Attached); // 看不到 ⇒ 不到 Presenting
     EXPECT_GT(host.stub()->initialize_calls, 0);
-    // 注意：这里不能断言 surface->isVisible() 为假——attach 成功就会把"显示表面"的意图打开
-    // （Qt 因为顶层窗口没显示而不会真的映射它）；"还没有画出去"由状态停在 Attached 表达。
+    EXPECT_FALSE(host.surface()->isVisible()); // 没有帧就不上屏
 
+    // 上屏本身就是那个事件：窗口一显示，控件自己的 show 事件把首帧做出来，表面随之出现。
     host.show();
-    EXPECT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    EXPECT_TRUE(host.surface()->isVisible());
 }
 
 // 宿主把控件丢进窗口后可以立刻 init()：此刻表面的尺寸还是退化值，真实尺寸等布局下落，
-// 之后由 resize 路径把 swapchain 对齐过去。
+// 之后由 resize 路径把 swapchain 对齐过去 —— 没有任何定时器兜底，把这件事做成的是控件自己的事件
+// （控件的 show 与容器的 resize）。
 TEST(RenderControlTest, HostCanAttachRightAfterEmbeddingBeforeTheLayoutSettles)
 {
     HostedControl host; // 控件在布局里，但窗口还没 show()
@@ -257,9 +266,12 @@ TEST(RenderControlTest, HostCanAttachRightAfterEmbeddingBeforeTheLayoutSettles)
     EXPECT_NE(host.control()->state(), RenderControl::SurfaceState::Pending);
 
     // 布局落下后尺寸被对齐：swapchain 按真实尺寸重建，随后首帧呈现。
-    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
-    EXPECT_GT(host.stub()->resize_calls, 1);
+    host.resizeWindow(640, 480);
+    ASSERT_TRUE(pumpUntil([&] {
+        return host.stub()->width == host.surface()->width() && host.stub()->height == host.surface()->height();
+    }, 3000));
     EXPECT_GT(host.stub()->width, 1);
+    EXPECT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
 }
 
 // 平台窗口被重建（换屏 / reparent / 把 dock 拖出去）：控件的已建立会话自己把新句柄重新公告给
@@ -293,7 +305,7 @@ TEST(RenderControlTest, FollowsARecreatedSurfaceWithoutTheHost)
                && host.control()->state() == RenderControl::SurfaceState::Presenting;
     }, 3000));
     EXPECT_GT(host.stub()->handle_calls, handle_calls_before);
-    EXPECT_TRUE(surface->isVisible()); // 重新绑上之后才再显示
+    EXPECT_TRUE(surface->isVisible()); // 新窗口里重新落一帧之后才再上屏
 
     // 重建期间状态回到 Pending（窗口没了就不该声称"在出画面"），然后重新走一遍 Attached -> Presenting。
     ASSERT_EQ(seen.size(), 3u);

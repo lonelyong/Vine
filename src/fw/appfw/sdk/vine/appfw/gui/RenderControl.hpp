@@ -44,15 +44,18 @@ V_APPFWGUI_NS_BEGIN
  * reparent), the new handle is picked up and re-announced to the backend without
  * the host having to notice.
  *
- * The native surface stays HIDDEN until the backend is bound to it, and is hidden
- * again whenever the platform window goes away, so the host's layout shows the
- * container's own background in the meantime: an unpresented native window is a
- * hole that the compositor fills with whatever it likes, which is what used to
- * make the render area flicker transparent at startup. Attaching does not need
- * the surface to be shown (a window system that disagrees fails the attach, and
- * the control falls back to showing it first - see state()), so the surface
- * appears only once a frame can be put into it, and the whole path is observable
- * through state() / stateChanged.
+ * The area this control occupies shows render output exactly when a frame is in the surface: the widget that holds the
+ * surface stays HIDDEN until then, and a hidden widget is not painted at all. That is what makes the window hosting
+ * this control safe to uncover at any moment - an unpresented native window is a hole (and Qt's window container
+ * punches its own rectangle transparent for the native window it holds, so a VISIBLE container without a frame in it
+ * is a hole the desktop shows through, whatever a widget would paint there). What is in its place until the first
+ * frame is the window's own background, painted by the widgets around this control. Attaching does not need the
+ * surface to be visible (a window system that disagrees fails the attach, and the control falls back to showing the
+ * area first - see state()), and the first frame of a session is rendered while the area is still hidden: the host's
+ * init() called from a plugin's load() lands before the host has laid its widgets out, and that frame is a WARM-UP -
+ * it pays the one-time build (pass graphs, program slots, compiled pipelines) at whatever size the platform window
+ * has at that moment, and the size change that follows is served in place. The whole path is observable through
+ * state() / stateChanged.
  */
 class V_APPFW_API RenderControl : public Control {
     V_OBJECT_META_DECL;
@@ -71,9 +74,10 @@ class V_APPFW_API RenderControl : public Control {
         /// No usable native surface - not laid out yet, or a platform window that is being replaced -
         /// so nothing is attached to one. The first attach starts here, and a recreation returns here.
         Pending,
-        /// The backend is bound to a live surface, but nothing has reached the screen yet.
+        /// The backend is bound to a live surface, but nothing has reached the screen yet (the surface is off
+        /// screen until it has something to show - see the class comment).
         Attached,
-        /// A frame has been handed to a visible surface: the area shows render output.
+        /// A frame is in the surface and the surface is on screen from here on: the area shows render output.
         Presenting,
         /// The backend cannot come up at all (no render backend is registered); see failureReason().
         Failed,
@@ -152,11 +156,12 @@ class V_APPFW_API RenderControl : public Control {
     SurfaceState state() const;
 
     /**
-     * @brief Whether a frame has reached the screen, or never will.
+     * @brief Whether a frame is in the surface, or never will be.
      *
-     * The question a window that embeds this control asks before it lets itself be uncovered: until this is true
-     * the native surface is a hole in that window - the backend is up, but nothing has been drawn into it yet -
-     * which is what a startup frame covering the window is there to hide.
+     * This is also the answer to "is the area showing render output rather than the window's own background": true
+     * while state() is Presenting, and true once state() is Failed - a backend that cannot come up will not put a
+     * frame in the surface either, so a host waiting for a picture is done waiting. Nothing has to wait for it to
+     * uncover a window: this control never leaves an empty native window on screen.
      *
      * @return true while state() is Presenting or Failed.
      */

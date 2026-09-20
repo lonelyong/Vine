@@ -103,44 +103,42 @@ app->run()                      → 主循环
 - 诊断行（那一刻打）：`Startup frame going away: main window visible=…, active=…`，
   用来把“被压在后面”（visible=true）与“根本没显示”（visible=false）分开。
 
-### 框关掉时窗口必须已经能画（2026-09-19：关框推迟到渲染视图出帧）
+### 框关掉时窗口必须已经能画（2026-09-20：这条责任挪回渲染视图，框架不再等）
 
-- 实测现象（保留作证据）：`finishStartup()` 那一刻 `main window visible=true, active=true`，但渲染区空白，
-  直到 `Attached -> Presenting after ~3300 ms`。差的那 ~0.7–0.9 s 不是“渲染后端初始化慢”，而是**首帧的时机**：
-  原生窗口的最终尺寸来自窗口系统（要事件循环），所以 `Attached` 之后的第一帧只能落在事件循环跑起来之后，
-  而 `finishStartup()` 比它早 —— 框关在了还没画的那一瞬。
-- 一度在框架里加的是 `SplashConfig::wait_for_first_frame`（按**固定时长**等主渲染视图首帧），**仍然删掉**：
-  那是猜时长，也是把具体业务塞进框架。
-- **现在的机制**（`GuiApplication.cpp`（2026-09-19）：`windowCanBeSeen()` / `deferStartupFrameClose()` /
-  `closeStartupFrame()` 三个私有方法就是这条路径）：`finishStartup()` 只在“窗口已经能露”时才立刻关框，
-  判据是 `windowCanBeSeen()` —— 主窗口没有主渲染视图（`MainWindow::primaryRenderControl()` 为 `nullptr`），
-  或该视图 `hasPresented()`（`Presenting`/`Failed`）。还不能露时走推迟：订阅 `RenderControl::stateChanged`，
-  由视图自己的上报（`Presenting`/`Failed`）触发关框；另加一个 `kSurfaceWaitMs = 2000 ms` 的一次性 `QTimer`
-  兜底 —— 一个什么都不报的视图不能把框永远举着，到点 warning 后照旧关框（永远举着框比露一块空区更糟）。
-  **没有嵌套事件循环**：跑循环的是 `run()`，等待方不在里面插一脚（启动期重入其它组件的事件是另一类坑，
-  见上面“重绘用 `repaint()`”一条）。框全程不动，只是结束在“有东西可露出来”的那一刻。
-  三条日志：武装时 `the startup frame stays up until the render view shows a frame (or 2000 ms pass)`，
-  关框时 `Startup frame going away: main window visible=…, active=…`，到点仍未上屏则
-  `the render view has not shown a frame after 2000 ms: closing the startup frame anyway`。
-- **“init 时把管线建好”不能替代这次等待**（2026-09-19 复核）：`RenderControl::init()` 确实在插件的 `load()` 里
-  就 attach，并让 `RenderEngine::initialize()` 预热（主内容在 `backend_->initialize()` 里编译，随后每个
-  enabled、不清屏的 pass 跑一遍，见 `RenderEngine.cpp:118` 的注释），但：
-  1) 预热建在**退化尺寸**上（首帧冲出来的 `build profile (pre-frame)` 实测 extent 只有 `100x30`）；
-  2) `Attached` 的语义只是“后端绑上了”，**一帧都没提交**，而首帧只能由事件循环提交（最终尺寸与曝光都来自
-     窗口系统）⇒ target / pass graph / program slot 仍是在首帧里建的，真实尺寸更是首帧之后才到（见下面实测）。
+- 实测现象（保留作证据，2026-09-19）：`finishStartup()` 那一刻 `main window visible=true, active=true`，
+  但渲染区空白，直到 `Attached -> Presenting after ~3300 ms`。差的那 ~0.7–0.9 s 不是“渲染后端初始化慢”，
+  而是**首帧的时机**：`Attached` 的语义只是“后端绑上了”，一帧都没提交，而首帧要等事件循环把窗口推到屏幕上，
+  再按窗口系统的最终尺寸建图和提交。
+- 框架一度为此等待（`windowCanBeSeen()` / `deferStartupFrameClose()` / `closeStartupFrame()` + 2000 ms 一次性
+  定时器，2026-09-19，见 git 历史）。**2026-09-20 三个方法连同常量、订阅、定时器整个删掉**：
+  `finishStartup()` 现在无条件关框，框架不再知道“首帧什么时候到”。
+- **取代它的规则在渲染视图里：容器控件藏着，直到有帧落进去**（`RenderControl`，见 `appfw-render-surface.md`）。
+  未 present 的原生窗口是一块洞（合成器随便填），而 Qt 的 window container 在 paint 里把自己的矩形抹成透明
+  （`CompositionMode_Source` + `Qt::TRANSPARENT`），所以“可见的容器 + 还没有帧”就是一块洞；
+  隐藏的容器根本不被 paint，那一格于是是**主窗口自己的背景**。`RenderControl` 因此把容器隐藏着，
+  `stateChanged` 报到 `Presenting` 才显示它；表面自己的可见性不碰（容器管嵌入窗口的几何与可见性，
+  自己 `show()/hide()` 是 Qt 文档里不推荐的做法），`surface_shown` / `setSurfaceShown()` / `handleShown()` /
+  `showEvent()` 都删了。
+- **首帧提前：attach 时先预热一帧**（2026-09-20）。`SurfaceWindow::initializeBackend()` 成功后看控件在不在屏上：
+  不在（还停在启动框后面）就走 `prewarmFrame()` —— 按当时的表面尺寸（实测 320x320，布局还没跑）
+  渲染一帧，把设备与管线的一次性开销付掉，不发布、不上屏、不改状态。窗口上屏后的第一帧由此变成**就地改尺寸**
+  的一帧（`target resizes 2`、`program slots 0`），不再重付那 183.6 ms。
+- 顺带把首帧的时机本身改成事件驱动（2026-09-20）：`init()` 里那串 `singleShot(150/400/900)` 重试梯子删了，
+  “表面现在能画了”由三个事件报告 —— 容器的 show（`eventFilter` 的 `QEvent::Show` 里补 `scheduleUpdate()`）、
+  容器的 resize、平台窗口重建（SurfaceCreated）。
+- **实测（本机 Windows + RTX 4060，2026-09-20）**：`Pending -> Attached` 在插件 `load()` 里（2642 ms），
+  预热帧 `build profile (frame): extent 320x320, targets 3, program slots 3, total 142.3 ms` → 69 ms 后
+  `Startup frame going away: main window visible=true, active=true`（2711 ms，框立刻走，没有武装、没有等待）
+  → 392 ms 后 `Attached -> Presenting`，这一帧 `total 3.8 ms`（旧版同一帧 183.6 ms，因为那一帧是拿窗口最终
+  尺寸冷建的）；稳定帧 `extent 752x480, target resizes 2 (0.2 ms), program slots 2 (40.7 ms), total 43.8 ms`。
+- **这一格是背景而不是洞**（2026-09-20，像素证据）：品红全屏窗口垫在主窗口背后 + `PrintWindow`
+  （`PW_RENDERFULLCONTENT`，截的是窗口自己的合成，与 z 序无关）：关框那一刻渲染区是主题背景色，
+  `Presenting` 后同一区域是画面，品红一次都没露过。旧版这里写成“露出来的是控件底色
+  （容器 `setAutoFillBackground(true)`）”，机制说错了：那个背景和洞在同一趟 paint 里被抹掉。
+  渲染器一侧的完整链条见 `appfw-render-surface.md`。
 - **契约没变的部分**：**插件从 `load()` 返回就表示它的子系统已经可用**；`finishStartup()` 仍是
-  “宿主自己的活 + 所有插件的活都干完了”。变的只是“框什么时候消失”：它等的是**窗口**（框架拥有它），
-  不是插件的子系统（那仍是插件自己的责任）；`Pending`（宿主还没让它 attach）不等待。
-- 不放在插件里的原因：`load()` 跑在 `loadAll()` 中段，在那儿等会拖住**其它插件**的加载与进度上报。
-- **实测（本机 Windows + RTX 4060，2026-09-19）**：`Pending -> Attached after 2281 ms` → 首帧的图在 **752x480**
-  上只建一次 → `Attached -> Presenting after 3282 ms` → 框比 `Presenting` 晚 2 ms 关（从武装到关 759 ms）。
-  修前同一段：框先关，756–903 ms 后首帧才上屏。
-- **实测（本机 xcb + lavapipe，2026-09-19）**：`Pending -> Attached after 1783 ms`（+`surface shown`）→ 21 ms
-  后 `finishStartup()` 武装推迟（那一刻仍是 `Attached`）→ 首帧在 `run()` 的循环里建
-  `shadow_map 1024x1024`、`gbuffer`/`composite` `100x30` 与 3 个 program slot →
-  `Attached -> Presenting after 2005 ms`，框同一毫秒关。首帧自身 `build profile (frame)`：`rebind compiles 1`、
-  `program slots 2 (view compiles 9.5 ms)`；真实尺寸 27.148 ms 才到（`composite resized 100x30 -> 378x247`），
-  32.966 ms 还在变（→ `1178x479`）。删掉这次等待，露出来的就是这 ~180–220 ms 的空区。
+  “宿主自己的活 + 所有插件的活都干完了”。`Pending`（宿主还没让它 attach）与这条无关。
+- 不放在插件里的原因（当时）：`load()` 跑在 `loadAll()` 中段，在那儿等会拖住**其它插件**的加载与进度上报。
 
 ## 平台注意
 

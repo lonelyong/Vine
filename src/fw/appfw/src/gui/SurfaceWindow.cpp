@@ -9,7 +9,6 @@
 #include <QObject>
 #include <QPlatformSurfaceEvent>
 #include <QResizeEvent>
-#include <QShowEvent>
 #include <QSurface>
 #include <QTimer>
 #include <QWheelEvent>
@@ -258,14 +257,9 @@ struct SurfaceWindow::Impl {
     State state = State::Pending;
     // Why the state reached Failed (empty otherwise).
     String failure_reason;
-    // Whether the native surface is shown. It starts hidden: an unpresented native window is
-    // a hole the compositor fills with whatever it likes, and attaching does not need it to
-    // be visible.
-    bool surface_shown = false;
-    // Set when the platform refused to attach to a hidden surface (a window system that wants the
-    // surface configured first): from then on a failed attempt on a hidden surface shows the surface
-    // instead of leaving the area blank, and the log line about it is said once. This is the fallback
-    // the whole hidden-surface path exists to avoid.
+    // Set when the platform refused to attach to a surface that is not on screen (a window system that wants the
+    // surface configured first): the fallback asks the control to put it on screen, and the log line about it is
+    // said once. This is the fallback the whole hidden-surface path exists to avoid.
     bool needs_visible_surface = false;
     // Whether the "waiting for a usable surface" line was already logged.
     bool deferral_logged = false;
@@ -301,12 +295,10 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     // Vulkan surface: Qt does not composite a raster backing store over the render surface, so the
     // Vulkan content stays visible.
     setSurfaceType(QSurface::VulkanSurface);
-    // Starts hidden: an unpresented native window is a hole the compositor fills with whatever it
-    // likes. Attaching does not need it to be visible - what it needs is a created platform window
-    // with a real size, and the size follows the container's layout whether or not the window is
-    // shown (measured while hidden on both xcb and offscreen) - so the surface is shown again only
-    // once the backend is bound to it (see setSurfaceShown()).
-    setVisible(false);
+    // The surface does NOT manage its own visibility: it is embedded in a window container, and Qt's container
+    // owns the embedded window's visibility (it shows and hides it with itself - calling show()/hide() on an
+    // embedded window is documented as not recommended). RenderControl hides and shows the container, which is
+    // what keeps an unpresented native window (a hole the compositor fills with whatever it likes) off screen.
 
     d->created_at = std::chrono::steady_clock::now();
     d->engine     = vine::intrusive_ptr<vine::graphics::RenderEngine>(
@@ -439,16 +431,10 @@ bool SurfaceWindow::init()
             QTimer::singleShot(delay_ms, this, [this] { recreateSurface(); });
         }
     }
-    if (d->backend_live) {
-        // The host's init() can land before the dock layout has fully settled (app_shell calls it
-        // right after embedding the control), and Qt may still recreate the platform window right
-        // after. Re-check a few times so the backend ends up bound to and rendering at the live
-        // surface size; each check is a no-op when the surface is unchanged (handleUpdate
-        // deduplicates via the coalescing flag).
-        QTimer::singleShot(150, this, [this] { scheduleUpdate(); });
-        QTimer::singleShot(400, this, [this] { scheduleUpdate(); });
-        QTimer::singleShot(900, this, [this] { scheduleUpdate(); });
-    }
+    // Nothing is re-checked on a timer here: the surface is drawn into on the events that report a drawable
+    // surface - the container's show (see RenderControl), the container's resize (handleResized()) and the
+    // recreated platform window (noteSurfaceUsable()) - so the backend ends up at the live surface size
+    // without this class guessing when that is.
     return d->backend_live;
 }
 
@@ -519,16 +505,6 @@ void SurfaceWindow::handleKey(const vine::window::KeyEvent& event)
     renderFrame();
 }
 
-void SurfaceWindow::handleShown()
-{
-    // Qt shows the embedded QWindow together with its container, so a surface that is meant to stay
-    // hidden until the backend is bound has to be re-hidden here, after that show. Without it, adding
-    // the control to a window that is already on screen - which is what a plugin loading its UI into
-    // a shown main window does - would put the unpresented native window on screen, which is the
-    // transparent hole this lifecycle exists to avoid.
-    setVisible(d->surface_shown);
-}
-
 void SurfaceWindow::handleDestroyed()
 {
     // Qt destroys and recreates the native platform surface (a new HWND / xcb window) on layout changes,
@@ -540,17 +516,10 @@ void SurfaceWindow::handleDestroyed()
     // recreation cost a full session rebuild.
     d->surface_ok = false;
 
-    // The "the surface is on screen" state goes away with the window: its replacement comes back with the
-    // container, so Qt shows it before anything has been drawn into it, and a shown-but-unpresented native
-    // window is the transparent hole the hidden-until-attached rule exists to avoid. Only the flag is cleared
-    // here (this runs while the platform window is being destroyed); the Show that follows is re-asserted
-    // against it (see showEvent()), and the surface is shown again once the backend is bound to the new window
-    // (initializeBackend()).
-    d->surface_shown = false;
-
-    // The published state goes back with it: Presenting claims the area shows render output, which is not
-    // true of a window that is being replaced, and a host showing its own placeholder wants that transition.
-    // The session itself is untouched (see the flags above); the next attach republishes Attached.
+    // The published state goes back with it: Presenting claims the area shows render output, which is not true of
+    // a window that is being replaced, and the control stops showing the area on that transition - which is what
+    // keeps the area (a hole the container punches for the native window) out of sight until the new window has a
+    // frame in it. The session itself is untouched (see the flags above); the next attach republishes Attached.
     setState(SurfaceState::Pending);
 }
 
@@ -700,18 +669,23 @@ void SurfaceWindow::initializeBackend()
         d->has_session    = true;
         d->session_handle = h;
         setState(SurfaceState::Attached);
-        // The surface may only be shown once something can go into it: showing it before the
-        // attach is what left a transparent hole at startup (an unpresented native window
-        // shows whatever the compositor decides). Shown here, the first present follows
-        // within a frame. The same rule covers a recreated platform window: it stayed hidden
-        // while the backend was being bound to it (see handleDestroyed()).
-        setSurfaceShown(true);
+        // What the host sees is the widget that holds this surface, and RenderControl keeps it hidden until a frame
+        // is in the surface (see its constructor) - a hidden widget is not painted, so the hole Qt's window
+        // container punches for the embedded window is not there either. The same rule covers a recreated platform
+        // window: it went back to Pending while the new window was being taken over (see handleDestroyed()).
         // Deliver the current surface size so the view's camera projection
         // aspect is set on the first frame (undistorted) and the backend
-        // viewport tracks the surface.
+        // viewport tracks the surface. At a first attach this is the size the platform window happens to
+        // have (the layout has not run yet - measured 160x160 here against the 752x480 of the settled
+        // window), which is why the frame below is the warm-up one when the control is not on screen yet.
         d->engine->resize(width(), height());
         d->view->onSurfaceResized(width(), height());
-        renderFrame();
+        if (isOnScreen()) {
+            renderFrame();
+        }
+        else {
+            prewarmFrame();
+        }
         // The first attach can land mid-layout (the host calls init() right after embedding the
         // control, before its dock layout has settled), so the
         // native surface may still be resized afterwards. Request settle frames
@@ -721,20 +695,19 @@ void SurfaceWindow::initializeBackend()
         // the view empty).
         requestSettleFrames();
     }
-    else if (!d->surface_shown) {
+    else if (!d->needs_visible_surface) {
         // The platform would not build a surface for an unmapped window (Wayland wants the
-        // surface configured first; X11 and Windows accept an unmapped one). Show the surface so the
-        // next attach can use it: shown-but-unpresented is the state the hidden-surface path exists
-        // to avoid, so this is the fallback, not the design - and it is said out loud once, because
-        // it also explains a longer startup on that platform. The next attach is the host's init()
-        // on a first attach and the surface's own follow of a recreated window on an established
-        // one; each of those shows the surface again, because a recreated window comes back hidden.
-        if (!d->needs_visible_surface) {
-            d->needs_visible_surface = true;
-            vine::logging::defaultLogger().info(
-                "[RenderControl] attaching to a hidden surface failed: this platform wants a visible window, showing the surface so the next attach can use it");
+        // surface configured first; X11 and Windows accept an unmapped one). Ask the control to put the
+        // surface on screen so the next attach can use it: shown-but-unpresented is the state the hidden-surface
+        // path exists to avoid, so this is the fallback, not the design - and it is said out loud once, because
+        // it also explains a longer startup on that platform. The next attach is the host's init() on a first
+        // attach and the surface's own follow of a recreated window on an established one.
+        d->needs_visible_surface = true;
+        vine::logging::defaultLogger().info(
+            "[RenderControl] attaching to a surface that is not on screen failed: this platform wants a visible window, showing the surface so the next attach can use it");
+        if (on_needs_visible_surface) {
+            on_needs_visible_surface();
         }
-        setSurfaceShown(true);
     }
     // On failure backend_live stays false, so the call after this one (the host's init(), or the
     // surface's own when it follows an established session onto a recreated window) tries again.
@@ -777,10 +750,9 @@ void SurfaceWindow::renderFrame()
     if (d->engine == nullptr) {
         return;
     }
-    // Never run the vsg frame loop (acquire/present) against a stale or hidden
-    // surface: acquireNextFrame() calls Window::resize() on a dead HWND and
-    // spams validation errors. Only render while the backend is attached to
-    // the surface the QWindow currently reports and the control is on screen.
+    // Never run the vsg frame loop (acquire/present) against a stale surface: acquireNextFrame()
+    // calls Window::resize() on a dead HWND and spams validation errors. Only render while the
+    // backend is attached to the surface the QWindow currently reports and the control is on screen.
     //
     // On screen is asked of the HOST widget, not of the QWindow: Qt shows the
     // embedded window together with its container, so the surface's own flags say
@@ -791,11 +763,15 @@ void SurfaceWindow::renderFrame()
     // and that is the pass that carries the size this surface keeps - so a frame from here is
     // built once, at the final size, instead of being built for a size the surface is about
     // to leave (the window system hands the real one over through the event loop).
+    //
+    // The surface's own visibility is deliberately NOT part of that question: it is hidden until it has
+    // something in it (see initializeBackend()), so the first frame of a session - the one that fills it -
+    // is rendered into a hidden surface on purpose.
     void* h = nativeHandle();
     if (h == nullptr) {
         return;
     }
-    if (!d->surface_shown || d->host == nullptr || !d->host->isVisible()) {
+    if (d->host == nullptr || !d->host->isVisible()) {
         return;
     }
     if (d->has_session && h != d->session_handle) {
@@ -809,12 +785,37 @@ void SurfaceWindow::renderFrame()
     }
     if (d->backend_live) {
         d->engine->frame();
-        // A frame was handed to a visible, attached surface, so the area shows render output
-        // from here on. A backend that could not present reports that on the diagnostics
-        // channel rather than through this call, which is why the state is "a frame was
-        // submitted", not "the swapchain confirmed it".
+        // The frame is in the surface, so the surface is what the area should show from now on: this is
+        // where it goes on screen (it stayed hidden until now, see initializeBackend()). A backend that
+        // could not present reports that on the diagnostics channel rather than through this call, which
+        // is why the state is "a frame was submitted", not "the swapchain confirmed it". The control shows the
+        // area on this transition (the widget visibility rule lives there), so a frame at the current size is
+        // also what makes the render output visible.
         setState(SurfaceState::Presenting);
     }
+}
+
+bool SurfaceWindow::isOnScreen() const
+{
+    return d->host != nullptr && d->host->isVisible();
+}
+
+void SurfaceWindow::prewarmFrame()
+{
+    // One frame, at the size the platform window has right now, before the control is on screen: what it buys is
+    // the one-time part of a session (pass graphs, program slots, compiled pipelines - measured 183.6 ms for the
+    // demo's 5 slots against a from-scratch build), paid while the host's startup frame still covers the window.
+    // The size change that follows is served in place (the backend keeps the slots and replaces the images, views
+    // and framebuffers), so the first frame the user can see costs a resize and a record instead of a build.
+    if (d->engine == nullptr || !d->backend_live) {
+        return;
+    }
+    if (nativeHandle() == nullptr || width() <= 0 || height() <= 0) {
+        return;
+    }
+    // Nothing is published and nothing is shown: a frame rendered for a size the surface is about to leave is not
+    // something to put on screen, and this class never decides that on its own (see renderFrame()).
+    d->engine->frame();
 }
 
 void SurfaceWindow::setState(SurfaceState next)
@@ -849,21 +850,6 @@ void SurfaceWindow::setState(SurfaceState next)
     if (on_state_changed) {
         on_state_changed(next);
     }
-}
-
-void SurfaceWindow::setSurfaceShown(bool shown)
-{
-    if (d->surface_shown == shown) {
-        return;
-    }
-    d->surface_shown = shown;
-    setVisible(shown);
-
-    // This is the line that says when the area started showing render output, and it is per direction: the
-    // hide side also appears when a platform window is recreated (see handleDestroyed()).
-    vine::logging::defaultLogger().info("[RenderControl] surface {} after {} ms",
-                                        shown ? "shown" : "hidden",
-                                        elapsedMs(d->created_at));
 }
 
 void SurfaceWindow::failAttach(String reason)
@@ -905,21 +891,17 @@ void SurfaceWindow::resizeEvent(QResizeEvent* event)
     QWindow::resizeEvent(event);
 }
 
-void SurfaceWindow::showEvent(QShowEvent* event)
-{
-    handleShown();
-    QWindow::showEvent(event);
-}
-
 bool SurfaceWindow::eventFilter(QObject* watched, QEvent* event)
 {
-    // The container widget the surface is embedded through: its resize covers a maximize, and its
-    // show is the other way this window reaches the screen (the same thing showEvent() reports).
+    // The container widget the surface is embedded through: its resize covers a maximize, and its show is the
+    // event that says the control is on screen now - which is what makes the first frame possible (rendering is
+    // refused until then, see renderFrame()) and what carries the surface's final size (the layout pass that
+    // shows the widget is the one that gives it).
     if (event->type() == QEvent::Resize) {
         handleResized(static_cast<QResizeEvent*>(event)->size().width(),
                       static_cast<QResizeEvent*>(event)->size().height());
     } else if (event->type() == QEvent::Show) {
-        handleShown();
+        scheduleUpdate();
     }
     return QWindow::eventFilter(watched, event);
 }

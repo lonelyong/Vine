@@ -213,13 +213,11 @@ GuiApplication::~GuiApplication()
 
     if (d->boot_splash != nullptr) {
         // The frame dies with the application either way, but a boot the host never ended also leaves the main window
-        // it was hiding unshown, which is exactly what the host has to be told about. A frame that is merely still
-        // waiting for the window (see finishStartup()) is not that, and dies quietly with the rest.
+        // it was hiding unshown, which is exactly what the host has to be told about.
         if (!d->boot_ended) {
             V_LOGW("Startup frame is still showing as the application is destroyed: the host never called "
                    "Application::finishStartup()");
         }
-        d->frame_close_deadline.stop();
         delete d->boot_splash;
         d->boot_splash = nullptr;
     }
@@ -297,18 +295,6 @@ void GuiApplication::init()
     }
 }
 
-namespace
-{
-
-/// How long the deferred close of the startup frame waits for the main window's render view to show a frame.
-///
-/// The measured settle time is ~0.7-0.9 s: the layout passes that give the native window its final size, the frame
-/// that follows them, and the device/swapchain/pipeline build behind that frame. The deadline is the safety net for
-/// a view that says nothing at all - one that cannot come up reports Failed, which closes the frame too.
-constexpr int kSurfaceWaitMs = 2000;
-
-} // namespace
-
 void GuiApplication::finishStartup()
 {
     auto* d = static_cast<GuiApplicationData*>(dptr());
@@ -337,68 +323,9 @@ void GuiApplication::finishStartup()
         return;
     }
 
-    if (windowCanBeSeen()) {
-        closeStartupFrame();
-        return;
-    }
-
-    // The window is not ready to be uncovered, and the frame is what hides that: hand the close to the render view's
-    // own report, inside the event loop that will draw it.
-    deferStartupFrameClose();
-}
-
-bool GuiApplication::windowCanBeSeen() const
-{
-    const auto* d = static_cast<const GuiApplicationData*>(dptr());
-
-    auto* control = (d->main_window != nullptr) ? d->main_window->primaryRenderControl() : nullptr;
-
-    // A window without a render view has nothing that could be missing when it is uncovered; one with a view is as
-    // ready as that view is (see RenderControl::hasPresented()).
-    return control == nullptr || control->hasPresented();
-}
-
-void GuiApplication::deferStartupFrameClose()
-{
-    auto* d    = static_cast<GuiApplicationData*>(dptr());
-    auto* view = d->main_window->primaryRenderControl();
-
-    // One-shot, and no loop of its own: the loop being waited for is run()'s, and the surface reports its own
-    // transitions. The subscription is replaced (i.e. cancelled) by closeStartupFrame(), and dies with the
-    // application, so nothing here can outlive what it talks to.
-    d->frame_close_subscription = view->stateChanged.connect([this](RenderControl::SurfaceState) {
-        if (windowCanBeSeen()) {
-            closeStartupFrame();
-        }
-    });
-
-    d->frame_close_deadline.setSingleShot(true);
-    // The timer is its own context object: the application is not a QObject, and the connection has to die with the
-    // data it belongs to (it is dropped with GuiApplicationData).
-    QObject::connect(&d->frame_close_deadline, &QTimer::timeout, &d->frame_close_deadline, [this] {
-        if (!windowCanBeSeen()) {
-            // Says out loud what the empty area that follows comes from; the frame goes anyway, because holding the
-            // whole boot on a view that never speaks would be worse.
-            V_LOGW("the render view has not shown a frame after {} ms: closing the startup frame anyway", kSurfaceWaitMs);
-        }
-        closeStartupFrame();
-    });
-    d->frame_close_deadline.start(kSurfaceWaitMs);
-
-    V_LOGI("the startup frame stays up until the render view shows a frame (or {} ms pass)", kSurfaceWaitMs);
-}
-
-void GuiApplication::closeStartupFrame()
-{
-    auto* d = static_cast<GuiApplicationData*>(dptr());
-
-    // Both the view's report and the deadline can land; only the first one closes.
-    d->frame_close_deadline.stop();
-    d->frame_close_subscription = {};
-
-    if (d->boot_splash == nullptr) {
-        return;
-    }
+    // The frame goes now: the window is what can be uncovered, because a render view in it keeps its area hidden
+    // until a frame is in the surface (see RenderControl) - what shows in the meantime is the window's own
+    // background. There is nothing to wait for here.
     delete d->boot_splash;
     d->boot_splash = nullptr;
 
