@@ -11,6 +11,9 @@
 #include <vine/appfw/gui/RibbonButton.hpp>
 #include <vine/appfw/gui/RibbonGroup.hpp>
 #include <vine/appfw/gui/RibbonTab.hpp>
+#include <vine/appfw/gui/VisualUserIO.hpp>
+
+#include <vine/logging/Log.hpp>
 
 #include "AppShellDemo.hpp"
 
@@ -107,8 +110,13 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
     auto* console_dock  = manager->createDockPanel(u8"控制台", console_panel, gui::DockAreas::Bottom);
     console_dock->setId(u8"dock_console");
 
-    if (auto* app = ::vine::obj_cast<gui::GuiApplication>(Application::current())) {
-        app->setConsolePanel(console_panel);
+    // The panel is bound on the visual user I/O itself: that is where the output and the prompts go, and it is the panel
+    // that decides whether the interactive console exists at all (a host whose UserIO does not take one has no console).
+    if (auto* io = ::vine::obj_cast<gui::VisualUserIO>(Application::current() ? Application::current()->userIO() : nullptr)) {
+        io->setConsolePanel(console_panel);
+    }
+    else {
+        V_LOGW("app_shell: no visual user I/O to bind the console panel to; the console will show nothing");
     }
 
     result.console_panel = console_panel;

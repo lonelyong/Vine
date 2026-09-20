@@ -1,9 +1,15 @@
-﻿#include "VisualUserIO.hpp"
+﻿#include <vine/appfw/gui/VisualUserIO.hpp>
 
+#include <atomic>
+#include <cassert>
 #include <cmath>
+#include <memory>
 
 #include <QPointer>
 #include <QWidget>
+
+#include <vine/Signal.hpp>
+
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/MainThreadDispatcher.hpp>
@@ -11,6 +17,7 @@
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
 
+#include <vine/async/AsyncEvent.hpp>
 #include <vine/async/DetachedTask.hpp>
 #include <vine/logging/Log.hpp>
 
@@ -72,50 +79,163 @@ void onConsolePanel(ConsolePanel* panel, TFn&& fn)
 
 V_OBJECT_META_IMPL(VisualUserIO, UserIO)
 
-VisualUserIO::VisualUserIO() = default;
+/// Everything the visual I/O owns: the panel it writes to, the interaction slot, and the bookkeeping of the read that is
+/// waiting for the user.
+///
+/// Nested and defined here rather than private members on the class, so that the public header stays free of the state
+/// and of the helpers below - a host binds a console panel, it has no business with the rest (VisualUserIO.hpp).
+struct VisualUserIO::Impl
+{
+    enum class PendingRead
+    {
+        None,
+        String,
+        Int,
+        Double,
+        Point
+    };
+
+    /// Releases the interaction slot when the read ends - however it ends,
+    /// including a coroutine frame that is destroyed before it ever resumed.
+    struct ReadScope {
+        Impl* self;
+        ~ReadScope() { self->endRead(); }
+    };
+
+    /// Prompt bookkeeping of the read that is waiting for input.
+    ///
+    /// Read and written on the application thread only: the write happens inside
+    /// the marshalled UI call that shows the prompt, and the read inside
+    /// repromptError(). It is shared rather than a plain member so a posted UI call
+    /// can write it without capturing this object, which may be gone by the time
+    /// the call runs (every other posted call in this file is written the same
+    /// way).
+    struct PromptState {
+        String current;
+    };
+
+    explicit Impl(VisualUserIO* owner) : owner(owner) {}
+
+    void setConsolePanel(ConsolePanel* console);
+    void setCommandManager(vine::appfw::CommandManager* manager);
+    void refreshCompletion();
+    void putString(const String& str);
+    void clear();
+    void cancelPendingInput();
+
+    /// Claims the single interaction slot and shows the prompt; false when another
+    /// read is already waiting.
+    bool beginRead(PendingRead kind, const String& prompt);
+    /// Releases the interaction slot.
+    void endRead() noexcept;
+    /// Waits for the user to answer the prompt; true when a value arrived, false
+    /// when the interaction was cancelled.
+    vine::async::Task<bool> waitForInput(PendingRead kind, const String& prompt);
+
+    void onLineEntered(const String& text);
+    void onEscape();
+    void parseAndComplete(const String& text);
+    void repromptError(const String& message);
+
+    /**
+     * @brief Appends an error message to the console on the application thread.
+     *
+     * The command completion callback runs on the thread that finished the
+     * command, which is not necessarily the application thread; the console panel
+     * is a QWidget and may only be touched there.
+     *
+     * @param message Message to show.
+     */
+    void appendOnApplicationThread(const String& message);
+
+    void completeString(const String& value);
+    void completeInt(int value);
+    void completeDouble(double value);
+    void completePoint(const math::Point3d& value);
+    void cancelInteraction();
+
+    /// The I/O this state belongs to: the command manager and the number parser are its API.
+    VisualUserIO* owner{ nullptr };
+
+    vine::async::AsyncEvent done;
+    std::atomic<bool>    cancelled{ false };
+
+    /// The interaction slot: only one read may wait for the user at a time, because
+    /// the console shows a single prompt and two waiting reads would share done
+    /// and each other's result fields. Claimed and released with compare/exchange,
+    /// so a second read can never slip in.
+    std::atomic<PendingRead> pending{ PendingRead::None };
+
+    String        string_result;
+    int           int_result{ 0 };
+    double        double_result{ 0.0 };
+    math::Point3d point_result;
+
+    ConsolePanel* console{ nullptr };
+    /// Handlers registered on the bound console, so a rebind can drop them again.
+    vine::Connection line_handler{};
+    vine::Connection escape_handler{};
+    /// Connection on the command manager's commandsChanged().
+    vine::Connection commands_handler{};
+
+    /// Prompt bookkeeping of the current read; see PromptState.
+    std::shared_ptr<PromptState> prompt_state{ std::make_shared<PromptState>() };
+};
+
+VisualUserIO::VisualUserIO() : d(std::make_unique<Impl>(this)) {}
 
 VisualUserIO::~VisualUserIO() = default;
 
 void VisualUserIO::setConsolePanel(ConsolePanel* console)
 {
-    if (console_ != nullptr) {
+    d->setConsolePanel(console);
+}
+
+void VisualUserIO::Impl::setConsolePanel(ConsolePanel* console)
+{
+    if (this->console != nullptr) {
         // Drop the handlers of the panel being left behind: binding a panel twice
         // would otherwise run every entered line through onLineEntered() twice, and
         // an idle line would start its command twice.
-        line_handler_.disconnect();
-        escape_handler_.disconnect();
+        line_handler.disconnect();
+        escape_handler.disconnect();
     }
 
-    console_ = console;
-    if (console_ == nullptr)
+    this->console = console;
+    if (this->console == nullptr)
     {
         return;
     }
-    line_handler_   = console_->lineEntered.connect([this](const String& text) { onLineEntered(text); });
-    escape_handler_ = console_->escapePressed.connect([this] { onEscape(); });
+    line_handler   = this->console->lineEntered.connect([this](const String& text) { onLineEntered(text); });
+    escape_handler = this->console->escapePressed.connect([this] { onEscape(); });
     refreshCompletion();
 }
 
 void VisualUserIO::setCommandManager(vine::appfw::CommandManager* manager)
 {
-    if (auto* previous = commandManager(); previous != nullptr && previous != manager) {
-        commands_handler_.disconnect();
+    d->setCommandManager(manager);
+}
+
+void VisualUserIO::Impl::setCommandManager(vine::appfw::CommandManager* manager)
+{
+    if (auto* previous = owner->commandManager(); previous != nullptr && previous != manager) {
+        commands_handler.disconnect();
     }
 
-    UserIO::setCommandManager(manager);
+    owner->UserIO::setCommandManager(manager);
 
-    if (manager != nullptr && !commands_handler_.isActive()) {
+    if (manager != nullptr && !commands_handler.isActive()) {
         // The completion list is a snapshot: follow the command set so commands of
         // plugins that register after the console was bound still show up.
-        commands_handler_ = manager->commandsChanged.connect(
+        commands_handler = manager->commandsChanged.connect(
             [this](vine::appfw::CommandManager&, vine::EventArgs&) { refreshCompletion(); });
     }
     refreshCompletion();
 }
 
-void VisualUserIO::refreshCompletion()
+void VisualUserIO::Impl::refreshCompletion()
 {
-    if (!console_ || !commandManager())
+    if (!console || !owner->commandManager())
     {
         return;
     }
@@ -123,7 +243,7 @@ void VisualUserIO::refreshCompletion()
     auto* pm = Application::current() ? Application::current()->pluginManager() : nullptr;
 
     std::vector<ConsoleCommandEntry> entries;
-    for (const auto& info : commandManager()->commandInfos())
+    for (const auto& info : owner->commandManager()->commandInfos())
     {
         // A disabled command cannot run, so offering it for completion would only
         // lead to a failed execution.
@@ -145,13 +265,18 @@ void VisualUserIO::refreshCompletion()
         entries.push_back(ConsoleCommandEntry{ info.name, info.description, info.aliases, source });
     }
 
-    auto* panel = console_;
+    auto* panel = console;
     onConsolePanel(panel, [entries = std::move(entries)](ConsolePanel* target) { target->setCommandEntries(entries); });
 }
 
 void VisualUserIO::putString(const String& str)
 {
-    if (console_ == nullptr)
+    d->putString(str);
+}
+
+void VisualUserIO::Impl::putString(const String& str)
+{
+    if (console == nullptr)
     {
         return;
     }
@@ -159,38 +284,48 @@ void VisualUserIO::putString(const String& str)
     // Commands print from whatever thread they resumed on, so the panel write is
     // marshalled: the panel is a QWidget and only the application thread may touch
     // it. Calling this from any thread is therefore safe.
-    auto* panel = console_;
+    auto* panel = console;
     onConsolePanel(panel, [str](ConsolePanel* target) { target->append(ConsoleMessageType::Normal, str); });
 }
 
 void VisualUserIO::clear()
 {
-    if (console_ == nullptr)
+    d->clear();
+}
+
+void VisualUserIO::Impl::clear()
+{
+    if (console == nullptr)
     {
         return;
     }
 
-    auto* panel = console_;
+    auto* panel = console;
     onConsolePanel(panel, [](ConsolePanel* target) { target->clear(); });
 }
 
 void VisualUserIO::cancelPendingInput()
+{
+    d->cancelPendingInput();
+}
+
+void VisualUserIO::Impl::cancelPendingInput()
 {
     // Same path as Escape: the awaiting read resumes with std::nullopt, so a command
     // parked on user input unwinds instead of holding the shutdown drain for its
     // whole bound. Application::shutdown() calls this while the event loop is already
     // stopped, and it may be called from another thread, so nothing here may end up
     // touching the panel.
-    if (pending_.load() != PendingRead::None)
+    if (pending.load() != PendingRead::None)
     {
         cancelInteraction();
     }
 }
 
-bool VisualUserIO::beginRead(PendingRead kind, const String& prompt)
+bool VisualUserIO::Impl::beginRead(PendingRead kind, const String& prompt)
 {
     PendingRead expected = PendingRead::None;
-    if (!pending_.compare_exchange_strong(expected, kind))
+    if (!pending.compare_exchange_strong(expected, kind))
     {
         V_LOGW("A user-input read is already waiting; refusing the new one");
         return false;
@@ -199,17 +334,17 @@ bool VisualUserIO::beginRead(PendingRead kind, const String& prompt)
     // The prompt itself is recorded where it is shown (waitForInput's marshalled UI
     // call), so this method never touches application-thread state: it may run on
     // the thread the reading command resumed on.
-    cancelled_.store(false);
-    done_.reset();
+    cancelled.store(false);
+    done.reset();
     return true;
 }
 
-void VisualUserIO::endRead() noexcept
+void VisualUserIO::Impl::endRead() noexcept
 {
-    pending_.store(PendingRead::None);
+    pending.store(PendingRead::None);
 }
 
-vine::async::Task<bool> VisualUserIO::waitForInput(PendingRead kind, const String& prompt)
+vine::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const String& prompt)
 {
     if (!beginRead(kind, prompt))
     {
@@ -217,87 +352,87 @@ vine::async::Task<bool> VisualUserIO::waitForInput(PendingRead kind, const Strin
     }
     const ReadScope scope{ this }; // frees the interaction slot however this ends
 
-    if (console_ != nullptr)
+    if (console != nullptr)
     {
-        auto* panel = console_;
+        auto* panel = console;
         // The prompt is recorded here, inside the marshalled call, so the member it
         // lives in is only ever touched on the application thread (repromptError()
         // reads it there when the user enters something invalid).
-        auto state  = prompt_;
+        auto state  = prompt_state;
         onConsolePanel(panel, [state, prompt](ConsolePanel* target) {
             state->current = prompt;
             target->beginInput(prompt);
         });
     }
 
-    co_await done_;
-    co_return !cancelled_.load();
+    co_await done;
+    co_return !cancelled.load();
 }
 
 vine::async::Task<std::optional<String>> VisualUserIO::getStringAsync(const String& prompt)
 {
-    if (!co_await waitForInput(PendingRead::String, prompt))
+    if (!co_await d->waitForInput(Impl::PendingRead::String, prompt))
     {
         co_return std::nullopt;
     }
-    co_return stringResult_;
+    co_return d->string_result;
 }
 
 vine::async::Task<std::optional<int>> VisualUserIO::getIntAsync(const String& prompt)
 {
-    if (!co_await waitForInput(PendingRead::Int, prompt))
+    if (!co_await d->waitForInput(Impl::PendingRead::Int, prompt))
     {
         co_return std::nullopt;
     }
-    co_return intResult_;
+    co_return d->int_result;
 }
 
 vine::async::Task<std::optional<double>> VisualUserIO::getDoubleAsync(const String& prompt)
 {
-    if (!co_await waitForInput(PendingRead::Double, prompt))
+    if (!co_await d->waitForInput(Impl::PendingRead::Double, prompt))
     {
         co_return std::nullopt;
     }
-    co_return doubleResult_;
+    co_return d->double_result;
 }
 
 vine::async::Task<std::optional<math::Point3d>> VisualUserIO::getPoint3dAsync(const String& prompt)
 {
-    if (!co_await waitForInput(PendingRead::Point, prompt))
+    if (!co_await d->waitForInput(Impl::PendingRead::Point, prompt))
     {
         co_return std::nullopt;
     }
-    co_return pointResult_;
+    co_return d->point_result;
 }
 
-void VisualUserIO::onLineEntered(const String& text)
+void VisualUserIO::Impl::onLineEntered(const String& text)
 {
-    if (pending_ != PendingRead::None)
+    if (pending != PendingRead::None)
     {
         parseAndComplete(text);
         return;
     }
 
-    if (commandManager() && commandManager()->runningCount() > 0)
+    if (owner->commandManager() && owner->commandManager()->runningCount() > 0)
     {
-        if (console_)
+        if (console)
         {
-            console_->append(ConsoleMessageType::Warning, String(u8"命令正在执行，请稍候"));
+            console->append(ConsoleMessageType::Warning, String(u8"命令正在执行，请稍候"));
         }
         return;
     }
 
-    if (console_)
+    if (console)
     {
-        console_->append(ConsoleMessageType::Command, text);
+        console->append(ConsoleMessageType::Command, text);
     }
 
-    if (commandManager())
+    if (owner->commandManager())
     {
         // 异步启动命令；失败信息在命令完成后回写。
         // 命令可能在任意线程上结束（await 了定时器/异步读取），因此回写必须
         // 编组到应用线程：控制台面板是 QWidget，只有应用线程可以碰。
-        [](VisualUserIO* self, vine::async::Task<CommandResult> task) -> vine::async::DetachedTask {
+        [](Impl* self, vine::async::Task<CommandResult> task) -> vine::async::DetachedTask {
             const auto result = co_await std::move(task);
             if (result.succeeded())
             {
@@ -306,43 +441,43 @@ void VisualUserIO::onLineEntered(const String& text)
 
             const auto& message = result.message();
             self->appendOnApplicationThread(message.empty() ? String(u8"命令执行失败") : message);
-        }(this, commandManager()->executeCommandAsync(text));
+        }(this, owner->commandManager()->executeCommandAsync(text));
     }
 }
 
-void VisualUserIO::appendOnApplicationThread(const String& message)
+void VisualUserIO::Impl::appendOnApplicationThread(const String& message)
 {
-    if (!console_)
+    if (!console)
     {
         return;
     }
 
-    auto* panel = console_;
+    auto* panel = console;
     onConsolePanel(panel, [message](ConsolePanel* target) { target->append(ConsoleMessageType::Error, message); });
 }
 
-void VisualUserIO::onEscape()
+void VisualUserIO::Impl::onEscape()
 {
-    if (pending_ != PendingRead::None)
+    if (pending != PendingRead::None)
     {
         cancelInteraction();
     }
-    else if (commandManager() && commandManager()->runningCount() > 0)
+    else if (owner->commandManager() && owner->commandManager()->runningCount() > 0)
     {
         // Cancel the foreground command chain (the one the console just showed as
         // running). Chains pushed out of the foreground are only reachable through
         // cancelAll().
-        commandManager()->cancelCurrent();
+        owner->commandManager()->cancelCurrent();
     }
-    else if (console_)
+    else if (console)
     {
-        console_->clearInput();
+        console->clearInput();
     }
 }
 
-void VisualUserIO::parseAndComplete(const String& text)
+void VisualUserIO::Impl::parseAndComplete(const String& text)
 {
-    switch (pending_)
+    switch (pending)
     {
     case PendingRead::String:
         completeString(text);
@@ -351,7 +486,7 @@ void VisualUserIO::parseAndComplete(const String& text)
     case PendingRead::Int:
     {
         int value = 0;
-        if (parseInt(text, value))
+        if (VisualUserIO::parseInt(text, value))
         {
             completeInt(value);
         }
@@ -407,49 +542,49 @@ void VisualUserIO::parseAndComplete(const String& text)
     }
 }
 
-void VisualUserIO::repromptError(const String& message)
+void VisualUserIO::Impl::repromptError(const String& message)
 {
-    if (!console_)
+    if (!console)
     {
         return;
     }
 
-    auto*        panel  = console_;
-    const String prompt = prompt_->current;
+    auto*        panel  = console;
+    const String prompt = prompt_state->current;
     onConsolePanel(panel, [message, prompt](ConsolePanel* target) {
         target->append(ConsoleMessageType::Error, message);
         target->beginInput(prompt);
     });
 }
 
-void VisualUserIO::completeString(const String& value)
+void VisualUserIO::Impl::completeString(const String& value)
 {
-    stringResult_ = value;
-    done_.set();
+    string_result = value;
+    done.set();
 }
 
-void VisualUserIO::completeInt(int value)
+void VisualUserIO::Impl::completeInt(int value)
 {
-    intResult_ = value;
-    done_.set();
+    int_result = value;
+    done.set();
 }
 
-void VisualUserIO::completeDouble(double value)
+void VisualUserIO::Impl::completeDouble(double value)
 {
-    doubleResult_ = value;
-    done_.set();
+    double_result = value;
+    done.set();
 }
 
-void VisualUserIO::completePoint(const math::Point3d& value)
+void VisualUserIO::Impl::completePoint(const math::Point3d& value)
 {
-    pointResult_ = value;
-    done_.set();
+    point_result = value;
+    done.set();
 }
 
-void VisualUserIO::cancelInteraction()
+void VisualUserIO::Impl::cancelInteraction()
 {
-    cancelled_ = true;
-    done_.set();
+    cancelled = true;
+    done.set();
 }
 
 V_APPFWGUI_NS_END

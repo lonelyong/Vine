@@ -12,18 +12,17 @@
 #    include <QSettings>
 #endif
 
-#include <vine/appfw/gui/ConsolePanel.hpp>
 #include <vine/appfw/gui/BootSplash.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/ProgressPresenter.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/appfw/gui/StatusBar.hpp>
+#include <vine/appfw/gui/VisualUserIO.hpp>
 
 #include <vine/appfw/StartupProgress.hpp>
 #include <vine/logging/Log.hpp>
 
 #include "GuiApplicationData.hpp"
-#include "VisualUserIO.hpp"
 
 #if defined(Q_OS_WIN) && QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
 namespace
@@ -423,16 +422,6 @@ raw_ptr<MainWindow> GuiApplication::mainWindow() const
 {
     const auto* d = static_cast<const GuiApplicationData*>(dptr());
     return d->main_window;
-}
-
-void GuiApplication::setConsolePanel(ConsolePanel* console)
-{
-    // obj_cast, not static_cast: a subclass may override createUserIO() with another
-    // implementation, and statically downcasting that would be undefined behaviour.
-    auto* io = obj_cast<VisualUserIO>(dptr()->user_io.get());
-    if (io != nullptr) {
-        io->setConsolePanel(console);
-    }
 }
 
 void GuiApplication::applyTheme(Theme theme)

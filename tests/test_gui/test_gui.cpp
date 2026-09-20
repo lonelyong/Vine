@@ -68,6 +68,7 @@
 #include <vine/appfw/gui/RibbonButton.hpp>
 #include <vine/appfw/gui/RibbonGroup.hpp>
 #include <vine/appfw/gui/RibbonTab.hpp>
+#include <vine/appfw/gui/VisualUserIO.hpp>
 #include <vine/appfw/gui/ProgressPresenter.hpp>
 #include <vine/appfw/ConsoleProgressReporter.hpp>
 
@@ -139,6 +140,14 @@ std::unique_ptr<guifw::GuiApplication> GuiEnv::app;
 
 // gtest_main 没有自定义 main 的钩子，用静态初始化注册全局环境即可。
 ::testing::Environment* const g_gui_env = ::testing::AddGlobalTestEnvironment(new GuiEnv());
+
+// 把控制台面板绑到可视 UserIO 上：宿主自己找它，框架不在 application 上转一手。
+void bindConsole(guifw::GuiApplication* app, guifw::ConsolePanel* panel)
+{
+    if (auto* io = vine::obj_cast<guifw::VisualUserIO>(app != nullptr ? app->userIO() : nullptr)) {
+        io->setConsolePanel(panel);
+    }
+}
 
 // 最小具体命令，用于验证 CommandManager 的 owner 跟踪与按插件报告。
 class DummyCommand : public vine::appfw::Command {
@@ -3898,7 +3907,7 @@ TEST_F(GuiTest, CommandManager_DetachedFailureIsReportedOnTheApplicationThread)
     cm->clearHistory();
 
     guifw::ConsolePanel panel;
-    app->setConsolePanel(&panel);
+    bindConsole(app, &panel);
     QWidget* root = panel.impl<QWidget>();
     ASSERT_NE(root, nullptr);
     auto* output = root->findChild<QPlainTextEdit*>();
@@ -3921,7 +3930,7 @@ TEST_F(GuiTest, CommandManager_DetachedFailureIsReportedOnTheApplicationThread)
     ASSERT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
     EXPECT_TRUE(output->toPlainText().contains(u8"boom")) << "消息应已投递到应用线程";
 
-    app->setConsolePanel(nullptr);
+    bindConsole(app, nullptr);
     cm->clearHistory();
     cm->unregisterCommand(name);
 }
@@ -5638,7 +5647,7 @@ TEST(UserIOTest, OutputFromAWorkerThreadIsMarshalledToTheApplicationThread)
     ASSERT_NE(io, nullptr);
 
     guifw::ConsolePanel panel;
-    app->setConsolePanel(&panel);
+    bindConsole(app, &panel);
     auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
     ASSERT_NE(output, nullptr);
 
@@ -5649,7 +5658,7 @@ TEST(UserIOTest, OutputFromAWorkerThreadIsMarshalledToTheApplicationThread)
     ASSERT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
     EXPECT_TRUE(output->toPlainText().contains(u8"from worker")) << "输出应已投递到应用线程";
 
-    app->setConsolePanel(nullptr);
+    bindConsole(app, nullptr);
 }
 
 // 同一时刻只允许一个交互等待：第二个读立即以 nullopt 收尾，而不是和第一个共享
@@ -5670,7 +5679,7 @@ TEST(UserIOTest, SecondReadIsRefusedWhileOneIsPending)
     IntReadCommand::s_value.reset();
 
     guifw::ConsolePanel panel;
-    app->setConsolePanel(&panel);
+    bindConsole(app, &panel);
     auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
     ASSERT_NE(output, nullptr);
 
@@ -5696,7 +5705,7 @@ TEST(UserIOTest, SecondReadIsRefusedWhileOneIsPending)
     ASSERT_EQ(cm->historyCount(), 1);
     EXPECT_FALSE(IntReadCommand::s_value.has_value());
 
-    app->setConsolePanel(nullptr);
+    bindConsole(app, nullptr);
     cm->clearHistory();
     cm->unregisterCommand(name);
 }
@@ -5715,7 +5724,7 @@ TEST(UserIOTest, IntReadKeepsItsValueAndRepromptsOnOverflow)
     ASSERT_TRUE(cm->registerCommand<IntReadCommand>(name));
 
     guifw::ConsolePanel panel;
-    app->setConsolePanel(&panel);
+    bindConsole(app, &panel);
     auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
     ASSERT_NE(output, nullptr);
 
@@ -5759,7 +5768,7 @@ TEST(UserIOTest, IntReadKeepsItsValueAndRepromptsOnOverflow)
     ASSERT_TRUE(IntReadCommand::s_value.has_value());
     EXPECT_EQ(*IntReadCommand::s_value, 42);
 
-    app->setConsolePanel(nullptr);
+    bindConsole(app, nullptr);
     cm->clearHistory();
     cm->unregisterCommand(name);
 }
@@ -5773,8 +5782,8 @@ TEST(UserIOTest, RebindingTheConsoleDoesNotRunALineTwice)
     ASSERT_NE(cm, nullptr);
 
     guifw::ConsolePanel panel;
-    app->setConsolePanel(&panel);
-    app->setConsolePanel(&panel); // 二次绑定：旧实现会在这里再挂一份 handler
+    bindConsole(app, &panel);
+    bindConsole(app, &panel); // 二次绑定：旧实现会在这里再挂一份 handler
 
     const auto name = vine::String(u8"rebindProbe");
     cm->unregisterCommand(name);
@@ -5792,7 +5801,7 @@ TEST(UserIOTest, RebindingTheConsoleDoesNotRunALineTwice)
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     EXPECT_EQ(cm->historyCount(), 1) << "同一行只能执行一次";
 
-    app->setConsolePanel(nullptr);
+    bindConsole(app, nullptr);
     cm->clearHistory();
     cm->unregisterCommand(name);
 }
@@ -5855,7 +5864,7 @@ TEST(UserIOTest, ReadStartedOnAWorkerThreadIsMarshalledAndReprompts)
     ASSERT_TRUE(cm->registerCommand<WorkerThreadReadCommand>(name));
 
     guifw::ConsolePanel panel;
-    app->setConsolePanel(&panel);
+    bindConsole(app, &panel);
     auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
     ASSERT_NE(output, nullptr);
 
@@ -5898,7 +5907,7 @@ TEST(UserIOTest, ReadStartedOnAWorkerThreadIsMarshalledAndReprompts)
     EXPECT_EQ(*WorkerThreadReadCommand::s_value, 7);
     EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Success);
 
-    app->setConsolePanel(nullptr);
+    bindConsole(app, nullptr);
     cm->unregisterCommand(name);
     cm->clearHistory();
 }

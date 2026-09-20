@@ -1,9 +1,10 @@
 # appfw UserIO 设计（2026-09-11 审查轮）
 
 代码：`src/fw/appfw/sdk/vine/appfw/UserIO.hpp` + `src/fw/appfw/src/UserIO.cpp`（基类），
-`src/fw/appfw/src/ConsoleUserIO.hpp/.cpp`（无头）与 `src/fw/appfw/src/gui/VisualUserIO.hpp/.cpp`（GUI），
+`src/fw/appfw/src/ConsoleUserIO.hpp/.cpp`（无头）与
+`src/fw/appfw/sdk/vine/appfw/gui/VisualUserIO.hpp` + `src/fw/appfw/src/gui/VisualUserIO.cpp`（GUI，2026-09-21 起公开），
 宿主接线在 `Application`（`createUserIO()`/`setupUserIO()`、`ApplicationData::user_io`）、
-`GuiApplication::setConsolePanel()` 与 `CommandManager`（`reportToUser()`、命令集事件）。
+`VisualUserIO::setConsolePanel()`（由宿主自己绑，见下）与 `CommandManager`（`reportToUser()`、命令集事件）。
 测试：`tests/test_gui/test_gui.cpp`（`UserIOTest.*` 5 例 + `GuiTest.CommandManager_PendingUserInput*`）。
 
 ## 结构
@@ -12,10 +13,24 @@
 | --- | --- | --- | --- |
 | `UserIO`（抽象基类） | — | `putString`/`clear` | 四个 `getXxxAsync` |
 | `ConsoleUserIO` | `Application::createUserIO()` 默认（无 GUI） | `std::cout`（互斥） | 后台读线程 + 行缓冲，`std::getline` 永不在等待者线程上 |
-| `VisualUserIO` | `GuiApplication::createUserIO()` | `ConsolePanel`（编组） | `ConsolePanel` 的 `lineEntered`/`escapePressed` + `AsyncEvent` |
+| `VisualUserIO`（**公开 SDK 类**，实现为私有 PImpl） | `GuiApplication::createUserIO()` | `ConsolePanel`（编组） | `ConsolePanel` 的 `lineEntered`/`escapePressed` + `AsyncEvent` |
 
 拥有者：`ApplicationData::user_io`（`unique_ptr`，先于 dispatcher 拆）；`Application::shutdown()` 先
 `cancelPendingInput()` 再排空命令链。
+
+### 面板接线（2026-09-21）
+
+- **面板归调用方，绑定在 UserIO 上**：`VisualUserIO::setConsolePanel(ConsolePanel*)`（`nullptr` = 解绑，重绑先摘旧面板的
+  handler）。插件建面板、挂 dock，再把它交出去；这个类不销毁面板。
+- **`VisualUserIO` 是公开类，但实现是私有的**（`struct Impl` + `unique_ptr<Impl> d`）：它只有 `setConsolePanel` 加基类
+  上的 override，没有暴露任何私有成员/方法，所以它的布局不因实现细节变化而变。以前它在 `src/` 里私有、
+  公开门是 `GuiApplication::setConsolePanel()`；现在需要面板的宿主不必再是 `GuiApplication`，所以那道门没了意义。
+- **`GuiApplication::setConsolePanel()` 已删**（2026-09-21，用户要求）：宿主自己 `obj_cast<VisualUserIO>(app->userIO())`
+  再绑，`app_shell` 就是这样做（找不到可视 IO 时它自己记一条 warning）。
+  代价是“绑不上”不再集中在框架里报：每个调用方都得自己判空（app_shell 的 `load()` 里那 4 行）。
+- **没有面板时**：输出被丢弃（`putString`/`clear` 直接返回），而 `waitForInput` 会跳过显示提示后
+  `co_await done` —— 能唤醒它的只有面板的 `lineEntered`/`escapePressed` 或关机的 `cancelPendingInput()`，
+  所以一个 `getXxxAsync` 会挂到关机（不崩、不报错）。要改语义就得先在 `UserIO` 层决定“没有交互面”算什么。
 
 ## 契约（本轮固化）
 
@@ -100,7 +115,7 @@
 | U5 | 补全列表不刷新：绑定 console 之后注册的命令进不了补全 | `refreshCompletion` 只在 `setConsolePanel`/`setCommandManager` 调用；app_shell 在自己的 `load()` 里绑定，命令在加载期注册 | 新增 `CommandManager::commandsChanged` 事件（注册/取消/启用开关/别名，均在锁外触发），`VisualUserIO` 订阅后编组刷新 |
 | U6 | 交互状态无同步，而 `cancelPendingInput()` 可能来自别的线程 | `cancelled_`/`pending_` 是普通成员 | 两者改 `std::atomic`；`set()` 待在两个锁之外调用，避免"被唤醒的读又要拿锁"而死锁 |
 | U7 | 重复绑定面板会重复挂 handler → 一行输入执行两次 | `setConsolePanel` 只 `connect` | 保存 `Connection` 成员，重绑时先 `disconnect()`（现在是 RAII 句柄，见 command-manager 设计文档）；`UserIOTest.RebindingTheConsoleDoesNotRunALineTwice` |
-| U8 | `GuiApplication::setConsolePanel` 用 `static_cast<VisualUserIO*>` | 子类换 `createUserIO()` 即 UB | 改 `obj_cast<VisualUserIO>` |
+| U8 | `GuiApplication::setConsolePanel` 用 `static_cast<VisualUserIO*>` | 子类换 `createUserIO()` 即 UB | 改 `obj_cast<VisualUserIO>`（该方法 2026-09-21 已随公开类一起删除：绑定现在直接写在 `VisualUserIO` 上） |
 | U9 | `ConsoleUserIO` 细节：stdout 可能交错、非 EOF 失败不区分 | 无锁 `std::cout`；只看 `eof()` | stdout 互斥；`eof`/`bad` 分开记录；两者都让读返回 `nullopt` |
 | U10 | `putString`/`clear`/`setCommandManager`/`cancelPendingInput` 缺线程契约 | 头文件没写 | 基类补齐（含"实现负责编组"与"槽位唯一"） |
 | U11 | 缺本设计文档 | 其他 appfw 模块都有 | 本文 |

@@ -11,7 +11,6 @@ V_APPFW_NS_END
 
 V_APPFWGUI_NS_BEGIN
 
-class ConsolePanel;
 class MainWindow;
 class BootSplash;
 
@@ -107,15 +106,6 @@ class V_APPFW_API GuiApplication : public Application {
      * @return The startup frame, or nullptr.
      */
     raw_ptr<BootSplash> bootSplash() const;
-
-    /**
-     * @brief Attaches the console panel used by the visual user I/O.
-     *
-     * The GUI application's UserIO routes its output and input prompts to
-     * this panel. The caller (typically a plugin) creates and docks the
-     * panel and then hands it over here.
-     */
-    void setConsolePanel(ConsolePanel* console);
 
   public:
     /**
