@@ -24,9 +24,11 @@
  *
  * WHAT A DRAW'S COMMAND LIST IS, IN ORDER. The state group holds the STATE commands, and vsg records each
  * state stack's top once: the pipeline bind (only when the pass' variant actually changed), the dynamic
- * block (only when a value differs from what this pass already issued), and the block descriptor set with
- * this draw's three dynamic offsets. The child command list holds the per-draw calls: the viewport and
- * scissor rectangles, the vertex and index binds, and the indexed draw itself.
+ * block (only when a value differs from what this pass already issued), the block descriptor set with this
+ * draw's three dynamic offsets, and the SAMPLED-INPUT set (only when the pass has not already bound that
+ * one - its inputs are a property of the pass, so one bind serves every draw of it). The child command list
+ * holds the per-draw calls: the viewport and scissor rectangles, the vertex and index binds, and the indexed
+ * draw itself.
  *
  * WHY THE TWO "ONLY WHEN" CLAUSES ARE IN THE RECORDING. `core::StateRegistry` owns them: it is the per-pass
  * memory of what is bound and what was issued, so a scene that draws two hundred drawables of one variant
@@ -52,6 +54,7 @@ class ContentDraw
         core::PipelineKey   key;                 ///< Identity (the pool answers whether it is compiled).
         core::DynamicState  dynamic;             ///< The set-command half of the state.
         ::vsg::ref_ptr<::vsg::BindDescriptorSet> blocks;  ///< This draw's block offsets (BlockDescriptors::bind).
+        ::vsg::ref_ptr<::vsg::BindDescriptorSet> inputs;  ///< The pass' sampled inputs, or null when it has none.
         std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>> vertex_binds;  ///< One per channel.
         ::vsg::ref_ptr<::vsg::BindIndexBuffer>    index;   ///< The index stream (required: draws are indexed).
         ViewportRect        viewport;            ///< The rectangle the draw covers.
@@ -95,6 +98,9 @@ class ContentDraw
     /** @brief Gets the number of dynamic blocks recorded (one per issue, not per draw). */
     [[nodiscard]] std::uint64_t dynamic_commands() const noexcept;
 
+    /** @brief Gets the number of sampled-input set binds recorded (one per pass that samples, not per draw). */
+    [[nodiscard]] std::uint64_t input_binds() const noexcept;
+
     /** @brief Gets the number of draws refused because their identity had no pipeline. */
     [[nodiscard]] std::uint64_t refusals() const noexcept;
 
@@ -105,6 +111,7 @@ class ContentDraw
     std::uint64_t                        draws_{0};
     std::uint64_t                        pipeline_binds_{0};
     std::uint64_t                        dynamic_commands_{0};
+    std::uint64_t                        input_binds_{0};
     std::uint64_t                        refusals_{0};
 };
 

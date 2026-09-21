@@ -26,6 +26,7 @@ set(SRC_FILE_LIST
 	ContentDrawTest.cpp
 	OffscreenTargetTest.cpp
 	ContentStackTest.cpp
+	SampledInputTest.cpp
 	SessionContentTest.cpp
 	DeviceProbeTest.cpp
 	SessionTest.cpp

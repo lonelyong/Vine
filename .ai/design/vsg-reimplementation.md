@@ -3,8 +3,10 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-21）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M3d-3b-7（多布局 scope：半片 = 程序 × 修订 × 布局，池与注册表共享）**：`test_vsg` 507 用例 / 81 套件全绿，
-> `core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings）。
+> **M3d-3b-8（pass 输入的采样绑定：计划携带输入表，内容层把输入的彩色附件绑成采样纹理，键里的
+> `sampled_color_count` 由此有值）**：`test_vsg` 512 用例 / 82 套件全绿（含真设备像素用例），
+> 强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由
+> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 800 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -952,13 +954,13 @@ M2c-2 再拆一次：**M2c-2a 块存储（本节，已完）**、M2c-2b 描述�
 | --- | --- |
 | `api/Device` | **无窗口**的设备缝：instance（版本从 1.4 往下试，取 loader 接受的那个）→ 按 `core::DeviceRequirements` 逐设备挑选 → `vsg::Device` + graphics queue family |
 | `api/DeviceFeatures` | 设备特性策略的**唯一拼写**（`static_assert(core::kDeviceFeatureCount == 7)`）；`Session` 改为调用它——同一个策略不能有两个拼写，否则"窗口进来的设备"与"无窗口的设备"能力不同 |
-| `api/OffscreenTarget` | 一张图 + 一个 render pass（CLEAR、`initialLayout = UNDEFINED`、`finalLayout = TRANSFER_SRC`）+ framebuffer + RenderGraph（`clearValues` + **`renderArea`**）+ capture 节点（`CopyImageToBuffer` + buffer barrier）→ `probe()` 给出紧凑 RGBA8 的 `core::PixelProbe` |
+| `api/OffscreenTarget` | 一张图 + 一个 render pass（CLEAR、`initialLayout = UNDEFINED`、`finalLayout = TRANSFER_SRC`【**彩色部分已由 §11.16n 改为 SHADER_READ_ONLY**】）+ framebuffer + RenderGraph（`clearValues` + **`renderArea`**）+ capture 节点（`CopyImageToBuffer` + buffer barrier）→ `probe()` 给出紧凑 RGBA8 的 `core::PixelProbe` |
 | `tests/test_vsg/OffscreenTargetTest.cpp` | 3 个真设备用例，**不需要窗口也不需要显示服务器**（lavapipe 头部路径） |
 
 | 规则 | 结论 |
 | --- | --- |
 | 证据通道 | 读回是命令图的一部分（`capture()` 由调用方挂在 render graph **之后**）：同一命令缓冲、同一队列、顺序有保证；帧提交 + device idle 之后才 `probe()` |
-| 为什么不需要 barrier | `initialLayout = UNDEFINED` + 每帧 CLEAR：上一帧内容被丢弃是**有意**的，这正是"读回不用 barrier 舞蹈"的代价与收益（该目标不支持 LOAD 上一帧——相位本来就每帧清） |
+| 为什么不需要 barrier | `initialLayout = UNDEFINED` + 每帧 CLEAR：上一帧内容被丢弃是**有意**的，这正是"读回不用 barrier 舞蹈"的代价与收益（该目标不支持 LOAD 上一帧——相位本来就每帧清）。**已修订（M3d-3b-8，§11.16n）**：读回的那一次拷贝此后自带一对 layout 转移（彩色附件改为按 SHADER_READ_ONLY 收尾，因为它是下一趟 pass 的纹理） |
 | 落地抓到的坑 | vsg 的 `RenderGraph` 默认 `renderArea` 是**零面积**：pass 记录成功却一个像素都没清，读回全 0，看起来像"拷贝坏了"。设上 `renderArea` 后立刻通过——这类"沉默的空 pass"正是像素相位存在的理由 |
 | DeviceProbe 重写 | `probePhysicalDevices()` 从 volk 版改为 vsg `Instance` + `PhysicalDevice::getFeatures<>` 版：**特性读取只剩一处实现**（`describePhysicalDevice`），并消掉新 api 层的 volk 依赖（include 顺序陷阱随之消失）；既有探测用例仍绿 |
 
@@ -1335,6 +1337,56 @@ M3d-3b（内容绘制进 render graph）开工前先把它的**两处前提**钉
 | 测试自己踩的坑 | 第二帧的 `beginFrame` 被协议拒绝：**关帧的是 `swapBuffers()`**（`endFrame()` 只离开 pass，回 `Idle` 靠 swap）⇒ 症状是“第二帧的计划还是第一帧的三条命令”，靠打印 token 抓到 |
 | 证据 | `test_vsg` 全量 **507 用例 / 81 套件全绿**（+1）；插件目标编过；hygiene 0 / 799 文件 |
 
+### 11.16n M3d-3b-8（2026-09-21）：pass 输入的采样绑定（计划携带输入表 + 内容层绑定，真设备）
+
+§11.16l 留下的第一个缺口：`setPassInputs` 声明的输入到不了着色——计划不携带它们，键里的
+`sampled_color_count` 恒为 0，描述符里也就没有采样的纹理。这一片把那条线接起来，分成三件事：
+
+1. **计划携带输入**（`core/FrameCompiler`）：`CompiledPass::inputs` = `CompiledInput{ target, color_attachments }`
+   的有序表，**从与 pass 目标同一份 target 事实**里解析（同一个事实只答一次：调用方重新从 target 对象推一遍
+   就可能与计划给出两个答案）；空输入（本帧无人产出）留在表里、报 0；**非空但事实答不上来的输入上报一次**
+   （此时什么也绑不了，静默按"没有这个输入"着色更糟）——注意 pass 本身照跑：目标查不到是"没地方画"，
+   输入查不到只是"这一项绑不上"。
+2. **采样集的布局进管线身份**（`api/ContentPipeline`）：键里的 `sampled_color_count` 是**身份**而不是运行时
+   状态（管线是按一份描述符集布局编译的），所以布局层按计数建 **set 1**（每项一个 combined image sampler，
+   顶点/片元两阶段都可读）**并按计数缓存**；`layoutFor(count)` 给出与之一体的管线布局，`sampledSetLayout(count)`
+   给内容层用来建**同一个**布局对象的 set；`inputSampler()` 一层一个采样器（默认线性）。
+3. **内容层绑定**（`api/ContentPass`）：调用方按计划顺序逐个输入交出图像（`InputImages`，
+   `OffscreenTarget::colorView(i)` 就是答案），内容层核对**每一项的彩色数**与计划一致后才建 set；
+   不一致 ⇒ **整趟 pass 拒绝**并说出是哪一项动了（输入是 pass 的**一个**事实，不存在"逐命令近似"）；
+   计数进键（`sampled_color_count`），set 进每一次绘制的状态组。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `core/FrameCompiler` | `CompiledInput` + `CompiledPass::inputs`（声明序、解析出彩色数）+ 答不上来的输入上报；文件头把"输入是什么"列进它决定的事 |
+| `core/StateRegistry` | 第三个"仅当"：采样集按**集合身份**去重（`resolve(key, state, inputs)` + `inputs_issued/skipped`），因为输入是 pass 的属性 ⇒ 一趟 pass 一条绑定命令，不是一绘制一条 |
+| `api/ContentPipeline` | 按 `sampled_color_count` 现建并保留的 set 1 布局 + 配套管线布局（`layoutFor/sampledSetLayout/inputSampler`）；`acquire()` 用键的计数选布局 |
+| `api/ContentDraw` | `Draw::inputs`（采样集绑定）+ `input_binds()` 计数；绑定排在块集之后（set 0 → set 1） |
+| `api/ContentPass` | `InputImages` + 计划/资源世界核对 + `makeInputSet`（一次 pass 一个 set）+ 键的计数 |
+| `api/OffscreenTarget` | 彩色附件改为**按可采样收尾**（`SAMPLED` usage + render pass 的 `finalLayout = SHADER_READ_ONLY`），`capture()` 自带一对 layout 转移，新增 `colorView(i)` |
+| `tests/test_vsg/SampledInputTest.cpp` | 1 个真设备用例（像素 + 拒绝两半）；`FrameCompilerTest` +2、`VariantCoreTest` +1、`ContentPipelineTest` +1 全无设备 |
+
+| 规则 | 结论 |
+| --- | --- |
+| **输入的粒度是 pass，不是绘制** | "pass 声明的输入"在契约里就是 pass 的属性（`setPassInputs` 每次绘制前重申同一份解析结果）⇒ 集合只建一次、只绑一次（`input_binds()==1` 对两个绘制调用），身份与绑定不可能各自漂移 |
+| **计数是身份不是状态** | 管线编译绑定在一份描述符集布局上，所以"这趟 pass 绑几个采样纹理"必须进键；两个计数 ⇒ 两个布局 ⇒ 两个管线对象（同键再来仍是 `Reused`）。这也是键审计表里"采样附件数"那一项真正落地的位置 |
+| **计划与资源世界必须对得上** | 计划说几项、每项几张，调用方给的图必须逐项相等；不等就**整趟拒绝**（与 M3d-3b-0 执行器核对 target 形状同一条纪律）。拒绝消息分两条：项数不对 / 第 i 项彩色数不对 |
+| **彩色附件按可采样收尾** | 输入的图像必须真的处在 `SHADER_READ_ONLY` 且建了 `SAMPLED` usage，否则描述符在撒谎。旧实现是"彩色附件永远按 SHADER_READ_ONLY 收尾"；重写版原先为了免 barrier 读回改成 TRANSFER_SRC，这一片把彩色改回**采样收尾**（深度仍留在附件布局：它是下一趟 pass 的附件、也是阴影的纹理，另有机制），**代价是读回的拷贝自带一对转移**（拷贝仍是一条命令，只是前后各一个 image barrier） |
+| **"没人产出"与"后端不认识"是两件事** | 空白输入（引擎解析成 null）留在表里、报 0 张、**不上报**——那一层的问题归引擎（它自己会报）；非空但 target 事实答不上来才由编译器报一次（后端自己的账缺了一页）。两种情形的共同答案都是"这一项绑不了东西"，所以内容层按 0 张核对，照画其余 |
+
+| 有意不做（写在这里，不埋在实现里） | 内容 |
+| --- | --- |
+| 输入的**深度**半边 | "深度真可采样才绑"与 shadow 的专用绑定（`shadow_bound` + `VineShadowBlock`）一起留给 M5：键里另一个 `depth_sampleable` 字段现在的含义是"pass 自己的目标深度可采样"（M3d-3b-0 的事实 + 执行器核对），在 M5 重钉之前不在这里造第二条语义 |
+| 全屏绘制调用（`DrawKind::Screen`） | 仍拒绝（program-slot 路径未接，M4）。M4 的"源附件 i→binding i"就是**这张表的另一个消费者**：ScreenPass 的源就是它声明的第一个输入，所以采样集、布局、绑定这条线不用再造 |
+| 着色器绑定声明的核对（"声明了却供给不了"） | 旧实现靠扫源码 `layout(binding=…)`（`MissingDescriptorBinding`）。这一片不做：驱动/验证层会报，而"谁声明了什么"要动 `ProgramFacts`，留给需要它的那片（M4 的拒绝理由与旧实现逐字对齐时） |
+
+| 落地抓到的 | 内容 |
+| --- | --- |
+| 顺带修掉的既有偏差（验证层抓的） | 整仓跑验证层时 `MrtTargetTest` 报 `VUID-vkCmdDrawIndexed-firstAttachment-07476`：那两个附件用例的绘制**没告诉录制器**自己写几个附件（默认 1）⇒ 动态混合命令只覆盖附件 0。修法是那一行 `draw.color_attachments = 2U`；修完全套 0 VUID（此前该套件只在无层的情况下跑过，所以这条一直没露） |
+| **变异反证 ×4（全部实测）** | A：计划丢掉输入表（`pass.inputs = {}`）⇒ `FrameCompilerTest` 与真设备用例同时红；B：键里计数写回 0 ⇒ 着色器读一个布局里不存在的 set 1，**段错误**（139）；C：注册表不回答"要发采样绑定"（`inputs_issued` 恒 false）⇒ 注册表 6 条断言红 + 真设备用例在"绑一次"那句红、随后段错误；D：彩色收尾改回 `TRANSFER_SRC` ⇒ **像素仍然通过**，但验证层报 6 条（`vkCmdDrawIndexed-imageLayout-00344` + `vkBarrier-oldLayout-01197`）——布局这类主张只有仪器看得见，这条已记进记忆 |
+| 工具事实 | 本机 `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` 对**测试二进制**同样有效（不只是 selftest）；`VK_LAYER_ENABLES=…SYNCHRONIZATION_VALIDATION_EXT` 也能整仓跑（512 用例约 3.5 s，完全可做常规门禁） |
+| 证据 | `test_vsg` 全量 **512 用例 / 82 套件全绿**（+5）；插件目标与全仓 `ninja` 零 error / 零 warning；强制验证层整仓 **0 VUID**，再加同步验证仍 **0 SYNC-HAZARD**；hygiene 0 / **800** 文件；`check_diagnostic_formats.py` 0 / 39；`check_doc_symbols.py` 通过 |
+
 ### 11.17 下一步
 
 | 项 | 内容 |
@@ -1350,7 +1402,7 @@ M3d-3b（内容绘制进 render graph）开工前先把它的**两处前提**钉
 | ~~M2c-2b-1~~ | **已完成（2026-09-21）**：块描述符（`api/BlockDescriptors`：一个 set + 三个 dynamic offset、对齐即拒绝、repoint 留布局），真设备用例 |
 | ~~M2c-2b-2a~~ | **已完成（2026-09-21）**：内容管线与着色器（一身份一对象、动态半声明含 viewport/scissor、编译失败即拒绝），无设备用例 |
 | ~~M2c-2b-2b-1~~ | **已完成（2026-09-21）**：绘制录制（`api/ContentDraw` + `api/StateCommands`：两个“仅当”、动态槽、引擎约定），无设备用例 |
-| ~~M2c-2b-2b-2a~~ | **已完成（2026-09-21）**：无窗口设备缝（`api/Device` + `api/DeviceFeatures`）+ 离屏目标与读回（`api/OffscreenTarget`：CLEAR、TRANSFER_SRC、capture 节点、`probe()`），真设备无窗口用例 |
+| ~~M2c-2b-2b-2a~~ | **已完成（2026-09-21）**：无窗口设备缝（`api/Device` + `api/DeviceFeatures`）+ 离屏目标与读回（`api/OffscreenTarget`：CLEAR、TRANSFER_SRC【彩色收尾见 §11.16n】、capture 节点、`probe()`），真设备无窗口用例 |
 | ~~M2c-2b-2b-2b~~ | **已完成（2026-09-21）**：整条栈画三角形到离屏目标并断言像素（三重验证齐） |
 | ~~M2c-3~~ | **已完成（2026-09-21）**：内容经 `Session` 进帧（内容根 + 设备 + recompile；窗口像素证据） |
 | ~~M3a~~ | **已完成（2026-09-21）**：清屏/加载策略（`core/ClearPlan`：bootstrap 全清、额外附件透明黑、保留的深度永不清、反转 Z 远平面 0.0），无设备用例 |
@@ -1367,7 +1419,7 @@ M3d-3b（内容绘制进 render graph）开工前先把它的**两处前提**钉
 | ~~M3d-3b-5~~ | **已完成（2026-09-21）**：程序与材质两张数据源（`api/ContentSources`：两段 + 一个入口点才算内容管线；无材质 = 身份为空的默认条目；块的成员才是载荷），无设备用例（§11.16k） |
 | ~~M3d-3b-6~~ | **已完成（2026-09-21）**：内容层（`api/ContentPass`：逐命令按表录取、查不到就拒绝并上报；块 + 流 + 绘制；`findMaterial` 改为只按身份查），真设备用例（像素 + 缓存计数）（§11.16l） |
 | ~~M3d-3b-7~~ | **已完成（2026-09-21）**：多布局 scope（`api/ContentPass`：半片 = 程序 × 修订 × 布局，池与注册表共享，选不中报“是哪一项”），真设备用例（双色像素 + 绑定计数 + 两条拒绝消息）（§11.16m） |
-| M3d-3b-8 | **pass 输入的采样绑定**：需要计划先携带 inputs（`FrameCompiler` 的 `CompiledPass` 加输入表），然后键里的 `sampled_color_count` 与描述符绑定才有值 |
+| ~~M3d-3b-8~~ | **已完成（2026-09-21）**：pass 输入的采样绑定（`core/FrameCompiler` 的输入表 + `api/ContentPipeline` 的采样集布局 + `api/ContentPass` 的绑定 + `api/OffscreenTarget` 的“彩色附件按可采样收尾”），真设备像素用例 + 四条变异反证（§11.16n） |
 | M3d-3c | 执行段第三片：会话侧（窗口 pass、`present` 一次、帧计数与退役推进对齐 `FrameTimeline`；视图块的时间与视口尺寸约定） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器

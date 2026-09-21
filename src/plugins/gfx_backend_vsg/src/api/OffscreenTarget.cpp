@@ -54,6 +54,11 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcep
  * attachment is cleared and the previous contents are not just allowed to be discarded, discarding them is
  * what removes the need for a barrier before the pass.
  *
+ * finalLayout is SHADER_READ_ONLY for every COLOUR attachment: a colour target is what a later pass samples
+ * (see the file note), and leaving it in that layout is what makes the sample legal without a consumer-side
+ * barrier. The depth stays in the attachment layout: it is an attachment for the next pass and a texture for a
+ * shadow that resolved it, and the two uses have their own machinery.
+ *
  * @param device The device to create the pass on.
  * @param color_formats One format per colour attachment, in attachment order.
  * @param depth_format Present when the shape has a depth attachment.
@@ -82,8 +87,9 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcep
         description.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         description.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         description.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        // TRANSFER_SRC on every colour attachment: the target reads each of them back on the CPU side.
-        description.finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        // SHADER_READ_ONLY on every colour attachment: that is the layout a later pass samples a colour target
+        // in, so a pass whose plan declares this target as an input samples it without its own barrier.
+        description.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         attachments.push_back(description);
     }
     if (plan.has_depth) {
@@ -123,9 +129,13 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcep
     ::vsg::SubpassDependency dependency;
     dependency.srcSubpass   = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass   = 0U;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    // The SOURCE scope has to cover both things an earlier submission may have done with these attachments:
+    // written them, or SAMPLED them (a colour target is a texture for the next pass). The second half is what
+    // orders this pass' layout transition after those reads - without it, a frame that samples a target and
+    // then writes it again would be a write-while-reading hazard that only synchronisation validation sees.
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0U;
+    dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     if (plan.has_depth) {
         // The depth attachment is written by the tests the fragments go through, which run before the colour
@@ -306,8 +316,10 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     const VkDeviceSize byte_count = static_cast<VkDeviceSize>(layout.width) * layout.height * 4U;
     for (const vine::graphics::RenderTarget::ColorFormat format : layout.color_formats) {
         Data::ColorTarget color;
-        // The image is created with TRANSFER_SRC usage as well as colour-attachment: the pass leaves it in
-        // TRANSFER_SRC (see makeOffscreenRenderPass) and the copy-back reads it there.
+        // The image is created with SAMPLED usage as well as colour-attachment: the pass leaves colour
+        // attachments in SHADER_READ_ONLY (see makeOffscreenRenderPass) so a later pass can sample them, and an
+        // image view read as a sampled image has to be created for it. TRANSFER_SRC is the readback's half (the
+        // capture moves the image there and back).
         color.image                 = ::vsg::Image::create();
         color.image->imageType      = VK_IMAGE_TYPE_2D;
         color.image->format         = toColorFormat(format);
@@ -316,7 +328,8 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
         color.image->arrayLayers    = 1U;
         color.image->samples        = VK_SAMPLE_COUNT_1_BIT;
         color.image->tiling         = VK_IMAGE_TILING_OPTIMAL;
-        color.image->usage          = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        color.image->usage          = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                      VK_IMAGE_USAGE_SAMPLED_BIT;
         color.image->initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
         color.image->sharingMode    = VK_SHARING_MODE_EXCLUSIVE;
         color.view                  = ::vsg::createImageView(target->d->device, color.image, VK_IMAGE_ASPECT_COLOR_BIT);
@@ -435,6 +448,21 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
         copy->dstBuffer      = color.destination;
         copy->regions.push_back(region);
 
+        // The pass leaves the attachment in SHADER_READ_ONLY (it is a texture for the next pass, see
+        // makeOffscreenRenderPass), so the copy has to move it to the transfer layout AND put it back: a
+        // capture may be recorded between two passes, and leaving it in TRANSFER_SRC would break the next
+        // descriptor that names it. The forward transition carries the pass' writes into the transfer stage,
+        // which is what makes the copied bytes the frame's picture.
+        const VkImageSubresourceRange color_range{ VK_IMAGE_ASPECT_COLOR_BIT, 0U, 1U, 0U, 1U };
+        auto to_transfer = ::vsg::ImageMemoryBarrier::create(
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, color.image, color_range);
+        auto from_transfer = ::vsg::ImageMemoryBarrier::create(
+            VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+            color.image, color_range);
+
         // The barrier: the GPU's writes must be visible to the host that maps this memory.
         auto buffer_barrier = ::vsg::BufferMemoryBarrier::create(
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_QUEUE_FAMILY_IGNORED,
@@ -443,7 +471,12 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
                                                       0, buffer_barrier);
 
         color.capture = ::vsg::Commands::create();
+        color.capture->addChild(::vsg::PipelineBarrier::create(
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, to_transfer));
         color.capture->addChild(copy);
+        color.capture->addChild(::vsg::PipelineBarrier::create(
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, from_transfer));
         color.capture->addChild(barrier);
     }
 
@@ -594,6 +627,15 @@ core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment) const
 std::uint32_t OffscreenTarget::colorAttachmentCount() const noexcept
 {
     return static_cast<std::uint32_t>(d->colors.size());
+}
+
+::vsg::ref_ptr<::vsg::ImageView> OffscreenTarget::colorView(std::uint32_t attachment) const noexcept
+{
+    if (attachment >= d->colors.size())
+    {
+        return {};
+    }
+    return d->colors[attachment].view;
 }
 
 core::TargetShape OffscreenTarget::shape() const noexcept

@@ -218,6 +218,7 @@ const CompiledFrame& FrameCompiler::compile(const FrameDescription& description,
         }
 
         pass.draws = resolveDraws(source, pass.viewport, description.default_program);
+        pass.inputs = resolveInputs(source, facts, frame_.token);
         ++schedule_index;
     }
     frame_.passes = compiled;
@@ -231,6 +232,39 @@ const CompiledFrame& FrameCompiler::compile(const FrameDescription& description,
     frame_.targets = published;
 
     return frame_;
+}
+
+std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass& pass, const FrameFacts& facts,
+                                                            const FrameToken& token)
+{
+    const std::span<CompiledInput> inputs = arena_.makeArray<CompiledInput>(pass.inputs.size());
+    for (std::size_t index = 0; index < pass.inputs.size(); ++index)
+    {
+        CompiledInput& out = inputs[index];
+        out.target         = pass.inputs[index].target;
+        if (out.target == nullptr)
+        {
+            continue;  // nothing produced it this frame: the engine reports that, and there is nothing to bind
+        }
+
+        // The count comes from the SAME facts the pass' own target was resolved from - so "how many colour
+        // textures this pass samples" is answered once, by the table, and a caller that re-derived it from the
+        // target object could not give a different answer.
+        const TargetFacts* found = findTarget(facts, out.target);
+        if (found == nullptr)
+        {
+            // The backend does not know a target it is being asked to sample. Binding nothing silently would
+            // shade the pass as if it had not declared the input at all, so it is said out loud - the fix is to
+            // hand the backend that target's facts.
+            report(vine::graphics::DiagnosticCategory::ContentSkipped,
+                   "frame " + std::to_string(token.frame) + ": pass " + std::to_string(pass.pass) +
+                       " declares a sampled input this backend cannot resolve to a target it knows: nothing is "
+                       "bound for it this frame");
+            continue;
+        }
+        out.color_attachments = static_cast<std::uint32_t>(found->wanted.shape.color_formats.size());
+    }
+    return inputs;
 }
 
 const CompiledFrame& FrameCompiler::frame() const noexcept

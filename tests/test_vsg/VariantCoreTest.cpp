@@ -258,6 +258,40 @@ TEST(CoreStateRegistryTest, TwoPassesShareVariantsAndKeepTheirOwnBindings)
     EXPECT_TRUE(second.dynamic_issued) << "and its own recording holds no values";
 }
 
+TEST(CoreStateRegistryTest, TheSampledInputSetIsBoundOncePerPass)
+{
+    // The pass' inputs are a property of the PASS, so the set that carries them costs one bind however many
+    // draws read it - while a different set (a new pass, a rebuilt frame) has to be bound again.
+    VariantPool   pool;
+    StateRegistry registry(pool);
+    const PipelineKey key = contentKey(&program_a, 1);
+
+    int first_set  = 0;
+    int second_set = 0;
+
+    const StateRegistry::Resolution first = registry.resolve(key, DynamicState{}, &first_set);
+    EXPECT_TRUE(first.inputs_issued) << "the pass has bound no sampled-input set yet";
+    EXPECT_TRUE(first.variant_switched) << "and the input set does not replace the pipeline bind";
+
+    const StateRegistry::Resolution repeated = registry.resolve(key, DynamicState{}, &first_set);
+    EXPECT_FALSE(repeated.inputs_issued) << "the same set is still the one bound";
+    EXPECT_EQ(registry.inputs_issued(), 1U);
+    EXPECT_EQ(registry.inputs_skipped(), 1U);
+
+    const StateRegistry::Resolution another = registry.resolve(key, DynamicState{}, &second_set);
+    EXPECT_TRUE(another.inputs_issued) << "a different set has to reach the recording";
+
+    const StateRegistry::Resolution none = registry.resolve(key, DynamicState{}, nullptr);
+    EXPECT_FALSE(none.inputs_issued) << "a pass with no inputs binds nothing - there is nothing to rebind";
+
+    // A fresh recording holds no state at all: the next resolution issues the set again.
+    registry.reset();
+    const StateRegistry::Resolution after_reset = registry.resolve(key, DynamicState{}, &first_set);
+    EXPECT_TRUE(after_reset.inputs_issued);
+    EXPECT_TRUE(after_reset.variant_switched);
+    EXPECT_EQ(registry.inputs_issued(), 3U);
+}
+
 TEST(CoreStateRegistryTest, ANewRecordingIssuesEverythingAgain)
 {
     VariantPool   pool;

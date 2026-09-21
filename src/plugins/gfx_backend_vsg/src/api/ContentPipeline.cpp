@@ -78,6 +78,13 @@ constexpr VkExtent2D kBakedViewportExtent{ 1U, 1U };
 
 struct ContentPipeline::Data
 {
+    /** @brief The set layout and pipeline layout one sampled-input count is compiled against. */
+    struct Sampled
+    {
+        ::vsg::ref_ptr<::vsg::DescriptorSetLayout> set;       ///< Set 1: one combined image sampler per colour.
+        ::vsg::ref_ptr<::vsg::PipelineLayout>      pipeline;  ///< The block set (0) plus that set (1).
+    };
+
     /** @brief Compiles one GLSL stage, or returns an empty pointer when the compiler refuses it. */
     ::vsg::ref_ptr<::vsg::ShaderStage> compileStage(VkShaderStageFlagBits stage, const std::string& source,
                                                     const std::string& entry)
@@ -95,8 +102,11 @@ struct ContentPipeline::Data
 
     ::vsg::ShaderCompiler                                       compiler;
     ::vsg::ref_ptr<::vsg::DescriptorSetLayout>                  block_set;
+    ::vsg::PushConstantRanges                                   push_ranges;  ///< Kept for the per-count layouts.
     ::vsg::ShaderStages                                         stages;
     ::vsg::ref_ptr<::vsg::PipelineLayout>                       layout;
+    std::unordered_map<std::uint32_t, Sampled>                  sampled;  ///< One entry per distinct count.
+    ::vsg::ref_ptr<::vsg::Sampler>                              input_sampler;
     ::vsg::GraphicsPipelineStates                               states;
     std::unordered_map<std::uint64_t, ::vsg::ref_ptr<::vsg::GraphicsPipeline>> pipelines;
     std::uint64_t                                               compiles{0};
@@ -136,11 +146,14 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ::vsg::ref_ptr<::
     layer->d->block_set = block_set;
 
     // The layout binds the block set (set 0) and the ABI's push budget. The blocks arrive through dynamic
-    // offsets, so a draw's state never reaches this layout again.
+    // offsets, so a draw's state never reaches this layout again. A layout with sampled inputs (set 1) is
+    // built on demand, one per count (see sampledSetLayout): the key names the count, so a pass never gets a
+    // pipeline compiled against another pass' sampled-input shape.
     ::vsg::PushConstantRanges push_ranges;
     if (settings.push_bytes != 0U) {
         push_ranges.push_back(VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0U, settings.push_bytes });
     }
+    layer->d->push_ranges = push_ranges;
     layer->d->layout = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ block_set }, push_ranges);
     if (layer->d->layout == nullptr) {
         return nullptr;
@@ -201,7 +214,16 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
         return {lookup.action, lookup.id, found->second};
     }
 
-    auto pipeline = ::vsg::GraphicsPipeline::create(d->layout, d->stages, d->states);
+    // The key names how many sampled colour textures this pass binds, and the pipeline layout has to be the
+    // one built for exactly that count: a pipeline is compiled against one descriptor set layout, so the count
+    // is identity rather than runtime state.
+    const ::vsg::ref_ptr<::vsg::PipelineLayout> layout = layoutFor(key.sampled_color_count);
+    if (layout == nullptr) {
+        ++d->failures;
+        return {lookup.action, lookup.id, {}};
+    }
+
+    auto pipeline = ::vsg::GraphicsPipeline::create(layout, d->stages, d->states);
     if (pipeline == nullptr) {
         ++d->failures;
         return {lookup.action, lookup.id, {}};
@@ -219,6 +241,54 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
 ::vsg::ref_ptr<::vsg::PipelineLayout> ContentPipeline::layout() const noexcept
 {
     return d->layout;
+}
+
+::vsg::ref_ptr<::vsg::DescriptorSetLayout> ContentPipeline::sampledSetLayout(std::uint32_t color_bindings)
+{
+    if (color_bindings == 0U) {
+        return {};  // no sampled inputs: there is no set 1 at all
+    }
+    const auto found = d->sampled.find(color_bindings);
+    if (found != d->sampled.end()) {
+        return found->second.set;
+    }
+
+    // One combined image sampler per colour texture, readable from either shading stage: the sampled inputs
+    // of a content pass ARE the picture it reads, and which stage reads it is the shader's business.
+    auto set = ::vsg::DescriptorSetLayout::create();
+    if (set == nullptr) {
+        return {};
+    }
+    for (std::uint32_t binding = 0; binding < color_bindings; ++binding) {
+        set->addBinding(binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1U,
+                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+    }
+    auto pipeline = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ d->block_set, set },
+                                                  d->push_ranges);
+    if (pipeline == nullptr) {
+        return {};
+    }
+    d->sampled.emplace(color_bindings, Data::Sampled{ set, pipeline });
+    return set;
+}
+
+::vsg::ref_ptr<::vsg::PipelineLayout> ContentPipeline::layoutFor(std::uint32_t sampled_color_bindings)
+{
+    if (sampled_color_bindings == 0U) {
+        return d->layout;
+    }
+    if (sampledSetLayout(sampled_color_bindings) == nullptr) {
+        return {};
+    }
+    return d->sampled.at(sampled_color_bindings).pipeline;
+}
+
+::vsg::ref_ptr<::vsg::Sampler> ContentPipeline::inputSampler()
+{
+    if (d->input_sampler == nullptr) {
+        d->input_sampler = ::vsg::Sampler::create();
+    }
+    return d->input_sampler;
 }
 
 const ::vsg::ShaderStages& ContentPipeline::stages() const noexcept

@@ -8,6 +8,7 @@
 #include <vsg/app/RenderGraph.h>
 #include <vsg/core/ref_ptr.h>
 #include <vsg/nodes/Node.h>
+#include <vsg/state/ImageView.h>
 
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/vsg/core/ClearPlan.hpp>
@@ -29,10 +30,12 @@ class Device;
  * engine; an off-screen target has neither problem, so the evidence path is a target of our own.
  *
  * THE TARGET IS ONE IMAGE, ONE RENDER PASS, ONE FRAMEBUFFER. The pass clears the colour attachment,
- * whatever the caller adds as children draws into it, and leaves the image in TRANSFER_SRC - the layout the
- * copy-back needs. Committing to that final layout is what makes the readback a single copy with no barrier
- * juggling: the pass DISCARDS the previous contents every time (initial layout is UNDEFINED), which is
- * exactly right for a phase that clears and draws.
+ * whatever the caller adds as children draws into it, and leaves it in SHADER_READ_ONLY - the layout a later
+ * pass samples it in, which is what makes "an input of the next pass" work without a barrier: an input target
+ * is a picture somebody else reads. Committing to that final layout is also what makes the readback a single
+ * copy with one pair of transitions (the copy needs TRANSFER_SRC, and the attachments go back to being
+ * sampleable afterwards, because a capture may run between two passes). The pass DISCARDS the previous
+ * contents every time (initial layout is UNDEFINED), which is exactly right for a phase that clears and draws.
  *
  * THE COPY IS PART OF THE COMMAND GRAPH, not a separate submission: `capture()` returns the node the caller
  * appends AFTER the render graph, so the copy is recorded in the same command buffer, on the same queue, in
@@ -160,6 +163,18 @@ class OffscreenTarget
 
     /** @brief Gets how many colour attachments this target has. */
     [[nodiscard]] std::uint32_t colorAttachmentCount() const noexcept;
+
+    /** @brief Gets one colour attachment's image view, for a pass that samples this target as an input.
+     *
+     * Why the VIEW and not the identity: the sampled images of a pass' input are GPU objects, and they belong
+     * to this target. The layer that owns the target answers for them, and the content layer binds what it is
+     * offered (see ContentPass::record). The view is left in SHADER_READ_ONLY by this target's pass, so a
+     * descriptor built from it names the layout the image really is in.
+     *
+     * @param attachment Colour attachment index (0 when there is only one).
+     * @return The view, or null when there is no such attachment.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::ImageView> colorView(std::uint32_t attachment) const noexcept;
 
     /** @brief Gets the shape the render pass, the framebuffer and every pipeline were built against.
      *

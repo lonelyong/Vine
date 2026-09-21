@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <string>
 
+#include <vsg/state/DescriptorImage.h>
+#include <vsg/state/ImageInfo.h>
+
 #include <vine/vsg/api/DrawBlock.hpp>
 
 V_VSG_NS_BEGIN
@@ -41,6 +44,17 @@ std::span<const std::byte> bytesOf(const Block& block) noexcept
     return std::span<const std::byte>(reinterpret_cast<const std::byte*>(&block), sizeof(Block));
 }
 
+/// @brief How many colour textures the pass' inputs offer, as the plan states it (the key's count).
+std::uint32_t sampledColorCount(const core::CompiledPass& pass) noexcept
+{
+    std::uint32_t total = 0;
+    for (const core::CompiledInput& input : pass.inputs)
+    {
+        total += input.color_attachments;
+    }
+    return total;
+}
+
 }  // namespace
 
 ContentPass::ContentPass(const Scope& scope, core::Diagnostics& diagnostics) noexcept
@@ -51,9 +65,50 @@ ContentPass::ContentPass(const Scope& scope, core::Diagnostics& diagnostics) noe
 
 bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& facts,
                          const core::RenderPassCompatibility& compatibility,
-                         std::span<const std::byte> view_block, ::vsg::ref_ptr<::vsg::Node>& out)
+                         std::span<const InputImages> inputs, std::span<const std::byte> view_block,
+                         ::vsg::ref_ptr<::vsg::Node>& out)
 {
     auto group = ::vsg::Group::create();
+
+    // The plan says what the pass READS; the caller says what those images ARE. The two have to agree before
+    // anything is bound - the same discipline the executor applies to a pass' target shape - because a pass
+    // that sampled images nobody described would put a picture on screen that no plan explains. A disagreement
+    // refuses the WHOLE pass (its inputs are one fact, not a per-draw one), and says which entry moved.
+    if (inputs.size() != pass.inputs.size())
+    {
+        diagnostics_.report(
+            vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+            asString("the pass is not drawn: it declares " + std::to_string(pass.inputs.size()) +
+                     " input(s) and the caller offered " + std::to_string(inputs.size()) +
+                     " (one entry per declared input, in declaration order)"));
+        out = group;
+        return false;
+    }
+    for (std::size_t index = 0; index < inputs.size(); ++index)
+    {
+        if (inputs[index].colors.size() != pass.inputs[index].color_attachments)
+        {
+            diagnostics_.report(
+                vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+                asString("the pass is not drawn: input " + std::to_string(index) + " offers " +
+                         std::to_string(inputs[index].colors.size()) +
+                         " colour texture(s) where the plan says " +
+                         std::to_string(pass.inputs[index].color_attachments)));
+            out = group;
+            return false;
+        }
+    }
+
+    // The count the pipeline identity carries, and the set the draws bind. Both come from the PLAN (the count)
+    // and the plan-checked images (the set), so the key and the bindings cannot disagree about the sampled
+    // shape of this pass.
+    const std::uint32_t sampled_color_count = sampledColorCount(pass);
+    const ::vsg::ref_ptr<::vsg::BindDescriptorSet> input_set = makeInputSet(pass, inputs);
+    if (sampled_color_count != 0U && input_set == nullptr)
+    {
+        out = group;  // makeInputSet reported why
+        return false;
+    }
 
     // One view block per pass: it describes the view, and the pass has one camera.
     const BlockStorage::Block view = scope_.storage->writeView(view_block);
@@ -76,7 +131,8 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         }
         for (const core::CompiledCommand& command : draw.commands)
         {
-            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, *group))
+            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, input_set,
+                               sampled_color_count, *group))
             {
                 complete = false;
             }
@@ -87,10 +143,74 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     return complete;
 }
 
+::vsg::ref_ptr<::vsg::BindDescriptorSet> ContentPass::makeInputSet(const core::CompiledPass& pass,
+                                                                  std::span<const InputImages> inputs)
+{
+    const std::uint32_t texture_count = sampledColorCount(pass);
+    if (texture_count == 0U)
+    {
+        return {};  // nothing declared (or nothing produced): there is no sampled set to bind
+    }
+    if (scope_.entries.empty())
+    {
+        reportRefused("the pass' sampled inputs", "no compiled half was built for this pass");
+        return {};
+    }
+
+    // One set per pass, laid out by the layer that compiles the pipelines: the set layout object the pipelines
+    // were compiled against, so the set the draws bind is exactly the shape they expect. The first half
+    // answers; the halves' sampled layouts are built from the same recipe, so they are compatible with one
+    // another as well (a pass may switch halves with this set bound).
+    ContentPipeline& pipelines  = *scope_.entries.front().pipelines;
+    const auto       set_layout = pipelines.sampledSetLayout(texture_count);
+    const auto       sampler    = pipelines.inputSampler();
+    if (set_layout == nullptr || sampler == nullptr)
+    {
+        reportRefused("the pass' sampled inputs", "the sampled-input set could not be built");
+        return {};
+    }
+
+    // Binding i reads the i-th colour texture, in declaration order: input by input and, inside one input, in
+    // attachment order. The image layout is the one a colour attachment is left in (see OffscreenTarget), so
+    // the descriptor names the layout the producer's pass actually left behind.
+    ::vsg::Descriptors descriptors;
+    descriptors.reserve(texture_count);
+    std::uint32_t binding = 0;
+    for (const InputImages& input : inputs)
+    {
+        for (const ::vsg::ref_ptr<::vsg::ImageView>& view : input.colors)
+        {
+            if (view == nullptr)
+            {
+                reportRefused("the pass' sampled inputs", "an entry offers no image view");
+                return {};
+            }
+            descriptors.push_back(::vsg::DescriptorImage::create(
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view,
+                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            ++binding;
+        }
+    }
+
+    auto set = ::vsg::DescriptorSet::create(set_layout, descriptors);
+    if (set == nullptr)
+    {
+        reportRefused("the pass' sampled inputs", "the sampled-input set could not be created");
+        return {};
+    }
+    // The pipeline layout this command names is the one built for the same count, and set 1 is the sampled
+    // set's index in it (the block set is set 0, see ContentPipeline).
+    constexpr std::uint32_t kSampledSetIndex = 1U;
+    return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.layoutFor(texture_count),
+                                            kSampledSetIndex, set);
+}
+
 bool ContentPass::recordCommand(const core::CompiledCommand& command, const core::CompiledDraw& draw,
                                 const core::CompiledPass& pass, const ContentFacts& facts,
                                 const core::RenderPassCompatibility& compatibility, std::uint64_t view_offset,
-                                ::vsg::Group& into)
+                                const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
+                                std::uint32_t sampled_color_count, ::vsg::Group& into)
 {
     const FactResult<ProgramFacts> program = findProgram(facts, command.program);
     if (!program.found())
@@ -193,10 +313,14 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     record.key.vertex_layout      = entry->layout;
     record.key.compatibility      = compatibility;
     record.key.depth_sampleable   = pass.depth_sampleable;
-    record.key.sampled_color_count = 0U;  // the plan does not carry the pass' inputs yet (see the file note)
+    // How many colour textures this pass binds as samplers: a fact of the plan's input table, carried into the
+    // identity so the pipeline is compiled against the sampled shape its pass really binds.
+    record.key.sampled_color_count = sampled_color_count;
     record.dynamic                = command.dynamic;
     record.blocks                 = scope_.descriptors->bind(
-        entry->pipelines->layout(), BlockDescriptors::Offsets{ view_offset, block.offset, material_write.offset });
+        entry->pipelines->layoutFor(sampled_color_count),
+        BlockDescriptors::Offsets{ view_offset, block.offset, material_write.offset });
+    record.inputs       = inputs;
     record.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
     record.index        = indices.bind;
     record.viewport     = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),

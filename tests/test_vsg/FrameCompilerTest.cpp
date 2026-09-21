@@ -38,6 +38,7 @@ using vine::graphics::RenderTarget;
 using vine::graphics::ShaderProgram;
 using vine::vsg::core::ClearPolicy;
 using vine::vsg::core::CompiledFrame;
+using vine::vsg::core::CompiledPass;
 using vine::vsg::core::DepthFacts;
 using vine::vsg::core::Diagnostics;
 using vine::vsg::core::FrameArena;
@@ -70,24 +71,27 @@ struct Rig
         return compiler.compile(recorder.description(), FrameFacts{ facts });
     }
 
-    /// @brief Adds the facts of a one-colour-attachment target, built or not.
-    void addTarget(const void* identity, int width, int height, bool built)
+    /// @brief Adds the facts of a target, built or not, with @p colors colour attachments of one format.
+    void addTarget(const void* identity, int width, int height, bool built, int colors = 1)
     {
         TargetFacts entry;
         entry.target         = identity;
         entry.wanted.width   = width;
         entry.wanted.height  = height;
-        entry.wanted.shape   = colorShape();
+        entry.wanted.shape   = colorShape(colors);
         entry.current.desc   = entry.wanted;
         entry.current.built  = built;
         facts.push_back(entry);
     }
 
-    /// @brief A one-colour-attachment shape.
-    static TargetShape colorShape()
+    /// @brief A shape with @p colors colour attachments (the count an input's offer is reported as).
+    static TargetShape colorShape(int colors = 1)
     {
         TargetShape shape;
-        shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+        for (int index = 0; index < colors; ++index)
+        {
+            shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+        }
         return shape;
     }
 };
@@ -99,6 +103,77 @@ std::vector<RenderCommand> oneCommand()
 }
 
 }  // namespace
+
+TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
+{
+    // The plan carries the pass' declared inputs because a binding layer needs two things the description
+    // cannot keep for it: WHICH target each input reads, and how many colour textures it offers (the count a
+    // sampled-input set binds). Both are answered here from the same facts the pass' own target came from.
+    Rig r;
+    vine::intrusive_ptr<RenderTarget> source(new RenderTarget());
+    vine::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    r.addTarget(source.get(), 64, 64, true, /*colors=*/2);
+    r.addTarget(destination.get(), 64, 64, true);
+
+    std::vector<RenderTarget*> inputs{ source.get(), nullptr };  // the second one nobody produced this frame
+    const std::vector<RenderCommand> commands = oneCommand();
+
+    r.recorder.beginFrame(FrameToken{ 1 });
+    r.recorder.beginPass(1);
+    r.recorder.setRenderTarget(destination.get());
+    r.recorder.setPassInputs(inputs);
+    r.recorder.render(commands, nullptr);
+    r.recorder.endPass();
+
+    r.recorder.beginPass(2);
+    r.recorder.setRenderTarget(source.get());
+    r.recorder.render(commands, nullptr);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.passes.size(), 2u);
+    EXPECT_EQ(frame.passes[0].pass, 2u);  // the producer first, as the sampled edge says
+    const CompiledPass& consumer = frame.passes[1];
+    ASSERT_EQ(consumer.inputs.size(), 2u);
+    EXPECT_EQ(consumer.inputs[0].target, static_cast<const void*>(source.get()));
+    EXPECT_EQ(consumer.inputs[0].color_attachments, 2u) << "the count comes from the target's shape, not a flag";
+    EXPECT_EQ(consumer.inputs[1].target, nullptr) << "an input nothing produced stays in the list, in order";
+    EXPECT_EQ(consumer.inputs[1].color_attachments, 0u);
+
+    // Nothing produced for the second entry is the ENGINE's business (it resolved it to null), so the backend
+    // reports nothing about it: one diagnostic would point the reader at the wrong layer.
+    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::ContentSkipped), 0u);
+}
+
+TEST(FrameCompilerTest, AnInputTheFactsCannotAnswerIsReportedAndOffersNothing)
+{
+    Rig r;
+    vine::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    vine::intrusive_ptr<RenderTarget> stranger(new RenderTarget());  // never handed to the backend's facts
+    r.addTarget(destination.get(), 64, 64, true);
+
+    std::vector<RenderTarget*> inputs{ stranger.get() };
+    const std::vector<RenderCommand> commands = oneCommand();
+
+    r.recorder.beginFrame(FrameToken{ 1 });
+    r.recorder.beginPass(1);
+    r.recorder.setRenderTarget(destination.get());
+    r.recorder.setPassInputs(inputs);
+    r.recorder.render(commands, nullptr);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    // The PASS still runs: a target the backend cannot resolve as an input is not a reason to lose the
+    // picture (unlike an unknown DRAW target, which is a pass with nowhere to go).
+    ASSERT_EQ(frame.passes.size(), 1u);
+    ASSERT_EQ(frame.passes[0].inputs.size(), 1u);
+    EXPECT_EQ(frame.passes[0].inputs[0].color_attachments, 0u)
+        << "nothing can be bound for an input no fact answers for - so no binding layer may claim otherwise";
+    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::ContentSkipped), 1u)
+        << "and it is said out loud, once per frame, instead of shading as if the input were not declared";
+}
 
 TEST(FrameCompilerTest, AViewportNobodyAnnouncedBecomesTheWholeTarget)
 {

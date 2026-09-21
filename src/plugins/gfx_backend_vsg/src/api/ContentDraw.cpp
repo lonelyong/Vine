@@ -10,9 +10,10 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
 
 ::vsg::ref_ptr<::vsg::StateGroup> ContentDraw::record(core::StateRegistry& registry, const Draw& draw)
 {
-    // The two "only when" answers come from the pass' registry: the variant bind only after a SWITCH, and
-    // the dynamic block only when a value differs from what this pass already issued.
-    const core::StateRegistry::Resolution resolution = registry.resolve(draw.key, draw.dynamic);
+    // The three "only when" answers come from the pass' registry: the variant bind only after a SWITCH, the
+    // dynamic block only when a value differs from what this pass already issued, and the sampled-input set
+    // only when this pass has not already bound that very set.
+    const core::StateRegistry::Resolution resolution = registry.resolve(draw.key, draw.dynamic, draw.inputs.get());
     const ContentPipeline::Result       compiled     = pipelines_->acquire(*pool_, draw.key);
     if (compiled.pipeline == nullptr) {
         // Nothing is recorded: a group without a pipeline bind would draw with whatever was bound last.
@@ -31,6 +32,10 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
     }
     if (draw.blocks != nullptr) {
         group->add(draw.blocks);
+    }
+    if (draw.inputs != nullptr && resolution.inputs_issued) {
+        group->add(draw.inputs);
+        ++input_binds_;
     }
 
     auto commands = ::vsg::Commands::create();
@@ -67,6 +72,11 @@ std::uint64_t ContentDraw::pipeline_binds() const noexcept
 std::uint64_t ContentDraw::dynamic_commands() const noexcept
 {
     return dynamic_commands_;
+}
+
+std::uint64_t ContentDraw::input_binds() const noexcept
+{
+    return input_binds_;
 }
 
 std::uint64_t ContentDraw::refusals() const noexcept

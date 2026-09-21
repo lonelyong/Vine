@@ -23,7 +23,9 @@
  * except where a fresh attachment forces one", and a command with no program of its own becomes the
  * frame's default program; (3) which pass of this frame is the BOOTSTRAP one for each target (the first
  * writer into attachments that were just built or invalidated), and what each target's plan and depth plan
- * are (planTarget / depthPlan, the pure functions of the target layer).
+ * are (planTarget / depthPlan, the pure functions of the target layer); (4) what each pass' declared inputs
+ * ARE - identity plus the number of colour textures each offers - from the same target facts, so a binding
+ * layer never has to ask the target registry the same question again.
  *
  * WHAT IT DOES NOT DECIDE. Which GPU objects exist, which pipeline a draw uses, what anything costs, and
  * whether a target should be rebuilt (that is planTarget's answer, read here, not invented here). It
@@ -73,6 +75,23 @@ struct CompiledCommand
     DynamicState  dynamic{};              ///< The dynamic layer, resolved (see resolveDynamicState).
 };
 
+/** @brief One of a pass' declared inputs, as the plan carries it: what it reads, and what it offers.
+ *
+ * Identity plus the ONE shape fact a sampler binding needs: how many colour attachments the input offers
+ * (that is the count of colour textures a sampled-input set binds for it). The value is answered HERE, from
+ * the same target facts the pass' own target is resolved from, because the two must not be able to disagree:
+ * a caller that re-derived it from the target it resolved would be answering the same question twice.
+ *
+ * An input nothing produced (the engine resolves those to null), or one the frame's facts cannot answer for,
+ * offers nothing: its count is zero, and a binding layer has nothing to bind for it - which is why the
+ * compiler REPORTS the second case (see compile()).
+ */
+struct CompiledInput
+{
+    const void*   target{nullptr};        ///< The target this input reads; nullptr = nothing produced it.
+    std::uint32_t color_attachments{0};   ///< Colour textures it offers (0 = nothing to bind for it).
+};
+
 /** @brief One drawing call, resolved. */
 struct CompiledDraw
 {
@@ -98,6 +117,7 @@ struct CompiledPass
     bool          depth_preserved{false};     ///< A later pass reads the depth this one writes: never clear it.
     std::uint32_t color_attachments{0};       ///< Colour attachments of the pass' target (part of a pipeline's identity).
     bool          depth_sampleable{false};    ///< The pass' target offers a sampleable depth (part of the identity).
+    std::span<const CompiledInput> inputs{};  ///< The pass' declared inputs, in declaration order.
     std::span<const CompiledDraw> draws{};    ///< Drawing calls, in the order they were collected.
 };
 
@@ -167,6 +187,20 @@ class FrameCompiler
     [[nodiscard]] std::span<const CompiledCommand> resolveCommands(const CollectedDraw& draw,
                                                                    const ProgramRef& default_program,
                                                                    vine::graphics::DepthMode pass_depth);
+
+    /** @brief Resolves one pass' declared inputs into the facts a binding layer needs.
+     *
+     * An input the frame's facts cannot answer for is reported here (nothing else can tell): the pass still
+     * runs - a target the backend does not own is not a reason to lose the picture - and its entry offers
+     * nothing, so no binding layer can claim otherwise.
+     *
+     * @param pass  The collected pass whose inputs are being resolved.
+     * @param facts The backend's account of the targets (the same table the pass' target came from).
+     * @param token The frame being compiled, for the report.
+     * @return The entries, in declaration order, in the frame's arena.
+     */
+    [[nodiscard]] std::span<const CompiledInput> resolveInputs(const CollectedPass& pass, const FrameFacts& facts,
+                                                               const FrameToken& token);
 
     /** @brief Reports one condition through the one route. */
     void report(vine::graphics::DiagnosticCategory category, const std::string& message);

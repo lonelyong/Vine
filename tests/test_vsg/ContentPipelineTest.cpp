@@ -230,6 +230,58 @@ TEST(ContentPipelineTest, TheLayoutBindsTheBlockSetAndThePushBudget)
     EXPECT_NE(layer->stages()[1]->module, nullptr);
 }
 
+TEST(ContentPipelineTest, ASampledInputCountGetsItsOwnSetLayoutAndItsOwnPipeline)
+{
+    // How many colour textures a pass samples is identity, not runtime state: the pipeline is compiled against
+    // one descriptor set layout, so the count has to reach the layout - and the layer keeps one layout per
+    // count, so a second pass with another shape does not disturb the first.
+    const auto block_set = ::vsg::DescriptorSetLayout::create();
+    auto       layer     = makeLayer(block_set);
+    ASSERT_NE(layer, nullptr);
+
+    EXPECT_EQ(layer->sampledSetLayout(0), nullptr) << "a pass with no sampled inputs has no set 1 at all";
+    EXPECT_EQ(layer->layoutFor(0), layer->layout()) << "the no-inputs layout is the one the layer was built with";
+
+    const auto one = layer->sampledSetLayout(1);
+    ASSERT_NE(one, nullptr);
+    ASSERT_EQ(one->bindings.size(), 1U);
+    EXPECT_EQ(one->bindings[0].binding, 0U);
+    EXPECT_EQ(one->bindings[0].descriptorType, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    EXPECT_EQ(one->bindings[0].descriptorCount, 1U);
+    EXPECT_EQ(one->bindings[0].stageFlags, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+        << "which stage samples the picture is the shader's business";
+    EXPECT_EQ(layer->sampledSetLayout(1), one) << "the layout is built once and kept";
+
+    const auto two = layer->sampledSetLayout(2);
+    ASSERT_NE(two, nullptr);
+    ASSERT_EQ(two->bindings.size(), 2U);
+    EXPECT_NE(two, one) << "two sampled textures are another shape, so another layout";
+
+    const auto layout_one = layer->layoutFor(1);
+    ASSERT_NE(layout_one, nullptr);
+    ASSERT_EQ(layout_one->setLayouts.size(), 2U) << "the block set and the sampled set";
+    EXPECT_EQ(layout_one->setLayouts[0], block_set);
+    EXPECT_EQ(layout_one->setLayouts[1], one);
+    EXPECT_EQ(layer->layoutFor(1), layout_one);
+
+    // The count is part of the identity: two counts are two pipelines, and each was compiled against its own
+    // layout.
+    VariantPool pool;
+    PipelineKey plain       = contentKey(1);
+    PipelineKey sampling    = contentKey(1);
+    sampling.sampled_color_count = 1U;
+
+    const auto without = layer->acquire(pool, plain);
+    const auto with    = layer->acquire(pool, sampling);
+    ASSERT_NE(without.pipeline, nullptr);
+    ASSERT_NE(with.pipeline, nullptr);
+    EXPECT_NE(without.pipeline, with.pipeline);
+    EXPECT_EQ(pool.created(), 2U);
+    EXPECT_EQ(without.pipeline->layout->setLayouts.size(), 1U);
+    EXPECT_EQ(with.pipeline->layout->setLayouts.size(), 2U);
+    EXPECT_EQ(layer->acquire(pool, sampling).action, VariantPool::Action::Reused);
+}
+
 TEST(ContentPipelineTest, DynamicStateChurnNeverReachesThePoolOrThisLayer)
 {
     const auto block_set = ::vsg::DescriptorSetLayout::create();

@@ -217,6 +217,10 @@ struct Fixture
         draw.index        = index_bind.bind;
         draw.viewport     = ViewportRect{ 0.0F, 0.0F, static_cast<float>(kSize), static_cast<float>(kSize) };
         draw.index_count  = 3U;
+        // The pass writes TWO colour attachments, and the blend state is dynamic: the command that issues it has
+        // to cover every attachment the render pass has (VUID-vkCmdDrawIndexed-firstAttachment-07476), so the
+        // count is told to the recorder rather than left at its single-attachment default.
+        draw.color_attachments = 2U;
         return recorder->record(*registry, draw);
     }
 

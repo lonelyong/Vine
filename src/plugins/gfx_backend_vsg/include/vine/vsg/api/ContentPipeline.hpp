@@ -9,6 +9,7 @@
 #include <vsg/state/DescriptorSetLayout.h>
 #include <vsg/state/GraphicsPipeline.h>
 #include <vsg/state/PipelineLayout.h>
+#include <vsg/state/Sampler.h>
 #include <vsg/state/ShaderStage.h>
 
 #include <vine/vsg/core/Keys.hpp>
@@ -32,6 +33,13 @@
  * This class only builds the object the pool says is needed and keeps it alive; the pool can evict an id,
  * and this layer then drops its object too (the commands that bind a pipeline hold their own reference, so
  * what dies here is only a keep-alive).
+ *
+ * THE SAMPLED-INPUT SET. A key also says how many colour attachments the pass' declared inputs offer
+ * (`sampled_color_count`), and those textures are bound in a set of their own - set 1, right after the block
+ * set at 0 - with one combined image sampler per colour texture, readable from the vertex or the fragment
+ * stage. A layout is built per count and kept, because the count IS part of the identity: a pipeline is
+ * compiled against one descriptor set layout, so "how many sampled textures this pass binds" has to be a
+ * fact of the pipeline, exactly as the old implementation's per-source shader sets were.
  *
  * NO DEVICE IS NEEDED. Nothing here compiles a Vulkan object: a `vsg::GraphicsPipeline` is a create-info
  * until a `vsg::Context` compiles it as part of a command graph, and the GLSL is compiled to SPIR-V in
@@ -129,8 +137,39 @@ class ContentPipeline
     [[nodiscard]] Result acquire(core::VariantPool& pool, const core::PipelineKey& key);
 
   public:
-    /** @brief Gets the layout every content pipeline of this layer shares. */
+    /** @brief Gets the layout every content pipeline of this layer shares (the one with no sampled inputs).
+     *
+     * The set layouts this layer owns (the block set it was built with, and one sampled-input set per count)
+     * sit at indices 0 and 1 - a caller whose block set lives at another index is outside this contract.
+     */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layout() const noexcept;
+
+    /** @brief Gets (or builds and keeps) the pipeline layout that binds @p sampled_color_bindings samplers.
+     *
+     * The count is the key's (`PipelineKey::sampled_color_count`), so every pipeline this layer holds was
+     * compiled against the layout this call answers for its own count.
+     *
+     * @param sampled_color_bindings Number of colour textures the pass binds (0 = the block set alone).
+     * @return The layout, or null when it could not be created.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layoutFor(std::uint32_t sampled_color_bindings);
+
+    /** @brief Gets (or builds and keeps) the sampled-input set layout for @p color_bindings samplers.
+     *
+     * The caller that binds the images uses THIS object, so the set it builds is laid out exactly like the
+     * set the pipelines of this layer expect.
+     *
+     * @param color_bindings Number of combined image samplers (binding i = the i-th colour texture).
+     * @return The set layout, or null for zero bindings (there is no sampled set at all then).
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSetLayout> sampledSetLayout(std::uint32_t color_bindings);
+
+    /** @brief Gets the sampler the sampled-input set binds its images with.
+     *
+     * One per layer, created on first use: the images of a declared input are colour attachments, so the
+     * default sampler (linear, repeat) is the right thing to interpolate a picture with.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::Sampler> inputSampler();
 
     /** @brief Gets the compiled shader stages. */
     [[nodiscard]] const ::vsg::ShaderStages& stages() const noexcept;
