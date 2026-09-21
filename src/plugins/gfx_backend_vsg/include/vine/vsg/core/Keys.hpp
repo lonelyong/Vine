@@ -99,6 +99,26 @@ struct VertexLayoutKey
 };
 
 /**
+ * @brief What one drawing call draws with: the engine has exactly two, and they compile against different
+ * descriptor ABIs.
+ *
+ * The kind is IDENTITY because the two are not interchangeable compilations of one program: a content draw
+ * binds the four ABI blocks at set 0 and its sampled inputs at set 1, while a full-screen draw binds the
+ * source's colour attachments at bindings 0..N-1 of set 0 (the full-screen ABI the engine's own screen
+ * programs, `BuiltinShaders::screenCopyProgram` and friends, are written against). A pipeline compiled for
+ * one of them cannot be bound for the other, so a key that did not carry the kind could hand one out for
+ * the other - the failure mode this field exists to make impossible.
+ *
+ * It is declared here, next to the key that uses it, and the plan uses the same enumeration (see
+ * FrameRecorder): one spelling for one fact.
+ */
+enum class DrawKind : std::uint8_t
+{
+    Content,   ///< render(): the pass' content, one instance per collected command.
+    Screen,    ///< drawScreenProgram(): a full-screen triangle sampling a target's attachments.
+};
+
+/**
  * @brief The part of a target's shape that a pipeline is compiled against.
  *
  * This is the whole of the "pipeline compatibility" question, and it is exactly what a pipeline key may
@@ -142,6 +162,7 @@ struct LoadOpVariantKey
  */
 struct PipelineKey
 {
+    DrawKind     kind{DrawKind::Content};        ///< Which of the engine's two drawing calls this is.
     const void*  program{nullptr};               ///< Shader program (or the default content program).
     std::uint64_t revision{0};                   ///< Program revision.
     VertexLayoutKey vertex_layout;               ///< Vertex stream layout.

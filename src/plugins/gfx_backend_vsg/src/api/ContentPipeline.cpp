@@ -81,8 +81,8 @@ struct ContentPipeline::Data
     /** @brief The set layout and pipeline layout one sampled-input count is compiled against. */
     struct Sampled
     {
-        ::vsg::ref_ptr<::vsg::DescriptorSetLayout> set;       ///< Set 1: one combined image sampler per colour.
-        ::vsg::ref_ptr<::vsg::PipelineLayout>      pipeline;  ///< The block set (0) plus that set (1).
+        ::vsg::ref_ptr<::vsg::DescriptorSetLayout> set;       ///< The samplers (set 1 for content, set 0 for screen).
+        ::vsg::ref_ptr<::vsg::PipelineLayout>      pipeline;  ///< That set, in its place among the layer's sets.
     };
 
     /** @brief Compiles one GLSL stage, or returns an empty pointer when the compiler refuses it. */
@@ -100,6 +100,7 @@ struct ContentPipeline::Data
         return shader_stage;
     }
 
+    core::DrawKind                                              kind{core::DrawKind::Content};
     ::vsg::ShaderCompiler                                       compiler;
     ::vsg::ref_ptr<::vsg::DescriptorSetLayout>                  block_set;
     ::vsg::PushConstantRanges                                   push_ranges;  ///< Kept for the per-count layouts.
@@ -202,10 +203,73 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ::vsg::ref_ptr<::
     return layer;
 }
 
+std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const Shaders& shaders)
+{
+    return createScreen(shaders, Settings{});
+}
+
+std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const Shaders& shaders, const Settings& settings)
+{
+    auto layer = std::unique_ptr<ContentPipeline>(new ContentPipeline());
+    layer->d->kind = core::DrawKind::Screen;
+
+    ::vsg::ref_ptr<::vsg::ShaderStage> vertex =
+        layer->d->compileStage(VK_SHADER_STAGE_VERTEX_BIT, shaders.vertex, shaders.entry);
+    ::vsg::ref_ptr<::vsg::ShaderStage> fragment =
+        layer->d->compileStage(VK_SHADER_STAGE_FRAGMENT_BIT, shaders.fragment, shaders.entry);
+    if (vertex == nullptr || fragment == nullptr) {
+        return nullptr;  // nothing to shade with: the caller reports it instead of drawing nothing
+    }
+    layer->d->stages = ::vsg::ShaderStages{ vertex, fragment };
+
+    // The full-screen ABI's constants are the FRAGMENT stage's: the engine's canonical vertex stage generates
+    // the triangle from gl_VertexIndex and declares none, while a screen program reads its light block.
+    ::vsg::PushConstantRanges push_ranges;
+    if (settings.push_bytes != 0U) {
+        push_ranges.push_back(VkPushConstantRange{ VK_SHADER_STAGE_FRAGMENT_BIT, 0U, settings.push_bytes });
+    }
+    layer->d->push_ranges = push_ranges;
+
+    // No blocks and no vertex streams: every set of this layer is the sampled one, and the triangle's vertices
+    // are generated. The create-info's states are the LEGACY full-screen shape (the previous implementation's
+    // overlay pipelines): no culling and no depth test, because a full-screen triangle's winding is the
+    // engine's own and cutting it out is only ever a way to lose the whole picture. They are the dynamic
+    // declaration's starting point - the plan's resolved state is what a draw commands.
+    auto raster_state       = ::vsg::RasterizationState::create();
+    raster_state->cullMode  = VK_CULL_MODE_NONE;
+    raster_state->frontFace = kBakedFrontFace;
+    auto depth_state              = ::vsg::DepthStencilState::create();
+    depth_state->depthTestEnable  = VK_FALSE;
+    depth_state->depthWriteEnable = VK_FALSE;
+    depth_state->depthCompareOp   = kBakedCompareOp;
+    auto input_assembly           = ::vsg::InputAssemblyState::create();
+    input_assembly->topology      = kBakedTopology;
+
+    layer->d->states = ::vsg::GraphicsPipelineStates{
+        ::vsg::VertexInputState::create(::vsg::VertexInputState::Bindings{}, ::vsg::VertexInputState::Attributes{}),
+        input_assembly,
+        ::vsg::ViewportState::create(kBakedViewportExtent),
+        raster_state,
+        depth_state,
+        makeColorBlendState(settings.color_attachments),
+        ::vsg::MultisampleState::create(),
+        makeDynamicStateDeclaration(),
+    };
+    return layer;
+}
+
 ContentPipeline::~ContentPipeline() = default;
 
 ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const core::PipelineKey& key)
 {
+    if (key.kind != d->kind) {
+        // The two kinds compile against different descriptor ABIs (blocks at set 0 versus the samplers there),
+        // so a key of the other kind is a call-site bug: compiling it here would hand the draw a pipeline bound
+        // to a layout its own bindings do not match. Refused, counted, and never entered into the pool.
+        ++d->failures;
+        return { core::VariantPool::Action::Created, 0U, {} };
+    }
+
     const core::VariantPool::Lookup lookup = pool.acquire(key);
 
     const auto found = d->pipelines.find(lookup.id);
@@ -246,7 +310,7 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
 ::vsg::ref_ptr<::vsg::DescriptorSetLayout> ContentPipeline::sampledSetLayout(std::uint32_t color_bindings)
 {
     if (color_bindings == 0U) {
-        return {};  // no sampled inputs: there is no set 1 at all
+        return {};  // nothing to sample: a content layer has only its block set, a full-screen one has nothing
     }
     const auto found = d->sampled.find(color_bindings);
     if (found != d->sampled.end()) {
@@ -254,7 +318,7 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
     }
 
     // One combined image sampler per colour texture, readable from either shading stage: the sampled inputs
-    // of a content pass ARE the picture it reads, and which stage reads it is the shader's business.
+    // of a pass ARE the picture it reads, and which stage reads it is the shader's business.
     auto set = ::vsg::DescriptorSetLayout::create();
     if (set == nullptr) {
         return {};
@@ -263,8 +327,17 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
         set->addBinding(binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1U,
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
     }
-    auto pipeline = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ d->block_set, set },
-                                                  d->push_ranges);
+
+    // Where the set sits is the kind's, and it is the whole difference between the two descriptor ABIs: a
+    // content layer binds its blocks at 0 and the samplers at 1, a full-screen layer binds the samplers at 0
+    // and nothing else (see the file note - the engine's screen programs declare `layout(binding = i)`).
+    ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline;
+    if (d->kind == core::DrawKind::Screen) {
+        pipeline = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ set }, d->push_ranges);
+    }
+    else {
+        pipeline = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ d->block_set, set }, d->push_ranges);
+    }
     if (pipeline == nullptr) {
         return {};
     }
@@ -275,12 +348,17 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
 ::vsg::ref_ptr<::vsg::PipelineLayout> ContentPipeline::layoutFor(std::uint32_t sampled_color_bindings)
 {
     if (sampled_color_bindings == 0U) {
-        return d->layout;
+        return d->layout;  // the content layer's "blocks only" layout; nothing for a full-screen layer
     }
     if (sampledSetLayout(sampled_color_bindings) == nullptr) {
         return {};
     }
     return d->sampled.at(sampled_color_bindings).pipeline;
+}
+
+core::DrawKind ContentPipeline::kind() const noexcept
+{
+    return d->kind;
 }
 
 ::vsg::ref_ptr<::vsg::Sampler> ContentPipeline::inputSampler()

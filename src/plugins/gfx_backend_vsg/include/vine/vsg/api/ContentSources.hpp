@@ -43,6 +43,28 @@ V_VSG_NS_BEGIN
  */
 [[nodiscard]] FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out);
 
+/** @brief Builds the program table entry for a FULL-SCREEN program (see core::DrawKind::Screen).
+ *
+ * The full-screen ABI is the engine's, not the host's: the fragment stage is the program's own, and the
+ * VERTEX stage is the engine's canonical full-screen triangle (`BuiltinShaders::fullscreenVertexProgram` -
+ * three vertices generated from `gl_VertexIndex`, `vine_uv` at location 0, no vertex buffer and no
+ * vertex-side constants). A vertex stage the program happens to carry is IGNORED, because that is what the
+ * contract says (`RenderBackend::drawScreenProgram`: "vertex stage, if any, is ignored - the backend provides
+ * the fullscreen vertex stage"): honouring one would compile a triangle the engine's fragment stages are not
+ * written against.
+ *
+ * The entry's identity is the program and its revision, so the plan's `program` names it exactly as a content
+ * program does.
+ *
+ * @param program SDK screen program to describe (borrowed; the entry copies the fragment source).
+ * @param out     Receives the entry (both GLSL texts are the pair a full-screen pipeline compiles).
+ * @return None when the entry was built; Unknown when the program has no stages at all; Malformed when it has
+ *         no fragment stage (or several), a compute or a second fragment stage, an empty fragment source, or a
+ *         fragment entry point that is not the canonical vertex stage's (the pipeline carries one entry point
+ *         for both stages).
+ */
+[[nodiscard]] FactMiss buildScreenProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out);
+
 /** @brief Builds the material table entry for @p material, or for the DEFAULT material when it is null.
  *
  * @param material SDK material to describe, or nullptr for the engine's default material.

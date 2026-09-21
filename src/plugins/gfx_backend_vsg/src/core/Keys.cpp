@@ -33,7 +33,7 @@ bool LoadOpVariantKey::operator==(const LoadOpVariantKey& other) const noexcept
 
 bool PipelineKey::operator==(const PipelineKey& other) const noexcept
 {
-    return program == other.program && revision == other.revision &&
+    return kind == other.kind && program == other.program && revision == other.revision &&
            vertex_layout == other.vertex_layout && compatibility == other.compatibility &&
            depth_sampleable == other.depth_sampleable && shadow_bound == other.shadow_bound &&
            sampled_color_count == other.sampled_color_count;
@@ -82,6 +82,7 @@ std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
     };
     mix(reinterpret_cast<std::uintptr_t>(key.program));
     mix(key.revision);
+    mix(static_cast<std::uint64_t>(key.kind));
     mix(key.vertex_layout.canonical_mask);
     for (const std::uint32_t location : key.vertex_layout.custom_locations) {
         mix(location);
@@ -109,8 +110,8 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
         { "LoadOpVariantKey",
           "load/store ops + initial/final layout - NOT pipeline identity: compatibility excludes them" },
         { "PipelineKey",
-          "program + revision + vertex layout + compatibility + depth sampleability + shadow bound + "
-          "sampled colour attachment count" },
+          "program + revision + draw kind (content or full-screen) + vertex layout + compatibility + depth "
+          "sampleability + shadow bound + sampled colour attachment count" },
         { "DynamicState",
           "depth policy + cull + polygon + topology + blend - delivered per draw with set commands" },
         { "InstanceSlot", "model matrix + opacity + material identity + revision - per frame data" },

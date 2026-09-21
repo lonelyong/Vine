@@ -119,6 +119,35 @@ const T* stateOf(const ::vsg::GraphicsPipeline& pipeline)
     return nullptr;
 }
 
+/// @brief The full-screen ABI's shader pair: the generated triangle plus a fragment stage reading a sampler.
+ContentPipeline::Shaders screenShaders()
+{
+    ContentPipeline::Shaders shaders;
+    shaders.vertex = "#version 450\n"
+                     "layout(location = 0) out vec2 vine_uv;\n"
+                     "void main() { vine_uv = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
+                     "              gl_Position = vec4(vine_uv * 2.0 - 1.0, 0.0, 1.0); }\n";
+    shaders.fragment = "#version 450\n"
+                       "layout(location = 0) in vec2 vine_uv;\n"
+                       "layout(location = 0) out vec4 out_color;\n"
+                       "layout(binding = 0) uniform sampler2D picture;\n"
+                       "void main() { out_color = texture(picture, vine_uv); }\n";
+    return shaders;
+}
+
+/// @brief An identity of the full-screen kind (kind = Screen: the other descriptor ABI).
+PipelineKey screenKey(std::uint64_t revision, std::uint32_t sampled_colors = 1U)
+{
+    static int program = 0;
+    PipelineKey key;
+    key.kind                     = vine::vsg::core::DrawKind::Screen;
+    key.program                  = &program;
+    key.revision                 = revision;
+    key.compatibility.samples    = 1U;
+    key.sampled_color_count      = sampled_colors;
+    return key;
+}
+
 }  // namespace
 
 TEST(ContentPipelineTest, TheSameIdentityIsBuiltOnce)
@@ -228,6 +257,83 @@ TEST(ContentPipelineTest, TheLayoutBindsTheBlockSetAndThePushBudget)
     ASSERT_EQ(layer->stages().size(), 2U);
     EXPECT_NE(layer->stages()[0]->module, nullptr) << "both stages are SPIR-V modules";
     EXPECT_NE(layer->stages()[1]->module, nullptr);
+}
+
+TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
+{
+    // The engine's TWO descriptor ABIs, and the whole difference between them: a content layer puts the blocks
+    // at set 0 and the sampled inputs at set 1; a full-screen layer puts the samplers at set 0 and nothing
+    // else, because that is where the engine's own screen programs declare theirs (`layout(binding = 0) uniform
+    // sampler2D`, no set qualifier). A layer that mixed the two would compile a pipeline the draw cannot bind.
+    auto layer = ContentPipeline::createScreen(screenShaders());
+    ASSERT_NE(layer, nullptr) << "the full-screen pair must compile";
+    EXPECT_EQ(layer->kind(), vine::vsg::core::DrawKind::Screen);
+
+    EXPECT_EQ(layer->sampledSetLayout(0), nullptr)
+        << "a full-screen draw without a sampled input has no set at all (its picture IS the input)";
+    EXPECT_EQ(layer->layoutFor(0), nullptr) << "and therefore no pipeline: see the class note";
+
+    const auto samplers = layer->sampledSetLayout(1);
+    ASSERT_NE(samplers, nullptr);
+    ASSERT_EQ(samplers->bindings.size(), 1U);
+    EXPECT_EQ(samplers->bindings[0].binding, 0U) << "binding i is attachment i, from 0";
+    EXPECT_EQ(samplers->bindings[0].descriptorType, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    EXPECT_EQ(layer->sampledSetLayout(1), samplers) << "built once and kept, like the content layer's";
+
+    const auto layout_one = layer->layoutFor(1);
+    ASSERT_NE(layout_one, nullptr);
+    ASSERT_EQ(layout_one->setLayouts.size(), 1U) << "the samplers are the only set - no block set, no set 1";
+    EXPECT_EQ(layout_one->setLayouts[0], samplers);
+
+    // The push budget is the full-screen ABI's 128 bytes, and the FRAGMENT stage reads them: the engine's
+    // canonical vertex stage declares no constants, while a screen program's light block is the shader's.
+    ASSERT_EQ(layout_one->pushConstantRanges.size(), 1U);
+    EXPECT_EQ(layout_one->pushConstantRanges.front().stageFlags, VK_SHADER_STAGE_FRAGMENT_BIT);
+    EXPECT_EQ(layout_one->pushConstantRanges.front().size, 128U);
+
+    VariantPool pool;
+    const auto  screen = layer->acquire(pool, screenKey(1U));
+    ASSERT_NE(screen.pipeline, nullptr) << "a key of this layer's kind is compiled";
+    EXPECT_EQ(screen.pipeline->layout, layout_one);
+    EXPECT_NE(screen.pipeline->layout, layer->layout()) << "and never against the content layout";
+
+    // The key carries the kind, so the same identity of the OTHER kind is refused rather than compiled: the
+    // layer cannot build a pipeline for a descriptor ABI its draws do not bind.
+    const std::uint64_t failures_before = layer->failures();
+    PipelineKey         content_kind    = screenKey(1U);
+    content_kind.kind                   = vine::vsg::core::DrawKind::Content;
+    const auto refused                  = layer->acquire(pool, content_kind);
+    EXPECT_EQ(refused.pipeline, nullptr);
+    EXPECT_EQ(layer->failures(), failures_before + 1U) << "a silently compiled wrong-ABI pipeline is the failure";
+}
+
+TEST(ContentPipelineTest, AScreenPipelineBakesTheLegacyFullscreenShape)
+{
+    // The create-info's states ARE the dynamic declaration's starting point, and for a full-screen draw they
+    // are the previous implementation's overlay shape: no culling (the triangle's winding is the engine's own,
+    // and cutting it out loses the whole picture) and no depth test (the draw composites on top). The plan's
+    // resolved state is what a draw commands; these are the values nothing may silently inherit.
+    auto layer = ContentPipeline::createScreen(screenShaders());
+    ASSERT_NE(layer, nullptr);
+
+    VariantPool pool;
+    const auto  screen = layer->acquire(pool, screenKey(1U));
+    ASSERT_NE(screen.pipeline, nullptr);
+
+    const auto* vertex_input = stateOf<::vsg::VertexInputState>(*screen.pipeline);
+    ASSERT_NE(vertex_input, nullptr);
+    EXPECT_TRUE(vertex_input->vertexBindingDescriptions.empty())
+        << "the vertices are generated, so no stream is declared";
+    EXPECT_TRUE(vertex_input->vertexAttributeDescriptions.empty());
+
+    const auto* raster = stateOf<::vsg::RasterizationState>(*screen.pipeline);
+    ASSERT_NE(raster, nullptr);
+    EXPECT_EQ(raster->cullMode, VK_CULL_MODE_NONE);
+
+    const auto* depth = stateOf<::vsg::DepthStencilState>(*screen.pipeline);
+    ASSERT_NE(depth, nullptr);
+    EXPECT_EQ(depth->depthTestEnable, VK_FALSE);
+    EXPECT_EQ(depth->depthWriteEnable, VK_FALSE);
 }
 
 TEST(ContentPipelineTest, ASampledInputCountGetsItsOwnSetLayoutAndItsOwnPipeline)

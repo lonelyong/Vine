@@ -16,6 +16,7 @@
 #include <vine/vsg/core/ClearPlan.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
 #include <vine/vsg/core/FrameArena.hpp>
+#include <vine/vsg/core/Keys.hpp>
 #include <vine/vsg/core/Observe.hpp>
 #include <vine/vsg/core/Protocol.hpp>
 #include <vine/vsg/vsg_global.hpp>
@@ -130,13 +131,6 @@ struct CollectedCommand
     float         opacity{1.0F};                ///< Effective opacity (the engine's only transparency channel).
     vine::graphics::ResolvedRenderState state{};  ///< Resolved per-object state (the dynamic layer's source).
     bool          depth_explicit{false};        ///< Whether the depth in `state` came from a StateNode.
-};
-
-/** @brief What one drawing call draws with. */
-enum class DrawKind : std::uint8_t
-{
-    Content,   ///< render(): the pass' content, one instance per collected command.
-    Screen,    ///< drawScreenProgram(): a full-screen triangle sampling a target's attachments.
 };
 
 /**

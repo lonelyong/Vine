@@ -41,6 +41,18 @@
  * compiled against one descriptor set layout, so "how many sampled textures this pass binds" has to be a
  * fact of the pipeline, exactly as the old implementation's per-source shader sets were.
  *
+ * TWO KINDS, TWO DESCRIPTOR ABIS (see core::DrawKind). A CONTENT layer is the one above: the ABI's blocks at
+ * set 0, the sampled inputs at set 1, vertex streams declared. A FULL-SCREEN layer is the other drawing
+ * call the engine has: the source's colour attachments at bindings 0..N-1 of set 0 and NOTHING else - the
+ * full-screen ABI the engine's own screen programs are written against (see
+ * `vine::graphics::BuiltinShaders`: `screenCopyProgram` declares its sampler as `layout(binding = i)`, with
+ * no set qualifier, so set 0 is where a full-screen sampler has to live), the full-screen vertex stage
+ * supplied by the backend (the engine's canonical triangle, built from `gl_VertexIndex`, with no vertex
+ * buffer and no vertex-side constants), and one 128-byte push block whose layout the SDK's builtin screen
+ * programs declare (`ambient` + `projparms` + three directional lights). The two are not interchangeable,
+ * which is why the layer knows its kind and the key carries it: `acquire()` refuses a key of the other kind
+ * rather than compiling a pipeline for an ABI the draw will not bind.
+ *
  * NO DEVICE IS NEEDED. Nothing here compiles a Vulkan object: a `vsg::GraphicsPipeline` is a create-info
  * until a `vsg::Context` compiles it as part of a command graph, and the GLSL is compiled to SPIR-V in
  * process. That is what makes the identity arithmetic testable without a GPU - the GPU compiles later.
@@ -122,35 +134,63 @@ class ContentPipeline
                                                    std::span<const VertexAttribute> attributes,
                                                    const Shaders& shaders);
 
+    /** @brief Creates a FULL-SCREEN layer: the other descriptor ABI, with no block set and no vertex streams.
+     *
+     * The stages are the engine's canonical full-screen vertex stage plus the host's fragment stage (see
+     * `api/ContentSources`: `buildScreenProgramFacts` composes exactly that pair), so the layer compiles one
+     * program pair whose vertex stage generates the triangle from `gl_VertexIndex`. Its set 0 is built per
+     * sampled-colour count - one combined image sampler per binding, binding i = attachment i - and its
+     * push range is the full-screen ABI's 128 bytes, read by the FRAGMENT stage (the full-screen vertex
+     * stage declares no constants; the light block belongs to the screen program that shades the picture).
+     *
+     * @param shaders  GLSL text of both stages (full-screen vertex + screen fragment).
+     * @param settings Colour attachment count and push budget.
+     * @return The layer, or null when the GLSL did not compile.
+     */
+    static std::unique_ptr<ContentPipeline> createScreen(const Shaders& shaders, const Settings& settings);
+
+    /** @brief Creates a full-screen layer with the default settings (see @ref Settings).
+     *
+     * @param shaders GLSL text of both stages (full-screen vertex + screen fragment).
+     * @return The layer, or null when the GLSL did not compile.
+     */
+    static std::unique_ptr<ContentPipeline> createScreen(const Shaders& shaders);
+
     ~ContentPipeline();
 
     ContentPipeline(const ContentPipeline&) = delete;
     ContentPipeline& operator=(const ContentPipeline&) = delete;
 
   public:
+    /** @brief Gets which drawing call this layer compiles pipelines for (see core::DrawKind). */
+    [[nodiscard]] core::DrawKind kind() const noexcept;
+
     /** @brief Gets (or builds) the pipeline for an identity.
      *
      * @param pool The scope's variant pool: it answers whether an identity is already compiled.
-     * @param key  Pipeline identity (identity layer only - see the file note).
+     * @param key  Pipeline identity (identity layer only - see the file note; its kind must be this layer's).
      * @return What the pool answered and the pipeline (null when the object could not be built).
      */
     [[nodiscard]] Result acquire(core::VariantPool& pool, const core::PipelineKey& key);
 
   public:
-    /** @brief Gets the layout every content pipeline of this layer shares (the one with no sampled inputs).
+    /** @brief Gets the layout a layer of this kind binds when it samples nothing.
      *
-     * The set layouts this layer owns (the block set it was built with, and one sampled-input set per count)
-     * sit at indices 0 and 1 - a caller whose block set lives at another index is outside this contract.
+     * A content layer always has one (the block set alone): a pass that reads no input still binds its blocks.
+     * A FULL-SCREEN layer has none - a full-screen draw IS the picture it samples, so `layoutFor(0)` refuses
+     * for it (and so does `acquire()` for a key whose count is 0).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layout() const noexcept;
 
     /** @brief Gets (or builds and keeps) the pipeline layout that binds @p sampled_color_bindings samplers.
      *
      * The count is the key's (`PipelineKey::sampled_color_count`), so every pipeline this layer holds was
-     * compiled against the layout this call answers for its own count.
+     * compiled against the layout this call answers for its own count. The sampled set's INDEX is the
+     * layer's kind's: set 1 after the block set for a content layer, set 0 for a full-screen one.
      *
-     * @param sampled_color_bindings Number of colour textures the pass binds (0 = the block set alone).
-     * @return The layout, or null when it could not be created.
+     * @param sampled_color_bindings Number of colour textures the pass binds (0 = the content layer's block
+     *                               set alone; refused by a full-screen layer).
+     * @return The layout, or null when it could not be created (or does not exist for this kind).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layoutFor(std::uint32_t sampled_color_bindings);
 
@@ -160,7 +200,7 @@ class ContentPipeline
      * set the pipelines of this layer expect.
      *
      * @param color_bindings Number of combined image samplers (binding i = the i-th colour texture).
-     * @return The set layout, or null for zero bindings (there is no sampled set at all then).
+     * @return The set layout, or null for zero bindings (a layer with nothing to sample has no such set).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSetLayout> sampledSetLayout(std::uint32_t color_bindings);
 

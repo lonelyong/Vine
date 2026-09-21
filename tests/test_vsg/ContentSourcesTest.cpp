@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include <vine/graphics/Material.hpp>
@@ -32,6 +33,7 @@ using vine::graphics::ShaderStage;
 using vine::graphics::ShaderStageType;
 using vine::vsg::buildMaterialFacts;
 using vine::vsg::buildProgramFacts;
+using vine::vsg::buildScreenProgramFacts;
 using vine::vsg::ContentFacts;
 using vine::vsg::FactMiss;
 using vine::vsg::findMaterial;
@@ -114,6 +116,72 @@ TEST(ContentSourcesTest, AProgramThatIsNotExactlyTwoGraphicsStagesCannotBeOneCon
 
     ShaderProgram no_stages;
     EXPECT_EQ(buildProgramFacts(no_stages, facts), FactMiss::Unknown);
+}
+
+TEST(ContentSourcesTest, AScreenProgramsVertexStageIsTheEnginesAndTheHostsIsIgnored)
+{
+    // The full-screen ABI: the host names the FRAGMENT stage, and the triangle is the engine's canonical one.
+    // A screen program is therefore describable with a fragment stage alone - the case that buildProgramFacts
+    // refuses, because a content pipeline needs both stages.
+    ShaderProgram screen;
+    screen.addStage(stage(ShaderStageType::Fragment, kFragmentSource));
+    const std::uint64_t revision = screen.revision();
+
+    ProgramFacts facts;
+    ASSERT_EQ(buildScreenProgramFacts(screen, facts), FactMiss::None);
+    EXPECT_EQ(facts.program, &screen) << "the identity is the host's program, as the plan names it";
+    EXPECT_EQ(facts.revision, revision);
+    EXPECT_EQ(facts.shaders.fragment, kFragmentSource);
+    EXPECT_FALSE(facts.shaders.vertex.empty()) << "the entry carries the engine's full-screen vertex stage";
+    EXPECT_NE(facts.shaders.vertex.find("gl_VertexIndex"), std::string::npos)
+        << "the engine's vertex stage generates its vertices from gl_VertexIndex";
+    EXPECT_NE(facts.shaders.vertex.find("vine_uv"), std::string::npos)
+        << "and it hands the fragment stage the interface the full-screen ABI states (vine_uv at location 0)";
+    EXPECT_EQ(facts.shaders.entry, "main");
+
+    // A vertex stage the program carries anyway is IGNORED, because the contract says so ("vertex stage, if
+    // any, is ignored - the backend provides the fullscreen vertex stage"): honouring it would compile a
+    // triangle the engine's fragment stages are not written against.
+    ShaderProgram with_vertex;
+    with_vertex.addStage(stage(ShaderStageType::Vertex, kVertexSource));
+    with_vertex.addStage(stage(ShaderStageType::Fragment, kFragmentSource));
+    ProgramFacts with_vertex_facts;
+    ASSERT_EQ(buildScreenProgramFacts(with_vertex, with_vertex_facts), FactMiss::None);
+    EXPECT_EQ(with_vertex_facts.shaders.vertex, facts.shaders.vertex)
+        << "the engine's vertex stage, not the host's";
+}
+
+TEST(ContentSourcesTest, AScreenProgramWithoutOneFragmentStageIsNotAScreenProgram)
+{
+    ProgramFacts facts;
+
+    ShaderProgram no_stages;
+    EXPECT_EQ(buildScreenProgramFacts(no_stages, facts), FactMiss::Unknown);
+
+    ShaderProgram vertex_only;
+    vertex_only.addStage(stage(ShaderStageType::Vertex, kVertexSource));
+    EXPECT_EQ(buildScreenProgramFacts(vertex_only, facts), FactMiss::Malformed)
+        << "a vertex stage alone is not a screen program: there is nothing to shade with";
+
+    ShaderProgram two_fragments;
+    two_fragments.addStage(stage(ShaderStageType::Fragment, kFragmentSource));
+    two_fragments.addStage(stage(ShaderStageType::Fragment, kFragmentSource));
+    EXPECT_EQ(buildScreenProgramFacts(two_fragments, facts), FactMiss::Malformed);
+
+    ShaderProgram with_compute;
+    with_compute.addStage(stage(ShaderStageType::Fragment, kFragmentSource));
+    with_compute.addStage(stage(ShaderStageType::Compute, kVertexSource));
+    EXPECT_EQ(buildScreenProgramFacts(with_compute, facts), FactMiss::Malformed);
+
+    ShaderProgram empty_source;
+    empty_source.addStage(stage(ShaderStageType::Fragment, ""));
+    EXPECT_EQ(buildScreenProgramFacts(empty_source, facts), FactMiss::Malformed);
+
+    // One entry point serves both stages, and the engine's full-screen vertex stage uses "main": a fragment
+    // stage with another entry point cannot be compiled against it.
+    ShaderProgram other_entry;
+    other_entry.addStage(stage(ShaderStageType::Fragment, kFragmentSource, "shade"));
+    EXPECT_EQ(buildScreenProgramFacts(other_entry, facts), FactMiss::Malformed);
 }
 
 TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)

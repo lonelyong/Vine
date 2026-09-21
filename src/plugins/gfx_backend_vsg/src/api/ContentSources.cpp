@@ -5,6 +5,8 @@
 #include <cstring>
 #include <string>
 
+#include <vine/graphics/BuiltinShaders.hpp>
+
 V_VSG_NS_BEGIN
 
 FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out)
@@ -57,6 +59,67 @@ FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, Program
     out.shaders.vertex   = std::string(vertex->source.as_std_str());
     out.shaders.fragment = std::string(fragment->source.as_std_str());
     out.shaders.entry    = std::string(vertex->entryPoint.as_std_str());
+    return FactMiss::None;
+}
+
+FactMiss buildScreenProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out)
+{
+    out          = ProgramFacts{};
+    out.program  = &program;
+    out.revision = program.revision();
+
+    const vine::graphics::ShaderStage* fragment = nullptr;
+    std::size_t                        extra    = 0;
+    std::size_t                        seen     = 0;
+
+    for (const vine::graphics::ShaderStage& stage : program.stages())
+    {
+        ++seen;
+        switch (stage.type)
+        {
+        case vine::graphics::ShaderStageType::Vertex:
+            break;  // ignored by the contract: the full-screen vertex stage is the engine's (see the header)
+        case vine::graphics::ShaderStageType::Fragment:
+            extra += fragment != nullptr ? 1U : 0U;  // a second fragment stage cannot be compiled into one
+            fragment = &stage;
+            break;
+        case vine::graphics::ShaderStageType::Compute:
+            ++extra;  // a compute stage is not a screen draw: the full-screen path is one fragment stage
+            break;
+        }
+    }
+
+    if (fragment == nullptr)
+    {
+        // "The program says nothing" and "it says something this kind of draw cannot be" are different
+        // answers: only the first is a lookup miss the table reports as unknown content.
+        return seen == 0U ? FactMiss::Unknown : FactMiss::Malformed;
+    }
+    if (extra != 0U || fragment->source.empty())
+    {
+        return FactMiss::Malformed;
+    }
+
+    // The engine owns the triangle text; reading the stage out of the SDK's program - rather than embedding a
+    // second copy of the GLSL - is what makes it impossible for a full-screen program to be compiled against
+    // a triangle the engine did not state (the previous implementation's factory reads it the same way).
+    const auto fullscreen_vertex = vine::graphics::fullscreenVertexProgram();
+    if (fullscreen_vertex == nullptr || fullscreen_vertex->stage(0) == nullptr)
+    {
+        return FactMiss::Malformed;  // the engine's own vertex stage is missing: nothing to compose
+    }
+    const vine::graphics::ShaderStage* vertex = fullscreen_vertex->stage(0);
+    if (vertex->entryPoint != fragment->entryPoint)
+    {
+        // One entry point serves both stages of the pipeline, so a fragment stage whose entry is not the
+        // canonical vertex stage's is not expressible (compiling "main" there would run a function the host
+        // did not name).
+        return FactMiss::Malformed;
+    }
+
+    out.shaders.vertex   = std::string(vertex->source.as_std_str());
+    out.shaders.fragment = std::string(fragment->source.as_std_str());
+    out.shaders.entry    = std::string(fragment->entryPoint.as_std_str());
     return FactMiss::None;
 }
 

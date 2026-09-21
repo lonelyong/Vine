@@ -3,10 +3,11 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-21）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M3d-3c（执行段第三片：窗口作为执行器认识的目标——一张图、一次清、一个稳定视图；视图块把 SDK 裁剪
-> 空间折进设备约定并带上帧时钟与目标尺寸；会话侧 `frameSeconds()` 与帧图接缝）**：`test_vsg` 517 用例 /
-> 83 套件全绿（含真设备像素用例），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的
-> include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 805 文件）。
+> **M4a（全屏绘制调用的内容侧：键携带绘制种类，`api/ContentPipeline` 多一个全屏层（set 0 = 源彩色附件、
+> push 片元 128B），`api/ContentSources` 把引擎的正典全屏顶点阶段与宿主的片元阶段组成一对，`api/ContentDraw`
+> 录 `Draw(3)`）**：`test_vsg` 524 用例 / 84 套件全绿（含真设备像素用例），强制验证层 + 同步验证下
+> **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验
+> （全树 0 findings / 806 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -1427,10 +1428,67 @@ M3d-3b（内容绘制进 render graph）开工前先把它的**两处前提**钉
 * **第二个渲染通道家族出现时可能需要逐 pass 视图**（现在是"一个视图管整个窗口"）；
 * **活改尺寸的窗口用例**：`prepare` 里"renderArea 跟随活的尺寸"那行现在只有代码与理由，没有可观测证据（M5 不可观测的原因）；它需要把宿主窗口在帧间改尺寸、再读新区域的像素。
 
+### 11.16p M4a（2026-09-21）：全屏绘制调用（身份 + 层 + 事实 + 录制，真设备像素）
+
+**为什么先做这一片。** 引擎只有两种绘制调用：内容绘制（`render()`）与全屏绘制（`drawScreenProgram()`）。
+M3d-3b-8 把采样线（"源附件 i → binding i"）建在内容路径上，而**全屏路径是这条线的另一个消费者**：它的
+源就是它的采样集。但两者**不是同一套描述符 ABI**：内容层是"块在 set 0、采样输入在 set 1"，而引擎自己
+的全屏程序（`BuiltinShaders::screenCopyProgram` / `deferredLightProgram`，随 SDK 一起发布的 GLSL）声明的是
+`layout(binding = i) uniform sampler2D`（**没有 set 限定词 ⇒ set 0**）与 `layout(push_constant)`。§1.3 的
+"被迫同形"清单早就写了这一条（"128B push block 承载全屏路径的光照+视图"），所以这一片**照做**：
+
+| | 内容 ABI | 全屏 ABI |
+| --- | --- | --- |
+| set 0 | 四个块（view/draw/material，动态偏移） | 源彩色附件（binding i = 附件 i） |
+| set 1 | 采样输入（同一条采样线） | 无 |
+| 顶点 | 几何流 + 索引流 | 无：`gl_VertexIndex` 生成的三角形 |
+| push | 128B（顶点阶段） | 128B（**片元**阶段：引擎的全屏顶点阶段不声明常量） |
+
+落地四件事：
+
+1. **身份**（`core/Keys`）：`DrawKind` 从计划搬到键的旁边（一处拼写），`PipelineKey.kind` 进
+   `operator==`/哈希/**键审计表**——两套 ABI 编译出的管线互不可绑，键不携带它就可能把一份错 ABI 的管线
+   发给绘制。
+2. **层**（`api/ContentPipeline`）：`createScreen` 建一个全屏层（无块集、无顶点流、set 0 按采样数现建、
+   push 是片元阶段的 128B）；`kind()` 自报；`acquire` **拒绝另一种 kind 的键**（计数 `failures`，不进池）；
+   烘焙状态用旧实现 overlay 的形状（cull NONE、深度测试/写关闭）——动态命令仍然赢。
+3. **事实**（`api/ContentSources`）：`buildScreenProgramFacts` 把**引擎的正典全屏顶点阶段**与宿主的片元
+   阶段组成一对（顶点阶段是**读**SDK 的文本，不是抄一份）；宿主自带的顶点阶段**按契约忽略**；无片元阶段
+   / 多片元 / compute / 空源 / 入口点不是正典的那个 ⇒ `Malformed`（"程序什么都没写" 才是 `Unknown`）。
+4. **录制**（`api/ContentDraw`）：`recordScreen` = 管线 + set 0 采样集 + 动态块 + viewport/scissor +
+   `Draw(3, 1, 0, 0)`；计数 `screen_draws()` 与 `input_binds()`（一趟 pass 一次绑定，与内容路径同一条
+   "仅当"）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `core/Keys`（+.cpp） | `DrawKind` 的家 + `PipelineKey.kind`（相等/哈希/审计表一行） |
+| `core/FrameRecorder` | 改用 `Keys.hpp` 的 `DrawKind`（一处拼写） |
+| `api/ContentPipeline` | `createScreen` + 按 kind 的 set/布局（set 0 采样集、push 片元 128B）+ `kind()` + 异 kind 拒绝 |
+| `api/ContentSources` | `buildScreenProgramFacts`（引擎顶点阶段 + 宿主片元阶段；契约说宿主顶点阶段被忽略） |
+| `api/ContentDraw` | `ScreenDraw` + `recordScreen` + `screen_draws()`；`vsg::Draw`（非索引） |
+| `tests/test_vsg/ScreenDrawTest.cpp`（新） | 2 个真设备用例：**随 SDK 发布的** `screenCopyProgram(0)` 的拷贝只落在 PiP 矩形内、`screenCopyProgram(1)` 读的是附件 1（由内容 MRT pass 画的绿色）而不是附件 0 |
+| `tests/test_vsg/ContentSourcesTest.cpp` | +2（全屏事实的组成与被忽略的宿主顶点阶段；六种拒绝） |
+| `tests/test_vsg/ContentPipelineTest.cpp` | +2（set 0 采样集/无块集/异 kind 拒绝；旧 overlay 的烘焙状态） |
+| `tests/test_vsg/ContentDrawTest.cpp` | +1（`Draw(3)` + set 0 + 空状态组的第二趟） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **两套 ABI 是身份，不是风格** | 同一个程序身份 + 不同 kind = 两个变体（同键仍是 `Reused`）。这条不是洁癖：把"全屏层编译的管线"发给内容绘制（或反过来）是**描述符集布局层面的不匹配**，驱动不报、画面也未必看得出 |
+| **采样线只用一次** | 全屏路径没有第二套采样机制：`sampledSetLayout`/`inputSampler` 原样复用，差别只有**集合的索引**（kind 决定是 0 还是 1）。M3d-3b-8 的"计划携带输入表"因此一行没改就服务了第二种调用 |
+| **全屏三角形是引擎的** | 顶点阶段从 `BuiltinShaders::fullscreenVertexProgram()` **读**出来（与旧实现的工厂同一个做法）；宿主带了顶点阶段也忽略——契约原文如此，而"尊重"它的后果是编译出一个引擎片元阶段没写过的三角形 |
+| **push 块的**内容**还没落地** | 布局声明了 128B（SDK 的 `deferredLightProgram` 就是这么声明的），但光照半边（world→view 的三盏方向光 + 环境光）与深度重建半边（near/far）分别是光照相位与深度采样相位的活。**这一片的程序（拷贝）不读它**；读它的内置程序在这之前看到零值——登记，不假装 |
+| **门禁抓到的是夹具不是产品** | 设备用例第一次跑出 **12 条 VUID**（`vkCmdSetPolygonModeEXT`/`vkCmdSetColorBlendEnableEXT`/`vkCmdSetColorBlendEquationEXT` 从未调用）：管线声明了这些动态状态，而夹具建 `ContentDraw` 时没取扩展入口点 ⇒ 动态命令静默跳过它们。同一族陷阱在 M3d-3b 的夹具注记里已经写过一次（"没有它们，动态命令跳过 polygon-mode 与 blend 调用"） |
+| **变异反证（四条已验）** | N1 集合索引不再跟 kind ⇒ 算术用例红 + 设备侧**段错误**（布局里带着空块集）；N3 三个顶点改成六个 ⇒ 算术红、**像素绿**（PiP 的 viewport 把多出来的三角形裁掉，而全屏拷贝的第二枚三角形画的又是同一张画）；N5 宿主顶点阶段获胜 ⇒ 事实用例红；N6 去掉 kind 检查 ⇒ 层与录制两处一起红。N3 的"像素看不见"是这一片的正当结论：**顶点数是 ABI 的声明，算术用例是它的证据** |
+
+**本片留下的口子（登记）**：**计划侧**（`api/ContentPass` 仍在拒绝 `DrawKind::Screen`）——源 = pass 声明的
+第一个输入（采样集已就位）、push 块的内容、PiP 子矩形经计划上屏、以及窗口合成（M4b）；顺带把 §11.16o 登记的
+两条口子（多趟窗口 pass 的"一次清"、窗口/离屏同键变体）一起变成可观测用例。
+
+
 | 有意不做（写在这里，不埋在实现里） | 内容 |
 | --- | --- |
 | 输入的**深度**半边 | "深度真可采样才绑"与 shadow 的专用绑定（`shadow_bound` + `VineShadowBlock`）一起留给 M5：键里另一个 `depth_sampleable` 字段现在的含义是"pass 自己的目标深度可采样"（M3d-3b-0 的事实 + 执行器核对），在 M5 重钉之前不在这里造第二条语义 |
-| 全屏绘制调用（`DrawKind::Screen`） | 仍拒绝（program-slot 路径未接，M4）。M4 的"源附件 i→binding i"就是**这张表的另一个消费者**：ScreenPass 的源就是它声明的第一个输入，所以采样集、布局、绑定这条线不用再造 |
+| 全屏绘制调用（`DrawKind::Screen`） | **内容栈已接（§11.16p，M4a）**：键带 kind、`createScreen` 建全屏层（set 0 = 采样集）、`recordScreen` 录 `Draw(3)`。**计划侧仍拒绝**（`api/ContentPass`）：源 = pass 声明的第一个输入、push 块的内容、PiP 经计划上屏在 M4b。采样线没有第二套机制——"源附件 i→binding i"就是 M3d-3b-8 那条线的另一个消费者 |
 | 着色器绑定声明的核对（"声明了却供给不了"） | 旧实现靠扫源码 `layout(binding=…)`（`MissingDescriptorBinding`）。这一片不做：驱动/验证层会报，而"谁声明了什么"要动 `ProgramFacts`，留给需要它的那片（M4 的拒绝理由与旧实现逐字对齐时） |
 
 | 落地抓到的 | 内容 |
@@ -1474,7 +1532,8 @@ M3d-3b（内容绘制进 render graph）开工前先把它的**两处前提**钉
 | ~~M3d-3b-7~~ | **已完成（2026-09-21）**：多布局 scope（`api/ContentPass`：半片 = 程序 × 修订 × 布局，池与注册表共享，选不中报“是哪一项”），真设备用例（双色像素 + 绑定计数 + 两条拒绝消息）（§11.16m） |
 | ~~M3d-3b-8~~ | **已完成（2026-09-21）**：pass 输入的采样绑定（`core/FrameCompiler` 的输入表 + `api/ContentPipeline` 的采样集布局 + `api/ContentPass` 的绑定 + `api/OffscreenTarget` 的“彩色附件按可采样收尾”），真设备像素用例 + 四条变异反证（§11.16n） |
 | ~~M3d-3c~~ | **已完成（2026-09-21）**：执行段第三片（`api/WindowTarget` 把窗口变成执行器认识的目标：一张图、一次清、一个稳定视图；`api/ViewBlock` 定下视图块的四处约定并把 SDK 裁剪空间折进设备约定；`api/Session` 的帧时钟 + `frameSeconds()` + 帧图接缝），真设备像素用例（计划清屏 + 视图块进着色 + 一次 present）+ 五条变异反证（一条登记为不可观测）（§11.16o） |
-| M4 | 全屏/screen pass：复用本片的采样线（“源附件 i → binding i”就是这套采样线的另一个消费者），消费 M3d-3c 的窗口目标与视图块 |
+| ~~M4a~~ | **已完成（2026-09-21）**：全屏绘制调用的内容侧（键的 `kind` + `api/ContentPipeline::createScreen`（set 0 = 采样集、push 片元 128B）+ `api/ContentSources::buildScreenProgramFacts`（引擎顶点阶段 + 宿主片元阶段）+ `api/ContentDraw::recordScreen`（`Draw(3)`）），真设备像素用例（随 SDK 发布的 screen copy 的 PiP 拷贝 + binding i = 附件 i）+ 四条变异反证（§11.16p） |
+| M4b | 全屏绘制的计划侧：`api/ContentPass` 接 `DrawKind::Screen`（源 = pass 声明的第一个输入、采样集在 set 0、push 块），PiP 子矩形与窗口合成经计划上屏；顺带把 §11.16o 登记的两条口子（多趟窗口 pass 的一次清、窗口/离屏同键变体）做成用例 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。

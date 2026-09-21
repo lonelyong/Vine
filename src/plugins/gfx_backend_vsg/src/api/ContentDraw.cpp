@@ -59,9 +59,55 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
     return group;
 }
 
+::vsg::ref_ptr<::vsg::StateGroup> ContentDraw::recordScreen(core::StateRegistry& registry, const ScreenDraw& draw)
+{
+    // The same three "only when" answers a content draw gets, over the same identity arithmetic: a full-screen
+    // draw is a different SHAPE, not a different bookkeeping. Its sampled set IS the whole state it binds, so
+    // it plays the role the content path's inputs play (one bind per pass that samples).
+    const core::StateRegistry::Resolution resolution = registry.resolve(draw.key, draw.dynamic, draw.samplers.get());
+    const ContentPipeline::Result       compiled     = pipelines_->acquire(*pool_, draw.key);
+    if (compiled.pipeline == nullptr) {
+        // Nothing is recorded: a group without a pipeline bind would draw with whatever was bound last.
+        ++refusals_;
+        return {};
+    }
+
+    auto group = ::vsg::StateGroup::create();
+    if (resolution.variant_switched) {
+        group->add(::vsg::BindGraphicsPipeline::create(compiled.pipeline));
+        ++pipeline_binds_;
+    }
+    if (resolution.dynamic_issued) {
+        group->add(makeDynamicStateCommand(draw.dynamic, draw.color_attachments, entry_points_));
+        ++dynamic_commands_;
+    }
+    if (draw.samplers != nullptr && resolution.inputs_issued) {
+        group->add(draw.samplers);
+        ++input_binds_;
+    }
+
+    auto commands = ::vsg::Commands::create();
+    commands->addChild(makeViewportCommand(draw.viewport));
+    commands->addChild(makeScissorCommand(draw.viewport));
+    // Three vertices, generated from gl_VertexIndex by the full-screen vertex stage: no vertex buffer, no
+    // index buffer, and the whole geometry is this one call.
+    constexpr std::uint32_t kFullscreenVertices = 3U;
+    commands->addChild(::vsg::Draw::create(kFullscreenVertices, 1U, 0U, 0U));
+    group->addChild(commands);
+
+    ++draws_;
+    ++screen_draws_;
+    return group;
+}
+
 std::uint64_t ContentDraw::draws() const noexcept
 {
     return draws_;
+}
+
+std::uint64_t ContentDraw::screen_draws() const noexcept
+{
+    return screen_draws_;
 }
 
 std::uint64_t ContentDraw::pipeline_binds() const noexcept
