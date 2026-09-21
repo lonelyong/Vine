@@ -11,6 +11,11 @@ set(SRC_FILE_LIST
 	FrameGraphTest.cpp
 	FrameCompilerTest.cpp
 	ExecutorTest.cpp
+	ContentFactsTest.cpp
+	DrawBlockTest.cpp
+	GeometryFactsTest.cpp
+	ContentSourcesTest.cpp
+	ContentPassTest.cpp
 	MrtTargetTest.cpp
 	SharedDepthTest.cpp
 	VariantCoreTest.cpp

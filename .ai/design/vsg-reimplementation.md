@@ -2,9 +2,9 @@
 
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
-> **实施进度（M0 第一片，2026-09-21）**：`core/` 的 8 个类型已落地，22 个无设备用例绿
-> （`tests/test_vsg/BackendCoreTest.cpp`），`core/` 的 include 边界已由
-> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings）。详见 §11。
+> **实施进度（截至 2026-09-21）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
+> **M3d-3b-7（多布局 scope：半片 = 程序 × 修订 × 布局，池与注册表共享）**：`test_vsg` 507 用例 / 81 套件全绿，
+> `core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -1048,6 +1048,293 @@ M2c-2 再拆一次：**M2c-2a 块存储（本节，已完）**、M2c-2b 描述�
 | 深度读回的诚实 | D32 → 原样 float，D16 → ÷65535；**D24S8 拒绝**（组合格式没有普通深度拷贝语义，按 float 读出来的数字"像深度但不是"）。镜像要带 `TRANSFER_SRC`，否则拷贝是验证错误；拷贝前后各一次 image barrier，把 layout 还原成附件布局——不然共享给后一趟 pass 的深度就废了 |
 | 证据 | 颜色：出借方红、借用方在被遮挡处**清屏色**（不是绿）、借用方自己的三角形绿。深度：出借方三角形处 `≈0.5`、清屏处 `0.0`、借用方自己的三角形处 `0.1`，且**每个 texel 恰好是这三个值之一**（第四种值就意味着有别的 pass 写过深度）。计数器：`draws=3 / refusals=0`；`test_vsg` 全量 **448 用例 / 72 套件全绿**，全量输出 `Validation Error` 计数 **0**；hygiene 0 findings / 772 文件 |
 
+### 11.16c M3d-1（2026-09-21）：帧的收集段（`core/FrameRecorder`，无设备）
+
+M3d（“执行器按 `Schedule` 机械落地”）按**证据面**拆成三段：**M3d-1 收集（本节，已完）**、
+M3d-2 编译（`FrameCompiler`：normalize → `FrameGraph` → `Schedule` → `CompiledFrame`，含环的跳过语义）、
+M3d-3 执行（`api/VsgExecutor`：把已经决定好的计划机械地变成 vsg 图 / 提交 / 呈现）。拆法与 M2c 同一把尺子：
+收集段的行为能在无设备下逐条钉死（arena 归属、消费规则、三种裁决），而执行段要有像素才谈得上证据。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `core/FrameRecorder.hpp` | 收集段的类型与入口：`PassId`、`ProgramRef`、`InputRef`、`LightRef`、`CameraSnapshot`、`CollectedCommand`、`DrawKind`、`CollectedDraw`（= **一次绘制调用**）、`CollectedPass`、`FrameDescription`、`FrameRecorder` |
+| `src/core/FrameRecorder.cpp` | 规则实现：协议先行、arena 快照、scope 属性 vs 逐绘制消费、三种裁决的落地与上报 |
+| `core/Protocol` | 新增 `droppedCount()` 与 `frameOpen()`；`Drop` 的两个出口收敛到一处计数（Drop 是唯一静默的裁决，只有计数能把它从“什么都没发生”里分出来） |
+| `tests/test_vsg/FrameRecorderTest.cpp` | 14 个无设备用例 |
+
+| 规则 | 结论 |
+| --- | --- |
+| **arena 独占（P0-1）** | 计划里没有一个 span 指向宿主容器：`CollectedCommand` 在 `render()` 里复制，`CollectedDraw`/`CollectedPass` 在 `endPass()`/`endFrame()` 复制。用例按引擎自己的模式驱动（一个 vector 清空重填）后断言**第一趟 pass 的记录仍按字节等于它当时拿到的值** |
+| **一次绘制调用，不是一条命令** | 粒度就是调用，因为契约恰在这个粒度上消费公告，视口/深度也只在调用级有意义；相机按调用记一次而不是按命令（1000 条命令不该抄 1000 份矩阵）。与契约同一句话：`render()` 里的 1000 条命令共享这一次调用的全部公告 |
+| **逐绘制消费 vs pass 属性** | 视口 / 光照被“下一次绘制调用”消费（SDK 原文：one announcement serves ONE drawing call）；**输入属于 pass**（引擎自己只宣布一次并写明 “every draw call in it sees the same list”）；target / order / clear / depth 属于 scope，`endPass()` 丢弃。§5 草图把 `lights` 画在 pass 级：那是草图与契约的分歧，落地按契约走 |
+| **没画东西的 scope 不进计划，除非它宣布了 clear** | 清屏走的是该 pass 自己的 load-op，丢掉一个“只清屏”的 pass 的代价是画面底色没了；只宣布 target/order/viewport 却什么都没画的 scope 丢掉是**对的**（“未消费的 scope 属性在 endPass 丢弃”的可观测形式） |
+| **三种裁决各自落地** | `Allow`→记录；`Drop`→不记录、不报（无 scope 的 setter 是合法的惰性），但计数；`Refuse`→不记录、上报一次/每 episode。episode 的边界由 `Protocol` 拥有，录制器不留第二份“报过没有”的标志 |
+| **上报消息带数字** | `frame 3: a drawing call arrives with no pass scope open: it is refused and nothing is drawn...`；“死 scope”与“无 scope”是两句不同的话（前者说“这是那个被释放的 target”，后者说“下一个 pass 从空请求开始”） |
+| **借用的东西只抄不留** | 灯→`LightRef` 数字（用例在 endFrame 之后 `reset()` 掉 `Light` 再断言快照）；相机→`CameraSnapshot`（VIEW/PROJ + eye/target/up）；程序→identity+revision；几何→identity+revision。材质只记身份：SDK 的 `Material` **没有** revision 访问器，材质 revision 的来源在 api 层材质管理器（那是它的账） |
+| **default program 不走状态机** | 它在所有状态下都合法，问协议只会得到一个恒为 `Allow` 的 `CallKind`；录制器记身份+revision，但**不替换**命令里为 null 的 program——“缺省未解析”是收集侧允许的形状，解析是编译器的活（P0-2） |
+| **死 scope 不会被新公告救活** | 被释放的 target 让该 scope 余下的生命失效；后续 `setRenderTarget` 按 `Drop` 落地（上报一次），之后的绘制仍被拒。旧实现注释里的“新的 `setRenderTarget` 会清掉标记”是**有意不保留**的行为：协议已经钉死，录制器不绕过裁决——分歧写在这里，而不是埋在实现对注释的偏离里 |
+
+| 变异反证（两条都实测跑过） | 结果 |
+| --- | --- |
+| 计划别名收集器的 scratch 而不是 arena（把 `endPass` 的 arena 复制换回 `span(open_draws_.data(), size())`） | `TheHostsReusedCommandListIsCopiedAtTheCallNotHeld` 与 `OneViewportAndLightAnnouncementServesOneDrawingCall` 变红，其余 12 绿 |
+| 公告不被绘制调用消费（去掉 `render()` 里的三行消费） | `OneViewportAndLightAnnouncementServesOneDrawingCall` 变红，其余 13 绿 |
+
+| 结论 | 内容 |
+| --- | --- |
+| 计数只有一处 | 进入计划的 pass 与收集到的绘制调用记在 `Observe`（相位门禁读的那一份）；被拒/被丢弃的次数记在 `Protocol`。录制器**不留**自己的账，同一件事两个计数器就是同一件事两个谎言 |
+| 与计数聚合一致 | 被拒的绘制**不**计入 `draws`：用例断言“两次无 scope 绘制 ⇒ `refusalCount()==2` 而 `draws==0`” |
+| 边界没被偷偷扩大 | 录制器只答“这次调用合法吗、它记录成什么数据”：不判 rebuild / resize / borrow / 顺序 / 缓存。编译器需要的一切都是描述里的**事实**（这条是 M3d-2 的入口条件） |
+| 证据 | `test_vsg` 全量 **462 用例 / 73 套件全绿**（+14）；插件目标 `gfx_backend_vsg` 同样编过（GLOB 收进新 core 文件，插件与测试编的是同一份源）；hygiene **0 findings / 775 文件** |
+
+### 11.16d M3d-2（2026-09-21）：帧的编译段（`core/FrameGraph` + `core/FrameCompiler`，无设备）
+
+| 文件 | 是什么 |
+| --- | --- |
+| `core/FrameGraph.hpp` / `src/core/FrameGraph.cpp` | 依赖图 + **稳定**拓扑序（`(order, 调用序)` 最小者先）+ Tarjan（**迭代版**：pass 数是宿主的数字，不该上 C++ 调用栈）找强连通分量 |
+| `core/FrameCompiler.hpp` / `src/core/FrameCompiler.cpp` | normalize（视口/程序/动态层/清屏+bootstrap）→ `planTarget` / `depthPlan` → 建边 → `Schedule` → `CompiledFrame`；输入是描述 + `FrameFacts`（api 层自己的 target 账） |
+| `core/Keys` | 新增 `resolveDynamicState`：**深度意图的唯一裁决点**（显式 StateNode 赢、否则跟 pass），其余动态项只有一个来源 |
+| `core/Observe` | 新增 `invalid_schedules` |
+| `tests/test_vsg/FrameGraphTest.cpp` / `FrameCompilerTest.cpp` | 10 + 12 个无设备用例 |
+
+| 规则 | 结论 |
+| --- | --- |
+| **顺序是依赖图的答案，不是调用顺序** | 稳定 = 在所有可跑者里取 `(公告 order, 调用序)` 最小者。公告顺序是画面叠放的决定（契约原文 "ascending pass order"、同序保持注册序），一个忽略它的拓扑排序会静默把画面重新叠一遍 |
+| **环 = 跳过整个强连通分量** | 三条失败语义各自落地：① 上报 Error（列出分量里的 pass，**每分量一次/每帧**）；② 分量成员不进计划（不是"按当前顺序偷偷画"，是不画）；③ 分量外的 pass 照旧，帧照旧提交呈现；计数器 `invalid_schedules` **按分量 +1**（两个独立环是两个问题），自检断言恒 0 |
+| **只读一个被跳过 pass 的 pass 仍然要跑** | 它的输入本帧没人生产——这正是契约里本来就存在的状态（`setPassInputs` 的 null）。把消费者一起停掉会让一个两 pass 的环吞掉整帧 |
+| **边只有两种** | 采样边（输入目标的生产者 = 本帧写入它的 pass）+ 深度借用边（出借目标的生产者）。**自我边不产生**：pass 采样自己画的目标是 feedback 模式（执行器判定，见 M2c 的 source==destination 拒绝），调度器把它当环会静默跳过每一个这样的 pass |
+| **bootstrap = 该目标的第一个写者** | 写 = 有绘制或宣布了 clear；且目标的 attachments 本帧新建/换镜像（`Rebuild` / `ResizeInPlace` / `Repair(Bootstrap)`）。后续写者 LOAD——在那里再来一次清屏会把第一个写者画的东西擦掉 |
+| **0×0 目标不是错误** | 没有任何东西能画进去 ⇒ 它的 pass 不进计划，**也不上报**（这是状态，不是错；目标层的构建失败另有报告）。用例断言 `diagnostics.clean()` |
+| **未知目标不静默** | 后端从没听说过的 target ⇒ 不进计划 + `ContentSkipped`(Error)。用一个空的 compatibility 或未建的 framebuffer 顶过去就是静默跳过 |
+| **缺省全部解析** | 视口（没公告 = 整目标，逐 draw 落定）、程序（命令没有自己的 = 帧的 default，**在编译期替换**）、动态层（`resolveDynamicState`）、清屏（有效 policy + `bootstrap` / `depth_preserved` 两个**执行器推不出来**的事实） |
+
+| 有意偏差（写在这里，不埋在实现里） | 内容 |
+| --- | --- |
+| `CompiledPass::compatibility` 没有 materialize | §5 草图里它是一份 `RenderPassCompatibility`，而该类型带 `std::vector` ⇒ 逐 pass 复制等于每帧每 pass 一次堆分配，而执行器本就按 target 身份持有同一份 shape。计划改为 `target_index` 指向 `CompiledFrame::targets`，兼容性由执行器按身份取。**回报**：整个计划里**零 vector**（§7 的“稳态帧零分配”从 M3d-3 起就成立） |
+| 逐 draw 的 compare op 仍未进动态层 | `core::DynamicState` 没有 compare 字段；M2c 的 `ContentPipeline` 按 §11.11 把 `GREATER` 烘进管线（引擎 reverse-Z 约定），而**旧实现**用 `RenderStateMapper::mapCompareOp` 按 `DepthState.compare` 逐 draw 映射。⇒ 内容自定比较算子的画面，新旧后端的答案不同。**登记为待办**（把 compare 加进 `DynamicState` 要动 `Keys.hpp` 的审计表，是独立小批次） |
+
+| 落地抓到的坑 | 内容 |
+| --- | --- |
+| 用例当场抓到真 bug | 不可服务的 pass（未知目标 / 0×0）只标了 `servable_=0`，**没有** `graph_.exclude()` ⇒ 它仍被排进 schedule，解析阶段用 `kNoTarget` 去索引 target 表（`stl_vector.h` 的越界断言当场炸）。修法：两处都 exclude，并在解析循环里留一条"不可达但把前置条件放在本地"的守卫 |
+| 变异反证 ×2（都实测） | ① 不认环（`cyclic = false`）⇒ **5 个用例红**（图 3 + 编译 2），其余 17 绿；② `freshAttachments` 恒 false ⇒ bootstrap 那条红 |
+
+| 结论 | 内容 |
+| --- | --- |
+| 与计数聚合一致 | `invalid_schedules` 是被跳过**分量**的数；被跳过的 pass 不进 `CompiledFrame::passes`，而 `counters().passes` 记的是收集到的 scope——两个数的差就是本帧丢掉的 pass，相位可断言 |
+| 边界没被扩大 | 编译器不碰任何 API 类型（事实是纯值、计划是纯值），不建资源、不选 GPU 对象；`planTarget` / `depthPlan` 的答案照读，不自造策略 |
+| 证据 | `test_vsg` 全量 **484 用例 / 75 套件全绿**（+22）；插件目标 `gfx_backend_vsg` 编过；hygiene **0 findings / 781 文件** |
+
+### 11.16e M3d-3a（2026-09-21）：执行段的第一片（`api/VsgExecutor`，真设备、无窗口）
+
+M3d-3 按“**能证明什么**”再拆：**M3d-3a 记录顺序 + 一个 pass scope = 一个 render pass**（本节，已完）、
+M3d-3b 内容绘制（几何/块/描述符经计划进 render graph，`ContentDraw` 接进来）、M3d-3c 会话侧（窗口 pass、
+`present`、帧计数与退役推进）。理由：**记录顺序是整个三段式拆分存在的理由**，而它恰好可以用清屏色证明——
+不需要先有内容路径。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/VsgExecutor.hpp` / `src/api/VsgExecutor.cpp` | 逐 pass 走 `CompiledFrame`：按 `target_index` 解析 target → 取该 pass 的 render graph（带自己的清屏值）→ 按计划顺序挂进 command graph；所有 target 的 capture 节点**最后**加；不服务的 pass 报告而不是画到别处 |
+| `api/OffscreenTarget` | 新增 `passGraph(policy)`：在**同一个** render pass + framebuffer 上造一张带本 pass 清屏值的 `RenderGraph`；清屏值填充抽成与构造函数共用的 `fillClearValues`（一处规则，两处使用） |
+| `tests/test_vsg/ExecutorTest.cpp` | 2 个真设备用例（lavapipe 无窗口；否则 SKIP） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **一个 pass scope = 一个 render pass 实例** | vsg 的一 `RenderGraph` 就是一次 begin/end render pass。清屏**值**属于 pass，render pass / framebuffer / load op 属于 target ⇒ 同一 target 上的两个 pass 是两张图，各清各的颜色，后录的那张胜出 |
+| **记录顺序 = 计划顺序（像素可查）** | 用例故意让两个 target 的“公告序”与“调度序”相反：A=红(10)/ 绿(0) ⇒ 期望**红**；B=绿(10)/ 红(0) ⇒ 期望**绿**。(A=红, B=绿) 这对组合只有走 schedule 才可能，“按调用序录”只会得到 (绿, 绿) |
+| **记录序列也是证据** | `recorded()` 断言 {2,4,1,3}（调度序），而不只是“四个都录了”：失败时能看出是哪一级动了 |
+| **capture 最后加** | 探针要读“最后一个写该 target 的 pass”留下的画面；夹在两个 pass 之间的拷贝读到的不是本帧的终态 |
+| **不服务的 pass 必须响** | 默认 framebuffer（窗口 pass 未接）、未注册的 target、无附件的 target ⇒ `Warning`/`ContentSkipped` + `skipped()` 计数 + `record()` 返回 false（这是部分帧，调用方要知道）。默认 framebuffer 那句还会点名“这一层还没接”，而不是把内容画到别的 target 上 |
+
+| 落地抓到的 | 内容 |
+| --- | --- |
+| **变异反证（端到端）** | 让调度器忽略公告 order（`ready.emplace(0, node)`）⇒ `FrameGraphTest` 的排序用例与 **`ExecutorTest` 的像素用例**同时变红，其余 22 绿。⇒ 那条像素断言测的是“**画面跟着 schedule 走**”，不是“图能提交” |
+| 工具 | `GTEST_SKIP() << vine::String` 编不过（u8 串进不了 gtest 的消息流）：要 `.as_std_str()` |
+
+| 结论 | 内容 |
+| --- | --- |
+| 边界 | 执行器只把计划变成 API 对象：不判 rebuild / resize / 顺序 / 缓存，也不挑管线或描述符（那两样在 M3d-3b 接内容时进来，但也仍是“按计划里的身份取对象”） |
+| 与旧实现解耦 | 执行器不认识 `SceneBridge`：它按 **identity** 解析 target，与 api 层其余部分（`Session` / `OffscreenTarget`）用同一张表 |
+| 清屏值这一半已到位 | M3a 的 load-op 变体有两半：**清屏值**（本节已能逐 pass 变化）与 **LOAD/CLEAR 操作**（仍归 target：镜像每帧 UNDEFINED ⇒ 必须清）。后者要等“带历史的 target”（跨帧保留 / 深度保留的 LOAD 路径） |
+| 证据 | `test_vsg` 全量 **486 用例 / 76 套件全绿**（+2，含真设备）；插件目标 `gfx_backend_vsg` 编过；hygiene **0 findings / 784 文件** |
+
+### 11.16f M3d-3b-0（2026-09-21）：计划带上“管线身份要的 pass 侧事实”，执行器核对计划与资源世界
+
+M3d-3b（内容绘制进 render graph）开工前先把它的**两处前提**钉住：
+
+1. 一个 `PipelineKey` 里有两项**只能从 pass/target 得出**：写了几个颜色附件（`color_attachments`）与目标是否提供可采样深度
+   （`depth_sampleable`）；它们现在由编译器从**已经查到的同一份 target 事实**解析进 `CompiledPass`，调用方不必再问一次。
+2. M3d-2 记下的偏差（“不 materialize `RenderPassCompatibility`，因为带 vector”）需要一个**按身份取兼容性的口子**：
+   `OffscreenTarget::shape()` 返回它建 render pass 用的那份形状（返回副本，无借用），执行器由此命名 key 的兼容性半边。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `core/FrameCompiler` | `CompiledPass::color_attachments` / `depth_sampleable`；按 slot 缓存附件数，避免逐 pass 重算 |
+| `api/OffscreenTarget` | `shape()`（返回 `core::TargetShape`） |
+| `api/VsgExecutor` | 记录一个 pass 前**核对**计划与 target：附件数或深度可采样不一致 ⇒ `Warning`/`ContentSkipped` + 跳过 + `record()` 返回 false |
+| `tests/test_vsg` | 编译器 +1（无设备，含“保留的深度撤销提升”那一面）；执行器 +1（真设备：故意让事实漂移到两个附件） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **同一个事实只答一次** | 两项都从编译器已经拿来建 target 表的事实里解析，所以“计划说的”与“执行器要的”不可能给出两个答案 |
+| **计划与资源世界必须对得上** | 计划描述的形状与它解析到的 target 不一致 = 上游事实漂了，而**按错形状建的管线与宿主要的画面没有任何关系**。这个不一致只在执行器这一处能被发现，所以在那里报，而不是交给驱动 |
+| 证据 | `test_vsg` 全量 **488 用例 / 76 套件全绿**（+2）；插件目标编过；hygiene 0 / 784 文件 |
+
+### 11.16g M3d-3b-1（2026-09-21）：内容“按 pass 放置”，状态全部来自计划
+
+内容世界（管线 / 流 / 块 / 材质）属于拥有它的那一层，不属于执行器。所以这一片的接缝是**数据而不是接口**：
+调用方把已录制好的内容按 pass 交给执行器（`PassContent{ pass, content }`），执行器只回答一个问题——
+**它进的是不是计划说的那个 pass**。这样既不需要在 api 里提前发明一套“内容工厂”抽象，又让“记录顺序 / 清屏值 /
+视口由计划决定”这些主张保持可验证。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/VsgExecutor` | `PassContent` + `record(frame, graph, content)`：匹配同一个 `PassId` 的内容作为该 pass render graph 的子节点；**计划里没有的 pass 的内容会被报**（它的 pass 可能因为环被跳过、或 target 不可服务） |
+| `tests/test_vsg/ExecutorTest.cpp` | 新增真设备用例：一个 pass + 一个 render command，内容层用 `ContentDraw`／`StreamUploads`／`BlockStorage`／`BlockDescriptors` 录一个三角形，**动态状态与视口都取自 `CompiledPass`** |
+
+| 规则 | 结论 |
+| --- | --- |
+| **内容只需进对 pass** | 执行器不看内容内部（里面有哪些 draw、绑了什么，是内容层的事），只保证它在计划的那个 pass 里、在 plan 的 clear 之后 |
+| **状态来自计划，而不是内容层重新决定** | 用例把 `pass.draws[0].commands[0].dynamic` 与 `pass.viewport` 直接交给 `ContentDraw`——这就是 M3d-2 把 normalize 做在编译段的意义：内容层不再需要知道"这个 pass 的深度策略是什么" |
+| **内容静默丢掉是不行的** | 给一个计划里不存在的 pass 的内容 ⇒ `Warning`/`ContentSkipped` + `skipped()` 计数。那一 pass 缺席是有原因的（环被跳过、target 不可服务），而原因已经在别处报过；这里只报“你录的东西没地方放” |
+| **变异反证** | 把 `graph->addChild(packet.content)` 拿掉 ⇒ 像素用例红，而且失败消息直接给出真相：中心读到 `(64, 128, 191)` = **计划那个 clear 色**——即“背景是计划的清屏，三角形没进去” |
+| 证据 | `test_vsg` 全量 **489 用例 / 76 套件全绿**（+1，真设备）；插件目标编过；hygiene 0 / 784 文件 |
+
+| 本片**没有**做（下一步的前提） | 内容层今天在测试里手录几何。生产侧需要三张事实表（程序身份 → GLSL、几何身份 + revision → 通道流/索引、材质身份 → 块字节），它们现在只存在于旧实现的 `SceneBridge`／`VsgMaterialManager` 里 |
+
+### 11.16h M3d-3b-2（2026-09-21）：内容层的三张事实表（`api/ContentFacts`，无设备）
+
+计划只能按**身份**命名程序/几何/材质（每帧每个命令只复制得起这个，也只应该复制这个）；
+“这个身份是哪些顶点流”“这个材质是哪些字节”是**内容**，不是帧意图，所以由拥有它们的层从自己的表里回答。
+这一片把这三张表与它们的**查找语义**钉住（数据源还在旧实现的 `SceneBridge`／`VsgMaterialManager` 里，那是下一片）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ContentFacts.hpp` / `src/api/ContentFacts.cpp` | `ChannelFacts` / `GeometryFacts` / `ProgramFacts` / `MaterialFacts` + `ContentFacts`（三张表，借用一帧）+ 三个查找 + 两条规则函数 |
+| `tests/test_vsg/ContentFactsTest.cpp` | 5 个无设备用例 |
+
+| 规则 | 结论 |
+| --- | --- |
+| **身份 + revision 是键** | 三个查找都按这两个值回答。revision 不同**不是**“旧的也能用”：计划描述的是内容已经往前走之后的画面，拿新字节去录就是一张与帧无关的图 |
+| **miss 有三种，都是“不能录”但不是同一件事** | `Unknown`（这张表不认识这个身份）/ `Revision`（身份在、修订不同）/ `Malformed`（条目在但不能画）。三者决定相同（跳过 + 报），但消息与排查路径不同——这正是“一次报清”的前提 |
+| **几何的 Malformed 是“通道与布局对不上”** | `popcount(canonical_mask) + custom_locations.size() == channels.size()`，且索引流必须是 `Index`。规则放在**查找里**，内容层就绕不过去：声明了没人喂的属性是驱动拒编或未绑定内存读，多出来的流是数据没人消费 |
+| **材质的 Malformed 是“块不是 ABI 的大小”** | `sizeof(VineMaterialBlock)`。字节数错了会让着色器读到别的块（与 M2c-2b-1 “对齐即拒绝”同一条纪律） |
+| **空表答 Unknown，不猜** | 表里没有就是没有：一个“缺省材质”或“缺省程序”的静默代替品会让内容错得无从归因（与旧实现“没有有效 shader 就不画”同一条口径） |
+
+| 变异反证 | 把三个 revision 检查改成“照样回答”⇒ 三条 revision 用例变红、其余 2 条绿 |
+| --- | --- |
+| 证据 | `test_vsg` 全量 **494 用例 / 77 套件全绿**（+5）；插件目标编过；hygiene 0 / 787 文件 |
+
+### 11.16i M3d-3b-3（2026-09-21）：每绘制 ABI 块的打包（`api/DrawBlock`，无设备）
+
+内容层把计划变成 GPU 对象时，第一处“算术”就是每绘制的块（`VineDrawBlock`）。三件事会静默错：矩阵的列主序、
+平移在平铺数组的 12..14、不透明度在 `params.x`。所以打包只允许有一处，并用一条**非对称矩阵**的用例钉住它——
+对称矩阵（单位阵、缩放、大多数测试内容）的转置打包与正确打包逐字节相同，只会在以后表现为“模型转错方向”。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/DrawBlock.hpp` / `src/api/DrawBlock.cpp` | `packDrawBlock(const CompiledCommand&, VineDrawBlock&)`：从访问器逐元素写（不抄内存），把列主序写成**函数自己的注释与用例**；`params = {opacity, 0, 0, 0}` |
+| `tests/test_vsg/DrawBlockTest.cpp` | 2 个无设备用例 |
+
+| 规则 | 结论 |
+| --- | --- |
+| **列主序写成 `column * 4 + row`** | 元素 (row, column) 落到平铺数组的哪个位置，是这份 ABI 与着色器之间的契约；从访问器逐元素写而不是复制存储，让“用的是哪种约定”在读过的地方直接可见 |
+| **平移在 12..14** | 同一个事实从字节侧再看一遍（第四列），也是“没有转置”的第二个证据 |
+| **`params.yzw` 是保留槽，打包为零** | “看起来应该有地方放”的值就是每绘制参数悄悄失效的入口 |
+| **值真的从计划来** | 第二个用例跑完整条路（recorder → compiler → packer），从平铺数组里读出平移：这是“屏幕上的数来自宿主那个模型矩阵”的声明 |
+| **视图块暂时不做** | `VineViewBlock` 的 ABI 已钉（`view` / `inv_view` / `proj` / `view_proj` / `cam_pos` / `frame`），但 `frame`（时间 / 视口尺寸）与 `cam_pos.w` 需要**会话侧**的约定，而那里才是这两个值得出处；在此发明就是给同一个问题第二个答案 |
+
+| 变异反证 | 把索引改成行主序 ⇒ **两条用例都红**（包括专门为它准备的非对称矩阵那条） |
+| --- | --- |
+| 证据 | `test_vsg` 全量 **496 用例 / 78 套件全绿**（+2）；插件目标编过；hygiene 0 / 790 文件 |
+
+### 11.16j M3d-3b-4（2026-09-21）：几何的通道走查（`api/GeometryFacts`，无设备）
+
+三张表的第一张真实数据源：把 SDK 的 `Geometry`（宿主 authored 的对象）变成 `GeometryFacts`。规则都是
+“错了也看不出来”的那种，所以逐条钉：
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/GeometryFacts.hpp` / `src/api/GeometryFacts.cpp` | `buildGeometryFacts(geometry, out, storage)`：按固定顺序走 `bufferLocations()`，逐通道建 `StreamKey` + `vsg::floatArray`，再建索引流 |
+| `tests/test_vsg/GeometryFactsTest.cpp` | 5 个无设备用例 |
+
+| 规则 | 结论 |
+| --- | --- |
+| **通道顺序就是顶点绑定顺序** | canonical 角色（位置 0 / 法线 1 / 颜色 2 / 保留 UV 8）在前，自定义 location 升序在后。管线属性声明从同一份 entry 建，所以“哪个缓冲喂哪个属性”不可能两边不一致 |
+| **索引流归一化为整个 buffer** | 几何声明的是一段**切片**，但流的身份是（buffer, revision）——切片随 draw 走（`index_count` / `first_index`）。这就是同一 index arena 上的两个几何只上传一次的原因；按切片建键会把同一段字节按几何数上传 |
+| **切片通道上传自己的段** | 通道读共享缓冲的一段，上传的就是那一段；索引相对几何自己的顶点（SDK 自己这么说）⇒ `vertex_offset = 0` |
+| **同一起点的规则** | 一个几何的所有通道必须从**同一个顶点**起算（`offset / components` 一致），否则“索引 0”对每个通道指的是不同顶点，索引就没有单一含义 ⇒ Malformed |
+| **不能画就是不能画** | 没有任何顶点缓冲 ⇒ `Unknown`；没有位置（唯一必需的属性）或没有索引（本后端的绘制是 indexed）⇒ `Malformed`。**自定义通道（≥ 3 且 ≠ 8）不被拒绝**：照原样描述，能力上限由上传层说出——在这里丢掉它会让宿主 authored 的几何看起来像另一个它没写过的几何 |
+
+| 落地抓到的 | 内容 |
+| --- | --- |
+| 用例当场抓到真 bug | 建好的 `storage` **没有发布成 `out.channels`**（entry 的 span 全空）⇒ 三条用例当场红。这正是“表是借用的、发布是显式一步”的价值 |
+| 变异反证 | ① 通道顺序改回“几何自己报的顺序” ⇒ 顺序用例红；② 索引键改成按切片（`count = indexCount()`）⇒ 两条分享/索引用例红。其余用例保持绿 |
+| 证据 | `test_vsg` 全量 **501 用例 / 79 套件全绿**（+5）；插件目标编过；hygiene 0 / 793 文件 |
+
+### 11.16k M3d-3b-5（2026-09-21）：程序与材质两张数据源（`api/ContentSources`，无设备）
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ContentSources.hpp` / `src/api/ContentSources.cpp` | `buildProgramFacts`（`ShaderProgram` → 两段 GLSL + 入口点）与 `buildMaterialFacts`（`Material` → ABI 块字节；`nullptr` → 默认材质） |
+| `api/ContentFacts` | `findMaterial` **不再特判 nullptr**：默认材质是一张表里的普通条目，而不是查找失败——决定“拒绝还是回退”留在内容层 |
+| `tests/test_vsg/ContentSourcesTest.cpp` | 4 个无设备用例 |
+
+| 规则 | 结论 |
+| --- | --- |
+| **一个内容管线 = 恰好两段图形阶段 + 一个入口点** | 多余的同种阶段 / compute 阶段 / 空源 / 两段入口点不一致 ⇒ `Malformed`。“取每种的第一个”会编出宿主没写过的程序，而画面上什么也不会说 |
+| **没有材质不等于查找失败** | SDK 的材质是可选的，而 ABI 自己的默认值**就是**默认材质；所以 `nullptr` 是一条**身份为空的普通条目**。表里有它就答得上，没有就答 `Unknown`——是否回退由内容层定，不由查找定 |
+| **材质的修订由调用方给** | `Material` 没有 revision 访问器（M3d-1 已记）；知道材质何时被改的是材质管理器，所以修订作为参数传入（与几何同一条规则：修订是计划要报的事实，只有它的拥有者能报） |
+| **块的成员才是载荷** | `VineMaterialBlock` 是聚合体，`{}` 只初始化**成员**（这是 ABI 的默认材质：灰、只有一个非零 shininess）而**不碰尾部填充**（shininess 在 48..51，块 64 字节）。填充不被任何着色器读；比较要用 ABI 自己的逐成员 `operator==`，字节级比较不是有意义的运算（它会把“没改过”报成“改过了”） |
+
+| 落地抓到的 | 内容 |
+| --- | --- |
+| 一个值得记住的字节级事实 | 先写了“`{}` 会把对象（含填充）清零”的注释，又被诊断打脸：诊断打印出**差异字节正好是 52..63**（= `shininess` 之后的尾部填充），而逐成员 `operator==` 为真。注释与用例都已改成陈述真正的事实（这一条也已记进仓库记忆） |
+| 变异反证 | ① 接受任意阶段组合 + 入口点不一致 ⇒ 程序规则用例红；② `findMaterial` 恢复 nullptr 特判 ⇒ 默认材质用例红；其余 7 绿 |
+| 证据 | `test_vsg` 全量 **505 用例 / 80 套件全绿**（+4）；插件目标编过；hygiene 0 / 796 文件 |
+
+### 11.16l M3d-3b-6（2026-09-21）：把三张表接进内容层（`api/ContentPass`，真设备）
+
+内容层就是“身份变成字节”的那一层：几何的通道变成流、程序的阶段变成管线、材质的块字节变成描述符的载荷。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ContentPass.hpp` / `src/api/ContentPass.cpp` | `Scope`（管线/录制器/注册表/块存储/描述符集/上传）+ `record(pass, facts, compatibility, view_block, out)`：逐命令 `findProgram/findGeometry/findMaterial` → 写块（`packDrawBlock` + 材质的 ABI 块）→ `acquireVertex/acquireIndex` → `ContentDraw::Draw` → 挂到组上 |
+| `api/ContentFacts` | **纠正**：`findMaterial` 只按身份查（签名去掉 revision 参数）——计划根本报不出材质的修订（SDK 的 `Material` 没有访问器），所以“表里的条目”就是它此刻的字节；条目仍留 revision，因为块存储按它管理 in-flight 副本 |
+| `tests/test_vsg/ContentPassTest.cpp` | 1 个真设备用例（含“第二帧复用”与“拒绝”两半） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **逐命令拒绝，不是逐 pass** | 程序/几何/材质任一查不到 ⇒ 该命令不画、按查找到的理由上报（未知 / 修订不同 / 畸形），**其余照画**。一个没法着色的 drawable 是画面上的一个洞，不是丢掉整帧的理由 |
+| **一个 scope 一种顶点布局（已声明的限制，§11.16m 已取代）** | 本层驱动一套 `ContentPipeline` + `ContentDraw`，而管线是按顶点布局编译的；几何布局不同 ⇒ 拒绝并说出原因。“静默按错布局画”比拒绝更糟；多布局 scope（一布局一管线、共享变体池）是下一片 |
+| **输入与全屏绘制调用未接** | 计划还没携带 pass 的输入（所以键里的 `sampled_color_count` 为 0），全屏绘制属于 program-slot 路径 ⇒ 两者都**拒绝**而不是近似 |
+| **缓存的证据是计数，不是“画出来了”** | 同一内容第二帧：`uploads()` 不涨而 `aliases()` +2（顶点 + 索引两条流）、`materialWrites()` 不涨而 `materialHits()` +1——这正是“身份带修订而不是带字节”的价值 |
+
+| 落地抓到的 | 内容 |
+| --- | --- |
+| 测试自己踩的坑（已修） | 用栈对象构造 `intrusive_ptr<Geometry>(&geometry)` ⇒ 析构时 `free(): invalid pointer`。SDK 对象必须堆上由 `intrusive_ptr` 拥有（与计划里的身份一致） |
+| 变异反证 | ① 每次 acquire 用**移动的身份**（revision + 计数器）⇒ 缓存断言红（`uploads` 3≠2、`aliases` 1≠2）；② 忽略几何 miss ⇒ 进程崩在空指针（那道检查正是它在防的事）。头两次尝试的变异都是无效变异（`+bound` 恒为 0；`+1` 两帧一致），**变异本身也要验证**——这一条已记进仓库记忆 |
+| 证据 | `test_vsg` 全量 **506 用例 / 81 套件全绿**（+1，真设备）；插件目标编过；hygiene 0 / 799 文件 |
+
+### 11.16m M3d-3b-7（2026-09-21）：多布局 scope（`api/ContentPass`，真设备）
+
+一片管线层 = 一个程序的阶段 × 一种顶点布局，所以一个 pass 要画两种布局的网格就需要两片。scope 现在是一**组**“编译好的半片”，逐命令按 (program, revision, layout) 选；所有半片共享池与 pass 的注册表。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ContentPass` | `Scope::Entry`（program / revision / layout / pipelines / draws）+ `Scope::entries`（span）；ctor 不再收布局；逐命令选半片，选不中时按“哪一项没对上”给两条不同消息 |
+| `tests/test_vsg/ContentPassTest.cpp` | 新增真设备用例（两半片 + 两次拒绝），并把既有用例迁到新 scope 形状 |
+
+| 规则 | 结论 |
+| --- | --- |
+| **半片的身份 = (程序, 修订, 布局)** | 管线层按一份阶段文本 + 一种布局建；借别人的阶段画就是画出没人写过的画面，而池会把那份对象记在计划点名的键上（静默）⇒ 三者都得对上 |
+| **选不中要说清是哪一项** | 两种 miss 的修法不同（去编译那个程序 / 去编译那种布局）⇒ 消息各说自己那一项；用例用 sink 收消息逐字钉住 |
+| **池与注册表共享是结构性的** | `Scope` 只有一个 registry 指针 ⇒ “半片一个注册表”这种错误安排**表达不出来**；共享的语义价值 = 换过半片后回到前一片要**重发管线绑定**，证据 = 左半片 `pipeline_binds()==2`（三次绘制：左、右、左） |
+
+| 落地抓到的 | 内容 |
+| --- | --- |
+| 变异反证 | ① 选半片忽略布局 ⇒ 未服务的布局被画（`record` 真、零消息）红；② 忽略程序身份 ⇒ 未编译的程序被画，红；③ 把注册表改成“每个录制器一份”（临时给 `ContentDraw` 加成员）⇒ 第三次绘制跳过绑定（1≠2）**且左网格被蓝管线圈画成 (0,0,255)** —— 计数与像素同时抓到 |
+| 测试自己踩的坑 | 第二帧的 `beginFrame` 被协议拒绝：**关帧的是 `swapBuffers()`**（`endFrame()` 只离开 pass，回 `Idle` 靠 swap）⇒ 症状是“第二帧的计划还是第一帧的三条命令”，靠打印 token 抓到 |
+| 证据 | `test_vsg` 全量 **507 用例 / 81 套件全绿**（+1）；插件目标编过；hygiene 0 / 799 文件 |
+
 ### 11.17 下一步
 
 | 项 | 内容 |
@@ -1069,7 +1356,19 @@ M2c-2 再拆一次：**M2c-2a 块存储（本节，已完）**、M2c-2b 描述�
 | ~~M3a~~ | **已完成（2026-09-21）**：清屏/加载策略（`core/ClearPlan`：bootstrap 全清、额外附件透明黑、保留的深度永不清、反转 Z 远平面 0.0），无设备用例 |
 | ~~M3b~~ | **已完成（2026-09-21）**：多附件目标与逐附件读回（`api/OffscreenTarget::TargetLayout`：MRT + 深度、`capture(i)`/`probe(i)`），真设备像素用例（双输出着色器分色） |
 | ~~M3c~~ | **已完成（2026-09-21）**：借用深度落到目标层（不建镜像 / LOAD / 提升撤销 + 事实即计划），真设备用例（颜色 + 深度双重证据）；顺带补上设备地板的**扩展**一半与深度读回（`core/DepthProbe`） |
-| M3d | 目标：执行器按 `Schedule` 机械落地（`FrameRecorder` / `FrameCompiler` / `VsgExecutor`，见 D2/§2.4） |
+| ~~M3d-1~~ | **已完成（2026-09-21）**：帧的收集段（`core/FrameRecorder`：协议先行、arena 独占快照、scope 属性 vs 逐绘制消费、三种裁决 + 计数），14 个无设备用例 |
+| ~~M3d-2~~ | **已完成（2026-09-21）**：帧的编译段（`core/FrameGraph`：稳定拓扑序 + 环的 SCC 跳过；`core/FrameCompiler`：normalize + target/depth 求解 + `CompiledFrame`），10 + 12 个无设备用例 |
+| ~~M3d-3a~~ | **已完成（2026-09-21）**：执行段第一片（`api/VsgExecutor`：一个 pass scope = 一个 render pass，逐 pass 清屏值，记录顺序 = 计划顺序有像素证据），真设备用例 2 个 |
+| ~~M3d-3b-0~~ | **已完成（2026-09-21）**：计划带 pass 侧管线事实（`color_attachments` / `depth_sampleable`）+ `OffscreenTarget::shape()` + 执行器核对计划与 target（§11.16f） |
+| ~~M3d-3b-1~~ | **已完成（2026-09-21）**：内容按 pass 放置（`PassContent` 接缝 + 非法内容上报），内容层用 `ContentDraw` 等录的三角形经计划上屏，真设备像素证据（§11.16g） |
+| ~~M3d-3b-2~~ | **已完成（2026-09-21）**：三张事实表的定义与查找语义（`api/ContentFacts`：身份 + revision 是键、三种 miss、通道↔布局与块↔ABI 两条规则），无设备用例（§11.16h） |
+| ~~M3d-3b-3~~ | **已完成（2026-09-21）**：每绘制 ABI 块的打包（`api/DrawBlock`：列主序 + 平移在 12..14 + `params.x` = opacity），非对称矩阵用例 + 变异反证（§11.16i） |
+| ~~M3d-3b-4~~ | **已完成（2026-09-21）**：几何的通道走查（`api/GeometryFacts`：通道顺序 = 绑定顺序、索引键归一化为整 buffer、切片上传自己的段、起点必须一致），无设备用例（§11.16j） |
+| ~~M3d-3b-5~~ | **已完成（2026-09-21）**：程序与材质两张数据源（`api/ContentSources`：两段 + 一个入口点才算内容管线；无材质 = 身份为空的默认条目；块的成员才是载荷），无设备用例（§11.16k） |
+| ~~M3d-3b-6~~ | **已完成（2026-09-21）**：内容层（`api/ContentPass`：逐命令按表录取、查不到就拒绝并上报；块 + 流 + 绘制；`findMaterial` 改为只按身份查），真设备用例（像素 + 缓存计数）（§11.16l） |
+| ~~M3d-3b-7~~ | **已完成（2026-09-21）**：多布局 scope（`api/ContentPass`：半片 = 程序 × 修订 × 布局，池与注册表共享，选不中报“是哪一项”），真设备用例（双色像素 + 绑定计数 + 两条拒绝消息）（§11.16m） |
+| M3d-3b-8 | **pass 输入的采样绑定**：需要计划先携带 inputs（`FrameCompiler` 的 `CompiledPass` 加输入表），然后键里的 `sampled_color_count` 与描述符绑定才有值 |
+| M3d-3c | 执行段第三片：会话侧（窗口 pass、`present` 一次、帧计数与退役推进对齐 `FrameTimeline`；视图块的时间与视口尺寸约定） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
