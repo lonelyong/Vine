@@ -35,7 +35,7 @@ V_APPFWGUI_NS_BEGIN
  * RenderControl embeds one of these in its widget tree (QWidget::createWindowContainer) and
  * forwards its public surface to the outside; no decision about the session is taken there. Every
  * lifecycle transition is reported through on_state_changed, which the control re-publishes as
- * its own stateChanged.
+ * its own state_changed.
  *
  * The host gives the timing, the surface maintains the session: nothing is attached until
  * RenderControl::init() asks for it, and an established session follows a platform window Qt

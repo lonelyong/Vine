@@ -55,7 +55,7 @@ V_APPFWGUI_NS_BEGIN
  * init() called from a plugin's load() lands before the host has laid its widgets out, and that frame is a WARM-UP -
  * it pays the one-time build (pass graphs, program slots, compiled pipelines) at whatever size the platform window
  * has at that moment, and the size change that follows is served in place. The whole path is observable through
- * state() / stateChanged.
+ * state() / state_changed.
  */
 class V_APPFW_API RenderControl : public Control {
     V_OBJECT_META_DECL;
@@ -184,7 +184,7 @@ class V_APPFW_API RenderControl : public Control {
      * placeholder, a disabled pane) or that wants to report an initialization failure subscribes
      * here instead of guessing a delay; the control's own log line already carries the timings.
      */
-    Signal<SurfaceState> stateChanged;
+    Signal<SurfaceState> state_changed;
 
   private:
     struct Impl;

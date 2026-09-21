@@ -57,10 +57,11 @@
   状态退回 `Pending` 再走 `Attached → Presenting`（`Presenting` 只在真的往可见表面出过帧时成立）。
   表面**由控件持有的容器控制可见性**（容器藏着直到首帧 present，句柄换了也重新藏，`handleDestroyed()`
   只把状态打回 `Pending`）。**2026-09-19 拆分**：会话逻辑全在私有 `SurfaceWindow`（`src/gui/SurfaceWindow.hpp/.cpp`），
-  `RenderControl` 只剩封装（嵌 surface + 转发公开 API，`stateChanged` 用 `on_state_changed` 回调中继），
+  `RenderControl` 只剩封装（嵌 surface + 转发公开 API，`state_changed` 用 `on_state_changed` 回调中继；
+  2026-09-21 信号由 `stateChanged` 改名而来，对齐 `theme_changed`/`name_changed`），
   日志前缀仍是 `[RenderControl]`；公开 API 与用例不变，详见 `.ai/design/appfw-render-surface.md` 的“文件划分”。
   `setAutoInitialize`/重试阶梯/构造里的首触发已删；`Failed` 现在只有“没注册后端插件”一种来源。
-  要知道“什么时候才能出画面”就订阅 `stateChanged`（`Pending/Attached/Presenting/Failed`），别用
+  要知道“什么时候才能出画面”就订阅 `state_changed`（`Pending/Attached/Presenting/Failed`），别用
   `QTimer::singleShot` 猜。
 - **渲染后端的初始化可以挪进 `load()`**（2026-09-18）：控件先丢进窗口、再立刻 `init()` ——
   attach 只要求“句柄 + 尺寸 > 0”，而新 QWindow 的退化尺寸（实测 1x1，不是 0x0）就够，真实尺寸随布局
@@ -91,7 +92,7 @@
 - ⚠️ **“框关掉时窗口必须已经能画”这条责任 2026-09-20 挪回渲染视图**：框架那套等待
   （`windowCanBeSeen()` / `deferStartupFrameClose()` / `closeStartupFrame()` + 2000 ms 定时器）**已整个删除**
   （`GuiApplicationData` 的两个字段、常量也一并删），`finishStartup()` 无条件关框。取代它的是 `RenderControl`
-  的规则：**窗口容器藏着，直到 `stateChanged` 报到 `Presenting`** —— 可见的容器会被 Qt 用
+  的规则：**窗口容器藏着，直到 `state_changed` 报到 `Presenting`** —— 可见的容器会被 Qt 用
   `CompositionMode_Source` + `Qt::TRANSPARENT` 抹成洞（嵌入窗口的洞），隐藏的容器不被 paint，所以那一格是
   主窗口自己的背景；表面自己不再管可见性（`surface_shown`/`setSurfaceShown()`/`handleShown()`/`showEvent()`
   全删，容器 `setAutoFillBackground(true)` 是错的机制、已删）。首帧提前：`initializeBackend()` 里控件不在屏上

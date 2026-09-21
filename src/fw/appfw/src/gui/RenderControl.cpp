@@ -62,7 +62,7 @@ RenderControl::RenderControl()
         // A frame is in the surface: the area can show it. Back to Pending, a platform window is being replaced
         // and the surface has nothing to show any more, so the area goes back into the background.
         data->container->setVisible(state == SurfaceState::Presenting);
-        stateChanged.trigger(state);
+        state_changed.trigger(state);
     };
     data->surface->on_needs_visible_surface = [this] {
         // The platform wants a surface that is on screen before it will attach (see SurfaceWindow): showing the

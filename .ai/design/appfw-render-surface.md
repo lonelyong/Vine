@@ -27,7 +27,7 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
 - **`RenderControl`**（公开，`sdk/vine/appfw/gui/RenderControl.hpp` + `src/gui/RenderControl.cpp`）只剩封装：
   构造 host QWidget、`createWindowContainer` 嵌表面、容器 `installEventFilter`，然后把
   `engine()/view()/init()/renderFrame()/fitToScreen()/devicePixelRatio()/state()/failureReason()`
-  直接转发给表面。`stateChanged` 是唯一需要中继的一处：控件订阅表面的 `on_state_changed` 再 trigger 自己的
+  直接转发给表面。`state_changed` 是唯一需要中继的一处：控件订阅表面的 `on_state_changed` 再 trigger 自己的
   信号，宿主仍然只订阅这一个入口。公开 API 与行为不变，`.cpp` 从 ~1060 行降到 ~100 行。
 - **`SurfaceWindow`**（私有，`src/fw/appfw/src/gui/SurfaceWindow.hpp` + `.cpp`）装“表面 + 会话”的全部逻辑：
   引擎与 SceneView 的创建、诊断 sink、attach/重新公告、延迟 resize、settle 帧、可见性规则、状态机、
@@ -73,12 +73,17 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
   同一个理由：定时器是猜，事件是事实。
 - **状态跟着现实走**：`handleDestroyed()` 同时把状态打回 `Pending`——`Presenting` 的语义是“已经往可见
   表面出过帧”，窗口在换的时候不成立；重建后重新走一遍 `Pending → Attached → Presenting`（会话本身没变）。
-  订阅 `stateChanged` 的宿主（占位图/缓存暂停之类）拿到的是真话。
+  订阅 `state_changed` 的宿主（占位图/缓存暂停之类）拿到的是真话。
 - **表面由控件自己建、自己持有**（2026-09-19 简化）：`RenderControl` 在构造体里 `new SurfaceWindow(host_widget)` 并交给 window container（容器即持有者），没有工厂函数、也没有“把指针挂在 widget 的 property 上再取回来”的往返。`Control` 的 widget 是一个普通 host QWidget，里面一个 `QVBoxLayout` 装着
   `QWidget::createWindowContainer(surface, host)` 出来的容器；容器把 resize/show 报给表面（`installEventFilter`），因为 maximize 时嵌入窗口收不到自己的 resize。
-- 对外接口：`SurfaceState { Pending, Attached, Presenting, Failed }` + `state()` + `stateChanged` 信号
+- 对外接口：`SurfaceState { Pending, Attached, Presenting, Failed }` + `state()` + `state_changed` 信号
   + `failureReason()`。
-- **可见性规则归容器控件**（2026-09-20，用户拍板）：`RenderControl` 把窗口容器**隐藏**着，直到 `stateChanged` 报到
+- **信号改名 `stateChanged` → `state_changed`**（2026-09-21，用户拍板）：与本目录早已存在的属性变更事件
+  （`GuiApplication::theme_changed`、`UIElement::name_changed`）同一风格；内部中继 `on_state_changed` 是
+  `std::function` **字段**、按字段规则本就是 snake_case，改名后同一个概念只有一个名字。
+  `V_APPFW_PLUGIN_ABI_VERSION` **不需要 +1**（它只描述插件握手面 `PluginAbi`/`PluginInfo`/入口签名/命令注册，
+  见 `appfw-plugin-system.md`），但用了该信号的插件必须重编：仓内是 `app_shell` 与 `test_gui`，同批改。
+- **可见性规则归容器控件**（2026-09-20，用户拍板）：`RenderControl` 把窗口容器**隐藏**着，直到 `state_changed` 报到
   `Presenting` 才显示它。理由是 Qt 的 window container 在每次 paint 里把自己的矩形用 `CompositionMode_Source`
   抹成 `Qt::TRANSPARENT`（给内嵌原生窗口挖洞），所以：**可见的容器 + 还没帧 = 一块透到桌面后面的洞**
   （给它 `setAutoFillBackground(true)` 也没用：先填的背景在同一趟里被抹掉）；**隐藏的容器则根本不被 paint** —— 
@@ -153,11 +158,11 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
 
 `tests/test_gui/RenderControlTest.cpp`（8 例，假后端，无需 GPU）：没人调 `init()` 就一直 `Pending`
 （后端一次都没被碰过、表面不显示）、宿主上屏时一次 `init()` 就 attach **并在同一调用里出首帧**
-（`Presenting` + 表面这时才可见）、`stateChanged` 的 `Pending→Attached→Presenting` 序列且不重复、
+（`Presenting` + 表面这时才可见）、`state_changed` 的 `Pending→Attached→Presenting` 序列且不重复、
 后端拒绝 ⇒ `init()` 返回 `false` 且**没有人在背后重试**、宿主再 `init()` 可恢复、没注册后端插件 ⇒ `Failed` + 原因、
 窗口未显示时先热起来但状态停在 `Attached` 且**表面不上屏**（`WarmsUpWhileInvisibleAndPutsTheSurfaceOnScreenWithItsFirstFrame`：
 `show()` 之后靠 show 事件自己把首帧做出来）、**平台窗口重建后控件自己跟过去**（新句柄被重新公告，宿主零调用；
-`stateChanged` 序列钐住 `Pending → Attached → Presenting`，即重建期间状态会退回 `Pending`）。
+`state_changed` 序列钐住 `Pending → Attached → Presenting`，即重建期间状态会退回 `Pending`）。
 
 ## 为什么没有更复杂的机制（曾实现过，已删）
 

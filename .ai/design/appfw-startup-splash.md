@@ -116,7 +116,7 @@ app->run()                      → 主循环
   未 present 的原生窗口是一块洞（合成器随便填），而 Qt 的 window container 在 paint 里把自己的矩形抹成透明
   （`CompositionMode_Source` + `Qt::TRANSPARENT`），所以“可见的容器 + 还没有帧”就是一块洞；
   隐藏的容器根本不被 paint，那一格于是是**主窗口自己的背景**。`RenderControl` 因此把容器隐藏着，
-  `stateChanged` 报到 `Presenting` 才显示它；表面自己的可见性不碰（容器管嵌入窗口的几何与可见性，
+  `state_changed` 报到 `Presenting` 才显示它；表面自己的可见性不碰（容器管嵌入窗口的几何与可见性，
   自己 `show()/hide()` 是 Qt 文档里不推荐的做法），`surface_shown` / `setSurfaceShown()` / `handleShown()` /
   `showEvent()` 都删了。
 - **首帧提前：attach 时先预热一帧**（2026-09-20）。`SurfaceWindow::initializeBackend()` 成功后看控件在不在屏上：

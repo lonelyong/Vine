@@ -86,7 +86,7 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
     // The control attaches when it is asked to and not before (see RenderControl: the host owns the timing, the
     // control only maintains an established session), so this line is the one that decides when the device and
     // the pipelines are built. The rest of the lifecycle - and its timings - are in RenderControl's log lines and
-    // its stateChanged.
+    // its state_changed.
     auto* render_control = new gui::RenderControl();
     manager->setCentralWidget(render_control);
 

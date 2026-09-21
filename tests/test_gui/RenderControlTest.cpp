@@ -170,12 +170,12 @@ TEST(RenderControlTest, NothingAttachesBeforeTheHostAsks)
 }
 
 // 状态序列是 Pending -> Attached -> Presenting，且每个转换只报一次。
-TEST(RenderControlTest, ReportsTheLifecycleThroughStateChanged)
+TEST(RenderControlTest, ReportsTheLifecycleThroughStateChanges)
 {
     HostedControl host;
 
     std::vector<RenderControl::SurfaceState> seen;
-    auto subscription = host.control()->stateChanged.connect([&seen](RenderControl::SurfaceState state) {
+    auto subscription = host.control()->state_changed.connect([&seen](RenderControl::SurfaceState state) {
         seen.push_back(state);
     });
 
@@ -290,7 +290,7 @@ TEST(RenderControlTest, FollowsARecreatedSurfaceWithoutTheHost)
     const int handle_calls_before = host.stub()->handle_calls;
 
     std::vector<RenderControl::SurfaceState> seen;
-    auto subscription = host.control()->stateChanged.connect([&seen](RenderControl::SurfaceState state) {
+    auto subscription = host.control()->state_changed.connect([&seen](RenderControl::SurfaceState state) {
         seen.push_back(state);
     });
 
