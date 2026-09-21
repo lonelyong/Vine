@@ -3,10 +3,10 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M5e（目标生命周期：计划驱动的换尺寸、旧集停车而不是丢弃、退到 idle 必须计数、租约两向拒绝）**：
-> `test_vsg` 552 用例 / 87 套件全绿（含真设备像素用例——换尺寸后的新尺寸真渲染、深度回读按新尺寸重建），
-> 强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由
-> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 814 文件）。
+> **M6（读回：一张分类表、格式诚实、借用方读到源；顺手关掉"float 颜色附件的回读会越界拷贝"这个从未被跑到的洞）**：
+> `test_vsg` 559 用例 / 88 套件全绿（含真设备用例——未捕获的读回被拒而不是返回分配内存、D16 按 65535 缩放、
+> D24/16F 诚实拒绝而 pass 照跑、借用方读到共享图像），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，
+> `core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 816 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -440,14 +440,14 @@ struct Phase { const char* name; SetupFn setup; AssertFn assert; CounterDelta ex
 | # | 能力（现有实现已钉住的行为） | 交付者 | 判据 |
 | --- | --- | --- | --- |
 | 1 | 设备/会话上线、失败自清、幂等、**移动而非重建**、空帧也提交、令牌语义 | `ResourceManager` + 世代号 + `FrameTimeline` + `planTarget`（格式兼容校验） | `DeviceRequirementsTest`、`runHostSurfaceMovePhase`（`window_builds` 不变、移动前后像素相同、两个宿主窗口都还活着） |
-| 2 | 表面尺寸权威、就地改尺寸、隐藏/0 尺寸、"无可用尺寸"每 episode 一次 | D6 `planTarget` | `runTargetResizePhase`、`ReadbackRefusal::Empty` |
+| 2 | 表面尺寸权威、就地改尺寸、隐藏/0 尺寸、"无可用尺寸"每 episode 一次 **（"无可用尺寸"在重写版归 `planTarget` 的 `Repair(SizeUnknown)`；读回那张表**没有** `Empty` 这一类——`create` 拒绝零尺寸，见 §11.16y）** | D6 `planTarget` | `runTargetResizePhase`、`ReadbackRefusal::Empty` |
 | 3 | 离屏 target 懒建、MRT、attachment 0 才清、额外附件透明黑、深度清到 reverse-Z 远平面、LOAD/STORE 变体、提升/借用/退役 | D6 `TargetInstance` / `planTarget` / `depthPlan` + D4 退役队列 | `PassClearValuesTest`、`PassRenderPassPlanTest`、`runColorBootstrapPhase`、`runSharedDepthPhase` |
 | 4 | pass scope、order 只是堆叠位、release 语义、协议违规、预热（成本归 "pre-frame"）、停用/移除 pass | D1 + D2 | `PassProtocolTest`、`FrameCommitTest`、`runPassProtocolPhase`（`detached_slots` 升后落、`offscreen_builds` 不变） |
 | 5 | 内容绘制、增量刷新、稳态（不重传/不重编/不增长）、缓存有界、废弃判定、共享规则 | D3 三层键 + D7 缓存与份额计数 | `SceneBridgeDataRebuildTest`、`runDataRefreshPhase`（build 1 / refresh 1 / 节点数平）、churn 相位 |
 | 6 | 全屏/屏幕 pass、PiP 子矩形、deferred 合成、源附件 i→binding i、深度真可采样才绑 | D3 键（draw kind = fullscreen，不另建系统）+ Executor | `runCompositingPixelPhase`、`runDepthSamplingProgramPhase`、`runTargetResizePhase` 的 `program_slot_builds` 不变 |
 | 7 | 光照 world→view、1 ambient + 3 directional、默认头光/环境光、丢弃项每 episode 一次 | 编译侧打包（前向 UBO + 全屏 128B push） | `LightsTest`、`LightDropReportTest`、`ForwardShaderSetTest` |
 | 8 | HUD / window layer：就是更高 order 的普通 pass + 子视口 + 不清屏（LOAD） | 无需专门代码 | `ContentSlotViewportTest`、HUD 相位、`.ai/bugs/vsg-maximize-black-band.md` 的复现 |
-| 9 | readback：RGBA8 紧凑打包、D32 原样 / D16÷65535 / D24S8 诚实拒绝、借用方读到源 | `core/` 里的 `ReadbackRefusal → ReadbackResult` 单表 | `ReadbackTest`、`runPixelReadbackPhase`、`runSharedDepthPixelPhase` |
+| 9 | readback：RGBA8 紧凑打包、D32 原样 / D16÷65535 / D24S8 诚实拒绝、借用方读到源 **（已关，§11.16y：`core::readbackOf` 单表 + 两张格式表 + `decodeDepth`；借用方读到源由共享深度夹具钉住）** | `core/` 里的 `ReadbackRefusal → ReadbackResult` 单表 | `ReadbackTest`、`runPixelReadbackPhase`、`runSharedDepthPixelPhase` |
 | 10 | 缓存与所有权：entry 持有 key、份额计数、会话/进程/pass 三类作用域 | D7 | `SceneBridgeCacheOwnershipTest`、`GeometrySafetyTest`（未画 1000 次仍保留） |
 | 11 | 诊断：单一出口、9 类、`ReportOnce`、告警不静默降级 | `Observe`（横切）+ D2.1 的环语义 | `DiagnosticsTest`、`ReportOnceTest`、`LightDropReportTest`、`scripts/check_diagnostic_formats.py` |
 | 12 | 平台：reverse-Z 与算子反转、正面声明、动态状态 9+ 项（3 个走函数指针）、无 VUID、WSI 细节 | `vsg/` 目录（唯一设备层） | `RenderStateMapperTest`、`DynamicStateTest`、`runHostSurfaceMovePhase`、`check_vsg_upstream_capabilities.py` |
@@ -2137,6 +2137,87 @@ M5a–M5d 把"一个目标能画出什么"填完了，这一片填的是"**目�
 * 前一版（§11.16w）留下的四条口子（`projparms` 无读者、全屏丢弃报告、`binding 5/6`
   的 ABI 债、`TargetFacts::shadow` 生产侧等）不变。
 
+### 11.16y M6（2026-09-22）：读回（一张分类表、格式诚实、借用方读到源，真设备）
+
+设计表（§4 第 9 行）的落地。三件事，外加两处顺手补掉的真洞：
+
+1. **一张表**（`core/Readback.hpp` / `.cpp`）：`ReadbackState`（目标的事实：颜色附件数、被请求附件的颜色
+   格式、深度格式、各自有没有交出过拷贝节点）+ `ReadbackRequest{kind, attachment}` →
+   `ReadbackResult{ok, refusal}`。**优先级是写下来的**（无设备用例逐条钉）：请求存在性
+   （`UnknownAttachment`）→ 格式能不能读（`UnreadableFormat`，**永久**原因）→ 有没有交出拷贝
+   （`NotCaptured`，**下一帧可以再试**）。"永远不行"和"还没行"必须是不同答案：方向报错一次，读者就去错的
+   地方找 bug。
+2. **没有 `Empty` 这一类**（设计表第 2 行借用的 `ReadbackRefusal::Empty` 在重写版**换了家**）：活着的目标永远
+   有可用尺寸——`create` 从 M5a 起就拒绝零尺寸（本片把这条规则写进 `@return`），而"还没尺寸 / 窗口隐藏"是
+   **生命周期**的问题（`planTarget` 的 `Repair(SizeUnknown)`，执行者那半），不是读回能回答的。一个**走不到**的
+   拒绝臂读起来像"覆盖了这个用例"，实际没覆盖，所以这张表里没有它。
+3. **捕获簿记**：`Attachments::Color::captured` + `Attachments::depth_captured`，在 `capture(i)` /
+   `captureDepth()` **交出节点**时置位——和 `written` 是同一条约定（记的是**录制**侧，"录了但丢帧"仍是同一个
+   目标）。**簿记属于附件集**：换尺寸整体换集，新集的缓冲里什么都没有 ⇒ 标志天然为假。没有它，一次"还没跑过
+   帧"的读回会返回**分配内存里碰巧有的东西**（旧实现的 `probe()` 就是这样），而头文件早就承诺过"没捕获 ⇒ 无效
+   探针"——这一片把文档兑现了，并且让"为什么"可查（`readbackResult`）。
+4. **格式诚实搬进 core**（`colorReadbackOf` / `depthReadbackOf` / `decodeDepth`）：RGBA8（4B/texel）、
+   D16（2B，解码 ÷65535）、D32/D32F（4B，原样 float）、D24 组合格式（**拒绝**：没有"普通深度拷贝"这回事）。
+   颜色侧**只打包 RGBA8** ⇒ float 附件（16F/32F）**不再建回读缓冲、不再录拷贝**，读回答 `UnreadableFormat`；
+   这是**顺手关掉的真洞**——原来 `buildAttachments` 无论什么格式都按 4B/texel 建缓冲并录
+   `CopyImageToBuffer`，一个 16F 目标第一次读回就是
+   `VUID-vkCmdCopyImageToBuffer-pRegions-00183`（拷贝写到缓冲末尾之外），而此前**没有任何用例建过 float 目标**
+   （所以它一直没被撞到）。**pass 照常渲染**：它的深度附件（可读格式）照样读回，本片就用这个当"这一趟真的跑
+   了"的证据。
+5. **借用方读到源**：借用方的深度拷贝从**共享图像**读、写进**它自己的**目标缓冲；它的 `readbackResult` 只认
+   **自己**的交出记录（出借方捕获过 ≠ 借用方能读——借用方的缓冲里那时还什么都没有）。设备用例把两半都钉住：
+   ①共享深度夹具里，**借用方**的 `depthProbe()` 在被拒绝的三角形处读到**出借方**的近值 0.5、在自己可见的
+   三角形处读到自己的远值 0.1、别处是清屏值 0.0（一张图、两趟 pass 的写）；②只有出借方交出过拷贝时，借用方
+   答 `NotCaptured`。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `core/Readback.hpp` / `.cpp`（新） | 分类表（`readbackOf` + `refusalName`）、两张格式表（`colorReadbackOf` / `depthReadbackOf`）、解码（`decodeDepth`）；文件注记写明"为什么是一张表"、"为什么没有 Empty"、优先级 |
+| `api/OffscreenTarget.hpp` / `.cpp` | `Attachments` 加 `captured` / `depth_captured`（`capture(i)` / `captureDepth()` 置位）；`readbackResult(request)`（新，分类口径）；`probe(i)` / `depthProbe()` 先过表、再按格式表读；float 颜色格式**不建**回读缓冲；`core::decodeDepth` 取代 `api` 里的 switch；`create` 的零尺寸规则写进文档 |
+| `tests/test_vsg/BackendCoreTest.cpp` | +4 无设备用例（`CoreReadbackTest`）：分类与优先级（含"未捕获"可重试 vs 格式永久）、格式表、解码（D16 ÷65535 的**非精确** 0.5 = 0.5000076、D32 原样、D24/半 texel ⇒ 空） |
+| `tests/test_vsg/OffscreenTargetTest.cpp` | `recordOneFrame` 帮手可带深度回读 + 空安全挂节点；+3 真设备用例：任何帧之前 `probe()`/`depthProbe()` 答 `NotCaptured`（而不是返回分配内存）、D16 按 65535 缩放（0.5 清屏 ⇒ 探针 0.5）/D24 拒绝而颜色半边照常、16F 颜色拒绝而 pass 照跑（深度探针 0.8 是证据） |
+| `tests/test_vsg/SharedDepthTest.cpp` | 夹具把**借用方**的深度拷贝也录进帧；+断言：借用方读到 0.5（出借方的）/0.1（自己的）/0.0（清屏），以及"两个目标各读各的缓冲"（出借方捕获 ⇒ 借用方仍 `NotCaptured`） |
+| `tests/test_vsg/CMakeLists.txt` | 新 core 源文件登记（`GLOB` 只管插件本身） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **分类先于任何工作** | 读回被拒时**不看设备、不拷贝**：`readbackResult` 是纯事实函数（无设备用例 0 ms 跑完） |
+| **永久 vs 暂时** | 变异 P5（把 `NotCaptured` 排在格式之前）⇒ 无设备用例红：一个跑多少帧都读不出来的目标会被告成"再试一次" |
+| **簿记是"交出录制"** | 变异 P1（忽略 `captured`）⇒ 无设备用例 + `AProbeBeforeAnyCapture…` 红（未捕获的探针会变成"有效"） |
+| **簿记属于集** | 换尺寸复用同一标志：新集里 `captured=false`（M5e 的用例已证明 `written` 同理） |
+| **格式诚实是 core 的事** | 变异 P3（D16 按 4B 读）⇒ 设备用例红（解码把 2 字节数据当 float）；P4（D16 不除 65535）⇒ 无设备 + 设备用例都红（0.5 变成 ~32768） |
+| **拒绝格式 ≠ 不渲染** | 变异 P2（忽略"可读"检查）⇒ `Buffer::create(0)` ⇒ `VUID-VkBufferCreateInfo-size-00912` + **段错误**（不是静默） |
+| **借用方读的是共享图像** | 变异 P8（拷贝的 `srcImage` 换成"自己的图像"，借用方为 null）⇒ **段错误**（不是静默）；变异 P7（借用方盗用出借方的捕获标志）⇒ 断言红 |
+
+| 变异反证（全部实测） | 结果 |
+| --- | --- |
+| P1：忽略 `captured` | 3 条红（2 无设备 + 1 真设备） |
+| P2：忽略颜色可读性 | 1 条红（16F 用例：0 字节缓冲的 VUID + 段错误） |
+| P3：D16 按 4 字节/texel | 2 条红（格式表 + 设备探针） |
+| P4：D16 不解码 | 3 条红（解码 + 设备探针） |
+| P5：优先级颠倒 | 1 条红（无设备） |
+| P6：忽略颜色格式 | 2 条红（无设备） |
+| P7：借用方盗用出借方的捕获标志 | 2 条红（真设备） |
+| P8：深度拷贝换源图像 | 1 条红（真设备段错误） |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **559 用例 / 88 套件全绿**（+7 用例 / +1 套件） |
+| 门禁 | 插件与全仓 `ninja` 零 error；强制验证层 **0 VUID**；加同步验证仍 **0 SYNC-HAZARD**；hygiene 0 / 816 文件；`check_diagnostic_formats.py` 0 / 39；`check_doc_symbols.py` 通过 |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **float 颜色的读回只是"诚实拒绝"**：真要读 16F/32F，需要一个 float 探针类型（`PixelProbe` 的契约就是紧凑
+  RGBA8）与它的解码/断言，那是新类型，而不是把这张表放宽——放宽只会让"看起来像图片"的东西替真实数据回答。
+* **`ReadbackResult` 只做分类**：像素仍在 `probe()` / `depthProbe()`；目标**没有诊断出口**（sink 在会话/执行者
+  手里），要报文由拿到分类的那一层报。
+* **窗口读回不走这张表**：宿主表面的字节（字节序归一、xcb 取图）是平台层的事（M4b/M4c 一带），这张表管的是
+  离屏附件。
+* **相位形式**：`runPixelReadbackPhase` 是旧 selftest 的名字；重写版的证据是这套 gtest 对（core 表 + 真设备），
+  相位表形态留给 M7。
+* 前一版（§11.16x）留下的三条口子不变（`resize` 的执行者、`attachments_invalidated` 的生产者、租约的"重建
+  借用方"）。
+
 ### 11.17 下一步
 
 | 项 | 内容 |
@@ -2180,6 +2261,7 @@ M5a–M5d 把"一个目标能画出什么"填完了，这一片填的是"**目�
 | ~~M5c-2~~ | **已完成（2026-09-22）**：阴影块——`ShadowFacts`（谁的 map + 生产者矩阵）进 `TargetFacts`/`CompiledInput`/`CompiledPass`，`FrameCompiler::resolveShadow` 三个事实先来先用；`LightRef` += 身份/投影开关/bias；`api/ShadowBlock::packShadowBlock`（身份匹配、启用/投影/类型/槽检查、`light_vp * inverse(view)` 列主序、`params` 四元组）；`BlockStorage` 第 5 区域 + `kShadowBinding = 4`；`directionalSlotOf`（与灯块打包同一次遍历）；**按实测删除 `PipelineKey::shadow_bound`**（本后端 ABI 里 map 走采样输入、块恒在块集、开关是运行期值 ⇒ 它只会白拆管线）；4 条无设备 + 1 条真设备四带像素用例 + 7 条变异反证（§11.16v） |
 | ~~M5d~~ | **已完成（2026-09-22）**：全屏路径的 128B push——`LightPushBlock`（128B，`projparms` 保留为零）+ `packLightPushBlock`（复用 `packLightBlock` 的遍历、只换布局）；`recordScreenDraw` 按每次调用推；`createScreen` 建 push-only 布局（"只读 push"的全屏 pass 不再被拒）；2 条用例（无设备 + 真设备三视口像素）+ 4 条变异反证（其中"push 全零"与"发错阶段"分别是内容缺失与静默失败的实证）（§11.16w） |
 | ~~M5e~~ | **已完成（2026-09-22）**：目标生命周期（计划驱动的换尺寸）——`OffscreenTarget::Attachments`（尺寸相关的一整批对象）+ `buildAttachments(width, height, out)`（纯构建、不写自身）；`create` 成功后才接手并计数借用者；`resize(w, h, timeline, retirement)` 按 `core::planTarget` 决定、**保留渲染通道与管线**、旧集经 `RetirementQueue` 停车（闸门关着时退回**计数过的** device idle）；租约两向拒绝；换后 `written=false` + `generation+1`；5 条真设备用例（含深度回读按新尺寸重建、引用计数证明"停着而不是扔了"）+ 6 条变异反证（§11.16x） |
+| ~~M6~~ | **已完成（2026-09-22）**：读回——`core/Readback`（`readbackOf` 单表 + 两类格式表 + `decodeDepth`），优先级"存在性 → 格式（永久）→ 捕获（可重试）"，不设走不到的 `Empty`（零尺寸归 `planTarget` / `create` 拒绝）；`OffscreenTarget` 的 `captured` / `depth_captured` 簿记（属于附件集，换尺寸天然复位）+ `readbackResult()`；float 颜色附件不再建回读缓冲（原来必撞 `VUID-vkCmdCopyImageToBuffer-pRegions-00183`）；借用方的深度回读 = 共享图像 + 自己的缓冲；4 条无设备 + 4 条真设备用例 + 8 条变异反证（§11.16y） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。

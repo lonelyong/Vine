@@ -14,6 +14,7 @@
 #include <vine/vsg/core/ClearPlan.hpp>
 #include <vine/vsg/core/DepthProbe.hpp>
 #include <vine/vsg/core/PixelProbe.hpp>
+#include <vine/vsg/core/Readback.hpp>
 #include <vine/vsg/core/RetirementQueue.hpp>
 #include <vine/vsg/core/TargetPlan.hpp>
 #include <vine/vsg/vsg_global.hpp>
@@ -80,7 +81,9 @@ class OffscreenTarget
      *
      * @param device The device everything belongs to (not owned).
      * @param layout Image extent and clear value.
-     * @return The target, or null when the image, the pass or the readback buffer could not be created.
+     * @return The target, or null when the image, the pass or the readback buffer could not be created, or
+     *         when the extent is 0 (there is no image of no size - the lifecycle plan calls that state
+     *         `Repair(SizeUnknown)` and no target is built for it, see core::planTarget).
      */
     static std::unique_ptr<OffscreenTarget> create(::vsg::ref_ptr<::vsg::Device> device, const Layout& layout);
 
@@ -168,13 +171,21 @@ class OffscreenTarget
      *
      * Append it to the command graph AFTER the render graph: it has to record after the pass, and it must not
      * be a child of the render graph (a copy inside the pass would run before the attachment is written).
+     *
+     * Asking for the node is also what makes a later @ref probe meaningful: the copy is the only thing that
+     * writes the host-visible buffer, so a target whose copy was never handed out answers a probe with
+     * `NotCaptured` instead of with whatever the allocation happened to hold (@ref readbackResult). Like
+     * @ref written, the flag records the RECORDING side: whether the submission completed is the caller's
+     * business (probe after the device is idle).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> capture() const noexcept;
 
     /** @brief Gets the node that copies one colour attachment into host-visible memory.
      *
      * @param attachment Colour attachment index (0 when there is only one).
-     * @return The copy commands, or null when there is no such attachment.
+     * @return The copy commands, or null when there is no such attachment, or when its format cannot be
+     *         read back (`core::colorReadbackOf`: this backend packs RGBA8 only, so no buffer and no copy
+     *         are built for a float attachment - the pass still renders).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> capture(std::uint32_t attachment) const;
 
@@ -184,16 +195,33 @@ class OffscreenTarget
      * idle, or a fence that covers the submission). Reading without that is a race, and the probe would
      * report pixels that may be from the previous frame.
      *
-     * @return A probe over the copied pixels (tightly packed RGBA8 rows).
+     * @return A probe over the copied pixels (tightly packed RGBA8 rows), or an invalid probe when the
+     *         readback was refused (see @ref readbackResult for why).
      */
     [[nodiscard]] core::PixelProbe probe() const;
 
     /** @brief Reads one colour attachment's pixels from the last submitted frame (see @ref capture).
      *
      * @param attachment Colour attachment index.
-     * @return A probe over the copied pixels, or an invalid probe for an index that does not exist.
+     * @return A probe over the copied pixels, or an invalid probe when the readback was refused (see
+     *         @ref readbackResult for why).
      */
     [[nodiscard]] core::PixelProbe probe(std::uint32_t attachment) const;
+
+    /** @brief Gets whether a readback of @p request can be served, and why not when it cannot.
+     *
+     * One table (`core::readbackOf`) answers for every readback entry point, so @ref probe, @ref depthProbe
+     * and this call cannot disagree - and the answer is available WITHOUT touching the device, which is what
+     * makes "this will not work, and here is why" possible before anything runs.
+     *
+     * The pixels are not part of the result: this is the classification (see core::ReadbackRefusal for what
+     * each category lets a caller do), and a caller that gets `ok` reads them with @ref probe or
+     * @ref depthProbe.
+     *
+     * @param request Which attachment to ask about.
+     * @return Whether it is servable, and the refusal category when it is not.
+     */
+    [[nodiscard]] core::ReadbackResult readbackResult(const core::ReadbackRequest& request) const noexcept;
 
     /** @brief Gets how many colour attachments this target has. */
     [[nodiscard]] std::uint32_t colorAttachmentCount() const noexcept;
@@ -269,14 +297,19 @@ class OffscreenTarget
      * comes after this node, and leaving it in the transfer layout would break exactly that.
      *
      * @return The copy commands, or null when there is no depth attachment or its format cannot be read
-     *         (a combined depth/stencil format is refused rather than converted as if it were plain depth).
+     *         (a combined depth/stencil format is refused rather than converted as if it were plain depth -
+     *         see core::depthReadbackOf).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> captureDepth() const;
 
     /** @brief Reads the depth attachment from the last submitted frame (see @ref captureDepth).
      *
-     * @return A probe over the depth values, or an invalid probe when the depth is absent, unreadable or was
-     *         not captured.
+     * The numbers are the FORMAT's: D32 / D32F arrive as the float the attachment holds, D16 as its
+     * unsigned value divided by 65535 (the conversion the format defines). A borrower reads the LENDER's
+     * image - that is what sharing the depth means, and this probe is where it becomes measurable.
+     *
+     * @return A probe over the depth values, or an invalid probe when the readback was refused (see
+     *         @ref readbackResult for why).
      */
     [[nodiscard]] core::DepthProbe depthProbe() const;
 
@@ -376,20 +409,23 @@ class OffscreenTarget
         {
             ::vsg::ref_ptr<::vsg::Image>                         image;
             ::vsg::ref_ptr<::vsg::ImageView>                     view;
-            ::vsg::ref_ptr<::vsg::Commands>                      capture;
+            ::vsg::ref_ptr<::vsg::Commands>                      capture;  ///< Empty when the format is unreadable.
             ::vsg::ref_ptr<::vsg::Buffer>                        destination;
             ::vsg::ref_ptr<::vsg::DeviceMemory>                  destination_memory;
             ::vsg::ref_ptr<::vsg::MappedData<::vsg::ubyteArray>> mapped;
+            /// Whether the copy node was handed out for recording (see capture). A fresh set starts
+            /// UNCLEARED here: its buffers hold whatever the allocation held, which is not a picture.
+            bool                                                 captured{false};
         };
 
         std::vector<Color>                                   colors;
         ::vsg::ref_ptr<::vsg::Image>                         depth_image;   ///< Empty when the depth is borrowed.
         ::vsg::ref_ptr<::vsg::ImageView>                     depth_view;    ///< Empty when the depth is borrowed.
-        ::vsg::ref_ptr<::vsg::Commands>                      depth_capture;
+        ::vsg::ref_ptr<::vsg::Commands>                      depth_capture;  ///< Empty when the format is unreadable.
         ::vsg::ref_ptr<::vsg::Buffer>                        depth_destination;
         ::vsg::ref_ptr<::vsg::DeviceMemory>                  depth_destination_memory;
         ::vsg::ref_ptr<::vsg::MappedData<::vsg::ubyteArray>> depth_mapped;
-        std::uint32_t                                        depth_bytes_per_texel{0};
+        bool                                                 depth_captured{false};  ///< See Color::captured.
         ::vsg::ref_ptr<::vsg::Framebuffer>                   framebuffer;
         ::vsg::ref_ptr<::vsg::RenderGraph>                   render_graph;
     };

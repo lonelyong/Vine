@@ -356,6 +356,25 @@ TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromoti
     EXPECT_TRUE(lender->depth().preserve);
     EXPECT_FALSE(lender->depth().sampleable) << "a LOAD pass revokes the promotion";
 
+    // Readback of a shared depth is PER TARGET: each target copies the image into a buffer of its own, so the
+    // lender's capture says nothing about the borrower's - a borrower whose own copy never ran would otherwise
+    // answer a probe with whatever its buffer held.
+    const vine::vsg::core::ReadbackRequest depth_request{ vine::vsg::core::ReadbackKind::Depth, 0U };
+    EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal),
+              static_cast<int>(vine::vsg::core::ReadbackRefusal::NotCaptured));
+    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal),
+              static_cast<int>(vine::vsg::core::ReadbackRefusal::NotCaptured));
+    EXPECT_TRUE(lender->captureDepth() != nullptr);
+    EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal),
+              static_cast<int>(vine::vsg::core::ReadbackRefusal::None));
+    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal),
+              static_cast<int>(vine::vsg::core::ReadbackRefusal::NotCaptured))
+        << "the lender's copy-back is the lender's: the borrower's probe reads the borrower's buffer";
+    EXPECT_FALSE(borrower->depthProbe().valid());
+    EXPECT_TRUE(borrower->captureDepth() != nullptr) << "the borrower gets its own destination and copy";
+    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal),
+              static_cast<int>(vine::vsg::core::ReadbackRefusal::None));
+
     borrower.reset();
     EXPECT_TRUE(lender->depth().sampleable) << "the revocation goes away with the borrower";
     EXPECT_FALSE(lender->depth().preserve);
@@ -412,6 +431,9 @@ TEST(SharedDepthTest, TheBorrowerSeesTheDepthTheLenderWrote)
     // The depth copy reads the SAME image the borrower's pass just wrote into, and it runs after both passes:
     // what it holds is therefore the state the two passes left behind, which is what the assertions read.
     command_graph->addChild(lender->captureDepth());
+    // A BORROWER's depth copy reads the same shared image through its own destination buffer: that is what the
+    // readback of a borrowed depth means, and the assertions below read it back through the borrower to say so.
+    command_graph->addChild(borrower->captureDepth());
     try {
         stack.viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
     }
@@ -475,6 +497,22 @@ TEST(SharedDepthTest, TheBorrowerSeesTheDepthTheLenderWrote)
               static_cast<std::size_t>(kSize) * kSize)
         << "every texel is one of exactly three values: a fourth would mean something wrote depth that no "
            "draw of this frame asked for";
+
+    // The borrower reads the SAME image back: its own copy-back node copies the lender's attachment, so the
+    // numbers are the two passes' writes in one picture. A borrower that owned a depth of its own would answer
+    // with its clear value where the lender's near triangle is.
+    const vine::vsg::core::DepthProbe borrowed_depth = borrower->depthProbe();
+    if (!borrowed_depth.valid()) {
+        GTEST_SKIP() << "the shared depth cannot be read back through the borrower on this device";
+    }
+    EXPECT_EQ(borrowed_depth.width(), static_cast<int>(kSize));
+    EXPECT_NEAR(borrowed_depth.depthAt(shared.x, shared.y), kNearZ, 0.01F)
+        << "where the borrower's own far triangle was rejected, the value is the LENDER's near one: the "
+           "borrower's readback is the shared image, not a depth of its own";
+    EXPECT_NEAR(borrowed_depth.depthAt(own.x, own.y), kFarZ, 0.01F)
+        << "and where the borrower's triangle was visible, its far value - one image, written by two passes";
+    EXPECT_NEAR(borrowed_depth.depthAt(1, 1), 0.0F, 0.01F)
+        << "the shared clear survives where neither drew";
 
     EXPECT_EQ(stack.recorder->draws(), 3U) << "three draws were recorded: one lender, two borrower";
     EXPECT_EQ(stack.recorder->refusals(), 0U);

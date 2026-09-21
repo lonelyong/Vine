@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 #include <vsg/app/CommandGraph.h>
 #include <vsg/app/Viewer.h>
@@ -31,6 +32,9 @@ using vine::vsg::OffscreenTarget;
 using vine::vsg::createDevice;
 using vine::vsg::core::FrameTimeline;
 using vine::vsg::core::PixelProbe;
+using vine::vsg::core::ReadbackKind;
+using vine::vsg::core::ReadbackRefusal;
+using vine::vsg::core::ReadbackRequest;
 using vine::vsg::core::RetirementQueue;
 using vine::vsg::core::Rgba8;
 
@@ -67,7 +71,7 @@ struct RecordedFrame
 /// @param policy  What the frame asks its pass to clear (the target's own values, as a caller would pass them).
 /// @return The frame's viewer and graph, both alive.
 RecordedFrame recordOneFrame(const DeviceResult& created, OffscreenTarget& target,
-                             const vine::vsg::core::ClearPolicy& policy)
+                             const vine::vsg::core::ClearPolicy& policy, bool with_depth_capture = false)
 {
     const ::vsg::ref_ptr<::vsg::RenderGraph> pass =
         target.passGraph(policy, /*bootstrap*/ !target.written(), /*depth_preserved*/ false);
@@ -77,7 +81,16 @@ RecordedFrame recordOneFrame(const DeviceResult& created, OffscreenTarget& targe
     frame.viewer        = ::vsg::Viewer::create();
     frame.graph         = ::vsg::CommandGraph::create(created.device, created.queue_family);
     frame.graph->addChild(pass);
-    frame.graph->addChild(target.capture());
+    // A readback the target refuses has no node at all (an unreadable format builds no buffer and no copy),
+    // so the frame records what exists and nothing else.
+    if (const ::vsg::ref_ptr<::vsg::Node> capture = target.capture()) {
+        frame.graph->addChild(capture);
+    }
+    if (with_depth_capture) {
+        if (const ::vsg::ref_ptr<::vsg::Node> depth_capture = target.captureDepth()) {
+            frame.graph->addChild(depth_capture);
+        }
+    }
     frame.viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ frame.graph });
     EXPECT_TRUE(frame.viewer->compile());
     frame.viewer->advanceToNextFrame();
@@ -87,18 +100,31 @@ RecordedFrame recordOneFrame(const DeviceResult& created, OffscreenTarget& targe
     return frame;
 }
 
-/// @brief The policy that reproduces a target's clear colour (what a caller of a simple target passes).
+/// @brief The refusal @p target reports for one readback (the classification every entry point shares).
+ReadbackRefusal refusalOf(const OffscreenTarget& target, ReadbackKind kind, std::uint32_t attachment = 0U)
+{
+    return target.readbackResult(ReadbackRequest{ kind, attachment }).refusal;
+}
+
+/// @brief The policy that reproduces a target's clear values (what a caller of a simple target passes).
 ///
-/// @param color      The target's clear colour.
-/// @param asked      Whether the pass ASKS to clear. A pass that does not is the interesting case after a
-///                   resize: it must still end up over a cleared image, because the first writer's clear comes
-///                   from the bootstrap rule and not from this flag.
-vine::vsg::core::ClearPolicy clearPolicy(const float (&color)[4], bool asked = true)
+/// @param color       The target's clear colour.
+/// @param asked       Whether the pass ASKS to clear. A pass that does not is the interesting case after a
+///                    resize: it must still end up over a cleared image, because the first writer's clear comes
+///                    from the bootstrap rule and not from this flag.
+/// @param depth_value The depth value the pass clears with, when it asks for one (the reverse-Z far plane is
+///                    the default, so a case that reads the depth back has to say what it expects).
+vine::vsg::core::ClearPolicy clearPolicy(const float (&color)[4], bool asked = true,
+                                         std::optional<float> depth_value = std::nullopt)
 {
     vine::vsg::core::ClearPolicy policy;
     policy.color = asked;
     for (std::size_t index = 0; index < 4U; ++index) {
         policy.color_value[index] = color[index];
+    }
+    if (depth_value.has_value()) {
+        policy.depth       = true;
+        policy.depth_value = depth_value.value();
     }
     return policy;
 }
@@ -560,4 +586,180 @@ TEST(OffscreenTargetTest, AResizeIsRefusedWhileADepthLeaseIsInForce)
         EXPECT_NEAR(sampled.r, quantise(0.5F), 1);
         EXPECT_TRUE(probe.wholeImageMatches(sampled));
     }
+}
+
+TEST(OffscreenTargetTest, AProbeBeforeAnyCaptureIsRefusedNotAnswered)
+{
+    const auto created = createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
+    }
+
+    OffscreenTarget::TargetLayout layout;
+    layout.width         = 8U;
+    layout.height        = 8U;
+    layout.color_formats = { vine::graphics::RenderTarget::ColorFormat::RGBA8 };
+    layout.depth_format  = vine::graphics::RenderTarget::DepthFormat::D32;
+    layout.clear.color   = true;
+    layout.clear.color_value[0] = 0.25F;
+    layout.clear.color_value[1] = 0.5F;
+
+    auto target = OffscreenTarget::create(created.device, layout);
+    ASSERT_NE(target, nullptr);
+
+    // Nothing has run: the mapped buffers hold whatever the allocation held, which is not a picture of anything.
+    // A probe must say so instead of answering with it, and the classification must say WHY before any device
+    // work - "run a frame first" is a category, not an empty buffer.
+    EXPECT_FALSE(target->probe().valid());
+    EXPECT_FALSE(target->depthProbe().valid());
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)),
+              static_cast<int>(ReadbackRefusal::NotCaptured));
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)),
+              static_cast<int>(ReadbackRefusal::NotCaptured));
+    EXPECT_TRUE(target->capture() != nullptr) << "the node exists: it is the RECORDING that has not happened";
+
+    // The frame that records both copies: from here on both readbacks are servable, and they carry the pass'
+    // clear values.
+    const float kClear[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
+    const RecordedFrame frame = recordOneFrame(created, *target, clearPolicy(kClear), /*with_depth_capture*/ true);
+
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)), static_cast<int>(ReadbackRefusal::None));
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)), static_cast<int>(ReadbackRefusal::None));
+
+    const PixelProbe pixels = target->probe();
+    ASSERT_TRUE(pixels.valid());
+    EXPECT_EQ(pixels.width(), 8);
+    EXPECT_EQ(pixels.height(), 8);
+    const Rgba8 sampled = pixels.pixel(4, 4);
+    EXPECT_NEAR(sampled.r, quantise(0.25F), 1);
+    EXPECT_NEAR(sampled.g, quantise(0.5F), 1);
+    EXPECT_TRUE(pixels.wholeImageMatches(sampled));
+
+    const vine::vsg::core::DepthProbe depth = target->depthProbe();
+    ASSERT_TRUE(depth.valid()) << "the depth copy was recorded too";
+    EXPECT_EQ(depth.width(), 8);
+    EXPECT_NEAR(depth.depthAt(4, 4), 0.0F, 0.0001F) << "the bootstrap clears the depth to the reverse-Z far plane";
+
+    // And the refusal a request that can never be served gets is the same for the whole target's life: asking
+    // for an attachment that does not exist stays `UnknownAttachment` once everything is captured.
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color, 3U)),
+              static_cast<int>(ReadbackRefusal::UnknownAttachment));
+}
+
+TEST(OffscreenTargetTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
+{
+    const auto created = createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
+    }
+
+    // D16: the attachment stores an unsigned integer, and the readback has to divide by ITS range - the
+    // conversion the format defines. The clear value is what the pass really wrote, so the number a probe
+    // answers with is the device's own conversion seen from the CPU.
+    {
+        OffscreenTarget::TargetLayout layout;
+        layout.width         = 4U;
+        layout.height        = 4U;
+        layout.color_formats = { vine::graphics::RenderTarget::ColorFormat::RGBA8 };
+        layout.depth_format  = vine::graphics::RenderTarget::DepthFormat::D16;
+        layout.clear.color   = true;
+        layout.clear.depth   = true;
+        layout.clear.depth_value = 0.5F;
+
+        auto target = OffscreenTarget::create(created.device, layout);
+        ASSERT_NE(target, nullptr) << "a D16 depth attachment is an ordinary target";
+
+        const float kClear[4]{ 0.0F, 0.0F, 0.0F, 1.0F };
+        const RecordedFrame frame =
+            recordOneFrame(created, *target, clearPolicy(kClear, /*asked*/ true, /*depth_value*/ 0.5F),
+                           /*with_depth_capture*/ true);
+
+        EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)),
+                  static_cast<int>(ReadbackRefusal::None));
+        const vine::vsg::core::DepthProbe depth = target->depthProbe();
+        ASSERT_TRUE(depth.valid());
+        EXPECT_NEAR(depth.depthAt(1, 1), 0.5F, 0.0001F)
+            << "0.5 clears to 32768 of 65535; reading the stored integer raw would answer ~32768, and reading "
+               "it as a float would answer nonsense";
+        EXPECT_NEAR(depth.depthAt(0, 0), 0.5F, 0.0001F);
+    }
+
+    // D24 is the COMBINED depth/stencil format: there is no plain depth copy, so the honest answer is a
+    // refusal - and the rest of the target is still a picture.
+    {
+        OffscreenTarget::TargetLayout layout;
+        layout.width         = 4U;
+        layout.height        = 4U;
+        layout.color_formats = { vine::graphics::RenderTarget::ColorFormat::RGBA8 };
+        layout.depth_format  = vine::graphics::RenderTarget::DepthFormat::D24;
+        layout.clear.color   = true;
+        layout.clear.color_value[0] = 0.0F;
+        layout.clear.color_value[1] = 0.5F;
+
+        auto target = OffscreenTarget::create(created.device, layout);
+        ASSERT_NE(target, nullptr);
+
+        EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)),
+                  static_cast<int>(ReadbackRefusal::UnreadableFormat));
+        EXPECT_EQ(target->captureDepth(), nullptr)
+            << "no depth destination and no copy are built for a format that cannot be read";
+        EXPECT_FALSE(target->depthProbe().valid());
+        EXPECT_TRUE(target->capture() != nullptr) << "the colour half is unaffected";
+        EXPECT_TRUE(target->readback() != nullptr);
+
+        const float kClear[4]{ 0.0F, 0.5F, 0.0F, 1.0F };
+        const RecordedFrame frame = recordOneFrame(created, *target, clearPolicy(kClear), /*with_depth_capture*/ true);
+        const PixelProbe pixels = target->probe();
+        ASSERT_TRUE(pixels.valid()) << "a target whose depth cannot be read still renders";
+        const Rgba8 sampled = pixels.pixel(2, 2);
+        EXPECT_NEAR(sampled.g, quantise(0.5F), 1);
+        EXPECT_TRUE(pixels.wholeImageMatches(sampled));
+    }
+}
+
+TEST(OffscreenTargetTest, AFloatColourAttachmentIsRenderedButNotReadBack)
+{
+    const auto created = createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
+    }
+
+    OffscreenTarget::TargetLayout layout;
+    layout.width         = 4U;
+    layout.height        = 4U;
+    layout.color_formats = { vine::graphics::RenderTarget::ColorFormat::RGBA16F };
+    layout.depth_format  = vine::graphics::RenderTarget::DepthFormat::D32;
+    layout.clear.color   = true;
+    layout.clear.depth   = true;
+    layout.clear.depth_value = 0.8F;
+
+    auto target = OffscreenTarget::create(created.device, layout);
+    ASSERT_NE(target, nullptr) << "an RGBA16F target is an ordinary target: only its READBACK is refused";
+
+    // No destination buffer and no copy: the readback packs RGBA8, and a buffer sized as if a 16-bit texel were
+    // 8-bit would make the copy write past its end.
+    EXPECT_EQ(target->capture(), nullptr);
+    EXPECT_EQ(target->readback(), nullptr) << "the executor appends what a target offers: this one offers nothing";
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)),
+              static_cast<int>(ReadbackRefusal::UnreadableFormat));
+    EXPECT_FALSE(target->probe().valid());
+
+    // The pass still runs, and the DEPTH attachment (D32, readable) says so: the frame clears it to the policy's
+    // value through this target's render pass. The colour half is proven elsewhere (the same pass, the same
+    // graph); what this case pins is that refusing a readback never turns into refusing to render.
+    const float kClear[4]{ 1.0F, 0.0F, 0.0F, 1.0F };
+    const RecordedFrame frame =
+        recordOneFrame(created, *target, clearPolicy(kClear, /*asked*/ true, /*depth_value*/ 0.8F),
+                       /*with_depth_capture*/ true);
+
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)),
+              static_cast<int>(ReadbackRefusal::None));
+    const vine::vsg::core::DepthProbe depth = target->depthProbe();
+    ASSERT_TRUE(depth.valid());
+    EXPECT_NEAR(depth.depthAt(2, 2), 0.8F, 0.0001F)
+        << "the depth attachment of a float-colour target is read back like any other, and it holds this pass' "
+           "clear value";
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)),
+              static_cast<int>(ReadbackRefusal::UnreadableFormat))
+        << "capturing the depth does not change what the colour half can do";
 }

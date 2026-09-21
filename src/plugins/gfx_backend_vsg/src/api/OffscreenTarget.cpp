@@ -193,28 +193,6 @@ VkImageLayout toVkLayout(vine::vsg::core::ImageLayout layout) noexcept
 }
 
 /**
- * @brief How many bytes one depth texel occupies when read back, or 0 when the format cannot be read.
- *
- * The zero is the honest half: a combined depth/stencil image (D24_UNORM_S8_UINT) has no plain depth copy
- * layout, and reading its first bytes as floats would produce numbers that look like depths and are not. A
- * format this function refuses yields no depth probe at all, which is a fact a phase can act on.
- *
- * @param format The attachment's depth format.
- * @return Bytes per texel, or 0.
- */
-std::uint32_t depthBytesPerTexel(vine::graphics::RenderTarget::DepthFormat format) noexcept
-{
-    switch (format)
-    {
-    case vine::graphics::RenderTarget::DepthFormat::D16: return 2U;
-    case vine::graphics::RenderTarget::DepthFormat::D32:
-    case vine::graphics::RenderTarget::DepthFormat::D32F: return 4U;
-    case vine::graphics::RenderTarget::DepthFormat::D24: return 0U;  // depth AND stencil: refused
-    }
-    return 0U;
-}
-
-/**
  * @brief Fills one render graph's clear values from a pass' clear plan, in attachment order.
  *
  * One clear value per attachment: attachment 0 gets the plan's colour, the extras the transparent black the
@@ -426,7 +404,6 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
 {
     const core::PassClearPlan plan = core::planClearValues(d->shape, d->clear_policy, /*bootstrap*/ true,
                                                           /*depth_preserved*/ d->depth_borrowed);
-    const VkDeviceSize byte_count = static_cast<VkDeviceSize>(width) * height * 4U;
     for (const vine::graphics::RenderTarget::ColorFormat format : d->shape.color_formats) {
         OffscreenTarget::Attachments::Color color;
         // The image is created with SAMPLED usage as well as colour-attachment: the pass leaves colour
@@ -510,13 +487,24 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
     // black for the extras, and the depth's value for the depth attachment.
     fillClearValues(*out.render_graph, plan);
 
-    // Each colour attachment gets its own host-visible destination and its own copy-back node. The buffer is
-    // host visible and coherent: the copy writes it, the host reads it, and no flush stands in between (the
-    // same choice the block storage makes). `bufferRowLength` is the image width in texels, so the rows
-    // arrive tightly packed - which is the packing a probe insists on.
+    // Each READABLE colour attachment gets its own host-visible destination and its own copy-back node. The
+    // buffer is host visible and coherent: the copy writes it, the host reads it, and no flush stands in
+    // between (the same choice the block storage makes). `bufferRowLength` is the image width in texels, so
+    // the rows arrive tightly packed - which is the packing a probe insists on.
+    //
+    // A format this backend cannot pack for the CPU (a float attachment: see core::colorReadbackOf) gets NO
+    // destination and NO copy: the copy would have to be sized by a format the probe cannot read, and a
+    // buffer sized as if the texels were RGBA8 would make vkCmdCopyImageToBuffer write past its end
+    // (VUID-vkCmdCopyImageToBuffer-pRegions-00183). The pass still renders into it; only the readback is
+    // refused, and it says so (core::ReadbackRefusal::UnreadableFormat).
     for (std::size_t index = 0; index < out.colors.size(); ++index) {
         OffscreenTarget::Attachments::Color& color = out.colors[index];
-        color.destination = ::vsg::Buffer::create(byte_count, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        const core::ReadbackFormat           packed = core::colorReadbackOf(d->shape.color_formats[index]);
+        if (!packed.readable) {
+            continue;
+        }
+        const VkDeviceSize color_byte_count = static_cast<VkDeviceSize>(width) * height * packed.bytes_per_texel;
+        color.destination = ::vsg::Buffer::create(color_byte_count, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                   VK_SHARING_MODE_EXCLUSIVE);
         if (color.destination == nullptr) {
             return false;
@@ -530,7 +518,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         }
         color.destination->bind(color.destination_memory, 0U);
         color.mapped = ::vsg::MappedData<::vsg::ubyteArray>::create(color.destination_memory.get(), 0U, 0U,
-                                                                   static_cast<std::size_t>(byte_count));
+                                                                   static_cast<std::size_t>(color_byte_count));
         if (color.mapped == nullptr || color.mapped->data() == nullptr) {
             return false;
         }
@@ -570,7 +558,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         // The barrier: the GPU's writes must be visible to the host that maps this memory.
         auto buffer_barrier = ::vsg::BufferMemoryBarrier::create(
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_QUEUE_FAMILY_IGNORED,
-            VK_QUEUE_FAMILY_IGNORED, color.destination, 0U, byte_count);
+            VK_QUEUE_FAMILY_IGNORED, color.destination, 0U, color_byte_count);
         auto barrier = ::vsg::PipelineBarrier::create(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
                                                       0, buffer_barrier);
 
@@ -583,7 +571,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         // practice, which is all it needs: both copies carry the same bytes.
         auto previous_copy = ::vsg::BufferMemoryBarrier::create(
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_QUEUE_FAMILY_IGNORED,
-            VK_QUEUE_FAMILY_IGNORED, color.destination, 0U, byte_count);
+            VK_QUEUE_FAMILY_IGNORED, color.destination, 0U, color_byte_count);
 
         color.capture = ::vsg::Commands::create();
         color.capture->addChild(
@@ -599,12 +587,12 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
     }
 
     // The depth copy is built only for a readable format: the rest of the target is still usable, it just
-    // cannot answer "what is in the depth buffer" (see depthBytesPerTexel).
+    // cannot answer "what is in the depth buffer" (see core::depthReadbackOf, and the refusal it makes the
+    // target report).
     if (plan.has_depth && out.depth_view != nullptr) {
-        const std::uint32_t bytes_per_texel = depthBytesPerTexel(d->depth_format.value());
-        if (bytes_per_texel != 0U) {
-            const VkDeviceSize depth_bytes = static_cast<VkDeviceSize>(width) * height * bytes_per_texel;
-            out.depth_bytes_per_texel = bytes_per_texel;
+        const core::ReadbackFormat packed = core::depthReadbackOf(d->depth_format.value());
+        if (packed.readable) {
+            const VkDeviceSize depth_bytes = static_cast<VkDeviceSize>(width) * height * packed.bytes_per_texel;
             out.depth_destination = ::vsg::Buffer::create(depth_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                                  VK_SHARING_MODE_EXCLUSIVE);
             if (out.depth_destination == nullptr) {
@@ -749,7 +737,14 @@ bool OffscreenTarget::written() const noexcept
     if (attachment >= d->attachments.colors.size()) {
         return nullptr;
     }
-    return d->attachments.colors[attachment].capture;
+    // Handing the node out is the recording half of a readback: from here on a probe is meaningful (see the
+    // declaration). The flag lives in the ATTACHMENT SET, so a resize starts it false - the new buffers hold
+    // nothing until a frame copies into them.
+    OffscreenTarget::Attachments::Color& color = d->attachments.colors[attachment];
+    if (color.capture != nullptr) {
+        color.captured = true;
+    }
+    return color.capture;
 }
 
 core::PixelProbe OffscreenTarget::probe() const
@@ -759,18 +754,40 @@ core::PixelProbe OffscreenTarget::probe() const
 
 core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment) const
 {
-    if (attachment >= d->attachments.colors.size()) {
+    // The same table readbackResult() answers with: "can this be served, and if not why" is one question,
+    // and a probe that decided it for itself could disagree with the classification a caller asked for.
+    const core::ReadbackResult check =
+        readbackResult(core::ReadbackRequest{ core::ReadbackKind::Color, attachment });
+    if (!check.ok || attachment >= d->attachments.colors.size()) {
         return core::PixelProbe(0, 0, {});
     }
     const OffscreenTarget::Attachments::Color& color = d->attachments.colors[attachment];
     if (color.mapped == nullptr || color.mapped->data() == nullptr) {
         return core::PixelProbe(0, 0, {});
     }
-    const std::size_t byte_count = static_cast<std::size_t>(d->width) * d->height * 4U;
+    const std::size_t byte_count = static_cast<std::size_t>(d->width) * d->height *
+                                   core::colorReadbackOf(d->shape.color_formats[attachment]).bytes_per_texel;
     std::vector<std::uint8_t> pixels;
     pixels.resize(byte_count);
     std::memcpy(pixels.data(), color.mapped->data(), byte_count);
     return core::PixelProbe(static_cast<int>(d->width), static_cast<int>(d->height), std::move(pixels));
+}
+
+core::ReadbackResult OffscreenTarget::readbackResult(const core::ReadbackRequest& request) const noexcept
+{
+    core::ReadbackState state;
+    state.color_attachments = static_cast<std::uint32_t>(d->attachments.colors.size());
+    if (request.kind == core::ReadbackKind::Color && request.attachment < d->shape.color_formats.size())
+    {
+        state.color_format = d->shape.color_formats[request.attachment];
+        state.color_captured = d->attachments.colors[request.attachment].captured;
+    }
+    if (d->depth_format.has_value())
+    {
+        state.depth_format   = d->depth_format;
+        state.depth_captured = d->attachments.depth_captured;
+    }
+    return core::readbackOf(state, request);
 }
 
 std::uint32_t OffscreenTarget::colorAttachmentCount() const noexcept
@@ -831,27 +848,30 @@ const OffscreenTarget* OffscreenTarget::depthSource() const noexcept
 
 ::vsg::ref_ptr<::vsg::Node> OffscreenTarget::captureDepth() const
 {
+    if (d->attachments.depth_capture != nullptr) {
+        d->attachments.depth_captured = true;
+    }
     return d->attachments.depth_capture;
 }
 
 core::DepthProbe OffscreenTarget::depthProbe() const
 {
-    if (d->attachments.depth_mapped == nullptr || d->attachments.depth_mapped->data() == nullptr || d->attachments.depth_bytes_per_texel == 0U
-        || d->width == 0U || d->height == 0U) {
+    // One classification (see readbackResult) and one decoder (core::decodeDepth), so "why is there no
+    // probe" and "what do the numbers mean" cannot drift apart between the entry points.
+    const core::ReadbackResult check =
+        readbackResult(core::ReadbackRequest{ core::ReadbackKind::Depth, 0U });
+    if (!check.ok || d->attachments.depth_mapped == nullptr || d->attachments.depth_mapped->data() == nullptr)
+    {
         return core::DepthProbe();
     }
-    const std::size_t texels = static_cast<std::size_t>(d->width) * d->height;
-    std::vector<float> values(texels);
-    if (d->attachments.depth_bytes_per_texel == 4U) {
-        std::memcpy(values.data(), d->attachments.depth_mapped->data(), texels * sizeof(float));
-    }
-    else {
-        // D16_UNORM: the stored integer is the depth, scaled by its full range - the conversion the format
-        // defines, not an approximation of it.
-        const auto* stored = static_cast<const std::uint16_t*>(static_cast<const void*>(d->attachments.depth_mapped->data()));
-        for (std::size_t index = 0; index < texels; ++index) {
-            values[index] = static_cast<float>(stored[index]) / 65535.0F;
-        }
+    const core::ReadbackFormat packed = core::depthReadbackOf(d->depth_format.value());
+    const std::size_t          texels = static_cast<std::size_t>(d->width) * d->height;
+    const auto* bytes = static_cast<const std::byte*>(static_cast<const void*>(d->attachments.depth_mapped->data()));
+    std::vector<float> values =
+        core::decodeDepth(d->depth_format.value(), std::span<const std::byte>(bytes, texels * packed.bytes_per_texel));
+    if (values.size() != texels)
+    {
+        return core::DepthProbe();  // a copy that is not a whole image is not a picture of anything
     }
     return core::DepthProbe(static_cast<int>(d->width), static_cast<int>(d->height), std::move(values));
 }

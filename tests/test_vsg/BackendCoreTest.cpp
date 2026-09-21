@@ -19,11 +19,14 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
 #include <vine/vsg/core/DepthProbe.hpp>
+#include <vine/vsg/core/Readback.hpp>
 #include <vine/vsg/core/DeviceRequirements.hpp>
 #include <vine/vsg/core/FrameArena.hpp>
 #include <vine/vsg/core/FrameTimeline.hpp>
@@ -34,6 +37,7 @@
 #include <vine/vsg/core/RetirementQueue.hpp>
 #include <vine/vsg/core/TargetPlan.hpp>
 
+using vine::graphics::RenderTarget;
 using vine::vsg::core::CallKind;
 using vine::vsg::core::Decision;
 using vine::vsg::core::FrameArena;
@@ -46,6 +50,8 @@ using vine::vsg::core::PipelineKey;
 using vine::vsg::core::Protocol;
 using vine::vsg::core::RepairReason;
 using vine::vsg::core::RetirementQueue;
+using vine::vsg::core::ReadbackRequest;
+using vine::vsg::core::ReadbackState;
 using vine::vsg::core::TargetAction;
 using vine::vsg::core::TargetDecision;
 using vine::vsg::core::TargetDesc;
@@ -740,4 +746,135 @@ TEST(CoreDepthProbeTest, TheValuesAreRowMajorAndCountedWithinATolerance)
     EXPECT_EQ(probe.countNear(0.75F, 0.001F), 1U)
         << "the tolerance is absolute: a clear value and a written depth do not arrive by the same path";
     EXPECT_EQ(probe.countNear(0.75F, 0.0F), 1U);
+}
+
+TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
+{
+    using vine::vsg::core::ReadbackKind;
+    using vine::vsg::core::ReadbackRefusal;
+    using vine::vsg::core::readbackOf;
+
+    ReadbackState state;
+    state.color_attachments = 2U;
+    state.color_format      = RenderTarget::ColorFormat::RGBA8;
+    state.depth_format      = RenderTarget::DepthFormat::D32;
+
+    // Nothing has recorded a copy yet: the answer is "not yet" - a frame can fix it, and a caller that gets
+    // this one may retry instead of hunting for a format bug.
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::NotCaptured));
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::NotCaptured));
+    EXPECT_FALSE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok);
+
+    state.color_captured = true;
+    state.depth_captured = true;
+    EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok) << "a captured RGBA8 attachment";
+    EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 1U }).ok) << "and the second one too";
+    EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).ok);
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::None))
+        << "ok and a category are two views of one answer, never contradictory";
+
+    // The request's own existence comes first: index 2 does not exist, and a target without a depth cannot
+    // answer a depth readback - whatever has been captured.
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 2U }).refusal),
+              static_cast<int>(ReadbackRefusal::UnknownAttachment));
+    ReadbackState colorless = state;
+    colorless.depth_format.reset();
+    EXPECT_EQ(static_cast<int>(readbackOf(colorless, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::UnknownAttachment));
+}
+
+TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
+{
+    using vine::vsg::core::ReadbackKind;
+    using vine::vsg::core::ReadbackRefusal;
+    using vine::vsg::core::readbackOf;
+
+    ReadbackState state;
+    state.color_attachments = 1U;
+    state.color_format      = RenderTarget::ColorFormat::RGBA16F;
+    state.depth_format      = RenderTarget::DepthFormat::D24;
+
+    // NOTHING captured: the format is still the answer, because a frame cannot fix it. Reporting "not captured"
+    // here would send a caller off to run another frame that cannot change anything.
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::UnreadableFormat));
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::UnreadableFormat));
+
+    state.color_captured = true;
+    state.depth_captured = true;
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::UnreadableFormat))
+        << "capturing more changes nothing: the format table is what says so";
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::UnreadableFormat));
+
+    EXPECT_EQ(vine::vsg::core::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
+    EXPECT_EQ(vine::vsg::core::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
+    EXPECT_EQ(vine::vsg::core::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
+    EXPECT_EQ(vine::vsg::core::refusalName(ReadbackRefusal::None), "none");
+}
+
+TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel)
+{
+    using vine::vsg::core::colorReadbackOf;
+    using vine::vsg::core::depthReadbackOf;
+    using vine::vsg::core::ReadbackFormat;
+
+    // The colour half packs RGBA8 only: the probes are 8-bit probes, and a float attachment converted into one
+    // would be a picture of something the GPU never held.
+    EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::RGBA8), (ReadbackFormat{ 4U, true }));
+    EXPECT_FALSE(colorReadbackOf(RenderTarget::ColorFormat::RGBA16F).readable);
+    EXPECT_FALSE(colorReadbackOf(RenderTarget::ColorFormat::RGBA32F).readable);
+    EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::RGBA16F).bytes_per_texel, 0U);
+
+    // The depth half: D16 is two bytes (and gets scaled on decode), D32 / D32F four (raw float), and the
+    // combined format is refused rather than read as if its first bytes were depth.
+    EXPECT_EQ(depthReadbackOf(RenderTarget::DepthFormat::D16), (ReadbackFormat{ 2U, true }));
+    EXPECT_EQ(depthReadbackOf(RenderTarget::DepthFormat::D32), (ReadbackFormat{ 4U, true }));
+    EXPECT_EQ(depthReadbackOf(RenderTarget::DepthFormat::D32F), (ReadbackFormat{ 4U, true }));
+    EXPECT_FALSE(depthReadbackOf(RenderTarget::DepthFormat::D24).readable);
+}
+
+TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
+{
+    using vine::vsg::core::decodeDepth;
+
+    // D32 / D32F: the stored bits are the value.
+    {
+        const std::array<float, 3> values{ 0.0F, 0.5F, 1.25F };
+        const auto                 bytes = std::as_bytes(std::span(values));
+        const auto                 decoded = decodeDepth(RenderTarget::DepthFormat::D32, bytes);
+        ASSERT_EQ(decoded.size(), 3U);
+        EXPECT_FLOAT_EQ(decoded[0], 0.0F);
+        EXPECT_FLOAT_EQ(decoded[1], 0.5F);
+        EXPECT_FLOAT_EQ(decoded[2], 1.25F) << "raw, not clamped: the attachment's own numbers";
+    }
+
+    // D16_UNORM: the stored integer divided by its full scale (65535) - the conversion the format defines.
+    {
+        const std::array<std::uint16_t, 4> stored{ 0U, 32768U, 65535U, 1U };
+        const auto bytes = std::as_bytes(std::span(stored));
+        const auto decoded = decodeDepth(RenderTarget::DepthFormat::D16, bytes);
+        ASSERT_EQ(decoded.size(), 4U);
+        EXPECT_FLOAT_EQ(decoded[0], 0.0F);
+        EXPECT_NEAR(decoded[1], 0.5000076F, 1.0e-6F) << "0.5 is not exactly representable in 16 bits, and the "
+                                                        "decode must not pretend otherwise";
+        EXPECT_FLOAT_EQ(decoded[2], 1.0F);
+        EXPECT_NEAR(decoded[3], 1.0F / 65535.0F, 1.0e-9F);
+    }
+
+    // A format that cannot be read, and a buffer that is not a whole number of texels: no probe at all rather
+    // than a plausible-looking half image.
+    {
+        const std::array<std::byte, 4> bytes{};
+        EXPECT_TRUE(decodeDepth(RenderTarget::DepthFormat::D24, bytes).empty());
+        const std::array<std::byte, 3> odd{};
+        EXPECT_TRUE(decodeDepth(RenderTarget::DepthFormat::D16, odd).empty())
+            << "half a texel is not a value: a probe built from it would claim a region is empty";
+        EXPECT_TRUE(decodeDepth(RenderTarget::DepthFormat::D32, odd).empty());
+    }
 }
