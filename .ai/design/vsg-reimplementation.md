@@ -3,10 +3,10 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M6（读回：一张分类表、格式诚实、借用方读到源；顺手关掉"float 颜色附件的回读会越界拷贝"这个从未被跑到的洞）**：
-> `test_vsg` 559 用例 / 88 套件全绿（含真设备用例——未捕获的读回被拒而不是返回分配内存、D16 按 65535 缩放、
-> D24/16F 诚实拒绝而 pass 照跑、借用方读到共享图像），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，
-> `core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 816 文件）。
+> **M7 第一半（证据加固：重写版第一张真相位表 + 门禁脚本 `scripts/vsg_rewrite_gate.sh`——0 VUID / 0 SYNC-HAZARD
+> / 跳过即失败 / 相位必须收尾，都成了可失败的断言）**：`test_vsg` 560 用例 / 88 套件全绿，
+> 一条命令跑完 build + 两个验证层 + 三个 hygiene 脚本 + 相位收尾；`core/` 的 include 边界由
+> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 816 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2218,6 +2218,82 @@ M5a–M5d 把"一个目标能画出什么"填完了，这一片填的是"**目�
 * 前一版（§11.16x）留下的三条口子不变（`resize` 的执行者、`attachments_invalidated` 的生产者、租约的"重建
   借用方"）。
 
+### 11.16z M7（2026-09-22）：证据加固（重写版的第一张真相位表 + 门禁脚本 + 稳态帧的门）
+
+M7 的设计口径是"基线冻结、性能档、无 VUID 门禁、诊断字段完整性"。这一片落地能在重写版上**诚实成立**的那两样
+（诊断字段完整性从 M0 起就有 `check_diagnostic_formats.py` 在跑，覆盖 39 个文件），并把"手跑的仪式"变成机器。
+
+1. **重写版的第一张真相位表**（`BackendEvidenceTest`）：`PhaseTable` 的行第一次真的带上 `sample` / `expect`
+   ——那张表存在的理由就是"这一相位**不许**抬高某个计数器"，而此前只有格式与空表的用例。三行：
+   * `two steady frames allocate nothing`：**两个连续的稳态帧各开一次 `AllocationGate` 窗口**，plan 路径
+     （recorder + compiler）在暖机后不再向堆要一字节，arena 也不加块。判据是"两帧都 0"而不是"一帧 0"：
+     一帧不分配是那一帧的事实，两帧连着不分配才是规则。
+   * `counters move by the frame's own shape`：`draws` 恰好 +2（一个 pass、两次绘制调用）。
+   * `a cycle is skipped and counted`：两个互相读对方目标的 pass ⇒ 整个分量被跳过（`passes.empty()`）**且**
+     `invalid_schedules` 恰好 +1。
+   写这条用例时撞到的两件实测（都写进了注释，因为它们都能让相位**假绿**）：
+   ① `beginFrame` 由协议状态机把关，`endFrame` 之后必须 `swapBuffers()` 才走完一帧的契约——忘了它，下一个
+   `beginFrame` 直接被拒（相位红得很吵，比静默好）；
+   ② **既没有绘制也没有清屏的 pass 根本不是 pass**（plan 会把它丢掉），第一版的环形 pass 因此"确实被跳过了、
+   可计数是 0"——`passes.empty()` 为真，行看起来通过了，实际什么都没测；把两个 pass 都改成真 pass（各带一次
+   绘制）之后，这一行才真正钉住 `invalid_schedules`。
+   行文本本身冻结成基线（`[selftest] <name>` + 收尾 `[selftest] done`，与旧自检同一格式）：**相位名单就是能力
+   名单**，改名或消失是一次 diff，而不是一条沉默的缺口。
+2. **门禁脚本**（`scripts/vsg_rewrite_gate.sh`）：把此前每一片都要手跑的那套仪式变成一条命令与一个退出码——
+   build → 套件（含真设备用例，**跳过即失败**，除非显式 `VINE_GATE_ALLOW_SKIPS=1`）→ 强制验证层
+   （`VUID` / `Validation Error` 计数必须为 0）→ 同步验证（`SYNC-HAZARD` 必须为 0，`--quick` 可跳过）→ 三个
+   hygiene 脚本 → `[selftest]` 行必须以 `[selftest] done` 收尾，最后打一张阶段表。
+   **为什么必须是脚本**：套件全绿的同时验证层可以一直在报 VUID——"测试过了"根本不是这个后端要下的结论；而手跑
+   的仪式里，最后一个阶段总是最容易先被跳过。
+   门禁**自己也能失败**（三条实测，见下表）：伪造的 VUID、伪造的 `[  SKIPPED  ]`、没有 `[selftest] done` 的
+   相位输出，分别让对应的阶段红。"不允许它失败"的门禁等于没有门禁——这条规矩在 M0 的分配门禁上已经立过一次。
+3. **实测记录**（写相位时用二分窗口量出来的）：plan 路径的存储在**头两帧**里有界地长一次（第二次 `compile`
+   分配 32 字节），第三帧起连续多帧都是 0。所以用例先暖三帧、再门两帧——"稳态"的定义正是"暖机之后"；若哪天真
+   出现**每帧**分配，这条门会红。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `tests/test_vsg/BackendEvidenceTest.cpp` | +1 用例：重写版第一张真相位表（三行、带 `sample`/`expect`）+ `[selftest]` 基线冻结；文件注记里的"later phases add ASSERTIONS"有了第一份实例 |
+| `scripts/vsg_rewrite_gate.sh`（新） | 一条命令的完整门禁：build / 套件（跳过即失败）/ 验证层 0 VUID / 同步验证 0 SYNC-HAZARD / 三个 hygiene 脚本 / `[selftest]` 收尾；输出一张阶段表，退出码即结论 |
+
+| 规则 | 结论 |
+| --- | --- |
+| **"测试过了"不是结论** | 套件与验证层是两件事：脚本读输出里的 `VUID`/`Validation Error`/`SYNC-HAZARD` 计数，才让"0 VUID"成为可失败的断言 |
+| **跳过不是证据** | 没有设备时所有真设备用例都会 SKIP；脚本把"有跳过"当失败（除非显式放行），否则"全绿"可以只是"什么都没跑" |
+| **相位名单 = 能力名单** | 行文本冻结成基线：相位改名/消失 ⇒ 用例红（`report.lines` 与基线不等），不是沉默缺口 |
+| **计数器要真的动** | 第 2/3 行分别把 `draws`、`invalid_schedules` 的增量写成期望；表在 `run` 前后各读一次计数器，行本身不自己断言数字 |
+| **假绿要能被自己抓到** | 实测的两处（忘了 `swapBuffers()`、空 pass 不是 pass）都是"行看起来通过了却什么都没测"的形态，注释里点名 |
+
+| 门禁自证（实测） | 结果 |
+| --- | --- |
+| 伪造一个打印 VUID 的测试二进制 | `suite (validation)` 红：`vuid=1` 并打印那条 VUID；退出码 1 |
+| 伪造一个含 `[  SKIPPED  ]` 的输出 | 红：`skipped=1`，点名"set VINE_GATE_ALLOW_SKIPS=1 to accept skips" |
+| 伪造一个没有 `[selftest] done` 的相位输出 | 红：`phase lines ... the phase run did not close with [selftest] done` |
+| 真跑（lavapipe + 两个验证层） | 全阶段绿：`cases=560 failed=0 vuid=0 hazard=0 skipped=0`，4 行相位以 `[selftest] done` 收尾 |
+
+| 相位表的变异反证（全部实测） | 结果 |
+| --- | --- |
+| P1 被门的帧故意分配 4 KiB | `two steady frames allocate nothing FAILED`（堆门禁真的会响） |
+| P2 帧里画三次而期望是 +2 | `counters move by the frame's own shape FAILED: counter expectation not met` |
+| P3 环形 pass 又变回空 pass（本片踩过的"假绿"形态） | `a cycle is skipped and counted FAILED`（`run` 会通过，计数器期望把它拦下） |
+| P4 把一行相位改名 | 基线断言红：`report.lines != baseline`（"相位名单 = 能力名单"） |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **560 用例 / 88 套件全绿**（+1 用例）；相位用例 `--gtest_repeat=20` 连跑 20 次全绿（堆窗口测量不是抽奖） |
+| 门禁 | `scripts/vsg_rewrite_gate.sh` 一条命令全绿（build + 两个验证层 + 三个脚本 + 相位收尾） |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **相位表目前只覆盖 plan 半边**（recorder / compiler / counters / arena）。真设备侧的相位仍以 gtest 用例的形态
+  存在：把设备用例也搬进 `PhaseTable` 需要"相位运行器"那一层（相位 = 装配 + 断言 + 计数器增量 + 像素读回），
+  而装配逻辑现在分散在各用例里。本片先落地**格式、基线与门禁**，形态统一留给相位运行器那一片。
+* **性能档（构建档案 / GPU profile）没做**：旧实现有 `VsgGpuProfile` + `GpuProfileTest`，重写版只有
+  `Session::frameSeconds()` 这一格；profile 出口要等执行者把 pass 命名接上去（`WindowTarget` 的图形命名那套
+  已经在旧实现里，重写版还没有）。
+* 之前的口子不变（`resize` 的执行者、`attachments_invalidated` 的生产者、租约的"重建借用方"、float 颜色读回、
+  相位运行器）。
+
 ### 11.17 下一步
 
 | 项 | 内容 |
@@ -2262,6 +2338,7 @@ M5a–M5d 把"一个目标能画出什么"填完了，这一片填的是"**目�
 | ~~M5d~~ | **已完成（2026-09-22）**：全屏路径的 128B push——`LightPushBlock`（128B，`projparms` 保留为零）+ `packLightPushBlock`（复用 `packLightBlock` 的遍历、只换布局）；`recordScreenDraw` 按每次调用推；`createScreen` 建 push-only 布局（"只读 push"的全屏 pass 不再被拒）；2 条用例（无设备 + 真设备三视口像素）+ 4 条变异反证（其中"push 全零"与"发错阶段"分别是内容缺失与静默失败的实证）（§11.16w） |
 | ~~M5e~~ | **已完成（2026-09-22）**：目标生命周期（计划驱动的换尺寸）——`OffscreenTarget::Attachments`（尺寸相关的一整批对象）+ `buildAttachments(width, height, out)`（纯构建、不写自身）；`create` 成功后才接手并计数借用者；`resize(w, h, timeline, retirement)` 按 `core::planTarget` 决定、**保留渲染通道与管线**、旧集经 `RetirementQueue` 停车（闸门关着时退回**计数过的** device idle）；租约两向拒绝；换后 `written=false` + `generation+1`；5 条真设备用例（含深度回读按新尺寸重建、引用计数证明"停着而不是扔了"）+ 6 条变异反证（§11.16x） |
 | ~~M6~~ | **已完成（2026-09-22）**：读回——`core/Readback`（`readbackOf` 单表 + 两类格式表 + `decodeDepth`），优先级"存在性 → 格式（永久）→ 捕获（可重试）"，不设走不到的 `Empty`（零尺寸归 `planTarget` / `create` 拒绝）；`OffscreenTarget` 的 `captured` / `depth_captured` 簿记（属于附件集，换尺寸天然复位）+ `readbackResult()`；float 颜色附件不再建回读缓冲（原来必撞 `VUID-vkCmdCopyImageToBuffer-pRegions-00183`）；借用方的深度回读 = 共享图像 + 自己的缓冲；4 条无设备 + 4 条真设备用例 + 8 条变异反证（§11.16y） |
+| ~~M7~~ | **已完成（2026-09-22，第一半：证据加固）**：重写版第一张**真**相位表（`PhaseTable` 的 `sample`/`expect` 第一次派上用场：稳态帧零分配 ×2 + `draws` +2 + 环跳过 `invalid_schedules` +1），`[selftest]` 行冻结成基线；`scripts/vsg_rewrite_gate.sh` 把整套仪式变成一条命令（跳过即失败、0 VUID / 0 SYNC-HAZARD 成为可失败断言、相位必须以 `[selftest] done` 收尾），门禁自己也被三条伪造输入证明能红；实测记录 plan 路径头两帧的有界增长（第二次 compile 32B，之后 0）（§11.16z）。**剩**：设备侧相位运行器、性能档（GPU profile） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。

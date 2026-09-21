@@ -15,24 +15,37 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdio>
+#include <iostream>
 #include <string>
 #include <vector>
 
 #include <vine/graphics/RenderDiagnostic.hpp>
 
+#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/RenderTarget.hpp>
+
 #include <vine/vsg/core/AllocationGate.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
 #include <vine/vsg/core/FrameArena.hpp>
+#include <vine/vsg/core/FrameCompiler.hpp>
+#include <vine/vsg/core/FrameRecorder.hpp>
 #include <vine/vsg/core/PhaseTable.hpp>
 #include <vine/vsg/core/PixelProbe.hpp>
 
 using vine::graphics::DiagnosticCategory;
 using vine::graphics::DiagnosticSeverity;
+using vine::graphics::RenderCommand;
 using vine::graphics::RenderDiagnostic;
+using vine::graphics::RenderTarget;
 using vine::graphics::Viewport;
 using vine::vsg::core::AllocationGate;
 using vine::vsg::core::Diagnostics;
 using vine::vsg::core::FrameArena;
+using vine::vsg::core::FrameCompiler;
+using vine::vsg::core::FrameRecorder;
+using vine::vsg::core::FrameToken;
+using vine::vsg::core::Observe;
 using vine::vsg::core::Phase;
 using vine::vsg::core::PhaseTable;
 using vine::vsg::core::PixelProbe;
@@ -286,4 +299,158 @@ TEST(CoreAllocationGateTest, ADeliberateAllocationIsCaught)
 
     EXPECT_GT(grew, 0) << "the gate has to be able to fail, or it is not a gate";
     EXPECT_GT(grows.size(), 0u);
+}
+
+TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
+{
+    // The rewrite's own frame path as PHASES: the table is how a run says "this capability held, and the
+    // counters say so" - a phase that rendered correctly while rebuilding everything would otherwise pass
+    // every assertion in its own body. These rows are the plan half (recorder + compiler), which is where the
+    // per-frame allocations and the counters live; the device half is a phase of its own kind (pixels).
+    FrameArena    arena(128 * 1024);
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder(arena, diagnostics, observe);
+    FrameCompiler compiler(arena, diagnostics, observe);
+
+    vine::intrusive_ptr<RenderTarget> first(new RenderTarget());
+    vine::intrusive_ptr<RenderTarget> second(new RenderTarget());
+
+    vine::vsg::core::TargetFacts first_facts;
+    first_facts.target        = first.get();
+    first_facts.wanted.width  = 64;
+    first_facts.wanted.height = 64;
+    first_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    first_facts.current.desc  = first_facts.wanted;
+    first_facts.current.built = true;
+    vine::vsg::core::TargetFacts second_facts = first_facts;
+    second_facts.target                       = second.get();
+
+    const std::vector<RenderCommand> one_draw{ RenderCommand{} };
+    const std::vector<vine::vsg::core::TargetFacts> one_target{ first_facts };
+
+    // One frame, recorded the way the API layer records it: one pass, two content draws into the same target.
+    // `swapBuffers()` is the contract's last call of a frame - it closes the books the next `beginFrame()`
+    // would otherwise find open (a phase that forgot it would stop at the first ASSERT below).
+    const auto record_frame = [&](std::uint64_t token, const void* target, int draws) {
+        EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
+        EXPECT_TRUE(recorder.beginPass(1U));
+        EXPECT_TRUE(recorder.setRenderTarget(target));
+        for (int index = 0; index < draws; ++index)
+        {
+            EXPECT_TRUE(recorder.render(one_draw, nullptr));
+        }
+        EXPECT_TRUE(recorder.endPass());
+        EXPECT_TRUE(recorder.endFrame());
+        EXPECT_TRUE(recorder.swapBuffers());
+    };
+    const auto compile_frame = [&](const std::vector<vine::vsg::core::TargetFacts>& facts) {
+        return &compiler.compile(recorder.description(), vine::vsg::core::FrameFacts{ facts });
+    };
+
+    // Warm-up: the plan path grows its own storage over the first frames (measured: the second compile
+    // allocates 32 bytes, every frame after it nothing), and "steady" is precisely the claim - a frame whose
+    // content did not change against an earlier one. Warming up three frames and gating the ones after that
+    // is what makes the two windows below a statement about the steady frame and not about glibc.
+    for (std::uint64_t warm_up = 1U; warm_up <= 3U; ++warm_up)
+    {
+        record_frame(warm_up, first.get(), 2);
+        ASSERT_NE(compile_frame(one_target), nullptr);
+    }
+
+    // TWO consecutive steady frames, each in its own window: one free frame after a warm-up is a fact about
+    // that frame; two in a row is the rule.
+    const bool          heap_gated = AllocationGate::supported();
+    std::ptrdiff_t      grew_first = 0;
+    std::ptrdiff_t      grew_second = 0;
+    std::size_t         arena_first = 0;
+    std::size_t         arena_second = 0;
+    for (std::uint64_t token = 100U; token <= 101U; ++token)
+    {
+        AllocationGate gate;
+        if (heap_gated)
+        {
+            gate.begin();
+        }
+        record_frame(token, first.get(), 2);
+        compile_frame(one_target);
+        const std::ptrdiff_t grew = heap_gated ? gate.end() : 0;
+        const std::size_t    allocated = arena.allocations();
+        if (token == 100U)
+        {
+            grew_first  = grew;
+            arena_first = allocated;
+        }
+        else
+        {
+            grew_second  = grew;
+            arena_second = allocated;
+        }
+    }
+
+    // A frame whose two passes READ each other's targets: a cycle. The compiler must skip the whole component
+    // and COUNT it - "validation clean, one pass missing" is the failure the rule replaces. Both passes draw,
+    // because a pass with neither a draw nor a clear is not pass at all and would be dropped for that reason
+    // (which is how this row once passed while counting nothing).
+    const auto cycles = [&] {
+        EXPECT_TRUE(recorder.beginFrame(FrameToken{ 200U }));
+        EXPECT_TRUE(recorder.beginPass(1U));
+        EXPECT_TRUE(recorder.setRenderTarget(first.get()));
+        EXPECT_TRUE(recorder.setPassInputs(std::vector<RenderTarget*>{ second.get() }));
+        EXPECT_TRUE(recorder.render(one_draw, nullptr));
+        EXPECT_TRUE(recorder.endPass());
+        EXPECT_TRUE(recorder.beginPass(2U));
+        EXPECT_TRUE(recorder.setRenderTarget(second.get()));
+        EXPECT_TRUE(recorder.setPassInputs(std::vector<RenderTarget*>{ first.get() }));
+        EXPECT_TRUE(recorder.render(one_draw, nullptr));
+        EXPECT_TRUE(recorder.endPass());
+        EXPECT_TRUE(recorder.endFrame());
+        EXPECT_TRUE(recorder.swapBuffers());
+        const auto* cycle_frame = compile_frame({ first_facts, second_facts });
+        return cycle_frame != nullptr && cycle_frame->passes.empty();
+    };
+
+    PhaseTable table;
+    table.add(Phase{ "two steady frames allocate nothing",
+                     [&]() {
+                         return !heap_gated
+                                || (grew_first == 0 && grew_second == 0 && arena_first == 0U && arena_second == 0U);
+                     } });
+    table.add(Phase{
+        "counters move by the frame's own shape",
+        [&]() {
+            record_frame(102U, first.get(), 2);
+            const auto* steady = compile_frame(one_target);
+            return steady != nullptr && steady->passes.size() == 1U;
+        },
+        [&]() { return static_cast<std::uint64_t>(observe.counters().draws); },
+        [](std::uint64_t before, std::uint64_t after) { return after == before + 2U; },
+    });
+    table.add(Phase{
+        "a cycle is skipped and counted",
+        [&]() { return cycles(); },
+        [&]() { return static_cast<std::uint64_t>(observe.counters().invalid_schedules); },
+        [](std::uint64_t before, std::uint64_t after) { return after == before + 1U; },
+    });
+
+    const vine::vsg::core::PhaseTable::Report report = table.runAll();
+    for (const std::string& line : report.lines)
+    {
+        std::cout << line << '\n';  // the evidence line format, printed so a script can freeze it
+    }
+
+    EXPECT_TRUE(report.ok()) << "every phase has to pass before this run claims anything";
+    EXPECT_EQ(report.passed, 3U);
+    EXPECT_EQ(report.failed, 0U);
+
+    // The BASELINE: these lines are the rewrite's own claim, in the format the legacy self-test uses, so a
+    // phase that disappears or gets renamed is a diff here and not a silent gap in the list.
+    const std::vector<std::string> baseline{
+        "[selftest] two steady frames allocate nothing",
+        "[selftest] counters move by the frame's own shape",
+        "[selftest] a cycle is skipped and counted",
+        "[selftest] done",
+    };
+    EXPECT_EQ(report.lines, baseline) << "the phase list IS the capability list: a diff here is a phase that "
+                                         "appeared, vanished or changed name";
 }
