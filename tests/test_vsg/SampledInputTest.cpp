@@ -96,7 +96,6 @@ using vine::vsg::core::FrameFacts;
 using vine::vsg::core::FrameRecorder;
 using vine::vsg::core::FrameToken;
 using vine::vsg::core::Observe;
-using vine::vsg::core::RenderPassCompatibility;
 using vine::vsg::core::Rgba8;
 using vine::vsg::core::StateRegistry;
 using vine::vsg::core::TargetFacts;
@@ -144,16 +143,6 @@ struct Triangle
         vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
             new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
 };
-
-RenderPassCompatibility compatibilityOf(const TargetShape& shape)
-{
-    RenderPassCompatibility compatibility;
-    compatibility.color_formats = shape.color_formats;
-    compatibility.depth_format  = shape.depth_format;
-    compatibility.samples       = shape.samples;
-    compatibility.subpass       = shape.subpass;
-    return compatibility;
-}
 
 bool isRed(const Rgba8& pixel)
 {
@@ -351,7 +340,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(consumer, facts, compatibilityOf(destination->shape()), images, view_block,
+    ASSERT_TRUE(content.record(consumer, facts, destination->shape().compatibility(), images, view_block,
                                content_node));
     ASSERT_TRUE(messages.empty()) << "nothing may be refused: the images match the plan";
     EXPECT_EQ(draws.draws(), 2U);
@@ -391,7 +380,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     storage->beginFrame();
     messages.clear();
     ::vsg::ref_ptr<::vsg::Node> refused_node;
-    EXPECT_FALSE(content.record(consumer, facts, compatibilityOf(destination->shape()),
+    EXPECT_FALSE(content.record(consumer, facts, destination->shape().compatibility(),
                                 std::span<const InputImages>{}, view_block, refused_node));
     ASSERT_EQ(messages.size(), 1U);
     EXPECT_NE(messages[0].as_std_str().find("declares 1 input(s) and the caller offered 0"), std::string::npos)
@@ -400,7 +389,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     storage->beginFrame();
     messages.clear();
     const InputImages empty_entry[] = { InputImages{} };
-    EXPECT_FALSE(content.record(consumer, facts, compatibilityOf(destination->shape()),
+    EXPECT_FALSE(content.record(consumer, facts, destination->shape().compatibility(),
                                 std::span<const InputImages>(empty_entry, 1U), view_block, refused_node));
     ASSERT_EQ(messages.size(), 1U);
     EXPECT_NE(messages[0].as_std_str().find("input 0 offers 0 colour texture(s) where the plan says 1"),
@@ -569,7 +558,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(consumer, facts, compatibilityOf(destination->shape()), images, view_block,
+    ASSERT_TRUE(content.record(consumer, facts, destination->shape().compatibility(), images, view_block,
                                content_node));
     ASSERT_TRUE(messages.empty()) << "nothing may be refused: the screen half is there and the images match";
     EXPECT_EQ(screen_draws.screen_draws(), 1U);

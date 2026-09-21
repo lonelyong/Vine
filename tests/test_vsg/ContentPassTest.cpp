@@ -86,7 +86,6 @@ using vine::vsg::core::FrameFacts;
 using vine::vsg::core::FrameRecorder;
 using vine::vsg::core::FrameToken;
 using vine::vsg::core::Observe;
-using vine::vsg::core::RenderPassCompatibility;
 using vine::vsg::core::Rgba8;
 using vine::vsg::core::StateRegistry;
 using vine::vsg::core::TargetFacts;
@@ -210,16 +209,6 @@ std::unique_ptr<ContentPipeline> pipelineFor(const GeometryFacts& facts, const C
     ContentPipeline::Settings settings;
     settings.color_attachments = 1U;
     return ContentPipeline::create(block_set, bindings, attributes, shaders, settings);
-}
-
-RenderPassCompatibility compatibilityOf(const TargetShape& shape)
-{
-    RenderPassCompatibility compatibility;
-    compatibility.color_formats = shape.color_formats;
-    compatibility.depth_format  = shape.depth_format;
-    compatibility.samples       = shape.samples;
-    compatibility.subpass       = shape.subpass;
-    return compatibility;
 }
 
 bool isGreen(const Rgba8& pixel)
@@ -360,7 +349,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, compatibilityOf(target->shape()), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
     ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: every identity is in the tables";
 
     const std::uint64_t uploads_after_first = uploads.uploads();
@@ -395,7 +384,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     //    it is the reason the tables carry revisions rather than bytes.
     storage->beginFrame();
     ::vsg::ref_ptr<::vsg::Node> again;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, compatibilityOf(target->shape()), {}, view_block, again));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, again));
     EXPECT_EQ(uploads.uploads(), uploads_after_first) << "the same geometry must not be uploaded twice";
     EXPECT_EQ(uploads.aliases(), 2U) << "the second frame aliases both streams the first one uploaded";
     EXPECT_EQ(storage->materialWrites(), material_writes) << "the same material must not be written twice";
@@ -410,7 +399,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
 
     storage->beginFrame();
     ::vsg::ref_ptr<::vsg::Node> missing;
-    EXPECT_FALSE(content.record(frame.passes[0], without_geometry, compatibilityOf(target->shape()), {}, view_block,
+    EXPECT_FALSE(content.record(frame.passes[0], without_geometry, target->shape().compatibility(), {}, view_block,
                                 missing))
         << "a command whose geometry the table cannot answer is not drawn";
     EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), refusals_before + 1U);
@@ -586,7 +575,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, compatibilityOf(target->shape()), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
     ASSERT_TRUE(messages.empty()) << "every identity is in the tables: nothing may be refused";
 
     EXPECT_EQ(pool.created(), 2U) << "one program against two layouts is two identities, not one";
@@ -647,7 +636,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     storage->beginFrame();
     messages.clear();
     ::vsg::ref_ptr<::vsg::Node> refused_node;
-    EXPECT_FALSE(content.record(unserved_frame.passes[0], facts, compatibilityOf(target->shape()), {}, view_block,
+    EXPECT_FALSE(content.record(unserved_frame.passes[0], facts, target->shape().compatibility(), {}, view_block,
                                 refused_node));
     ASSERT_EQ(messages.size(), 1U);
     EXPECT_NE(messages[0].as_std_str().find("vertex layout"), std::string::npos) << messages[0].as_std_str();
@@ -674,7 +663,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     storage->beginFrame();
     messages.clear();
     ::vsg::ref_ptr<::vsg::Node> unmatched_node;
-    EXPECT_FALSE(content.record(other_frame.passes[0], facts, compatibilityOf(target->shape()), {}, view_block,
+    EXPECT_FALSE(content.record(other_frame.passes[0], facts, target->shape().compatibility(), {}, view_block,
                                 unmatched_node));
     ASSERT_EQ(messages.size(), 1U);
     EXPECT_NE(messages[0].as_std_str().find("program"), std::string::npos) << messages[0].as_std_str();

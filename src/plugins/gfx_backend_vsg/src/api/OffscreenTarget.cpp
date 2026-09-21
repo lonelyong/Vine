@@ -294,6 +294,16 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     core::TargetShape shape;
     shape.color_formats = layout.color_formats;
     shape.depth_format  = layout.depth_format;
+    // The DEVICE formats the images and the render pass are actually built with: the engine's spelling is a
+    // projection (RGBA8 covers both a linear and an sRGB image), and a pipeline key cannot be built from a
+    // projection - an sRGB window surface and this linear target are not render-pass compatible (see
+    // RenderPassCompatibility).
+    for (const vine::graphics::RenderTarget::ColorFormat format : layout.color_formats) {
+        shape.device_color_formats.push_back(static_cast<std::uint32_t>(toColorFormat(format)));
+    }
+    if (layout.depth_format.has_value()) {
+        shape.device_depth_format = static_cast<std::uint32_t>(toDepthFormat(layout.depth_format.value()));
+    }
     const bool                depth_borrowed = depth_source != nullptr;
     const core::PassClearPlan plan = core::planClearValues(shape, layout.clear, /*bootstrap*/ true,
                                                           /*depth_preserved*/ depth_borrowed);
@@ -470,7 +480,21 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
         auto barrier = ::vsg::PipelineBarrier::create(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
                                                       0, buffer_barrier);
 
+        // The copy-back writes a buffer that is written EVERY time this node is recorded, and a frame may be
+        // recorded again while an earlier submission's copy is still in flight (a session keeps several frames
+        // in flight). Vulkan orders submissions, but it does not make one submission's transfer visible to the
+        // next without a dependency - the validation layer reports the pair as
+        // `SYNC-HAZARD-WRITE-AFTER-WRITE` on the destination buffer (measured: a fixture that records two
+        // off-screen frames in a row, M4c). One barrier declares the order the pair has always had in
+        // practice, which is all it needs: both copies carry the same bytes.
+        auto previous_copy = ::vsg::BufferMemoryBarrier::create(
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED, color.destination, 0U, byte_count);
+
         color.capture = ::vsg::Commands::create();
+        color.capture->addChild(
+            ::vsg::PipelineBarrier::create(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                           previous_copy));
         color.capture->addChild(::vsg::PipelineBarrier::create(
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, to_transfer));

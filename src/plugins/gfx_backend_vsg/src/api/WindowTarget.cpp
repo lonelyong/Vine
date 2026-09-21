@@ -31,10 +31,11 @@ vine::graphics::RenderTarget::ColorFormat toColorFormat(VkFormat format) noexcep
         return vine::graphics::RenderTarget::ColorFormat::RGBA32F;
     default:
         // An unknown surface format falls back to the engine's 8-bit entry rather than failing the session:
-        // this mapping only decides which VARIANTS the window's passes share with off-screen passes (the
-        // pipelines themselves compile against the window's own render pass, under the window's own view),
-        // so a fallback costs at most a variant that is not shared - while refusing here would make a session
-        // unable to start on a platform whose surface list this table has not seen.
+        // the engine's spelling decides which variants the window's passes may SHARE with off-screen passes,
+        // and the DEVICE format (reported next to it, see the create function) is the one that decides which
+        // render passes are compatible at all - so a fallback here costs at most a variant that is not
+        // shared, while refusing would make a session unable to start on a platform whose surface list this
+        // table has not seen.
         return vine::graphics::RenderTarget::ColorFormat::RGBA8;
     }
 }
@@ -77,9 +78,13 @@ std::unique_ptr<WindowTarget> WindowTarget::create(::vsg::ref_ptr<::vsg::Window>
     target->d->window = window;
 
     // The shape is sampled once, and it is the window's own answer: the surface format it presents and the
-    // depth format its traits asked for.
+    // depth format its traits asked for - plus the DEVICE formats those map from, because the engine's
+    // spelling cannot tell the window's sRGB surface from a linear off-screen target, and the two are not
+    // render-pass compatible (see RenderPassCompatibility: the crossing is measured).
     target->d->shape.color_formats.push_back(toColorFormat(window->surfaceFormat().format));
-    target->d->shape.depth_format = toDepthFormat(window->depthFormat());
+    target->d->shape.device_color_formats.push_back(static_cast<std::uint32_t>(window->surfaceFormat().format));
+    target->d->shape.depth_format        = toDepthFormat(window->depthFormat());
+    target->d->shape.device_depth_format = static_cast<std::uint32_t>(window->depthFormat());
 
     auto graph      = ::vsg::RenderGraph::create(window);
     graph->contents = VK_SUBPASS_CONTENTS_INLINE;
@@ -88,9 +93,15 @@ std::unique_ptr<WindowTarget> WindowTarget::create(::vsg::ref_ptr<::vsg::Window>
     graph->windowResizeHandler = {};
     target->d->graph           = graph;
 
-    // The window's content view: one stable view, so vsg compiles the window's pipelines against the
-    // window's own render pass (see the file note). The rectangles arrive as commands, which is what keeps
-    // an extent out of the pipeline's identity.
+    // The window's content view: one stable view, so the window's content has its own view id. The rectangles
+    // arrive as commands, which is what keeps an extent out of the pipeline's identity.
+    //
+    // NOTE (measured, M4c): this view does NOT keep the window's pipelines apart from an off-screen pass'
+    // pipelines. vsg reuses an existing implementation whose pipeline STATES compare equal whatever render
+    // pass it was built for, and since a stable view's states are only the pipeline's own, two views of one
+    // pipeline object reuse each other's VkPipeline. What keeps the families apart is the pipeline KEY (the
+    // device formats in its compatibility half - see RenderPassCompatibility); a view is what a per-view
+    // state OVERRIDE would need, and nothing here overrides state.
     //
     // The view still needs a camera: vsg's compile traversal merges "view.camera->viewportState" into the
     // pipeline states without testing the camera first, so a camera-less view walks into a null pointer.

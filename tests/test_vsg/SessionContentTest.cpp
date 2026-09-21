@@ -30,6 +30,8 @@
 #    include <xcb/xcb.h>
 #endif
 
+#include "TestHostWindow.hpp"
+
 #include <vsg/app/CommandGraph.h>
 #include <vsg/app/Viewer.h>
 #include <vsg/commands/Command.h>
@@ -102,7 +104,6 @@ using vine::vsg::core::FrameArena;
 using vine::vsg::core::FrameCompiler;
 using vine::vsg::core::FrameFacts;
 using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::RenderPassCompatibility;
 using vine::vsg::core::StateRegistry;
 using vine::vsg::core::StreamKey;
 using vine::vsg::core::StreamKind;
@@ -118,78 +119,7 @@ namespace
 constexpr int kWidth  = 128;
 constexpr int kHeight = 96;
 
-/// @brief A window the TEST owns, so the session can adopt it as the host's and the test can read it back.
-class HostWindow
-{
-  public:
-    HostWindow(xcb_connection_t* connection, xcb_screen_t* screen, int width, int height)
-      : connection_(connection)
-    {
-        window_                      = xcb_generate_id(connection_);
-        const std::uint32_t mask     = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
-        const std::uint32_t values[] = { screen->black_pixel,
-                                         XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_EXPOSURE };
-        xcb_create_window(connection_, XCB_COPY_FROM_PARENT, window_, screen->root, 0, 0,
-                          static_cast<std::uint16_t>(width), static_cast<std::uint16_t>(height), 0,
-                          XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, mask, values);
-        xcb_map_window(connection_, window_);
-        xcb_flush(connection_);
-    }
-
-    HostWindow(const HostWindow&)            = delete;
-    HostWindow& operator=(const HostWindow&) = delete;
-
-    ~HostWindow()
-    {
-        xcb_destroy_window(connection_, window_);
-        xcb_flush(connection_);
-    }
-
-    /** @brief The handle in the form the backend passes it around. */
-    [[nodiscard]] void* handle() const noexcept
-    {
-        return reinterpret_cast<void*>(static_cast<std::uintptr_t>(window_));
-    }
-
-    /** @brief Reads one pixel back out of the window (XGetImage's server-side equivalent).
-     *
-     * The bytes of a TrueColor pixel are returned in the server's order; the case's assertions are written so
-     * they do not depend on it (a pure green pixel has the same middle byte in both orders).
-     *
-     * @param x Column to read.
-     * @param y Row to read.
-     * @return The first three bytes of the pixel.
-     */
-    [[nodiscard]] std::array<std::uint8_t, 3> pixel(int x, int y) const
-    {
-        const xcb_get_image_cookie_t cookie =
-            xcb_get_image(connection_, XCB_IMAGE_FORMAT_Z_PIXMAP, window_, static_cast<std::int16_t>(x),
-                          static_cast<std::int16_t>(y), 1U, 1U, ~0U);
-        xcb_get_image_reply_t* reply = xcb_get_image_reply(connection_, cookie, nullptr);
-        if (reply == nullptr) {
-            return { 0U, 0U, 0U };
-        }
-        const std::uint8_t* data = xcb_get_image_data(reply);
-        const std::array<std::uint8_t, 3> rgb{ data[0], data[1], data[2] };
-        std::free(reply);
-        return rgb;
-    }
-
-  private:
-    xcb_connection_t* connection_;
-    xcb_window_t      window_{ 0 };
-};
-
 /// @brief The compatibility half of a pipeline's identity, from the shape a target really has.
-RenderPassCompatibility compatibilityOf(const TargetShape& shape)
-{
-    RenderPassCompatibility compatibility;
-    compatibility.color_formats = shape.color_formats;
-    compatibility.depth_format  = shape.depth_format;
-    compatibility.samples       = shape.samples;
-    compatibility.subpass       = shape.subpass;
-    return compatibility;
-}
 
 /// @brief Whether a pixel is the fragment shader's pure green, whichever byte order the server uses.
 bool isGreen(const std::array<std::uint8_t, 3>& pixel)
@@ -269,7 +199,7 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    HostWindow window(connection, screen, kWidth, kHeight);
+    TestHostWindow window(connection, screen, kWidth, kHeight);
 
     vine::vsg::core::Diagnostics diagnostics;
     diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
@@ -426,7 +356,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    HostWindow window(connection, screen, kWidth, kHeight);
+    TestHostWindow window(connection, screen, kWidth, kHeight);
 
     vine::vsg::core::Diagnostics diagnostics;
     diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
@@ -586,7 +516,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
         std::as_bytes(std::span<const vine::graphics::VineViewBlock>(&view_block, 1U));
 
     ::vsg::ref_ptr<::vsg::Node> content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, compatibilityOf(window_target->shape()), {}, view_bytes,
+    ASSERT_TRUE(content.record(frame.passes[0], facts, window_target->shape().compatibility(), {}, view_bytes,
                                content_node));
     EXPECT_TRUE(diagnostics.clean()) << "every identity is in the tables and the inputs match the plan";
 

@@ -8,7 +8,21 @@ namespace core
 bool TargetShape::operator==(const TargetShape& other) const noexcept
 {
     return color_formats == other.color_formats && depth_format == other.depth_format &&
-           samples == other.samples && subpass == other.subpass;
+           device_color_formats == other.device_color_formats &&
+           device_depth_format == other.device_depth_format && samples == other.samples &&
+           subpass == other.subpass;
+}
+
+RenderPassCompatibility TargetShape::compatibility() const noexcept
+{
+    RenderPassCompatibility compatibility;
+    compatibility.color_formats        = color_formats;
+    compatibility.depth_format         = depth_format;
+    compatibility.device_color_formats = device_color_formats;
+    compatibility.device_depth_format  = device_depth_format;
+    compatibility.samples              = samples;
+    compatibility.subpass              = subpass;
+    return compatibility;
 }
 
 bool TargetDesc::operator==(const TargetDesc& other) const noexcept

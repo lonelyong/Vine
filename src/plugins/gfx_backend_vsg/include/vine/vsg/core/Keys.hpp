@@ -125,13 +125,37 @@ enum class DrawKind : std::uint8_t
  * contain about a target. The load/store operations and the layouts are NOT in here - they live in
  * LoadOpVariantKey - because the API's compatibility rule excludes them, which is what makes several
  * variants of one attachment set share a single compiled pipeline.
+ *
+ * WHY THE DEVICE FORMATS ARE IN HERE ON TOP OF THE ENGINE'S SPELLING. The engine classifies attachments as
+ * RGBA8 / RGBA16F / RGBA32F, and that vocabulary is a PROJECTION: a window whose swapchain format is
+ * B8G8R8A8_SRGB and an off-screen target built as R8G8B8A8_UNORM are both "RGBA8" to it, while the render
+ * passes they are used in are incompatible (channel order and colour space are part of a render pass'
+ * identity). Measured: with only the engine's spelling in the key, ONE variant served both passes and the
+ * off-screen-compiled VkPipeline was bound in the window's render pass
+ * (`VUID-vkCmdDrawIndexed-renderPass-02684`, B8G8R8A8_SRGB versus R8G8B8A8_UNORM, two subpass dependencies
+ * against one). The device formats cannot be recovered from the engine's vocabulary, so the layer that knows
+ * them hands them over instead: a target reports them in its shape, and `TargetShape::compatibility()` copies
+ * them into this key.
+ *
+ * They are carried as the DEVICE's own format code (a `VkFormat` value - 0, the device's UNDEFINED, also
+ * means "no such attachment"). This layer compares them and never interprets them: the device layer is the
+ * one place that knows what a format code means. "Not known" is not the same as "absent": a shape that
+ * reports no device formats is a DIFFERENT compatibility from one that reports them, so an unknown never
+ * silently merges two families - what it can do is merge two shapes that are BOTH unknown, which is the
+ * behaviour this key had before the field existed.
+ *
+ * What the mismatch LOOKS like on the screen is not evidence: binding a pipeline compiled against another
+ * render pass is undefined behaviour, and the measured run drew the right picture anyway. The validation
+ * layer's report is the evidence (and the fix is a key, not a picture).
  */
 struct RenderPassCompatibility
 {
     std::vector<vine::graphics::RenderTarget::ColorFormat> color_formats;  ///< One per colour attachment.
     std::optional<vine::graphics::RenderTarget::DepthFormat> depth_format; ///< Absent for colour-only.
-    std::uint32_t samples{1};                                              ///< Sample count.
-    std::uint32_t subpass{0};                                              ///< Subpass index.
+    std::vector<std::uint32_t> device_color_formats;  ///< The same attachments as the device spells them.
+    std::uint32_t              device_depth_format{0}; ///< The device's depth format; 0 = no depth.
+    std::uint32_t              samples{1};             ///< Sample count.
+    std::uint32_t              subpass{0};             ///< Subpass index.
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const RenderPassCompatibility& other) const noexcept;

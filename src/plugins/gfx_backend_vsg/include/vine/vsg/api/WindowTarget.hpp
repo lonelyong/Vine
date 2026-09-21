@@ -38,15 +38,16 @@ class Window;
  * a target may build variants of its render pass; the swapchain's pass cannot, and pretending otherwise
  * would erase the earlier passes.
  *
- * ONE VIEW FOR THE WHOLE WINDOW, for the other platform fact: vsg compiles a pipeline per VIEW ID, and a
- * graphics pipeline is only usable in a compatible render pass. Off-screen passes all share view 0, where
- * every render pass of a given shape comes from the same recipe (so they are compatible with one another);
- * the window's render pass comes from vsg, with the surface's format and its own dependencies, so it is NOT
- * compatible with an off-screen pass of the same engine shape - and a variant shared between the two would
- * be bound in a render pass it was not compiled against. Recording the window's content under its own,
- * stable view gives the window its own compiled pipelines (one per variant object, vsg's normal per-view
- * behaviour) while the shared object stays shared, exactly as the previous implementation's slots did with
- * their own views.
+ * ONE VIEW FOR THE WHOLE WINDOW - and, measured in M4c, NOT the thing that keeps the window's pipelines apart
+ * from an off-screen pass' ones. vsg compiles a pipeline per VIEW ID, and a graphics pipeline is only usable
+ * in a compatible render pass; the window's render pass comes from vsg, with the surface's format and its own
+ * dependencies, so it is NOT compatible with an off-screen pass of the same engine shape. The window's
+ * content is recorded under its own stable view, and what that buys is a view id of its own; what it does NOT
+ * buy is a separately compiled VkPipeline - vsg reuses an implementation whose pipeline STATES compare equal
+ * whatever render pass it was built for, and a view with no state overrides adds no difference. The separation
+ * that holds is the pipeline KEY: the DEVICE formats in its compatibility half (the swapchain's sRGB format
+ * versus an off-screen target's linear one), which gives each family its own variant object. See
+ * RenderPassCompatibility for the measurement.
  *
  * The view carries a PLACEHOLDER camera: vsg's compile traversal merges `view.camera->viewportState` into
  * the pipeline states without testing the camera first, so a camera-less view walks into a null pointer -

@@ -21,7 +21,9 @@ bool VertexLayoutKey::operator==(const VertexLayoutKey& other) const noexcept
 bool RenderPassCompatibility::operator==(const RenderPassCompatibility& other) const noexcept
 {
     return color_formats == other.color_formats && depth_format == other.depth_format &&
-           samples == other.samples && subpass == other.subpass;
+           device_color_formats == other.device_color_formats &&
+           device_depth_format == other.device_depth_format && samples == other.samples &&
+           subpass == other.subpass;
 }
 
 bool LoadOpVariantKey::operator==(const LoadOpVariantKey& other) const noexcept
@@ -91,6 +93,10 @@ std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
         mix(static_cast<std::uint64_t>(format));
     }
     mix(key.compatibility.depth_format.has_value() ? static_cast<std::uint64_t>(*key.compatibility.depth_format) + 1U : 0U);
+    for (const std::uint32_t format : key.compatibility.device_color_formats) {
+        mix(format);
+    }
+    mix(key.compatibility.device_depth_format);
     mix(key.compatibility.samples);
     mix(key.compatibility.subpass);
     mix(key.depth_sampleable ? 1U : 0U);
@@ -106,7 +112,9 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
     static constexpr std::array<KeyAuditEntry, 8> kAudit{ {
         { "DataKey", "buffer identity + upstream revision + channel slice (components/offset/count)" },
         { "VertexLayoutKey", "canonical channel mask + custom channel locations" },
-        { "RenderPassCompatibility", "colour formats + depth format (or none) + samples + subpass" },
+        { "RenderPassCompatibility",
+          "colour formats + depth format (or none) + the same attachments as the DEVICE spells them + samples "
+          "+ subpass" },
         { "LoadOpVariantKey",
           "load/store ops + initial/final layout - NOT pipeline identity: compatibility excludes them" },
         { "PipelineKey",
@@ -115,7 +123,9 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
         { "DynamicState",
           "depth policy + cull + polygon + topology + blend - delivered per draw with set commands" },
         { "InstanceSlot", "model matrix + opacity + material identity + revision - per frame data" },
-        { "TargetDesc.shape", "attachment formats + depth format + samples + subpass - NEVER an extent" },
+        { "TargetDesc.shape",
+          "attachment formats (the engine's spelling AND the device's) + depth format + samples + subpass - "
+          "NEVER an extent" },
     } };
     return kAudit;
 }

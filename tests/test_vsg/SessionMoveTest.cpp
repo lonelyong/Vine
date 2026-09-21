@@ -21,6 +21,8 @@
 #    include <xcb/xcb.h>
 #endif
 
+#include "TestHostWindow.hpp"
+
 #include <vine/vsg/api/DeviceProbe.hpp>
 #include <vine/vsg/api/Session.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
@@ -33,64 +35,6 @@ using vine::vsg::api::probePhysicalDevices;
 
 namespace
 {
-
-/**
- * @brief An X11 window the TEST owns, so a session can adopt it as the host's.
- *
- * Created and destroyed by the test on purpose: the session must never destroy the host's window, and a
- * window this test did not make would not prove that. The handle travels as `void*` exactly as the backend
- * receives it (see VsgHostWindow's handle conversion).
- */
-class HostWindow
-{
-  public:
-    HostWindow(xcb_connection_t* connection, xcb_screen_t* screen, int width, int height)
-      : connection_(connection)
-    {
-        window_                      = xcb_generate_id(connection_);
-        const std::uint32_t mask     = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
-        const std::uint32_t values[] = { screen->black_pixel,
-                                         XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_EXPOSURE };
-        xcb_create_window(connection_, XCB_COPY_FROM_PARENT, window_, screen->root, 0, 0,
-                          static_cast<std::uint16_t>(width), static_cast<std::uint16_t>(height), 0,
-                          XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, mask, values);
-        xcb_map_window(connection_, window_);
-        xcb_flush(connection_);
-    }
-
-    HostWindow(const HostWindow&)            = delete;
-    HostWindow& operator=(const HostWindow&) = delete;
-
-    ~HostWindow()
-    {
-        xcb_destroy_window(connection_, window_);
-        xcb_flush(connection_);
-    }
-
-    /** @brief The handle in the form the backend passes it around. */
-    [[nodiscard]] void* handle() const noexcept
-    {
-        return reinterpret_cast<void*>(static_cast<std::uintptr_t>(window_));
-    }
-
-    /** @brief Whether the window still exists (the session must not have destroyed it). */
-    [[nodiscard]] bool alive() const
-    {
-        const auto* reply = xcb_get_window_attributes_reply(
-            connection_, xcb_get_window_attributes(connection_, window_), nullptr);
-        const bool alive = reply != nullptr;
-        if (reply != nullptr)
-        {
-            std::free(const_cast<xcb_get_window_attributes_reply_t*>(reply));
-        }
-        return alive;
-    }
-
-
-  private:
-    xcb_connection_t* connection_;
-    xcb_window_t      window_;
-};
 
 }  // namespace
 
@@ -115,8 +59,8 @@ TEST(SessionMoveTest, ASecondHostWindowMovesTheSessionAndTheSameOneKeepsIt)
     ASSERT_NE(screens.rem, 0) << "an X display without a screen";
     xcb_screen_t* screen = screens.data;
 
-    HostWindow first(connection, screen, 320, 240);
-    HostWindow second(connection, screen, 320, 240);
+    TestHostWindow first(connection, screen, 320, 240);
+    TestHostWindow second(connection, screen, 320, 240);
 
     vine::vsg::core::Diagnostics diagnostics;
     // A session that NEVER pumps the host's events (the host owns the message loop) and reports nothing.

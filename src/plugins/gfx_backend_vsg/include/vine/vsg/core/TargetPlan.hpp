@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/vsg/core/Keys.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -64,16 +65,34 @@ enum class RepairReason : std::uint8_t
  * What a resize may NOT be allowed to hide here is an extent: pixel size is a runtime resource, not an
  * identity. What it MUST contain is everything a rebuild really depends on: attachment formats, the
  * depth format (or its absence), the sample count and the subpass structure.
+ *
+ * The device formats are carried next to the engine's spelling because only the device layer can fill them
+ * and only they can tell two render passes apart that the engine's vocabulary calls the same thing (an sRGB
+ * surface and a linear RGBA8 image are both "RGBA8"; see RenderPassCompatibility). 0, the device's
+ * UNDEFINED, means "no such attachment" - and, for a shape that never learned them, "not known".
  */
 struct TargetShape
 {
     std::vector<vine::graphics::RenderTarget::ColorFormat> color_formats;  ///< One per colour attachment.
     std::optional<vine::graphics::RenderTarget::DepthFormat> depth_format; ///< Absent for a colour-only target.
-    std::uint32_t samples{1};                                              ///< Sample count.
-    std::uint32_t subpass{0};                                              ///< Subpass the pipeline targets.
+    std::vector<std::uint32_t> device_color_formats;  ///< The same attachments, as the device spells them.
+    std::uint32_t              device_depth_format{0}; ///< The device's depth format; 0 = no depth.
+    std::uint32_t              samples{1};             ///< Sample count.
+    std::uint32_t              subpass{0};             ///< Subpass the pipeline targets.
 
     /** @brief Compares the compatibility-relevant properties. */
     [[nodiscard]] bool operator==(const TargetShape& other) const noexcept;
+
+    /** @brief Gets the compatibility half of a pipeline key for a target that has this shape.
+     *
+     * One spelling for one fact: a pipeline is compiled against exactly the render pass its target owns, so
+     * the key's compatibility half IS this shape's compatibility-relevant half - built here rather than by
+     * every caller, because a caller that built it by hand could drop the device formats and silently hand
+     * one compiled pipeline to two render passes that are not compatible (see RenderPassCompatibility).
+     *
+     * @return The shape's compatibility, device formats included.
+     */
+    [[nodiscard]] RenderPassCompatibility compatibility() const noexcept;
 };
 
 /** @brief A target as the frame wants it: an extent plus a shape. */

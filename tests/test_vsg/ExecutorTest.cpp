@@ -74,7 +74,6 @@ using vine::vsg::core::FrameToken;
 using vine::vsg::core::Observe;
 using vine::vsg::core::PassId;
 using vine::vsg::core::Rgba8;
-using vine::vsg::core::RenderPassCompatibility;
 using vine::vsg::core::StateRegistry;
 using vine::vsg::core::StreamKey;
 using vine::vsg::core::StreamKind;
@@ -104,15 +103,6 @@ ContentPipeline::Shaders triangleShaders()
 }
 
 /// @brief The compatibility half of a pipeline's identity, from the shape the target really has.
-RenderPassCompatibility compatibilityOf(const TargetShape& shape)
-{
-    RenderPassCompatibility compatibility;
-    compatibility.color_formats = shape.color_formats;
-    compatibility.depth_format  = shape.depth_format;
-    compatibility.samples       = shape.samples;
-    compatibility.subpass       = shape.subpass;
-    return compatibility;
-}
 
 std::vector<std::byte> bytesOf(std::size_t count)
 {
@@ -252,7 +242,7 @@ struct Fixture
         draw.key.program                      = &program;
         draw.key.revision                     = 1U;
         draw.key.vertex_layout.canonical_mask = 0x1U;
-        draw.key.compatibility                = compatibilityOf(first->shape());
+        draw.key.compatibility                = first->shape().compatibility();
         draw.key.sampled_color_count          = 0U;
         draw.dynamic                          = pass.draws[0].commands[0].dynamic;
         draw.blocks = descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,

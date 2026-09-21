@@ -28,6 +28,7 @@ set(SRC_FILE_LIST
 	ContentStackTest.cpp
 	SampledInputTest.cpp
 	ScreenDrawTest.cpp
+	WindowCompositionTest.cpp
 	ViewBlockTest.cpp
 	SessionContentTest.cpp
 	DeviceProbeTest.cpp

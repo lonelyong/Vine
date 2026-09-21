@@ -3,10 +3,11 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M4b（全屏绘制的计划侧：计划解析它的状态（深度策略 `Disabled` —— 正典三角形在 reverse-Z 远平面），内容层
-> 按 `kind` 找半片、把 pass 的输入绑在 **set 0** 并推 128B 片元 push 块）**：`test_vsg` 526 用例 / 84 套件
+> **M4c（窗口合成：一趟窗口 pass 里叠全屏覆盖层；顺带把 §11.16o 登记的两条口子做成用例——多趟窗口 pass 的
+> "一次清"有了像素证据，"窗口/离屏同键变体"被证明**是错的**：引擎的格式枚举是投影、vsg 的按 viewID 编译在
+> 状态相同时不救，修法是**设备格式进键的兼容性半边**）**：`test_vsg` 527 用例 / 85 套件
 > 全绿（含真设备像素用例），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由
-> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 806 文件）。
+> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 808 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -1416,15 +1417,20 @@ M3d-3b（内容绘制进 render graph）开工前先把它的**两处前提**钉
 
 **本片留下的口子（登记，不假装解决）**：
 
-* **多次窗口 pass 的"一次清"没有像素证据**：本片用例只有一趟窗口 pass，`window_recorded_` 那条规则
+* **多次窗口 pass 的"一次清"没有像素证据**（**已关，§11.16r**：M4c 的夹具里第④趟窗口 pass 公告了另一种清屏色，
+  背景仍是第③趟的颜色、公告的那个色**不出现**）；本片用例只有一趟窗口 pass，`window_recorded_` 那条规则
   要等 M4（全屏/screen pass 会往同一张图上叠第二趟）才有可观测的形态；
 * **稳定视图的反证（与离屏 pass 共用管线键）也没落地**：要看到"窗口管线被按别人 render pass 编译"的
   后果，得让同一帧里有一趟离屏 pass 与窗口 pass **同键**（同程序/几何/兼容性）；这是 M4 的用例形态
-  （共享键 + 采样输入正是全屏 pass 的日常）；
+  （共享键 + 采样输入正是全屏 pass 的日常）。**已关，且结论是修正**（§11.16r）：同键的后果实测到了
+  （`VUID-vkCmdDrawIndexed-renderPass-02684`），但稳定视图**不是**解法——vsg 的复用循环只比 pipeline states，
+  两个视图的状态集合相同时照样共用一份实现；解法是键带上**设备格式**（两个变体）；
 * **逐帧新建 `CommandGraph`/内容节点**：`makeFrameGraph` 现在每帧可以给一张新图，内容节点也每帧重建
   （保留 + 停放的优化留给后面）；
 * **采样输入的描述符集逐帧重建**（M3d-3b-8 的既有形态）依旧成立；
-* **第二个渲染通道家族出现时可能需要逐 pass 视图**（现在是"一个视图管整个窗口"）；
+* **第二个渲染通道家族出现时可能需要逐 pass 视图**（现在是"一个视图管整个窗口"）——**已实测给出答案**
+  （§11.16r）：家族之分靠**键**（设备格式），不靠视图；视图只在需要**逐视图状态覆盖**时才有用，本后端不覆盖
+  任何状态，所以"一个视图管整个窗口"留着；
 * **活改尺寸的窗口用例**：`prepare` 里"renderArea 跟随活的尺寸"那行现在只有代码与理由，没有可观测证据（M5 不可观测的原因）；它需要把宿主窗口在帧间改尺寸、再读新区域的像素。
 
 ### 11.16p M4a（2026-09-21）：全屏绘制调用（身份 + 层 + 事实 + 录制，真设备像素）
@@ -1524,6 +1530,89 @@ pass 声明的第一个输入（M3d-3b-8 那条采样线的另一个消费者）
 （多趟窗口 pass 的"一次清"、窗口/离屏同键变体）——它们要一个"离屏 pass + 两趟窗口 pass"的夹具，与 M4a/b 的
 离屏夹具不同源，单独做一片（M4c）。
 
+### 11.16r M4c（2026-09-22）：窗口合成（一趟窗口 pass 里叠全屏覆盖层），顺带把两条登记的口子做成用例
+
+M4a/M4b 的全屏绘制只在离屏目标上验过；这一片把它放进**窗口自己的 render pass**（vsg 造的，表面格式 + 它自己
+的依赖），与一趟离屏 pass 同帧。夹具 = 四趟 pass 一帧：①「picture」离屏（只清屏，红）②「shared」离屏（清屏 +
+同一段场景三角形，深度格式与窗口 traits 相同 ⇒ 引擎看来与窗口同形）③窗口场景（**第一趟窗口 pass，拥有那一次
+清**）④窗口覆盖层（全屏绘制：采 picture，画在 PiP 子矩形里，自己公告**绿色**清屏——必须不生效）。计数器与像素
+各管一段：像素说"叠对了"，计数器说"录对了"（黑窗也能让"没画"看起来像"画对了"）。
+
+三条结论，两条来自登记的口子，第三条是这一片**新发现**：
+
+1. **多趟窗口 pass 的"一次清"有了像素证据**：窗口背景是第③趟的清屏色（蓝），第④趟公告的绿色**不出现**
+   （`isColourByte(background[1], 0.25)` 为假），三角形仍是场景色 ⇒ `window_recorded_` 那条规则
+   （一帧里第一趟窗口 pass 拥有那次清）从"只有理由"变成"有反证"。执行器还断言了它是**按计划顺序**放置四趟
+   （`recorded() == {1,2,3,4}`，不是公告顺序——本夹具里两者恰好相同，所以这条是"接缝存在"的证据而不是"顺序会
+   被改"的证据）。
+2. **"窗口/离屏同键变体"这个口子是错的**：真正的答案不是"共享一个变体、让 vsg 按 viewID 分开编译"，而是
+   **两个变体**。理由两条，都是实测：
+   * 引擎的兼容性词汇表是**投影**（`RenderTarget::ColorFormat::RGBA8` 同时覆盖 `B8G8R8A8_SRGB` 与
+     `R8G8B8A8_UNORM`），而这两个 render pass **不兼容**（通道序 + 色彩空间 + 子 pass 依赖数都不同）；
+   * vsg 的 `GraphicsPipeline` 虽然按 viewID 编译，但**复用循环只比 pipeline states，不比 render pass**
+     （`vsg 1.1.16 — src/vsg/state/GraphicsPipeline.cpp — GraphicsPipeline::compile()`）：本后端的管线把
+     viewport/scissor 声明成动态状态、状态集合逐位相同 ⇒ "两个视图"照样复用同一份实现。
+   实测形态：`VUID-vkCmdDrawIndexed-renderPass-02684`（`B8G8R8A8_SRGB` vs `R8G8B8A8_UNORM`、
+   `dependencyCount 2 != 1`）——**画面竟然是对的**（未定义行为，不是"能跑就行"的证据）。
+   修法（本片落地）：**把设备格式放进键的兼容性半边**——`core::TargetShape` 多两个字段
+   （`device_color_formats` / `device_depth_format`，装载设备自己的格式码，0 = 无该附件/未知），
+   `core::RenderPassCompatibility` 同样带上，`TargetShape::compatibility()` 一处装配（调用方不再手搓），
+   两个目标各自把真实格式报出来（窗口从 surface，离屏从自己建镜像用的那个映射）。这是**引擎词汇表表达不了
+   的事实由知道它的那一层交出来**，不是把 extent 之类的运行时量塞进身份：格式是 render pass 身份的一部分，
+   Vulkan 的兼容性规则里写着。
+3. **顺带纠正 §11.16o 的一条理由**：那里说"窗口内容挂在自己的稳定 `vsg::View` 下 ⇒ vsg 就按窗口的 render pass
+   编译窗口的管线"。视图**没有**这个作用（见 2 的第二条：状态相同就复用实现），稳定视图本身还在（记录期
+   `viewID` 的出处），但"分族"是**键**的事。视图的真正用途是"逐视图状态覆盖"的挂点，本后端不覆盖任何状态。
+
+**顺带修掉的既有缺陷（本片夹具第一个踩到）**：**capture 的跨帧写-写**。每个目标的 `capture()` 每帧被录一次，
+写的是**同一块** host-visible 目的缓冲；会话可以有好几帧在飞，两份拷贝之间没有任何依赖 ⇒ 同步验证报
+`SYNC-HAZARD-WRITE-AFTER-WRITE`（4 条）。修法是 capture 命令表开头加一条**声明顺序**的缓冲屏障
+（`TRANSFER → TRANSFER`、`TRANSFER_WRITE → TRANSFER_WRITE`）——两份拷贝写的是同样的字节，缺的只是"谁先谁后"
+的声明。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `tests/test_vsg/WindowCompositionTest.cpp`（新） | 四趟 pass 一帧的窗口合成夹具：像素三条（三角形 = 自己的变体、背景 = 第一趟窗口 pass 的清、PiP = 覆盖层采到的那张图）+ 计数器五条 + 执行器顺序；窗口读回按**表面字节序**归一（见下） |
+| `tests/test_vsg/TestHostWindow.hpp`（新） | 测试自己的宿主窗口（XCB）：`handle()` / `alive()` / `pixel()`——把 `SessionContentTest` / `SessionMoveTest` 里两份雷同的局部 `HostWindow` 合成一处（-116 行），本片的用例是第三个使用者 |
+| `core/Keys.hpp` / `Keys.cpp` | `RenderPassCompatibility` 带 `device_color_formats` / `device_depth_format`（+ `operator==` + 哈希 + 审计表那一行的词）与理由（含实测 VUID） |
+| `core/TargetPlan.hpp` / `TargetPlan.cpp` | `TargetShape` 同两个字段 + `compatibility()`（键的兼容性半边就此只有一处装配）；`operator==` 带上它们 |
+| `api/WindowTarget.cpp` / `api/OffscreenTarget.cpp` | 各自把真实设备格式报进 shape（窗口 = surface format，离屏 = 自己镜像用的那个）；窗口文件头纠正"稳定视图"那条理由 |
+| `api/OffscreenTarget.cpp` | capture 命令表加声明顺序的缓冲屏障（跨帧写-写） |
+| `tests/test_vsg/{ContentPassTest,ExecutorTest,SampledInputTest,SessionContentTest,WindowCompositionTest}.cpp` | 五份本地 `compatibilityOf(shape)` 助手删掉，改调 `shape.compatibility()`（一处规则一处装配） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **"两个视图"不等于"两份编译"** | vsg 的复用循环看的是状态集合；两个视图的状态集合相同时它**故意**复用（对同一 render pass 的 load-op 变体来说这正是想要的：`LoadOpVariantKey` 不进键就是为了让它们共享一份编译）。所以"哪些东西算兼容"必须由**键**回答完整，视图救不了键 |
+| **引擎的格式枚举是投影，不是身份** | `RGBA8` 不能作为 render pass 身份的替身：sRGB/线性、BGR/RGB 都是兼容性的一部分。设备格式因此**必须**从设备层交上来（`core/` 不认识这些码，只比较它们）；"没报"与"报了别的"是两个不同的兼容性，未知**不会**静默并族 |
+| **未定义行为可能"看着对"** | 变异 Q1（键丢掉设备格式）复现 VUID 的同时**像素照过**：管线当初是按另一个 render pass 编译的，驱动只是恰好把这次画对了。所以这一条的判据是验证层，不是画面——"画面对了"证明不了兼容性 |
+| **窗口读回要按表面字节序** | `xcb_get_image` 回来的字节是**服务器/表面**的顺序：本机交换链是 `B8G8R8A8_*` ⇒ `[B,G,R]`。第一版夹具直接在 `[0]` 上比红色，把红蓝读反了——而三角形选的洋红在红蓝上对称，这个错误**看不出来**。夹具现在按 `device_color_formats` 把像素归一成 (r,g,b) 一次，并把颜色选成"红蓝不对称"（背景蓝、覆盖层源红） |
+| **记录一帧两次会碰到 probe 的跨帧序** | capture 写的是同一块目的缓冲；会话有好几帧在飞时这就是写-写。修法是声明顺序的屏障（不是加环：probe 的语义正是"读这帧的最后一张图"，而宿主读之前要等设备） |
+| **`Session` 中途换帧图不安全** | 试过"settle 帧只挂窗口图"（避开离屏 capture 的重复录制）：`assignFrameGraphs` 会释放**在飞**的命令缓冲 ⇒ `VUID-vkFreeCommandBuffers-pCommandBuffers-00047`。在飞的帧没有公开的等待点（`shutdown()` 才有），所以这条只能整片地做（登记到下面的口子） |
+
+| 变异反证（全部实测） | 结果 |
+| --- | --- |
+| Q1：键里丢掉设备格式（`TargetShape::compatibility()` 不搬那两个字段） | `pipelines()` 从 2 变 1（计数器断言红）+ `VUID-vkCmdDrawIndexed-renderPass-02684` 复现（验证层红，4 条）+ **像素全绿**（未定义行为，见上） |
+| Q2：capture 不声明顺序（去掉那条屏障） | 同步验证从 0 变 **4** 条 `SYNC-HAZARD-WRITE-AFTER-WRITE`（写的是同一块缓冲） |
+| Q3：不跑 settle 帧 | 窗口读到 **(0,0,0)**：呈现是异步的，`commitFrame()` 之后立刻读会拿到旧后备存储（登记在 §11.16o 的既有事实） |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **527 用例 / 85 套件全绿**（+1 用例 / +1 套件） |
+| 门禁 | 插件目标与全仓 `ninja` 零 error；强制验证层整仓 **0 VUID**；再加同步验证仍 **0 SYNC-HAZARD**；hygiene 0 / **808** 文件；`check_diagnostic_formats.py` 0 / 39；`check_doc_symbols.py` 通过；`check_vsg_upstream_capabilities.py` 7 条全部仍成立 |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **离屏目标的多趟写入**：`OffscreenTarget::passGraph()` 里 bootstrap 恒为 `true`（每趟都清），且离屏内容挂在
+  **pass 图**里而不是目标的稳定视图下 ⇒ 同一目标一帧两趟时第二趟会擦掉第一趟、内容只画在自己那趟里。计划侧
+  （`CompiledPass::bootstrap` = "该目标的第一个写者"）已经能表达，执行侧还没接上——留给"多写者离屏目标"那片；
+* **`Session` 在飞的帧没有等待点**：中途 `assignFrameGraphs` 会释放仍在待处理的命令缓冲（VUID 00047）。要用
+  "换图"表达"这一帧只画窗口"的用例（本片的 settle 帧本可以更省）得先有那个等待点（或 vsg 侧的回收协议）；
+* **capture 的宿主读序**：屏障声明的是**设备侧**的顺序；宿主 `probe()` 前仍要靠 `deviceWaitIdle`（真设备用例
+  都这么做）。多帧在飞时，"读第 N 帧的图"与"第 N+2 帧正在写同一块缓冲"之间的宿主侧顺序没有机制，只有约定；
+* **`prepare` 的 renderArea 仍无活改尺寸证据**（§11.16o 登记，M5 之前不动）；
+* **窗口内容视图仍是"一个管整个窗口"**：与 pass 的对应关系不存在（本后端不覆盖逐视图状态），若将来某个 pass
+  需要逐视图状态（例如按视图不同的深度范围），那才是"逐 pass 视图"的时机。
+
 
 | 有意不做（写在这里，不埋在实现里） | 内容 |
 | --- | --- |
@@ -1574,7 +1663,7 @@ pass 声明的第一个输入（M3d-3b-8 那条采样线的另一个消费者）
 | ~~M3d-3c~~ | **已完成（2026-09-21）**：执行段第三片（`api/WindowTarget` 把窗口变成执行器认识的目标：一张图、一次清、一个稳定视图；`api/ViewBlock` 定下视图块的四处约定并把 SDK 裁剪空间折进设备约定；`api/Session` 的帧时钟 + `frameSeconds()` + 帧图接缝），真设备像素用例（计划清屏 + 视图块进着色 + 一次 present）+ 五条变异反证（一条登记为不可观测）（§11.16o） |
 | ~~M4a~~ | **已完成（2026-09-21）**：全屏绘制调用的内容侧（键的 `kind` + `api/ContentPipeline::createScreen`（set 0 = 采样集、push 片元 128B）+ `api/ContentSources::buildScreenProgramFacts`（引擎顶点阶段 + 宿主片元阶段）+ `api/ContentDraw::recordScreen`（`Draw(3)`）），真设备像素用例（随 SDK 发布的 screen copy 的 PiP 拷贝 + binding i = 附件 i）+ 四条变异反证（§11.16p） |
 | ~~M4b~~ | **已完成（2026-09-22）**：全屏绘制的计划侧（`CompiledDraw::dynamic` + 全屏调用的深度策略 = `Disabled`（正典三角形在 reverse-Z 远平面）；`api/ContentPass` 按 `kind` 找半片、采样集在 set 0、push 128B 片元（内容全零）；真设备像素用例（计划驱动的 PiP 拷贝）+ 两条变异反证（§11.16q） |
-| M4c | 窗口合成：一趟窗口 pass 里叠全屏覆盖层；顺带把 §11.16o 登记的两条口子（多趟窗口 pass 的一次清、窗口/离屏同键变体）做成用例 |
+| ~~M4c~~ | **已完成（2026-09-22）**：窗口合成（`tests/test_vsg/WindowCompositionTest.cpp`：四趟 pass 一帧——离屏清屏 / 同形离屏场景 / 窗口场景（拥有那一次清）/ 窗口全屏覆盖层，真设备像素三条 + 计数器五条 + 执行器按计划顺序放置）；顺带把 §11.16o 的两条口子做成用例，其中"窗口/离屏同键变体"被证明是错的 ⇒ **设备格式进键的兼容性半边**（`core::TargetShape` / `core::RenderPassCompatibility` + `TargetShape::compatibility()` + 两个目标各自上报），并纠正 §11.16o 里"稳定视图分族"那条理由；修掉 capture 的跨帧写-写（声明顺序的屏障）+ 三条变异反证 + 测试宿主窗口去重（§11.16r） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
