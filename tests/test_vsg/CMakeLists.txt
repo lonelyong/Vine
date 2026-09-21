@@ -27,6 +27,7 @@ set(SRC_FILE_LIST
 	OffscreenTargetTest.cpp
 	ContentStackTest.cpp
 	SampledInputTest.cpp
+	ViewBlockTest.cpp
 	SessionContentTest.cpp
 	DeviceProbeTest.cpp
 	SessionTest.cpp
@@ -158,6 +159,8 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/GeometryFacts.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentSources.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentPass.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/WindowTarget.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ViewBlock.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridge.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridgeGeometry.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgSceneRules.cpp

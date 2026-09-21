@@ -3,10 +3,10 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-21）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M3d-3b-8（pass 输入的采样绑定：计划携带输入表，内容层把输入的彩色附件绑成采样纹理，键里的
-> `sampled_color_count` 由此有值）**：`test_vsg` 512 用例 / 82 套件全绿（含真设备像素用例），
-> 强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由
-> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 800 文件）。
+> **M3d-3c（执行段第三片：窗口作为执行器认识的目标——一张图、一次清、一个稳定视图；视图块把 SDK 裁剪
+> 空间折进设备约定并带上帧时钟与目标尺寸；会话侧 `frameSeconds()` 与帧图接缝）**：`test_vsg` 517 用例 /
+> 83 套件全绿（含真设备像素用例），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的
+> include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 805 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -1374,6 +1374,59 @@ M3d-3b（内容绘制进 render graph）开工前先把它的**两处前提**钉
 | **彩色附件按可采样收尾** | 输入的图像必须真的处在 `SHADER_READ_ONLY` 且建了 `SAMPLED` usage，否则描述符在撒谎。旧实现是"彩色附件永远按 SHADER_READ_ONLY 收尾"；重写版原先为了免 barrier 读回改成 TRANSFER_SRC，这一片把彩色改回**采样收尾**（深度仍留在附件布局：它是下一趟 pass 的附件、也是阴影的纹理，另有机制），**代价是读回的拷贝自带一对转移**（拷贝仍是一条命令，只是前后各一个 image barrier） |
 | **"没人产出"与"后端不认识"是两件事** | 空白输入（引擎解析成 null）留在表里、报 0 张、**不上报**——那一层的问题归引擎（它自己会报）；非空但 target 事实答不上来才由编译器报一次（后端自己的账缺了一页）。两种情形的共同答案都是"这一项绑不了东西"，所以内容层按 0 张核对，照画其余 |
 
+### 11.16o M3d-3c（2026-09-21）：会话侧（窗口目标、一次 present、视图块，真设备）
+
+执行段的第三片：把"窗口"变成执行器认识的目标，把"视图块"的四处约定钉在一处，把会话的帧时钟与
+帧图接缝接上。三件事：
+
+1. **窗口是目标，不是特例**（`api/WindowTarget`）：`prepare(clear)` 刷新 renderArea（跟随窗口**活的**
+   尺寸）并按计划写清屏值，`graph()` 给出唯一那张 `RenderGraph`，`shape()/facts()` 用与离屏目标同一套
+   词回答"你是几张彩色、深度是什么"。`facts()` 的 `target` 是 **nullptr** —— 这就是默认帧缓冲的身份，
+   执行器用它把 pass 分派到窗口路径。
+2. **一张图、一次清、一个稳定视图**（`api/WindowTarget` + `api/VsgExecutor::recordWindow`）：
+   窗口的 framebuffer 是**记录时**按 `window->imageIndex()` 解的，而窗口的 render pass 的 load op 是
+   vsg 的（平台定），所以**一帧里只能清一次**：计划顺序里第一个窗口 pass 拥有这次清（它自己的
+   `clear` 策略），后面的窗口 pass 叠在它上面（`window_recorded_` 正是这条规则的开关）。
+   窗口的内容挂在**一个** `vsg::View` 下，且这视图跨帧稳定：vsg 的 `GraphicsPipeline` 是**按 viewID**
+   编译的（`GraphicsPipeline.cpp` 的 `_implementation[viewID]`），没有视图时所有 pass 共用 viewID 0，
+   窗口的 pass 就可能复用到"按别人 render pass 编译"的管线；逐帧换视图则会让编译出的管线**泄漏**
+   （`View::~View` 只放号，不回收号上的实现）。
+3. **视图块**（`api/ViewBlock`）：`buildViewBlock(camera, time, width, height)` 把计划里的相机快照、
+   会话的帧时钟与**目标**（不是 pass 子矩形）的尺寸装配成 ABI 块；`api/Session` 新增 `frameSeconds()`
+   （会话自己开机的时刻为零点，**一帧内不变**），并给内容层两条帧图接缝（`makeFrameGraph` /
+   `assignFrameGraphs`）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/WindowTarget`（新） | 窗口作为目标：shape/facts/`prepare`/`addContent`/`graph` + `colorAttachmentCount/width/height/depthSampleable`；文件头写明"一张图、一次清、一个稳定视图"三条理由 |
+| `api/ViewBlock`（新） | 视图块唯一装配处：列主序、`view_proj = proj * view`、`inv_view`、`cam_pos.w`/`frame.w` 保留为 0、**裁剪矩阵折进设备约定**、`frame = {时间, 目标宽, 目标高, 0}`、无相机 = 零矩阵 + 帧事实仍在 |
+| `api/VsgExecutor` | `setWindow(WindowTarget*)` + `recordWindow`（计划/world 形状核对、首次 `prepare` + 挂图、逐包挂内容；不匹配就整趟跳过并上报）；离屏路径移进 `recordOffscreen` |
+| `api/Session` | `Impl` 里窗口目标取代临时 render graph；帧时钟（`started_at`/`frame_seconds`）在 `beginFrame()` 采样；`frameSeconds()`；`makeFrameGraph`/`assignFrameGraphs`（后者换掉 viewer 的录/提交任务并紧接着编译） |
+| `tests/test_vsg/ViewBlockTest.cpp`（新） | 4 个无设备用例（列主序 + 组合、**裁剪折叠**的算术、帧事实与保留位、无相机） |
+| `tests/test_vsg/SessionContentTest.cpp` | +1 个真设备用例：计划驱动的整帧进窗口（清屏像素、视图块进片元着色、一次 present、timeline 推进、零设备等待） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **视图块的裁剪矩阵是设备的，不是 SDK 的** | SDK 的矩阵是 x 右、y 上、z∈[-1,1] 近端 -1；本后端的设备是 reverse-Z + y 向下 NDC（近→1、远→0、世界上=屏幕上）。**宿主程序写 `gl_Position = view_proj * model * pos` 时不该知道任何一条**，所以折叠（x/w 不变、y 取反、z 记作 `0.5 - 0.5*z`）发生在块装配处。`view`/`inv_view` 是视图空间矩阵，**不折**（视图空间的关照计算与裁剪约定无关） |
+| **不折的失败形态（实测）** | 没折的矩阵把测试三角形放在裁剪 z = **-0.714**；窗口深度清 0.0、比较是 `GREATER` ⇒ 每个片元都被拒绝。画面只剩清屏色，而**绘制仍被记录、计划仍正确、0 VUID、0 诊断**——这正是 `SceneBridgePipeline` 文件头为手写 `gl_Position` 记下的陷阱，只是上了一层（矩阵而不是程序） |
+| **镜像的深度映射画面看不出来** | 变异 M2（z 折反：近→0、远→1）让三角形落在深度 0.143，仍 `GREATER` 过测 ⇒ **像素断言全绿**，只有算术用例红。这就是"算术用例与像素用例各管一段"的实证：画面负责"这条约定能用"，算术负责"这条约定是对的" |
+| **时间与尺寸的出处** | 时间来自 `Session::frameSeconds()`（会话开机为零点、一帧内所有 pass 同值）；尺寸是**目标**的（着色重建屏幕空间数据时用的那张图），不是 pass 的子矩形——子矩形是 viewport 命令的事 |
+| **一帧一次 present** | `commitFrame()` 里 `recordAndSubmit()` → `present()` → 帧计数 +1、`timeline.submitted(token)`、`retirement.advance(timeline)` 的顺序就是"帧的账"。像素用例在**第一帧**之后立刻断言 `framesPresented()==1`、`submittedFrame()==1`、`deviceWaits()==0`，再空转两帧只为**让呈现落地**（显示服务器的拷贝是异步的，第一帧刚 present 就读到的可能还是窗口的旧后备存储——另一个用例一直呈现三帧就是这个原因） |
+| **变异反证（五条已验，一条登记）** | M1 折掉 ⇒ 3 用例红（2 算术 + 像素的 4 条断言）；M2 z 折反 ⇒ 2 算术红、像素**绿**（见上）；M3 y 不折 ⇒ 2 算术 + 朝向像素红；M4 `view` 也折 ⇒ 2 算术红（像素读不到 `view`）；M6 不调 `prepare` ⇒ 清屏像素红且实测露出 vsg 的默认清屏色 **(102,51,51)**（"画面里的清屏色确实是计划的"由此有了反证）。M1–M4 的容差特意收紧到 ±6：0.25 的 sRGB 像（137）与 0.5 的线性像（128）只差 9，容差一松，**没画出来的像素**就能替着色答"cam_pos 到了"。M5（`prepare` 不刷 renderArea）**在本片的夹具里不可观测**：窗口尺寸没变过，创建时的矩形与活的尺寸相同——它的可观测形态要一个**活改尺寸**的窗口用例（登记到下面的口子） |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **多次窗口 pass 的"一次清"没有像素证据**：本片用例只有一趟窗口 pass，`window_recorded_` 那条规则
+  要等 M4（全屏/screen pass 会往同一张图上叠第二趟）才有可观测的形态；
+* **稳定视图的反证（与离屏 pass 共用管线键）也没落地**：要看到"窗口管线被按别人 render pass 编译"的
+  后果，得让同一帧里有一趟离屏 pass 与窗口 pass **同键**（同程序/几何/兼容性）；这是 M4 的用例形态
+  （共享键 + 采样输入正是全屏 pass 的日常）；
+* **逐帧新建 `CommandGraph`/内容节点**：`makeFrameGraph` 现在每帧可以给一张新图，内容节点也每帧重建
+  （保留 + 停放的优化留给后面）；
+* **采样输入的描述符集逐帧重建**（M3d-3b-8 的既有形态）依旧成立；
+* **第二个渲染通道家族出现时可能需要逐 pass 视图**（现在是"一个视图管整个窗口"）；
+* **活改尺寸的窗口用例**：`prepare` 里"renderArea 跟随活的尺寸"那行现在只有代码与理由，没有可观测证据（M5 不可观测的原因）；它需要把宿主窗口在帧间改尺寸、再读新区域的像素。
+
 | 有意不做（写在这里，不埋在实现里） | 内容 |
 | --- | --- |
 | 输入的**深度**半边 | "深度真可采样才绑"与 shadow 的专用绑定（`shadow_bound` + `VineShadowBlock`）一起留给 M5：键里另一个 `depth_sampleable` 字段现在的含义是"pass 自己的目标深度可采样"（M3d-3b-0 的事实 + 执行器核对），在 M5 重钉之前不在这里造第二条语义 |
@@ -1420,7 +1473,8 @@ M3d-3b（内容绘制进 render graph）开工前先把它的**两处前提**钉
 | ~~M3d-3b-6~~ | **已完成（2026-09-21）**：内容层（`api/ContentPass`：逐命令按表录取、查不到就拒绝并上报；块 + 流 + 绘制；`findMaterial` 改为只按身份查），真设备用例（像素 + 缓存计数）（§11.16l） |
 | ~~M3d-3b-7~~ | **已完成（2026-09-21）**：多布局 scope（`api/ContentPass`：半片 = 程序 × 修订 × 布局，池与注册表共享，选不中报“是哪一项”），真设备用例（双色像素 + 绑定计数 + 两条拒绝消息）（§11.16m） |
 | ~~M3d-3b-8~~ | **已完成（2026-09-21）**：pass 输入的采样绑定（`core/FrameCompiler` 的输入表 + `api/ContentPipeline` 的采样集布局 + `api/ContentPass` 的绑定 + `api/OffscreenTarget` 的“彩色附件按可采样收尾”），真设备像素用例 + 四条变异反证（§11.16n） |
-| M3d-3c | 执行段第三片：会话侧（窗口 pass、`present` 一次、帧计数与退役推进对齐 `FrameTimeline`；视图块的时间与视口尺寸约定） |
+| ~~M3d-3c~~ | **已完成（2026-09-21）**：执行段第三片（`api/WindowTarget` 把窗口变成执行器认识的目标：一张图、一次清、一个稳定视图；`api/ViewBlock` 定下视图块的四处约定并把 SDK 裁剪空间折进设备约定；`api/Session` 的帧时钟 + `frameSeconds()` + 帧图接缝），真设备像素用例（计划清屏 + 视图块进着色 + 一次 present）+ 五条变异反证（一条登记为不可观测）（§11.16o） |
+| M4 | 全屏/screen pass：复用本片的采样线（“源附件 i → binding i”就是这套采样线的另一个消费者），消费 M3d-3c 的窗口目标与视图块 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。

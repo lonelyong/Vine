@@ -8,6 +8,7 @@
 #include <vsg/app/RenderGraph.h>
 
 #include <vine/vsg/api/OffscreenTarget.hpp>
+#include <vine/vsg/api/WindowTarget.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
 #include <vine/vsg/vsg_global.hpp>
@@ -32,12 +33,21 @@
  * passes into the same target are two graphs, in the plan's order - "a pass is a render pass instance" is
  * not a coincidence of this backend, it is what the load-op variant design assumes.
  *
- * WHAT IT DOES NOT SERVE YET (and says so instead of drawing somewhere else): the default framebuffer (the
- * window's pass). The CONTENT of a pass arrives already recorded (see PassContent): the layer that owns the
- * content world - pipelines, streams, blocks, materials - records it, because that is where those objects
- * live, and the executor places it inside the pass the plan asked for. What the executor decides about
- * content is that it goes into the RIGHT pass, and that content for a pass the frame does not contain is
- * reported instead of vanishing.
+ * WHAT IT DOES NOT SERVE YET (and says so instead of drawing somewhere else): nothing - every pass of a
+ * plan is recorded, either into an off-screen target this executor was told about or into the window it was
+ * told about. A pass whose target it does not know is reported rather than dropped in silence.
+ *
+ * THE WINDOW IS ONE PASS' WORTH OF STATE ACROSS PASSES. The window's graph is created once (by the
+ * session, see WindowTarget) and every window pass adds its content to it in the plan's order, because the
+ * swapchain's render pass has one clear and one begin/end: the first window pass in execution order owns
+ * that clear, and later ones stack on top. The graph is added to the command graph where its first pass
+ * sits in the plan, so the order the host sees on screen is the plan's order like everywhere else.
+ *
+ * The CONTENT of a pass arrives already recorded (see PassContent): the layer that owns the content world -
+ * pipelines, streams, blocks, materials - records it, because that is where those objects live, and the
+ * executor places it inside the pass the plan asked for. What the executor decides about content is that it
+ * goes into the RIGHT pass, and that content for a pass the frame does not contain is reported instead of
+ * vanishing.
  */
 V_VSG_NS_BEGIN
 
@@ -69,6 +79,17 @@ class V_VSG_API VsgExecutor
 
     VsgExecutor(const VsgExecutor&)            = delete;
     VsgExecutor& operator=(const VsgExecutor&) = delete;
+
+    /** @brief Registers the window that passes targeting the default framebuffer are recorded into.
+     *
+     * Borrowed: the session owns the window (and the target wrapping it) and must keep it alive while it is
+     * registered - the same rule as every other borrowed argument in this backend. One window per executor,
+     * because a frame has one swapchain to present.
+     *
+     * @param window The window target, or nullptr to unregister it (default-framebuffer passes are then
+     *               reported as unserved instead of being recorded somewhere else).
+     */
+    void setWindow(WindowTarget* window) noexcept;
 
     /** @brief Registers the target that a compiled pass' identity resolves to.
      *
@@ -112,16 +133,37 @@ class V_VSG_API VsgExecutor
         OffscreenTarget* target{nullptr};    ///< The target, borrowed.
     };
 
+    /** @brief Records one pass into an off-screen target; false when it could not be served. */
+    [[nodiscard]] bool recordOffscreen(const core::CompiledPass& pass, const core::CompiledTarget& compiled_target,
+                                       const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
+                                       std::span<const PassContent> content);
+
+    /** @brief Records one pass into the window's graph (see the file note for the one-clear rule).
+     *
+     * @param pass          The compiled pass targeting the default framebuffer.
+     * @param command_graph Graph the window's graph is added to, at its first window pass' position.
+     * @param content       Already-recorded content, one entry per pass that has any.
+     * @return true when the pass was recorded.
+     */
+    [[nodiscard]] bool recordWindow(const core::CompiledPass& pass,
+                                    const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
+                                    std::span<const PassContent> content);
+
     /** @brief Resolves one compiled target to a registered target, or nullptr. */
     [[nodiscard]] OffscreenTarget* resolve(const core::CompiledTarget& target) const noexcept;
 
     /** @brief Reports a pass it could not record. */
     void reportSkipped(const core::CompiledTarget& target, const char* why);
 
+    /** @brief Reports a window pass it could not record (it has no compiled-target entry to name). */
+    void reportWindowSkipped(const char* why);
+
 
   private:
     core::Diagnostics&        diagnostics_;  ///< The one diagnostic route.
     std::vector<Entry>        targets_;      ///< Registered targets, borrowed.
+    WindowTarget*             window_{nullptr};       ///< The registered window (borrowed).
+    bool                      window_recorded_{false};  ///< Whether this frame's window graph is in the graph.
     std::vector<core::PassId> recorded_;     ///< Passes recorded, in record order.
     std::uint64_t             skipped_{0};   ///< Passes not recorded this frame.
 };

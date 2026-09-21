@@ -1,7 +1,10 @@
 #include <vine/vsg/api/Session.hpp>
 
+#include <chrono>
+
 #include <vine/vsg/api/DeviceFeatures.hpp>
 #include <vine/vsg/api/SessionContent.hpp>
+#include <vine/vsg/api/WindowTarget.hpp>
 
 #include <string>
 
@@ -67,11 +70,16 @@ struct Session::Impl
     ::vsg::ref_ptr<::vsg::Window> window;
     ::vsg::ref_ptr<::vsg::Viewer> viewer;
     ::vsg::ref_ptr<::vsg::Group>  content;  ///< What the frame renders (see SessionContentAccess).
+    std::unique_ptr<WindowTarget> window_target;  ///< The default framebuffer as a target the executor serves.
     void*                  host_handle{nullptr}; ///< The host window this session is on, or nullptr.
     bool                   on_host_window{false};///< Whether the session adopted a host window.
     std::uint32_t          slots{0};             ///< In-flight slots the tracker learned (0 = not learned yet).
     core::SlotTracker      slot_tracker;         ///< Folds per-frame probes until the count stops growing.
     std::uint64_t          frames_presented{0};
+    // The frame clock the view block reads (see Session::frameSeconds): the session's own start is the zero
+    // of the time line, and the value is re-sampled once per opened frame.
+    std::chrono::steady_clock::time_point started_at{};
+    float                                 frame_seconds{0.0F};
     bool                   ready{false};
     // Statistics about how this Session object brought sessions up. NOT reset by shutdown(): they answer
     // "what did this host's announcements cost", which a teardown does not change.
@@ -171,21 +179,26 @@ bool Session::initialize(const SessionOptions& options, core::Diagnostics& diagn
         impl->viewer = ::vsg::ref_ptr<::vsg::Viewer>(new EmbeddedViewer());
         impl->viewer->addWindow(impl->window);
 
-        // The window's render graph: the session draws nothing into it yet, but a frame needs a graph to
-        // record (and a clear makes the result visible rather than undefined). Its own resize handling is
-        // OFF, because the backend re-derives every rectangle it owns from the target's current size -
-        // two writers for one rectangle is what produces stretched HUD rectangles on a maximize.
-        auto render_graph                = ::vsg::RenderGraph::create(impl->window);
-        render_graph->contents           = VK_SUBPASS_CONTENTS_INLINE;
-        render_graph->windowResizeHandler = {};
+        // The window as the frame's default-framebuffer target: it owns the one render graph every window pass
+        // records into (see WindowTarget) - and one stable view under it, which is what gives the window's
+        // content its own compiled pipelines (vsg compiles per view id, and the swapchain's render pass is not
+        // compatible with an off-screen one of the same engine shape).
+        impl->window_target = WindowTarget::create(impl->window);
+        if (impl->window_target == nullptr)
+        {
+            diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
+                               asString("the session could not wrap its window as a render target"));
+            shutdown();
+            return false;
+        }
         // The content root, attached BEFORE the compile pass: content a caller adds later is compiled by
         // asking for one more pass (see SessionContentAccess::recompile). The session draws whatever is in
         // here, every frame, and nothing else.
         impl->content = ::vsg::Group::create();
-        render_graph->addChild(impl->content);
+        impl->window_target->addContent(impl->content);
 
         auto command_graph = ::vsg::CommandGraph::create(impl->window);
-        command_graph->addChild(render_graph);
+        command_graph->addChild(impl->window_target->graph());
         impl->viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
 
         // The slot count is NOT probed here, and that is not an oversight: the framework's per-slot index
@@ -203,6 +216,8 @@ bool Session::initialize(const SessionOptions& options, core::Diagnostics& diagn
         }
 
         impl->ready = true;
+        impl->started_at = std::chrono::steady_clock::now();
+        impl->frame_seconds = 0.0F;
         ++impl->generation;
         return true;
     }
@@ -232,9 +247,12 @@ void Session::shutdown() noexcept
     impl->slot_tracker     = core::SlotTracker();
     impl->retirement       = core::RetirementQueue(0);
     impl->timeline         = core::FrameTimeline();
+    impl->frame_seconds    = 0.0F;
+    impl->started_at       = {};
     impl->host_handle      = nullptr;
     impl->on_host_window   = false;
     impl->viewer           = {};
+    impl->window_target    = nullptr;
     impl->window           = {};
     impl->content          = {};
 }
@@ -250,6 +268,11 @@ core::FrameToken Session::beginFrame()
     {
         return {};
     }
+
+    // The frame's time stamp is sampled HERE and does not move while the frame is open: every pass of this
+    // frame binds the same "now" (see frameSeconds).
+    const std::chrono::duration<float> elapsed = std::chrono::steady_clock::now() - impl->started_at;
+    impl->frame_seconds                        = elapsed.count();
 
     impl->viewer->advanceToNextFrame();
     impl->viewer->handleEvents();
@@ -345,6 +368,11 @@ std::uint32_t Session::slots() const noexcept
 std::uint64_t Session::framesPresented() const noexcept
 {
     return impl ? impl->frames_presented : 0;
+}
+
+float Session::frameSeconds() const noexcept
+{
+    return impl ? impl->frame_seconds : 0.0F;
 }
 
 std::size_t Session::deviceWaits() const noexcept
@@ -444,6 +472,40 @@ namespace detail
         return {};
     }
     return session.impl->window->getOrCreateDevice();
+}
+
+WindowTarget* SessionContentAccess::windowTarget(const api::Session& session) noexcept
+{
+    if (session.impl == nullptr)
+    {
+        return nullptr;
+    }
+    return session.impl->window_target.get();
+}
+
+::vsg::ref_ptr<::vsg::CommandGraph> SessionContentAccess::makeFrameGraph(const api::Session& session) noexcept
+{
+    if (session.impl == nullptr || session.impl->window == nullptr)
+    {
+        return {};
+    }
+    // Bound to the window: the graph's device and queue family come from the surface it presents, which is
+    // exactly the session's, and the caller does not have to be told either of them.
+    return ::vsg::CommandGraph::create(session.impl->window);
+}
+
+bool SessionContentAccess::assignFrameGraphs(api::Session& session, const ::vsg::CommandGraphs& graphs)
+{
+    if (session.impl == nullptr || session.impl->viewer == nullptr)
+    {
+        return false;
+    }
+    // The viewer's tasks are what record and submit; replacing them is how one frame's graphs become the
+    // session's. The compile pass follows immediately: a graph the viewer has never seen has nodes whose
+    // implementations (descriptor sets above all) are created by exactly that pass, and the viewer's record
+    // pass would otherwise find them missing.
+    session.impl->viewer->assignRecordAndSubmitTaskAndPresentation(graphs);
+    return SessionContentAccess::recompile(session);
 }
 
 bool SessionContentAccess::recompile(api::Session& session)

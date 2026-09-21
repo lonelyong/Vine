@@ -113,6 +113,16 @@ class Session
     /** @brief Gets how many frames have been presented. */
     [[nodiscard]] std::uint64_t framesPresented() const noexcept;
 
+    /** @brief Gets the open frame's time stamp: seconds since this session came up.
+     *
+     * The frame's time is sampled by beginFrame() and does NOT move while the frame is open - a frame is one
+     * moment, and the view block a pass binds carries this value so two passes of one frame cannot animate
+     * against each other. It is 0.0 before the session is up, and it starts at (almost) zero on the first
+     * frame, which is the convention the shading's `frame.x` is written against: a session's time line, not
+     * the process' uptime and not wall clock (a host that wants a world clock puts it in its own uniform).
+     */
+    [[nodiscard]] float frameSeconds() const noexcept;
+
     /** @brief Gets how many counted device idles this session has taken. */
     [[nodiscard]] std::size_t deviceWaits() const noexcept;
 

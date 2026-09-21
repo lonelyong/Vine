@@ -21,6 +21,11 @@ VsgExecutor::VsgExecutor(core::Diagnostics& diagnostics) noexcept
 {
 }
 
+void VsgExecutor::setWindow(WindowTarget* window) noexcept
+{
+    window_ = window;
+}
+
 void VsgExecutor::addTarget(const void* identity, OffscreenTarget* target) noexcept
 {
     for (Entry& entry : targets_)
@@ -43,7 +48,8 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
                          std::span<const PassContent> content)
 {
     recorded_.clear();
-    skipped_ = 0;
+    skipped_          = 0;
+    window_recorded_  = false;
 
     for (const core::CompiledPass& pass : frame.passes)
     {
@@ -54,47 +60,15 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
         }
         const core::CompiledTarget& compiled_target = frame.targets[pass.target_index];
 
-        OffscreenTarget* target = resolve(compiled_target);
-        if (target == nullptr)
+        // The default framebuffer (a null identity) is the window's, everything else is an off-screen target
+        // this executor was told about.
+        const bool recorded = compiled_target.target == nullptr
+                                  ? recordWindow(pass, command_graph, content)
+                                  : recordOffscreen(pass, compiled_target, command_graph, content);
+        if (!recorded)
         {
-            reportSkipped(compiled_target, "this executor was not told about it");
             continue;
         }
-
-        // The plan and the resource world must agree about the SHAPE of what the pass draws into: the plan's
-        // colour-attachment count and depth sampleability come from the facts it was compiled with, and the
-        // target answers for what it really has. A disagreement means the plan describes a different target
-        // than the one it resolved to - and a pipeline built against the wrong shape is a picture with no
-        // relationship to what the host asked for. It is found HERE, at the one place the two meet.
-        if (pass.color_attachments != target->colorAttachmentCount() ||
-            pass.depth_sampleable != target->depth().sampleable)
-        {
-            reportSkipped(compiled_target, "the plan and the target disagree about its shape (colour "
-                                           "attachments or depth sampleability)");
-            continue;
-        }
-
-        ::vsg::ref_ptr<::vsg::RenderGraph> graph = target->passGraph(pass.clear);
-        if (graph == nullptr)
-        {
-            reportSkipped(compiled_target, "the target has no attachments to draw into");
-            continue;
-        }
-
-        // Whatever the content layer recorded for THIS pass goes inside this pass - after the plan's clear,
-        // before the pass ends. The executor does not look at it: which draws it holds, and what they bind,
-        // was decided where the content lives.
-        for (const PassContent& packet : content)
-        {
-            if (packet.pass == pass.pass && packet.content != nullptr)
-            {
-                graph->addChild(packet.content);
-            }
-        }
-
-        // One pass scope, one render pass instance: what the pass clears comes from the plan, and the order
-        // the graphs are added in IS the execution order (see the file note).
-        command_graph->addChild(graph);
         recorded_.push_back(pass.pass);
     }
 
@@ -132,6 +106,96 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
     return skipped_ == 0;
 }
 
+bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::CompiledTarget& compiled_target,
+                                  const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
+                                  std::span<const PassContent> content)
+{
+    OffscreenTarget* target = resolve(compiled_target);
+    if (target == nullptr)
+    {
+        reportSkipped(compiled_target, "this executor was not told about it");
+        return false;
+    }
+
+    // The plan and the resource world must agree about the SHAPE of what the pass draws into: the plan's
+    // colour-attachment count and depth sampleability come from the facts it was compiled with, and the
+    // target answers for what it really has. A disagreement means the plan describes a different target
+    // than the one it resolved to - and a pipeline built against the wrong shape is a picture with no
+    // relationship to what the host asked for. It is found HERE, at the one place the two meet.
+    if (pass.color_attachments != target->colorAttachmentCount() ||
+        pass.depth_sampleable != target->depth().sampleable)
+    {
+        reportSkipped(compiled_target, "the plan and the target disagree about its shape (colour "
+                                       "attachments or depth sampleability)");
+        return false;
+    }
+
+    ::vsg::ref_ptr<::vsg::RenderGraph> graph = target->passGraph(pass.clear);
+    if (graph == nullptr)
+    {
+        reportSkipped(compiled_target, "the target has no attachments to draw into");
+        return false;
+    }
+
+    // Whatever the content layer recorded for THIS pass goes inside this pass - after the plan's clear,
+    // before the pass ends. The executor does not look at it: which draws it holds, and what they bind,
+    // was decided where the content lives.
+    for (const PassContent& packet : content)
+    {
+        if (packet.pass == pass.pass && packet.content != nullptr)
+        {
+            graph->addChild(packet.content);
+        }
+    }
+
+    // One pass scope, one render pass instance: what the pass clears comes from the plan, and the order
+    // the graphs are added in IS the execution order (see the file note).
+    command_graph->addChild(graph);
+    return true;
+}
+
+bool VsgExecutor::recordWindow(const core::CompiledPass& pass,
+                               const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
+                               std::span<const PassContent> content)
+{
+    if (window_ == nullptr)
+    {
+        reportWindowSkipped("no window target was registered with this executor");
+        return false;
+    }
+
+    // The same plan/world agreement an off-screen target gets, asked of the window: the plan resolved the
+    // default framebuffer's facts (one colour attachment, no sampleable depth), and the window answers for
+    // what the swapchain and its render pass really are.
+    if (pass.color_attachments != window_->colorAttachmentCount() ||
+        pass.depth_sampleable != window_->depthSampleable())
+    {
+        reportWindowSkipped("the plan and the window disagree about its shape (colour attachments or depth "
+                            "sampleability)");
+        return false;
+    }
+
+    // ONE graph, ONE clear: the first window pass of the frame brings the graph up to date (its render area
+    // follows the window's live extent, and its clear values are that pass' clear policy) and puts the graph
+    // into the command graph at the position that pass has in the plan. Later window passes stack on what it
+    // left - the swapchain's render pass cannot express a second clear (see WindowTarget).
+    if (!window_recorded_)
+    {
+        window_->prepare(pass.clear);
+        command_graph->addChild(window_->graph());
+        window_recorded_ = true;
+    }
+
+    for (const PassContent& packet : content)
+    {
+        if (packet.pass == pass.pass && packet.content != nullptr)
+        {
+            window_->addContent(packet.content);
+        }
+    }
+    return true;
+}
+
 std::span<const core::PassId> VsgExecutor::recorded() const noexcept
 {
     return recorded_;
@@ -160,9 +224,17 @@ void VsgExecutor::reportSkipped(const core::CompiledTarget& target, const char* 
     diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
                         vine::graphics::DiagnosticCategory::ContentSkipped,
                         asString(std::string("a compiled pass is not recorded: ") + why +
-                                 (target.target == nullptr ? " (the pass targets the default framebuffer, which "
-                                                             "this executor does not serve yet)"
+                                 (target.target == nullptr ? " (the pass targets the default framebuffer)"
                                                            : "")));
+}
+
+void VsgExecutor::reportWindowSkipped(const char* why)
+{
+    ++skipped_;
+    diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
+                        vine::graphics::DiagnosticCategory::ContentSkipped,
+                        asString(std::string("a compiled pass is not recorded: ") + why +
+                                 " (the pass targets the default framebuffer)"));
 }
 
 V_VSG_NS_END

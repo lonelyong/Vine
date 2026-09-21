@@ -1,9 +1,11 @@
 #pragma once
 
+#include <vsg/app/CommandGraph.h>
 #include <vsg/core/ref_ptr.h>
 #include <vsg/vk/Device.h>
 
 #include <vine/vsg/api/Session.hpp>
+#include <vine/vsg/api/WindowTarget.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 namespace vsg
@@ -59,6 +61,46 @@ class SessionContentAccess
      * @return The session's device, or null.
      */
     [[nodiscard]] static ::vsg::ref_ptr<::vsg::Device> device(const api::Session& session) noexcept;
+
+    /** @brief Gets the session's window as the frame's default-framebuffer target.
+     *
+     * This is the target an executor is told about so that passes targeting the default framebuffer (a null
+     * target in the plan) have somewhere to go, and the object that answers the window's shape for a
+     * pipeline key - one window per session, so there is one.
+     *
+     * @param session Session to ask.
+     * @return The window target, or null when the session is not up.
+     */
+    [[nodiscard]] static WindowTarget* windowTarget(const api::Session& session) noexcept;
+
+    /** @brief Creates the command graph ONE frame records into, bound to the session's window.
+     *
+     * One graph per frame, not one retained graph: the plan's execution order decides where each pass graph
+     * sits (an off-screen graph before the window's when the window samples it, the other way round when it
+     * does not), and the executor appends them to the graph it is given. A graph that survived the frame
+     * would keep the previous frame's order and collect the new one behind it. The session's knowledge here
+     * is only what a graph needs to be usable at all: the window it presents, and with it the device and the
+     * queue family.
+     *
+     * @param session Session to ask.
+     * @return The graph, or null when the session is not up.
+     */
+    [[nodiscard]] static ::vsg::ref_ptr<::vsg::CommandGraph> makeFrameGraph(const api::Session& session) noexcept;
+
+    /** @brief Hands the session the command graphs THIS frame records, replacing the ones it set up.
+     *
+     * A session renders what it was given: its own (empty-frame) graph while nothing else was handed over,
+     * and from then on the caller's - a graph holding the window target's graph and whatever off-screen
+     * graphs the frame's plan produced. The compile pass is folded in, because a graph handed over for the
+     * first time has objects (descriptor sets, buffers) whose implementations do not exist yet, and a caller
+     * that forgot it would record nothing and see an empty frame with no reason.
+     *
+     * @param session Session to hand the graphs to.
+     * @param graphs  The graphs the next commitFrame() submits (the window's graph must be one of them).
+     * @return true when the graphs were assigned and compiled; false when the session is not up or the
+     *         compile pass failed (reported).
+     */
+    static bool assignFrameGraphs(api::Session& session, const ::vsg::CommandGraphs& graphs);
 
     /** @brief Compiles content that was attached after the session came up.
      *
