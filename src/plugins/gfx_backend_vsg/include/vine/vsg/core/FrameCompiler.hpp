@@ -101,7 +101,16 @@ struct CompiledDraw
     std::span<const LightRef> lights{};        ///< The consumed lights; empty = the backend default.
     const void*      source{nullptr};          ///< Screen draws: the target whose attachments are sampled.
     ProgramRef       program{};                ///< Screen draws: the fragment program to draw with.
+    DynamicState     dynamic{};                ///< Screen draws: the state the PASS gives them (see below).
     std::span<const CompiledCommand> commands{};  ///< Content draws: the instances to render.
+
+    // Why a screen draw has its own `dynamic` field rather than resolving per command: a full-screen call has
+    // no commands (there is no geometry to instance, so there is nothing to resolve), and the state it draws
+    // with is the pass'. The one half that is NOT simply the pass' is the depth policy: a full-screen draw
+    // composites ON TOP of its rectangle, and the engine's canonical triangle sits exactly at the reverse-Z
+    // FAR plane (z = 0.0 - the value a window's depth is cleared to), so any depth test rejects the whole
+    // overlay. The legacy overlay pipelines baked depth off for that reason, and the SDK documents the call as
+    // "opaque over it", so the depth policy is disabled here rather than inherited.
 };
 
 /** @brief One pass scope, resolved: its scope attributes are final and every default is explicit. */

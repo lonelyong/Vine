@@ -306,6 +306,17 @@ std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass&  
         draw.source   = source.source;
         draw.program  = source.program;
         draw.commands = resolveCommands(source, default_program, pass.depth);
+
+        if (source.kind == DrawKind::Screen)
+        {
+            // A full-screen draw has no commands to carry per-draw state, so the plan resolves its state here:
+            // the defaults a screen program does not edit (no culling, fill, triangles, the engine's blend
+            // factors) with the depth policy the call's own definition gives it (see CompiledDraw::dynamic -
+            // the canonical triangle lies at the reverse-Z far plane, where any depth test rejects it).
+            const vine::graphics::ResolvedRenderState screen_state{};
+            draw.dynamic =
+                resolveDynamicState(screen_state, /*depth_explicit*/ false, vine::graphics::DepthMode::Disabled);
+        }
     }
     return draws;
 }

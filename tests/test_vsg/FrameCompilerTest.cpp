@@ -37,10 +37,12 @@ using vine::graphics::RenderCommand;
 using vine::graphics::RenderTarget;
 using vine::graphics::ShaderProgram;
 using vine::vsg::core::ClearPolicy;
+using vine::vsg::core::CompiledDraw;
 using vine::vsg::core::CompiledFrame;
 using vine::vsg::core::CompiledPass;
 using vine::vsg::core::DepthFacts;
 using vine::vsg::core::Diagnostics;
+using vine::vsg::core::DrawKind;
 using vine::vsg::core::FrameArena;
 using vine::vsg::core::FrameCompiler;
 using vine::vsg::core::FrameFacts;
@@ -104,9 +106,76 @@ std::vector<RenderCommand> oneCommand()
 
 }  // namespace
 
-TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
+TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState)
 {
-    // The plan carries the pass' declared inputs because a binding layer needs two things the description
+    // A full-screen drawing call has no commands, so nothing per-command can carry its state: the plan resolves
+    // it here, and the one half that is NOT simply the pass' is the depth policy - the engine's canonical
+    // triangle lies exactly at the reverse-Z far plane (z = 0.0, where a window's depth is cleared to), so any
+    // depth test rejects the whole overlay. Taking the pass' TestAndWrite would make an overlay vanish on a
+    // window and look fine on a colour-only target, which is the kind of difference no counter can report.
+    Rig r;
+    vine::intrusive_ptr<RenderTarget> source(new RenderTarget());
+    vine::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    r.addTarget(source.get(), 64, 64, true);
+    r.addTarget(destination.get(), 64, 64, true);
+
+    const std::vector<RenderCommand> commands = oneCommand();
+    vine::intrusive_ptr<vine::graphics::ShaderProgram> screen_program(new vine::graphics::ShaderProgram());
+
+    ASSERT_TRUE(r.recorder.beginFrame(FrameToken{ 1 }));
+    ASSERT_TRUE(r.recorder.beginPass(1));
+    ASSERT_TRUE(r.recorder.setRenderTarget(destination.get()));
+    ASSERT_TRUE(r.recorder.setPassInputs(std::vector<RenderTarget*>{ source.get() }));
+    ASSERT_TRUE(r.recorder.setViewport(4, 8, 16, 32));  // the picture-in-picture rectangle
+    ASSERT_TRUE(r.recorder.drawScreenProgram(source.get(), screen_program.get(), nullptr))
+        << "the full-screen call must be collected";
+    ASSERT_TRUE(r.recorder.render(commands, nullptr)) << "a content draw of the same pass: both kinds coexist";
+    ASSERT_TRUE(r.recorder.endPass());
+
+    r.recorder.beginPass(2);
+    r.recorder.setRenderTarget(source.get());
+    // The producer pass announces a clear: "a pass that announced them and drew nothing" is still a pass (and a
+    // pass with neither is not one - the plan drops it).
+    vine::vsg::core::ClearPolicy fill;
+    fill.color          = true;
+    fill.color_value[0] = 0.25F;
+    fill.color_value[3] = 1.0F;
+    r.recorder.setClearPolicy(fill);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.passes.size(), 2u);
+    EXPECT_EQ(r.recorder.description().passes[0].draws.size(), 2u)
+        << "the recorder keeps both call kinds (a dropped one would make the plan look deliberately small)";
+    const CompiledPass& consumer = frame.passes[1];  // the producer runs first, as the sampled edge says
+    ASSERT_EQ(consumer.draws.size(), 2u);
+
+    const CompiledDraw& screen = consumer.draws[0];
+    EXPECT_EQ(screen.kind, DrawKind::Screen);
+    EXPECT_EQ(screen.source, static_cast<const void*>(source.get())) << "the call's source is carried";
+    EXPECT_EQ(screen.program.program, static_cast<const void*>(screen_program.get()));
+    EXPECT_TRUE(screen.commands.empty()) << "a full-screen call has no geometry to instance";
+    EXPECT_EQ(screen.viewport.x, 4) << "the announced picture-in-picture rectangle is the draw's own";
+    EXPECT_EQ(screen.viewport.y, 8);
+    EXPECT_EQ(screen.viewport.width, 16);
+    EXPECT_EQ(screen.viewport.height, 32);
+
+    EXPECT_EQ(screen.dynamic.depth, vine::graphics::DepthMode::Disabled)
+        << "a full-screen draw composites on top: the canonical triangle would be rejected at the far plane";
+    EXPECT_EQ(screen.dynamic.cull_mode, vine::graphics::CullMode::None) << "the screen ABI's legacy shape";
+    EXPECT_EQ(screen.dynamic.polygon_mode, vine::graphics::PolygonMode::Fill);
+    EXPECT_EQ(screen.dynamic.topology, vine::graphics::Topology::Triangles);
+
+    const CompiledDraw& content = consumer.draws[1];
+    EXPECT_EQ(content.kind, DrawKind::Content);
+    ASSERT_EQ(content.commands.size(), 1u) << "the content call of the same pass is unchanged";
+    EXPECT_EQ(content.commands[0].dynamic.depth, consumer.depth)
+        << "and a content command still takes the pass' depth policy";
+}
+
+TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
+{    // The plan carries the pass' declared inputs because a binding layer needs two things the description
     // cannot keep for it: WHICH target each input reads, and how many colour textures it offers (the count a
     // sampled-input set binds). Both are answered here from the same facts the pass' own target came from.
     Rig r;

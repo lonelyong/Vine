@@ -568,7 +568,8 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // frame clock - the extent is the window's, which is the picture the shading reconstructs from.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
-        program.get(), program_facts.revision, geometry_facts.layout, pipelines.get(), &draws } };
+        vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        pipelines.get(), &draws } };
     ContentPass::Scope scope;
     scope.entries     = halves;
     scope.registry    = &registry;

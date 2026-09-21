@@ -89,6 +89,11 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
     auto commands = ::vsg::Commands::create();
     commands->addChild(makeViewportCommand(draw.viewport));
     commands->addChild(makeScissorCommand(draw.viewport));
+    if (draw.push != nullptr) {
+        // After the state commands, where the pipeline layout the bind made current is the one the push range
+        // is read from (see vsg::PushConstants::record).
+        commands->addChild(draw.push);
+    }
     // Three vertices, generated from gl_VertexIndex by the full-screen vertex stage: no vertex buffer, no
     // index buffer, and the whole geometry is this one call.
     constexpr std::uint32_t kFullscreenVertices = 3U;

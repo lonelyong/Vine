@@ -2,12 +2,11 @@
 
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
-> **实施进度（截至 2026-09-21）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M4a（全屏绘制调用的内容侧：键携带绘制种类，`api/ContentPipeline` 多一个全屏层（set 0 = 源彩色附件、
-> push 片元 128B），`api/ContentSources` 把引擎的正典全屏顶点阶段与宿主的片元阶段组成一对，`api/ContentDraw`
-> 录 `Draw(3)`）**：`test_vsg` 524 用例 / 84 套件全绿（含真设备像素用例），强制验证层 + 同步验证下
-> **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验
-> （全树 0 findings / 806 文件）。
+> **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
+> **M4b（全屏绘制的计划侧：计划解析它的状态（深度策略 `Disabled` —— 正典三角形在 reverse-Z 远平面），内容层
+> 按 `kind` 找半片、把 pass 的输入绑在 **set 0** 并推 128B 片元 push 块）**：`test_vsg` 526 用例 / 84 套件
+> 全绿（含真设备像素用例），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由
+> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 806 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -1484,11 +1483,52 @@ M3d-3b-8 把采样线（"源附件 i → binding i"）建在内容路径上，�
 第一个输入（采样集已就位）、push 块的内容、PiP 子矩形经计划上屏、以及窗口合成（M4b）；顺带把 §11.16o 登记的
 两条口子（多趟窗口 pass 的"一次清"、窗口/离屏同键变体）一起变成可观测用例。
 
+### 11.16q M4b（2026-09-22）：全屏绘制的计划侧（计划解析它的状态，内容层按 kind 录它，真设备像素）
+
+M4a 把全屏调用接到了内容栈；这一片把它接到**计划**上：`api/ContentPass` 不再拒绝 `DrawKind::Screen`，源就是
+pass 声明的第一个输入（M3d-3b-8 那条采样线的另一个消费者），PiP 子矩形与"一趟 pass 一条绑定"照旧。三件事：
+
+1. **计划解析全屏调用的状态**（`core/FrameCompiler`）：全屏调用**没有命令**，所以没有"逐命令的状态"可解——
+   `CompiledDraw::dynamic` 是它的，取的默认值是屏幕程序不编辑的那些（无剔除、fill、三角形、引擎的混合因子），
+   而**深度策略取 `Disabled`**：引擎的正典三角形正好落在 **reverse-Z 的远平面**（z = 0.0 —— 窗口深度清屏的
+   那个值），任何深度测试都会把整块覆盖层拒掉。旧实现的 overlay 管线就是为此把深度烘成关闭的，SDK 也把这次
+   调用描述成"opaque over it"；继承 pass 的 `TestAndWrite` 会让同一块覆盖层在窗口上消失、在无深度附件的小目
+   标上却看着正常。
+2. **内容层按 kind 找半片**（`api/ContentPass`）：`Scope::Entry` 多一个 `kind`；全屏半片按**计划里的程序身份 +
+   修订**找（没有几何那一半：这次调用不画几何，所以不需要事实表），miss 的消息区分"没编过这个程序"与"修订
+   对不上"。采样集**每 kind 一份**：内容在 set 1（块集之后），全屏在 **set 0**（它自己的 ABI），两个 kind 各
+   自用自己那一层的布局对象去建 set，而"一趟 pass 一次绑定"的"仅当"逻辑是**同一个注册表**说了算。
+3. **push 块**（`api/ContentPass::recordScreenDraw`）：128 字节、**片元阶段**、内容**全零**。布局是 SDK 的
+   （`deferredLightProgram` 就这么声明），填它的两半（world→view 的光照、near/far）分属光照相位与深度采样
+   相位。**必须真的推**：声明了 push 范围却从不推，着色读到的是**未定义**字节，"那一相位还没落地"得是确定的
+   零而不是驱动恰好留下的东西。本片证据用的程序（引擎的 screen copy）一个字节都不读它。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `core/FrameCompiler`（+.hpp） | `CompiledDraw::dynamic`（全屏调用的状态）+ 解析规则（默认值 + `Disabled` 深度）与理由 |
+| `api/ContentPass`（+.hpp） | `Scope::Entry::kind`；全屏半片查找（程序 + 修订，两种 miss 消息）；`makeInputSet` 改为按层与集合索引参数化；`recordScreenDraw`（管线 + set 0 + 动态块 + **push** + 矩形 + `Draw(3)`） |
+| `api/ContentDraw`（+.hpp） | `ScreenDraw::push`（在管线绑定之后录） |
+| `tests/test_vsg/FrameCompilerTest.cpp` | +1 无设备用例：全屏调用的 kind/source/program/矩形进计划，`dynamic` 是 `Disabled` + 屏幕默认值；**同一趟 pass 的内容命令仍拿 pass 的深度** |
+| `tests/test_vsg/SampledInputTest.cpp` | +1 真设备用例：计划驱动的合成——pass 1 清源、pass 2 用**随 SDK 发布的** `screenCopyProgram(0)` 在 PiP 矩形里拷贝源；矩形内是源的颜色、外是目标自己的清屏色；`input_binds() == 1` |
+| `tests/test_vsg/ContentDrawTest.cpp` | 屏幕用例 +push 节点的形状（片元阶段、128 字节） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **全屏调用不测深度是它的定义，不是优化** | 正典三角形在 z = 0.0；窗口的深度清 0.0 且比较是 `GREATER` ⇒ 测了就整块消失。变异 P2（改成继承 pass 的策略）在**有深度附件的目标上**让"矩形内是源的颜色"直接变红（实测得到目标清屏色 (0,0,191)） |
+| **集合的索引是 ABI，绑错一层就崩** | 变异 P1（全屏采样集绑到 set 1）：4 条 VUID（`vkCmdBindDescriptorSets-firstSet-00360`、`vkCmdDraw-None-08600`）+ **段错误**——全屏管线布局只有 set 0，绑到 1 的集合既越界又不被绘制看见 |
+| **一趟 pass、两个 kind、一份输入** | 采样集按 kind 各建一份，但"输入是 pass 的"这条没变：注册表还是同一个，`input_binds()` 仍是每 pass 一次。两种 kind 混在一趟 pass 里在计划与本层都合法（内容命令走自己的三张表，全屏调用走半片） |
+| **push 的"形"有证据、"内容"没有** | 形：设备无关用例钉住节点（片元阶段 + 128 字节）与它排在管线绑定之后；内容：**登记**为光照相位的活（本片的程序不读它）。想用"读到零值"做反证不可靠（未定义的 push 内存常常也读成零），所以不假装有反证 |
+| **相机不再被本层使用，但契约仍然要它** | 全屏 ABI 的采样器在 set 0、块一个不绑，所以重写版的全屏路径**不读视图块**；SDK 的 `ScreenPass` 在没有相机时**根本不会问后端**（wiring 期就报），所以"没有视图就画不出来"这条不在这里重造 |
+
+**本片留下的口子（登记）**：**窗口合成**（一趟窗口 pass 里叠一块全屏覆盖层）与 §11.16o 登记的两条口子
+（多趟窗口 pass 的"一次清"、窗口/离屏同键变体）——它们要一个"离屏 pass + 两趟窗口 pass"的夹具，与 M4a/b 的
+离屏夹具不同源，单独做一片（M4c）。
+
 
 | 有意不做（写在这里，不埋在实现里） | 内容 |
 | --- | --- |
 | 输入的**深度**半边 | "深度真可采样才绑"与 shadow 的专用绑定（`shadow_bound` + `VineShadowBlock`）一起留给 M5：键里另一个 `depth_sampleable` 字段现在的含义是"pass 自己的目标深度可采样"（M3d-3b-0 的事实 + 执行器核对），在 M5 重钉之前不在这里造第二条语义 |
-| 全屏绘制调用（`DrawKind::Screen`） | **内容栈已接（§11.16p，M4a）**：键带 kind、`createScreen` 建全屏层（set 0 = 采样集）、`recordScreen` 录 `Draw(3)`。**计划侧仍拒绝**（`api/ContentPass`）：源 = pass 声明的第一个输入、push 块的内容、PiP 经计划上屏在 M4b。采样线没有第二套机制——"源附件 i→binding i"就是 M3d-3b-8 那条线的另一个消费者 |
+| 全屏绘制调用（`DrawKind::Screen`） | **已接（§11.16p 内容侧 / §11.16q 计划侧）**：键带 kind、`createScreen` 建全屏层（set 0 = 采样集）、`recordScreen` 录 `Draw(3)`；计划解析其状态（深度 `Disabled`），`api/ContentPass` 按 kind 找半片并把 pass 的输入绑在 set 0 + 推 128B push（内容全零，光照/深度相位各管一半）。采样线没有第二套机制——"源附件 i→binding i"就是 M3d-3b-8 那条线的另一个消费者 |
 | 着色器绑定声明的核对（"声明了却供给不了"） | 旧实现靠扫源码 `layout(binding=…)`（`MissingDescriptorBinding`）。这一片不做：驱动/验证层会报，而"谁声明了什么"要动 `ProgramFacts`，留给需要它的那片（M4 的拒绝理由与旧实现逐字对齐时） |
 
 | 落地抓到的 | 内容 |
@@ -1533,7 +1573,8 @@ M3d-3b-8 把采样线（"源附件 i → binding i"）建在内容路径上，�
 | ~~M3d-3b-8~~ | **已完成（2026-09-21）**：pass 输入的采样绑定（`core/FrameCompiler` 的输入表 + `api/ContentPipeline` 的采样集布局 + `api/ContentPass` 的绑定 + `api/OffscreenTarget` 的“彩色附件按可采样收尾”），真设备像素用例 + 四条变异反证（§11.16n） |
 | ~~M3d-3c~~ | **已完成（2026-09-21）**：执行段第三片（`api/WindowTarget` 把窗口变成执行器认识的目标：一张图、一次清、一个稳定视图；`api/ViewBlock` 定下视图块的四处约定并把 SDK 裁剪空间折进设备约定；`api/Session` 的帧时钟 + `frameSeconds()` + 帧图接缝），真设备像素用例（计划清屏 + 视图块进着色 + 一次 present）+ 五条变异反证（一条登记为不可观测）（§11.16o） |
 | ~~M4a~~ | **已完成（2026-09-21）**：全屏绘制调用的内容侧（键的 `kind` + `api/ContentPipeline::createScreen`（set 0 = 采样集、push 片元 128B）+ `api/ContentSources::buildScreenProgramFacts`（引擎顶点阶段 + 宿主片元阶段）+ `api/ContentDraw::recordScreen`（`Draw(3)`）），真设备像素用例（随 SDK 发布的 screen copy 的 PiP 拷贝 + binding i = 附件 i）+ 四条变异反证（§11.16p） |
-| M4b | 全屏绘制的计划侧：`api/ContentPass` 接 `DrawKind::Screen`（源 = pass 声明的第一个输入、采样集在 set 0、push 块），PiP 子矩形与窗口合成经计划上屏；顺带把 §11.16o 登记的两条口子（多趟窗口 pass 的一次清、窗口/离屏同键变体）做成用例 |
+| ~~M4b~~ | **已完成（2026-09-22）**：全屏绘制的计划侧（`CompiledDraw::dynamic` + 全屏调用的深度策略 = `Disabled`（正典三角形在 reverse-Z 远平面）；`api/ContentPass` 按 `kind` 找半片、采样集在 set 0、push 128B 片元（内容全零）；真设备像素用例（计划驱动的 PiP 拷贝）+ 两条变异反证（§11.16q） |
+| M4c | 窗口合成：一趟窗口 pass 里叠全屏覆盖层；顺带把 §11.16o 登记的两条口子（多趟窗口 pass 的一次清、窗口/离屏同键变体）做成用例 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。

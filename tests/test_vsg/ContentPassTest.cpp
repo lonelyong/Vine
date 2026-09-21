@@ -348,7 +348,8 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     // 4. The content layer records that pass from the tables.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
-        program.get(), program_facts.revision, geometry_facts.layout, pipelines.get(), &draws } };
+        vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        pipelines.get(), &draws } };
     ContentPass::Scope scope;
     scope.entries     = halves;
     scope.registry    = &registry;
@@ -499,8 +500,10 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     ContentDraw right_draws(*right_pipeline, pool, entry_points);
 
     const ContentPass::Scope::Entry halves[]{
-        { green_program.get(), green_facts.revision, left_facts.layout, left_pipeline.get(), &left_draws },
-        { blue_program.get(), blue_facts.revision, right_facts.layout, right_pipeline.get(), &right_draws },
+        { vine::vsg::core::DrawKind::Content, green_program.get(), green_facts.revision, left_facts.layout,
+          left_pipeline.get(), &left_draws },
+        { vine::vsg::core::DrawKind::Content, blue_program.get(), blue_facts.revision, right_facts.layout,
+          right_pipeline.get(), &right_draws },
     };
     const vine::intrusive_ptr<Material> material(new Material());
     material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));

@@ -48,8 +48,10 @@
  * match the plan. The DEPTH half of the input ABI (a shadow map, and "bind it only while it is really
  * sampleable") arrives with the shadow resolution.
  *
- * WHAT IS NOT HERE YET, and is therefore not promised: full-screen drawing calls (they arrive with the
- * program-slot path). Those are refused rather than approximated.
+ * WHAT IS NOT HERE YET, and is therefore not promised: the DEPTH half of the input ABI (a shadow map, and
+ * "bind it only while it is really sampleable") arrives with the shadow resolution, and the full-screen push
+ * block's CONTENTS arrive with the lighting phase. Those are refused or recorded empty rather than
+ * approximated.
  *
  * WHAT THE SCOPE IS A SET OF: COMPILED HALVES. A pipeline layer is built from ONE program's stage text against
  * ONE vertex layout, so the scope holds a set of them - one per (program, revision, layout) the pass draws with
@@ -59,6 +61,17 @@
  * pipeline bind the other half had already replaced, and the draw would run with a pipeline that is not its
  * own. A command whose pair no half was built for is refused, and the message says WHICH of the two did not
  * match, because the two have different fixes (compile the program / compile the layout).
+ *
+ * THE OTHER DRAWING CALL: FULL-SCREEN PASSES. A `DrawKind::Screen` drawing call draws the same pass' declared
+ * inputs through a program of its own - no geometry, no vertex streams, no material - so its half is an entry
+ * of its own KIND (see `Scope::Entry::kind`): a full-screen pipeline layer, looked up by the plan's program
+ * identity and revision. Nothing about the lookup is geometry-shaped, which is why a screen entry carries no
+ * vertex layout. The pass' declared inputs reach it through the SAME check and the same images as the content
+ * halves - but at **set 0**, because that is where the full-screen ABI's samplers live (see ContentPipeline),
+ * so a pass that draws both kinds gets two set objects over one list of images. The state it draws with is the
+ * plan's `CompiledDraw::dynamic` (a full-screen call has no per-command state to resolve), and its 128-byte
+ * push block is recorded with the layout the SDK's screen programs declare - its CONTENTS are the lighting
+ * phase's (see the note on `recordScreenDraw`).
  */
 V_VSG_NS_BEGIN
 
@@ -84,9 +97,10 @@ class V_VSG_API ContentPass
         /** @brief One compiled half: one program's stages against one vertex layout. */
         struct Entry
         {
+            core::DrawKind        kind{core::DrawKind::Content};  ///< Which drawing call this half serves.
             const void*           program{nullptr};    ///< The program identity the plan names.
             std::uint64_t         revision{0};         ///< The revision the stages were taken at.
-            core::VertexLayoutKey layout{};            ///< The vertex layout its pipeline declares.
+            core::VertexLayoutKey layout{};            ///< The vertex layout its pipeline declares (content).
             ContentPipeline*      pipelines{nullptr};  ///< The pipeline layer over that stage text.
             ContentDraw*          draws{nullptr};      ///< The recorder over those pipelines.
         };
@@ -145,16 +159,48 @@ class V_VSG_API ContentPass
 
     /** @brief Builds the pass' sampled-input set and its bind command, or null when there is nothing to bind.
      *
-     * One set per pass: the inputs are a property of the pass, so every draw of it binds the same set, and the
-     * registry's "already bound" answer (see StateRegistry) is what keeps the second draw from re-issuing it.
+     * One set per pass and per KIND: the inputs are a property of the pass, so every draw of one kind binds the
+     * same set, and the registry's "already bound" answer (see StateRegistry) is what keeps the second draw
+     * from re-issuing it. Where the set's bind lands is the ABI's: set 1 after the blocks for a content half,
+     * set 0 for a full-screen one - so the layer the draws bind is the one whose layout the set is built from.
      *
-     * @param pass   The compiled pass whose inputs are being bound.
-     * @param inputs The images the caller offered, already checked against the plan.
+     * @param pass      The compiled pass whose inputs are being bound.
+     * @param inputs    The images the caller offered, already checked against the plan.
+     * @param layer     The half's pipeline layer (its layout is what the set is built against).
+     * @param first_set The set index this bind starts at (1 for content, 0 for full-screen).
      * @return The bind command, or null for a pass with no colour textures to sample (a build failure is
      *         reported here).
      */
     ::vsg::ref_ptr<::vsg::BindDescriptorSet> makeInputSet(const core::CompiledPass& pass,
-                                                         std::span<const InputImages> inputs);
+                                                         std::span<const InputImages> inputs,
+                                                         ContentPipeline& layer, std::uint32_t first_set);
+
+    /** @brief Records one FULL-SCREEN drawing call; false when it was refused (and reported).
+     *
+     * A full-screen call draws the pass' declared inputs (the images the caller offered, already checked
+     * against the plan) through the half its program names, with the plan's `CompiledDraw::dynamic` - a
+     * full-screen call has no per-command state to resolve.
+     *
+     * THE PUSH BLOCK IS THE FULL-SCREEN ABI'S 128 BYTES, AND ITS CONTENTS ARE NOT THIS PHASE'S. The layout is
+     * the SDK's (`ambient` + `projparms` + three directional lights - `BuiltinShaders::deferredLightProgram`
+     * declares exactly that), while the light half needs the world->view transform and the drop accounting of
+     * the lighting phase and the `projparms` half needs the near/far the plan does not carry yet. It is pushed
+     * ZEROED: a declared push range that is never pushed holds undefined bytes, so "the phase that fills it has
+     * not landed" has to be a defined zero rather than whatever the driver had. The program this slice's
+     * evidence draws through (the engine's screen copy) reads none of it.
+     *
+     * @param draw    The compiled full-screen call.
+     * @param entry   The screen half its program names (resolved by the caller).
+     * @param pass    The compiled pass (colour attachment count; the viewport is the draw's own).
+     * @param compatibility The target's shape (the pipeline key's half - the plan names the target, this layer
+     *                      does not know it).
+     * @param samples The set the full-screen ABI binds at set 0, or null when the pass samples nothing.
+     * @param into    The group the recorded commands are added to.
+     * @return true when recorded; false when the half could not record it (already reported).
+     */
+    bool recordScreenDraw(const core::CompiledDraw& draw, const Scope::Entry& entry,
+                          const core::CompiledPass& pass, const core::RenderPassCompatibility& compatibility,
+                          const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& samples, ::vsg::Group& into);
 
     /** @brief Reports one refused command, naming the identity and the reason the lookup gave. */
     void reportRefused(const char* what, FactMiss miss);

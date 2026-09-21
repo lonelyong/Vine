@@ -4,8 +4,10 @@
 #include <cstddef>
 #include <string>
 
+#include <vsg/core/Array.h>
 #include <vsg/state/DescriptorImage.h>
 #include <vsg/state/ImageInfo.h>
+#include <vsg/state/PushConstants.h>
 
 #include <vine/vsg/api/DrawBlock.hpp>
 
@@ -55,6 +57,9 @@ std::uint32_t sampledColorCount(const core::CompiledPass& pass) noexcept
     return total;
 }
 
+/// @brief The full-screen ABI's push block: the layout the SDK's screen programs declare.
+constexpr std::size_t kFullscreenPushBytes = 128U;
+
 }  // namespace
 
 ContentPass::ContentPass(const Scope& scope, core::Diagnostics& diagnostics) noexcept
@@ -99,18 +104,50 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         }
     }
 
-    // The count the pipeline identity carries, and the set the draws bind. Both come from the PLAN (the count)
-    // and the plan-checked images (the set), so the key and the bindings cannot disagree about the sampled
-    // shape of this pass.
+    // The count the pipeline identity carries comes from the PLAN. The set the draws bind is built per KIND:
+    // a content draw binds it at set 1 (after the blocks), a full-screen draw at set 0 (its own ABI), so each
+    // kind's set is built from the layer that kind's pipelines were compiled in - and each kind's set is
+    // bound once, because the inputs are a property of the pass.
     const std::uint32_t sampled_color_count = sampledColorCount(pass);
-    const ::vsg::ref_ptr<::vsg::BindDescriptorSet> input_set = makeInputSet(pass, inputs);
-    if (sampled_color_count != 0U && input_set == nullptr)
+
+    const Scope::Entry* content_half  = nullptr;
+    const Scope::Entry* screen_half   = nullptr;
+    bool                has_content   = false;
+    for (const Scope::Entry& entry : scope_.entries)
     {
-        out = group;  // makeInputSet reported why
-        return false;
+        if (entry.kind == core::DrawKind::Screen)
+        {
+            screen_half = screen_half == nullptr ? &entry : screen_half;
+        }
+        else
+        {
+            content_half = content_half == nullptr ? &entry : content_half;
+        }
+    }
+    for (const core::CompiledDraw& draw : pass.draws)
+    {
+        has_content = has_content || draw.kind == core::DrawKind::Content;
     }
 
-    // One view block per pass: it describes the view, and the pass has one camera.
+    ::vsg::ref_ptr<::vsg::BindDescriptorSet> input_set;
+    if (has_content)
+    {
+        if (content_half == nullptr || content_half->pipelines == nullptr)
+        {
+            reportRefused("the pass' sampled inputs", "no compiled content half was built for this pass");
+            out = group;
+            return false;
+        }
+        input_set = makeInputSet(pass, inputs, *content_half->pipelines, 1U);
+        if (sampled_color_count != 0U && input_set == nullptr)
+        {
+            out = group;  // makeInputSet reported why
+            return false;
+        }
+    }
+
+    // One view block per pass: it describes the view, and the pass has one camera. A full-screen draw does not
+    // read it (the full-screen ABI binds no blocks), so a pass with nothing but those still pays for one row.
     const BlockStorage::Block view = scope_.storage->writeView(view_block);
     if (!view.valid)
     {
@@ -119,16 +156,62 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         return false;
     }
 
+    // The full-screen halves' images, built on demand: one set per half (its layer's set layout, set 0), and a
+    // second screen half of the same pass gets a set of its own over the same images - the same recipe builds
+    // their layouts, so the two are compatible with one another.
+    const Scope::Entry*                            screen_set_for = nullptr;
+    ::vsg::ref_ptr<::vsg::BindDescriptorSet>       screen_set;
+
     bool complete = true;
     for (const core::CompiledDraw& draw : pass.draws)
     {
-        if (draw.kind != core::DrawKind::Content)
+        if (draw.kind == core::DrawKind::Screen)
         {
-            // A full-screen program drawing call drives the program-slot path, which this layer does not own.
-            reportRefused("a full-screen drawing call", "the program-slot path is not wired yet");
-            complete = false;
+            // The half is found by the program the PLAN names (identity plus revision): the stages are already
+            // compiled in the layer the entry names, so nothing here needs the facts table - the geometry-shaped
+            // half of the content lookup has no counterpart in a call that draws no geometry.
+            const Scope::Entry* half = nullptr;
+            bool                same_program = false;
+            for (const Scope::Entry& entry : scope_.entries)
+            {
+                if (entry.kind != core::DrawKind::Screen || entry.program != draw.program.program)
+                {
+                    continue;
+                }
+                same_program = true;
+                if (entry.revision == draw.program.revision)
+                {
+                    half = &entry;
+                    break;
+                }
+            }
+            if (half == nullptr || half->pipelines == nullptr || half->draws == nullptr)
+            {
+                reportRefused("a full-screen drawing call",
+                              same_program ? "the pass' program is compiled at a different revision"
+                                           : "no compiled full-screen half was built for the pass' program");
+                complete = false;
+                continue;
+            }
+
+            if (screen_set_for != half)
+            {
+                screen_set     = makeInputSet(pass, inputs, *half->pipelines, 0U);
+                screen_set_for = half;
+                if (sampled_color_count != 0U && screen_set == nullptr)
+                {
+                    complete = false;  // makeInputSet reported why
+                    continue;
+                }
+            }
+
+            if (!recordScreenDraw(draw, *half, pass, compatibility, screen_set, *group))
+            {
+                complete = false;
+            }
             continue;
         }
+
         for (const core::CompiledCommand& command : draw.commands)
         {
             if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, input_set,
@@ -144,26 +227,22 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
 }
 
 ::vsg::ref_ptr<::vsg::BindDescriptorSet> ContentPass::makeInputSet(const core::CompiledPass& pass,
-                                                                  std::span<const InputImages> inputs)
+                                                                  std::span<const InputImages> inputs,
+                                                                  ContentPipeline& layer,
+                                                                  std::uint32_t    first_set)
 {
     const std::uint32_t texture_count = sampledColorCount(pass);
     if (texture_count == 0U)
     {
         return {};  // nothing declared (or nothing produced): there is no sampled set to bind
     }
-    if (scope_.entries.empty())
-    {
-        reportRefused("the pass' sampled inputs", "no compiled half was built for this pass");
-        return {};
-    }
 
-    // One set per pass, laid out by the layer that compiles the pipelines: the set layout object the pipelines
-    // were compiled against, so the set the draws bind is exactly the shape they expect. The first half
-    // answers; the halves' sampled layouts are built from the same recipe, so they are compatible with one
-    // another as well (a pass may switch halves with this set bound).
-    ContentPipeline& pipelines  = *scope_.entries.front().pipelines;
-    const auto       set_layout = pipelines.sampledSetLayout(texture_count);
-    const auto       sampler    = pipelines.inputSampler();
+    // One set per pass and kind, laid out by the layer that compiles the pipelines that kind's draws bind: the
+    // set layout object they were compiled against, so the set is exactly the shape they expect. The halves of
+    // one kind build their sampled layouts from the same recipe, so they are compatible with one another as
+    // well (a pass may switch halves with this set bound).
+    const auto set_layout = layer.sampledSetLayout(texture_count);
+    const auto sampler    = layer.inputSampler();
     if (set_layout == nullptr || sampler == nullptr)
     {
         reportRefused("the pass' sampled inputs", "the sampled-input set could not be built");
@@ -199,11 +278,40 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         reportRefused("the pass' sampled inputs", "the sampled-input set could not be created");
         return {};
     }
-    // The pipeline layout this command names is the one built for the same count, and set 1 is the sampled
-    // set's index in it (the block set is set 0, see ContentPipeline).
-    constexpr std::uint32_t kSampledSetIndex = 1U;
-    return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.layoutFor(texture_count),
-                                            kSampledSetIndex, set);
+    // The pipeline layout this command names is the one built for the same count, and the set index is the
+    // ABI's: 1 after the block set for a content half, 0 for a full-screen one (see ContentPipeline).
+    return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, layer.layoutFor(texture_count),
+                                            first_set, set);
+}
+
+bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::Entry& entry,
+                                   const core::CompiledPass& pass,
+                                   const core::RenderPassCompatibility& compatibility,
+                                   const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& samples, ::vsg::Group& into)
+{
+    ContentDraw::ScreenDraw full_screen;
+    full_screen.key.kind                  = core::DrawKind::Screen;
+    full_screen.key.program               = draw.program.program;
+    full_screen.key.revision              = draw.program.revision;
+    full_screen.key.compatibility         = compatibility;
+    full_screen.key.sampled_color_count   = sampledColorCount(pass);
+    full_screen.dynamic                   = draw.dynamic;
+    full_screen.samplers                  = samples;
+    full_screen.push = ::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0U,
+                                                    ::vsg::ubyteArray::create(kFullscreenPushBytes));
+    full_screen.viewport = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
+                                         static_cast<float>(draw.viewport.width),
+                                         static_cast<float>(draw.viewport.height) };
+    full_screen.color_attachments = pass.color_attachments;
+
+    const auto group = entry.draws->recordScreen(*scope_.registry, full_screen);
+    if (group == nullptr)
+    {
+        reportRefused("a full-screen drawing call", "its pipeline for this target could not be built");
+        return false;
+    }
+    into.addChild(group);
+    return true;
 }
 
 bool ContentPass::recordCommand(const core::CompiledCommand& command, const core::CompiledDraw& draw,

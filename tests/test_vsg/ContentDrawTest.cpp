@@ -38,6 +38,7 @@
 #include <vsg/state/DescriptorBuffer.h>
 #include <vsg/state/DescriptorImage.h>
 #include <vsg/state/DescriptorSet.h>
+#include <vsg/state/PushConstants.h>
 #include <vsg/state/DescriptorSetLayout.h>
 #include <vsg/state/PipelineLayout.h>
 
@@ -348,8 +349,10 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     draw.key.sampled_color_count    = 2U;
     draw.samplers = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines->layoutFor(2U), 0U,
                                                      set);
+    draw.push = ::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0U, ::vsg::ubyteArray::create(128U));
     draw.viewport = ViewportRect{ 8.0F, 8.0F, 32.0F, 16.0F };
     ASSERT_NE(draw.samplers, nullptr) << "the set must have been created";
+    ASSERT_NE(draw.push, nullptr) << "the push block must have been created";
 
     const auto group = recorder.recordScreen(registry, draw);
     ASSERT_NE(group, nullptr);
@@ -361,10 +364,16 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     ASSERT_EQ(group->children.size(), 1U);
     const auto* commands = dynamic_cast<const ::vsg::Commands*>(group->children[0].get());
     ASSERT_NE(commands, nullptr);
-    ASSERT_EQ(commands->children.size(), 3U) << "viewport, scissor, ONE draw - there is no geometry to bind";
+    ASSERT_EQ(commands->children.size(), 4U)
+        << "viewport, scissor, the push block, ONE draw - there is no geometry to bind";
     EXPECT_NE(dynamic_cast<const ::vsg::SetViewport*>(commands->children[0].get()), nullptr);
     EXPECT_NE(dynamic_cast<const ::vsg::SetScissor*>(commands->children[1].get()), nullptr);
-    const auto* generated = dynamic_cast<const ::vsg::Draw*>(commands->children[2].get());
+    const auto* push = dynamic_cast<const ::vsg::PushConstants*>(commands->children[2].get());
+    ASSERT_NE(push, nullptr) << "the full-screen ABI's block is what the push range is for";
+    EXPECT_EQ(push->stageFlags, VK_SHADER_STAGE_FRAGMENT_BIT) << "the screen vertex stage declares no constants";
+    ASSERT_NE(push->data, nullptr);
+    EXPECT_EQ(push->data->dataSize(), 128U);
+    const auto* generated = dynamic_cast<const ::vsg::Draw*>(commands->children[3].get());
     ASSERT_NE(generated, nullptr) << "a full-screen draw is Draw(3), not DrawIndexed";
     EXPECT_EQ(generated->vertexCount, 3U);
     EXPECT_EQ(generated->instanceCount, 1U);

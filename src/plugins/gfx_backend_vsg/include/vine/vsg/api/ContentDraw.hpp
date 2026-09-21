@@ -12,6 +12,7 @@
 #include <vsg/nodes/StateGroup.h>
 #include <vsg/state/BindDescriptorSet.h>
 #include <vsg/state/GraphicsPipeline.h>
+#include <vsg/state/PushConstants.h>
 
 #include <vine/vsg/VsgVulkanEntryPoints.hpp>
 #include <vine/vsg/api/ContentPipeline.hpp>
@@ -78,6 +79,7 @@ class ContentDraw
         core::PipelineKey  key;                 ///< Identity (kind = Screen: the full-screen descriptor ABI).
         core::DynamicState dynamic;             ///< The set-command half of the state.
         ::vsg::ref_ptr<::vsg::BindDescriptorSet> samplers;  ///< Set 0: binding i is the source's attachment i.
+        ::vsg::ref_ptr<::vsg::PushConstants>     push;      ///< The ABI's 128-byte block, or null to push none.
         ViewportRect       viewport;            ///< The rectangle the triangle covers (the PiP sub-rectangle).
         std::uint32_t      color_attachments{1};///< Colour attachments of the pass (for the blend state).
     };
@@ -111,7 +113,9 @@ class ContentDraw
      * stage, so there is no vertex buffer and no index buffer to bind - and the sampled set is bound as SET 0,
      * because the full-screen ABI's samplers live there (the content ABI's blocks do; see ContentPipeline).
      * The set is bound only when the pass' registry has not already bound that very set (one pass draws its
-     * picture through it, so binding it twice would be two commands for one fact).
+     * picture through it, so binding it twice would be two commands for one fact). A push block, when the
+     * caller offers one, is recorded after the pipeline bind (the API reads the push range from the pipeline
+     * layout the bind just made current).
      *
      * @param registry The pass' state registry (what is bound, what was issued).
      * @param draw     The resolved full-screen draw.
