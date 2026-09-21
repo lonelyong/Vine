@@ -24,6 +24,7 @@ set(SRC_FILE_LIST
 	BlockDescriptorsTest.cpp
 	ContentPipelineTest.cpp
 	ContentDrawTest.cpp
+	DevicePhaseTest.cpp
 	OffscreenTargetTest.cpp
 	ContentStackTest.cpp
 	SampledInputTest.cpp

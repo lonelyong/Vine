@@ -220,10 +220,18 @@ if [ -z "$PHASES" ]; then
     record_stage "phase lines" 1 "the suite printed no [selftest] line"
 else
     printf '%s\n' "$PHASES" | sed 's/^/         /'
-    if printf '%s\n' "$PHASES" | tail -1 | grep -q '^\[selftest\] done$'; then
-        record_stage "phase lines" 0 "$(printf '%s\n' "$PHASES" | grep -c '^\[selftest\]') line(s), closed"
+    phase_lines=$(printf '%s\n' "$PHASES" | grep -c '^\[selftest\]' || true)
+    phase_failed=$(printf '%s\n' "$PHASES" | grep -c 'FAILED' || true)
+    phase_closed=$(printf '%s\n' "$PHASES" | grep -c '^\[selftest\] done$' || true)
+    # Several tables print (the plan-side phases and the device phases): what makes a run clean is that
+    # NO phase reported FAILED and that every run that started also closed - not that the last line is a
+    # `done`, which a later, passing run would also satisfy.
+    if [ "$phase_failed" -ne 0 ]; then
+        record_stage "phase lines" 1 "$phase_failed phase(s) reported FAILED"
+    elif [ "$phase_closed" -eq 0 ]; then
+        record_stage "phase lines" 1 "no phase run closed with [selftest] done"
     else
-        record_stage "phase lines" 1 "the phase run did not close with [selftest] done"
+        record_stage "phase lines" 0 "$phase_lines line(s) in $phase_closed phase run(s), all closed"
     fi
 fi
 

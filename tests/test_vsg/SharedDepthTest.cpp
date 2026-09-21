@@ -46,6 +46,8 @@
 #include <vine/vsg/core/Streams.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
+#include "DevicePhases.hpp"
+
 using vine::graphics::RenderTarget;
 using vine::vsg::BlockDescriptors;
 using vine::vsg::BlockStorage;
@@ -163,14 +165,9 @@ struct Stack
 
     static int material_identity;
 
-    bool build()
+    bool build(const vine::vsg::DeviceResult& device)
     {
-        vine::vsg::DeviceOptions options;
-        options.validation = true;  // the shared depth is also a layout question, so the layers are on
-        created            = vine::vsg::createDevice(options);
-        if (!created.ok) {
-            return false;
-        }
+        created = device;  // the shared depth is a layout question, so the caller brings the layers
         if (!created.validation) {
             // The instrument is asked for and its absence is reported, not silently traded for a weaker set of
             // assertions: the layer is a separate package (see the repo's own lavapipe gate, which warns and
@@ -315,6 +312,147 @@ constexpr float kNearZ = 0.5F;   ///< Depth 0.5: nearer, which is what reverse-Z
 
 }  // namespace
 
+void runSharedDepthPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+{
+    Stack stack;
+    try {
+        if (!stack.build(device)) {
+            GTEST_SKIP() << "no device satisfies the device-floor requirements";
+        }
+    }
+    catch (const ::vsg::Exception& error) {
+        FAIL() << "build threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
+    }
+
+    std::unique_ptr<OffscreenTarget> lender;
+    std::unique_ptr<OffscreenTarget> borrower;
+    try {
+        lender   = OffscreenTarget::create(device.device, depthLayout(/*sampleable*/ false));
+        borrower = lender != nullptr ? OffscreenTarget::create(device.device, depthLayout(/*sampleable*/ false), lender.get())
+                                     : nullptr;
+    }
+    catch (const ::vsg::Exception& error) {
+        FAIL() << "target create threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
+    }
+    ASSERT_NE(lender, nullptr);
+    ASSERT_NE(borrower, nullptr) << "the shared-depth target must be creatable";
+    if (lender != nullptr && borrower != nullptr) {
+        counters.targets_built += 2U;  // the lender and the borrower
+    }
+
+    // The lender draws one NEAR red triangle on the left; the borrower draws two FAR green triangles - one
+    // exactly where the lender's is (the shared depth must reject it) and one on the right (which must appear).
+    const auto lender_triangle   = stack.triangle(kNearZ, -0.4F, 0.0F, 1.0F);
+    const auto borrower_rejected = stack.triangle(kFarZ, -0.4F, 1.0F, 0.0F);
+    const auto borrower_visible  = stack.triangle(kFarZ, 0.4F, 1.0F, 0.0F);
+    ASSERT_NE(lender_triangle, nullptr);
+    ASSERT_NE(borrower_rejected, nullptr);
+    ASSERT_NE(borrower_visible, nullptr);
+
+    lender->renderGraph()->addChild(lender_triangle);
+    (void)0;
+    borrower->renderGraph()->addChild(borrower_rejected);
+    borrower->renderGraph()->addChild(borrower_visible);
+
+    // One command graph, in order: the lender's pass (which writes the depth), then the borrower's (which
+    // LOADs it), then both readbacks. The borrower's pass must run after the lender's - that is the producer /
+    // consumer edge the shared image carries.
+    auto command_graph = ::vsg::CommandGraph::create(device.device, stack.created.queue_family);
+    command_graph->addChild(lender->renderGraph());
+    command_graph->addChild(lender->capture());
+    command_graph->addChild(borrower->renderGraph());
+    command_graph->addChild(borrower->capture());
+    // The depth copy reads the SAME image the borrower's pass just wrote into, and it runs after both passes:
+    // what it holds is therefore the state the two passes left behind, which is what the assertions read.
+    command_graph->addChild(lender->captureDepth());
+    // A BORROWER's depth copy reads the same shared image through its own destination buffer: that is what the
+    // readback of a borrowed depth means, and the assertions below read it back through the borrower to say so.
+    command_graph->addChild(borrower->captureDepth());
+    try {
+        stack.viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    }
+    catch (const ::vsg::Exception& error) {
+        FAIL() << "assign threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
+    }
+    try {
+        ASSERT_TRUE(stack.viewer->compile());
+    }
+    catch (const ::vsg::Exception& error) {
+        FAIL() << "compile threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
+    }
+    stack.viewer->advanceToNextFrame();
+    stack.viewer->handleEvents();
+    try {
+        stack.viewer->recordAndSubmit();
+        stack.viewer->deviceWaitIdle();
+    ++counters.frames;
+    }
+    catch (const ::vsg::Exception& error) {
+        FAIL() << "submit threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
+    }
+
+    const PixelProbe lender_pixels   = lender->probe();
+    const PixelProbe borrower_pixels = borrower->probe();
+    ASSERT_TRUE(lender_pixels.valid());
+    ASSERT_TRUE(borrower_pixels.valid());
+
+    const Pixel shared = centroidOf(-0.4F);
+    const Pixel own    = centroidOf(0.4F);
+
+    EXPECT_TRUE(isRed(lender_pixels.pixel(shared.x, shared.y))) << "the lender drew its near triangle";
+    EXPECT_TRUE(isClear(lender_pixels.pixel(own.x, own.y))) << "and nothing else";
+
+    EXPECT_TRUE(isClear(borrower_pixels.pixel(shared.x, shared.y)))
+        << "the borrower's far triangle stood where the lender's near one already wrote depth: the shared depth "
+           "test must reject it. A borrower with a depth of its own would paint this pixel green";
+    const Rgba8 own_pixel    = borrower_pixels.pixel(own.x, own.y);
+    const Rgba8 shared_pixel = borrower_pixels.pixel(shared.x, shared.y);
+    EXPECT_TRUE(isGreen(own_pixel)) << "borrower(" << own.x << "," << own.y << ") = r" << int(own_pixel.r) << " g"
+                                    << int(own_pixel.g) << " b" << int(own_pixel.b) << " a" << int(own_pixel.a)
+                                    << " | shared = r" << int(shared_pixel.r) << " g" << int(shared_pixel.g) << " b"
+                                    << int(shared_pixel.b)
+                                    << " | the borrower's second triangle must be visible: 'the depth is shared' and "
+                                       "'the borrower draws nothing' are different pictures";
+    // The depth is the other half of the evidence, and the half a colour picture cannot give: "the triangle
+    // is hidden" and "the depth buffer is empty" look the same in pixels. These numbers say which pass wrote
+    // what into the image both targets share.
+    const vine::vsg::core::DepthProbe depth = lender->depthProbe();
+    if (!depth.valid()) {
+        GTEST_SKIP() << "the depth attachment of this device cannot be read back";
+    }
+    EXPECT_EQ(depth.width(), static_cast<int>(kSize));
+    EXPECT_NEAR(depth.depthAt(shared.x, shared.y), kNearZ, 0.01F)
+        << "the lender's depth is still there once the borrower's pass has finished: the borrower tested "
+           "against THIS value, not against a clear of its own";
+    EXPECT_NEAR(depth.depthAt(own.x, own.y), kFarZ, 0.01F)
+        << "the borrower's visible triangle wrote its own depth into the shared image";
+    EXPECT_NEAR(depth.depthAt(1, 1), 0.0F, 0.01F)
+        << "and the clear (the reverse-Z far plane) survives where neither triangle is";
+    EXPECT_EQ(depth.countNear(0.0F, 0.01F) + depth.countNear(kNearZ, 0.01F) + depth.countNear(kFarZ, 0.01F),
+              static_cast<std::size_t>(kSize) * kSize)
+        << "every texel is one of exactly three values: a fourth would mean something wrote depth that no "
+           "draw of this frame asked for";
+
+    // The borrower reads the SAME image back: its own copy-back node copies the lender's attachment, so the
+    // numbers are the two passes' writes in one picture. A borrower that owned a depth of its own would answer
+    // with its clear value where the lender's near triangle is.
+    const vine::vsg::core::DepthProbe borrowed_depth = borrower->depthProbe();
+    if (!borrowed_depth.valid()) {
+        GTEST_SKIP() << "the shared depth cannot be read back through the borrower on this device";
+    }
+    EXPECT_EQ(borrowed_depth.width(), static_cast<int>(kSize));
+    EXPECT_NEAR(borrowed_depth.depthAt(shared.x, shared.y), kNearZ, 0.01F)
+        << "where the borrower's own far triangle was rejected, the value is the LENDER's near one: the "
+           "borrower's readback is the shared image, not a depth of its own";
+    EXPECT_NEAR(borrowed_depth.depthAt(own.x, own.y), kFarZ, 0.01F)
+        << "and where the borrower's triangle was visible, its far value - one image, written by two passes";
+    EXPECT_NEAR(borrowed_depth.depthAt(1, 1), 0.0F, 0.01F)
+        << "the shared clear survives where neither drew";
+
+    EXPECT_EQ(stack.recorder->draws(), 3U) << "three draws were recorded: one lender, two borrower";
+    EXPECT_EQ(stack.recorder->refusals(), 0U);
+}
+
 TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromotion)
 {
     const auto created = vine::vsg::createDevice();
@@ -382,138 +520,16 @@ TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromoti
 
 TEST(SharedDepthTest, TheBorrowerSeesTheDepthTheLenderWrote)
 {
-    Stack stack;
-    try {
-        if (!stack.build()) {
-            GTEST_SKIP() << "no device satisfies the device-floor requirements";
-        }
+    // The phase body is also what the phase table runs (see DevicePhases.hpp). The device is created here,
+    // with the layers on: the shared depth is a layout question, and the phase is evidence about it.
+    vine::vsg::DeviceOptions options;
+    options.validation = true;
+    const auto created = vine::vsg::createDevice(options);
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
-    catch (const ::vsg::Exception& error) {
-        FAIL() << "build threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
-    }
-    const auto& device = stack.created.device;
-
-    std::unique_ptr<OffscreenTarget> lender;
-    std::unique_ptr<OffscreenTarget> borrower;
-    try {
-        lender   = OffscreenTarget::create(device, depthLayout(/*sampleable*/ false));
-        borrower = lender != nullptr ? OffscreenTarget::create(device, depthLayout(/*sampleable*/ false), lender.get())
-                                     : nullptr;
-    }
-    catch (const ::vsg::Exception& error) {
-        FAIL() << "target create threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
-    }
-    ASSERT_NE(lender, nullptr);
-    ASSERT_NE(borrower, nullptr) << "the shared-depth target must be creatable";
-
-    // The lender draws one NEAR red triangle on the left; the borrower draws two FAR green triangles - one
-    // exactly where the lender's is (the shared depth must reject it) and one on the right (which must appear).
-    const auto lender_triangle   = stack.triangle(kNearZ, -0.4F, 0.0F, 1.0F);
-    const auto borrower_rejected = stack.triangle(kFarZ, -0.4F, 1.0F, 0.0F);
-    const auto borrower_visible  = stack.triangle(kFarZ, 0.4F, 1.0F, 0.0F);
-    ASSERT_NE(lender_triangle, nullptr);
-    ASSERT_NE(borrower_rejected, nullptr);
-    ASSERT_NE(borrower_visible, nullptr);
-
-    lender->renderGraph()->addChild(lender_triangle);
-    (void)0;
-    borrower->renderGraph()->addChild(borrower_rejected);
-    borrower->renderGraph()->addChild(borrower_visible);
-
-    // One command graph, in order: the lender's pass (which writes the depth), then the borrower's (which
-    // LOADs it), then both readbacks. The borrower's pass must run after the lender's - that is the producer /
-    // consumer edge the shared image carries.
-    auto command_graph = ::vsg::CommandGraph::create(device, stack.created.queue_family);
-    command_graph->addChild(lender->renderGraph());
-    command_graph->addChild(lender->capture());
-    command_graph->addChild(borrower->renderGraph());
-    command_graph->addChild(borrower->capture());
-    // The depth copy reads the SAME image the borrower's pass just wrote into, and it runs after both passes:
-    // what it holds is therefore the state the two passes left behind, which is what the assertions read.
-    command_graph->addChild(lender->captureDepth());
-    // A BORROWER's depth copy reads the same shared image through its own destination buffer: that is what the
-    // readback of a borrowed depth means, and the assertions below read it back through the borrower to say so.
-    command_graph->addChild(borrower->captureDepth());
-    try {
-        stack.viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
-    }
-    catch (const ::vsg::Exception& error) {
-        FAIL() << "assign threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
-    }
-    try {
-        ASSERT_TRUE(stack.viewer->compile());
-    }
-    catch (const ::vsg::Exception& error) {
-        FAIL() << "compile threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
-    }
-    stack.viewer->advanceToNextFrame();
-    stack.viewer->handleEvents();
-    try {
-        stack.viewer->recordAndSubmit();
-        stack.viewer->deviceWaitIdle();
-    }
-    catch (const ::vsg::Exception& error) {
-        FAIL() << "submit threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
-    }
-
-    const PixelProbe lender_pixels   = lender->probe();
-    const PixelProbe borrower_pixels = borrower->probe();
-    ASSERT_TRUE(lender_pixels.valid());
-    ASSERT_TRUE(borrower_pixels.valid());
-
-    const Pixel shared = centroidOf(-0.4F);
-    const Pixel own    = centroidOf(0.4F);
-
-    EXPECT_TRUE(isRed(lender_pixels.pixel(shared.x, shared.y))) << "the lender drew its near triangle";
-    EXPECT_TRUE(isClear(lender_pixels.pixel(own.x, own.y))) << "and nothing else";
-
-    EXPECT_TRUE(isClear(borrower_pixels.pixel(shared.x, shared.y)))
-        << "the borrower's far triangle stood where the lender's near one already wrote depth: the shared depth "
-           "test must reject it. A borrower with a depth of its own would paint this pixel green";
-    const Rgba8 own_pixel    = borrower_pixels.pixel(own.x, own.y);
-    const Rgba8 shared_pixel = borrower_pixels.pixel(shared.x, shared.y);
-    EXPECT_TRUE(isGreen(own_pixel)) << "borrower(" << own.x << "," << own.y << ") = r" << int(own_pixel.r) << " g"
-                                    << int(own_pixel.g) << " b" << int(own_pixel.b) << " a" << int(own_pixel.a)
-                                    << " | shared = r" << int(shared_pixel.r) << " g" << int(shared_pixel.g) << " b"
-                                    << int(shared_pixel.b)
-                                    << " | the borrower's second triangle must be visible: 'the depth is shared' and "
-                                       "'the borrower draws nothing' are different pictures";
-    // The depth is the other half of the evidence, and the half a colour picture cannot give: "the triangle
-    // is hidden" and "the depth buffer is empty" look the same in pixels. These numbers say which pass wrote
-    // what into the image both targets share.
-    const vine::vsg::core::DepthProbe depth = lender->depthProbe();
-    if (!depth.valid()) {
-        GTEST_SKIP() << "the depth attachment of this device cannot be read back";
-    }
-    EXPECT_EQ(depth.width(), static_cast<int>(kSize));
-    EXPECT_NEAR(depth.depthAt(shared.x, shared.y), kNearZ, 0.01F)
-        << "the lender's depth is still there once the borrower's pass has finished: the borrower tested "
-           "against THIS value, not against a clear of its own";
-    EXPECT_NEAR(depth.depthAt(own.x, own.y), kFarZ, 0.01F)
-        << "the borrower's visible triangle wrote its own depth into the shared image";
-    EXPECT_NEAR(depth.depthAt(1, 1), 0.0F, 0.01F)
-        << "and the clear (the reverse-Z far plane) survives where neither triangle is";
-    EXPECT_EQ(depth.countNear(0.0F, 0.01F) + depth.countNear(kNearZ, 0.01F) + depth.countNear(kFarZ, 0.01F),
-              static_cast<std::size_t>(kSize) * kSize)
-        << "every texel is one of exactly three values: a fourth would mean something wrote depth that no "
-           "draw of this frame asked for";
-
-    // The borrower reads the SAME image back: its own copy-back node copies the lender's attachment, so the
-    // numbers are the two passes' writes in one picture. A borrower that owned a depth of its own would answer
-    // with its clear value where the lender's near triangle is.
-    const vine::vsg::core::DepthProbe borrowed_depth = borrower->depthProbe();
-    if (!borrowed_depth.valid()) {
-        GTEST_SKIP() << "the shared depth cannot be read back through the borrower on this device";
-    }
-    EXPECT_EQ(borrowed_depth.width(), static_cast<int>(kSize));
-    EXPECT_NEAR(borrowed_depth.depthAt(shared.x, shared.y), kNearZ, 0.01F)
-        << "where the borrower's own far triangle was rejected, the value is the LENDER's near one: the "
-           "borrower's readback is the shared image, not a depth of its own";
-    EXPECT_NEAR(borrowed_depth.depthAt(own.x, own.y), kFarZ, 0.01F)
-        << "and where the borrower's triangle was visible, its far value - one image, written by two passes";
-    EXPECT_NEAR(borrowed_depth.depthAt(1, 1), 0.0F, 0.01F)
-        << "the shared clear survives where neither drew";
-
-    EXPECT_EQ(stack.recorder->draws(), 3U) << "three draws were recorded: one lender, two borrower";
-    EXPECT_EQ(stack.recorder->refusals(), 0U);
+    DevicePhaseCounters counters;
+    runSharedDepthPhase(created, counters);
+    EXPECT_EQ(counters.targets_built, 2U) << "the phase built the lender and the borrower";
+    EXPECT_EQ(counters.frames, 1U);
 }

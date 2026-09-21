@@ -35,6 +35,8 @@
 #include <vine/vsg/core/Observe.hpp>
 #include <vine/vsg/core/RetirementQueue.hpp>
 
+#include "DevicePhases.hpp"
+
 using vine::graphics::RenderCommand;
 using vine::graphics::RenderTarget;
 using vine::vsg::core::CompiledPass;
@@ -151,20 +153,15 @@ vine::vsg::core::ClearPolicy clearPolicy(const float (&color)[4], bool asked = t
 
 }  // namespace
 
-TEST(OffscreenTargetTest, AClearedTargetReadsBackAsItsClearColour)
+void runOffscreenReadbackPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
-    const auto created = createDevice();
-    if (!created.ok) {
-        GTEST_SKIP() << "no device satisfies the device-floor requirements: "
-                     << std::string(reinterpret_cast<const char*>(created.error.data()), created.error.size());
-    }
-
-    auto target = OffscreenTarget::create(created.device, OffscreenTarget::Layout{ 8U, 4U,
+    auto target = OffscreenTarget::create(device.device, OffscreenTarget::Layout{ 8U, 4U,
                                                                                    { 0.25F, 0.5F, 0.75F, 1.0F } });
     ASSERT_NE(target, nullptr) << "the target (image, pass, framebuffer, copy-back) must be creatable";
+    ++counters.targets_built;
 
     auto viewer        = ::vsg::Viewer::create();
-    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    auto command_graph = ::vsg::CommandGraph::create(device.device, device.queue_family);
     command_graph->addChild(target->renderGraph());
     command_graph->addChild(target->capture());  // recorded AFTER the pass, on the same queue, in order
     viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
@@ -174,6 +171,7 @@ TEST(OffscreenTargetTest, AClearedTargetReadsBackAsItsClearColour)
     viewer->handleEvents();
     viewer->recordAndSubmit();
     viewer->deviceWaitIdle();
+    ++counters.frames;
 
     const PixelProbe probe = target->probe();
     ASSERT_TRUE(probe.valid());
@@ -190,6 +188,266 @@ TEST(OffscreenTargetTest, AClearedTargetReadsBackAsItsClearColour)
     EXPECT_TRUE(probe.wholeImageMatches(sampled))
         << "the clear is uniform: any pixel that differs is a region the pass did not write";
     EXPECT_DOUBLE_EQ(probe.nonBlackFraction(), 1.0) << "a clear colour that is not black is still not 'empty'";
+}
+
+void runTargetResizePhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+{
+    auto target = OffscreenTarget::create(device.device,
+                                          OffscreenTarget::Layout{ 8U, 4U, { 0.25F, 0.5F, 0.75F, 1.0F } });
+    ASSERT_NE(target, nullptr);
+    ++counters.targets_built;
+
+    const float kClear[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
+
+    // Frame 1 through the graph the executor derives: the target works BEFORE the resize, so "it still works
+    // after" is a change rather than the first time anything ran.
+    const RecordedFrame first_frame = recordOneFrame(device, *target, clearPolicy(kClear));
+    ++counters.frames;
+    {
+        const PixelProbe probe = target->probe();
+        ASSERT_TRUE(probe.valid());
+        EXPECT_EQ(probe.width(), 8);
+        EXPECT_EQ(probe.height(), 4);
+    }
+    EXPECT_EQ(target->generation(), 0U) << "a fresh target has replaced nothing yet";
+    EXPECT_TRUE(target->written()) << "a pass has been recorded into the attachments";
+
+    // The graph of the set that is about to be replaced. Its REFERENCE COUNT is the observable that tells
+    // parking from dropping: this case holds one reference, the frame that recorded it holds another, and the
+    // set the target no longer serves still has to be reachable - from the queue.
+    const ::vsg::ref_ptr<::vsg::RenderGraph> replaced_graph = target->renderGraph();
+    const unsigned int                       counts_before  = replaced_graph->referenceCount();
+
+    FrameTimeline timeline;
+    const auto    token = timeline.begin();
+    timeline.submitted(token);  // the frame that recorded those attachments: retire point = 1 + 3 + 1
+    RetirementQueue queue(3U);
+
+    const OffscreenTarget::Resized resized = target->resize(16U, 12U, timeline, queue);
+
+    EXPECT_EQ(static_cast<int>(resized.decision.action), static_cast<int>(vine::vsg::core::TargetAction::ResizeInPlace));
+    EXPECT_FALSE(resized.refused);
+    EXPECT_TRUE(resized.replaced);
+    EXPECT_TRUE(resized.parked) << "the objects a submission may still name are parked, not freed";
+    EXPECT_EQ(resized.generation, 1U);
+    EXPECT_EQ(queue.pending(), 1U);
+    EXPECT_EQ(queue.deviceWaits(), 0U) << "parking is exactly what keeps this path from stopping the device";
+    EXPECT_EQ(target->generation(), 1U);
+    EXPECT_EQ(target->width(), 16U);
+    EXPECT_EQ(target->height(), 12U);
+    EXPECT_FALSE(target->written()) << "the new attachments have never been drawn into: the next pass in clears";
+    EXPECT_NE(target->renderGraph(), replaced_graph)
+        << "the graph built around the old framebuffer cannot serve the new extent";
+    EXPECT_EQ(replaced_graph->referenceCount(), counts_before)
+        << "the replaced set is still alive right after the resize: the queue holds it, and a resize that "
+           "dropped it would free images a frame in flight may still name";
+
+    // Frame 2 through the graph the resize built: the new extent has to RENDER, not just exist. `written()`
+    // being false is what makes this pass the first writer again, so the fresh images are CLEARED - and the
+    // pass does not ask for a clear, so a target that forgot it had been replaced would LOAD images nobody
+    // wrote, which is what the picture below catches.
+    const RecordedFrame second_frame = recordOneFrame(device, *target, clearPolicy(kClear, /*asked*/ false));
+    ++counters.frames;
+    ++counters.resizes_replaced;
+    ++counters.parked;
+    {
+        const PixelProbe probe = target->probe();
+        ASSERT_TRUE(probe.valid());
+        EXPECT_EQ(probe.width(), 16);
+        EXPECT_EQ(probe.height(), 12) << "the probe follows the target's own extent, so a stale capture shows";
+        const Rgba8 expected{ quantise(0.25F), quantise(0.5F), quantise(0.75F), 255U };
+        const Rgba8 sampled = probe.pixel(8, 6);
+        EXPECT_NEAR(sampled.r, expected.r, 1);
+        EXPECT_NEAR(sampled.g, expected.g, 1);
+        EXPECT_NEAR(sampled.b, expected.b, 1);
+        EXPECT_TRUE(probe.wholeImageMatches(sampled))
+            << "the whole new extent holds the clear: a resize that left part of the image (or the old "
+               "framebuffer's extent) behind would show here";
+    }
+
+    // The release the queue was waiting for: past the retire point, the parked set goes - and it is the
+    // queue's hold (and only it) that goes away.
+    timeline.completeUpTo(queue.retirePoint(timeline));
+    queue.advance(timeline);
+    EXPECT_EQ(queue.released(), 1U);
+    EXPECT_EQ(queue.pending(), 0U);
+    EXPECT_EQ(replaced_graph->referenceCount() + 1U, counts_before)
+        << "the queue held the replaced set and let go exactly once";
+    EXPECT_TRUE(target->probe().valid()) << "the release of the old set must not touch the live one";
+}
+
+void runLostSubmissionPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+{
+    const float kRed[4]{ 1.0F, 0.0F, 0.0F, 1.0F };
+    const float kGreen[4]{ 0.0F, 1.0F, 0.0F, 1.0F };
+    const float kBlue[4]{ 0.0F, 0.0F, 1.0F, 1.0F };
+
+    auto target = OffscreenTarget::create(device.device, OffscreenTarget::Layout{ 8U, 8U, { kRed[0], kRed[1], kRed[2], 1.0F } });
+    ASSERT_NE(target, nullptr);
+    ++counters.targets_built;
+
+    // The executor's loop, without the executor: the target's OWN facts go to the plan, the plan's bootstrap
+    // flag goes to the pass graph, and the pixels say whether the two agreed. Nothing here keeps a private
+    // idea of when the target must clear - that is the point of the case.
+    FrameArena    arena(64 * 1024);
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    vine::intrusive_ptr<RenderTarget> handle(new RenderTarget());
+    const std::vector<RenderCommand>  one_draw{ RenderCommand{} };
+
+    const auto facts_of = [&]() {
+        TargetFacts facts;
+        facts.target  = handle.get();
+        facts.wanted  = vine::vsg::core::TargetDesc{ 8, 8, target->shape() };
+        facts.current = target->instance();
+        return facts;
+    };
+    const auto record_frame = [&](std::uint64_t token, const vine::vsg::core::ClearPolicy& policy) {
+        EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
+        EXPECT_TRUE(recorder.beginPass(1U));
+        EXPECT_TRUE(recorder.setRenderTarget(handle.get()));
+        EXPECT_TRUE(recorder.setClearPolicy(policy));
+        EXPECT_TRUE(recorder.render(one_draw, nullptr));
+        EXPECT_TRUE(recorder.endPass());
+        EXPECT_TRUE(recorder.endFrame());
+        EXPECT_TRUE(recorder.swapBuffers());
+        const std::vector<TargetFacts> table{ facts_of() };
+        return &compiler.compile(recorder.description(), vine::vsg::core::FrameFacts{ table });
+    };
+    const auto submit = [&](const vine::vsg::core::CompiledPass& pass) {
+        const ::vsg::ref_ptr<::vsg::RenderGraph> graph =
+            target->passGraph(pass.clear, pass.bootstrap, pass.depth_preserved);
+        EXPECT_NE(graph, nullptr);
+        auto viewer        = ::vsg::Viewer::create();
+        auto command_graph = ::vsg::CommandGraph::create(device.device, device.queue_family);
+        command_graph->addChild(graph);
+        if (const ::vsg::ref_ptr<::vsg::Node> capture = target->capture()) {
+            command_graph->addChild(capture);
+        }
+        viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+        EXPECT_TRUE(viewer->compile());
+        viewer->advanceToNextFrame();
+        viewer->handleEvents();
+        viewer->recordAndSubmit();
+        viewer->deviceWaitIdle();
+    };
+    const auto sampled = [&]() { return target->probe().pixel(4, 4); };
+    const auto expects = [&](const float (&color)[4], const char* what) {
+        const Rgba8 pixel = sampled();
+        EXPECT_NEAR(pixel.r, quantise(color[0]), 1) << what;
+        EXPECT_NEAR(pixel.g, quantise(color[1]), 1) << what;
+        EXPECT_NEAR(pixel.b, quantise(color[2]), 1) << what;
+    };
+
+    // Frame 1: the target EXISTS but has never been written into, so the plan must call it a bootstrap and the
+    // pass has to clear - the fact comes from instance(), not from a caller's assumption.
+    const vine::vsg::core::TargetInstance fresh = target->instance();
+    EXPECT_EQ(fresh.desc.width, 8);
+    EXPECT_EQ(fresh.desc.height, 8);
+    EXPECT_EQ(fresh.generation, 0U);
+    EXPECT_FALSE(fresh.built) << "images exist, but nothing has been written into them: loading is impossible";
+    EXPECT_FALSE(fresh.attachments_invalidated);
+
+    vine::vsg::core::ClearPolicy fill;
+    fill.color          = true;
+    fill.color_value[0] = kRed[0];
+    fill.color_value[1] = kRed[1];
+    fill.color_value[2] = kRed[2];
+    fill.color_value[3] = 1.0F;
+
+    const auto* first_frame = record_frame(1U, fill);
+    ASSERT_NE(first_frame, nullptr);
+    ASSERT_EQ(first_frame->passes.size(), 1U);
+    EXPECT_EQ(static_cast<int>(first_frame->targets[0].decision.action),
+              static_cast<int>(vine::vsg::core::TargetAction::Repair));
+    EXPECT_EQ(static_cast<int>(first_frame->targets[0].decision.reason),
+              static_cast<int>(vine::vsg::core::RepairReason::Bootstrap));
+    EXPECT_TRUE(first_frame->passes[0].bootstrap) << "the first writer into an unwritten target clears";
+    submit(first_frame->passes[0]);
+    ++counters.frames;
+    expects(kRed, "the bootstrap clear is what the frame shows");
+
+    // The submission into that target is LOST (or the device went away): the contents can no longer be
+    // trusted, and the target says so instead of pretending the frame landed.
+    target->invalidateAttachments();
+    EXPECT_TRUE(target->instance().attachments_invalidated);
+    EXPECT_TRUE(target->instance().built) << "'lost' is not 'never written': the images still exist";
+
+    // Frame 2 does NOT ask for a clear, and paints its own colour. If the plan honours the invalidation, the
+    // pass is the bootstrap one and the colour below IS what the frame shows; if it does not, this frame loads
+    // whatever the lost submission left behind (red).
+    vine::vsg::core::ClearPolicy after_loss;
+    after_loss.color          = false;
+    after_loss.color_value[0] = kGreen[0];
+    after_loss.color_value[1] = kGreen[1];
+    after_loss.color_value[2] = kGreen[2];
+    after_loss.color_value[3] = 1.0F;
+
+    // A caller that IGNORES the plan (a load on an invalidated target) does not repair anything: loading an
+    // image whose contents are unknown cannot make them known, so the fact has to survive it.
+    const ::vsg::ref_ptr<::vsg::RenderGraph> ignored_plan =
+        target->passGraph(after_loss, /*bootstrap*/ false, /*depth_preserved*/ false);
+    ASSERT_NE(ignored_plan, nullptr);
+    EXPECT_TRUE(target->instance().attachments_invalidated)
+        << "only a pass that CLEARS repairs a lost submission; a load must not be able to claim it did";
+
+    const auto* second_frame = record_frame(2U, after_loss);
+    ASSERT_NE(second_frame, nullptr);
+    EXPECT_EQ(static_cast<int>(second_frame->targets[0].decision.reason),
+              static_cast<int>(vine::vsg::core::RepairReason::Bootstrap));
+    EXPECT_TRUE(second_frame->passes[0].bootstrap) << "the frame that repairs the target clears";
+    submit(second_frame->passes[0]);
+    ++counters.frames;
+    expects(kGreen, "the frame that re-bootstrapped the target cleared it with its own colour");
+
+    // ... and ONE frame is enough: the clear repaired the fact, so the next frame loads what it left.
+    EXPECT_FALSE(target->instance().attachments_invalidated) << "the bootstrapping frame repaired the fact";
+    EXPECT_EQ(static_cast<int>(vine::vsg::core::planTarget(target->instance(),
+                                                          vine::vsg::core::TargetDesc{ 8, 8, target->shape() })
+                                   .action),
+              static_cast<int>(vine::vsg::core::TargetAction::None));
+
+    vine::vsg::core::ClearPolicy steady;
+    steady.color          = false;
+    steady.color_value[0] = kBlue[0];
+    steady.color_value[1] = kBlue[1];
+    steady.color_value[2] = kBlue[2];
+    steady.color_value[3] = 1.0F;
+
+    const auto* third_frame = record_frame(3U, steady);
+    ASSERT_NE(third_frame, nullptr);
+    EXPECT_FALSE(third_frame->passes[0].bootstrap) << "a repaired target is a load, not another clear";
+    submit(third_frame->passes[0]);
+    ++counters.frames;
+    expects(kGreen, "the repair happens ONCE: a second clear would have painted this frame's colour");
+
+    // And the same fact feeds the other lifecycle arm: a resize replaces the set the invalidation was about.
+    target->invalidateAttachments();
+    FrameTimeline   timeline;
+    RetirementQueue queue(3U);
+    const OffscreenTarget::Resized resized = target->resize(16U, 8U, timeline, queue);
+    EXPECT_TRUE(resized.replaced);
+    EXPECT_FALSE(target->instance().attachments_invalidated) << "the images that were lost are gone with the set";
+    EXPECT_EQ(target->instance().generation, 1U);
+    EXPECT_FALSE(target->instance().built) << "the new images have never been written into either";
+}
+
+TEST(OffscreenTargetTest, AClearedTargetReadsBackAsItsClearColour)
+{
+    // The phase body is also what the phase table runs (see DevicePhases.hpp): ONE spelling of the
+    // capability, read out here as a gtest case and there as a `[selftest]` line.
+    const auto created = createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements: "
+                     << std::string(reinterpret_cast<const char*>(created.error.data()), created.error.size());
+    }
+    DevicePhaseCounters counters;
+    runOffscreenReadbackPhase(created, counters);
+    EXPECT_EQ(counters.frames, 1U) << "the phase submitted its frame";
+    EXPECT_EQ(counters.targets_built, 1U);
 }
 
 TEST(OffscreenTargetTest, ABlackClearReadsBackAsNoContent)
@@ -266,84 +524,10 @@ TEST(OffscreenTargetTest, AResizeReplacesTheExtentAndParksWhatItReplaced)
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
-
-    auto target = OffscreenTarget::create(created.device,
-                                          OffscreenTarget::Layout{ 8U, 4U, { 0.25F, 0.5F, 0.75F, 1.0F } });
-    ASSERT_NE(target, nullptr);
-
-    const float kClear[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
-
-    // Frame 1 through the graph the executor derives: the target works BEFORE the resize, so "it still works
-    // after" is a change rather than the first time anything ran.
-    const RecordedFrame first_frame = recordOneFrame(created, *target, clearPolicy(kClear));
-    {
-        const PixelProbe probe = target->probe();
-        ASSERT_TRUE(probe.valid());
-        EXPECT_EQ(probe.width(), 8);
-        EXPECT_EQ(probe.height(), 4);
-    }
-    EXPECT_EQ(target->generation(), 0U) << "a fresh target has replaced nothing yet";
-    EXPECT_TRUE(target->written()) << "a pass has been recorded into the attachments";
-
-    // The graph of the set that is about to be replaced. Its REFERENCE COUNT is the observable that tells
-    // parking from dropping: this case holds one reference, the frame that recorded it holds another, and the
-    // set the target no longer serves still has to be reachable - from the queue.
-    const ::vsg::ref_ptr<::vsg::RenderGraph> replaced_graph = target->renderGraph();
-    const unsigned int                       counts_before  = replaced_graph->referenceCount();
-
-    FrameTimeline timeline;
-    const auto    token = timeline.begin();
-    timeline.submitted(token);  // the frame that recorded those attachments: retire point = 1 + 3 + 1
-    RetirementQueue queue(3U);
-
-    const OffscreenTarget::Resized resized = target->resize(16U, 12U, timeline, queue);
-
-    EXPECT_EQ(static_cast<int>(resized.decision.action), static_cast<int>(vine::vsg::core::TargetAction::ResizeInPlace));
-    EXPECT_FALSE(resized.refused);
-    EXPECT_TRUE(resized.replaced);
-    EXPECT_TRUE(resized.parked) << "the objects a submission may still name are parked, not freed";
-    EXPECT_EQ(resized.generation, 1U);
-    EXPECT_EQ(queue.pending(), 1U);
-    EXPECT_EQ(queue.deviceWaits(), 0U) << "parking is exactly what keeps this path from stopping the device";
-    EXPECT_EQ(target->generation(), 1U);
-    EXPECT_EQ(target->width(), 16U);
-    EXPECT_EQ(target->height(), 12U);
-    EXPECT_FALSE(target->written()) << "the new attachments have never been drawn into: the next pass in clears";
-    EXPECT_NE(target->renderGraph(), replaced_graph)
-        << "the graph built around the old framebuffer cannot serve the new extent";
-    EXPECT_EQ(replaced_graph->referenceCount(), counts_before)
-        << "the replaced set is still alive right after the resize: the queue holds it, and a resize that "
-           "dropped it would free images a frame in flight may still name";
-
-    // Frame 2 through the graph the resize built: the new extent has to RENDER, not just exist. `written()`
-    // being false is what makes this pass the first writer again, so the fresh images are CLEARED - and the
-    // pass does not ask for a clear, so a target that forgot it had been replaced would LOAD images nobody
-    // wrote, which is what the picture below catches.
-    const RecordedFrame second_frame = recordOneFrame(created, *target, clearPolicy(kClear, /*asked*/ false));
-    {
-        const PixelProbe probe = target->probe();
-        ASSERT_TRUE(probe.valid());
-        EXPECT_EQ(probe.width(), 16);
-        EXPECT_EQ(probe.height(), 12) << "the probe follows the target's own extent, so a stale capture shows";
-        const Rgba8 expected{ quantise(0.25F), quantise(0.5F), quantise(0.75F), 255U };
-        const Rgba8 sampled = probe.pixel(8, 6);
-        EXPECT_NEAR(sampled.r, expected.r, 1);
-        EXPECT_NEAR(sampled.g, expected.g, 1);
-        EXPECT_NEAR(sampled.b, expected.b, 1);
-        EXPECT_TRUE(probe.wholeImageMatches(sampled))
-            << "the whole new extent holds the clear: a resize that left part of the image (or the old "
-               "framebuffer's extent) behind would show here";
-    }
-
-    // The release the queue was waiting for: past the retire point, the parked set goes - and it is the
-    // queue's hold (and only it) that goes away.
-    timeline.completeUpTo(queue.retirePoint(timeline));
-    queue.advance(timeline);
-    EXPECT_EQ(queue.released(), 1U);
-    EXPECT_EQ(queue.pending(), 0U);
-    EXPECT_EQ(replaced_graph->referenceCount() + 1U, counts_before)
-        << "the queue held the replaced set and let go exactly once";
-    EXPECT_TRUE(target->probe().valid()) << "the release of the old set must not touch the live one";
+    DevicePhaseCounters counters;
+    runTargetResizePhase(created, counters);
+    EXPECT_EQ(counters.resizes_replaced, 1U);
+    EXPECT_EQ(counters.parked, 1U);
 }
 
 TEST(OffscreenTargetTest, ARedundantResizeRepairsNothingAndReplacesNothing)
@@ -790,156 +974,7 @@ TEST(OffscreenTargetTest, ALostSubmissionIsRepairedByTheNextFrameAndOnlyOnce)
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
-
-    const float kRed[4]{ 1.0F, 0.0F, 0.0F, 1.0F };
-    const float kGreen[4]{ 0.0F, 1.0F, 0.0F, 1.0F };
-    const float kBlue[4]{ 0.0F, 0.0F, 1.0F, 1.0F };
-
-    auto target = OffscreenTarget::create(created.device, OffscreenTarget::Layout{ 8U, 8U, { kRed[0], kRed[1], kRed[2], 1.0F } });
-    ASSERT_NE(target, nullptr);
-
-    // The executor's loop, without the executor: the target's OWN facts go to the plan, the plan's bootstrap
-    // flag goes to the pass graph, and the pixels say whether the two agreed. Nothing here keeps a private
-    // idea of when the target must clear - that is the point of the case.
-    FrameArena    arena(64 * 1024);
-    Diagnostics   diagnostics;
-    Observe       observe;
-    FrameRecorder recorder{ arena, diagnostics, observe };
-    FrameCompiler compiler{ arena, diagnostics, observe };
-
-    vine::intrusive_ptr<RenderTarget> handle(new RenderTarget());
-    const std::vector<RenderCommand>  one_draw{ RenderCommand{} };
-
-    const auto facts_of = [&]() {
-        TargetFacts facts;
-        facts.target  = handle.get();
-        facts.wanted  = vine::vsg::core::TargetDesc{ 8, 8, target->shape() };
-        facts.current = target->instance();
-        return facts;
-    };
-    const auto record_frame = [&](std::uint64_t token, const vine::vsg::core::ClearPolicy& policy) {
-        EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
-        EXPECT_TRUE(recorder.beginPass(1U));
-        EXPECT_TRUE(recorder.setRenderTarget(handle.get()));
-        EXPECT_TRUE(recorder.setClearPolicy(policy));
-        EXPECT_TRUE(recorder.render(one_draw, nullptr));
-        EXPECT_TRUE(recorder.endPass());
-        EXPECT_TRUE(recorder.endFrame());
-        EXPECT_TRUE(recorder.swapBuffers());
-        const std::vector<TargetFacts> table{ facts_of() };
-        return &compiler.compile(recorder.description(), vine::vsg::core::FrameFacts{ table });
-    };
-    const auto submit = [&](const vine::vsg::core::CompiledPass& pass) {
-        const ::vsg::ref_ptr<::vsg::RenderGraph> graph =
-            target->passGraph(pass.clear, pass.bootstrap, pass.depth_preserved);
-        EXPECT_NE(graph, nullptr);
-        auto viewer        = ::vsg::Viewer::create();
-        auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
-        command_graph->addChild(graph);
-        if (const ::vsg::ref_ptr<::vsg::Node> capture = target->capture()) {
-            command_graph->addChild(capture);
-        }
-        viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
-        EXPECT_TRUE(viewer->compile());
-        viewer->advanceToNextFrame();
-        viewer->handleEvents();
-        viewer->recordAndSubmit();
-        viewer->deviceWaitIdle();
-    };
-    const auto sampled = [&]() { return target->probe().pixel(4, 4); };
-    const auto expects = [&](const float (&color)[4], const char* what) {
-        const Rgba8 pixel = sampled();
-        EXPECT_NEAR(pixel.r, quantise(color[0]), 1) << what;
-        EXPECT_NEAR(pixel.g, quantise(color[1]), 1) << what;
-        EXPECT_NEAR(pixel.b, quantise(color[2]), 1) << what;
-    };
-
-    // Frame 1: the target EXISTS but has never been written into, so the plan must call it a bootstrap and the
-    // pass has to clear - the fact comes from instance(), not from a caller's assumption.
-    const vine::vsg::core::TargetInstance fresh = target->instance();
-    EXPECT_EQ(fresh.desc.width, 8);
-    EXPECT_EQ(fresh.desc.height, 8);
-    EXPECT_EQ(fresh.generation, 0U);
-    EXPECT_FALSE(fresh.built) << "images exist, but nothing has been written into them: loading is impossible";
-    EXPECT_FALSE(fresh.attachments_invalidated);
-
-    vine::vsg::core::ClearPolicy fill;
-    fill.color          = true;
-    fill.color_value[0] = kRed[0];
-    fill.color_value[1] = kRed[1];
-    fill.color_value[2] = kRed[2];
-    fill.color_value[3] = 1.0F;
-
-    const auto* first_frame = record_frame(1U, fill);
-    ASSERT_NE(first_frame, nullptr);
-    ASSERT_EQ(first_frame->passes.size(), 1U);
-    EXPECT_EQ(static_cast<int>(first_frame->targets[0].decision.action),
-              static_cast<int>(vine::vsg::core::TargetAction::Repair));
-    EXPECT_EQ(static_cast<int>(first_frame->targets[0].decision.reason),
-              static_cast<int>(vine::vsg::core::RepairReason::Bootstrap));
-    EXPECT_TRUE(first_frame->passes[0].bootstrap) << "the first writer into an unwritten target clears";
-    submit(first_frame->passes[0]);
-    expects(kRed, "the bootstrap clear is what the frame shows");
-
-    // The submission into that target is LOST (or the device went away): the contents can no longer be
-    // trusted, and the target says so instead of pretending the frame landed.
-    target->invalidateAttachments();
-    EXPECT_TRUE(target->instance().attachments_invalidated);
-    EXPECT_TRUE(target->instance().built) << "'lost' is not 'never written': the images still exist";
-
-    // Frame 2 does NOT ask for a clear, and paints its own colour. If the plan honours the invalidation, the
-    // pass is the bootstrap one and the colour below IS what the frame shows; if it does not, this frame loads
-    // whatever the lost submission left behind (red).
-    vine::vsg::core::ClearPolicy after_loss;
-    after_loss.color          = false;
-    after_loss.color_value[0] = kGreen[0];
-    after_loss.color_value[1] = kGreen[1];
-    after_loss.color_value[2] = kGreen[2];
-    after_loss.color_value[3] = 1.0F;
-
-    // A caller that IGNORES the plan (a load on an invalidated target) does not repair anything: loading an
-    // image whose contents are unknown cannot make them known, so the fact has to survive it.
-    const ::vsg::ref_ptr<::vsg::RenderGraph> ignored_plan =
-        target->passGraph(after_loss, /*bootstrap*/ false, /*depth_preserved*/ false);
-    ASSERT_NE(ignored_plan, nullptr);
-    EXPECT_TRUE(target->instance().attachments_invalidated)
-        << "only a pass that CLEARS repairs a lost submission; a load must not be able to claim it did";
-
-    const auto* second_frame = record_frame(2U, after_loss);
-    ASSERT_NE(second_frame, nullptr);
-    EXPECT_EQ(static_cast<int>(second_frame->targets[0].decision.reason),
-              static_cast<int>(vine::vsg::core::RepairReason::Bootstrap));
-    EXPECT_TRUE(second_frame->passes[0].bootstrap) << "the frame that repairs the target clears";
-    submit(second_frame->passes[0]);
-    expects(kGreen, "the frame that re-bootstrapped the target cleared it with its own colour");
-
-    // ... and ONE frame is enough: the clear repaired the fact, so the next frame loads what it left.
-    EXPECT_FALSE(target->instance().attachments_invalidated) << "the bootstrapping frame repaired the fact";
-    EXPECT_EQ(static_cast<int>(vine::vsg::core::planTarget(target->instance(),
-                                                          vine::vsg::core::TargetDesc{ 8, 8, target->shape() })
-                                   .action),
-              static_cast<int>(vine::vsg::core::TargetAction::None));
-
-    vine::vsg::core::ClearPolicy steady;
-    steady.color          = false;
-    steady.color_value[0] = kBlue[0];
-    steady.color_value[1] = kBlue[1];
-    steady.color_value[2] = kBlue[2];
-    steady.color_value[3] = 1.0F;
-
-    const auto* third_frame = record_frame(3U, steady);
-    ASSERT_NE(third_frame, nullptr);
-    EXPECT_FALSE(third_frame->passes[0].bootstrap) << "a repaired target is a load, not another clear";
-    submit(third_frame->passes[0]);
-    expects(kGreen, "the repair happens ONCE: a second clear would have painted this frame's colour");
-
-    // And the same fact feeds the other lifecycle arm: a resize replaces the set the invalidation was about.
-    target->invalidateAttachments();
-    FrameTimeline   timeline;
-    RetirementQueue queue(3U);
-    const OffscreenTarget::Resized resized = target->resize(16U, 8U, timeline, queue);
-    EXPECT_TRUE(resized.replaced);
-    EXPECT_FALSE(target->instance().attachments_invalidated) << "the images that were lost are gone with the set";
-    EXPECT_EQ(target->instance().generation, 1U);
-    EXPECT_FALSE(target->instance().built) << "the new images have never been written into either";
+    DevicePhaseCounters counters;
+    runLostSubmissionPhase(created, counters);
+    EXPECT_EQ(counters.frames, 3U) << "the phase drives three frames: fresh, repaired, steady";
 }

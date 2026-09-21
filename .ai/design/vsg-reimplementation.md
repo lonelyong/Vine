@@ -3,10 +3,12 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **执行者收口（`OffscreenTarget::instance()`：目标自己产出计划要的事实，`built` = "能 LOAD"；`invalidateAttachments()`
-> 给丢帧一个生产者，下一帧首写者清屏、且只有清屏能修这个事实）**：`test_vsg` 561 用例 / 88 套件全绿；
-> 门禁一条命令（`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清、相位以 `[selftest] done`
-> 收尾；`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 816 文件）。
+> **M7 第二半：设备侧相位运行器（设备能力只有一个写法——身体是函数，细节用例与相位行都调用它；每一行由计数器
+> 门住，而不是"它跑过了"）**：`test_vsg` 562 用例 / 88 套件全绿；门禁一条命令
+> （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清、**9 行相位 / 2 次运行全收尾**；
+> `core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 818 文件）。
+> M7 剩最后一样：**性能档（GPU profile）**，其语义（每 pass 一个采样、采样要有身份、读结果不阻塞、`age_frames`）
+> 已在 §11.16ab 的口子里写清。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2359,6 +2361,68 @@ M7 的设计口径是"基线冻结、性能档、无 VUID 门禁、诊断字段�
 * **租约的"重建借用者"仍没有 API**（§11.16x 口子不变）：调用方现在只能先析构再 `create`。
 * M7 剩下的两样（**设备侧相位运行器**、**GPU profile 性能档**）不变。
 
+### 11.16ab M7 第二半（2026-09-22）：设备侧相位运行器（能力只有一个写法、两个读出口）
+
+§11.16z 留下的第一张口子就是"设备侧相位还是散用例"。这一片把**设备能力**搬进 `PhaseTable` 的形态，但
+不新增第二份断言：**相位体就是用例体**。
+
+1. **身体是函数，读出口有两个**（`tests/test_vsg/DevicePhases.hpp`）：`runOffscreenReadbackPhase` /
+   `runSharedDepthPhase` / `runTargetResizePhase` / `runLostSubmissionPhase` 各自是一个函数，**既**被细节
+   用例调用（`TEST(...) { run…Phase(device, counters); }` 这样的薄壳），**也**被相位表的一行调用。一个能力
+   长出一条相位没跑的断言、或一条相位行没有身体，在这种形态下**不可能**发生——这正是"两处各写一遍"会烂掉
+   的地方。断言仍是 gtest 的（红的时候给文件与行号），而**计数器**是行真正门住的东西：帧数、建了几个目标、
+   换了几次尺寸、停车几个、idle 几次——`DevicePhaseCounters` 记的是"这一相位**驱动**了什么"。
+2. **四行各自门一个数**（`DevicePhaseTest`）：`targets_built +1`（离屏读回）、`+2`（共享深度：出借方与借用
+   方）、`resizes_replaced +1`（换尺寸）、`frames +3`（丢帧修复：新帧 / 修复帧 / 稳态帧）。只写"它跑过了"
+   的行会在能力**什么都没做**时照样通过——计数列就是为此存在的（变异 P2 实测：相位体直接 return ⇒ 行以
+   "counter expectation not met" 红）。
+3. **一次运行一个设备**：四行在同一个设备上依次跑（`Stack::build(device)` 现在收调用方的设备，不再自建），
+   于是这次运行只花一个设备而不是四个；细节用例照旧各自带一个（共享深度那条还要**验证层开着**，它测的是布局）。
+4. **`test_vsg` 现在是两次相位运行**：plan 半边（`BackendEvidenceTest`，3 行）+ 设备半边（`DevicePhaseTest`，
+   4 行），门禁输出 9 行 `[selftest]`、2 个 `done`。**门禁的判据随之改对**：原来要求"最后一行是
+   `[selftest] done`"——两张表之后，**前面一张表红、后面一张表干净收尾**就会骗过它（实测：伪造输出
+   `FAILED` 行 + 随后的干净表，旧判据 PASS）。现在判据是"**没有任何 `FAILED` 行** + 每次开始运行都收尾"，
+   伪造输入实测红。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `tests/test_vsg/DevicePhases.hpp`（新） | 四个相位体的声明 + `DevicePhaseCounters`（帧 / 目标 / 换尺寸 / 停车 / idle）+ 文件注记（为什么是函数、记的是什么、跳过是谁的事） |
+| `tests/test_vsg/OffscreenTargetTest.cpp` | 三条用例（离屏读回、换尺寸、丢帧修复）改成薄壳 + 相位体；12 条用例仍全绿（像素与断言一字未改） |
+| `tests/test_vsg/SharedDepthTest.cpp` | `Stack::build(device)` 收设备；共享深度用例同上；2 条用例仍全绿 |
+| `tests/test_vsg/DevicePhaseTest.cpp`（新） | 四行相位表（每行一个计数器期望）+ 行文本基线 + 总数断言（7 帧 / 5 目标 / 1 次换尺寸 / 1 次停车） |
+| `scripts/vsg_rewrite_gate.sh` | 相位行判据改为"无 FAILED 行 + 有收尾"，并报告"几次运行" |
+
+| 规则 | 结论 |
+| --- | --- |
+| **能力只有一个写法** | 变异 P1（把离屏读回的期望颜色改掉）⇒ **细节用例与相位行同时红**（同一个身体的两个读出口） |
+| **"跑过了"不是证据** | 变异 P2（共享深度相位体直接 return）⇒ 用例壳的计数器断言红 + 行以 "counter expectation not met" 红 |
+| **两张表都要能被判** | 伪造"非末表 FAILED + 末表干净收尾"的测试输出 ⇒ 门禁红（旧判据会放行） |
+
+| 变异反证 / 门禁自证（全部实测） | 结果 |
+| --- | --- |
+| P1 相位体的期望颜色改掉 | 2 处红（细节用例 + 相位行） |
+| P2 相位体空转 | 2 处红（用例计数器 + 相位行计数器） |
+| 伪造非末表 FAILED 的输出 | 门禁 `phase lines` 红：`1 phase(s) reported FAILED` |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **562 用例 / 88 套件全绿**（+1 用例：相位运行；四条被接管的用例行为不变） |
+| 门禁 | `scripts/vsg_rewrite_gate.sh` 全绿：`cases=562 failed=0 vuid=0 hazard=0 skipped=0`、hygiene 0 / 818、相位 **9 行 / 2 次运行全收尾** |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **设备能力只搬了四个**：离屏读回、共享深度、目标换尺寸、丢帧修复。其余（MRT、全屏合成、前后向阴影像素、
+  窗口合成、内容稳态……）仍是散用例；形态已经就位（`DevicePhases.hpp` + 一行 `Phase`），搬过去是机械工作，
+  但每搬一个都要**保留它自己的细节用例**（薄壳化），不能只留相位行。
+* **性能档（构建档案 / GPU profile）仍未做——这是 M7 的最后一样**。旧实现（`vine/vsg/VsgGpuProfile`）的规则
+  要照抄语义而不是代码：①每个 render pass 一个采样（离屏 pass + 窗口图，窗口图给的是"呈现路径"整体）；
+  ②采样要有**身份**——上游 `RenderGraph::record` 的时间戳是空对象，所以旧实现给每个 pass 的图包一层
+  `vsg::InstrumentationNode` 并把图自己当对象传；③读结果**不带 `VK_QUERY_RESULT_WAIT_BIT`**，读到的总是
+  几帧前的数据，用 `age_frames` 说清"这是哪一帧的"，因为"读到 0 帧延迟"意味着阻塞读，而阻塞读会抬高计数过的
+  device wait。重写版要做的是：执行者按开关包那层 + 名字从编译好的帧里取（目标/顺序/"window"）+ 会话暴露
+  `age_frames`。这是独立一片（要动执行者与会话，且需要自己的像素/计数器判据）。
+* 之前的口子不变（调用 `invalidateAttachments()` 的提交失败缝、`Rebuild` 臂、租约"重建借用者"、float 颜色读回）。
+
 ### 11.17 下一步
 
 | 项 | 内容 |
@@ -2403,7 +2467,7 @@ M7 的设计口径是"基线冻结、性能档、无 VUID 门禁、诊断字段�
 | ~~M5d~~ | **已完成（2026-09-22）**：全屏路径的 128B push——`LightPushBlock`（128B，`projparms` 保留为零）+ `packLightPushBlock`（复用 `packLightBlock` 的遍历、只换布局）；`recordScreenDraw` 按每次调用推；`createScreen` 建 push-only 布局（"只读 push"的全屏 pass 不再被拒）；2 条用例（无设备 + 真设备三视口像素）+ 4 条变异反证（其中"push 全零"与"发错阶段"分别是内容缺失与静默失败的实证）（§11.16w） |
 | ~~M5e~~ | **已完成（2026-09-22）**：目标生命周期（计划驱动的换尺寸）——`OffscreenTarget::Attachments`（尺寸相关的一整批对象）+ `buildAttachments(width, height, out)`（纯构建、不写自身）；`create` 成功后才接手并计数借用者；`resize(w, h, timeline, retirement)` 按 `core::planTarget` 决定、**保留渲染通道与管线**、旧集经 `RetirementQueue` 停车（闸门关着时退回**计数过的** device idle）；租约两向拒绝；换后 `written=false` + `generation+1`；5 条真设备用例（含深度回读按新尺寸重建、引用计数证明"停着而不是扔了"）+ 6 条变异反证（§11.16x） |
 | ~~M6~~ | **已完成（2026-09-22）**：读回——`core/Readback`（`readbackOf` 单表 + 两类格式表 + `decodeDepth`），优先级"存在性 → 格式（永久）→ 捕获（可重试）"，不设走不到的 `Empty`（零尺寸归 `planTarget` / `create` 拒绝）；`OffscreenTarget` 的 `captured` / `depth_captured` 簿记（属于附件集，换尺寸天然复位）+ `readbackResult()`；float 颜色附件不再建回读缓冲（原来必撞 `VUID-vkCmdCopyImageToBuffer-pRegions-00183`）；借用方的深度回读 = 共享图像 + 自己的缓冲；4 条无设备 + 4 条真设备用例 + 8 条变异反证（§11.16y） |
-| ~~M7~~ | **已完成（2026-09-22，第一半：证据加固）**：重写版第一张**真**相位表（`PhaseTable` 的 `sample`/`expect` 第一次派上用场：稳态帧零分配 ×2 + `draws` +2 + 环跳过 `invalid_schedules` +1），`[selftest]` 行冻结成基线；`scripts/vsg_rewrite_gate.sh` 把整套仪式变成一条命令（跳过即失败、0 VUID / 0 SYNC-HAZARD 成为可失败断言、相位必须以 `[selftest] done` 收尾），门禁自己也被三条伪造输入证明能红；实测记录 plan 路径头两帧的有界增长（第二次 compile 32B，之后 0）（§11.16z）。**剩**：设备侧相位运行器、性能档（GPU profile） |
+| ~~M7~~ | **已完成（2026-09-22，第一半：证据加固）**：重写版第一张**真**相位表（`PhaseTable` 的 `sample`/`expect` 第一次派上用场：稳态帧零分配 ×2 + `draws` +2 + 环跳过 `invalid_schedules` +1），`[selftest]` 行冻结成基线；`scripts/vsg_rewrite_gate.sh` 把整套仪式变成一条命令（跳过即失败、0 VUID / 0 SYNC-HAZARD 成为可失败断言、相位必须以 `[selftest] done` 收尾），门禁自己也被三条伪造输入证明能红；实测记录 plan 路径头两帧的有界增长（第二次 compile 32B，之后 0）（§11.16z）。| ~~M7c（设备侧相位运行器）~~ | **已完成（2026-09-22）**：`DevicePhases.hpp` 让四个设备能力**只有一个写法**（身体是函数：细节用例与相位行都调它）；`DevicePhaseTest` 用计数器门住每一行（目标 +1/+2、换尺寸 +1、帧 +3），行文本冻结；`Stack::build(device)` 改收调用方的设备（一次运行一个设备）；门禁的相位判据改成"无 FAILED 行 + 每次运行收尾"（两张表之后，"最后一行是 done"会被"前面红、后面干净"骗过，实测）；2 条变异 + 1 条伪造输入全红（§11.16ab）。**剩**：性能档（GPU profile） |
 | ~~M7b（执行者收口）~~ | **已完成（2026-09-22）**：目标自己说事实——`OffscreenTarget::instance()`（`built` = **能 LOAD** = `written`；15 处手拼 facts 统一到它，像素断言是判据）+ `invalidateAttachments()`（丢帧 ⇒ 计划 `Repair(Bootstrap)` ⇒ 下一帧首写者清屏；**只有 bootstrap 能修事实**，`resize` 换集合同时换事实）；+1 真设备用例把执行者循环（facts → 计划 → `pass.bootstrap` → 图 → 像素）跑通，含"只修一次"与 resize 两条判据；5 条变异反证（§11.16aa） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
