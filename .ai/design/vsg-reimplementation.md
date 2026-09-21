@@ -3,9 +3,8 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M4c（窗口合成：一趟窗口 pass 里叠全屏覆盖层；顺带把 §11.16o 登记的两条口子做成用例——多趟窗口 pass 的
-> "一次清"有了像素证据，"窗口/离屏同键变体"被证明**是错的**：引擎的格式枚举是投影、vsg 的按 viewID 编译在
-> 状态相同时不救，修法是**设备格式进键的兼容性半边**）**：`test_vsg` 527 用例 / 85 套件
+> **M5a（多写者离屏目标：计划的 load op 决定目标用哪张渲染通道变体；第二趟 LOAD 第一趟写的东西，两趟共用一份
+> 编译好的管线；顺带把"没人写过的目标不能 LOAD"做成目标报出的计划事实）**：`test_vsg` 529 用例 / 85 套件
 > 全绿（含真设备像素用例），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由
 > `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 808 文件）。
 >
@@ -1605,6 +1604,8 @@ M4a/M4b 的全屏绘制只在离屏目标上验过；这一片把它放进**窗�
 * **离屏目标的多趟写入**：`OffscreenTarget::passGraph()` 里 bootstrap 恒为 `true`（每趟都清），且离屏内容挂在
   **pass 图**里而不是目标的稳定视图下 ⇒ 同一目标一帧两趟时第二趟会擦掉第一趟、内容只画在自己那趟里。计划侧
   （`CompiledPass::bootstrap` = "该目标的第一个写者"）已经能表达，执行侧还没接上——留给"多写者离屏目标"那片；
+  **已关，§11.16s**（M5a）：执行侧接上了——`passGraph` 按计划解析出的 load op 选/建**渲染通道变体**，
+  第二趟 LOAD 第一趟写的东西；"内容只画在自己那趟里"正是对的（LOAD 保住了第一趟的画面）。
 * **`Session` 在飞的帧没有等待点**：中途 `assignFrameGraphs` 会释放仍在待处理的命令缓冲（VUID 00047）。要用
   "换图"表达"这一帧只画窗口"的用例（本片的 settle 帧本可以更省）得先有那个等待点（或 vsg 侧的回收协议）；
 * **capture 的宿主读序**：屏障声明的是**设备侧**的顺序；宿主 `probe()` 前仍要靠 `deviceWaitIdle`（真设备用例
@@ -1626,6 +1627,69 @@ M4a/M4b 的全屏绘制只在离屏目标上验过；这一片把它放进**窗�
 | **变异反证 ×4（全部实测）** | A：计划丢掉输入表（`pass.inputs = {}`）⇒ `FrameCompilerTest` 与真设备用例同时红；B：键里计数写回 0 ⇒ 着色器读一个布局里不存在的 set 1，**段错误**（139）；C：注册表不回答"要发采样绑定"（`inputs_issued` 恒 false）⇒ 注册表 6 条断言红 + 真设备用例在"绑一次"那句红、随后段错误；D：彩色收尾改回 `TRANSFER_SRC` ⇒ **像素仍然通过**，但验证层报 6 条（`vkCmdDrawIndexed-imageLayout-00344` + `vkBarrier-oldLayout-01197`）——布局这类主张只有仪器看得见，这条已记进记忆 |
 | 工具事实 | 本机 `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` 对**测试二进制**同样有效（不只是 selftest）；`VK_LAYER_ENABLES=…SYNCHRONIZATION_VALIDATION_EXT` 也能整仓跑（512 用例约 3.5 s，完全可做常规门禁） |
 | 证据 | `test_vsg` 全量 **512 用例 / 82 套件全绿**（+5）；插件目标与全仓 `ninja` 零 error / 零 warning；强制验证层整仓 **0 VUID**，再加同步验证仍 **0 SYNC-HAZARD**；hygiene 0 / **800** 文件；`check_diagnostic_formats.py` 0 / 39；`check_doc_symbols.py` 通过 |
+
+### 11.16s M5a（2026-09-22）：离屏目标的多写者（LOAD 变体，真设备像素）
+
+M4c 登记的口子：`OffscreenTarget` 只建**一张**渲染通道、load op 恒 CLEAR，所以同一目标一帧两趟时第二趟会擦
+掉第一趟。计划侧早就能表达（`CompiledPass::bootstrap` = "该目标的第一个写者"、`planClearValues` 的第 1/2/3
+条规则），这一片把执行侧接上。三件事：
+
+1. **计划的三个输入决定 load op**（`api/VsgExecutor::recordOffscreen`）：`pass.clear` / `pass.bootstrap` /
+   `pass.depth_preserved` 交给 `passGraph`，目标由此解析出 `PassClearPlan` 并选中要用的渲染通道变体。执行器
+   不再自己判断"要不要清"——它只搬事实。
+2. **目标按 load op 建渲染通道变体**（`api/OffscreenTarget` + `core::LoadOpVariantKey`）：`LoadOpVariantKey`
+   从"粗粒度一份"改成能表达变体的形状（颜色集合一份 + 深度独立一份：load/store + 起始/收尾布局 + `has_depth`），
+   `core::loadOpVariantOf(plan, color_final, depth_final)` 是唯一的装配处；目标按该键缓存渲染通道对象，
+   framebuffer 与附件在所有变体间共享（`passVariantCount()` 是可读的计数）。
+   **关键不变量：所有变体的子 pass 结构与依赖列表逐位相同**——依赖掩码是渲染通道**兼容性**的一部分
+   （验证层点名 `VUID-vkCmdDrawIndexed-renderPass-02684` 会比较 `pDependencies`），只有 load/store 与布局可
+   以差。因此依赖取"该形状任何一趟都可能需要"的超集，其中颜色的目的域补上了
+   `COLOR_ATTACHMENT_READ`（LOAD 的一趟要**读**附件）。
+3. **"没人写过"是计划的事实，必须由目标报出来**（`api/OffscreenTarget::written()`）：投影出来的新问题——
+   一个刚建好但还没画过的目标，其镜像处于 UNDEFINED；`planTarget` 的
+   `RepairReason::Bootstrap`（"nothing usable yet - the first pass in has to clear"）本来就有这条规则，但事实
+   得有人报。`written()` 在**建 pass 图时**置位（"有人往里录过东西"），夹具与将来的 target 账用
+   `TargetFacts::current.built = target->written()`。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `core/Keys.hpp` / `Keys.cpp` | `LoadOpVariantKey` 改成变体的名字（颜色集合 load/store + 起始/收尾布局；深度独立一份 + `has_depth`）+ `operator==` + 审计表那一行 |
+| `core/ClearPlan.hpp` / `ClearPlan.cpp` | `loadOpVariantOf(plan, color_final, depth_final)`：CLEAR 从 UNDEFINED 起步、LOAD 命名上一趟留下的布局；**清屏值不进键**（值属于 pass 实例） |
+| `api/OffscreenTarget`（+.hpp） | 变体表（键 → 渲染通道对象）+ `renderPassFor()`；`makeOffscreenRenderPass` 改为按变体建造（依赖列表取超集，与 load op 无关）；`passGraph(policy, bootstrap, depth_preserved)`；`passVariantCount()`、`written()` |
+| `api/VsgExecutor` | `recordOffscreen` 把计划的三个事实交给目标 |
+| `tests/test_vsg/ClearPlanTest.cpp` | +1 无设备用例：变体命名"做什么"而不命名"清成什么"（CLEAR ⇒ 起始 UNDEFINED、LOAD ⇒ 起始 = 收尾布局；值不同的两份计划是**同一个**变体；保留的深度走 LOAD；纯色目标深度位为空） |
+| `tests/test_vsg/ContentPassTest.cpp` | +1 真设备用例：一帧两趟同一目标（第一趟 bootstrap 清屏 + 左网格，第二趟 LOAD + 右网格），像素三条（背景是第一趟的清、左右两个网格都在）+ 三个计数（`pool.created() == 1`、`pipeline_binds() == 2`、`passVariantCount() == 2`）；夹具的 `built` 改成 `target->written()` |
+
+| 规则 | 结论 |
+| --- | --- |
+| **load op 是"交换半边"，不是身份** | Vulkan 的兼容性规则里没有 load/store 与布局，所以一个变体对象的管线在另一个变体里**合法**——这正是"两趟 pass 共用一个变体"能成立的原因；反过来说，**依赖掩码绝不能随变体变**（变异 Q3 实测：4 条验证层报错，含 `VkRenderPassBeginInfo-renderPass-00904`——变体连自己的 framebuffer 都不兼容了） |
+| **"没人写过"不能 LOAD** | 新目标的第一趟必须清（颜色与深度都是）；报这条事实的只能是目标自己（`written()`），硬写 `built = true` 的症状是 `VUID-vkCmdDraw-None-09600`（"期望 DEPTH_STENCIL_ATTACHMENT_OPTIMAL，当前 UNDEFINED"）——只有同步验证看得见 |
+| **值不属于变体** | 清屏值是 pass 实例的事，所以两趟清成不同颜色的 pass 共用一份渲染通道对象、一份管线；变体键里只放"操作 + 布局" |
+| **bootstrap 是"第一个写者"的** | 同一目标一帧两趟：第一趟 bootstrap（清），第二趟不是（LOAD）；变异 Q1（执行器写死 bootstrap）⇒ 第二趟清屏 ⇒ 背景与左网格一起消失（像素读回 (0,0,0)、(0,0,0)） |
+
+| 变异反证（全部实测） | 结果 |
+| --- | --- |
+| Q1：执行器忽略计划（`passGraph(clear, /*bootstrap*/ true, false)`，即 M4c 之前的形态） | 新用例红 4 条：`passVariantCount` 2→1、背景 (0,0,0)、左网格 (0,0,0)（第一趟的画面被第二趟擦掉） |
+| Q2：`loadOpVariantOf` 忽略 LOAD（恒 Clear） | 无设备用例 3 条红（`color_load`、`color_initial`、`color_initial=ShaderReadOnly` 那句）+ 设备用例红（变体数 1、背景黑） |
+| Q3：依赖掩码随变体变（LOAD 时多一个 stage 位、颜色目的域去掉 READ） | 用例本身**全绿**，验证层 4 条：`VkRenderPassBeginInfo-renderPass-00904`（变体与 framebuffer 不兼容）+ `vkCmdDrawIndexed-renderPass-02684`（共享管线跨族）——"依赖是兼容性的一部分"由此有反证 |
+| Q4：`written()` 恒 true | 整仓同步验证 0 → **4** 条 `VUID-vkCmdDraw-None-09600`（深度附件期望 DEPTH_STENCIL_ATTACHMENT_OPTIMAL、实际 UNDEFINED） |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **529 用例 / 85 套件全绿**（+2 用例） |
+| 门禁 | 插件目标与全仓 `ninja` 零 error；强制验证层整仓 **0 VUID**；再加同步验证仍 **0 SYNC-HAZARD**；hygiene 0 / 808 文件；`check_diagnostic_formats.py` 0 / 39；`check_doc_symbols.py` 通过 |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **`passGraph` 的默认参数是"bootstrap"**（`bootstrap = true, depth_preserved = false`）：手驱路径（`renderGraph()`
+  与旧夹具）仍按"清"来建图，因为它的调用方不经过计划；等手驱路径退役再收掉这两个默认值。
+* **退役/重用变体**：变体表只增不减（一个目标最多几种 load-op 组合，且随目标一起销毁）；若将来出现"每帧换
+  load-op"的形态，这里要按 `RetirementQueue` 处理。
+* **`written()` 在"录了但没提交"时也为真**：事实是"有人往里录过东西"，不是"GPU 写过"；对 bootstrap 判断够用
+  （下一帧的 pass 会写），但"提交失败后重来"的语义要靠 `attachments_invalidated` 那条路（M6/M7 再说）。
+* **深度侧的 promote/borrow 布局仍只走"附件布局"**（M3c 的既有形态）：`depth_final` 目前恒为
+  `DepthAttachment`，阴影那片的"提升成纹理"会带来第三种收尾布局——那时变体键的深度半边才真正被用满。
+* 前一版（§11.16r）留下的 `Session` 等待点、capture 宿主读序两条口子不变。
 
 ### 11.17 下一步
 
@@ -1664,6 +1728,7 @@ M4a/M4b 的全屏绘制只在离屏目标上验过；这一片把它放进**窗�
 | ~~M4a~~ | **已完成（2026-09-21）**：全屏绘制调用的内容侧（键的 `kind` + `api/ContentPipeline::createScreen`（set 0 = 采样集、push 片元 128B）+ `api/ContentSources::buildScreenProgramFacts`（引擎顶点阶段 + 宿主片元阶段）+ `api/ContentDraw::recordScreen`（`Draw(3)`）），真设备像素用例（随 SDK 发布的 screen copy 的 PiP 拷贝 + binding i = 附件 i）+ 四条变异反证（§11.16p） |
 | ~~M4b~~ | **已完成（2026-09-22）**：全屏绘制的计划侧（`CompiledDraw::dynamic` + 全屏调用的深度策略 = `Disabled`（正典三角形在 reverse-Z 远平面）；`api/ContentPass` 按 `kind` 找半片、采样集在 set 0、push 128B 片元（内容全零）；真设备像素用例（计划驱动的 PiP 拷贝）+ 两条变异反证（§11.16q） |
 | ~~M4c~~ | **已完成（2026-09-22）**：窗口合成（`tests/test_vsg/WindowCompositionTest.cpp`：四趟 pass 一帧——离屏清屏 / 同形离屏场景 / 窗口场景（拥有那一次清）/ 窗口全屏覆盖层，真设备像素三条 + 计数器五条 + 执行器按计划顺序放置）；顺带把 §11.16o 的两条口子做成用例，其中"窗口/离屏同键变体"被证明是错的 ⇒ **设备格式进键的兼容性半边**（`core::TargetShape` / `core::RenderPassCompatibility` + `TargetShape::compatibility()` + 两个目标各自上报），并纠正 §11.16o 里"稳定视图分族"那条理由；修掉 capture 的跨帧写-写（声明顺序的屏障）+ 三条变异反证 + 测试宿主窗口去重（§11.16r） |
+| ~~M5a~~ | **已完成（2026-09-22）**：多写者离屏目标（LOAD 变体）——`LoadOpVariantKey` 改成变体的名字 + `core::loadOpVariantOf` 装配；`OffscreenTarget` 按变体建/缓存渲染通道（依赖列表逐位相同、framebuffer 共享）+ `passVariantCount()` + `written()`；执行器把计划的 `clear`/`bootstrap`/`depth_preserved` 交下去；真设备像素用例（一帧两趟：清 + LOAD，两个网格都在）+ 四条变异反证（§11.16s） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。

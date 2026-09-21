@@ -110,25 +110,57 @@ class OffscreenTarget
     /** @brief Gets the render graph to add content to (the caller's children are drawn after the clear). */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> renderGraph() const noexcept;
 
-    /** @brief Gets a render graph over this target's attachments that clears with @p policy's values.
+    /** @brief Gets a render graph over this target's attachments that clears or loads per @p policy.
      *
-     * WHY A GRAPH PER PASS. A pass scope IS one render pass in the recording, and the clear VALUES belong to
-     * the pass, not to the target: two passes drawing into the same target each clear to their own colour, and
-     * the one recorded later is the one that lands. The render pass, the framebuffer and the load operations
-     * are shared - only the graph, its render area and its clear values differ - so this costs one small
-     * object per pass rather than a second set of images.
+     * WHY A GRAPH PER PASS. A pass scope IS one render pass in the recording, and what a pass does to its
+     * attachments belongs to the pass, not to the target: a later pass LOADS what an earlier one wrote (that
+     * is what "two passes over one target" means), and the one recorded later is the one that lands. The
+     * render pass OBJECT is shared by every pass whose load-op variant is the same, the framebuffer is shared
+     * by all of them, and the graph, its render area and its clear VALUES are per pass.
      *
      * That is also what makes "the executor records in the schedule's order, not in the host's call order" a
-     * claim a PIXEL can check: the last pass recorded owns the final colour.
+     * claim a PIXEL can check: the last pass recorded owns the final colour, and the earlier pass' picture is
+     * still underneath it.
      *
-     * The load operations stay what the target built them as (a target's mirror starts UNDEFINED every frame,
-     * so the first pass in must clear - see the design's load-op variants for the LOAD case, which this
-     * target does not build yet).
+     * The three inputs are the plan's: what the pass asked to clear, whether it is the target's FIRST writer
+     * (a fresh image cannot be loaded - it must clear), and whether a later pass reads the depth this one
+     * writes (never cleared, not even by the bootstrap rule). A pass that is neither the first writer nor asks
+     * for a clear LOADS, which is a variant this target builds the first time a frame needs it.
      *
-     * @param policy What this pass asks the target to clear (attachment 0's colour, and whether depth clears).
-     * @return The graph to add this pass' content to, or null when the target has no attachments.
+     * @param policy          What this pass asks the target to clear (attachment 0's colour, and the depth).
+     * @param bootstrap       Whether this pass is the first writer of freshly built attachments.
+     * @param depth_preserved Whether a later pass reads the depth this one writes.
+     * @return The graph this pass records into (its only child is the target's content view - see
+     *         `addContent`), or null when the target has no attachments or the variant could not be built.
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> passGraph(const core::ClearPolicy& policy) const;
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> passGraph(const core::ClearPolicy& policy, bool bootstrap = true,
+                                                              bool depth_preserved = false);
+
+    /** @brief Gets how many load-op variants of this target's render pass have been built.
+     *
+     * One per distinct set of load/store operations and layouts a pass has asked for, so a phase can read
+     * "this frame's two passes were one clear and one load" off the target (see core::LoadOpVariantKey).
+     */
+    [[nodiscard]] std::size_t passVariantCount() const noexcept;
+
+    /** @brief Gets whether anything has been recorded into this target's attachments yet.
+     *
+     * THE PLAN'S BOOTSTRAP FACT, and the reason it has to come from the target: an image nobody has written
+     * is in the UNDEFINED layout, so a pass that LOADs it reads whatever the driver left in the memory. The
+     * compiler already has the rule (`core::planTarget`'s `RepairReason::Bootstrap`: "nothing usable yet - the
+     * first pass in has to clear"), but it can only apply it if the facts it is handed say so: a target's
+     * `TargetFacts::current.built` is FALSE until this says true, i.e. until the first pass graph has been
+     * built for it. A host that hard-codes `built = true` for a target it has just created makes the first
+     * pass load undefined contents - which is exactly the hole this accessor closes (measured: the
+     * validation layer reports `VUID-vkCmdDraw-None-09600` on a DEPTH attachment - "expected
+     * DEPTH_STENCIL_ATTACHMENT_OPTIMAL, current layout UNDEFINED" - as soon as a pass that declares no clear
+     * is not forced to clear).
+     *
+     * It becomes true when a pass' graph is built (@ref passGraph), not when a frame is submitted: the fact is
+     * "something has been recorded into it", and a frame that is recorded and then dropped describes the same
+     * target as one that was not.
+     */
+    [[nodiscard]] bool written() const noexcept;
 
     /** @brief Gets the node that copies attachment 0 into host-visible memory.
      *
@@ -238,6 +270,14 @@ class OffscreenTarget
     std::unique_ptr<Data> d;
 
     OffscreenTarget();
+
+    /** @brief Gets the render pass for @p key, building and remembering it when this target has not served
+     *         that load-op variant before (see LoadOpVariantKey).
+     *
+     * @param key The variant a pass' clear plan resolves to.
+     * @return The render pass, or null when the API refused the description.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderPass> renderPassFor(const core::LoadOpVariantKey& key);
 };
 
 V_VSG_NS_END

@@ -29,8 +29,10 @@ bool RenderPassCompatibility::operator==(const RenderPassCompatibility& other) c
 bool LoadOpVariantKey::operator==(const LoadOpVariantKey& other) const noexcept
 {
     return color_load == other.color_load && color_store == other.color_store &&
-           depth_load == other.depth_load && depth_store == other.depth_store &&
-           initial == other.initial && final == other.final;
+           color_initial == other.color_initial && color_final == other.color_final &&
+           has_depth == other.has_depth && depth_load == other.depth_load &&
+           depth_store == other.depth_store && depth_initial == other.depth_initial &&
+           depth_final == other.depth_final;
 }
 
 bool PipelineKey::operator==(const PipelineKey& other) const noexcept
@@ -116,7 +118,8 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
           "colour formats + depth format (or none) + the same attachments as the DEVICE spells them + samples "
           "+ subpass" },
         { "LoadOpVariantKey",
-          "load/store ops + initial/final layout - NOT pipeline identity: compatibility excludes them" },
+          "load/store ops + initial/final layouts - one entry for the colour set and one for the depth - NOT "
+          "pipeline identity: compatibility excludes them" },
         { "PipelineKey",
           "program + revision + draw kind (content or full-screen) + vertex layout + compatibility + depth "
           "sampleability + shadow bound + sampled colour attachment count" },

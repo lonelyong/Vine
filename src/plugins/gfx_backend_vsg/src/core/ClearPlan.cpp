@@ -69,6 +69,28 @@ PassClearPlan planClearValues(const TargetShape& shape, const ClearPolicy& polic
     return plan;
 }
 
+LoadOpVariantKey loadOpVariantOf(const PassClearPlan& plan, ImageLayout color_final,
+                                 ImageLayout depth_final) noexcept
+{
+    LoadOpVariantKey variant;
+    if (!plan.colors.empty()) {
+        // The colour attachments move together (rule 4), so attachment 0 speaks for the set.
+        const AttachmentClear& color = plan.colors.front();
+        variant.color_load    = color.load;
+        variant.color_store   = color.store;
+        variant.color_initial = color.load == LoadOp::Clear ? ImageLayout::Undefined : color_final;
+        variant.color_final   = color_final;
+    }
+    variant.has_depth = plan.has_depth;
+    if (plan.has_depth) {
+        variant.depth_load    = plan.depth.load;
+        variant.depth_store   = plan.depth.store;
+        variant.depth_initial = plan.depth.load == LoadOp::Clear ? ImageLayout::Undefined : depth_final;
+        variant.depth_final   = depth_final;
+    }
+    return variant;
+}
+
 }  // namespace core
 
 V_VSG_NS_END

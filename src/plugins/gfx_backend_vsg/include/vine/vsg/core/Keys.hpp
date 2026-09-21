@@ -164,18 +164,31 @@ struct RenderPassCompatibility
 /**
  * @brief What a pass asks of its attachments before it draws: the swappable half of a pass' graph.
  *
- * Kept apart from RenderPassCompatibility because the two have different lifetimes: this one changes
- * with a pass' clear policy (and is what a bootstrap swaps for one frame), while the compiled pipeline
- * only depends on the compatibility half.
+ * Kept apart from RenderPassCompatibility because the two have different lifetimes: this one changes with a
+ * pass' clear policy (and is what a bootstrap swaps for one frame), while the compiled pipeline only depends
+ * on the compatibility half. Vulkan draws the line in the same place: load/store operations and layouts are
+ * NOT part of render pass compatibility, so several variants of one attachment set MAY share one compiled
+ * pipeline - which is what makes a target able to serve a clearing pass and a loading pass without
+ * recompiling anything (see OffscreenTarget, which keys its render pass objects by exactly this type).
+ *
+ * WHAT IT HAS TO CARRY is therefore every property of the render pass OBJECT a graph is built with: whether
+ * each attachment clears or keeps what is there, whether its result survives, and which layout it is in at
+ * the start and at the end of the pass. The colour attachments move together (a pass clears all of them or
+ * none - see planClearValues), so one entry describes the set; the DEPTH is independent, because a later pass
+ * may load the depth an earlier one wrote while the colour is cleared, and because a borrowed depth starts in
+ * the layout its lender left it in.
  */
 struct LoadOpVariantKey
 {
-    LoadOp      color_load{LoadOp::Load};    ///< Colour attachment 0.
+    LoadOp      color_load{LoadOp::Load};    ///< Every colour attachment: keep what is there, or clear it.
     StoreOp     color_store{StoreOp::Store}; ///< Whether the colour survives the pass.
-    LoadOp      depth_load{LoadOp::Load};    ///< Depth attachment.
-    StoreOp     depth_store{StoreOp::Store}; ///< Whether the depth survives the pass.
-    ImageLayout initial{ImageLayout::ColorAttachment};  ///< Layout the attachment starts in.
-    ImageLayout final{ImageLayout::ColorAttachment};    ///< Layout it is left in.
+    ImageLayout color_initial{ImageLayout::Undefined};  ///< Layout the colour starts in.
+    ImageLayout color_final{ImageLayout::ColorAttachment};  ///< Layout it is left in.
+    bool        has_depth{false};             ///< Whether the target has a depth attachment at all.
+    LoadOp      depth_load{LoadOp::Load};     ///< Keep the depth, or clear it.
+    StoreOp     depth_store{StoreOp::Store};  ///< Whether the depth survives the pass.
+    ImageLayout depth_initial{ImageLayout::Undefined};  ///< Layout the depth starts in.
+    ImageLayout depth_final{ImageLayout::DepthAttachment};  ///< Layout it is left in.
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const LoadOpVariantKey& other) const noexcept;

@@ -347,7 +347,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     picture_facts.wanted.height = static_cast<int>(kSourceSize);
     picture_facts.wanted.shape  = picture->shape();
     picture_facts.current.desc  = picture_facts.wanted;
-    picture_facts.current.built = true;
+    picture_facts.current.built = picture->written();
 
     TargetFacts shared_facts;
     shared_facts.target                = shared_handle.get();
@@ -355,7 +355,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     shared_facts.wanted.height         = static_cast<int>(kSourceSize);
     shared_facts.wanted.shape          = shared_target->shape();
     shared_facts.current.desc          = shared_facts.wanted;
-    shared_facts.current.built         = true;
+    shared_facts.current.built         = shared_target->written();
 
     const std::vector<TargetFacts> target_table = { picture_facts, shared_facts, window_target->facts() };
 

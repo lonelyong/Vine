@@ -48,66 +48,79 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcep
 }
 
 /**
- * @brief Builds the render pass from the shape and the core's clear plan.
+ * @brief Builds ONE render pass variant from the shape and a pass' load-op key.
  *
- * initialLayout is UNDEFINED on purpose: the target bootstraps (see OffscreenTarget::create), so every
- * attachment is cleared and the previous contents are not just allowed to be discarded, discarding them is
- * what removes the need for a barrier before the pass.
+ * WHY A PASS PER VARIANT, AND WHY THEY STAY COMPATIBLE. Load/store operations and layouts differ per pass -
+ * the first writer of a target clears it, a later writer loads what is there - and Vulkan expresses exactly
+ * that difference through the attachment descriptions. What must NOT differ is the subpass structure and the
+ * dependency list: both are part of render pass COMPATIBILITY (the validator says it by name:
+ * VUID-vkCmdDrawIndexed-renderPass-02684 compares pDependencies between the bound pass and the one a pipeline
+ * was compiled against), so two variants with different dependencies could not share one compiled pipeline,
+ * and sharing it is the whole point of putting load ops in the key rather than in the compatibility half.
+ * The dependency below is therefore the SUPERSET every pass of this shape may need, built from the shape
+ * alone.
  *
  * finalLayout is SHADER_READ_ONLY for every COLOUR attachment: a colour target is what a later pass samples
  * (see the file note), and leaving it in that layout is what makes the sample legal without a consumer-side
- * barrier. The depth stays in the attachment layout: it is an attachment for the next pass and a texture for a
- * shadow that resolved it, and the two uses have their own machinery.
+ * barrier - and it is also what a variant that LOADs declares as its initial layout. The depth stays in the
+ * attachment layout: it is an attachment for the next pass and a texture for a shadow that resolved it, and
+ * the two uses have their own machinery.
  *
  * @param device The device to create the pass on.
  * @param color_formats One format per colour attachment, in attachment order.
  * @param depth_format Present when the shape has a depth attachment.
- * @param plan The pass' load/store decisions, from `core::planClearValues`.
+ * @param variant What this variant loads, stores and leaves behind (see core::LoadOpVariantKey).
  * @return The pass, or null when the API refuses the description.
  */
 ::vsg::ref_ptr<::vsg::RenderPass> makeOffscreenRenderPass(
     const ::vsg::ref_ptr<::vsg::Device>&                 device,
     const std::vector<vine::graphics::RenderTarget::ColorFormat>& color_formats,
     const std::optional<vine::graphics::RenderTarget::DepthFormat>& depth_format,
-    const vine::vsg::core::PassClearPlan&                plan,
-    bool                                                 depth_borrowed)
+    const vine::vsg::core::LoadOpVariantKey&             variant)
 {
+    // One spelling for one conversion: the core's neutral spellings are the API's enums, bound here.
+    const auto toLoadOp = [](vine::vsg::core::LoadOp load) noexcept {
+        return load == vine::vsg::core::LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    };
+    const auto toLayout = [](vine::vsg::core::ImageLayout layout) noexcept {
+        switch (layout) {
+        case vine::vsg::core::ImageLayout::Undefined: return VK_IMAGE_LAYOUT_UNDEFINED;
+        case vine::vsg::core::ImageLayout::ColorAttachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        case vine::vsg::core::ImageLayout::DepthAttachment:
+            return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        case vine::vsg::core::ImageLayout::ShaderReadOnly: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        case vine::vsg::core::ImageLayout::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        }
+        return VK_IMAGE_LAYOUT_UNDEFINED;
+    };
+
     ::vsg::RenderPass::Attachments attachments;
     for (std::size_t index = 0; index < color_formats.size(); ++index) {
         ::vsg::AttachmentDescription description;
         description.flags   = 0;
         description.format  = toColorFormat(color_formats[index]);
         description.samples = VK_SAMPLE_COUNT_1_BIT;
-        // The plan says CLEAR for every attachment of a bootstrapping target; a LOAD here would read an
-        // UNDEFINED image, which is why create() refuses such a plan rather than passing it on.
-        description.loadOp        = plan.colors[index].load == vine::vsg::core::LoadOp::Clear
-                                        ? VK_ATTACHMENT_LOAD_OP_CLEAR
-                                        : VK_ATTACHMENT_LOAD_OP_LOAD;
+        // All colour attachments move together - a pass clears all of them or none (see planClearValues) -
+        // which is why the variant carries one entry for the set.
+        description.loadOp        = toLoadOp(variant.color_load);
         description.storeOp       = VK_ATTACHMENT_STORE_OP_STORE;
         description.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         description.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        description.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        // SHADER_READ_ONLY on every colour attachment: that is the layout a later pass samples a colour target
-        // in, so a pass whose plan declares this target as an input samples it without its own barrier.
-        description.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        description.initialLayout = toLayout(variant.color_initial);
+        description.finalLayout   = toLayout(variant.color_final);
         attachments.push_back(description);
     }
-    if (plan.has_depth) {
+    if (variant.has_depth) {
         ::vsg::AttachmentDescription description;
         description.flags   = 0;
         description.format  = toDepthFormat(depth_format.value());
         description.samples = VK_SAMPLE_COUNT_1_BIT;
-        description.loadOp        = plan.depth.load == vine::vsg::core::LoadOp::Clear
-                                        ? VK_ATTACHMENT_LOAD_OP_CLEAR
-                                        : VK_ATTACHMENT_LOAD_OP_LOAD;
+        description.loadOp        = toLoadOp(variant.depth_load);
         description.storeOp       = VK_ATTACHMENT_STORE_OP_STORE;
         description.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         description.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        // A borrowed depth was left in the attachment layout by the lender's pass, and it must stay there:
-        // UNDEFINED would discard what this pass is about to LOAD, which is the whole point of sharing it.
-        description.initialLayout = depth_borrowed ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-                                                   : VK_IMAGE_LAYOUT_UNDEFINED;
-        description.finalLayout   = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        description.initialLayout = toLayout(variant.depth_initial);
+        description.finalLayout   = toLayout(variant.depth_final);
         attachments.push_back(description);
     }
 
@@ -119,7 +132,7 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcep
         reference.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         subpass.colorAttachments.push_back(reference);
     }
-    if (plan.has_depth) {
+    if (variant.has_depth) {
         ::vsg::AttachmentReference reference;
         reference.attachment = static_cast<std::uint32_t>(color_formats.size());
         reference.layout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -136,8 +149,13 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcep
     dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    if (plan.has_depth) {
+    // The DESTINATION scope covers what a LOADING pass does as well as what a clearing one does: a pass that
+    // keeps the colour READS it through the attachment, and a dependency that only named the write would
+    // leave that read unordered (measured: synchronisation validation reports the chain as
+    // READ_AFTER_WRITE when the bit is missing). Since the masks are part of compatibility, the superset is
+    // declared for EVERY variant - a clearing pass simply does not use the read half.
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    if (variant.has_depth) {
         // The depth attachment is written by the tests the fragments go through, which run before the colour
         // output stage: a dependency that only covered the colour stage would let the first frame's depth
         // test overlap with the previous frame's reads.
@@ -248,10 +266,41 @@ struct OffscreenTarget::Data
     std::uint32_t                      height{0};
     core::TargetShape                  shape;           ///< What the render pass was built against.
     bool                               depth_borrowed{false};  ///< The depth is the lender's image.
+    /// Whether anything has been recorded into the attachments yet (see OffscreenTarget::written).
+    bool                               written{false};
+
+    /// @brief One render pass this target has served a pass with: its load-op variant and the pass object.
+    struct PassVariant
+    {
+        core::LoadOpVariantKey            key;
+        ::vsg::ref_ptr<::vsg::RenderPass> render_pass;
+    };
+
+    /// Every variant this target has built, in the order the passes asked for them; the first is the one
+    /// `create` built (the bootstrap variant, whose pass the constructor's graph uses).
+    std::vector<PassVariant> variants;
 };
 
 OffscreenTarget::OffscreenTarget() : d(std::make_unique<Data>())
 {
+}
+
+::vsg::ref_ptr<::vsg::RenderPass> OffscreenTarget::renderPassFor(const core::LoadOpVariantKey& key)
+{
+    for (const Data::PassVariant& variant : d->variants) {
+        if (variant.key == key) {
+            return variant.render_pass;
+        }
+    }
+    // A variant this target has not served before: build it. Every variant of one target shares the subpass
+    // structure and the dependency list (see makeOffscreenRenderPass), so they are compatible with one another
+    // and the pipelines compiled for one are usable in all of them.
+    auto render_pass = makeOffscreenRenderPass(d->device, d->shape.color_formats, d->depth_format, key);
+    if (render_pass == nullptr) {
+        return {};
+    }
+    d->variants.push_back(Data::PassVariant{ key, render_pass });
+    return render_pass;
 }
 
 std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::Device> device,
@@ -385,10 +434,17 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     }
 
     target->d->render_pass = makeOffscreenRenderPass(target->d->device, layout.color_formats,
-                                                     layout.depth_format, plan, depth_borrowed);
+                                                     layout.depth_format,
+                                                     core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly,
+                                                                           core::ImageLayout::DepthAttachment));
     if (target->d->render_pass == nullptr) {
         return nullptr;
     }
+    // The variant create() built is the target's FIRST one, and the constructor's graph records through it.
+    target->d->variants.push_back(
+        Data::PassVariant{ core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly,
+                                                 core::ImageLayout::DepthAttachment),
+                           target->d->render_pass });
 
     ::vsg::ImageViews attachments;
     for (const Data::ColorTarget& color : target->d->colors) {
@@ -593,25 +649,50 @@ OffscreenTarget::~OffscreenTarget()
     return d->render_graph;
 }
 
-::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearPolicy& policy) const
+::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearPolicy& policy, bool bootstrap,
+                                                            bool depth_preserved)
 {
     if (d->render_pass == nullptr || d->framebuffer == nullptr)
     {
         return {};
     }
 
+    // What this pass does to the attachments, resolved from the plan's three inputs, and the variant that
+    // spells it out: a first writer clears, a later writer loads what is there, and a preserved depth is never
+    // cleared (see core::planClearValues).
+    const core::PassClearPlan plan = core::planClearValues(d->shape, policy, bootstrap, depth_preserved);
+    const core::LoadOpVariantKey variant =
+        core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly, core::ImageLayout::DepthAttachment);
+    const ::vsg::ref_ptr<::vsg::RenderPass> render_pass = renderPassFor(variant);
+    if (render_pass == nullptr)
+    {
+        return {};
+    }
+    // A pass is about to be recorded into this target, so its attachments stop being "never written": the
+    // NEXT frame's facts say so (see written()). Doing it here and not after a submit is deliberate - the
+    // fact is "something has been recorded into it", and a frame that is recorded but dropped is not a
+    // different target.
+    d->written = true;
+
     auto graph              = ::vsg::RenderGraph::create();
     graph->framebuffer      = d->framebuffer;
-    graph->renderPass       = d->render_pass;
+    graph->renderPass       = render_pass;
     graph->renderArea       = VkRect2D{ { 0, 0 }, { d->width, d->height } };
     graph->contents         = VK_SUBPASS_CONTENTS_INLINE;
-    // The same rule the render pass itself was built with, applied to THIS pass' policy: the target clears
-    // (its mirror starts UNDEFINED), and the pass says what the colour is. The clear VALUES differ per pass;
-    // the render pass, the framebuffer and the load operations are shared.
-    const core::PassClearPlan plan = core::planClearValues(d->shape, policy, /*bootstrap*/ true,
-                                                          /*depth_preserved*/ d->depth_borrowed);
+    // One clear value per attachment, in attachment order, from the SAME plan the variant was derived from -
+    // so "which attachment is which" cannot drift between the render pass and the values it clears with.
     fillClearValues(*graph, plan);
     return graph;
+}
+
+std::size_t OffscreenTarget::passVariantCount() const noexcept
+{
+    return d->variants.size();
+}
+
+bool OffscreenTarget::written() const noexcept
+{
+    return d->written;
 }
 
 ::vsg::ref_ptr<::vsg::Node> OffscreenTarget::capture() const noexcept

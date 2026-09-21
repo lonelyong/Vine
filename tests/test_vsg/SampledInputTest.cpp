@@ -265,7 +265,9 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     source_facts.wanted.height = static_cast<int>(kSize);
     source_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     source_facts.current.desc  = source_facts.wanted;
-    source_facts.current.built = true;
+    // The facts tell the plan the truth about the target: nothing has been written into it yet, so its
+    // first pass is its bootstrap one and must clear (see OffscreenTarget::written).
+    source_facts.current.built = source->written();
 
     TargetFacts destination_facts;
     destination_facts.target        = destination_handle.get();
@@ -273,7 +275,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     destination_facts.wanted.height = static_cast<int>(kSize);
     destination_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     destination_facts.current.desc  = destination_facts.wanted;
-    destination_facts.current.built = true;
+    destination_facts.current.built = destination->written();
     const std::vector<TargetFacts> target_table{ source_facts, destination_facts };
 
     ClearPolicy red_clear;
@@ -484,7 +486,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     source_facts.wanted.height = static_cast<int>(kSize);
     source_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     source_facts.current.desc  = source_facts.wanted;
-    source_facts.current.built = true;
+    source_facts.current.built = source->written();
 
     TargetFacts destination_facts;
     destination_facts.target        = destination_handle.get();
@@ -492,7 +494,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     destination_facts.wanted.height = static_cast<int>(kSize);
     destination_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     destination_facts.current.desc  = destination_facts.wanted;
-    destination_facts.current.built = true;
+    destination_facts.current.built = destination->written();
     const std::vector<TargetFacts> target_table{ source_facts, destination_facts };
 
     ClearPolicy red_clear;

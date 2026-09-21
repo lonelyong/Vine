@@ -305,7 +305,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     target_facts.wanted.height = static_cast<int>(kSize);
     target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     target_facts.current.desc  = target_facts.wanted;
-    target_facts.current.built = true;
+    target_facts.current.built = target->written();
     const std::vector<TargetFacts> target_table{ target_facts };
 
     ClearPolicy clear;
@@ -526,7 +526,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     target_facts.wanted.height = static_cast<int>(kSize);
     target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     target_facts.current.desc  = target_facts.wanted;
-    target_facts.current.built = true;
+    target_facts.current.built = target->written();
     const std::vector<TargetFacts> target_table{ target_facts };
 
     ClearPolicy clear;
@@ -668,4 +668,218 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     ASSERT_EQ(messages.size(), 1U);
     EXPECT_NE(messages[0].as_std_str().find("program"), std::string::npos) << messages[0].as_std_str();
     EXPECT_EQ(uploads.uploads(), uploads_before) << "a refused command uploads nothing";
+}
+
+TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVariant)
+{
+    // TWO PASSES OVER ONE TARGET, ONE FRAME. The first pass clears its own colour and draws the left mesh; the
+    // second one asks for NO clear, so what it does to the attachment is LOAD - and it draws the right mesh on
+    // top of the picture that is already there.
+    //
+    // Three things this case is the evidence for, and none of them is visible to a counter alone:
+    //
+    //   * the target serves the two passes with TWO RENDER PASS VARIANTS (a clearing one and a loading one,
+    //     see core::LoadOpVariantKey) built over the SAME attachments - `passVariantCount()` says so;
+    //   * the loading variant is COMPATIBLE with the clearing one, so both passes compile and bind through ONE
+    //     variant object (`pool.created() == 1`): load/store operations and layouts are not part of render pass
+    //     compatibility, which is what lets the pipeline be shared. If they were, the validation layer would
+    //     report VUID-vkCmdDrawIndexed-renderPass-02684 here - the same trap M4c found between a window pass
+    //     and an off-screen one, reached from the other side;
+    //   * the loading pass really LOADs: the first pass' clear colour is still there afterwards, and the left
+    //     mesh it drew is still on the screen under the second pass' work.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout layout;
+    layout.width  = kSize;
+    layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    ASSERT_NE(target, nullptr);
+    EXPECT_EQ(target->passVariantCount(), 1U) << "create() builds the bootstrap variant; no pass has run yet";
+
+    std::unique_ptr<BlockStorage>     storage     = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(created.device, *storage);
+    ASSERT_NE(descriptors, nullptr);
+
+    // ONE program, ONE layout: the two meshes differ in their vertex data, not in what a pipeline is compiled
+    // against, so both passes ask for the same variant.
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    addStages(*program);
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, program_facts), FactMiss::None);
+
+    // The mesh to the LEFT (drawn by the clearing pass) and the one to the RIGHT (drawn by the loading one).
+    // Both feed positions only, and the probes below are the centroids of the two triangles in a 64x64 NDC.
+    Mesh left(std::vector<float>{ -0.8F, -0.8F, 0.0F, 0.0F, -0.8F, 0.0F, -0.4F, 0.8F, 0.0F }, {}, {});
+    Mesh right(std::vector<float>{ 0.0F, -0.8F, 0.0F, 0.8F, -0.8F, 0.0F, 0.4F, 0.8F, 0.0F }, {}, {});
+
+    GeometryFacts             left_facts;
+    GeometryFacts             right_facts;
+    std::vector<ChannelFacts> left_channels;
+    std::vector<ChannelFacts> right_channels;
+    ASSERT_EQ(buildGeometryFacts(*left.geometry, left_facts, left_channels), FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*right.geometry, right_facts, right_channels), FactMiss::None);
+    ASSERT_TRUE(left_facts.layout == right_facts.layout) << "the two meshes must ask for the same layout";
+
+    std::unique_ptr<ContentPipeline> pipelines =
+        pipelineFor(left_facts, program_facts.shaders, descriptors->layout());
+    ASSERT_NE(pipelines, nullptr);
+
+    VariantPool   pool;
+    StreamUploads uploads;
+    const auto    entry_points =
+        vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    ContentDraw   draws(*pipelines, pool, entry_points);
+
+    // One registry per PASS (what a pass has bound is not what another pass has bound), one pool between them.
+    StateRegistry first_registry(pool);
+    StateRegistry second_registry(pool);
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    MaterialFacts          material_facts;
+    std::vector<std::byte> material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts   programs[]   = { program_facts };
+    const GeometryFacts  geometries[] = { left_facts, right_facts };
+    const MaterialFacts  materials[]  = { material_facts };
+    ContentFacts         facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    // The target has NEVER been written into, and the facts say so: its first writer is a bootstrap pass and
+    // must clear (an image in the UNDEFINED layout cannot be loaded), while the second one loads what that
+    // first pass left.
+    TargetFacts target_facts;
+    target_facts.target        = target.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current.desc  = target_facts.wanted;
+    target_facts.current.built = target->written();
+    ASSERT_FALSE(target_facts.current.built) << "nothing has been recorded into it yet";
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+
+    RenderCommand left_command;
+    left_command.geometry = left.geometry;
+    left_command.material = material;
+    left_command.program  = program;
+    RenderCommand right_command;
+    right_command.geometry = right.geometry;
+    right_command.material = material;
+    right_command.program  = program;
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(std::vector<RenderCommand>{ left_command }, nullptr);
+    recorder.endPass();
+    recorder.beginPass(2U);
+    recorder.setRenderTarget(target.get());
+    // NO clear policy for the second pass: it keeps what the first one left.
+    recorder.render(std::vector<RenderCommand>{ right_command }, nullptr);
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 2U) << "two passes, two render pass instances";
+    EXPECT_EQ(frame.passes[0].target_index, frame.passes[1].target_index) << "and one target between them";
+    EXPECT_TRUE(frame.passes[0].bootstrap)
+        << "the first writer of a target nobody has written into must clear: its images are UNDEFINED";
+    EXPECT_FALSE(frame.passes[1].bootstrap) << "the bootstrap is the FIRST writer's, not every pass'";
+    EXPECT_TRUE(frame.passes[0].clear.color);
+    EXPECT_FALSE(frame.passes[1].clear.color) << "the second pass asked for no clear: it LOADs";
+
+    // The content layer records each pass with its OWN registry (the second pass binds for itself).
+    storage->beginFrame();
+    const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
+        vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, left_facts.layout,
+        pipelines.get(), &draws } };
+
+    ContentPass::Scope first_scope;
+    first_scope.entries     = halves;
+    first_scope.registry    = &first_registry;
+    first_scope.storage     = storage.get();
+    first_scope.descriptors = descriptors.get();
+    first_scope.uploads     = &uploads;
+    ContentPass first_content(first_scope, diagnostics);
+
+    ContentPass::Scope second_scope;
+    second_scope.entries     = halves;
+    second_scope.registry    = &second_registry;
+    second_scope.storage     = storage.get();
+    second_scope.descriptors = descriptors.get();
+    second_scope.uploads     = &uploads;
+    ContentPass second_content(second_scope, diagnostics);
+
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>  first_node;
+    ::vsg::ref_ptr<::vsg::Node>  second_node;
+    ASSERT_TRUE(first_content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block,
+                                     first_node));
+    ASSERT_TRUE(second_content.record(frame.passes[1], facts, target->shape().compatibility(), {}, view_block,
+                                      second_node));
+    ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: every identity is in the tables";
+    EXPECT_EQ(pool.created(), 1U)
+        << "two passes, one program, one layout: ONE variant object, because load ops are not identity";
+    EXPECT_EQ(draws.pipeline_binds(), 2U) << "each pass binds it for itself: the registries do not share state";
+
+    // The executor places both passes into the target, in the plan's order.
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(target.get(), target.get());
+
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packets[] = { PassContent{ 1U, first_node }, PassContent{ 2U, second_node } };
+    ASSERT_TRUE(executor.record(frame, command_graph, packets));
+    EXPECT_EQ(executor.skipped(), 0U);
+    EXPECT_EQ(target->passVariantCount(), 2U) << "a clearing variant and a loading one, over one framebuffer";
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    // The picture: the first pass' clear colour everywhere the meshes are not, the LEFT mesh it drew, and the
+    // RIGHT mesh the second pass added - which is what "the loading pass kept the picture" means. Had the
+    // second pass cleared, both of the first two would be gone (black), and the case would be red.
+    const auto near = [](std::uint8_t byte, double linear) {
+        return std::abs(static_cast<double>(byte) - 255.0 * linear) <= 8.0;
+    };
+    const Rgba8 background = target->probe().pixel(2, 2);
+    EXPECT_TRUE(near(background.r, kClear[0]) && near(background.g, kClear[1]) && near(background.b, kClear[2]))
+        << "the first pass' clear must survive the second pass, got (" << static_cast<int>(background.r) << ", "
+        << static_cast<int>(background.g) << ", " << static_cast<int>(background.b) << ")";
+
+    const Rgba8 left_pixel = target->probe().pixel(19, 40);
+    EXPECT_TRUE(isGreen(left_pixel)) << "the clearing pass' mesh is still there, got ("
+                                     << static_cast<int>(left_pixel.r) << ", " << static_cast<int>(left_pixel.g)
+                                     << ", " << static_cast<int>(left_pixel.b) << ")";
+    const Rgba8 right_pixel = target->probe().pixel(45, 40);
+    EXPECT_TRUE(isGreen(right_pixel)) << "the loading pass drew through the shared variant, got ("
+                                      << static_cast<int>(right_pixel.r) << ", " << static_cast<int>(right_pixel.g)
+                                      << ", " << static_cast<int>(right_pixel.b) << ")";
 }

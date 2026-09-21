@@ -104,6 +104,24 @@ struct PassClearPlan
 [[nodiscard]] PassClearPlan planClearValues(const TargetShape& shape, const ClearPolicy& policy, bool bootstrap,
                                             bool depth_preserved) noexcept;
 
+/** @brief Names the render pass variant a pass' clear plan asks for (see LoadOpVariantKey).
+ *
+ * The two layouts a target leaves its attachments in are INPUTS rather than facts of the plan: the plan says
+ * what a pass does at the START, and the target is the one that decides what its attachments hold BETWEEN
+ * passes (this backend leaves colour sampleable and the depth an attachment - see makeOffscreenRenderPass).
+ *
+ * A CLEAR starts from UNDEFINED whatever the attachment held: the contents are about to be discarded, and
+ * UNDEFINED is the cheapest transition the driver can make. A LOAD has to name the layout the last pass left,
+ * which is exactly `color_final` / `depth_final`.
+ *
+ * @param plan        The pass' per-attachment decisions (from @ref planClearValues).
+ * @param color_final The layout the colour attachments are left in.
+ * @param depth_final The layout the depth attachment is left in.
+ * @return The variant key: two passes that may share one render pass object compare equal on it.
+ */
+[[nodiscard]] LoadOpVariantKey loadOpVariantOf(const PassClearPlan& plan, ImageLayout color_final,
+                                               ImageLayout depth_final) noexcept;
+
 }  // namespace core
 
 V_VSG_NS_END

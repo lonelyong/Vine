@@ -130,7 +130,12 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::Co
         return false;
     }
 
-    ::vsg::ref_ptr<::vsg::RenderGraph> graph = target->passGraph(pass.clear);
+    // What the pass does to its attachments is the PLAN's decision, and both halves of it are facts the
+    // executor cannot derive: whether this is the target's first writer (a fresh image cannot be loaded) and
+    // whether a later pass reads the depth this one writes (never cleared). Handing them on is what makes a
+    // second pass over one target LOAD 
+    // what the first one wrote instead of erasing it - the target builds the variant the plan asks for.
+    ::vsg::ref_ptr<::vsg::RenderGraph> graph = target->passGraph(pass.clear, pass.bootstrap, pass.depth_preserved);
     if (graph == nullptr)
     {
         reportSkipped(compiled_target, "the target has no attachments to draw into");
