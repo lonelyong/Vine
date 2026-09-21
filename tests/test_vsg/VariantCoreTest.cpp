@@ -109,8 +109,8 @@ TEST(CoreVariantPoolTest, TheCompatibilityHalfOfTheKeyMatters)
     other_depth.compatibility.depth_format = RenderTarget::DepthFormat::D32F;
     PipelineKey sampled_depth = base;
     sampled_depth.depth_sampleable = true;
-    PipelineKey shadow = base;
-    shadow.shadow_bound = true;
+    PipelineKey sampled_depth_count = base;
+    sampled_depth_count.sampled_depth_count = 1U;
     PipelineKey layout = base;
     layout.vertex_layout.canonical_mask = 0x7U;
 
@@ -118,7 +118,7 @@ TEST(CoreVariantPoolTest, TheCompatibilityHalfOfTheKeyMatters)
     EXPECT_EQ(pool.acquire(other_format).action, VariantPool::Action::Created);
     EXPECT_EQ(pool.acquire(other_depth).action, VariantPool::Action::Created);
     EXPECT_EQ(pool.acquire(sampled_depth).action, VariantPool::Action::Created);
-    EXPECT_EQ(pool.acquire(shadow).action, VariantPool::Action::Created);
+    EXPECT_EQ(pool.acquire(sampled_depth_count).action, VariantPool::Action::Created);
     EXPECT_EQ(pool.acquire(layout).action, VariantPool::Action::Created);
     EXPECT_EQ(pool.variants(), 6U) << "every compatibility change is a different pipeline";
 

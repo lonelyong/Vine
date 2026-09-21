@@ -40,6 +40,29 @@ ViewAxes viewAxesOf(const core::CameraSnapshot& camera) noexcept
 
 }  // namespace
 
+std::size_t directionalSlotOf(std::span<const core::LightRef> lights, const void* light_identity) noexcept
+{
+    // The walk has to be the packing's own, or a shadow block's slot number would name a different light than the
+    // one its map belongs to (see the declaration).
+    std::size_t slot = 0U;
+    for (const core::LightRef& light : lights)
+    {
+        if (!light.enabled || light.type != vine::graphics::LightType::Directional)
+        {
+            continue;
+        }
+        if (light.identity == light_identity)
+        {
+            return slot;
+        }
+        if (++slot == kLightDirectionalSlots)
+        {
+            break;  // the block is full: a later light has no slot a shader could name it by
+        }
+    }
+    return kLightDirectionalSlots;
+}
+
 std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::CameraSnapshot& camera,
                            VineLightsBlock& out) noexcept
 {

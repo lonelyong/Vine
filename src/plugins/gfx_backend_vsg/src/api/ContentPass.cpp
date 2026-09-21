@@ -11,6 +11,7 @@
 
 #include <vine/vsg/api/DrawBlock.hpp>
 #include <vine/vsg/api/LightBlock.hpp>
+#include <vine/vsg/api/ShadowBlock.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -257,10 +258,24 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
             continue;
         }
 
+        // The shadow block is written for EVERY call, switch on or off: the same shader text serves a shadowed and
+        // an unshadowed pass (the ABI's `params.x` is that switch), so the binding must never be left to chance -
+        // an unbound block a shader reads is undefined behaviour, not "no shadow".
+        vine::graphics::VineShadowBlock shadow_block;
+        const bool                      shadow_on    = packShadowBlock(pass.shadow, draw, shadow_block);
+        const BlockStorage::Block       shadow       = scope_.storage->writeShadows(bytesOf(shadow_block));
+        (void)shadow_on;
+        if (!shadow.valid)
+        {
+            reportRefused("the drawing call's shadow block", "the frame's block budget is full");
+            complete = false;
+            continue;
+        }
+
         for (const core::CompiledCommand& command : draw.commands)
         {
-            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, lights.offset, input_set,
-                               sampled_color_count, sampled_depth_count, *group))
+            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, lights.offset, shadow.offset,
+                               input_set, sampled_color_count, sampled_depth_count, *group))
             {
                 complete = false;
             }
@@ -381,7 +396,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
 bool ContentPass::recordCommand(const core::CompiledCommand& command, const core::CompiledDraw& draw,
                                 const core::CompiledPass& pass, const ContentFacts& facts,
                                 const core::RenderPassCompatibility& compatibility, std::uint64_t view_offset,
-                                std::uint64_t lights_offset,
+                                std::uint64_t lights_offset, std::uint64_t shadow_offset,
                                 const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
                                 std::uint32_t sampled_color_count, std::uint32_t sampled_depth_count,
                                 ::vsg::Group& into)
@@ -496,7 +511,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     record.dynamic                = command.dynamic;
     record.blocks                 = scope_.descriptors->bind(
         entry->pipelines->layoutFor(sampled_color_count, sampled_depth_count),
-        BlockDescriptors::Offsets{ view_offset, block.offset, material_write.offset, lights_offset });
+        BlockDescriptors::Offsets{ view_offset, block.offset, material_write.offset, lights_offset,
+                                      shadow_offset });
     record.inputs       = inputs;
     record.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
     record.index        = indices.bind;

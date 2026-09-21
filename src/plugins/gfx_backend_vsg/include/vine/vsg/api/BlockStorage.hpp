@@ -41,7 +41,7 @@
  */
 V_VSG_NS_BEGIN
 
-/** @brief The frame's mapped block storage (views, draws, lights, materials). */
+/** @brief The frame's mapped block storage (views, draws, lights, shadows, materials). */
 class BlockStorage
 {
   public:
@@ -51,6 +51,7 @@ class BlockStorage
         core::FrameRing::Layout     views{ 288U, 1U, 3U, 256U };       ///< View blocks (one per pass per frame).
         core::FrameRing::Layout     draws{ 80U, 1U, 3U, 1024U };       ///< Draw blocks (one per draw per frame).
         core::FrameRing::Layout     lights{ 112U, 1U, 3U, 1024U };     ///< Light blocks (one per drawing call).
+        core::FrameRing::Layout     shadows{ 80U, 1U, 3U, 1024U };     ///< Shadow blocks (one per drawing call).
         core::MaterialArena::Layout materials{ 64U, 3U, 256U };        ///< Material blocks (persistent, rotating).
     };
 
@@ -78,6 +79,8 @@ class BlockStorage
         std::uint64_t draws_bytes{0};     ///< Size of the draw-block region.
         std::uint64_t lights_base{0};     ///< Start of the light-block region.
         std::uint64_t lights_bytes{0};    ///< Size of the light-block region.
+        std::uint64_t shadows_base{0};    ///< Start of the shadow-block region.
+        std::uint64_t shadows_bytes{0};   ///< Size of the shadow-block region.
         std::uint64_t materials_base{0};  ///< Start of the material-block region.
         std::uint64_t materials_bytes{0}; ///< Size of the material-block region.
     };
@@ -88,6 +91,7 @@ class BlockStorage
         std::uint64_t view{0};      ///< Bytes between two view blocks.
         std::uint64_t draw{0};      ///< Bytes between two draw blocks.
         std::uint64_t light{0};     ///< Bytes between two light blocks.
+        std::uint64_t shadow{0};    ///< Bytes between two shadow blocks.
         std::uint64_t material{0};  ///< Bytes between two material blocks.
     };
 
@@ -134,6 +138,13 @@ class BlockStorage
      */
     [[nodiscard]] Block writeLights(std::span<const std::byte> block) noexcept;
 
+    /** @brief Writes one shadow block into this frame's slab.
+     *
+     * @param block Block bytes (a `VineShadowBlock`: the view -> light clip matrix and the shading's scalars).
+     * @return Where it went, or `valid == false` when the block is oversized or the frame's budget ran out.
+     */
+    [[nodiscard]] Block writeShadows(std::span<const std::byte> block) noexcept;
+
     /** @brief Notes a material's bytes for this frame, writing them only when the revision moved.
      *
      * @param material Material identity (a raw pointer: the arena stores no reference to it).
@@ -163,7 +174,7 @@ class BlockStorage
     /** @brief Gets the number of frames begun. */
     [[nodiscard]] std::uint64_t frames() const noexcept;
 
-    /** @brief Gets the number of blocks actually written (views, draws, lights and materials together). */
+    /** @brief Gets the number of blocks actually written (views, draws, lights, shadows and materials). */
     [[nodiscard]] std::uint64_t writes() const noexcept;
 
     /** @brief Gets the total bytes written. */
@@ -172,7 +183,7 @@ class BlockStorage
     /** @brief Gets the number of writes refused because the block was larger than its stride. */
     [[nodiscard]] std::uint64_t oversized() const noexcept;
 
-    /** @brief Gets the number of view/draw/light writes refused because the frame's budget ran out. */
+    /** @brief Gets the number of view/draw/light/shadow writes refused because the frame's budget ran out. */
     [[nodiscard]] std::uint64_t overflows() const noexcept;
 
     /** @brief Gets the number of materials with a slot. */

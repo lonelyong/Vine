@@ -56,6 +56,20 @@ static_assert(alignof(VineLightsBlock) == 16U, "VineLightsBlock must stay std140
 inline constexpr std::size_t kLightDirectionalSlots = 3U;
 
 /**
+ * @brief Gets the directional slot one announced light was packed into.
+ *
+ * The walk is the packing's own: enabled directional lights take slots 0..2 in announcement order, everything else -
+ * disabled lights, other kinds, and a light the block has no room for - takes none. It exists so a consumer that has
+ * to NAME a light (the shadow block's `params.w` says which of the block's directional lights a map belongs to) can
+ * ask the same list the same question, instead of writing the order down a second time.
+ *
+ * @param lights The lights the drawing call announced.
+ * @param light_identity The identity of the light whose slot is wanted (see LightRef::identity).
+ * @return The slot in [0, kLightDirectionalSlots), or kLightDirectionalSlots when the light has none.
+ */
+std::size_t directionalSlotOf(std::span<const core::LightRef> lights, const void* light_identity) noexcept;
+
+/**
  * @brief Packs a drawing call's lights into the forward light block.
  *
  * The walk is the reference one: enabled ambient lights fill the ambient slot (the last one wins), enabled directional

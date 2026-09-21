@@ -97,12 +97,20 @@ struct InputRef
  */
 struct LightRef
 {
+    /// @brief The light this was copied from (its identity, not a number).
+    ///
+    /// A shadow map states WHOSE it is (RenderTarget::shadowOf), so the plan has to be able to match that
+    /// statement against the lights a drawing call announced - and numbers cannot do that (two lights of the same
+    /// colour are the same numbers). The pointer is an identity, never dereferenced after the call returns.
+    const void*                identity{nullptr};
     bool                       enabled{false};                    ///< Disabled lights are not lit.
     vine::graphics::LightType  type{vine::graphics::LightType::Ambient};  ///< Ambient / directional / reserved kinds.
     vine::Colorf               color{};                           ///< Linear colour.
     float                      intensity{1.0F};                   ///< Intensity multiplier.
     bool                       has_direction{false};              ///< Whether direction() means anything.
     vine::math::Vec3d          direction{};                       ///< World-space direction (directional lights).
+    bool                       cast_shadow{false};                ///< Light::castShadow: the switch that makes it a caster.
+    float                      shadow_bias{0.0F};                 ///< ShadowSettings::bias: the map comparison's depth bias.
 };
 
 /** @brief A camera as the frame remembers it: its matrices and eye, not the borrowed pointer.

@@ -49,9 +49,9 @@
  * WHICH one an input offers is the plan's fact - the caller is checked against it rather than asked.
  *
  * WHAT IS NOT HERE YET, and is therefore not promised: the full-screen push block's CONTENTS (the lights and the
- * depth reconstruction the SDK's deferred lighting program reads) arrive with the lighting phase, and the shadow
- * block (the matrix that places a fragment in a light's map) with the shadow binding. Those are recorded empty
- * rather than approximated.
+ * depth reconstruction the SDK's deferred lighting program reads) arrive with the full-screen lighting half - the
+ * forward path's light and shadow blocks are bound here (see LightBlock / ShadowBlock), and the full-screen push is
+ * recorded empty rather than approximated.
  *
  * WHAT THE SCOPE IS A SET OF: COMPILED HALVES. A pipeline layer is built from ONE program's stage text against
  * ONE vertex layout, so the scope holds a set of them - one per (program, revision, layout) the pass draws with
@@ -160,7 +160,7 @@ class V_VSG_API ContentPass
     bool recordCommand(const core::CompiledCommand& command, const core::CompiledDraw& draw,
                        const core::CompiledPass& pass, const ContentFacts& facts,
                        const core::RenderPassCompatibility& compatibility, std::uint64_t view_offset,
-                       std::uint64_t lights_offset,
+                       std::uint64_t lights_offset, std::uint64_t shadow_offset,
                        const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
                        std::uint32_t sampled_color_count, std::uint32_t sampled_depth_count,
                        ::vsg::Group& into);

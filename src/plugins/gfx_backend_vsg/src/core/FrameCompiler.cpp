@@ -219,6 +219,7 @@ const CompiledFrame& FrameCompiler::compile(const FrameDescription& description,
 
         pass.draws = resolveDraws(source, pass.viewport, description.default_program);
         pass.inputs = resolveInputs(source, facts, frame_.token);
+        pass.shadow = resolveShadow(pass.inputs);
         ++schedule_index;
     }
     frame_.passes = compiled;
@@ -267,6 +268,9 @@ std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass&
         // a pass preserves is not sampleable, and neither is a lender's depth - so a shader never samples an
         // image some other pass is still depth-testing against.
         out.depth_sampleable = core::depthPlan(found->depth).sampleable;
+        // And WHAT this input is, when the target says so: a shadow map is a depth input whose owner stated
+        // whose shadow it is (see ShadowFacts). The statement is copied, never re-derived by the consumer.
+        out.shadow = found->shadow;
     }
     return inputs;
 }
@@ -291,6 +295,21 @@ const TargetFacts* FrameCompiler::findTarget(const FrameFacts& facts, const void
         }
     }
     return nullptr;
+}
+
+ShadowFacts FrameCompiler::resolveShadow(std::span<const CompiledInput> inputs) noexcept
+{
+    // The FIRST input that IS a map, whose depth is really sampleable and whose producer published how to read
+    // it: three facts, and any of them missing leaves the shading's switch off (a map nobody can place, or one
+    // whose texture would not be bound, is not a shadow this pass can shade with).
+    for (const CompiledInput& input : inputs)
+    {
+        if (input.shadow.light != nullptr && input.depth_sampleable && input.shadow.has_view_projection)
+        {
+            return input.shadow;
+        }
+    }
+    return {};
 }
 
 std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass&            pass,

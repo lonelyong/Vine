@@ -44,6 +44,7 @@ struct BlockStorage::Data
         view_ring(withAlignment(layout.views, alignment)),
         draw_ring(withAlignment(layout.draws, alignment)),
         light_ring(withAlignment(layout.lights, alignment)),
+        shadow_ring(withAlignment(layout.shadows, alignment)),
         arena(withAlignedStride(layout.materials, alignment))
     {
         const std::uint64_t views_bytes   = view_ring.capacityBytes();
@@ -51,7 +52,9 @@ struct BlockStorage::Data
         const std::uint64_t draws_bytes   = draw_ring.capacityBytes();
         const std::uint64_t lights_base   = alignUp(draws_base + draws_bytes, alignment);
         const std::uint64_t lights_bytes  = light_ring.capacityBytes();
-        const std::uint64_t materials_base = alignUp(lights_base + lights_bytes, alignment);
+        const std::uint64_t shadows_base  = alignUp(lights_base + lights_bytes, alignment);
+        const std::uint64_t shadows_bytes = shadow_ring.capacityBytes();
+        const std::uint64_t materials_base = alignUp(shadows_base + shadows_bytes, alignment);
         const std::uint64_t materials_bytes = arena.capacityBytes();
 
         regions.views_base     = 0;
@@ -60,6 +63,8 @@ struct BlockStorage::Data
         regions.draws_bytes    = draws_bytes;
         regions.lights_base    = lights_base;
         regions.lights_bytes   = lights_bytes;
+        regions.shadows_base   = shadows_base;
+        regions.shadows_bytes  = shadows_bytes;
         regions.materials_base = materials_base;
         regions.materials_bytes = materials_bytes;
 
@@ -128,6 +133,7 @@ struct BlockStorage::Data
     core::FrameRing                               view_ring;
     core::FrameRing                               draw_ring;
     core::FrameRing                               light_ring;
+    core::FrameRing                               shadow_ring;
     core::MaterialArena                           arena;
     ::vsg::ref_ptr<::vsg::Buffer>                 buffer;
     ::vsg::ref_ptr<::vsg::DeviceMemory>           memory;
@@ -165,6 +171,7 @@ void BlockStorage::beginFrame() noexcept
     d->view_ring.beginFrame();
     d->draw_ring.beginFrame();
     d->light_ring.beginFrame();
+    d->shadow_ring.beginFrame();
     d->arena.beginFrame();
 }
 
@@ -223,6 +230,23 @@ BlockStorage::Block BlockStorage::writeLights(std::span<const std::byte> block) 
     return {true, offset};
 }
 
+BlockStorage::Block BlockStorage::writeShadows(std::span<const std::byte> block) noexcept
+{
+    if (block.size() > d->shadow_ring.stride()) {
+        ++d->oversized_count;
+        return {};
+    }
+    const core::FrameRing::Reservation reservation = d->shadow_ring.reserve();
+    if (!reservation.valid) {
+        return {};
+    }
+    const std::uint64_t offset = d->regions.shadows_base + reservation.offset;
+    if (!d->writeInto(offset, d->shadow_ring.stride(), block, d->oversized_count)) {
+        return {};
+    }
+    return {true, offset};
+}
+
 BlockStorage::MaterialWrite BlockStorage::writeMaterial(const void* material, std::uint64_t revision,
                                                         std::span<const std::byte> block)
 {
@@ -252,7 +276,8 @@ BlockStorage::Regions BlockStorage::regions() const noexcept
 
 BlockStorage::Strides BlockStorage::strides() const noexcept
 {
-    return {d->view_ring.stride(), d->draw_ring.stride(), d->light_ring.stride(), d->arena.blockBytes()};
+    return {d->view_ring.stride(), d->draw_ring.stride(), d->light_ring.stride(), d->shadow_ring.stride(),
+            d->arena.blockBytes()};
 }
 
 std::span<const std::byte> BlockStorage::bytes() const noexcept
@@ -296,7 +321,8 @@ std::uint64_t BlockStorage::oversized() const noexcept
 
 std::uint64_t BlockStorage::overflows() const noexcept
 {
-    return d->view_ring.overflows() + d->draw_ring.overflows() + d->light_ring.overflows();
+    return d->view_ring.overflows() + d->draw_ring.overflows() + d->light_ring.overflows() +
+           d->shadow_ring.overflows();
 }
 
 std::size_t BlockStorage::liveMaterials() const noexcept

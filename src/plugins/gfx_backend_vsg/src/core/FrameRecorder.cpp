@@ -493,11 +493,14 @@ void FrameRecorder::snapshotLights(std::span<const vine::graphics::Light* const>
             continue;  // a null entry stays the default "disabled" light: the array keeps its positions
         }
         LightRef& ref     = copy[i];
+        ref.identity      = light;
         ref.enabled       = light->isEnabled();
         ref.type          = light->type();
         ref.color         = light->color();
         ref.intensity     = light->intensity();
         ref.has_direction = light->hasDirection();
+        ref.cast_shadow   = light->castShadow();
+        ref.shadow_bias   = light->shadowSettings().bias;
         if (ref.has_direction)
         {
             ref.direction = light->direction();

@@ -244,6 +244,81 @@ TEST(FrameCompilerTest, AnInputTheFactsCannotAnswerIsReportedAndOffersNothing)
         << "and it is said out loud, once per frame, instead of shading as if the input were not declared";
 }
 
+TEST(FrameCompilerTest, ThePlanResolvesAShadowFromWhatTheTargetStates)
+{
+    // A shadow map is a depth input whose TARGET says whose shadow it is, and the plan has to resolve it that way:
+    // "the first declared input whose depth is sampleable" bound a G-buffer's depth as the sun's map for a whole
+    // deferred branch in the reference backend (a measured defect, see ShadowFacts). The four inputs here are: a
+    // plain depth (a G-buffer's), a map nobody published a matrix for, a map whose depth is not sampleable, and a
+    // map that is usable - declared LAST, so a resolution that stopped at the first sampleable depth would pick the
+    // wrong one.
+    Rig r;
+    vine::intrusive_ptr<RenderTarget> gbuffer(new RenderTarget());
+    vine::intrusive_ptr<RenderTarget> map_no_matrix(new RenderTarget());
+    vine::intrusive_ptr<RenderTarget> map_flat(new RenderTarget());
+    vine::intrusive_ptr<RenderTarget> map_ok(new RenderTarget());
+    vine::intrusive_ptr<RenderTarget> colour(new RenderTarget());
+    const void* const                 light = reinterpret_cast<const void*>(0x15U);
+    r.addTarget(colour.get(), 64, 64, true);
+
+    const auto depth_target = [&r, light](const void* identity, bool promotion, bool is_map, bool with_matrix) {
+        TargetFacts entry;
+        entry.target        = identity;
+        entry.wanted.width  = 64;
+        entry.wanted.height = 64;
+        entry.wanted.shape.depth_format = RenderTarget::DepthFormat::D32;
+        entry.current.desc  = entry.wanted;
+        entry.current.built = true;
+        entry.depth.has_depth = true;
+        entry.depth.promotion = promotion;
+        entry.shadow.light = is_map ? light : nullptr;
+        entry.shadow.has_view_projection = with_matrix;
+        entry.shadow.view_projection     = with_matrix ? vine::math::Mat4d{} : vine::math::Mat4d{};
+        r.facts.push_back(entry);
+    };
+    depth_target(gbuffer.get(), /*promotion*/ true, /*is_map*/ false,
+                 /*with_matrix*/ true);  // a depth WITH a matrix that nobody claims as a shadow
+    depth_target(map_no_matrix.get(), /*promotion*/ true, /*is_map*/ true, /*with_matrix*/ false);
+    depth_target(map_flat.get(), /*promotion*/ false, /*is_map*/ true, /*with_matrix*/ true);
+    depth_target(map_ok.get(), /*promotion*/ true, /*is_map*/ true, /*with_matrix*/ true);
+
+    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<RenderTarget*> inputs{ gbuffer.get(), map_flat.get(), map_no_matrix.get(), map_ok.get() };
+
+    r.recorder.beginFrame(FrameToken{ 1 });
+    r.recorder.beginPass(1);
+    r.recorder.setRenderTarget(colour.get());
+    r.recorder.setPassInputs(inputs);
+    r.recorder.render(commands, nullptr);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.passes.size(), 1u);
+    const CompiledPass& pass = frame.passes[0];
+    ASSERT_EQ(pass.inputs.size(), 4u);
+
+    // The statement travels per input: the maps carry their owner, the G-buffer carries none.
+    EXPECT_EQ(pass.inputs[2].shadow.light, static_cast<const void*>(light)) << "a map states whose it is";
+    EXPECT_EQ(pass.inputs[0].shadow.light, nullptr) << "a depth nobody claims is not a shadow";
+
+    // And the PASS' map is the one that is usable, declared LAST: the G-buffer's depth (sampleable, with a matrix,
+    // declared FIRST) is not a shadow, the map whose depth cannot be sampled is not readable, and the map nobody
+    // published a matrix for is not readable either. "The first sampleable depth" picks the wrong one - that is the
+    // reference backend's measured defect, and the input order here is what would show it again.
+    EXPECT_EQ(pass.shadow.light, static_cast<const void*>(light));
+    EXPECT_TRUE(pass.shadow.has_view_projection);
+    EXPECT_TRUE(pass.inputs[0].depth_sampleable && pass.inputs[0].shadow.has_view_projection)
+        << "the G-buffer's depth is sampleable AND carries a matrix - and is still not a shadow";
+
+    // Each skipped input says WHY, and every reason is a fact of the input rather than of the resolution.
+    EXPECT_TRUE(pass.inputs[1].shadow.light == light && !pass.inputs[1].depth_sampleable)
+        << "a map whose depth is not sampleable is not a map a shader can read";
+    EXPECT_TRUE(pass.inputs[2].shadow.light == light && !pass.inputs[2].shadow.has_view_projection)
+        << "a map nobody published a matrix for is not readable either";
+    EXPECT_EQ(pass.inputs[3].shadow.light, static_cast<const void*>(light)) << "and the last one is the map";
+}
+
 TEST(FrameCompilerTest, AViewportNobodyAnnouncedBecomesTheWholeTarget)
 {
     Rig r;

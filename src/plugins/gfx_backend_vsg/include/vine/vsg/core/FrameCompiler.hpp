@@ -48,6 +48,24 @@ V_VSG_NS_BEGIN
 namespace core
 {
 
+/** @brief What a target states about being a SHADOW MAP: whose it is, and how a fragment maps into it.
+ *
+ * The statement belongs to the TARGET, not to the pass that reads it (RenderTarget::shadowOf /
+ * setProducerViewProjection): a pass declares targets as its inputs and nothing else, so a map is found by what the
+ * target SAYS rather than by declaration order - "the first declared input whose depth is sampleable" bound one as
+ * the sun's map for a whole deferred branch, because a G-buffer has a depth too (a measured defect of the reference
+ * backend, see .ai/design/graphics-shadow.md).
+ *
+ * The matrix is the PRODUCER's own (light clip <- world, in the SDK's clip convention): a consumer cannot invent it,
+ * and a map without one is not readable - shading nothing is the honest answer for a map nobody stated how to read.
+ */
+struct ShadowFacts
+{
+    const void*       light{nullptr};              ///< The light this map belongs to (its identity); nullptr = not a map.
+    bool              has_view_projection{false};  ///< Whether the producer published how to read the map.
+    vine::math::Mat4d view_projection{};           ///< Light clip <- world, in the producer's clip convention.
+};
+
 /** @brief What the compiler knows about one target: the API layer's own account of it. */
 struct TargetFacts
 {
@@ -55,6 +73,7 @@ struct TargetFacts
     TargetDesc     wanted{};         ///< The extent and shape THIS frame asks for.
     TargetInstance current{};        ///< What the backend currently has for it.
     DepthFacts     depth{};          ///< Promotion / borrowing / preservation facts.
+    ShadowFacts    shadow{};         ///< "This target is a shadow map, and here is how to read it".
 };
 
 /** @brief Everything the description cannot carry: the facts about what the frame draws into. */
@@ -94,8 +113,10 @@ struct CompiledInput
     /// whole-target input: "every colour attachment of its source, plus its depth while that one is
     /// sampleable"). Resolved from the same facts the target's own depth plan is made of, so "may a shader
     /// sample it" has one answer per frame.
-    bool depth_sampleable{false};
-};
+    bool depth_sampleable{false};    /// The map this input IS, when it is one (the target's own statement, copied here): a pass samples a
+    /// shadow by declaring the target the map was rendered into, and what it reads only becomes a shadow
+    /// because the target says whose it is.
+    ShadowFacts shadow{};};
 
 /** @brief One drawing call, resolved. */
 struct CompiledDraw
@@ -132,6 +153,11 @@ struct CompiledPass
     std::uint32_t color_attachments{0};       ///< Colour attachments of the pass' target (part of a pipeline's identity).
     bool          depth_sampleable{false};    ///< The pass' target offers a sampleable depth (part of the identity).
     std::span<const CompiledInput> inputs{};  ///< The pass' declared inputs, in declaration order.
+    /// The shadow map this pass samples, resolved: the FIRST input that is one (a target that states its light),
+    /// whose depth is sampleable (a map whose texture is not bound is not a map a shader can read) and whose
+    /// producer published a matrix (a map nobody stated how to read is not readable). `light == nullptr` when the
+    /// pass samples none, and the shading's switch stays off rather than reading a map that cannot be placed.
+    ShadowFacts shadow{};
     std::span<const CompiledDraw> draws{};    ///< Drawing calls, in the order they were collected.
 };
 
@@ -215,6 +241,17 @@ class FrameCompiler
      */
     [[nodiscard]] std::span<const CompiledInput> resolveInputs(const CollectedPass& pass, const FrameFacts& facts,
                                                                const FrameToken& token);
+
+    /** @brief Picks the shadow map a pass samples out of its resolved inputs.
+     *
+     * The FIRST input that is a map (the target states whose shadow it is), whose depth is sampleable and whose
+     * producer published how to read it - the three facts a shadow term needs, answered from one table so the
+     * shading layer never re-derives them.
+     *
+     * @param inputs The pass' resolved inputs, in declaration order.
+     * @return The map, or a default fact set (`light == nullptr`) when the pass samples none.
+     */
+    [[nodiscard]] static ShadowFacts resolveShadow(std::span<const CompiledInput> inputs) noexcept;
 
     /** @brief Reports one condition through the one route. */
     void report(vine::graphics::DiagnosticCategory category, const std::string& message);

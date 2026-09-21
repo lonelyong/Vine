@@ -3,10 +3,11 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M5c-1（前向光照块：灯光按"每绘制调用"打包成视图空间的 `VineLightsBlock`、挂在 set 0 binding 3、
-> 丢弃项每 episode 报一次）**：`test_vsg` 539 用例 / 86 套件全绿（含真设备像素用例——一帧一趟四带，
-> 四个灯的宣布各自对照一条像素），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include
-> 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 811 文件）。
+> **M5c-2（阴影块：map 靠目标"认领"自己的灯，块按每绘制调用打包 `light_vp * inverse(view)`，开关由
+> `castShadow`/槽号/矩阵三道事实把关；顺带按实测删掉 `PipelineKey::shadow_bound`）**：`test_vsg` 545 用例 /
+> 87 套件全绿（含真设备像素用例——一帧四带，四种"该不该有影"的理由各自对照一条像素），强制验证层 + 同步验证下
+> **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验
+> （全树 0 findings / 814 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -1894,6 +1895,8 @@ M5b 登记的"灯光与 `VineShadowBlock` 还没接"拆成两片，这是**灯�
 
 * **阴影块（`VineShadowBlock`）与 `shadow_bound` 键位还没接**（M5c-2）：灯的"槽号"（`params.w` 指向
   块里第几盏方向光）、`Light::castShadow` 的挑选、以及把 map 与块绑到内容 ABI 里，都是那一半的事。
+  **已关，§11.16v**（M5c-2）：阴影块落地（`packShadowBlock` + `kShadowBinding = 4` + 槽号），而
+  `shadow_bound` 键位按实测**删掉**（本后端的 ABI 里它是冗余的，见该节）。
 * **全屏路径的 128B push 内容仍全零**：`deferredLightProgram` 读的 ambient/sun/projparms 是光照相位
   的另一半（全屏不需要矩阵，所以它走 push），本片只做了前向 UBO 那半。
 * **引擎自带的前向程序文本与本后端的 set 0 布局不同**（登记为场景桥的债）：SDK 的
@@ -1903,6 +1906,83 @@ M5b 登记的"灯光与 `VineShadowBlock` 还没接"拆成两片，这是**灯�
   在文本层做转换，不能两套 ABI 混配。
 * 前一版（§11.16t）留下的"灯光槽索引/阴影块""采样集合深度前缀规则""借用者捕获布局"三条口子，
   除前两条外不变。
+
+### 11.16v M5c-2（2026-09-22）：阴影块（一张 map 只缩放它属于的那盏灯，真设备像素）
+
+M5c 的后半片。M5b 把 map 当**采样输入**绑上了（深度半边），但着色器拿不到"一个片元落在 map 的哪里"——
+map 是**那盏灯的相机**栅格化的，消费 pass 用的是自己的相机，所以块里必须带
+`light_vp * inverse(view)` 与比较用的标量（`VineShadowBlock`：一个 mat4 + `params` = 开关 / bias / 强度 / 灯槽
+号）。四件事：
+
+1. **map 的"身份"是目标说出来的**（`core::ShadowFacts` + `TargetFacts::shadow`）：`RenderTarget::shadowOf`
+   说这张 map 属于哪盏灯、`setProducerViewProjection` 说怎么读它；事实由调用方（会话/执行器）从 SDK 目标
+   读进来，计划原样复制。参考实现踩过的坑就在这里：**"第一个深度可采样的输入就是太阳的 map"会把 G-buffer 的
+   深度当成阴影贴图**（整个 deferred 分支"影子是世界坐标的函数"，`.ai/design/graphics-shadow.md` 有记录）。
+2. **计划解析"这趟 pass 的 map"**（`core/FrameCompiler::resolveShadow`）：输入里**第一个**
+   "目标表明它属于某盏灯 + 深度可采样 + 生产者公布了矩阵"的输入；三个事实缺一个 ⇒ `light == nullptr`
+   ⇒ 着色开关保持关闭（不假装有一张能读的 map）。
+3. **打包与开关**（`api/ShadowBlock`）：按身份找到 map 的那盏灯，要求它**这趟调用宣布了、启用了、还在投影
+   （`castShadow`）、类型是方向光、且在灯块的三个槽内**；满足才写矩阵（列主序）与
+   `params = {1, 该灯自己的 ShadowSettings::bias, 1, 槽号}`，否则整块**零字节**（开关关）。
+   `api/LightBlock` 新增 `directionalSlotOf(lights, identity)`——"这盏灯落在第几槽"必须和灯块打包**同一次
+   遍历**（旧实现的注释原话："the same walk collectLight…"），否则 `params.w` 会指向另一盏灯。
+4. **每绘制调用写一块、第 5 个动态偏移绑定**（`BlockStorage` 第 5 区域 + `BlockDescriptors::kShadowBinding = 4`）：
+   块的内容与调用有关（相机 + 灯单），所以粒度仍是"一次调用"；开关关的调用也**照写**（全零），因为同一个
+   着色器文本要同时服务有影/无影两种 pass——**绝不能留下未绑定的块**。
+
+**顺带的键修正（实测推论，已改设计）**：`PipelineKey::shadow_bound` **删掉**。它在 v1 里是从旧实现抄来的
+（旧路径的前向 shader set 有"插入阴影 ABI"的变体 ⇒ 集布局不同 ⇒ 管线不同），而在本后端的 ABI 里：
+map 走**采样输入**（`sampled_depth_count` 已经是键的一半）、阴影块**恒在块集里**（shader 可以少声明，集合布局
+不变）、有影/无影是**运行期开关**（同一个文本）——留着一个"改了 GPU 对象却不变"的键字段，正是键审计表要防止
+的事：它只会让本该共用一份管线的两个 pass 分家。§D3 的那一行按此更正。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `core/FrameRecorder.hpp` / `.cpp` | `LightRef` += `identity`（`Light*`，阴影靠它认领）/ `cast_shadow` / `shadow_bias`（`ShadowSettings::bias`）；`snapshotLights` 逐项填 |
+| `core/FrameCompiler.hpp` / `.cpp` | `ShadowFacts`（谁的 map + 是否公布矩阵 + 生产者矩阵）+ `TargetFacts::shadow` + `CompiledInput::shadow` + `CompiledPass::shadow`；`resolveShadow`（三个事实、先来先用） |
+| `core/Keys.hpp` / `.cpp` | **删** `PipelineKey::shadow_bound`（等值 / 哈希 / 审计表行同步） |
+| `api/ShadowBlock.hpp` / `.cpp`（新） | `packShadowBlock(shadow, draw, out)`：身份匹配 + 启用/投影/类型/槽检查 + `light_vp * inverse(view)`（列主序）+ `params`；不可用 ⇒ 全零 + false |
+| `api/LightBlock`（+.hpp/.cpp） | `directionalSlotOf(lights, identity)`（与打包同一次遍历） |
+| `api/BlockStorage` / `api/BlockDescriptors` | 第 5 区域 `shadows{80,1,3,1024}` + `writeShadows`；`kShadowBinding = 4` + 5 个动态偏移 |
+| `api/ContentPass`（+.hpp） | 每绘制调用打包/写阴影块（开关关也写）+ `shadow_offset` 传入 `recordCommand` |
+| `tests/test_vsg/ShadowBlockTest.cpp`（新） | 4 条无设备用例（视图→灯 clip 的组合**用两张矩阵语义验证**且相机非恒等、七种缺一事实的拒绝 + 块必须全零、第四盏方向光的槽号、`directionalSlotOf` 与打包**互相钉住**）+ 1 条真设备像素用例（**一帧四带**，见下） |
+| `tests/test_vsg/FrameCompilerTest.cpp` | +1 无设备用例：**四输入**（G-buffer 深度带矩阵且排第一 / 深度不可采样的 map / 没公布矩阵的 map / 可用的 map 排最后）⇒ 计划必须选最后一个；每条被跳过的输入都要说得出原因 |
+| `tests/test_vsg/BlockDescriptorsTest.cpp` / `VariantCoreTest.cpp` | 绑定数 4→5（含范围与动态偏移）；把 `shadow_bound` 的开关换成 `sampled_depth_count` |
+
+| 规则 | 结论 |
+| --- | --- |
+| **只能由目标"认领"** | 变异 M4（去掉"目标说了属于哪盏灯"这个条件，任何"可采样深度 + 有矩阵"都算）⇒ 计划把 G-buffer 的深度当成 map（`pass.shadow.light == NULL`）——这就是参考实现的实测缺陷 |
+| **槽号决定缩哪盏灯** | 变异 M2（`params.w` 恒 0）⇒ 设备用例带 2 从 `(26,128,26)` 变成 `(128,26,26)`：本该被缩放的那盏灯没被动，另一盏被缩没了——"整张 map 缩放所有灯"的经典错误 |
+| **开关是灯的运行期事实** | 变异 M3（忽略 `castShadow`）⇒ 无设备用例 + 设备用例带 1 红（同一盏灯在两趟调用之间**被翻开开关**⇒ 带 1 从全亮变成只剩 ambient）；相机夹具第一版用**另一个 Light 对象**表达"不投影"，M3 只在无设备用例红——那测的是**身份**不是开关，现已改成同一对象翻开关 |
+| **组合必须走世界** | 变异 M1（丢掉 `inverse(view)`，直接用生产者的矩阵）⇒ **只有算术用例红**（设备用例的相机只有平移，而测试选的生产者矩阵不读 z ⇒ 平移不可见）。又是一次"判据选对"：这类约定归算术用例 |
+| **矩阵是列主序** | 变异 M5（按行写）⇒ 算术用例红（测试的矩阵有非对称项 (0,1)=0.25 / (1,0)=-0.125，对角矩阵看不出来） |
+| **拒绝必须写零** | 变异 M6（拒绝时把 `params.x` 留成 1）⇒ **只有字节级用例红**：设备像素看不出（零矩阵 ⇒ `light_clip.w = 0` ⇒ NaN ⇒ 着色器的范围判断全 false ⇒ 恰好落回"亮"，那是巧合而不是检查） |
+| **块是每次调用的** | 变异 M7（整趟 pass 只打包第一调用的阴影块）⇒ 设备用例三条像素红（带 1/2/3 全按带 0 的灯与槽算） |
+
+| 变异反证（全部实测） | 结果 |
+| --- | --- |
+| M1：组合丢掉 `inverse(view)` | 1 条红（算术用例；设备用例绿——轴对齐/纯平移相机看不出） |
+| M2：`params.w` 恒 0 | 设备用例红（带 2 的颜色变成"另一盏灯被缩放"） |
+| M3：忽略 `castShadow` | 2 条红（无设备 + 设备带 1） |
+| M4：不要求目标认领（任何可采样深度 + 矩阵都算） | 1 条红（计划选错输入：G-buffer 的深度变成 map） |
+| M5：矩阵按行写 | 1 条红（算术用例） |
+| M6：拒绝时留下开关 1 | 1 条红（字节级用例；像素因 NaN 恰好正确） |
+| M7：阴影块按 pass 打包 | 设备用例 3 条红（带 1/2/3 全用带 0 的灯） |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **545 用例 / 87 套件全绿**（+6 用例、+1 套件） |
+| 门禁 | 插件目标与全仓 `ninja` 零 error；强制验证层整仓 **0 VUID**；再加同步验证仍 **0 SYNC-HAZARD**；hygiene 0 / 814 文件；`check_diagnostic_formats.py` 0 / 39；`check_doc_symbols.py` 通过 |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **`TargetFacts::shadow` 的生产侧还没接**：本片的夹具从 SDK 目标自己读（`shadowOf()` /
+  `producerViewProjection()`）再填进事实表；会话/执行器那层要把它变成常规动作（和 `depth` 事实同一处）。
+* **`params.y/z` 的语义只钉了"来源"**：bias 来自投影灯的 `ShadowSettings`（实测值随灯走），强度恒 1；
+  `ShadowSettings::filter`（PCF）是 SDK 自己标了 RESERVED 的，本片不假装支持。
+* **全屏路径的 128B push 光照/深度重建半边**仍未填（M5c-1 登记过），它读的是同一份灯数据的另一种表示。
+* **场景桥的 ABI 债仍在**（§11.16u 登记）：SDK 自带前向程序的绑定与本后端 set 0 布局不同，接进来时要统一。
+* 前一版（§11.16u）留下的 `TargetFacts::shadow` 生产侧、`params.y/z` 语义两条口子中，前一条已在上方登记。
 
 ### 11.17 下一步
 
@@ -1944,6 +2024,7 @@ M5b 登记的"灯光与 `VineShadowBlock` 还没接"拆成两片，这是**灯�
 | ~~M5a~~ | **已完成（2026-09-22）**：多写者离屏目标（LOAD 变体）——`LoadOpVariantKey` 改成变体的名字 + `core::loadOpVariantOf` 装配；`OffscreenTarget` 按变体建/缓存渲染通道（依赖列表逐位相同、framebuffer 共享）+ `passVariantCount()` + `written()`；执行器把计划的 `clear`/`bootstrap`/`depth_preserved` 交下去；真设备像素用例（一帧两趟：清 + LOAD，两个网格都在）+ 四条变异反证（§11.16s） |
 | ~~M5b~~ | **已完成（2026-09-22）**：输入表带上深度半边（"阴影脊柱"）——`CompiledInput::depth_sampleable` 由 `core::depthPlan` 解析（采样者与被采样者同一个答案）；`core::depthFinalLayout` 给"纯深度 + 可采样"第三种收尾布局（`ShaderReadOnly`），`loadOpVariantOf` 的深度起始布局改成 `depth_steady`（借用者命名的是出借者的布局）；`PipelineKey::sampled_depth_count` + `SampledKey{colors, depths}` + NEAREST 深度采样器；深度捕获屏障按 `depthSteadyLayout()` 进/出（原来写死的布局是 `VUID-VkImageMemoryBarrier-oldLayout-01197` 的谎报，还会让采样读到全 0）；真设备用例（探针 0.5/0.0 + 像素灰/黑/清屏色）+ 无设备用例两条 + 四条变异反证（§11.16t） |
 | ~~M5c-1~~ | **已完成（2026-09-22）**：前向光照块——`api/LightBlock`（`VineLightsBlock` 112B + 世界→视图换算 + 归一化 + 三槽规则 + 补光不计数 + 无相机 ⇒ 空块）；`BlockStorage` 第 4 区域 + `writeLights`；`BlockDescriptors::kLightsBinding = 3` + 四个动态偏移；`ContentPass` 每绘制调用写一块 + "每 episode 一次"的丢弃报告（`ReportOnce`）；6 条无设备用例 + 1 条真设备四带像素用例（带 0 朝向观察者的太阳 / 带 1 反向 / 带 2-3 装不下的灯 = 补光 + 一条报告）+ 四条变异反证（其中 M1 实测"轴对齐相机看不出缺旋转"⇒ 判据是算术用例）（§11.16u） |
+| ~~M5c-2~~ | **已完成（2026-09-22）**：阴影块——`ShadowFacts`（谁的 map + 生产者矩阵）进 `TargetFacts`/`CompiledInput`/`CompiledPass`，`FrameCompiler::resolveShadow` 三个事实先来先用；`LightRef` += 身份/投影开关/bias；`api/ShadowBlock::packShadowBlock`（身份匹配、启用/投影/类型/槽检查、`light_vp * inverse(view)` 列主序、`params` 四元组）；`BlockStorage` 第 5 区域 + `kShadowBinding = 4`；`directionalSlotOf`（与灯块打包同一次遍历）；**按实测删除 `PipelineKey::shadow_bound`**（本后端 ABI 里 map 走采样输入、块恒在块集、开关是运行期值 ⇒ 它只会白拆管线）；4 条无设备 + 1 条真设备四带像素用例 + 7 条变异反证（§11.16v） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
