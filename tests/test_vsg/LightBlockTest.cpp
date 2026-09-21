@@ -478,8 +478,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     target_facts.wanted.width  = static_cast<int>(kSize);
     target_facts.wanted.height = static_cast<int>(kSize);
     target_facts.wanted.shape  = target->shape();
-    target_facts.current.desc  = target_facts.wanted;
-    target_facts.current.built = target->written();
+    target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
     FrameArena    arena{ 64 * 1024 };
@@ -739,8 +738,7 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     target_facts.wanted.width  = static_cast<int>(kSize);
     target_facts.wanted.height = static_cast<int>(kSize);
     target_facts.wanted.shape  = destination->shape();
-    target_facts.current.desc  = target_facts.wanted;
-    target_facts.current.built = destination->written();
+    target_facts.current       = destination->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
     FrameArena    arena{ 64 * 1024 };

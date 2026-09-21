@@ -167,6 +167,38 @@ class OffscreenTarget
      */
     [[nodiscard]] bool written() const noexcept;
 
+    /** @brief Gets the facts the lifecycle plan is decided from (`core::planTarget`).
+     *
+     * ONE SPELLING FOR ONE FACT. `built` is not "the attachments exist": a target that exists but has never
+     * been written into cannot be LOADed, so asking the plan about it has to come back
+     * `Repair(Bootstrap)` - the fact that answers that question is @ref written, not the presence of images.
+     * The shape carries the device formats (what a pipeline's compatibility half needs), so a caller can hand
+     * these facts to the plan AND to the compiler's target table (`TargetFacts::current`) without assembling
+     * anything by hand - and the two cannot drift apart about what this target is.
+     *
+     * @return The instance: the description the current attachments were built for, the generation, whether
+     *         they hold something loadable, and whether a submission into them was lost.
+     */
+    [[nodiscard]] core::TargetInstance instance() const noexcept;
+
+    /** @brief Records that a submission into this target did not complete, so its contents cannot be trusted.
+     *
+     * The situation it is for: the frame was recorded and submitted, the submission failed (or the session
+     * lost the device), and whether anything was written is now unknowable. The attachments still exist and
+     * are still loadable objects - what changed is the FACT about their contents, which is why this is a flag
+     * and not a teardown.
+     *
+     * What the plan does with it: `instance()` reports it and `core::planTarget` answers
+     * `Repair(Bootstrap)`, so the next frame's first writer CLEARS instead of loading. Clearing is what
+     * repairs the fact, so the frame that does it clears the flag again (see @ref passGraph) - and only a
+     * frame that bootstraps does: a caller that ignores the plan's answer cannot silently mark an unknown
+     * image as loadable.
+     *
+     * The caller that saw the failure is the one that knows about it; a target does not watch submissions,
+     * so this is the seam a session reports through.
+     */
+    void invalidateAttachments() noexcept;
+
     /** @brief Gets the node that copies attachment 0 into host-visible memory.
      *
      * Append it to the command graph AFTER the render graph: it has to record after the pass, and it must not

@@ -246,6 +246,10 @@ struct OffscreenTarget::Data
     bool                               depth_borrowed{false};  ///< The depth is the lender's image.
     /// Whether anything has been recorded into the attachments yet (see OffscreenTarget::written).
     bool                               written{false};
+    /// Whether a submission into these attachments was lost: they exist and were written into, but their
+    /// contents can no longer be trusted (see OffscreenTarget::invalidateAttachments). The plan answers
+    /// Repair(Bootstrap) for such a target, so the next frame's first writer clears instead of loading.
+    bool                               attachments_invalidated{false};
 
     /// @brief One render pass this target has served a pass with: its load-op variant and the pass object.
     struct PassVariant
@@ -705,6 +709,14 @@ OffscreenTarget::~OffscreenTarget()
     // fact is "something has been recorded into it", and a frame that is recorded but dropped is not a
     // different target.
     d->written = true;
+    // An INVALIDATED target is repaired by exactly this kind of pass: one that bootstraps CLEARS the
+    // attachments, which is what turns "contents unknown" back into "contents known - the clear colour".
+    // Only a bootstrapping frame may do it: a pass that loads cannot repair an image nobody can trust, and
+    // letting it clear the flag would hand the next frame a LOAD of unknown contents.
+    if (bootstrap)
+    {
+        d->attachments_invalidated = false;
+    }
 
     auto graph              = ::vsg::RenderGraph::create();
     graph->framebuffer      = d->attachments.framebuffer;
@@ -725,6 +737,25 @@ std::size_t OffscreenTarget::passVariantCount() const noexcept
 bool OffscreenTarget::written() const noexcept
 {
     return d->written;
+}
+
+core::TargetInstance OffscreenTarget::instance() const noexcept
+{
+    core::TargetInstance instance;
+    instance.desc = core::TargetDesc{ static_cast<int>(d->width), static_cast<int>(d->height), d->shape };
+    instance.generation = d->generation;
+    // "Built" means LOADABLE, not "the images exist": the plan's Repair(Bootstrap) is what tells a pass to
+    // clear an image nobody has written into, and `written` is that fact (see the declaration).
+    instance.built                   = d->written;
+    instance.attachments_invalidated = d->attachments_invalidated;
+    return instance;
+}
+
+void OffscreenTarget::invalidateAttachments() noexcept
+{
+    // Not a teardown: the images stay, the FACT about their contents changes. `written` is deliberately left
+    // alone - "something was recorded" is still true, and the two facts answer different questions.
+    d->attachments_invalidated = true;
 }
 
 ::vsg::ref_ptr<::vsg::Node> OffscreenTarget::capture() const noexcept
@@ -946,6 +977,9 @@ OffscreenTarget::Resized OffscreenTarget::resize(std::uint32_t width, std::uint3
     // "this pass is the first writer" from written() clears rather than loads, which is the only thing an
     // UNDEFINED image accepts (see passGraph).
     d->written = false;
+    // The invalidation belonged to the OLD set: these images are new, and "the plan says ResizeInPlace" is
+    // already the fact that makes the next writer clear (see core::FrameCompiler's freshAttachments).
+    d->attachments_invalidated = false;
     ++d->generation;
     result.replaced   = true;
     result.generation = d->generation;

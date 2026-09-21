@@ -3,10 +3,10 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M7 第一半（证据加固：重写版第一张真相位表 + 门禁脚本 `scripts/vsg_rewrite_gate.sh`——0 VUID / 0 SYNC-HAZARD
-> / 跳过即失败 / 相位必须收尾，都成了可失败的断言）**：`test_vsg` 560 用例 / 88 套件全绿，
-> 一条命令跑完 build + 两个验证层 + 三个 hygiene 脚本 + 相位收尾；`core/` 的 include 边界由
-> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 816 文件）。
+> **执行者收口（`OffscreenTarget::instance()`：目标自己产出计划要的事实，`built` = "能 LOAD"；`invalidateAttachments()`
+> 给丢帧一个生产者，下一帧首写者清屏、且只有清屏能修这个事实）**：`test_vsg` 561 用例 / 88 套件全绿；
+> 门禁一条命令（`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清、相位以 `[selftest] done`
+> 收尾；`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 816 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2294,6 +2294,71 @@ M7 的设计口径是"基线冻结、性能档、无 VUID 门禁、诊断字段�
 * 之前的口子不变（`resize` 的执行者、`attachments_invalidated` 的生产者、租约的"重建借用方"、float 颜色读回、
   相位运行器）。
 
+### 11.16aa 执行者收口（2026-09-22）：目标自己说事实、丢帧有生产者、执行者循环落成用例
+
+§11.16x 登记的三条口子里，有两条是"语义已经写好、但没有生产者"：`attachments_invalidated` 没有生产者、
+`resize` 没有执行者。这一片把**事实的产出与消费**接成一条可跑的循环，并把"谁报告丢帧"留给会话那条路（见口子）。
+
+1. **`OffscreenTarget::instance()`**（新）：目标自己产出 `core::TargetInstance` —— `desc` 来自它自己的尺寸与形状
+   （含设备格式，兼容性那一半照旧在 `shape()` 里）、`generation`、`built`、`attachments_invalidated`。这里
+   有一条必须说清的语义：**`built` 不是"图像存在"，而是"能 LOAD"** —— 一个刚建好、从没写过的目标如果报
+   `built = true`，计划就会答 `None`，第一趟 pass 于是去 LOAD 一张 UNDEFINED 的图；所以 `built = written`
+   （M5a 起 `written` 就是"有人往里录过东西"的那个事实）。设计文里 `TargetInstance::built` 的旧措辞
+   （"Attachments exist for desc"）按这份实现更正为"**loadable**"。
+   收益立刻可见：**15 处手拼的 facts 换成 `instance()`**（`ContentPassTest` 3、`SampledInputTest` 6、
+   `ShadowBlockTest` 2、`LightBlockTest` 2、`WindowCompositionTest` 2），而这些用例里有 8 条真设备像素断言
+   ——如果 `instance()` 与它们原来的手拼说法不一致，那些像素会当场红。一处拼写、一处事实。
+2. **`invalidateAttachments()`**（新）：一份"提交失败 / 设备丢失 ⇒ 里面现在是什么没人知道"的事实。它**不是拆
+   除**：图像还在、还是合法的 LOAD 对象，变的只是"内容可信吗"这个事实。计划的反应是
+   `Repair(Bootstrap)`（`planTarget` 第 2 条），于是**下一帧的第一个写者清屏**而不是 LOAD。
+   谁是"生产者"：**报告丢帧的调用方**（目标不观察提交），也就是会话/执行者的那条路（本片只提供缝，见口子）。
+3. **修复这个事实的，恰好是"清屏的那一趟"**：`passGraph(..., bootstrap = true, ...)` 在交出图的同时把标志清掉。
+   语义上必须如此——**只有清屏能把"内容未知"变回"内容已知"**，一次 LOAD 不能声称它修好了什么；所以
+   `bootstrap = false` 的调用**不许**清标志（用例钉住：忽略计划的调用者清不掉它）。
+   同一条约定也用在 `resize` 的替换臂上：新图像换掉了被丢的那批，标志随旧集合一起消失（`written = false`
+   已经让计划说 `ResizeInPlace` ⇒ 首写者清屏）。
+4. **执行者的循环落成一条用例**（`ALostSubmissionIsRepairedByTheNextFrameAndOnlyOnce`）：facts 从
+   `instance()` 拿 → `FrameCompiler` 给决定与 `pass.bootstrap` → 用**计划给的那个 flag**建图 → 提交 → 读像素。
+   像素是判据：帧 1（目标从没写过）计划必须答 `Repair(Bootstrap)`，画面是清屏色；丢帧后帧 2 **不宣布清屏**
+   而计划仍要求 bootstrap ⇒ 画面是**这一帧自己给的颜色**（说明真的清了）；帧 3 不再清（画面停在帧 2 的颜色，
+   "只修一次"由此可判）；最后 `invalidate` + `resize` 后 `attachments_invalidated` 为假、`generation` 前进。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/OffscreenTarget.hpp` / `.cpp` | `instance()`（文档写明 `built` = loadable 的理由）、`invalidateAttachments()`（文档写明它不是拆除、谁是生产者、以及为什么只有 bootstrap 能修）；`passGraph` 在 bootstrap 时清标志（**只**在 bootstrap）；`resize` 替换集合时清标志 |
+| `tests/test_vsg/OffscreenTargetTest.cpp` | +1 真设备用例：丢帧 → 下一帧清屏 → 只修一次 → resize 换集合；中间还钉住"忽略计划的 LOAD 不许修事实" |
+| 5 个既有设备测试文件 | 15 处手拼 `current` 换成 `target->instance()`（像素断言是这次替换的判据） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **`built` = "能 LOAD"** | 变异 P3（改成"图像存在"）⇒ 帧 1 的计划变 `None` ⇒ 首写者不再清屏 ⇒ 断言与像素都红 |
+| **丢帧必须被记录** | 变异 P1（`invalidateAttachments()` 空实现）⇒ 帧 2 的计划变 `None` ⇒ 画面停在红（旧内容）而不是新颜色 |
+| **只有清屏能修** | 变异 P5（任何 pass 都清标志）⇒ "忽略计划的 LOAD 不许修事实"那条断言红；变异 P2（bootstrap 也不清）⇒ 帧 3 又清了一次 ⇒"只修一次"红 |
+| **换集合就换事实** | 变异 P4（resize 保留标志）⇒ `attachments_invalidated` 断言红 |
+
+| 变异反证（全部实测） | 结果 |
+| --- | --- |
+| P1 `invalidateAttachments()` 不记录 | 2 条红（事实断言 + 像素） |
+| P2 bootstrap 不清标志 | 2 条红（"只修一次"的两条） |
+| P3 `built` = 图像存在 | 2 条红（帧 1 的决定 + 像素） |
+| P4 resize 保留标志 | 1 条红 |
+| P5 任何 pass 都修（不只清屏） | 2 条红（"只有清屏能修"及其后续） |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **561 用例 / 88 套件全绿**（+1 用例；15 处 facts 改口径零测试改动） |
+| 门禁 | `scripts/vsg_rewrite_gate.sh` 一条命令全绿：`cases=561 failed=0 vuid=0 hazard=0 skipped=0` + hygiene 三个脚本 + 相位收尾 |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **"谁报告丢帧"还没接**：`invalidateAttachments()` 有缝、计划与用例有完整语义，但**会话的提交路径**还不知道
+  自己这一帧都碰过哪些目标（`Session::commitFrame` 只提交 viewer 的图，目标表在将来的适配层里）。接法已经明确：
+  提交失败时（`vsg` 抛错 / 丢失设备）由持有目标表的那一层对本帧的目标调用 `invalidateAttachments()`。
+* **`Rebuild` 臂仍没有执行者**：形状真的变了（换格式/换附件数）时 `resize` 不做——那是"销毁并重建这个目标"，
+  归会话的目标表；本片只把 `ResizeInPlace`/`Repair` 两条路走通。
+* **租约的"重建借用者"仍没有 API**（§11.16x 口子不变）：调用方现在只能先析构再 `create`。
+* M7 剩下的两样（**设备侧相位运行器**、**GPU profile 性能档**）不变。
+
 ### 11.17 下一步
 
 | 项 | 内容 |
@@ -2339,6 +2404,7 @@ M7 的设计口径是"基线冻结、性能档、无 VUID 门禁、诊断字段�
 | ~~M5e~~ | **已完成（2026-09-22）**：目标生命周期（计划驱动的换尺寸）——`OffscreenTarget::Attachments`（尺寸相关的一整批对象）+ `buildAttachments(width, height, out)`（纯构建、不写自身）；`create` 成功后才接手并计数借用者；`resize(w, h, timeline, retirement)` 按 `core::planTarget` 决定、**保留渲染通道与管线**、旧集经 `RetirementQueue` 停车（闸门关着时退回**计数过的** device idle）；租约两向拒绝；换后 `written=false` + `generation+1`；5 条真设备用例（含深度回读按新尺寸重建、引用计数证明"停着而不是扔了"）+ 6 条变异反证（§11.16x） |
 | ~~M6~~ | **已完成（2026-09-22）**：读回——`core/Readback`（`readbackOf` 单表 + 两类格式表 + `decodeDepth`），优先级"存在性 → 格式（永久）→ 捕获（可重试）"，不设走不到的 `Empty`（零尺寸归 `planTarget` / `create` 拒绝）；`OffscreenTarget` 的 `captured` / `depth_captured` 簿记（属于附件集，换尺寸天然复位）+ `readbackResult()`；float 颜色附件不再建回读缓冲（原来必撞 `VUID-vkCmdCopyImageToBuffer-pRegions-00183`）；借用方的深度回读 = 共享图像 + 自己的缓冲；4 条无设备 + 4 条真设备用例 + 8 条变异反证（§11.16y） |
 | ~~M7~~ | **已完成（2026-09-22，第一半：证据加固）**：重写版第一张**真**相位表（`PhaseTable` 的 `sample`/`expect` 第一次派上用场：稳态帧零分配 ×2 + `draws` +2 + 环跳过 `invalid_schedules` +1），`[selftest]` 行冻结成基线；`scripts/vsg_rewrite_gate.sh` 把整套仪式变成一条命令（跳过即失败、0 VUID / 0 SYNC-HAZARD 成为可失败断言、相位必须以 `[selftest] done` 收尾），门禁自己也被三条伪造输入证明能红；实测记录 plan 路径头两帧的有界增长（第二次 compile 32B，之后 0）（§11.16z）。**剩**：设备侧相位运行器、性能档（GPU profile） |
+| ~~M7b（执行者收口）~~ | **已完成（2026-09-22）**：目标自己说事实——`OffscreenTarget::instance()`（`built` = **能 LOAD** = `written`；15 处手拼 facts 统一到它，像素断言是判据）+ `invalidateAttachments()`（丢帧 ⇒ 计划 `Repair(Bootstrap)` ⇒ 下一帧首写者清屏；**只有 bootstrap 能修事实**，`resize` 换集合同时换事实）；+1 真设备用例把执行者循环（facts → 计划 → `pass.bootstrap` → 图 → 像素）跑通，含"只修一次"与 resize 两条判据；5 条变异反证（§11.16aa） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。

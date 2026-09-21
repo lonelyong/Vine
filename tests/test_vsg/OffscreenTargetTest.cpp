@@ -22,11 +22,31 @@
 #include <vsg/app/Viewer.h>
 #include <vsg/vk/Device.h>
 
+#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/RenderTarget.hpp>
+
 #include <vine/vsg/api/Device.hpp>
 #include <vine/vsg/api/OffscreenTarget.hpp>
+#include <vine/vsg/core/Diagnostics.hpp>
+#include <vine/vsg/core/FrameArena.hpp>
+#include <vine/vsg/core/FrameCompiler.hpp>
+#include <vine/vsg/core/FrameRecorder.hpp>
 #include <vine/vsg/core/FrameTimeline.hpp>
+#include <vine/vsg/core/Observe.hpp>
 #include <vine/vsg/core/RetirementQueue.hpp>
 
+using vine::graphics::RenderCommand;
+using vine::graphics::RenderTarget;
+using vine::vsg::core::CompiledPass;
+using vine::vsg::core::Diagnostics;
+using vine::vsg::core::FrameArena;
+using vine::vsg::core::FrameCompiler;
+using vine::vsg::core::FrameRecorder;
+using vine::vsg::core::FrameToken;
+using vine::vsg::core::Observe;
+using vine::vsg::core::TargetAction;
+using vine::vsg::core::TargetFacts;
+using vine::vsg::core::TargetInstance;
 using vine::vsg::DeviceResult;
 using vine::vsg::OffscreenTarget;
 using vine::vsg::createDevice;
@@ -762,4 +782,164 @@ TEST(OffscreenTargetTest, AFloatColourAttachmentIsRenderedButNotReadBack)
     EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)),
               static_cast<int>(ReadbackRefusal::UnreadableFormat))
         << "capturing the depth does not change what the colour half can do";
+}
+
+TEST(OffscreenTargetTest, ALostSubmissionIsRepairedByTheNextFrameAndOnlyOnce)
+{
+    const auto created = createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
+    }
+
+    const float kRed[4]{ 1.0F, 0.0F, 0.0F, 1.0F };
+    const float kGreen[4]{ 0.0F, 1.0F, 0.0F, 1.0F };
+    const float kBlue[4]{ 0.0F, 0.0F, 1.0F, 1.0F };
+
+    auto target = OffscreenTarget::create(created.device, OffscreenTarget::Layout{ 8U, 8U, { kRed[0], kRed[1], kRed[2], 1.0F } });
+    ASSERT_NE(target, nullptr);
+
+    // The executor's loop, without the executor: the target's OWN facts go to the plan, the plan's bootstrap
+    // flag goes to the pass graph, and the pixels say whether the two agreed. Nothing here keeps a private
+    // idea of when the target must clear - that is the point of the case.
+    FrameArena    arena(64 * 1024);
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    vine::intrusive_ptr<RenderTarget> handle(new RenderTarget());
+    const std::vector<RenderCommand>  one_draw{ RenderCommand{} };
+
+    const auto facts_of = [&]() {
+        TargetFacts facts;
+        facts.target  = handle.get();
+        facts.wanted  = vine::vsg::core::TargetDesc{ 8, 8, target->shape() };
+        facts.current = target->instance();
+        return facts;
+    };
+    const auto record_frame = [&](std::uint64_t token, const vine::vsg::core::ClearPolicy& policy) {
+        EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
+        EXPECT_TRUE(recorder.beginPass(1U));
+        EXPECT_TRUE(recorder.setRenderTarget(handle.get()));
+        EXPECT_TRUE(recorder.setClearPolicy(policy));
+        EXPECT_TRUE(recorder.render(one_draw, nullptr));
+        EXPECT_TRUE(recorder.endPass());
+        EXPECT_TRUE(recorder.endFrame());
+        EXPECT_TRUE(recorder.swapBuffers());
+        const std::vector<TargetFacts> table{ facts_of() };
+        return &compiler.compile(recorder.description(), vine::vsg::core::FrameFacts{ table });
+    };
+    const auto submit = [&](const vine::vsg::core::CompiledPass& pass) {
+        const ::vsg::ref_ptr<::vsg::RenderGraph> graph =
+            target->passGraph(pass.clear, pass.bootstrap, pass.depth_preserved);
+        EXPECT_NE(graph, nullptr);
+        auto viewer        = ::vsg::Viewer::create();
+        auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+        command_graph->addChild(graph);
+        if (const ::vsg::ref_ptr<::vsg::Node> capture = target->capture()) {
+            command_graph->addChild(capture);
+        }
+        viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+        EXPECT_TRUE(viewer->compile());
+        viewer->advanceToNextFrame();
+        viewer->handleEvents();
+        viewer->recordAndSubmit();
+        viewer->deviceWaitIdle();
+    };
+    const auto sampled = [&]() { return target->probe().pixel(4, 4); };
+    const auto expects = [&](const float (&color)[4], const char* what) {
+        const Rgba8 pixel = sampled();
+        EXPECT_NEAR(pixel.r, quantise(color[0]), 1) << what;
+        EXPECT_NEAR(pixel.g, quantise(color[1]), 1) << what;
+        EXPECT_NEAR(pixel.b, quantise(color[2]), 1) << what;
+    };
+
+    // Frame 1: the target EXISTS but has never been written into, so the plan must call it a bootstrap and the
+    // pass has to clear - the fact comes from instance(), not from a caller's assumption.
+    const vine::vsg::core::TargetInstance fresh = target->instance();
+    EXPECT_EQ(fresh.desc.width, 8);
+    EXPECT_EQ(fresh.desc.height, 8);
+    EXPECT_EQ(fresh.generation, 0U);
+    EXPECT_FALSE(fresh.built) << "images exist, but nothing has been written into them: loading is impossible";
+    EXPECT_FALSE(fresh.attachments_invalidated);
+
+    vine::vsg::core::ClearPolicy fill;
+    fill.color          = true;
+    fill.color_value[0] = kRed[0];
+    fill.color_value[1] = kRed[1];
+    fill.color_value[2] = kRed[2];
+    fill.color_value[3] = 1.0F;
+
+    const auto* first_frame = record_frame(1U, fill);
+    ASSERT_NE(first_frame, nullptr);
+    ASSERT_EQ(first_frame->passes.size(), 1U);
+    EXPECT_EQ(static_cast<int>(first_frame->targets[0].decision.action),
+              static_cast<int>(vine::vsg::core::TargetAction::Repair));
+    EXPECT_EQ(static_cast<int>(first_frame->targets[0].decision.reason),
+              static_cast<int>(vine::vsg::core::RepairReason::Bootstrap));
+    EXPECT_TRUE(first_frame->passes[0].bootstrap) << "the first writer into an unwritten target clears";
+    submit(first_frame->passes[0]);
+    expects(kRed, "the bootstrap clear is what the frame shows");
+
+    // The submission into that target is LOST (or the device went away): the contents can no longer be
+    // trusted, and the target says so instead of pretending the frame landed.
+    target->invalidateAttachments();
+    EXPECT_TRUE(target->instance().attachments_invalidated);
+    EXPECT_TRUE(target->instance().built) << "'lost' is not 'never written': the images still exist";
+
+    // Frame 2 does NOT ask for a clear, and paints its own colour. If the plan honours the invalidation, the
+    // pass is the bootstrap one and the colour below IS what the frame shows; if it does not, this frame loads
+    // whatever the lost submission left behind (red).
+    vine::vsg::core::ClearPolicy after_loss;
+    after_loss.color          = false;
+    after_loss.color_value[0] = kGreen[0];
+    after_loss.color_value[1] = kGreen[1];
+    after_loss.color_value[2] = kGreen[2];
+    after_loss.color_value[3] = 1.0F;
+
+    // A caller that IGNORES the plan (a load on an invalidated target) does not repair anything: loading an
+    // image whose contents are unknown cannot make them known, so the fact has to survive it.
+    const ::vsg::ref_ptr<::vsg::RenderGraph> ignored_plan =
+        target->passGraph(after_loss, /*bootstrap*/ false, /*depth_preserved*/ false);
+    ASSERT_NE(ignored_plan, nullptr);
+    EXPECT_TRUE(target->instance().attachments_invalidated)
+        << "only a pass that CLEARS repairs a lost submission; a load must not be able to claim it did";
+
+    const auto* second_frame = record_frame(2U, after_loss);
+    ASSERT_NE(second_frame, nullptr);
+    EXPECT_EQ(static_cast<int>(second_frame->targets[0].decision.reason),
+              static_cast<int>(vine::vsg::core::RepairReason::Bootstrap));
+    EXPECT_TRUE(second_frame->passes[0].bootstrap) << "the frame that repairs the target clears";
+    submit(second_frame->passes[0]);
+    expects(kGreen, "the frame that re-bootstrapped the target cleared it with its own colour");
+
+    // ... and ONE frame is enough: the clear repaired the fact, so the next frame loads what it left.
+    EXPECT_FALSE(target->instance().attachments_invalidated) << "the bootstrapping frame repaired the fact";
+    EXPECT_EQ(static_cast<int>(vine::vsg::core::planTarget(target->instance(),
+                                                          vine::vsg::core::TargetDesc{ 8, 8, target->shape() })
+                                   .action),
+              static_cast<int>(vine::vsg::core::TargetAction::None));
+
+    vine::vsg::core::ClearPolicy steady;
+    steady.color          = false;
+    steady.color_value[0] = kBlue[0];
+    steady.color_value[1] = kBlue[1];
+    steady.color_value[2] = kBlue[2];
+    steady.color_value[3] = 1.0F;
+
+    const auto* third_frame = record_frame(3U, steady);
+    ASSERT_NE(third_frame, nullptr);
+    EXPECT_FALSE(third_frame->passes[0].bootstrap) << "a repaired target is a load, not another clear";
+    submit(third_frame->passes[0]);
+    expects(kGreen, "the repair happens ONCE: a second clear would have painted this frame's colour");
+
+    // And the same fact feeds the other lifecycle arm: a resize replaces the set the invalidation was about.
+    target->invalidateAttachments();
+    FrameTimeline   timeline;
+    RetirementQueue queue(3U);
+    const OffscreenTarget::Resized resized = target->resize(16U, 8U, timeline, queue);
+    EXPECT_TRUE(resized.replaced);
+    EXPECT_FALSE(target->instance().attachments_invalidated) << "the images that were lost are gone with the set";
+    EXPECT_EQ(target->instance().generation, 1U);
+    EXPECT_FALSE(target->instance().built) << "the new images have never been written into either";
 }

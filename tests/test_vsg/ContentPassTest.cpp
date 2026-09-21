@@ -304,8 +304,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     target_facts.wanted.width  = static_cast<int>(kSize);
     target_facts.wanted.height = static_cast<int>(kSize);
     target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    target_facts.current.desc  = target_facts.wanted;
-    target_facts.current.built = target->written();
+    target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
     ClearPolicy clear;
@@ -525,8 +524,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     target_facts.wanted.width  = static_cast<int>(kSize);
     target_facts.wanted.height = static_cast<int>(kSize);
     target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    target_facts.current.desc  = target_facts.wanted;
-    target_facts.current.built = target->written();
+    target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
     ClearPolicy clear;
@@ -767,8 +765,7 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     target_facts.wanted.width  = static_cast<int>(kSize);
     target_facts.wanted.height = static_cast<int>(kSize);
     target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    target_facts.current.desc  = target_facts.wanted;
-    target_facts.current.built = target->written();
+    target_facts.current       = target->instance();
     ASSERT_FALSE(target_facts.current.built) << "nothing has been recorded into it yet";
     const std::vector<TargetFacts> target_table{ target_facts };
 

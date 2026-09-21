@@ -346,16 +346,14 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     picture_facts.wanted.width  = static_cast<int>(kSourceSize);
     picture_facts.wanted.height = static_cast<int>(kSourceSize);
     picture_facts.wanted.shape  = picture->shape();
-    picture_facts.current.desc  = picture_facts.wanted;
-    picture_facts.current.built = picture->written();
+    picture_facts.current       = picture->instance();
 
     TargetFacts shared_facts;
     shared_facts.target                = shared_handle.get();
     shared_facts.wanted.width          = static_cast<int>(kSourceSize);
     shared_facts.wanted.height         = static_cast<int>(kSourceSize);
     shared_facts.wanted.shape          = shared_target->shape();
-    shared_facts.current.desc          = shared_facts.wanted;
-    shared_facts.current.built         = shared_target->written();
+    shared_facts.current               = shared_target->instance();
 
     const std::vector<TargetFacts> target_table = { picture_facts, shared_facts, window_target->facts() };
 

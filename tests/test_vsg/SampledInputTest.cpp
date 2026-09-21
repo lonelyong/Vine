@@ -264,18 +264,16 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     source_facts.wanted.width  = static_cast<int>(kSize);
     source_facts.wanted.height = static_cast<int>(kSize);
     source_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    source_facts.current.desc  = source_facts.wanted;
-    // The facts tell the plan the truth about the target: nothing has been written into it yet, so its
-    // first pass is its bootstrap one and must clear (see OffscreenTarget::written).
-    source_facts.current.built = source->written();
+    // The facts come from the target itself (`instance()`): nothing has been written into it yet, so its
+    // first pass is its bootstrap one and must clear (see OffscreenTarget::instance).
+    source_facts.current       = source->instance();
 
     TargetFacts destination_facts;
     destination_facts.target        = destination_handle.get();
     destination_facts.wanted.width  = static_cast<int>(kSize);
     destination_facts.wanted.height = static_cast<int>(kSize);
     destination_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    destination_facts.current.desc  = destination_facts.wanted;
-    destination_facts.current.built = destination->written();
+    destination_facts.current       = destination->instance();
     const std::vector<TargetFacts> target_table{ source_facts, destination_facts };
 
     ClearPolicy red_clear;
@@ -485,16 +483,14 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     source_facts.wanted.width  = static_cast<int>(kSize);
     source_facts.wanted.height = static_cast<int>(kSize);
     source_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    source_facts.current.desc  = source_facts.wanted;
-    source_facts.current.built = source->written();
+    source_facts.current       = source->instance();
 
     TargetFacts destination_facts;
     destination_facts.target        = destination_handle.get();
     destination_facts.wanted.width  = static_cast<int>(kSize);
     destination_facts.wanted.height = static_cast<int>(kSize);
     destination_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    destination_facts.current.desc  = destination_facts.wanted;
-    destination_facts.current.built = destination->written();
+    destination_facts.current       = destination->instance();
     const std::vector<TargetFacts> target_table{ source_facts, destination_facts };
 
     ClearPolicy red_clear;
@@ -773,8 +769,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     shadow_facts_table.wanted.width  = static_cast<int>(kSize);
     shadow_facts_table.wanted.height = static_cast<int>(kSize);
     shadow_facts_table.wanted.shape  = shadow_map->shape();
-    shadow_facts_table.current.desc  = shadow_facts_table.wanted;
-    shadow_facts_table.current.built = shadow_map->written();
+    shadow_facts_table.current       = shadow_map->instance();
     // The host asked for a sampleable depth, and this pass is the one that writes it: that is the fact the
     // plan's input table turns into "a shader may sample it".
     shadow_facts_table.depth.has_depth   = true;
@@ -788,8 +783,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     receiver_facts.wanted.width  = static_cast<int>(kSize);
     receiver_facts.wanted.height = static_cast<int>(kSize);
     receiver_facts.wanted.shape  = receiver->shape();
-    receiver_facts.current.desc  = receiver_facts.wanted;
-    receiver_facts.current.built = receiver->written();
+    receiver_facts.current       = receiver->instance();
     const std::vector<TargetFacts> target_table{ shadow_facts_table, receiver_facts };
 
     RenderCommand shadow_command;

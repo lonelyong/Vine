@@ -610,8 +610,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     map_facts.wanted.width  = static_cast<int>(kSize);
     map_facts.wanted.height = static_cast<int>(kSize);
     map_facts.wanted.shape  = map->shape();
-    map_facts.current.desc  = map_facts.wanted;
-    map_facts.current.built = map->written();
+    map_facts.current       = map->instance();
     map_facts.depth.has_depth = true;
     map_facts.depth.promotion = true;
     map_facts.shadow.light    = sun_a.get();
@@ -623,8 +622,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     receiver_facts.wanted.width  = static_cast<int>(kSize);
     receiver_facts.wanted.height = static_cast<int>(kSize);
     receiver_facts.wanted.shape  = receiver->shape();
-    receiver_facts.current.desc  = receiver_facts.wanted;
-    receiver_facts.current.built = receiver->written();
+    receiver_facts.current       = receiver->instance();
     const std::vector<TargetFacts> target_table{ map_facts, receiver_facts };
 
     FrameArena    arena{ 128 * 1024 };
