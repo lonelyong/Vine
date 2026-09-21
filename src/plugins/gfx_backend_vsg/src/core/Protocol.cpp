@@ -57,7 +57,7 @@ Decision Protocol::onCall(CallKind kind) noexcept
         // before it opens a scope, and the next beginPass() starts from an empty request.
         if (state_ != State::InPass)
         {
-            return {Verdict::Drop, false};
+            return drop(false);
         }
         if (announced_target_released_)
         {
@@ -65,7 +65,7 @@ Decision Protocol::onCall(CallKind kind) noexcept
             // draw this scope, so it is dropped and the scope reports the condition once.
             const bool first_of_scope = !dead_scope_reported_;
             dead_scope_reported_      = true;
-            return {Verdict::Drop, first_of_scope};
+            return drop(first_of_scope);
         }
         return {};
 
@@ -142,6 +142,11 @@ bool Protocol::scopeOpen() const noexcept
     return state_ == State::InPass;
 }
 
+bool Protocol::frameOpen() const noexcept
+{
+    return state_ != State::Idle;
+}
+
 bool Protocol::announcedTargetReleased() const noexcept
 {
     return announced_target_released_;
@@ -155,6 +160,17 @@ const void* Protocol::announcedTarget() const noexcept
 std::uint64_t Protocol::refusalCount() const noexcept
 {
     return refusals_;
+}
+
+std::uint64_t Protocol::droppedCount() const noexcept
+{
+    return drops_;
+}
+
+Decision Protocol::drop(bool report) noexcept
+{
+    ++drops_;
+    return {Verdict::Drop, report};
 }
 
 Decision Protocol::refuse(bool& episode) noexcept

@@ -106,6 +106,13 @@ class Protocol
     /** @brief Gets whether a pass scope is open. */
     [[nodiscard]] bool scopeOpen() const noexcept;
 
+    /** @brief Gets whether a frame is open (between beginFrame and swapBuffers).
+     *
+     * The state is only observable here: a caller that tracked it separately would be keeping a second
+     * copy of a fact this machine already owns.
+     */
+    [[nodiscard]] bool frameOpen() const noexcept;
+
     /** @brief Gets whether the open scope's announced target was released while announced. */
     [[nodiscard]] bool announcedTargetReleased() const noexcept;
 
@@ -123,10 +130,27 @@ class Protocol
      */
     [[nodiscard]] std::uint64_t refusalCount() const noexcept;
 
+    /** @brief Gets how many calls this protocol dropped.
+     *
+     * A drop is the quiet verdict (legal but inert), and it is the one that is invisible in a log by
+     * construction - so it is the one worth counting: a phase can tell "the host announced state with no
+     * scope open, which did nothing" from "nothing happened at all" only here. Refusals and drops share
+     * this type because they share the state machine that produced them; a caller keeping its own tallies
+     * would be the second place for the same fact.
+     */
+    [[nodiscard]] std::uint64_t droppedCount() const noexcept;
+
 
   private:
     /** @brief The verdict for a refusal, reported only the first time in its episode. */
     [[nodiscard]] Decision refuse(bool& episode) noexcept;
+
+    /** @brief The allowed-but-inert verdict, counted (every Drop goes through it).
+     *
+     * @param report Whether this call is the one that reports the condition (the scope's target was
+     *               released while it was open); rearmed per scope, like the refusal episodes.
+     */
+    [[nodiscard]] Decision drop(bool report) noexcept;
 
     /** @brief Ends the per-scope episodes (an announcement, a closed scope). */
     void rearmScopeEpisodes() noexcept;
@@ -147,6 +171,7 @@ class Protocol
     bool        nesting_reported_{false};       ///< "nested or unpaired scope": once per frame.
     bool        dead_scope_reported_{false};    ///< "would use a released target": once per scope.
     std::uint64_t refusals_{0};
+    std::uint64_t drops_{0};
 };
 
 }  // namespace core

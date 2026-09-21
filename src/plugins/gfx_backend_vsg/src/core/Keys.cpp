@@ -45,6 +45,34 @@ bool DynamicState::operator==(const DynamicState& other) const noexcept
            topology == other.topology && blend == other.blend;
 }
 
+DynamicState resolveDynamicState(const vine::graphics::ResolvedRenderState& state, bool depth_explicit,
+                                 vine::graphics::DepthMode pass_depth) noexcept
+{
+    DynamicState resolved;
+    resolved.cull_mode    = state.cullMode;
+    resolved.polygon_mode = state.polygonMode;
+    resolved.topology     = state.topology;
+    resolved.blend        = state.blend;
+
+    // The command's own depth state wins where it has one; where it does not, the pass decides for the
+    // content it draws (see the declaration for the two pictures the wrong choice produces).
+    if (!depth_explicit)
+    {
+        resolved.depth = pass_depth;
+        return resolved;
+    }
+    if (!state.depth.test)
+    {
+        resolved.depth = vine::graphics::DepthMode::Disabled;
+    }
+    else
+    {
+        resolved.depth = state.depth.write ? vine::graphics::DepthMode::TestAndWrite
+                                           : vine::graphics::DepthMode::TestOnly;
+    }
+    return resolved;
+}
+
 std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
 {
     // The same combine the stream registry uses, over exactly the fields PipelineKey::operator== reads.

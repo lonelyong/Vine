@@ -181,6 +181,29 @@ struct DynamicState
 };
 
 /**
+ * @brief Resolves the dynamic layer of one instance from what the host authored.
+ *
+ * THE ONE PLACE THE TWO DEPTH INTENTS ARE WEIGHED. A command whose depth came from a StateNode wins
+ * (`depth_explicit`), and content that authored none follows the pass it was drawn by
+ * (RenderPass::depthMode) - finer-grained intent over the pass default. Getting this backwards is silent
+ * in both directions: a HUD overlay drawn with the scene's depth policy writes depth over everything
+ * after it, and translucent content drawn with the pass default writes depth it was never meant to.
+ *
+ * Everything else in the dynamic layer has one source, so it is copied: culling, polygon mode, topology
+ * and blending come from the resolved state and nowhere else. The compare operation is deliberately NOT
+ * resolved here: under the engine's reverse-Z convention it is an engine-wide constant (GREATER) delivered
+ * by the pipeline layer, not a per-draw item - see `RenderStateMapper::mapCompareOp` for the distance-to-
+ * reverse-Z mapping and `.ai/design/vsg-reimplementation.md` §11.11 for why the rewrite bakes it.
+ *
+ * @param state          Resolved per-object state (`RenderCommand::renderState`).
+ * @param depth_explicit Whether that state's depth item came from a StateNode.
+ * @param pass_depth     The pass' depth handling, used when the content authored none.
+ * @return The state to deliver with a set command (never part of an identity - see the file note).
+ */
+[[nodiscard]] DynamicState resolveDynamicState(const vine::graphics::ResolvedRenderState& state, bool depth_explicit,
+                                               vine::graphics::DepthMode pass_depth) noexcept;
+
+/**
  * @brief The per-frame data of one draw: written into a buffer, never part of an identity.
  *
  * A pure logical record - the GPU storage belongs to the session's arenas. Keeping the two apart is

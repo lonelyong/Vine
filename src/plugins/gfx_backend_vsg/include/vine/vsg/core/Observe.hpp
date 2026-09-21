@@ -41,6 +41,7 @@ struct FrameCounters
     std::uint64_t offscreen_resizes{0};     ///< Off-screen targets resized in place.
     std::uint64_t window_builds{0};         ///< Window sessions built (a move does not count).
     std::uint64_t program_slot_builds{0};   ///< Full-screen program slots built.
+    std::uint64_t invalid_schedules{0};     ///< Cyclic pass-dependency components skipped (see FrameGraph).
 };
 
 /** @brief Counters about what is retained and what it cost to let go. */
