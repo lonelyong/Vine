@@ -105,7 +105,7 @@ TEST(BlockDescriptorsTest, TheLayoutDeclaresOneDynamicBindingPerBlock)
 
     const auto layout = fixture.descriptors->layout();
     ASSERT_NE(layout, nullptr);
-    ASSERT_EQ(layout->bindings.size(), 3U);
+    ASSERT_EQ(layout->bindings.size(), 4U);
 
     const auto expect_binding = [&layout](std::size_t index, std::uint32_t binding) {
         const auto& declared = layout->bindings[index];
@@ -119,6 +119,7 @@ TEST(BlockDescriptorsTest, TheLayoutDeclaresOneDynamicBindingPerBlock)
     expect_binding(0, BlockDescriptors::kViewBinding);
     expect_binding(1, BlockDescriptors::kDrawBinding);
     expect_binding(2, BlockDescriptors::kMaterialBinding);
+    expect_binding(3, BlockDescriptors::kLightsBinding);
 }
 
 TEST(BlockDescriptorsTest, TheSetBindsOneBlockPerRegionAtOffsetZero)
@@ -131,10 +132,10 @@ TEST(BlockDescriptorsTest, TheSetBindsOneBlockPerRegionAtOffsetZero)
 
     const auto set = fixture.descriptors->set();
     ASSERT_NE(set, nullptr);
-    ASSERT_EQ(set->descriptors.size(), 3U);
+    ASSERT_EQ(set->descriptors.size(), 4U);
 
     const BlockStorage::Strides strides = fixture.storage->strides();
-    const std::uint64_t         expected_ranges[3] = { strides.view, strides.draw, strides.material };
+    const std::uint64_t         expected_ranges[4] = { strides.view, strides.draw, strides.material, strides.light };
 
     for (std::size_t index = 0; index < set->descriptors.size(); ++index) {
         const auto* descriptor = dynamic_cast<const ::vsg::DescriptorBuffer*>(set->descriptors[index].get());
@@ -159,17 +160,17 @@ TEST(BlockDescriptorsTest, TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet
     const auto pipeline_layout = pipelineLayoutFor(fixture.device, fixture.descriptors->layout());
     ASSERT_NE(pipeline_layout, nullptr);
 
-    const BlockDescriptors::Offsets first{ 0, 80, 0 };
-    const BlockDescriptors::Offsets second{ 256, 336, 64 };
+    const BlockDescriptors::Offsets first{ 0, 80, 0, 0 };
+    const BlockDescriptors::Offsets second{ 256, 336, 64, 112 };
 
     const auto first_bind  = fixture.descriptors->bind(pipeline_layout, first);
     const auto second_bind = fixture.descriptors->bind(pipeline_layout, second);
 
     ASSERT_NE(first_bind, nullptr);
     ASSERT_NE(second_bind, nullptr);
-    EXPECT_EQ(first_bind->dynamicOffsets, (std::vector<std::uint32_t>{ 0, 80, 0 }))
-        << "one offset per binding, in binding order (view, draw, material)";
-    EXPECT_EQ(second_bind->dynamicOffsets, (std::vector<std::uint32_t>{ 256, 336, 64 }));
+    EXPECT_EQ(first_bind->dynamicOffsets, (std::vector<std::uint32_t>{ 0, 80, 0, 0 }))
+        << "one offset per binding, in binding order (view, draw, material, lights)";
+    EXPECT_EQ(second_bind->dynamicOffsets, (std::vector<std::uint32_t>{ 256, 336, 64, 112 }));
     EXPECT_EQ(first_bind->firstSet, fixture.descriptors->setIndex());
     EXPECT_EQ(first_bind->descriptorSet, second_bind->descriptorSet)
         << "every draw binds the SAME set: the offsets carry the difference";

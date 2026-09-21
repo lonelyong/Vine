@@ -49,6 +49,7 @@ struct BlockDescriptors::Data
         layout->addBinding(kViewBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
         layout->addBinding(kDrawBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
         layout->addBinding(kMaterialBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
+        layout->addBinding(kLightsBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
         return true;
     }
 
@@ -76,6 +77,7 @@ struct BlockDescriptors::Data
                                                          descriptorFor(kViewBinding, strides.view),
                                                          descriptorFor(kDrawBinding, strides.draw),
                                                          descriptorFor(kMaterialBinding, strides.material),
+                                                         descriptorFor(kLightsBinding, strides.light),
                                                      });
     }
 
@@ -139,7 +141,8 @@ bool BlockDescriptors::repoint(const BlockStorage& storage)
     }
     // Refuse rather than hand the driver an offset the API forbids: a misaligned dynamic offset is a
     // validation error with validation on and undefined behaviour with it off.
-    if (!d->usableOffset(offsets.view) || !d->usableOffset(offsets.draw) || !d->usableOffset(offsets.material)) {
+    if (!d->usableOffset(offsets.view) || !d->usableOffset(offsets.draw) || !d->usableOffset(offsets.material) ||
+        !d->usableOffset(offsets.lights)) {
         ++d->refusals;
         return {};
     }
@@ -149,11 +152,12 @@ bool BlockDescriptors::repoint(const BlockStorage& storage)
     if (command == nullptr) {
         return {};
     }
-    // One dynamic offset per binding, in BINDING order (view, draw, material) - the order the API consumes
-    // them in, not the order they were written in.
+    // One dynamic offset per binding, in BINDING order (view, draw, material, lights) - the order the API
+    // consumes them in, not the order they were written in.
     command->dynamicOffsets = { static_cast<std::uint32_t>(offsets.view),
                                 static_cast<std::uint32_t>(offsets.draw),
-                                static_cast<std::uint32_t>(offsets.material) };
+                                static_cast<std::uint32_t>(offsets.material),
+                                static_cast<std::uint32_t>(offsets.lights) };
     return command;
 }
 

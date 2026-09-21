@@ -3,11 +3,10 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M5b（输入表的深度半边："计划为每个输入解析出"深度可采样"事实 + 纯深度可采样目标把深度收尾在采样布局 +
-> 内容层的采样集合按"先颜色后深度"绑定、深度用 NEAREST 采样器"）**：`test_vsg` 532 用例 / 85 套件全绿
-> （含真设备像素用例——一趟 pass 采样另一趟写进**纯深度**目标的值），强制验证层 + 同步验证下
-> **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验
-> （全树 0 findings / 808 文件）。
+> **M5c-1（前向光照块：灯光按"每绘制调用"打包成视图空间的 `VineLightsBlock`、挂在 set 0 binding 3、
+> 丢弃项每 episode 报一次）**：`test_vsg` 539 用例 / 86 套件全绿（含真设备像素用例——一帧一趟四带，
+> 四个灯的宣布各自对照一条像素），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include
+> 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 811 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -1822,7 +1821,7 @@ pe 读未绑定描述符）——"没绑"不是"少画点东西"，是未定义�
 * **灯光与 `VineShadowBlock` 还没接**：这一片证明的是"深度能被采样"，还不是"阴影
 算得对"——`shadow_bound` 这个键位、灯槽索引、
   `VineShadowBlock`（旧路径：颜色数 +2 处的块）与 `Light::castShadow` 的挑选逻辑
-都留到 M5c。
+都留到 M5c。**灯光那半已关，§11.16u**（M5c-1）：前向光照块落地（`shadow_bound` / 阴影块 / 槽号仍是 M5c-2）。
 * **采样集合的深度数仍是"每输入 0/1"**：计划里一个输入最多贡献一个深度；若将来
 出现"一趟采样两个目标的深度"，`SampledKey` 的
   `depths` 计数已经够用，但绑定顺序的推导（=颜色数）要保持"先颜色后深度"的前缀
@@ -1832,6 +1831,78 @@ pe 读未绑定描述符）——"没绑"不是"少画点东西"，是未定义�
   这条要再想；目前借用深度恒不可采样（`core::depthPlan`），所以还到不了这里。
 * 前一版（§11.16s）留下的 `passGraph` 默认参数、变体退役、`written()` 语义三条口
 子不变。
+
+### 11.16u M5c-1（2026-09-22）：前向光照块（灯到了着色器里，真设备像素）
+
+M5b 登记的"灯光与 `VineShadowBlock` 还没接"拆成两片，这是**灯光**那半。要解决的问题只有一句：引擎
+把灯光宣布给**一次绘制调用**，而这份数据此前没有任何一条路到达着色器。前向路径**不能走 push**——
+128B 的保证预算被视图矩阵占满（引擎的前向顶点阶段就在那里读），所以灯光必须走**UBO**；全屏路径的
+那半（128B push 里装灯与深度重建）留给它自己的相位。四件事：
+
+1. **打包是一个规则，不是一个 memcpy**（`api/LightBlock` + `api/LightBlock.cpp`）：一个 ambient 槽
+   （rgb + 强度，后宣布的覆盖前一个）+ 最多三盏方向光（按宣布顺序占 0..2 槽），世界坐标方向**乘相机
+   的三个轴**换成视图空间（视图矩阵的前三行就是 r / u / -f），方向**归一化**（着色器拿它和法线做点
+   积，未归一化等于把灯调亮），跳过 disabled 与块装不下的类型（Point/Spot 保留但无槽）。块是 ABI
+   （`VineLightsBlock`，112B，`builtin_forward.frag` 声明的那份文本），静态断言钉死。
+2. **"空灯单"仍然可见，但补光不算数**：没有可用的环境光时块里填 0.15 的 ambient
+   （否则着色把 albedo 乘成零），但**计数只算宿主宣布的灯**——补光被算进去，调用方就会报一个宿主从
+   未宣布过的"丢弃"。返回值 = "块代表了几盏宣布的灯"，调用方拿去和宣布数比。
+3. **没有相机 = 空块**：没有视图空间可换算时块保持全零（不是补光）。这是参考实现的行为，而且**看得
+   见**：没宣布相机的 pass 是"不亮"，不是"被猜出来的环境光照亮"。
+4. **每绘制调用写一块、四个动态偏移绑定**（`api/BlockStorage` 的第 4 个区域 + `api/BlockDescriptors`
+   的 `kLightsBinding = 3` + `api/ContentPass` 在每个内容 draw 的命令循环**之外**写块）：契约宣布灯光的
+   粒度是"一次调用"（该调用的每条命令共享），所以块也按调用写一次；`BlockDescriptors::Offsets` 从三个
+   变四个（view / draw / material / **lights**），布局多一个 `UNIFORM_BUFFER_DYNAMIC` 绑定。
+5. **丢弃报告是"每 episode 一次"**（`ContentPass::reportLightsDropped` + `Scope::lights_dropped`）：
+   规则照旧实现搬——`announced == 0 || represented >= announced` ⇒ **re-arm**（episode 结束），否则
+   只在 `shouldReport()` 为真时报一次；报文分三支，且每支都说清楚**替代物**是什么（没相机 ⇒ 不亮；
+   全 unusable ⇒ 补光；部分 ⇒ 缺几盏）。`ReportOnce` 放在 caller 提供的 `Scope` 里：episode 的结束由
+   调用方决定（一帧一个 scope ⇒ 每帧一次；一个 session 一个 scope ⇒ 全程一次）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/LightBlock.hpp` / `.cpp`（新） | `VineLightsBlock`（112B：ambient + `dirs[3]` + `cols[3]`，std140 静态断言）+ `packLightBlock(lights, camera, out)` 的完整规则与"没有相机 ⇒ 空块" |
+| `api/BlockStorage`（+.hpp） | 第 4 个区域 `lights{112, 1, 3, 1024}`（每调用一块）+ `writeLights` + `Regions` / `Strides` / `overflows()` 的相应半边 |
+| `api/BlockDescriptors`（+.hpp） | `kLightsBinding = 3` + 第 4 个 `UNIFORM_BUFFER_DYNAMIC` 绑定 + `Offsets::lights`（动态偏移数组按**绑定顺序**四个） |
+| `api/ContentPass`（+.hpp） | 每个内容 draw 写一块、把 offset 传进 `recordCommand`；`Scope::lights_dropped`（`core::ReportOnce`）+ `reportLightsDropped`（re-arm 规则 + 三支报文，`ChannelIgnored`）；文件注记里"深度半边还没接"的过期句子一并更正（M5b 已接） |
+| `tests/test_vsg/LightBlockTest.cpp`（新） | 6 条无设备用例（视图空间换算、**旋转相机**才是判据、disabled/无槽类型跳过、空灯单 = 补光且不计数、四盏方向光只装三盏、无相机 ⇒ 空块）+ 1 条真设备像素用例（**一帧一趟四带**：带 0 灯朝观察者 = ambient + 太阳；带 1 同色反方向 = 只有 ambient；带 2/3 宣布装不下的灯 = 补光，且两条之间**只有一条**报告；带外是 pass 自己的清屏色） |
+| `tests/test_vsg/BlockDescriptorsTest.cpp` | 三条断言从"三个绑定"改成"四个"（布局、集合的描述符范围、动态偏移数组按绑定顺序四个） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **光照块是宿主决策的载体，不是身份** | 与材质块同理：块在描述符集里、按动态偏移选，不进 `PipelineKey`——"灯换了"是写一块新字节，不是编译一份新管线 |
+| **方向必须换成视图空间** | 而**轴对齐的相机会让缺失的旋转变不可见**：变异 M1（方向原样留在世界空间）只有算术用例红，真设备像素用例仍然全绿（那台的相机在 +Z 且目不斜视）。这正是"判据要选对"的又一例：约定用算术用例钉，像素管"能用" |
+| **补光不算灯** | 变异 M2（把补光算进返回值）⇒ 5 条红：4 条算术 + 设备用例的报告断言（"全装得下"⇒ 不报告 ⇒ 计数 1 变 0） |
+| **块是每次调用的** | 变异 M3（整趟 pass 只打包第一调用的灯）⇒ 设备用例三条像素红：带 1..3 全变成带 0 的颜色 `(128,26,26)` |
+| **布局与声明必须一致** | 变异 M4（布局里去掉 lights 绑定，着色器仍声明 binding 3）⇒ 无设备用例红（绑定数 3≠4），设备用例**在驱动里段错误**（未定义行为，崩溃前 0 VUID）——"没绑"不是"少画一点" |
+| **清屏仍是宿主的** | 夹具不把 `setClearPolicy` 交给第二趟以后的 pass，看到的就是黑屏（M5b 已记一次，这一片在四带图里又踩一次：带外的"背景"必须是 pass 自己的清屏色，否则"背景"断言什么都没有 |
+| **报告要有替代物** | 三条报文都说清了替代物（不亮 / 补光 / 缺几盏）：只说"丢弃"会让读者猜是黑屏还是补光 |
+
+| 变异反证（全部实测） | 结果 |
+| --- | --- |
+| M1：世界的方向不换视图空间 | 1 条红（`TheDirectionsAreRotatedIntoViewSpace`）；设备用例**全绿**（轴对齐相机看不出）——判据选对的实测 |
+| M2：补光算进"代表了几盏" | 5 条红（4 条算术 + 设备用例的报告计数 1→0） |
+| M3：整趟 pass 只打包第一调用的灯 | 设备用例红 4 条（报告计数 + 带 1/2/3 像素全变成带 0 的 `(128,26,26)`） |
+| M4：布局去掉 lights 绑定 | 无设备用例红（3≠4）+ 设备用例段错误（崩溃前 0 VUID） |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **539 用例 / 86 套件全绿**（+7 用例、+1 套件） |
+| 门禁 | 插件目标与全仓 `ninja` 零 error；强制验证层整仓 **0 VUID**；再加同步验证仍 **0 SYNC-HAZARD**；hygiene 0 / 811 文件；`check_diagnostic_formats.py` 0 / 39；`check_doc_symbols.py` 通过 |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **阴影块（`VineShadowBlock`）与 `shadow_bound` 键位还没接**（M5c-2）：灯的"槽号"（`params.w` 指向
+  块里第几盏方向光）、`Light::castShadow` 的挑选、以及把 map 与块绑到内容 ABI 里，都是那一半的事。
+* **全屏路径的 128B push 内容仍全零**：`deferredLightProgram` 读的 ambient/sun/projparms 是光照相位
+  的另一半（全屏不需要矩阵，所以它走 push），本片只做了前向 UBO 那半。
+* **引擎自带的前向程序文本与本后端的 set 0 布局不同**（登记为场景桥的债）：SDK 的
+  `builtin_forward.frag` 声明 material 0 / diffuse 1 / lights 2（外加 shadow 3/4），draw 块还在 **set 1
+  binding 0**；而本重写版的 set 0 是 view 0 / draw 1 / material 2 / lights 3。两者都能工作，但**同一个
+  管线的着色器文本与集合布局必须匹配**——场景桥把那批程序接进来时，要么按 SDK 的绑定建集合，要么
+  在文本层做转换，不能两套 ABI 混配。
+* 前一版（§11.16t）留下的"灯光槽索引/阴影块""采样集合深度前缀规则""借用者捕获布局"三条口子，
+  除前两条外不变。
 
 ### 11.17 下一步
 
@@ -1872,6 +1943,7 @@ pe 读未绑定描述符）——"没绑"不是"少画点东西"，是未定义�
 | ~~M4c~~ | **已完成（2026-09-22）**：窗口合成（`tests/test_vsg/WindowCompositionTest.cpp`：四趟 pass 一帧——离屏清屏 / 同形离屏场景 / 窗口场景（拥有那一次清）/ 窗口全屏覆盖层，真设备像素三条 + 计数器五条 + 执行器按计划顺序放置）；顺带把 §11.16o 的两条口子做成用例，其中"窗口/离屏同键变体"被证明是错的 ⇒ **设备格式进键的兼容性半边**（`core::TargetShape` / `core::RenderPassCompatibility` + `TargetShape::compatibility()` + 两个目标各自上报），并纠正 §11.16o 里"稳定视图分族"那条理由；修掉 capture 的跨帧写-写（声明顺序的屏障）+ 三条变异反证 + 测试宿主窗口去重（§11.16r） |
 | ~~M5a~~ | **已完成（2026-09-22）**：多写者离屏目标（LOAD 变体）——`LoadOpVariantKey` 改成变体的名字 + `core::loadOpVariantOf` 装配；`OffscreenTarget` 按变体建/缓存渲染通道（依赖列表逐位相同、framebuffer 共享）+ `passVariantCount()` + `written()`；执行器把计划的 `clear`/`bootstrap`/`depth_preserved` 交下去；真设备像素用例（一帧两趟：清 + LOAD，两个网格都在）+ 四条变异反证（§11.16s） |
 | ~~M5b~~ | **已完成（2026-09-22）**：输入表带上深度半边（"阴影脊柱"）——`CompiledInput::depth_sampleable` 由 `core::depthPlan` 解析（采样者与被采样者同一个答案）；`core::depthFinalLayout` 给"纯深度 + 可采样"第三种收尾布局（`ShaderReadOnly`），`loadOpVariantOf` 的深度起始布局改成 `depth_steady`（借用者命名的是出借者的布局）；`PipelineKey::sampled_depth_count` + `SampledKey{colors, depths}` + NEAREST 深度采样器；深度捕获屏障按 `depthSteadyLayout()` 进/出（原来写死的布局是 `VUID-VkImageMemoryBarrier-oldLayout-01197` 的谎报，还会让采样读到全 0）；真设备用例（探针 0.5/0.0 + 像素灰/黑/清屏色）+ 无设备用例两条 + 四条变异反证（§11.16t） |
+| ~~M5c-1~~ | **已完成（2026-09-22）**：前向光照块——`api/LightBlock`（`VineLightsBlock` 112B + 世界→视图换算 + 归一化 + 三槽规则 + 补光不计数 + 无相机 ⇒ 空块）；`BlockStorage` 第 4 区域 + `writeLights`；`BlockDescriptors::kLightsBinding = 3` + 四个动态偏移；`ContentPass` 每绘制调用写一块 + "每 episode 一次"的丢弃报告（`ReportOnce`）；6 条无设备用例 + 1 条真设备四带像素用例（带 0 朝向观察者的太阳 / 带 1 反向 / 带 2-3 装不下的灯 = 补光 + 一条报告）+ 四条变异反证（其中 M1 实测"轴对齐相机看不出缺旋转"⇒ 判据是算术用例）（§11.16u） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。

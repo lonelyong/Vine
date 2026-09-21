@@ -47,13 +47,16 @@ class BlockDescriptors
     static constexpr std::uint32_t kDrawBinding = 1U;
     /** @brief Binding of the material block. */
     static constexpr std::uint32_t kMaterialBinding = 2U;
+    /** @brief Binding of the forward light block (see api/LightBlock.hpp). */
+    static constexpr std::uint32_t kLightsBinding = 3U;
 
-    /** @brief Where this draw's three blocks are (the dynamic offsets, in binding order). */
+    /** @brief Where this draw's blocks are (the dynamic offsets, in binding order). */
     struct Offsets
     {
         std::uint64_t view{0};      ///< Offset of the view block (see `BlockStorage::writeView`).
         std::uint64_t draw{0};      ///< Offset of the draw block (see `BlockStorage::writeDraw`).
         std::uint64_t material{0};  ///< Offset of the material block (see `BlockStorage::writeMaterial`).
+        std::uint64_t lights{0};    ///< Offset of the light block (see `BlockStorage::writeLights`).
     };
 
   public:
@@ -80,7 +83,7 @@ class BlockDescriptors
      */
     bool repoint(const BlockStorage& storage);
 
-    /** @brief Builds the command that binds this set with three dynamic offsets.
+    /** @brief Builds the command that binds this set with four dynamic offsets.
      *
      * @param pipeline_layout The pipeline layout whose set at @ref setIndex is this set.
      * @param offsets         Where this draw's blocks are.

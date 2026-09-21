@@ -45,13 +45,13 @@
  * WHAT THE OUTER LAYER OWNS, and is therefore not here: turning an input identity into images. The targets
  * belong to the session (the same table the executor resolves its targets from), so the caller - the layer that
  * owns them - offers the images by identity; this layer binds what it was offered and refuses when it does not
- * match the plan. The DEPTH half of the input ABI (a shadow map, and "bind it only while it is really
- * sampleable") arrives with the shadow resolution.
+ * match the plan. Both halves of the input ABI are bound (colour attachments and a sampleable depth), and
+ * WHICH one an input offers is the plan's fact - the caller is checked against it rather than asked.
  *
- * WHAT IS NOT HERE YET, and is therefore not promised: the DEPTH half of the input ABI (a shadow map, and
- * "bind it only while it is really sampleable") arrives with the shadow resolution, and the full-screen push
- * block's CONTENTS arrive with the lighting phase. Those are refused or recorded empty rather than
- * approximated.
+ * WHAT IS NOT HERE YET, and is therefore not promised: the full-screen push block's CONTENTS (the lights and the
+ * depth reconstruction the SDK's deferred lighting program reads) arrive with the lighting phase, and the shadow
+ * block (the matrix that places a fragment in a light's map) with the shadow binding. Those are recorded empty
+ * rather than approximated.
  *
  * WHAT THE SCOPE IS A SET OF: COMPILED HALVES. A pipeline layer is built from ONE program's stage text against
  * ONE vertex layout, so the scope holds a set of them - one per (program, revision, layout) the pass draws with
@@ -111,6 +111,11 @@ class V_VSG_API ContentPass
         BlockStorage*          storage{nullptr};      ///< The frame's block storage.
         BlockDescriptors*      descriptors{nullptr};  ///< The block set (one per frame).
         StreamUploads*         uploads{nullptr};      ///< The stream sharing (geometry).
+        /// Episode state of the light-drop report: a drawing call whose announced lights all fit the block
+        /// re-arms it, so "the host announced lights the block cannot carry" is said once per episode rather
+        /// than once per drawing call (see `record`). The episode's END is the caller's decision - a scope
+        /// that lives for one frame reports once per frame, and one that lives for the session reports once.
+        core::ReportOnce       lights_dropped;
     };
 
   public:
@@ -155,9 +160,13 @@ class V_VSG_API ContentPass
     bool recordCommand(const core::CompiledCommand& command, const core::CompiledDraw& draw,
                        const core::CompiledPass& pass, const ContentFacts& facts,
                        const core::RenderPassCompatibility& compatibility, std::uint64_t view_offset,
+                       std::uint64_t lights_offset,
                        const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
                        std::uint32_t sampled_color_count, std::uint32_t sampled_depth_count,
                        ::vsg::Group& into);
+
+    /** @brief Reports the lights of @p announced that the block could not carry, once per episode. */
+    void reportLightsDropped(std::size_t announced, std::size_t represented, bool has_camera);
 
     /** @brief Builds the pass' sampled-input set and its bind command, or null when there is nothing to bind.
      *

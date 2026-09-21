@@ -10,6 +10,7 @@
 #include <vsg/state/PushConstants.h>
 
 #include <vine/vsg/api/DrawBlock.hpp>
+#include <vine/vsg/api/LightBlock.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -241,9 +242,24 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
             continue;
         }
 
+        // The packing of the lights is the drawing call's, not the command's: the contract announces lights for
+        // ONE call (every command of the call shares them), so one block serves the whole call and the block
+        // bytes are written before the first command is recorded - the same "one announcement, one call" rule
+        // the viewport follows.
+        vine::vsg::VineLightsBlock lights_block;
+        const std::size_t          represented = packLightBlock(draw.lights, draw.camera, lights_block);
+        const BlockStorage::Block  lights      = scope_.storage->writeLights(bytesOf(lights_block));
+        reportLightsDropped(draw.lights.size(), represented, draw.camera.present);
+        if (!lights.valid)
+        {
+            reportRefused("the drawing call's light block", "the frame's block budget is full");
+            complete = false;
+            continue;
+        }
+
         for (const core::CompiledCommand& command : draw.commands)
         {
-            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, input_set,
+            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, lights.offset, input_set,
                                sampled_color_count, sampled_depth_count, *group))
             {
                 complete = false;
@@ -365,6 +381,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
 bool ContentPass::recordCommand(const core::CompiledCommand& command, const core::CompiledDraw& draw,
                                 const core::CompiledPass& pass, const ContentFacts& facts,
                                 const core::RenderPassCompatibility& compatibility, std::uint64_t view_offset,
+                                std::uint64_t lights_offset,
                                 const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
                                 std::uint32_t sampled_color_count, std::uint32_t sampled_depth_count,
                                 ::vsg::Group& into)
@@ -479,7 +496,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     record.dynamic                = command.dynamic;
     record.blocks                 = scope_.descriptors->bind(
         entry->pipelines->layoutFor(sampled_color_count, sampled_depth_count),
-        BlockDescriptors::Offsets{ view_offset, block.offset, material_write.offset });
+        BlockDescriptors::Offsets{ view_offset, block.offset, material_write.offset, lights_offset });
     record.inputs       = inputs;
     record.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
     record.index        = indices.bind;
@@ -515,6 +532,44 @@ void ContentPass::reportRefused(const char* what, const char* why)
     const std::string message = std::string(what) + " is not drawn: " + why;
     diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
                         vine::graphics::DiagnosticCategory::ContentSkipped, asString(message));
+}
+
+void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represented, bool has_camera)
+{
+    // The episode rule the SDK states for dropped lights: a drawing call whose lights ALL fit (or which announced
+    // none) ends the episode, and a call that lost some is reported once - not once per call, because a scene has
+    // one light list and would otherwise fill the log with the same sentence per drawable.
+    if (announced == 0U || represented >= announced)
+    {
+        scope_.lights_dropped.rearm();
+        return;
+    }
+    if (!scope_.lights_dropped.shouldReport())
+    {
+        return;
+    }
+
+    // Three branches, and each says what the pass shades with INSTEAD: "dropped" alone would leave the reader
+    // guessing whether the pass went dark, lit by a fill, or lit by a partial list.
+    std::string message;
+    if (!has_camera)
+    {
+        message = std::to_string(announced) + " announced light(s) are not lit: the drawing call announced no";
+        message += " camera, so there is no view space to light in (the pass draws unlit)";
+    }
+    else if (represented == 0U)
+    {
+        message = std::to_string(announced) + " announced light(s) are not lit (disabled, or a kind the light";
+        message += " block does not carry); the pass falls back to the block's ambient fill";
+    }
+    else
+    {
+        message = std::to_string(announced - represented) + " of " + std::to_string(announced) + " announced";
+        message += " light(s) are not lit (disabled, not ambient or directional, or beyond the block's three";
+        message += " directional slots)";
+    }
+    diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
+                        vine::graphics::DiagnosticCategory::ChannelIgnored, asString(message));
 }
 
 V_VSG_NS_END

@@ -43,22 +43,27 @@ struct BlockStorage::Data
       : device(std::move(device_in)),
         view_ring(withAlignment(layout.views, alignment)),
         draw_ring(withAlignment(layout.draws, alignment)),
+        light_ring(withAlignment(layout.lights, alignment)),
         arena(withAlignedStride(layout.materials, alignment))
     {
         const std::uint64_t views_bytes   = view_ring.capacityBytes();
         const std::uint64_t draws_base    = alignUp(views_bytes, alignment);
         const std::uint64_t draws_bytes   = draw_ring.capacityBytes();
-        const std::uint64_t materials_base = alignUp(draws_base + draws_bytes, alignment);
+        const std::uint64_t lights_base   = alignUp(draws_base + draws_bytes, alignment);
+        const std::uint64_t lights_bytes  = light_ring.capacityBytes();
+        const std::uint64_t materials_base = alignUp(lights_base + lights_bytes, alignment);
         const std::uint64_t materials_bytes = arena.capacityBytes();
 
         regions.views_base     = 0;
         regions.views_bytes    = views_bytes;
         regions.draws_base     = draws_base;
         regions.draws_bytes    = draws_bytes;
+        regions.lights_base    = lights_base;
+        regions.lights_bytes   = lights_bytes;
         regions.materials_base = materials_base;
         regions.materials_bytes = materials_bytes;
 
-        // One buffer for all three regions: they are all "the bytes this frame writes", and a single
+        // One buffer for all four regions: they are all "the bytes this frame writes", and a single
         // allocation is what keeps the steady state to zero allocations as well as zero transfers.
         buffer = ::vsg::Buffer::create(materials_base + materials_bytes, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                        VK_SHARING_MODE_EXCLUSIVE);
@@ -122,6 +127,7 @@ struct BlockStorage::Data
     ::vsg::ref_ptr<::vsg::Device>                 device;
     core::FrameRing                               view_ring;
     core::FrameRing                               draw_ring;
+    core::FrameRing                               light_ring;
     core::MaterialArena                           arena;
     ::vsg::ref_ptr<::vsg::Buffer>                 buffer;
     ::vsg::ref_ptr<::vsg::DeviceMemory>           memory;
@@ -158,6 +164,7 @@ void BlockStorage::beginFrame() noexcept
 {
     d->view_ring.beginFrame();
     d->draw_ring.beginFrame();
+    d->light_ring.beginFrame();
     d->arena.beginFrame();
 }
 
@@ -197,6 +204,25 @@ BlockStorage::Block BlockStorage::writeDraw(std::span<const std::byte> block) no
     return {true, offset};
 }
 
+BlockStorage::Block BlockStorage::writeLights(std::span<const std::byte> block) noexcept
+{
+    // The size is checked before a reservation is taken, exactly like the view and draw writes: an oversized block
+    // must not consume a frame's budget on its way to being refused.
+    if (block.size() > d->light_ring.stride()) {
+        ++d->oversized_count;
+        return {};
+    }
+    const core::FrameRing::Reservation reservation = d->light_ring.reserve();
+    if (!reservation.valid) {
+        return {};
+    }
+    const std::uint64_t offset = d->regions.lights_base + reservation.offset;
+    if (!d->writeInto(offset, d->light_ring.stride(), block, d->oversized_count)) {
+        return {};
+    }
+    return {true, offset};
+}
+
 BlockStorage::MaterialWrite BlockStorage::writeMaterial(const void* material, std::uint64_t revision,
                                                         std::span<const std::byte> block)
 {
@@ -226,7 +252,7 @@ BlockStorage::Regions BlockStorage::regions() const noexcept
 
 BlockStorage::Strides BlockStorage::strides() const noexcept
 {
-    return {d->view_ring.stride(), d->draw_ring.stride(), d->arena.blockBytes()};
+    return {d->view_ring.stride(), d->draw_ring.stride(), d->light_ring.stride(), d->arena.blockBytes()};
 }
 
 std::span<const std::byte> BlockStorage::bytes() const noexcept
@@ -270,7 +296,7 @@ std::uint64_t BlockStorage::oversized() const noexcept
 
 std::uint64_t BlockStorage::overflows() const noexcept
 {
-    return d->view_ring.overflows() + d->draw_ring.overflows();
+    return d->view_ring.overflows() + d->draw_ring.overflows() + d->light_ring.overflows();
 }
 
 std::size_t BlockStorage::liveMaterials() const noexcept
