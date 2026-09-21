@@ -107,6 +107,26 @@ class OffscreenTarget
     /** @brief Gets the render graph to add content to (the caller's children are drawn after the clear). */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> renderGraph() const noexcept;
 
+    /** @brief Gets a render graph over this target's attachments that clears with @p policy's values.
+     *
+     * WHY A GRAPH PER PASS. A pass scope IS one render pass in the recording, and the clear VALUES belong to
+     * the pass, not to the target: two passes drawing into the same target each clear to their own colour, and
+     * the one recorded later is the one that lands. The render pass, the framebuffer and the load operations
+     * are shared - only the graph, its render area and its clear values differ - so this costs one small
+     * object per pass rather than a second set of images.
+     *
+     * That is also what makes "the executor records in the schedule's order, not in the host's call order" a
+     * claim a PIXEL can check: the last pass recorded owns the final colour.
+     *
+     * The load operations stay what the target built them as (a target's mirror starts UNDEFINED every frame,
+     * so the first pass in must clear - see the design's load-op variants for the LOAD case, which this
+     * target does not build yet).
+     *
+     * @param policy What this pass asks the target to clear (attachment 0's colour, and whether depth clears).
+     * @return The graph to add this pass' content to, or null when the target has no attachments.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> passGraph(const core::ClearPolicy& policy) const;
+
     /** @brief Gets the node that copies attachment 0 into host-visible memory.
      *
      * Append it to the command graph AFTER the render graph: it has to record after the pass, and it must not
@@ -140,6 +160,17 @@ class OffscreenTarget
 
     /** @brief Gets how many colour attachments this target has. */
     [[nodiscard]] std::uint32_t colorAttachmentCount() const noexcept;
+
+    /** @brief Gets the shape the render pass, the framebuffer and every pipeline were built against.
+     *
+     * The compatibility half of a pipeline's identity, in the engine's terms: attachment formats, depth
+     * format, sample count and subpass. It is read by whatever builds a pipeline key for a pass, so the key
+     * names the shape the target REALLY has rather than one a plan happened to carry (the plan holds no
+     * vector - see the design's §11.16d - so the shape is answered here, by the object that owns it).
+     *
+     * @return The shape (already stored: this is the one the render pass was created from).
+     */
+    [[nodiscard]] core::TargetShape shape() const noexcept;
 
     /** @brief Gets whether this target has a depth attachment. */
     [[nodiscard]] bool hasDepth() const noexcept;

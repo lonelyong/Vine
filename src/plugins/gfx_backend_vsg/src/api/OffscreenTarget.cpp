@@ -174,6 +174,35 @@ std::uint32_t depthBytesPerTexel(vine::graphics::RenderTarget::DepthFormat forma
     return 0U;
 }
 
+/**
+ * @brief Fills one render graph's clear values from a pass' clear plan, in attachment order.
+ *
+ * One clear value per attachment: attachment 0 gets the plan's colour, the extras the transparent black the
+ * plan gives them, and the depth attachment its own value. Written once and shared by the target's own graph
+ * and by every per-pass graph, so the two can never disagree about which attachment is which.
+ *
+ * @param graph Render graph to fill; its previous clear values are replaced.
+ * @param plan  The pass' load/store decisions (from `core::planClearValues`).
+ */
+void fillClearValues(::vsg::RenderGraph& graph, const core::PassClearPlan& plan)
+{
+    graph.clearValues.clear();
+    for (const core::AttachmentClear& attachment : plan.colors)
+    {
+        VkClearValue value = {};
+        value.color        = VkClearColorValue{ { attachment.clear[0], attachment.clear[1], attachment.clear[2],
+                                                 attachment.clear[3] } };
+        graph.clearValues.push_back(value);
+    }
+    if (plan.has_depth)
+    {
+        VkClearValue value         = {};
+        value.depthStencil.depth   = plan.depth.clear;
+        value.depthStencil.stencil = 0U;
+        graph.clearValues.push_back(value);
+    }
+}
+
 }  // namespace
 
 struct OffscreenTarget::Data
@@ -207,6 +236,8 @@ struct OffscreenTarget::Data
     ::vsg::ref_ptr<::vsg::RenderGraph> render_graph;
     std::uint32_t                      width{0};
     std::uint32_t                      height{0};
+    core::TargetShape                  shape;           ///< What the render pass was built against.
+    bool                               depth_borrowed{false};  ///< The depth is the lender's image.
 };
 
 OffscreenTarget::OffscreenTarget() : d(std::make_unique<Data>())
@@ -269,6 +300,8 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     target->d->device = std::move(device);
     target->d->width  = layout.width;
     target->d->height = layout.height;
+    target->d->shape        = shape;
+    target->d->depth_borrowed = depth_borrowed;
 
     const VkDeviceSize byte_count = static_cast<VkDeviceSize>(layout.width) * layout.height * 4U;
     for (const vine::graphics::RenderTarget::ColorFormat format : layout.color_formats) {
@@ -358,19 +391,7 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     target->d->render_graph->contents   = VK_SUBPASS_CONTENTS_INLINE;
     // One clear value per attachment, in attachment order: the plan's colour for attachment 0, transparent
     // black for the extras, and the depth's value for the depth attachment.
-    target->d->render_graph->clearValues.clear();
-    for (std::size_t index = 0; index < plan.colors.size(); ++index) {
-        VkClearValue value = {};
-        value.color        = VkClearColorValue{ { plan.colors[index].clear[0], plan.colors[index].clear[1],
-                                                 plan.colors[index].clear[2], plan.colors[index].clear[3] } };
-        target->d->render_graph->clearValues.push_back(value);
-    }
-    if (plan.has_depth) {
-        VkClearValue value        = {};
-        value.depthStencil.depth   = plan.depth.clear;
-        value.depthStencil.stencil = 0U;
-        target->d->render_graph->clearValues.push_back(value);
-    }
+    fillClearValues(*target->d->render_graph, plan);
 
     // Each colour attachment gets its own host-visible destination and its own copy-back node. The buffer is
     // host visible and coherent: the copy writes it, the host reads it, and no flush stands in between (the
@@ -515,6 +536,27 @@ OffscreenTarget::~OffscreenTarget()
     return d->render_graph;
 }
 
+::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearPolicy& policy) const
+{
+    if (d->render_pass == nullptr || d->framebuffer == nullptr)
+    {
+        return {};
+    }
+
+    auto graph              = ::vsg::RenderGraph::create();
+    graph->framebuffer      = d->framebuffer;
+    graph->renderPass       = d->render_pass;
+    graph->renderArea       = VkRect2D{ { 0, 0 }, { d->width, d->height } };
+    graph->contents         = VK_SUBPASS_CONTENTS_INLINE;
+    // The same rule the render pass itself was built with, applied to THIS pass' policy: the target clears
+    // (its mirror starts UNDEFINED), and the pass says what the colour is. The clear VALUES differ per pass;
+    // the render pass, the framebuffer and the load operations are shared.
+    const core::PassClearPlan plan = core::planClearValues(d->shape, policy, /*bootstrap*/ true,
+                                                          /*depth_preserved*/ d->depth_borrowed);
+    fillClearValues(*graph, plan);
+    return graph;
+}
+
 ::vsg::ref_ptr<::vsg::Node> OffscreenTarget::capture() const noexcept
 {
     return capture(0U);
@@ -552,6 +594,11 @@ core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment) const
 std::uint32_t OffscreenTarget::colorAttachmentCount() const noexcept
 {
     return static_cast<std::uint32_t>(d->colors.size());
+}
+
+core::TargetShape OffscreenTarget::shape() const noexcept
+{
+    return d->shape;
 }
 
 bool OffscreenTarget::hasDepth() const noexcept

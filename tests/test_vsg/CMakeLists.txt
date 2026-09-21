@@ -10,6 +10,7 @@ set(SRC_FILE_LIST
 	FrameRecorderTest.cpp
 	FrameGraphTest.cpp
 	FrameCompilerTest.cpp
+	ExecutorTest.cpp
 	MrtTargetTest.cpp
 	SharedDepthTest.cpp
 	VariantCoreTest.cpp
