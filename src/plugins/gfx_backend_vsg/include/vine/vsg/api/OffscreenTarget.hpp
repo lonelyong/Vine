@@ -208,6 +208,26 @@ class OffscreenTarget
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::ImageView> colorView(std::uint32_t attachment) const noexcept;
 
+    /** @brief Gets the DEPTH attachment's view, for a pass that samples it (see core::CompiledInput).
+     *
+     * A shader may sample it only while the depth is sampleable (`core::depthPlan`: the host asked for it and
+     * no pass preserves it), which is the same fact the plan's input table carries - and the layout a
+     * sampleable depth-only target leaves behind is the one a sampler reads (see core::depthFinalLayout).
+     *
+     * @return The depth view, or null when the target has no depth attachment.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::ImageView> depthView() const noexcept;
+
+    /** @brief Gets the node that copies this target's picture back for a probe.
+     *
+     * The READBACK seam: a target with colour attachments copies attachment 0 (see @ref capture), and a
+     * DEPTH-ONLY one (a shadow map) copies its depth instead - "what this target can be asked about" is one
+     * question, and the executor appends the answer for every target of the frame.
+     *
+     * @return The copy commands, or null when this target has nothing readable.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> readback() const noexcept;
+
     /** @brief Gets the shape the render pass, the framebuffer and every pipeline were built against.
      *
      * The compatibility half of a pipeline's identity, in the engine's terms: attachment formats, depth
@@ -278,6 +298,16 @@ class OffscreenTarget
      * @return The render pass, or null when the API refused the description.
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderPass> renderPassFor(const core::LoadOpVariantKey& key);
+
+    /** @brief Gets the layout this target's depth is in between passes (see core::depthFinalLayout).
+     *
+     * The OWNER of the image answers: a borrower's depth is wherever its lender leaves it, which is what makes
+     * "sample the depth a shadow pass wrote" and "depth-test against a borrowed depth" two different starting
+     * layouts rather than an assumption.
+     *
+     * @return The steady layout of the depth this target writes (or borrows).
+     */
+    [[nodiscard]] core::ImageLayout depthSteadyLayout() const noexcept;
 };
 
 V_VSG_NS_END

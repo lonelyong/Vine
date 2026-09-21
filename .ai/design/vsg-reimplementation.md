@@ -3,10 +3,11 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M5a（多写者离屏目标：计划的 load op 决定目标用哪张渲染通道变体；第二趟 LOAD 第一趟写的东西，两趟共用一份
-> 编译好的管线；顺带把"没人写过的目标不能 LOAD"做成目标报出的计划事实）**：`test_vsg` 529 用例 / 85 套件
-> 全绿（含真设备像素用例），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由
-> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 808 文件）。
+> **M5b（输入表的深度半边："计划为每个输入解析出"深度可采样"事实 + 纯深度可采样目标把深度收尾在采样布局 +
+> 内容层的采样集合按"先颜色后深度"绑定、深度用 NEAREST 采样器"）**：`test_vsg` 532 用例 / 85 套件全绿
+> （含真设备像素用例——一趟 pass 采样另一趟写进**纯深度**目标的值），强制验证层 + 同步验证下
+> **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验
+> （全树 0 findings / 808 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -1689,7 +1690,148 @@ M4c 登记的口子：`OffscreenTarget` 只建**一张**渲染通道、load op �
   （下一帧的 pass 会写），但"提交失败后重来"的语义要靠 `attachments_invalidated` 那条路（M6/M7 再说）。
 * **深度侧的 promote/borrow 布局仍只走"附件布局"**（M3c 的既有形态）：`depth_final` 目前恒为
   `DepthAttachment`，阴影那片的"提升成纹理"会带来第三种收尾布局——那时变体键的深度半边才真正被用满。
+  **已关，§11.16t**（M5b）：`core::depthFinalLayout` 给了第三种收尾布局（纯深度可采样 ⇒ `ShaderReadOnly`），
+  LOAD 变体的 `depth_initial` 改成命名 `depth_steady`（借用者命名的就是出借者的布局）。
 * 前一版（§11.16r）留下的 `Session` 等待点、capture 宿主读序两条口子不变。
+
+### 11.16t M5b（2026-09-22）：输入表带上了深度半边（"阴影脊柱"，真设备像素）
+
+M5a 登记的口子：变体键的**深度半边**还只是"附件布局"一种取值，"提升成纹理"没接
+上；而 SDK 的输入契约原文
+就是"该来源的**每一张颜色附件**（外加**那张深度**，只要它可被采样）"——上一片只实
+现了前半句。这一片补后半
+句，并且用"一趟 pass 采样另一趟写进**纯深度目标**的值"来证明它：
+
+1. **计划为输入解析出深度事实**（`core/FrameCompiler::resolveInputs`）：`Compiled
+Input` 加 `depth_sampleable`，
+   值与目标自己那份计划**同源**（`core::depthPlan(found->depth).sampleable`）——
+"这个深度能不能被采样"
+   一帧只有一个答案，采样者与被采样者不会各说各话。
+2. **深度-only + 可采样 = 深度收尾在采样布局**（`core::depthFinalLayout(shape, sam
+pleable)`）：只有"purely
+   深度 + 宿主要求可采样"的形状（阴影贴图的形状）把深度留在 `ShaderReadOnly`——
+   它的深度**就是**那幅画，下一趟采样它不需要自己的屏障；任何带颜色附件的目标
+   仍留 `DepthAttachment`（下一趟还要拿它做深度测试）。这条规则只依赖形状与宿主要
+   求，所以**无设备可钉**（`CoreClearPlanTest` 两条用例）。
+   `OffscreenTarget::depthSteadyLayout()` 用同一个函数，并且**借用者问出借者**：
+   借来的深度处在出借者留下的布局里，所以借用者的 LOAD 变体声明的是出借者的收尾
+   布局。
+3. **内容层绑定深度**（`api/ContentPipeline` + `api/ContentPass`）：采样集合的布局
+从"颜色数"扩成（颜色数, 深度数）
+   的**对**（`SampledKey`），绑定顺序**固定为：输入逐个来，一个输入内部先颜色附件
+（按附件序）后深度**——所以
+   深度绑定号 = 颜色数（阴影那片的程序里就是 `binding 0`，因为它没有任何颜色输
+入）；深度用**NEAREST** 采样器
+   （`ContentPipeline::depthSampler()`）：着色器比对的是精确深度，插值出来的值
+等于一个谁也没栅格化过的深度。
+   `PipelineKey` 因此也加了 `sampled_depth_count`（"这个管线的集合里有几个深度采
+样器"是身份，与颜色同理）。
+4. **给消费者的报价也校验深度半边**（`api/ContentPass::record`）：调用方与计划在
+**两个半边**上都要一致，不一致
+   就整趟不画，报文点名是哪一个半边动了（"计划说不可采样/计划说可采样而你没
+给"）。
+5. **深度捕获的出入布局跟着形状走**（`api/OffscreenTarget::create`）：原来写死
+```
+DepthAttachment → TRANSFER_SRC → DepthAttachment
+```
+   的一对屏障，在"深度收尾在 `ShaderReadOnly`"的形状上直接是**谎报**
+   （实测 `VUID-VkImageMemoryBarrier-oldLayout-01197`：镜像实际在 `SHADER_READ_O
+NLY`，屏障说它是
+   附件布局），并且把镜像**放回错的布局**，于是消费者采样到全 0（整幅画面黑，而
+深度探针却正常——像素与探针
+   说的是两件事，这条差异就是线索）。改成"从 `depthSteadyLayout()` 出去、回
+`depthSteadyLayout()`"，前向
+   屏障的源作用域补上 `FRAGMENT_SHADER`（采样者已经读过它），后向补上
+   `EARLY|LATE_FRAGMENT_TESTS | FRAGMENT_SHADER`（下一趟既当附件又当纹理）。
+6. **纯深度形状被 `create` 接受**：`TargetLayout::color_formats` 为空 + 有深度
+格式 = 合法的阴影贴图形状（原来"空形状"一律拒绝；
+   注意 `Layout` 那个老重载会默默塞一张 RGBA8——夹具里必须显式 `color_formats.c
+lear()`，这一条实测踩过）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `core/FrameCompiler.hpp` / `.cpp` | `CompiledInput::depth_sampleable`（输入表的
+深度半边）+ `resolveInputs` 用 `core::depthPlan` 解析它 |
+| `core/ClearPlan.hpp` / `.cpp` | `depthFinalLayout(shape, depth_sampleable)`（阴
+影贴图形状 ⇒ `ShaderReadOnly`，其余 ⇒ `DepthAttachment`）+ `loadOpVariantOf(pla
+n, color_final, **depth_steady**, depth_final)`：LOAD 必须命名**它保留的像素真正
+在的**布局——借用者读的是出借者的布局，而不是自己写完之后的布局 |
+| `core/Keys.hpp` / `.cpp` | `PipelineKey::sampled_depth_count`（+ `operator==`
+、哈希、审计表那一行） |
+| `api/OffscreenTarget`（+.hpp） | `depthSteadyLayout()`（借用问出借者）；`makeOf
+fscreenRenderPass` 里的布局转换提到文件作用域的 `toVkLayout()`（捕获屏障与渲染通道
+描述必须用同一个转换）；深度捕获屏障按 `depthSteadyLayout()` 进/出 |
+| `api/ContentPipeline`（+.hpp） | `SampledKey{colors, depths}` + 哈希；`sampledSe
+tLayout(colors, depths)`、`layoutFor(colors, depths)`；`depthSampler()`（NEAREST
+） |
+| `api/ContentPass.cpp`（+.hpp） | `sampledDepthCount(pass)`；报价两半边校验（不一致 ⇒ 整趟不画 + 报文点名）；`makeInputSet` 绑定顺序=先颜色后深度、深度用 NEAREST |
+| `api/VsgExecutor.cpp` | 帧尾读回循环里 `readback()` 的空安全（一个目标可以只有
+深度、没有颜色捕获） |
+| `tests/test_vsg/SampledInputTest.cpp` | +1 真设备用例（"阴影脊柱"）：①纯深度可
+采样目标（`D32`、清 0.0）+ ②消费者颜色目标（清蓝）；生产者三角形的片段着色器为
+空（`settings.color_attachments = 0`），消费者采样深度并写出灰值。判据：计划的两
+条输入事实、深度探针（三角内 0.5 / 外 0.0）、消费者像素（左半 0.5 灰 / 右半黑 /
+三角形外保留清屏色） |
+| `tests/test_vsg/ClearPlanTest.cpp` | +2 无设备用例：`depthFinalLayout` 四种形状
+（纯深度可采样 ⇒ `ShaderReadOnly`；纯深度不可采样 / 带颜色 + 可采样 / 无深度 ⇒
+`DepthAttachment`），以及阴影贴图形状的变体（CLEAR 起 `Undefined`、LOAD 起 `Shad
+erReadOnly`，两者收尾都是 `ShaderReadOnly`，且是**两张**渲染通道对象） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **"可采样"决定收尾布局，而不是决定"要不要转"** | 纯深度可采样（阴影贴图）⇒
+深度收尾 `ShaderReadOnly`，采样者零屏障；带颜色附件的目标⇒ `DepthAttachment`（下
+一趟的深度测试要用）。规则是形状的函数（§11.16t-2 的两条无设备用例），所以相位/
+目标/捕获三处不会各算各的 |
+| **捕获屏障必须命名真正的当前布局** | 写死 `DepthAttachment` 的捕获入口屏障对阴
+影贴图是谎报（`VUID-VkImageMemoryBarrier-oldLayout-01197`），而且它还把镜像放回错
+布局 ⇒ 采样全 0。**探针绿 / 像素黑**这种撕裂，正是"探针读的是捕获副本、消费者读
+的是原图布局"的指纹 |
+| **借用的深度：LOAD 命名出借者的布局** | `depth_steady` 是"这趟不清它时它现在在
+哪"，借用者是**出借者**的收尾布局；收尾仍是本层决定的 `depth_final`（借用者原样
+还回去） |
+| **绑定顺序是 ABI** | 输入逐个来，一个输入内部先颜色后深度 ⇒ 深度绑定号 = 颜色
+数；阴影片（无颜色输入）里它就是 `binding 0`。`sampled_depth_count` 进 `Pipeline
+Key`，因为"集合里有没有深度采样器"是管线身份的 ABI 半边 |
+| **深度用 NEAREST** | 比对精确深度：线性插值出来的值是一个谁也没栅格化过的深度 |
+
+| 变异反证（全部实测） | 结果 |
+| --- | --- |
+| Q1：`depthFinalLayout` 恒 `DepthAttachment`（阴影贴图也收在附件布局） | 红：2
+条 VUID（`vkCmdDrawIndexed-imageLayout-00344`：着色器访问时镜像布局与描述符不符）
++ 6 条断言（4 条无设备 + 2 条像素） |
+| Q2：`makeInputSet` 不绑深度（`if (false && input.depth != nullptr)`） | 红：2
+条 VUID（`vkCmdDrawIndexed-None-08114`：集合里的描述符无效）+ 进程段错误（lavapi
+pe 读未绑定描述符）——"没绑"不是"少画点东西"，是未定义行为 |
+| Q3：`resolveInputs` 把 `depth_sampleable` 恒 false（计划忘了深度半边） | 红：用
+例 2 条（计划的输入事实 + 内容层**拒绝整趟**——报价与计划不一致）且进程不再崩溃
+（拒绝发生在录制前） |
+| Q4（过程记录）：夹具只设 `Layout::clear_color`、没给第二趟 `setClearPolicy` |
+红：整幅清成黑（第二条）——补上策略后清屏色才生效；顺带证明"清屏是宿主决策、计划
+只决定 bootstrap 何时override" |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **532 用例 / 85 套件全绿**（+3 用例） |
+| 门禁 | 插件目标与全仓 `ninja` 零 error；强制验证层整仓 **0 VUID**；再加同步验
+证仍 **0 SYNC-HAZARD**；hygiene 0 / 808 文件；`check_diagnostic_formats.py` 0 /
+39；`check_doc_symbols.py` 通过 |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **灯光与 `VineShadowBlock` 还没接**：这一片证明的是"深度能被采样"，还不是"阴影
+算得对"——`shadow_bound` 这个键位、灯槽索引、
+  `VineShadowBlock`（旧路径：颜色数 +2 处的块）与 `Light::castShadow` 的挑选逻辑
+都留到 M5c。
+* **采样集合的深度数仍是"每输入 0/1"**：计划里一个输入最多贡献一个深度；若将来
+出现"一趟采样两个目标的深度"，`SampledKey` 的
+  `depths` 计数已经够用，但绑定顺序的推导（=颜色数）要保持"先颜色后深度"的前缀
+规则。
+* **深度捕获的 `steady_layout` 对借用者的语义**：借用者捕获的是**共享**深度（出
+借者的镜像），布局也按出借者算——如果将来允许"借用者独立提升"，
+  这条要再想；目前借用深度恒不可采样（`core::depthPlan`），所以还到不了这里。
+* 前一版（§11.16s）留下的 `passGraph` 默认参数、变体退役、`written()` 语义三条口
+子不变。
 
 ### 11.17 下一步
 
@@ -1729,6 +1871,7 @@ M4c 登记的口子：`OffscreenTarget` 只建**一张**渲染通道、load op �
 | ~~M4b~~ | **已完成（2026-09-22）**：全屏绘制的计划侧（`CompiledDraw::dynamic` + 全屏调用的深度策略 = `Disabled`（正典三角形在 reverse-Z 远平面）；`api/ContentPass` 按 `kind` 找半片、采样集在 set 0、push 128B 片元（内容全零）；真设备像素用例（计划驱动的 PiP 拷贝）+ 两条变异反证（§11.16q） |
 | ~~M4c~~ | **已完成（2026-09-22）**：窗口合成（`tests/test_vsg/WindowCompositionTest.cpp`：四趟 pass 一帧——离屏清屏 / 同形离屏场景 / 窗口场景（拥有那一次清）/ 窗口全屏覆盖层，真设备像素三条 + 计数器五条 + 执行器按计划顺序放置）；顺带把 §11.16o 的两条口子做成用例，其中"窗口/离屏同键变体"被证明是错的 ⇒ **设备格式进键的兼容性半边**（`core::TargetShape` / `core::RenderPassCompatibility` + `TargetShape::compatibility()` + 两个目标各自上报），并纠正 §11.16o 里"稳定视图分族"那条理由；修掉 capture 的跨帧写-写（声明顺序的屏障）+ 三条变异反证 + 测试宿主窗口去重（§11.16r） |
 | ~~M5a~~ | **已完成（2026-09-22）**：多写者离屏目标（LOAD 变体）——`LoadOpVariantKey` 改成变体的名字 + `core::loadOpVariantOf` 装配；`OffscreenTarget` 按变体建/缓存渲染通道（依赖列表逐位相同、framebuffer 共享）+ `passVariantCount()` + `written()`；执行器把计划的 `clear`/`bootstrap`/`depth_preserved` 交下去；真设备像素用例（一帧两趟：清 + LOAD，两个网格都在）+ 四条变异反证（§11.16s） |
+| ~~M5b~~ | **已完成（2026-09-22）**：输入表带上深度半边（"阴影脊柱"）——`CompiledInput::depth_sampleable` 由 `core::depthPlan` 解析（采样者与被采样者同一个答案）；`core::depthFinalLayout` 给"纯深度 + 可采样"第三种收尾布局（`ShaderReadOnly`），`loadOpVariantOf` 的深度起始布局改成 `depth_steady`（借用者命名的是出借者的布局）；`PipelineKey::sampled_depth_count` + `SampledKey{colors, depths}` + NEAREST 深度采样器；深度捕获屏障按 `depthSteadyLayout()` 进/出（原来写死的布局是 `VUID-VkImageMemoryBarrier-oldLayout-01197` 的谎报，还会让采样读到全 0）；真设备用例（探针 0.5/0.0 + 像素灰/黑/清屏色）+ 无设备用例两条 + 四条变异反证（§11.16t） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。

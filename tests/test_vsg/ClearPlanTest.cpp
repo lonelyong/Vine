@@ -26,6 +26,7 @@ using vine::graphics::RenderTarget;
 using vine::vsg::core::AttachmentClear;
 using vine::vsg::core::ClearPolicy;
 using vine::vsg::core::DepthClear;
+using vine::vsg::core::depthFinalLayout;
 using vine::vsg::core::ImageLayout;
 using vine::vsg::core::kReverseZFarDepth;
 using vine::vsg::core::LoadOp;
@@ -191,7 +192,8 @@ TEST(CoreClearPlanTest, AVariantNamesWhatAPassDoesAndNotWhatItClearsWith)
     const auto clear_plan = planClearValues(singleColorShapeWithDepth(), first, /*bootstrap*/ false,
                                             /*depth_preserved*/ false);
     const auto clear_variant =
-        loadOpVariantOf(clear_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment);
+        loadOpVariantOf(clear_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment,
+                                          ImageLayout::DepthAttachment);
 
     EXPECT_EQ(clear_variant.color_load, LoadOp::Clear);
     EXPECT_EQ(clear_variant.color_initial, ImageLayout::Undefined) << "a cleared attachment has no past";
@@ -208,7 +210,8 @@ TEST(CoreClearPlanTest, AVariantNamesWhatAPassDoesAndNotWhatItClearsWith)
     const auto other_plan = planClearValues(singleColorShapeWithDepth(), second, /*bootstrap*/ false,
                                            /*depth_preserved*/ false);
     EXPECT_TRUE(other_plan != clear_plan) << "the PLANS differ (the colours do)";
-    EXPECT_TRUE(loadOpVariantOf(other_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment) ==
+    EXPECT_TRUE(loadOpVariantOf(other_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment,
+                                          ImageLayout::DepthAttachment) ==
                 clear_variant)
         << "the VARIANTS do not: one render pass object serves both";
 
@@ -217,7 +220,8 @@ TEST(CoreClearPlanTest, AVariantNamesWhatAPassDoesAndNotWhatItClearsWith)
     const auto load_plan = planClearValues(singleColorShapeWithDepth(), ClearPolicy{}, /*bootstrap*/ false,
                                            /*depth_preserved*/ false);
     const auto load_variant =
-        loadOpVariantOf(load_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment);
+        loadOpVariantOf(load_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment,
+                                          ImageLayout::DepthAttachment);
 
     EXPECT_EQ(load_variant.color_load, LoadOp::Load);
     EXPECT_EQ(load_variant.color_initial, ImageLayout::ShaderReadOnly);
@@ -232,7 +236,8 @@ TEST(CoreClearPlanTest, AVariantNamesWhatAPassDoesAndNotWhatItClearsWith)
     const auto borrowed_plan = planClearValues(singleColorShapeWithDepth(), borrowing, /*bootstrap*/ true,
                                                /*depth_preserved*/ true);
     const auto borrowed_variant =
-        loadOpVariantOf(borrowed_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment);
+        loadOpVariantOf(borrowed_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment,
+                                          ImageLayout::DepthAttachment);
     EXPECT_EQ(borrowed_variant.color_load, LoadOp::Clear);
     EXPECT_EQ(borrowed_variant.depth_load, LoadOp::Load);
     EXPECT_EQ(borrowed_variant.depth_initial, ImageLayout::DepthAttachment);
@@ -241,7 +246,57 @@ TEST(CoreClearPlanTest, AVariantNamesWhatAPassDoesAndNotWhatItClearsWith)
     const auto color_only_plan = planClearValues(singleColor(), ClearPolicy{}, /*bootstrap*/ false,
                                                 /*depth_preserved*/ false);
     const auto color_only_variant =
-        loadOpVariantOf(color_only_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment);
+        loadOpVariantOf(color_only_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment,
+                                          ImageLayout::DepthAttachment);
     EXPECT_FALSE(color_only_variant.has_depth);
     EXPECT_EQ(color_only_variant.color_load, LoadOp::Load);
+}
+
+TEST(CoreClearPlanTest, OnlyASampleableDepthOnlyTargetEndsReadyToBeSampled)
+{
+    // Where a target's depth is LEFT between passes is the other half of the plan, and the rule is a function
+    // of the shape alone (see core::depthFinalLayout) - which is why a phase can pin it with no device at all:
+    //
+    //   * a sampleable DEPTH-ONLY target is a shadow map. Its depth IS the picture, so it ends in the layout a
+    //     sampler reads and the pass that samples it needs no transition of its own;
+    //   * every other shape ends in the attachment layout. A depth behind colour attachments is depth-tested
+    //     by the next pass, and "hand it to a sampler" is a different decision than "it is a texture".
+    EXPECT_EQ(depthFinalLayout(depthOnly(), /*depth_sampleable*/ true), ImageLayout::ShaderReadOnly)
+        << "the depth of a shadow map is the thing the next pass reads";
+    EXPECT_EQ(depthFinalLayout(depthOnly(), /*depth_sampleable*/ false), ImageLayout::DepthAttachment)
+        << "a depth nobody samples stays an attachment: a transition would be a cost for nothing";
+    EXPECT_EQ(depthFinalLayout(singleColorShapeWithDepth(), /*depth_sampleable*/ true), ImageLayout::DepthAttachment)
+        << "a sampleable request does not turn a colour target's depth into a texture: the NEXT pass still "
+           "depth-tests against it in the attachment layout";
+    EXPECT_EQ(depthFinalLayout(singleColor(), /*depth_sampleable*/ true), ImageLayout::DepthAttachment)
+        << "a shape with no depth has no layout to choose";
+}
+
+TEST(CoreClearPlanTest, TheShadowMapVariantNamesTheSampledDepthOnTheWayInAndOut)
+{
+    // The variant the shadow map's own pass asks for: its depth ends where the declaration says
+    // (core::depthFinalLayout), so a pass that LOADS it must name THAT layout as the one it starts in - and a
+    // pass that clears it discards the contents and starts from UNDEFINED. The two are different render pass
+    // objects, which is what makes "the second writer of a shadow map" a variant rather than a rebuild.
+    const TargetShape shadow_shape = depthOnly();
+    const ImageLayout steady       = depthFinalLayout(shadow_shape, /*depth_sampleable*/ true);
+    ASSERT_EQ(steady, ImageLayout::ShaderReadOnly);
+
+    ClearPolicy clear_depth;
+    clear_depth.depth = true;
+    const auto clearing = planClearValues(shadow_shape, clear_depth, /*bootstrap*/ true, /*depth_preserved*/ false);
+    const auto clear_variant = loadOpVariantOf(clearing, ImageLayout::ShaderReadOnly, steady, steady);
+    EXPECT_TRUE(clear_variant.has_depth);
+    EXPECT_EQ(clear_variant.depth_load, LoadOp::Clear);
+    EXPECT_EQ(clear_variant.depth_initial, ImageLayout::Undefined) << "a cleared attachment has no past";
+    EXPECT_EQ(clear_variant.depth_final, steady) << "and it still ends where the sampler reads it";
+
+    const auto loading =
+        planClearValues(shadow_shape, ClearPolicy{}, /*bootstrap*/ false, /*depth_preserved*/ false);
+    const auto load_variant = loadOpVariantOf(loading, ImageLayout::ShaderReadOnly, steady, steady);
+    EXPECT_EQ(load_variant.depth_load, LoadOp::Load);
+    EXPECT_EQ(load_variant.depth_initial, steady)
+        << "a LOAD names where the pixels it keeps really are - the shadow map is a texture by then";
+    EXPECT_EQ(load_variant.depth_final, steady);
+    EXPECT_TRUE(load_variant != clear_variant) << "clearing and loading are two render pass objects";
 }

@@ -90,6 +90,11 @@ struct CompiledInput
 {
     const void*   target{nullptr};        ///< The target this input reads; nullptr = nothing produced it.
     std::uint32_t color_attachments{0};   ///< Colour textures it offers (0 = nothing to bind for it).
+    /// Whether the input's DEPTH is sampleable and therefore bound too (the engine's contract for a
+    /// whole-target input: "every colour attachment of its source, plus its depth while that one is
+    /// sampleable"). Resolved from the same facts the target's own depth plan is made of, so "may a shader
+    /// sample it" has one answer per frame.
+    bool depth_sampleable{false};
 };
 
 /** @brief One drawing call, resolved. */

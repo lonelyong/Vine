@@ -263,6 +263,10 @@ std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass&
             continue;
         }
         out.color_attachments = static_cast<std::uint32_t>(found->wanted.shape.color_formats.size());
+        // The depth half, decided by the same function the target's own plan uses (core::depthPlan): a depth
+        // a pass preserves is not sampleable, and neither is a lender's depth - so a shader never samples an
+        // image some other pass is still depth-testing against.
+        out.depth_sampleable = core::depthPlan(found->depth).sampleable;
     }
     return inputs;
 }

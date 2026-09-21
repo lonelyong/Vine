@@ -57,6 +57,17 @@ std::uint32_t sampledColorCount(const core::CompiledPass& pass) noexcept
     return total;
 }
 
+/// @brief How many DEPTH textures the pass' inputs offer, as the plan states it (the key's count).
+std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
+{
+    std::uint32_t total = 0;
+    for (const core::CompiledInput& input : pass.inputs)
+    {
+        total += input.depth_sampleable ? 1U : 0U;
+    }
+    return total;
+}
+
 /// @brief The full-screen ABI's push block: the layout the SDK's screen programs declare.
 constexpr std::size_t kFullscreenPushBytes = 128U;
 
@@ -91,6 +102,23 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     }
     for (std::size_t index = 0; index < inputs.size(); ++index)
     {
+        // The DEPTH half of the offer: the plan says whether the input offers a sampleable depth (it is the
+        // same fact the shader's binding count comes from), so "the shader declares a depth sampler" and "the
+        // caller offered one" cannot disagree silently.
+        const bool offers_depth = inputs[index].depth != nullptr;
+        if (offers_depth != pass.inputs[index].depth_sampleable)
+        {
+            diagnostics_.report(
+                vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+                asString("the pass is not drawn: input " + std::to_string(index) +
+                         (offers_depth ? " offers a depth texture where the plan says its depth is not "
+                                         "sampleable (a depth a pass preserves, or a lender's, cannot be sampled)"
+                                       : " offers no depth texture where the plan says its depth IS sampleable "
+                                         "(the shader's binding would have nothing to read)")));
+            out = group;
+            return false;
+        }
+
         if (inputs[index].colors.size() != pass.inputs[index].color_attachments)
         {
             diagnostics_.report(
@@ -109,6 +137,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     // kind's set is built from the layer that kind's pipelines were compiled in - and each kind's set is
     // bound once, because the inputs are a property of the pass.
     const std::uint32_t sampled_color_count = sampledColorCount(pass);
+    const std::uint32_t sampled_depth_count = sampledDepthCount(pass);
 
     const Scope::Entry* content_half  = nullptr;
     const Scope::Entry* screen_half   = nullptr;
@@ -139,7 +168,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
             return false;
         }
         input_set = makeInputSet(pass, inputs, *content_half->pipelines, 1U);
-        if (sampled_color_count != 0U && input_set == nullptr)
+        if ((sampled_color_count != 0U || sampled_depth_count != 0U) && input_set == nullptr)
         {
             out = group;  // makeInputSet reported why
             return false;
@@ -198,7 +227,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
             {
                 screen_set     = makeInputSet(pass, inputs, *half->pipelines, 0U);
                 screen_set_for = half;
-                if (sampled_color_count != 0U && screen_set == nullptr)
+                if ((sampled_color_count != 0U || sampled_depth_count != 0U) && screen_set == nullptr)
                 {
                     complete = false;  // makeInputSet reported why
                     continue;
@@ -215,7 +244,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         for (const core::CompiledCommand& command : draw.commands)
         {
             if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, input_set,
-                               sampled_color_count, *group))
+                               sampled_color_count, sampled_depth_count, *group))
             {
                 complete = false;
             }
@@ -231,8 +260,9 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
                                                                   ContentPipeline& layer,
                                                                   std::uint32_t    first_set)
 {
-    const std::uint32_t texture_count = sampledColorCount(pass);
-    if (texture_count == 0U)
+    const std::uint32_t texture_count  = sampledColorCount(pass);
+    const std::uint32_t depth_count    = sampledDepthCount(pass);
+    if (texture_count == 0U && depth_count == 0U)
     {
         return {};  // nothing declared (or nothing produced): there is no sampled set to bind
     }
@@ -241,7 +271,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     // set layout object they were compiled against, so the set is exactly the shape they expect. The halves of
     // one kind build their sampled layouts from the same recipe, so they are compatible with one another as
     // well (a pass may switch halves with this set bound).
-    const auto set_layout = layer.sampledSetLayout(texture_count);
+    const auto set_layout = layer.sampledSetLayout(texture_count, depth_count);
     const auto sampler    = layer.inputSampler();
     if (set_layout == nullptr || sampler == nullptr)
     {
@@ -249,11 +279,12 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         return {};
     }
 
-    // Binding i reads the i-th colour texture, in declaration order: input by input and, inside one input, in
-    // attachment order. The image layout is the one a colour attachment is left in (see OffscreenTarget), so
-    // the descriptor names the layout the producer's pass actually left behind.
+    // The bindings read the inputs in DECLARATION order: input by input, and inside one input its colour
+    // attachments in attachment order and then its depth. The image layouts are the ones the producers leave
+    // behind (a colour attachment ends sampleable, and a depth a shader may sample ends sampleable too - see
+    // OffscreenTarget), so the descriptors name the layouts the producers' passes really left.
     ::vsg::Descriptors descriptors;
-    descriptors.reserve(texture_count);
+    descriptors.reserve(texture_count + depth_count);
     std::uint32_t binding = 0;
     for (const InputImages& input : inputs)
     {
@@ -270,6 +301,22 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
                 binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
             ++binding;
         }
+        if (input.depth != nullptr)
+        {
+            // A DEPTH texture gets the NEAREST sampler (see ContentPipeline::depthSampler): the shader compares
+            // exact depths, so an interpolated one would be a depth nobody rasterised.
+            const auto depth_sampler = layer.depthSampler();
+            if (depth_sampler == nullptr)
+            {
+                reportRefused("the pass' sampled inputs", "the depth sampler could not be created");
+                return {};
+            }
+            descriptors.push_back(::vsg::DescriptorImage::create(
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(depth_sampler, input.depth,
+                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            ++binding;
+        }
     }
 
     auto set = ::vsg::DescriptorSet::create(set_layout, descriptors);
@@ -278,10 +325,10 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         reportRefused("the pass' sampled inputs", "the sampled-input set could not be created");
         return {};
     }
-    // The pipeline layout this command names is the one built for the same count, and the set index is the
-    // ABI's: 1 after the block set for a content half, 0 for a full-screen one (see ContentPipeline).
-    return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, layer.layoutFor(texture_count),
-                                            first_set, set);
+    // The pipeline layout this command names is the one built for the same pair of counts, and the set index
+    // is the ABI's: 1 after the block set for a content half, 0 for a full-screen one (see ContentPipeline).
+    return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                            layer.layoutFor(texture_count, depth_count), first_set, set);
 }
 
 bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::Entry& entry,
@@ -295,6 +342,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     full_screen.key.revision              = draw.program.revision;
     full_screen.key.compatibility         = compatibility;
     full_screen.key.sampled_color_count   = sampledColorCount(pass);
+    full_screen.key.sampled_depth_count   = sampledDepthCount(pass);
     full_screen.dynamic                   = draw.dynamic;
     full_screen.samplers                  = samples;
     full_screen.push = ::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0U,
@@ -318,7 +366,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
                                 const core::CompiledPass& pass, const ContentFacts& facts,
                                 const core::RenderPassCompatibility& compatibility, std::uint64_t view_offset,
                                 const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                                std::uint32_t sampled_color_count, ::vsg::Group& into)
+                                std::uint32_t sampled_color_count, std::uint32_t sampled_depth_count,
+                                ::vsg::Group& into)
 {
     const FactResult<ProgramFacts> program = findProgram(facts, command.program);
     if (!program.found())
@@ -424,9 +473,12 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // How many colour textures this pass binds as samplers: a fact of the plan's input table, carried into the
     // identity so the pipeline is compiled against the sampled shape its pass really binds.
     record.key.sampled_color_count = sampled_color_count;
+    // ... and how many DEPTH textures: the same table's other half (see core::CompiledInput), identity for the
+    // same reason - the pipeline's sampled set is compiled against how many of each the pass binds.
+    record.key.sampled_depth_count = sampled_depth_count;
     record.dynamic                = command.dynamic;
     record.blocks                 = scope_.descriptors->bind(
-        entry->pipelines->layoutFor(sampled_color_count),
+        entry->pipelines->layoutFor(sampled_color_count, sampled_depth_count),
         BlockDescriptors::Offsets{ view_offset, block.offset, material_write.offset });
     record.inputs       = inputs;
     record.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);

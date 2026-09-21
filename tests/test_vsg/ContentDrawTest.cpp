@@ -347,7 +347,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     draw.key.revision               = 1U;
     draw.key.compatibility.samples  = 1U;
     draw.key.sampled_color_count    = 2U;
-    draw.samplers = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines->layoutFor(2U), 0U,
+    draw.samplers = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines->layoutFor(2U, 0U), 0U,
                                                      set);
     draw.push = ::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0U, ::vsg::ubyteArray::create(128U));
     draw.viewport = ViewportRect{ 8.0F, 8.0F, 32.0F, 16.0F };

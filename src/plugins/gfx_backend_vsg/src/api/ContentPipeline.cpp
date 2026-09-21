@@ -85,6 +85,19 @@ struct ContentPipeline::Data
         ::vsg::ref_ptr<::vsg::PipelineLayout>      pipeline;  ///< That set, in its place among the layer's sets.
     };
 
+    /// @brief The pair a sampled set is built for: colour bindings and depth bindings.
+    struct SampledKey
+    {
+        std::uint32_t colors{0};  ///< Colour textures the pass binds.
+        std::uint32_t depths{0};  ///< DEPTH textures the pass binds (they follow the colours).
+
+        /** @brief Compares the pair. */
+        [[nodiscard]] bool operator==(const SampledKey& other) const noexcept
+        {
+            return colors == other.colors && depths == other.depths;
+        }
+    };
+
     /** @brief Compiles one GLSL stage, or returns an empty pointer when the compiler refuses it. */
     ::vsg::ref_ptr<::vsg::ShaderStage> compileStage(VkShaderStageFlagBits stage, const std::string& source,
                                                     const std::string& entry)
@@ -106,9 +119,26 @@ struct ContentPipeline::Data
     ::vsg::PushConstantRanges                                   push_ranges;  ///< Kept for the per-count layouts.
     ::vsg::ShaderStages                                         stages;
     ::vsg::ref_ptr<::vsg::PipelineLayout>                       layout;
-    std::unordered_map<std::uint32_t, Sampled>                  sampled;  ///< One entry per distinct count.
+    /// @brief Hash for the (colours, depths) pair (a set layout is built per distinct pair).
+    struct SampledKeyHash
+    {
+        /** @brief Hashes the pair (the same mix the other keys use). */
+        [[nodiscard]] std::size_t operator()(const SampledKey& key) const noexcept
+        {
+            std::size_t hash = 0;
+            const auto  mix  = [&hash](std::uint64_t value) noexcept {
+                hash ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+            };
+            mix(key.colors);
+            mix(key.depths);
+            return hash;
+        }
+    };
+
+    std::unordered_map<SampledKey, Sampled, SampledKeyHash>     sampled;  ///< One entry per distinct pair.
     ::vsg::ref_ptr<::vsg::Sampler>                              input_sampler;
     ::vsg::GraphicsPipelineStates                               states;
+    ::vsg::ref_ptr<::vsg::Sampler> depth_sampler;  ///< NEAREST: a depth compare reads exact texels.
     std::unordered_map<std::uint64_t, ::vsg::ref_ptr<::vsg::GraphicsPipeline>> pipelines;
     std::uint64_t                                               compiles{0};
     std::uint64_t                                               failures{0};
@@ -281,7 +311,8 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
     // The key names how many sampled colour textures this pass binds, and the pipeline layout has to be the
     // one built for exactly that count: a pipeline is compiled against one descriptor set layout, so the count
     // is identity rather than runtime state.
-    const ::vsg::ref_ptr<::vsg::PipelineLayout> layout = layoutFor(key.sampled_color_count);
+    const ::vsg::ref_ptr<::vsg::PipelineLayout> layout =
+        layoutFor(key.sampled_color_count, key.sampled_depth_count);
     if (layout == nullptr) {
         ++d->failures;
         return {lookup.action, lookup.id, {}};
@@ -307,23 +338,27 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
     return d->layout;
 }
 
-::vsg::ref_ptr<::vsg::DescriptorSetLayout> ContentPipeline::sampledSetLayout(std::uint32_t color_bindings)
+::vsg::ref_ptr<::vsg::DescriptorSetLayout> ContentPipeline::sampledSetLayout(std::uint32_t color_bindings,
+                                                                             std::uint32_t depth_bindings)
 {
-    if (color_bindings == 0U) {
+    if (color_bindings == 0U && depth_bindings == 0U) {
         return {};  // nothing to sample: a content layer has only its block set, a full-screen one has nothing
     }
-    const auto found = d->sampled.find(color_bindings);
+    const Data::SampledKey key{ color_bindings, depth_bindings };
+    const auto             found = d->sampled.find(key);
     if (found != d->sampled.end()) {
         return found->second.set;
     }
 
-    // One combined image sampler per colour texture, readable from either shading stage: the sampled inputs
-    // of a pass ARE the picture it reads, and which stage reads it is the shader's business.
+    // One combined image sampler per texture, readable from either shading stage: the sampled inputs of a pass
+    // ARE the picture it reads, and which stage reads it is the shader's business. The DEPTH textures follow
+    // the colour ones (see the declaration), so a pass that samples colours and a depth reads binding 0..N-1
+    // for the colours and N for the depth - the same order whatever else the pass declares.
     auto set = ::vsg::DescriptorSetLayout::create();
     if (set == nullptr) {
         return {};
     }
-    for (std::uint32_t binding = 0; binding < color_bindings; ++binding) {
+    for (std::uint32_t binding = 0; binding < color_bindings + depth_bindings; ++binding) {
         set->addBinding(binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1U,
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
     }
@@ -341,19 +376,20 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
     if (pipeline == nullptr) {
         return {};
     }
-    d->sampled.emplace(color_bindings, Data::Sampled{ set, pipeline });
+    d->sampled.emplace(key, Data::Sampled{ set, pipeline });
     return set;
 }
 
-::vsg::ref_ptr<::vsg::PipelineLayout> ContentPipeline::layoutFor(std::uint32_t sampled_color_bindings)
+::vsg::ref_ptr<::vsg::PipelineLayout> ContentPipeline::layoutFor(std::uint32_t sampled_color_bindings,
+                                                                 std::uint32_t sampled_depth_bindings)
 {
-    if (sampled_color_bindings == 0U) {
+    if (sampled_color_bindings == 0U && sampled_depth_bindings == 0U) {
         return d->layout;  // the content layer's "blocks only" layout; nothing for a full-screen layer
     }
-    if (sampledSetLayout(sampled_color_bindings) == nullptr) {
+    if (sampledSetLayout(sampled_color_bindings, sampled_depth_bindings) == nullptr) {
         return {};
     }
-    return d->sampled.at(sampled_color_bindings).pipeline;
+    return d->sampled.at(Data::SampledKey{ sampled_color_bindings, sampled_depth_bindings }).pipeline;
 }
 
 core::DrawKind ContentPipeline::kind() const noexcept
@@ -367,6 +403,17 @@ core::DrawKind ContentPipeline::kind() const noexcept
         d->input_sampler = ::vsg::Sampler::create();
     }
     return d->input_sampler;
+}
+
+::vsg::ref_ptr<::vsg::Sampler> ContentPipeline::depthSampler()
+{
+    if (d->depth_sampler == nullptr) {
+        d->depth_sampler               = ::vsg::Sampler::create();
+        d->depth_sampler->magFilter    = VK_FILTER_NEAREST;
+        d->depth_sampler->minFilter    = VK_FILTER_NEAREST;
+        d->depth_sampler->mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    }
+    return d->depth_sampler;
 }
 
 const ::vsg::ShaderStages& ContentPipeline::stages() const noexcept

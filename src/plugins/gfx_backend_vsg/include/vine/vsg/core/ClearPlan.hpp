@@ -104,6 +104,24 @@ struct PassClearPlan
 [[nodiscard]] PassClearPlan planClearValues(const TargetShape& shape, const ClearPolicy& policy, bool bootstrap,
                                             bool depth_preserved) noexcept;
 
+/** @brief Gets the layout a target leaves its depth attachment in.
+ *
+ * A DEPTH-ONLY target that the host asked to be sampleable is a SHADOW MAP, and that is what such a target is
+ * for: its depth ends - and therefore starts the next pass - in the layout a shader reads it in, so the pass
+ * that samples it needs no barrier and no transition of its own. Every other shape keeps its depth in the
+ * attachment layout: it is an attachment for the next pass (which depth-tests against it), and "make it a
+ * texture" is a promotion that a later slice plans per pass.
+ *
+ * The rule is a function of the shape and the host's request only, so a phase can pin it without a device -
+ * and it is the SAME value for the end of one pass and the start of the next, because that is what "leaves it
+ * in" means.
+ *
+ * @param shape            The target's shape (colour attachments + optional depth format).
+ * @param depth_sampleable Whether the host asked for the depth to be usable as a texture.
+ * @return The depth's steady layout for this target.
+ */
+[[nodiscard]] ImageLayout depthFinalLayout(const TargetShape& shape, bool depth_sampleable) noexcept;
+
 /** @brief Names the render pass variant a pass' clear plan asks for (see LoadOpVariantKey).
  *
  * The two layouts a target leaves its attachments in are INPUTS rather than facts of the plan: the plan says
@@ -114,13 +132,15 @@ struct PassClearPlan
  * UNDEFINED is the cheapest transition the driver can make. A LOAD has to name the layout the last pass left,
  * which is exactly `color_final` / `depth_final`.
  *
- * @param plan        The pass' per-attachment decisions (from @ref planClearValues).
- * @param color_final The layout the colour attachments are left in.
- * @param depth_final The layout the depth attachment is left in.
+ * @param plan         The pass' per-attachment decisions (from @ref planClearValues).
+ * @param color_final  The layout the colour attachments are left in.
+ * @param depth_steady The layout the depth is in when this pass does NOT clear it (the target's own
+ *                     @ref depthFinalLayout, or its lender's when the depth is borrowed).
+ * @param depth_final  The layout this pass leaves the depth in.
  * @return The variant key: two passes that may share one render pass object compare equal on it.
  */
 [[nodiscard]] LoadOpVariantKey loadOpVariantOf(const PassClearPlan& plan, ImageLayout color_final,
-                                               ImageLayout depth_final) noexcept;
+                                               ImageLayout depth_steady, ImageLayout depth_final) noexcept;
 
 }  // namespace core
 

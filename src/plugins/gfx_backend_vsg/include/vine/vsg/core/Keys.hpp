@@ -207,6 +207,10 @@ struct PipelineKey
     bool         depth_sampleable{false};        ///< The pass samples the target's depth.
     bool         shadow_bound{false};            ///< The pass binds a shadow map.
     std::uint32_t sampled_color_count{0};        ///< Colour attachments bound as textures.
+    /// DEPTH textures the pass' inputs bind. A pass whose inputs offer a sampleable depth binds it
+    /// (the engine's contract for a whole-target input), and where a shader reads it is the shader's
+    /// ABI - so "how many depth samplers this pipeline's set has" is identity, like the colours.
+    std::uint32_t sampled_depth_count{0};
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const PipelineKey& other) const noexcept;

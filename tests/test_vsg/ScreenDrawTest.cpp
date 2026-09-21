@@ -197,7 +197,7 @@ class Fixture
     /// @brief The sampler set: binding i is the source's attachment i, exactly as the ABI says.
     ::vsg::ref_ptr<::vsg::BindDescriptorSet> samplerSet()
     {
-        const auto set_layout = pipelines->sampledSetLayout(source->colorAttachmentCount());
+        const auto set_layout = pipelines->sampledSetLayout(source->colorAttachmentCount(), 0U);
         const auto sampler    = pipelines->inputSampler();
         if (set_layout == nullptr || sampler == nullptr) {
             return {};
@@ -218,7 +218,7 @@ class Fixture
             return {};
         }
         return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                               pipelines->layoutFor(source->colorAttachmentCount()), 0U, set);
+                                               pipelines->layoutFor(source->colorAttachmentCount(), 0U), 0U, set);
     }
 
     /// @brief Records the full-screen draw of the source into the destination, inside @p viewport.

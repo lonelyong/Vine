@@ -69,8 +69,18 @@ PassClearPlan planClearValues(const TargetShape& shape, const ClearPolicy& polic
     return plan;
 }
 
+ImageLayout depthFinalLayout(const TargetShape& shape, bool depth_sampleable) noexcept
+{
+    // "Depth-only and sampleable" is the shadow-map shape (see the declaration): the depth IS the picture, so it
+    // ends where a shader reads it. A target with colour attachments keeps its depth an attachment - the next
+    // pass depth-tests against it, and that pass' own layout is the attachment one.
+    return shape.color_formats.empty() && shape.depth_format.has_value() && depth_sampleable
+               ? ImageLayout::ShaderReadOnly
+               : ImageLayout::DepthAttachment;
+}
+
 LoadOpVariantKey loadOpVariantOf(const PassClearPlan& plan, ImageLayout color_final,
-                                 ImageLayout depth_final) noexcept
+                                 ImageLayout depth_steady, ImageLayout depth_final) noexcept
 {
     LoadOpVariantKey variant;
     if (!plan.colors.empty()) {
@@ -85,7 +95,9 @@ LoadOpVariantKey loadOpVariantOf(const PassClearPlan& plan, ImageLayout color_fi
     if (plan.has_depth) {
         variant.depth_load    = plan.depth.load;
         variant.depth_store   = plan.depth.store;
-        variant.depth_initial = plan.depth.load == LoadOp::Clear ? ImageLayout::Undefined : depth_final;
+        // A LOAD must name where the depth IT KEEPS really is, and that is not always where this pass leaves it:
+        // a borrower reads its lender's image in the lender's layout and hands it back unchanged.
+        variant.depth_initial = plan.depth.load == LoadOp::Clear ? ImageLayout::Undefined : depth_steady;
         variant.depth_final   = depth_final;
     }
     return variant;

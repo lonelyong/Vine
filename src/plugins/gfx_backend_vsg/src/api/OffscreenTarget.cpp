@@ -72,6 +72,27 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcep
  * @param variant What this variant loads, stores and leaves behind (see core::LoadOpVariantKey).
  * @return The pass, or null when the API refuses the description.
  */
+
+/**
+ * @brief Turns one of the core's neutral layouts into the API's enum.
+ *
+ * One spelling for one conversion: the render pass description and the capture barriers both name layouts,
+ * and a second switch would be a second chance to disagree.
+ *
+ * @param layout The core's layout.
+ * @return The API's layout (UNDEFINED for a layout the core does not have).
+ */
+VkImageLayout toVkLayout(vine::vsg::core::ImageLayout layout) noexcept
+{
+    switch (layout) {
+    case vine::vsg::core::ImageLayout::Undefined: return VK_IMAGE_LAYOUT_UNDEFINED;
+    case vine::vsg::core::ImageLayout::ColorAttachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    case vine::vsg::core::ImageLayout::DepthAttachment: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    case vine::vsg::core::ImageLayout::ShaderReadOnly: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    case vine::vsg::core::ImageLayout::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    }
+    return VK_IMAGE_LAYOUT_UNDEFINED;
+}
 ::vsg::ref_ptr<::vsg::RenderPass> makeOffscreenRenderPass(
     const ::vsg::ref_ptr<::vsg::Device>&                 device,
     const std::vector<vine::graphics::RenderTarget::ColorFormat>& color_formats,
@@ -82,17 +103,7 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcep
     const auto toLoadOp = [](vine::vsg::core::LoadOp load) noexcept {
         return load == vine::vsg::core::LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
     };
-    const auto toLayout = [](vine::vsg::core::ImageLayout layout) noexcept {
-        switch (layout) {
-        case vine::vsg::core::ImageLayout::Undefined: return VK_IMAGE_LAYOUT_UNDEFINED;
-        case vine::vsg::core::ImageLayout::ColorAttachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        case vine::vsg::core::ImageLayout::DepthAttachment:
-            return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        case vine::vsg::core::ImageLayout::ShaderReadOnly: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        case vine::vsg::core::ImageLayout::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        }
-        return VK_IMAGE_LAYOUT_UNDEFINED;
-    };
+    const auto toLayout = [](vine::vsg::core::ImageLayout layout) noexcept { return toVkLayout(layout); };
 
     ::vsg::RenderPass::Attachments attachments;
     for (std::size_t index = 0; index < color_formats.size(); ++index) {
@@ -285,6 +296,15 @@ OffscreenTarget::OffscreenTarget() : d(std::make_unique<Data>())
 {
 }
 
+core::ImageLayout OffscreenTarget::depthSteadyLayout() const noexcept
+{
+    // The image's OWNER answers: a borrowed depth is wherever the lender leaves it, and a lender that leaves it
+    // sampleable (a shadow map) makes the borrower's pass START in that layout - the alternative is a pass that
+    // declares the attachment layout for an image that is not in it.
+    const OffscreenTarget* owner = d->depth_source != nullptr ? d->depth_source : this;
+    return core::depthFinalLayout(owner->d->shape, owner->d->depth_sampleable);
+}
+
 ::vsg::ref_ptr<::vsg::RenderPass> OffscreenTarget::renderPassFor(const core::LoadOpVariantKey& key)
 {
     for (const Data::PassVariant& variant : d->variants) {
@@ -322,7 +342,11 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
                                                          const TargetLayout&          layout,
                                                          const OffscreenTarget*       depth_source)
 {
-    if (device == nullptr || layout.width == 0U || layout.height == 0U || layout.color_formats.empty()) {
+    if (device == nullptr || layout.width == 0U || layout.height == 0U ||
+        (layout.color_formats.empty() && !layout.depth_format.has_value())) {
+        // A target with NOTHING to attach is not a target; a DEPTH-ONLY one is the shadow-map shape and is
+        // allowed (no colour attachment, a depth attachment, and the host's decision whether a shader may
+        // sample it - see core::depthFinalLayout).
         return nullptr;
     }
     if (depth_source != nullptr) {
@@ -436,14 +460,15 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     target->d->render_pass = makeOffscreenRenderPass(target->d->device, layout.color_formats,
                                                      layout.depth_format,
                                                      core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly,
-                                                                           core::ImageLayout::DepthAttachment));
+                                                                           target->depthSteadyLayout(),
+                                                                           target->depthSteadyLayout()));
     if (target->d->render_pass == nullptr) {
         return nullptr;
     }
     // The variant create() built is the target's FIRST one, and the constructor's graph records through it.
     target->d->variants.push_back(
         Data::PassVariant{ core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly,
-                                                 core::ImageLayout::DepthAttachment),
+                                                 target->depthSteadyLayout(), target->depthSteadyLayout()),
                            target->d->render_pass });
 
     ::vsg::ImageViews attachments;
@@ -587,20 +612,24 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
                 return nullptr;
             }
 
-            // The pass leaves the depth in the attachment layout (the next pass must be able to read it as an
-            // attachment), so the copy has to move it to the transfer layout AND put it back: a one-way
-            // transition would make a shared depth unusable for everything that follows this node.
+            // The pass leaves the depth in ITS OWN steady layout - the attachment layout for an ordinary
+            // depth, SHADER_READ_ONLY for a sampleable depth-only shape (see core::depthFinalLayout) - so the
+            // copy has to move it to the transfer layout AND put it back into exactly that layout: a one-way
+            // transition, or one that names the wrong layout on the way out, would make a shared depth
+            // unusable for everything that follows this node (measured: the transition that claimed
+            // DEPTH_STENCIL_ATTACHMENT_OPTIMAL for a shadow map in SHADER_READ_ONLY is
+            // VUID-VkImageMemoryBarrier-oldLayout-01197).
             const VkImageSubresourceRange depth_range{ VK_IMAGE_ASPECT_DEPTH_BIT, 0U, 1U, 0U, 1U };
+            const VkImageLayout steady_layout = toVkLayout(target->depthSteadyLayout());
             auto to_transfer = ::vsg::ImageMemoryBarrier::create(
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
-                VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
-                target->d->depth_image, depth_range);
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
+                VK_ACCESS_TRANSFER_READ_BIT, steady_layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target->d->depth_image, depth_range);
             auto from_transfer = ::vsg::ImageMemoryBarrier::create(
                 VK_ACCESS_TRANSFER_READ_BIT,
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
-                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target->d->depth_image, depth_range);
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, steady_layout, VK_QUEUE_FAMILY_IGNORED,
+                VK_QUEUE_FAMILY_IGNORED, target->d->depth_image, depth_range);
 
             VkBufferImageCopy depth_region = {};
             depth_region.bufferOffset      = 0U;
@@ -622,12 +651,14 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
 
             target->d->depth_capture = ::vsg::Commands::create();
             target->d->depth_capture->addChild(::vsg::PipelineBarrier::create(
-                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, to_transfer));
+                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, to_transfer));
             target->d->depth_capture->addChild(depth_copy);
             target->d->depth_capture->addChild(::vsg::PipelineBarrier::create(
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, 0,
-                from_transfer));
+                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                0, from_transfer));
             target->d->depth_capture->addChild(::vsg::PipelineBarrier::create(
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, depth_buffer_barrier));
         }
@@ -662,7 +693,7 @@ OffscreenTarget::~OffscreenTarget()
     // cleared (see core::planClearValues).
     const core::PassClearPlan plan = core::planClearValues(d->shape, policy, bootstrap, depth_preserved);
     const core::LoadOpVariantKey variant =
-        core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly, core::ImageLayout::DepthAttachment);
+        core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly, depthSteadyLayout(), depthSteadyLayout());
     const ::vsg::ref_ptr<::vsg::RenderPass> render_pass = renderPassFor(variant);
     if (render_pass == nullptr)
     {
@@ -741,6 +772,20 @@ std::uint32_t OffscreenTarget::colorAttachmentCount() const noexcept
         return {};
     }
     return d->colors[attachment].view;
+}
+
+::vsg::ref_ptr<::vsg::ImageView> OffscreenTarget::depthView() const noexcept
+{
+    return d->depth_view;
+}
+
+::vsg::ref_ptr<::vsg::Node> OffscreenTarget::readback() const noexcept
+{
+    if (!d->colors.empty()) {
+        return capture(0U);
+    }
+    // A depth-only target IS its depth: that is what a phase asks it about (see captureDepth).
+    return captureDepth();
 }
 
 core::TargetShape OffscreenTarget::shape() const noexcept

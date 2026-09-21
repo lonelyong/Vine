@@ -182,34 +182,50 @@ class ContentPipeline
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layout() const noexcept;
 
-    /** @brief Gets (or builds and keeps) the pipeline layout that binds @p sampled_color_bindings samplers.
+    /** @brief Gets (or builds and keeps) the pipeline layout that binds @p sampled_color_bindings colour
+     *         samplers and @p sampled_depth_bindings depth samplers.
      *
-     * The count is the key's (`PipelineKey::sampled_color_count`), so every pipeline this layer holds was
-     * compiled against the layout this call answers for its own count. The sampled set's INDEX is the
-     * layer's kind's: set 1 after the block set for a content layer, set 0 for a full-screen one.
+     * The counts are the key's (`PipelineKey::sampled_color_count` / `sampled_depth_count`), so every pipeline
+     * this layer holds was compiled against the layout this call answers for its own pair. The sampled set's
+     * INDEX is the layer's kind's: set 1 after the block set for a content layer, set 0 for a full-screen one.
      *
-     * @param sampled_color_bindings Number of colour textures the pass binds (0 = the content layer's block
-     *                               set alone; refused by a full-screen layer).
+     * @param sampled_color_bindings Number of colour textures the pass binds.
+     * @param sampled_depth_bindings Number of depth textures the pass binds (they follow the colours, one per
+     *                               input that offers a sampleable depth - see core::CompiledInput).
      * @return The layout, or null when it could not be created (or does not exist for this kind).
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layoutFor(std::uint32_t sampled_color_bindings);
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layoutFor(std::uint32_t sampled_color_bindings,
+                                                                 std::uint32_t sampled_depth_bindings);
 
-    /** @brief Gets (or builds and keeps) the sampled-input set layout for @p color_bindings samplers.
+    /** @brief Gets (or builds and keeps) the sampled-input set layout for @p color_bindings colour samplers
+     *         and @p depth_bindings depth samplers.
      *
      * The caller that binds the images uses THIS object, so the set it builds is laid out exactly like the
-     * set the pipelines of this layer expect.
+     * set the pipelines of this layer expect. The binding order is the inputs' declaration order - each
+     * input's colour attachments in attachment order, then its depth - so a shader can name a binding once
+     * and keep reading the same thing as long as the pass declares its inputs in the same order.
      *
-     * @param color_bindings Number of combined image samplers (binding i = the i-th colour texture).
+     * @param color_bindings Number of combined image samplers (colour textures).
+     * @param depth_bindings Number of combined image samplers (DEPTH textures, binding after the colours).
      * @return The set layout, or null for zero bindings (a layer with nothing to sample has no such set).
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSetLayout> sampledSetLayout(std::uint32_t color_bindings);
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSetLayout> sampledSetLayout(std::uint32_t color_bindings,
+                                                                             std::uint32_t depth_bindings);
 
-    /** @brief Gets the sampler the sampled-input set binds its images with.
+    /** @brief Gets the sampler the sampled-input set binds its IMAGES with.
      *
      * One per layer, created on first use: the images of a declared input are colour attachments, so the
      * default sampler (linear, repeat) is the right thing to interpolate a picture with.
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::Sampler> inputSampler();
+
+    /** @brief Gets the sampler the sampled-input set binds a DEPTH texture with.
+     *
+     * NEAREST, for the reason the engine's own shadow code gives: a depth-sampling shader compares exact
+     * depths (the bias and the comparison are the shader's), so filtering across texels would invent a depth
+     * nobody rasterised. Separate from the colour sampler because it is a different question.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::Sampler> depthSampler();
 
     /** @brief Gets the compiled shader stages. */
     [[nodiscard]] const ::vsg::ShaderStages& stages() const noexcept;

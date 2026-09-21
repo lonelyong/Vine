@@ -99,7 +99,13 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
         OffscreenTarget* target = resolve(compiled_target);
         if (target != nullptr)
         {
-            command_graph->addChild(target->capture());
+            // A depth-only target (a shadow map) copies its DEPTH back; a colour one copies attachment 0.
+            // Adding the null a colour-less target would answer with a colour capture is a vsg Group with a
+            // null child, which traverses into a crash the first time the frame is recorded.
+            if (auto readback = target->readback())
+            {
+                command_graph->addChild(readback);
+            }
         }
     }
 

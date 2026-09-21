@@ -85,6 +85,7 @@ V_VSG_NS_BEGIN
 struct InputImages
 {
     std::span<const ::vsg::ref_ptr<::vsg::ImageView>> colors;  ///< Colour attachments, in attachment order.
+    ::vsg::ref_ptr<::vsg::ImageView>                  depth;   ///< The input's DEPTH view, when it offers one.
 };
 
 /** @brief The content recorder of one pass scope (see the file note for what it refuses and why). */
@@ -155,7 +156,8 @@ class V_VSG_API ContentPass
                        const core::CompiledPass& pass, const ContentFacts& facts,
                        const core::RenderPassCompatibility& compatibility, std::uint64_t view_offset,
                        const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                       std::uint32_t sampled_color_count, ::vsg::Group& into);
+                       std::uint32_t sampled_color_count, std::uint32_t sampled_depth_count,
+                       ::vsg::Group& into);
 
     /** @brief Builds the pass' sampled-input set and its bind command, or null when there is nothing to bind.
      *

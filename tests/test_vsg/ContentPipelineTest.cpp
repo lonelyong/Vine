@@ -269,18 +269,18 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     ASSERT_NE(layer, nullptr) << "the full-screen pair must compile";
     EXPECT_EQ(layer->kind(), vine::vsg::core::DrawKind::Screen);
 
-    EXPECT_EQ(layer->sampledSetLayout(0), nullptr)
+    EXPECT_EQ(layer->sampledSetLayout(0, 0U), nullptr)
         << "a full-screen draw without a sampled input has no set at all (its picture IS the input)";
-    EXPECT_EQ(layer->layoutFor(0), nullptr) << "and therefore no pipeline: see the class note";
+    EXPECT_EQ(layer->layoutFor(0, 0U), nullptr) << "and therefore no pipeline: see the class note";
 
-    const auto samplers = layer->sampledSetLayout(1);
+    const auto samplers = layer->sampledSetLayout(1, 0U);
     ASSERT_NE(samplers, nullptr);
     ASSERT_EQ(samplers->bindings.size(), 1U);
     EXPECT_EQ(samplers->bindings[0].binding, 0U) << "binding i is attachment i, from 0";
     EXPECT_EQ(samplers->bindings[0].descriptorType, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-    EXPECT_EQ(layer->sampledSetLayout(1), samplers) << "built once and kept, like the content layer's";
+    EXPECT_EQ(layer->sampledSetLayout(1, 0U), samplers) << "built once and kept, like the content layer's";
 
-    const auto layout_one = layer->layoutFor(1);
+    const auto layout_one = layer->layoutFor(1, 0U);
     ASSERT_NE(layout_one, nullptr);
     ASSERT_EQ(layout_one->setLayouts.size(), 1U) << "the samplers are the only set - no block set, no set 1";
     EXPECT_EQ(layout_one->setLayouts[0], samplers);
@@ -345,10 +345,10 @@ TEST(ContentPipelineTest, ASampledInputCountGetsItsOwnSetLayoutAndItsOwnPipeline
     auto       layer     = makeLayer(block_set);
     ASSERT_NE(layer, nullptr);
 
-    EXPECT_EQ(layer->sampledSetLayout(0), nullptr) << "a pass with no sampled inputs has no set 1 at all";
-    EXPECT_EQ(layer->layoutFor(0), layer->layout()) << "the no-inputs layout is the one the layer was built with";
+    EXPECT_EQ(layer->sampledSetLayout(0, 0U), nullptr) << "a pass with no sampled inputs has no set 1 at all";
+    EXPECT_EQ(layer->layoutFor(0, 0U), layer->layout()) << "the no-inputs layout is the one the layer was built with";
 
-    const auto one = layer->sampledSetLayout(1);
+    const auto one = layer->sampledSetLayout(1, 0U);
     ASSERT_NE(one, nullptr);
     ASSERT_EQ(one->bindings.size(), 1U);
     EXPECT_EQ(one->bindings[0].binding, 0U);
@@ -356,19 +356,19 @@ TEST(ContentPipelineTest, ASampledInputCountGetsItsOwnSetLayoutAndItsOwnPipeline
     EXPECT_EQ(one->bindings[0].descriptorCount, 1U);
     EXPECT_EQ(one->bindings[0].stageFlags, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
         << "which stage samples the picture is the shader's business";
-    EXPECT_EQ(layer->sampledSetLayout(1), one) << "the layout is built once and kept";
+    EXPECT_EQ(layer->sampledSetLayout(1, 0U), one) << "the layout is built once and kept";
 
-    const auto two = layer->sampledSetLayout(2);
+    const auto two = layer->sampledSetLayout(2, 0U);
     ASSERT_NE(two, nullptr);
     ASSERT_EQ(two->bindings.size(), 2U);
     EXPECT_NE(two, one) << "two sampled textures are another shape, so another layout";
 
-    const auto layout_one = layer->layoutFor(1);
+    const auto layout_one = layer->layoutFor(1, 0U);
     ASSERT_NE(layout_one, nullptr);
     ASSERT_EQ(layout_one->setLayouts.size(), 2U) << "the block set and the sampled set";
     EXPECT_EQ(layout_one->setLayouts[0], block_set);
     EXPECT_EQ(layout_one->setLayouts[1], one);
-    EXPECT_EQ(layer->layoutFor(1), layout_one);
+    EXPECT_EQ(layer->layoutFor(1, 0U), layout_one);
 
     // The count is part of the identity: two counts are two pipelines, and each was compiled against its own
     // layout.
