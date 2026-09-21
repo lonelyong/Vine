@@ -85,7 +85,38 @@ STD_HEADERS = frozenset((
 INCLUDE = re.compile(r'^#include\s*([<"])([^>"]+)[>"]\s*$')
 DEFAULT_PATHS = ("src", "tests", "tools")
 SKIP_PARTS = ("build/", "_deps/", "/vsg_selftest/")
+# The rewritten backend's core layer must stay API-agnostic (see .ai/design/vsg-reimplementation.md
+# §2.3): it may include the graphics SDK and the standard library, but nothing from the render API's own
+# headers and nothing from the plugin's own upper layer. A prose rule ("only the executor touches vsg")
+# decays the moment it is inconvenient; a directory plus this check is what makes it hold.
+CORE_LAYER_DIRS = ("/vine/vsg/core/", "/gfx_backend_vsg/src/core/")
+# Allowed inside the core: its own headers, and the project's global header (the namespace/export
+# macros - the coding guidelines make that one the first include of any file).
+CORE_LAYER_ALLOWED_PREFIXES = ("vine/vsg/core/", "vine/vsg/vsg_global.hpp")
 
+
+def is_core_layer(path):
+    """Return whether @p path belongs to the backend's API-agnostic core layer."""
+    text = str(path).replace("\\", "/")
+    return any(marker in text for marker in CORE_LAYER_DIRS)
+
+
+def core_layer_findings(path, lines):
+    """Return the findings that keep the core layer free of the render API and of the layer above it."""
+    if not is_core_layer(path):
+        return []
+
+    findings = []
+    for number, line in enumerate(lines, start=1):
+        match = INCLUDE.match(line)
+        if not match:
+            continue
+        header = match.group(2)
+        if header.startswith("vsg/"):
+            findings.append((number, f"core layer includes the render API ({header}): {line.strip()}"))
+        elif header.startswith("vine/vsg/") and not header.startswith(CORE_LAYER_ALLOWED_PREFIXES):
+            findings.append((number, f"core layer includes the layer above it ({header}): {line.strip()}"))
+    return findings
 
 def group_of(quote, header):
     """Return the include group of one header, or None when it is not grouped."""
@@ -127,6 +158,7 @@ def check_file(path):
             findings.append((number, f"duplicated (also on line {seen[text]}): {text}"))
         else:
             seen[text] = number
+    findings.extend(core_layer_findings(path, lines))
     return findings
 
 

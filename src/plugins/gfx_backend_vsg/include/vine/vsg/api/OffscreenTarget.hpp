@@ -1,0 +1,197 @@
+#pragma once
+
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <vector>
+
+#include <vsg/app/RenderGraph.h>
+#include <vsg/core/ref_ptr.h>
+#include <vsg/nodes/Node.h>
+
+#include <vine/graphics/RenderTarget.hpp>
+#include <vine/vsg/core/ClearPlan.hpp>
+#include <vine/vsg/core/DepthProbe.hpp>
+#include <vine/vsg/core/PixelProbe.hpp>
+#include <vine/vsg/vsg_global.hpp>
+
+namespace vsg
+{
+class Device;
+}
+
+/**
+ * @brief An off-screen colour target and the readback path that turns it into pixels a phase can assert.
+ *
+ * WHY A PHASE NEEDS ONE. "It rendered" and "validation was clean" are both satisfiable by a program that
+ * draws nothing, so the only evidence this backend accepts for its picture is the pixels themselves. A
+ * swapchain cannot be read after it is presented, and reading it before is a race with the presentation
+ * engine; an off-screen target has neither problem, so the evidence path is a target of our own.
+ *
+ * THE TARGET IS ONE IMAGE, ONE RENDER PASS, ONE FRAMEBUFFER. The pass clears the colour attachment,
+ * whatever the caller adds as children draws into it, and leaves the image in TRANSFER_SRC - the layout the
+ * copy-back needs. Committing to that final layout is what makes the readback a single copy with no barrier
+ * juggling: the pass DISCARDS the previous contents every time (initial layout is UNDEFINED), which is
+ * exactly right for a phase that clears and draws.
+ *
+ * THE COPY IS PART OF THE COMMAND GRAPH, not a separate submission: `capture()` returns the node the caller
+ * appends AFTER the render graph, so the copy is recorded in the same command buffer, on the same queue, in
+ * order. After the frame is submitted and the device is idle, `probe()` reads the mapped destination buffer.
+ *
+ * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
+ */
+V_VSG_NS_BEGIN
+
+/** @brief An off-screen colour target plus its copy-back path. */
+class OffscreenTarget
+{
+  public:
+    /** @brief The target's shape and what the pass clears it to. */
+    struct Layout
+    {
+        std::uint32_t width{256};          ///< Image width in pixels.
+        std::uint32_t height{256};         ///< Image height in pixels.
+        float         clear_color[4]{ 0.0F, 0.0F, 0.0F, 1.0F };  ///< Clear value (RGBA, linear).
+    };
+
+    /** @brief The target's shape in the engine's terms: several colour attachments, optional depth.
+     *
+     * The shape is the core's (@ref core::TargetShape), not a list of API formats: a target the backend draws
+     * into has to be expressible in the SDK's vocabulary, and the conversion to the API's enums is the API
+     * layer's job (the same mapping the pipeline factory uses).
+     */
+    struct TargetLayout
+    {
+        std::uint32_t                                          width{256};   ///< Extent in pixels.
+        std::uint32_t                                          height{256};
+        std::vector<vine::graphics::RenderTarget::ColorFormat> color_formats{ vine::graphics::RenderTarget::ColorFormat::RGBA8 };
+        std::optional<vine::graphics::RenderTarget::DepthFormat> depth_format;  ///< Absent for colour only.
+        bool           depth_sampleable{false};  ///< The host asked for a depth a shader may sample (promotion).
+        core::ClearPolicy clear;        ///< What the pass clears (bootstrap applies).
+    };
+
+  public:
+    /** @brief Creates the image, the pass, the framebuffer and the copy-back commands.
+     *
+     * @param device The device everything belongs to (not owned).
+     * @param layout Image extent and clear value.
+     * @return The target, or null when the image, the pass or the readback buffer could not be created.
+     */
+    static std::unique_ptr<OffscreenTarget> create(::vsg::ref_ptr<::vsg::Device> device, const Layout& layout);
+
+    /** @brief Creates a target with the given shape (several colour attachments and/or a depth attachment).
+     *
+     * The pass' clear decisions come from the core's plan (`core::planClearValues`) with the bootstrap rule on:
+     * a freshly built image is UNDEFINED, so every attachment clears - attachment 0 with the policy's colour,
+     * the extras with transparent black, and a depth with the reverse-Z far plane.
+     *
+     * @param device The device everything belongs to (not owned).
+     * @param layout The shape and what the pass clears.
+     * @param depth_source When given, this target USES that target's depth image instead of owning one - the
+     *        classic shared-depth case, where an earlier pass wrote the scene's depth and this pass draws
+     *        against it. Such a pass LOADs the depth (clearing it would undo what the lender wrote) and never
+     *        promises it to a shader (the policy is the lender's, see `core::depthPlan`). The source must
+     *        outlive the borrower and the depth formats must match.
+     * @return The target, or null when any image, the pass or a readback buffer could not be created, or when
+     *         the borrowed depth does not fit (no source depth, mismatched formats, a LOAD plan without one).
+     */
+    static std::unique_ptr<OffscreenTarget> create(::vsg::ref_ptr<::vsg::Device> device, const TargetLayout& layout,
+                                                   const OffscreenTarget* depth_source = nullptr);
+
+    ~OffscreenTarget();
+
+    OffscreenTarget(const OffscreenTarget&) = delete;
+    OffscreenTarget& operator=(const OffscreenTarget&) = delete;
+
+  public:
+    /** @brief Gets the render graph to add content to (the caller's children are drawn after the clear). */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> renderGraph() const noexcept;
+
+    /** @brief Gets the node that copies attachment 0 into host-visible memory.
+     *
+     * Append it to the command graph AFTER the render graph: it has to record after the pass, and it must not
+     * be a child of the render graph (a copy inside the pass would run before the attachment is written).
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> capture() const noexcept;
+
+    /** @brief Gets the node that copies one colour attachment into host-visible memory.
+     *
+     * @param attachment Colour attachment index (0 when there is only one).
+     * @return The copy commands, or null when there is no such attachment.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> capture(std::uint32_t attachment) const;
+
+    /** @brief Reads the last submitted frame's pixels.
+     *
+     * The caller must have submitted a frame that included @ref capture and waited for the device (a device
+     * idle, or a fence that covers the submission). Reading without that is a race, and the probe would
+     * report pixels that may be from the previous frame.
+     *
+     * @return A probe over the copied pixels (tightly packed RGBA8 rows).
+     */
+    [[nodiscard]] core::PixelProbe probe() const;
+
+    /** @brief Reads one colour attachment's pixels from the last submitted frame (see @ref capture).
+     *
+     * @param attachment Colour attachment index.
+     * @return A probe over the copied pixels, or an invalid probe for an index that does not exist.
+     */
+    [[nodiscard]] core::PixelProbe probe(std::uint32_t attachment) const;
+
+    /** @brief Gets how many colour attachments this target has. */
+    [[nodiscard]] std::uint32_t colorAttachmentCount() const noexcept;
+
+    /** @brief Gets whether this target has a depth attachment. */
+    [[nodiscard]] bool hasDepth() const noexcept;
+
+    /** @brief Gets this target's depth plan, derived from its facts by the core (`core::depthPlan`).
+     *
+     * What it answers, and why it is derived rather than stored:
+     *
+     *   * a BORROWED depth is never sampleable and never preserved by the borrower - the policy is the
+     *     lender's;
+     *   * a promotion (the host asked for a sampleable depth) survives only while no pass preserves the
+     *     depth, and another target loading this one's depth is exactly such a pass - so lending revokes
+     *     the promotion, and the revocation disappears when the borrower does.
+     *
+     * @return The plan: whether there is a depth, whether a shader may sample it, whether it is borrowed, and
+     *         whether a pass depends on what an earlier pass wrote.
+     */
+    [[nodiscard]] core::DepthPlan depth() const noexcept;
+
+    /** @brief Gets the target whose depth image this target uses, or null when it owns its own. */
+    [[nodiscard]] const OffscreenTarget* depthSource() const noexcept;
+
+    /** @brief Gets the node that copies the DEPTH attachment into host-visible memory.
+     *
+     * Append it after the passes that write the depth. The copy needs the attachment in the transfer layout, so
+     * it transitions it there and back: a shared depth must still be usable as an attachment by the pass that
+     * comes after this node, and leaving it in the transfer layout would break exactly that.
+     *
+     * @return The copy commands, or null when there is no depth attachment or its format cannot be read
+     *         (a combined depth/stencil format is refused rather than converted as if it were plain depth).
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> captureDepth() const;
+
+    /** @brief Reads the depth attachment from the last submitted frame (see @ref captureDepth).
+     *
+     * @return A probe over the depth values, or an invalid probe when the depth is absent, unreadable or was
+     *         not captured.
+     */
+    [[nodiscard]] core::DepthProbe depthProbe() const;
+
+    /** @brief Gets the target's width in pixels. */
+    [[nodiscard]] std::uint32_t width() const noexcept;
+
+    /** @brief Gets the target's height in pixels. */
+    [[nodiscard]] std::uint32_t height() const noexcept;
+
+  private:
+    struct Data;
+    // Lexically after Data so the out-of-line destructor is the only place that needs the complete type.
+    std::unique_ptr<Data> d;
+
+    OffscreenTarget();
+};
+
+V_VSG_NS_END

@@ -1,5 +1,26 @@
 set(TEST_NAME test_vsg)
 set(SRC_FILE_LIST
+	# The rewritten backend's device-free core (see .ai/design/vsg-reimplementation.md): the protocol
+	# state machine, the plan/timeline types, the key audit and the evidence fixtures. No device, no
+	# vsg types.
+	BackendCoreTest.cpp
+	BackendEvidenceTest.cpp
+	ContentCoreTest.cpp
+	ClearPlanTest.cpp
+	MrtTargetTest.cpp
+	SharedDepthTest.cpp
+	VariantCoreTest.cpp
+	StreamUploadsTest.cpp
+	BlockStorageTest.cpp
+	BlockDescriptorsTest.cpp
+	ContentPipelineTest.cpp
+	ContentDrawTest.cpp
+	OffscreenTargetTest.cpp
+	ContentStackTest.cpp
+	SessionContentTest.cpp
+	DeviceProbeTest.cpp
+	SessionTest.cpp
+	SessionMoveTest.cpp
 	GfxBackendVsgPluginTest.cpp
 	RenderStateMapperTest.cpp
 	CameraBridgeTest.cpp
@@ -83,6 +104,41 @@ if(vsg_FOUND)
 	target_link_libraries(${TEST_NAME} vsg::vsg)
 endif()
 target_sources(${TEST_NAME} PRIVATE
+	# The rewritten backend's core layer: device-free by construction (no vsg:: include anywhere -
+	# see the design's §2.3 boundary).
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/Protocol.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/FrameArena.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/FrameTimeline.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/RetirementQueue.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/TargetPlan.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/ClearPlan.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/DepthProbe.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/Keys.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/Observe.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/PhaseTable.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/Diagnostics.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/PixelProbe.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/AllocationGate.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/DeviceRequirements.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/SlotProbe.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/SessionMove.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/Streams.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/MaterialArena.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/FrameRing.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/VariantPool.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/StateRegistry.cpp
+	# The API side of the boundary: the only new code that touches the graphics API.
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/DeviceProbe.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/Session.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/StreamUploads.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/BlockStorage.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/BlockDescriptors.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentPipeline.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentDraw.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/StateCommands.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/Device.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/DeviceFeatures.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/OffscreenTarget.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridge.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridgeGeometry.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgSceneRules.cpp
