@@ -3,6 +3,7 @@
 #include <vine/vsg/core/TargetPlan.hpp>
 
 #include <cstring>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -246,33 +247,21 @@ void fillClearValues(::vsg::RenderGraph& graph, const core::PassClearPlan& plan)
 
 struct OffscreenTarget::Data
 {
-    /// @brief One colour attachment and the memory its pixels are copied back into.
-    struct ColorTarget
-    {
-        ::vsg::ref_ptr<::vsg::Image>                         image;
-        ::vsg::ref_ptr<::vsg::ImageView>                     view;
-        ::vsg::ref_ptr<::vsg::Commands>                      capture;
-        ::vsg::ref_ptr<::vsg::Buffer>                        destination;
-        ::vsg::ref_ptr<::vsg::DeviceMemory>                  destination_memory;
-        ::vsg::ref_ptr<::vsg::MappedData<::vsg::ubyteArray>> mapped;
-    };
-
     ::vsg::ref_ptr<::vsg::Device>     device;
-    std::vector<ColorTarget>          colors;
-    ::vsg::ref_ptr<::vsg::Image>      depth_image;
-    ::vsg::ref_ptr<::vsg::ImageView>  depth_view;
+    /// Everything whose description contains the extent: replaced as ONE set by a resize, and parked as one set
+    /// when it is (see OffscreenTarget::Attachments).
+    Attachments                    attachments;
     std::optional<vine::graphics::RenderTarget::DepthFormat> depth_format;
-    ::vsg::ref_ptr<::vsg::Commands>                      depth_capture;
-    ::vsg::ref_ptr<::vsg::Buffer>                        depth_destination;
-    ::vsg::ref_ptr<::vsg::DeviceMemory>                  depth_destination_memory;
-    ::vsg::ref_ptr<::vsg::MappedData<::vsg::ubyteArray>> depth_mapped;
-    std::uint32_t                                        depth_bytes_per_texel{0};  ///< 0 = not readable.
     const OffscreenTarget*            depth_source{nullptr};  ///< The lender, when the depth is borrowed.
     std::uint32_t                     borrowers{0};           ///< Targets loading this target's depth.
     bool                              depth_sampleable{false};  ///< The host asked for a sampleable depth.
+    /// The clear policy `create` was given: the initial graph's clear values come from it, and a rebuilt graph
+    /// has to use the same policy - values a caller never re-announces must not change under it.
+    core::ClearPolicy                 clear_policy{};
+    /// Bumped every time the attachments are replaced (see resize): a caller can tell "the same target, new
+    /// images" from "the same images" without comparing pointers.
+    std::uint64_t                     generation{0};
     ::vsg::ref_ptr<::vsg::RenderPass> render_pass;
-    ::vsg::ref_ptr<::vsg::Framebuffer> framebuffer;
-    ::vsg::ref_ptr<::vsg::RenderGraph> render_graph;
     std::uint32_t                      width{0};
     std::uint32_t                      height{0};
     core::TargetShape                  shape;           ///< What the render pass was built against.
@@ -353,7 +342,7 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
         // A borrowed depth has to be the same KIND of image, and there has to be one: the formats are part of
         // the pass description, so a mismatch is a pass the driver would refuse at creation and a missing depth
         // is a borrowed attachment that does not exist.
-        if (depth_source->d->depth_view == nullptr || !depth_source->d->depth_format.has_value() ||
+        if (depth_source->d->attachments.depth_view == nullptr || !depth_source->d->depth_format.has_value() ||
             layout.depth_format != depth_source->d->depth_format) {
             return nullptr;
         }
@@ -390,73 +379,21 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     }
 
     auto target = std::unique_ptr<OffscreenTarget>(new OffscreenTarget());
-    target->d->device = std::move(device);
-    target->d->width  = layout.width;
-    target->d->height = layout.height;
-    target->d->shape        = shape;
-    target->d->depth_borrowed = depth_borrowed;
-
-    const VkDeviceSize byte_count = static_cast<VkDeviceSize>(layout.width) * layout.height * 4U;
-    for (const vine::graphics::RenderTarget::ColorFormat format : layout.color_formats) {
-        Data::ColorTarget color;
-        // The image is created with SAMPLED usage as well as colour-attachment: the pass leaves colour
-        // attachments in SHADER_READ_ONLY (see makeOffscreenRenderPass) so a later pass can sample them, and an
-        // image view read as a sampled image has to be created for it. TRANSFER_SRC is the readback's half (the
-        // capture moves the image there and back).
-        color.image                 = ::vsg::Image::create();
-        color.image->imageType      = VK_IMAGE_TYPE_2D;
-        color.image->format         = toColorFormat(format);
-        color.image->extent         = VkExtent3D{ layout.width, layout.height, 1U };
-        color.image->mipLevels      = 1U;
-        color.image->arrayLayers    = 1U;
-        color.image->samples        = VK_SAMPLE_COUNT_1_BIT;
-        color.image->tiling         = VK_IMAGE_TILING_OPTIMAL;
-        color.image->usage          = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                      VK_IMAGE_USAGE_SAMPLED_BIT;
-        color.image->initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
-        color.image->sharingMode    = VK_SHARING_MODE_EXCLUSIVE;
-        color.view                  = ::vsg::createImageView(target->d->device, color.image, VK_IMAGE_ASPECT_COLOR_BIT);
-        if (color.view == nullptr) {
-            return nullptr;
-        }
-        target->d->colors.push_back(std::move(color));
-    }
-
+    target->d->device           = std::move(device);
+    target->d->width            = layout.width;
+    target->d->height           = layout.height;
+    target->d->shape            = shape;
+    target->d->depth_borrowed   = depth_borrowed;
     target->d->depth_format     = layout.depth_format;
     target->d->depth_sampleable = layout.depth_sampleable;
-    if (plan.has_depth && depth_borrowed) {
-        // Someone else's image, in the layout its own pass leaves it in, and its own pass left the depth
-        // where this pass' fragment tests can read it. Nothing is created and nothing is owned.
+    target->d->clear_policy     = layout.clear;
+    if (depth_borrowed) {
         target->d->depth_source = depth_source;
-        target->d->depth_image  = depth_source->d->depth_image;
-        target->d->depth_view   = depth_source->d->depth_view;
-        ++depth_source->d->borrowers;
-    }
-    else if (plan.has_depth) {
-        target->d->depth_image            = ::vsg::Image::create();
-        target->d->depth_image->imageType = VK_IMAGE_TYPE_2D;
-        target->d->depth_image->format    = toDepthFormat(layout.depth_format.value());
-        target->d->depth_image->extent    = VkExtent3D{ layout.width, layout.height, 1U };
-        target->d->depth_image->mipLevels = 1U;
-        target->d->depth_image->arrayLayers = 1U;
-        target->d->depth_image->samples   = VK_SAMPLE_COUNT_1_BIT;
-        target->d->depth_image->tiling    = VK_IMAGE_TILING_OPTIMAL;
-        // TRANSFER_SRC is part of the depth image's usage even though nothing samples it: a target that
-        // offers a depth readback MUST be created with the usage that permits the copy, or the copy is a
-        // validation error (VUID-vkCmdCopyImageToBuffer-srcImage-00186) - and a readback that is refused at
-        // runtime is worth less than an image built for it.
-        target->d->depth_image->usage     = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                            (layout.depth_sampleable ? VK_IMAGE_USAGE_SAMPLED_BIT : 0U);
-        target->d->depth_image->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        target->d->depth_image->sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-        target->d->depth_view = ::vsg::createImageView(target->d->device, target->d->depth_image,
-                                                       VK_IMAGE_ASPECT_DEPTH_BIT);
-        if (target->d->depth_view == nullptr) {
-            return nullptr;
-        }
     }
 
+    // The pass and its first variant are the SHAPE's, built once for the target's life: an extent is not part of
+    // render-pass compatibility (see TargetShape), so a resize keeps them and a pipeline compiled for this target
+    // stays the pipeline for it (see resize).
     target->d->render_pass = makeOffscreenRenderPass(target->d->device, layout.color_formats,
                                                      layout.depth_format,
                                                      core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly,
@@ -465,73 +402,149 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     if (target->d->render_pass == nullptr) {
         return nullptr;
     }
-    // The variant create() built is the target's FIRST one, and the constructor's graph records through it.
     target->d->variants.push_back(
         Data::PassVariant{ core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly,
                                                  target->depthSteadyLayout(), target->depthSteadyLayout()),
                            target->d->render_pass });
 
+    // Everything whose description contains the EXTENT is built by the same function a resize uses. The target
+    // counts as a borrower only once that build succeeded: a create that failed halfway must not leave a lender
+    // believing something loads its depth.
+    Attachments built;
+    if (!target->buildAttachments(layout.width, layout.height, built)) {
+        return nullptr;
+    }
+    target->d->attachments = std::move(built);
+    if (depth_borrowed) {
+        ++depth_source->d->borrowers;
+    }
+    return target;
+}
+
+bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height,
+                                        Attachments& out) const
+{
+    const core::PassClearPlan plan = core::planClearValues(d->shape, d->clear_policy, /*bootstrap*/ true,
+                                                          /*depth_preserved*/ d->depth_borrowed);
+    const VkDeviceSize byte_count = static_cast<VkDeviceSize>(width) * height * 4U;
+    for (const vine::graphics::RenderTarget::ColorFormat format : d->shape.color_formats) {
+        OffscreenTarget::Attachments::Color color;
+        // The image is created with SAMPLED usage as well as colour-attachment: the pass leaves colour
+        // attachments in SHADER_READ_ONLY (see makeOffscreenRenderPass) so a later pass can sample them, and an
+        // image view read as a sampled image has to be created for it. TRANSFER_SRC is the readback's half (the
+        // capture moves the image there and back).
+        color.image                 = ::vsg::Image::create();
+        color.image->imageType      = VK_IMAGE_TYPE_2D;
+        color.image->format         = toColorFormat(format);
+        color.image->extent         = VkExtent3D{ width, height, 1U };
+        color.image->mipLevels      = 1U;
+        color.image->arrayLayers    = 1U;
+        color.image->samples        = VK_SAMPLE_COUNT_1_BIT;
+        color.image->tiling         = VK_IMAGE_TILING_OPTIMAL;
+        color.image->usage          = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                      VK_IMAGE_USAGE_SAMPLED_BIT;
+        color.image->initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+        color.image->sharingMode    = VK_SHARING_MODE_EXCLUSIVE;
+        color.view                  = ::vsg::createImageView(d->device, color.image, VK_IMAGE_ASPECT_COLOR_BIT);
+        if (color.view == nullptr) {
+            return false;
+        }
+        out.colors.push_back(std::move(color));
+    }
+
+    if (plan.has_depth && d->depth_borrowed) {
+        // Someone else's image, in the layout its own pass leaves it in, and its own pass left the depth
+        // where this pass' fragment tests can read it. Nothing is created and nothing is owned here: the
+        // lender keeps its reference, and the borrower count is the CALLER's business (create counts one
+        // only once this build succeeded; a resize never does, because it refuses while one exists).
+        out.depth_image = d->depth_source->d->attachments.depth_image;
+        out.depth_view  = d->depth_source->d->attachments.depth_view;
+    }
+    else if (plan.has_depth) {
+        out.depth_image            = ::vsg::Image::create();
+        out.depth_image->imageType = VK_IMAGE_TYPE_2D;
+        out.depth_image->format    = toDepthFormat(d->depth_format.value());
+        out.depth_image->extent    = VkExtent3D{ width, height, 1U };
+        out.depth_image->mipLevels = 1U;
+        out.depth_image->arrayLayers = 1U;
+        out.depth_image->samples   = VK_SAMPLE_COUNT_1_BIT;
+        out.depth_image->tiling    = VK_IMAGE_TILING_OPTIMAL;
+        // TRANSFER_SRC is part of the depth image's usage even though nothing samples it: a target that
+        // offers a depth readback MUST be created with the usage that permits the copy, or the copy is a
+        // validation error (VUID-vkCmdCopyImageToBuffer-srcImage-00186) - and a readback that is refused at
+        // runtime is worth less than an image built for it.
+        out.depth_image->usage     = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                            (d->depth_sampleable ? VK_IMAGE_USAGE_SAMPLED_BIT : 0U);
+        out.depth_image->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        out.depth_image->sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+        out.depth_view = ::vsg::createImageView(d->device, out.depth_image,
+                                                       VK_IMAGE_ASPECT_DEPTH_BIT);
+        if (out.depth_view == nullptr) {
+            return false;
+        }
+    }
+
     ::vsg::ImageViews attachments;
-    for (const Data::ColorTarget& color : target->d->colors) {
+    for (const OffscreenTarget::Attachments::Color& color : out.colors) {
         attachments.push_back(color.view);
     }
     if (plan.has_depth) {
-        attachments.push_back(target->d->depth_view);
+        attachments.push_back(out.depth_view);
     }
-    target->d->framebuffer =
-        ::vsg::Framebuffer::create(target->d->render_pass, attachments, layout.width, layout.height, 1U);
-    if (target->d->framebuffer == nullptr) {
-        return nullptr;
+    out.framebuffer = ::vsg::Framebuffer::create(d->render_pass, attachments, width, height, 1U);
+    if (out.framebuffer == nullptr) {
+        return false;
     }
 
-    target->d->render_graph              = ::vsg::RenderGraph::create();
-    target->d->render_graph->framebuffer = target->d->framebuffer;
-    target->d->render_graph->renderPass  = target->d->render_pass;
+    out.render_graph              = ::vsg::RenderGraph::create();
+    out.render_graph->framebuffer = out.framebuffer;
+    out.render_graph->renderPass  = d->render_pass;
     // The render AREA is what the pass clears and what the scissor defaults to: a default-constructed
     // RenderGraph has a zero extent, and a zero-area pass records successfully while clearing nothing -
     // which reads back as an all-zero image that looks like "the copy is broken" rather than "the pass
     // never covered a pixel".
-    target->d->render_graph->renderArea = VkRect2D{ { 0, 0 }, { layout.width, layout.height } };
-    target->d->render_graph->contents   = VK_SUBPASS_CONTENTS_INLINE;
+    out.render_graph->renderArea = VkRect2D{ { 0, 0 }, { width, height } };
+    out.render_graph->contents   = VK_SUBPASS_CONTENTS_INLINE;
     // One clear value per attachment, in attachment order: the plan's colour for attachment 0, transparent
     // black for the extras, and the depth's value for the depth attachment.
-    fillClearValues(*target->d->render_graph, plan);
+    fillClearValues(*out.render_graph, plan);
 
     // Each colour attachment gets its own host-visible destination and its own copy-back node. The buffer is
     // host visible and coherent: the copy writes it, the host reads it, and no flush stands in between (the
     // same choice the block storage makes). `bufferRowLength` is the image width in texels, so the rows
     // arrive tightly packed - which is the packing a probe insists on.
-    for (std::size_t index = 0; index < target->d->colors.size(); ++index) {
-        Data::ColorTarget& color = target->d->colors[index];
+    for (std::size_t index = 0; index < out.colors.size(); ++index) {
+        OffscreenTarget::Attachments::Color& color = out.colors[index];
         color.destination = ::vsg::Buffer::create(byte_count, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                   VK_SHARING_MODE_EXCLUSIVE);
         if (color.destination == nullptr) {
-            return nullptr;
+            return false;
         }
-        color.destination->compile(target->d->device.get());
+        color.destination->compile(d->device.get());
         color.destination_memory = ::vsg::DeviceMemory::create(
-            target->d->device.get(), color.destination->getMemoryRequirements(target->d->device->deviceID),
+            d->device.get(), color.destination->getMemoryRequirements(d->device->deviceID),
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         if (color.destination_memory == nullptr) {
-            return nullptr;
+            return false;
         }
         color.destination->bind(color.destination_memory, 0U);
         color.mapped = ::vsg::MappedData<::vsg::ubyteArray>::create(color.destination_memory.get(), 0U, 0U,
                                                                    static_cast<std::size_t>(byte_count));
         if (color.mapped == nullptr || color.mapped->data() == nullptr) {
-            return nullptr;
+            return false;
         }
 
         VkBufferImageCopy region = {};
         region.bufferOffset      = 0U;
-        region.bufferRowLength   = layout.width;
-        region.bufferImageHeight = layout.height;
+        region.bufferRowLength   = width;
+        region.bufferImageHeight = height;
         region.imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
         region.imageSubresource.mipLevel       = 0U;
         region.imageSubresource.baseArrayLayer = 0U;
         region.imageSubresource.layerCount     = 1U;
         region.imageOffset                     = VkOffset3D{ 0, 0, 0 };
-        region.imageExtent                     = VkExtent3D{ layout.width, layout.height, 1U };
+        region.imageExtent                     = VkExtent3D{ width, height, 1U };
 
         auto copy            = ::vsg::CopyImageToBuffer::create();
         copy->srcImage       = color.image;
@@ -587,29 +600,29 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
 
     // The depth copy is built only for a readable format: the rest of the target is still usable, it just
     // cannot answer "what is in the depth buffer" (see depthBytesPerTexel).
-    if (plan.has_depth && target->d->depth_view != nullptr) {
-        const std::uint32_t bytes_per_texel = depthBytesPerTexel(layout.depth_format.value());
+    if (plan.has_depth && out.depth_view != nullptr) {
+        const std::uint32_t bytes_per_texel = depthBytesPerTexel(d->depth_format.value());
         if (bytes_per_texel != 0U) {
-            const VkDeviceSize depth_bytes = static_cast<VkDeviceSize>(layout.width) * layout.height * bytes_per_texel;
-            target->d->depth_bytes_per_texel = bytes_per_texel;
-            target->d->depth_destination = ::vsg::Buffer::create(depth_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            const VkDeviceSize depth_bytes = static_cast<VkDeviceSize>(width) * height * bytes_per_texel;
+            out.depth_bytes_per_texel = bytes_per_texel;
+            out.depth_destination = ::vsg::Buffer::create(depth_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                                  VK_SHARING_MODE_EXCLUSIVE);
-            if (target->d->depth_destination == nullptr) {
-                return nullptr;
+            if (out.depth_destination == nullptr) {
+                return false;
             }
-            target->d->depth_destination->compile(target->d->device.get());
-            target->d->depth_destination_memory = ::vsg::DeviceMemory::create(
-                target->d->device.get(),
-                target->d->depth_destination->getMemoryRequirements(target->d->device->deviceID),
+            out.depth_destination->compile(d->device.get());
+            out.depth_destination_memory = ::vsg::DeviceMemory::create(
+                d->device.get(),
+                out.depth_destination->getMemoryRequirements(d->device->deviceID),
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            if (target->d->depth_destination_memory == nullptr) {
-                return nullptr;
+            if (out.depth_destination_memory == nullptr) {
+                return false;
             }
-            target->d->depth_destination->bind(target->d->depth_destination_memory, 0U);
-            target->d->depth_mapped = ::vsg::MappedData<::vsg::ubyteArray>::create(
-                target->d->depth_destination_memory.get(), 0U, 0U, static_cast<std::size_t>(depth_bytes));
-            if (target->d->depth_mapped == nullptr || target->d->depth_mapped->data() == nullptr) {
-                return nullptr;
+            out.depth_destination->bind(out.depth_destination_memory, 0U);
+            out.depth_mapped = ::vsg::MappedData<::vsg::ubyteArray>::create(
+                out.depth_destination_memory.get(), 0U, 0U, static_cast<std::size_t>(depth_bytes));
+            if (out.depth_mapped == nullptr || out.depth_mapped->data() == nullptr) {
+                return false;
             }
 
             // The pass leaves the depth in ITS OWN steady layout - the attachment layout for an ordinary
@@ -620,50 +633,50 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
             // DEPTH_STENCIL_ATTACHMENT_OPTIMAL for a shadow map in SHADER_READ_ONLY is
             // VUID-VkImageMemoryBarrier-oldLayout-01197).
             const VkImageSubresourceRange depth_range{ VK_IMAGE_ASPECT_DEPTH_BIT, 0U, 1U, 0U, 1U };
-            const VkImageLayout steady_layout = toVkLayout(target->depthSteadyLayout());
+            const VkImageLayout steady_layout = toVkLayout(depthSteadyLayout());
             auto to_transfer = ::vsg::ImageMemoryBarrier::create(
                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
                 VK_ACCESS_TRANSFER_READ_BIT, steady_layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target->d->depth_image, depth_range);
+                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, out.depth_image, depth_range);
             auto from_transfer = ::vsg::ImageMemoryBarrier::create(
                 VK_ACCESS_TRANSFER_READ_BIT,
                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, steady_layout, VK_QUEUE_FAMILY_IGNORED,
-                VK_QUEUE_FAMILY_IGNORED, target->d->depth_image, depth_range);
+                VK_QUEUE_FAMILY_IGNORED, out.depth_image, depth_range);
 
             VkBufferImageCopy depth_region = {};
             depth_region.bufferOffset      = 0U;
-            depth_region.bufferRowLength   = layout.width;
-            depth_region.bufferImageHeight = layout.height;
+            depth_region.bufferRowLength   = width;
+            depth_region.bufferImageHeight = height;
             depth_region.imageSubresource  = { VK_IMAGE_ASPECT_DEPTH_BIT, 0U, 0U, 1U };
             depth_region.imageOffset       = VkOffset3D{ 0, 0, 0 };
-            depth_region.imageExtent       = VkExtent3D{ layout.width, layout.height, 1U };
+            depth_region.imageExtent       = VkExtent3D{ width, height, 1U };
 
             auto depth_copy            = ::vsg::CopyImageToBuffer::create();
-            depth_copy->srcImage       = target->d->depth_image;
+            depth_copy->srcImage       = out.depth_image;
             depth_copy->srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            depth_copy->dstBuffer      = target->d->depth_destination;
+            depth_copy->dstBuffer      = out.depth_destination;
             depth_copy->regions.push_back(depth_region);
 
             auto depth_buffer_barrier = ::vsg::BufferMemoryBarrier::create(
                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_QUEUE_FAMILY_IGNORED,
-                VK_QUEUE_FAMILY_IGNORED, target->d->depth_destination, 0U, depth_bytes);
+                VK_QUEUE_FAMILY_IGNORED, out.depth_destination, 0U, depth_bytes);
 
-            target->d->depth_capture = ::vsg::Commands::create();
-            target->d->depth_capture->addChild(::vsg::PipelineBarrier::create(
+            out.depth_capture = ::vsg::Commands::create();
+            out.depth_capture->addChild(::vsg::PipelineBarrier::create(
                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, to_transfer));
-            target->d->depth_capture->addChild(depth_copy);
-            target->d->depth_capture->addChild(::vsg::PipelineBarrier::create(
+            out.depth_capture->addChild(depth_copy);
+            out.depth_capture->addChild(::vsg::PipelineBarrier::create(
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 0, from_transfer));
-            target->d->depth_capture->addChild(::vsg::PipelineBarrier::create(
+            out.depth_capture->addChild(::vsg::PipelineBarrier::create(
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, depth_buffer_barrier));
         }
     }
-    return target;
+    return true;
 }
 
 OffscreenTarget::~OffscreenTarget()
@@ -677,13 +690,13 @@ OffscreenTarget::~OffscreenTarget()
 
 ::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::renderGraph() const noexcept
 {
-    return d->render_graph;
+    return d->attachments.render_graph;
 }
 
 ::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearPolicy& policy, bool bootstrap,
                                                             bool depth_preserved)
 {
-    if (d->render_pass == nullptr || d->framebuffer == nullptr)
+    if (d->render_pass == nullptr || d->attachments.framebuffer == nullptr)
     {
         return {};
     }
@@ -706,7 +719,7 @@ OffscreenTarget::~OffscreenTarget()
     d->written = true;
 
     auto graph              = ::vsg::RenderGraph::create();
-    graph->framebuffer      = d->framebuffer;
+    graph->framebuffer      = d->attachments.framebuffer;
     graph->renderPass       = render_pass;
     graph->renderArea       = VkRect2D{ { 0, 0 }, { d->width, d->height } };
     graph->contents         = VK_SUBPASS_CONTENTS_INLINE;
@@ -733,10 +746,10 @@ bool OffscreenTarget::written() const noexcept
 
 ::vsg::ref_ptr<::vsg::Node> OffscreenTarget::capture(std::uint32_t attachment) const
 {
-    if (attachment >= d->colors.size()) {
+    if (attachment >= d->attachments.colors.size()) {
         return nullptr;
     }
-    return d->colors[attachment].capture;
+    return d->attachments.colors[attachment].capture;
 }
 
 core::PixelProbe OffscreenTarget::probe() const
@@ -746,10 +759,10 @@ core::PixelProbe OffscreenTarget::probe() const
 
 core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment) const
 {
-    if (attachment >= d->colors.size()) {
+    if (attachment >= d->attachments.colors.size()) {
         return core::PixelProbe(0, 0, {});
     }
-    const Data::ColorTarget& color = d->colors[attachment];
+    const OffscreenTarget::Attachments::Color& color = d->attachments.colors[attachment];
     if (color.mapped == nullptr || color.mapped->data() == nullptr) {
         return core::PixelProbe(0, 0, {});
     }
@@ -762,26 +775,26 @@ core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment) const
 
 std::uint32_t OffscreenTarget::colorAttachmentCount() const noexcept
 {
-    return static_cast<std::uint32_t>(d->colors.size());
+    return static_cast<std::uint32_t>(d->attachments.colors.size());
 }
 
 ::vsg::ref_ptr<::vsg::ImageView> OffscreenTarget::colorView(std::uint32_t attachment) const noexcept
 {
-    if (attachment >= d->colors.size())
+    if (attachment >= d->attachments.colors.size())
     {
         return {};
     }
-    return d->colors[attachment].view;
+    return d->attachments.colors[attachment].view;
 }
 
 ::vsg::ref_ptr<::vsg::ImageView> OffscreenTarget::depthView() const noexcept
 {
-    return d->depth_view;
+    return d->attachments.depth_view;
 }
 
 ::vsg::ref_ptr<::vsg::Node> OffscreenTarget::readback() const noexcept
 {
-    if (!d->colors.empty()) {
+    if (!d->attachments.colors.empty()) {
         return capture(0U);
     }
     // A depth-only target IS its depth: that is what a phase asks it about (see captureDepth).
@@ -795,13 +808,13 @@ core::TargetShape OffscreenTarget::shape() const noexcept
 
 bool OffscreenTarget::hasDepth() const noexcept
 {
-    return d->depth_view != nullptr;
+    return d->attachments.depth_view != nullptr;
 }
 
 core::DepthPlan OffscreenTarget::depth() const noexcept
 {
     core::DepthFacts facts;
-    facts.has_depth = d->depth_view != nullptr;
+    facts.has_depth = d->attachments.depth_view != nullptr;
     // The host's request is a fact here, not a decision: whether it survives is the core's answer, because
     // it depends on what this frame's passes do with the depth (see core::depthPlan).
     facts.promotion   = d->depth_sampleable;
@@ -818,24 +831,24 @@ const OffscreenTarget* OffscreenTarget::depthSource() const noexcept
 
 ::vsg::ref_ptr<::vsg::Node> OffscreenTarget::captureDepth() const
 {
-    return d->depth_capture;
+    return d->attachments.depth_capture;
 }
 
 core::DepthProbe OffscreenTarget::depthProbe() const
 {
-    if (d->depth_mapped == nullptr || d->depth_mapped->data() == nullptr || d->depth_bytes_per_texel == 0U
+    if (d->attachments.depth_mapped == nullptr || d->attachments.depth_mapped->data() == nullptr || d->attachments.depth_bytes_per_texel == 0U
         || d->width == 0U || d->height == 0U) {
         return core::DepthProbe();
     }
     const std::size_t texels = static_cast<std::size_t>(d->width) * d->height;
     std::vector<float> values(texels);
-    if (d->depth_bytes_per_texel == 4U) {
-        std::memcpy(values.data(), d->depth_mapped->data(), texels * sizeof(float));
+    if (d->attachments.depth_bytes_per_texel == 4U) {
+        std::memcpy(values.data(), d->attachments.depth_mapped->data(), texels * sizeof(float));
     }
     else {
         // D16_UNORM: the stored integer is the depth, scaled by its full range - the conversion the format
         // defines, not an approximation of it.
-        const auto* stored = static_cast<const std::uint16_t*>(static_cast<const void*>(d->depth_mapped->data()));
+        const auto* stored = static_cast<const std::uint16_t*>(static_cast<const void*>(d->attachments.depth_mapped->data()));
         for (std::size_t index = 0; index < texels; ++index) {
             values[index] = static_cast<float>(stored[index]) / 65535.0F;
         }
@@ -851,6 +864,91 @@ std::uint32_t OffscreenTarget::width() const noexcept
 std::uint32_t OffscreenTarget::height() const noexcept
 {
     return d->height;
+}
+
+std::uint64_t OffscreenTarget::generation() const noexcept
+{
+    return d->generation;
+}
+
+OffscreenTarget::Resized OffscreenTarget::resize(std::uint32_t width, std::uint32_t height,
+                                                 const core::FrameTimeline& timeline,
+                                                 core::RetirementQueue& retirement)
+{
+    // The PLAN decides, not this function. The wanted shape is the target's own: the attachment formats and the
+    // render pass are fixed at create (a different shape is a different target, not a resize), so the arms that
+    // can answer here are None (the extent already is what was asked), Repair (an extent of 0: nothing can be
+    // built) and ResizeInPlace. Rebuild is handled with it rather than assumed impossible - the two differ in
+    // what else has to follow (pipelines), and this function would still replace the extensional objects.
+    const core::TargetDesc wanted{ static_cast<int>(width), static_cast<int>(height), d->shape };
+    const core::TargetInstance current{ core::TargetDesc{ static_cast<int>(d->width), static_cast<int>(d->height),
+                                                          d->shape },
+                                        d->generation, /*built*/ d->attachments.render_graph != nullptr,
+                                        /*attachments_invalidated*/ false };
+    const core::TargetDecision decision = core::planTarget(current, wanted);
+
+    Resized result;
+    result.decision   = decision;
+    result.generation = d->generation;
+    if (decision.action != core::TargetAction::ResizeInPlace && decision.action != core::TargetAction::Rebuild)
+    {
+        return result;
+    }
+
+    // A lease refuses in both directions, for one reason: a leased depth image has exactly one owner, and the
+    // borrower's framebuffer names the LENDER's image.
+    //   * This target LENDS its depth (borrowers > 0): their framebuffers name the image this resize would
+    //     replace, and this target does not know who they are. The caller rebuilds the borrower first - the
+    //     rule the reference reads as "the borrow points at another image".
+    //   * This target BORROWS its depth (depth_source): the depth attachment of the new framebuffer would be
+    //     the lender's image at the LENDER's extent, and a framebuffer attachment must be at least as large as
+    //     the framebuffer it is attached to (VUID-VkFramebufferCreateInfo-pAttachments-00861). Moving the
+    //     extent here is not this target's to do: the caller resizes the lender and builds this target again.
+    if (d->borrowers > 0U || d->depth_source != nullptr)
+    {
+        result.refused = true;
+        return result;
+    }
+
+    // The replacement exists BEFORE what it replaces is touched: a build that fails leaves the target serving
+    // the extent it had, with the generation it had ("the same images" stays true), and nothing to park.
+    Attachments built;
+    if (!buildAttachments(width, height, built))
+    {
+        return result;
+    }
+
+    Attachments previous = std::move(d->attachments);
+    d->attachments       = std::move(built);
+    d->width             = width;
+    d->height            = height;
+    // The new images have never been written into, so the target's facts have to say so: a caller that derives
+    // "this pass is the first writer" from written() clears rather than loads, which is the only thing an
+    // UNDEFINED image accepts (see passGraph).
+    d->written = false;
+    ++d->generation;
+    result.replaced   = true;
+    result.generation = d->generation;
+
+    // What was replaced may still be named by a frame in flight (submissions overlap), so it does not die here.
+    // It is parked through a custody the queue can DROP without destroying anything: retire() refuses by
+    // dropping the callback, and a callback that owned the objects by value would free them right there, with
+    // no device idle and while a submitted command buffer may still name them.
+    auto custody   = std::make_shared<Attachments>(std::move(previous));
+    result.parked  = retirement.retire(timeline, [custody]() { *custody = Attachments{}; });
+    if (!result.parked)
+    {
+        // No parking window (a caller that never learned how many frames may be in flight): the objects have
+        // no safe window, so they are destroyed only under a COUNTED device idle - the count is what keeps
+        // "the frame path never idles the device" checkable.
+        retirement.noteDeviceWait();
+        if (d->device != nullptr)
+        {
+            vkDeviceWaitIdle(*d->device);
+        }
+        *custody = Attachments{};
+    }
+    return result;
 }
 
 V_VSG_NS_END

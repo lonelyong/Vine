@@ -14,6 +14,8 @@
 #include <vine/vsg/core/ClearPlan.hpp>
 #include <vine/vsg/core/DepthProbe.hpp>
 #include <vine/vsg/core/PixelProbe.hpp>
+#include <vine/vsg/core/RetirementQueue.hpp>
+#include <vine/vsg/core/TargetPlan.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 namespace vsg
@@ -284,6 +286,62 @@ class OffscreenTarget
     /** @brief Gets the target's height in pixels. */
     [[nodiscard]] std::uint32_t height() const noexcept;
 
+    /** @brief Gets the attachments' generation: it changes when a resize replaces them (see @ref resize). */
+    [[nodiscard]] std::uint64_t generation() const noexcept;
+
+    /** @brief What a plan-driven extent change did (see @ref resize). */
+    struct Resized
+    {
+        core::TargetDecision decision{};      ///< The plan's own answer (`planTarget`).
+        bool                 replaced{false}; ///< Attachments were replaced (the extent really changed).
+        bool                 refused{false};  ///< A depth lease blocked it (see the declaration of resize).
+        bool                 parked{false};   ///< What was replaced went to the retirement queue.
+        std::uint64_t        generation{0};   ///< The generation in force when the call returned.
+    };
+
+    /** @brief Makes the target serve a new extent, the way the plan says (`core::planTarget`).
+     *
+     * WHAT IS REPLACED, AND WHAT IS NOT. An extent is not part of a pipeline's identity and not part of
+     * render-pass compatibility (`core::TargetShape`), so a resize replaces EXACTLY the objects whose size is in
+     * their description - the images, their views, the copy-back buffers and nodes, the framebuffer and the
+     * graph built around it - and KEEPS the render pass and its load-op variants: a pipeline compiled for this
+     * target before the resize is still the pipeline for it afterwards. A resize that rebuilt the pass would
+     * hand that pipeline a render pass it was not compiled against, which is the failure the compatibility half
+     * of the key exists to prevent.
+     *
+     * THE OLD OBJECTS ARE PARKED, NEVER FREED. The frame that had them may still be in flight - a resize happens
+     * between frames, and submissions overlap - so they go to @p retirement, which releases them once the
+     * timeline is past the slot that could still name them. When parking is unavailable (a caller that never
+     * learned how many frames are in flight) the release runs immediately under a COUNTED device wait: an object
+     * with no safe window is destroyed only when the evidence says nothing can be using it.
+     *
+     * WHAT IT REFUSES. A lease in either direction stops it, because a leased depth has one owner and every
+     * borrower's framebuffer names the LENDER's image. A target that LENDS its depth (another target loads it)
+     * refuses: the borrowers' framebuffers name the image a resize would replace and this target does not know
+     * who they are, so the caller rebuilds the borrower first - the rule the reference reads as "the borrow
+     * points at another image". A target that BORROWS its depth refuses as well: its new framebuffer would
+     * name the lender's image at the lender's extent, and a framebuffer's attachments must be at least as
+     * large as the framebuffer itself (VUID-VkFramebufferCreateInfo-pAttachments-00861), so the caller
+     * resizes the lender and builds this target against it again. `refused` says so; nothing is replaced and
+     * nothing is parked.
+     *
+     * WHAT THE TARGET COUNTS AS AFTERWARDS. The new attachments have never been drawn into, so a resize makes
+     * the target behave like one that was just created: the next pass in clears (see @ref written), and the
+     * generation moved, which is how a caller holding a compiled frame tells that the images it named are
+     * gone. The render pass, its variants and every pipeline compiled against them are untouched.
+     *
+     * @param width     Wanted width in pixels (0 = not known yet: the plan repairs and nothing changes).
+     * @param height    Wanted height in pixels.
+     * @param timeline  The frame timeline the park is dated against (the caller's own clock).
+     * @param retirement Where the replaced objects go (the caller owns it, like its device waits).
+     * @return What happened: the plan's decision, whether objects were replaced, whether they were parked, and
+     *         the generation in force afterwards. A wanted extent that could not be honoured is
+     *         `replaced == false`: `refused` says a lease blocked it, and an action of ResizeInPlace (or
+     *         Rebuild) without a refusal says the build itself failed, leaving the target serving what it had.
+     */
+    [[nodiscard]] Resized resize(std::uint32_t width, std::uint32_t height, const core::FrameTimeline& timeline,
+                                 core::RetirementQueue& retirement);
+
   private:
     struct Data;
     // Lexically after Data so the out-of-line destructor is the only place that needs the complete type.
@@ -308,6 +366,49 @@ class OffscreenTarget
      * @return The steady layout of the depth this target writes (or borrows).
      */
     [[nodiscard]] core::ImageLayout depthSteadyLayout() const noexcept;
+
+    /** @brief Everything that depends on the extent: what a resize replaces and what it must keep alive until
+     *         the retirement queue releases it. */
+    struct Attachments
+    {
+        /// @brief One colour attachment and the memory its pixels are copied back into.
+        struct Color
+        {
+            ::vsg::ref_ptr<::vsg::Image>                         image;
+            ::vsg::ref_ptr<::vsg::ImageView>                     view;
+            ::vsg::ref_ptr<::vsg::Commands>                      capture;
+            ::vsg::ref_ptr<::vsg::Buffer>                        destination;
+            ::vsg::ref_ptr<::vsg::DeviceMemory>                  destination_memory;
+            ::vsg::ref_ptr<::vsg::MappedData<::vsg::ubyteArray>> mapped;
+        };
+
+        std::vector<Color>                                   colors;
+        ::vsg::ref_ptr<::vsg::Image>                         depth_image;   ///< Empty when the depth is borrowed.
+        ::vsg::ref_ptr<::vsg::ImageView>                     depth_view;    ///< Empty when the depth is borrowed.
+        ::vsg::ref_ptr<::vsg::Commands>                      depth_capture;
+        ::vsg::ref_ptr<::vsg::Buffer>                        depth_destination;
+        ::vsg::ref_ptr<::vsg::DeviceMemory>                  depth_destination_memory;
+        ::vsg::ref_ptr<::vsg::MappedData<::vsg::ubyteArray>> depth_mapped;
+        std::uint32_t                                        depth_bytes_per_texel{0};
+        ::vsg::ref_ptr<::vsg::Framebuffer>                   framebuffer;
+        ::vsg::ref_ptr<::vsg::RenderGraph>                   render_graph;
+    };
+
+    /** @brief Builds everything whose description contains the extent (images, views, copy-back, framebuffer).
+     *
+     * A pure "make the objects for this width and height" step, writing into @p out and touching no field of
+     * this object: `create` and `resize` both need exactly this set, and a resize has to build its replacement
+     * BEFORE it can part with what it has (a build that fails leaves the target serving its old extent). The
+     * extent is a PARAMETER rather than this object's width()/height() for exactly that reason: while a resize
+     * builds the replacement, the target still serves the extent it had.
+     *
+     * @param width  Extent to build for, in pixels.
+     * @param height Extent to build for, in pixels.
+     * @param out    Receives the objects; the caller moves them into place (or parks them, when it is done
+     *               with a previous set).
+     * @return true when every object was created.
+     */
+    [[nodiscard]] bool buildAttachments(std::uint32_t width, std::uint32_t height, Attachments& out) const;
 };
 
 V_VSG_NS_END

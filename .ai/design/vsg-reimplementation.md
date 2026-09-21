@@ -3,10 +3,10 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M5d（全屏路径的 128B push：与前向 UBO 同一份灯打包的另一种布局，`projparms` 保留位按 SDK 声明留零；
-> 顺带修掉"只读 push 的全屏 pass 建不出管线"这个洞）**：`test_vsg` 547 用例 / 87 套件全绿（含真设备像素用例
-> ——一趟三个全屏调用、三个视口，各自对照一条像素），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，
-> `core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 814 文件）。
+> **M5e（目标生命周期：计划驱动的换尺寸、旧集停车而不是丢弃、退到 idle 必须计数、租约两向拒绝）**：
+> `test_vsg` 552 用例 / 87 套件全绿（含真设备像素用例——换尺寸后的新尺寸真渲染、深度回读按新尺寸重建），
+> 强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由
+> `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 814 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2046,6 +2046,97 @@ M4b 登记的"push 的形有证据、内容没有"到此关闭。全屏路径**�
   本片只填了 push。
 * 前一版（§11.16v）留下的三条口子（`TargetFacts::shadow` 生产侧、`params.y/z` 语义、场景桥 ABI 债）不变。
 
+### 11.16x M5e（2026-09-22）：目标生命周期（计划驱动的换尺寸、租约两向拒绝、停车 vs 计数空闲）
+
+M5a–M5d 把"一个目标能画出什么"填完了，这一片填的是"**目标的尺寸和寿命**"，也就是
+`core::planTarget`（M0 就落地、至今只有 `BackendCoreTest` 的表在照它）终于在真设备
+上有了执行者。四件事：
+
+1. **`OffscreenTarget` 的字段拆成"形状的"和"尺寸的"两块**（`api/OffscreenTarget`）
+   ：`Data` 里新增 `struct Attachments`（颜色附件 + 视图 + 回读缓冲/映射、深度图
+   像/视图/回读、帧缓冲、`render_graph`），并且**只由参数化函数构建**
+   （`buildAttachments(width, height, out)`）——纯"按给定尺寸造对象"的一步，**不写
+   本对象任何字段**。`create` 先建渲染通道与其首个变体（形状的），再调它，成功了才
+   `std::move` 进 `attachments`，**借用计数也改成成功之后才 +1**（原来在 `return
+   nullptr` 之前就加，创建失败会漏一个借用者）。
+   尺寸之所以是**参数**而不是 `width()/height()`：换尺寸必须**先造好替代品**才能碰
+   旧的，而造替代品的那一瞬间，目标仍在服务旧尺寸。
+2. **`resize()` 让计划说话**（`ResizeInPlace` / `Rebuild` 都走同一条替换臂；`None`
+   与 `Repair` 直接返回、一个 GPU 对象都不碰）：`TargetInstance` 由目标自己的事实填
+   （`desc`、`generation`、`built = render_graph != nullptr`），`wanted` 的**形状就
+   是目标自己的形状**——格式在 `create` 时定死，换形状是另一个目标而不是"改尺寸"。
+   **替换的都是"描述里含尺寸"的对象**（图像/视图/回读缓冲与节点/帧缓冲/它周围的
+   `render_graph`），**保留渲染通道、它的 LOAD/CLEAR 变体与所有按它们编译的管线**
+   ——尺寸不进渲染通道兼容性（`core::TargetShape` 里没有 extent，§11.16 的键表早已
+   钉死）。
+3. **旧的一批对象不是"扔掉"，是"停车"**：`resize` 把它们交给 `retirement`
+   （`RetirementQueue::retire(timeline, …)`），到退役点才释放。闸门关着（调用方从
+   来没学到在飞槽数）时 `retire()` **返回 false 而不是猜窗口**——那时释放必须退回
+   **计数过的 device idle**（`noteDeviceWait()` + `vkDeviceWaitIdle`），计数就是"帧
+   路径不停设备"这条不变量的判据（§11.17 的 D5）。
+   实现细节上有一处必须做对：`retire()` 的 `ReleaseFn` 是**按值**收的，拒绝时它直
+   接把回调丢掉——**回调若按值持有那批对象，就会在 `retire()` 内部、没有 idle 的情
+   况下把它们析构掉**（而提交过的命令缓冲可能还命名着它们）。所以这里用一个
+   `shared_ptr` "托管"捕获：队列丢掉回调什么也不会析构，本地还有一份，退到 idle 那
+   条路才真正释放。
+4. **租约两向都拒绝换尺寸**（一个被借的深度图只有一个所有者，而**借用者的帧缓冲命
+   名的是出借者的图像**）：
+   * 出借方（`borrowers > 0`）：借用者的帧缓冲命名着本片要换掉的那张图，而本对象
+     不知道它们是谁 ⇒ 调用方先重建借用者（参考实现读作 "the borrow points at
+     another image"）；
+   * 借用方（`depth_source != nullptr`）：新帧缓冲的深度附件会是**出借者的图、出借
+     者的尺寸**，而帧缓冲附件必须**不小于**帧缓冲本身
+     （`VUID-VkFramebufferCreateInfo-pAttachments-00861`）⇒ 尺寸不是借用方能挪的，
+     调用方先换出借方、再按新尺寸重建这个目标。
+   `refused` 两向都置位，**不替换、不停车**；借用者析构（计数递减）后同一条调用立
+   刻替换成功。
+5. **换尺寸后目标回到"从未被写"**：`written = false` + `generation += 1`。前者是执
+   行者用 `bootstrap = !written()` 推"谁清屏"的那个事实（新图像是 UNDEFINED，LOAD
+   没有意义）；后者是调用方"我编的那一帧命名的图像没了"的判据。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/OffscreenTarget.hpp` | `Attachments`（含 `Color`）+ `buildAttachments(width, height, out)`（文档写明"为什么尺寸是参数"）+ `generation()` + `Resized`/`resize()`（"换什么/留什么/拒绝什么/之后算作什么"四段契约）；`resize` 的 `@return` 写明"想要但没做到 = `replaced == false`：`refused` 是租约，`ResizeInPlace` 而没 `refused` 是构建失败" |
+| `api/OffscreenTarget.cpp` | `Data` 拆字段（+`attachments`/`clear_policy`/`generation`）；`create` 改成"形状先、尺寸后、成功才接手、计数后加"；`resize` 实现（计划 → 租约检查 → 先造后换 → 停车/计数 idle → 换代） |
+| `tests/test_vsg/OffscreenTargetTest.cpp` | +5 真设备用例：换尺寸后旧集**仍在**（引用计数 + `pending()`/`released()` 两条证据）且新尺寸**真渲染**（像素 + `probe` 的宽高）；同尺寸/0 尺寸 ⇒ 什么都不换且仍渲染；无停车窗口 ⇒ `deviceWaits()` +1 且对象真的释放；带深度目标换尺寸后**深度回读按新尺寸重建**（`depthProbe` 的宽高 + 清屏值不变）；租约两向拒绝 + 借用者死后同一调用成功 + 出借方还能再借出新图 |
+
+| 规则 | 结论 |
+| --- | --- |
+| **租约是唯一的拒绝原因** | 变异"租约不再拒绝"⇒ 租约用例红（`refused` 为假、尺寸被换掉） |
+| **停车 ≠ 丢引用** | 变异"报告 parked 却直接丢掉这批对象"⇒ `pending()` 与引用计数两条断言红（对象真的没了，而报告说它停着） |
+| **`written` 必须复位** | 变异"不复位"⇒ 用例红，并且**验证层与像素同时报**（第二趟不宣布清屏 ⇒ 被当作 LOAD 而不是首写者） |
+| **换代要真的换** | 变异"不 bump generation"⇒ 红；变异"换了对象却不采纳新尺寸"⇒ `width()/height()` 与探针红 |
+| **退到 idle 要计数** | 变异"不计数"⇒ `deviceWaits()` 断言红（这条判据就是计数，不是"跑起来没崩"） |
+
+| 变异反证（全部实测） | 结果 |
+| --- | --- |
+| P1：报告 parked、实际直接丢 | 2 条红（`pending()` + 旧图引用计数） |
+| P2：`written` 不复位 | 1 条红（`written()` 断言 + 随后的验证层报错 + 像素不符） |
+| P3：不 bump `generation` | 2 条红（`Resized::generation` 与 `generation()`） |
+| P4：忽略租约 | 2 条红（两向 `refused`/`replaced`） |
+| P5：不采纳新尺寸 | 2 条红（`width()/height()`） |
+| P6：退回 idle 不计数 | 1 条红（`deviceWaits()`） |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **552 用例 / 87 套件全绿**（+5 用例） |
+| 门禁 | 插件目标 `ninja` 零 error；强制验证层整仓 **0 VUID**；再加同步验证仍 **0 SYNC-HAZARD**；hygiene 0 / 814 文件；`check_diagnostic_formats.py` 0 / 39；`check_doc_symbols.py` 通过 |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **`resize` 现在没有执行者**：调用它的是将来的帧执行者/宿主窗口尺寸权威（`planTarget`
+  的生产侧在 `FrameCompiler`，`TargetFacts::current` 目前由用例自己填）。本片给全了
+  "换尺寸"这一半的语义与证据，但"谁在什么时候请求换尺寸"仍属于执行者那片；`Rebuild`
+  臂（形状真的变了）在 `resize` 里与 `ResizeInPlace` 同路处理，真正需要重建内容/全屏
+  槽与管线的那条路还没接。
+* **`attachments_invalidated` 没有生产者**：`TargetInstance` 有这个事实、`planTarget`
+  也照它答 `Repair(Bootstrap)`，但本后端还没有"失效但还在"的状态；留给会话级重建那片。
+* **租约的"重建借用者"没有 API**：`resize` 说"调用方先重建借用者"，但"把借用者按新
+  出借方重建"目前只能靠调用方先析构再 `create`（本片用例正是这么做的）。若将来借用成
+  为常规用法，值得给一条显式的"重新出借"路径而不是让调用方拼。
+* 前一版（§11.16w）留下的四条口子（`projparms` 无读者、全屏丢弃报告、`binding 5/6`
+  的 ABI 债、`TargetFacts::shadow` 生产侧等）不变。
+
 ### 11.17 下一步
 
 | 项 | 内容 |
@@ -2088,6 +2179,7 @@ M4b 登记的"push 的形有证据、内容没有"到此关闭。全屏路径**�
 | ~~M5c-1~~ | **已完成（2026-09-22）**：前向光照块——`api/LightBlock`（`VineLightsBlock` 112B + 世界→视图换算 + 归一化 + 三槽规则 + 补光不计数 + 无相机 ⇒ 空块）；`BlockStorage` 第 4 区域 + `writeLights`；`BlockDescriptors::kLightsBinding = 3` + 四个动态偏移；`ContentPass` 每绘制调用写一块 + "每 episode 一次"的丢弃报告（`ReportOnce`）；6 条无设备用例 + 1 条真设备四带像素用例（带 0 朝向观察者的太阳 / 带 1 反向 / 带 2-3 装不下的灯 = 补光 + 一条报告）+ 四条变异反证（其中 M1 实测"轴对齐相机看不出缺旋转"⇒ 判据是算术用例）（§11.16u） |
 | ~~M5c-2~~ | **已完成（2026-09-22）**：阴影块——`ShadowFacts`（谁的 map + 生产者矩阵）进 `TargetFacts`/`CompiledInput`/`CompiledPass`，`FrameCompiler::resolveShadow` 三个事实先来先用；`LightRef` += 身份/投影开关/bias；`api/ShadowBlock::packShadowBlock`（身份匹配、启用/投影/类型/槽检查、`light_vp * inverse(view)` 列主序、`params` 四元组）；`BlockStorage` 第 5 区域 + `kShadowBinding = 4`；`directionalSlotOf`（与灯块打包同一次遍历）；**按实测删除 `PipelineKey::shadow_bound`**（本后端 ABI 里 map 走采样输入、块恒在块集、开关是运行期值 ⇒ 它只会白拆管线）；4 条无设备 + 1 条真设备四带像素用例 + 7 条变异反证（§11.16v） |
 | ~~M5d~~ | **已完成（2026-09-22）**：全屏路径的 128B push——`LightPushBlock`（128B，`projparms` 保留为零）+ `packLightPushBlock`（复用 `packLightBlock` 的遍历、只换布局）；`recordScreenDraw` 按每次调用推；`createScreen` 建 push-only 布局（"只读 push"的全屏 pass 不再被拒）；2 条用例（无设备 + 真设备三视口像素）+ 4 条变异反证（其中"push 全零"与"发错阶段"分别是内容缺失与静默失败的实证）（§11.16w） |
+| ~~M5e~~ | **已完成（2026-09-22）**：目标生命周期（计划驱动的换尺寸）——`OffscreenTarget::Attachments`（尺寸相关的一整批对象）+ `buildAttachments(width, height, out)`（纯构建、不写自身）；`create` 成功后才接手并计数借用者；`resize(w, h, timeline, retirement)` 按 `core::planTarget` 决定、**保留渲染通道与管线**、旧集经 `RetirementQueue` 停车（闸门关着时退回**计数过的** device idle）；租约两向拒绝；换后 `written=false` + `generation+1`；5 条真设备用例（含深度回读按新尺寸重建、引用计数证明"停着而不是扔了"）+ 6 条变异反证（§11.16x） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
