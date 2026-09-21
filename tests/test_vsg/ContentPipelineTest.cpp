@@ -271,7 +271,12 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
 
     EXPECT_EQ(layer->sampledSetLayout(0, 0U), nullptr)
         << "a full-screen draw without a sampled input has no set at all (its picture IS the input)";
-    EXPECT_EQ(layer->layoutFor(0, 0U), nullptr) << "and therefore no pipeline: see the class note";
+    // ... and it still has a PIPELINE: a screen program that reads nothing but its push block (a lighting pass
+    // that shades from the light block alone) is a legal call, and without a layout the layer could not compile
+    // its pipeline and every such draw was refused as "its pipeline could not be built" - which is a pipeline
+    // nobody ever asked for rather than one that failed.
+    EXPECT_NE(layer->layoutFor(0, 0U), nullptr) << "the push-only layout a pass with no inputs binds";
+    EXPECT_TRUE(layer->layoutFor(0, 0U)->setLayouts.empty()) << "no sets at all: the push is the whole interface";
 
     const auto samplers = layer->sampledSetLayout(1, 0U);
     ASSERT_NE(samplers, nullptr);

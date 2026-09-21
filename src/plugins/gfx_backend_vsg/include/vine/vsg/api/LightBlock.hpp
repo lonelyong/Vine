@@ -55,6 +55,37 @@ static_assert(alignof(VineLightsBlock) == 16U, "VineLightsBlock must stay std140
 /** @brief How many directional lights the block holds (a fourth one is not lit at all). */
 inline constexpr std::size_t kLightDirectionalSlots = 3U;
 
+/** @brief The full-screen path's light representation: the same lights, in the 128-byte PUSH range.
+ *
+ * WHY A SECOND SHAPE AT ALL. The full-screen path needs no view matrices (its vertex stage generates the triangle),
+ * so its whole push budget is free - and the engine's deferred lighting program spends it on the lights, which is
+ * why a full-screen pass has no light UBO to bind. The values are the SAME ones the forward block carries (one
+ * view-space ambient plus three directionals: `packLightPushBlock` is `packLightBlock` in this layout), because the
+ * SDK's two programs light the same scene; only the transport differs.
+ *
+ * `projparms` is RESERVED AND STAYS ZERO: it is where a program that reconstructs a view position from a depth
+ * buffer would find near / far / proj[0][0] / proj[1][1], and no shipped program reads it - the engine's own
+ * lighting program samples the G-buffer's view-position attachment instead (see builtin_deferred_lighting.frag,
+ * which says so at the declaration). The reference backend filled it for a perspective camera and nothing read it,
+ * which is the "a field that promises an effect has to have one" failure this file's sibling notes keep naming;
+ * inventing a reader here would be worse than leaving the reservation visible.
+ */
+struct alignas(16) LightPushBlock
+{
+    std::array<float, 4>                ambient{};    ///< rgb + intensity (the light block's ambient slot).
+    std::array<float, 4>                projparms{};  ///< RESERVED: zeros, see the declaration.
+    std::array<std::array<float, 4>, 3> dirs{};       ///< View-space directions (w unused).
+    std::array<std::array<float, 4>, 3> cols{};       ///< rgb + intensity of the light each direction belongs to.
+};
+
+// The struct IS the shader ABI (builtin_deferred_lighting.frag's PushConstants) AND the range the pipeline declares:
+// a field added here without updating either must fail the build.
+static_assert(sizeof(LightPushBlock) == 128U, "LightPushBlock must match the 128-byte push-constant range");
+static_assert(alignof(LightPushBlock) == 16U, "LightPushBlock must stay std140 / D3D-cbuffer aligned");
+static_assert(offsetof(LightPushBlock, projparms) == 16U, "LightPushBlock std140 offset");
+static_assert(offsetof(LightPushBlock, dirs) == 32U, "LightPushBlock std140 offset");
+static_assert(offsetof(LightPushBlock, cols) == 80U, "LightPushBlock std140 offset");
+
 /**
  * @brief Gets the directional slot one announced light was packed into.
  *
@@ -83,5 +114,19 @@ std::size_t directionalSlotOf(std::span<const core::LightRef> lights, const void
  */
 std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::CameraSnapshot& camera,
                            VineLightsBlock& out) noexcept;
+
+/**
+ * @brief Packs a full-screen drawing call's lights into the push block.
+ *
+ * The values are the forward block's (see @ref packLightBlock), so the two paths light a scene identically; the
+ * reserved field stays zero.
+ *
+ * @param lights The lights the drawing call announced; empty means the backend default (an ambient-lit scene).
+ * @param camera The camera announced with the same call (its view matrix holds the world -> view rotation).
+ * @param out    Receives the block; every field is written (the reservation included).
+ * @return How many of @p lights the block represents, not counting the ambient fill.
+ */
+std::size_t packLightPushBlock(std::span<const core::LightRef> lights, const core::CameraSnapshot& camera,
+                               LightPushBlock& out) noexcept;
 
 V_VSG_NS_END

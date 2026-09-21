@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstring>
 #include <string>
 
 #include <vsg/core/Array.h>
@@ -70,8 +71,9 @@ std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
     return total;
 }
 
-/// @brief The full-screen ABI's push block: the layout the SDK's screen programs declare.
-constexpr std::size_t kFullscreenPushBytes = 128U;
+/// @brief The full-screen ABI's push range: the layout the SDK's screen programs declare (see LightPushBlock).
+constexpr std::size_t kFullscreenPushBytes = sizeof(vine::vsg::LightPushBlock);
+static_assert(kFullscreenPushBytes == 128U, "the full-screen push range is the ABI's 128 bytes");
 
 }  // namespace
 
@@ -376,8 +378,17 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     full_screen.key.sampled_depth_count   = sampledDepthCount(pass);
     full_screen.dynamic                   = draw.dynamic;
     full_screen.samplers                  = samples;
-    full_screen.push = ::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0U,
-                                                    ::vsg::ubyteArray::create(kFullscreenPushBytes));
+    // The push the SDK's full-screen programs declare: the lights the call announced, packed into the 128-byte
+    // range (see LightPushBlock). An empty list leaves the ambient fill, so a full-screen pass with no lights still
+    // shades its albedo instead of rendering black. The count of represented lights is deliberately NOT reported
+    // here: the drop report is the content path's (the reference behaviour), and a full-screen call packs what fits
+    // and says nothing.
+    vine::vsg::LightPushBlock push_block;
+    (void)packLightPushBlock(draw.lights, draw.camera, push_block);
+    ::vsg::ref_ptr<::vsg::ubyteArray> push_bytes =
+        ::vsg::ubyteArray::create(static_cast<std::uint32_t>(sizeof(push_block)));
+    std::memcpy(push_bytes->data(), &push_block, sizeof(push_block));
+    full_screen.push = ::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0U, push_bytes);
     full_screen.viewport = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
                                          static_cast<float>(draw.viewport.width),
                                          static_cast<float>(draw.viewport.height) };

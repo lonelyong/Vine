@@ -260,6 +260,16 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const Shaders& sh
     }
     layer->d->push_ranges = push_ranges;
 
+    // The layout a pass with NO declared inputs binds. `layoutFor(0, 0)` answers with this one, and a screen
+    // program that reads nothing but its push block (a lighting pass that reconstructs positions from a depth
+    // attachment it samples as an INPUT, say) needs it: without it the layer would have no layout to hand the
+    // pipeline and every such draw would be refused as "its pipeline could not be built" - which is a pipeline
+    // that was never asked for, not one that failed.
+    layer->d->layout = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{}, push_ranges);
+    if (layer->d->layout == nullptr) {
+        return nullptr;
+    }
+
     // No blocks and no vertex streams: every set of this layer is the sampled one, and the triangle's vertices
     // are generated. The create-info's states are the LEGACY full-screen shape (the previous implementation's
     // overlay pipelines): no culling and no depth test, because a full-screen triangle's winding is the

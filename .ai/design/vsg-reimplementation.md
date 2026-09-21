@@ -3,11 +3,10 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M5c-2（阴影块：map 靠目标"认领"自己的灯，块按每绘制调用打包 `light_vp * inverse(view)`，开关由
-> `castShadow`/槽号/矩阵三道事实把关；顺带按实测删掉 `PipelineKey::shadow_bound`）**：`test_vsg` 545 用例 /
-> 87 套件全绿（含真设备像素用例——一帧四带，四种"该不该有影"的理由各自对照一条像素），强制验证层 + 同步验证下
-> **0 VUID / 0 SYNC-HAZARD**，`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验
-> （全树 0 findings / 814 文件）。
+> **M5d（全屏路径的 128B push：与前向 UBO 同一份灯打包的另一种布局，`projparms` 保留位按 SDK 声明留零；
+> 顺带修掉"只读 push 的全屏 pass 建不出管线"这个洞）**：`test_vsg` 547 用例 / 87 套件全绿（含真设备像素用例
+> ——一趟三个全屏调用、三个视口，各自对照一条像素），强制验证层 + 同步验证下 **0 VUID / 0 SYNC-HAZARD**，
+> `core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 814 文件）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -1523,7 +1522,7 @@ pass 声明的第一个输入（M3d-3b-8 那条采样线的另一个消费者）
 | **全屏调用不测深度是它的定义，不是优化** | 正典三角形在 z = 0.0；窗口的深度清 0.0 且比较是 `GREATER` ⇒ 测了就整块消失。变异 P2（改成继承 pass 的策略）在**有深度附件的目标上**让"矩形内是源的颜色"直接变红（实测得到目标清屏色 (0,0,191)） |
 | **集合的索引是 ABI，绑错一层就崩** | 变异 P1（全屏采样集绑到 set 1）：4 条 VUID（`vkCmdBindDescriptorSets-firstSet-00360`、`vkCmdDraw-None-08600`）+ **段错误**——全屏管线布局只有 set 0，绑到 1 的集合既越界又不被绘制看见 |
 | **一趟 pass、两个 kind、一份输入** | 采样集按 kind 各建一份，但"输入是 pass 的"这条没变：注册表还是同一个，`input_binds()` 仍是每 pass 一次。两种 kind 混在一趟 pass 里在计划与本层都合法（内容命令走自己的三张表，全屏调用走半片） |
-| **push 的"形"有证据、"内容"没有** | 形：设备无关用例钉住节点（片元阶段 + 128 字节）与它排在管线绑定之后；内容：**登记**为光照相位的活（本片的程序不读它）。想用"读到零值"做反证不可靠（未定义的 push 内存常常也读成零），所以不假装有反证 |
+| **push 的"形"有证据、"内容"没有** | 形：设备无关用例钉住节点（片元阶段 + 128 字节）与它排在管线绑定之后；内容：**登记**为光照相位的活（本片的程序不读它）。想用"读到零值"做反证不可靠（未定义的 push 内存常常也读成零），所以不假装有反证。**已关，§11.16w**（M5d）：内容落地（`LightPushBlock` + 每次调用推），并且**正向**断言了"三带各自的颜色 + 全零变异三条带全黑" |
 | **相机不再被本层使用，但契约仍然要它** | 全屏 ABI 的采样器在 set 0、块一个不绑，所以重写版的全屏路径**不读视图块**；SDK 的 `ScreenPass` 在没有相机时**根本不会问后端**（wiring 期就报），所以"没有视图就画不出来"这条不在这里重造 |
 
 **本片留下的口子（登记）**：**窗口合成**（一趟窗口 pass 里叠一块全屏覆盖层）与 §11.16o 登记的两条口子
@@ -1984,6 +1983,69 @@ map 走**采样输入**（`sampled_depth_count` 已经是键的一半）、阴�
 * **场景桥的 ABI 债仍在**（§11.16u 登记）：SDK 自带前向程序的绑定与本后端 set 0 布局不同，接进来时要统一。
 * 前一版（§11.16u）留下的 `TargetFacts::shadow` 生产侧、`params.y/z` 语义两条口子中，前一条已在上方登记。
 
+### 11.16w M5d（2026-09-22）：全屏路径的 128B push（光照的第二种表示，真设备像素）
+
+M4b 登记的"push 的形有证据、内容没有"到此关闭。全屏路径**不需要视图矩阵**（顶点阶段是
+`gl_VertexIndex` 生成的正典三角形），所以它把整个 128B push 预算花在光照上——同一个场景的两条路径
+因此有两种表示（前向 UBO / 全屏 push），值必须一模一样。三件事：
+
+1. **push 是同一份打包的另一种布局**（`api/LightBlock` 的 `LightPushBlock` + `packLightPushBlock`）：
+   实现**调用** `packLightBlock`（同一个遍历、同一套规则），再把三个字段搬进 push 的布局——
+   两次遍历就是"同一个场景两条路径照出不同亮度"的入口。128B 的四个槽位：`ambient` / **`projparms`** /
+   `dirs[3]` / `cols[3]`，静态断言钉死（含三个偏移）。
+2. **`projparms` 是保留位，且保持全零**：它是"从深度缓冲重建视图位置"的程序要的
+   near / far / proj[0][0] / proj[1][1]，而**随 SDK 发布的程序都不读它**（引擎自己的光照程序采样
+   G-buffer 的视图位置附件，`builtin_deferred_lighting.frag` 在声明处就写明"this program does not
+   read it"）。参考实现为透视相机填了它、没人读——"承诺了效果却没有效果"正是本项目一直在点名的
+   失败家族；这一片**不发明读者**，把保留位留成可见的保留位。
+3. **按"每次调用"推**（`api/ContentPass::recordScreenDraw`）：`packLightPushBlock(draw.lights, draw.camera, …)`
+   的 `draw` 是**这一趟全屏调用**（相机与灯都是它宣布的），空灯单 ⇒ 补光（同前向路径的规则），
+   丢弃**不上报**（丢报是内容路径的，参考实现亦然）。
+
+**顺带修掉一个真洞（本片夹具当场撞到）**：`ContentPipeline::createScreen` 从不建
+"没有输入时的 pipeline layout"，于是 `layoutFor(0,0)` 返回空 ⇒ **任何"只读 push、不声明输入"的全屏 pass
+都被拒**（"its pipeline could not be built"——那是一条从未被请求的管线，而不是失败）。修法：屏幕层也建一份
+"只有 push range、没有集合"的布局，`layoutFor(0,0)` 返回它；M4a 那条"全屏层没有布局"的断言按此更正。
+"全屏程序只读 push"是合法调用（本片的设备用例就是这样），不是边角。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/LightBlock.hpp` / `.cpp` | `LightPushBlock`（128B：ambient / **projparms 保留** / dirs[3] / cols[3]，静态断言 + 偏移）+ `packLightPushBlock`（**复用** `packLightBlock` 的遍历，只换布局） |
+| `api/ContentPass.cpp` | `recordScreenDraw` 的 push 从"128 个零字节"改成打包后的灯；`kFullscreenPushBytes = sizeof(LightPushBlock)`（+ 静态断言 128） |
+| `api/ContentPipeline.cpp` | `createScreen` 建"push-only"布局（无集合）；`layoutFor(0,0)` 不再返回空 |
+| `tests/test_vsg/LightBlockTest.cpp` | +2 用例：无设备（push 与 UBO 逐字段一致、`projparms` 全零、三个偏移、无相机 ⇒ 空 push、空灯单 ⇒ 补光）+ 真设备像素（**一趟三个全屏调用、三个视口**：带 0 灯朝观察者 = 0.5/0.1/0.1；带 1 同灯反向 = 只有 ambient；带 2 不宣布 = 补光 0.15；且 `ChannelIgnored` 计数为 0——全屏路径不上报丢弃） |
+| `tests/test_vsg/ContentPipelineTest.cpp` | M4a 那条"全屏层 `layoutFor(0,0)` 为空"的断言更正为"返回 push-only 布局、集合为空" |
+
+| 规则 | 结论 |
+| --- | --- |
+| **两种表示，一份打包** | 变异 P1（把 UBO 的字节直接塞进 push，两个布局混用）⇒ 无设备用例红 + 设备用例带 0 从 `(128,26,26)` 变 `(26,26,26)`：方向/颜色整体错位，太阳的项落进了保留位 |
+| **内容真的有到** | 变异 P2（push 保持全零，即 M4b 的形态）⇒ 三条带全 `(0,0,0)`（未定义 push 内存"常常也读成零"，所以**反向**断言才是有用的方向——本条正是"M4b 的形有证据、内容没有"的实证） |
+| **按调用推** | 变异 P3（整趟 pass 只推第一调用的灯）⇒ 带 1/2 变成带 0 的颜色 `(128,26,26)` |
+| **阶段是 ABI 的一半** | 变异 P4（push 发到顶点阶段）⇒ **0 VUID**、带 1/2 仍显示带 0 的颜色：片元阶段从没读到新 push，静默失败——正是"阶段写错看不出"的实测 |
+
+| 变异反证（全部实测） | 结果 |
+| --- | --- |
+| P1：push 用 UBO 的布局 | 2 条红（无设备 + 设备带 0 错位） |
+| P2：push 全零 | 1 条红（三条带全黑） |
+| P3：push 按 pass 推 | 1 条红（带 1/2 用带 0 的灯） |
+| P4：push 发到顶点阶段 | 1 条红（带 1/2 仍是带 0 的颜色；**0 VUID**，静默） |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **547 用例 / 87 套件全绿**（+2 用例） |
+| 门禁 | 插件目标与全仓 `ninja` 零 error；强制验证层整仓 **0 VUID**；再加同步验证仍 **0 SYNC-HAZARD**；hygiene 0 / 814 文件；`check_diagnostic_formats.py` 0 / 39；`check_doc_symbols.py` 通过 |
+
+**本片留下的口子（登记，不假装解决）**：
+
+* **`projparms` 没有读者**：保留位按 SDK 的声明保持零；将来若出现"从深度重建视图位置"的程序，
+  它的 near/far/proj00/proj11 必须**来自相机自己的投影矩阵**（`CameraSnapshot::projection` 的两个对角 +
+  near/far），而不是在这里二次发明一套公式。
+* **全屏路径的丢弃报告**：按参考实现，全屏调用不报（只有内容路径报）；若将来全屏侧也要报，
+  `Scope::lights_dropped` 是现成的 episode 状态，但语义要先钉（"谁宣布的灯"在两个路径里是同一条契约）。
+* **`shadowedDeferredLightProgram` 的 map/块（binding 5/6）仍未接**：那属于场景桥的 ABI 债（§11.16u），
+  本片只填了 push。
+* 前一版（§11.16v）留下的三条口子（`TargetFacts::shadow` 生产侧、`params.y/z` 语义、场景桥 ABI 债）不变。
+
 ### 11.17 下一步
 
 | 项 | 内容 |
@@ -2025,6 +2087,7 @@ map 走**采样输入**（`sampled_depth_count` 已经是键的一半）、阴�
 | ~~M5b~~ | **已完成（2026-09-22）**：输入表带上深度半边（"阴影脊柱"）——`CompiledInput::depth_sampleable` 由 `core::depthPlan` 解析（采样者与被采样者同一个答案）；`core::depthFinalLayout` 给"纯深度 + 可采样"第三种收尾布局（`ShaderReadOnly`），`loadOpVariantOf` 的深度起始布局改成 `depth_steady`（借用者命名的是出借者的布局）；`PipelineKey::sampled_depth_count` + `SampledKey{colors, depths}` + NEAREST 深度采样器；深度捕获屏障按 `depthSteadyLayout()` 进/出（原来写死的布局是 `VUID-VkImageMemoryBarrier-oldLayout-01197` 的谎报，还会让采样读到全 0）；真设备用例（探针 0.5/0.0 + 像素灰/黑/清屏色）+ 无设备用例两条 + 四条变异反证（§11.16t） |
 | ~~M5c-1~~ | **已完成（2026-09-22）**：前向光照块——`api/LightBlock`（`VineLightsBlock` 112B + 世界→视图换算 + 归一化 + 三槽规则 + 补光不计数 + 无相机 ⇒ 空块）；`BlockStorage` 第 4 区域 + `writeLights`；`BlockDescriptors::kLightsBinding = 3` + 四个动态偏移；`ContentPass` 每绘制调用写一块 + "每 episode 一次"的丢弃报告（`ReportOnce`）；6 条无设备用例 + 1 条真设备四带像素用例（带 0 朝向观察者的太阳 / 带 1 反向 / 带 2-3 装不下的灯 = 补光 + 一条报告）+ 四条变异反证（其中 M1 实测"轴对齐相机看不出缺旋转"⇒ 判据是算术用例）（§11.16u） |
 | ~~M5c-2~~ | **已完成（2026-09-22）**：阴影块——`ShadowFacts`（谁的 map + 生产者矩阵）进 `TargetFacts`/`CompiledInput`/`CompiledPass`，`FrameCompiler::resolveShadow` 三个事实先来先用；`LightRef` += 身份/投影开关/bias；`api/ShadowBlock::packShadowBlock`（身份匹配、启用/投影/类型/槽检查、`light_vp * inverse(view)` 列主序、`params` 四元组）；`BlockStorage` 第 5 区域 + `kShadowBinding = 4`；`directionalSlotOf`（与灯块打包同一次遍历）；**按实测删除 `PipelineKey::shadow_bound`**（本后端 ABI 里 map 走采样输入、块恒在块集、开关是运行期值 ⇒ 它只会白拆管线）；4 条无设备 + 1 条真设备四带像素用例 + 7 条变异反证（§11.16v） |
+| ~~M5d~~ | **已完成（2026-09-22）**：全屏路径的 128B push——`LightPushBlock`（128B，`projparms` 保留为零）+ `packLightPushBlock`（复用 `packLightBlock` 的遍历、只换布局）；`recordScreenDraw` 按每次调用推；`createScreen` 建 push-only 布局（"只读 push"的全屏 pass 不再被拒）；2 条用例（无设备 + 真设备三视口像素）+ 4 条变异反证（其中"push 全零"与"发错阶段"分别是内容缺失与静默失败的实证）（§11.16w） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。

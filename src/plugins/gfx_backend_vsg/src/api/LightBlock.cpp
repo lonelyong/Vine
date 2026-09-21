@@ -143,4 +143,18 @@ std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::C
     return packed + (has_ambient ? 1U : 0U);
 }
 
+std::size_t packLightPushBlock(std::span<const core::LightRef> lights, const core::CameraSnapshot& camera,
+                               LightPushBlock& out) noexcept
+{
+    // The lights themselves are packed ONCE (see packLightBlock): the push is another layout for the same values,
+    // and a second walk would be a second chance for the two paths to light a scene differently.
+    VineLightsBlock values;
+    const std::size_t represented = packLightBlock(lights, camera, values);
+    out = LightPushBlock{};
+    out.ambient = values.ambient;
+    out.dirs    = values.dirs;
+    out.cols    = values.cols;
+    return represented;
+}
+
 V_VSG_NS_END

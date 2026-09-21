@@ -75,6 +75,7 @@ using vine::vsg::BlockStorage;
 using vine::vsg::buildGeometryFacts;
 using vine::vsg::buildMaterialFacts;
 using vine::vsg::buildProgramFacts;
+using vine::vsg::buildScreenProgramFacts;
 using vine::vsg::ContentDraw;
 using vine::vsg::ContentFacts;
 using vine::vsg::ContentPass;
@@ -84,13 +85,16 @@ using vine::vsg::GeometryFacts;
 using vine::vsg::kLightDirectionalSlots;
 using vine::vsg::MaterialFacts;
 using vine::vsg::OffscreenTarget;
+using vine::vsg::LightPushBlock;
 using vine::vsg::packLightBlock;
+using vine::vsg::packLightPushBlock;
 using vine::vsg::PassContent;
 using vine::vsg::ProgramFacts;
 using vine::vsg::StreamUploads;
 using vine::vsg::VineLightsBlock;
 using vine::vsg::VsgExecutor;
 using vine::vsg::core::CameraSnapshot;
+using vine::vsg::core::CompiledDraw;
 using vine::vsg::core::ClearPolicy;
 using vine::vsg::core::CompiledFrame;
 using vine::vsg::core::Diagnostics;
@@ -598,4 +602,241 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     EXPECT_TRUE(background.g > 150 && background.r < 40 && background.b < 40)
         << "outside the four triangles the pass keeps its clear, got (" << static_cast<int>(background.r) << ", "
         << static_cast<int>(background.g) << ", " << static_cast<int>(background.b) << ")";
+}
+
+TEST(LightBlockTest, ThePushBlockIsTheSameLightsInThePushesOwnLayout)
+{
+    // The full-screen path spends its whole 128-byte push range on the lights (it needs no view matrices, so unlike
+    // the forward path it has nothing else to spend it on), and the values have to be the ones the forward UBO
+    // carries: the SDK's two lighting programs light the same scene, so a second walk with different rules would
+    // shade a scene differently depending on which pass draws it.
+    const CameraSnapshot camera = cameraAtPlusZ();
+    ASSERT_TRUE(camera.present);
+
+    LightRef      ambient = makeLight(LightType::Ambient, 0.2, 0.3, 0.4, 0.5F);
+    LightRef      sun     = makeLight(LightType::Directional, 0.8, 0.4, 0.2, 2.0F);
+    sun.has_direction     = true;
+    sun.direction         = vine::math::Vec3d(0.0, 0.0, 1.0);
+    const LightRef announced[]{ ambient, sun };
+
+    LightPushBlock    push;
+    const std::size_t represented = packLightPushBlock(announced, camera, push);
+
+    VineLightsBlock ubo;
+    ASSERT_EQ(packLightBlock(announced, camera, ubo), represented) << "one packing, two layouts";
+    EXPECT_EQ(represented, 2U);
+    EXPECT_EQ(push.ambient, ubo.ambient);
+    for (std::size_t slot = 0; slot < kLightDirectionalSlots; ++slot)
+    {
+        EXPECT_EQ(push.dirs[slot], ubo.dirs[slot]) << "slot " << slot << " of the directions";
+        EXPECT_EQ(push.cols[slot], ubo.cols[slot]) << "slot " << slot << " of the colours";
+    }
+
+    // The reservation stays zero: no shipped program reads it, and a value nobody reads is a promise without an
+    // effect (see LightPushBlock's declaration).
+    for (const float value : push.projparms)
+    {
+        EXPECT_FLOAT_EQ(value, 0.0F) << "projparms is reserved and stays zero";
+    }
+
+    // The ABI itself: the size and the offsets the GLSL block declares.
+    EXPECT_EQ(sizeof(LightPushBlock), 128U);
+    EXPECT_EQ(offsetof(LightPushBlock, projparms), 16U);
+    EXPECT_EQ(offsetof(LightPushBlock, dirs), 32U);
+    EXPECT_EQ(offsetof(LightPushBlock, cols), 80U);
+
+    // Same rules as the UBO: no camera means an empty push (not the fill), an empty list means the fill.
+    LightPushBlock empty;
+    EXPECT_EQ(packLightPushBlock(announced, CameraSnapshot{}, empty), 0U);
+    for (const float value : empty.ambient)
+    {
+        EXPECT_FLOAT_EQ(value, 0.0F) << "no camera: nothing to rotate into, so nothing is pushed";
+    }
+    LightPushBlock filled;
+    EXPECT_EQ(packLightPushBlock(std::span<const LightRef>{}, camera, filled), 0U);
+    EXPECT_FLOAT_EQ(filled.ambient[0], 0.15F) << "an empty announcement keeps the scene visible";
+}
+
+TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
+{
+    // THE PICTURE. Three full-screen calls in ONE pass, each with its own viewport (a third of the target) and its
+    // own light list: a sun pointing at the viewer, the same sun reversed, and no announcement at all. The fragment
+    // stage reads the PUSH (its only input), so each band's colour is its own call's announcement:
+    //
+    //   band 0: ambient + the sun towards the viewer -> 0.5 / 0.1 / 0.1
+    //   band 1: the same light the other way         -> 0.1 / 0.1 / 0.1 (ambient alone)
+    //   band 2: nothing announced                    -> 0.15 (the fill, so the band is visible at all)
+    //
+    // A push recorded once per PASS (all three calls sharing the first announcement), a zeroed push, or one pushed
+    // to the wrong stage moves at least one band, and the destination's clear (blue) is what a band that drew
+    // nothing would show.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    constexpr float kBlue[4]{ 0.0F, 0.0F, 0.75F, 1.0F };
+    OffscreenTarget::Layout destination_layout;
+    destination_layout.width  = kSize;
+    destination_layout.height = kSize;
+    for (std::size_t index = 0; index < 4U; ++index)
+    {
+        destination_layout.clear_color[index] = kBlue[index];
+    }
+    std::unique_ptr<OffscreenTarget> destination = OffscreenTarget::create(created.device, destination_layout);
+    ASSERT_NE(destination, nullptr);
+
+    // The program: the engine's canonical full-screen vertex stage (buildScreenProgramFacts composes it) with a
+    // fragment stage that shades from the push.
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(push_constant, std140) uniform PushConstants {\n"
+            "    vec4 ambient;\n"
+            "    vec4 projparms;\n"
+            "    vec4 sun_dir[3];\n"
+            "    vec4 sun_color[3];\n"
+            "} pc;\n"
+            "layout(location = 0) out vec4 outColor;\n"
+            "void main() {\n"
+            "    vec3 n = vec3(0.0, 0.0, 1.0);\n"
+            "    vec3 lit = pc.ambient.rgb * pc.ambient.a;\n"
+            "    for (int i = 0; i < 3; ++i) {\n"
+            "        lit += pc.sun_color[i].rgb * pc.sun_color[i].a * max(dot(n, pc.sun_dir[i].xyz), 0.0);\n"
+            "    }\n"
+            "    outColor = vec4(lit, 1.0);\n"
+            "}\n"));
+        program->addStage(fragment);
+    }
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildScreenProgramFacts(*program, program_facts), FactMiss::None);
+
+    std::unique_ptr<ContentPipeline> pipelines = ContentPipeline::createScreen(program_facts.shaders);
+    ASSERT_NE(pipelines, nullptr);
+
+    // The camera every call announces: at +Z looking at the origin, so a world +Z direction is a light towards the
+    // viewer (which lights the fixed normal) and the reversed one does not.
+    Camera camera;
+    camera.setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 5.0), vine::math::Vec3d(0.0, 0.0, 0.0),
+                                 vine::math::Vec3d(0.0, 1.0, 0.0));
+
+    vine::intrusive_ptr<Light> ambient = Light::createAmbient();
+    ambient->setColor(vine::Colorf(0.1, 0.1, 0.1, 1.0));
+    vine::intrusive_ptr<Light> towards = Light::createDirectional(vine::math::Vec3d(0.0, 0.0, 1.0));
+    towards->setColor(vine::Colorf(0.4, 0.0, 0.0, 1.0));
+    vine::intrusive_ptr<Light> away = Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0));
+    away->setColor(vine::Colorf(0.4, 0.0, 0.0, 1.0));
+
+    const Light* band0_lights[]{ ambient.get(), towards.get() };
+    const Light* band1_lights[]{ ambient.get(), away.get() };
+
+    const vine::intrusive_ptr<RenderTarget> handle(new RenderTarget());
+    TargetFacts                             target_facts;
+    target_facts.target        = handle.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape  = destination->shape();
+    target_facts.current.desc  = target_facts.wanted;
+    target_facts.current.built = destination->written();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(handle.get());
+    const std::uint32_t band_width = kSize / 3U;  // 21 / 21 / 22: the last band takes the remainder
+    recorder.setViewport(0, 0, static_cast<int>(band_width), static_cast<int>(kSize));
+    recorder.setLights(std::span<const Light* const>(band0_lights, 2U));
+    recorder.drawScreenProgram(handle.get(), program.get(), &camera);
+    recorder.setViewport(static_cast<int>(band_width), 0, static_cast<int>(band_width), static_cast<int>(kSize));
+    recorder.setLights(std::span<const Light* const>(band1_lights, 2U));
+    recorder.drawScreenProgram(handle.get(), program.get(), &camera);
+    recorder.setViewport(static_cast<int>(band_width * 2U), 0, static_cast<int>(kSize - band_width * 2U),
+                         static_cast<int>(kSize));
+    recorder.setLights(std::span<const Light* const>{});  // the backend default: the fill
+    recorder.drawScreenProgram(handle.get(), program.get(), &camera);
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws.size(), 3U);
+    EXPECT_EQ(frame.passes[0].draws[0].lights.size(), 2U) << "each call carries its own announcement";
+    EXPECT_EQ(frame.passes[0].draws[2].lights.size(), 0U);
+
+    std::unique_ptr<BlockStorage>     storage     = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(created.device, *storage);
+    ASSERT_NE(descriptors, nullptr);
+
+    storage->beginFrame();
+    VariantPool   pool;
+    StreamUploads uploads;
+    const auto    entry_points =
+        vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    ContentDraw   draws(*pipelines, pool, entry_points);
+    StateRegistry registry(pool);
+
+    const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
+        DrawKind::Screen, program_facts.program, program_facts.revision, {}, pipelines.get(), &draws } };
+    ContentPass::Scope              scope;
+    scope.entries     = halves;
+    scope.registry    = &registry;
+    scope.storage     = storage.get();
+    scope.descriptors = descriptors.get();
+    scope.uploads     = &uploads;
+    ContentPass content(scope, diagnostics);
+
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>  node;
+    const ContentFacts           facts;  // a screen call reads no tables: its half is looked up by program identity
+    ASSERT_TRUE(content.record(frame.passes[0], facts, destination->shape().compatibility(), {}, view_block, node));
+    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ChannelIgnored), 0U)
+        << "the drop report belongs to the content path: a full-screen call packs what fits and says nothing";
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(handle.get(), destination.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packets[]{ PassContent{ 1U, node } };
+    ASSERT_TRUE(executor.record(frame, command_graph, packets));
+    EXPECT_EQ(executor.skipped(), 0U);
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const auto near = [](std::uint8_t byte, double value) {
+        return std::abs(static_cast<double>(byte) - 255.0 * value) <= 8.0;
+    };
+    const auto band = [&](int x) { return destination->probe().pixel(x, 32); };
+
+    const Rgba8 lit = band(8);
+    EXPECT_TRUE(near(lit.r, 0.5) && near(lit.g, 0.1) && near(lit.b, 0.1))
+        << "band 0 is the push's ambient + the sun towards the viewer, got (" << static_cast<int>(lit.r) << ", "
+        << static_cast<int>(lit.g) << ", " << static_cast<int>(lit.b) << ")";
+
+    const Rgba8 away_band = band(24);
+    EXPECT_TRUE(near(away_band.r, 0.1) && near(away_band.g, 0.1) && near(away_band.b, 0.1))
+        << "band 1 is ambient alone: the same push layout, the direction reversed, got ("
+        << static_cast<int>(away_band.r) << ", " << static_cast<int>(away_band.g) << ", "
+        << static_cast<int>(away_band.b) << ")";
+
+    const Rgba8 fill = band(54);
+    EXPECT_TRUE(near(fill.r, 0.15) && near(fill.g, 0.15) && near(fill.b, 0.15))
+        << "band 2 announced nothing and is the fill, got (" << static_cast<int>(fill.r) << ", "
+        << static_cast<int>(fill.g) << ", " << static_cast<int>(fill.b) << ")";
 }
