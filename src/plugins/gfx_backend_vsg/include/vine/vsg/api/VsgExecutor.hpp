@@ -302,12 +302,13 @@ class V_VSG_API VsgExecutor
 
     /** @brief Records one pass into the window's graph (see the file note for the one-clear rule).
      *
-     * @param pass          The compiled pass targeting the default framebuffer.
-     * @param command_graph Graph the window's graph is added to, at its first window pass' position.
-     * @param content       Already-recorded content, one entry per pass that has any.
+     * @param pass            The compiled pass targeting the default framebuffer.
+     * @param compiled_target The plan's entry for the default framebuffer (what the facts said it is).
+     * @param command_graph   Graph the window's graph is added to, at its first window pass' position.
+     * @param content         Already-recorded content, one entry per pass that has any.
      * @return true when the pass was recorded.
      */
-    [[nodiscard]] bool recordWindow(const core::CompiledPass& pass,
+    [[nodiscard]] bool recordWindow(const core::CompiledPass& pass, const core::CompiledTarget& compiled_target,
                                     const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
                                     std::span<const PassContent> content);
 

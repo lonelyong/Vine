@@ -548,6 +548,94 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     session.shutdown();
 }
 
+TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
+{
+    if (std::getenv("DISPLAY") == nullptr)
+    {
+        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
+    }
+    const auto probed_devices = probePhysicalDevices();
+    if (!probed_devices.ok || probed_devices.usableCount() == 0)
+    {
+        GTEST_SKIP() << "no device satisfies the requirements";
+    }
+
+    Diagnostics diagnostics;
+    Session     session;
+    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+
+    vine::vsg::WindowTarget* window = vine::vsg::detail::SessionContentAccess::windowTarget(session);
+    ASSERT_NE(window, nullptr);
+
+    VsgExecutor executor(diagnostics);
+    executor.setWindow(window);
+
+    FrameArena    arena{ 64 * 1024 };
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    const FrameToken token = session.beginFrame();
+    ASSERT_TRUE(token);
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[3] = 1.0F;
+
+    EXPECT_TRUE(recorder.beginFrame(token));
+    EXPECT_TRUE(recorder.beginPass(1U));
+    EXPECT_TRUE(recorder.setRenderTarget(nullptr));  // the default framebuffer is the window's
+    EXPECT_TRUE(recorder.setClearPolicy(clear));
+    EXPECT_TRUE(recorder.endPass());
+    EXPECT_TRUE(recorder.endFrame());
+
+    // What the window really is, in its own words (its surface format, its depth, and the DEVICE formats
+    // both map from - see WindowTarget::facts).
+    const std::vector<TargetFacts> truthful{ window->facts() };
+    ASSERT_EQ(truthful[0].wanted.shape.color_formats.size(), 1U);
+
+    // ...and a plan told the same COUNT of colour attachments in a different FORMAT: the count-and-depth
+    // half of the record step's check cannot see this, and a pipeline keyed on the plan's account would be
+    // compiled against a render pass the window does not have.
+    std::vector<TargetFacts> drifted = truthful;
+    drifted[0].wanted.shape.color_formats[0] = RenderTarget::ColorFormat::RGBA16F;
+    drifted[0].current.desc                  = drifted[0].wanted;  // the table lies consistently
+
+    const std::size_t skipped_before = diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped);
+
+    const CompiledFrame& wrong = compiler.compile(recorder.description(), FrameFacts{ drifted });
+    ASSERT_EQ(wrong.passes.size(), 1U);
+    EXPECT_EQ(wrong.passes[0].color_attachments, 1U) << "the count agrees: only the format drifted";
+
+    const ::vsg::ref_ptr<::vsg::CommandGraph> refused =
+        vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    ASSERT_NE(refused, nullptr);
+    EXPECT_FALSE(executor.record(wrong, refused)) << "the same count is not the same render pass";
+    EXPECT_EQ(executor.skipped(), 1U);
+    EXPECT_TRUE(executor.recorded().empty());
+    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), skipped_before + 1U);
+
+    // Told the truth, the same pass records - and the frame goes on to be presented, so what was wrong was
+    // the plan's account of the window, not the window.
+    const CompiledFrame& right = compiler.compile(recorder.description(), FrameFacts{ truthful });
+    ASSERT_EQ(right.passes.size(), 1U);
+
+    const ::vsg::ref_ptr<::vsg::CommandGraph> served =
+        vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    ASSERT_NE(served, nullptr);
+    EXPECT_TRUE(executor.record(right, served));
+    EXPECT_EQ(executor.skipped(), 0U);
+    ASSERT_EQ(executor.recorded().size(), 1U);
+    EXPECT_EQ(executor.recorded()[0], 1U);
+
+    ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ served }));
+    EXPECT_TRUE(session.commitFrame());
+    EXPECT_EQ(session.framesPresented(), 1U);
+    EXPECT_EQ(session.deviceWaits(), 0U) << "none of this is a reason to stop the device";
+
+    session.shutdown();
+}
+
 TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
 {
     if (std::getenv("DISPLAY") == nullptr)

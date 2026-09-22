@@ -69,7 +69,7 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
         // The default framebuffer (a null identity) is the window's, everything else is an off-screen target
         // this executor was told about.
         const bool recorded = compiled_target.target == nullptr
-                                  ? recordWindow(pass, command_graph, content)
+                                  ? recordWindow(pass, compiled_target, command_graph, content)
                                   : recordOffscreen(pass, compiled_target, command_graph, content);
         if (!recorded)
         {
@@ -185,11 +185,16 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::Co
     // target answers for what it really has. A disagreement means the plan describes a different target
     // than the one it resolved to - and a pipeline built against the wrong shape is a picture with no
     // relationship to what the host asked for. It is found HERE, at the one place the two meet.
+    //
+    // The FORMATS are part of it (see CompiledShape): a shape with the same count and a different format is
+    // a different render pass, and the engine's vocabulary cannot tell two of them apart - which is the
+    // drift this half of the check exists for.
     if (pass.color_attachments != target->colorAttachmentCount() ||
-        pass.depth_sampleable != target->depth().sampleable)
+        pass.depth_sampleable != target->depth().sampleable ||
+        !core::statedShapeAgrees(compiled_target.shape, target->shape()))
     {
-        reportSkipped(compiled_target, "the plan and the target disagree about its shape (colour "
-                                       "attachments or depth sampleability)");
+        reportSkipped(compiled_target, "the plan and the target disagree about its shape (colour attachments, "
+                                       "formats, samples or depth)");
         return false;
     }
 
@@ -223,7 +228,7 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::Co
     return true;
 }
 
-bool VsgExecutor::recordWindow(const core::CompiledPass& pass,
+bool VsgExecutor::recordWindow(const core::CompiledPass& pass, const core::CompiledTarget& compiled_target,
                                const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
                                std::span<const PassContent> content)
 {
@@ -235,12 +240,14 @@ bool VsgExecutor::recordWindow(const core::CompiledPass& pass,
 
     // The same plan/world agreement an off-screen target gets, asked of the window: the plan resolved the
     // default framebuffer's facts (one colour attachment, no sampleable depth), and the window answers for
-    // what the swapchain and its render pass really are.
+    // what the swapchain and its render pass really are - formats and samples included, because a window
+    // whose facts state the DEVICE's spelling has to state the swapchain's own (see WindowTarget::facts).
     if (pass.color_attachments != window_->colorAttachmentCount() ||
-        pass.depth_sampleable != window_->depthSampleable())
+        pass.depth_sampleable != window_->depthSampleable() ||
+        !core::statedShapeAgrees(compiled_target.shape, window_->shape()))
     {
-        reportWindowSkipped("the plan and the window disagree about its shape (colour attachments or depth "
-                            "sampleability)");
+        reportWindowSkipped("the plan and the window disagree about its shape (colour attachments, formats, "
+                            "samples or depth)");
         return false;
     }
 

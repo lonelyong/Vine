@@ -1,5 +1,6 @@
 #include <vine/vsg/core/FrameCompiler.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 
@@ -38,7 +39,47 @@ bool writes(const CollectedPass& pass) noexcept
     return !pass.draws.empty() || pass.has_clear;
 }
 
+/// @brief Copies the shape a target's facts state into the plan's own storage (see CompiledShape).
+CompiledShape copiedShape(FrameArena& arena, const TargetShape& shape)
+{
+    CompiledShape copy;
+    copy.color_formats = arena.copy(std::span<const vine::graphics::RenderTarget::ColorFormat>{ shape.color_formats });
+    copy.depth_format  = shape.depth_format;
+    copy.device_color_formats =
+        arena.copy(std::span<const std::uint32_t>{ shape.device_color_formats });
+    copy.device_depth_format = shape.device_depth_format;
+    copy.samples             = shape.samples;
+    copy.subpass             = shape.subpass;
+    return copy;
+}
+
 }  // namespace
+
+bool statedShapeAgrees(const CompiledShape& stated, const TargetShape& actual) noexcept
+{
+    // The engine's half is stated by every plan (a depth-only target states an empty color_formats), so it
+    // is compared as it stands.
+    if (!std::equal(stated.color_formats.begin(), stated.color_formats.end(), actual.color_formats.begin(),
+                    actual.color_formats.end()) ||
+        stated.depth_format != actual.depth_format || stated.samples != actual.samples ||
+        stated.subpass != actual.subpass)
+    {
+        return false;
+    }
+
+    // The device's half is compared only where BOTH sides state it: a shape that never learned the device's
+    // spellings says nothing about them, and "not known" must not read as "absent" (see
+    // RenderPassCompatibility). What this leaves unchecked is two unknowns - they may differ, and nothing
+    // here could tell.
+    if (!stated.device_color_formats.empty() && !actual.device_color_formats.empty() &&
+        !std::equal(stated.device_color_formats.begin(), stated.device_color_formats.end(),
+                    actual.device_color_formats.begin(), actual.device_color_formats.end()))
+    {
+        return false;
+    }
+    return stated.device_depth_format == 0U || actual.device_depth_format == 0U ||
+           stated.device_depth_format == actual.device_depth_format;
+}
 
 FrameCompiler::FrameCompiler(FrameArena& arena, Diagnostics& diagnostics, Observe& observe) noexcept
     : arena_(arena)
@@ -92,6 +133,7 @@ const CompiledFrame& FrameCompiler::compile(const FrameDescription& description,
             entry.compiled.target    = pass.target;
             entry.compiled.decision  = planTarget(found->current, found->wanted);
             entry.compiled.depth     = depthPlan(found->depth);
+            entry.compiled.shape     = copiedShape(arena_, found->wanted.shape);
             entry.width              = found->wanted.width;
             entry.height             = found->wanted.height;
             entry.color_attachments  = static_cast<std::uint32_t>(found->wanted.shape.color_formats.size());

@@ -261,16 +261,18 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     source_facts.target        = source_handle.get();
     source_facts.wanted.width  = static_cast<int>(kSize);
     source_facts.wanted.height = static_cast<int>(kSize);
-    source_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    // The facts come from the target itself (`instance()`): nothing has been written into it yet, so its
-    // first pass is its bootstrap one and must clear (see OffscreenTarget::instance).
-    source_facts.current       = source->instance();
+    // The shape is the target's own, in both spellings: a plan told only the engine's half would be
+    // describing a target nobody has (see CompiledShape). The facts come from the target itself
+    // (`instance()`): nothing has been written into it yet, so its first pass is its bootstrap one and must
+    // clear (see OffscreenTarget::instance).
+    source_facts.wanted.shape = source->shape();
+    source_facts.current      = source->instance();
 
     TargetFacts destination_facts;
     destination_facts.target        = destination_handle.get();
     destination_facts.wanted.width  = static_cast<int>(kSize);
     destination_facts.wanted.height = static_cast<int>(kSize);
-    destination_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    destination_facts.wanted.shape  = destination->shape();
     destination_facts.current       = destination->instance();
     const std::vector<TargetFacts> target_table{ source_facts, destination_facts };
 
@@ -477,14 +479,17 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     source_facts.target        = source_handle.get();
     source_facts.wanted.width  = static_cast<int>(kSize);
     source_facts.wanted.height = static_cast<int>(kSize);
-    source_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    source_facts.wanted.shape  = source->shape();
     source_facts.current       = source->instance();
 
+    // The DESTINATION's shape is the target's own too, and this one has a DEPTH attachment: a plan told only
+    // about its colour attachment is describing a target that does not exist (see CompiledShape) - which is
+    // what the record step reports.
     TargetFacts destination_facts;
     destination_facts.target        = destination_handle.get();
     destination_facts.wanted.width  = static_cast<int>(kSize);
     destination_facts.wanted.height = static_cast<int>(kSize);
-    destination_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    destination_facts.wanted.shape  = destination->shape();
     destination_facts.current       = destination->instance();
     const std::vector<TargetFacts> target_table{ source_facts, destination_facts };
 

@@ -506,9 +506,15 @@ void runPlanDrivenTargetPhase(const vine::vsg::DeviceResult& device, DevicePhase
     // Frame 3: the plan asks for a new SHAPE (a second colour attachment and a depth) - Rebuild - and the
     // drive applies that too. The frame records through the REBUILT pass, which is the half a shape change
     // that only replaced images would fail.
-    TargetShape wanted_shape = target->shape();
-    wanted_shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    wanted_shape.depth_format = RenderTarget::DepthFormat::D32F;
+    //
+    // The wanted shape is DECLARED in the engine's terms: the host asks for a second colour attachment and a
+    // depth, and the DEVICE spellings are the target layer's answer to that request (the rebuild derives
+    // them through the same mapping create uses). Not stating them is honest - "not known" is not "absent"
+    // (see CompiledShape) - while a HALF-stated device list (the old shape's, with one more engine format
+    // pushed onto it) would describe a target nobody asked for, which the record step reports.
+    TargetShape wanted_shape;
+    wanted_shape.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA8 };
+    wanted_shape.depth_format  = RenderTarget::DepthFormat::D32F;
     const auto           table_3 = facts_of(TargetDesc{ 16, 12, wanted_shape });
     const CompiledFrame* third   = record_frame(3U, fill, table_3);
     ASSERT_EQ(static_cast<int>(third->targets[0].decision.action), static_cast<int>(TargetAction::Rebuild));
@@ -687,6 +693,80 @@ TEST(ExecutorTest, APlanThatDisagreesWithTheTargetAboutItsShapeIsNotRecorded)
     EXPECT_EQ(fixture.executor.skipped(), 1U);
     EXPECT_TRUE(fixture.executor.recorded().empty());
     EXPECT_EQ(fixture.diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 1U);
+}
+
+TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
+{
+    Fixture fixture;
+    if (!fixture.build())
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
+                     << fixture.created.error.as_std_str();
+    }
+
+    // The truth about the target the plan resolves to: one colour attachment, and the DEVICE format its
+    // image and render pass are really built with. The engine's vocabulary cannot tell two device formats
+    // apart (see RenderPassCompatibility), so this is the half that only the plan's own copy can carry.
+    const TargetShape actual = fixture.first->shape();
+    ASSERT_EQ(actual.color_formats.size(), 1U);
+    ASSERT_EQ(actual.device_color_formats.size(), 1U);
+
+    fixture.recorder.beginFrame(FrameToken{ 1 });
+    fixture.clearPass(fixture.first.get(), 1U, 0, 1.0F, 1.0F, 1.0F);
+    fixture.recorder.endFrame();
+
+    std::vector<TargetFacts> drifted = fixture.facts;
+
+    // (1) The ENGINE's spelling drifted: same count, same samples, same depth - a different format. The
+    // count-and-sampleability half of the check cannot see this.
+    drifted[0].wanted.shape.color_formats[0] = RenderTarget::ColorFormat::RGBA16F;
+    drifted[0].current.desc                  = drifted[0].wanted;
+
+    const CompiledFrame& engine_drift =
+        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ drifted });
+    ASSERT_EQ(engine_drift.passes.size(), 1U);
+    ASSERT_EQ(engine_drift.targets.size(), 1U);
+    EXPECT_EQ(engine_drift.passes[0].color_attachments, 1U) << "the count agrees: only the format drifted";
+
+    auto engine_graph = ::vsg::CommandGraph::create(fixture.created.device, fixture.created.queue_family);
+    EXPECT_FALSE(fixture.executor.record(engine_drift, engine_graph)) << "the same count is not the same render pass";
+    EXPECT_EQ(fixture.executor.skipped(), 1U);
+    EXPECT_TRUE(fixture.executor.recorded().empty());
+    EXPECT_EQ(fixture.diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 1U);
+
+    // (2) The engine's spelling is back; the DEVICE's drifted - and this one the engine cannot even express
+    // (both spellings are RGBA8 to it), which is what the plan's copy of the device formats is for.
+    const std::uint32_t other_format = actual.device_color_formats[0] == VK_FORMAT_R8G8B8A8_UNORM
+                                           ? VK_FORMAT_B8G8R8A8_UNORM
+                                           : VK_FORMAT_R8G8B8A8_UNORM;
+    drifted[0].wanted.shape.color_formats[0]        = actual.color_formats[0];
+    drifted[0].wanted.shape.device_color_formats    = { other_format };
+    drifted[0].current.desc                         = drifted[0].wanted;
+
+    const CompiledFrame& device_drift =
+        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ drifted });
+    ASSERT_EQ(device_drift.passes.size(), 1U);
+    ASSERT_EQ(device_drift.targets[0].shape.device_color_formats.size(), 1U);
+    EXPECT_EQ(device_drift.targets[0].shape.device_color_formats[0], other_format)
+        << "the plan carries the device's spelling it was told";
+
+    auto device_graph = ::vsg::CommandGraph::create(fixture.created.device, fixture.created.queue_family);
+    EXPECT_FALSE(fixture.executor.record(device_drift, device_graph));
+    EXPECT_EQ(fixture.executor.skipped(), 1U);
+    EXPECT_EQ(fixture.diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 2U);
+
+    // (3) Told the truth, the SAME frame records: what was wrong was the plan's account of the target, not
+    // the target.
+    drifted[0].wanted.shape = actual;
+    drifted[0].current.desc = drifted[0].wanted;
+    const CompiledFrame& truthful =
+        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ drifted });
+    ASSERT_EQ(truthful.passes.size(), 1U);
+
+    auto served_graph = ::vsg::CommandGraph::create(fixture.created.device, fixture.created.queue_family);
+    EXPECT_TRUE(fixture.executor.record(truthful, served_graph));
+    EXPECT_EQ(fixture.executor.skipped(), 0U);
+    EXPECT_EQ(fixture.executor.recorded().size(), 1U);
 }
 
 TEST(ExecutorTest, ApplyingThePlansAnswerRepairsWhatTheRecordStepWouldOnlyReport)

@@ -74,9 +74,10 @@
 > M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）、
 > M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）、M8l 形状变了就是真的重建（§11.16au）、
 > M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）、M8o 窗口路径一次调用（§11.16ax）、
-> M8p 每帧换图不再拆机器（§11.16ay）、M8q 丢帧的会话自己活下来（§11.16az）。
+> M8p 每帧换图不再拆机器（§11.16ay）、M8q 丢帧的会话自己活下来（§11.16az）、
+> M8r 计划说的形状连格式一起核对（§11.16ba）。
 > 下一步：
-> `record` 的 shape 核对补上**格式**；窗口路径把 `applyTargetPlans` 也接上；`skyMap` 生产者。
+> 窗口路径把 `applyTargetPlans` 也接上；`skyMap` 生产者。
 > 其余遗留口子：集合与半片停靠窗口各自独立。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2627,7 +2628,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8o（窗口路径一次调用）~~ | **已完成（2026-09-22）**：`VsgExecutor::commit(frame, session)`（`commitFrame()` 答 false ⇒ `noteLostSubmission(frame)`；报告留会话、标记归执行器）+ 真设备用例（两个会话：A 上 `commit` 成功、离屏目标像素 + "没被标"；B 上把记录步做成抛异常 ⇒ 答 false + `SubmissionFailed` + 标记 + 下一份计划里**写它的那一趟** `bootstrap` + 录进去清掉；两次运行各 **0 VUID**）；3/3 变异红；**顺手撞出新口子**：上一次提交还在飞时再 `assignFrameGraphs` 会销毁 viewer 的 task ⇒ 12 条 VUID + 验证层里段错误（§11.16ax）。 |
 | ~~M8p（每帧换图不再拆机器）~~ | **已完成（2026-09-22）**：`SessionContentAccess::assignFrameGraphs` 改成把新图**交给自己已有的 task**（`task->commandGraphs = graphs`），只在 viewer 一个 task 都没有时才让 viewer 重建——不再销毁在飞的 fence / semaphore / 命令缓冲；真设备用例（一帧一图、帧帧在飞时换图，六个提交零 VUID、`deviceWaits()==0`、像素指出**最后换的那张图**真的被提交）+ 3/3 变异红（旧行为 ⇒ 30 条 VUID；不换图 ⇒ 像素错；不编译 ⇒ 红）（§11.16ay）。 |
 | ~~M8q（丢帧的会话自己活下来）~~ | **已完成（2026-09-22）**：`Session::commitFrame()` 的失败分支重建 swapchain（`window->resize()`：vsg 的 `buildSwapchain()` 先 `vkDeviceWaitIdle` 再换链）+ **把这次 idle 计进 `deviceWaits()`**；真设备用例（同一会话丢帧后**下一帧就位**：`commit` 答 true、被标的目标在它的 bootstrap 趟里清掉、像素 = 清屏色、`framesPresented`+5、`lostFrames==1`、`deviceWaits==1`、报告恰好一条；两次运行各 0 VUID）+ 3/3 变异红（不重建 ⇒ 10 条 VUID；不计数 ⇒ 红；每帧都重建 ⇒ 红，还连带 8 个会话用例红）（§11.16az）。 |
-| **M8 下一步** | `record` 的 shape 核对补上格式；窗口路径接上 `applyTargetPlans`；`skyMap` 生产者。 |
+| ~~M8r（计划说的形状，连格式一起核对）~~ | **已完成（2026-09-22）**：`core::CompiledShape`（形状的兼容性半边，编译器用 `arena.copy` 抄进帧的 arena ⇒ 计划里没有指向宿主 facts 的 span、也不每帧分配）+ `CompiledTarget::shape` + `core::statedShapeAgrees`（引擎半边每份计划都说了 ⇒ 直接比；**设备半边只在两边都说了时比**）；`recordOffscreen` / `recordWindow` 都接上（窗口那趟现在拿到 `CompiledTarget`）；无设备用例（计划的副本是它自己的 + 判定表逐行）+ 两条真设备用例（离屏：数目相同的引擎格式漂移、引擎相同的设备格式漂移各拒一次、说真话即录；窗口：同样的事 + 说真话后**呈递**，`deviceWaits()==0`）；当场修掉两处旧夹具的谎话；变异 **5/5 红**（不抄形状 ⇒ 75 行红、无条件下比设备半边 ⇒ 51 行红）（§11.16ba）。 |
+| **M8 下一步** | 窗口路径接上 `applyTargetPlans`；`skyMap` 生产者。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3691,3 +3693,46 @@ M8n/M8o 的现场留了一个"宿主必须重建会话"的尾巴：丢帧时 acq
 变异 3/3 红：①不重建 ⇒ **10 条 VUID**（acquire 的 forward-progress + present 未 acquire 的图）；②重建但不计数 ⇒ 红；
 ③每帧都重建 ⇒ 红（本片用例的 `deviceWaits()==0`），且连带给**另外 8 个会话用例**留下失败——"这条路径不该停设备"的判别力
 原来就在那儿。门禁 644 用例 / 98 套件、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 849、相位 11 行 / 2 次运行。
+
+### 11.16ba M8r（2026-09-22）：计划说的形状，连格式一起核对
+
+`record` 那道"计划与世界必须一致"的检查此前只问两件事：**颜色附件数**与**深度可采样**（§11.16f）。于是同一数目、同一深度、
+只有**格式**不同的漂移完全不可见——而格式正是引擎自己的词汇无法分辨的那一半（RGBA8 同时是线性图和 sRGB 面，见
+`RenderPassCompatibility` 的实测）。计划本身也**没有携带**形状，连比较的材料都不在。
+
+这一片把"计划被告诉的形状"变成计划的一部分，并拿它核对：
+
+* `core::CompiledShape`（`FrameCompiler.hpp`）：形状的兼容性半边——引擎拼写、深度格式、**设备拼写**、samples、subpass。
+  `CompiledTarget += shape`；编译器用 `arena.copy` 把 facts 说的两份格式表抄进**帧自己的 arena**：计划里不许出现指向宿主
+  facts 的 span（P0-1），而值形式的 `TargetShape` 会每帧给每个 target 分配两个 `vector`（分配门禁就是为这种事准备的）。
+* `core::statedShapeAgrees(stated, actual)`：**计划说了什么就核对什么**——引擎半边每份计划都说了（空 `color_formats` 就是
+  "没有颜色附件"，如深度-only 的 shadow map），所以直接比；**设备半边只在两边都说了时才比**：没学会设备拼写的计划"什么也没说"，
+  "不知道"不等于"没有"（与 `RenderPassCompatibility` 同一条规矩），两个"不知道"也不当作一致证据。
+* `VsgExecutor::recordOffscreen` / `recordWindow` 都接上它；窗口那一趟此前拿不到 `CompiledTarget`，现在传进去（窗口的 facts
+  来自它自己，`WindowTarget::facts()` 连设备拼写一起说）。
+
+证据分三层：
+
+* **无设备（2 条）**：①计划真的带着那份形状，而且是**它自己的副本**——编译后改 facts（引擎格式、设备格式、深度一起改），计划里
+  的值不动；②判定表逐行：引擎格式漂移（数目相同）⇒ 不一致；设备格式漂移（引擎相同）⇒ 不一致；深度格式、samples、subpass 各一行
+  ⇒ 不一致；**设备半边留空 ⇒ 一致**（"没说"不比）。
+* **真设备（`ExecutorTest.APlanThatGotOnlyTheFormatsWrongIsRefusedToo`）**：同一个 target 上两半各来一次——引擎格式换了、
+  数目一样（`color_attachments == 1` 是"旧检查看不见"的证据）⇒ `record` 答 false、`skipped == 1`、什么都没录、报告 +1；设备
+  格式换成**另一个合法的拼写**（引擎半边完全一致）⇒ 再拒一次、报告 +2；把它告诉成真话（`target->shape()`）⇒ 同一帧录得进去、
+  `skipped == 0`。
+* **真设备（`SessionTest.AWindowPlanThatGotTheFormatWrongIsNotRecorded`）**：会话自己的窗口上同样的事——facts 说的格式与窗口
+  的差一个而数目相同 ⇒ 拒录（报告 +1、`recorded()` 空）；说真话后录进去**并且呈递**（`framesPresented() == 1`、
+  `deviceWaits() == 0`——核对帧的形状不该让设备停下来）。两次运行各 **0 VUID**。
+
+**它当场揪出两处旧夹具的谎话**（修夹具，不加容忍）：`runPlanDrivenTargetPhase` 的帧 3 先把旧形状抄下来、只往引擎半边 push 一个
+格式（设备表因此少一项）⇒ 改成"在引擎的词汇里**声明**想要的东西"（设备拼写是目标层对这次请求的回答：不声明是诚实的，半声明
+不是）；`SampledInputTest` 的全屏用例把有深度附件的目标说成"只有颜色"（此前这让计划一直答 Rebuild）⇒ 改成目标自己的 `shape()`。
+两处都是这条检查存在的理由本身。
+
+变异 5/5 红：①离屏那半回到只比数目 ⇒ 红（本片用例 + 2）；②窗口那半回到只比数目 ⇒ 红（窗口用例 + 2）；③编译器不抄形状 ⇒
+**75 行红**（每一条真设备记录都开始拒）；④设备半边**无条件下比**（计划没说也比）⇒ **51 行红**（"只在说了时比"是承重的）；
+⑤不比深度格式 ⇒ 红（无设备判定表 + 全屏用例）。门禁 **648 用例 / 98 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 849、
+相位 11 行 / 2 次运行。
+
+**本片留下的口子（登记）**：①窗口路径仍没接 `applyTargetPlans`（计划的换尺寸/重建答案对窗口还没有执行者）；②`skyMap` 仍无
+生产者；③集合与半片停靠窗口各自独立（旧口子不变）；④设备半边在"某一侧没说"时跳过——那是一处**已知的不检查**，不是等价性声明。

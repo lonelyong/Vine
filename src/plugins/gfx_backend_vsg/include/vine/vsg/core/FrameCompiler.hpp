@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -161,12 +162,60 @@ struct CompiledPass
     std::span<const CompiledDraw> draws{};    ///< Drawing calls, in the order they were collected.
 };
 
+/**
+ * @brief The shape a plan was TOLD a target has, kept in the frame's own storage (see CompiledTarget).
+ *
+ * WHY THE PLAN CARRIES IT AT ALL. The executor compares the plan against the resource world at the one
+ * place the two meet (see VsgExecutor::record), and what it could ask the plan until now was only what
+ * the facts had already answered to the PASS: the colour-attachment count and the depth sampleability. A
+ * shape that drifted in a format, in the sample count or in the subpass - same count, same depth
+ * sampleability - was invisible to that check, and a pipeline compiled against the plan's account could
+ * then be handed a render pass it was not compiled against. Formats are exactly where the engine's own
+ * vocabulary is blind (RGBA8 covers both a linear image and an sRGB surface - measured, see
+ * RenderPassCompatibility), so the check has to read the device's spelling as well as the engine's.
+ *
+ * WHY SPANS AND NOT A TargetShape. The plan's storage rule is the arena's (see FrameArena and §2.5
+ * P0-1): a plan holds no span into the caller's facts, so the compiler COPIES what the facts stated into
+ * the same arena the rest of the plan lives in and points there. A `TargetShape` by value would allocate
+ * a vector per target per frame, which is what the steady-state allocation gate of every phase exists to
+ * catch.
+ *
+ * "NOT KNOWN" IS NOT "ABSENT", and the fields say which is which: an EMPTY device_color_formats (or a
+ * device_depth_format of 0) means the facts never learned the device's spellings, not that the target
+ * has no such attachment - the engine's own fields answer that (an empty color_formats IS a target with
+ * no colour attachments, which is what a depth-only shadow map states).
+ */
+struct CompiledShape
+{
+    std::span<const vine::graphics::RenderTarget::ColorFormat> color_formats{};  ///< The engine's spelling, one per colour attachment.
+    std::optional<vine::graphics::RenderTarget::DepthFormat>   depth_format{};   ///< The engine's spelling; absent = no depth attachment.
+    std::span<const std::uint32_t> device_color_formats{};   ///< The device's spelling; empty = never learned.
+    std::uint32_t                  device_depth_format{0};   ///< The device's depth format; 0 = no depth, or never learned.
+    std::uint32_t                  samples{1};               ///< Sample count.
+    std::uint32_t                  subpass{0};               ///< Subpass the pipeline targets.
+};
+
+/** @brief Whether what a plan was told about a target's shape agrees with what the target really has.
+ *
+ * The fields the plan STATES are compared against the target's own, and the ones it does not state are
+ * not compared: a plan whose facts never learned the device's spellings states nothing about them, and
+ * "not known" must not read as "absent" - nor may two unknowns be treated as agreeing evidence (the
+ * two shapes may still differ; all this answers is "nothing the plan stated disagrees", see the record
+ * step's note for what that is worth).
+ *
+ * @param stated What the plan's facts said (see CompiledShape).
+ * @param actual What the target reports now (see TargetShape).
+ * @return true when nothing the plan stated disagrees with the target.
+ */
+[[nodiscard]] bool statedShapeAgrees(const CompiledShape& stated, const TargetShape& actual) noexcept;
+
 /** @brief One target the frame draws into, with what has to happen to it (see planTarget / depthPlan). */
 struct CompiledTarget
 {
     const void*    target{nullptr};      ///< Identity; nullptr is the default framebuffer.
     TargetDecision decision{};           ///< None / Repair / ResizeInPlace / Rebuild, and why.
     DepthPlan      depth{};              ///< Whether the depth is sampleable, borrowed or preserved.
+    CompiledShape  shape{};              ///< What its facts SAID its shape is (the record step checks it).
 };
 
 /** @brief One frame, compiled: what the executor walks, in the order it walks it. */

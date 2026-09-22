@@ -40,6 +40,7 @@ using vine::vsg::core::ClearPolicy;
 using vine::vsg::core::CompiledDraw;
 using vine::vsg::core::CompiledFrame;
 using vine::vsg::core::CompiledPass;
+using vine::vsg::core::CompiledShape;
 using vine::vsg::core::DepthFacts;
 using vine::vsg::core::Diagnostics;
 using vine::vsg::core::DrawKind;
@@ -50,6 +51,7 @@ using vine::vsg::core::FrameRecorder;
 using vine::vsg::core::FrameToken;
 using vine::vsg::core::Observe;
 using vine::vsg::core::RepairReason;
+using vine::vsg::core::statedShapeAgrees;
 using vine::vsg::core::TargetAction;
 using vine::vsg::core::TargetFacts;
 using vine::vsg::core::TargetShape;
@@ -681,6 +683,111 @@ TEST(FrameCompilerTest, ThePlanCarriesWhatAPipelineIdentityNeedsFromThePass)
     ASSERT_EQ(again.passes.size(), 1u);
     EXPECT_TRUE(again.passes[0].depth_preserved);
     EXPECT_FALSE(again.passes[0].depth_sampleable);
+}
+
+TEST(FrameCompilerTest, ThePlanCarriesTheShapeItsFactsStated)
+{
+    Rig r;
+    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    r.addTarget(target.get(), 64, 64, true);
+    r.facts[0].wanted.shape.depth_format         = RenderTarget::DepthFormat::D32F;
+    r.facts[0].wanted.shape.device_color_formats = { 44U };  // the layer compares these, never interprets them
+    r.facts[0].wanted.shape.device_depth_format  = 37U;
+    r.facts[0].current.desc                      = r.facts[0].wanted;
+
+    const std::vector<RenderCommand> commands = oneCommand();
+    r.recorder.beginFrame(FrameToken{ 1 });
+    r.recorder.beginPass(1);
+    r.recorder.setRenderTarget(target.get());
+    r.recorder.render(commands, nullptr);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.targets.size(), 1u);
+    const CompiledShape& stated = frame.targets[0].shape;
+    ASSERT_EQ(stated.color_formats.size(), 1u);
+    EXPECT_EQ(stated.color_formats[0], RenderTarget::ColorFormat::RGBA8);
+    ASSERT_TRUE(stated.depth_format.has_value());
+    EXPECT_EQ(stated.depth_format.value(), RenderTarget::DepthFormat::D32F);
+    ASSERT_EQ(stated.device_color_formats.size(), 1u);
+    EXPECT_EQ(stated.device_color_formats[0], 44U);
+    EXPECT_EQ(stated.device_depth_format, 37U);
+    EXPECT_EQ(stated.samples, 1U);
+    EXPECT_EQ(stated.subpass, 0U);
+
+    // ...and the plan's copy is its OWN, because the facts are the caller's and may be a table it reuses:
+    // the same rule the rest of the plan lives under (see CompiledShape). What the copy is FOR is the
+    // check the record step makes (see VsgExecutor), which needs the account a frame was compiled with -
+    // not whatever the caller's table says later.
+    r.facts[0].wanted.shape.color_formats[0]        = RenderTarget::ColorFormat::RGBA16F;
+    r.facts[0].wanted.shape.device_color_formats[0] = 99U;
+    r.facts[0].wanted.shape.depth_format            = std::nullopt;
+    EXPECT_EQ(stated.color_formats[0], RenderTarget::ColorFormat::RGBA8);
+    EXPECT_EQ(stated.device_color_formats[0], 44U);
+    ASSERT_TRUE(stated.depth_format.has_value());
+    EXPECT_EQ(stated.depth_format.value(), RenderTarget::DepthFormat::D32F);
+}
+
+TEST(FrameCompilerTest, AStatedShapeIsComparedOnlyWhereItStatesSomething)
+{
+    TargetShape actual;  // what a target really reports: the engine's spellings and the device's
+    actual.color_formats        = { RenderTarget::ColorFormat::RGBA8 };
+    actual.depth_format         = RenderTarget::DepthFormat::D32F;
+    actual.device_color_formats = { 44U, 45U };
+    actual.device_depth_format  = 37U;
+    actual.samples              = 1U;
+    actual.subpass              = 0U;
+
+    const RenderTarget::ColorFormat colors[]{ RenderTarget::ColorFormat::RGBA8 };
+    const std::uint32_t             devices[]{ 44U, 45U };
+    CompiledShape                   stated;
+    stated.color_formats        = colors;
+    stated.depth_format         = RenderTarget::DepthFormat::D32F;
+    stated.device_color_formats = devices;
+    stated.device_depth_format  = 37U;
+    EXPECT_TRUE(statedShapeAgrees(stated, actual));
+
+    // A different ENGINE format with the same count: the drift a count-and-sampleability check cannot see,
+    // and the one a pipeline keyed on the plan's account would be compiled wrongly for.
+    const RenderTarget::ColorFormat other[]{ RenderTarget::ColorFormat::RGBA16F };
+    stated.color_formats = other;
+    EXPECT_FALSE(statedShapeAgrees(stated, actual));
+    stated.color_formats = colors;
+
+    // A different DEVICE format for the same engine format: the drift the engine's vocabulary cannot even
+    // express (its own name for both is RGBA8 - see RenderPassCompatibility).
+    const std::uint32_t other_devices[]{ 46U, 45U };
+    stated.device_color_formats = other_devices;
+    EXPECT_FALSE(statedShapeAgrees(stated, actual));
+    stated.device_color_formats = devices;
+
+    // ...and the same in the depth, plus the two fields that are numbers rather than spellings.
+    stated.device_depth_format = 38U;
+    EXPECT_FALSE(statedShapeAgrees(stated, actual));
+    stated.device_depth_format = 37U;
+    stated.samples             = 2U;
+    EXPECT_FALSE(statedShapeAgrees(stated, actual));
+    stated.samples = 1U;
+    stated.subpass = 1U;
+    EXPECT_FALSE(statedShapeAgrees(stated, actual));
+    stated.subpass = 0U;
+
+    // A plan whose facts never learned the device's spellings states NOTHING about them, so it does not
+    // argue with a target that knows - "not known" is not "absent" (the rule RenderPassCompatibility
+    // spells out for the same fields).
+    stated.device_color_formats = {};
+    stated.device_depth_format  = 0U;
+    EXPECT_TRUE(statedShapeAgrees(stated, actual));
+
+    // The engine's half is stated by every plan, though: a plan that says "one RGBA8" disagrees with a
+    // target whose attachment is another format, and one that says "no depth" disagrees with a target
+    // that has one.
+    stated.color_formats = other;
+    EXPECT_FALSE(statedShapeAgrees(stated, actual));
+    stated.color_formats = colors;
+    stated.depth_format  = std::nullopt;
+    EXPECT_FALSE(statedShapeAgrees(stated, actual));
 }
 
 TEST(FrameCompilerTest, TheFrameCarriesWhatTheRecorderSnapshottedWithoutReworkingIt)
