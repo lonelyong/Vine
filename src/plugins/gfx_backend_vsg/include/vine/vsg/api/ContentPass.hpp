@@ -68,12 +68,14 @@
  * inputs through a program of its own - no geometry, no vertex streams, no material - so its half is an entry
  * of its own KIND (see `Scope::Entry::kind`): a full-screen pipeline layer, looked up by the plan's program
  * identity and revision. Nothing about the lookup is geometry-shaped, which is why a screen entry carries no
- * vertex layout. The pass' declared inputs reach it through the SAME check and the same images as the content
- * halves - but at **set 0**, because that is where the full-screen ABI's samplers live (see ContentPipeline),
- * so a pass that draws both kinds gets two set objects over one list of images. The state it draws with is the
- * plan's `CompiledDraw::dynamic` (a full-screen call has no per-command state to resolve), and its 128-byte
- * push block is recorded with the layout the SDK's screen programs declare - its CONTENTS are the lighting
- * phase's (see the note on `recordScreenDraw`).
+ * vertex layout. The pass' images reach it through the SAME check and the same offer as the content halves,
+ * but the set they are bound in is the FULL-SCREEN ABI's (see ContentPipeline): the call's source (named by
+ * idENTITY the plan resolved) offers bindings 0.. for its attachments, the shadow map takes the binding its
+ * text declares, and the call's own shadow block takes its own - the pass builds that set per call, because
+ * a full-screen call has ONE block and it is the call's. The state it draws with is the plan's
+ * `CompiledDraw::dynamic` (a full-screen call has no per-command state to resolve), and its 128-byte push
+ * block carries the call's lights (see `recordScreenDraw`) - the full-screen ABI's own copy of what the
+ * content path's light block is.
  */
 V_VSG_NS_BEGIN
 
@@ -174,50 +176,57 @@ class V_VSG_API ContentPass
      */
     void reportShadowNotSampled(const Scope::Entry& entry, const core::CompiledPass& pass);
 
-    /** @brief Builds the pass' sampled-input set and its bind command, or null when there is nothing to bind.
+    /** @brief Builds the pass' sampled-input set and its bind command for a CONTENT half, or null when there
+     *         is nothing to bind.
      *
-     * One set per pass and per KIND: the inputs are a property of the pass, so every draw of one kind binds the
+     * One set per pass: the inputs are a property of the pass, so every draw of the content kind binds the
      * same set, and the registry's "already bound" answer (see StateRegistry) is what keeps the second draw
-     * from re-issuing it. Where the set's bind lands is the ABI's: set 1 after the blocks for a content half,
-     * set 0 for a full-screen one - so the layer the draws bind is the one whose layout the set is built from.
+     * from re-issuing it. The set lives at `ContentPipeline::kInputSet` (1, after the declared block sets),
+     * which is where a content layer's sampled inputs live - a full-screen call's set is built by
+     * `recordScreenDraw` instead, in the ABI its own text declares.
      *
-     * @param pass      The compiled pass whose inputs are being bound.
-     * @param inputs    The images the caller offered, already checked against the plan.
-     * @param layer     The half's pipeline layer (its layout is what the set is built against).
-     * @param first_set The set index this bind starts at (1 for content, 0 for full-screen).
+     * @param pass   The compiled pass whose inputs are being bound.
+     * @param inputs The images the caller offered, already checked against the plan.
+     * @param layer  The half's pipeline layer (its layout is what the set is built against).
      * @return The bind command, or null for a pass with no colour textures to sample (a build failure is
      *         reported here).
      */
     ::vsg::ref_ptr<::vsg::BindDescriptorSet> makeInputSet(const core::CompiledPass& pass,
                                                          std::span<const InputImages> inputs,
-                                                         ContentPipeline& layer, std::uint32_t first_set);
+                                                         ContentPipeline& layer);
 
     /** @brief Records one FULL-SCREEN drawing call; false when it was refused (and reported).
      *
-     * A full-screen call draws the pass' declared inputs (the images the caller offered, already checked
-     * against the plan) through the half its program names, with the plan's `CompiledDraw::dynamic` - a
-     * full-screen call has no per-command state to resolve.
+     * A full-screen call draws ONE of the pass' inputs - its source, named by the idENTITY the plan resolved -
+     * plus the shadow map (by name, wherever its text declares it), through the half its program names, with
+     * the plan's `CompiledDraw::dynamic` - a full-screen call has no per-command state to resolve.
      *
-     * THE PUSH BLOCK IS THE FULL-SCREEN ABI'S 128 BYTES, AND ITS CONTENTS ARE NOT THIS PHASE'S. The layout is
-     * the SDK's (`ambient` + `projparms` + three directional lights - `BuiltinShaders::deferredLightProgram`
-     * declares exactly that), while the light half needs the world->view transform and the drop accounting of
-     * the lighting phase and the `projparms` half needs the near/far the plan does not carry yet. It is pushed
-     * ZEROED: a declared push range that is never pushed holds undefined bytes, so "the phase that fills it has
-     * not landed" has to be a defined zero rather than whatever the driver had. The program this slice's
-     * evidence draws through (the engine's screen copy) reads none of it.
+     * IT BUILDS THE SET ITSELF, and that is the difference from a content half: the source's attachments, the
+     * map and the call's block are the PASS' images, and a full-screen text declares where they live (see
+     * ContentPipeline). The block is the call's own (its lights and camera are), so the set is built per call;
+     * the engine's passes make one full-screen call each.
      *
-     * @param draw    The compiled full-screen call.
-     * @param entry   The screen half its program names (resolved by the caller).
-     * @param pass    The compiled pass (colour attachment count; the viewport is the draw's own).
+     * WHAT IT REFUSES, and each by name: a source that is not one of the pass' declared inputs; an input that
+     * is neither the source nor the map; a text that declares `shadow_map` when the pass resolved no readable
+     * map (a text that names the map is a text that shades a shadow - the engine picks its shadowed variant
+     * only when a shadow exists); and a text that samples a texture this pass does not offer.
+     *
+     * THE PUSH BLOCK IS THE FULL-SCREEN ABI'S 128 BYTES AND CARRIES THE CALL'S LIGHTS
+     * (`LightPushBlock` - the same packing the lighting phase uses for the content path's block).
+     *
+     * @param draw          The compiled full-screen call.
+     * @param entry         The screen half its program names (resolved by the caller).
+     * @param pass          The compiled pass (its colour attachment count, its inputs and its resolved shadow).
      * @param compatibility The target's shape (the pipeline key's half - the plan names the target, this layer
      *                      does not know it).
-     * @param samples The set the full-screen ABI binds at set 0, or null when the pass samples nothing.
-     * @param into    The group the recorded commands are added to.
+     * @param inputs        The images the pass' inputs offer, one entry per `pass.inputs` entry and in the same
+     *                      order (the same offer the content halves get).
+     * @param into          The group the recorded commands are added to.
      * @return true when recorded; false when the half could not record it (already reported).
      */
     bool recordScreenDraw(const core::CompiledDraw& draw, const Scope::Entry& entry,
                           const core::CompiledPass& pass, const core::RenderPassCompatibility& compatibility,
-                          const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& samples, ::vsg::Group& into);
+                          std::span<const InputImages> inputs, ::vsg::Group& into);
 
     /** @brief Reports one refused command, naming the identity and the reason the lookup gave. */
     void reportRefused(const char* what, FactMiss miss);

@@ -5,7 +5,10 @@
 #include <cstring>
 
 #include <vsg/core/Array.h>
+#include <vsg/state/BufferInfo.h>
+#include <vsg/state/DescriptorBuffer.h>
 #include <vsg/state/DescriptorImage.h>
+#include <vsg/state/DescriptorSet.h>
 #include <vsg/state/ImageInfo.h>
 #include <vsg/state/PushConstants.h>
 
@@ -292,7 +295,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
             out = group;
             return false;
         }
-        input_set = makeInputSet(pass, inputs, *content_half->pipelines, 1U);
+        input_set = makeInputSet(pass, inputs, *content_half->pipelines);
         if ((sampled_color_count != 0U || sampled_depth_count != 0U) && input_set == nullptr)
         {
             out = group;  // makeInputSet reported why
@@ -309,12 +312,6 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         out = group;
         return false;
     }
-
-    // The full-screen halves' images, built on demand: one set per half (its layer's set layout, set 0), and a
-    // second screen half of the same pass gets a set of its own over the same images - the same recipe builds
-    // their layouts, so the two are compatible with one another.
-    const Scope::Entry*                            screen_set_for = nullptr;
-    ::vsg::ref_ptr<::vsg::BindDescriptorSet>       screen_set;
 
     bool complete = true;
     for (const core::CompiledDraw& draw : pass.draws)
@@ -348,18 +345,10 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
                 continue;
             }
 
-            if (screen_set_for != half)
-            {
-                screen_set     = makeInputSet(pass, inputs, *half->pipelines, 0U);
-                screen_set_for = half;
-                if ((sampled_color_count != 0U || sampled_depth_count != 0U) && screen_set == nullptr)
-                {
-                    complete = false;  // makeInputSet reported why
-                    continue;
-                }
-            }
-
-            if (!recordScreenDraw(draw, *half, pass, compatibility, screen_set, *group))
+            // The set this call binds is the PASS' (the source's attachments, the map, the call's block), so
+            // it is built per call: a full-screen call has ONE block and it is the call's own (see
+            // makeScreenSet). A pass whose call is refused says why - the rest of the pass still draws.
+            if (!recordScreenDraw(draw, *half, pass, compatibility, inputs, *group))
             {
                 complete = false;
             }
@@ -411,8 +400,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
 
 ::vsg::ref_ptr<::vsg::BindDescriptorSet> ContentPass::makeInputSet(const core::CompiledPass& pass,
                                                                   std::span<const InputImages> inputs,
-                                                                  ContentPipeline& layer,
-                                                                  std::uint32_t    first_set)
+                                                                  ContentPipeline& layer)
 {
     const std::uint32_t texture_count  = sampledColorCount(pass);
     const std::uint32_t depth_count    = sampledDepthCount(pass);
@@ -421,10 +409,10 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         return {};  // nothing declared (or nothing produced): there is no sampled set to bind
     }
 
-    // One set per pass and kind, laid out by the layer that compiles the pipelines that kind's draws bind: the
-    // set layout object they were compiled against, so the set is exactly the shape they expect. The halves of
-    // one kind build their sampled layouts from the same recipe, so they are compatible with one another as
-    // well (a pass may switch halves with this set bound).
+    // One set per pass, laid out by the layer that compiles the pipelines the content half's draws bind: the
+    // set layout object they were compiled against, so the set is exactly the shape they expect. The halves
+    // of one kind build their sampled layouts from the same recipe, so they are compatible with one another
+    // as well (a pass may switch halves with this set bound).
     const auto set_layout = layer.sampledSetLayout(texture_count, depth_count);
     const auto sampler    = layer.inputSampler();
     if (set_layout == nullptr || sampler == nullptr)
@@ -480,23 +468,226 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         return {};
     }
     // The pipeline layout this command names is the one built for the same pair of counts, and the set index
-    // is the ABI's: 1 after the block set for a content half, 0 for a full-screen one (see ContentPipeline).
+    // is the content ABI's: 1, after the declared block sets (see ContentPipeline).
     return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                            layer.layoutFor(texture_count, depth_count), first_set, set);
+                                            layer.layoutFor(texture_count, depth_count),
+                                            ContentPipeline::kInputSet, set);
 }
 
 bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::Entry& entry,
                                    const core::CompiledPass& pass,
                                    const core::RenderPassCompatibility& compatibility,
-                                   const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& samples, ::vsg::Group& into)
+                                   std::span<const InputImages> inputs, ::vsg::Group& into)
 {
+    ContentPipeline* const layer = entry.pipelines;
+    if (layer == nullptr)
+    {
+        reportRefused("a full-screen drawing call", "no compiled full-screen half was built for the pass' program");
+        return false;
+    }
+
+    // WHICH OF THE PASS' INPUTS THIS CALL READS. The full-screen ABI reads ONE input - the call's source - plus
+    // the shadow map (by name, wherever the text declares it). The source is named by IDENTITY (the plan's
+    // `draw.source`), not by position: the pass' other inputs are its own business, and a call whose source is
+    // not among them has nothing to draw from.
+    std::size_t source_index = inputs.size();
+    for (std::size_t index = 0; index < inputs.size(); ++index)
+    {
+        if (index < pass.inputs.size() && pass.inputs[index].target == draw.source)
+        {
+            source_index = index;
+            break;
+        }
+    }
+    const bool         has_source = source_index < inputs.size();
+    const InputImages* source     = has_source ? &inputs[source_index] : nullptr;
+
+    // The map: the input the plan RESOLVED (by the light its target states), never "the first one with a
+    // depth" - a G-buffer has a depth too, and binding that one as the sun's map is the measured defect the
+    // plan's own resolution exists to avoid (see api/ContentImages).
+    const std::size_t map_index = vine::vsg::shadowInputIndexOf(pass, inputs);
+
+    // A text that declares a sampler OTHER than the map's reads the SOURCE's attachments, so a call that names
+    // no source among the pass' inputs has nothing to fill them from - and every input that is neither the
+    // source nor the map is one the ABI has no binding for at all. Both are refused by name: a binding filled
+    // with somebody else's picture (or left unread) is a picture nobody asked for.
+    const bool declares_source_textures = [&] {
+        for (const AbiBinding& binding : layer->abi().bindings)
+        {
+            if (binding.kind != AbiDescriptorKind::UniformBlock &&
+                vine::vsg::imageOriginOf(binding.name) != ImageOrigin::Shadow)
+            {
+                return true;
+            }
+        }
+        return false;
+    }();
+    if (declares_source_textures && !has_source)
+    {
+        reportRefused("a full-screen drawing call",
+                      "its program samples the source's textures and the call named no source among the pass' "
+                      "inputs");
+        return false;
+    }
+    for (std::size_t index = 0; index < inputs.size(); ++index)
+    {
+        if (index == source_index)
+        {
+            continue;
+        }
+        if (index != map_index)
+        {
+            reportRefused("a full-screen drawing call",
+                          "one of the pass' inputs is neither the call's source nor the shadow map, and the "
+                          "full-screen ABI has no binding for its textures");
+            return false;
+        }
+        if (!inputs[index].colors.empty())
+        {
+            reportRefused("a full-screen drawing call",
+                          "the shadow map's input offers colour textures the full-screen ABI has no binding "
+                          "for (the map is its depth)");
+            return false;
+        }
+    }
+
+    // The text's own declaration of the map (the engine's shadow ABI names it) and of its block. A text that
+    // declares the map is a text that shades a shadow - the engine picks its shadowed lighting variant only
+    // when a shadow exists - so a pass without a readable map REFUSES the call instead of shading it through a
+    // stand-in: the picture would be one nobody asked for, and the reason (the map's depth is not sampleable,
+    // or its producer published no matrix) is exactly what the refusal has to say.
+    std::uint32_t map_binding = 0U;
+    const bool    declares_map = vine::vsg::shadowBindingOf(layer->abi(), 0U, map_binding);
+    vine::vsg::SamplerImage map_image;
+    if (declares_map && !vine::vsg::shadowImageOf(pass, inputs, layer->depthSampler(), map_image))
+    {
+        reportRefused("a full-screen drawing call",
+                      "its program declares `shadow_map` and this pass resolved no readable map (the depth is "
+                      "not sampleable, or the producer published no matrix)");
+        return false;
+    }
+    // ... and the other direction, once per half: the pass resolved a map and the program cannot read it.
+    reportShadowNotSampled(entry, pass);
+
+    // The block is the CALL's (its lights and camera are), so it is written per call - for every call, switch
+    // on or off: the same text serves both, and an unbound block a shader reads is undefined behaviour rather
+    // than "no shadow".
+    const std::span<const BlockDescriptors::Binding> shape = layer->blockShape(0U);
+    vine::graphics::VineShadowBlock                  shadow_block;
+    std::uint64_t                                    shadow_offset = 0U;
+    if (!shape.empty())
+    {
+        const bool                shadow_on = packShadowBlock(pass.shadow, draw, shadow_block);
+        const BlockStorage::Block written   = scope_.storage->writeShadows(bytesOf(shadow_block));
+        (void)shadow_on;
+        if (!written.valid)
+        {
+            reportRefused("the drawing call's shadow block", "the frame's block budget is full");
+            return false;
+        }
+        shadow_offset = written.offset;
+    }
+
+    // The set: the source's colour attachments, the source's own depth, the map (at the binding its text
+    // names) and the call's block - laid out by the layer, filled here. A depth the text declares is the
+    // SOURCE's depth; the map never takes a depth slot (it has a binding of its own), which is what keeps the
+    // engine's hard-coded 5/6 right whether or not the source's depth is sampleable.
+    //
+    // A text that declares NOTHING and a call with no source need no set at all: the draw's whole interface is
+    // its push block (the engine's own screen programs always name a source - theirs shade its picture).
+    const std::uint32_t colours       = source != nullptr ? static_cast<std::uint32_t>(source->colors.size()) : 0U;
+    const std::uint32_t depths        = source != nullptr && source->depth != nullptr ? 1U : 0U;
+    const bool          needs_set     = !layer->abi().bindings.empty() || colours != 0U || depths != 0U;
+    const auto          set_layout    = needs_set ? layer->sampledSetLayout(colours, depths) : nullptr;
+    const auto          sampler       = layer->inputSampler();
+    const auto          depth_sampler = layer->depthSampler();
+    if (needs_set &&
+        (set_layout == nullptr || sampler == nullptr || depth_sampler == nullptr || scope_.storage->buffer() == nullptr))
+    {
+        reportRefused("a full-screen drawing call", "its sampled set could not be built");
+        return false;
+    }
+    ::vsg::Descriptors descriptors;
+    bool               source_depth_used = false;
+    const std::span<const VkDescriptorSetLayoutBinding> declared_bindings =
+        set_layout != nullptr ? std::span<const VkDescriptorSetLayoutBinding>(set_layout->bindings)
+                              : std::span<const VkDescriptorSetLayoutBinding>{};
+    descriptors.reserve(declared_bindings.size());
+    for (const VkDescriptorSetLayoutBinding& declared : declared_bindings)
+    {
+        if (declared.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        {
+            auto buffer_info = ::vsg::BufferInfo::create(scope_.storage->buffer(), shadow_offset,
+                                                         static_cast<VkDeviceSize>(sizeof(shadow_block)));
+            descriptors.push_back(::vsg::DescriptorBuffer::create(
+                ::vsg::BufferInfoList{ buffer_info }, declared.binding, 0U, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER));
+            continue;
+        }
+        if (declares_map && declared.binding == map_binding)
+        {
+            descriptors.push_back(::vsg::DescriptorImage::create(
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(map_image.sampler, map_image.view,
+                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            continue;
+        }
+        if (source != nullptr && declared.binding < colours)
+        {
+            const ::vsg::ref_ptr<::vsg::ImageView>& view = source->colors[declared.binding];
+            if (view == nullptr)
+            {
+                reportRefused("a full-screen drawing call", "the source offers no attachment at one of its bindings");
+                return false;
+            }
+            descriptors.push_back(::vsg::DescriptorImage::create(
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            continue;
+        }
+        if (!source_depth_used && source != nullptr && source->depth != nullptr)
+        {
+            source_depth_used = true;
+            descriptors.push_back(::vsg::DescriptorImage::create(
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(depth_sampler, source->depth,
+                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            continue;
+        }
+        // A binding the layout declares (the text names it) that neither the source nor the map fills: the
+        // text samples something this pass does not offer, said by NAME rather than left to read undefined
+        // data (a material's map and the environment are the two names this can be).
+        reportRefused("a full-screen drawing call", "it samples a texture this pass does not offer at the "
+                                                    "binding its text declares");
+        return false;
+    }
+
+    ::vsg::ref_ptr<::vsg::BindDescriptorSet> samples;
+    if (needs_set)
+    {
+        auto set = ::vsg::DescriptorSet::create(set_layout, descriptors);
+        if (set == nullptr)
+        {
+            reportRefused("a full-screen drawing call", "its sampled set could not be created");
+            return false;
+        }
+        samples = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                   layer->layoutFor(colours, depths), 0U, set);
+        if (samples == nullptr)
+        {
+            reportRefused("a full-screen drawing call", "its sampled set could not be bound");
+            return false;
+        }
+    }
+
     ContentDraw::ScreenDraw full_screen;
     full_screen.key.kind                  = core::DrawKind::Screen;
     full_screen.key.program               = draw.program.program;
     full_screen.key.revision              = draw.program.revision;
     full_screen.key.compatibility         = compatibility;
-    full_screen.key.sampled_color_count   = sampledColorCount(pass);
-    full_screen.key.sampled_depth_count   = sampledDepthCount(pass);
+    // The identity says how many textures the set the draw binds carries: the source's colours and its own
+    // depth (the map and the block are the text's own declarations, so they cannot vary with the pass).
+    full_screen.key.sampled_color_count   = colours;
+    full_screen.key.sampled_depth_count   = depths;
     full_screen.dynamic                   = draw.dynamic;
     full_screen.samplers                  = samples;
     // The push the SDK's full-screen programs declare: the lights the call announced, packed into the 128-byte

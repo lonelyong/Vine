@@ -32,6 +32,8 @@
 #include <vine/graphics/StateNode.hpp>
 
 #include <vine/vsg/RenderStateMapper.hpp>
+#include <vine/vsg/api/StateCommands.hpp>
+#include <vine/vsg/core/Keys.hpp>
 #include <vine/vsg/VsgDynamicState.hpp>
 #include <vine/vsg/VsgSceneRules.hpp>
 
@@ -52,6 +54,7 @@ using vine::vsg::detail::kBakedTopology;
 using vine::vsg::detail::kMaxDynamicAttachments;
 using vine::vsg::detail::makeDynamicStateDeclaration;
 using vine::vsg::detail::SetDynamicState;
+using vine::vsg::makeDynamicStateCommand;
 using vine::vsg::makeDynamicState;
 using vine::vsg::makePipelineStateObjects;
 using vine::vsg::makeRenderStateObjects;
@@ -292,6 +295,36 @@ TEST(DynamicStateTest, TheExtensionBackedCallsNeedAnEntryPointPerDevice)
     // a command of one device never pools with a command of another.
     const auto bare = makeDynamicState(makeRenderStateObjects(vine::graphics::ResolvedRenderState{}));
     EXPECT_FALSE(bare->entry_points.complete());
+}
+
+TEST(DynamicStateTest, SeveralColourAttachmentsAreDeliveredUnblended)
+{
+    // The blend ENABLE is delivered by this command, so the pipeline's baked constants no longer decide:
+    // one colour attachment keeps the engine's opacity pair (a drawable's per-vertex alpha may drop
+    // below 1 at any time without a rebuild), while a pass with SEVERAL writes DATA - a G-buffer's
+    // normal rides with the material's shininess in its alpha - and this backend's rule for those
+    // attachments is blend DISABLED (the same rule the L2 applies in applyOpaqueBlendForAttachments,
+    // which was the measured fix for the same picture: a shininess of 32 attenuated every stored normal
+    // to 12.5% of its value). The engine's own lighting case in ContentPassTest shades a G-buffer whose
+    // normal attachment carries alpha 0.125 and saw exactly that attenuation while this end said "on".
+    const vine::vsg::core::DynamicState state;
+    const auto                       one =
+        makeDynamicStateCommand(state, 1U, DynamicStateEntryPoints{});
+    ASSERT_NE(one, nullptr);
+    EXPECT_EQ(one->color_attachment_count, 1U);
+    EXPECT_EQ(one->blend[0].blendEnable, VK_TRUE) << "one attachment: the opacity path";
+    EXPECT_EQ(one->blend[0].srcColorBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA);
+    EXPECT_EQ(one->blend[0].dstColorBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+
+    const auto four = makeDynamicStateCommand(state, 4U, DynamicStateEntryPoints{});
+    ASSERT_NE(four, nullptr);
+    EXPECT_EQ(four->color_attachment_count, 4U);
+    for (std::uint32_t index = 0; index < 4U; ++index) {
+        EXPECT_EQ(four->blend[index].blendEnable, VK_FALSE)
+            << "attachment " << index << " carries data, not transparency";
+        EXPECT_EQ(four->blend[index].srcColorBlendFactor, VK_BLEND_FACTOR_ONE);
+        EXPECT_EQ(four->blend[index].dstColorBlendFactor, VK_BLEND_FACTOR_ZERO);
+    }
 }
 
 TEST(DynamicStateTest, TheCommandHasItsOwnStateSlotAtTheTopOfTheStack)

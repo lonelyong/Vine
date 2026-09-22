@@ -388,15 +388,44 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
     return layer;
 }
 
-std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const Shaders& shaders)
+std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi& abi, const Shaders& shaders)
 {
-    return createScreen(shaders, Settings{});
+    return createScreen(abi, shaders, Settings{});
 }
 
-std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const Shaders& shaders, const Settings& settings)
+std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi& abi, const Shaders& shaders,
+                                                              const Settings& settings)
 {
     auto layer = std::unique_ptr<ContentPipeline>(new ContentPipeline());
     layer->d->kind = core::DrawKind::Screen;
+    layer->d->abi  = abi;
+    layer->d->empty_set = ::vsg::DescriptorSetLayout::create();
+    if (layer->d->empty_set == nullptr)
+    {
+        return nullptr;
+    }
+
+    // The full-screen ABI's three rules (see the header): ONE set, and it is set 0 - the engine's screen
+    // programs declare `layout(binding = i)` with no set qualifier, and its shadow ABI inserts the map and
+    // the block into that same set, so there is no second set for this kind to bind. The only BLOCK it may
+    // declare is the shadow's, because a full-screen program's lights travel in its push block.
+    for (const AbiBinding& binding : abi.bindings)
+    {
+        if (binding.set != 0U)
+        {
+            return nullptr;
+        }
+        if (binding.kind == AbiDescriptorKind::UniformBlock && binding.role != AbiBlockRole::ShadowBlock)
+        {
+            return nullptr;
+        }
+    }
+    if (!describeAbi(abi, layer->d->sets, layer->d->shapes, layer->d->sampler_shapes))
+    {
+        return nullptr;
+    }
+    // The set a full-screen draw binds is the PASS' (it is the pass' images): nothing here is a caller's set,
+    // so the list of "sets the caller builds" stays empty (see declaredSets).
 
     ::vsg::ref_ptr<::vsg::ShaderStage> vertex =
         layer->d->compileStage(VK_SHADER_STAGE_VERTEX_BIT, shaders.vertex, shaders.entry);
@@ -415,12 +444,12 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const Shaders& sh
     }
     layer->d->push_ranges = push_ranges;
 
-    // The layout a pass with NO declared inputs binds. `layoutFor(0, 0)` answers with this one, and a screen
-    // program that reads nothing but its push block (a lighting pass that reconstructs positions from a depth
-    // attachment it samples as an INPUT, say) needs it: without it the layer would have no layout to hand the
-    // pipeline and every such draw would be refused as "its pipeline could not be built" - which is a pipeline
-    // that was never asked for, not one that failed.
-    layer->d->layout = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{}, push_ranges);
+    // The layout a pass with NO source textures binds: the set the TEXT declares (its shadow map and its
+    // block), or the push alone when the text declares nothing - a screen program that shades from its push
+    // block (a lighting pass that reconstructs positions from a depth attachment it samples as an INPUT, say)
+    // needs the latter: without it the layer would have no layout to hand the pipeline and every such draw
+    // would be refused as "its pipeline could not be built" - which is a pipeline that was never asked for.
+    layer->d->layout = ::vsg::PipelineLayout::create(layer->d->sets, push_ranges);
     if (layer->d->layout == nullptr) {
         return nullptr;
     }
@@ -532,8 +561,12 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
 ::vsg::ref_ptr<::vsg::DescriptorSetLayout> ContentPipeline::sampledSetLayout(std::uint32_t color_bindings,
                                                                              std::uint32_t depth_bindings)
 {
-    if (color_bindings == 0U && depth_bindings == 0U) {
-        return {};  // nothing to sample: a content layer has only its block set, a full-screen one has nothing
+    const bool screen = d->kind == core::DrawKind::Screen;
+    if (color_bindings == 0U && depth_bindings == 0U && (!screen || d->sets.empty())) {
+        // Nothing to sample: a content layer has only its block set. A full-screen program that declares
+        // NOTHING has nothing to bind either - while one that declares the map or the block still needs the
+        // set its text describes (see the builder below).
+        return {};
     }
     const Data::SampledKey key{ color_bindings, depth_bindings };
     const auto             found = d->sampled.find(key);
@@ -541,17 +574,66 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
         return found->second.set;
     }
 
-    // One combined image sampler per texture, readable from either shading stage: the sampled inputs of a pass
-    // ARE the picture it reads, and which stage reads it is the shader's business. The DEPTH textures follow
-    // the colour ones (see the declaration), so a pass that samples colours and a depth reads binding 0..N-1
-    // for the colours and N for the depth - the same order whatever else the pass declares.
     auto set = ::vsg::DescriptorSetLayout::create();
     if (set == nullptr) {
         return {};
     }
-    for (std::uint32_t binding = 0; binding < color_bindings + depth_bindings; ++binding) {
-        set->addBinding(binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1U,
-                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+    constexpr VkShaderStageFlags kSamplerStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    if (screen)
+    {
+        // The engine's screen ABI plus whatever the TEXT declares: binding i is the source's attachment i
+        // ("the BINDING is the attachment" - see BuiltinShaders), the source's depth follows the colours, and
+        // then the text's own numbers - the shadow map at ITS binding, not at "the next free slot" (the
+        // engine's shadowed lighting program hard-codes 5 for a four-colour G-buffer, so a pass whose source
+        // depth is NOT sampleable would otherwise put the map one binding too low), and a declared block.
+        //
+        // WHY THE BLOCK IS A STATIC UNIFORM HERE. A full-screen call has ONE block (its lights and camera are
+        // the call's), the pass bakes that block's offset into the descriptor, and the bind carries no dynamic
+        // offsets - so the one set a pass builds can be bound by its one call. A depth slot never takes a
+        // binding the text names for something else.
+        const std::span<const std::uint32_t> declared_samplers =
+            d->sampler_shapes.empty() ? std::span<const std::uint32_t>{}
+                                      : std::span<const std::uint32_t>(d->sampler_shapes[0]);
+        const std::span<const BlockDescriptors::Binding> declared_blocks =
+            d->shapes.empty() ? std::span<const BlockDescriptors::Binding>{}
+                              : std::span<const BlockDescriptors::Binding>(d->shapes[0]);
+        std::vector<std::pair<std::uint32_t, VkDescriptorType>> entries;
+        entries.reserve(declared_samplers.size() + declared_blocks.size() + color_bindings + depth_bindings);
+        for (std::uint32_t binding = 0; binding < color_bindings; ++binding) {
+            entries.emplace_back(binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        }
+        std::uint32_t slot = color_bindings;
+        for (std::uint32_t placed = 0; placed < depth_bindings; ++placed) {
+            while (std::find(declared_samplers.begin(), declared_samplers.end(), slot) != declared_samplers.end()) {
+                ++slot;   // the text named this binding for something of its own: the next slot is ours
+            }
+            entries.emplace_back(slot, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            ++slot;
+        }
+        for (const std::uint32_t binding : declared_samplers) {
+            entries.emplace_back(binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        }
+        for (const BlockDescriptors::Binding& entry : declared_blocks) {
+            entries.emplace_back(entry.binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        }
+        std::sort(entries.begin(), entries.end(),
+                  [](const auto& left, const auto& right) { return left.first < right.first; });
+        entries.erase(std::unique(entries.begin(), entries.end(),
+                                  [](const auto& left, const auto& right) { return left.first == right.first; }),
+                      entries.end());
+        for (const auto& [binding, type] : entries) {
+            set->addBinding(binding, type, 1U, kSamplerStages);
+        }
+    }
+    else
+    {
+        // One combined image sampler per texture, readable from either shading stage: the sampled inputs of a
+        // pass ARE the picture it reads, and which stage reads it is the shader's business. The DEPTH textures
+        // follow the colour ones (see the declaration), so a pass that samples colours and a depth reads
+        // binding 0..N-1 for the colours and N for the depth - the same order whatever else the pass declares.
+        for (std::uint32_t binding = 0; binding < color_bindings + depth_bindings; ++binding) {
+            set->addBinding(binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1U, kSamplerStages);
+        }
     }
 
     // Where the set sits is the kind's: a content layer's sampled inputs live in set 1 (after the declared

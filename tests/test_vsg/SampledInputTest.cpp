@@ -444,7 +444,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     ProgramFacts screen_facts;
     ASSERT_EQ(buildScreenProgramFacts(*screen_program, screen_facts), FactMiss::None);
 
-    std::unique_ptr<ContentPipeline> screen_pipelines = ContentPipeline::createScreen(screen_facts.shaders);
+    std::unique_ptr<ContentPipeline> screen_pipelines = ContentPipeline::createScreen(screen_facts.abi, screen_facts.shaders);
     ASSERT_NE(screen_pipelines, nullptr);
 
     VariantPool   pool;

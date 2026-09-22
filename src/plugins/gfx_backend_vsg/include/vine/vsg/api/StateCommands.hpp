@@ -27,9 +27,15 @@
  *
  * Both conventions live HERE, once, so a command and a pipeline's create-info cannot drift apart.
  *
- * BLENDING IS ALWAYS ENABLED. Opacity rides the per-vertex colour alpha and may drop below 1 at any time, so
- * the engine's `blend.enabled` selects the FACTORS rather than turning blending off (see
- * RenderStateMapper's note); a state that does not opt in gets the standard SrcAlpha / OneMinusSrcAlpha pair.
+ * BLENDING, AND THE ONE PLACE IT IS NOT ENABLED. For a SINGLE colour attachment blending is always enabled:
+ * opacity rides the per-vertex colour alpha and may drop below 1 at any time, so the engine's
+ * `blend.enabled` selects the FACTORS rather than turning blending off (see RenderStateMapper's note), and a
+ * state that does not opt in gets the standard SrcAlpha / OneMinusSrcAlpha pair. A pass with SEVERAL
+ * attachments is written UNBLENDED, whatever the state says: those attachments carry DATA - the engine's
+ * G-buffer writes the material's shininess into its normal attachment's alpha (clamp(shininess / 256, 0, 1),
+ * so a shininess of 32 attenuates it to 12.5% and a shininess of 0 erases it) - and the L2 measured exactly
+ * that before writing its own G-buffer unblended (applyOpaqueBlendForAttachments, VsgSceneRules.hpp). The
+ * rule is re-applied at THIS end because the enable travels with the command, not with the pipeline.
  *
  * The commands are the existing backend's own (`detail::SetDynamicState` and `vsg::SetViewport` /
  * `vsg::SetScissor`): reusing a platform command that already learned its slots is not the same as reusing a

@@ -25,28 +25,41 @@ ImageOrigin imageOriginOf(std::string_view name) noexcept
     return ImageOrigin::Input;
 }
 
-bool samplesShadowMap(const ProgramAbi& abi) noexcept
+bool shadowBindingOf(const ProgramAbi& abi, std::uint32_t set, std::uint32_t& binding) noexcept
 {
-    for (const AbiBinding& binding : abi.bindings)
+    for (const AbiBinding& declared : abi.bindings)
     {
-        if (binding.kind != AbiDescriptorKind::UniformBlock &&
-            imageOriginOf(binding.name) == ImageOrigin::Shadow)
+        if (declared.set == set && declared.kind != AbiDescriptorKind::UniformBlock &&
+            imageOriginOf(declared.name) == ImageOrigin::Shadow)
         {
+            binding = declared.binding;
             return true;
         }
     }
     return false;
 }
 
-bool shadowImageOf(const core::CompiledPass& pass, std::span<const InputImages> inputs,
-                   const ::vsg::ref_ptr<::vsg::Sampler>& depth_sampler, SamplerImage& out) noexcept
+bool samplesShadowMap(const ProgramAbi& abi) noexcept
+{
+    for (const AbiBinding& declared : abi.bindings)
+    {
+        if (declared.kind != AbiDescriptorKind::UniformBlock &&
+            imageOriginOf(declared.name) == ImageOrigin::Shadow)
+        {
+            return true;   // declared anywhere: the set index is not this question's business
+        }
+    }
+    return false;
+}
+
+std::size_t shadowInputIndexOf(const core::CompiledPass& pass, std::span<const InputImages> inputs) noexcept
 {
     // No map: the pass samples none (its target states no light, its depth is not sampleable, or no producer
-    // published how to read it). The caller binds the white stand-in, and the engine's own programs never read
-    // it while the block's switch is off - which is exactly why the stand-in's value is the multiply's identity.
+    // published how to read it). The caller binds the white stand-in on the content path, and a full-screen
+    // text that names the map is refused rather than shaded through a stand-in (see ContentPass).
     if (pass.shadow.light == nullptr)
     {
-        return false;
+        return inputs.size();
     }
 
     // Which offered image IS the map: the input the plan resolved the map from. The three facts come from the
@@ -57,20 +70,27 @@ bool shadowImageOf(const core::CompiledPass& pass, std::span<const InputImages> 
     for (std::size_t index = 0; index < count; ++index)
     {
         const core::CompiledInput& input = pass.inputs[index];
-        if (input.shadow.light != pass.shadow.light || !input.depth_sampleable ||
-            !input.shadow.has_view_projection)
+        if (input.shadow.light == pass.shadow.light && input.depth_sampleable &&
+            input.shadow.has_view_projection)
         {
-            continue;
+            return index;
         }
-        if (inputs[index].depth == nullptr || depth_sampler == nullptr)
-        {
-            return false;  // the map's image is the caller's to offer, and it offered none
-        }
-        out.view    = inputs[index].depth;
-        out.sampler = depth_sampler;
-        return true;
     }
-    return false;
+    return inputs.size();
+}
+
+bool shadowImageOf(const core::CompiledPass& pass, std::span<const InputImages> inputs,
+                   const ::vsg::ref_ptr<::vsg::Sampler>& depth_sampler, SamplerImage& out) noexcept
+{
+    const std::size_t index = shadowInputIndexOf(pass, inputs);
+    if (index >= inputs.size() || inputs[index].depth == nullptr || depth_sampler == nullptr)
+    {
+        // The map's image is the caller's to offer, and it offered none: a hole is not a guess.
+        return false;
+    }
+    out.view    = inputs[index].depth;
+    out.sampler = depth_sampler;
+    return true;
 }
 
 V_VSG_NS_END

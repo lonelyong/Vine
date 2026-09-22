@@ -101,10 +101,18 @@ VkBlendFactor mapBlendFactor(vine::graphics::BlendFactor factor) noexcept
     command->polygon_mode = mapPolygon(state.polygon_mode);
     command->topology     = mapTopology(state.topology);
 
-    // Blending is always on; the state selects the factors (or leaves the standard pair in place).
-    VkBlendFactor src = VK_BLEND_FACTOR_SRC_ALPHA;
-    VkBlendFactor dst = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    if (state.blend.enabled) {
+    // Blending is always on for a SINGLE colour attachment (the engine's per-vertex opacity can drop
+    // below 1 without a pipeline rebuild, so the one-attachment picture keeps the standard pair), and
+    // always OFF for a pass with several: those attachments carry DATA, and a G-buffer's normal rides
+    // with the material's shininess in its alpha, so blending would scale the stored normal by its own
+    // alpha (a shininess of 32 attenuates it to 12.5%). The L2's G-buffer hit exactly that and writes
+    // its attachments unblended (see applyOpaqueBlendForAttachments, VsgSceneRules.cpp); the rule is
+    // re-applied at THIS end because the enable and the factors are delivered by this command, so the
+    // pipeline's baked state no longer decides for either path.
+    const bool opaque = color_attachments > 1U;
+    VkBlendFactor src = opaque ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_SRC_ALPHA;
+    VkBlendFactor dst = opaque ? VK_BLEND_FACTOR_ZERO : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    if (!opaque && state.blend.enabled) {
         src = mapBlendFactor(state.blend.src);
         dst = mapBlendFactor(state.blend.dst);
     }
@@ -113,7 +121,7 @@ VkBlendFactor mapBlendFactor(vine::graphics::BlendFactor factor) noexcept
     const std::uint32_t carried = std::min(color_attachments, detail::kMaxDynamicAttachments);
     for (std::uint32_t index = 0; index < carried; ++index) {
         VkPipelineColorBlendAttachmentState& attachment = command->blend[index];
-        attachment.blendEnable         = VK_TRUE;
+        attachment.blendEnable         = opaque ? VK_FALSE : VK_TRUE;
         attachment.srcColorBlendFactor = src;
         attachment.dstColorBlendFactor = dst;
         attachment.srcAlphaBlendFactor = src;

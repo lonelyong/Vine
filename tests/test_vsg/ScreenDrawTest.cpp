@@ -172,7 +172,7 @@ class Fixture
         if (buildScreenProgramFacts(*program, facts) != FactMiss::None) {
             return false;
         }
-        pipelines = ContentPipeline::createScreen(facts.shaders);
+        pipelines = ContentPipeline::createScreen(facts.abi, facts.shaders);
         if (pipelines == nullptr) {
             return false;
         }

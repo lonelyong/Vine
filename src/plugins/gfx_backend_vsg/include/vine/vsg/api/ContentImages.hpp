@@ -93,6 +93,33 @@ struct SamplerImage
  */
 [[nodiscard]] bool samplesShadowMap(const ProgramAbi& abi) noexcept;
 
+/** @brief Gets the binding a program declares the shadow map at, in one set.
+ *
+ * The full-screen ABI needs the NUMBER (its set carries the map at the binding the text names - 5 for the
+ * engine's four-colour G-buffer), while the content ABI's caller fills the binding itself; this is the one
+ * spelling of "which binding is the map's".
+ *
+ * @param abi     The bindings the program's text declares.
+ * @param set     Descriptor set index.
+ * @param binding Receives the declared binding when the text names one there.
+ * @return true when the set declares a sampler named `shadow_map`.
+ */
+[[nodiscard]] bool shadowBindingOf(const ProgramAbi& abi, std::uint32_t set, std::uint32_t& binding) noexcept;
+
+/** @brief Gets the index of the pass' input that IS the map its plan resolved, in the offered list.
+ *
+ * The plan names the map by the light its target states (see core::FrameCompiler's `resolveShadow`), and the
+ * offered list is walked with the same three facts - so the answer is the input the plan resolved, never
+ * "the first input that has a depth" (a G-buffer has one too, and that is the measured defect this asks the
+ * plan to avoid).
+ *
+ * @param pass  The compiled pass (its resolved shadow).
+ * @param inputs The images the caller offers, one entry per `pass.inputs` entry and in the same order.
+ * @return The index into @p inputs, or `inputs.size()` when the pass samples no map it can read.
+ */
+[[nodiscard]] std::size_t shadowInputIndexOf(const core::CompiledPass& pass,
+                                            std::span<const InputImages> inputs) noexcept;
+
 /** @brief Picks the map a pass samples, as the layer's depth sampler reads it.
  *
  * The map is the INPUT the plan resolved (core::FrameCompiler's `resolveShadow`: the first input whose target

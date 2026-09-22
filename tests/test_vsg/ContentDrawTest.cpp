@@ -258,19 +258,22 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
     churn.cull_mode    = vine::graphics::CullMode::Back;
     churn.polygon_mode = vine::graphics::PolygonMode::Line;
     churn.topology     = vine::graphics::Topology::Points;
-    const auto mapped  = vine::vsg::makeDynamicStateCommand(churn, 2U, none);
+    const auto mapped  = vine::vsg::makeDynamicStateCommand(churn, 1U, none);
     EXPECT_EQ(mapped->cull_mode, VK_CULL_MODE_BACK_BIT);
     EXPECT_EQ(mapped->polygon_mode, VK_POLYGON_MODE_LINE);
     EXPECT_EQ(mapped->topology, VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
-    EXPECT_EQ(mapped->color_attachment_count, 2U);
-    for (std::uint32_t index = 0; index < 2U; ++index) {
-        EXPECT_EQ(mapped->blend[index].blendEnable, VK_TRUE) << "blending is always on in this engine";
-        EXPECT_EQ(mapped->blend[index].srcColorBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA)
-            << "a state that does not opt in gets the standard pair";
-        EXPECT_EQ(mapped->blend[index].dstColorBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
-        EXPECT_EQ(mapped->blend[index].srcAlphaBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA);
-        EXPECT_EQ(mapped->blend[index].dstAlphaBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
-    }
+    EXPECT_EQ(mapped->color_attachment_count, 1U);
+    // Blending is always on for ONE attachment - the per-vertex opacity path, where an alpha may drop
+    // below 1 without a rebuild - and always off for several, where the attachments are DATA (a
+    // G-buffer's normal rides with the material's shininess in its alpha). Several attachments are
+    // pinned device-free in DynamicStateTest.SeveralColourAttachmentsAreDeliveredUnblended; the rule
+    // itself is the L2's own (applyOpaqueBlendForAttachments, VsgSceneRules.hpp).
+    EXPECT_EQ(mapped->blend[0].blendEnable, VK_TRUE) << "one attachment: the engine's opacity path";
+    EXPECT_EQ(mapped->blend[0].srcColorBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA)
+        << "a state that does not opt in gets the standard pair";
+    EXPECT_EQ(mapped->blend[0].dstColorBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+    EXPECT_EQ(mapped->blend[0].srcAlphaBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA);
+    EXPECT_EQ(mapped->blend[0].dstAlphaBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
 
     DynamicState opted_in;
     opted_in.blend.enabled = true;
@@ -326,7 +329,10 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
                        "layout(location = 0) out vec4 out_color;\n"
                        "layout(binding = 0) uniform sampler2D picture;\n"
                        "void main() { out_color = texture(picture, vine_uv); }\n";
-    auto pipelines = ContentPipeline::createScreen(shaders);
+    // The layer's set is what the text declares: scan the pair (the engine's table entry does exactly that).
+    vine::vsg::ProgramAbi abi;
+    ASSERT_EQ(vine::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vine::vsg::FactMiss::None);
+    auto pipelines = ContentPipeline::createScreen(abi, shaders);
     ASSERT_NE(pipelines, nullptr);
 
     VariantPool     pool;

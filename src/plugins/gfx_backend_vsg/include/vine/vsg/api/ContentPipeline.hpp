@@ -175,27 +175,42 @@ class ContentPipeline
                                                    std::span<const VertexAttribute> attributes,
                                                    const Shaders& shaders);
 
-    /** @brief Creates a FULL-SCREEN layer: the other descriptor ABI, with no block set and no vertex streams.
+    /** @brief Creates a FULL-SCREEN layer: the other descriptor ABI, whose set is what the text declares.
      *
      * The stages are the engine's canonical full-screen vertex stage plus the host's fragment stage (see
      * `api/ContentSources`: `buildScreenProgramFacts` composes exactly that pair), so the layer compiles one
-     * program pair whose vertex stage generates the triangle from `gl_VertexIndex`. Its set 0 is built per
-     * sampled-colour count - one combined image sampler per binding, binding i = attachment i - and its
-     * push range is the full-screen ABI's 128 bytes, read by the FRAGMENT stage (the full-screen vertex
-     * stage declares no constants; the light block belongs to the screen program that shades the picture).
+     * program pair whose vertex stage generates the triangle from `gl_VertexIndex`. The bindings are the
+     * program's own declarations (api/ProgramAbi) like a content layer's - with the full-screen ABI's three
+     * rules, which `create` REFUSES a text for breaking:
+     *   * everything lives in SET 0: the engine's screen programs write `layout(binding = i)` with no set
+     *     qualifier, and its shadow ABI inserts its map and its block into that same set - there is no
+     *     second set for this ABI to bind;
+     *   * the only BLOCK it may declare is the shadow's (`VineShadowBlock`): a full-screen program's lights
+     *     travel in its 128-byte push block, so any other L1 block names bytes nothing would write;
+     *   * a sampler is a `sampler2D` and never the environment (`skyMap` - see api/ContentImages).
      *
+     * WHERE THE IMAGES COME FROM is the pass', not a caller's: the source's colour attachments occupy
+     * bindings 0..N-1 (the ABI's own convention: "binding i is attachment i"), the source's depth takes
+     * binding N when a shader may sample it, a declared `shadow_map` takes ITS binding, and a declared
+     * shadow block takes its own. `sampledSetLayout` answers that layout per (colours, depths) - the pass
+     * builds the set from it (see ContentPass), which is why `declaredSets()` is empty for this kind.
+     *
+     * @param abi      The bindings and push ranges the program's text declares.
      * @param shaders  GLSL text of both stages (full-screen vertex + screen fragment).
      * @param settings Colour attachment count and push budget.
-     * @return The layer, or null when the GLSL did not compile.
+     * @return The layer, or null when the GLSL did not compile or a declaration breaks one of the rules
+     *         above (a layer that can never build a pipeline has nothing to offer).
      */
-    static std::unique_ptr<ContentPipeline> createScreen(const Shaders& shaders, const Settings& settings);
+    static std::unique_ptr<ContentPipeline> createScreen(const ProgramAbi& abi, const Shaders& shaders,
+                                                         const Settings& settings);
 
     /** @brief Creates a full-screen layer with the default settings (see @ref Settings).
      *
+     * @param abi     The bindings and push ranges the program's text declares.
      * @param shaders GLSL text of both stages (full-screen vertex + screen fragment).
-     * @return The layer, or null when the GLSL did not compile.
+     * @return The layer, or null when the GLSL did not compile or a declaration cannot be served.
      */
-    static std::unique_ptr<ContentPipeline> createScreen(const Shaders& shaders);
+    static std::unique_ptr<ContentPipeline> createScreen(const ProgramAbi& abi, const Shaders& shaders);
 
     ~ContentPipeline();
 
@@ -234,7 +249,12 @@ class ContentPipeline
     [[nodiscard]] std::span<const std::uint32_t> samplerBindings(std::uint32_t set) const noexcept;
 
     /** @brief Gets the set indices the program declares ANYTHING in (blocks and/or sampled images),
-     *         ascending: the sets a caller has to build and a pass has to bind. */
+     *         ascending: the sets a caller has to build and a pass has to bind.
+     *
+     * EMPTY for a FULL-SCREEN layer, and that is not "nothing to bind": its set is the program's own
+     * declaration and the PASS builds it (see @ref sampledSetLayout) - a caller that built one would have to
+     * know which of the pass' images each binding reads, which is the pass' own bookkeeping.
+     */
     [[nodiscard]] std::span<const std::uint32_t> declaredSets() const noexcept;
 
     /** @brief Gets (or builds) the pipeline for an identity.
@@ -249,8 +269,9 @@ class ContentPipeline
     /** @brief Gets the layout a layer of this kind binds when it samples nothing.
      *
      * A content layer always has one (the block set alone): a pass that reads no input still binds its blocks.
-     * A FULL-SCREEN layer has none - a full-screen draw IS the picture it samples, so `layoutFor(0)` refuses
-     * for it (and so does `acquire()` for a key whose count is 0).
+     * A full-screen layer's is the set its TEXT declares - the shadow map's binding and its block's - or the
+     * push alone when the text declares nothing (a screen program that shades from its push block is a legal
+     * call).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layout() const noexcept;
 
@@ -263,7 +284,9 @@ class ContentPipeline
      *
      * @param sampled_color_bindings Number of colour textures the pass binds.
      * @param sampled_depth_bindings Number of depth textures the pass binds (they follow the colours, one per
-     *                               input that offers a sampleable depth - see core::CompiledInput).
+     *                               input that offers a sampleable depth - see core::CompiledInput; for a
+     *                               FULL-SCREEN layer it is the source's own depth, since the shadow map
+     *                               takes the binding its text names - see @ref sampledSetLayout).
      * @return The layout, or null when it could not be created (or does not exist for this kind).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layoutFor(std::uint32_t sampled_color_bindings,
@@ -273,13 +296,26 @@ class ContentPipeline
      *         and @p depth_bindings depth samplers.
      *
      * The caller that binds the images uses THIS object, so the set it builds is laid out exactly like the
-     * set the pipelines of this layer expect. The binding order is the inputs' declaration order - each
-     * input's colour attachments in attachment order, then its depth - so a shader can name a binding once
-     * and keep reading the same thing as long as the pass declares its inputs in the same order.
+     * set the pipelines of this layer expect.
+     *
+     * A CONTENT layer's binding order is the inputs' declaration order - each input's colour attachments in
+     * attachment order, then its depth - so a shader can name a binding once and keep reading the same thing
+     * as long as the pass declares its inputs in the same order.
+     *
+     * A FULL-SCREEN layer's is the engine's screen ABI plus whatever the text declares: the source's colour
+     * attachments at bindings 0..color_bindings-1 (binding i IS attachment i), the source's depth at the next
+     * binding, and then the text's own declarations - a `shadow_map` at the binding the text names (not at
+     * "the next free slot": the engine's shadowed lighting program hard-codes 5 for a four-colour G-buffer,
+     * so a pass whose source depth is NOT sampleable would otherwise put the map one binding too low), and a
+     * declared shadow block at its own binding. A depth slot never takes a binding the text names for
+     * something else.
      *
      * @param color_bindings Number of combined image samplers (colour textures).
-     * @param depth_bindings Number of combined image samplers (DEPTH textures, binding after the colours).
-     * @return The set layout, or null for zero bindings (a layer with nothing to sample has no such set).
+     * @param depth_bindings Number of combined image samplers (DEPTH textures the pass binds itself: one per
+     *                       input that offers a sampleable depth, minus the shadow map for a full-screen
+     *                       layer - that one takes its declared binding).
+     * @return The set layout, or null for zero bindings (a layer with nothing to sample and nothing declared
+     *         has no such set).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSetLayout> sampledSetLayout(std::uint32_t color_bindings,
                                                                              std::uint32_t depth_bindings);

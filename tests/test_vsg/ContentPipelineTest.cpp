@@ -36,11 +36,19 @@
 #include <vsg/state/VertexInputState.h>
 #include <vsg/state/ViewportState.h>
 
+#include <vine/graphics/BuiltinShaders.hpp>
+#include <vine/graphics/ShaderProgram.hpp>
+
 #include <vine/vsg/api/ContentPipeline.hpp>
+#include <vine/vsg/api/ContentSources.hpp>
+#include <vine/vsg/api/ProgramAbi.hpp>
 #include <vine/vsg/core/StateRegistry.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
+using vine::vsg::buildScreenProgramFacts;
 using vine::vsg::ContentPipeline;
+using vine::vsg::FactMiss;
+using vine::vsg::ProgramFacts;
 using vine::vsg::core::DynamicState;
 using vine::vsg::core::PipelineKey;
 using vine::vsg::core::StateRegistry;
@@ -140,6 +148,18 @@ ContentPipeline::Shaders screenShaders()
                        "layout(binding = 0) uniform sampler2D picture;\n"
                        "void main() { out_color = texture(picture, vine_uv); }\n";
     return shaders;
+}
+
+/// @brief The layer a full-screen pair declares: the abi is scanned from the same two texts (the engine's
+///        table entry does exactly that - see api/ContentSources), so the layout the layer builds IS what
+///        the text says.
+std::unique_ptr<ContentPipeline> screenLayer(const ContentPipeline::Shaders& shaders)
+{
+    vine::vsg::ProgramAbi abi;
+    if (vine::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
+        return nullptr;
+    }
+    return ContentPipeline::createScreen(abi, shaders);
 }
 
 /// @brief An identity of the full-screen kind (kind = Screen: the other descriptor ABI).
@@ -270,18 +290,19 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     // at set 0 and the sampled inputs at set 1; a full-screen layer puts the samplers at set 0 and nothing
     // else, because that is where the engine's own screen programs declare theirs (`layout(binding = 0) uniform
     // sampler2D`, no set qualifier). A layer that mixed the two would compile a pipeline the draw cannot bind.
-    auto layer = ContentPipeline::createScreen(screenShaders());
+    auto layer = screenLayer(screenShaders());
     ASSERT_NE(layer, nullptr) << "the full-screen pair must compile";
     EXPECT_EQ(layer->kind(), vine::vsg::core::DrawKind::Screen);
 
-    EXPECT_EQ(layer->sampledSetLayout(0, 0U), nullptr)
-        << "a full-screen draw without a sampled input has no set at all (its picture IS the input)";
-    // ... and it still has a PIPELINE: a screen program that reads nothing but its push block (a lighting pass
-    // that shades from the light block alone) is a legal call, and without a layout the layer could not compile
-    // its pipeline and every such draw was refused as "its pipeline could not be built" - which is a pipeline
-    // nobody ever asked for rather than one that failed.
-    EXPECT_NE(layer->layoutFor(0, 0U), nullptr) << "the push-only layout a pass with no inputs binds";
-    EXPECT_TRUE(layer->layoutFor(0, 0U)->setLayouts.empty()) << "no sets at all: the push is the whole interface";
+    // The text declares `layout(binding = 0) uniform sampler2D picture;` - so the SET IS THE TEXT'S: a pass
+    // whose source offers no attachment still binds binding 0 (the picture could be the map, or something a
+    // text of its own declares), and `layoutFor(0, 0)` is that set plus the push range.
+    const auto declared_zero = layer->sampledSetLayout(0, 0U);
+    ASSERT_NE(declared_zero, nullptr) << "a text that declares a sampler has a set even with no source texture";
+    ASSERT_EQ(declared_zero->bindings.size(), 1U);
+    EXPECT_EQ(declared_zero->bindings[0].binding, 0U);
+    EXPECT_NE(layer->layoutFor(0, 0U), nullptr) << "the layout a pass with no source textures binds";
+    ASSERT_EQ(layer->layoutFor(0, 0U)->setLayouts.size(), 1U) << "the text's own set, and nothing else";
 
     const auto samplers = layer->sampledSetLayout(1, 0U);
     ASSERT_NE(samplers, nullptr);
@@ -317,13 +338,98 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     EXPECT_EQ(layer->failures(), failures_before + 1U) << "a silently compiled wrong-ABI pipeline is the failure";
 }
 
+TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
+{
+    // The engine's own screen lighting program (`BuiltinShaders::shadowedDeferredLightProgram`) writes its
+    // shadow ABI's bindings down by hand: the map at 5 (the source's four colours take 0..3 and its depth
+    // would take 4) and the block at 6. The layer's set is what the TEXT declares, so those numbers are the
+    // text's - and the layer has to serve them.
+    const vine::intrusive_ptr<vine::graphics::ShaderProgram> program =
+        vine::graphics::shadowedDeferredLightProgram();
+    ASSERT_NE(program, nullptr);
+    ProgramFacts facts;
+    ASSERT_EQ(buildScreenProgramFacts(*program, facts), FactMiss::None);
+    auto layer = ContentPipeline::createScreen(facts.abi, facts.shaders);
+    ASSERT_NE(layer, nullptr) << "the engine's shadowed lighting program must be servable";
+
+    EXPECT_TRUE(layer->declaredSets().empty()) << "a full-screen set is the PASS' to build";
+    const auto samplers = layer->samplerBindings(0U);
+    ASSERT_EQ(samplers.size(), 5U) << "the source's four attachments and the map";
+    EXPECT_EQ(samplers[0], 0U);
+    EXPECT_EQ(samplers[1], 1U);
+    EXPECT_EQ(samplers[2], 2U);
+    EXPECT_EQ(samplers[3], 3U);
+    EXPECT_EQ(samplers[4], 5U) << "the map's binding is the text's own number";
+    const auto shape = layer->blockShape(0U);
+    ASSERT_EQ(shape.size(), 1U);
+    EXPECT_EQ(shape[0].binding, 6U);
+    EXPECT_EQ(shape[0].role, vine::vsg::AbiBlockRole::ShadowBlock);
+
+    // The set a pass binds when its source offers FOUR colours and NO sampleable depth: 0..3 for the colours,
+    // the map at 5 and the block at 6 - binding 4 is NOT in it, which is exactly where an arrangement that
+    // just appended the textures would have put the map (and the engine's text would then read undefined
+    // data: it hard-codes 5).
+    const auto set = layer->sampledSetLayout(4U, 0U);
+    ASSERT_NE(set, nullptr);
+    std::vector<std::uint32_t> bindings;
+    for (const auto& entry : set->bindings) { bindings.push_back(entry.binding); }
+    ASSERT_EQ(bindings.size(), 6U);
+    EXPECT_EQ(bindings[0], 0U);
+    EXPECT_EQ(bindings[3], 3U);
+    EXPECT_EQ(bindings[4], 5U) << "the map takes its declared binding";
+    EXPECT_EQ(bindings[5], 6U) << "and the block takes its own";
+    EXPECT_EQ(std::find(bindings.begin(), bindings.end(), 4U), bindings.end())
+        << "nothing lives at 4: the source offers no depth";
+    for (const auto& entry : set->bindings) {
+        if (entry.binding == 6U) {
+            EXPECT_EQ(entry.descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                << "a full-screen call has ONE block: the pass bakes its offset into the descriptor";
+        }
+    }
+
+    // ... and with a sampleable source depth the arrangement gains binding 4 while the map STAYS at 5.
+    const auto with_depth = layer->sampledSetLayout(4U, 1U);
+    ASSERT_NE(with_depth, nullptr);
+    std::vector<std::uint32_t> with_depth_bindings;
+    for (const auto& entry : with_depth->bindings) { with_depth_bindings.push_back(entry.binding); }
+    ASSERT_EQ(with_depth_bindings.size(), 7U);
+    EXPECT_EQ(with_depth_bindings[4], 4U) << "the source's own depth";
+    EXPECT_EQ(with_depth_bindings[5], 5U) << "the map did not move";
+    EXPECT_EQ(with_depth_bindings[6], 6U);
+
+    // The full-screen ABI's rules, each refused where the layer is built: a declaration outside set 0 (there
+    // is no second set to bind), and any block that is not the shadow's (a screen program's lights travel in
+    // its push).
+    const auto refusing = [](const std::string& declaration) {
+        ContentPipeline::Shaders shaders;
+        shaders.vertex   = "#version 450\n"
+                           "layout(location = 0) out vec2 vine_uv;\n"
+                           "void main() { vine_uv = vec2(0.0); gl_Position = vec4(0.0, 0.0, 0.0, 1.0); }\n";
+        shaders.fragment = "#version 450\n"
+                           "layout(location = 0) in vec2 vine_uv;\n"
+                           "layout(location = 0) out vec4 out_color;\n" +
+                           declaration + "\nvoid main() { out_color = vec4(vine_uv, 0.0, 1.0); }\n";
+        vine::vsg::ProgramAbi abi;
+        if (vine::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
+            return std::unique_ptr<ContentPipeline>{};
+        }
+        return ContentPipeline::createScreen(abi, shaders);
+    };
+    EXPECT_EQ(refusing("layout(set = 1, binding = 0) uniform sampler2D picture;"), nullptr)
+        << "the full-screen ABI is set 0 and nothing else";
+    EXPECT_EQ(refusing("layout(binding = 7, std140) uniform VineLightsBlock { vec4 ambient; } lights;"), nullptr)
+        << "a screen program's lights travel in its push block";
+    EXPECT_NE(refusing("layout(binding = 5) uniform sampler2D shadow_map;"), nullptr)
+        << "while the shadow's pair is exactly what a screen text may declare";
+}
+
 TEST(ContentPipelineTest, AScreenPipelineBakesTheLegacyFullscreenShape)
 {
     // The create-info's states ARE the dynamic declaration's starting point, and for a full-screen draw they
     // are the previous implementation's overlay shape: no culling (the triangle's winding is the engine's own,
     // and cutting it out loses the whole picture) and no depth test (the draw composites on top). The plan's
     // resolved state is what a draw commands; these are the values nothing may silently inherit.
-    auto layer = ContentPipeline::createScreen(screenShaders());
+    auto layer = screenLayer(screenShaders());
     ASSERT_NE(layer, nullptr);
 
     VariantPool pool;

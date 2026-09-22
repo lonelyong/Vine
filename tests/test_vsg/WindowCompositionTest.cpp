@@ -290,7 +290,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     ASSERT_NE(screen_program, nullptr);
     ProgramFacts screen_facts;
     ASSERT_EQ(buildScreenProgramFacts(*screen_program, screen_facts), FactMiss::None);
-    auto screen_layer = ContentPipeline::createScreen(screen_facts.shaders);
+    auto screen_layer = ContentPipeline::createScreen(screen_facts.abi, screen_facts.shaders);
     ASSERT_NE(screen_layer, nullptr);
 
     VariantPool   content_pool;

@@ -716,7 +716,7 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     ProgramFacts program_facts;
     ASSERT_EQ(buildScreenProgramFacts(*program, program_facts), FactMiss::None);
 
-    std::unique_ptr<ContentPipeline> pipelines = ContentPipeline::createScreen(program_facts.shaders);
+    std::unique_ptr<ContentPipeline> pipelines = ContentPipeline::createScreen(program_facts.abi, program_facts.shaders);
     ASSERT_NE(pipelines, nullptr);
 
     // The camera every call announces: at +Z looking at the origin, so a world +Z direction is a light towards the
