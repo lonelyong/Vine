@@ -463,7 +463,7 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
 
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) },
                                   program.get());
-    store.tablesFor(plan->frame, timeline, retirement);
+    (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.geometryEntries(), 1U);
     ASSERT_EQ(store.programEntries(), 1U);
 

@@ -42,6 +42,7 @@
 #include <vine/vsg/api/ContentDraw.hpp>
 #include <vine/vsg/api/ContentFacts.hpp>
 #include <vine/vsg/api/ContentImages.hpp>
+#include <vine/vsg/api/ContentHalves.hpp>
 #include <vine/vsg/api/ContentPass.hpp>
 #include <vine/vsg/api/ContentStore.hpp>
 #include <vine/vsg/api/ContentPipeline.hpp>
@@ -74,6 +75,7 @@ using vine::vsg::buildProgramFacts;
 using vine::vsg::ChannelFacts;
 using vine::vsg::ContentDraw;
 using vine::vsg::ContentFacts;
+using vine::vsg::ContentHalves;
 using vine::vsg::ContentPass;
 using vine::vsg::ContentPipeline;
 using vine::vsg::FactMiss;
@@ -181,49 +183,15 @@ struct Mesh
     }
 };
 
-/// @brief The `VkFormat` of one channel (a channel's components are 32-bit floats, see `StreamKey`).
-std::uint32_t channelFormat(const ChannelFacts& channel)
-{
-    switch (channel.key.components)
-    {
-    case 1:
-        return VK_FORMAT_R32_SFLOAT;
-    case 2:
-        return VK_FORMAT_R32G32_SFLOAT;
-    case 3:
-        return VK_FORMAT_R32G32B32_SFLOAT;
-    default:
-        return VK_FORMAT_R32G32B32A32_SFLOAT;
-    }
-}
-
-/// @brief Builds the pipeline layer for one layout, declaring exactly the channels the entry lists.
+/// @brief Builds the pipeline layer for one layout - the binding/format spelling lives in the api now
+/// (`ContentPipeline::create`'s geometry-entry overload), so a fixture and the production path cannot
+/// disagree about which binding a channel is fed at or what its format is.
 std::unique_ptr<ContentPipeline> pipelineFor(const GeometryFacts& facts, const ContentPipeline::Shaders& shaders,
                                              const vine::vsg::ProgramAbi& abi)
 {
-    std::vector<ContentPipeline::VertexBinding>   bindings;
-    std::vector<ContentPipeline::VertexAttribute> attributes;
-    for (const ChannelFacts& channel : facts.channels)
-    {
-        // The binding a channel is fed at is the BACKEND's canonical order (see StreamUploads::
-        // bindingOfCanonical): positions 0, normals 1, texcoords 2, colours 3 - NOT the channel's order in
-        // this list, and not the shader's location either. The two agree for positions and normals and
-        // disagree for everything else: the engine's reserved texcoord slot is location 8, and a pipeline
-        // that bound it as "the second channel" would leave the shader's vec2 un-fed (the draw binds by the
-        // canonical number, so the attribute must be declared against that same number).
-        const std::uint32_t binding = vine::vsg::StreamUploads::bindingOfCanonical(channel.key.location);
-        EXPECT_NE(binding, vine::vsg::StreamUploads::kNoBinding) << "a canonical channel has a binding";
-        bindings.push_back(ContentPipeline::VertexBinding{ binding,
-                                                           static_cast<std::uint32_t>(channel.key.components *
-                                                                                      sizeof(float)),
-                                                           false });
-        attributes.push_back(
-            ContentPipeline::VertexAttribute{ channel.key.location, binding, channelFormat(channel), 0U });
-    }
-
     ContentPipeline::Settings settings;
     settings.color_attachments = 1U;
-    return ContentPipeline::create(abi, bindings, attributes, shaders, settings);
+    return ContentPipeline::create(abi, facts, shaders, settings);
 }
 
 bool isGreen(const Rgba8& pixel)
@@ -3824,59 +3792,45 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     vine::vsg::ProgramVariant textured_variant;
     textured_variant.diffuse_map = true;
     const vine::vsg::ProgramVariant plain_variant;
-    const auto textured_entry =
-        findProgram(facts, vine::vsg::core::ProgramRef{ program.get(), program->revision() }, textured_variant);
-    const auto plain_entry =
-        findProgram(facts, vine::vsg::core::ProgramRef{ program.get(), program->revision() }, plain_variant);
-    ASSERT_TRUE(textured_entry.found());
-    ASSERT_TRUE(plain_entry.found());
-    EXPECT_FALSE(textured_entry.entry->abi.pushes.empty()) << "the textured text declares the push it reads";
-    EXPECT_TRUE(plain_entry.entry->abi.pushes.empty()) << "the plain text declares none, and must be served none";
+    // THE HALVES ARE PRODUCED the way a host produces them: the pass' tuples come from the store's tables
+    // and the layers are compiled from the entries they name (see api/ContentHalves) - no host loop, no
+    // layer built by hand. The entries are in first-seen order, so the plain command (collected first) is
+    // served first.
+    VariantPool                       pool;
+    ContentHalves                     halves(pool,
+                                             vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                                                            created.instance->vk()));
+    const auto entries = halves.halvesFor(frame.passes[0], facts, timeline, retirement);
+    ASSERT_EQ(entries.size(), 2U) << "one program, two texts: the pass is served two halves";
+    ASSERT_EQ(halves.halves(), 2U);
+    ASSERT_EQ(entries[0].variant, plain_variant);
+    ASSERT_EQ(entries[1].variant, textured_variant);
 
-    const auto geometry_entry = findGeometry(facts, geometry.get(), geometry->revision());
-    ASSERT_TRUE(geometry_entry.found());
-    ASSERT_TRUE(channelsMatchLayout(*geometry_entry.entry));
+    // The PUSH declarations the halves were compiled from: what the define gates must be what each half has.
+    EXPECT_TRUE(entries[0].pipelines->abi().pushes.empty())
+        << "the plain text declares no push, and is served none";
+    EXPECT_FALSE(entries[1].pipelines->abi().pushes.empty())
+        << "the textured text declares the push it reads";
 
-    // The two layers are built from THE STORE'S OWN entries - the production loop, spelled out.
-    std::unique_ptr<ContentPipeline> textured_layer =
-        pipelineFor(*geometry_entry.entry, textured_entry.entry->shaders, textured_entry.entry->abi);
-    std::unique_ptr<ContentPipeline> plain_layer =
-        pipelineFor(*geometry_entry.entry, plain_entry.entry->shaders, plain_entry.entry->abi);
-    ASSERT_NE(textured_layer, nullptr);
-    ASSERT_NE(plain_layer, nullptr);
+    StateRegistry registry(pool);
+    StreamUploads uploads;
 
+    // The pass' DECLARED SETS stay the caller's (they carry the frame's descriptor numbers and the map's
+    // image), built from each half's OWN declarations: the layer's `abi` is the shape a set must have.
     const vine::vsg::BlockDescriptors::SampledBinding textured_maps[] = {
         vine::vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
     };
     std::unique_ptr<BlockDescriptors> textured_declared =
-        BlockDescriptors::forAbi(textured_entry.entry->abi, 0U, created.device, *storage, textured_maps);
+        BlockDescriptors::forAbi(entries[1].pipelines->abi(), 0U, created.device, *storage, textured_maps);
     std::unique_ptr<BlockDescriptors> plain_declared =
-        BlockDescriptors::forAbi(plain_entry.entry->abi, 0U, created.device, *storage);
+        BlockDescriptors::forAbi(entries[0].pipelines->abi(), 0U, created.device, *storage);
     ASSERT_NE(textured_declared, nullptr);
     ASSERT_NE(plain_declared, nullptr);
-
-    VariantPool   pool;
-    StateRegistry registry(pool);
-    StreamUploads uploads;
-    ContentDraw   textured_draws(*textured_layer, pool,
-                                 vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
-                                                                                created.instance->vk()));
-    ContentDraw   plain_draws(*plain_layer, pool,
-                              vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
-                                                                             created.instance->vk()));
-
-    const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vine::vsg::core::DrawKind::Content, program.get(), textured_entry.entry->revision,
-                                   geometry_entry.entry->layout, textured_layer.get(), &textured_draws,
-                                   textured_variant },
-        ContentPass::Scope::Entry{ vine::vsg::core::DrawKind::Content, program.get(), plain_entry.entry->revision,
-                                   geometry_entry.entry->layout, plain_layer.get(), &plain_draws, plain_variant }
-    };
     BlockDescriptors* declared_sets[] = { textured_declared.get(), plain_declared.get() };
 
     storage->beginFrame();
     ContentPass::Scope scope;
-    scope.entries    = halves;
+    scope.entries    = entries;
     scope.registry   = &registry;
     scope.storage    = storage.get();
     scope.block_sets = declared_sets;

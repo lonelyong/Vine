@@ -3,6 +3,13 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
+> **M8f：半片的生产侧**——`api/ContentHalves`：按计划走一遍 pass，用**与录制器相同的查找**（几何按计划的修订、
+> 材质按身份、变体由两者决定、程序条目按变体取）为每个 (kind, program, revision, layout, variant、
+> **pass 的颜色附件数**) 产出一片**已编译的半片**（层 + 录制器，`Scope::Entry` 直接可用）；布局的绑定/格式拼写
+> 收进 api（`ContentPipeline::create(abi, GeometryFacts, shaders, settings)`，夹具也改用它——一份拼写）；键的
+> 表不再回答（修订被表退役）的半片按同一窗口停靠；**被拒的层记住、不重试**。真设备证据：整帧 = store 的表 +
+> 生产者的半片 ⇒ 左半洋红、右半材质色、0 VUID；`test_vsg` 633 用例 / 97 套件全绿；门禁 **0 VUID /
+> 0 SYNC-HAZARD**、skipped=0、hygiene 全清（现 843 文件）。更早一片是
 > **M8e：三张表的生产侧**——`api/ContentStore`：宿主 `track()` 活对象（条目持键，地址不回收），
 > `tablesFor(计划)` 只建**计划点到名**的东西（稳态帧 0 重建），修订是重建的闸（几何/程序读 SDK 自己的
 > `revision()`，材质只有 `updateMaterial()` 报告的那一个——SDK 类型没有 revision）；被顶替的修订**留在表里**
@@ -40,9 +47,9 @@
 > M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：M8a 读事实（§11.16ae）、M8b 布局跟着
 > 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）、
 > M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）、
-> M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）。
+> M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）。
 > 下一步：
-> 半片的生产侧（由表建管线层与 `Scope::Entry`）。
+> 逐 drawable 的声明集合（同一变体、不同贴图的两个 drawable 今天会撞一套）。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2581,6 +2588,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8d-1（材质贴图的 GPU 侧）~~ | **已完成（2026-09-22）**：`api/MaterialImages`（按地址 + 修订缓存；条目持住键；mip-major 交错 staging；元素 = 一个 texel、数组维数 = 层数；view type 写在 DATA 上；白 fallback 2D（复用 `WhiteImage`）+ cube；`releaseAbandoned`/`clear`/超限淘汰；`setMaxAnisotropy`）；`ContentPipeline` 放开 `samplerCube` 的拒绝（立方体视图落地了）；上传走 vsg 的 TransferTask（数据背书的 `vsg::Image`），像素证：四色 2x2 → 四象限、六色 cube → 五方向、重填 → 第二趟新颜色；5 条变异反证全红（§11.16al）。 |
 | ~~M8d-2（变体的 define 进管线身份）~~ | **已完成（2026-09-22）**：`api/ProgramVariant`（规则 + `bits()` + `defines()` + `describe()` + `variantOf(材质, 几何)`）；`PipelineKey += variant`（相等 + 散列 + 审计表行数不变）；`Shaders.defines` 一份清单喂**扫描与编译**两侧；`compileStage` 交给 vsg 的 `compiler.compile(stage, defines)`；`Scope::Entry += variant`（放在最后，旧聚合初始化照旧编）；`recordCommand` 由**事实**算变体并按四元组配 half、三种拒绝各自说清；顺手修**每趟只 serve 第一个 content half**（多 half 的趟绑错集合 = VUID 00358+08600）；5 条变异反证全红（§11.16am）。 |
 | ~~M8e（三张表的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentStore`（track 活对象 + 条目持键；`tablesFor(计划)` 只建点名者、稳态 0 重建；几何/程序按 SDK 修订重建、材质按 `updateMaterial` 计数；被顶替的修订留在表里直到停靠到期、材质就地替换只停旧值；`releaseAbandoned`；无窗口 = 留下并计数）。顺手：程序表按变体作键（`ProgramFacts.variant` + `findProgram(…, variant)` + `recordCommand` 先算变体），两个查找改为扫全表（表里可能有被顶替的修订）；真设备用例 = store 生产的表画的整帧（push 声明的有无由变体决定）；6 条变异反证全红（§11.16an）。 |
+| ~~M8f（半片的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentHalves`（走 pass、与录制器同查找 ⇒ 每个 (kind, program, revision, layout, variant, 附件数) 一片；层 + 录制器 + `Scope::Entry`；键离开表 ⇒ 停靠；被拒的层记住不重试）；`ContentPipeline::create(abi, GeometryFacts, shaders, settings)`（绑定 = 规范编号、格式 = 分量数，自定义通道拒）且夹具改用它；真设备用例 = store 的表 + 生产者的半片画的整帧；6 条变异反证全红（§11.16ao）。 |
 | **M8 下一步** | 变体的 define 进管线身份（`VINE_DIFFUSE_MAP` / texcoord kind 取决于几何与材质）→ 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
@@ -3264,3 +3272,66 @@ skipped=0、hygiene 0 / 840 文件、`check_diagnostic_formats.py` 0 / 39、`che
 **这一片留下的口子**：①**半片的生产侧**——表有了，管线层与 `Scope::Entry` 仍由宿主自己建（用例里就是
 "由表建层"那段循环），那才是下一步；②屏幕路径的程序条目**不带变体**（全屏 ABI 是引擎的、今天的全屏程序
 也门控不了什么，但用户片元文本若按 define 变脸，这里要补）；③M8d-2 记的输入集合仍按第一个 content half 建。
+
+### 11.16ao M8f（2026-09-22）：半片的生产侧——表与几何产出可录制的半片
+
+§11.16an 产出了三张表，这一片把**半片**也接上：`Scope::Entry`（一个 (program, revision, layout, **variant**)
+的已编译层 + 录制器）过去由宿主自己按 pass 手搭——那段循环每个宿主都要写一遍，而它写错的每个地方恰好都是身份
+拼写的地方（变体、布局的绑定号、pass 的附件数）。
+
+**`api/ContentHalves` 的规则**：
+
+1. **走 pass，做与录制器相同的查找**：几何按计划点名的修订、材质按身份、变体由这两条事实决定（engine 的规则）、
+   程序条目按变体取（§11.16an 的键）。因此**半片恰好存在于 pass 会问的那些元组上**：表答不出的东西不产出半片
+   （录制器先因为几何或材质拒绝，两种说法一致），产出半片也绝不早于表能回答它的时刻。
+2. **半片的键 = 编译产物依赖的一切**：kind、program、revision、layout、variant、**pass 的颜色附件数**。最后一项
+   不是细节：层的混合状态是建层时按附件数写死的，1 附件的层用在 4 附件的 pass 上会**静默**地只画进三张。
+3. **布局的拼写收进 api**：`ContentPipeline::create(abi, const GeometryFacts&, shaders, settings)`——绑定号 =
+   `StreamUploads::bindingOfCanonical`（绘制侧绑的就是它，**不是**通道在表里的次序、也不是 shader 的 location：
+   保留的纹理坐标槽是 8 而绑定号是 2），格式 = 分量数 × 32 位浮点，自定义通道（没有规范绑定）直接拒。测试夹具
+   的 `pipelineFor` 改用它 ⇒ 夹具与生产路径**一份拼写**（既有的全部真设备内容用例顺带覆盖新重载）。
+4. **键离开表 ⇒ 停靠**：表自己会把被顶替的修订退役；一个半片的键一旦表不再回答，pass 也再不会问它（pass 的
+   元组正是从同一张表来的），所以它按**同一个** `RetirementQueue` 窗口停靠（闭包持 `weak_ptr`，两边都不悬空）。
+   `halves()` 只数活着的；被停靠的活在窗口里、离开实时列表。**被拒的层记住**：编译不过的程序每帧重试一次
+   等于把 shader 编译放进帧循环，而且每帧说同一句话。
+
+**它不做什么（有意）**：**不**建 pass 的**声明集合**——那里面装的是帧的描述符号与材料的图（`BlockDescriptors`
+是 scope 的事，本片的真设备用例仍自己按半片的 `abi` 建它）；也**不**清扫"再也没被画到"的程序留下的半片
+（它的键还答得出，就留着——见下面的口子）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ContentHalves.hpp` / `src/api/ContentHalves.cpp`（新） | 构造收 `VariantPool&` + 动态状态入口点（无设备调用方给空集）；`halvesFor(pass, facts, timeline, retirement)` 返回本 pass 的 `Scope::Entry` span（首次出现序、去重）；`halves()` / `builds()` / `refused()` / `clear()` |
+| `api/ContentPipeline.hpp` / `.cpp` | 新重载 `create(abi, const GeometryFacts&, shaders, settings)`：绑定 = 规范编号、格式 = 分量数、自定义通道拒；头里前向声明 `GeometryFacts`（表反向包含本头 ⇒ 定义会成环） |
+| `tests/test_vsg/ContentHalvesTest.cpp`（新，无设备，9 条） | 一条元组一片；稳态 0 重建；一个程序两个变体两片；附件数是键的一部分；布局是键的一部分；全屏拿引擎顶点阶段；表答不出就不产出；键离开表 ⇒ 停靠（先停靠、后释放、释放后不再重建）；被拒的层不重试 |
+| `tests/test_vsg/ContentPassTest.cpp`（真设备用例重写 + 夹具） | 整帧 = store 的表 + 生产者的半片（`halvesFor` 的 span 直接进 scope）；断言两片各自带**自己文本的 push 声明**；夹具的 `pipelineFor` 改用 api 重载（删掉夹具里的 `channelFormat`） |
+
+**实测踩到的两件事**：
+
+* **两个条目不能共用一段存储**：`buildGeometryFacts` / `buildMaterialFacts` 会先清空传入的存储向量；测试里
+  两个几何（或两个材质）共用一条 `std::vector` 时，第一个条目的 span 会**指向第二份数据**（span 指向的是
+  向量的堆缓冲，向量的移动不搬它 ⇒ 存放它们的**外层向量的每个内层向量才是稳定住所**）。症状是"第一个几何
+  的通道数对不上布局" ⇒ `findGeometry` 判 Malformed ⇒ 少一片半片。
+* **替换文本的搜索必须限定起点**：`s.index(marker)` 从 0 找起，而同一段文本在文件更早的用例里也有
+  （`scope.entries = halves;`）⇒ 起止反向、切片把整段文件复制坏。恢复靠 `git checkout -- <file>`（本文件
+  当时只有本轮的改动，且已备份到 /tmp）。规则：**先 `index(start)`，再 `index(marker, start)`**。
+
+**变异反证（6/6 红）**：
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 生产者的变体查找恒用空变体 | 真设备用例红（贴图半边拿不到带 push 的半片） |
+| M2 键不比附件数 | 附件数用例红 |
+| M3 键不比布局 | 布局用例红 |
+| M4 永不清扫 | "键离开表 ⇒ 停靠"用例红 |
+| M5 被拒的层不记住 | "被拒不重试"用例红 |
+| M6 表还答得出也照扫 | 7 条用例红（半片每帧重建） |
+
+证据：`test_vsg` 全量 **633 用例 / 97 套件全绿**；门禁 `scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、
+skipped=0、hygiene 0 / 843 文件、`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、
+相位 9 行 / 2 次运行全收尾。
+
+**这一片留下的口子**：①**逐 drawable 的声明集合**——同一变体、不同贴图的两个 drawable 今天会撞同一套
+（`serveHalf` 认领集合只比 set 序号 + 形状 + 采样器绑定号，不比**装的是哪张图**）⇒ 下一步；②"再也没被画到"
+的程序留下的半片没有清扫（键还答得出就留着，容量上界只能靠表的退役）；③M8d-2 记的输入集合仍按第一个 content
+half 建。

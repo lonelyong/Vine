@@ -19,7 +19,9 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/vsg/api/ContentImages.hpp>
 #include <vine/vsg/api/ContentPush.hpp>
+#include <vine/vsg/api/GeometryFacts.hpp>
 #include <vine/vsg/api/LightBlock.hpp>
+#include <vine/vsg/api/StreamUploads.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -28,6 +30,22 @@ namespace
 
 /** @brief The descriptor set a CONTENT program's sampled inputs live in (see the file note). */
 constexpr std::uint32_t kContentInputSet = 1U;
+
+/** @brief The `VkFormat` of one channel: its components are 32-bit floats (see core::StreamKey). */
+std::uint32_t channelFormatOf(std::uint32_t components) noexcept
+{
+    switch (components)
+    {
+    case 1U:
+        return VK_FORMAT_R32_SFLOAT;
+    case 2U:
+        return VK_FORMAT_R32G32_SFLOAT;
+    case 3U:
+        return VK_FORMAT_R32G32B32_SFLOAT;
+    default:
+        return VK_FORMAT_R32G32B32A32_SFLOAT;
+    }
+}
 
 /** @brief The bytes one L1 block role's ABI struct carries (0 for a role that is not a block). */
 std::uint32_t abiSizeOfRole(AbiBlockRole role) noexcept
@@ -393,6 +411,29 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
         makeDynamicStateDeclaration(),
     };
     return layer;
+}
+
+std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi, const GeometryFacts& geometry,
+                                                         const Shaders& shaders, const Settings& settings)
+{
+    std::vector<VertexBinding>   bindings;
+    std::vector<VertexAttribute> attributes;
+    bindings.reserve(geometry.channels.size());
+    attributes.reserve(geometry.channels.size());
+    for (const ChannelFacts& channel : geometry.channels)
+    {
+        const std::uint32_t binding = StreamUploads::bindingOfCanonical(channel.key.location);
+        if (binding == StreamUploads::kNoBinding)
+        {
+            return nullptr;  // a channel the stream store cannot feed (see the header)
+        }
+        bindings.push_back(VertexBinding{ binding,
+                                          static_cast<std::uint32_t>(channel.key.components * sizeof(float)),
+                                          false });
+        attributes.push_back(
+            VertexAttribute{ channel.key.location, binding, channelFormatOf(channel.key.components), 0U });
+    }
+    return create(abi, bindings, attributes, shaders, settings);
 }
 
 std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi& abi, const Shaders& shaders)

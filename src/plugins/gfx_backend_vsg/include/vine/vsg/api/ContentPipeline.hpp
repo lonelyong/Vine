@@ -73,6 +73,10 @@
  */
 V_VSG_NS_BEGIN
 
+// The entry whose channels one of the factories below describes (see api/ContentFacts; the
+// definition would close a cycle - the tables name this class' `Shaders`).
+struct GeometryFacts;
+
 /** @brief Content pipelines: identity in, `vsg::GraphicsPipeline` out. */
 class ContentPipeline
 {
@@ -180,6 +184,29 @@ class ContentPipeline
                                                    std::span<const VertexBinding>  bindings,
                                                    std::span<const VertexAttribute> attributes,
                                                    const Shaders& shaders);
+
+    /** @brief Creates the layer for a content program over one geometry ENTRY's channels.
+     *
+     * THE LAYOUT IS THE ENTRY'S OWN CHANNELS, spelled once: the binding a channel is fed at is the stream
+     * store's canonical number (`StreamUploads::bindingOfCanonical` - what the draw binds by, NOT the
+     * channel's order in the entry and not the shader's location, which is 8 for the reserved texcoord
+     * slot), its location is the shader's own, and its format follows its component count (a channel's
+     * scalars are 32-bit floats - see core::StreamKey). A builder that re-derived any of the three would
+     * declare a pipeline the draw's streams do not match, and that is invisible until the picture is wrong.
+     *
+     * A CUSTOM channel (no canonical binding) is refused here (null): this backend's stream store has no
+     * bind for one, so a pipeline playing it could never be fed (api/GeometryFacts describes such a
+     * channel; the upload layer is where the limit is said).
+     *
+     * @param abi      The bindings and push ranges the program's text declares.
+     * @param geometry The entry whose channels the pipeline declares.
+     * @param shaders  GLSL text of both stages.
+     * @param settings What the pipeline is built against besides the identity.
+     * @return The layer, or null when the GLSL did not compile, a declaration cannot be served, or a channel
+     *         has no canonical binding.
+     */
+    static std::unique_ptr<ContentPipeline> create(const ProgramAbi& abi, const GeometryFacts& geometry,
+                                                   const Shaders& shaders, const Settings& settings);
 
     /** @brief Creates a FULL-SCREEN layer: the other descriptor ABI, whose set is what the text declares.
      *
