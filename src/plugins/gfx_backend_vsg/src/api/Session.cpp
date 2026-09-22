@@ -710,11 +710,30 @@ bool SessionContentAccess::assignFrameGraphs(api::Session& session, const ::vsg:
     {
         return false;
     }
-    // The viewer's tasks are what record and submit; replacing them is how one frame's graphs become the
-    // session's. The compile pass follows immediately: a graph the viewer has never seen has nodes whose
-    // implementations (descriptor sets above all) are created by exactly that pass, and the viewer's record
-    // pass would otherwise find them missing.
-    session.impl->viewer->assignRecordAndSubmitTaskAndPresentation(graphs);
+    // THE TASKS SURVIVE THE HANDOVER, and that is the whole point: a task owns the fences and semaphores a
+    // submission in flight still names, so the viewer's own assignRecordAndSubmitTaskAndPresentation() -
+    // which CLEARS the task list and builds new ones - destroys objects the queue is using the moment it is
+    // called while the previous frame is still running (measured: 12 VUIDs about fences, semaphores and
+    // command buffers in use, and a crash inside the validation layer that a run without it hides). One
+    // frame's graphs become the session's by handing them to the tasks it already has; only a viewer with no
+    // task at all (not this session: it comes up with its own frame graph) is built by the viewer.
+    if (session.impl->viewer->recordAndSubmitTasks.empty())
+    {
+        session.impl->viewer->assignRecordAndSubmitTaskAndPresentation(graphs);
+    }
+    else
+    {
+        // One session has one task (one window, one device, one queue family), so this is a formality - and
+        // it keeps every task's fences, its WSI semaphores and the window they present on untouched.
+        for (const auto& task : session.impl->viewer->recordAndSubmitTasks)
+        {
+            task->commandGraphs = graphs;
+        }
+    }
+
+    // The compile pass follows immediately: a graph the viewer has never seen has nodes whose implementations
+    // (descriptor sets above all) are created by exactly that pass, and the viewer's record pass would
+    // otherwise find them missing.
     return SessionContentAccess::recompile(session);
 }
 

@@ -157,6 +157,127 @@ TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEv
     EXPECT_EQ(session.slots(), 0U);
 }
 
+TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitSubmits)
+{
+    if (std::getenv("DISPLAY") == nullptr)
+    {
+        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
+    }
+    const auto probed_devices = probePhysicalDevices();
+    if (!probed_devices.ok || probed_devices.usableCount() == 0)
+    {
+        GTEST_SKIP() << "no device satisfies the requirements";
+    }
+
+    Diagnostics diagnostics;
+    Session     session;
+    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+
+    // Two off-screen targets, one colour each - so WHICH graph the session submitted is readable: each frame
+    // hands over its own graph (one per frame, see makeFrameGraph) and writes one of them with its own clear.
+    const ::vsg::ref_ptr<::vsg::Device> device = vine::vsg::detail::SessionContentAccess::device(session);
+    ASSERT_NE(device, nullptr);
+    auto first_target = OffscreenTarget::create(device, OffscreenTarget::Layout{ 8U, 8U, { 0.2F, 0.0F, 0.0F, 1.0F } });
+    auto second_target = OffscreenTarget::create(device, OffscreenTarget::Layout{ 8U, 8U, { 0.6F, 0.0F, 0.0F, 1.0F } });
+    ASSERT_NE(first_target, nullptr);
+    ASSERT_NE(second_target, nullptr);
+
+    vine::vsg::WindowTarget* window = vine::vsg::detail::SessionContentAccess::windowTarget(session);
+    ASSERT_NE(window, nullptr);
+    VsgExecutor executor(diagnostics);
+    executor.setWindow(window);
+    executor.addTarget(first_target.get(), first_target.get());
+    executor.addTarget(second_target.get(), second_target.get());
+
+    FrameArena    arena{ 64 * 1024 };
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    ClearPolicy window_clear;
+    window_clear.color          = true;
+    window_clear.color_value[3] = 1.0F;
+
+    // One frame, driven the way the frame drive does it: open the session's frame, record a window pass and
+    // (when asked) one off-screen pass, compile, hand the session THIS frame's graph, and commit. Every
+    // handover happens while the previous frame's submission is still in flight - nothing here waits the
+    // device - which is exactly what the session has to survive.
+    const auto drive = [&](OffscreenTarget* into, float value) {
+        const FrameToken token = session.beginFrame();
+        EXPECT_TRUE(token);
+
+        ClearPolicy clear;
+        clear.color          = true;
+        clear.color_value[0] = value;
+        clear.color_value[3] = 1.0F;
+
+        EXPECT_TRUE(recorder.beginFrame(token));
+        EXPECT_TRUE(recorder.beginPass(1U));
+        EXPECT_TRUE(recorder.setRenderTarget(nullptr));
+        EXPECT_TRUE(recorder.setClearPolicy(window_clear));
+        EXPECT_TRUE(recorder.endPass());
+        if (into != nullptr)
+        {
+            EXPECT_TRUE(recorder.beginPass(2U));
+            EXPECT_TRUE(recorder.setRenderTarget(into));
+            EXPECT_TRUE(recorder.setClearPolicy(clear));
+            EXPECT_TRUE(recorder.endPass());
+        }
+        EXPECT_TRUE(recorder.endFrame());
+        EXPECT_TRUE(recorder.swapBuffers());
+
+        std::vector<TargetFacts> table(1U);
+        table[0] = window->facts();
+        if (into != nullptr)
+        {
+            TargetFacts offscreen;
+            offscreen.target        = into;
+            offscreen.wanted.width  = 8;
+            offscreen.wanted.height = 8;
+            offscreen.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+            offscreen.current = into->instance();
+            table.push_back(offscreen);
+        }
+        const CompiledFrame& compiled = compiler.compile(recorder.description(), FrameFacts{ table });
+
+        const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
+            vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        EXPECT_NE(graph, nullptr);
+        EXPECT_TRUE(executor.record(compiled, graph));
+        EXPECT_EQ(executor.skipped(), 0U);
+        EXPECT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+        return executor.commit(compiled, session);
+    };
+
+    EXPECT_TRUE(drive(first_target.get(), 0.2F));
+    EXPECT_TRUE(drive(second_target.get(), 0.6F));
+    EXPECT_TRUE(drive(first_target.get(), 0.4F));
+
+    // The last three frames write the window only, and that is not decoration: a frame waits the fence of the
+    // slot it enters, so the frames that follow are what PROVE the first three have finished - which is what
+    // makes reading their pixels evidence instead of a race.
+    EXPECT_TRUE(drive(nullptr, 0.0F));
+    EXPECT_TRUE(drive(nullptr, 0.0F));
+    EXPECT_TRUE(drive(nullptr, 0.0F));
+
+    EXPECT_EQ(session.framesPresented(), 6U) << "every one of the six submissions reached the queue";
+    EXPECT_EQ(session.lostFrames(), 0U);
+    EXPECT_EQ(session.deviceWaits(), 0U) << "handing graphs over must not need a device idle";
+    EXPECT_TRUE(diagnostics.clean()) << "nothing about the handovers is an event";
+    {
+        // The graphs that were SUBMITTED are the ones handed over per frame: a session that kept the first
+        // frame's graph (or the one before it) would show the earlier clear here.
+        const vine::vsg::core::PixelProbe first = first_target->probe();
+        ASSERT_TRUE(first.valid());
+        EXPECT_NEAR(first.pixel(4, 4).r, quantise(0.4F), 1) << "the third frame's graph is what ran last for it";
+        const vine::vsg::core::PixelProbe second = second_target->probe();
+        ASSERT_TRUE(second.valid());
+        EXPECT_NEAR(second.pixel(4, 4).r, quantise(0.6F), 1);
+    }
+
+    session.shutdown();
+}
+
 TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
 {
     if (std::getenv("DISPLAY") == nullptr)

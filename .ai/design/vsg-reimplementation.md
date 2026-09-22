@@ -73,10 +73,10 @@
 > M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）、
 > M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）、
 > M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）、M8l 形状变了就是真的重建（§11.16au）、
-> M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）、M8o 窗口路径一次调用（§11.16ax）。
+> M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）、M8o 窗口路径一次调用（§11.16ax）、
+> M8p 每帧换图不再拆机器（§11.16ay）。
 > 下一步：
-> 帧驱动收口：`assignFrameGraphs` 与"提交还在飞"的关系（今天重新 assign = 销毁在飞的 fence/semaphore/命令缓冲）、
-> `record` 的 shape 核对补上**格式**、丢帧后的会话自愈（swapchain 图像已取未呈）。
+> `record` 的 shape 核对补上**格式**；丢帧后的会话自愈（swapchain 图像已取未呈）；窗口路径把 `applyTargetPlans` 也接上。
 > 其余遗留口子：`skyMap` 无生产者、集合与半片停靠窗口各自独立。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2625,7 +2625,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8m（帧驱动应用计划的答案）~~ | **已完成（2026-09-22）**：`VsgExecutor::applyTargetPlans(frame, facts, timeline, retirement)`（只走**计划点名的**目标；`ResizeInPlace` ⇒ `resize`、`Rebuild` ⇒ `rebuild`；新形状取自 facts 的 wanted，目标的 clear 策略与深度提升取自新访问器 `OffscreenTarget::layout()`；计分 `resized/rebuilt/refused/failed`）+ 设备相位（三帧：Repair 不应用、ResizeInPlace ⇒ 16×12 像素、Rebuild ⇒ 2 色 + 深度；旁观者目标不动；相位 11 行）+ 真设备用例（"计划与目标不符 ⇒ 拒录"那帧在应用之后**录得进去**）；变异 4/4 红（§11.16av）。 |
 | ~~M8n（会话的提交也自己说）~~ | **已完成（2026-09-22）**：`Session::commitFrame()` 自己驱动 viewer 的任务（`Viewer::recordAndSubmit` 返回 void、**吞掉队列 `VkResult`**）：任何一个任务提交失败（VkResult 非成功，或 vsg 抛异常）⇒ 报 `SubmissionFailed`、答 false、`lostFrames+1`；**不呈现、不计已呈现、不声称完成**；帧本身照样结束（`FrameTimeline::abandoned(token)`：令牌被消费、**submitted 水位不动**——两个水位因此分别是"帧"与"提交"）；真设备用例（丢帧的提交答 false + 报告 + 计数 + 水位 + 无开帧；重建会话后正常提交呈现）+ 1 条无设备时间线用例；变异 6/6 红 + 一次"照样呈现"挂住并带 2 条 VUID（§11.16aw）。 |
 | ~~M8o（窗口路径一次调用）~~ | **已完成（2026-09-22）**：`VsgExecutor::commit(frame, session)`（`commitFrame()` 答 false ⇒ `noteLostSubmission(frame)`；报告留会话、标记归执行器）+ 真设备用例（两个会话：A 上 `commit` 成功、离屏目标像素 + "没被标"；B 上把记录步做成抛异常 ⇒ 答 false + `SubmissionFailed` + 标记 + 下一份计划里**写它的那一趟** `bootstrap` + 录进去清掉；两次运行各 **0 VUID**）；3/3 变异红；**顺手撞出新口子**：上一次提交还在飞时再 `assignFrameGraphs` 会销毁 viewer 的 task ⇒ 12 条 VUID + 验证层里段错误（§11.16ax）。 |
-| **M8 下一步** | 帧驱动收口：`assignFrameGraphs` 与在飞提交的关系（等设备或复用 task）、`record` 的 shape 核对补上格式、丢帧后的会话自愈。 |
+| ~~M8p（每帧换图不再拆机器）~~ | **已完成（2026-09-22）**：`SessionContentAccess::assignFrameGraphs` 改成把新图**交给自己已有的 task**（`task->commandGraphs = graphs`），只在 viewer 一个 task 都没有时才让 viewer 重建——不再销毁在飞的 fence / semaphore / 命令缓冲；真设备用例（一帧一图、帧帧在飞时换图，六个提交零 VUID、`deviceWaits()==0`、像素指出**最后换的那张图**真的被提交）+ 3/3 变异红（旧行为 ⇒ 30 条 VUID；不换图 ⇒ 像素错；不编译 ⇒ 红）（§11.16ay）。 |
+| **M8 下一步** | `record` 的 shape 核对补上格式；丢帧后的会话自愈；窗口路径接上 `applyTargetPlans`。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3651,3 +3652,22 @@ M8k 让执行器的 `submit(frame, viewer)` 在自己驱动的 viewer 上说失�
 时再 assign（本片用例最初的写法：每帧 assign 一次）会销毁在飞的 fence / semaphore / 命令缓冲：实测 12 条 VUID
 （`vkDestroyFence/Semaphore/Buffer` 在飞、`vkFreeCommandBuffers` pending）+ 验证层里段错误（不带层时静默通过）。本片用例
 因此**每个会话只 assign 一次**；正确做法（assign 前等设备、或复用 task 而不是重建）留给帧驱动收口那片。
+
+### 11.16ay M8p（2026-09-22）：每帧换命令图不再拆掉在飞的机器
+
+M8o 收尾时撞出来的口子：`SessionContentAccess::assignFrameGraphs` 走的是 viewer 自己的
+`assignRecordAndSubmitTaskAndPresentation`，而它**清空并重建** record-and-submit task——task 手里握着在飞提交还点名的
+fence / semaphore / 命令缓冲，于是"每帧换图"（这本来就是 `makeFrameGraph` 的用法：一帧一张图）在上一次提交还没回来时
+会拆掉它们：实测 12 条 VUID（`vkDestroyFence/Semaphore/Buffer` in use、`vkFreeCommandBuffers` pending）+ 验证层里段错误
+（不带层时静默通过）。
+
+这一片把换图改成**换图不换机器**：新图交给 session 已经有的 task（`task->commandGraphs = graphs`），只有 viewer 一个
+task 都没有时（这个 session 不会：它起来时就带着自己的帧图）才让 viewer 重建；task 的 fence、WSI 信号量与窗口原样保留。
+编译照旧跟在后面（新图里的对象要那一趟才有实现）。
+
+证据：真设备用例——一帧一张图，**帧帧都在上一帧的提交还在飞时换图**：六个提交（前三个各写一个离屏目标，后三个只写窗口；
+后三个是判据的一半：帧 k 会等它进入的那个槽的 fence，所以"后面三帧"正是"前三帧已经做完"的证据）⇒ `framesPresented()==6`、
+`lostFrames()==0`、`deviceWaits()==0`、`diagnostics.clean()`、两次运行各 **0 VUID**，且两个离屏目标的像素是**最后换的那张图**
+的清屏色（0.4 / 0.6，而不是第一帧的 0.2 / 0.6）。变异 3/3 红：①回到旧行为（viewer 重建 task）⇒ **30 条 VUID**；
+②换图不装机（新图不交给 task）⇒ 像素错；③不编译 ⇒ 红。
+门禁 644 用例 / 98 套件、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 849、相位 11 行 / 2 次运行。
