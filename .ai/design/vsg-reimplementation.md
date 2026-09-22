@@ -3,6 +3,14 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
+> **M8h：声明集合的生产侧**——`api/ContentSets`：把"每套声明集合自己建"的那段宿主代码收成一处——每个被声明
+> 的采样器按**名字**取图（`diffuseMap` ⇒ 材质的纹理（缺/不可用 ⇒ 白，cube 槽给白 cube）、`shadow_map` ⇒
+> pass 解析出的那张图（没有 ⇒ 白）、其余名字 ⇒ pass 的输入图，按输入集合的绑定序），每套集合按
+> **(program, revision, variant, set, 图来源)** 作键复用（图来源 = M8g 的 `ImageSource`；采样器全是 pass 级的
+> 集合打**空来源**，同变体的所有 drawable 共用），键离开表 ⇒ 同一窗口停靠，被拒的集合记住不重试；真设备证据：
+> 与 M8g 同一幅画（两纹理、一同形状的两套集合）但**一套都不手建**，并且第二趟调用 `builds()` 不涨；
+> `test_vsg` 635 用例 / 97 套件全绿；门禁 **0 VUID / 0 SYNC-HAZARD**、skipped=0、hygiene 全清（现 845 文件）。
+> 更早一片是
 > **M8g：一个 drawable 的图，一个集合**——同一变体的两个 drawable 的**声明集合形状完全相同**（同样的块绑定、
 > 同样的采样器绑定号），所以"按形状挑第一套"会把一个 drawable 的贴图交给另一个（**静默**：形状对、图错）。
 > `BlockDescriptors::ImageSource`（纹理 + 修订——正是 `MaterialImages` 的键）给集合打上"它的图来自哪版纹理"，
@@ -56,9 +64,9 @@
 > 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）、
 > M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）、
 > M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）、
-> M8g 一个 drawable 的图一个集合（§11.16ap）。
+> M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）。
 > 下一步：
-> 声明集合的生产侧（按 (程序变体, 材质纹理 + 修订) 建集合、退役旧的）。
+> 帧装配的收口（把表 / 半片 / 集合 / 输入集合串成一次 record）＋ 提交失败接缝 / 重建臂。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2599,6 +2607,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8e（三张表的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentStore`（track 活对象 + 条目持键；`tablesFor(计划)` 只建点名者、稳态 0 重建；几何/程序按 SDK 修订重建、材质按 `updateMaterial` 计数；被顶替的修订留在表里直到停靠到期、材质就地替换只停旧值；`releaseAbandoned`；无窗口 = 留下并计数）。顺手：程序表按变体作键（`ProgramFacts.variant` + `findProgram(…, variant)` + `recordCommand` 先算变体），两个查找改为扫全表（表里可能有被顶替的修订）；真设备用例 = store 生产的表画的整帧（push 声明的有无由变体决定）；6 条变异反证全红（§11.16an）。 |
 | ~~M8f（半片的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentHalves`（走 pass、与录制器同查找 ⇒ 每个 (kind, program, revision, layout, variant, 附件数) 一片；层 + 录制器 + `Scope::Entry`；键离开表 ⇒ 停靠；被拒的层记住不重试）；`ContentPipeline::create(abi, GeometryFacts, shaders, settings)`（绑定 = 规范编号、格式 = 分量数，自定义通道拒）且夹具改用它；真设备用例 = store 的表 + 生产者的半片画的整帧；6 条变异反证全红（§11.16ao）。 |
 | ~~M8g（一个 drawable 的图，一个集合）~~ | **已完成（2026-09-22）**：`BlockDescriptors::ImageSource`（纹理 + 修订，= MaterialImages 的键）+ `forAbi/create` 收它 + `source()`；`serveHalf` 收"drawable 要的图"，先精确、再退到"没有纹理"的集合、否则按名拒绝（两种失败分说）；`recordCommand` 从材质事实算（纹理 + 实时 `revision()`）。真设备用例 = 同一半片两张贴图两套同形状集合 ⇒ 左洋红右绿；5 条变异反证全红（§11.16ap）。 |
+| ~~M8h（声明集合的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentSets`（按名取图：材质/白 + cube 白、影子+白、输入按序；键 = (program, revision, variant, set, 图来源)，空来源共享；键离开表 ⇒ 停靠；被拒记住；`sets()/builds()/fallbacks()/refused()`）；真设备用例 = 不手建任何集合的两纹理画；5 条变异反证全红（§11.16aq）。 |
 | **M8 下一步** | 变体的 define 进管线身份（`VINE_DIFFUSE_MAP` / texcoord kind 取决于几何与材质）→ 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
@@ -3398,3 +3407,49 @@ skipped=0、hygiene 0 / 843 文件、`check_diagnostic_formats.py` 0 / 39、`che
 今天还是调用方手写（下一步）；②"图来源"只覆盖 `diffuseMap` 一类**材质图**：`shadow_map`/输入图是 pass 级的，
 两次 pass 用不同影子图时集合各建各的（调用方 per-pass ✓），但没有一条规则**强制**它；③M8d-2 记的输入集合仍按
 第一个 content half 建。
+
+### 11.16aq M8h（2026-09-22）：声明集合的生产侧
+
+§11.16ap 让 pass 按"图来源"挑集合，这一片把**建集合**的那段宿主代码收成一处（`api/ContentSets`）。它回答的
+三个问题每个宿主都会问：**图从哪来**、**这是哪版纹理**、**什么时候这套集合不再是它对的那套**。
+
+**每个被声明的采样器按名字取图**（`api/ContentImages` 的策略，`imageOriginOf` 的三种来源各有出处）：
+
+* `diffuseMap`（Material）⇒ 这个 drawable 自己的纹理，经 `MaterialImages::acquire`——材质没有纹理、或纹理
+  不可用 ⇒ **白**（"没有图"是白色，不是没写过的绑定）；cube 槽（文本声明 `samplerCube`）落在白 **cube** 上
+  （2D 视图配 cube 声明是非法描述符，不是"没有图"）。
+* `shadow_map`（Shadow）⇒ pass 计划解析出的那张图（`shadowImageOf`），没有 ⇒ 白（按声明种类给 2D/cube）。
+* 其余名字（Input）⇒ pass 的输入图，**按 pass 自己输入集合的绑定序**（逐输入、每个输入的彩色附件序、再深度）。
+
+**集合的键 = (program, revision, variant, set, 图来源)**：前三个说它服务哪份声明（新修订是新 ABI、另一个变体
+是另一份文本），图来源说它装的是谁的图（= M8g 的 `ImageSource`，`MaterialImages` 的键）。**采样器全是
+pass 级的集合打空来源**——同变体的所有 drawable 共用一套（引擎的 set 0 装 material 块 + `diffuseMap` +
+`shadow_map`，后者是 pass 级的，但整套仍可能因 `diffuseMap` 而按 drawable 分）。键的表不再回答（修订被表退役）
+⇒ 同一窗口停靠；**被拒的集合记住**、不重试。
+
+**它不做什么**：不建 pass 的**输入集合**（`ContentPass` 按 key 的计数自己建）；不建全屏调用的集合（屏幕 ABI 的
+`declaredSets` 为空，整套都是 pass 的）；不报告（只计数：`fallbacks()` / `refused()`，诊断流是调用方的）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ContentSets.hpp` / `src/api/ContentSets.cpp`（新） | 构造收 (`Device`, `BlockStorage&`, `MaterialImages&`)；`setsFor(pass, facts, halves, inputs, timeline, retirement)` 返回 `Scope::block_sets` 的候选 span（首次出现序、去重）；`sets()/builds()/fallbacks()/refused()/clear()` |
+| `tests/test_vsg/ContentPassTest.cpp`（+1 真设备） | 与 M8g 同一幅画（**一个半片、两张 1×1 贴图、两套同形状集合**）但**一套都不手建**：`setsFor` 产出两套、`builds()` 第二趟不涨、两套来源不同；像素仍是左洋红、右绿 |
+
+**变异反证（5/5 红）**：
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 产出的集合全不标来源 | 新用例红（两 drawable 都落到第一套 ⇒ 同色） |
+| M2 材质图恒用白 fallback | 新用例红（两边都变白） |
+| M3 键不比图来源 | 新用例红（一套通吃） |
+| M4 永不复用（find 恒空） | 新用例红（`builds()` 第二趟仍涨、候选重复） |
+| M5 图来源只比修订号 | 新用例 + M8g 用例红（两张纹理的修订号相同 ⇒ 分不开） |
+
+证据：`test_vsg` 全量 **635 用例 / 97 套件全绿**；门禁 `scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、
+skipped=0、hygiene 0 / 845 文件、`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、
+相位 9 行 / 2 次运行全收尾。
+
+**这一片留下的口子**：①**帧装配的收口**——表（`ContentStore`）、半片（`ContentHalves`）、集合（`ContentSets`）、
+输入集合（`ContentPass`）现在各自可用，但把它们按一次 record 串起来仍是调用方（真设备用例）在写；②集合与半片
+的停靠窗口各自独立（同一修订的集合与半片会在两帧里先后离场——安全，但不整齐）；③`Environment`（skyMap）仍
+无生产者（建层时就拒）。
