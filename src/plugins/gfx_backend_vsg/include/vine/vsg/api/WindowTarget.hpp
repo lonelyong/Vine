@@ -64,9 +64,10 @@ class V_VSG_API WindowTarget
   public:
     /** @brief Wraps @p window as this session's default-framebuffer target.
      *
-     * The graph, the view and the shape are built here - and the shape is sampled ONCE, because a session
-     * whose host window changes its swapchain format cannot move to it (see core::planSessionMove): the
-     * surface format belongs to the render pass every pipeline of this window is compiled against.
+     * The graph, the view and the shape are built here, and the shape is sampled from the swapchain NOW: a
+     * session whose host window changes its swapchain format cannot move to it (see core::planSessionMove),
+     * so this sample is what every pipeline of this window is compiled against until @ref refresh re-samples
+     * it.
      *
      * @param window The window a session renders into (borrowed: the session owns it and outlives this).
      * @return The target, or null when there is no window.
@@ -98,22 +99,46 @@ class V_VSG_API WindowTarget
     [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> graph() const noexcept;
 
   public:
-    /** @brief Gets the window's shape, in the engine's vocabulary: one colour attachment and its depth.
+    /** @brief Gets the window's shape as this target's records were built against it: one colour attachment
+     *         and its depth.
      *
      * The surface format is mapped by BIT DEPTH AND KIND (an 8-bit surface becomes the engine's 8-bit colour
      * entry, a 16-bit float one its 16-bit entry, and so on): the engine's colour vocabulary has no
      * byte-order variants, and it does not need them here - the render pass the pipelines really compile
      * against is the window's own, and the window's content is compiled under its own view (see the file
      * note), so the engine format only decides WHICH VARIANTS this pass shares with off-screen passes.
+     *
+     * This is the shape the pipelines of this window were KEYS on, so it is the one the plan compares the
+     * facts with; what the swapchain serves right now is a separate read (see @ref facts and @ref refresh).
      */
     [[nodiscard]] core::TargetShape shape() const noexcept;
 
+    /** @brief Re-samples the swapchain's shape; true when it changed under this target.
+     *
+     * The ONE event this answers is the platform having rebuilt the surface with another format (see
+     * VsgHostWindow::moveToHostSurface, which refuses a different presentation format for a live session,
+     * and Session::initialize, which rebuilds the session instead): the render pass this window's pipelines
+     * are compiled against is the swapchain's, so such a change has to be RE-READ rather than assumed - a
+     * target still serving a stale shape would hand those pipelines a render pass they were not compiled
+     * for. Nothing is adopted from a caller's claim: the only writer of this target's shape is the platform.
+     *
+     * @return true when the shape the swapchain serves differs from the one this target reports; false when
+     *         nothing changed (the common case: no host path can change it today).
+     */
+    [[nodiscard]] bool refresh();
+
     /** @brief Gets the facts the compiler resolves the default framebuffer from.
      *
-     * The window is always "built" and always what the frame asks for: the swapchain's images are replaced
-     * by vsg behind the graph (which is why the graph names the window and not an image), so nothing of the
-     * target layer's repair work applies to it. Its depth is never sampleable: the window's depth is an
-     * attachment, not a texture a later pass may read.
+     * WHAT THE FRAME WANTS AND WHAT THE TARGET HAS, kept apart like everywhere else: the WANTED shape is what
+     * the swapchain serves NOW (a live read - see @ref refresh), while the CURRENT one is the shape this
+     * target's records were built against (@ref shape). The pair is what makes "the platform rebuilt the
+     * surface with another format" a REBUILD answer for the plan instead of a silent draw through pipelines
+     * that were keyed on a render pass that no longer exists.
+     *
+     * The window is always "built" (vsg replaces the swapchain's images behind the graph - which is why the
+     * graph names the window and not an image), so nothing of the target layer's repair work applies to it,
+     * and its depth is never sampleable: the window's depth is an attachment, not a texture a later pass may
+     * read.
      */
     [[nodiscard]] core::TargetFacts facts() const noexcept;
 
@@ -130,6 +155,9 @@ class V_VSG_API WindowTarget
     [[nodiscard]] std::uint32_t height() const noexcept;
 
   private:
+    /** @brief What the swapchain serves NOW: the surface format and the traits' depth format, both spellings. */
+    [[nodiscard]] core::TargetShape sampledShape() const;
+
     struct Data;
     // Lexically after Data so the out-of-line destructor is the only place that needs the complete type.
     std::unique_ptr<Data> d;

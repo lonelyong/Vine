@@ -1,5 +1,6 @@
 #include <vine/vsg/api/WindowTarget.hpp>
 
+#include <utility>
 #include <vector>
 
 #include <vsg/app/Camera.h>
@@ -77,14 +78,9 @@ std::unique_ptr<WindowTarget> WindowTarget::create(::vsg::ref_ptr<::vsg::Window>
     auto target   = std::unique_ptr<WindowTarget>(new WindowTarget());
     target->d->window = window;
 
-    // The shape is sampled once, and it is the window's own answer: the surface format it presents and the
-    // depth format its traits asked for - plus the DEVICE formats those map from, because the engine's
-    // spelling cannot tell the window's sRGB surface from a linear off-screen target, and the two are not
-    // render-pass compatible (see RenderPassCompatibility: the crossing is measured).
-    target->d->shape.color_formats.push_back(toColorFormat(window->surfaceFormat().format));
-    target->d->shape.device_color_formats.push_back(static_cast<std::uint32_t>(window->surfaceFormat().format));
-    target->d->shape.depth_format        = toDepthFormat(window->depthFormat());
-    target->d->shape.device_depth_format = static_cast<std::uint32_t>(window->depthFormat());
+    // The shape is what the swapchain serves at this moment (see sampledShape): the surface format the window
+    // presents and the depth format its traits asked for, plus the DEVICE formats those map from.
+    target->d->shape = target->sampledShape();
 
     auto graph      = ::vsg::RenderGraph::create(window);
     graph->contents = VK_SUBPASS_CONTENTS_INLINE;
@@ -170,20 +166,53 @@ core::TargetShape WindowTarget::shape() const noexcept
     return d->shape;
 }
 
+core::TargetShape WindowTarget::sampledShape() const
+{
+    // The window's own answer, in both spellings: the engine's vocabulary cannot tell the window's sRGB
+    // surface from a linear off-screen target, and the two are not render-pass compatible (see
+    // RenderPassCompatibility: the crossing is measured), so the device's format travels with it.
+    core::TargetShape shape;
+    shape.color_formats.push_back(toColorFormat(d->window->surfaceFormat().format));
+    shape.device_color_formats.push_back(static_cast<std::uint32_t>(d->window->surfaceFormat().format));
+    shape.depth_format        = toDepthFormat(d->window->depthFormat());
+    shape.device_depth_format = static_cast<std::uint32_t>(d->window->depthFormat());
+    return shape;
+}
+
+bool WindowTarget::refresh()
+{
+    core::TargetShape sampled = sampledShape();
+    if (sampled == d->shape)
+    {
+        return false;
+    }
+    // The platform's answer REPLACES this target's record of it: the next compile keys the window's
+    // pipelines on the new compatibility, and the next pass that draws into it begins from a clear (the plan
+    // answers Rebuild for a shape change, and its bootstrap rule is what a render pass nobody has written
+    // into needs).
+    d->shape = std::move(sampled);
+    return true;
+}
+
 core::TargetFacts WindowTarget::facts() const noexcept
 {
     const VkExtent2D extent = d->window->extent2D();
 
     core::TargetFacts facts;
-    facts.target         = nullptr;  // the default framebuffer's identity
-    facts.wanted.width   = static_cast<int>(extent.width);
-    facts.wanted.height  = static_cast<int>(extent.height);
-    facts.wanted.shape   = d->shape;
-    facts.current.desc   = facts.wanted;
-    facts.current.built  = true;  // the window is whatever it is: nothing of the target layer's work applies
-    facts.depth.has_depth = d->shape.depth_format.has_value();
-    facts.depth.promotion = false;
-    facts.depth.borrowed  = false;
+    facts.target        = nullptr;  // the default framebuffer's identity
+    facts.wanted.width  = static_cast<int>(extent.width);
+    facts.wanted.height = static_cast<int>(extent.height);
+    // The swapchain serves this shape NOW (a live read), and the shape this target's records were built
+    // against is what the plan compares it with: the pair is what turns "the platform rebuilt the surface"
+    // into a REBUILD answer instead of a silent draw through the old compatibility's pipelines (see the
+    // header).
+    facts.wanted.shape       = sampledShape();
+    facts.current.desc       = facts.wanted;
+    facts.current.desc.shape = d->shape;
+    facts.current.built      = true;  // the window is whatever it is: nothing of the target layer's work applies
+    facts.depth.has_depth    = facts.wanted.shape.depth_format.has_value();
+    facts.depth.promotion    = false;
+    facts.depth.borrowed     = false;
     return facts;
 }
 

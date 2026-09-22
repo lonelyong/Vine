@@ -49,10 +49,14 @@ using vine::vsg::core::FrameArena;
 using vine::vsg::core::FrameCompiler;
 using vine::vsg::core::FrameFacts;
 using vine::vsg::core::FrameRecorder;
+using vine::vsg::core::FrameTimeline;
 using vine::vsg::core::FrameToken;
 using vine::vsg::core::Observe;
+using vine::vsg::core::RetirementQueue;
 using vine::vsg::core::Rgba8;
+using vine::vsg::core::TargetAction;
 using vine::vsg::core::TargetFacts;
+using vine::vsg::core::TargetShape;
 
 namespace
 {
@@ -624,6 +628,134 @@ TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
         vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(served, nullptr);
     EXPECT_TRUE(executor.record(right, served));
+    EXPECT_EQ(executor.skipped(), 0U);
+    ASSERT_EQ(executor.recorded().size(), 1U);
+    EXPECT_EQ(executor.recorded()[0], 1U);
+
+    ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ served }));
+    EXPECT_TRUE(session.commitFrame());
+    EXPECT_EQ(session.framesPresented(), 1U);
+    EXPECT_EQ(session.deviceWaits(), 0U) << "none of this is a reason to stop the device";
+
+    session.shutdown();
+}
+
+TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePlan)
+{
+    if (std::getenv("DISPLAY") == nullptr)
+    {
+        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
+    }
+    const auto probed_devices = probePhysicalDevices();
+    if (!probed_devices.ok || probed_devices.usableCount() == 0)
+    {
+        GTEST_SKIP() << "no device satisfies the requirements";
+    }
+
+    Diagnostics diagnostics;
+    Session     session;
+    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+
+    vine::vsg::WindowTarget* window = vine::vsg::detail::SessionContentAccess::windowTarget(session);
+    ASSERT_NE(window, nullptr);
+    const auto device = vine::vsg::detail::SessionContentAccess::device(session);
+    ASSERT_NE(device, nullptr);
+
+    VsgExecutor executor(diagnostics);
+    executor.setWindow(window);
+
+    FrameArena    arena{ 64 * 1024 };
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    FrameTimeline   timeline;
+    RetirementQueue queue(3U);
+
+    const FrameToken token = session.beginFrame();
+    ASSERT_TRUE(token);
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[3] = 1.0F;
+
+    EXPECT_TRUE(recorder.beginFrame(token));
+    EXPECT_TRUE(recorder.beginPass(1U));
+    EXPECT_TRUE(recorder.setRenderTarget(nullptr));  // the default framebuffer is the window's
+    EXPECT_TRUE(recorder.setClearPolicy(clear));
+    EXPECT_TRUE(recorder.endPass());
+    EXPECT_TRUE(recorder.endFrame());
+
+    // What the swapchain serves now, and a second DEVICE format a plan could claim it serves instead - taken
+    // from a real target, because the layer compares format codes and never invents them.
+    const TargetShape live = window->facts().wanted.shape;
+    ASSERT_EQ(live.device_color_formats.size(), 1U);
+    auto other_target = OffscreenTarget::create(device, OffscreenTarget::Layout{ 8U, 8U, { 0.0F, 0.0F, 0.0F, 1.0F } });
+    ASSERT_NE(other_target, nullptr);
+    const std::uint32_t other_format = other_target->shape().device_color_formats.front();
+    ASSERT_NE(other_format, live.device_color_formats.front())
+        << "the case needs two device formats to tell apart (an off-screen RGBA8 against the surface's own)";
+    EXPECT_FALSE(window->refresh()) << "no host path changes the swapchain's shape under a live session";
+
+    // (1) A truthful account: the plan has nothing to answer for the window, nothing is applied, and the
+    // frame records.
+    const std::vector<TargetFacts> truthful{ window->facts() };
+    const CompiledFrame& steady = compiler.compile(recorder.description(), FrameFacts{ truthful });
+    ASSERT_EQ(steady.passes.size(), 1U);
+    ASSERT_EQ(steady.targets.size(), 1U);
+    EXPECT_EQ(static_cast<int>(steady.targets[0].decision.action), static_cast<int>(TargetAction::None));
+    {
+        const VsgExecutor::TargetApplications applied =
+            executor.applyTargetPlans(steady, truthful, timeline, queue);
+        EXPECT_EQ(applied.resized + applied.rebuilt + applied.refused + applied.failed, 0U)
+            << "a steady window has no answer to apply";
+    }
+    {
+        const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
+            vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        ASSERT_NE(graph, nullptr);
+        EXPECT_TRUE(executor.record(steady, graph));
+        EXPECT_EQ(executor.skipped(), 0U);
+    }
+
+    // (2) A plan TOLD the swapchain serves another format: the plan answers Rebuild, and the executor asks the
+    // platform - which says it has not changed. Nothing is applied, the claim is not adopted into the target,
+    // and the pass that relied on it is refused: an unapplied rebuild is never recorded.
+    std::vector<TargetFacts> claimed = truthful;
+    claimed[0].wanted.shape.device_color_formats = { other_format };
+
+    const std::size_t skipped_before = diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped);
+
+    const CompiledFrame& rebuild = compiler.compile(recorder.description(), FrameFacts{ claimed });
+    ASSERT_EQ(rebuild.passes.size(), 1U);
+    EXPECT_EQ(static_cast<int>(rebuild.targets[0].decision.action), static_cast<int>(TargetAction::Rebuild))
+        << "the plan was told a shape the window does not have";
+    {
+        const VsgExecutor::TargetApplications applied =
+            executor.applyTargetPlans(rebuild, claimed, timeline, queue);
+        EXPECT_EQ(applied.rebuilt, 0U) << "the platform did not change the swapchain";
+        EXPECT_EQ(applied.failed, 1U) << "the claim was not applied: the platform says otherwise";
+        EXPECT_EQ(applied.resized + applied.refused, 0U);
+    }
+    EXPECT_EQ(window->shape().device_color_formats.front(), live.device_color_formats.front())
+        << "the target still reports what the swapchain serves: the plan's claim was not adopted";
+    EXPECT_FALSE(window->refresh());
+    {
+        const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
+            vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        ASSERT_NE(graph, nullptr);
+        EXPECT_FALSE(executor.record(rebuild, graph)) << "an unapplied rebuild is not recorded";
+        EXPECT_EQ(executor.skipped(), 1U);
+        EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), skipped_before + 1U);
+    }
+
+    // (3) The window is still usable: told the truth, the same pass records - and the frame is presented.
+    const CompiledFrame& again = compiler.compile(recorder.description(), FrameFacts{ truthful });
+    ASSERT_EQ(again.passes.size(), 1U);
+    const ::vsg::ref_ptr<::vsg::CommandGraph> served =
+        vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    ASSERT_NE(served, nullptr);
+    EXPECT_TRUE(executor.record(again, served));
     EXPECT_EQ(executor.skipped(), 0U);
     ASSERT_EQ(executor.recorded().size(), 1U);
     EXPECT_EQ(executor.recorded()[0], 1U);

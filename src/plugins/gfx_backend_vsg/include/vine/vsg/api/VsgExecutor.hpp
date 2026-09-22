@@ -130,9 +130,9 @@ class V_VSG_API VsgExecutor
     struct TargetApplications
     {
         std::uint64_t resized{0};  ///< Targets whose extent was replaced (ResizeInPlace).
-        std::uint64_t rebuilt{0};  ///< Targets whose SHAPE was replaced (Rebuild).
+        std::uint64_t rebuilt{0};  ///< Targets whose SHAPE was replaced (Rebuild; the window re-samples it).
         std::uint64_t refused{0};  ///< A depth lease blocked it: nothing was replaced.
-        std::uint64_t failed{0};   ///< The description could not be built: the target keeps what it had.
+        std::uint64_t failed{0};   ///< The answer could not be applied: the target keeps what it had.
     };
 
     /**
@@ -149,10 +149,13 @@ class V_VSG_API VsgExecutor
      * so a target this frame does not touch is not touched here either), matched to its entry in @p facts -
      * which are the same facts the plan was compiled from, because the wanted extent and shape live THERE
      * (the compiled plan carries the answer, not the description). A target this executor was not told
-     * about is skipped: @ref record reports the pass that needed it. The default framebuffer is skipped too
-     * (its extent belongs to the surface, not to this table). The modes that need nothing - None, and the
-     * repair arms, which the recording answers with a bootstrap clear - do not appear in the counts, so a
-     * caller can gate on "exactly one replacement happened".
+     * about is skipped: @ref record reports the pass that needed it. The default framebuffer is walked too,
+     * and its two modes have the two answers its nature allows: ResizeInPlace is the surface's extent, which
+     * the platform and vsg already follow (nothing to replace), while Rebuild is answered by RE-SAMPLING the
+     * swapchain (WindowTarget::refresh) - never by adopting the plan's claim, because only the platform can
+     * say what it serves (a claim it does not back is counted as failed, and @ref record refuses the pass).
+     * The modes that need nothing - None, and the repair arms, which the recording answers with a bootstrap
+     * clear - do not appear in the counts, so a caller can gate on "exactly one replacement happened".
      *
      * @param frame      The compiled plan whose targets are applied.
      * @param facts      The target facts the plan was compiled from (the wanted descriptions live here).

@@ -75,10 +75,10 @@
 > M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）、M8l 形状变了就是真的重建（§11.16au）、
 > M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）、M8o 窗口路径一次调用（§11.16ax）、
 > M8p 每帧换图不再拆机器（§11.16ay）、M8q 丢帧的会话自己活下来（§11.16az）、
-> M8r 计划说的形状连格式一起核对（§11.16ba）。
+> M8r 计划说的形状连格式一起核对（§11.16ba）、M8s 窗口的答案也有执行者（§11.16bb）。
 > 下一步：
-> 窗口路径把 `applyTargetPlans` 也接上；`skyMap` 生产者。
-> 其余遗留口子：集合与半片停靠窗口各自独立。
+> `skyMap` 生产者。
+> 其余遗留口子：集合与半片停靠窗口各自独立；窗口 `facts()` 的 live 采样与 `refresh()` 的成功臂今天没有可驱动的触发（登记）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2629,7 +2629,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8p（每帧换图不再拆机器）~~ | **已完成（2026-09-22）**：`SessionContentAccess::assignFrameGraphs` 改成把新图**交给自己已有的 task**（`task->commandGraphs = graphs`），只在 viewer 一个 task 都没有时才让 viewer 重建——不再销毁在飞的 fence / semaphore / 命令缓冲；真设备用例（一帧一图、帧帧在飞时换图，六个提交零 VUID、`deviceWaits()==0`、像素指出**最后换的那张图**真的被提交）+ 3/3 变异红（旧行为 ⇒ 30 条 VUID；不换图 ⇒ 像素错；不编译 ⇒ 红）（§11.16ay）。 |
 | ~~M8q（丢帧的会话自己活下来）~~ | **已完成（2026-09-22）**：`Session::commitFrame()` 的失败分支重建 swapchain（`window->resize()`：vsg 的 `buildSwapchain()` 先 `vkDeviceWaitIdle` 再换链）+ **把这次 idle 计进 `deviceWaits()`**；真设备用例（同一会话丢帧后**下一帧就位**：`commit` 答 true、被标的目标在它的 bootstrap 趟里清掉、像素 = 清屏色、`framesPresented`+5、`lostFrames==1`、`deviceWaits==1`、报告恰好一条；两次运行各 0 VUID）+ 3/3 变异红（不重建 ⇒ 10 条 VUID；不计数 ⇒ 红；每帧都重建 ⇒ 红，还连带 8 个会话用例红）（§11.16az）。 |
 | ~~M8r（计划说的形状，连格式一起核对）~~ | **已完成（2026-09-22）**：`core::CompiledShape`（形状的兼容性半边，编译器用 `arena.copy` 抄进帧的 arena ⇒ 计划里没有指向宿主 facts 的 span、也不每帧分配）+ `CompiledTarget::shape` + `core::statedShapeAgrees`（引擎半边每份计划都说了 ⇒ 直接比；**设备半边只在两边都说了时比**）；`recordOffscreen` / `recordWindow` 都接上（窗口那趟现在拿到 `CompiledTarget`）；无设备用例（计划的副本是它自己的 + 判定表逐行）+ 两条真设备用例（离屏：数目相同的引擎格式漂移、引擎相同的设备格式漂移各拒一次、说真话即录；窗口：同样的事 + 说真话后**呈递**，`deviceWaits()==0`）；当场修掉两处旧夹具的谎话；变异 **5/5 红**（不抄形状 ⇒ 75 行红、无条件下比设备半边 ⇒ 51 行红）（§11.16ba）。 |
-| **M8 下一步** | 窗口路径接上 `applyTargetPlans`；`skyMap` 生产者。 |
+| ~~M8s（窗口的答案也有执行者）~~ | **已完成（2026-09-22）**：`WindowTarget::facts()` 把 "想要" 与 "已有" 分开（wanted = swapchain 现在的 live 采样、current = 记录被建时的形状 ⇒ 平台换了格式就是 `Rebuild`，不再被静默记进旧兼容性的通道）+ `WindowTarget::refresh()`（重新采样，变了才替换；**唯一能写这份形状的是平台**）+ `applyTargetPlans` 的窗口臂（`Rebuild` ⇒ 问平台：变了 ⇒ `rebuilt`，没变 ⇒ `failed`；`ResizeInPlace` 无事可做）；真设备用例（稳定帧四计数全 0 且录得进去；说谎的帧 ⇒ `failed==1`、主张未被采纳、`record` 拒录；再说真话 ⇒ 录进去并呈递、`deviceWaits()==0`）+ 3/3 变异红（§11.16bb）。 |
+| **M8 下一步** | `skyMap` 生产者。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3736,3 +3737,32 @@ M8n/M8o 的现场留了一个"宿主必须重建会话"的尾巴：丢帧时 acq
 
 **本片留下的口子（登记）**：①窗口路径仍没接 `applyTargetPlans`（计划的换尺寸/重建答案对窗口还没有执行者）；②`skyMap` 仍无
 生产者；③集合与半片停靠窗口各自独立（旧口子不变）；④设备半边在"某一侧没说"时跳过——那是一处**已知的不检查**，不是等价性声明。
+
+### 11.16bb M8s（2026-09-22）：窗口的答案也有执行者——问平台，不采纳计划的主张
+
+M8m 的 `applyTargetPlans` 把默认帧缓冲整支跳过（"尺寸属于 surface"），于是**计划对窗口的任何答案都没有执行者**。M8r 之后这件事有了后果：
+窗口的答案一旦与目标不符会被拒录，而一个被忽略的答案只会让那个不符永远存在。这一片把窗口当成一个正常目标处理，并把它的本质差别写进代码：
+
+* `WindowTarget::facts()` 把"想要"与"已有"分开：**wanted = swapchain 现在服务的形状**（`sampledShape()`，一次实时采样），**current = 这份目标的
+  记录被建时的形状**（`shape()`——那个进了管线键的兼容性）。稳定会话上两者相同 ⇒ 计划答 `None`；平台把 surface 换成别的格式时，计划看到的就是
+  形状变化 ⇒ `Rebuild`，而不是被记进一个计划没有描述过的渲染通道。
+* `WindowTarget::refresh()`：重新采样 swapchain，**变了才替换**并答 true。**唯一能写这份形状的是平台**——执行器不采纳计划的主张。
+* `VsgExecutor::applyTargetPlans` 的窗口臂：`Rebuild` ⇒ 问平台（`refresh()`）：真变了 ⇒ `rebuilt`，没变 ⇒ `failed`；`ResizeInPlace` 无事可做
+  （extent 属于 surface，平台与 vsg 自己跟随）；`None` 与 Repair 臂照旧是录制的事。口径与离屏目标一致，`record` 的核对把它兜住。
+
+证据（真设备用例 `SessionTest.AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePlan`，会话自己的窗口）：
+
+* 稳定帧：`facts()` 的两半相同 ⇒ 计划 `None`、`applyTargetPlans` 四个计数全 0、同一帧录得进去（`skipped == 0`）；`refresh()` 答 false
+  （"没有宿主路径能在活会话下换掉 swapchain 的形状"——换格式被 `VsgHostWindow::moveToHostSurface` 拒绝，宿主重建走 `Session::initialize` 的
+  Rebuild 臂，两者都不留一个陈旧的缓存）。
+* 说谎的帧：计划被告知 swapchain 换了另一个（真实存在的）设备格式（格式码取自另一个离屏目标——这一层只比格式码，从不臆造）⇒ 计划答 `Rebuild`；
+  执行器问平台 ⇒ 平台说没变 ⇒ `rebuilt == 0`、`failed == 1`、**目标报告的形状没被改**（主张没被采纳）、再问一次 `refresh()` 仍 false；
+  随后 `record` 拒录（`skipped == 1`、`ContentSkipped` +1）：没被应用的 Rebuild 不会被记录。
+* 再说真话：同一帧录得进去并**呈递**（`framesPresented() == 1`、`deviceWaits() == 0`）。两次运行各 **0 VUID**。
+
+变异 3/3 红：①把 `refresh()` 的结果取反（把"没变"记成 `rebuilt`）；②`refresh()` 删掉比较、永远答"变了"；③去掉 `action != Rebuild` 的守卫
+（对每个窗口答案都跑一次）⇒ 稳定帧的"四计数全 0"红。
+
+**本片留下的口子（登记）**：①窗口 `facts()` 的 live 采样与 `refresh()` 的**成功臂**今天没有可驱动的触发（宿主换格式被拒、宿主重建走整会话
+Rebuild）——它的可观测形态需要一条"平台真的换了形状"的宿主路径（或一个能重建 surface 的测试缝），那时两者会同时被观测；②`skyMap` 仍无
+生产者；③集合与半片停靠窗口各自独立；④设备半边在"某一侧没说"时跳过（M8r 的登记不变）。

@@ -377,11 +377,39 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
     TargetApplications applied;
     for (const core::CompiledTarget& compiled : frame.targets)
     {
+        const core::TargetAction action = compiled.decision.action;
+
         if (compiled.target == nullptr)
         {
-            continue;  // the default framebuffer: its extent is the surface's, not this table's
+            // The default framebuffer. Its EXTENT belongs to the surface - the platform follows it and vsg
+            // rebuilds the swapchain on its own (see WindowTarget::prepare) - so ResizeInPlace is already
+            // true and there is nothing here to replace. Its SHAPE is the swapchain's too, and the shape
+            // this target's records were keyed on is the target's own account of it, so a plan that says
+            // Rebuild is answered by ASKING THE PLATFORM (WindowTarget::refresh) and never by adopting what
+            // the plan claims: a claim the swapchain does not back is counted as NOT APPLIED, and the record
+            // step refuses the pass that relied on it (see its shape agreement) - which is what keeps a
+            // window rebuild from being silently ignored.
+            if (action != core::TargetAction::Rebuild)
+            {
+                // None and the repair arms are the recording's (a bootstrap clear); ResizeInPlace is the
+                // surface's, already true.
+                continue;
+            }
+            if (window_ == nullptr)
+            {
+                continue;  // not registered here: record() reports the pass that needed it
+            }
+            if (window_->refresh())
+            {
+                ++applied.rebuilt;
+            }
+            else
+            {
+                ++applied.failed;
+            }
+            continue;
         }
-        const core::TargetAction action = compiled.decision.action;
+
         if (action != core::TargetAction::ResizeInPlace && action != core::TargetAction::Rebuild)
         {
             // None, and the repair arms (which the recording answers with a bootstrap clear): nothing to
