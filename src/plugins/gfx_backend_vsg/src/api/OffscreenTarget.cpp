@@ -315,12 +315,24 @@ core::TargetShape OffscreenTarget::shapeOf(const TargetLayout& layout)
     return shape;
 }
 
+OffscreenTarget::TargetLayout OffscreenTarget::layout() const noexcept
+{
+    TargetLayout out;
+    out.width            = d->width;
+    out.height           = d->height;
+    out.color_formats    = d->shape.color_formats;
+    out.depth_format     = d->depth_format;
+    out.depth_sampleable = d->depth_sampleable;
+    out.clear            = d->clear_policy;
+    return out;
+}
+
 std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::Device> device,
                                                          const Layout&                layout)
 {
     TargetLayout target_layout;
-    target_layout.width        = layout.width;
-    target_layout.height       = layout.height;
+    target_layout.width         = layout.width;
+    target_layout.height        = layout.height;
     target_layout.color_formats = { vine::graphics::RenderTarget::ColorFormat::RGBA8 };
     target_layout.depth_format.reset();
     target_layout.clear.color = true;

@@ -72,10 +72,11 @@
 > M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）、
 > M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）、
 > M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）、
-> M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）、M8l 形状变了就是真的重建（§11.16au）。
+> M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）、M8l 形状变了就是真的重建（§11.16au）、
+> M8m 帧驱动应用计划的答案（§11.16av）。
 > 下一步：
-> 帧驱动把计划的答案（resize / rebuild）真的应用到目标上（今天由宿主 / 测试应用），并把队列提交的 `VkResult` 接进 `submit` 那道缝。
-> 其余遗留口子：executor 的 shape 核对只看得见颜色附件数与深度可采样性（**格式变化看不见**）、`skyMap` 无生产者、集合与半片停靠窗口各自独立。
+> 会话/插件侧的帧驱动：窗口路径的提交接上（队列 `VkResult` 接进 `submit` 那道缝），窗口目标也走 `applyTargetPlans`；
+> 其余遗留口子：`record` 的 shape 核对看不见格式变化、`skyMap` 无生产者、集合与半片停靠窗口各自独立。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2620,7 +2621,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8j（丢掉的提交，下一帧修一次）~~ | **已完成（2026-09-22）**：`VsgExecutor::noteLostSubmission(frame)`（只标该帧 pass 真正点到的离屏目标；下一份计划答 `Repair(Bootstrap)`、第一个 bootstrap pass 清标志）；真设备用例（记录 → 标 1 个 → 下帧 `bootstrap` ✓ → 记录后清 ✓ → 别的目标不动 ✓）；变异反证红（§11.16as）。 |
 | ~~M8k（提交这一步自己说）~~ | **已完成（2026-09-22）**：`VsgExecutor::submit(frame, viewer)`（记录 → 提交 → **失败即标记**：`noteLostSubmission` + 报 `SubmissionFailed` + 答 false；vsg 的异常词表两种都接——`vsg::Exception` 不是 std::exception）＋ SDK 分类表按它自己写明的规则在 `Count` 前追加 `SubmissionFailed`；真设备用例（成功的提交 ⇒ 清屏色真的在像素里、无标记；失败 ⇒ **只有它写过的**目标被标 + 拒绝计数 +1；下帧计划 `bootstrap` ✓）；4/4 变异反证红 + 一次"只留 std::exception 分支"的变异也红（§11.16at）。 |
 | ~~M8l（形状变了就是真的重建）~~ | **已完成（2026-09-22）**：`OffscreenTarget::rebuild(wanted, timeline, retirement)`（渲染通道 + 全部 load-op 变体 + 附件一起重建，旧的**连 pass 一起停靠**（记录过的 `vkCmdBeginRenderPass` 直接点名它）；lease 两向拒；构建失败一个字段都不动）+ `core::planTarget` 次序改为**形状变化先于 load-op 修复**；设备相位（1 色 8×4 ⇒ 2 色 + D32F 16×12；附件 0 / 附件 1 / 深度三条读回；compatibility 真的变了；`pending()==1`、`deviceWaits()==0`）+ lease 两向拒绝用例 + 2 条次序用例；变异 5/5 红（次序复原 / 新形状不装 / 事实不重置 / 旧变体留着 / 直接销毁不停靠）+ 一次**用例抓不住、门禁 VUID 抓住**（18 条）；门禁 639 用例 / 98 套件、0 VUID（§11.16au）。 |
-| **M8 下一步** | 帧驱动把计划的答案（resize / rebuild）真的应用（今天由宿主 / 测试应用），并把队列提交返回的 `VkResult` 接进 `submit` 那道缝。 |
+| ~~M8m（帧驱动应用计划的答案）~~ | **已完成（2026-09-22）**：`VsgExecutor::applyTargetPlans(frame, facts, timeline, retirement)`（只走**计划点名的**目标；`ResizeInPlace` ⇒ `resize`、`Rebuild` ⇒ `rebuild`；新形状取自 facts 的 wanted，目标的 clear 策略与深度提升取自新访问器 `OffscreenTarget::layout()`；计分 `resized/rebuilt/refused/failed`）+ 设备相位（三帧：Repair 不应用、ResizeInPlace ⇒ 16×12 像素、Rebuild ⇒ 2 色 + 深度；旁观者目标不动；相位 11 行）+ 真设备用例（"计划与目标不符 ⇒ 拒录"那帧在应用之后**录得进去**）；变异 4/4 红（§11.16av）。 |
+| **M8 下一步** | 会话/插件侧的帧驱动（窗口路径的提交、队列 `VkResult` 接进 `submit`）；其余口子：`record` 的 shape 核对看不见格式变化、`skyMap` 无生产者、集合与半片停靠窗口各自独立。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3567,3 +3569,32 @@ vsg 自己的词表是异常（命令缓冲建不出来就抛 `vsg::Exception`�
 **这一片留下的口子**：①**谁在每帧应用计划的答案**（`resize` / `rebuild` 今天仍由宿主或测试调用；帧驱动落地时接上，
 到时"编译用的是新形状、目标还是旧形状"要在录制前挡住——executor 现有的 shape 核对只看**颜色附件数与深度可采样性**，
 格式变化它看不见）；②`Viewer::recordAndSubmit` 吞掉的队列 `VkResult`；③`skyMap` 仍无生产者；④集合与半片的停靠窗口各自独立。
+
+### 11.16av M8m（2026-09-22）：帧驱动把计划的答案应用到自己持有的目标上
+
+M5e 的 `resize` 与 M8l 的 `rebuild` 在此之前**只有测试在调**：计划每帧都算得出 `ResizeInPlace` / `Rebuild`，
+但"谁把答案变成动作"一直悬着。这一片把它收进执行器：`VsgExecutor::applyTargetPlans(frame, facts, timeline, retirement)` ——
+`compile → applyTargetPlans → record → submit` 至此是一条完整的帧驱动。
+
+* 只走**计划点名的**目标（`frame.targets`），每个按身份在 `facts` 里找它的描述——**想要什么活在 facts 里**
+  （计划只带答案）；执行器注册表里有、但这一帧没点名的目标**不动**（相位里的"旁观者"就是这条的判据）。
+* `ResizeInPlace` ⇒ `resize`，`Rebuild` ⇒ `rebuild`；新形状从 `wanted.shape` 来，而目标的 **clear 策略**与
+  **深度采样提升**从目标自己来——新增的 `OffscreenTarget::layout()` 就是为此（计划描述里没有这两样，猜一个
+  会静默丢掉一次性设置）。
+* 计分 `resized` / `rebuilt` / `refused` / `failed`；`None` 与两个 Repair 臂不计（后者是录制的事：bootstrap 清屏）。
+  默认帧缓冲跳过（尺寸属于 surface）；没注册的目标跳过（`record` 会照旧上报那条 pass）。
+* 已知的下一层：形状里**格式**变了而驱动没跑（或 refused/failed）时，`record` 的核对只看颜色附件数与深度可采样性，
+  **格式变化它看不见**（继续记为口子）。
+
+证据：新设备相位（真设备 + 验证层）——同一执行器持有两个目标：帧 1 = 目标的第一个写者（计划答 `Repair(Bootstrap)`，
+驱动**不**应用、录制清屏 ⇒ 像素）；帧 2 = 计划答 `ResizeInPlace` ⇒ `applied.resized == 1`、16×12 的像素；
+帧 3 = 计划答 `Rebuild`（2 色 + D32F）⇒ `applied.rebuilt == 1`、附件 0 是清屏色、附件 1 透明黑；三帧都经
+`executor.submit` 提交；旁观者目标的 `generation`/`width`/`height` 全不动。相位行按 `plan_applied` 门禁（+2）。
+另加真设备用例，与既有的"计划与目标不符 ⇒ 拒录"配对：同一份事实（这次说真话、帧点名**第二个**目标）下
+`applyTargetPlans` 之后同一帧**录得进去**（`applied.rebuilt == 1`、像素是帧自己的清屏色），计划没点名的目标不动。
+变异 4/4 红（Rebuild 不应用 / ResizeInPlace 不应用 / 拿"第一个事实"当答案 / 新形状取 `current` 而不是 `wanted`；
+第一次 M4 尝试只改了 extent、在"形状变化"下是空操作，不计）。
+门禁 640 用例 / 98 套件、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 848、相位 11 行 / 2 次运行。
+
+**这一片留下的口子**：①`record` 的 shape 核对看不见格式变化；②`Viewer::recordAndSubmit` 吞掉的队列 `VkResult`；
+③`skyMap` 仍无生产者；④集合与半片的停靠窗口各自独立。

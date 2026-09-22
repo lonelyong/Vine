@@ -347,6 +347,97 @@ std::span<const core::PassId> VsgExecutor::recorded() const noexcept
     return recorded_;
 }
 
+VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::CompiledFrame& frame,
+                                                              std::span<const core::TargetFacts> facts,
+                                                              const core::FrameTimeline& timeline,
+                                                              core::RetirementQueue& retirement)
+{
+    TargetApplications applied;
+    for (const core::CompiledTarget& compiled : frame.targets)
+    {
+        if (compiled.target == nullptr)
+        {
+            continue;  // the default framebuffer: its extent is the surface's, not this table's
+        }
+        const core::TargetAction action = compiled.decision.action;
+        if (action != core::TargetAction::ResizeInPlace && action != core::TargetAction::Rebuild)
+        {
+            // None, and the repair arms (which the recording answers with a bootstrap clear): nothing to
+            // replace, so nothing is counted - a caller gates on "exactly one replacement happened".
+            continue;
+        }
+
+        OffscreenTarget* target = resolve(compiled);
+        if (target == nullptr)
+        {
+            continue;  // not registered here: record() reports the pass that needed it
+        }
+
+        // The wanted description lives in the facts, not in the plan (the plan carries the answer). A target
+        // the frame names but the table does not is one this call cannot act on: better nothing than a
+        // description nobody gave.
+        const core::TargetFacts* wanted = nullptr;
+        for (const core::TargetFacts& entry : facts)
+        {
+            if (entry.target == compiled.target)
+            {
+                wanted = &entry;
+                break;
+            }
+        }
+        if (wanted == nullptr)
+        {
+            continue;
+        }
+
+        if (action == core::TargetAction::ResizeInPlace)
+        {
+            const OffscreenTarget::Resized resized =
+                target->resize(static_cast<std::uint32_t>(wanted->wanted.width),
+                               static_cast<std::uint32_t>(wanted->wanted.height), timeline, retirement);
+            if (resized.replaced)
+            {
+                ++applied.resized;
+            }
+            else if (resized.refused)
+            {
+                ++applied.refused;
+            }
+            else
+            {
+                ++applied.failed;
+            }
+            continue;
+        }
+
+        // Rebuild: the plan changed the SHAPE, and everything the target is NOT changing here is its own -
+        // the clear policy it was created with and whether its depth was asked to be sampleable (the plan's
+        // description carries neither, see OffscreenTarget::layout).
+        OffscreenTarget::TargetLayout layout = target->layout();
+        layout.width         = static_cast<std::uint32_t>(wanted->wanted.width);
+        layout.height        = static_cast<std::uint32_t>(wanted->wanted.height);
+        layout.color_formats = wanted->wanted.shape.color_formats;
+        layout.depth_format  = wanted->wanted.shape.depth_format;
+        const OffscreenTarget::Rebuilt rebuilt = target->rebuild(layout, timeline, retirement);
+        if (rebuilt.replaced)
+        {
+            ++applied.rebuilt;
+        }
+        else if (rebuilt.refused)
+        {
+            ++applied.refused;
+        }
+        else
+        {
+            // The plan said Rebuild and nothing was replaced without a lease refusing: the description could
+            // not be built, and the target still serves the shape it had (the pass that needed the new one
+            // is reported by record()).
+            ++applied.failed;
+        }
+    }
+    return applied;
+}
+
 std::uint64_t VsgExecutor::skipped() const noexcept
 {
     return skipped_;

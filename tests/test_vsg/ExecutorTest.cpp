@@ -24,6 +24,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -46,10 +47,14 @@
 #include <vine/vsg/api/VsgExecutor.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
 #include <vine/vsg/core/FrameRecorder.hpp>
+#include <vine/vsg/core/FrameTimeline.hpp>
+#include <vine/vsg/core/RetirementQueue.hpp>
 #include <vine/vsg/core/StateRegistry.hpp>
 #include <vine/vsg/core/Streams.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 #include <vine/vsg/VsgDynamicState.hpp>
+
+#include "DevicePhases.hpp"
 
 using vine::graphics::RenderCommand;
 using vine::graphics::RenderTarget;
@@ -70,13 +75,18 @@ using vine::vsg::core::FrameArena;
 using vine::vsg::core::FrameCompiler;
 using vine::vsg::core::FrameFacts;
 using vine::vsg::core::FrameRecorder;
+using vine::vsg::core::FrameTimeline;
 using vine::vsg::core::FrameToken;
 using vine::vsg::core::Observe;
 using vine::vsg::core::PassId;
+using vine::vsg::core::RepairReason;
+using vine::vsg::core::RetirementQueue;
 using vine::vsg::core::Rgba8;
 using vine::vsg::core::StateRegistry;
 using vine::vsg::core::StreamKey;
 using vine::vsg::core::StreamKind;
+using vine::vsg::core::TargetAction;
+using vine::vsg::core::TargetDesc;
 using vine::vsg::core::TargetFacts;
 using vine::vsg::core::TargetShape;
 using vine::vsg::core::VariantPool;
@@ -85,6 +95,12 @@ namespace
 {
 
 constexpr std::uint32_t kSize = 64;
+
+/// @brief The 8-bit value a clear colour quantises to (UNORM conversion, round to nearest).
+std::uint8_t quantise(float value)
+{
+    return static_cast<std::uint8_t>(std::lround(value * 255.0F));
+}
 
 /// @brief The pass' clear colour: nothing is black, so "the plan's clear" and "nothing cleared" differ.
 constexpr float kClear[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
@@ -352,6 +368,183 @@ bool isGreen(const Rgba8& pixel)
 
 }  // namespace
 
+void runPlanDrivenTargetPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+{
+    const float kFirst[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
+
+    auto target = OffscreenTarget::create(device.device,
+                                          OffscreenTarget::Layout{ 8U, 4U,
+                                                                   { kFirst[0], kFirst[1], kFirst[2], 1.0F } });
+    ASSERT_NE(target, nullptr);
+    ++counters.targets_built;
+
+    // A second target this executor holds and no frame of this phase names. The drive walks the PLAN's
+    // targets, so this one must not move - the observable that says "the plan was applied" rather than
+    // "everything the executor holds was reshaped".
+    auto bystander = OffscreenTarget::create(device.device,
+                                             OffscreenTarget::Layout{ 8U, 4U, { 0.0F, 0.0F, 0.0F, 1.0F } });
+    ASSERT_NE(bystander, nullptr);
+    ++counters.targets_built;
+
+    FrameArena    arena(64 * 1024);
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    // A plan names IDENTITIES; the executor is the layer that holds the targets they resolve to.
+    vine::intrusive_ptr<RenderTarget> handle(new RenderTarget());
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(handle.get(), target.get());
+    executor.addTarget(bystander.get(), bystander.get());
+
+    FrameTimeline   timeline;
+    RetirementQueue queue(3U);
+
+    const auto facts_of = [&](const TargetDesc& wanted) {
+        std::vector<TargetFacts> table(1U);
+        table[0].target  = handle.get();
+        table[0].wanted  = wanted;
+        table[0].current = target->instance();
+        return table;
+    };
+    const auto record_frame = [&](std::uint64_t token, const ClearPolicy& policy,
+                                  const std::vector<TargetFacts>& table) {
+        EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
+        EXPECT_TRUE(recorder.beginPass(1U));
+        EXPECT_TRUE(recorder.setRenderTarget(handle.get()));
+        EXPECT_TRUE(recorder.setClearPolicy(policy));
+        EXPECT_TRUE(recorder.endPass());
+        EXPECT_TRUE(recorder.endFrame());
+        EXPECT_TRUE(recorder.swapBuffers());
+        return &compiler.compile(recorder.description(), FrameFacts{ table });
+    };
+    // The whole frame drive: the plan's answers become real, the plan is recorded, and the frame is submitted
+    // through the executor's own step (which also says whether the submission happened).
+    const auto drive = [&](const CompiledFrame& frame, const std::vector<TargetFacts>& table) {
+        const VsgExecutor::TargetApplications applied = executor.applyTargetPlans(frame, table, timeline, queue);
+        auto command_graph = ::vsg::CommandGraph::create(device.device, device.queue_family);
+        EXPECT_TRUE(executor.record(frame, command_graph));
+        EXPECT_EQ(executor.skipped(), 0U) << "every pass of the plan has a target this executor holds";
+        // A second colour attachment is only readable if its copy is recorded too (the executor hands out
+        // attachment 0 for a probe); a one-colour shape has no such node and nothing is added.
+        if (const ::vsg::ref_ptr<::vsg::Node> extra = target->capture(1U)) {
+            command_graph->addChild(extra);
+        }
+        auto viewer = ::vsg::Viewer::create();
+        viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+        EXPECT_TRUE(viewer->compile());
+        viewer->advanceToNextFrame();
+        viewer->handleEvents();
+        EXPECT_TRUE(executor.submit(frame, *viewer)) << "the submission step says the frame happened";
+        viewer->deviceWaitIdle();
+        ++counters.frames;
+        return applied;
+    };
+
+    ClearPolicy fill;
+    fill.color          = true;
+    fill.color_value[0] = kFirst[0];
+    fill.color_value[1] = kFirst[1];
+    fill.color_value[2] = kFirst[2];
+    fill.color_value[3] = 1.0F;
+
+    // Frame 1: the plan asks for what the target already IS, but nothing has been written into it yet -
+    // so the plan answers the load-op repair (the first pass in clears), which the drive does not apply: a
+    // repair is what the RECORDING answers. The frame renders, the baseline the next two are a change
+    // against.
+    const auto           table_1 = facts_of(TargetDesc{ 8, 4, target->shape() });
+    const CompiledFrame* first   = record_frame(1U, fill, table_1);
+    ASSERT_EQ(first->passes.size(), 1U);
+    ASSERT_EQ(first->targets.size(), 1U);
+    EXPECT_EQ(static_cast<int>(first->targets[0].decision.action), static_cast<int>(TargetAction::Repair));
+    EXPECT_EQ(static_cast<int>(first->targets[0].decision.reason), static_cast<int>(RepairReason::Bootstrap));
+    {
+        const VsgExecutor::TargetApplications applied = drive(*first, table_1);
+        EXPECT_EQ(applied.resized + applied.rebuilt + applied.refused + applied.failed, 0U)
+            << "the repair arms are the recording's, not a replacement: the drive applies nothing";
+    }
+    EXPECT_TRUE(target->written()) << "the bootstrapping pass was recorded: the target holds something";
+    {
+        const vine::vsg::core::PixelProbe probe = target->probe();
+        ASSERT_TRUE(probe.valid());
+        EXPECT_EQ(probe.width(), 8);
+        EXPECT_EQ(probe.height(), 4);
+    }
+
+    // Frame 2: the plan asks for a new EXTENT of the same shape - ResizeInPlace - and the drive applies it.
+    // The recording that follows lands in the new images, whose clear is what the probe reads.
+    const auto           table_2 = facts_of(TargetDesc{ 16, 12, target->shape() });
+    const CompiledFrame* second  = record_frame(2U, fill, table_2);
+    ASSERT_EQ(static_cast<int>(second->targets[0].decision.action),
+              static_cast<int>(TargetAction::ResizeInPlace));
+    {
+        const VsgExecutor::TargetApplications applied = drive(*second, table_2);
+        EXPECT_EQ(applied.resized, 1U) << "the plan's answer became a replacement";
+        EXPECT_EQ(applied.rebuilt + applied.refused + applied.failed, 0U);
+    }
+    ++counters.resizes_replaced;
+    ++counters.plan_applied;
+    ++counters.parked;
+    EXPECT_EQ(target->width(), 16U);
+    EXPECT_EQ(target->height(), 12U);
+    EXPECT_EQ(target->generation(), 1U);
+    {
+        const vine::vsg::core::PixelProbe probe = target->probe();
+        ASSERT_TRUE(probe.valid());
+        EXPECT_EQ(probe.width(), 16) << "the probe follows the extent the DRIVE's plan asked for";
+        EXPECT_EQ(probe.height(), 12);
+        const Rgba8 expected{ quantise(kFirst[0]), quantise(kFirst[1]), quantise(kFirst[2]), 255U };
+        const Rgba8 sampled = probe.pixel(8, 6);
+        EXPECT_NEAR(sampled.r, expected.r, 1);
+        EXPECT_NEAR(sampled.g, expected.g, 1);
+        EXPECT_NEAR(sampled.b, expected.b, 1);
+        EXPECT_TRUE(probe.wholeImageMatches(sampled));
+    }
+
+    // Frame 3: the plan asks for a new SHAPE (a second colour attachment and a depth) - Rebuild - and the
+    // drive applies that too. The frame records through the REBUILT pass, which is the half a shape change
+    // that only replaced images would fail.
+    TargetShape wanted_shape = target->shape();
+    wanted_shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    wanted_shape.depth_format = RenderTarget::DepthFormat::D32F;
+    const auto           table_3 = facts_of(TargetDesc{ 16, 12, wanted_shape });
+    const CompiledFrame* third   = record_frame(3U, fill, table_3);
+    ASSERT_EQ(static_cast<int>(third->targets[0].decision.action), static_cast<int>(TargetAction::Rebuild));
+    {
+        const VsgExecutor::TargetApplications applied = drive(*third, table_3);
+        EXPECT_EQ(applied.rebuilt, 1U) << "a shape change is the rebuild arm, not a resize";
+        EXPECT_EQ(applied.resized + applied.refused + applied.failed, 0U);
+    }
+    ++counters.rebuilds_replaced;
+    ++counters.plan_applied;
+    ++counters.parked;
+    EXPECT_EQ(target->colorAttachmentCount(), 2U);
+    EXPECT_TRUE(target->hasDepth());
+    EXPECT_EQ(target->generation(), 2U);
+    {
+        const vine::vsg::core::PixelProbe probe = target->probe();
+        ASSERT_TRUE(probe.valid());
+        const Rgba8 expected{ quantise(kFirst[0]), quantise(kFirst[1]), quantise(kFirst[2]), 255U };
+        const Rgba8 sampled = probe.pixel(8, 6);
+        EXPECT_NEAR(sampled.r, expected.r, 1);
+        EXPECT_TRUE(probe.wholeImageMatches(sampled));
+    }
+    {
+        const vine::vsg::core::PixelProbe extra = target->probe(1U);
+        ASSERT_TRUE(extra.valid()) << "the rebuilt shape has a second colour attachment, and it is readable";
+        EXPECT_EQ(extra.width(), 16);
+        EXPECT_EQ(extra.pixel(8, 6).a, 0U) << "an extra colour attachment clears to transparent black";
+    }
+
+    // The bystander: held by this executor, named by no plan - untouched by every application above.
+    EXPECT_EQ(bystander->generation(), 0U) << "the drive walks the PLAN's targets, not everything it holds";
+    EXPECT_EQ(bystander->width(), 8U);
+    EXPECT_EQ(bystander->height(), 4U);
+    EXPECT_FALSE(bystander->written()) << "no pass of any driven frame named it";
+}
+
 int Fixture::material_identity = 0;
 
 TEST(ExecutorTest, TheContentOfAPassIsRecordedInsideThatPassWithThePlansClear)
@@ -494,6 +687,59 @@ TEST(ExecutorTest, APlanThatDisagreesWithTheTargetAboutItsShapeIsNotRecorded)
     EXPECT_EQ(fixture.executor.skipped(), 1U);
     EXPECT_TRUE(fixture.executor.recorded().empty());
     EXPECT_EQ(fixture.diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 1U);
+}
+
+TEST(ExecutorTest, ApplyingThePlansAnswerRepairsWhatTheRecordStepWouldOnlyReport)
+{
+    Fixture fixture;
+    if (!fixture.build())
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
+                     << fixture.created.error.as_std_str();
+    }
+
+    // The SAME drift the case above reports - the facts ask for a second colour attachment the target does not
+    // have - except that here they tell the TRUTH about what the backend currently has, so the plan answers
+    // Rebuild. What this case adds is the drive's half: the answer is APPLIED, and the frame that could not be
+    // recorded a moment ago becomes recordable. "Reported" and "repaired" differ by exactly this call.
+    //
+    // The frame names the SECOND target on purpose: the drive has to match a plan's target to ITS facts entry
+    // (the wanted description lives there), and a call that took "the first fact" or "the first registered
+    // target" would answer with this one instead.
+    fixture.facts[1].wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA16F);
+    fixture.facts[1].current = fixture.second->instance();
+
+    fixture.recorder.beginFrame(FrameToken{ 1 });
+    fixture.clearPass(fixture.second.get(), 1U, 0, 1.0F, 1.0F, 1.0F);
+    fixture.recorder.endFrame();
+
+    const CompiledFrame& frame =
+        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
+    ASSERT_EQ(frame.passes.size(), 1U);
+    ASSERT_EQ(frame.targets.size(), 1U);
+    EXPECT_EQ(frame.targets[0].target, fixture.second.get());
+    EXPECT_EQ(frame.passes[0].color_attachments, 2U);
+    EXPECT_EQ(static_cast<int>(frame.targets[0].decision.action), static_cast<int>(TargetAction::Rebuild))
+        << "the facts describe a shape the target does not have yet";
+
+    FrameTimeline                          timeline;
+    RetirementQueue                        queue(3U);
+    const VsgExecutor::TargetApplications  applied =
+        fixture.executor.applyTargetPlans(frame, fixture.facts, timeline, queue);
+    EXPECT_EQ(applied.rebuilt, 1U) << "the plan's answer became a real rebuild";
+    EXPECT_EQ(applied.resized + applied.refused + applied.failed, 0U);
+    EXPECT_EQ(fixture.second->colorAttachmentCount(), 2U);
+    EXPECT_EQ(fixture.first->colorAttachmentCount(), 1U) << "the target the plan did NOT name is untouched";
+    EXPECT_FALSE(fixture.second->written()) << "the fresh attachments make the pass the first writer again";
+
+    ASSERT_TRUE(fixture.render(frame)) << "the recording that refused this frame before now serves it";
+    EXPECT_EQ(fixture.executor.skipped(), 0U);
+
+    const Rgba8 centre = fixture.centre(*fixture.second);
+    EXPECT_GT(centre.r, 200);
+    EXPECT_GT(centre.g, 200);
+    EXPECT_GT(centre.b, 200) << "the rebuilt target renders the frame's own clear";
+    EXPECT_TRUE(fixture.diagnostics.clean());
 }
 
 TEST(ExecutorTest, APassIntoTheDefaultFramebufferIsReportedRatherThanDrawnSomewhereElse)

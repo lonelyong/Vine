@@ -85,6 +85,12 @@ TEST(DevicePhaseTest, TheRealDeviceCapabilitiesArePhasesWithCounterExpectations)
         [](std::uint64_t before, std::uint64_t after) { return after == before + 1U; },
     });
     table.add(Phase{
+        "plan-driven targets: the executor applies the plan's resize and rebuild answers",
+        [&]() { return runPhase(runPlanDrivenTargetPhase, device, counters); },
+        [&]() { return counters.plan_applied; },
+        [](std::uint64_t before, std::uint64_t after) { return after == before + 2U; },
+    });
+    table.add(Phase{
         "lost submission: repaired by the next frame, and only once",
         [&]() { return runPhase(runLostSubmissionPhase, device, counters); },
         [&]() { return counters.frames; },
@@ -97,7 +103,7 @@ TEST(DevicePhaseTest, TheRealDeviceCapabilitiesArePhasesWithCounterExpectations)
     }
 
     EXPECT_TRUE(report.ok()) << "every device phase has to pass before this run claims anything";
-    EXPECT_EQ(report.passed, 5U);
+    EXPECT_EQ(report.passed, 6U);
     EXPECT_EQ(report.failed, 0U);
 
     const std::vector<std::string> baseline{
@@ -105,6 +111,7 @@ TEST(DevicePhaseTest, TheRealDeviceCapabilitiesArePhasesWithCounterExpectations)
         "[selftest] shared depth: the borrower draws against the lender's depth and reads it back",
         "[selftest] target resize: the plan replaces the extent, the old set is parked, the new one renders",
         "[selftest] target rebuild: the shape changes, the pass and the attachments are rebuilt, the new shape renders",
+        "[selftest] plan-driven targets: the executor applies the plan's resize and rebuild answers",
         "[selftest] lost submission: repaired by the next frame, and only once",
         "[selftest] done",
     };
@@ -113,9 +120,11 @@ TEST(DevicePhaseTest, TheRealDeviceCapabilitiesArePhasesWithCounterExpectations)
 
     // The same counters the rows gated on, read once more: a row that passed while its phase did nothing
     // would have to have moved nothing, and these numbers are what the phase drove in total.
-    EXPECT_EQ(counters.frames, 9U) << "readback 1 + shared depth 1 + resize 2 + rebuild 2 + lost submission 3";
-    EXPECT_EQ(counters.targets_built, 6U) << "readback 1 + shared depth 2 + resize 1 + rebuild 1 + lost submission 1";
-    EXPECT_EQ(counters.resizes_replaced, 1U);
-    EXPECT_EQ(counters.rebuilds_replaced, 1U);
-    EXPECT_EQ(counters.parked, 2U);
+    EXPECT_EQ(counters.frames, 12U) << "readback 1 + shared depth 1 + resize 2 + rebuild 2 + drive 3 + lost submission 3";
+    EXPECT_EQ(counters.targets_built, 8U)
+        << "readback 1 + shared depth 2 + resize 1 + rebuild 1 + drive 2 + lost submission 1";
+    EXPECT_EQ(counters.resizes_replaced, 2U);
+    EXPECT_EQ(counters.rebuilds_replaced, 2U);
+    EXPECT_EQ(counters.plan_applied, 2U) << "one resize answer and one rebuild answer";
+    EXPECT_EQ(counters.parked, 4U);
 }

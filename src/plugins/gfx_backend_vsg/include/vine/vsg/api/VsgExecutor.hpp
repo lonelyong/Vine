@@ -13,6 +13,8 @@
 #include <vine/vsg/api/WindowTarget.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
+#include <vine/vsg/core/FrameTimeline.hpp>
+#include <vine/vsg/core/RetirementQueue.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -122,6 +124,43 @@ class V_VSG_API VsgExecutor
 
     /** @brief Gets the passes it recorded, in the order it recorded them. */
     [[nodiscard]] std::span<const core::PassId> recorded() const noexcept;
+
+    /** @brief What applying a plan's target answers did (see @ref applyTargetPlans). */
+    struct TargetApplications
+    {
+        std::uint64_t resized{0};  ///< Targets whose extent was replaced (ResizeInPlace).
+        std::uint64_t rebuilt{0};  ///< Targets whose SHAPE was replaced (Rebuild).
+        std::uint64_t refused{0};  ///< A depth lease blocked it: nothing was replaced.
+        std::uint64_t failed{0};   ///< The description could not be built: the target keeps what it had.
+    };
+
+    /**
+     * @brief Applies the plan's target answers (resize / rebuild) to the targets this executor holds.
+     *
+     * WHY THIS IS THE EXECUTOR'S STEP, and not the host's: the plan already answered what has to happen to
+     * every target this frame draws into (see core::planTarget), the targets are the ones THIS executor
+     * records into, and the caller that owns the frame has no way to tell a "the extent moved" from a "the
+     * pass graph must be rebuilt" except by reading the plan it just compiled. Here the answers become real
+     * in one call: `compile`, @ref applyTargetPlans, @ref record, @ref submit is the whole frame drive, and
+     * a target the plan asked to rebuild is not drawn into with the pipelines of its old shape.
+     *
+     * WHAT IT WALKS, AND WHAT IT LEAVES ALONE. One application per target of @p frame (the plan's own list,
+     * so a target this frame does not touch is not touched here either), matched to its entry in @p facts -
+     * which are the same facts the plan was compiled from, because the wanted extent and shape live THERE
+     * (the compiled plan carries the answer, not the description). A target this executor was not told
+     * about is skipped: @ref record reports the pass that needed it. The default framebuffer is skipped too
+     * (its extent belongs to the surface, not to this table). The modes that need nothing - None, and the
+     * repair arms, which the recording answers with a bootstrap clear - do not appear in the counts, so a
+     * caller can gate on "exactly one replacement happened".
+     *
+     * @param frame      The compiled plan whose targets are applied.
+     * @param facts      The target facts the plan was compiled from (the wanted descriptions live here).
+     * @param timeline   The frame timeline a replaced set is parked against (the caller's own clock).
+     * @param retirement Where replaced objects go (the caller owns it, like its device waits).
+     * @return What was applied, refused and could not be built, per mode.
+     */
+    TargetApplications applyTargetPlans(const core::CompiledFrame& frame, std::span<const core::TargetFacts> facts,
+                                        const core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /**
      * @brief Records that @p frame's submission did not happen: what its passes wrote is not there.

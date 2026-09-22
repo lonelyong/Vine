@@ -304,6 +304,21 @@ class OffscreenTarget
     /** @brief Gets whether this target has a depth attachment. */
     [[nodiscard]] bool hasDepth() const noexcept;
 
+    /** @brief Gets the description this target serves, in the vocabulary it was created with.
+     *
+     * WHAT IT IS FOR. A caller that wants the target to serve a DIFFERENT shape (@ref rebuild) has to hand
+     * back the parts it is NOT changing, and those parts are the target's own: the clear policy it was
+     * created with, whether its depth was asked to be sampleable, and the formats it has. A plan's target
+     * description cannot answer them (it carries the SHAPE, not the create-time policy), so a caller that
+     * guessed one would silently drop a depth promotion or change what an initial graph clears to.
+     *
+     * The extent is the one the target serves NOW: a resized or rebuilt target answers with its current
+     * extent, so this is also what a caller changes one field of before asking for a new shape.
+     *
+     * @return The layout: extent, formats, depth format, depth promotion and clear policy.
+     */
+    [[nodiscard]] TargetLayout layout() const noexcept;
+
     /** @brief Gets this target's depth plan, derived from its facts by the core (`core::depthPlan`).
      *
      * What it answers, and why it is derived rather than stored:
