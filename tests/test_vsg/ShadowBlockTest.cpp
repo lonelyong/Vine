@@ -487,20 +487,26 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
 
     std::unique_ptr<BlockStorage>     storage     = BlockStorage::create(created.device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
-    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(created.device, *storage);
+    // Each half gets the block set ITS program declares: the producer declares none (an empty set), the
+    // consumer declares the lights at set 0 / binding 3 and the shadow block at 4.
+    std::unique_ptr<BlockDescriptors> producer_descriptors = BlockDescriptors::forAbi(producer_facts.abi, 0U, created.device, *storage);
+    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::forAbi(consumer_facts.abi, 0U, created.device, *storage);
+    ASSERT_NE(producer_descriptors, nullptr);
     ASSERT_NE(descriptors, nullptr);
+    BlockDescriptors* producer_blocks[] = { producer_descriptors.get() };
+    BlockDescriptors* consumer_blocks[] = { descriptors.get() };
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
     ContentPipeline::Settings              settings;
     settings.color_attachments = 1U;
     std::unique_ptr<ContentPipeline> producer_pipelines =
-        ContentPipeline::create(descriptors->layout(), std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+        ContentPipeline::create(producer_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                 std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
                                 producer_facts.shaders, ContentPipeline::Settings{ 0U, 128U });
     ASSERT_NE(producer_pipelines, nullptr);
     std::unique_ptr<ContentPipeline> consumer_pipelines =
-        ContentPipeline::create(descriptors->layout(), std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+        ContentPipeline::create(consumer_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                 std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
                                 consumer_facts.shaders, settings);
     ASSERT_NE(consumer_pipelines, nullptr);
@@ -690,7 +696,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     producer_scope.entries     = producer_halves;
     producer_scope.registry    = &producer_registry;
     producer_scope.storage     = storage.get();
-    producer_scope.descriptors = descriptors.get();
+    producer_scope.block_sets  = producer_blocks;
     producer_scope.uploads     = &uploads;
     ContentPass producer_pass(producer_scope, diagnostics);
 
@@ -698,7 +704,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     consumer_scope.entries     = consumer_halves;
     consumer_scope.registry    = &consumer_registry;
     consumer_scope.storage     = storage.get();
-    consumer_scope.descriptors = descriptors.get();
+    consumer_scope.block_sets  = consumer_blocks;
     consumer_scope.uploads     = &uploads;
     ContentPass consumer_pass(consumer_scope, diagnostics);
 

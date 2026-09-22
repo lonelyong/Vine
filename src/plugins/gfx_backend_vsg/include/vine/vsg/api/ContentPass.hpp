@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 #include <vsg/core/ref_ptr.h>
 #include <vsg/nodes/Group.h>
@@ -109,7 +110,11 @@ class V_VSG_API ContentPass
         std::span<const Entry> entries;               ///< One per (program, revision, layout) this pass draws with.
         core::StateRegistry*   registry{nullptr};     ///< This pass' state memory, shared by every half.
         BlockStorage*          storage{nullptr};      ///< The frame's block storage.
-        BlockDescriptors*      descriptors{nullptr};  ///< The block set (one per frame).
+        /// The block sets this pass may bind: ONE PER SET INDEX A PROGRAM DECLARES BLOCKS IN, built from the
+        /// shape that program declares (`BlockDescriptors::create(device, storage, layer->blockShape(set),
+        /// set)`). A program whose declared shape no entry here covers is refused by name - the alternative
+        /// is binding a set whose layout the pipeline was not compiled against.
+        std::span<BlockDescriptors* const> block_sets{};
         StreamUploads*         uploads{nullptr};      ///< The stream sharing (geometry).
         /// Episode state of the light-drop report: a drawing call whose announced lights all fit the block
         /// re-arms it, so "the host announced lights the block cannot carry" is said once per episode rather
@@ -221,8 +226,31 @@ class V_VSG_API ContentPass
 
 
   private:
+    /** @brief Resolves the block sets @p entry's program declares, in the order the declarations name them.
+     *
+     * This is the pass' ONE place that knows what it can fill today: a program's declared block sets must be
+     * covered by the sets the caller built for it (same index, same shape), and a program that declares a push
+     * range is refused until the camera-matrix phase fills those bytes (pushing into a declared range with
+     * nothing written is undefined data, not "no matrices"). A half that fails the check is reported once per
+     * pass and its commands are not recorded - the rest of the pass still draws.
+     *
+     * @param entry       The compiled half.
+     * @param input_count Sampled textures the pass' key carries (colours plus depths).
+     * @return true when the half can be served; @ref half_blocks_ then holds the sets to bind.
+     */
+    [[nodiscard]] bool serveHalf(const Scope::Entry& entry, std::uint32_t input_count);
+
+  private:
+    /** @brief The most block sets one program can declare and still be served (the five roles' bound). */
+    static constexpr std::size_t kMaxBlockSets = 8U;
+
     Scope               scope_;        ///< The pieces this layer drives (borrowed).
     core::Diagnostics&  diagnostics_;  ///< The one diagnostic route.
+    /// One report-once per entry: a half that cannot be served must say so once, not once per command.
+    std::vector<core::ReportOnce> half_reported_;
+    /// The block sets `serveHalf` resolved for this pass' content half (in the declared set order).
+    std::array<BlockDescriptors*, kMaxBlockSets> half_blocks_{};
+    std::size_t                                  half_block_count_{0};
 };
 
 V_VSG_NS_END

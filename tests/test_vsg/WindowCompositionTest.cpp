@@ -246,8 +246,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // The content stack the scene uses (one layer, one recorder, one registry per PASS).
     auto storage     = BlockStorage::create(device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
-    auto descriptors = BlockDescriptors::create(device, *storage);
-    ASSERT_NE(descriptors, nullptr);
+
 
     const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
@@ -255,14 +254,14 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
         vertex.type   = ShaderStageType::Vertex;
         vertex.source = vine::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0) uniform ViewBlock {\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
             "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vine::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 0) uniform ViewBlock {\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
             "void main() { outColor = vec4(vb.frame.y / 128.0, vb.cam_pos.x, vb.frame.z / 96.0, 1.0); }\n"));
         program->addStage(vertex);
@@ -274,11 +273,17 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
-    auto content_layer = ContentPipeline::create(descriptors->layout(),
+    auto content_layer = ContentPipeline::create(program_facts.abi,
                                                  std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                                  std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
                                                  program_facts.shaders);
     ASSERT_NE(content_layer, nullptr);
+
+    // The block set the content programs' own declarations need: they declare the view block at set 0 /
+    // binding 0 and nothing else, so that - and only that - is what the pass binds.
+    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::forAbi(program_facts.abi, 0U, device, *storage);
+    ASSERT_NE(descriptors, nullptr);
+    BlockDescriptors* content_blocks[] = { descriptors.get() };
 
     // The screen layer: the engine's own copy program over the picture.
     const vine::intrusive_ptr<ShaderProgram> screen_program(vine::graphics::screenCopyProgram(0));
@@ -463,7 +468,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     shared_scope.entries     = content_halves;
     shared_scope.registry    = &scene_registry;
     shared_scope.storage     = storage.get();
-    shared_scope.descriptors = descriptors.get();
+    shared_scope.block_sets  = content_blocks;
     shared_scope.uploads     = &uploads;
     ContentPass shared_content(shared_scope, diagnostics);
     ::vsg::ref_ptr<::vsg::Node> shared_node;
@@ -476,7 +481,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     window_scope.entries     = content_halves;
     window_scope.registry    = &window_registry;
     window_scope.storage     = storage.get();
-    window_scope.descriptors = descriptors.get();
+    window_scope.block_sets  = content_blocks;
     window_scope.uploads     = &uploads;
     ContentPass window_content(window_scope, diagnostics);
     ::vsg::ref_ptr<::vsg::Node> window_node;
@@ -491,7 +496,6 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     screen_scope.entries     = screen_halves;
     screen_scope.registry    = &screen_registry;
     screen_scope.storage     = storage.get();
-    screen_scope.descriptors = descriptors.get();
     screen_scope.uploads     = &uploads;
     ContentPass overlay_content(screen_scope, diagnostics);
 

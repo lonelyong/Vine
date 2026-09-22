@@ -79,9 +79,13 @@ class Fixture
         shaders.fragment = "#version 450\n"
                            "layout(location = 0) out vec4 outColor;\n"
                            "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n";
+        // The text declares no bindings, so the layer builds a layout with no sets - the recorder's own
+        // command shapes are what these cases pin (nothing here is executed on a device).
+        vine::vsg::ProgramAbi abi;
+        EXPECT_EQ(vine::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vine::vsg::FactMiss::None);
         const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
         const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
-        pipelines = ContentPipeline::create(set_layout, std::span<const ContentPipeline::VertexBinding>(&binding, 1),
+        pipelines = ContentPipeline::create(abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1),
                                             std::span<const ContentPipeline::VertexAttribute>(&attribute, 1), shaders);
 
         recorder = std::make_unique<ContentDraw>(*pipelines, pool);
@@ -109,7 +113,8 @@ class Fixture
         result.key.revision                     = revision;
         result.key.vertex_layout.canonical_mask = 0x1U;
         result.key.compatibility.samples        = 1U;
-        result.blocks                           = blocks();
+        block_binds[0]                          = blocks();
+        result.blocks                           = block_binds;
         result.vertex_binds                     = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind, 1);
         result.index                            = ::vsg::BindIndexBuffer::create(::vsg::uintArray::create(3U));
         result.viewport                         = ViewportRect{ 0.0F, 0.0F, 320.0F, 240.0F };
@@ -119,6 +124,8 @@ class Fixture
 
     ::vsg::ref_ptr<::vsg::DescriptorSetLayout> set_layout;
     ::vsg::ref_ptr<::vsg::PipelineLayout>      pipeline_layout;
+    /// The one block bind the fixture's draws carry (a draw binds a span, one entry per declared set).
+    mutable ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[1];
     std::unique_ptr<ContentPipeline>           pipelines;
     VariantPool                                pool;
     std::unique_ptr<ContentDraw>               recorder;
@@ -145,7 +152,7 @@ TEST(ContentDrawTest, TheFirstDrawRecordsThePipelineTheStateAndTheGeometry)
     ASSERT_NE(dynamic, nullptr);
     EXPECT_EQ(dynamic->slot, vine::vsg::detail::kDynamicStateSlot)
         << "the dynamic command must not take the pipeline bind's slot";
-    EXPECT_EQ(group->stateCommands[2], draw.blocks) << "the third command is this draw's block bind";
+    EXPECT_EQ(group->stateCommands[2], draw.blocks[0]) << "the third command is this draw's block bind";
 
     ASSERT_EQ(group->children.size(), 1U);
     const auto* commands = dynamic_cast<const ::vsg::Commands*>(group->children[0].get());

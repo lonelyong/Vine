@@ -191,7 +191,7 @@ std::uint32_t channelFormat(const ChannelFacts& channel)
 
 /// @brief Builds the pipeline layer for one layout, declaring exactly the channels the entry lists.
 std::unique_ptr<ContentPipeline> pipelineFor(const GeometryFacts& facts, const ContentPipeline::Shaders& shaders,
-                                             const ::vsg::ref_ptr<::vsg::DescriptorSetLayout>& block_set)
+                                             const vine::vsg::ProgramAbi& abi)
 {
     std::vector<ContentPipeline::VertexBinding>   bindings;
     std::vector<ContentPipeline::VertexAttribute> attributes;
@@ -208,7 +208,7 @@ std::unique_ptr<ContentPipeline> pipelineFor(const GeometryFacts& facts, const C
 
     ContentPipeline::Settings settings;
     settings.color_attachments = 1U;
-    return ContentPipeline::create(block_set, bindings, attributes, shaders, settings);
+    return ContentPipeline::create(abi, bindings, attributes, shaders, settings);
 }
 
 bool isGreen(const Rgba8& pixel)
@@ -257,7 +257,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     ASSERT_EQ(buildProgramFacts(*program, program_facts), FactMiss::None);
 
     std::unique_ptr<ContentPipeline> pipelines = ContentPipeline::create(
-        descriptors->layout(), std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+        program_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
         std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U), program_facts.shaders, settings);
     ASSERT_NE(pipelines, nullptr);
 
@@ -339,11 +339,10 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
         vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
         pipelines.get(), &draws } };
     ContentPass::Scope scope;
-    scope.entries     = halves;
-    scope.registry    = &registry;
-    scope.storage     = storage.get();
-    scope.descriptors = descriptors.get();
-    scope.uploads     = &uploads;
+    scope.entries  = halves;
+    scope.registry = &registry;
+    scope.storage  = storage.get();
+    scope.uploads  = &uploads;
     ContentPass content(scope, diagnostics);
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
@@ -473,9 +472,9 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
 
     // The two halves, and the one registry and pool they share.
     std::unique_ptr<ContentPipeline> left_pipeline =
-        pipelineFor(left_facts, green_facts.shaders, descriptors->layout());
+        pipelineFor(left_facts, green_facts.shaders, green_facts.abi);
     std::unique_ptr<ContentPipeline> right_pipeline =
-        pipelineFor(right_facts, blue_facts.shaders, descriptors->layout());
+        pipelineFor(right_facts, blue_facts.shaders, blue_facts.abi);
     ASSERT_NE(left_pipeline, nullptr);
     ASSERT_NE(right_pipeline, nullptr);
 
@@ -564,11 +563,10 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
 
     storage->beginFrame();
     ContentPass::Scope scope;
-    scope.entries     = halves;
-    scope.registry    = &registry;
-    scope.storage     = storage.get();
-    scope.descriptors = descriptors.get();
-    scope.uploads     = &uploads;
+    scope.entries  = halves;
+    scope.registry = &registry;
+    scope.storage  = storage.get();
+    scope.uploads  = &uploads;
     ContentPass content(scope, diagnostics);
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
@@ -724,7 +722,7 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     ASSERT_TRUE(left_facts.layout == right_facts.layout) << "the two meshes must ask for the same layout";
 
     std::unique_ptr<ContentPipeline> pipelines =
-        pipelineFor(left_facts, program_facts.shaders, descriptors->layout());
+        pipelineFor(left_facts, program_facts.shaders, program_facts.abi);
     ASSERT_NE(pipelines, nullptr);
 
     VariantPool   pool;
@@ -814,19 +812,17 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
         pipelines.get(), &draws } };
 
     ContentPass::Scope first_scope;
-    first_scope.entries     = halves;
-    first_scope.registry    = &first_registry;
-    first_scope.storage     = storage.get();
-    first_scope.descriptors = descriptors.get();
-    first_scope.uploads     = &uploads;
+    first_scope.entries  = halves;
+    first_scope.registry = &first_registry;
+    first_scope.storage  = storage.get();
+    first_scope.uploads  = &uploads;
     ContentPass first_content(first_scope, diagnostics);
 
     ContentPass::Scope second_scope;
-    second_scope.entries     = halves;
-    second_scope.registry    = &second_registry;
-    second_scope.storage     = storage.get();
-    second_scope.descriptors = descriptors.get();
-    second_scope.uploads     = &uploads;
+    second_scope.entries  = halves;
+    second_scope.registry = &second_registry;
+    second_scope.storage  = storage.get();
+    second_scope.uploads  = &uploads;
     ContentPass second_content(second_scope, diagnostics);
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
@@ -879,4 +875,193 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     EXPECT_TRUE(isGreen(right_pixel)) << "the loading pass drew through the shared variant, got ("
                                       << static_cast<int>(right_pixel.r) << ", " << static_cast<int>(right_pixel.g)
                                       << ", " << static_cast<int>(right_pixel.b) << ")";
+}
+
+TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
+{
+    // The ENGINE's own programs put the material at set 0 / binding 0 and the per-drawable block in set 1 -
+    // not the arrangement this backend's own programs use (view 0 / draw 1 / material 2). This case draws with
+    // such a program, and the two halves make the claim testable with pixels:
+    //
+    //   * the fragment stage's colour IS the material block's diffuse, read from set 0 / binding 0 - where the
+    //     canonical arrangement has the VIEW block, whose bytes are all zero here, so a role that had been
+    //     guessed by POSITION would paint black;
+    //   * the vertex stage places the triangle by the draw block in SET 1, so the geometry, the dynamic
+    //     offsets and the two sets all have to be the ones the text declares.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout target_layout;
+    target_layout.width  = kSize;
+    target_layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    ASSERT_NE(target, nullptr);
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 1, binding = 0, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
+            "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "void main() { outColor = vec4(material.diffuse.rgb, 1.0); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, program_facts), FactMiss::None);
+
+    // The block sets the program's OWN declarations need: one per set it declares a block in, each built from
+    // the shape the layer compiles its pipelines against (see api/BlockDescriptors).
+    std::unique_ptr<BlockDescriptors> material_set =
+        BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage);
+    std::unique_ptr<BlockDescriptors> draw_set = BlockDescriptors::forAbi(program_facts.abi, 1U, created.device, *storage);
+    ASSERT_NE(material_set, nullptr);
+    ASSERT_NE(draw_set, nullptr);
+    ASSERT_EQ(material_set->shape().size(), 1U);
+    ASSERT_EQ(material_set->shape()[0].role, vine::vsg::AbiBlockRole::Material);
+    ASSERT_EQ(draw_set->shape().size(), 1U);
+    ASSERT_EQ(draw_set->shape()[0].role, vine::vsg::AbiBlockRole::Draw);
+    BlockDescriptors* block_sets[] = { material_set.get(), draw_set.get() };
+
+    const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
+    const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
+    ContentPipeline::Settings              settings;
+    settings.color_attachments = 1U;
+    std::unique_ptr<ContentPipeline> pipelines = ContentPipeline::create(
+        program_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+        std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U), program_facts.shaders, settings);
+    ASSERT_NE(pipelines, nullptr);
+
+    VariantPool   pool;
+    StateRegistry registry(pool);
+    StreamUploads uploads;
+    ContentDraw   draws(*pipelines, pool, vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                                                         created.instance->vk()));
+
+    Triangle                            triangle;
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    geometry->setPositions(triangle.positions);
+    geometry->setIndices(triangle.indices);
+    geometry->setRevision(1U);
+    GeometryFacts                        geometry_facts;
+    std::vector<vine::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+
+    // A colour the CLEAR's channels do not match, so a role read from the wrong binding cannot pass: the clear
+    // is (0.25, 0.5, 0.75) and the material is its mirror in red and blue.
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vine::Colorf(0.75F, 0.25F, 0.5F, 1.0F));
+    MaterialFacts          material_facts;
+    std::vector<std::byte> material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts  programs[]   = { program_facts };
+    const GeometryFacts geometries[] = { geometry_facts };
+    const MaterialFacts materials[]  = { material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    TargetFacts target_facts;
+    target_facts.target        = target.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands{ command };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(commands, nullptr);
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws.size(), 1U);
+
+    storage->beginFrame();
+    const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
+        vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        pipelines.get(), &draws } };
+    ContentPass::Scope scope;
+    scope.entries    = halves;
+    scope.registry   = &registry;
+    scope.storage    = storage.get();
+    scope.block_sets = block_sets;
+    scope.uploads    = &uploads;
+    ContentPass content(scope, diagnostics);
+
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>  content_node;
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: both declared sets are there";
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(target.get(), target.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packet{ frame.passes[0].pass, content_node };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(&packet, 1U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const auto near = [](std::uint8_t byte, double linear) {
+        return std::abs(static_cast<double>(byte) - 255.0 * linear) <= 4.0;
+    };
+    const Rgba8 centre = target->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(near(centre.r, 0.75) && near(centre.g, 0.25) && near(centre.b, 0.5))
+        << "the fragment must read the MATERIAL block at the binding its text names, got ("
+        << static_cast<int>(centre.r) << ", " << static_cast<int>(centre.g) << ", " << static_cast<int>(centre.b)
+        << ") - black would mean the view block (all zeros here) was bound there";
+
+    const Rgba8 corner = target->probe().pixel(2, 2);
+    EXPECT_TRUE(near(corner.r, kClear[0]) && near(corner.g, kClear[1]) && near(corner.b, kClear[2]))
+        << "the triangle must be placed by the draw block in set 1, leaving the clear at the corner, got ("
+        << static_cast<int>(corner.r) << ", " << static_cast<int>(corner.g) << ", " << static_cast<int>(corner.b)
+        << ")";
 }

@@ -30,8 +30,10 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
         group->add(makeDynamicStateCommand(draw.dynamic, draw.color_attachments, entry_points_));
         ++dynamic_commands_;
     }
-    if (draw.blocks != nullptr) {
-        group->add(draw.blocks);
+    if (!draw.blocks.empty()) {
+        for (const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& blocks : draw.blocks) {
+            group->add(blocks);
+        }
     }
     if (draw.inputs != nullptr && resolution.inputs_issued) {
         group->add(draw.inputs);

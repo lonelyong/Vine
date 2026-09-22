@@ -9,6 +9,8 @@
 
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/vsg/api/ContentPipeline.hpp>
+#include <vine/vsg/api/FactResult.hpp>
+#include <vine/vsg/api/ProgramAbi.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
 #include <vine/vsg/core/Keys.hpp>
 #include <vine/vsg/core/Streams.hpp>
@@ -58,12 +60,19 @@ struct GeometryFacts
     std::uint32_t  vertex_offset{0};    ///< Added to every index before fetching.
 };
 
-/** @brief What a program identity answers with: the two stages a content pipeline compiles. */
+/** @brief What a program identity answers with: the two stages a content pipeline compiles, and the
+ *         bindings those stages declare (see api/ProgramAbi.hpp).
+ *
+ * The ABI is part of the entry because a pipeline cannot be built without it: what the text declares is
+ * what the layout must be, and the layer that compiles the pair is the one that needs both halves of the
+ * answer together (see api/ContentPipeline). It is scanned for the variant the layer compiles with - today
+ * the source as written, so the two can never disagree about which declarations are in effect. */
 struct ProgramFacts
 {
     const void*              program{nullptr};  ///< The identity the plan names.
     std::uint64_t            revision{0};       ///< The revision the plan names.
     ContentPipeline::Shaders shaders{};         ///< The GLSL those two stages consist of.
+    ProgramAbi               abi{};             ///< The bindings and push ranges those two texts declare.
 };
 
 /** @brief What a material identity answers with: the block bytes the shading reads. */
@@ -72,26 +81,6 @@ struct MaterialFacts
     const void*                material{nullptr};  ///< The identity (nullptr = the default material).
     std::uint64_t              revision{0};        ///< The revision its owner tracks its bytes at.
     std::span<const std::byte> block{};            ///< The block; its size must be the ABI's.
-};
-
-/** @brief Why a lookup did not answer with an entry the content layer can record. */
-enum class FactMiss : std::uint8_t
-{
-    None,       ///< Found: the entry can be recorded as it is.
-    Unknown,    ///< No entry has this identity: the content layer was never told about it.
-    Revision,   ///< The identity is there, at a DIFFERENT revision: the plan describes content that has moved on.
-    Malformed,  ///< The entry exists but cannot be drawn (see the rule each lookup applies).
-};
-
-/** @brief The answer of one lookup: the entry, and why it is missing when it is. */
-template <typename Facts>
-struct FactResult
-{
-    const Facts* entry{nullptr};          ///< The entry, or null (see @ref miss).
-    FactMiss     miss{FactMiss::None};    ///< Why it is missing when it is (None when it is not).
-
-    /** @brief Gets whether an entry was found. */
-    [[nodiscard]] bool found() const noexcept { return entry != nullptr; }
 };
 
 /** @brief Every table a frame's content needs, borrowed for the recording. */

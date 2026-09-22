@@ -55,7 +55,10 @@ class ContentDraw
     {
         core::PipelineKey   key;                 ///< Identity (the pool answers whether it is compiled).
         core::DynamicState  dynamic;             ///< The set-command half of the state.
-        ::vsg::ref_ptr<::vsg::BindDescriptorSet> blocks;  ///< This draw's block offsets (BlockDescriptors::bind).
+        /// This draw's block binds, one per set the PROGRAM declares blocks in (the canonical arrangement is
+        /// one set; the engine's own programs put the per-drawable block in a set of its own). Empty for a
+        /// program that declares none.
+        std::span<const ::vsg::ref_ptr<::vsg::BindDescriptorSet>> blocks;
         ::vsg::ref_ptr<::vsg::BindDescriptorSet> inputs;  ///< The pass' sampled inputs, or null when it has none.
         std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>> vertex_binds;  ///< One per channel.
         ::vsg::ref_ptr<::vsg::BindIndexBuffer>    index;   ///< The index stream (required: draws are indexed).

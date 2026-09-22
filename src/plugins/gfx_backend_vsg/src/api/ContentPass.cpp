@@ -75,12 +75,96 @@ std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
 constexpr std::size_t kFullscreenPushBytes = sizeof(vine::vsg::LightPushBlock);
 static_assert(kFullscreenPushBytes == 128U, "the full-screen push range is the ABI's 128 bytes");
 
+/// @brief Whether two block shapes declare the same roles at the same bindings, in the same order.
+bool sameShape(std::span<const BlockDescriptors::Binding> left,
+               std::span<const BlockDescriptors::Binding> right) noexcept
+{
+    if (left.size() != right.size())
+    {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.size(); ++index)
+    {
+        if (left[index].binding != right[index].binding || left[index].role != right[index].role)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 ContentPass::ContentPass(const Scope& scope, core::Diagnostics& diagnostics) noexcept
     : scope_(scope)
     , diagnostics_(diagnostics)
 {
+    half_reported_ = std::vector<core::ReportOnce>(scope.entries.size());
+}
+
+bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count)
+{
+    half_block_count_ = 0U;
+
+    if (entry.pipelines == nullptr)
+    {
+        return false;
+    }
+    const ProgramAbi& abi = entry.pipelines->abi();
+    if (abi.bindings.empty())
+    {
+        return true;   // a full-screen half, or a content program that declares nothing: nothing to fill
+    }
+
+    const auto refuse = [&](const char* why) {
+        const std::size_t index = static_cast<std::size_t>(&entry - scope_.entries.data());
+        if (index < half_reported_.size() && half_reported_[index].shouldReport())
+        {
+            reportRefused("the pass' content half", why);
+        }
+        return false;
+    };
+
+    // A push range is the camera-matrix phase's to fill (see the file note): a half that declares one is
+    // refused rather than drawn with whatever the last draw pushed - a declared-but-unwritten push is
+    // undefined data, and "the picture is black because the matrices were zero" is not a diagnosis.
+    if (!abi.pushes.empty())
+    {
+        return refuse("its program reads a push block this pass does not fill yet (the camera matrices)");
+    }
+
+    // The declared bindings have to be exactly what the pass can put there: a sampler the pass' input set
+    // covers, and a block set the caller built for the program's OWN declared shape.
+    for (const AbiBinding& binding : abi.bindings)
+    {
+        if (binding.kind != AbiDescriptorKind::UniformBlock && binding.binding >= input_count)
+        {
+            return refuse("its program samples an input texture this pass does not declare");
+        }
+    }
+    for (const std::uint32_t set : entry.pipelines->blockSets())
+    {
+        if (half_block_count_ == half_blocks_.size())
+        {
+            return refuse("its program declares blocks in more sets than this pass can bind");
+        }
+        BlockDescriptors* found = nullptr;
+        for (BlockDescriptors* candidate : scope_.block_sets)
+        {
+            if (candidate != nullptr && candidate->setIndex() == set &&
+                sameShape(candidate->shape(), entry.pipelines->blockShape(set)))
+            {
+                found = candidate;
+                break;
+            }
+        }
+        if (found == nullptr)
+        {
+            return refuse("its program declares blocks in a set the caller built no matching block set for");
+        }
+        half_blocks_[half_block_count_++] = found;
+    }
+    return true;
 }
 
 bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& facts,
@@ -168,6 +252,14 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         if (content_half == nullptr || content_half->pipelines == nullptr)
         {
             reportRefused("the pass' sampled inputs", "no compiled content half was built for this pass");
+            out = group;
+            return false;
+        }
+        // What the pass cannot fill is refused BEFORE any pipeline is acquired or any set is built (see
+        // serveHalf): a program whose blocks live in a set nobody built for it would otherwise be drawn with
+        // another set's bytes.
+        if (!serveHalf(*content_half, sampled_color_count + sampled_depth_count))
+        {
             out = group;
             return false;
         }
@@ -520,10 +612,26 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // same reason - the pipeline's sampled set is compiled against how many of each the pass binds.
     record.key.sampled_depth_count = sampled_depth_count;
     record.dynamic                = command.dynamic;
-    record.blocks                 = scope_.descriptors->bind(
-        entry->pipelines->layoutFor(sampled_color_count, sampled_depth_count),
-        BlockDescriptors::Offsets{ view_offset, block.offset, material_write.offset, lights_offset,
-                                      shadow_offset });
+    // The blocks: one bind per set the PROGRAM declares (its own `layout(set = ..., binding = ...)` qualifiers,
+    // see api/ProgramAbi). Which sets those are came from `serveHalf`, which also refused the half when the
+    // caller built no set for one of them.
+    const ::vsg::ref_ptr<::vsg::PipelineLayout> block_layout =
+        entry->pipelines->layoutFor(sampled_color_count, sampled_depth_count);
+    const BlockDescriptors::Offsets block_offsets{ view_offset, block.offset, material_write.offset, lights_offset,
+                                                   shadow_offset };
+    std::array<::vsg::ref_ptr<::vsg::BindDescriptorSet>, kMaxBlockSets> block_binds;
+    std::size_t                                                        bound_sets = 0U;
+    for (std::size_t index = 0U; index < half_block_count_; ++index)
+    {
+        block_binds[bound_sets] = half_blocks_[index]->bind(block_layout, block_offsets);
+        if (block_binds[bound_sets] == nullptr)
+        {
+            reportRefused("the command's block set", "one of its dynamic offsets is not one the device accepts");
+            return false;
+        }
+        ++bound_sets;
+    }
+    record.blocks       = std::span<const ::vsg::ref_ptr<::vsg::BindDescriptorSet>>(block_binds.data(), bound_sets);
     record.inputs       = inputs;
     record.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
     record.index        = indices.bind;

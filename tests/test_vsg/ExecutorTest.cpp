@@ -163,7 +163,12 @@ struct Fixture
         {
             return false;
         }
-        descriptors = BlockDescriptors::create(created.device, *storage);
+        const ContentPipeline::Shaders shader_pair = triangleShaders();
+        vine::vsg::ProgramAbi            abi;
+        if (vine::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vine::vsg::FactMiss::None) {
+            return false;
+        }
+        descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
         if (descriptors == nullptr)
         {
             return false;
@@ -173,10 +178,10 @@ struct Fixture
         const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
         ContentPipeline::Settings              settings;
         settings.color_attachments = 1U;
-        pipelines = ContentPipeline::create(descriptors->layout(),
+        pipelines = ContentPipeline::create(abi,
                                            std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                            std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                           triangleShaders(), settings);
+                                           shader_pair, settings);
         if (pipelines == nullptr)
         {
             return false;
@@ -245,8 +250,16 @@ struct Fixture
         draw.key.compatibility                = first->shape().compatibility();
         draw.key.sampled_color_count          = 0U;
         draw.dynamic                          = pass.draws[0].commands[0].dynamic;
-        draw.blocks = descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,
-                                                                                       material.offset });
+        const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
+            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,
+                                                                               material.offset })
+        };
+        // The program's own text declares no blocks, so its pipeline layout declares no sets either and there
+        // is nothing to bind: a set the layout does not have is an invalid handle, not an empty bind (the
+        // bytes above are written for a program that reads nothing).
+        if (!descriptors->shape().empty()) {
+            draw.blocks = block_binds;
+        }
         draw.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
         draw.index        = index_bind.bind;
         draw.viewport     = ViewportRect{ static_cast<float>(pass.viewport.x), static_cast<float>(pass.viewport.y),

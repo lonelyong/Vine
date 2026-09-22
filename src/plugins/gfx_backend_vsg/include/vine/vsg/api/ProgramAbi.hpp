@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-#include <vine/vsg/api/ContentFacts.hpp>
+#include <vine/vsg/api/FactResult.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**

@@ -397,15 +397,18 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
 
     std::unique_ptr<BlockStorage>     storage     = BlockStorage::create(created.device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
-    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(created.device, *storage);
+    // The block set the program's OWN declarations need: it declares the lights block, so that (and only
+    // that) is what its pipelines were compiled against and what the pass binds.
+    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage);
     ASSERT_NE(descriptors, nullptr);
+    BlockDescriptors* content_blocks[] = { descriptors.get() };
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
     ContentPipeline::Settings              settings;
     settings.color_attachments = 1U;
     std::unique_ptr<ContentPipeline> pipelines =
-        ContentPipeline::create(descriptors->layout(), std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+        ContentPipeline::create(program_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                 std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
                                 program_facts.shaders, settings);
     ASSERT_NE(pipelines, nullptr);
@@ -541,7 +544,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     scope.entries     = halves;
     scope.registry    = &registry;
     scope.storage     = storage.get();
-    scope.descriptors = descriptors.get();
+    scope.block_sets  = content_blocks;
     scope.uploads     = &uploads;
     ContentPass content(scope, diagnostics);
 
@@ -772,8 +775,6 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
 
     std::unique_ptr<BlockStorage>     storage     = BlockStorage::create(created.device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
-    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(created.device, *storage);
-    ASSERT_NE(descriptors, nullptr);
 
     storage->beginFrame();
     VariantPool   pool;
@@ -789,7 +790,6 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     scope.entries     = halves;
     scope.registry    = &registry;
     scope.storage     = storage.get();
-    scope.descriptors = descriptors.get();
     scope.uploads     = &uploads;
     ContentPass content(scope, diagnostics);
 

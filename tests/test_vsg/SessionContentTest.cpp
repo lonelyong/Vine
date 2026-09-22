@@ -153,11 +153,11 @@ ContentPipeline::Shaders shaders()
     ContentPipeline::Shaders pair;
     pair.vertex = "#version 450\n"
                   "layout(location = 0) in vec3 position;\n"
-                  "layout(set = 0, binding = 1) uniform DrawBlock { mat4 model; vec4 params; } draw;\n"
+                  "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
                   "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
     pair.fragment = "#version 450\n"
                     "layout(location = 0) out vec4 outColor;\n"
-                    "layout(set = 0, binding = 1) uniform DrawBlock { mat4 model; vec4 params; } draw;\n"
+                    "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
                     "void main() { outColor = vec4(0.0, 1.0, 0.0, draw.params.x); }\n";
     return pair;
 }
@@ -229,15 +229,19 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     // The content stack, built on the SESSION's device (objects from another device are unusable here).
     auto storage = BlockStorage::create(device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
-    auto descriptors = BlockDescriptors::create(device, *storage);
+    const ContentPipeline::Shaders program_shaders = shaders();
+    vine::vsg::ProgramAbi            program_abi;
+    ASSERT_EQ(vine::vsg::scanProgramAbi(program_shaders.vertex, program_shaders.fragment, {}, program_abi),
+              FactMiss::None);
+    auto descriptors = BlockDescriptors::forAbi(program_abi, 0U, device, *storage);
     ASSERT_NE(descriptors, nullptr);
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
-    auto pipelines = ContentPipeline::create(descriptors->layout(),
+    auto pipelines = ContentPipeline::create(program_abi,
                                              std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                              std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                             shaders());
+                                             program_shaders);
     ASSERT_NE(pipelines, nullptr) << "the shader pair must compile";
 
     auto positions  = ::vsg::vec3Array::create(3U);
@@ -289,8 +293,11 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     draw.key.revision                     = 1U;
     draw.key.vertex_layout.canonical_mask = 0x1U;
     draw.key.compatibility.samples        = 1U;
-    draw.blocks = descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,
-                                                                                    material.offset });
+    const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
+        descriptors->bind(pipelines->layout(),
+                          BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
+    };
+    draw.blocks       = block_binds;
     draw.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
     draw.index        = index_bind.bind;
     draw.viewport     = ViewportRect{ 0.0F, 0.0F, static_cast<float>(kWidth), static_cast<float>(kHeight) };
@@ -381,8 +388,6 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // The content stack, built on the SESSION's device.
     auto storage = BlockStorage::create(device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
-    auto descriptors = BlockDescriptors::create(device, *storage);
-    ASSERT_NE(descriptors, nullptr);
 
     const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
@@ -390,14 +395,14 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
         vertex.type   = ShaderStageType::Vertex;
         vertex.source = vine::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0) uniform ViewBlock {\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
             "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vine::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 0) uniform ViewBlock {\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
             "void main() { outColor = vec4(vb.frame.y / 128.0, vb.cam_pos.x, vb.frame.z / 96.0, 1.0); }\n"));
         program->addStage(vertex);
@@ -407,9 +412,14 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, program_facts), FactMiss::None);
 
+    // The block set the program's OWN declarations need (the view block at set 0 / binding 0).
+    auto descriptors = BlockDescriptors::forAbi(program_facts.abi, 0U, device, *storage);
+    ASSERT_NE(descriptors, nullptr);
+    BlockDescriptors* content_blocks[] = { descriptors.get() };
+
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
-    auto pipelines = ContentPipeline::create(descriptors->layout(),
+    auto pipelines = ContentPipeline::create(program_facts.abi,
                                              std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                              std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
                                              program_facts.shaders);
@@ -501,11 +511,11 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
         vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
         pipelines.get(), &draws } };
     ContentPass::Scope scope;
-    scope.entries     = halves;
-    scope.registry    = &registry;
-    scope.storage     = storage.get();
-    scope.descriptors = descriptors.get();
-    scope.uploads     = &uploads;
+    scope.entries    = halves;
+    scope.registry   = &registry;
+    scope.storage    = storage.get();
+    scope.block_sets = content_blocks;
+    scope.uploads    = &uploads;
     ContentPass content(scope, diagnostics);
 
     const std::uint32_t target_width  = window_target->width();

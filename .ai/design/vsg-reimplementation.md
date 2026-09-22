@@ -3,13 +3,14 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M8a：场景桥的第一半——程序文本的绑定声明成为事实（`api/ProgramAbi`；引擎自己的八个程序逐条钉住，
-> 条件按 defines 求值，taken 分支里的 `#error` 让变体 Malformed）**：`test_vsg` 576 用例 / 90 套件全绿；
-> 门禁一条命令（`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 821 文件）、
+> **M8b：布局就是声明——块服务到文本自己写的那个 `(set, binding)` 去（`ProgramFacts` 带 `ProgramAbi`；
+> `BlockDescriptors` 形状驱动；`ContentPipeline` 照声明装配布局与 push 范围、填不了就按名字拒绝；
+> `ContentPass` 逐声明集服务）**：`test_vsg` 580 用例 / 90 套件全绿；
+> 门禁一条命令（`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 822 文件）、
 > 相位 9 行 / 2 次运行全收尾；`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验。
 > M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：ABI 债按 §11.16ae 的决定解掉了一半
 > ——**布局跟着程序文本的声明走**（`VineViewBlock` … 这些 L1 名就是角色），重写版自己的 set 0 布局只是
-> “另一种声明”。下一步是让布局真的跟着声明装配（M8b）与按角色取值（M8c）。
+> “另一种声明”，M8b 已让装配真的按声明落地（§11.16af）。下一步是按角色取值（M8c）。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2539,7 +2540,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M7b（执行者收口）~~ | **已完成（2026-09-22）**：目标自己说事实——`OffscreenTarget::instance()`（`built` = **能 LOAD** = `written`；15 处手拼 facts 统一到它，像素断言是判据）+ `invalidateAttachments()`（丢帧 ⇒ 计划 `Repair(Bootstrap)` ⇒ 下一帧首写者清屏；**只有 bootstrap 能修事实**，`resize` 换集合同时换事实）；+1 真设备用例把执行者循环（facts → 计划 → `pass.bootstrap` → 图 → 像素）跑通，含"只修一次"与 resize 两条判据；5 条变异反证（§11.16aa） |
 | **M8 场景桥** | **开工**：把引擎的场景内容（程序 / 几何 / 材质 / 目标）接到重写版的内容层。已决的接法 = **按程序文本自己的声明服务**（§11.16ae）：文本是宿主的，后端选不了它的绑定号。 |
 | ~~M8a（声明成为事实）~~ | **已完成（2026-09-22）**：`api/ProgramAbi`——`scanProgramAbi(vertex, fragment, defines, out)` 把文本的绑定声明读成事实（set/binding、种类、阶段、按**L1 类型名**认领的角色、std140 尺寸、push 范围），条件按变体求值（taken 分支的 `#error` ⇒ Malformed），引擎自己的八个程序逐条钉住（前向 5 绑定 + push 128B 顶点、带影延迟光照的 5/6、屏幕拷贝的 binding=N…）；11 条无设备用例 + 5 条变异反证（§11.16ae）。下一步 M8b：布局跟着声明装配。 |
-| **M8 下一步** | M8b（`ContentPipeline` 按 `ProgramAbi` 装配：块角色 → dynamic UBO、sampler → 静态绑定、push 照声明）→ M8c（角色取值：arena 偏移、draw 在 set 1、`pc` 的 proj/modelView、`diffuseMap` 的白色 fallback 与 `shadow_map` 的图）→ 变体的 define 进管线身份 → 贴图/材质纹理 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
+| ~~M8b（布局就是声明）~~ | **已完成（2026-09-22）**：`ContentPipeline::create` 收 `ProgramAbi`——`describeAbi` 把声明读成布局（每个被声明碰到的 set 一条布局、空隙填真布局、块 → dynamic UBO 在**它自己写的** binding 上、push 照声明），填不了的按名拒绝（外来块 / 非 std140 / 超尺寸 / `count != 1` / 无视图的采样器种类 / 内容路径 set≠1 的采样器 / 块与输入挤一个 set），`acquire` 另拒“采样器超出本 pass 输入数”；`BlockDescriptors` 形状驱动（`canonicalShape` / `layoutOfShape` / `forAbi` / `blockShapeOf`，`bind()` 一个声明绑定一个偏移）；`ContentPass::Scope::block_sets` 一组块集 + `serveHalf` 按“set 序号 + 形状逐位相同”认领、按名拒绝、push 未填即拒；`Draw::blocks` 变 span。4 条新用例（真设备像素 1、真设备描述符 1、无设备 2）+ 6 条变异反证全红；门禁还揪出三处仍无条件绑块的旧夹具（程序一个块都没声明 ⇒ 布局 0 个 set），修夹具而不是加容忍（§11.16af）。 |
+| **M8 下一步** | M8c（角色取值：arena 偏移、draw 搬进 set 1、`pc` 的 proj/modelView 填进声明出的 push、`diffuseMap` 的白色 fallback 与 `shadow_map` 的图）→ 变体的 define 进管线身份 → 贴图/材质纹理 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -2646,3 +2648,66 @@ M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `
 `scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、hygiene 0 / 821 文件、
 `check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、相位 9 行 / 2 次运行全收尾。变异反证
 **5/5 红**（N1 条件不分、N2 角色按位置、N3 不按 std140 补齐、N4 矛盾相消、N5 `#error` 忽略）。
+
+### 11.16af M8b（2026-09-22）：布局就是声明——块服务到文本自己写的那个 `(set, binding)` 去
+
+§11.16ae 把“按程序文本自己的声明服务”定成政策，这一片让**装配真的按它走**：`ContentPipeline::create`
+收的是 `ProgramAbi`（不再是“一个块集 + 一个布局”），`describeAbi` 把声明读成**布局本身**——每个被声明碰到
+的 set 序号一条 `DescriptorSetLayout`（块 → dynamic UBO，绑在**它自己写的** binding 上），**空隙是真实的
+空布局**而不是空指针（`PipelineLayout` 的集合列表是从 0 起的连续区间，空指针是无效句柄不是“没有这个
+set”）；push 范围同样照声明来（内容程序声明了 push，范围就在——只是**这一片还不填**）。于是重写版自己的
+“view 0 / draw 1 / material 2”不再是一条后端政策，而只是**另一种声明**：引擎的“material 0 + draw 1”、
+第三种程序、任何一种，走的是同一条装配路径。
+
+**填不了的按名字拒绝，绝不静默改派**（拒绝策略集中在 `describeAbi` 与 `acquire`）：外来块（不是五个 L1
+名）、非 std140（尺寸是编译器的，绑进去的字节是 std140 的）、**声明比 L1 结构体更大**（多出来的字节 ABI
+里没有）、`count != 1`、`sampler3D` 一类没有视图的种类、**内容路径里不在 set 1 的采样器**、以及“块和采样
+输入挤在同一个 set”（一个 set 不能是两样东西——纹理支持来了才有那种排布）；`acquire` 另外拒“采样器的
+binding 号超出这个 pass 的输入数”（那张图不存在，绑上去是另一次绘制的图）。
+
+**pass 侧按声明的 set 逐条服务**：`Scope::descriptors` 换成 `Scope::block_sets`（**一组**块集），
+`serveHalf` 用“set 序号 + 形状逐位相同”去认领（认不出就按名拒绝、每个条目只报一次），`recordCommand` 把
+每条声明集的 `bind` 放进 `Draw::blocks`（span，逐条录制）；每个声明绑定一个动态偏移、按**形状的顺序**给
+（不是按它们被写进代码的顺序）。还在 `serveHalf` 里立了 M8c 之前必须立的一道闸：**声明了 push 却没有填**
+⇒ 拒绝这一半（“黑屏是因为矩阵是零”不算诊断，见 §11.16x 的教训）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ProgramAbi.hpp` / `src/api/ProgramAbi.cpp` | 不变（事实仍是 M8a 那份） |
+| `api/FactResult.hpp`（新） | `FactMiss` + `FactResult` 搬出来，解开 `ProgramAbi` 进 `ProgramFacts` 的包含环 |
+| `api/ContentFacts.hpp` / `api/ContentSources.cpp/.hpp` | `ProgramFacts` += `ProgramAbi abi{}`：两张数据源在 scan 时就带上事实（扫描失败 = Malformed） |
+| `api/BlockDescriptors.hpp` / `src/api/BlockDescriptors.cpp` | 形状驱动：`Binding{binding, role}`、`canonicalShape()`（本重写版的声明 = 五种之一）、`layoutOfShape()`（形状→集合布局**唯一的写法**）、`create(..., shape, set_index)`、`forAbi(abi, set, …)`、`blockShapeOf(abi, set)`（自由函数）；`bind()` = 形状顺序、每绑定一个动态偏移 |
+| `api/ContentPipeline.hpp` / `src/api/ContentPipeline.cpp` | `create(abi, bindings, attributes, shaders[, settings])`（旧的“块集”重载删掉）；`describeAbi` 拒绝政策 + 空隙填充；`abi()` / `blockShape(set)` / `blockSets()` 三个读出口；采样变体按声明集 + 输入集（set 1）装 |
+| `api/ContentPass.hpp` / `src/api/ContentPass.cpp` | `Scope::block_sets`（一组）+ `serveHalf`（形状认领、按名拒绝、push 未填即拒）+ 逐声明集 `bind` |
+| `api/ContentDraw.hpp` / `src/api/ContentDraw.cpp` | `Draw::blocks` 改成 span（每个声明集一条） |
+| `tests/test_vsg/BlockDescriptorsTest.cpp` | +1 真设备用例：**按声明形状**（view 0 + material 3、set 1）建的集合 ⇒ 两个动态偏移 `{0, 64}`（正典五个在这里是错的） |
+| `tests/test_vsg/ContentPipelineTest.cpp` | +2 无设备用例：声明在别处的布局（material 3、draw 在 set 1、只声明 set 2 时的**空隙是空布局**）；拒绝面一整批（外来块 / 超尺寸 / 非 std140 / 采样器在块集 / `sampler3D` / 前缀块可以 / 键盖不住采样器时 `acquire` 拒） |
+| `tests/test_vsg/ContentPassTest.cpp` | +1 真设备像素用例：**SDK 排布的程序**（material 在 `(0,0)`、draw 在 `(1,0)`、无 push）——binding 0 上是全零的 view 块，所以“按键号猜角色”会画成黑 |
+
+| 规则 | 结论（变异反证全部实测） |
+| --- | --- |
+| **角色是类型名，不是位置** | 变异 N1（角色按 binding 序号给）⇒ **7 条红**，含新的像素用例（`(0,0)` 上的 material 会被当成 view ⇒ 黑）与 `shape()[0].role == Material` 断言 |
+| **声明写在哪个 set 就是哪个 set** | 变异 N2（所有块都进 set 0）⇒ 无设备用例 `sets.size() == 2` 失败 + 像素用例 SIGSEGV（shader 要的 set 1 布局不存在） |
+| **每个声明绑定一个动态偏移** | 变异 N3（只写一个偏移、其余复用）⇒ 2 条红（正典五绑定那条 + 新的声明形状 `{0,64}` 那条） |
+| **空隙必须是真布局** | 变异 N4（空格填成空指针）⇒ 像素/布局用例 SIGSEGV（`PipelineLayout` 里出现无效句柄）——**这条实测还暴露了一处死代码**：`create` 里那段“补空”防御循环从来没被走到过，已删（空隙只在 `describeAbi` 一处填） |
+| **填不了的拒绝** | 变异 N5（不看 std140 / 不看尺寸）⇒ 拒绝面那条红（超尺寸与非 std140 的层被建了出来） |
+| **逐声明集绑定** | 变异 N6（第一个块集复用给所有声明集）⇒ 像素用例 SIGSEGV（set 1 上绑了 set 0 的集合） |
+| **“什么都不声明”就是“什么都不绑”** | 门禁实测：三处**测试夹具**（`ExecutorTest` / `MrtTargetTest` / `ScreenDrawTest`）仍无条件绑一个块集，而它们的程序文本一个块都没声明 ⇒ 布局 0 个 set、绑定无效句柄：`VUID-vkCmdBindDescriptorSets-firstSet-00360` ×6。修的是夹具（没有声明就没有集合可绑），不是给后端加“容忍” |
+
+**这一片留下的口子（登记，不假装解决）**：
+
+* **角色取值是 M8c**：material / lights / shadow 块在 arena 里的偏移按角色拿；draw 块搬进 set 1；`pc` 的
+  `projection` / `modelView`（`view` × `model`）填进声明出来的 push 范围；`diffuseMap` 的白色 fallback 与
+  `shadow_map` 的图。在这一片里，声明了 push 的内容半片会被 `serveHalf` **拒绝**（宁可拒绝，不用上一个
+  draw 推过的字节画）。
+* **变体 define 还没进管线身份**：`import_defines` 已经在事实里，但“哪些 define 生效”与几何/材质的纹理
+  支持一起做（§11.16ae 登记过）。
+* **采样输入的 set 序号仍是内容路径的 1**：`kContentInputSet` 写死；纹理支持来了才有“采样与块混在一个
+  set”的排布需要（那种排布现在被明确拒绝）。
+* **三张表的生产侧**还是 §11.17 那一行：活的 SDK 对象 + 修订 + 退役（现在的用例都是自己填事实）。
+
+证据：`test_vsg` 全量 **580 用例 / 90 套件全绿**（+4 用例：真设备像素 1、真设备描述符 1、无设备 2）；门禁
+一条命令 `scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、hygiene 0 / 822 文件、
+`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、相位 9 行 / 2 次运行全收尾。变异反证
+**6/6 红**（N1 角色按位置、N2 忽略声明 set、N3 偏移复用、N4 空隙空指针、N5 放弃拒绝、N6 复用第一个块集），
+其中 N2 / N4 / N6 的失败形态是崩溃（无效句柄进 `PipelineLayout` / 绑错集合），N1 / N3 / N5 是断言。

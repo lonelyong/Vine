@@ -12,6 +12,8 @@
 #include <vsg/state/Sampler.h>
 #include <vsg/state/ShaderStage.h>
 
+#include <vine/vsg/api/BlockDescriptors.hpp>
+#include <vine/vsg/api/ProgramAbi.hpp>
 #include <vine/vsg/core/Keys.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 #include <vine/vsg/vsg_global.hpp>
@@ -34,12 +36,22 @@
  * and this layer then drops its object too (the commands that bind a pipeline hold their own reference, so
  * what dies here is only a keep-alive).
  *
+ * WHERE THE BLOCKS LIVE IS THE PROGRAM'S ANSWER. A descriptor set layout is not this backend's to choose:
+ * the program's text carries the `layout(set = ..., binding = ...)` qualifiers, and a pipeline built against
+ * a different arrangement would read whichever bytes happened to be bound there. So `create` takes the
+ * program's DECLARED bindings (api/ProgramAbi) and builds every set from them - dynamic uniform bindings for
+ * the L1 blocks, one sampler per declared sampled input - plus the push ranges the text declares. A program
+ * that declares nothing this backend can fill (a foreign block, an oversized or non-std140 block, an
+ * unsupported sampler, a sampler outside the layer's input set) is REFUSED rather than compiled against a
+ * layout nobody can feed.
+ *
  * THE SAMPLED-INPUT SET. A key also says how many colour attachments the pass' declared inputs offer
  * (`sampled_color_count`), and those textures are bound in a set of their own - set 1, right after the block
  * set at 0 - with one combined image sampler per colour texture, readable from the vertex or the fragment
  * stage. A layout is built per count and kept, because the count IS part of the identity: a pipeline is
  * compiled against one descriptor set layout, so "how many sampled textures this pass binds" has to be a
- * fact of the pipeline, exactly as the old implementation's per-source shader sets were.
+ * fact of the pipeline, exactly as the old implementation's per-source shader sets were. A program that
+ * DECLARES such a sampler declares it inside that set (a binding the count covers) - see below.
  *
  * TWO KINDS, TWO DESCRIPTOR ABIS (see core::DrawKind). A CONTENT layer is the one above: the ABI's blocks at
  * set 0, the sampled inputs at set 1, vertex streams declared. A FULL-SCREEN layer is the other drawing
@@ -94,7 +106,8 @@ class ContentPipeline
     struct Settings
     {
         std::uint32_t color_attachments{1};  ///< Colour attachments the blend state declares.
-        std::uint32_t push_bytes{128};       ///< Push-constant budget (0 = none), per the ABI.
+        std::uint32_t push_bytes{128};       ///< The FULL-SCREEN path's push budget: a content program's push
+                                             ///< ranges are its own declarations (see `create`).
     };
 
     /** @brief What an acquire did. */
@@ -106,30 +119,49 @@ class ContentPipeline
     };
 
   public:
-    /** @brief Compiles the shader stages and prepares the states and the layout.
+    /** @brief Creates the layer for a CONTENT program: the layout IS what the program's text declares.
      *
-     * @param block_set  The block descriptor set layout every content pipeline binds.
+     * The bindings come from the program's own `layout(set = ..., binding = ...)` qualifiers (see
+     * api/ProgramAbi): every L1 block the text declares becomes a DYNAMIC uniform binding at the (set,
+     * binding) the text names, in the set the text puts it in, and the push ranges are the text's own (offset,
+     * size, stage). The canonical arrangement (the five blocks at set 0's bindings 0..4) is therefore not a
+     * constant of this class: it is what this backend's own programs happen to declare. A caller that binds
+     * these pipelines builds its block sets for the same shape - `blockShape()` answers it - so the set it
+     * binds and the layout the pipeline was compiled against cannot be separately defined.
+     *
+     * WHAT IT REFUSES (the layer cannot describe it, so no pipeline can be built):
+     *   * a FOREIGN block (a uniform block whose type name is none of the five L1 names - nothing can fill it);
+     *   * a role block whose declared layout is not `std140` (its size is then the compiler's, and the bytes
+     *     this backend binds are std140 structs);
+     *   * a role block that declares MORE bytes than the L1 struct carries (the bytes past the struct are not
+     *     the ABI's: the block is bound with a range that ends there);
+     *   * an `OtherSampler` (the images this backend binds are float 2D and cube views);
+     *   * a sampler declared at any SET other than the layer's input set (content: set 1), and a sampler
+     *     binding the key's input count does not cover (checked in @ref acquire, where the count is known).
+     *
+     * @param abi        The bindings and push ranges the program's text declares.
      * @param bindings   Vertex stream bindings the pipeline declares.
      * @param attributes Vertex attributes the pipeline declares.
      * @param shaders    GLSL text of both stages.
-     * @param settings   Colour attachment count and push budget.
-     * @return The layer, or null when the GLSL did not compile (a layer that can never build a pipeline has
-     *         nothing to offer, and the caller reports it rather than drawing an empty frame).
+     * @param settings   Colour attachment count (and the full-screen path's push budget).
+     * @return The layer, or null when the GLSL did not compile or a declaration cannot be served (a layer
+     *         that can never build a pipeline has nothing to offer, and the caller reports it rather than
+     *         drawing an empty frame).
      */
-    static std::unique_ptr<ContentPipeline> create(const ::vsg::ref_ptr<::vsg::DescriptorSetLayout>& block_set,
+    static std::unique_ptr<ContentPipeline> create(const ProgramAbi& abi,
                                                    std::span<const VertexBinding>  bindings,
                                                    std::span<const VertexAttribute> attributes,
                                                    const Shaders& shaders, const Settings& settings);
 
-    /** @brief Compiles the shader stages with the default settings (see @ref Settings).
+    /** @brief Creates the layer for a content program with the default settings (see @ref Settings).
      *
-     * @param block_set  The block descriptor set layout every content pipeline binds.
+     * @param abi        The bindings and push ranges the program's text declares.
      * @param bindings   Vertex stream bindings the pipeline declares.
      * @param attributes Vertex attributes the pipeline declares.
      * @param shaders    GLSL text of both stages.
-     * @return The layer, or null when the GLSL did not compile.
+     * @return The layer, or null when the GLSL did not compile or a declaration cannot be served.
      */
-    static std::unique_ptr<ContentPipeline> create(const ::vsg::ref_ptr<::vsg::DescriptorSetLayout>& block_set,
+    static std::unique_ptr<ContentPipeline> create(const ProgramAbi& abi,
                                                    std::span<const VertexBinding>  bindings,
                                                    std::span<const VertexAttribute> attributes,
                                                    const Shaders& shaders);
@@ -164,6 +196,23 @@ class ContentPipeline
   public:
     /** @brief Gets which drawing call this layer compiles pipelines for (see core::DrawKind). */
     [[nodiscard]] core::DrawKind kind() const noexcept;
+
+    /** @brief Gets the bindings and push ranges the layer was built from. */
+    [[nodiscard]] const ProgramAbi& abi() const noexcept;
+
+    /** @brief Gets the block shape the program declares in @p set (empty when it declares none there).
+     *
+     * This is what a caller builds its block set from: `BlockDescriptors::create(device, storage,
+     * layer->blockShape(set), set)` produces the set whose layout the pipelines of this layer were compiled
+     * against, because both are the same shape (see api/BlockDescriptors).
+     *
+     * @param set Descriptor set index.
+     * @return The shape, in binding order.
+     */
+    [[nodiscard]] std::span<const BlockDescriptors::Binding> blockShape(std::uint32_t set) const noexcept;
+
+    /** @brief Gets the set indices the program declares blocks in, ascending. */
+    [[nodiscard]] std::span<const std::uint32_t> blockSets() const noexcept;
 
     /** @brief Gets (or builds) the pipeline for an identity.
      *

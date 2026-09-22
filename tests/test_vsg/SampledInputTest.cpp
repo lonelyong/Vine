@@ -190,8 +190,6 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
 
     std::unique_ptr<BlockStorage>     storage     = BlockStorage::create(created.device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
-    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(created.device, *storage);
-    ASSERT_NE(descriptors, nullptr);
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
@@ -206,7 +204,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     ASSERT_EQ(buildProgramFacts(*program, program_facts), FactMiss::None);
 
     std::unique_ptr<ContentPipeline> pipelines = ContentPipeline::create(
-        descriptors->layout(), std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+        program_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
         std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U), program_facts.shaders, settings);
     ASSERT_NE(pipelines, nullptr);
 
@@ -327,11 +325,10 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
         ContentPass::Scope::Entry{ vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision,
                                    geometry_facts.layout, pipelines.get(), &draws } };
     ContentPass::Scope scope;
-    scope.entries     = halves;
-    scope.registry    = &registry;
-    scope.storage     = storage.get();
-    scope.descriptors = descriptors.get();
-    scope.uploads     = &uploads;
+    scope.entries  = halves;
+    scope.registry = &registry;
+    scope.storage  = storage.get();
+    scope.uploads  = &uploads;
     ContentPass content(scope, diagnostics);
 
     const ::vsg::ref_ptr<::vsg::ImageView> source_colors[] = { source->colorView(0) };
@@ -440,8 +437,6 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
 
     std::unique_ptr<BlockStorage>     storage     = BlockStorage::create(created.device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
-    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(created.device, *storage);
-    ASSERT_NE(descriptors, nullptr);
 
     // The screen program (the SDK's own copy) and the layer that compiles it: no blocks, no vertex streams.
     const vine::intrusive_ptr<ShaderProgram> screen_program(vine::graphics::screenCopyProgram(0));
@@ -543,11 +538,10 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
         ContentPass::Scope::Entry{ DrawKind::Screen, screen_program.get(), screen_facts.revision, {},
                                    screen_pipelines.get(), &screen_draws } };
     ContentPass::Scope scope;
-    scope.entries     = halves;
-    scope.registry    = &registry;
-    scope.storage     = storage.get();
-    scope.descriptors = descriptors.get();
-    scope.uploads     = &uploads;
+    scope.entries  = halves;
+    scope.registry = &registry;
+    scope.storage  = storage.get();
+    scope.uploads  = &uploads;
     ContentPass content(scope, diagnostics);
 
     const ::vsg::ref_ptr<::vsg::ImageView> source_colors[] = { source->colorView(0) };
@@ -647,8 +641,6 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     std::unique_ptr<BlockStorage>     storage     = BlockStorage::create(created.device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
-    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(created.device, *storage);
-    ASSERT_NE(descriptors, nullptr);
 
     // The producer: a triangle written into the depth map, with NO fragment output (the pass has no colour
     // attachment to write to - a depth-only pipeline, which is what settings.color_attachments = 0 declares).
@@ -698,7 +690,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     ContentPipeline::Settings shadow_settings;
     shadow_settings.color_attachments = 0U;  // a depth-only pass: no colour attachment to blend into
     std::unique_ptr<ContentPipeline> shadow_pipelines =
-        ContentPipeline::create(descriptors->layout(), std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+        ContentPipeline::create(shadow_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                 std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
                                 shadow_facts.shaders, shadow_settings);
     ASSERT_NE(shadow_pipelines, nullptr);
@@ -706,7 +698,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     ContentPipeline::Settings sampling_settings;
     sampling_settings.color_attachments = 1U;
     std::unique_ptr<ContentPipeline> sampling_pipelines =
-        ContentPipeline::create(descriptors->layout(), std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+        ContentPipeline::create(sampling_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                 std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
                                 sampling_facts.shaders, sampling_settings);
     ASSERT_NE(sampling_pipelines, nullptr);
@@ -829,22 +821,20 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
         DrawKind::Content, shadow_program.get(), shadow_facts.revision, shadow_geometry_facts.layout,
         shadow_pipelines.get(), &shadow_draws } };
     ContentPass::Scope shadow_scope;
-    shadow_scope.entries     = shadow_halves;
-    shadow_scope.registry    = &shadow_registry;
-    shadow_scope.storage     = storage.get();
-    shadow_scope.descriptors = descriptors.get();
-    shadow_scope.uploads     = &uploads;
+    shadow_scope.entries  = shadow_halves;
+    shadow_scope.registry = &shadow_registry;
+    shadow_scope.storage  = storage.get();
+    shadow_scope.uploads  = &uploads;
     ContentPass shadow_content(shadow_scope, diagnostics);
 
     const ContentPass::Scope::Entry sampling_halves[]{ ContentPass::Scope::Entry{
         DrawKind::Content, sampling_program.get(), sampling_facts.revision, sampling_geometry_facts.layout,
         sampling_pipelines.get(), &sampling_draws } };
     ContentPass::Scope sampling_scope;
-    sampling_scope.entries     = sampling_halves;
-    sampling_scope.registry    = &sampling_registry;
-    sampling_scope.storage     = storage.get();
-    sampling_scope.descriptors = descriptors.get();
-    sampling_scope.uploads     = &uploads;
+    sampling_scope.entries  = sampling_halves;
+    sampling_scope.registry = &sampling_registry;
+    sampling_scope.storage  = storage.get();
+    sampling_scope.uploads  = &uploads;
     ContentPass sampling_content(sampling_scope, diagnostics);
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });

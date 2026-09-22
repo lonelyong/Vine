@@ -86,24 +86,31 @@ PipelineKey contentKey(std::uint64_t revision)
     return key;
 }
 
-/// @brief The layer under test: the one-stream shader pair over @p block_set.
-std::unique_ptr<ContentPipeline> makeLayer(const ::vsg::ref_ptr<::vsg::DescriptorSetLayout>& block_set)
+/// @brief The bindings and push ranges @p shaders declare (the layer is built from these, not from a set).
+vine::vsg::ProgramAbi abiOf(const ContentPipeline::Shaders& shaders)
+{
+    vine::vsg::ProgramAbi abi;
+    EXPECT_EQ(vine::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vine::vsg::FactMiss::None);
+    return abi;
+}
+
+/// @brief The layer under test: the one-stream shader pair, built from its own declarations.
+std::unique_ptr<ContentPipeline> makeLayer()
 {
     // The declared layout is copied into the pipeline's own state objects, so these locals may die here.
+    const ContentPipeline::Shaders         shaders   = contentShaders();
     const ContentPipeline::VertexBinding   binding   = positionBinding();
     const ContentPipeline::VertexAttribute attribute = positionAttribute();
-    return ContentPipeline::create(block_set, std::span<const ContentPipeline::VertexBinding>(&binding, 1),
-                                   std::span<const ContentPipeline::VertexAttribute>(&attribute, 1),
-                                   contentShaders());
+    return ContentPipeline::create(abiOf(shaders), std::span<const ContentPipeline::VertexBinding>(&binding, 1),
+                                   std::span<const ContentPipeline::VertexAttribute>(&attribute, 1), shaders);
 }
 
 /// @brief The layer under test with caller-chosen shader text.
-std::unique_ptr<ContentPipeline> makeLayerWith(const ::vsg::ref_ptr<::vsg::DescriptorSetLayout>& block_set,
-                                               const ContentPipeline::Shaders&                shaders)
+std::unique_ptr<ContentPipeline> makeLayerWith(const ContentPipeline::Shaders& shaders)
 {
     const ContentPipeline::VertexBinding   binding   = positionBinding();
     const ContentPipeline::VertexAttribute attribute = positionAttribute();
-    return ContentPipeline::create(block_set, std::span<const ContentPipeline::VertexBinding>(&binding, 1),
+    return ContentPipeline::create(abiOf(shaders), std::span<const ContentPipeline::VertexBinding>(&binding, 1),
                                    std::span<const ContentPipeline::VertexAttribute>(&attribute, 1), shaders);
 }
 
@@ -152,8 +159,7 @@ PipelineKey screenKey(std::uint64_t revision, std::uint32_t sampled_colors = 1U)
 
 TEST(ContentPipelineTest, TheSameIdentityIsBuiltOnce)
 {
-    const auto block_set = ::vsg::DescriptorSetLayout::create();
-    auto       layer     = makeLayer(block_set);
+    auto layer = makeLayer();
     ASSERT_NE(layer, nullptr) << "the shader pair must compile";
 
     VariantPool      pool;
@@ -175,8 +181,7 @@ TEST(ContentPipelineTest, TheSameIdentityIsBuiltOnce)
 
 TEST(ContentPipelineTest, AnIdentityChangeIsANewPipeline)
 {
-    const auto block_set = ::vsg::DescriptorSetLayout::create();
-    auto       layer     = makeLayer(block_set);
+    auto layer = makeLayer();
     ASSERT_NE(layer, nullptr);
 
     VariantPool pool;
@@ -193,8 +198,7 @@ TEST(ContentPipelineTest, AnIdentityChangeIsANewPipeline)
 
 TEST(ContentPipelineTest, TheEditableHalfIsDeclaredDynamic)
 {
-    const auto block_set = ::vsg::DescriptorSetLayout::create();
-    auto       layer     = makeLayer(block_set);
+    auto layer = makeLayer();
     ASSERT_NE(layer, nullptr);
 
     VariantPool pool;
@@ -236,10 +240,9 @@ TEST(ContentPipelineTest, TheEditableHalfIsDeclaredDynamic)
     EXPECT_EQ(blend->attachments.size(), 1U) << "the blend state follows the colour attachment count";
 }
 
-TEST(ContentPipelineTest, TheLayoutBindsTheBlockSetAndThePushBudget)
+TEST(ContentPipelineTest, TheLayoutIsExactlyWhatTheTextDeclares)
 {
-    const auto block_set = ::vsg::DescriptorSetLayout::create();
-    auto       layer     = makeLayer(block_set);
+    auto layer = makeLayer();
     ASSERT_NE(layer, nullptr);
 
     VariantPool pool;
@@ -247,13 +250,15 @@ TEST(ContentPipelineTest, TheLayoutBindsTheBlockSetAndThePushBudget)
     ASSERT_NE(result.pipeline, nullptr);
     ASSERT_NE(result.pipeline->layout, nullptr);
 
-    ASSERT_EQ(result.pipeline->layout->setLayouts.size(), 1U) << "the blocks are the only set a draw needs";
-    EXPECT_EQ(result.pipeline->layout->setLayouts[0], block_set);
+    // This program declares ONE thing: the camera matrices as a push block. So the layout has no descriptor
+    // sets at all and one push range - the range the TEXT names (128 bytes, read by the vertex stage), not a
+    // constant this backend would have guessed.
+    EXPECT_TRUE(result.pipeline->layout->setLayouts.empty()) << "the text declares no blocks and no samplers";
     ASSERT_EQ(result.pipeline->layout->pushConstantRanges.size(), 1U);
     const VkPushConstantRange& push = result.pipeline->layout->pushConstantRanges.front();
     EXPECT_EQ(push.stageFlags, VK_SHADER_STAGE_VERTEX_BIT);
     EXPECT_EQ(push.offset, 0U);
-    EXPECT_EQ(push.size, 128U) << "the ABI's push budget (see ShaderAbi.hpp)";
+    EXPECT_EQ(push.size, 128U) << "the two matrices the text declares (see ShaderAbi.hpp)";
     ASSERT_EQ(layer->stages().size(), 2U);
     EXPECT_NE(layer->stages()[0]->module, nullptr) << "both stages are SPIR-V modules";
     EXPECT_NE(layer->stages()[1]->module, nullptr);
@@ -346,8 +351,7 @@ TEST(ContentPipelineTest, ASampledInputCountGetsItsOwnSetLayoutAndItsOwnPipeline
     // How many colour textures a pass samples is identity, not runtime state: the pipeline is compiled against
     // one descriptor set layout, so the count has to reach the layout - and the layer keeps one layout per
     // count, so a second pass with another shape does not disturb the first.
-    const auto block_set = ::vsg::DescriptorSetLayout::create();
-    auto       layer     = makeLayer(block_set);
+    auto layer = makeLayer();
     ASSERT_NE(layer, nullptr);
 
     EXPECT_EQ(layer->sampledSetLayout(0, 0U), nullptr) << "a pass with no sampled inputs has no set 1 at all";
@@ -370,8 +374,9 @@ TEST(ContentPipelineTest, ASampledInputCountGetsItsOwnSetLayoutAndItsOwnPipeline
 
     const auto layout_one = layer->layoutFor(1, 0U);
     ASSERT_NE(layout_one, nullptr);
-    ASSERT_EQ(layout_one->setLayouts.size(), 2U) << "the block set and the sampled set";
-    EXPECT_EQ(layout_one->setLayouts[0], block_set);
+    ASSERT_EQ(layout_one->setLayouts.size(), 2U) << "the set before the samplers (empty here) and the sampled set";
+    EXPECT_NE(layout_one->setLayouts[0], nullptr) << "a gap is a set with no bindings, not a missing one";
+    EXPECT_TRUE(layout_one->setLayouts[0]->bindings.empty());
     EXPECT_EQ(layout_one->setLayouts[1], one);
     EXPECT_EQ(layer->layoutFor(1, 0U), layout_one);
 
@@ -388,15 +393,16 @@ TEST(ContentPipelineTest, ASampledInputCountGetsItsOwnSetLayoutAndItsOwnPipeline
     ASSERT_NE(with.pipeline, nullptr);
     EXPECT_NE(without.pipeline, with.pipeline);
     EXPECT_EQ(pool.created(), 2U);
-    EXPECT_EQ(without.pipeline->layout->setLayouts.size(), 1U);
-    EXPECT_EQ(with.pipeline->layout->setLayouts.size(), 2U);
+    EXPECT_EQ(without.pipeline->layout->setLayouts.size(), 0U)
+        << "the text declares no blocks: a pass with no inputs binds nothing at all";
+    EXPECT_EQ(with.pipeline->layout->setLayouts.size(), 2U)
+        << "the (empty) set before the samplers and the sampled set itself";
     EXPECT_EQ(layer->acquire(pool, sampling).action, VariantPool::Action::Reused);
 }
 
 TEST(ContentPipelineTest, DynamicStateChurnNeverReachesThePoolOrThisLayer)
 {
-    const auto block_set = ::vsg::DescriptorSetLayout::create();
-    auto       layer     = makeLayer(block_set);
+    auto layer = makeLayer();
     ASSERT_NE(layer, nullptr);
 
     VariantPool   pool;
@@ -420,8 +426,7 @@ TEST(ContentPipelineTest, DynamicStateChurnNeverReachesThePoolOrThisLayer)
 
 TEST(ContentPipelineTest, AnEvictedIdentityCostsThisLayerItsObject)
 {
-    const auto block_set = ::vsg::DescriptorSetLayout::create();
-    auto       layer     = makeLayer(block_set);
+    auto layer = makeLayer();
     ASSERT_NE(layer, nullptr);
 
     VariantPool pool(1);  // one identity at a time: the second acquire evicts the first
@@ -445,7 +450,123 @@ TEST(ContentPipelineTest, AShaderPairThatDoesNotCompileYieldsNoLayer)
     ContentPipeline::Shaders broken = contentShaders();
     broken.fragment = "#version 450\nvoid main() { this is not glsl; }\n";
 
-    const auto block_set = ::vsg::DescriptorSetLayout::create();
-    auto       layer     = makeLayerWith(block_set, broken);
+    auto layer = makeLayerWith(broken);
     EXPECT_EQ(layer, nullptr) << "a layer that can never build a pipeline must say so before anything is drawn";
+}
+
+TEST(ContentPipelineTest, TheLayoutFollowsTheDeclarationsWhereverTheyPutTheBlocks)
+{
+    // A program whose blocks are NOT where this backend's own programs put them: the material at binding 3 of
+    // set 0 and the per-drawable block in set 1's binding 0 (the ENGINE's programs put the material at 0 and
+    // the draw block in set 1 - a third arrangement again). All of them are served the same way: the layout is
+    // read out of the text, and the shape a caller must build its set from is answered by the same facts.
+    ContentPipeline::Shaders shaders;
+    shaders.vertex = "#version 450\n"
+                     "layout(location = 0) in vec3 position;\n"
+                     "layout(set = 1, binding = 0, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
+                     "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
+    shaders.fragment = "#version 450\n"
+                       "layout(location = 0) out vec4 outColor;\n"
+                       "layout(set = 0, binding = 3, std140) uniform VineMaterialBlock\n"
+                       "{\n"
+                       "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+                       "} material;\n"
+                       "void main() { outColor = material.diffuse; }\n";
+
+    auto layer = makeLayerWith(shaders);
+    ASSERT_NE(layer, nullptr);
+
+    VariantPool pool;
+    const auto  result = layer->acquire(pool, contentKey(1));
+    ASSERT_NE(result.pipeline, nullptr);
+    ASSERT_NE(result.pipeline->layout, nullptr);
+
+    const ::vsg::DescriptorSetLayouts& sets = result.pipeline->layout->setLayouts;
+    ASSERT_EQ(sets.size(), 2U) << "the text declares a block in each of two sets";
+    ASSERT_EQ(sets[0]->bindings.size(), 1U);
+    EXPECT_EQ(sets[0]->bindings[0].binding, 3U) << "the material's binding is the TEXT's, not this backend's";
+    EXPECT_EQ(sets[0]->bindings[0].descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
+        << "the blocks arrive through dynamic offsets, whatever binding they sit at";
+    ASSERT_EQ(sets[1]->bindings.size(), 1U);
+    EXPECT_EQ(sets[1]->bindings[0].binding, 0U);
+
+    ASSERT_EQ(layer->blockSets().size(), 2U) << "the sets a caller has to build block sets for";
+    EXPECT_EQ(layer->blockSets()[0], 0U);
+    EXPECT_EQ(layer->blockSets()[1], 1U);
+    const std::span<const vine::vsg::BlockDescriptors::Binding> shape = layer->blockShape(0U);
+    ASSERT_EQ(shape.size(), 1U);
+    EXPECT_EQ(shape[0].binding, 3U);
+    EXPECT_EQ(shape[0].role, vine::vsg::AbiBlockRole::Material);
+    EXPECT_TRUE(layer->blockShape(2U).empty()) << "a set the text says nothing about declares nothing";
+
+    // A block in set 2 ALONE: the sets before it are part of the layout all the same - the API wants a
+    // contiguous range from 0 - and the ones in between are REAL, EMPTY descriptor set layouts, because a
+    // null entry in a pipeline layout is not "no set", it is an invalid handle.
+    ContentPipeline::Shaders gapped;
+    gapped.vertex   = "#version 450\n"
+                      "layout(location = 0) in vec3 position;\n"
+                      "void main() { gl_Position = vec4(position, 1.0); }\n";
+    gapped.fragment = "#version 450\n"
+                      "layout(location = 0) out vec4 outColor;\n"
+                      "layout(set = 2, binding = 0, std140) uniform VineLightsBlock { vec4 light0; } lights;\n"
+                      "void main() { outColor = lights.light0; }\n";
+    auto gapped_layer = makeLayerWith(gapped);
+    ASSERT_NE(gapped_layer, nullptr);
+    ASSERT_EQ(gapped_layer->blockSets().size(), 1U);
+    EXPECT_EQ(gapped_layer->blockSets()[0], 2U);
+    const auto gapped_result = gapped_layer->acquire(pool, contentKey(1));
+    ASSERT_NE(gapped_result.pipeline, nullptr);
+    ASSERT_NE(gapped_result.pipeline->layout, nullptr);
+    const ::vsg::DescriptorSetLayouts& gapped_sets = gapped_result.pipeline->layout->setLayouts;
+    ASSERT_EQ(gapped_sets.size(), 3U);
+    EXPECT_EQ(gapped_sets[0]->bindings.size(), 0U) << "a set the text does not mention is still a set: empty";
+    EXPECT_EQ(gapped_sets[1]->bindings.size(), 0U);
+    EXPECT_EQ(gapped_sets[2]->bindings.size(), 1U);
+}
+
+TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
+{
+    const auto layerDeclaring = [](const std::string& declaration) {
+        ContentPipeline::Shaders shaders;
+        shaders.vertex   = "#version 450\n"
+                           "layout(location = 0) in vec3 position;\n"
+                           "void main() { gl_Position = vec4(position, 1.0); }\n";
+        shaders.fragment = "#version 450\n"
+                           "layout(location = 0) out vec4 outColor;\n" +
+                           declaration + "\nvoid main() { outColor = vec4(1.0); }\n";
+        return makeLayerWith(shaders);
+    };
+
+    // A uniform block that is none of the L1 names: nothing can fill it, so no pipeline is built.
+    EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 0, std140) uniform MyOwnBlock { vec4 value; } own;"), nullptr);
+    // A material block that declares MORE bytes than the L1 struct: the bytes past it are not the ABI's.
+    EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+                             "{ vec4 ambient; vec4 diffuse; vec4 specular; float shininess; vec4 extra; } material;"),
+              nullptr);
+    // A block whose layout is not std140: its size is the compiler's, and the bytes bound are std140's.
+    EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 0) uniform VineMaterialBlock\n"
+                             "{ vec4 ambient; vec4 diffuse; vec4 specular; float shininess; } material;"),
+              nullptr);
+    // A sampler in the block set: the pass' input images live in the input set, and a set cannot be both.
+    EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 1) uniform sampler2D picture;"), nullptr);
+    // A sampler kind this backend has no view for.
+    EXPECT_EQ(layerDeclaring("layout(set = 1, binding = 0) uniform sampler3D volume_tex;"), nullptr);
+
+    // A block that reads a PREFIX of the L1 struct is fine: the range it is bound with covers what it reads.
+    auto prefix = layerDeclaring("layout(set = 0, binding = 0, std140) uniform VineLightsBlock { vec4 light0; } lights;");
+    ASSERT_NE(prefix, nullptr);
+    const std::span<const vine::vsg::BlockDescriptors::Binding> shape = prefix->blockShape(0U);
+    ASSERT_EQ(shape.size(), 1U);
+    EXPECT_EQ(shape[0].role, vine::vsg::AbiBlockRole::Lights);
+
+    // A declared input sampler is a fact of the program, but the KEY has to cover it: a pass that samples
+    // nothing cannot bind an image at binding 0, so the pipeline is refused for that key and only that key.
+    auto sampling = layerDeclaring("layout(set = 1, binding = 0) uniform sampler2D picture;");
+    ASSERT_NE(sampling, nullptr);
+    VariantPool      pool;
+    const auto       no_inputs = sampling->acquire(pool, contentKey(1));
+    EXPECT_EQ(no_inputs.pipeline, nullptr) << "a sampler the pass' input count cannot reach has no image to bind";
+    PipelineKey      with_input = contentKey(1);
+    with_input.sampled_color_count = 1U;
+    EXPECT_NE(sampling->acquire(pool, with_input).pipeline, nullptr);
 }

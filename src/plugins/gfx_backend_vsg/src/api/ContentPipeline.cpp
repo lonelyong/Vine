@@ -1,5 +1,7 @@
 #include <vine/vsg/api/ContentPipeline.hpp>
 
+#include <algorithm>
+#include <cstdint>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -14,10 +16,104 @@
 #include <vsg/state/ViewportState.h>
 #include <vsg/utils/ShaderCompiler.h>
 
+#include <vine/graphics/ShaderAbi.hpp>
+#include <vine/vsg/api/LightBlock.hpp>
+
 V_VSG_NS_BEGIN
 
 namespace
 {
+
+/** @brief The descriptor set a CONTENT program's sampled inputs live in (see the file note). */
+constexpr std::uint32_t kContentInputSet = 1U;
+
+/** @brief The bytes one L1 block role's ABI struct carries (0 for a role that is not a block). */
+std::uint32_t abiSizeOfRole(AbiBlockRole role) noexcept
+{
+    switch (role)
+    {
+    case AbiBlockRole::View: return static_cast<std::uint32_t>(sizeof(vine::graphics::VineViewBlock));
+    case AbiBlockRole::Draw: return static_cast<std::uint32_t>(sizeof(vine::graphics::VineDrawBlock));
+    case AbiBlockRole::Material: return static_cast<std::uint32_t>(sizeof(vine::graphics::VineMaterialBlock));
+    case AbiBlockRole::Lights: return static_cast<std::uint32_t>(sizeof(VineLightsBlock));
+    case AbiBlockRole::ShadowBlock: return static_cast<std::uint32_t>(sizeof(vine::graphics::VineShadowBlock));
+    case AbiBlockRole::NotABlock:
+    case AbiBlockRole::Foreign: return 0U;
+    }
+    return 0U;
+}
+
+/** @brief The stage flags a declared push range's stages mean to the API. */
+VkShaderStageFlags pushStagesOf(std::uint32_t stages) noexcept
+{
+    VkShaderStageFlags flags = 0;
+    if ((stages & static_cast<std::uint32_t>(AbiStage::Vertex)) != 0U)
+    {
+        flags |= VK_SHADER_STAGE_VERTEX_BIT;
+    }
+    if ((stages & static_cast<std::uint32_t>(AbiStage::Fragment)) != 0U)
+    {
+        flags |= VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    return flags;
+}
+
+/**
+ * @brief Reads @p abi into @p sets (one per set index) and the shapes they declare.
+ *
+ * Refuses what this backend cannot describe at all - a foreign block, a block that is not std140 or that
+ * declares MORE bytes than its L1 struct, an unsupported sampler, an array binding, a sampler outside the
+ * input set - because a pipeline built against a layout nobody can feed is worse than no pipeline: its
+ * draws read whatever happens to be bound.
+ *
+ * @param abi   The program's declared bindings.
+ * @param sets  Receives one layout per set index the facts mention (empty layouts included: the API wants a
+ *              contiguous range, and a shader may declare further sets than it uses).
+ * @param shapes Receives the shape of each entry of @p sets.
+ * @return true when every declaration can be described.
+ */
+bool describeAbi(const ProgramAbi& abi, std::vector<::vsg::ref_ptr<::vsg::DescriptorSetLayout>>& sets,
+                 std::vector<std::vector<BlockDescriptors::Binding>>& shapes)
+{
+    std::uint32_t set_count = 0U;
+    for (const AbiBinding& binding : abi.bindings)
+    {
+        if (binding.kind == AbiDescriptorKind::UniformBlock)
+        {
+            if (binding.role == AbiBlockRole::Foreign || binding.role == AbiBlockRole::NotABlock)
+            {
+                return false;
+            }
+            if (binding.layout != AbiBlockLayout::Std140 || binding.count != 1U ||
+                binding.block_size > abiSizeOfRole(binding.role))
+            {
+                return false;
+            }
+            set_count = std::max(set_count, binding.set + 1U);
+        }
+        else
+        {
+            if (binding.kind == AbiDescriptorKind::OtherSampler || binding.count != 1U ||
+                binding.set != kContentInputSet)
+            {
+                return false;
+            }
+        }
+    }
+
+    sets.resize(set_count);
+    shapes.resize(set_count);
+    for (std::uint32_t index = 0U; index < set_count; ++index)
+    {
+        shapes[index] = blockShapeOf(abi, index);
+        sets[index]   = BlockDescriptors::layoutOfShape(shapes[index]);
+        if (sets[index] == nullptr)
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 /// @brief The baked values the create-info carries (Vulkan requires the structs; set commands win).
 ///
@@ -115,8 +211,17 @@ struct ContentPipeline::Data
 
     core::DrawKind                                              kind{core::DrawKind::Content};
     ::vsg::ShaderCompiler                                       compiler;
-    ::vsg::ref_ptr<::vsg::DescriptorSetLayout>                  block_set;
-    ::vsg::PushConstantRanges                                   push_ranges;  ///< Kept for the per-count layouts.
+    ProgramAbi                                                  abi;          ///< The facts the layer was built from.
+    /// @brief One layout per set index the DECLARED BLOCKS reach (empty layouts included, see describeAbi).
+    std::vector<::vsg::ref_ptr<::vsg::DescriptorSetLayout>>     sets;
+    /// @brief One shape per entry of @ref sets: which block role sits at which binding.
+    std::vector<std::vector<BlockDescriptors::Binding>>         shapes;
+    /// @brief The set indices that declare at least one block, ascending.
+    std::vector<std::uint32_t>                                  block_sets;
+    /// @brief The layout that fills a set index the declarations leave empty (the API wants a CONTIGUOUS
+    ///        range of set layouts, and a gap is not a null entry - it is a set with no bindings).
+    ::vsg::ref_ptr<::vsg::DescriptorSetLayout>                  empty_set;
+    ::vsg::PushConstantRanges                                   push_ranges;  ///< The declared push ranges.
     ::vsg::ShaderStages                                         stages;
     ::vsg::ref_ptr<::vsg::PipelineLayout>                       layout;
     /// @brief Hash for the (colours, depths) pair (a set layout is built per distinct pair).
@@ -148,22 +253,32 @@ ContentPipeline::ContentPipeline() : d(std::make_unique<Data>())
 {
 }
 
-std::unique_ptr<ContentPipeline> ContentPipeline::create(const ::vsg::ref_ptr<::vsg::DescriptorSetLayout>& block_set,
-                                                         std::span<const VertexBinding>  bindings,
-                                                         std::span<const VertexAttribute> attributes,
-                                                         const Shaders& shaders)
+std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
+                                                        std::span<const VertexBinding>  bindings,
+                                                        std::span<const VertexAttribute> attributes,
+                                                        const Shaders& shaders)
 {
-    return create(block_set, bindings, attributes, shaders, Settings{});
+    return create(abi, bindings, attributes, shaders, Settings{});
 }
 
-std::unique_ptr<ContentPipeline> ContentPipeline::create(const ::vsg::ref_ptr<::vsg::DescriptorSetLayout>& block_set,
-                                                         std::span<const VertexBinding>  bindings,
-                                                         std::span<const VertexAttribute> attributes,
-                                                         const Shaders& shaders, const Settings& settings)
+std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
+                                                        std::span<const VertexBinding>  bindings,
+                                                        std::span<const VertexAttribute> attributes,
+                                                        const Shaders& shaders, const Settings& settings)
 {
     auto layer = std::unique_ptr<ContentPipeline>(new ContentPipeline());
-    if (block_set == nullptr) {
-        return nullptr;
+    layer->d->abi = abi;
+    layer->d->empty_set = ::vsg::DescriptorSetLayout::create();
+    if (layer->d->empty_set == nullptr || !describeAbi(abi, layer->d->sets, layer->d->shapes)) {
+        return nullptr;  // a declaration this backend cannot describe: reported, never compiled against a guess
+    }
+    // A pipeline layout's set layouts are a CONTIGUOUS range from 0 and a gap is a set with no bindings - not
+    // a null entry, which is an invalid handle. describeAbi is where that range is built (one entry per set
+    // index, empty layouts included), so nothing is left to patch up here.
+    for (std::uint32_t set = 0U; set < layer->d->shapes.size(); ++set) {
+        if (!layer->d->shapes[set].empty()) {
+            layer->d->block_sets.push_back(set);
+        }
     }
 
     ::vsg::ref_ptr<::vsg::ShaderStage> vertex =
@@ -174,18 +289,19 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ::vsg::ref_ptr<::
         return nullptr;  // nothing to shade with: the caller reports it instead of drawing nothing
     }
     layer->d->stages = ::vsg::ShaderStages{ vertex, fragment };
-    layer->d->block_set = block_set;
 
-    // The layout binds the block set (set 0) and the ABI's push budget. The blocks arrive through dynamic
-    // offsets, so a draw's state never reaches this layout again. A layout with sampled inputs (set 1) is
-    // built on demand, one per count (see sampledSetLayout): the key names the count, so a pass never gets a
-    // pipeline compiled against another pass' sampled-input shape.
+    // The push ranges ARE the declarations (offset, size and the stage that reads them): a content program
+    // that reads its camera matrices from a push block gets exactly the range its text declares, and one that
+    // declares none gets none - pushing into a range that does not exist is an API violation, not a no-op.
     ::vsg::PushConstantRanges push_ranges;
-    if (settings.push_bytes != 0U) {
-        push_ranges.push_back(VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0U, settings.push_bytes });
+    for (const AbiPushRange& range : abi.pushes) {
+        if (range.size == 0U) {
+            return nullptr;  // a block whose members could not be sized is not a range to declare
+        }
+        push_ranges.push_back(VkPushConstantRange{ pushStagesOf(range.stages), range.offset, range.size });
     }
     layer->d->push_ranges = push_ranges;
-    layer->d->layout = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ block_set }, push_ranges);
+    layer->d->layout     = ::vsg::PipelineLayout::create(layer->d->sets, push_ranges);
     if (layer->d->layout == nullptr) {
         return nullptr;
     }
@@ -310,6 +426,27 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
         return { core::VariantPool::Action::Created, 0U, {} };
     }
 
+    // The declarations have to cover the key, or the pipeline would be compiled against a layout the pass'
+    // bindings do not fit: a sampler at a binding the input count does not reach has no image to bind, and a
+    // block declared in the input set would have to share a set with those images (one set cannot be two
+    // objects - that arrangement arrives with the material/map sets, see the scene bridge's next slice).
+    const std::uint32_t input_count = key.sampled_color_count + key.sampled_depth_count;
+    for (const AbiBinding& binding : d->abi.bindings)
+    {
+        if (binding.kind == AbiDescriptorKind::UniformBlock)
+        {
+            if (input_count != 0U && binding.set == kContentInputSet) {
+                ++d->failures;
+                return { core::VariantPool::Action::Created, 0U, {} };
+            }
+            continue;
+        }
+        if (binding.binding >= input_count) {
+            ++d->failures;
+            return { core::VariantPool::Action::Created, 0U, {} };
+        }
+    }
+
     const core::VariantPool::Lookup lookup = pool.acquire(key);
 
     const auto found = d->pipelines.find(lookup.id);
@@ -373,15 +510,18 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
     }
 
-    // Where the set sits is the kind's, and it is the whole difference between the two descriptor ABIs: a
-    // content layer binds its blocks at 0 and the samplers at 1, a full-screen layer binds the samplers at 0
-    // and nothing else (see the file note - the engine's screen programs declare `layout(binding = i)`).
+    // Where the set sits is the kind's: a content layer's sampled inputs live in set 1 (after the declared
+    // block sets), a full-screen layer's in set 0 (its own ABI - the engine's screen programs declare
+    // `layout(binding = i)`).
     ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline;
     if (d->kind == core::DrawKind::Screen) {
         pipeline = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ set }, d->push_ranges);
     }
     else {
-        pipeline = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ d->block_set, set }, d->push_ranges);
+        ::vsg::DescriptorSetLayouts pipeline_sets = d->sets;
+        pipeline_sets.resize(std::max<std::size_t>(pipeline_sets.size(), kContentInputSet + 1U), d->empty_set);
+        pipeline_sets[kContentInputSet] = set;
+        pipeline                        = ::vsg::PipelineLayout::create(pipeline_sets, d->push_ranges);
     }
     if (pipeline == nullptr) {
         return {};
@@ -405,6 +545,22 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
 core::DrawKind ContentPipeline::kind() const noexcept
 {
     return d->kind;
+}
+
+const ProgramAbi& ContentPipeline::abi() const noexcept
+{
+    return d->abi;
+}
+
+std::span<const BlockDescriptors::Binding> ContentPipeline::blockShape(std::uint32_t set) const noexcept
+{
+    return set < d->shapes.size() ? std::span<const BlockDescriptors::Binding>(d->shapes[set])
+                                  : std::span<const BlockDescriptors::Binding>{};
+}
+
+std::span<const std::uint32_t> ContentPipeline::blockSets() const noexcept
+{
+    return d->block_sets;
 }
 
 ::vsg::ref_ptr<::vsg::Sampler> ContentPipeline::inputSampler()

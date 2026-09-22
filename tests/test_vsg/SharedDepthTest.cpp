@@ -123,11 +123,11 @@ ContentPipeline::Shaders depthShaders()
     ContentPipeline::Shaders shaders;
     shaders.vertex = "#version 450\n"
                      "layout(location = 0) in vec3 position;\n"
-                     "layout(set = 0, binding = 1) uniform DrawBlock { mat4 model; vec4 params; } draw;\n"
+                     "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
                      "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) out vec4 outColor;\n"
-                       "layout(set = 0, binding = 1) uniform DrawBlock { mat4 model; vec4 params; } draw;\n"
+                       "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
                        "void main() { outColor = vec4(draw.params.y, draw.params.x, 0.0, 1.0); }\n";
     return shaders;
 }
@@ -180,17 +180,22 @@ struct Stack
         if (storage == nullptr) {
             return false;
         }
-        descriptors = BlockDescriptors::create(created.device, *storage);
+        const ContentPipeline::Shaders shader_pair = depthShaders();
+        vine::vsg::ProgramAbi            abi;
+        if (vine::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vine::vsg::FactMiss::None) {
+            return false;
+        }
+        descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
         if (descriptors == nullptr) {
             return false;
         }
 
         const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
         const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
-        pipelines = ContentPipeline::create(descriptors->layout(),
+        pipelines = ContentPipeline::create(abi,
                                             std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                             std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                            depthShaders());
+                                            shader_pair);
         if (pipelines == nullptr) {
             return false;
         }
@@ -227,8 +232,11 @@ struct Stack
         draw.key.revision                     = 1U;
         draw.key.vertex_layout.canonical_mask = 0x1U;
         draw.key.compatibility.samples        = 1U;
-        draw.blocks = descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,
-                                                                                        material.offset });
+        const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
+            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,
+                                                                               material.offset })
+        };
+        draw.blocks       = block_binds;
         draw.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
         draw.index        = index_bind.bind;
         draw.viewport     = ViewportRect{ 0.0F, 0.0F, static_cast<float>(kSize), static_cast<float>(kSize) };

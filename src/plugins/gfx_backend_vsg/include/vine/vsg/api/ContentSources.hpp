@@ -30,6 +30,13 @@
  * The material's REVISION comes from the caller, not from the SDK object: `Material` has no revision accessor,
  * so the layer that tracks material edits (the material manager) is the one that knows. That is the same rule
  * the geometry follows - a revision is a fact the plan names, and only its owner can report it.
+ *
+ * THE ENTRY ALSO CARRIES THE BINDINGS THE TEXT DECLARES (`ProgramFacts::abi`, see api/ProgramAbi.hpp): a
+ * pipeline is built against THE TEXT's own `layout(set = ..., binding = ...)` qualifiers, so "what this program
+ * is" is not just its two stages but also where its blocks and samplers live. The scan runs on the same two
+ * texts the entry hands the layer, for the same variant the layer compiles them with - today, the sources as
+ * they are written - so the layout the layer builds and the module it compiles cannot disagree about which
+ * declarations are in effect.
  */
 V_VSG_NS_BEGIN
 
@@ -38,8 +45,9 @@ V_VSG_NS_BEGIN
  * @param program SDK program to describe (borrowed; the entry copies its sources).
  * @param out     Receives the entry.
  * @return None when the entry was built; Unknown when the program has no stages; Malformed when it cannot be
- *         one content pipeline (not exactly one vertex and one fragment stage, an empty source, or an entry
- *         point the two stages disagree about).
+ *         one content pipeline (not exactly one vertex and one fragment stage, an empty source, an entry
+ *         point the two stages disagree about, or a text whose declared bindings cannot be read - see
+ *         api/ProgramAbi).
  */
 [[nodiscard]] FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out);
 
@@ -57,11 +65,12 @@ V_VSG_NS_BEGIN
  * program does.
  *
  * @param program SDK screen program to describe (borrowed; the entry copies the fragment source).
- * @param out     Receives the entry (both GLSL texts are the pair a full-screen pipeline compiles).
+ * @param out     Receives the entry (both GLSL texts are the pair a full-screen pipeline compiles, and the
+ *                declared bindings are scanned from that same pair - the engine's triangle declares none).
  * @return None when the entry was built; Unknown when the program has no stages at all; Malformed when it has
- *         no fragment stage (or several), a compute or a second fragment stage, an empty fragment source, or a
+ *         no fragment stage (or several), a compute or a second fragment stage, an empty fragment source, a
  *         fragment entry point that is not the canonical vertex stage's (the pipeline carries one entry point
- *         for both stages).
+ *         for both stages), or a fragment text whose declared bindings cannot be read.
  */
 [[nodiscard]] FactMiss buildScreenProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out);
 

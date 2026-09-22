@@ -19,6 +19,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <span>
+#include <vector>
 
 #include <vsg/app/Window.h>
 #include <vsg/app/WindowTraits.h>
@@ -177,6 +179,45 @@ TEST(BlockDescriptorsTest, TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet
     EXPECT_EQ(first_bind->descriptorSet, second_bind->descriptorSet)
         << "every draw binds the SAME set: the offsets carry the difference";
     EXPECT_EQ(fixture.descriptors->refusals(), 0U);
+}
+
+TEST(BlockDescriptorsTest, TheDeclaredShapeDecidesTheBindingsAndTheOffsets)
+{
+    // A shape that is NOT this backend's own arrangement: the view block at binding 0 and the material at
+    // binding 3 (the engine's programs put the material at 0 and the per-drawable block in set 1). The set
+    // this object builds is whatever its caller declared, and the offsets follow THAT shape's order - the
+    // canonical five would be wrong here, and a set bound with the wrong offsets reads another draw's bytes.
+    if (!Fixture::available()) {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+    Fixture fixture;
+    ASSERT_TRUE(fixture.build({}));
+
+    const BlockDescriptors::Binding declared[]{ { 0U, vine::vsg::AbiBlockRole::View },
+                                                { 3U, vine::vsg::AbiBlockRole::Material } };
+    std::unique_ptr<BlockDescriptors> descriptors =
+        BlockDescriptors::create(fixture.device, *fixture.storage, declared, 1U);
+    ASSERT_NE(descriptors, nullptr);
+
+    const std::span<const BlockDescriptors::Binding> shape = descriptors->shape();
+    ASSERT_EQ(shape.size(), 2U);
+    EXPECT_EQ(shape[0].binding, 0U);
+    EXPECT_EQ(shape[1].binding, 3U);
+    EXPECT_EQ(descriptors->setIndex(), 1U) << "the set the program declares its blocks in is the caller's";
+
+    const auto layout = descriptors->layout();
+    ASSERT_NE(layout, nullptr);
+    ASSERT_EQ(layout->bindings.size(), 2U);
+    EXPECT_EQ(layout->bindings[0].binding, 0U);
+    EXPECT_EQ(layout->bindings[1].binding, 3U);
+    EXPECT_EQ(layout->bindings[1].descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
+
+    const auto bound =
+        descriptors->bind(pipelineLayoutFor(fixture.device, layout), BlockDescriptors::Offsets{ 0, 0, 64, 0, 0 });
+    ASSERT_NE(bound, nullptr);
+    EXPECT_EQ(bound->dynamicOffsets, (std::vector<std::uint32_t>{ 0, 64 }))
+        << "one offset per DECLARED binding, in the declared order";
+    EXPECT_EQ(descriptors->refusals(), 0U);
 }
 
 TEST(BlockDescriptorsTest, AMisalignedOffsetIsRefusedInsteadOfBound)

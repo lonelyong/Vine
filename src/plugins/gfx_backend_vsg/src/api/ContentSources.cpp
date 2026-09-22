@@ -7,6 +7,8 @@
 
 #include <vine/graphics/BuiltinShaders.hpp>
 
+#include <vine/vsg/api/ProgramAbi.hpp>
+
 V_VSG_NS_BEGIN
 
 FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out)
@@ -59,6 +61,15 @@ FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, Program
     out.shaders.vertex   = std::string(vertex->source.as_std_str());
     out.shaders.fragment = std::string(fragment->source.as_std_str());
     out.shaders.entry    = std::string(vertex->entryPoint.as_std_str());
+
+    // The ABI is scanned from the same two texts, for the SAME variant the layer will compile them with (no
+    // defines today): the layout a pipeline is built against and the module it compiles cannot disagree about
+    // which declarations are in effect. A text whose bindings cannot be read is not a describable program.
+    if (scanProgramAbi(out.shaders.vertex, out.shaders.fragment, {}, out.abi) != FactMiss::None)
+    {
+        out = ProgramFacts{};
+        return FactMiss::Malformed;
+    }
     return FactMiss::None;
 }
 
@@ -120,6 +131,14 @@ FactMiss buildScreenProgramFacts(const vine::graphics::ShaderProgram& program, P
     out.shaders.vertex   = std::string(vertex->source.as_std_str());
     out.shaders.fragment = std::string(fragment->source.as_std_str());
     out.shaders.entry    = std::string(fragment->entryPoint.as_std_str());
+
+    // The composed pair's own declarations - the engine's triangle declares none, so the ABI is the host's
+    // fragment stage's (see api/ProgramAbi.hpp).
+    if (scanProgramAbi(out.shaders.vertex, out.shaders.fragment, {}, out.abi) != FactMiss::None)
+    {
+        out = ProgramFacts{};
+        return FactMiss::Malformed;
+    }
     return FactMiss::None;
 }
 

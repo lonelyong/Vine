@@ -287,17 +287,20 @@ class Fixture
         draw.key.revision                     = 1U;
         draw.key.vertex_layout.canonical_mask = 0x1U;
         draw.key.compatibility.samples        = 1U;
-        draw.blocks                           = content_descriptors->bind(
-            content_pipelines->layout(),
-            BlockDescriptors::Offsets{ view.offset, block.offset, material.offset });
+        const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
+            content_descriptors->bind(content_pipelines->layout(),
+                                      BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
+        };
+        // The content program declares no blocks, so its pipeline layout declares no sets: there is no block
+        // set to bind (a set the layout does not have is an invalid handle, not an empty bind).
+        if (!content_descriptors->shape().empty()) {
+            draw.blocks = block_binds;
+        }
         draw.vertex_binds      = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
         draw.index             = index_bind.bind;
         draw.viewport          = ViewportRect{ 0.0F, 0.0F, static_cast<float>(kSize), static_cast<float>(kSize) };
         draw.index_count       = 3U;
         draw.color_attachments = 2U;  // the source's pass writes two attachments; the blend command covers both
-        if (draw.blocks == nullptr) {
-            return false;
-        }
 
         const auto content = content_recorder->record(*content_registry, draw);
         if (content == nullptr) {
@@ -337,7 +340,12 @@ class Fixture
         if (storage == nullptr) {
             return false;
         }
-        content_descriptors = BlockDescriptors::create(created.device, *storage);
+        const ContentPipeline::Shaders        shader_pair = mrtShaders();
+        vine::vsg::ProgramAbi                 abi;
+        if (vine::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vine::vsg::FactMiss::None) {
+            return false;
+        }
+        content_descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
         if (content_descriptors == nullptr) {
             return false;
         }
@@ -346,10 +354,10 @@ class Fixture
         const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
         ContentPipeline::Settings              settings;
         settings.color_attachments = 2U;  // the source's pass writes two colour attachments
-        content_pipelines          = ContentPipeline::create(content_descriptors->layout(),
+        content_pipelines          = ContentPipeline::create(abi,
                                                             std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
                                                             std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                                            mrtShaders(), settings);
+                                                            shader_pair, settings);
         if (content_pipelines == nullptr) {
             return false;
         }

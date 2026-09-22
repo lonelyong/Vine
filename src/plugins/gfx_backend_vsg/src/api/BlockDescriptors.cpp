@@ -2,7 +2,9 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
 #include <utility>
+#include <vector>
 
 #include <vsg/state/BufferInfo.h>
 #include <vsg/state/DescriptorBuffer.h>
@@ -30,31 +32,56 @@ std::uint64_t uniformAlignment(const ::vsg::ref_ptr<::vsg::Device>& device) noex
 /// @brief The stages a block's values are read at (a matrix in the vertex stage, an opacity in the fragment).
 constexpr VkShaderStageFlags kBlockStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
+/// @brief The distance between two blocks of @p role in a storage (0U for a role that is not a block).
+std::uint64_t strideOf(AbiBlockRole role, const BlockStorage::Strides& strides) noexcept
+{
+    switch (role)
+    {
+    case AbiBlockRole::View: return strides.view;
+    case AbiBlockRole::Draw: return strides.draw;
+    case AbiBlockRole::Material: return strides.material;
+    case AbiBlockRole::Lights: return strides.light;
+    case AbiBlockRole::ShadowBlock: return strides.shadow;
+    case AbiBlockRole::NotABlock:
+    case AbiBlockRole::Foreign: return 0U;
+    }
+    return 0U;
+}
+
+/// @brief The offset @p offsets has for @p role (the shape's bindings pick their own role's).
+std::uint64_t offsetOf(const BlockDescriptors::Offsets& offsets, AbiBlockRole role) noexcept
+{
+    switch (role)
+    {
+    case AbiBlockRole::View: return offsets.view;
+    case AbiBlockRole::Draw: return offsets.draw;
+    case AbiBlockRole::Material: return offsets.material;
+    case AbiBlockRole::Lights: return offsets.lights;
+    case AbiBlockRole::ShadowBlock: return offsets.shadow;
+    case AbiBlockRole::NotABlock:
+    case AbiBlockRole::Foreign: return 0U;
+    }
+    return 0U;
+}
+
 }  // namespace
 
 struct BlockDescriptors::Data
 {
-    Data(::vsg::ref_ptr<::vsg::Device> device_in, std::uint32_t set_index_in)
-      : device(std::move(device_in)), set_index(set_index_in), alignment(uniformAlignment(device))
+    Data(::vsg::ref_ptr<::vsg::Device> device_in, std::span<const Binding> shape_in, std::uint32_t set_index_in)
+      : device(std::move(device_in)), shape(shape_in.begin(), shape_in.end()), set_index(set_index_in),
+        alignment(uniformAlignment(device))
     {
     }
 
-    /** @brief Builds the layout (once) with one dynamic uniform binding per block region. */
+    /** @brief Builds the layout (once) with one dynamic uniform binding per entry of the shape. */
     bool makeLayout()
     {
-        layout = ::vsg::DescriptorSetLayout::create();
-        if (layout == nullptr) {
-            return false;
-        }
-        layout->addBinding(kViewBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
-        layout->addBinding(kDrawBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
-        layout->addBinding(kMaterialBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
-        layout->addBinding(kLightsBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
-        layout->addBinding(kShadowBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
-        return true;
+        layout = layoutOfShape(shape);
+        return layout != nullptr;
     }
 
-    /** @brief Builds a set over @p storage's buffer, one binding per region. */
+    /** @brief Builds a set over @p storage's buffer, one binding per entry of the shape. */
     ::vsg::ref_ptr<::vsg::DescriptorSet> makeSet(const BlockStorage& storage) const
     {
         auto* const buffer = storage.buffer().get();
@@ -68,19 +95,14 @@ struct BlockDescriptors::Data
         // argument order is (buffer info, DESTINATION BINDING, array element, type) - passing the binding in
         // the array-element slot declares three descriptors at binding 0, which a set layout with one element
         // per binding then resolves as an out-of-range element rather than as the error it is.
-        const auto descriptorFor = [buffer](std::uint32_t binding, std::uint64_t range) {
-            auto buffer_info = ::vsg::BufferInfo::create(buffer, 0, range);
-            return ::vsg::DescriptorBuffer::create(::vsg::BufferInfoList{ buffer_info }, binding, 0U,
-                                                   VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
-        };
-
-        return ::vsg::DescriptorSet::create(layout, ::vsg::Descriptors{
-                                                         descriptorFor(kViewBinding, strides.view),
-                                                         descriptorFor(kDrawBinding, strides.draw),
-                                                         descriptorFor(kMaterialBinding, strides.material),
-                                                         descriptorFor(kLightsBinding, strides.light),
-                                                         descriptorFor(kShadowBinding, strides.shadow),
-                                                     });
+        ::vsg::Descriptors descriptors;
+        descriptors.reserve(shape.size());
+        for (const Binding& entry : shape) {
+            auto buffer_info = ::vsg::BufferInfo::create(buffer, 0, strideOf(entry.role, strides));
+            descriptors.push_back(::vsg::DescriptorBuffer::create(
+                ::vsg::BufferInfoList{ buffer_info }, entry.binding, 0U, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC));
+        }
+        return ::vsg::DescriptorSet::create(layout, descriptors);
     }
 
     /** @brief Whether one dynamic offset may be handed to the driver at all. */
@@ -90,6 +112,7 @@ struct BlockDescriptors::Data
     }
 
     ::vsg::ref_ptr<::vsg::Device>              device;
+    std::vector<Binding>                       shape;
     ::vsg::ref_ptr<::vsg::DescriptorSetLayout> layout;
     ::vsg::ref_ptr<::vsg::DescriptorSet>       set;
     std::uint32_t                              set_index{0};
@@ -97,23 +120,77 @@ struct BlockDescriptors::Data
     std::uint64_t                              refusals{0};
 };
 
+std::span<const BlockDescriptors::Binding> BlockDescriptors::canonicalShape() noexcept
+{
+    // The five L1 blocks at the bindings this backend's own programs declare them at (see
+    // `.ai/design/vsg-reimplementation.md` §11.16ae): the ENGINE's programs declare them elsewhere, and a
+    // caller that serves such a program builds that shape instead.
+    static constexpr Binding kCanonical[] = {
+        { kViewBinding, AbiBlockRole::View },        { kDrawBinding, AbiBlockRole::Draw },
+        { kMaterialBinding, AbiBlockRole::Material }, { kLightsBinding, AbiBlockRole::Lights },
+        { kShadowBinding, AbiBlockRole::ShadowBlock },
+    };
+    return kCanonical;
+}
+
+std::vector<BlockDescriptors::Binding> blockShapeOf(const ProgramAbi& abi, std::uint32_t set)
+{
+    std::vector<BlockDescriptors::Binding> shape;
+    for (const AbiBinding& binding : abi.bindings)
+    {
+        if (binding.set == set && binding.kind == AbiDescriptorKind::UniformBlock)
+        {
+            shape.push_back(BlockDescriptors::Binding{ binding.binding, binding.role });
+        }
+    }
+    return shape;
+}
+
+::vsg::ref_ptr<::vsg::DescriptorSetLayout> BlockDescriptors::layoutOfShape(std::span<const Binding> shape)
+{
+    auto layout = ::vsg::DescriptorSetLayout::create();
+    if (layout == nullptr) {
+        return {};
+    }
+    for (const Binding& entry : shape) {
+        layout->addBinding(entry.binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
+    }
+    return layout;
+}
+
 BlockDescriptors::BlockDescriptors(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage,
-                                   std::uint32_t set_index)
+                                  std::span<const Binding> shape, std::uint32_t set_index)
 {
     // The alignment is read BEFORE the device is moved into the data (argument evaluation order is not a
     // promise), the same care BlockStorage takes.
     const std::uint64_t alignment = uniformAlignment(device);
-    d                             = std::make_unique<Data>(std::move(device), set_index);
+    d                             = std::make_unique<Data>(std::move(device), shape, set_index);
     d->alignment                  = alignment;
+    (void)storage;
 }
 
 std::unique_ptr<BlockDescriptors> BlockDescriptors::create(::vsg::ref_ptr<::vsg::Device> device,
                                                            const BlockStorage& storage, std::uint32_t set_index)
 {
+    return create(std::move(device), storage, canonicalShape(), set_index);
+}
+
+std::unique_ptr<BlockDescriptors> BlockDescriptors::forAbi(const ProgramAbi& abi, std::uint32_t set,
+                                                          ::vsg::ref_ptr<::vsg::Device> device,
+                                                          const BlockStorage& storage)
+{
+    const std::vector<Binding> shape = blockShapeOf(abi, set);
+    return create(std::move(device), storage, shape, set);
+}
+
+std::unique_ptr<BlockDescriptors> BlockDescriptors::create(::vsg::ref_ptr<::vsg::Device> device,
+                                                           const BlockStorage& storage, std::span<const Binding> shape,
+                                                           std::uint32_t set_index)
+{
     if (device == nullptr) {
         return nullptr;
     }
-    auto descriptors = std::unique_ptr<BlockDescriptors>(new BlockDescriptors(std::move(device), storage, set_index));
+    auto descriptors = std::unique_ptr<BlockDescriptors>(new BlockDescriptors(std::move(device), storage, shape, set_index));
     if (!descriptors->d->makeLayout()) {
         return nullptr;
     }
@@ -143,10 +220,11 @@ bool BlockDescriptors::repoint(const BlockStorage& storage)
     }
     // Refuse rather than hand the driver an offset the API forbids: a misaligned dynamic offset is a
     // validation error with validation on and undefined behaviour with it off.
-    if (!d->usableOffset(offsets.view) || !d->usableOffset(offsets.draw) || !d->usableOffset(offsets.material) ||
-        !d->usableOffset(offsets.lights) || !d->usableOffset(offsets.shadow)) {
-        ++d->refusals;
-        return {};
+    for (const Binding& entry : d->shape) {
+        if (!d->usableOffset(offsetOf(offsets, entry.role))) {
+            ++d->refusals;
+            return {};
+        }
     }
 
     auto command = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, d->set_index,
@@ -154,14 +232,19 @@ bool BlockDescriptors::repoint(const BlockStorage& storage)
     if (command == nullptr) {
         return {};
     }
-    // One dynamic offset per binding, in BINDING order (view, draw, material, lights, shadow) - the order the
-    // API consumes them in, not the order they were written in.
-    command->dynamicOffsets = { static_cast<std::uint32_t>(offsets.view),
-                                static_cast<std::uint32_t>(offsets.draw),
-                                static_cast<std::uint32_t>(offsets.material),
-                                static_cast<std::uint32_t>(offsets.lights),
-                                static_cast<std::uint32_t>(offsets.shadow) };
+    // One dynamic offset per binding, in the SHAPE's binding order - the order the API consumes them in, not
+    // the order they were written in. The offsets are named by role, so a set that carries, say, only the
+    // material and the lights picks exactly those two and in its own binding order.
+    command->dynamicOffsets.reserve(d->shape.size());
+    for (const Binding& entry : d->shape) {
+        command->dynamicOffsets.push_back(static_cast<std::uint32_t>(offsetOf(offsets, entry.role)));
+    }
     return command;
+}
+
+std::span<const BlockDescriptors::Binding> BlockDescriptors::shape() const noexcept
+{
+    return d->shape;
 }
 
 ::vsg::ref_ptr<::vsg::DescriptorSetLayout> BlockDescriptors::layout() const noexcept
