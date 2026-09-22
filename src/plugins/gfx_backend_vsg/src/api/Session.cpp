@@ -1,6 +1,7 @@
 #include <vine/vsg/api/Session.hpp>
 
 #include <chrono>
+#include <cstdlib>
 
 #include <vine/vsg/api/DeviceFeatures.hpp>
 #include <vine/vsg/api/SessionContent.hpp>
@@ -14,7 +15,9 @@
 #include <vsg/app/Viewer.h>
 #include <vsg/app/Window.h>
 #include <vsg/app/WindowTraits.h>
+#include <vsg/utils/Profiler.h>
 #include <vsg/vk/DeviceFeatures.h>
+#include <vsg/vk/PhysicalDevice.h>
 
 #include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/VsgHostWindow.hpp>
@@ -37,6 +40,19 @@ using vine::graphics::DiagnosticSeverity;
 vine::String asString(const std::string& text)
 {
     return vine::String(reinterpret_cast<const char8_t*>(text.c_str()));
+}
+
+/// @brief Reads an environment variable as a non-negative number, or @p fallback when unset or unparsable.
+unsigned int envLevel(const char* name, unsigned int fallback)
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr)
+    {
+        return fallback;
+    }
+    char*       end     = nullptr;
+    const long  parsed  = std::strtol(value, &end, 10);
+    return (end != nullptr && end != value && parsed > 0) ? static_cast<unsigned int>(parsed) : fallback;
 }
 
 /**
@@ -67,6 +83,9 @@ struct Session::Impl
     core::FrameTimeline    timeline;             ///< One clock for the session (see the class note).
     core::RetirementQueue  retirement{0};        ///< Constructed for real once the slots are learned.
     core::Diagnostics*     diagnostics{nullptr}; ///< Where the session's reasons go (borrowed).
+    /// The device profiler, when the switch asked for one (see Session::profiling): the executor wraps the
+    /// passes, this owns the query pool and the log they are read from.
+    ::vsg::ref_ptr<::vsg::Profiler> profiler;
     ::vsg::ref_ptr<::vsg::Window> window;
     ::vsg::ref_ptr<::vsg::Viewer> viewer;
     ::vsg::ref_ptr<::vsg::Group>  content;  ///< What the frame renders (see SessionContentAccess).
@@ -200,6 +219,20 @@ bool Session::initialize(const SessionOptions& options, core::Diagnostics& diagn
         auto command_graph = ::vsg::CommandGraph::create(impl->window);
         command_graph->addChild(impl->window_target->graph());
         impl->viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+
+        // The device profiler, when the environment asked for one: installed AFTER the record-and-submit
+        // task, because the task is what the viewer propagates instrumentation through (the legacy
+        // backend's own order, for the same reason).
+        if (std::getenv("VINE_VSG_PROFILE") != nullptr)
+        {
+            auto settings                        = ::vsg::Profiler::Settings::create();
+            settings->cpu_instrumentation_level  = envLevel("VINE_VSG_PROFILE_CPU", 0U);
+            // Level 1 is the level the executor's per-pass wrappers carry; a higher level timestamps every
+            // recorded node and the profiler's fixed pool then drops what does not fit, silently.
+            settings->gpu_instrumentation_level  = envLevel("VINE_VSG_PROFILE_GPU", 1U);
+            impl->profiler                       = ::vsg::Profiler::create(settings);
+            impl->viewer->assignInstrumentation(impl->profiler);
+        }
 
         // The slot count is NOT probed here, and that is not an oversight: the framework's per-slot index
         // table is filled by advance(), which the first frame's open runs - before that, every fence query
@@ -373,6 +406,100 @@ std::uint64_t Session::framesPresented() const noexcept
 float Session::frameSeconds() const noexcept
 {
     return impl ? impl->frame_seconds : 0.0F;
+}
+
+bool Session::profiling() const noexcept
+{
+    return impl != nullptr && impl->profiler != nullptr;
+}
+
+Session::GpuProfile Session::gpuProfile() const
+{
+    GpuProfile profile;
+    profile.enabled = profiling();
+    if (!profile.enabled)
+    {
+        return profile;
+    }
+    // Whether this device can write timestamps at all is a device fact, not a software one: without it the
+    // answer stays "enabled, nothing available" instead of looking like a frame that cost nothing.
+    const auto device   = impl->window != nullptr ? impl->window->getOrCreateDevice() : nullptr;
+    const auto physical = device != nullptr ? device->getPhysicalDevice() : nullptr;
+    profile.timestamps_available = physical != nullptr &&
+                                   physical->getProperties().limits.timestampComputeAndGraphics != VK_FALSE;
+    if (!profile.timestamps_available)
+    {
+        return profile;
+    }
+
+    const auto& log = impl->profiler->log;
+    if (log == nullptr)
+    {
+        return profile;
+    }
+
+    // The newest frame that HAS results, walked backwards: the profiler reads without waiting (see the
+    // header), so the last frames in the log have no timestamps yet - looking further back is what turns
+    // "not readable yet" into "this is the newest one".
+    const auto& frames = log->frameIndices;
+    for (std::size_t index = frames.size(); index-- > 0;)
+    {
+        const auto& frame_entry = log->entry(frames[index]);
+        if (frame_entry.type != ::vsg::ProfileLog::FRAME || !frame_entry.enter)
+        {
+            continue;  // the ring has overwritten this frame's entry
+        }
+        const std::uint64_t frame_end = frame_entry.reference;
+        if (frame_end <= frames[index] || (frame_end - frames[index]) >= log->entries.size())
+        {
+            continue;  // not a frame span this log still holds
+        }
+
+        GpuProfile candidate;
+        candidate.enabled              = true;
+        candidate.timestamps_available = true;
+        bool        saw_frame_interval = false;
+        const double ticks_to_ms       = log->timestampScaleToMilliseconds;
+        for (std::uint64_t reference = frames[index]; reference <= frame_end; ++reference)
+        {
+            const auto& interval = log->entry(reference);
+            if (!interval.enter || interval.gpuTime == 0 || interval.reference <= reference ||
+                interval.reference > frame_end)
+            {
+                continue;
+            }
+            const auto& end = log->entry(interval.reference);
+            if (end.gpuTime <= interval.gpuTime)
+            {
+                continue;  // this pair has not been read back yet
+            }
+            const double milliseconds = static_cast<double>(end.gpuTime - interval.gpuTime) * ticks_to_ms;
+            if (interval.type == ::vsg::ProfileLog::COMMAND_BUFFER)
+            {
+                candidate.frame_gpu_ms = milliseconds;
+                saw_frame_interval     = true;
+                continue;
+            }
+            if (interval.type != ::vsg::ProfileLog::GPU || interval.object == nullptr)
+            {
+                continue;  // an interval upstream's own hook wrote, with no object to attribute it to
+            }
+            GpuSample sample;
+            // The ADDRESS is the key, and it is only ever compared (see GpuSample::key): the frame it names
+            // may have been released since, and reading through it is the crash the legacy backend measured.
+            sample.key    = static_cast<const void*>(interval.object);
+            sample.gpu_ms = milliseconds;
+            candidate.passes.push_back(sample);
+        }
+        if (saw_frame_interval || !candidate.passes.empty())
+        {
+            candidate.age_frames = frames.size() - 1U - index;
+            candidate.readable   = true;
+            profile              = std::move(candidate);
+            return profile;
+        }
+    }
+    return profile;
 }
 
 std::size_t Session::deviceWaits() const noexcept

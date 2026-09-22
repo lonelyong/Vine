@@ -15,7 +15,6 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <string>
 
@@ -125,4 +124,87 @@ TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEv
     EXPECT_FALSE(session.initialized());
     session.shutdown();  // idempotent, and safe after a live session
     EXPECT_EQ(session.slots(), 0U);
+}
+
+TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevice)
+{
+    if (std::getenv("DISPLAY") == nullptr)
+    {
+        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
+    }
+    const auto probed_devices = probePhysicalDevices();
+    if (!probed_devices.ok || probed_devices.usableCount() == 0)
+    {
+        GTEST_SKIP() << "no device satisfies the requirements";
+    }
+
+    vine::vsg::core::Diagnostics diagnostics;
+    diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+        std::printf("[session-test] diagnostic: severity=%d category=%d message=%s\n",
+                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    as_bytes(diagnostic.message).c_str());
+    });
+    const auto frame = [](Session& session) {
+        EXPECT_TRUE(session.beginFrame());
+        EXPECT_TRUE(session.commitFrame());
+    };
+
+    // OFF (the default): nothing is measured, and a read says so instead of reporting zeros that would look
+    // like a frame that cost nothing.
+    {
+        Session session;
+        ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+        EXPECT_FALSE(session.profiling());
+        for (int index = 0; index < 4; ++index)
+        {
+            frame(session);
+        }
+        const Session::GpuProfile profile = session.gpuProfile();
+        EXPECT_FALSE(profile.enabled);
+        EXPECT_FALSE(profile.readable);
+        EXPECT_TRUE(profile.passes.empty());
+        EXPECT_EQ(session.deviceWaits(), 0U) << "a session that measures nothing must not idle the device";
+    }
+
+    // ON: the switch is the environment's, read once when the session comes up (and restored here, so the
+    // rest of the process - and the next session - sees what it saw before).
+    ::setenv("VINE_VSG_PROFILE", "1", 1);
+    {
+        Session session;
+        ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+        EXPECT_TRUE(session.profiling());
+
+        // Frames first, then the read: the profiler's log only holds frames whose timestamps are back.
+        for (int index = 0; index < 8; ++index)
+        {
+            frame(session);
+        }
+
+        const std::size_t      waits_before = session.deviceWaits();
+        const Session::GpuProfile profile   = session.gpuProfile();
+        EXPECT_EQ(session.deviceWaits(), waits_before)
+            << "reading the profile must not stop the device: zero frames of lag would mean a blocking read";
+
+        EXPECT_TRUE(profile.enabled);
+        if (!profile.timestamps_available)
+        {
+            GTEST_SKIP() << "this device cannot write timestamps";
+        }
+        ASSERT_TRUE(profile.readable)
+            << "eight committed frames with timestamps: the log must hold results, or the read is "
+               "looking in the wrong place";
+        EXPECT_LT(profile.age_frames, 8U) << "a result that old cannot be the newest one";
+        {
+            // The numbers are a measurement: non-negative and attributable is all a test may claim - and
+            // nothing here is wrapped (the executor wraps passes, and this session has none), so the frame
+            // interval is what a lone session can report.
+            EXPECT_GE(profile.frame_gpu_ms, 0.0);
+            for (const Session::GpuSample& sample : profile.passes)
+            {
+                EXPECT_NE(sample.key, nullptr) << "a sample without a key cannot be attributed at all";
+                EXPECT_GE(sample.gpu_ms, 0.0);
+            }
+        }
+    }
+    ::unsetenv("VINE_VSG_PROFILE");
 }

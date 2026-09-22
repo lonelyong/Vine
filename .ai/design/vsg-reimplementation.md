@@ -3,11 +3,12 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M7 第三半：性能档的身份半边（每个 pass 都记成可归属的区间——开着时经带名字的 `InstrumentationNode` 记录、
-> 对象是图自己、按图归属；关着时命令图里一个包装节点都没有）**：`test_vsg` 564 用例 / 88 套件全绿；门禁一条命令
+> **M7 第四半：性能档的读数字半边（会话按环境开关装 `vsg::Profiler`，读回是「不等待」的倒着走查：
+> 结果没回来就报不可读，读一次绝不让设备停）**：`test_vsg` 565 用例 / 88 套件全绿；门禁一条命令
 > （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清、相位 9 行 / 2 次运行全收尾；
 > `core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 818 文件）。
-> M7 只剩会话侧的读数字半边（安装 `vsg::Profiler` + 不阻塞读 + `age_frames`），语义已在 §11.16ac 的口子里写全。
+> M7 至此完整：身份半边（§11.16ac）与读数字半边（§11.16ad）都在，遗留口子只剩设计里已登记的
+> 那些（场景桥、提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2526,7 +2527,10 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M5d~~ | **已完成（2026-09-22）**：全屏路径的 128B push——`LightPushBlock`（128B，`projparms` 保留为零）+ `packLightPushBlock`（复用 `packLightBlock` 的遍历、只换布局）；`recordScreenDraw` 按每次调用推；`createScreen` 建 push-only 布局（"只读 push"的全屏 pass 不再被拒）；2 条用例（无设备 + 真设备三视口像素）+ 4 条变异反证（其中"push 全零"与"发错阶段"分别是内容缺失与静默失败的实证）（§11.16w） |
 | ~~M5e~~ | **已完成（2026-09-22）**：目标生命周期（计划驱动的换尺寸）——`OffscreenTarget::Attachments`（尺寸相关的一整批对象）+ `buildAttachments(width, height, out)`（纯构建、不写自身）；`create` 成功后才接手并计数借用者；`resize(w, h, timeline, retirement)` 按 `core::planTarget` 决定、**保留渲染通道与管线**、旧集经 `RetirementQueue` 停车（闸门关着时退回**计数过的** device idle）；租约两向拒绝；换后 `written=false` + `generation+1`；5 条真设备用例（含深度回读按新尺寸重建、引用计数证明"停着而不是扔了"）+ 6 条变异反证（§11.16x） |
 | ~~M6~~ | **已完成（2026-09-22）**：读回——`core/Readback`（`readbackOf` 单表 + 两类格式表 + `decodeDepth`），优先级"存在性 → 格式（永久）→ 捕获（可重试）"，不设走不到的 `Empty`（零尺寸归 `planTarget` / `create` 拒绝）；`OffscreenTarget` 的 `captured` / `depth_captured` 簿记（属于附件集，换尺寸天然复位）+ `readbackResult()`；float 颜色附件不再建回读缓冲（原来必撞 `VUID-vkCmdCopyImageToBuffer-pRegions-00183`）；借用方的深度回读 = 共享图像 + 自己的缓冲；4 条无设备 + 4 条真设备用例 + 8 条变异反证（§11.16y） |
-| ~~M7~~ | **已完成（2026-09-22，第一半：证据加固）**：重写版第一张**真**相位表（`PhaseTable` 的 `sample`/`expect` 第一次派上用场：稳态帧零分配 ×2 + `draws` +2 + 环跳过 `invalid_schedules` +1），`[selftest]` 行冻结成基线；`scripts/vsg_rewrite_gate.sh` 把整套仪式变成一条命令（跳过即失败、0 VUID / 0 SYNC-HAZARD 成为可失败断言、相位必须以 `[selftest] done` 收尾），门禁自己也被三条伪造输入证明能红；实测记录 plan 路径头两帧的有界增长（第二次 compile 32B，之后 0）（§11.16z）。| ~~M7c（设备侧相位运行器）~~ | **已完成（2026-09-22）**：`DevicePhases.hpp` 让四个设备能力**只有一个写法**（身体是函数：细节用例与相位行都调它）；`DevicePhaseTest` 用计数器门住每一行（目标 +1/+2、换尺寸 +1、帧 +3），行文本冻结；`Stack::build(device)` 改收调用方的设备（一次运行一个设备）；门禁的相位判据改成"无 FAILED 行 + 每次运行收尾"（两张表之后，"最后一行是 done"会被"前面红、后面干净"骗过，实测）；2 条变异 + 1 条伪造输入全红（§11.16ab）。| ~~M7d（性能档的身份半边）~~ | **已完成（2026-09-22）**：`VsgExecutor::setProfiling`（默认关，**关着不加任何东西**）+ `recordedChild()` 把每个 pass 记成**可归属的区间**（带名字的 `InstrumentationNode`，对象是**图自己** ⇒ `ProfileEntry` + `profileOf(graph)` 就是读数字那一半要的全部映射）；窗口图只包一次（区间 = 呈现路径整体）；条目属于帧；2 条真设备用例 + 5 条变异反证（§11.16ac）。**剩**：会话侧安装 `vsg::Profiler` + 不阻塞读 + `age_frames`（语义已写全） |
+| ~~M7~~ | **已完成（2026-09-22，第一半：证据加固）**：重写版第一张**真**相位表（`PhaseTable` 的 `sample`/`expect` 第一次派上用场：稳态帧零分配 ×2 + `draws` +2 + 环跳过 `invalid_schedules` +1），`[selftest]` 行冻结成基线；`scripts/vsg_rewrite_gate.sh` 把整套仪式变成一条命令（跳过即失败、0 VUID / 0 SYNC-HAZARD 成为可失败断言、相位必须以 `[selftest] done` 收尾），门禁自己也被三条伪造输入证明能红；实测记录 plan 路径头两帧的有界增长（第二次 compile 32B，之后 0）（§11.16z）。| ~~M7c（设备侧相位运行器）~~ | **已完成（2026-09-22）**：`DevicePhases.hpp` 让四个设备能力**只有一个写法**（身体是函数：细节用例与相位行都调它）；`DevicePhaseTest` 用计数器门住每一行（目标 +1/+2、换尺寸 +1、帧 +3），行文本冻结；`Stack::build(device)` 改收调用方的设备（一次运行一个设备）；门禁的相位判据改成"无 FAILED 行 + 每次运行收尾"（两张表之后，"最后一行是 done"会被"前面红、后面干净"骗过，实测）；2 条变异 + 1 条伪造输入全红（§11.16ab）。| ~~M7d（性能档的身份半边）~~ | **已完成（2026-09-22）**：`VsgExecutor::setProfiling`（默认关，**关着不加任何东西**）+ `recordedChild()` 把每个 pass 记成**可归属的区间**（带名字的 `InstrumentationNode`，对象是**图自己** ⇒ `ProfileEntry` + `profileOf(graph)` 就是读数字那一半要的全部映射）；窗口图只包一次（区间 = 呈现路径整体）；条目属于帧；2 条真设备用例 + 5 条变异反证（§11.16ac）。~~M7e（会话侧读数字半边）~~ | **已完成（2026-09-22）**：`VINE_VSG_PROFILE` 初始化时读一次并
+装 `vsg::Profiler`（关着不装）；`Session::gpuProfile()` 倒着走日志取最新有结果的一帧（`readable` /
+`age_frames` / `frame_gpu_ms` / 按地址归属的 `passes`），读一次不等待、不让设备停（`deviceWaits()`
+前后相等钉住）；1 条会话用例 + 5 条变异反证（§11.16ad）。|
 | ~~M7b（执行者收口）~~ | **已完成（2026-09-22）**：目标自己说事实——`OffscreenTarget::instance()`（`built` = **能 LOAD** = `written`；15 处手拼 facts 统一到它，像素断言是判据）+ `invalidateAttachments()`（丢帧 ⇒ 计划 `Repair(Bootstrap)` ⇒ 下一帧首写者清屏；**只有 bootstrap 能修事实**，`resize` 换集合同时换事实）；+1 真设备用例把执行者循环（facts → 计划 → `pass.bootstrap` → 图 → 像素）跑通，含"只修一次"与 resize 两条判据；5 条变异反证（§11.16aa） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
@@ -2534,3 +2538,32 @@ M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `
 
 代码落地前的约定：新增 `core/` 文件会被 `v_add_plugin` 的 `GLOB_RECURSE` 自动收进插件，
 `tests/test_vsg` 需要显式加源文件（两份 CMakeLists 各一处）。
+
+### 11.16ad（M7e）会话侧读数字半边
+
+身份半边（§11.16ac）把每个 pass 记成可归属的区间；这一半把区间读成数字，规则只有三条：
+
+1. **开关是环境的**：`VINE_VSG_PROFILE` 在 `initialize()` 里读一次（`"0"` / 空 = 关），关着时一个
+   `Profiler` 都不装——`profiling()` 为假、`gpuProfile().enabled` 为假、`passes` 为空。
+2. **读是走查，不是采样**：日志里最后几帧还没有结果（读取不带 `VK_QUERY_RESULT_WAIT_BIT`），所以从后
+   往前找第一帧有结果的：`age_frames = frames.size() - 1 - index`。一帧只要有命令缓冲区区间**或** pass
+   样本就算读到了——只画窗口图、没有执行层包 pass 的会话照样能报 `frame_gpu_ms`；什么都没读到就报
+   `readable == false`，绝不报 0 假冒“这帧不耗时”。
+3. **读数字不许让设备停**：整条路径不碰设备（不提交、不等待、不做阻塞式的查询结果读取）。用例把这条钉成
+   断言：读之前 / 之后的 `deviceWaits()` 必须相等——设备侧等待正是 `RetirementQueue` 存在的理由，
+   读性能数字不该是它的第一个反例。
+
+归属键是**地址**，只许比较、不许解引用（图可能在帧之间被释放——旧实现实测过这条崩溃）；归属映射的另一半在
+`VsgExecutor::profileOf(graph)`。时间戳是否可用是**设备事实**（`timestampComputeAndGraphics`），不可用时
+回答“开着、但没有可读的”，而不是一个数字。
+
+实测（lavapipe）：8 帧后 `readable == true`、`age_frames == 2`、`frame_gpu_ms ≈ 1.86 ms`、1 个带非空键的
+样本——样本数是日志里带对象的 GPU 区间数（会话自己不包 pass，所以这是上游/执行层写下的那些），用例只断言
+“键非空、毫秒非负”，不断言条数（那是驱动时序的函数）。
+
+证据：`SessionTest.TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevice`（关：`profiling()`
+假 + 4 帧后不可读 + 空 `passes` + `deviceWaits()==0`；开：8 帧后 `readable` 必须为真、`age_frames < 8`、
+逐样本键非空且毫秒非负、读前后 `deviceWaits()` 相等；无时间戳能力则 `GTEST_SKIP`）；变异反证 5/5 红——
+(a) `readable` 永不为真、(b) `age_frames` 取成 `frames.size()`、(c) 关着也报可读、(d) 读里加一次
+`noteDeviceWait()`、(e) 空键样本放行。门禁：565 用例 / 88 套件、0 VUID、0 SYNC-HAZARD、hygiene 全清、
+相位 9 行 / 2 次运行全收尾。

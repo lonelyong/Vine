@@ -126,6 +126,59 @@ class Session
     /** @brief Gets how many counted device idles this session has taken. */
     [[nodiscard]] std::size_t deviceWaits() const noexcept;
 
+    /** @brief Whether this session measures the device (see @ref gpuProfile).
+     *
+     * The switch is the environment's, read ONCE when the session comes up: `VINE_VSG_PROFILE` asks for a
+     * profiler, `VINE_VSG_PROFILE_CPU` / `VINE_VSG_PROFILE_GPU` set its two instrumentation levels (defaults
+     * 0 and 1 - level 1 is the per-pass level the executor's wrappers carry; a higher level timestamps every
+     * recorded node and the profiler's fixed query pool then drops what does not fit, silently).
+     *
+     * @return true when measurement is on.
+     */
+    [[nodiscard]] bool profiling() const noexcept;
+
+    /** @brief One measured pass of the newest frame the profile could read. */
+    struct GpuSample
+    {
+        /// The measured graph's ADDRESS, as an opaque key: compare it, never dereference it (a measured
+        /// frame may name a graph that has since been released, and the legacy backend measured the crash
+        /// that reading such an entry causes).
+        const void* key{nullptr};
+        double      gpu_ms{0.0};  ///< Device time between the pass' two timestamps.
+    };
+
+    /** @brief What the profile knows about the newest frame with readable results. */
+    struct GpuProfile
+    {
+        bool                   enabled{false};               ///< The switch asked for measurement.
+        bool                   timestamps_available{false};  ///< The device can write timestamps at all.
+        bool                   readable{false};              ///< A frame's results were ready.
+        std::uint64_t          age_frames{0};                ///< Frames between this read and that frame.
+        double                 frame_gpu_ms{0.0};            ///< The command buffer's own interval.
+        std::vector<GpuSample> passes;                       ///< One per measured pass, in log order.
+    };
+
+    /** @brief Reads the newest measured frame WITHOUT waiting for the device.
+     *
+     * The results are read the way the profiler writes them, which is without `VK_QUERY_RESULT_WAIT_BIT`: a
+     * frame's timestamps become readable a few frames after it was recorded, so what this returns describes
+     * an EARLIER frame and @ref GpuProfile::age_frames says which - zero frames of lag would mean a blocking
+     * read, and this backend's frame path must not stop the device (its device waits are counted; a profile
+     * read that raised them would be a regression, not a measurement).
+     *
+     * NOTHING IS FABRICATED: with measurement off, or with no results ready yet, the answer says so
+     * (`enabled` / `readable` false, empty samples) instead of reporting zeros that look like a frame that
+     * cost nothing.
+     *
+     * The KEY is what a caller attributes with: the executor that recorded the frame maps it back to the pass
+     * (`VsgExecutor::profileOf`), because the pass identity belongs to the layer that built the graph - this
+     * is the device timeline's half of the answer.
+     *
+     * @return The profile: whether it is on, whether the device can write timestamps, and the newest frame's
+     *         samples when there are any.
+     */
+    [[nodiscard]] GpuProfile gpuProfile() const;
+
     /** @brief Gets the frame timeline (for the completion watermark and the open-frame state). */
     [[nodiscard]] core::FrameTimeline& timeline() noexcept;
 
