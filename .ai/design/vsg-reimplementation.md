@@ -3,6 +3,13 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
+> **M8i：一帧收成两次调用**——`api/ContentAssembly`：`beginFrame(计划)` 开块预算 + 由 store 产出表，
+> `record(pass, …)` 把半片（`ContentHalves`）、声明集合（`ContentSets`）、**每 pass 一个 `StateRegistry`**
+> （注册表的契约就是"这个 pass 的状态记忆"）与输入集合串成一次 `ContentPass::record`；构造时自己从设备取
+> **动态状态入口点**（集成测试证明：漏了就是 12 条 VUID——动态调用被静默跳过）。真设备证据：整帧只用这两个
+> 调用画出（两纹理各自采自己的图）＋**第二帧每个生产者的计数都不动**（`frames()` 确认块预算按帧开）；
+> 4/4 变异反证红；`test_vsg` 636 用例 / 97 套件全绿；门禁 **0 VUID / 0 SYNC-HAZARD**、skipped=0、
+> hygiene 全清（现 847 文件）。更早一片是
 > **M8h：声明集合的生产侧**——`api/ContentSets`：把"每套声明集合自己建"的那段宿主代码收成一处——每个被声明
 > 的采样器按**名字**取图（`diffuseMap` ⇒ 材质的纹理（缺/不可用 ⇒ 白，cube 槽给白 cube）、`shadow_map` ⇒
 > pass 解析出的那张图（没有 ⇒ 白）、其余名字 ⇒ pass 的输入图，按输入集合的绑定序），每套集合按
@@ -64,9 +71,9 @@
 > 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）、
 > M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）、
 > M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）、
-> M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）。
+> M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）。
 > 下一步：
-> 帧装配的收口（把表 / 半片 / 集合 / 输入集合串成一次 record）＋ 提交失败接缝 / 重建臂。
+> 提交失败接缝 / 重建臂（把"重录一帧"变成一条真实路径）。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2608,6 +2615,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8f（半片的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentHalves`（走 pass、与录制器同查找 ⇒ 每个 (kind, program, revision, layout, variant, 附件数) 一片；层 + 录制器 + `Scope::Entry`；键离开表 ⇒ 停靠；被拒的层记住不重试）；`ContentPipeline::create(abi, GeometryFacts, shaders, settings)`（绑定 = 规范编号、格式 = 分量数，自定义通道拒）且夹具改用它；真设备用例 = store 的表 + 生产者的半片画的整帧；6 条变异反证全红（§11.16ao）。 |
 | ~~M8g（一个 drawable 的图，一个集合）~~ | **已完成（2026-09-22）**：`BlockDescriptors::ImageSource`（纹理 + 修订，= MaterialImages 的键）+ `forAbi/create` 收它 + `source()`；`serveHalf` 收"drawable 要的图"，先精确、再退到"没有纹理"的集合、否则按名拒绝（两种失败分说）；`recordCommand` 从材质事实算（纹理 + 实时 `revision()`）。真设备用例 = 同一半片两张贴图两套同形状集合 ⇒ 左洋红右绿；5 条变异反证全红（§11.16ap）。 |
 | ~~M8h（声明集合的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentSets`（按名取图：材质/白 + cube 白、影子+白、输入按序；键 = (program, revision, variant, set, 图来源)，空来源共享；键离开表 ⇒ 停靠；被拒记住；`sets()/builds()/fallbacks()/refused()`）；真设备用例 = 不手建任何集合的两纹理画；5 条变异反证全红（§11.16aq）。 |
+| ~~M8i（一帧收成两次调用）~~ | **已完成（2026-09-22）**：`api/ContentAssembly`（beginFrame = 块预算 + 表；record = 半片 + 集合 + 每 pass 注册表 + 输入集合 + 一次 `ContentPass::record`；构造自带动态状态入口点；`facts()/halves()/sets()`）；真设备用例 = 只用两次调用的整帧 + 第二帧计数全不动（`frames()` 证块预算按帧开）；4/4 变异反证红（§11.16ar）。 |
 | **M8 下一步** | 变体的 define 进管线身份（`VINE_DIFFUSE_MAP` / texcoord kind 取决于几何与材质）→ 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
@@ -3453,3 +3461,42 @@ skipped=0、hygiene 0 / 845 文件、`check_diagnostic_formats.py` 0 / 39、`che
 输入集合（`ContentPass`）现在各自可用，但把它们按一次 record 串起来仍是调用方（真设备用例）在写；②集合与半片
 的停靠窗口各自独立（同一修订的集合与半片会在两帧里先后离场——安全，但不整齐）；③`Environment`（skyMap）仍
 无生产者（建层时就拒）。
+
+### 11.16ar M8i（2026-09-22）：一帧收成两次调用
+
+至此每一块都有自己的所有者：`ContentStore` 回答计划点到名的事实、`ContentHalves` 编译 pass 会问的半片、
+`ContentSets` 建它们的声明集合、`ContentPass` 录制——而**把它们串起来的那段循环**（走 pass、把上一块的答案交给
+下一块、开帧的块预算、每个 pass 一个注册表）每个调用方都要写一遍。`api/ContentAssembly` 就是那段循环：
+
+* **`beginFrame(计划, 时间线, 停靠队列)`**：开块预算（`BlockStorage::beginFrame`——它是"一帧的第一个动作"）+
+  由 store 产出表 ✓；
+* **`record(pass, 兼容性, 输入图, 视图块, out)`**：半片 → 集合（后者拿前者的 entries）→ **每 pass 一个
+  `StateRegistry`** → 组装 scope → 一次 `ContentPass::record`。注册表是每 pass 的：它自己的契约就是"这个 pass
+  的状态记忆"，而一次录制发出的状态（含 pass 的视图块偏移）不该被第二个 pass 继承（逐 pass 的用例一直这么建）。
+* 构造时**自己取动态状态入口点**（它拿着设备）——见下。
+
+**集成测试揪出的真问题**：assembly 最初把 `ContentHalves(pool)` 用**默认空入口点**建起来，于是全部动态调用被
+静默跳过 ⇒ 门禁 12 条 VUID（`07621`/`07627`/`10862`）。这正是 M4a 记过的坑，三个月后在新的调用链上原地复现——
+说明"入口点"这条依赖最好由**知道设备的层**（assembly，而不是每个宿主）满足：现在它的构造签名就把这件事钉死了。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ContentAssembly.hpp` / `src/api/ContentAssembly.cpp`（新） | 构造收 (`ContentStore&`, `Device`, `VariantPool&`, `BlockStorage&`, `MaterialImages&`, `Diagnostics&`)；`beginFrame` / `record`；`facts()/halves()/sets()` 暴露证据计数；record 在 beginFrame 之前 ⇒ 空节点 + false（调用方 bug，不上报） |
+| `tests/test_vsg/ContentPassTest.cpp`（+1 真设备） | 整帧只用两次调用：两纹理各自采自己的图；`storage->frames()` 证块预算按帧开；第二帧 store/halves/sets 的 `builds()` 全不动 |
+
+**变异反证（4/4 红）**：
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 beginFrame 不开块预算 | 用例红（`frames()` 不动 ⇒ 第二帧没开） |
+| M2 scope 不带声明集合 | 用例红（拒绝 ⇒ 录制失败） |
+| M3 scope 不带半片 | 用例红（同上） |
+| M4 beginFrame 忘了表 | 用例红（record 见空表 ⇒ false） |
+
+证据：`test_vsg` 全量 **636 用例 / 97 套件全绿**；门禁 `scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、
+skipped=0、hygiene 0 / 847 文件、`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、
+相位 9 行 / 2 次运行全收尾。
+
+**这一片留下的口子**：①**提交失败接缝 / 重建臂**——"重录一帧"还不是一条真实路径（它一落地，集合/半片/表的停靠
+窗口就有了真实读者，今天靠"记录是同步的"省掉的时序问题会回来）；②`Environment`（skyMap）仍无生产者；
+③集合与半片的停靠窗口各自独立。
