@@ -6,6 +6,7 @@
 
 #include <vsg/app/CommandGraph.h>
 #include <vsg/app/RenderGraph.h>
+#include <vsg/app/Viewer.h>
 #include <vsg/nodes/InstrumentationNode.h>
 
 #include <vine/vsg/api/OffscreenTarget.hpp>
@@ -140,6 +141,34 @@ class V_VSG_API VsgExecutor
      * @return How many targets were marked.
      */
     std::size_t noteLostSubmission(const core::CompiledFrame& frame) noexcept;
+
+    /**
+     * @brief Submits @p frame's recorded graphs through @p viewer, and turns a failed submission into the
+     * repair evidence itself (see @ref noteLostSubmission).
+     *
+     * WHY THE STEP AND ITS FAILURE ARE ONE CALL, and it is the whole reason this method exists: a host
+     * that wrote `viewer.recordAndSubmit()` itself would have to know that a failure thrown out of that
+     * call means "the writes this frame recorded were never performed" - and the moment it does not know,
+     * the next frame draws over contents nobody can vouch for. The host calls ONE method, the failure is
+     * never something it has to interpret, and the targets the frame wrote are marked before it ever
+     * gets the answer back.
+     *
+     * WHAT COUNTS AS "FAILED": anything the step throws. vsg's own vocabulary for a submission it cannot
+     * make is an exception (`vsg::Exception`, thrown from the command buffer's allocation and nowhere
+     * told to the caller of `Viewer::recordAndSubmit`, which returns void) - and an exception means the
+     * step did NOT complete, so whether the frame's writes happened is unknown, which is exactly what
+     * the mark says. Presenting is not this call: that half stays with whoever owns the window.
+     *
+     * THE FRAME IS NOT RETRIED HERE. Whether to try again is the host's (or the session's) decision, and
+     * the mark is what makes the retry correct either way: the next COMPILED plan answers "repair" for
+     * the marked targets, so a frame that never made it is rebuilt from a clear instead of drawn over.
+     *
+     * @param frame  The frame whose graphs were recorded (the same plan @ref record was given).
+     * @param viewer The viewer those graphs are assigned to.
+     * @return true when the submission happened; false when it did not (it was reported, and the frame's
+     *         written targets were marked).
+     */
+    bool submit(const core::CompiledFrame& frame, ::vsg::Viewer& viewer);
 
     /** @brief Sets whether this frame's passes are recorded through measurement wrappers.
      *

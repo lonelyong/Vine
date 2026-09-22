@@ -46,6 +46,9 @@ enum class DiagnosticCategory : std::uint8_t
     UnsupportedRequest,    ///< The host asked for something that is not implemented yet: a documented
                            ///< stand-in was assembled instead, so the picture is not what was asked
                            ///< for.
+    SubmissionFailed,      ///< A frame's submission could not be made: the frame was not drawn, and the
+                           ///< backend will repair what it recorded before the next one (a device-lost
+                           ///< keeps failing, so a host seeing this repeatedly has lost the device).
 
     Count, ///< Number of categories (not a category itself; keeps count arrays sized).
 };

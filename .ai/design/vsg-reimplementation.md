@@ -71,10 +71,11 @@
 > 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）、
 > M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）、
 > M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）、
-> M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）。
+> M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）、
+> M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）。
 > 下一步：
-> 提交失败接缝的调用方（谁在提交失败时调用 `noteLostSubmission`——今天要宿主自己说）。
-> 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
+> Rebuild 臂（形状变了 ⇒ 重建渲染通道 / 帧缓冲 / 按它编译的管线——今天只有 Repair 与 ResizeInPlace 是真实路径）。
+> 其余遗留口子：`Viewer::recordAndSubmit` 吞掉的队列 `VkResult`（真·设备丢失回来的那一层）、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2616,7 +2617,9 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8g（一个 drawable 的图，一个集合）~~ | **已完成（2026-09-22）**：`BlockDescriptors::ImageSource`（纹理 + 修订，= MaterialImages 的键）+ `forAbi/create` 收它 + `source()`；`serveHalf` 收"drawable 要的图"，先精确、再退到"没有纹理"的集合、否则按名拒绝（两种失败分说）；`recordCommand` 从材质事实算（纹理 + 实时 `revision()`）。真设备用例 = 同一半片两张贴图两套同形状集合 ⇒ 左洋红右绿；5 条变异反证全红（§11.16ap）。 |
 | ~~M8h（声明集合的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentSets`（按名取图：材质/白 + cube 白、影子+白、输入按序；键 = (program, revision, variant, set, 图来源)，空来源共享；键离开表 ⇒ 停靠；被拒记住；`sets()/builds()/fallbacks()/refused()`）；真设备用例 = 不手建任何集合的两纹理画；5 条变异反证全红（§11.16aq）。 |
 | ~~M8i（一帧收成两次调用）~~ | **已完成（2026-09-22）**：`api/ContentAssembly`（beginFrame = 块预算 + 表；record = 半片 + 集合 + 每 pass 注册表 + 输入集合 + 一次 `ContentPass::record`；构造自带动态状态入口点；`facts()/halves()/sets()`）；真设备用例 = 只用两次调用的整帧 + 第二帧计数全不动（`frames()` 证块预算按帧开）；4/4 变异反证红（§11.16ar）。 |
-| **M8 下一步** | 变体的 define 进管线身份（`VINE_DIFFUSE_MAP` / texcoord kind 取决于几何与材质）→ 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
+| ~~M8j（丢掉的提交，下一帧修一次）~~ | **已完成（2026-09-22）**：`VsgExecutor::noteLostSubmission(frame)`（只标该帧 pass 真正点到的离屏目标；下一份计划答 `Repair(Bootstrap)`、第一个 bootstrap pass 清标志）；真设备用例（记录 → 标 1 个 → 下帧 `bootstrap` ✓ → 记录后清 ✓ → 别的目标不动 ✓）；变异反证红（§11.16as）。 |
+| ~~M8k（提交这一步自己说）~~ | **已完成（2026-09-22）**：`VsgExecutor::submit(frame, viewer)`（记录 → 提交 → **失败即标记**：`noteLostSubmission` + 报 `SubmissionFailed` + 答 false；vsg 的异常词表两种都接——`vsg::Exception` 不是 std::exception）＋ SDK 分类表按它自己写明的规则在 `Count` 前追加 `SubmissionFailed`；真设备用例（成功的提交 ⇒ 清屏色真的在像素里、无标记；失败 ⇒ **只有它写过的**目标被标 + 拒绝计数 +1；下帧计划 `bootstrap` ✓）；4/4 变异反证红 + 一次"只留 std::exception 分支"的变异也红（§11.16at）。 |
+| **M8 下一步** | **Rebuild 臂**：形状变了（附件数 / 格式 / 深度 / 样本）要重建渲染通道、帧缓冲与按它编译的管线——今天只有 Repair 与 ResizeInPlace 是真实路径；随后是会话/插件侧的帧驱动，把队列提交返回的 `VkResult` 接进 `submit` 那道缝。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3511,3 +3514,22 @@ skipped=0、hygiene 0 / 847 文件、`check_diagnostic_formats.py` 0 / 39、`che
 证据：真设备用例（记录一帧 → noteLostSubmission == 1 → 下一帧的计划 bootstrap ✓ → 记录后标志清 ✓ →
 另一注册目标始终未被标 ✓）、0 VUID；变异 2/2（不标 / 清成 true ⇒ 红；另一次尝试的变异是空操作，不计）。
 门禁 637 用例 / 98 套件、0 VUID / 0 SYNC-HAZARD、hygiene 全清。
+
+### 11.16at M8k（2026-09-22）：提交这一步自己说它失败了
+
+M8j 把"提交没发生"变成了目标上的事实，但**说这句话的人还是宿主**：`noteLostSubmission(frame)` 谁来调、调在哪个时刻，是宿主自己的事。这一片把那句话搬进执行器：
+`VsgExecutor::submit(frame, viewer)` —— **记录 → 提交 → 失败即标记**。任何一个从 `viewer.recordAndSubmit()` 抛出来的异常都意味着这一步没走完：
+vsg 自己的词表是异常（命令缓冲建不出来就抛 `vsg::Exception`，而 `Viewer::recordAndSubmit` 返回 void、什么都不告诉调用方），而"这一步没走完"
+⇒ 该帧写过的离屏目标内容不可信 ⇒ `noteLostSubmission` 标记它们、报一条 `SubmissionFailed`、答 false。宿主从此不需要解释任何失败。
+**不在这层重试**：要不要再来一帧是宿主/会话的决定，而标记让重试变正确——下一份**编译出的**计划答 Repair(Bootstrap)（用例断言钉住）。
+
+顺手两件：①`vsg::Exception` **不是** `std::exception`（纯结构体 message + VkResult），只 catch `std::exception` 会让故障直接穿过去——
+变异 M3（只留 std::exception，去掉 vsg 分支与 `catch (...)`）红，且 gtest 打出的是 `Unknown C++ exception thrown in the test body.`（这条教训自己会说话）；
+②SDK 的分类表按它自己写明的规则（"Append a new value before Count"）在 `Count` 前追加 `SubmissionFailed`——宿主得能按类别分辨"这一帧没提交"与"后端没起来"。
+
+证据：真设备用例（两个目标；帧 1 经 `submit` 提交成功 ⇒ 清屏色真的在像素里（alpha=255）、没有标记；帧 2 的提交在记录步抛 `vsg::Exception`
+⇒ `submit` 答 false、**只有它写过的**目标被标、另一目标不动、`SubmissionFailed` 计数 +1；帧 3 的计划 `bootstrap == true`）、0 VUID；
+变异 4/4 红（不标 / 答 true / 标到别的目标上 / 不报）+ M3 也红。门禁 638 用例 / 98 套件、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 848 文件。
+
+**这一片留下的口子**：①`Viewer::recordAndSubmit()` 吞掉的最后一层——队列提交返回的 `VkResult`（真·设备丢失正是这样回来的）宿主与会话都看不见；
+等自己的帧驱动（会话的 commit 或插件侧）落地时，这条结果要接到 `submit` 同一道缝上；②Rebuild 臂；③`skyMap` 仍无生产者；④集合与半片的停靠窗口各自独立。

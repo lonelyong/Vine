@@ -1,7 +1,10 @@
 #include <vine/vsg/api/VsgExecutor.hpp>
 
 #include <cstddef>
+#include <exception>
 #include <string>
+
+#include <vsg/core/Exception.h>
 
 V_VSG_NS_BEGIN
 
@@ -296,6 +299,47 @@ std::size_t VsgExecutor::noteLostSubmission(const core::CompiledFrame& frame) no
         ++marked;
     }
     return marked;
+}
+
+bool VsgExecutor::submit(const core::CompiledFrame& frame, ::vsg::Viewer& viewer)
+{
+    // Three catches, because the throwers disagree on what an exception is: vsg::Exception is a plain
+    // struct (message + VkResult) that is NOT a std::exception, so without the first branch the failure
+    // this method exists for would slip past the second - and with it the mark. Anything else is unusual
+    // enough to name as such rather than to let it end the frame drive.
+    std::string failure;
+    try
+    {
+        viewer.recordAndSubmit();
+        return true;
+    }
+    catch (const ::vsg::Exception& error)
+    {
+        failure = error.message;
+        if (error.result != 0)
+        {
+            failure += " (VkResult " + std::to_string(error.result) + ")";
+        }
+    }
+    catch (const std::exception& error)
+    {
+        failure = error.what();
+    }
+    catch (...)
+    {
+        failure = "an exception of an unknown type";
+    }
+
+    const std::size_t marked = noteLostSubmission(frame);
+    diagnostics_.report(vine::graphics::DiagnosticSeverity::Error,
+                        vine::graphics::DiagnosticCategory::SubmissionFailed,
+                        asString("the frame's submission failed, so what its passes wrote was never "
+                                 "performed: " +
+                                 std::to_string(marked) +
+                                 " off-screen target(s) marked for repair (the next compiled plan bootstraps "
+                                 "them) - the failure was: " +
+                                 failure));
+    return false;
 }
 
 std::span<const core::PassId> VsgExecutor::recorded() const noexcept
