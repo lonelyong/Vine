@@ -109,10 +109,12 @@ class V_VSG_API ContentPass
         std::span<const Entry> entries;               ///< One per (program, revision, layout, VARIANT) it draws with.
         core::StateRegistry*   registry{nullptr};     ///< This pass' state memory, shared by every half.
         BlockStorage*          storage{nullptr};      ///< The frame's block storage.
-        /// The block sets this pass may bind: ONE PER SET INDEX A PROGRAM DECLARES BLOCKS IN, built from the
-        /// shape that program declares (`BlockDescriptors::create(device, storage, layer->blockShape(set),
-        /// set)`). A program whose declared shape no entry here covers is refused by name - the alternative
-        /// is binding a set whose layout the pipeline was not compiled against.
+        /// The block sets this pass may bind: one per SET INDEX a program declares blocks in - and, when a
+        /// program's samplers read a texture, one per TEXTURE REVISION those images were resolved from (see
+        /// BlockDescriptors::ImageSource): two drawables of one variant with different materials have sets
+        /// of the SAME shape, so shape alone cannot say which one carries whose map. A program whose
+        /// declared shape no entry here covers is refused by name - the alternative is binding a set whose
+        /// layout the pipeline was not compiled against.
         std::span<BlockDescriptors* const> block_sets{};
         StreamUploads*         uploads{nullptr};      ///< The stream sharing (geometry).
         /// Episode state of the light-drop report: a drawing call whose announced lights all fit the block
@@ -257,7 +259,15 @@ class V_VSG_API ContentPass
      * @param input_count Sampled textures the pass' key carries (colours plus depths).
      * @return true when the half can be served; @ref half_blocks_ then holds the sets to bind.
      */
-    [[nodiscard]] bool serveHalf(const Scope::Entry& entry, std::uint32_t input_count);
+    /** @brief Serves the half's declared sets, picking them from @p scope_.block_sets.
+     *
+     * @param entry       The half being drawn through.
+     * @param input_count How many sampled inputs the pass binds.
+     * @param demanded    The images the DRAWABLE asks for (see BlockDescriptors::ImageSource), or null when
+     *                    no drawable is known yet (the pass-level validation: any matching set is accepted).
+     */
+    [[nodiscard]] bool serveHalf(const Scope::Entry& entry, std::uint32_t input_count,
+                                 const BlockDescriptors::ImageSource* demanded);
 
   private:
     /** @brief The most block sets one program can declare and still be served (the five roles' bound). */

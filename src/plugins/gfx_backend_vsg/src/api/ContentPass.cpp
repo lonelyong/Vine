@@ -1,5 +1,7 @@
 #include <vine/vsg/api/ContentPass.hpp>
 
+#include <vine/graphics/Texture.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstring>
@@ -124,7 +126,8 @@ ContentPass::ContentPass(const Scope& scope, core::Diagnostics& diagnostics) noe
     shadow_reported_ = std::vector<core::ReportOnce>(scope.entries.size());
 }
 
-bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count)
+bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count,
+                             const BlockDescriptors::ImageSource* demanded)
 {
     half_block_count_ = 0U;
 
@@ -179,19 +182,61 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
         {
             return refuse("its program declares more sets than this pass can bind");
         }
+        const auto fits = [&](const BlockDescriptors* candidate) noexcept {
+            return candidate != nullptr && candidate->setIndex() == set &&
+                   sameShape(candidate->shape(), entry.pipelines->blockShape(set)) &&
+                   sameSamplers(candidate->samplers(), entry.pipelines->samplerBindings(set));
+        };
+
+        // WHICH SHAPE-MATCHING SET: the drawable's own images win. Two drawables of one variant have sets of
+        // the same shape, and picking by shape alone would hand one of them the other's map (silently - the
+        // picture would just be the wrong texture). A set whose source says its images involve no texture
+        // (every sampler it binds is pass-level) serves any drawable; the exact source is tried first so a
+        // caller that built one per drawable always gets its own.
         BlockDescriptors* found = nullptr;
-        for (BlockDescriptors* candidate : scope_.block_sets)
+        if (demanded != nullptr)
         {
-            if (candidate != nullptr && candidate->setIndex() == set &&
-                sameShape(candidate->shape(), entry.pipelines->blockShape(set)) &&
-                sameSamplers(candidate->samplers(), entry.pipelines->samplerBindings(set)))
+            for (BlockDescriptors* candidate : scope_.block_sets)
             {
-                found = candidate;
-                break;
+                if (fits(candidate) && candidate->source() == *demanded)
+                {
+                    found = candidate;
+                    break;
+                }
+            }
+            if (found == nullptr)
+            {
+                for (BlockDescriptors* candidate : scope_.block_sets)
+                {
+                    if (fits(candidate) && candidate->source().empty())
+                    {
+                        found = candidate;
+                        break;
+                    }
+                }
+            }
+        }
+        else
+        {
+            for (BlockDescriptors* candidate : scope_.block_sets)
+            {
+                if (fits(candidate))
+                {
+                    found = candidate;
+                    break;
+                }
             }
         }
         if (found == nullptr)
         {
+            for (const BlockDescriptors* candidate : scope_.block_sets)
+            {
+                if (fits(candidate))
+                {
+                    return refuse("its material samples a texture the caller's sets were not built from "
+                                  "(see BlockDescriptors::ImageSource)");
+                }
+            }
             return refuse("its program declares a set the caller built no matching set for");
         }
         half_blocks_[half_block_count_++] = found;
@@ -290,7 +335,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         // What the pass cannot fill is refused BEFORE any pipeline is acquired or any set is built (see
         // serveHalf): a program whose blocks live in a set nobody built for it would otherwise be drawn with
         // another set's bytes.
-        if (!serveHalf(*content_half, sampled_color_count + sampled_depth_count))
+        if (!serveHalf(*content_half, sampled_color_count + sampled_depth_count, nullptr))
         {
             out = group;
             return false;
@@ -805,12 +850,23 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         return false;
     }
 
+    // WHICH IMAGES THIS DRAWABLE ASKS FOR: its material's texture at the revision that texture is at. The
+    // caller's sets are tagged with the same pair (see BlockDescriptors::ImageSource - MaterialImages
+    // acquires images by exactly this key), so a pass serving two textured drawables of one variant picks
+    // each one's own map instead of the first set whose shape fits.
+    BlockDescriptors::ImageSource demanded;
+    if (material.entry->texture != nullptr)
+    {
+        demanded.texture  = material.entry->texture;
+        demanded.revision = material.entry->texture->revision();
+    }
+
     // THE HALF IS SERVED HERE, per command: a pass holds one half per (program, revision, layout,
     // variant), and each half's block sets are ITS OWN - the textured variant's declared set carries the
     // map the untextured one has no binding for - so the sets a command binds must come from the half
     // that command is drawn through, not from whichever half the pass happened to see first. Serving
     // also refuses (once per half - see half_reported_) a half whose sets the caller built no match for.
-    if (!serveHalf(*entry, sampled_color_count + sampled_depth_count))
+    if (!serveHalf(*entry, sampled_color_count + sampled_depth_count, &demanded))
     {
         return false;
     }

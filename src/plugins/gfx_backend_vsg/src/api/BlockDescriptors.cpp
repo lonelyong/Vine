@@ -137,6 +137,7 @@ struct BlockDescriptors::Data
     ::vsg::ref_ptr<::vsg::DescriptorSetLayout> layout;
     ::vsg::ref_ptr<::vsg::DescriptorSet>       set;
     std::uint32_t                              set_index{0};
+    BlockDescriptors::ImageSource              source{};  ///< The texture revision the sampled images came from.
     std::uint64_t                              alignment{kFallbackAlignment};
     std::uint64_t                              refusals{0};
 };
@@ -185,13 +186,14 @@ std::vector<BlockDescriptors::Binding> blockShapeOf(const ProgramAbi& abi, std::
 
 BlockDescriptors::BlockDescriptors(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage,
                                   std::span<const Binding> shape, std::uint32_t set_index,
-                                  std::span<const SampledBinding> samplers)
+                                  std::span<const SampledBinding> samplers, ImageSource source)
 {
     // The alignment is read BEFORE the device is moved into the data (argument evaluation order is not a
     // promise), the same care BlockStorage takes.
     const std::uint64_t alignment = uniformAlignment(device);
     d                             = std::make_unique<Data>(std::move(device), shape, set_index, samplers);
     d->alignment                  = alignment;
+    d->source                     = source;
     (void)storage;
 }
 
@@ -204,22 +206,24 @@ std::unique_ptr<BlockDescriptors> BlockDescriptors::create(::vsg::ref_ptr<::vsg:
 std::unique_ptr<BlockDescriptors> BlockDescriptors::forAbi(const ProgramAbi& abi, std::uint32_t set,
                                                           ::vsg::ref_ptr<::vsg::Device> device,
                                                           const BlockStorage& storage,
-                                                          std::span<const SampledBinding> samplers)
+                                                          std::span<const SampledBinding> samplers,
+                                                          ImageSource source)
 {
     const std::vector<Binding> shape = blockShapeOf(abi, set);
-    return create(std::move(device), storage, shape, set, samplers);
+    return create(std::move(device), storage, shape, set, samplers, source);
 }
 
 std::unique_ptr<BlockDescriptors> BlockDescriptors::create(::vsg::ref_ptr<::vsg::Device> device,
                                                            const BlockStorage& storage, std::span<const Binding> shape,
                                                            std::uint32_t set_index,
-                                                           std::span<const SampledBinding> samplers)
+                                                           std::span<const SampledBinding> samplers,
+                                                           ImageSource source)
 {
     if (device == nullptr) {
         return nullptr;
     }
     auto descriptors = std::unique_ptr<BlockDescriptors>(new BlockDescriptors(std::move(device), storage, shape, set_index,
-                                                                               samplers));
+                                                                               samplers, source));
     if (!descriptors->d->makeLayout()) {
         return nullptr;
     }
@@ -294,6 +298,11 @@ std::span<const BlockDescriptors::SampledBinding> BlockDescriptors::samplers() c
 std::uint32_t BlockDescriptors::setIndex() const noexcept
 {
     return d->set_index;
+}
+
+BlockDescriptors::ImageSource BlockDescriptors::source() const noexcept
+{
+    return d->source;
 }
 
 std::uint64_t BlockDescriptors::alignment() const noexcept

@@ -3,6 +3,14 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
+> **M8g：一个 drawable 的图，一个集合**——同一变体的两个 drawable 的**声明集合形状完全相同**（同样的块绑定、
+> 同样的采样器绑定号），所以"按形状挑第一套"会把一个 drawable 的贴图交给另一个（**静默**：形状对、图错）。
+> `BlockDescriptors::ImageSource`（纹理 + 修订——正是 `MaterialImages` 的键）给集合打上"它的图来自哪版纹理"，
+> pass 由 drawable 的材质事实算出**它要的**那对（纹理指针 + **实时**读到的 `revision()`），先找精确匹配、
+> 再退到"图里没有纹理"的集合（采样器全是 pass 级的），都没有才按名拒绝（拒绝语分清"没人建过这种形状"与
+> "建过的那些装的是别的图"）。真设备证据：**同一半片、两张纯色贴图、两套同形状集合** ⇒ 左半洋红、右半绿；
+> 5/5 变异反证（M1 就是旧匹配 = 复现）。`test_vsg` 634 用例 / 97 套件全绿；门禁 **0 VUID / 0 SYNC-HAZARD**、
+> skipped=0、hygiene 全清（现 843 文件）。更早一片是
 > **M8f：半片的生产侧**——`api/ContentHalves`：按计划走一遍 pass，用**与录制器相同的查找**（几何按计划的修订、
 > 材质按身份、变体由两者决定、程序条目按变体取）为每个 (kind, program, revision, layout, variant、
 > **pass 的颜色附件数**) 产出一片**已编译的半片**（层 + 录制器，`Scope::Entry` 直接可用）；布局的绑定/格式拼写
@@ -47,9 +55,10 @@
 > M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：M8a 读事实（§11.16ae）、M8b 布局跟着
 > 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）、
 > M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）、
-> M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）。
+> M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）、
+> M8g 一个 drawable 的图一个集合（§11.16ap）。
 > 下一步：
-> 逐 drawable 的声明集合（同一变体、不同贴图的两个 drawable 今天会撞一套）。
+> 声明集合的生产侧（按 (程序变体, 材质纹理 + 修订) 建集合、退役旧的）。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2589,6 +2598,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8d-2（变体的 define 进管线身份）~~ | **已完成（2026-09-22）**：`api/ProgramVariant`（规则 + `bits()` + `defines()` + `describe()` + `variantOf(材质, 几何)`）；`PipelineKey += variant`（相等 + 散列 + 审计表行数不变）；`Shaders.defines` 一份清单喂**扫描与编译**两侧；`compileStage` 交给 vsg 的 `compiler.compile(stage, defines)`；`Scope::Entry += variant`（放在最后，旧聚合初始化照旧编）；`recordCommand` 由**事实**算变体并按四元组配 half、三种拒绝各自说清；顺手修**每趟只 serve 第一个 content half**（多 half 的趟绑错集合 = VUID 00358+08600）；5 条变异反证全红（§11.16am）。 |
 | ~~M8e（三张表的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentStore`（track 活对象 + 条目持键；`tablesFor(计划)` 只建点名者、稳态 0 重建；几何/程序按 SDK 修订重建、材质按 `updateMaterial` 计数；被顶替的修订留在表里直到停靠到期、材质就地替换只停旧值；`releaseAbandoned`；无窗口 = 留下并计数）。顺手：程序表按变体作键（`ProgramFacts.variant` + `findProgram(…, variant)` + `recordCommand` 先算变体），两个查找改为扫全表（表里可能有被顶替的修订）；真设备用例 = store 生产的表画的整帧（push 声明的有无由变体决定）；6 条变异反证全红（§11.16an）。 |
 | ~~M8f（半片的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentHalves`（走 pass、与录制器同查找 ⇒ 每个 (kind, program, revision, layout, variant, 附件数) 一片；层 + 录制器 + `Scope::Entry`；键离开表 ⇒ 停靠；被拒的层记住不重试）；`ContentPipeline::create(abi, GeometryFacts, shaders, settings)`（绑定 = 规范编号、格式 = 分量数，自定义通道拒）且夹具改用它；真设备用例 = store 的表 + 生产者的半片画的整帧；6 条变异反证全红（§11.16ao）。 |
+| ~~M8g（一个 drawable 的图，一个集合）~~ | **已完成（2026-09-22）**：`BlockDescriptors::ImageSource`（纹理 + 修订，= MaterialImages 的键）+ `forAbi/create` 收它 + `source()`；`serveHalf` 收"drawable 要的图"，先精确、再退到"没有纹理"的集合、否则按名拒绝（两种失败分说）；`recordCommand` 从材质事实算（纹理 + 实时 `revision()`）。真设备用例 = 同一半片两张贴图两套同形状集合 ⇒ 左洋红右绿；5 条变异反证全红（§11.16ap）。 |
 | **M8 下一步** | 变体的 define 进管线身份（`VINE_DIFFUSE_MAP` / texcoord kind 取决于几何与材质）→ 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
@@ -3335,3 +3345,56 @@ skipped=0、hygiene 0 / 843 文件、`check_diagnostic_formats.py` 0 / 39、`che
 （`serveHalf` 认领集合只比 set 序号 + 形状 + 采样器绑定号，不比**装的是哪张图**）⇒ 下一步；②"再也没被画到"
 的程序留下的半片没有清扫（键还答得出就留着，容量上界只能靠表的退役）；③M8d-2 记的输入集合仍按第一个 content
 half 建。
+
+### 11.16ap M8g（2026-09-22）：一个 drawable 的图，一个集合
+
+§11.16ao 让同一变体的两个 drawable 共用**一个半片**；这一片处理共用暴露出的下一个问题：它们的**声明集合**。
+
+**缺陷的形状**：引擎的 set 0 同时装 material 块与 `diffuseMap`——两个**带不同贴图**的材质走同一变体时，调用方
+为它们各建一套集合，而这两套的**形状完全相同**（同样的块绑定、同样的采样器绑定号），差别只在**装的是哪张图**。
+`serveHalf` 认领集合时只看（set 序号 + 块形状 + 采样器绑定号），于是"第一套"会同时服务两个 drawable——**形状
+对、图错**，而且**静默**：画面是一张合法的贴图，只是别人的。这是"布局对了、字节错了"这一类里最晚被抓住的一个，
+因为直到 M8f 之前，一个 pass 里的集合往往只有一个带图。
+
+**修法：集合带上"它的图来自哪版纹理"**（`BlockDescriptors::ImageSource` = 纹理 + 修订）。
+
+1. **调用方给每套自己建的集合打标**（`forAbi(..., samplers, source)`）：标的就是它取图时用的那对——
+   `MaterialImages` 正是按 (纹理, 修订) 建缓存条目，所以"这套集合的图"与"那次 acquire 的图"是同一件事
+   （一次拼写）。
+2. **pass 由 drawable 的事实算它要的那对**：材质的 `texture` 指针 + **实时**读到的 `Texture::revision()`
+   （材质编辑只改字节、不改图 ⇒ 不换集合；重填纹理改的是修订 ⇒ 换集合——键选的正是**图**变没变）。
+3. **选取顺序**：先精确匹配的集合；没有就退到"source 为空"的集合（它的采样器全是 pass 级的——影子图、输入图，
+   没有 drawable 的图 ⇒ 服务任何 drawable）。**这条回落是既有调用的活路**：M8d-1/M8f 的用例建的正是这种
+   集合（M5 变异把它删掉 ⇒ 那些用例红）。
+4. **拒绝分两种**：没有任何形状匹配 ⇒ "没人建过这种形状"；有形状匹配但都装着别的图 ⇒ "它的材质采样的纹理不是
+   调用方建集合时用的那版"（修法不同，说法就得不同——§11.16am 的同一条纪律）。
+
+**顺手记一个 C++ 坑**：`ImageSource` 是 `BlockDescriptors` 的**嵌套类型**，而它的默认参数写作 `= {}`——嵌套类型
+的**默认成员初始化器**在"外层类定义内使用"时会被诊断
+（`default member initializer for 'texture' needed within definition of enclosing class`）。所以它的成员故意
+**不写初始化器**（`{}` 值初始化即为"没有纹理"），而不是靠 NSDMI。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/BlockDescriptors.hpp` / `.cpp` | `ImageSource{texture, revision}`（+ `empty()`、`==`）、`forAbi`/`create` 收尾参、`source()` 访问器 |
+| `api/ContentPass.hpp` / `.cpp` | `serveHalf(entry, input_count, demanded)`（`demanded == nullptr` = 无 drawable 的 pass 级校验，接受任何匹配）；`recordCommand` 从材质事实算 demanded；拒绝语分清两种失败；`Scope::block_sets` 的文档改成"每个 set 序号 **× 每个图来源**" |
+| `tests/test_vsg/ContentPassTest.cpp`（+1 真设备） | 同一半片、两张 1×1 贴图（洋红/绿）、两套**同形状**集合（各自打标）⇒ 左半洋红、右半绿；并断言两套形状/采样器数完全相同（证明只靠形状分不出来） |
+
+**变异反证（5/5 红）**：
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 匹配只看形状（= 旧行为，复现缺陷） | 新真设备用例红（两半同色） |
+| M2 pass 不要图（demand 恒空） | 新用例红（打标的集合一套都匹配不上 ⇒ 拒绝 ⇒ 清屏色） |
+| M3 集合忘了自己的标（`d->source` 不存） | 新用例红（退化成形状优先、第一套通吃） |
+| M4 demand 的修订恒 0 | 新用例红（精确匹配对不上、回落也没有 ⇒ 拒绝） |
+| M5 删掉"没有纹理"的回落 | M8f 真设备用例红（既有调用方建的未打标集合不再被接受） |
+
+证据：`test_vsg` 全量 **634 用例 / 97 套件全绿**；门禁 `scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、
+skipped=0、hygiene 0 / 843 文件、`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、
+相位 9 行 / 2 次运行全收尾。
+
+**这一片留下的口子**：①**集合的生产侧**——谁按 (程序变体 × 材质纹理修订) 建集合、并在纹理重填后把旧集合停靠，
+今天还是调用方手写（下一步）；②"图来源"只覆盖 `diffuseMap` 一类**材质图**：`shadow_map`/输入图是 pass 级的，
+两次 pass 用不同影子图时集合各建各的（调用方 per-pass ✓），但没有一条规则**强制**它；③M8d-2 记的输入集合仍按
+第一个 content half 建。

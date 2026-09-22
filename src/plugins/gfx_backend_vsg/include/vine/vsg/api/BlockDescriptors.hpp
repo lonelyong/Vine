@@ -73,6 +73,30 @@ class BlockDescriptors
         AbiBlockRole  role{AbiBlockRole::NotABlock};  ///< The block role read at that binding.
     };
 
+    /** @brief The texture revision a set's sampled images were resolved from.
+     *
+     * WHY A SET SAYS THIS. Two drawables of one program VARIANT (see api/ProgramVariant) are served by the
+     * same compiled half, but their MATERIALS may sample different maps - and the sets a caller builds for
+     * them have the SAME shape (the same block bindings, the same sampler bindings), so a pass that picked
+     * a set by shape alone would hand one drawable the other's images. The source is the tag that says
+     * which texture revision the images came from - the SAME pair api/MaterialImages keys its cache by -
+     * and a pass that knows a drawable's material asks for the set built from ITS texture (and takes a set
+     * whose source is empty - one whose samplers are all pass-level - when there is no exact one).
+     */
+    struct ImageSource
+    {
+        // No default member initialisers on purpose: a default argument of the enclosing class cannot use
+        // them (`ImageSource source = {}` would be diagnosed), so `{}` value-initialises these instead.
+        const void*   texture;   ///< The texture the images were acquired for; null = none involved.
+        std::uint64_t revision;  ///< That texture's revision when they were.
+
+        /** @brief Gets whether the set's images involve no texture at all (its samplers are pass-level). */
+        [[nodiscard]] bool empty() const noexcept { return texture == nullptr; }
+
+        /** @brief Compares two sources (the identity is the pair). */
+        [[nodiscard]] friend bool operator==(const ImageSource&, const ImageSource&) noexcept = default;
+    };
+
     /** @brief One sampled image a declared set binds (the ENGINE's set 0 carries the material block AND the
      *         diffuse map, so the two kinds share a set - `layoutOfShape` declares both). */
     struct SampledBinding
@@ -135,12 +159,14 @@ class BlockDescriptors
      * @param shape     The bindings the set declares (one per block role; see `layoutOfShape`).
      * @param set_index Index of the block set in the pipeline layouts that use it.
      * @param samplers  The sampled images the program declares in the SAME set (empty for a blocks-only set).
+     * @param source    Which texture revision those images were resolved from (see @ref ImageSource).
      * @return The descriptors, or null when the layout or the set could not be created.
      */
     static std::unique_ptr<BlockDescriptors> create(::vsg::ref_ptr<::vsg::Device> device,
                                                     const BlockStorage& storage, std::span<const Binding> shape,
                                                     std::uint32_t set_index,
-                                                    std::span<const SampledBinding> samplers = {});
+                                                    std::span<const SampledBinding> samplers = {},
+                                                    ImageSource source = {});
 
     /** @brief Creates the set @p abi's declared blocks are bound through, for one set index.
      *
@@ -153,12 +179,15 @@ class BlockDescriptors
      * @param set       Descriptor set index.
      * @param device    The device the set and its pool belong to.
      * @param storage   The storage whose buffer is bound.
+     * @param samplers  The sampled images the program declares in the SAME set.
+     * @param source    Which texture revision those images were resolved from (see @ref ImageSource).
      * @return The descriptors, or null when the set could not be created.
      */
     static std::unique_ptr<BlockDescriptors> forAbi(const ProgramAbi& abi, std::uint32_t set,
                                                     ::vsg::ref_ptr<::vsg::Device> device,
                                                     const BlockStorage& storage,
-                                                    std::span<const SampledBinding> samplers = {});
+                                                    std::span<const SampledBinding> samplers = {},
+                                                    ImageSource source = {});
 
     ~BlockDescriptors();
 
@@ -198,6 +227,9 @@ class BlockDescriptors
     /** @brief Gets the index of the block set in the pipeline layout. */
     [[nodiscard]] std::uint32_t setIndex() const noexcept;
 
+    /** @brief Gets which texture revision this set's sampled images were resolved from (see @ref ImageSource). */
+    [[nodiscard]] ImageSource source() const noexcept;
+
     /** @brief Gets the alignment every dynamic offset must satisfy on this device. */
     [[nodiscard]] std::uint64_t alignment() const noexcept;
 
@@ -211,7 +243,7 @@ class BlockDescriptors
 
     BlockDescriptors(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage,
                      std::span<const Binding> shape, std::uint32_t set_index,
-                     std::span<const SampledBinding> samplers);
+                     std::span<const SampledBinding> samplers, ImageSource source);
 };
 
 /** @brief Gets the block shape @p abi declares in @p set, in binding order.
