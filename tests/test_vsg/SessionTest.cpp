@@ -301,6 +301,11 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     target_clear.color_value[3] = 1.0F;
 
     Diagnostics diagnostics;
+    diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+        std::printf("[drive-test] diagnostic: severity=%d category=%d message=%s\n",
+                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    as_bytes(diagnostic.message).c_str());
+    });
 
     // Frame 1: the happy path, on a session of its own - committed through the drive, and the pixels are the
     // evidence that the off-screen pass really reached the device through the session's submission.
@@ -363,6 +368,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
         EXPECT_TRUE(executor.commit(*first, session)) << "the drive submits and presents through the session";
         EXPECT_EQ(session.framesPresented(), 1U);
+        EXPECT_EQ(session.deviceWaits(), 0U) << "a frame that goes through does not stop the device";
         EXPECT_FALSE(target->instance().attachments_invalidated)
             << "a submission that happened leaves nothing to repair";
         {
@@ -448,11 +454,54 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     EXPECT_EQ(session.framesPresented(), 0U) << "nothing was presented for the lost frame";
     EXPECT_EQ(session.lostFrames(), 1U);
 
-    // Frame 3: the plan reads the mark. The pass that writes the off-screen target bootstraps (it clears what
-    // nobody can vouch for), and the window pass does not - the frame's window write belongs to the
-    // presentation, not to this target's contents. Recording the bootstrapping pass is what repairs the
-    // fact, which is the half a mark without a next plan would leave open.
-    const CompiledFrame* third = record_frame(FrameToken{ 3U });
+    // Frame 3: the SAME session serves the next frame, because a lost frame is survivable here - the
+    // session rebuilt the swapchain for exactly the image this frame acquired and never presented (one
+    // counted device idle). The plan reads the mark: the pass that writes the off-screen target bootstraps
+    // (it clears what nobody can vouch for) and the window pass does not - the frame's window write belongs
+    // to the presentation, not to this target's contents.
+    const auto drive = [&](bool with_offscreen) -> const CompiledFrame* {
+        const FrameToken token = session.beginFrame();
+        EXPECT_TRUE(token);
+        EXPECT_TRUE(recorder.beginFrame(token));
+        EXPECT_TRUE(recorder.beginPass(1U));
+        EXPECT_TRUE(recorder.setRenderTarget(nullptr));
+        EXPECT_TRUE(recorder.setClearPolicy(window_clear));
+        EXPECT_TRUE(recorder.endPass());
+        if (with_offscreen)
+        {
+            EXPECT_TRUE(recorder.beginPass(2U));
+            EXPECT_TRUE(recorder.setRenderTarget(target.get()));
+            EXPECT_TRUE(recorder.setClearPolicy(target_clear));
+            EXPECT_TRUE(recorder.endPass());
+        }
+        EXPECT_TRUE(recorder.endFrame());
+        EXPECT_TRUE(recorder.swapBuffers());
+
+        std::vector<TargetFacts> table(1U);
+        table[0] = window->facts();
+        if (with_offscreen)
+        {
+            TargetFacts offscreen;
+            offscreen.target        = target.get();
+            offscreen.wanted.width  = 8;
+            offscreen.wanted.height = 8;
+            offscreen.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+            offscreen.current = target->instance();
+            table.push_back(offscreen);
+        }
+        const CompiledFrame& compiled = compiler.compile(recorder.description(), FrameFacts{ table });
+
+        const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
+            vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        EXPECT_NE(graph, nullptr);
+        EXPECT_TRUE(executor.record(compiled, graph));
+        EXPECT_EQ(executor.skipped(), 0U);
+        EXPECT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+        EXPECT_TRUE(executor.commit(compiled, session)) << "the next frame goes through on the same session";
+        return &compiled;
+    };
+
+    const CompiledFrame* third = drive(/*with_offscreen*/ true);
     ASSERT_EQ(third->passes.size(), 2U);
     bool offscreen_bootstraps = false;
     bool window_bootstraps    = false;
@@ -469,12 +518,32 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     }
     EXPECT_TRUE(offscreen_bootstraps) << "the plan answers the mark: the pass that writes it clears";
     EXPECT_FALSE(window_bootstraps) << "the window is not implicated by the off-screen target's mark";
-
-    const auto third_graph = vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
-    ASSERT_NE(third_graph, nullptr);
-    ASSERT_TRUE(executor.record(*third, third_graph));
     EXPECT_FALSE(target->instance().attachments_invalidated)
         << "the bootstrapping pass repaired it: contents are known again";
+
+    // Four frames that write the window only (one more than the slots vsg keeps in flight, so the healed
+    // frame's slot has been re-entered): a frame waits the fence of the slot it enters, so these are what
+    // PROVE the healed frame's copy has run - which is what makes reading its pixels evidence, not a race.
+    drive(/*with_offscreen*/ false);
+    drive(/*with_offscreen*/ false);
+    drive(/*with_offscreen*/ false);
+    drive(/*with_offscreen*/ false);
+
+    EXPECT_EQ(session.framesPresented(), 5U) << "the lost frame is not a presented one; the five that followed are";
+    EXPECT_EQ(session.lostFrames(), 1U);
+    EXPECT_EQ(session.deviceWaits(), 1U) << "the swapchain rebuild a lost frame costs is counted, and it is the only one";
+    EXPECT_EQ(diagnostics.total(), failures_before + 1U)
+        << "the lost frame was the one event, and it was reported exactly once";
+    {
+        const vine::vsg::core::PixelProbe probe = target->probe();
+        ASSERT_TRUE(probe.valid());
+        const Rgba8 sampled  = probe.pixel(4, 4);
+        const Rgba8 expected{ quantise(0.25F), quantise(0.5F), quantise(0.75F), 255U };
+        EXPECT_NEAR(sampled.r, expected.r, 1) << "the repaired target renders the frame that repaired it";
+        EXPECT_NEAR(sampled.g, expected.g, 1);
+        EXPECT_NEAR(sampled.b, expected.b, 1);
+        EXPECT_TRUE(probe.wholeImageMatches(sampled));
+    }
 
     session.shutdown();
 }

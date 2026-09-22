@@ -74,10 +74,10 @@
 > M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）、
 > M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）、M8l 形状变了就是真的重建（§11.16au）、
 > M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）、M8o 窗口路径一次调用（§11.16ax）、
-> M8p 每帧换图不再拆机器（§11.16ay）。
+> M8p 每帧换图不再拆机器（§11.16ay）、M8q 丢帧的会话自己活下来（§11.16az）。
 > 下一步：
-> `record` 的 shape 核对补上**格式**；丢帧后的会话自愈（swapchain 图像已取未呈）；窗口路径把 `applyTargetPlans` 也接上。
-> 其余遗留口子：`skyMap` 无生产者、集合与半片停靠窗口各自独立。
+> `record` 的 shape 核对补上**格式**；窗口路径把 `applyTargetPlans` 也接上；`skyMap` 生产者。
+> 其余遗留口子：集合与半片停靠窗口各自独立。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2626,7 +2626,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8n（会话的提交也自己说）~~ | **已完成（2026-09-22）**：`Session::commitFrame()` 自己驱动 viewer 的任务（`Viewer::recordAndSubmit` 返回 void、**吞掉队列 `VkResult`**）：任何一个任务提交失败（VkResult 非成功，或 vsg 抛异常）⇒ 报 `SubmissionFailed`、答 false、`lostFrames+1`；**不呈现、不计已呈现、不声称完成**；帧本身照样结束（`FrameTimeline::abandoned(token)`：令牌被消费、**submitted 水位不动**——两个水位因此分别是"帧"与"提交"）；真设备用例（丢帧的提交答 false + 报告 + 计数 + 水位 + 无开帧；重建会话后正常提交呈现）+ 1 条无设备时间线用例；变异 6/6 红 + 一次"照样呈现"挂住并带 2 条 VUID（§11.16aw）。 |
 | ~~M8o（窗口路径一次调用）~~ | **已完成（2026-09-22）**：`VsgExecutor::commit(frame, session)`（`commitFrame()` 答 false ⇒ `noteLostSubmission(frame)`；报告留会话、标记归执行器）+ 真设备用例（两个会话：A 上 `commit` 成功、离屏目标像素 + "没被标"；B 上把记录步做成抛异常 ⇒ 答 false + `SubmissionFailed` + 标记 + 下一份计划里**写它的那一趟** `bootstrap` + 录进去清掉；两次运行各 **0 VUID**）；3/3 变异红；**顺手撞出新口子**：上一次提交还在飞时再 `assignFrameGraphs` 会销毁 viewer 的 task ⇒ 12 条 VUID + 验证层里段错误（§11.16ax）。 |
 | ~~M8p（每帧换图不再拆机器）~~ | **已完成（2026-09-22）**：`SessionContentAccess::assignFrameGraphs` 改成把新图**交给自己已有的 task**（`task->commandGraphs = graphs`），只在 viewer 一个 task 都没有时才让 viewer 重建——不再销毁在飞的 fence / semaphore / 命令缓冲；真设备用例（一帧一图、帧帧在飞时换图，六个提交零 VUID、`deviceWaits()==0`、像素指出**最后换的那张图**真的被提交）+ 3/3 变异红（旧行为 ⇒ 30 条 VUID；不换图 ⇒ 像素错；不编译 ⇒ 红）（§11.16ay）。 |
-| **M8 下一步** | `record` 的 shape 核对补上格式；丢帧后的会话自愈；窗口路径接上 `applyTargetPlans`。 |
+| ~~M8q（丢帧的会话自己活下来）~~ | **已完成（2026-09-22）**：`Session::commitFrame()` 的失败分支重建 swapchain（`window->resize()`：vsg 的 `buildSwapchain()` 先 `vkDeviceWaitIdle` 再换链）+ **把这次 idle 计进 `deviceWaits()`**；真设备用例（同一会话丢帧后**下一帧就位**：`commit` 答 true、被标的目标在它的 bootstrap 趟里清掉、像素 = 清屏色、`framesPresented`+5、`lostFrames==1`、`deviceWaits==1`、报告恰好一条；两次运行各 0 VUID）+ 3/3 变异红（不重建 ⇒ 10 条 VUID；不计数 ⇒ 红；每帧都重建 ⇒ 红，还连带 8 个会话用例红）（§11.16az）。 |
+| **M8 下一步** | `record` 的 shape 核对补上格式；窗口路径接上 `applyTargetPlans`；`skyMap` 生产者。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3671,3 +3672,22 @@ task 都没有时（这个 session 不会：它起来时就带着自己的帧图
 的清屏色（0.4 / 0.6，而不是第一帧的 0.2 / 0.6）。变异 3/3 红：①回到旧行为（viewer 重建 task）⇒ **30 条 VUID**；
 ②换图不装机（新图不交给 task）⇒ 像素错；③不编译 ⇒ 红。
 门禁 644 用例 / 98 套件、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 849、相位 11 行 / 2 次运行。
+
+### 11.16az M8q（2026-09-22）：丢帧的会话自己活下来
+
+M8n/M8o 的现场留了一个"宿主必须重建会话"的尾巴：丢帧时 acquire 到的那张 swapchain 图像再也不会被呈递，WSI 因此缺一张图，
+下一次 acquire 就报 forward-progress 警告、present 报"呈了一张没 acquire 的图"（实测两类 VUID）。这一片把这一层修进会话自己：
+
+* `commitFrame()` 的失败分支在结束帧之后**重建 swapchain**（`window->resize()` → vsg 的 `buildSwapchain()`：先
+  `vkDeviceWaitIdle`，再换新链、重建 depth/multisample 与 frames），并把这次 idle **计进 `deviceWaits()`**——"帧路径不停
+  设备"这条不变量因此仍然可查：丢帧是例外，计数器就是例外留下的痕迹。
+* "没有开着的帧"那条 false 不走这里（没有 acquire 过，没有 WSI 损伤要修）。
+* 不做的仍然是"重试这一帧"：图像已经取走、图已经录过，重试不是一个选项（见 §11.16aw 的 `abandoned`）。
+
+证据：真设备用例（M8o 的会话 B 扩写）——丢帧（`commit` 答 false、目标被标、`SubmissionFailed` +1）之后**同一个会话**继续驱动：
+下一帧（窗口 pass + 离屏 pass）`commit` 答 true，计划里写该目标的那趟 `bootstrap == true`，录进去后标记清掉，随后四个只写窗口的
+帧（比槽数多一：帧会等它进入的那个槽的 fence，所以它们是"那一帧已经做完"的证据）⇒ `framesPresented()==5`、`lostFrames()==1`、
+`deviceWaits()==1`、`diagnostics.total()` 恰好一条；目标像素 = 这一趟的清屏色。两次运行各 **0 VUID**。
+变异 3/3 红：①不重建 ⇒ **10 条 VUID**（acquire 的 forward-progress + present 未 acquire 的图）；②重建但不计数 ⇒ 红；
+③每帧都重建 ⇒ 红（本片用例的 `deviceWaits()==0`），且连带给**另外 8 个会话用例**留下失败——"这条路径不该停设备"的判别力
+原来就在那儿。门禁 644 用例 / 98 套件、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 849、相位 11 行 / 2 次运行。

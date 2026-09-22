@@ -445,6 +445,18 @@ bool Session::commitFrame()
         impl->timeline.abandoned(token);
         impl->retirement.advance(impl->timeline);
         ++impl->lost_frames;
+        // THE SWAPCHAIN IS REBUILT, and this is the whole reason a lost frame is survivable here: the frame's
+        // image was acquired and never presented, so the WSI is short one image and the next acquire cannot
+        // be trusted (measured: a forward-progress warning on the acquire and a present of an image that was
+        // not acquired). It is the one repair this layer can make without a new device, and it costs a device
+        // idle - COUNTED, because vsg's buildSwapchain() waits the device before it destroys the old
+        // swapchain (WindowAdapter::resize): a lost frame is the exception, and the counter is how that stays
+        // visible instead of becoming a habit.
+        if (impl->window != nullptr)
+        {
+            impl->window->resize();
+            impl->retirement.noteDeviceWait();
+        }
         if (impl->diagnostics != nullptr)
         {
             impl->diagnostics->report(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed,
