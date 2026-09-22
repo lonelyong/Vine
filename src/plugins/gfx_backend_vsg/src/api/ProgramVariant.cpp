@@ -2,6 +2,9 @@
 
 #include <vine/graphics/ShaderAbi.hpp>
 
+#include <vine/vsg/api/ContentFacts.hpp>
+#include <vine/vsg/api/GeometryFacts.hpp>
+
 V_VSG_NS_BEGIN
 
 std::uint32_t ProgramVariant::bits() const noexcept

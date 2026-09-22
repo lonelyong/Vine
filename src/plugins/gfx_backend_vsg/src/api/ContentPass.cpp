@@ -724,13 +724,6 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
                                 std::uint32_t sampled_color_count, std::uint32_t sampled_depth_count,
                                 ::vsg::Group& into)
 {
-    const FactResult<ProgramFacts> program = findProgram(facts, command.program);
-    if (!program.found())
-    {
-        reportRefused("the command's program", program.miss);
-        return false;
-    }
-
     const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry, command.geometry_revision);
     if (!geometry.found())
     {
@@ -738,9 +731,9 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         return false;
     }
 
-    // The material answers BEFORE the half is picked, because it is one of the two inputs of the
-    // drawable's VARIANT (see below): a program's text is several programs, and which of them this
-    // drawable is drawn with is a fact of the drawable, not of the plan.
+    // The material answers before the program does, because it is one of the two inputs of the drawable's
+    // VARIANT (see below): a program's text is several programs, and which of them this drawable is drawn
+    // with is a fact of the drawable, not of the plan.
     const FactResult<MaterialFacts> material = findMaterial(facts, command.material);
     if (!material.found())
     {
@@ -750,8 +743,17 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
 
     // THE VARIANT: which of the program's texts this drawable means, computed from the two facts that
     // decide it (the engine's own rule - see api/ProgramVariant). It is part of the half's identity, so a
-    // pass that compiled one variant never draws another variant's drawable through it.
+    // pass that compiled one variant never draws another variant's drawable through it - and it is part of
+    // the PROGRAM ENTRY's key as well, so the `abi` this command is served (its push ranges) is the one its
+    // own text declares (see findProgram).
     const ProgramVariant variant = variantOf(*material.entry, *geometry.entry);
+
+    const FactResult<ProgramFacts> program = findProgram(facts, command.program, variant);
+    if (!program.found())
+    {
+        reportRefused("the command's program", program.miss);
+        return false;
+    }
 
     // The compiled half the tuple names: one program's stages against one vertex layout FOR ONE VARIANT
     // (see the file note). A half carries its own program, revision and variant, so a command that names

@@ -12,6 +12,7 @@
 #include <vine/vsg/api/ContentPipeline.hpp>
 #include <vine/vsg/api/FactResult.hpp>
 #include <vine/vsg/api/ProgramAbi.hpp>
+#include <vine/vsg/api/ProgramVariant.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
 #include <vine/vsg/core/Keys.hpp>
 #include <vine/vsg/core/Streams.hpp>
@@ -77,6 +78,7 @@ struct ProgramFacts
 {
     const void*              program{nullptr};  ///< The identity the plan names.
     std::uint64_t            revision{0};       ///< The revision the plan names.
+    ProgramVariant           variant{};         ///< The variant (which of the program's texts) this entry is.
     ContentPipeline::Shaders shaders{};         ///< The GLSL those two stages consist of.
     ProgramAbi               abi{};             ///< The bindings and push ranges those two texts declare.
 };
@@ -125,13 +127,29 @@ struct ContentFacts
 
 /** @brief Finds the program a compiled command names.
  *
+ * THE VARIANT IS PART OF THE KEY. A program's text is several texts (see api/ProgramVariant): its stages
+ * gate declarations and code on define names, so one (identity, revision) may be answered with several
+ * entries that differ in what their `abi` declares. The lookup asks for the one the drawable means, because
+ * an entry of another variant would hand the layer bindings and push ranges the module it compiled does not
+ * have - and the picture, or the validation layer, would be the only thing to notice.
+ *
+ * A TABLE MAY CARRY SUPERSEDED REVISIONS. A production table keeps a replaced revision answerable until the
+ * frames that may still name it are past (see api/ContentStore), so the scan looks for the entry asked for
+ * instead of stopping at the first entry of that identity: reporting Revision on the first mismatch would
+ * call a revision missing that is right there.
+ *
  * @param facts    The tables.
  * @param program  Program identity and revision (from the plan).
+ * @param variant  Which of the program's texts the drawable means.
  * @return The entry, or the reason there is none.
  */
-[[nodiscard]] FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::ProgramRef& program) noexcept;
+[[nodiscard]] FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::ProgramRef& program,
+                                                   const ProgramVariant& variant) noexcept;
 
 /** @brief Finds the geometry a compiled command names.
+ *
+ * A TABLE MAY CARRY SUPERSEDED REVISIONS (see findProgram): the scan looks for the revision asked for
+ * instead of stopping at the first entry of that identity.
  *
  * @param facts    The tables.
  * @param geometry Geometry identity (from the plan).

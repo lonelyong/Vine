@@ -35,7 +35,8 @@ bool blockFitsAbi(const MaterialFacts& facts) noexcept
     return facts.block.size() == sizeof(vine::graphics::VineMaterialBlock);
 }
 
-FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::ProgramRef& program) noexcept
+FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::ProgramRef& program,
+                                     const ProgramVariant& variant) noexcept
 {
     if (program.program == nullptr)
     {
@@ -45,19 +46,34 @@ FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::Prog
         return { nullptr, FactMiss::Unknown };
     }
 
+    // The whole scan has to run: a table may hold several entries of one identity (its other texts, or a
+    // revision a replaced entry still answers), so the first entry of that identity is not the answer.
+    bool identity_known = false;
+    bool revision_known = false;
     for (const ProgramFacts& entry : facts.programs)
     {
         if (entry.program != program.program)
         {
             continue;
         }
+        identity_known = true;
         if (entry.revision != program.revision)
         {
-            return { nullptr, FactMiss::Revision };
+            continue;
         }
-        return { &entry, FactMiss::None };
+        revision_known = true;
+        if (entry.variant == variant)
+        {
+            return { &entry, FactMiss::None };
+        }
     }
-    return { nullptr, FactMiss::Unknown };
+    if (revision_known)
+    {
+        // The program is here at the revision the plan names, but not AS THIS DRAWABLE'S TEXT: the entry
+        // that is missing is the variant's (see api/ProgramVariant - the fixes are "build that variant").
+        return { nullptr, FactMiss::Unknown };
+    }
+    return { nullptr, identity_known ? FactMiss::Revision : FactMiss::Unknown };
 }
 
 FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, const void* geometry,
@@ -68,15 +84,19 @@ FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, const void* ge
         return { nullptr, FactMiss::Unknown };
     }
 
+    // The whole scan has to run: a table may hold a replaced revision while the frames that named it are
+    // still in flight (see api/ContentStore), so the first entry of that identity is not the answer.
+    bool identity_known = false;
     for (const GeometryFacts& entry : facts.geometries)
     {
         if (entry.geometry != geometry)
         {
             continue;
         }
+        identity_known = true;
         if (entry.revision != revision)
         {
-            return { nullptr, FactMiss::Revision };
+            continue;
         }
         if (!channelsMatchLayout(entry))
         {
@@ -84,7 +104,7 @@ FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, const void* ge
         }
         return { &entry, FactMiss::None };
     }
-    return { nullptr, FactMiss::Unknown };
+    return { nullptr, identity_known ? FactMiss::Revision : FactMiss::Unknown };
 }
 
 FactResult<MaterialFacts> findMaterial(const ContentFacts& facts, const void* material) noexcept

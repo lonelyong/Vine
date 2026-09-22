@@ -4,11 +4,15 @@
 #include <string>
 #include <vector>
 
-#include <vine/vsg/api/ContentFacts.hpp>
-#include <vine/vsg/api/GeometryFacts.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 V_VSG_NS_BEGIN
+
+// Forward declarations: the two fact types this header NAMES but does not read (see variantOf). Including
+// their definitions here would close a cycle - the tables key their program entries by this variant, so
+// ContentFacts.hpp includes THIS header.
+struct GeometryFacts;
+struct MaterialFacts;
 
 /**
  * @brief The VARIANT of a program: the defines that change what its text means.

@@ -29,6 +29,7 @@ using vine::vsg::findProgram;
 using vine::vsg::GeometryFacts;
 using vine::vsg::MaterialFacts;
 using vine::vsg::ProgramFacts;
+using vine::vsg::ProgramVariant;
 using vine::vsg::core::ProgramRef;
 using vine::vsg::core::StreamKind;
 
@@ -125,19 +126,19 @@ TEST(ContentFactsTest, AProgramIsFoundByItsIdentityAndRevisionAndNothingElse)
     tables.programs.push_back(ProgramFacts{ &second, 1U, {} });
     const ContentFacts facts = tables.view();
 
-    const auto found = findProgram(facts, ProgramRef{ &first, 7U });
+    const auto found = findProgram(facts, ProgramRef{ &first, 7U }, ProgramVariant{});
     ASSERT_TRUE(found.found());
     EXPECT_EQ(found.entry->program, &first);
     EXPECT_EQ(found.miss, FactMiss::None);
 
     // The same identity at a different revision is NOT the same content: the plan describes a program that has
     // moved on, and recording the newer one would draw a picture the frame never asked for.
-    EXPECT_EQ(findProgram(facts, ProgramRef{ &first, 6U }).miss, FactMiss::Revision);
-    EXPECT_FALSE(findProgram(facts, ProgramRef{ &first, 6U }).found());
-    EXPECT_EQ(findProgram(facts, ProgramRef{ &first, 8U }).miss, FactMiss::Revision);
+    EXPECT_EQ(findProgram(facts, ProgramRef{ &first, 6U }, ProgramVariant{}).miss, FactMiss::Revision);
+    EXPECT_FALSE(findProgram(facts, ProgramRef{ &first, 6U }, ProgramVariant{}).found());
+    EXPECT_EQ(findProgram(facts, ProgramRef{ &first, 8U }, ProgramVariant{}).miss, FactMiss::Revision);
 
-    EXPECT_EQ(findProgram(facts, ProgramRef{ nullptr, 7U }).miss, FactMiss::Unknown);
-    EXPECT_EQ(findProgram(facts, ProgramRef{ &unrelated, 7U }).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(facts, ProgramRef{ nullptr, 7U }, ProgramVariant{}).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(facts, ProgramRef{ &unrelated, 7U }, ProgramVariant{}).miss, FactMiss::Unknown);
 }
 
 TEST(ContentFactsTest, AGeometryIsFoundByItsIdentityAndRevision)
@@ -217,7 +218,7 @@ TEST(ContentFactsTest, AnEmptyTableAnswersUnknownRatherThanGuessing)
     const ContentFacts empty{};
 
     int identity = 0;
-    EXPECT_EQ(findProgram(empty, ProgramRef{ &identity, 0U }).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(empty, ProgramRef{ &identity, 0U }, ProgramVariant{}).miss, FactMiss::Unknown);
     EXPECT_EQ(findGeometry(empty, &identity, 0U).miss, FactMiss::Unknown);
     EXPECT_EQ(findMaterial(empty, &identity).miss, FactMiss::Unknown);
 }

@@ -3,6 +3,16 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
+> **M8e：三张表的生产侧**——`api/ContentStore`：宿主 `track()` 活对象（条目持键，地址不回收），
+> `tablesFor(计划)` 只建**计划点到名**的东西（稳态帧 0 重建），修订是重建的闸（几何/程序读 SDK 自己的
+> `revision()`，材质只有 `updateMaterial()` 报告的那一个——SDK 类型没有 revision）；被顶替的修订**留在表里**
+> 直到时间线过了还可能记录它的槽（同一个 `RetirementQueue`，弱引用捕获，队列先死也不会悬空），材质例外：
+> 它按身份查（计划不能点修订），所以**就地替换**、只把旧值停靠；`releaseAbandoned()` 丢"只剩存储自己"的对象；
+> 没有停靠窗口时**留下并计数**（`retained()`），绝不提前释放。顺手把**程序表按变体作键**（`ProgramFacts.variant`
+> + `findProgram(…, variant)`，pass 先算变体再取条目）并让两个查找**扫全表**（表里可能有被顶替的修订）；真设备
+> 证据：整帧的表由 store 生产、同一程序两个变体（`VINE_DIFFUSE_MAP` 连 push 声明都门控）⇒ 左半洋红、右半材质色；
+> `test_vsg` 624 用例 / 96 套件全绿；门禁 **0 VUID / 0 SYNC-HAZARD**、skipped=0、hygiene 全清（现 840 文件）。
+> 更早一片是
 > **M8d-2：程序的文本是好几份程序**——同一份文本按 `#pragma import_defines` 编译出不同的 ABI 与分支（引擎的
 > `forwardProgram` 没有 `VINE_DIFFUSE_MAP` 时 (0,1) 处**没有**采样器、texcoord 的种类由 define 决定），
 > 于是**变体的 define 进管线身份**：`api/ProgramVariant`（规则唯一拼写：恒有且只有一个 texcoord kind、
@@ -30,9 +40,9 @@
 > M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：M8a 读事实（§11.16ae）、M8b 布局跟着
 > 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）、
 > M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）、
-> M8d-2 变体的 define 进管线身份（§11.16am）。
+> M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）。
 > 下一步：
-> 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。
+> 半片的生产侧（由表建管线层与 `Scope::Entry`）。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2570,6 +2580,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8c-4（全屏集合即声明）~~ | **已完成（2026-09-22）**：`createScreen` 收 `ProgramAbi` + set≠0 / 非阴影块两条拒绝；`sampledSetLayout` 的全屏分支（声明号就是绑定号、深度槽跳过已点名的号、块 = 静态 UBO）；`recordScreenDraw` 按身份找源、按计划找 map、按名拒绝、每调用一个阴影块；引擎带影/无影延迟光照七趟真设备像素；顺手修**动态命令一直开着混合**（多附件 = 不混合，单附件恒开）；5 条变异反证全红（§11.16ak）。 |
 | ~~M8d-1（材质贴图的 GPU 侧）~~ | **已完成（2026-09-22）**：`api/MaterialImages`（按地址 + 修订缓存；条目持住键；mip-major 交错 staging；元素 = 一个 texel、数组维数 = 层数；view type 写在 DATA 上；白 fallback 2D（复用 `WhiteImage`）+ cube；`releaseAbandoned`/`clear`/超限淘汰；`setMaxAnisotropy`）；`ContentPipeline` 放开 `samplerCube` 的拒绝（立方体视图落地了）；上传走 vsg 的 TransferTask（数据背书的 `vsg::Image`），像素证：四色 2x2 → 四象限、六色 cube → 五方向、重填 → 第二趟新颜色；5 条变异反证全红（§11.16al）。 |
 | ~~M8d-2（变体的 define 进管线身份）~~ | **已完成（2026-09-22）**：`api/ProgramVariant`（规则 + `bits()` + `defines()` + `describe()` + `variantOf(材质, 几何)`）；`PipelineKey += variant`（相等 + 散列 + 审计表行数不变）；`Shaders.defines` 一份清单喂**扫描与编译**两侧；`compileStage` 交给 vsg 的 `compiler.compile(stage, defines)`；`Scope::Entry += variant`（放在最后，旧聚合初始化照旧编）；`recordCommand` 由**事实**算变体并按四元组配 half、三种拒绝各自说清；顺手修**每趟只 serve 第一个 content half**（多 half 的趟绑错集合 = VUID 00358+08600）；5 条变异反证全红（§11.16am）。 |
+| ~~M8e（三张表的生产侧）~~ | **已完成（2026-09-22）**：`api/ContentStore`（track 活对象 + 条目持键；`tablesFor(计划)` 只建点名者、稳态 0 重建；几何/程序按 SDK 修订重建、材质按 `updateMaterial` 计数；被顶替的修订留在表里直到停靠到期、材质就地替换只停旧值；`releaseAbandoned`；无窗口 = 留下并计数）。顺手：程序表按变体作键（`ProgramFacts.variant` + `findProgram(…, variant)` + `recordCommand` 先算变体），两个查找改为扫全表（表里可能有被顶替的修订）；真设备用例 = store 生产的表画的整帧（push 声明的有无由变体决定）；6 条变异反证全红（§11.16an）。 |
 | **M8 下一步** | 变体的 define 进管线身份（`VINE_DIFFUSE_MAP` / texcoord kind 取决于几何与材质）→ 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
@@ -3189,3 +3200,67 @@ VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)` 里**点名**它可能�
 "同一种 kind 的 halves 用同一份 recipe 建采样布局，所以彼此兼容"（`makeInputSet` 的注释）；引擎今天的
 三个变体都不碰输入集合，但**用户程序**若按变体改输入声明，就需要按 half 建输入集合（或明确拒绝）；
 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）仍是下一片。
+
+### 11.16an M8e（2026-09-22）：三张表的生产侧——计划说要什么，修订说何时重建，时间线说何时退役
+
+§11.16am 把"变体"接进身份，这一片回答它引出的后勤问题：**这些表在生产里由谁产出**。之前的每一片里，表都是
+测试手搭的；宿主编辑场景时不该做这件事——ABI 扫描是工作，按帧、按 drawable、或在录制时做，等于把内容决策
+塞进帧循环。
+
+**`api/ContentStore` 的四条规则**：
+
+1. **计划就是清单**：`tablesFor(计划)` 走一遍编译好的帧（内容命令的 geometry/material/program、全屏调用的
+   program），只建**点到名**的东西，点两次只建一次。没有比它更可信的清单——宿主手维护一份就是帧的第二份拷贝，
+   两份不一致的方向恰好是"什么都不画"。
+2. **修订是闸，且不猜**：重建读对象**现在**的 `Geometry::revision()` / `ShaderProgram::revision()`；材质
+   SDK 类型没有 revision，只有 `updateMaterial()`（SDK `MaterialManager` 的契约，这里拼成一个成员）报告的
+   那个。计划点的是旧修订，表**不给**旧字节——它已经不在了；那一刻的查找就是 miss，pass 按设计上报（"miss 是
+   报告，不是回落"）。
+3. **被顶替的修订留在表里**：点过 3 的帧可能还被重录（重建臂），所以 3 必须一直能答——直到**还可能记录它的
+   槽**过去为止（与 GPU 对象同一窗口、同一个 `RetirementQueue`）。做法是**追加**而不是替换：表里短暂地同时
+   有 3 和 4，3 在停靠到期时连同它的存储一起离场。**材质是例外**：它按身份查（计划不能点材质修订），表必须
+   回答"现在的材质"，所以编辑**就地替换**那一行，只把旧值（facts + 它的块存储）停靠起来。
+4. **条目持有键对象**：表按**地址**作键而观察不到销毁，只引用的条目会活过对象——地址被复用时会拿到死对象的
+   事实（画面错，且是静默的）。所以每个被 track 的对象由 store 持一份份额；`releaseAbandoned()` 丢"只剩
+   存储自己"的那些，把它们的行按同一窗口停靠。没有停靠窗口（会话没探到在飞槽数）时**留下并计数**
+   （`retained()`）：内存有代价、正确性没有。停靠的闭包持 `weak_ptr<Data>`——store 先死则释放无事发生，
+   队列先死则行按时离场，两个方向都不悬空。
+
+**顺手补的两处（生产暴露的）**：
+
+* **程序表的键要装得下生产**：一条 (身份, 修订) 现在可能对应**几份文本**（不同变体），所以 `ProgramFacts`
+  带 `variant`，`findProgram(…, variant)` 按三者匹配，`recordCommand` 先由材料+几何算变体、再取条目——
+  这样命令拿到的 `abi`（含 **push 范围**）就是它自己那份文本声明的。变异 M1/M5 证明：忽略变体时，要么
+  真设备用例的左半只剩清屏色（贴图命令拿到"没有 push"的 ABI，矩阵从没写过），要么半片条目断言红。
+* **查找必须扫全表**：表里现在可能有被顶替的修订，`findGeometry`/`findProgram` 原先"第一个同身份条目修订
+  不符就报 Revision"会在多修订表上**把在表里的修订报成缺失**（追加序 [3,4] 查 4 ⇒ 先在 3 上停住）。改成
+  扫全表、精确命中优先；M6 证明。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ContentStore.hpp` / `src/api/ContentStore.cpp`（新） | `track(几何/程序/材质)`、`updateMaterial`、`tablesFor(计划, 时间线, 停靠队列)`、`releaseAbandoned`、`clear`、`geometryEntries/programEntries/materialEntries/builds/retained`；内部三张表 + 每行配套存储（行的 span 指向自己的堆内存） |
+| `api/ContentFacts.hpp` / `.cpp` | `ProgramFacts += variant`；`findProgram(…, variant)`；`findGeometry`/`findProgram` 改为全表扫描（被顶替的修订可能在场） |
+| `api/ContentSources.cpp` | `buildProgramFacts(program, variant, out)` 顺手写上 `out.variant`（生成与查找一处拼写） |
+| `api/ContentPass.cpp` | `recordCommand` 先查几何+材质 → 算变体 → 再按变体取程序条目 |
+| `api/ProgramVariant.hpp` | 不再包含两张表头（前向声明 `GeometryFacts`/`MaterialFacts`）——表按变体作键 ⇒ 反过来包含它，写定义会成环 |
+| `tests/test_vsg/ContentStoreTest.cpp`（新，无设备，8 条） | 计划决定建什么；稳态帧 0 重建；修订抖动 ⇒ 旧修订留到停靠到期（早一帧不放）；材质编辑 ⇒ 就地替换 + 停旧值；一个程序两个变体两条目；全屏程序拿引擎的顶点阶段；未 track 就什么都不答；`releaseAbandoned` 只丢没人持有的 |
+| `tests/test_vsg/ContentPassTest.cpp`（+1 真设备） | 整帧的表由 store 生产：同一程序两个变体（`VINE_DIFFUSE_MAP` 连 push 声明都门控），**无贴图命令先收**（先建的一版被错查就会让贴图半边读不到 push）⇒ 左半洋红、右半材质色；M8d-1 的三条有贴图用例改为按各自变体建表条目 |
+
+**变异反证（6/6 红）**：
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 `findProgram` 不比变体 | 变体用例红 + 真设备用例红 |
+| M2 store 不看重修订（建过就不建） | 修订抖动用例红 |
+| M3 被顶替的修订立刻删行 | 修订抖动用例红（窗口内就不再作答） |
+| M4 材质编辑不推进修订 | 材质编辑用例红（还是旧块字节） |
+| M5 store 忽略材质的贴图（恒用空变体） | 变体用例红 + 真设备用例红 |
+| M6 几何查找在别的修订上停住 | 修订抖动用例红（在表里的修订被报缺失） |
+
+证据：`test_vsg` 全量 **624 用例 / 96 套件全绿**；门禁 `scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、
+skipped=0、hygiene 0 / 840 文件、`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、
+相位 9 行 / 2 次运行全收尾。
+
+**这一片留下的口子**：①**半片的生产侧**——表有了，管线层与 `Scope::Entry` 仍由宿主自己建（用例里就是
+"由表建层"那段循环），那才是下一步；②屏幕路径的程序条目**不带变体**（全屏 ABI 是引擎的、今天的全屏程序
+也门控不了什么，但用户片元文本若按 define 变脸，这里要补）；③M8d-2 记的输入集合仍按第一个 content half 建。
