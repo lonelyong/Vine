@@ -3,14 +3,14 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M8c-2a：一个声明的集合可以同时装块与采样图（引擎的 set 0 就是这种排布）**：事实/布局允许采样器落在任何
-> 声明的 set（与块同集也行，只要不撞 binding），`layoutOfShape` 两种绑定一起声明、`BlockDescriptors` 同时装
-> 块与图（`SampledBinding`）、`declaredSets()` / `samplerBindings(set)` 是调用方建集的唯一拼写；输入集仍是
-> pass 自己的（它的图来自 pass 的输入）。`test_vsg` 589 用例 / 91 套件全绿；门禁
-> （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 825 文件）、相位 9 行 / 2 次运行。
+> **M8c-2b：没有贴图的材料采样“白”**：`api/WhiteImage`（图像 + 视图 + 采样器 + `fill()` = 屏障 +
+> `vkCmdClearColorImage`（白）+ 屏障，停在描述符声明的 `SHADER_READ_ONLY`；无设备）——引擎的 “没有贴图就是白”
+> 是一个**值**，空着的是未定义数据；`test_vsg` 591 用例 / 92 套件全绿；门禁
+> （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 828 文件）、相位 9 行 / 2 次运行。
 > M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：M8a 读事实（§11.16ae）、M8b 布局跟着
-> 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）。下一步 M8c-2b：白色 fallback
-> 图 + 按声明绑定 pass 的输入图（`diffuseMap` 与 `shadow_map` 的生产侧）。
+> 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）。
+> 下一步：按名字把 pass 的输入图指到声明的 binding（`shadow_map` / G-buffer）+ 材质贴图（GPU 侧）→ 变体的
+> define 进管线身份 → 三张表的生产侧。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2542,7 +2542,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8a（声明成为事实）~~ | **已完成（2026-09-22）**：`api/ProgramAbi`——`scanProgramAbi(vertex, fragment, defines, out)` 把文本的绑定声明读成事实（set/binding、种类、阶段、按**L1 类型名**认领的角色、std140 尺寸、push 范围），条件按变体求值（taken 分支的 `#error` ⇒ Malformed），引擎自己的八个程序逐条钉住（前向 5 绑定 + push 128B 顶点、带影延迟光照的 5/6、屏幕拷贝的 binding=N…）；11 条无设备用例 + 5 条变异反证（§11.16ae）。下一步 M8b：布局跟着声明装配。 |
 | ~~M8b（布局就是声明）~~ | **已完成（2026-09-22）**：`ContentPipeline::create` 收 `ProgramAbi`——`describeAbi` 把声明读成布局（每个被声明碰到的 set 一条布局、空隙填真布局、块 → dynamic UBO 在**它自己写的** binding 上、push 照声明），填不了的按名拒绝（外来块 / 非 std140 / 超尺寸 / `count != 1` / 无视图的采样器种类 / 内容路径 set≠1 的采样器 / 块与输入挤一个 set），`acquire` 另拒“采样器超出本 pass 输入数”；`BlockDescriptors` 形状驱动（`canonicalShape` / `layoutOfShape` / `forAbi` / `blockShapeOf`，`bind()` 一个声明绑定一个偏移）；`ContentPass::Scope::block_sets` 一组块集 + `serveHalf` 按“set 序号 + 形状逐位相同”认领、按名拒绝、push 未填即拒；`Draw::blocks` 变 span。4 条新用例（真设备像素 1、真设备描述符 1、无设备 2）+ 6 条变异反证全红；门禁还揪出三处仍无条件绑块的旧夹具（程序一个块都没声明 ⇒ 布局 0 个 set），修夹具而不是加容忍（§11.16af）。 |
 | ~~M8c-1（push 由 pass 自己填）~~ | **已完成（2026-09-22）**：`AbiPushRange` 带上成员表（名字/偏移/尺寸，扫描时就记）；新 `api/ContentPush`：`contentPushMemberOf` 认 `projection` / `modelView`，`packContentPush` 按**名字**填——`projection` = `foldToDeviceClip(camera.projection)`（与 `VineViewBlock.proj` 同一个值、同一处折叠），`modelView` = `view * model`（顺序就是契约：模型矩阵在右）；认不出的名字或尺寸不对（`vec4 projection`）在 `ContentPipeline::create` 就拒（前缀可以），无相机写零（同 `buildViewBlock`）；`ContentDraw::Draw` += `pushes`，每个可绘制对象一遍（`modelView` 带的是它自己的模型矩阵）。**实测的坑**：`vsg::PushConstants` 放进 `StateGroup` 的 stateCommands 会被 vsg 按 slot 记录、但**到不了 shader**（画出来是恒等矩阵）——必须放进 `Commands` 节点、按插入序紧贴绘制（全屏路径 M5d 一直就是这么做的）；变异 N1 把位置改回去 ⇒ 像素用例红。另：计划里有相机时，pass 的**深度清屏值要显式给**（reverse-Z 远 = 0.0），否则片元被拒（画面=清屏色、0 VUID、无拒绝）。5 条新用例（真设备像素 ×1、无设备 ×4）+ 5 条变异反证全红（§11.16ag）。 |
-| **M8 下一步** | M8c-2b（`diffuseMap` 的白色 fallback 图（1×1 上传，材料还没有纹理）+ 按声明绑定 pass 的输入图（`shadow_map` / G-buffer 采样））→ 变体的 define 进管线身份 → 贴图/材质纹理 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
+| **M8 下一步** | 按名字把 pass 的输入图指到声明的 binding（`shadow_map` / G-buffer 采样；policy：`diffuseMap` → 材料/白、`skyMap` → 环境（仍拒）、其余名字 → pass 的输入，按声明顺序）+ 材质贴图的 GPU 侧（缓存 + 上传 + 立方体视图）→ 变体的 define 进管线身份 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -2831,3 +2831,47 @@ sampler）**，谁在哪一个 binding 由文本说了算；只要不把两样�
 0 SYNC-HAZARD**、hygiene 0 / 825 文件、`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、
 相位 9 行 / 2 次运行全收尾。变异 **M3 / M5 纯套件红**，**M1 / M4 由验证层抓住**（各 2 条 VUID；干净树上
 这三条用例的 VUID 基线是 0，实测核对过）。
+
+### 11.16ai M8c-2b（2026-09-22）：没有贴图的材料采样"白"——fallback 是值，不是错误
+
+§11.16ah 让"一个集合同时装块与图"成立，并用**真实存在的附件**证明了机制；但引擎的程序会**无条件**采样
+`diffuseMap`（`texture(diffuseMap, uv)`），而引擎的 ABI 对"材料没有贴图"给的是**值**：采样结果是白色，
+于是着色就是材料自己的颜色。所以那个 binding 不能空着——**没写过的描述符不是"没有贴图"，是未定义数据**
+（开着验证就是一条 VUID）。这一片补上这个 fallback，顺手把"给它找内容"这件事做干净。
+
+**为什么不走上传**。内容是常量、图像是一个纹素，没什么可暂存的：`fill()` 在两道屏障之间录一条
+`vkCmdClearColorImage`（vsg 的 `vsg::ClearColorImage`），图像就此变白并停在
+`VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL`——**描述符声明的那一个布局**（和"写过内容的图像"最后待的
+布局相同）。清的源布局是 `UNDEFINED`：图像的全部内容都由这条命令写，之前是什么都该丢掉。它不是渲染通道
+命令（不需要挂载点、不需要 pass 处于活动状态），所以调用方把它加进**帧的命令图**、放在内容之前；每帧重录
+是幂等的，代价是一次 1×1 的清。
+
+**工具与政策分开**。`api/WhiteImage` 只是"那个值"（图像 + 视图 + 采样器 + `fill()` 节点，且**不需要设备**：
+`vsg::Image` / `ImageView` / `Sampler` 到 `Context` 编译前都只是 create-info，和 `ContentPipeline` 同一个
+理由）。**谁把哪个 binding 指向它**是政策：`diffuseMap` → 材料自己的贴图，没有贴图就是白（本片）；材料
+真正带贴图、以及按名字把 pass 的输入图指到声明的 binding（`shadow_map` / G-buffer 采样）是"三张表的生产
+侧"和贴图那一并做的活（引擎还没有可用的 GPU 贴图路径——`Material::texture()` 有了，缓存与上传没有）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/WhiteImage.hpp` / `src/api/WhiteImage.cpp`（新） | `WhiteImage::create()`（无设备）→ `view()` / `sampler()` / `fill()`；`fill()` = 屏障（`UNDEFINED → TRANSFER_DST`）+ `ClearColorImage`(白) + 屏障（`TRANSFER_DST → SHADER_READ_ONLY`）；每次 `create()` 给一套**独立**的对象（一个集合绑的东西不与他人共享） |
+| `tests/test_vsg/WhiteImageTest.cpp`（新，无设备） | fallback 就是声明集合需要的那三样；`fill()` 的结构（屏障 / 清 / 屏障）、清的是白、`TRANSFER_DST`、覆盖整张图；两次 `create()` 不共享视图 |
+| `tests/test_vsg/ContentPassTest.cpp` | +1 真设备像素：引擎形状的程序（material 块 @(0,0) + `diffuseMap` @(0,1) + push），材料**没有**贴图 ⇒ 图那一半绑 fallback，`fill()` 先于内容录进帧 ⇒ 画面 = 材料的 diffuse（白 × 材质） |
+
+| 规则 | 结论（变异反证） |
+| --- | --- |
+| **fallback 必须是白的** | 变异 N1（清成黑）⇒ 纯套件红 2 条（无设备用例查了清的四个通道 + 像素用例变黑） |
+| **清完必须停在描述符声明的布局** | 变异 N2（第二道屏障留在 `TRANSFER_DST`）⇒ 纯套件绿、验证层 **4 条 VUID**：像素在 lavapipe 上照样"看着对"，判据是验证层（§11.16r 的老经验） |
+
+**这一片留下的口子（登记，不假装解决）**：
+
+* **材料真正带贴图**：`Material::texture()` 是有的，GPU 侧没有（缓存 + 上传 + 采样器选择）——贴图那一片。
+* **按名字指派输入图**：`shadow_map` / G-buffer 采样按声明的 binding 指到 pass 的输入（policy：`diffuseMap`
+  → 材料/白、`skyMap` → 环境（仍拒）、其余名字 → pass 的输入，按声明顺序）；随"三张表的生产侧"一起做，
+  因为**谁把哪个输入图给哪条声明**是那一层的事实。
+* **`samplerCube`**（`diffuseMap` 的立方体变体、`skyMap`）仍拒：立方体视图随贴图那一并做。
+
+证据：`test_vsg` 全量 **591 用例 / 92 套件全绿**；门禁 `scripts/vsg_rewrite_gate.sh`：**0 VUID /
+0 SYNC-HAZARD**、hygiene 0 / 828 文件、`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、
+相位 9 行 / 2 次运行全收尾。变异 **N1 纯套件红**（2 条）、**N2 由验证层抓住**（4 条 VUID；干净树上这两条
+用例的 VUID 基线为 0，实测核对过）。

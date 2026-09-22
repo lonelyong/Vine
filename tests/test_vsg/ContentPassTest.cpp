@@ -43,6 +43,7 @@
 #include <vine/vsg/api/Device.hpp>
 #include <vine/vsg/api/GeometryFacts.hpp>
 #include <vine/vsg/api/OffscreenTarget.hpp>
+#include <vine/vsg/api/WhiteImage.hpp>
 #include <vine/vsg/api/StreamUploads.hpp>
 #include <vine/vsg/api/VsgExecutor.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
@@ -1515,4 +1516,201 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
         << "a set without the declared image is not the set the program declares";
     EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), refusals_before + 1U)
         << "the refusal is reported, not silent";
+}
+
+TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
+{
+    // The engine's contract for "this material has no texture": the sample is WHITE, so the shading is the
+    // material's own colour. A program that samples `diffuseMap` therefore cannot have that binding empty -
+    // an unwritten descriptor is undefined data, not "no map" - and this case draws exactly that program with
+    // the fallback bound: the map half of the declared set is a 1x1 white image (api/WhiteImage), whose fill
+    // is recorded before the content, and the picture is the material's diffuse multiplied by white.
+    //
+    // The negative is built in: a black fallback (or one that never got filled, which would leave the image
+    // in the layout the descriptor does not declare) paints something else, and the material colour is a
+    // value no other node in this frame writes.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout target_layout;
+    target_layout.width  = kSize;
+    target_layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    ASSERT_NE(target, nullptr);
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+
+    const std::shared_ptr<vine::vsg::WhiteImage> white = vine::vsg::WhiteImage::create();
+    ASSERT_NE(white, nullptr);
+
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
+            "void main() { gl_Position = pc.projection * pc.modelView * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+            "void main() { outColor = vec4(texture(diffuseMap, vec2(0.5, 0.5)).rgb * material.diffuse.rgb, 1.0); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, program_facts), FactMiss::None);
+
+    const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
+    const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
+    ContentPipeline::Settings              settings;
+    settings.color_attachments = 1U;
+    std::unique_ptr<ContentPipeline> pipelines = ContentPipeline::create(
+        program_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+        std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U), program_facts.shaders, settings);
+    ASSERT_NE(pipelines, nullptr);
+
+    // The declared set: the material's block from the arena, and the fallback at the binding the text names.
+    const vine::vsg::BlockDescriptors::SampledBinding maps[] = {
+        vine::vsg::BlockDescriptors::SampledBinding{ 1U, white->view(), white->sampler() }
+    };
+    std::unique_ptr<BlockDescriptors> declared = BlockDescriptors::forAbi(program_facts.abi, 0U, created.device,
+                                                                         *storage, maps);
+    ASSERT_NE(declared, nullptr);
+    BlockDescriptors* declared_sets[] = { declared.get() };
+
+    VariantPool   pool;
+    StateRegistry registry(pool);
+    StreamUploads uploads;
+    ContentDraw   draws(*pipelines, pool, vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                                                         created.instance->vk()));
+
+    Triangle                            triangle;
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    geometry->setPositions(triangle.positions);
+    geometry->setIndices(triangle.indices);
+    geometry->setRevision(1U);
+    GeometryFacts                        geometry_facts;
+    std::vector<vine::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vine::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
+    ASSERT_EQ(material->texture(), nullptr) << "the material this case shades has no map (that is the point)";
+    MaterialFacts          material_facts;
+    std::vector<std::byte> material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts  programs[]   = { program_facts };
+    const GeometryFacts geometries[] = { geometry_facts };
+    const MaterialFacts materials[]  = { material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    const vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 1.5), vine::math::Vec3d(0.0, 0.0, 0.0),
+                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+
+    TargetFacts target_facts;
+    target_facts.target        = target.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+    clear.depth          = true;
+    clear.depth_value    = 0.0F;
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands{ command };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(commands, camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws.size(), 1U);
+
+    storage->beginFrame();
+    const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
+        vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        pipelines.get(), &draws } };
+    ContentPass::Scope scope;
+    scope.entries    = halves;
+    scope.registry   = &registry;
+    scope.storage    = storage.get();
+    scope.block_sets = declared_sets;
+    scope.uploads    = &uploads;
+    ContentPass content(scope, diagnostics);
+
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>  content_node;
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(diagnostics.clean()) << "the material's map binding is served by the fallback";
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(target.get(), target.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    // The fallback's fill goes BEFORE the content: a clear needs no render pass, and the draws that sample
+    // the image have to see it white (see api/WhiteImage).
+    command_graph->addChild(white->fill());
+    const PassContent packet{ frame.passes[0].pass, content_node };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(&packet, 1U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const auto near = [](std::uint8_t byte, double linear) {
+        return std::abs(static_cast<double>(byte) - 255.0 * linear) <= 4.0;
+    };
+    const Rgba8 centre = target->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(near(centre.r, 1.0) && near(centre.g, 0.5) && near(centre.b, 0.5))
+        << "a material without a map must shade as its own diffuse (white map), got (" << static_cast<int>(centre.r)
+        << ", " << static_cast<int>(centre.g) << ", " << static_cast<int>(centre.b)
+        << ") - black means the fallback was not white (or never filled)";
+
+    const Rgba8 corner = target->probe().pixel(2, 2);
+    EXPECT_TRUE(near(corner.r, kClear[0]) && near(corner.g, kClear[1]) && near(corner.b, kClear[2]))
+        << "the pass' clear must survive where the triangle is not, got (" << static_cast<int>(corner.r) << ", "
+        << static_cast<int>(corner.g) << ", " << static_cast<int>(corner.b) << ")";
 }
