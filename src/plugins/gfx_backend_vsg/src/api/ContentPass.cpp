@@ -3,13 +3,13 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <string>
 
 #include <vsg/core/Array.h>
 #include <vsg/state/DescriptorImage.h>
 #include <vsg/state/ImageInfo.h>
 #include <vsg/state/PushConstants.h>
 
+#include <vine/vsg/api/ContentPush.hpp>
 #include <vine/vsg/api/DrawBlock.hpp>
 #include <vine/vsg/api/LightBlock.hpp>
 #include <vine/vsg/api/ShadowBlock.hpp>
@@ -125,13 +125,11 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
         return false;
     };
 
-    // A push range is the camera-matrix phase's to fill (see the file note): a half that declares one is
-    // refused rather than drawn with whatever the last draw pushed - a declared-but-unwritten push is
-    // undefined data, and "the picture is black because the matrices were zero" is not a diagnosis.
-    if (!abi.pushes.empty())
-    {
-        return refuse("its program reads a push block this pass does not fill yet (the camera matrices)");
-    }
+    // A push range is now FILLED, member by member, by every command that draws through this half (see
+    // api/ContentPush): the camera matrices the text names come from the pass' camera and the drawable's
+    // model matrix, and the range's offset, size and stages are the declaration's. What is still refused is a
+    // declaration this backend cannot fill at all - that is decided where the layout is built
+    // (ContentPipeline::create refuses an unfillable member), so nothing is left to check here.
 
     // The declared bindings have to be exactly what the pass can put there: a sampler the pass' input set
     // covers, and a block set the caller built for the program's OWN declared shape.
@@ -632,6 +630,41 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         ++bound_sets;
     }
     record.blocks       = std::span<const ::vsg::ref_ptr<::vsg::BindDescriptorSet>>(block_binds.data(), bound_sets);
+    // The pushes: one command per range the PROGRAM declares, filled from this pass' camera and THIS drawable's
+    // model matrix (api/ContentPush) - a declared push is re-written for every drawable, because `modelView`
+    // carries the drawable's model matrix, and an unwritten one would carry the last drawable's. The range's
+    // offset, size and stages are the declaration's, so the words and the pipeline layout cannot disagree.
+    std::array<::vsg::ref_ptr<::vsg::PushConstants>, kMaxPushRanges> push_commands;
+    std::size_t                                                      push_count = 0U;
+    for (const AbiPushRange& range : program.entry->abi.pushes)
+    {
+        if (push_count == push_commands.size())
+        {
+            reportRefused("the command's push range", "its program declares more push ranges than this pass writes");
+            return false;
+        }
+        if (!packContentPush(range, draw.camera, command.model, push_bytes_, unhandled_member_))
+        {
+            // A member the layer accepted but the packer cannot fill cannot happen (ContentPipeline refuses
+            // those); it is reported rather than pushed as zeros because the bytes here ARE the shader's input.
+            reportRefused("the command's push range", unhandled_member_.empty()
+                                                            ? "its program declares a push range with no size"
+                                                            : "one of its push members is not one this backend fills");
+            return false;
+        }
+        ::vsg::ref_ptr<::vsg::ubyteArray> bytes =
+            ::vsg::ubyteArray::create(static_cast<std::uint32_t>(push_bytes_.size()));
+        std::memcpy(bytes->data(), push_bytes_.data(), push_bytes_.size());
+        push_commands[push_count] = ::vsg::PushConstants::create(
+            static_cast<VkShaderStageFlags>(pushStagesOf(range.stages)), range.offset, bytes);
+        if (push_commands[push_count] == nullptr)
+        {
+            reportRefused("the command's push range", "its bytes could not be prepared");
+            return false;
+        }
+        ++push_count;
+    }
+    record.pushes       = std::span<const ::vsg::ref_ptr<::vsg::PushConstants>>(push_commands.data(), push_count);
     record.inputs       = inputs;
     record.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
     record.index        = indices.bind;

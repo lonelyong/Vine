@@ -228,11 +228,11 @@ class V_VSG_API ContentPass
   private:
     /** @brief Resolves the block sets @p entry's program declares, in the order the declarations name them.
      *
-     * This is the pass' ONE place that knows what it can fill today: a program's declared block sets must be
-     * covered by the sets the caller built for it (same index, same shape), and a program that declares a push
-     * range is refused until the camera-matrix phase fills those bytes (pushing into a declared range with
-     * nothing written is undefined data, not "no matrices"). A half that fails the check is reported once per
-     * pass and its commands are not recorded - the rest of the pass still draws.
+     * This is the pass' ONE place that knows what it can fill today: a program's declared sets must be
+     * covered by the sets the caller built for it (same index, same shape). A half that fails the check is
+     * reported once per pass and its commands are not recorded - the rest of the pass still draws. The push
+     * ranges a program declares are NOT checked here: they are filled per command (see api/ContentPush), and
+     * a range nobody can fill is refused where the layout is built (ContentPipeline::create).
      *
      * @param entry       The compiled half.
      * @param input_count Sampled textures the pass' key carries (colours plus depths).
@@ -244,6 +244,9 @@ class V_VSG_API ContentPass
     /** @brief The most block sets one program can declare and still be served (the five roles' bound). */
     static constexpr std::size_t kMaxBlockSets = 8U;
 
+    /** @brief The most push ranges one program can declare and still be served (the engine declares one). */
+    static constexpr std::size_t kMaxPushRanges = 4U;
+
     Scope               scope_;        ///< The pieces this layer drives (borrowed).
     core::Diagnostics&  diagnostics_;  ///< The one diagnostic route.
     /// One report-once per entry: a half that cannot be served must say so once, not once per command.
@@ -251,6 +254,13 @@ class V_VSG_API ContentPass
     /// The block sets `serveHalf` resolved for this pass' content half (in the declared set order).
     std::array<BlockDescriptors*, kMaxBlockSets> half_blocks_{};
     std::size_t                                  half_block_count_{0};
+    /// The push commands one command's declared ranges recorded (reused per command: the record is consumed
+    /// by the recorder within the call, so no per-draw container is allocated).
+    std::array<::vsg::ref_ptr<::vsg::PushConstants>, kMaxPushRanges> push_commands_{};
+    /// The push bytes being assembled, reused across commands (a steady frame does not allocate for them).
+    std::vector<std::byte> push_bytes_{};
+    /// The member name a refused push range carried (only read while reporting).
+    std::string_view unhandled_member_{};
 };
 
 V_VSG_NS_END

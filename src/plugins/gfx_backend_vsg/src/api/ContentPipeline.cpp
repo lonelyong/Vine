@@ -17,6 +17,7 @@
 #include <vsg/utils/ShaderCompiler.h>
 
 #include <vine/graphics/ShaderAbi.hpp>
+#include <vine/vsg/api/ContentPush.hpp>
 #include <vine/vsg/api/LightBlock.hpp>
 
 V_VSG_NS_BEGIN
@@ -41,21 +42,6 @@ std::uint32_t abiSizeOfRole(AbiBlockRole role) noexcept
     case AbiBlockRole::Foreign: return 0U;
     }
     return 0U;
-}
-
-/** @brief The stage flags a declared push range's stages mean to the API. */
-VkShaderStageFlags pushStagesOf(std::uint32_t stages) noexcept
-{
-    VkShaderStageFlags flags = 0;
-    if ((stages & static_cast<std::uint32_t>(AbiStage::Vertex)) != 0U)
-    {
-        flags |= VK_SHADER_STAGE_VERTEX_BIT;
-    }
-    if ((stages & static_cast<std::uint32_t>(AbiStage::Fragment)) != 0U)
-    {
-        flags |= VK_SHADER_STAGE_FRAGMENT_BIT;
-    }
-    return flags;
 }
 
 /**
@@ -293,12 +279,22 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
     // The push ranges ARE the declarations (offset, size and the stage that reads them): a content program
     // that reads its camera matrices from a push block gets exactly the range its text declares, and one that
     // declares none gets none - pushing into a range that does not exist is an API violation, not a no-op.
+    // The MEMBERS are checked here too: a range whose members are not the L2 realization of the L1 camera
+    // pair (see api/ContentPush) is one no pass can fill, so the layer that would compile against it refuses
+    // the program instead of drawing with zeros.
     ::vsg::PushConstantRanges push_ranges;
     for (const AbiPushRange& range : abi.pushes) {
         if (range.size == 0U) {
             return nullptr;  // a block whose members could not be sized is not a range to declare
         }
-        push_ranges.push_back(VkPushConstantRange{ pushStagesOf(range.stages), range.offset, range.size });
+        for (const AbiPushMember& member : range.members) {
+            if (!canFillPushMember(member)) {
+                return nullptr;  // a member this backend cannot fill: the pass would draw with zero bytes
+            }
+        }
+        push_ranges.push_back(
+            VkPushConstantRange{ static_cast<VkShaderStageFlags>(pushStagesOf(range.stages)), range.offset,
+                                 range.size });
     }
     layer->d->push_ranges = push_ranges;
     layer->d->layout     = ::vsg::PipelineLayout::create(layer->d->sets, push_ranges);

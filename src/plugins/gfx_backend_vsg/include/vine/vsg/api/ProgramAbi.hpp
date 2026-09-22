@@ -103,6 +103,14 @@ struct AbiBinding
     std::string      name{};          ///< The declared instance name (`material`, `diffuseMap`, ...).
 };
 
+/** @brief One member of a declared push block: what it is called, and where its bytes sit. */
+struct AbiPushMember
+{
+    std::string   name{};    ///< The declared member name (`projection`, `modelView`, ...).
+    std::uint32_t offset{0}; ///< Its byte offset inside the push range (from the range's start).
+    std::uint32_t size{0};   ///< Its size in bytes (an array counts all its elements).
+};
+
 /** @brief One push-constant range a stage declares. */
 struct AbiPushRange
 {
@@ -110,6 +118,11 @@ struct AbiPushRange
     std::uint32_t size{0};       ///< Its size in bytes (std430 rules); 0 when the members could not be sized.
     std::uint32_t stages{0};     ///< Union of the stages that declare it (AbiStage bits).
     std::string   type_name{};   ///< The declared block type name (for diagnostics).
+    /// The members, in declaration order, each with its own offset - what the serving layer fills BY NAME.
+    /// A push block is the one range whose bytes are ASSEMBLED rather than copied from an L1 struct (the
+    /// engine's `pc` is the L2 realization of the `VineViewBlock` / `VineDrawBlock` pair), so the names are
+    /// what says which value goes where: a member nobody recognizes is refused by name, never zero-filled.
+    std::vector<AbiPushMember> members{};
 };
 
 /** @brief The bindings and push ranges a program's two stages declare FOR ONE VARIANT. */

@@ -65,4 +65,16 @@ V_VSG_NS_BEGIN
 [[nodiscard]] vine::graphics::VineViewBlock buildViewBlock(const core::CameraSnapshot& camera, float time_seconds,
                                                            std::uint32_t width, std::uint32_t height) noexcept;
 
+/** @brief Folds one projection matrix written in the SDK's clip convention into this device's (see the file
+ *         note: y down, z `0.5 - 0.5 * z`).
+ *
+ * The fold is NOT only the view block's: the engine's camera push declares `projection` and `modelView`, and
+ * the push is the L2 realization of the same L1 pair (`pc.projection == VineViewBlock.proj`), so a second
+ * spelling of the convention somewhere else would be a second convention. This is that one spelling.
+ *
+ * @param sdk_projection A projection matrix in the SDK's convention (y up, z in [-1, 1]).
+ * @return The same projection in this device's convention.
+ */
+[[nodiscard]] vine::math::Mat4d foldToDeviceClip(const vine::math::Mat4d& sdk_projection) noexcept;
+
 V_VSG_NS_END

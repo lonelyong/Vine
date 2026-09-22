@@ -570,3 +570,48 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
     with_input.sampled_color_count = 1U;
     EXPECT_NE(sampling->acquire(pool, with_input).pipeline, nullptr);
 }
+
+TEST(ContentPipelineTest, APushNobodyCouldFillIsRefusedWhereTheLayoutIsBuilt)
+{
+    // A push range is the one range whose bytes are ASSEMBLED rather than copied from an L1 struct
+    // (api/ContentPush), so the layer that would compile against it also has to know that every member is one
+    // the pass can fill: a program reading `pc.tint` would shade with zeros, and a `vec4 projection` would be
+    // a projection written into bytes that are not its own. Both are refused where the layout is built, not
+    // discovered when the picture is black.
+    const auto layerPushing = [](const std::string& members) {
+        ContentPipeline::Shaders shaders;
+        shaders.vertex   = "#version 450\n"
+                           "layout(location = 0) in vec3 position;\n"
+                           "layout(push_constant) uniform PushConstants { " + members +
+                           " } pc;\n"
+                           "void main() { gl_Position = vec4(position, 1.0); }\n";
+        shaders.fragment = "#version 450\n"
+                           "layout(location = 0) out vec4 outColor;\n"
+                           "void main() { outColor = vec4(1.0); }\n";
+        return makeLayerWith(shaders);
+    };
+
+    // The engine's own pair: the two camera matrices, each a mat4 - fillable, and the layer keeps the range.
+    auto engine_shaped = layerPushing("mat4 projection; mat4 modelView;");
+    ASSERT_NE(engine_shaped, nullptr);
+    VariantPool pool;
+    const auto  compiled = engine_shaped->acquire(pool, contentKey(1));
+    ASSERT_NE(compiled.pipeline, nullptr);
+    ASSERT_NE(compiled.pipeline->layout, nullptr);
+    ASSERT_EQ(compiled.pipeline->layout->pushConstantRanges.size(), 1U);
+    EXPECT_EQ(compiled.pipeline->layout->pushConstantRanges.front().size, 128U);
+    EXPECT_EQ(compiled.pipeline->layout->pushConstantRanges.front().stageFlags, VK_SHADER_STAGE_VERTEX_BIT);
+
+    // A member nobody names: no pass can fill it, so there is no pipeline to draw with.
+    EXPECT_EQ(layerPushing("mat4 projection; vec4 tint;"), nullptr);
+    // A known name of the wrong size: `vec4 projection` is not a projection matrix.
+    EXPECT_EQ(layerPushing("vec4 projection; mat4 modelView;"), nullptr);
+    // A range that declares only PART of the pair is fine: the pass fills what is declared, and the range's
+    // size is what the text declares (the same rule a block that reads a prefix of its L1 struct follows).
+    auto projection_only = layerPushing("mat4 projection;");
+    ASSERT_NE(projection_only, nullptr);
+    const auto projection_result = projection_only->acquire(pool, contentKey(1));
+    ASSERT_NE(projection_result.pipeline, nullptr);
+    ASSERT_EQ(projection_result.pipeline->layout->pushConstantRanges.size(), 1U);
+    EXPECT_EQ(projection_result.pipeline->layout->pushConstantRanges.front().size, 64U);
+}

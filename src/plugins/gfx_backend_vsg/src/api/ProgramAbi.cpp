@@ -516,12 +516,16 @@ bool memberLayout(std::string_view type, std::uint32_t count, bool std140, std::
 /**
  * @brief Sizes one block body (the text between its braces).
  *
- * @param members The block's members, semicolon separated.
- * @param std140  Whether the block declares the std140 layout (std430 rules otherwise, as push blocks have).
- * @param out     Receives the size in bytes.
+ * @param members  The block's members, semicolon separated.
+ * @param std140   Whether the block declares the std140 layout (std430 rules otherwise, as push blocks have).
+ * @param out      Receives the size in bytes.
+ * @param recorded When not null, receives one entry per member (name, offset, size) - the push blocks'
+ *                 serving layer fills them BY NAME, so the walk that already knows where each member sits is
+ *                 also the place that records it.
  * @return true when every member was sized; false when a member type is outside the scan's table.
  */
-bool sizeBlockMembers(std::string_view members, bool std140, std::uint32_t& out)
+bool sizeBlockMembers(std::string_view members, bool std140, std::uint32_t& out,
+                      std::vector<AbiPushMember>* recorded = nullptr)
 {
     std::uint32_t end       = 0U;
     std::uint32_t max_align = 1U;
@@ -575,6 +579,10 @@ bool sizeBlockMembers(std::string_view members, bool std140, std::uint32_t& out)
             }
             end       = roundUp(end, alignment) + size;
             max_align = std::max(max_align, alignment);
+            if (recorded != nullptr)
+            {
+                recorded->push_back(AbiPushMember{ std::string(name), end - size, size });
+            }
 
             const std::size_t next = skipSpaces(declaration, cursor);
             if (next < declaration.size() && declaration[next] == ',')
@@ -733,11 +741,15 @@ bool scanStageDeclarations(std::string_view text, AbiStage stage, std::vector<Ab
 
             const bool std140 = qualifiers.layout == AbiBlockLayout::Std140;
             std::uint32_t    block_size = 0U;
+            // A push block's members are recorded as well (a push range is ASSEMBLED from named values, see
+            // AbiPushRange); a uniform block's are not - its bytes come from an L1 struct whole.
+            std::vector<AbiPushMember> push_members;
             // A push block's layout is std430 unless the text says std140. A UNIFORM block without a layout
             // qualifier is `shared` (the compiler's own layout), so its size is not this scan's to compute:
             // the fact is 0 = "not known here", and only a declared std140 gets a size (see ProgramAbi).
             const bool       sized = qualifiers.push_constant
-                                         ? sizeBlockMembers(text.substr(body + 1U, end - body - 1U), std140, block_size)
+                                         ? sizeBlockMembers(text.substr(body + 1U, end - body - 1U), std140, block_size,
+                                                            &push_members)
                                          : (std140 && sizeBlockMembers(text.substr(body + 1U, end - body - 1U), true, block_size));
 
             if (qualifiers.push_constant)
@@ -747,6 +759,10 @@ bool scanStageDeclarations(std::string_view text, AbiStage stage, std::vector<Ab
                 range.size      = sized ? block_size : 0U;
                 range.stages    = stage_bit;
                 range.type_name = std::string(type);
+                if (sized)
+                {
+                    range.members = std::move(push_members);
+                }
                 pushes.push_back(std::move(range));
                 continue;
             }
@@ -937,9 +953,19 @@ FactMiss scanProgramAbi(std::string_view vertex, std::string_view fragment,
             out.pushes.push_back(push);
             continue;
         }
-        if (found->size != push.size)
+        // Two stages may declare ONE range (the same camera matrices read by both) - that is one range whose
+        // stages are the union. Two ranges at one offset that differ in size OR in what their members are
+        // called are a contradiction: the bytes cannot be two things.
+        bool same = found->size == push.size && found->members.size() == push.members.size();
+        for (std::size_t index = 0U; same && index < push.members.size(); ++index)
         {
-            return FactMiss::Malformed;   // two stages declaring different blocks at one offset
+            same = found->members[index].name == push.members[index].name &&
+                   found->members[index].offset == push.members[index].offset &&
+                   found->members[index].size == push.members[index].size;
+        }
+        if (!same)
+        {
+            return FactMiss::Malformed;
         }
         found->stages |= push.stages;
     }

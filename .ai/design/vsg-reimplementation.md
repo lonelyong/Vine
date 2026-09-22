@@ -3,14 +3,16 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M8b：布局就是声明——块服务到文本自己写的那个 `(set, binding)` 去（`ProgramFacts` 带 `ProgramAbi`；
-> `BlockDescriptors` 形状驱动；`ContentPipeline` 照声明装配布局与 push 范围、填不了就按名字拒绝；
-> `ContentPass` 逐声明集服务）**：`test_vsg` 580 用例 / 90 套件全绿；
-> 门禁一条命令（`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 822 文件）、
-> 相位 9 行 / 2 次运行全收尾；`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验。
+> **M8c-1：声明出来的 push 由 pass 自己填（事实带上 push 成员；`api/ContentPush` 按**名字**填
+> `pc.projection = VineViewBlock.proj`（已折到设备裁剪域）与 `pc.modelView = view * model`；每个可绘制对象一遍）**：
+> `test_vsg` 587 用例 / 91 套件全绿；门禁一条命令（`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、
+> hygiene 全清（0 / 825 文件）、相位 9 行 / 2 次运行全收尾；`core/` 的 include 边界由
+> `scripts/check_include_hygiene.py` 机器校验。
 > M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：ABI 债按 §11.16ae 的决定解掉了一半
 > ——**布局跟着程序文本的声明走**（`VineViewBlock` … 这些 L1 名就是角色），重写版自己的 set 0 布局只是
-> “另一种声明”，M8b 已让装配真的按声明落地（§11.16af）。下一步是按角色取值（M8c）。
+> “另一种声明”，M8b 已让装配真的按声明落地（§11.16af），M8c-1 把声明出来的相机 push 填上（§11.16ag）。
+> 下一步是 M8c-2：一个集合同时装块与采样器（引擎的 set 0 就是这种排布）+ `diffuseMap` 的白色 fallback +
+> `shadow_map` 的图。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2541,7 +2543,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | **M8 场景桥** | **开工**：把引擎的场景内容（程序 / 几何 / 材质 / 目标）接到重写版的内容层。已决的接法 = **按程序文本自己的声明服务**（§11.16ae）：文本是宿主的，后端选不了它的绑定号。 |
 | ~~M8a（声明成为事实）~~ | **已完成（2026-09-22）**：`api/ProgramAbi`——`scanProgramAbi(vertex, fragment, defines, out)` 把文本的绑定声明读成事实（set/binding、种类、阶段、按**L1 类型名**认领的角色、std140 尺寸、push 范围），条件按变体求值（taken 分支的 `#error` ⇒ Malformed），引擎自己的八个程序逐条钉住（前向 5 绑定 + push 128B 顶点、带影延迟光照的 5/6、屏幕拷贝的 binding=N…）；11 条无设备用例 + 5 条变异反证（§11.16ae）。下一步 M8b：布局跟着声明装配。 |
 | ~~M8b（布局就是声明）~~ | **已完成（2026-09-22）**：`ContentPipeline::create` 收 `ProgramAbi`——`describeAbi` 把声明读成布局（每个被声明碰到的 set 一条布局、空隙填真布局、块 → dynamic UBO 在**它自己写的** binding 上、push 照声明），填不了的按名拒绝（外来块 / 非 std140 / 超尺寸 / `count != 1` / 无视图的采样器种类 / 内容路径 set≠1 的采样器 / 块与输入挤一个 set），`acquire` 另拒“采样器超出本 pass 输入数”；`BlockDescriptors` 形状驱动（`canonicalShape` / `layoutOfShape` / `forAbi` / `blockShapeOf`，`bind()` 一个声明绑定一个偏移）；`ContentPass::Scope::block_sets` 一组块集 + `serveHalf` 按“set 序号 + 形状逐位相同”认领、按名拒绝、push 未填即拒；`Draw::blocks` 变 span。4 条新用例（真设备像素 1、真设备描述符 1、无设备 2）+ 6 条变异反证全红；门禁还揪出三处仍无条件绑块的旧夹具（程序一个块都没声明 ⇒ 布局 0 个 set），修夹具而不是加容忍（§11.16af）。 |
-| **M8 下一步** | M8c（角色取值：arena 偏移、draw 搬进 set 1、`pc` 的 proj/modelView 填进声明出的 push、`diffuseMap` 的白色 fallback 与 `shadow_map` 的图）→ 变体的 define 进管线身份 → 贴图/材质纹理 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
+| ~~M8c-1（push 由 pass 自己填）~~ | **已完成（2026-09-22）**：`AbiPushRange` 带上成员表（名字/偏移/尺寸，扫描时就记）；新 `api/ContentPush`：`contentPushMemberOf` 认 `projection` / `modelView`，`packContentPush` 按**名字**填——`projection` = `foldToDeviceClip(camera.projection)`（与 `VineViewBlock.proj` 同一个值、同一处折叠），`modelView` = `view * model`（顺序就是契约：模型矩阵在右）；认不出的名字或尺寸不对（`vec4 projection`）在 `ContentPipeline::create` 就拒（前缀可以），无相机写零（同 `buildViewBlock`）；`ContentDraw::Draw` += `pushes`，每个可绘制对象一遍（`modelView` 带的是它自己的模型矩阵）。**实测的坑**：`vsg::PushConstants` 放进 `StateGroup` 的 stateCommands 会被 vsg 按 slot 记录、但**到不了 shader**（画出来是恒等矩阵）——必须放进 `Commands` 节点、按插入序紧贴绘制（全屏路径 M5d 一直就是这么做的）；变异 N1 把位置改回去 ⇒ 像素用例红。另：计划里有相机时，pass 的**深度清屏值要显式给**（reverse-Z 远 = 0.0），否则片元被拒（画面=清屏色、0 VUID、无拒绝）。5 条新用例（真设备像素 ×1、无设备 ×4）+ 5 条变异反证全红（§11.16ag）。 |
+| **M8 下一步** | M8c-2（一个集合同时装块与采样器——引擎的 set 0 就是这种排布；`diffuseMap` 的白色 fallback；`shadow_map` 的图）→ 变体的 define 进管线身份 → 贴图/材质纹理 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -2711,3 +2714,69 @@ binding 号超出这个 pass 的输入数”（那张图不存在，绑上去是
 `check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、相位 9 行 / 2 次运行全收尾。变异反证
 **6/6 红**（N1 角色按位置、N2 忽略声明 set、N3 偏移复用、N4 空隙空指针、N5 放弃拒绝、N6 复用第一个块集），
 其中 N2 / N4 / N6 的失败形态是崩溃（无效句柄进 `PipelineLayout` / 绑错集合），N1 / N3 / N5 是断言。
+
+### 11.16ag M8c-1（2026-09-22）：声明出来的 push 由 pass 自己填（相机矩阵按名字装配）
+
+§11.16af 让布局跟着声明走，于是“一个声明了 push 的程序”不再是 M8b 那样被 `serveHalf` 一拒了事：范围是
+它自己声明的（128B、顶点阶段、`offset = 0`），里面要装什么也是它自己写下的——`projection` 与
+`modelView` 两个 `mat4`。而这两份值不是新约定，是**同一对 L1 值的另一个居住地**：本后端把
+`VineViewBlock` / `VineDrawBlock` 直接绑成块，而那 128B 的 push 是同一对矩阵的 L2 实现（既有后端的
+`VsgPipelineFactory.cpp` 注释写得很清楚：`pc.projection == VineViewBlock.proj`、
+`pc.modelView == VineViewBlock.view * VineDrawBlock.model`——同一段话，改写一遍）。所以这一片做的事是
+把它**真的填上**：`describeAbi` 在 `create` 就拒“填不了的成员”，pass 在每个绘制命令前把声明的每个范围
+按名字填好、按声明的阶段与偏移发给 `PushConstants`。
+
+**按名字，不按位置**。push 是唯一一个“字节要装配”的范围（块从 L1 结构体整块拷），所以“哪个成员是什么”
+只能来自文本写的名字：
+
+* `projection` → `foldToDeviceClip(camera.projection)`——**与 `VineViewBlock.proj` 逐位同一个值**，折叠
+  只写在一处（`api/ViewBlock` 的 `foldToDeviceClip`，M8c-1 从它里面提出来共用）：读 push 的程序与读块的
+  程序不能对“画面在哪”有不同看法；
+* `modelView` → `camera.view * model`，**顺序就是契约**（模型矩阵在右手）：写反了不是“偏一点”，是每个可
+  绘制对象被摆到没人写过的变换上；
+* 认不出的名字（`pc.tint`）与尺寸不对的名字（`vec4 projection`）⇒ 在 **`create`** 就拒（一个没人能填的
+  声明是一条永远画不出来的管线，拒绝属于布局那一层）；声明了**一部分**是可以的（`mat4 projection;`
+  单独出现），与“块只读 L1 结构体的前缀”同一条规则；
+* 没有相机 ⇒ 写零（与 `buildViewBlock` 同一个 `present` 事实）： “没有视图”是一个值，不是错误。
+
+**每个可绘制对象一遍**。`modelView` 带着**这个** drawable 的模型矩阵，所以 push 是逐命令写的（不是逐 pass）
+——一个 pass 里十个对象就是十次 `vkCmdPushConstants`；范围的偏移、尺寸与阶段全部来自声明，pass 只是把
+字节装配进去（`api/ContentPush`），两边不可能对不上。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ProgramAbi.hpp` / `src/api/ProgramAbi.cpp` | `AbiPushRange` += `members`（`AbiPushMember{name, offset, size}`）：块尺寸的那次遍历本来就知道每个成员在哪，顺手记下来；两个阶段声明同一个范围时，名字/偏移/尺寸也要逐位一致（否则矛盾 ⇒ Malformed） |
+| `api/ContentPush.hpp` / `src/api/ContentPush.cpp`（新） | `ContentPushMember{Unknown, Projection, ModelView}` + `contentPushMemberOf` / `contentPushMemberName` / `canFillPushMember` + `packContentPush`（按名字装配，列主序写矩阵）+ `pushStagesOf`（声明阶段 → API flags 的唯一拼写，`ContentPipeline` 也用它） |
+| `api/ViewBlock.hpp` / `src/api/ViewBlock.cpp` | 折叠提出来共用：`foldToDeviceClip(sdk_projection)`（`buildViewBlock` 改用它，**同一处**折叠） |
+| `api/ContentPipeline.hpp` / `src/api/ContentPipeline.cpp` | `create` 在声明 push 范围时逐成员检查 `canFillPushMember`（填不了 ⇒ 整个程序不建） |
+| `api/ContentPass.hpp` / `src/api/ContentPass.cpp` | `serveHalf` 不再拒“声明了 push 的半片”；`recordCommand` 把声明的每个范围填好、按声明发给 `PushConstants`（复用成员缓冲：稳态帧不分配） |
+| `api/ContentDraw.hpp` / `src/api/ContentDraw.cpp` | `Draw::pushes`（span，逐声明范围）+ `push_commands()` 计数器；**push 记在 `Commands` 节点的插入序里**（见下） |
+| `tests/test_vsg/ContentPushTest.cpp`（新） | 5 条无设备用例：名字→值、与 `VineViewBlock.proj` 逐位相同、`view * model`（并证明另一个顺序是另一条矩阵）、拒绝面（名字/尺寸/零尺寸）、无相机写零 |
+| `tests/test_vsg/ProgramAbiTest.cpp` | 引擎前向程序的 push 成员逐条钉住（`projection@0` / `modelView@64`，各 64B，顶点阶段） |
+| `tests/test_vsg/ContentPipelineTest.cpp` | +1：填不了的成员在 `create` 就拒；只有 `projection` 的范围可以（尺寸 64） |
+| `tests/test_vsg/ContentPassTest.cpp` | +1 真设备像素：**引擎形状的 push-only 程序**（`gl_Position = pc.projection * pc.modelView * pos`），相机 + 非恒等模型矩阵 ⇒ 三角形被缩小并移右（右像素是网格色、左像素是计划清屏色） |
+
+| 规则 | 结论（变异反证全部实测） |
+| --- | --- |
+| **push 必须紧贴绘制、按插入序记** | 变异 N1（把 push 放回 `StateGroup` 的 stateCommands——vsg 按 slot 记录）⇒ 像素用例红：**命令确实发出去了（vsg 里打印得到我的字节），但 shader 读到的是恒等矩阵**，画面“看着正常”。全屏路径（M5d）一直把 push 加进 `Commands` 节点，这就是原因 |
+| **按名字装配** | 变异 N2（按声明顺序：offset 0 给 modelView）⇒ 6 条红（4 条无设备 + 2 条设备） |
+| **投影要折** | 变异 N3（直接用 SDK 投影）⇒ 4 条红：几何被裁掉（设备 z 出 [0,1]）、画面=清屏色——§11.16o 同一个坑，这次在 push 上 |
+| **`modelView` 的顺序** | 变异 N4（`model * view`）⇒ 4 条红 |
+| **尺寸不对的名字也要拒** | 变异 N5（只看名字不看尺寸）⇒ 4 条红（层会把 `vec4 projection` 当成投影矩阵建出管线） |
+
+**这一片留下的口子（登记，不假装解决）**：
+
+* **采样器与块同集合的排布**（M8c-2）：引擎的前向程序把 material/lights/阴影块与 `diffuseMap`/`shadow_map`
+  放在**同一个 set 0**，而现在“块与采样输入挤一个 set”被明确拒绝；`diffuseMap` 的白色 fallback 与
+  `shadow_map` 的图都还没有生产侧。
+* **push 的其它成员**：本片只填 L1 的那两个（`projection` / `modelView`）；全屏光照程序的 128B push
+  （`LightPushBlock`）走的是**另一条**路径（M5d，按调用打包），两条路径的成员名不同、互不干扰。
+* **相机缺失时的零矩阵**只是“没有视图”的值：pass 照画（几何落在原点）。要不要在上层把“无相机的 pass”
+  整个拒掉，属于场景桥再上一层的政策（引擎给每个绘制的 pass 都带相机）。
+
+证据：`test_vsg` 全量 **587 用例 / 91 套件全绿**（+5 用例：`ContentPushTest` 5 条、`ContentPipelineTest` +1、
+`ContentPassTest` +1 —— 其中 `ContentPushTest` 是第 91 套）；门禁
+一条命令 `scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、hygiene 0 / 825 文件、
+`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、相位 9 行 / 2 次运行全收尾。变异反证
+**5/5 红**（N1 push 放回 stateCommands、N2 不按名字、N3 不折投影、N4 顺序写反、N5 不查尺寸）；N1 的失败
+形态最有价值：它在“命令发出去了”的情况下仍然红——判据是像素，不是“我发了命令”。

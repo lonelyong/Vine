@@ -59,6 +59,11 @@ class ContentDraw
         /// one set; the engine's own programs put the per-drawable block in a set of its own). Empty for a
         /// program that declares none.
         std::span<const ::vsg::ref_ptr<::vsg::BindDescriptorSet>> blocks;
+        /// The push ranges the program DECLARES, filled (one entry per range, each with its declaration's
+        /// offset, size and stages: see api/ContentPush and api/ProgramAbi). Empty for a program that declares
+        /// none - and a program that declares one is never drawn without it (the layer refuses to compile a
+        /// push whose members nobody can fill).
+        std::span<const ::vsg::ref_ptr<::vsg::PushConstants>> pushes;
         ::vsg::ref_ptr<::vsg::BindDescriptorSet> inputs;  ///< The pass' sampled inputs, or null when it has none.
         std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>> vertex_binds;  ///< One per channel.
         ::vsg::ref_ptr<::vsg::BindIndexBuffer>    index;   ///< The index stream (required: draws are indexed).
@@ -143,6 +148,10 @@ class ContentDraw
     /** @brief Gets the number of sampled-input set binds recorded (one per pass that samples, not per draw). */
     [[nodiscard]] std::uint64_t input_binds() const noexcept;
 
+    /** @brief Gets the number of push ranges recorded (one per DECLARED range, per draw: a declared push is
+     *         re-filled for every drawable, because its `modelView` carries that drawable's model matrix). */
+    [[nodiscard]] std::uint64_t push_commands() const noexcept;
+
     /** @brief Gets the number of draws refused because their identity had no pipeline. */
     [[nodiscard]] std::uint64_t refusals() const noexcept;
 
@@ -155,6 +164,7 @@ class ContentDraw
     std::uint64_t                        pipeline_binds_{0};
     std::uint64_t                        dynamic_commands_{0};
     std::uint64_t                        input_binds_{0};
+    std::uint64_t                        push_commands_{0};
     std::uint64_t                        refusals_{0};
 };
 

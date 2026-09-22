@@ -34,6 +34,11 @@ vine::math::Mat4d sdkClipToDeviceClip() noexcept
 
 }  // namespace
 
+vine::math::Mat4d foldToDeviceClip(const vine::math::Mat4d& sdk_projection) noexcept
+{
+    return sdkClipToDeviceClip() * sdk_projection;
+}
+
 vine::graphics::VineViewBlock buildViewBlock(const core::CameraSnapshot& camera, float time_seconds,
                                              std::uint32_t width, std::uint32_t height) noexcept
 {
@@ -42,12 +47,10 @@ vine::graphics::VineViewBlock buildViewBlock(const core::CameraSnapshot& camera,
     {
         // The two view-space matrices are the module's own convention (a lighting term in view space has
         // nothing to do with the clip convention); the two clip-space ones carry the device's.
-        const vine::math::Mat4d to_device = sdkClipToDeviceClip();
-
         writeMatrix(camera.view, block.view);
         writeMatrix(camera.view.inverted(), block.inv_view);
-        writeMatrix(to_device * camera.projection, block.proj);
-        writeMatrix(to_device * camera.projection * camera.view, block.view_proj);
+        writeMatrix(foldToDeviceClip(camera.projection), block.proj);
+        writeMatrix(foldToDeviceClip(camera.projection * camera.view), block.view_proj);
 
         block.cam_pos[0] = static_cast<float>(camera.eye.x);
         block.cam_pos[1] = static_cast<float>(camera.eye.y);

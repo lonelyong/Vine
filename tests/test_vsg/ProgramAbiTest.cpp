@@ -131,10 +131,21 @@ TEST(ProgramAbiTest, TheForwardProgramDeclaresTheContentAbiTheExistingBackendSer
     EXPECT_EQ(at(abi, 0U, 1U), nullptr);
 
     // One push block: the two camera matrices the vertex stage reads, which is the whole 128-byte budget.
+    // The MEMBERS are facts too, and they are what the serving layer fills BY NAME: `projection` first, then
+    // `modelView`, each a mat4 (see api/ContentPush) - a push whose bytes were assembled by position would
+    // swap the two the moment a program declared them in the other order.
     ASSERT_EQ(abi.pushes.size(), 1U);
     EXPECT_EQ(abi.pushes[0].offset, 0U);
     EXPECT_EQ(abi.pushes[0].size, 128U);
     EXPECT_EQ(abi.pushes[0].stages, kVertex);
+    EXPECT_EQ(abi.pushes[0].type_name, "PushConstants");
+    ASSERT_EQ(abi.pushes[0].members.size(), 2U);
+    EXPECT_EQ(abi.pushes[0].members[0].name, "projection");
+    EXPECT_EQ(abi.pushes[0].members[0].offset, 0U);
+    EXPECT_EQ(abi.pushes[0].members[0].size, 64U);
+    EXPECT_EQ(abi.pushes[0].members[1].name, "modelView");
+    EXPECT_EQ(abi.pushes[0].members[1].offset, 64U);
+    EXPECT_EQ(abi.pushes[0].members[1].size, 64U);
 }
 
 TEST(ProgramAbiTest, TheDiffuseSamplerIsTheVariantsFactAndAVariantThatCannotCompileIsRefused)

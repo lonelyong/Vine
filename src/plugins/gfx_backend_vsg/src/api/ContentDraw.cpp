@@ -35,12 +35,24 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
             group->add(blocks);
         }
     }
+    std::vector<::vsg::ref_ptr<::vsg::PushConstants>> pushes;
+    for (const ::vsg::ref_ptr<::vsg::PushConstants>& push : draw.pushes) {
+        if (push != nullptr) {
+            pushes.push_back(push);
+            ++push_commands_;
+        }
+    }
     if (draw.inputs != nullptr && resolution.inputs_issued) {
         group->add(draw.inputs);
         ++input_binds_;
     }
 
     auto commands = ::vsg::Commands::create();
+    // The touches the push must land in the same command buffer, right before the draw, in INSERTION order:
+    // a state command's slot decides when vsg records it, and the draw's pipeline must already be bound.
+    for (const ::vsg::ref_ptr<::vsg::PushConstants>& push : pushes) {
+        commands->addChild(push);
+    }
     // The rectangle is a command, which is what keeps an extent out of the pipeline's identity: a resize
     // changes these two calls and nothing else.
     commands->addChild(makeViewportCommand(draw.viewport));
@@ -130,6 +142,11 @@ std::uint64_t ContentDraw::dynamic_commands() const noexcept
 std::uint64_t ContentDraw::input_binds() const noexcept
 {
     return input_binds_;
+}
+
+std::uint64_t ContentDraw::push_commands() const noexcept
+{
+    return push_commands_;
 }
 
 std::uint64_t ContentDraw::refusals() const noexcept
