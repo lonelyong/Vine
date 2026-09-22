@@ -10,6 +10,7 @@
 #include <vsg/nodes/InstrumentationNode.h>
 
 #include <vine/vsg/api/OffscreenTarget.hpp>
+#include <vine/vsg/api/Session.hpp>
 #include <vine/vsg/api/WindowTarget.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
@@ -208,6 +209,29 @@ class V_VSG_API VsgExecutor
      *         written targets were marked).
      */
     bool submit(const core::CompiledFrame& frame, ::vsg::Viewer& viewer);
+
+    /**
+     * @brief Commits @p frame through @p session (submit + present), and turns a lost submission into the
+     * repair evidence (see @ref noteLostSubmission).
+     *
+     * THE WINDOW PATH'S TWIN OF @ref submit, and the reason it is a separate call: the window's submission
+     * goes through the SESSION (it owns the swapchain, the present and the frame protocol), so the step that
+     * knows whether the submission happened is `Session::commitFrame()` - which reports its own failure and
+     * answers false (see its declaration). What this executor adds is the half the session cannot know:
+     * WHICH of the frame's targets are now holding contents nobody can vouch for. One call, and the caller
+     * never has to interpret either answer.
+     *
+     * A FALSE ANSWER MARKS, INCLUDING "THERE WAS NO OPEN FRAME": both mean this frame's writes were never
+     * handed to the queue, which is exactly the fact the mark states. The session is the reporter on this
+     * path (its `SubmissionFailed` carries the reason), so this call adds no diagnostic of its own - unlike
+     * @ref submit, where the executor is the only layer that saw the failure.
+     *
+     * @param frame   The frame whose graphs were recorded and assigned to the session.
+     * @param session The session that submits and presents them.
+     * @return true when the frame was submitted and presented; false when it was not (the frame's written
+     *         targets were marked, and the session reported why).
+     */
+    bool commit(const core::CompiledFrame& frame, api::Session& session);
 
     /** @brief Sets whether this frame's passes are recorded through measurement wrappers.
      *

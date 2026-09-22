@@ -342,6 +342,21 @@ bool VsgExecutor::submit(const core::CompiledFrame& frame, ::vsg::Viewer& viewer
     return false;
 }
 
+bool VsgExecutor::commit(const core::CompiledFrame& frame, api::Session& session)
+{
+    if (session.commitFrame())
+    {
+        return true;
+    }
+
+    // The submission did not happen (or there was no open frame to commit, which means the same thing for
+    // this frame): the session has reported why, and what it cannot know is which of the frame's targets
+    // are now holding contents nobody can vouch for - marking them is what makes the next compiled plan
+    // repair them (see noteLostSubmission).
+    noteLostSubmission(frame);
+    return false;
+}
+
 std::span<const core::PassId> VsgExecutor::recorded() const noexcept
 {
     return recorded_;

@@ -73,10 +73,11 @@
 > M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）、
 > M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）、
 > M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）、M8l 形状变了就是真的重建（§11.16au）、
-> M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）。
+> M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）、M8o 窗口路径一次调用（§11.16ax）。
 > 下一步：
-> 把 M8m/M8n 连起来（窗口路径上"提交失败 ⇒ 标这一帧写过的目标"由帧驱动一次完成），`record` 的 shape 核对补上**格式**；
-> 其余遗留口子：丢帧后 swapchain 图像已取未呈（WSI 状态要宿主重建会话）、`skyMap` 无生产者、集合与半片停靠窗口各自独立。
+> 帧驱动收口：`assignFrameGraphs` 与"提交还在飞"的关系（今天重新 assign = 销毁在飞的 fence/semaphore/命令缓冲）、
+> `record` 的 shape 核对补上**格式**、丢帧后的会话自愈（swapchain 图像已取未呈）。
+> 其余遗留口子：`skyMap` 无生产者、集合与半片停靠窗口各自独立。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2623,7 +2624,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8l（形状变了就是真的重建）~~ | **已完成（2026-09-22）**：`OffscreenTarget::rebuild(wanted, timeline, retirement)`（渲染通道 + 全部 load-op 变体 + 附件一起重建，旧的**连 pass 一起停靠**（记录过的 `vkCmdBeginRenderPass` 直接点名它）；lease 两向拒；构建失败一个字段都不动）+ `core::planTarget` 次序改为**形状变化先于 load-op 修复**；设备相位（1 色 8×4 ⇒ 2 色 + D32F 16×12；附件 0 / 附件 1 / 深度三条读回；compatibility 真的变了；`pending()==1`、`deviceWaits()==0`）+ lease 两向拒绝用例 + 2 条次序用例；变异 5/5 红（次序复原 / 新形状不装 / 事实不重置 / 旧变体留着 / 直接销毁不停靠）+ 一次**用例抓不住、门禁 VUID 抓住**（18 条）；门禁 639 用例 / 98 套件、0 VUID（§11.16au）。 |
 | ~~M8m（帧驱动应用计划的答案）~~ | **已完成（2026-09-22）**：`VsgExecutor::applyTargetPlans(frame, facts, timeline, retirement)`（只走**计划点名的**目标；`ResizeInPlace` ⇒ `resize`、`Rebuild` ⇒ `rebuild`；新形状取自 facts 的 wanted，目标的 clear 策略与深度提升取自新访问器 `OffscreenTarget::layout()`；计分 `resized/rebuilt/refused/failed`）+ 设备相位（三帧：Repair 不应用、ResizeInPlace ⇒ 16×12 像素、Rebuild ⇒ 2 色 + 深度；旁观者目标不动；相位 11 行）+ 真设备用例（"计划与目标不符 ⇒ 拒录"那帧在应用之后**录得进去**）；变异 4/4 红（§11.16av）。 |
 | ~~M8n（会话的提交也自己说）~~ | **已完成（2026-09-22）**：`Session::commitFrame()` 自己驱动 viewer 的任务（`Viewer::recordAndSubmit` 返回 void、**吞掉队列 `VkResult`**）：任何一个任务提交失败（VkResult 非成功，或 vsg 抛异常）⇒ 报 `SubmissionFailed`、答 false、`lostFrames+1`；**不呈现、不计已呈现、不声称完成**；帧本身照样结束（`FrameTimeline::abandoned(token)`：令牌被消费、**submitted 水位不动**——两个水位因此分别是"帧"与"提交"）；真设备用例（丢帧的提交答 false + 报告 + 计数 + 水位 + 无开帧；重建会话后正常提交呈现）+ 1 条无设备时间线用例；变异 6/6 红 + 一次"照样呈现"挂住并带 2 条 VUID（§11.16aw）。 |
-| **M8 下一步** | 把 M8m/M8n 连起来（窗口路径上一次调用完成"提交失败 ⇒ 标这一帧写过的目标"）；`record` 的 shape 核对补上格式；其余口子：丢帧后 swapchain 图像已取未呈（要宿主重建会话）、`skyMap` 无生产者、集合与半片停靠窗口各自独立。 |
+| ~~M8o（窗口路径一次调用）~~ | **已完成（2026-09-22）**：`VsgExecutor::commit(frame, session)`（`commitFrame()` 答 false ⇒ `noteLostSubmission(frame)`；报告留会话、标记归执行器）+ 真设备用例（两个会话：A 上 `commit` 成功、离屏目标像素 + "没被标"；B 上把记录步做成抛异常 ⇒ 答 false + `SubmissionFailed` + 标记 + 下一份计划里**写它的那一趟** `bootstrap` + 录进去清掉；两次运行各 **0 VUID**）；3/3 变异红；**顺手撞出新口子**：上一次提交还在飞时再 `assignFrameGraphs` 会销毁 viewer 的 task ⇒ 12 条 VUID + 验证层里段错误（§11.16ax）。 |
+| **M8 下一步** | 帧驱动收口：`assignFrameGraphs` 与在飞提交的关系（等设备或复用 task）、`record` 的 shape 核对补上格式、丢帧后的会话自愈。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3630,3 +3632,22 @@ M8k 让执行器的提交步自己说失败，但**窗口路径的提交在会�
 
 **这一片留下的口子**：①把 M8m/M8n 连起来（窗口路径上"提交失败 ⇒ 标这一帧写过的目标"由帧驱动一次完成）；②`record` 的
 shape 核对看不见**格式**变化；③丢帧后的 WSI 状态（上面那条）；④`skyMap` 仍无生产者；⑤集合与半片的停靠窗口各自独立。
+
+### 11.16ax M8o（2026-09-22）：窗口路径上一次调用把"提交失败"变成事实
+
+M8k 让执行器的 `submit(frame, viewer)` 在自己驱动的 viewer 上说失败，M8n 让会话的 `commitFrame()` 说它；但窗口路径上
+"提交失败 ⇒ 标这一帧写过的目标"仍要宿主把两者拼起来。这一片收成一步：`VsgExecutor::commit(frame, session)` ——
+`session.commitFrame()`，答 false 就 `noteLostSubmission(frame)`；宿主两个答案都不用解释。分工写在明处：**报告**留在会话
+一侧（`SubmissionFailed` 带原因），执行器只加会话**不可能知道**的那半——哪些目标现在的内容没人能担保。答 false 的两种
+情况（提交失败、以及"没有开着的帧"）都标：两者都意味着这一帧的写入没进过队列。
+
+证据：真设备用例（开真窗口）——**两个会话**：会话 A 上经 `commit` 提交一帧（窗口 pass + 离屏 pass）⇒ 答 true、离屏目标
+像素 = 清屏色、没有被标；会话 B（丢失的帧会把 swapchain 钉住一张已取未呈的图，所以第二半本来就该跑在重建出来的会话上，
+见 §11.16aw）上把记录步做成抛异常 ⇒ `commit` 答 false、`SubmissionFailed` +1、离屏目标被标、`framesPresented` 不动、
+`lostFrames()==1`；下一份计划里**写它的那一趟** `bootstrap == true`（窗口那趟不动），把那一趟录进去 ⇒ 标记清掉。
+两次运行各 **0 VUID**、0 崩。变异 3/3 红（不标 / 成功也标 / 永远答 true）。
+
+**写这一片时撞出来的新口子（记在案）**：`assignFrameGraphs` 换的是 viewer 的 record-and-submit task——**上一次提交还在飞**
+时再 assign（本片用例最初的写法：每帧 assign 一次）会销毁在飞的 fence / semaphore / 命令缓冲：实测 12 条 VUID
+（`vkDestroyFence/Semaphore/Buffer` 在飞、`vkFreeCommandBuffers` pending）+ 验证层里段错误（不带层时静默通过）。本片用例
+因此**每个会话只 assign 一次**；正确做法（assign 前等设备、或复用 task 而不是重建）留给帧驱动收口那片。
