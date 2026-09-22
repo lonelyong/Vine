@@ -3,6 +3,10 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
+> **M8d-1：材质贴图的 GPU 侧**——`api/MaterialImages`（一张 texture 的 image/view/sampler，按**地址 + 修订**缓存、
+> 条目持住键、白 fallback 按**种类**给 2D/cube、超限淘汰、放弃即释放）；像素证据：四色 2x2 贴图 → 画面四象限、
+> 六色 cube → 五个方向上的五个面（层序错是**静默**的，只有像素能抓）、重填后第二趟是新颜色；`test_vsg` 611 用例 /
+> 94 套件全绿；门禁 **0 VUID / 0 SYNC-HAZARD**、skipped=0、hygiene 全清（现 834 文件）。更早一片是
 > **M8c-4：全屏集合就是程序自己的声明**——引擎的 `shadowedDeferredLightProgram` 把 `shadow_map` 写在
 > binding 5、`VineShadowBlock` 写在 6（源的四张颜色占 0..3、源无可采样深度），全屏路径按**声明号**装集合；
 > 引擎带影/无影两个变体在引擎自己格式的 G-buffer 上端到端出像素；顺手修了**动态命令一直开着混合**（多附件
@@ -16,7 +20,8 @@
 > （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 831 文件）、相位 9 行 / 2 次运行。
 > M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：M8a 读事实（§11.16ae）、M8b 布局跟着
 > 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）、
-> M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）。下一步：材质贴图（GPU 侧）→
+> M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）。
+> 下一步：
 > 变体的 define 进管线身份 → 三张表的生产侧。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
@@ -2553,7 +2558,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8c-2b（没有贴图采样白）~~ | **已完成（2026-09-22）**：`api/WhiteImage`（值而不是错误：材料没有纹理时 `diffuseMap` 绑白图）+ `ContentPipeline` 的 `sampler_shapes` 只服务声明过的绑定；真设备像素用例（白 × 材质色）（§11.16ai）。 |
 | ~~M8c-3（名字即来源）~~ | **已完成（2026-09-22）**：`api/ContentImages`（`ImageOrigin` + `imageOriginOf` + `samplesShadowMap` + `shadowImageOf`）；`shadow_map` 按名字到达程序声明在**自己集合里**的那个 binding；`skyMap` 在建层时按名字拒；"pass 解析出 map 而程序读不到"每半片上报一次；顺手修 `BlockStorage::writeMaterial` 的 HIT 返回 offset 0（§11.16aj）。 |
 | ~~M8c-4（全屏集合即声明）~~ | **已完成（2026-09-22）**：`createScreen` 收 `ProgramAbi` + set≠0 / 非阴影块两条拒绝；`sampledSetLayout` 的全屏分支（声明号就是绑定号、深度槽跳过已点名的号、块 = 静态 UBO）；`recordScreenDraw` 按身份找源、按计划找 map、按名拒绝、每调用一个阴影块；引擎带影/无影延迟光照七趟真设备像素；顺手修**动态命令一直开着混合**（多附件 = 不混合，单附件恒开）；5 条变异反证全红（§11.16ak）。 |
-| **M8 下一步** | 材质贴图的 GPU 侧（缓存 + 上传 + 立方体视图）→ 变体的 define 进管线身份 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
+| ~~M8d-1（材质贴图的 GPU 侧）~~ | **已完成（2026-09-22）**：`api/MaterialImages`（按地址 + 修订缓存；条目持住键；mip-major 交错 staging；元素 = 一个 texel、数组维数 = 层数；view type 写在 DATA 上；白 fallback 2D（复用 `WhiteImage`）+ cube；`releaseAbandoned`/`clear`/超限淘汰；`setMaxAnisotropy`）；`ContentPipeline` 放开 `samplerCube` 的拒绝（立方体视图落地了）；上传走 vsg 的 TransferTask（数据背书的 `vsg::Image`），像素证：四色 2x2 → 四象限、六色 cube → 五方向、重填 → 第二趟新颜色；5 条变异反证全红（§11.16al）。 |
+| **M8 下一步** | 变体的 define 进管线身份（`VINE_DIFFUSE_MAP` / texcoord kind 取决于几何与材质）→ 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3029,3 +3035,71 @@ shininess/256（引擎的 G-buffer 约定；本夹具的材料 shininess = 0）�
 
 **这一片留下的口子**：材质贴图的 GPU 侧（缓存 + 上传 + 立方体视图）→ 变体的 define 进
 管线身份 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。
+
+### 11.16al M8d-1（2026-09-22）：材质贴图的 GPU 侧——缓存、上传、立方体视图
+
+§11.16ai 给"没有贴图"定了值（白），这一片把"有贴图"接上：**一张 texture 的 image / view / sampler**
+（`api/MaterialImages`），以及它怎么到达设备。
+
+**为什么必须在这一层**：引擎的 `Texture` 是**逻辑描述**（种类、尺寸、格式、mip 数、逐面的 `imaging::Image`
+源图、`revision`），它按设计**不持有任何 GPU 资源**——"能建纹理的后端物化这个描述"是它写下的分工。于是
+`MaterialImages` 就是那个物化：`acquire(texture, reason)` 回答**这套图与这个采样器**，caller 把它绑到程序
+声明的 `diffuseMap` 槽上（引擎的 set 0 = material 块 + 图，M8c-2a 已经能让一个声明的集合同时装两者）。
+
+**上传：不自己搬运，靠数据背书的 image + viewer 的传输步**。`makeImage` 把每个面的每一级 mip 拷进一条
+staging 字节链（**mip-major 交错**：vsg 的拷贝区域按"一级里的所有层连续"读，引擎的存储是"一层里所有级连续"，
+多层纹理必须在这里交织——错了是**静默**的，字节总数一样、每个拷贝区域都合法，只是每个面采到别人的数据），
+用**一个 texel 宽**的元素类型把它包成 `vsg::Data`（元素宽 = stride，vsg 的步进就是一片 face 的大小），
+数组的**维数 = 层数**（`TransferTask` 对 cube 从 DATA 的 depth 取 arrayLayers），cube 的
+`properties.imageViewType = CUBE`（ImageView 的构造从 DATA 读它，事后赋 `view->viewType` 会被覆盖），
+`flags |= CUBE_COMPATIBLE`。数据背书的 image 由 viewer 的传输步上传（`RecordAndSubmitTask::submit` 里
+`transferData(TRANSFER_BEFORE_RECORD_TRAVERSAL)`）——**测试的手动驱动也走这条**，所以不需要额外的上传节点
+（§11.16ai 记的"`requiresDataCopy` 无人消费"指的是那个遗留标志；真正生效的是 `Data::dirty` 那套）。
+
+**缓存的三条规则**（L2 的 `VsgTextureCache` 是参考，这里重写为自己的拼写）：
+1. **键是地址 + 修订**：条目记住构建时的 `Texture::revision()`，重填过的纹理下次 `acquire` 重建（没有它就会
+   一直采旧像素）；
+2. **条目持住键**：地址是键而缓存看不见销毁，条目持一个 owning 引用，新纹理复用同一地址时不会拿到死纹理的图；
+   `releaseAbandoned()` 释放"只剩缓存自己持有"的条目；
+3. **有界**（256 条，超限淘汰最旧的）+ **fallback 是值**：不可用的纹理给白图而不是空视图，**按种类**给
+   （cube 槽不能绑 2D 视图——那不是"没贴图"，是非法描述符）；2D 白复用 `api/WhiteImage`（清屏、不是上传），
+   白 cube 走与真纹理同一条路（六面一个 texel）。
+
+**顺手放开的拒绝**：`ContentPipeline` 原先按"没有视图的采样器种类"拒掉 `samplerCube`；立方体视图落地后这条
+只剩 `OtherSampler`（`sampler3D` 一类）与 `count != 1`。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/MaterialImages.hpp` / `src/api/MaterialImages.cpp`（新） | `SamplerImage acquire(texture, reason)`、`white()` / `whiteCube()`、`has` / `count` / `releaseAbandoned` / `clear` / `setMaxAnisotropy`；设备无关（create-info），决策复用 `VsgSceneRules` 的那一份（`classifyTexture` / `TextureReject` / `vkFormatFor` / `levelExtent` / `textureDataMatchesExtent` / `anisotropyFor`——**一个决策只有一处拼写**） |
+| `api/ContentPipeline.cpp` | 放开 `samplerCube` 的拒绝（视图有了），拒绝面收敛为 `OtherSampler` / 非 1 个 / `skyMap` |
+| `tests/test_vsg/MaterialImagesTest.cpp`（新，无设备，10 条） | 缺纹理 → 共享白（不入缓存）；未填完不入缓存；**fallback 按种类**（cube → 白 cube，view type 可断言）；无 Vulkan 对应格式 → 拒；同一纹理只建一次；重填重建；条目持住纹理直到放弃；clear 清空（含 fallback，重建是新对象）；超限淘汰最旧；cube = 六层 depth + CUBE 视图 + 视图类型写在 DATA 上 |
+| `tests/test_vsg/ContentPassTest.cpp`（+3 真设备） | 四色 2x2 贴图 × 四边形 UV ⇒ 画面四象限 = 四个 texel；六色 cube ⇒ 五个方向读五个面；同纹理重填 ⇒ 第二趟画新颜色 |
+| `tests/test_vsg/ContentPassTest.cpp`（夹具） | `pipelineFor` 把通道的绑定号改成**后端的规范编号**（`StreamUploads::bindingOfCanonical`：位置 0、法线 1、纹理坐标 **2**、颜色 3）——不是通道在表里的次序，也不是 shader 的 location（纹理坐标槽是 8）。按次序绑会让 location 8 的 `vec2` 永远读 (0,0) |
+
+**实测踩到/量到的四件事**：
+
+* **绑定号不是 location 也不是次序**：L1 的纹理坐标槽是 location 8，而后端的绑定号是 2（`bindingOfCanonical`）。
+  夹具原先按"第几个通道就绑几号"，位置/法线恰好一致、纹理坐标就错位——表现是"贴图上传了但画面是四个 texel 的
+  平均"（uv 恒为 (0,0)，重复寻址 + 线性过滤在角上正好平均四格）。
+* **1x1 的 cube 面用线性过滤会在接缝处互渗**（1x1 面在面内任何点都不是 texel 中心）⇒ 面的颜色只在面内部纯；
+  夹具用 4x4 纯色面。
+* **换行的注释会被编译器当真**：写长中文注释时行被折在检查之外，续行没有 `//` ⇒ "unknown type name"。写完先 build。
+* **变异脚本的恢复断言会误伤**：M4 的还原串 `return white();` 在文件里出现 4 次 ⇒ 断言失败、脚本中止、文件留在
+  **变异态**（本片的 M4 就是这样，手动还原后才继续）。规则：还原串必须带**唯一上下文**，或者先存原文再整段写回。
+
+**变异反证（5/5 红）**：
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 staging 不再按层交错（每层都写同一个槽 ⇒ 只剩最后一层） | 像素红（cube 五个方向变成同一个面） |
+| M2 cube 不写 view type（六层 2D 数组视图） | 无设备用例红（视图类型）+ 像素红 |
+| M3 缓存不看修订 | 无设备用例红（重填重建）+ 像素红（第二趟还是旧颜色） |
+| M4 被拒的 cube 退回 2D 白 | 无设备用例红（fallback 按种类） |
+| M5 条目永不放弃 | 无设备用例红（放弃即释放） |
+
+证据：`test_vsg` 全量 **611 用例 / 94 套件全绿**；门禁 `scripts/vsg_rewrite_gate.sh`：**0 VUID /
+0 SYNC-HAZARD**、skipped=0、hygiene 0 / 834 文件、`check_diagnostic_formats.py` 0 / 39、
+`check_doc_symbols.py` 通过、相位 9 行 / 2 次运行全收尾。
+
+**这一片留下的口子**：变体的 define 进管线身份（`VINE_DIFFUSE_MAP` 与 texcoord kind 取决于几何与材质——
+管线身份现在是 `(program, revision, layout)`，还差 define）；三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。

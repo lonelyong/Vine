@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include <vsg/app/CommandGraph.h>
@@ -34,6 +35,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Texture.hpp>
 
 #include <vine/vsg/api/BlockDescriptors.hpp>
 #include <vine/vsg/api/BlockStorage.hpp>
@@ -43,6 +45,7 @@
 #include <vine/vsg/api/ContentPass.hpp>
 #include <vine/vsg/api/ContentPipeline.hpp>
 #include <vine/vsg/api/ContentSources.hpp>
+#include <vine/vsg/api/MaterialImages.hpp>
 #include <vine/vsg/api/Device.hpp>
 #include <vine/vsg/api/GeometryFacts.hpp>
 #include <vine/vsg/api/OffscreenTarget.hpp>
@@ -201,7 +204,14 @@ std::unique_ptr<ContentPipeline> pipelineFor(const GeometryFacts& facts, const C
     std::vector<ContentPipeline::VertexAttribute> attributes;
     for (const ChannelFacts& channel : facts.channels)
     {
-        const std::uint32_t binding = static_cast<std::uint32_t>(bindings.size());
+        // The binding a channel is fed at is the BACKEND's canonical order (see StreamUploads::
+        // bindingOfCanonical): positions 0, normals 1, texcoords 2, colours 3 - NOT the channel's order in
+        // this list, and not the shader's location either. The two agree for positions and normals and
+        // disagree for everything else: the engine's reserved texcoord slot is location 8, and a pipeline
+        // that bound it as "the second channel" would leave the shader's vec2 un-fed (the draw binds by the
+        // canonical number, so the attribute must be declared against that same number).
+        const std::uint32_t binding = vine::vsg::StreamUploads::bindingOfCanonical(channel.key.location);
+        EXPECT_NE(binding, vine::vsg::StreamUploads::kNoBinding) << "a canonical channel has a binding";
         bindings.push_back(ContentPipeline::VertexBinding{ binding,
                                                            static_cast<std::uint32_t>(channel.key.components *
                                                                                       sizeof(float)),
@@ -1261,6 +1271,762 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     EXPECT_TRUE(near(left.r, kClear[0]) && near(left.g, kClear[1]) && near(left.b, kClear[2]))
         << "the drawable moved right, so the left half of the picture is the plan's clear, got ("
         << static_cast<int>(left.r) << ", " << static_cast<int>(left.g) << ", " << static_cast<int>(left.b) << ")";
+}
+
+TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
+{
+    // The other half of AMaterialWithoutAMapSamplesWhite: the material HAS a texture, and what the shader
+    // reads has to be the pixels the caller filled in. api/MaterialImages describes the image - a
+    // data-backed vsg::Image, which the viewer's transfer step uploads before the frame that samples it
+    // records - the caller binds its view and sampler where its text declares `diffuseMap`, and this frame
+    // draws a quad whose UVs run 0..1 over a 2x2 texture of four distinct colours: each quadrant of the
+    // picture is one texel, so "the map reached the shader" is a picture rather than a claim.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout target_layout;
+    target_layout.width  = kSize;
+    target_layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    ASSERT_NE(target, nullptr);
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+
+    // The texture: 2x2, four colours, filled through the engine's own API (the description is the contract,
+    // the image is the content).
+    const vine::intrusive_ptr<vine::graphics::Texture2D> texture(
+        new vine::graphics::Texture2D(2, 2, vine::imaging::PixelFormat::Rgba8Unorm));
+    {
+        auto image = vine::intrusive_ptr<vine::imaging::Image>(
+            new vine::imaging::Image(2, 2, vine::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        const std::uint8_t         texels[4][4]{ { 255U, 0U, 0U, 255U },      // the base row's first texel
+                                                 { 0U, 255U, 0U, 255U },      // and its second
+                                                 { 0U, 0U, 255U, 255U },      // the second row's first
+                                                 { 255U, 255U, 255U, 255U } };// and its second
+        for (std::size_t texel = 0; texel < 4U; ++texel) {
+            for (std::size_t byte = 0; byte < 4U; ++byte) {
+                pixels[texel * 4U + byte] = static_cast<std::byte>(texels[texel][byte]);
+            }
+        }
+        texture->setImage(vine::intrusive_ptr<const vine::imaging::Image>(image));
+    }
+
+    const std::shared_ptr<vine::vsg::MaterialImages> images = vine::vsg::MaterialImages::create();
+    ASSERT_NE(images, nullptr);
+    vine::vsg::detail::TextureReject reason = vine::vsg::detail::TextureReject::Ok;
+    const vine::vsg::SamplerImage    map    = images->acquire(texture.get(), reason);
+    ASSERT_EQ(reason, vine::vsg::detail::TextureReject::Ok) << "a complete 2x2 texture must be uploadable";
+    ASSERT_NE(map.view, nullptr);
+    ASSERT_NE(map.sampler, nullptr);
+
+    // The program: the quad's position, its UV pair (the L1's reserved texcoord slot), the material block
+    // and the map at the binding the text names - the shape the engine's own forward program has when a
+    // material carries a texture.
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(location = 8) in vec2 texcoord;\n"
+            "layout(location = 0) out vec2 uv;\n"
+            "layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
+            "void main()\n"
+            "{\n"
+            "    uv = texcoord;\n"
+            "    gl_Position = pc.projection * pc.modelView * vec4(position, 1.0);\n"
+            "}\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec2 uv;\n"
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+            "void main() { outColor = vec4(texture(diffuseMap, uv).rgb, 1.0); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, program_facts), FactMiss::None);
+
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F,
+                                            1.0F,  1.0F,  0.0F, -1.0F, 1.0F, 0.0F };
+        const std::vector<float> texcoords{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F };
+        geometry->setPositions(
+            vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(positions)));
+        geometry->setTexcoords2(
+            vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(texcoords)));
+        geometry->setIndices(vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
+            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                        geometry_facts;
+    std::vector<vine::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+
+    std::unique_ptr<ContentPipeline> pipelines =
+        pipelineFor(geometry_facts, program_facts.shaders, program_facts.abi);
+    ASSERT_NE(pipelines, nullptr) << "the quad's two channels are what the program declares";
+
+    // The declared set: the material's block from the arena, and the texture's images at binding 1.
+    const vine::vsg::BlockDescriptors::SampledBinding maps[] = {
+        vine::vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
+    };
+    std::unique_ptr<BlockDescriptors> declared =
+        BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage, maps);
+    ASSERT_NE(declared, nullptr);
+    BlockDescriptors* declared_sets[] = { declared.get() };
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setTexture(texture);
+    MaterialFacts          material_facts;
+    std::vector<std::byte> material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts  programs[]   = { program_facts };
+    const GeometryFacts geometries[] = { geometry_facts };
+    const MaterialFacts materials[]  = { material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    const vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 1.5), vine::math::Vec3d(0.0, 0.0, 0.0),
+                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+
+    TargetFacts target_facts;
+    target_facts.target        = target.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+    clear.depth          = true;
+    clear.depth_value    = 0.0F;
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands{ command };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(commands, camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws.size(), 1U);
+
+    VariantPool   pool;
+    StateRegistry registry(pool);
+    StreamUploads uploads;
+    ContentDraw   draws(*pipelines, pool,
+                        vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                                       created.instance->vk()));
+
+    storage->beginFrame();
+    const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
+        vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        pipelines.get(), &draws } };
+    ContentPass::Scope scope;
+    scope.entries    = halves;
+    scope.registry   = &registry;
+    scope.storage    = storage.get();
+    scope.block_sets = declared_sets;
+    scope.uploads    = &uploads;
+    ContentPass content(scope, diagnostics);
+
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>  content_node;
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block,
+                               content_node));
+    ASSERT_TRUE(diagnostics.clean()) << "nothing is refused: the map is the cache's image";
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(target.get(), target.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packet{ frame.passes[0].pass, content_node };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(&packet, 1U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    // The four quadrants of the picture are the texture's four texels. The engine's device clip inverts Y
+    // (vsg's projection does, and the recorder folds it), so the texture's first row is the picture's
+    // BOTTOM row: v = 0 is the quad's world -Y edge, which lands at the picture's last rows.
+    // The sampler is the cache's own (linear), so a probe at a quadrant's centre reads that texel plus a
+    // few percent of its neighbour - which is why the tolerance is a texel's worth of bleed and not 1.
+    const auto near = [](std::uint8_t byte, double expected) {
+        return std::abs(static_cast<double>(byte) - expected) <= 16.0;
+    };
+    const auto probe = [&](int x, int y) { return target->probe().pixel(x, y); };
+    const Rgba8 top_left     = probe(static_cast<int>(kSize) / 4, static_cast<int>(kSize) / 4);
+    const Rgba8 top_right    = probe(static_cast<int>(kSize) * 3 / 4, static_cast<int>(kSize) / 4);
+    const Rgba8 bottom_left  = probe(static_cast<int>(kSize) / 4, static_cast<int>(kSize) * 3 / 4);
+    const Rgba8 bottom_right = probe(static_cast<int>(kSize) * 3 / 4, static_cast<int>(kSize) * 3 / 4);
+    EXPECT_TRUE(near(bottom_left.r, 255.0) && near(bottom_left.g, 0.0) && near(bottom_left.b, 0.0))
+        << "the texture's first texel is red, got (" << static_cast<int>(bottom_left.r) << ", "
+        << static_cast<int>(bottom_left.g) << ", " << static_cast<int>(bottom_left.b)
+        << ") - black means the upload never ran";
+    EXPECT_TRUE(near(bottom_right.r, 0.0) && near(bottom_right.g, 255.0) && near(bottom_right.b, 0.0))
+        << "its second texel is green, got (" << static_cast<int>(bottom_right.r) << ", "
+        << static_cast<int>(bottom_right.g) << ", " << static_cast<int>(bottom_right.b) << ")";
+    EXPECT_TRUE(near(top_left.r, 0.0) && near(top_left.g, 0.0) && near(top_left.b, 255.0))
+        << "the second row's first texel is blue, got (" << static_cast<int>(top_left.r) << ", "
+        << static_cast<int>(top_left.g) << ", " << static_cast<int>(top_left.b) << ")";
+    EXPECT_TRUE(near(top_right.r, 255.0) && near(top_right.g, 255.0) && near(top_right.b, 255.0))
+        << "and its second is white, got (" << static_cast<int>(top_right.r) << ", "
+        << static_cast<int>(top_right.g) << ", " << static_cast<int>(top_right.b) << ")";
+}
+
+TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
+{
+    // A cube map's six faces are six LAYERS of one image, and the layer a fragment reads is chosen by its
+    // direction - so the sampler's kind, the view's kind and the layer ORDER all have to be right at once,
+    // and a wrong layer order is SILENT: the byte count is the same either way, every copy region stays
+    // inside the image, and the picture simply shows the wrong face. It is therefore asserted by pixels.
+    //
+    // The fragment turns its UV pair into a direction (x and y over the quad, z fixed at 0.5): the
+    // picture's centre looks along +Z, its left/right edges along -X/+X and its top/bottom along +/-Y,
+    // each far enough from the diagonal ties for the face choice to be unambiguous. Every face is 1x1 and
+    // a different colour, so the five probes read five different faces.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout target_layout;
+    target_layout.width  = kSize;
+    target_layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    ASSERT_NE(target, nullptr);
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+
+    // The cube: six faces of 4x4 texels, in Vulkan's layer order (CubeMap::Face), each a solid distinct
+    // colour. The size is not decoration: a 1x1 face sampled with the cache's LINEAR filter bleeds across
+    // the cube's seams (the taps reach the neighbouring face), so a face's colour is only pure inside it.
+    constexpr int kFaceSize = 4;
+    const vine::intrusive_ptr<vine::graphics::CubeMap> cube(
+        new vine::graphics::CubeMap(kFaceSize, vine::imaging::PixelFormat::Rgba8Unorm));
+    const std::uint8_t face_colors[6][4]{ { 255U, 0U, 0U, 255U },      // PosX: red
+                                          { 0U, 255U, 0U, 255U },      // NegX: green
+                                          { 0U, 0U, 255U, 255U },      // PosY: blue
+                                          { 255U, 255U, 0U, 255U },    // NegY: yellow
+                                          { 255U, 0U, 255U, 255U },    // PosZ: magenta
+                                          { 0U, 255U, 255U, 255U } };  // NegZ: cyan
+    for (int face = 0; face < cube->faceCount(); ++face) {
+        auto image = vine::intrusive_ptr<vine::imaging::Image>(
+            new vine::imaging::Image(kFaceSize, kFaceSize, vine::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        for (std::size_t texel = 0; texel < pixels.size() / 4U; ++texel) {
+            for (std::size_t byte = 0; byte < 4U; ++byte) {
+                pixels[texel * 4U + byte] = static_cast<std::byte>(face_colors[face][byte]);
+            }
+        }
+        cube->setSource(face, vine::intrusive_ptr<const vine::imaging::Image>(image));
+    }
+
+    const std::shared_ptr<vine::vsg::MaterialImages> images = vine::vsg::MaterialImages::create();
+    ASSERT_NE(images, nullptr);
+    vine::vsg::detail::TextureReject reason = vine::vsg::detail::TextureReject::Ok;
+    const vine::vsg::SamplerImage    map    = images->acquire(cube.get(), reason);
+    ASSERT_EQ(reason, vine::vsg::detail::TextureReject::Ok) << "a complete cube must be uploadable";
+    ASSERT_EQ(map.view->viewType, VK_IMAGE_VIEW_TYPE_CUBE);
+
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(location = 8) in vec2 texcoord;\n"
+            "layout(location = 0) out vec2 uv;\n"
+            "layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
+            "void main()\n"
+            "{\n"
+            "    uv = texcoord;\n"
+            "    gl_Position = pc.projection * pc.modelView * vec4(position, 1.0);\n"
+            "}\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec2 uv;\n"
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "layout(set = 0, binding = 1) uniform samplerCube diffuseMap;\n"
+            "void main()\n"
+            "{\n"
+            "    vec3 direction = normalize(vec3(uv * 2.0 - 1.0, 0.5));\n"
+            "    outColor = vec4(texture(diffuseMap, direction).rgb, 1.0);\n"
+            "}\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, program_facts), FactMiss::None);
+
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F,
+                                            1.0F,  1.0F,  0.0F, -1.0F, 1.0F, 0.0F };
+        const std::vector<float> texcoords{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F };
+        geometry->setPositions(
+            vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(positions)));
+        geometry->setTexcoords2(
+            vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(texcoords)));
+        geometry->setIndices(vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
+            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                        geometry_facts;
+    std::vector<vine::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+
+    std::unique_ptr<ContentPipeline> pipelines =
+        pipelineFor(geometry_facts, program_facts.shaders, program_facts.abi);
+    ASSERT_NE(pipelines, nullptr);
+
+    const vine::vsg::BlockDescriptors::SampledBinding maps[] = {
+        vine::vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
+    };
+    std::unique_ptr<BlockDescriptors> declared =
+        BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage, maps);
+    ASSERT_NE(declared, nullptr);
+    BlockDescriptors* declared_sets[] = { declared.get() };
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setTexture(cube);
+    MaterialFacts          material_facts;
+    std::vector<std::byte> material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts  programs[]   = { program_facts };
+    const GeometryFacts geometries[] = { geometry_facts };
+    const MaterialFacts materials[]  = { material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    const vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 1.5), vine::math::Vec3d(0.0, 0.0, 0.0),
+                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+
+    TargetFacts target_facts;
+    target_facts.target        = target.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+    clear.depth          = true;
+    clear.depth_value    = 0.0F;
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands{ command };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(commands, camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+
+    VariantPool   pool;
+    StateRegistry registry(pool);
+    StreamUploads uploads;
+    ContentDraw   draws(*pipelines, pool,
+                        vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                                       created.instance->vk()));
+
+    storage->beginFrame();
+    const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
+        vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        pipelines.get(), &draws } };
+    ContentPass::Scope scope;
+    scope.entries    = halves;
+    scope.registry   = &registry;
+    scope.storage    = storage.get();
+    scope.block_sets = declared_sets;
+    scope.uploads    = &uploads;
+    ContentPass content(scope, diagnostics);
+
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>  content_node;
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block,
+                               content_node));
+    ASSERT_TRUE(diagnostics.clean());
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(target.get(), target.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packet{ frame.passes[0].pass, content_node };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(&packet, 1U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const auto near = [](std::uint8_t byte, double expected) {
+        return std::abs(static_cast<double>(byte) - expected) <= 16.0;
+    };
+    const auto isColor = [&](const Rgba8& pixel, std::uint8_t r, std::uint8_t g, std::uint8_t b,
+                             const char* face) {
+        return near(pixel.r, r) && near(pixel.g, g) && near(pixel.b, b)
+               || (ADD_FAILURE() << "expected " << face << ", got (" << static_cast<int>(pixel.r) << ", "
+                                 << static_cast<int>(pixel.g) << ", " << static_cast<int>(pixel.b) << ")",
+                   false);
+    };
+    const int middle = static_cast<int>(kSize) / 2;
+    EXPECT_TRUE(isColor(target->probe().pixel(middle, middle), 255U, 0U, 255U, "the +Z face (magenta)"));
+    EXPECT_TRUE(isColor(target->probe().pixel(4, middle), 0U, 255U, 0U, "the -X face (green)"));
+    EXPECT_TRUE(isColor(target->probe().pixel(static_cast<int>(kSize) - 4, middle), 255U, 0U, 0U,
+                        "the +X face (red)"));
+    EXPECT_TRUE(isColor(target->probe().pixel(middle, 4), 0U, 0U, 255U, "the +Y face (blue)"));
+    EXPECT_TRUE(isColor(target->probe().pixel(middle, static_cast<int>(kSize) - 4), 255U, 255U, 0U,
+                        "the -Y face (yellow)"));
+}
+
+TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
+{
+    // A texture that is re-filled keeps its ADDRESS, so only its revision says the pixels changed - and the
+    // upload is the viewer's transfer step, which copies what the scene references. This frame draws the
+    // same quad twice, with the texture re-filled between the two passes: the first picture is the old
+    // texel and the second is the new one. A cache that ignored the revision would draw the old colour
+    // twice, and a pipeline that reused the first pass' descriptor would do the same.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    const auto makeTarget = [&] {
+        OffscreenTarget::Layout layout;
+        layout.width  = kSize;
+        layout.height = kSize;
+        return OffscreenTarget::create(created.device, layout);
+    };
+    std::unique_ptr<OffscreenTarget> first_target  = makeTarget();
+    std::unique_ptr<OffscreenTarget> second_target = makeTarget();
+    ASSERT_NE(first_target, nullptr);
+    ASSERT_NE(second_target, nullptr);
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+
+    const auto fill = [](vine::graphics::Texture2D& texture, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+        auto image = vine::intrusive_ptr<vine::imaging::Image>(
+            new vine::imaging::Image(1, 1, vine::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        pixels[0] = static_cast<std::byte>(r);
+        pixels[1] = static_cast<std::byte>(g);
+        pixels[2] = static_cast<std::byte>(b);
+        pixels[3] = static_cast<std::byte>(255U);
+        texture.setImage(vine::intrusive_ptr<const vine::imaging::Image>(image));
+    };
+    const vine::intrusive_ptr<vine::graphics::Texture2D> texture(
+        new vine::graphics::Texture2D(1, 1, vine::imaging::PixelFormat::Rgba8Unorm));
+    fill(*texture, 255U, 0U, 0U);
+
+    const std::shared_ptr<vine::vsg::MaterialImages> images = vine::vsg::MaterialImages::create();
+    ASSERT_NE(images, nullptr);
+    const auto acquire = [&](const char* step) {
+        vine::vsg::detail::TextureReject reason = vine::vsg::detail::TextureReject::Ok;
+        const vine::vsg::SamplerImage    result = images->acquire(texture.get(), reason);
+        EXPECT_EQ(reason, vine::vsg::detail::TextureReject::Ok) << step;
+        EXPECT_NE(result.view, nullptr) << step;
+        return result;
+    };
+    const vine::vsg::SamplerImage first_images = acquire("the first fill uploads");
+
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(location = 8) in vec2 texcoord;\n"
+            "layout(location = 0) out vec2 uv;\n"
+            "layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
+            "void main()\n"
+            "{\n"
+            "    uv = texcoord;\n"
+            "    gl_Position = pc.projection * pc.modelView * vec4(position, 1.0);\n"
+            "}\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec2 uv;\n"
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+            "void main() { outColor = vec4(texture(diffuseMap, uv).rgb, 1.0); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, program_facts), FactMiss::None);
+
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F,
+                                            1.0F,  1.0F,  0.0F, -1.0F, 1.0F, 0.0F };
+        const std::vector<float> texcoords{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F };
+        geometry->setPositions(
+            vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(positions)));
+        geometry->setTexcoords2(
+            vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(texcoords)));
+        geometry->setIndices(vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
+            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                        geometry_facts;
+    std::vector<vine::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+
+    std::unique_ptr<ContentPipeline> pipelines =
+        pipelineFor(geometry_facts, program_facts.shaders, program_facts.abi);
+    ASSERT_NE(pipelines, nullptr);
+
+    // The declared set of the FIRST pass; the second pass gets its own, built from the re-acquired images.
+    const vine::vsg::BlockDescriptors::SampledBinding first_maps[] = {
+        vine::vsg::BlockDescriptors::SampledBinding{ 1U, first_images.view, first_images.sampler }
+    };
+    std::unique_ptr<BlockDescriptors> first_declared =
+        BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage, first_maps);
+    ASSERT_NE(first_declared, nullptr);
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setTexture(texture);
+    MaterialFacts          material_facts;
+    std::vector<std::byte> material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts  programs[]   = { program_facts };
+    const GeometryFacts geometries[] = { geometry_facts };
+    const MaterialFacts materials[]  = { material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    const vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 1.5), vine::math::Vec3d(0.0, 0.0, 0.0),
+                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+
+    const auto targetFacts = [](std::unique_ptr<OffscreenTarget>& which) {
+        TargetFacts entry;
+        entry.target        = which.get();
+        entry.wanted.width  = static_cast<int>(kSize);
+        entry.wanted.height = static_cast<int>(kSize);
+        entry.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+        entry.current = which->instance();
+        return entry;
+    };
+    const std::vector<TargetFacts> target_table{ targetFacts(first_target), targetFacts(second_target) };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+    clear.depth          = true;
+    clear.depth_value    = 0.0F;
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands{ command };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(first_target.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(commands, camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    // Re-fill the texture: the same address, a new revision - the cache rebuilds and the new image is what
+    // the second pass' descriptor is built from.
+    fill(*texture, 0U, 255U, 0U);
+    const vine::vsg::SamplerImage second_images = acquire("the re-fill uploads");
+    EXPECT_NE(second_images.view.get(), first_images.view.get()) << "the revision decided the rebuild";
+
+    const vine::vsg::BlockDescriptors::SampledBinding second_maps[] = {
+        vine::vsg::BlockDescriptors::SampledBinding{ 1U, second_images.view, second_images.sampler }
+    };
+    std::unique_ptr<BlockDescriptors> second_declared =
+        BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage, second_maps);
+    ASSERT_NE(second_declared, nullptr);
+
+    recorder.beginPass(2U);
+    recorder.setRenderTarget(second_target.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(commands, camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 2U);
+
+    VariantPool   pool;
+    StateRegistry first_registry(pool);
+    StateRegistry second_registry(pool);
+    StreamUploads uploads;
+    ContentDraw   first_draws(*pipelines, pool,
+                              vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                                             created.instance->vk()));
+    ContentDraw  second_draws(*pipelines, pool,
+                              vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                                             created.instance->vk()));
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+
+    storage->beginFrame();
+    BlockDescriptors* first_sets[]  = { first_declared.get() };
+    BlockDescriptors* second_sets[] = { second_declared.get() };
+    const auto recordPass = [&](const vine::vsg::core::CompiledPass& pass,
+                                std::span<const ContentPass::Scope::Entry> halves,
+                                const vine::vsg::core::RenderPassCompatibility& compatibility,
+                                std::span<BlockDescriptors*> sets, StateRegistry& registry,
+                                ContentPass::Scope& scope) {
+        scope.entries    = halves;
+        scope.registry   = &registry;
+        scope.storage    = storage.get();
+        scope.block_sets = sets;
+        scope.uploads    = &uploads;
+        ContentPass content(scope, diagnostics);
+        ::vsg::ref_ptr<::vsg::Node> node;
+        EXPECT_TRUE(content.record(pass, facts, compatibility, {}, view_block, node));
+        return node;
+    };
+
+    ContentPass::Scope first_scope;
+    ContentPass::Scope second_scope;
+    const ContentPass::Scope::Entry first_halves[]{ ContentPass::Scope::Entry{
+        vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        pipelines.get(), &first_draws } };
+    const ContentPass::Scope::Entry second_halves[]{ ContentPass::Scope::Entry{
+        vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        pipelines.get(), &second_draws } };
+    ::vsg::ref_ptr<::vsg::Node> first_node = recordPass(
+        frame.passes[0], first_halves, first_target->shape().compatibility(),
+        std::span<BlockDescriptors*>(first_sets, 1U), first_registry, first_scope);
+    ::vsg::ref_ptr<::vsg::Node> second_node = recordPass(
+        frame.passes[1], second_halves, second_target->shape().compatibility(),
+        std::span<BlockDescriptors*>(second_sets, 1U), second_registry, second_scope);
+    ASSERT_TRUE(diagnostics.clean());
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(first_target.get(), first_target.get());
+    executor.addTarget(second_target.get(), second_target.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packets[]{ PassContent{ frame.passes[0].pass, first_node },
+                                 PassContent{ frame.passes[1].pass, second_node } };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(packets, 2U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const auto near = [](std::uint8_t byte, double expected) {
+        return std::abs(static_cast<double>(byte) - expected) <= 16.0;
+    };
+    const int middle = static_cast<int>(kSize) / 2;
+    const Rgba8 first_pixel  = first_target->probe().pixel(middle, middle);
+    const Rgba8 second_pixel = second_target->probe().pixel(middle, middle);
+    EXPECT_TRUE(near(first_pixel.r, 255.0) && near(first_pixel.g, 0.0) && near(first_pixel.b, 0.0))
+        << "the first pass draws the first fill (red), got (" << static_cast<int>(first_pixel.r) << ", "
+        << static_cast<int>(first_pixel.g) << ", " << static_cast<int>(first_pixel.b) << ")";
+    EXPECT_TRUE(near(second_pixel.r, 0.0) && near(second_pixel.g, 255.0) && near(second_pixel.b, 0.0))
+        << "the second pass draws the SECOND fill (green), got (" << static_cast<int>(second_pixel.r) << ", "
+        << static_cast<int>(second_pixel.g) << ", " << static_cast<int>(second_pixel.b)
+        << ") - red here means the revision was ignored";
 }
 
 TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)

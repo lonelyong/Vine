@@ -82,13 +82,13 @@ bool describeAbi(const ProgramAbi& abi, std::vector<::vsg::ref_ptr<::vsg::Descri
         {
             // A sampler may sit in ANY set the text names: the engine's own set 0 carries the material block
             // and the diffuse map side by side, and a set is a set whatever kind of binding it holds. What
-            // this layer refuses is a KIND it has no view for (a cube map arrives with the texture work) and
-            // an array of samplers (each binding carries one image here) - plus ONE name: `skyMap` is the
-            // frame's environment, and the environment image has not landed, so a program that samples it is
-            // better refused than compiled against a stand-in that would show something nobody authored
-            // (see api/ContentImages).
-            if (binding.kind == AbiDescriptorKind::OtherSampler || binding.kind == AbiDescriptorKind::SamplerCube ||
-                binding.count != 1U || imageOriginOf(binding.name) == ImageOrigin::Environment)
+            // this layer refuses is a KIND it has no view for - anything but `sampler2D` and `samplerCube`,
+            // which are the two shapes a texture has (see api/MaterialImages) - and an array of samplers
+            // (each binding carries one image here) - plus ONE name: `skyMap` is the frame's environment,
+            // and the environment image has not landed, so a program that samples it is better refused than
+            // compiled against a stand-in that would show something nobody authored (see api/ContentImages).
+            if (binding.kind == AbiDescriptorKind::OtherSampler || binding.count != 1U ||
+                imageOriginOf(binding.name) == ImageOrigin::Environment)
             {
                 return false;
             }
