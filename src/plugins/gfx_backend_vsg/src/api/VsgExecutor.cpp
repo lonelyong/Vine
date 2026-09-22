@@ -265,6 +265,39 @@ bool VsgExecutor::recordWindow(const core::CompiledPass& pass,
     return true;
 }
 
+std::size_t VsgExecutor::noteLostSubmission(const core::CompiledFrame& frame) noexcept
+{
+    std::size_t marked = 0U;
+    for (const core::CompiledPass& pass : frame.passes)
+    {
+        if (pass.target_index >= frame.targets.size())
+        {
+            continue;  // the plan names a target it does not carry: the recorder refused it on the way in
+        }
+        const void* const identity = frame.targets[pass.target_index].target;
+        if (identity == nullptr)
+        {
+            continue;  // the default framebuffer: its contents are the presentation's, not ours
+        }
+        OffscreenTarget* target = nullptr;
+        for (const Entry& entry : targets_)
+        {
+            if (entry.identity == identity)
+            {
+                target = entry.target;
+                break;
+            }
+        }
+        if (target == nullptr || target->instance().attachments_invalidated)
+        {
+            continue;  // not registered, or already marked by an earlier pass of this frame
+        }
+        target->invalidateAttachments();
+        ++marked;
+    }
+    return marked;
+}
+
 std::span<const core::PassId> VsgExecutor::recorded() const noexcept
 {
     return recorded_;

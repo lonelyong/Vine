@@ -30,6 +30,7 @@ set(SRC_FILE_LIST
 	MaterialImagesTest.cpp
 	ProgramVariantTest.cpp
 	ContentStoreTest.cpp
+	ExecutorSubmissionTest.cpp
 	ContentHalvesTest.cpp
 	ContentDrawTest.cpp
 	DevicePhaseTest.cpp

@@ -73,7 +73,7 @@
 > M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）、
 > M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）。
 > 下一步：
-> 提交失败接缝 / 重建臂（把"重录一帧"变成一条真实路径）。
+> 提交失败接缝的调用方（谁在提交失败时调用 `noteLostSubmission`——今天要宿主自己说）。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -3500,3 +3500,14 @@ skipped=0、hygiene 0 / 847 文件、`check_diagnostic_formats.py` 0 / 39、`che
 **这一片留下的口子**：①**提交失败接缝 / 重建臂**——"重录一帧"还不是一条真实路径（它一落地，集合/半片/表的停靠
 窗口就有了真实读者，今天靠"记录是同步的"省掉的时序问题会回来）；②`Environment`（skyMap）仍无生产者；
 ③集合与半片的停靠窗口各自独立。
+
+### 11.16as M8j（2026-09-22）：丢掉的提交，下一帧修一次
+
+`OffscreenTarget` 的"内容不可信"事实（`attachments_invalidated`）与它的修复路径（计划答 Repair(Bootstrap)、
+第一个 bootstrap pass 清标志）早已就位，但**只有测试手调 `invalidateAttachments()`**。这一片补上那道缝：
+`VsgExecutor::noteLostSubmission(frame)` —— 把"这一帧的提交没发生"变成"它写过的那些离屏目标的内容不可信"：
+只标**该帧 pass 真正点到的**离屏目标（没写的目标不动、默认帧缓冲没有我们的附件 ✓），下一份计划的对应 pass
+`bootstrap == true`（用例断言），第一个 bootstrap pass 清标志（用例断言），第二帧起回到普通计划。
+证据：真设备用例（记录一帧 → noteLostSubmission == 1 → 下一帧的计划 bootstrap ✓ → 记录后标志清 ✓ →
+另一注册目标始终未被标 ✓）、0 VUID；变异 2/2（不标 / 清成 true ⇒ 红；另一次尝试的变异是空操作，不计）。
+门禁 637 用例 / 98 套件、0 VUID / 0 SYNC-HAZARD、hygiene 全清。

@@ -122,6 +122,25 @@ class V_VSG_API VsgExecutor
     /** @brief Gets the passes it recorded, in the order it recorded them. */
     [[nodiscard]] std::span<const core::PassId> recorded() const noexcept;
 
+    /**
+     * @brief Records that @p frame's submission did not happen: what its passes wrote is not there.
+     *
+     * A submission that fails - or a frame the host dropped after recording it - leaves the attachments of
+     * every OFF-SCREEN target this frame's passes wrote in a state nobody can trust: the writes were
+     * recorded, not performed. Marking them is what turns "contents unknown" back into a state the plan can
+     * answer (see OffscreenTarget::invalidateAttachments): the next compiled plan says "repair" for them,
+     * and the first BOOTSTRAPPING pass into each clears that - exactly once, because only a pass that clears
+     * can make contents known again.
+     *
+     * Only the targets @p frame's passes actually name: a registered target the frame did not write is left
+     * alone (nothing was recorded into it), and the default framebuffer has no attachments of ours to
+     * distrust.
+     *
+     * @param frame The frame whose submission was lost (the same compiled frame that was recorded).
+     * @return How many targets were marked.
+     */
+    std::size_t noteLostSubmission(const core::CompiledFrame& frame) noexcept;
+
     /** @brief Sets whether this frame's passes are recorded through measurement wrappers.
      *
      * WHAT THE WRAPPER IS FOR, and why the pass graph cannot be attributed without it: upstream's own
