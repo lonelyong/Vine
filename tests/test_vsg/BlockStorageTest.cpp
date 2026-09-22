@@ -250,6 +250,8 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
     const auto steady = fixture.storage->writeMaterial(&material, 1, second);
     EXPECT_EQ(steady.kind, vine::vsg::core::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(steady.bytes, 0U);
+    EXPECT_EQ(steady.offset, allocated.offset)
+        << "a hit still names the block: a draw binds THAT offset (offset 0 is another region's data)";
     EXPECT_EQ(readBack(*fixture.storage, allocated.offset, first.size()), first)
         << "a steady frame must not have overwritten anything";
 
@@ -264,6 +266,7 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
     const auto deduped = fixture.storage->writeMaterial(&material, 3, fourth);
     EXPECT_EQ(deduped.kind, vine::vsg::core::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(deduped.bytes, 0U);
+    EXPECT_EQ(deduped.offset, rewritten.offset) << "the frame's copy is where both answers point";
     EXPECT_EQ(readBack(*fixture.storage, rewritten.offset, third.size()), third)
         << "the frame's copy still holds the version the draw will use";
     EXPECT_EQ(fixture.storage->materialWrites(), 2U);

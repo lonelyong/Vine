@@ -14,6 +14,7 @@
 #include <vine/vsg/api/BlockStorage.hpp>
 #include <vine/vsg/api/ContentDraw.hpp>
 #include <vine/vsg/api/ContentFacts.hpp>
+#include <vine/vsg/api/ContentImages.hpp>
 #include <vine/vsg/api/ContentPipeline.hpp>
 #include <vine/vsg/api/StreamUploads.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
@@ -75,19 +76,6 @@
  * phase's (see the note on `recordScreenDraw`).
  */
 V_VSG_NS_BEGIN
-
-/** @brief The images one compiled input offers, as the layer that owns the target reports them.
- *
- * One entry per plan input, in the plan's order: the caller walks `CompiledPass::inputs` and answers for each
- * one. A colour-only entry today - the depth half of the input ABI (the shadow map) arrives with the shadow
- * resolution, and a caller with nothing to offer for an input (it produced nothing this frame) hands over an
- * empty entry rather than skipping it, so the two lists stay indexable against each other.
- */
-struct InputImages
-{
-    std::span<const ::vsg::ref_ptr<::vsg::ImageView>> colors;  ///< Colour attachments, in attachment order.
-    ::vsg::ref_ptr<::vsg::ImageView>                  depth;   ///< The input's DEPTH view, when it offers one.
-};
 
 /** @brief The content recorder of one pass scope (see the file note for what it refuses and why). */
 class V_VSG_API ContentPass
@@ -173,6 +161,19 @@ class V_VSG_API ContentPass
     /** @brief Reports the lights of @p announced that the block could not carry, once per episode. */
     void reportLightsDropped(std::size_t announced, std::size_t represented, bool has_camera);
 
+    /** @brief Reports, once per half, a program that cannot read the shadow its pass declared.
+     *
+     * The pass' plan resolves a map only from a target that STATES one (see core::ShadowFacts), so "this
+     * pass samples a shadow" is a fact of the plan; whether the program's text can read it is a fact of its
+     * declarations, and the name is what says so (api/ContentImages's `samplesShadowMap`). The two together
+     * are a diagnostic nothing else in the frame can give: the drawables stay lit and the map is simply never
+     * sampled, so without this line the shadow "disappears" with no reason anywhere.
+     *
+     * @param entry The compiled half that is about to draw.
+     * @param pass  The compiled pass (its resolved shadow).
+     */
+    void reportShadowNotSampled(const Scope::Entry& entry, const core::CompiledPass& pass);
+
     /** @brief Builds the pass' sampled-input set and its bind command, or null when there is nothing to bind.
      *
      * One set per pass and per KIND: the inputs are a property of the pass, so every draw of one kind binds the
@@ -251,6 +252,9 @@ class V_VSG_API ContentPass
     core::Diagnostics&  diagnostics_;  ///< The one diagnostic route.
     /// One report-once per entry: a half that cannot be served must say so once, not once per command.
     std::vector<core::ReportOnce> half_reported_;
+    /// One report-once per entry for the shadow the pass declared and the program cannot read (see
+    /// `reportShadowNotSampled`): a second message about the same half must not be what silences the first.
+    std::vector<core::ReportOnce> shadow_reported_;
     /// The block sets `serveHalf` resolved for this pass' content half (in the declared set order).
     std::array<BlockDescriptors*, kMaxBlockSets> half_blocks_{};
     std::size_t                                  half_block_count_{0};

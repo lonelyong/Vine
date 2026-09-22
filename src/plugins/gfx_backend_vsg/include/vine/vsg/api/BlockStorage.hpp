@@ -66,7 +66,10 @@ class BlockStorage
     struct MaterialWrite
     {
         core::MaterialArena::WriteKind kind{core::MaterialArena::WriteKind::Unchanged};  ///< What happened.
-        std::uint64_t                  offset{0};  ///< Byte offset (meaningful when kind != Unchanged).
+        /// Byte offset in the storage's buffer - the dynamic offset to bind, meaningful for EVERY answer: a
+        /// hit names the block the last write left, which is exactly what a draw must bind (its bytes are the
+        /// material's - see `writeMaterial`).
+        std::uint64_t                  offset{0};
         std::uint64_t                  bytes{0};   ///< Bytes written (0 when nothing was).
     };
 
@@ -150,7 +153,8 @@ class BlockStorage
      * @param material Material identity (a raw pointer: the arena stores no reference to it).
      * @param revision Upstream revision of the material's bytes.
      * @param block    Block bytes (a `VineMaterialBlock`); not written when the revision matches.
-     * @return What happened and where the bytes are (see @ref MaterialWrite).
+     * @return What happened and where the block is; the offset is valid for every answer, so a caller binds
+     *         it whether the bytes were written or were already right (see @ref MaterialWrite).
      */
     [[nodiscard]] MaterialWrite writeMaterial(const void* material, std::uint64_t revision,
                                               std::span<const std::byte> block);

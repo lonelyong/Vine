@@ -117,7 +117,8 @@ ContentPass::ContentPass(const Scope& scope, core::Diagnostics& diagnostics) noe
     : scope_(scope)
     , diagnostics_(diagnostics)
 {
-    half_reported_ = std::vector<core::ReportOnce>(scope.entries.size());
+    half_reported_   = std::vector<core::ReportOnce>(scope.entries.size());
+    shadow_reported_ = std::vector<core::ReportOnce>(scope.entries.size());
 }
 
 bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count)
@@ -587,6 +588,11 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         return false;
     }
 
+    // The shadow the pass declared reaches a program only through the name its text uses for the map
+    // (api/ContentImages): a program that never declares it shades unshadowed, which is a picture the host
+    // cannot tell from "the light does not cast" - so it is said once per half rather than left to the eye.
+    reportShadowNotSampled(*entry, pass);
+
     // The blocks: this draw's identity and data (the view's bytes came in with the pass).
     vine::graphics::VineDrawBlock draw_block;
     packDrawBlock(command, draw_block);
@@ -730,6 +736,27 @@ void ContentPass::reportRefused(const char* what, const char* why)
     const std::string message = std::string(what) + " is not drawn: " + why;
     diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
                         vine::graphics::DiagnosticCategory::ContentSkipped, asString(message));
+}
+
+void ContentPass::reportShadowNotSampled(const Scope::Entry& entry, const core::CompiledPass& pass)
+{
+    if (pass.shadow.light == nullptr || entry.pipelines == nullptr)
+    {
+        return;  // the pass samples no shadow (or the half declares nothing): nothing to say
+    }
+    if (samplesShadowMap(entry.pipelines->abi()))
+    {
+        return;  // the text names the map: the caller fills that binding (see api/ContentImages)
+    }
+    const std::size_t index = static_cast<std::size_t>(&entry - scope_.entries.data());
+    if (index >= shadow_reported_.size() || !shadow_reported_[index].shouldReport())
+    {
+        return;
+    }
+    diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
+                        vine::graphics::DiagnosticCategory::UnsupportedRequest,
+                        asString("the pass declared a shadow, but the program shading it declares no `shadow_map` "
+                                 "sampler, so the map does not reach its drawables: they are shaded unshadowed"));
 }
 
 void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represented, bool has_camera)

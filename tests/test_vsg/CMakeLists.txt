@@ -26,6 +26,7 @@ set(SRC_FILE_LIST
 	ContentPipelineTest.cpp
 	ContentPushTest.cpp
 	WhiteImageTest.cpp
+	ContentImagesTest.cpp
 	ContentDrawTest.cpp
 	DevicePhaseTest.cpp
 	OffscreenTargetTest.cpp
@@ -172,6 +173,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ProgramAbi.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentPush.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/WhiteImage.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentImages.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentPass.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/WindowTarget.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ViewBlock.cpp

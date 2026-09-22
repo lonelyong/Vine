@@ -3,14 +3,16 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M8c-2b：没有贴图的材料采样“白”**：`api/WhiteImage`（图像 + 视图 + 采样器 + `fill()` = 屏障 +
-> `vkCmdClearColorImage`（白）+ 屏障，停在描述符声明的 `SHADER_READ_ONLY`；无设备）——引擎的 “没有贴图就是白”
-> 是一个**值**，空着的是未定义数据；`test_vsg` 591 用例 / 92 套件全绿；门禁
-> （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 828 文件）、相位 9 行 / 2 次运行。
+> **M8c-3：`shadow_map` 按名字到达程序声明的 binding**：`api/ContentImages`（“哪个名字的图从哪来”的策略唯一拼写：
+> `diffuseMap` → 材料/白、`skyMap` → 环境（未落地 ⇒ 建层时拒）、`shadow_map` → pass 解析出的那张 map、
+> 其余名字 → pass 的输入）+ 内容路径的真设备像素（同一程序三种输入：有 map ⇒ 读到 0.25、无 map ⇒
+> 白色替身 ⇒ 材料的颜色、程序不声明 map 而 pass 声明了 ⇒ 画照画、报一次）；顺手修了 **material HIT 返回 offset 0**
+> 的稳态帧缺陷（`BlockStorage::writeMaterial`）；`test_vsg` 595 用例 / 93 套件全绿；门禁
+> （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 831 文件）、相位 9 行 / 2 次运行。
 > M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：M8a 读事实（§11.16ae）、M8b 布局跟着
-> 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）。
-> 下一步：按名字把 pass 的输入图指到声明的 binding（`shadow_map` / G-buffer）+ 材质贴图（GPU 侧）→ 变体的
-> define 进管线身份 → 三张表的生产侧。
+> 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）、
+> M8c-3 名字即来源（§11.16aj）。下一步：全屏路径的阴影槽（map 在 c+1、块在 c+2）+ 材质贴图（GPU 侧）→
+> 变体的 define 进管线身份 → 三张表的生产侧。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2542,7 +2544,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8a（声明成为事实）~~ | **已完成（2026-09-22）**：`api/ProgramAbi`——`scanProgramAbi(vertex, fragment, defines, out)` 把文本的绑定声明读成事实（set/binding、种类、阶段、按**L1 类型名**认领的角色、std140 尺寸、push 范围），条件按变体求值（taken 分支的 `#error` ⇒ Malformed），引擎自己的八个程序逐条钉住（前向 5 绑定 + push 128B 顶点、带影延迟光照的 5/6、屏幕拷贝的 binding=N…）；11 条无设备用例 + 5 条变异反证（§11.16ae）。下一步 M8b：布局跟着声明装配。 |
 | ~~M8b（布局就是声明）~~ | **已完成（2026-09-22）**：`ContentPipeline::create` 收 `ProgramAbi`——`describeAbi` 把声明读成布局（每个被声明碰到的 set 一条布局、空隙填真布局、块 → dynamic UBO 在**它自己写的** binding 上、push 照声明），填不了的按名拒绝（外来块 / 非 std140 / 超尺寸 / `count != 1` / 无视图的采样器种类 / 内容路径 set≠1 的采样器 / 块与输入挤一个 set），`acquire` 另拒“采样器超出本 pass 输入数”；`BlockDescriptors` 形状驱动（`canonicalShape` / `layoutOfShape` / `forAbi` / `blockShapeOf`，`bind()` 一个声明绑定一个偏移）；`ContentPass::Scope::block_sets` 一组块集 + `serveHalf` 按“set 序号 + 形状逐位相同”认领、按名拒绝、push 未填即拒；`Draw::blocks` 变 span。4 条新用例（真设备像素 1、真设备描述符 1、无设备 2）+ 6 条变异反证全红；门禁还揪出三处仍无条件绑块的旧夹具（程序一个块都没声明 ⇒ 布局 0 个 set），修夹具而不是加容忍（§11.16af）。 |
 | ~~M8c-1（push 由 pass 自己填）~~ | **已完成（2026-09-22）**：`AbiPushRange` 带上成员表（名字/偏移/尺寸，扫描时就记）；新 `api/ContentPush`：`contentPushMemberOf` 认 `projection` / `modelView`，`packContentPush` 按**名字**填——`projection` = `foldToDeviceClip(camera.projection)`（与 `VineViewBlock.proj` 同一个值、同一处折叠），`modelView` = `view * model`（顺序就是契约：模型矩阵在右）；认不出的名字或尺寸不对（`vec4 projection`）在 `ContentPipeline::create` 就拒（前缀可以），无相机写零（同 `buildViewBlock`）；`ContentDraw::Draw` += `pushes`，每个可绘制对象一遍（`modelView` 带的是它自己的模型矩阵）。**实测的坑**：`vsg::PushConstants` 放进 `StateGroup` 的 stateCommands 会被 vsg 按 slot 记录、但**到不了 shader**（画出来是恒等矩阵）——必须放进 `Commands` 节点、按插入序紧贴绘制（全屏路径 M5d 一直就是这么做的）；变异 N1 把位置改回去 ⇒ 像素用例红。另：计划里有相机时，pass 的**深度清屏值要显式给**（reverse-Z 远 = 0.0），否则片元被拒（画面=清屏色、0 VUID、无拒绝）。5 条新用例（真设备像素 ×1、无设备 ×4）+ 5 条变异反证全红（§11.16ag）。 |
-| **M8 下一步** | 按名字把 pass 的输入图指到声明的 binding（`shadow_map` / G-buffer 采样；policy：`diffuseMap` → 材料/白、`skyMap` → 环境（仍拒）、其余名字 → pass 的输入，按声明顺序）+ 材质贴图的 GPU 侧（缓存 + 上传 + 立方体视图）→ 变体的 define 进管线身份 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
+| **M8 下一步** | 全屏路径的阴影槽（引擎的 shadow ABI 把 `shadow_map` 放在 `color_count+1`、`VineShadowBlock` 放在 `color_count+2`——当前全屏的输入集是“按计数依次绑定”，屏程序声明在哪就绑到哪是下一片）+ 材质贴图的 GPU 侧（缓存 + 上传 + 立方体视图）→ 变体的 define 进管线身份 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -2875,3 +2877,68 @@ sampler）**，谁在哪一个 binding 由文本说了算；只要不把两样�
 0 SYNC-HAZARD**、hygiene 0 / 828 文件、`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、
 相位 9 行 / 2 次运行全收尾。变异 **N1 纯套件红**（2 条）、**N2 由验证层抓住**（4 条 VUID；干净树上这两条
 用例的 VUID 基线为 0，实测核对过）。
+
+### 11.16aj M8c-3（2026-09-22）：名字即来源——`shadow_map` 到达它声明的 binding
+
+§11.16ai 给"没有贴图"定了值；这一片给"没有阴影"定值，并把**哪个名字的图从哪来**变成一条可断言的策略。
+
+**问题**：引擎的内容程序把 `shadow_map` 声明在**自己的集合里**（前向：set 0 / binding 3，挨着 material@0 与
+`diffuseMap`@1），而那张图是 **pass 的输入**——计划里由目标自己的声明解析出来（`resolveShadow`：目标是 map +
+深度可采样 + 生产者公布了怎么读）。caller 建那个集合（块 + 图），但它凭什么知道 binding 3 该放哪张图？
+"第一个可采样的深度"是这条路上已经量过的缺陷（一个 G-buffer 也有深度——参考实现就是把 G-buffer 的深度当成太阳的
+map）。**光靠位置不行，得靠名字**。
+
+**策略（`api/ContentImages`，唯一拼写）**：
+
+| 名字 | 来源 | 今天的生产者 |
+| --- | --- | --- |
+| `diffuseMap` | 材料自己的贴图，没有就是那张白图 | caller（§11.16ai 的 `api/WhiteImage`） |
+| `skyMap` | 帧的环境图 | **环境没落地 ⇒ `ContentPipeline::create` 按名字拒**（比编一个替身诚实） |
+| `shadow_map` | pass 解析出的那张 map | `shadowImageOf`（本片）+ "程序读不到"的上报 |
+| 其余名字（`albedo_tex`、`screen_tex`……） | pass 声明的输入，按声明顺序 | caller（场景桥落地时用它走输入表） |
+
+**`shadowImageOf` 不问位置，问计划**：它按 `resolveShadow` 的同样三个事实（同一个 light 身份 + 深度可采样 +
+生产者公布过矩阵）走输入表，取**caller 真的提供过的**那个深度视图，配 `ContentPipeline::depthSampler()`（NEAREST：
+深度比较读的是光栅器写下的精确值）。pass 没解析出 map ⇒ 返回 false，caller 绑**白色替身**——引擎的程序只在
+`VineShadowBlock::params.x` 打开时读它，而白色的值是那次乘法的单位元。
+
+**pass 侧能断言的只有它自己知道的事实**：程序声明了 `shadow_map` 而这条 pass 没解析出 map ⇒ 不拒（白替身兜住），
+但**反过来的情形必须说话**：pass 解析出了 map、程序的名字表里没有它 ⇒ 画照画（"一个 drawable 不该因为阴影而消失"），
+并**每个半片报一次**（`UnsupportedRequest`："the pass declared a shadow, but the program shading it declares no
+`shadow_map` sampler…"）。这是旧实现已经认下的判据（§SceneBridgePipeline 的那条），搬到新层后不再依赖
+"set 0 / binding 3"这种写死的坐标——**名字**才是契约。
+
+**顺手抓到并修掉的稳态帧缺陷**：`BlockStorage::writeMaterial` 在 HIT（同一 material + 同一 revision，稳态帧的
+常态）时返回 `{Unchanged, offset 0, 0}`，而 `ContentPass::recordCommand` 会照用那个 offset ⇒ 一个帧里**第二次**
+绘制同一材料时绑到 offset 0——那是存储缓冲的第一块（view 区），着色读到的 material 全是 0（实测：(0,0,0)）。
+之前没有用例把"第二帧的记录"提交上去过（§11.16p 的第一个用例只记录、不断言第二帧的画面），本片的像素帧里同一
+材料被画三次，第二次就现形。修法：HIT 也报出**上一次写留下的那块**（`offsetOf(slot, copy)`——arena 的 slot
+与 copy 本来就是给读的一侧准备的），并把"hit 也指名"钉进 `BlockStorageTest`。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ContentImages.hpp` / `src/api/ContentImages.cpp`（新） | `InputImages`（从 `ContentPass.hpp` 搬来，图的事归图）、`ImageOrigin` + `imageOriginOf`（名字表）、`samplesShadowMap(abi)`、`shadowImageOf(pass, inputs, depth_sampler, out)`（**无设备**：图是 create-info，计划是值） |
+| `ContentPipeline` | 名字为 `skyMap` 的采样器在 describeAbi 里被拒（"环境没落地"这件事有一个按名字的拼写） |
+| `ContentPass` | `reportShadowNotSampled`（每半片一次）：pass 解析出 map 而程序读不到 ⇒ 上报，不拒 |
+| `BlockStorage` | HIT 的 offset = 上一次写留下的那块（稳态帧的第二笔绘制读的就是它） |
+| `tests/test_vsg/ContentImagesTest.cpp`（新，无设备，3 条） | 名字表（含"名字不是模式"：`diffuseMap2`/`shadowMap`/`SkyMap` 都是 Input）；`samplesShadowMap` 不看 set/binding；`shadowImageOf` **按身份挑**（两个可采样深度、map 在后/在前/换别的 light/没公布矩阵/没提供视图） |
+| `tests/test_vsg/ContentPassTest.cpp`（+1 真设备） | 一帧五趟：两个 depth-only 可采样目标（一个有 light 声明、一个没有）+ 同程序三趟（[source,map] ⇒ 读 0.25；[source] ⇒ 白替身；不给 map 的程序 + [source,map] ⇒ 上报一次且照画） |
+| `tests/test_vsg/ContentPipelineTest.cpp` | 2D `skyMap` 与 cube 一样被拒 |
+| `tests/test_vsg/BlockStorageTest.cpp` | HIT 的 offset 与 Allocated/Rewritten 的相同（改法被变异住的那条） |
+
+**变异反证（5/5 红，都在纯套件里，不带设备）**：
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 挑选器改成"第一个提供过深度的输入"（就是那个已量过的缺陷） | 无设备用例红（挑到 source 的 0.0）+ 像素红（画面变黑） |
+| M2 建层时不再拒 `skyMap` | 无设备用例红（`ADeclarationThisBackendCannotFillIsRefused`） |
+| M3 "程序读不到阴影"不上报 | 像素红（上报计数断言）——纯套件抓不到（这就是它必须上报的原因） |
+| M4 HIT 返回 offset 0（复现原缺陷） | `BlockStorageTest` 红 + 像素红 |
+| M5 `samplesShadowMap` 变成"声明了任何采样器就算" | 无设备用例红 + 像素红（报告该不响的时候响了） |
+
+证据：`test_vsg` 全量 **595 用例 / 93 套件全绿**；门禁 `scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、
+hygiene 0 / 831 文件、`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、相位 9 行 / 2 次运行全收尾。
+
+**这一片留下的口子（登记，不假装解决）**：全屏路径的输入集仍是"按计数依次绑定"，引擎的 shadow ABI 给全屏程序
+声明的槽位是 `color_count+1`（map）与 `color_count+2`（块）——`layout` 跟着全屏程序的声明走（含那个块用动态偏移
+绑）是下一片；材质贴图的 GPU 侧（缓存 + 上传 + 立方体视图）随之；`Input` 那一行要等场景桥来消费。

@@ -258,11 +258,17 @@ BlockStorage::MaterialWrite BlockStorage::writeMaterial(const void* material, st
     }
 
     const core::MaterialArena::Write write = d->arena.note(material, revision);
+    // WHERE THE BLOCK IS, for EVERY answer. On a hit nothing is written, but the bytes the LAST write put
+    // there are still the material's (the arena keeps a slot's copies readable for as long as a frame may),
+    // so the offset a draw binds is the same one - and answering 0 instead would bind the first block of the
+    // storage's buffer, i.e. another region's data: measured as a steady frame shading with a zero material
+    // (the frame's second draw of one material read the view region - see BlockStorageTest's steady-frame
+    // case, which pins the bytes at that offset).
+    const std::uint64_t offset = d->regions.materials_base + d->arena.offsetOf(write.slot, write.copy);
     if (write.kind == core::MaterialArena::WriteKind::Unchanged) {
-        return {write.kind, 0, 0};
+        return {write.kind, offset, 0};
     }
 
-    const std::uint64_t offset = d->regions.materials_base + d->arena.offsetOf(write.slot, write.copy);
     if (!d->writeInto(offset, d->arena.blockBytes(), block, d->oversized_count)) {
         return {write.kind, 0, 0};
     }

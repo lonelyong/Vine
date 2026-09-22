@@ -558,6 +558,10 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
     // A sampler kind this backend has no view for (a cube map arrives with the texture work).
     EXPECT_EQ(layerDeclaring("layout(set = 1, binding = 0) uniform sampler3D volume_tex;"), nullptr);
     EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 1) uniform samplerCube skyMap;"), nullptr);
+    // ... and the frame's environment: `skyMap` is the name that reserves it (api/ContentImages), and that
+    // image has not landed, so a 2D declaration of it is refused like the cube one - compiling it against a
+    // stand-in would show a picture nobody authored.
+    EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 1) uniform sampler2D skyMap;"), nullptr);
 
     // A block that reads a PREFIX of the L1 struct is fine: the range it is bound with covers what it reads.
     auto prefix = layerDeclaring("layout(set = 0, binding = 0, std140) uniform VineLightsBlock { vec4 light0; } lights;");

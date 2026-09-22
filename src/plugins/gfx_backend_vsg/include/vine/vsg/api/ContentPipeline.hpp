@@ -42,8 +42,8 @@
  * program's DECLARED bindings (api/ProgramAbi) and builds every set from them - dynamic uniform bindings for
  * the L1 blocks, one sampler per declared sampled input - plus the push ranges the text declares. A program
  * that declares nothing this backend can fill (a foreign block, an oversized or non-std140 block, an
- * unsupported sampler, a sampler outside the layer's input set) is REFUSED rather than compiled against a
- * layout nobody can feed.
+ * unsupported sampler, a `skyMap` whose environment image has not landed) is REFUSED rather than compiled
+ * against a layout nobody can feed.
  *
  * THE SAMPLED-INPUT SET. A key also says how many colour attachments the pass' declared inputs offer
  * (`sampled_color_count`), and those textures are bound in a set of their own - set 1, right after the block
@@ -51,7 +51,7 @@
  * stage. A layout is built per count and kept, because the count IS part of the identity: a pipeline is
  * compiled against one descriptor set layout, so "how many sampled textures this pass binds" has to be a
  * fact of the pipeline, exactly as the old implementation's per-source shader sets were. A program that
- * DECLARES such a sampler declares it inside that set (a binding the count covers) - see below.
+ * declares a sampler in that set has to declare it at a binding the count covers (`acquire` checks that).
  *
  * TWO KINDS, TWO DESCRIPTOR ABIS (see core::DrawKind). A CONTENT layer is the one above: the ABI's blocks at
  * set 0, the sampled inputs at set 1, vertex streams declared. A FULL-SCREEN layer is the other drawing
@@ -80,7 +80,8 @@ class ContentPipeline
     /** @brief The set THIS backward's own arrangement puts a pass' sampled inputs in (the engine's programs
      *         declare their maps in their own sets instead - see api/ProgramAbi). A sampler declared in this
      *         set is served from the pass' inputs (one per binding, in declaration order); a sampler anywhere
-     *         else is a MAP the caller supplies (a material's texture, the white fallback). */
+     *         else is filled by the CALLER, from the source its NAME states (see api/ContentImages: a
+     *         material's texture or the white fallback, the pass' resolved shadow map, ...). */
     static constexpr std::uint32_t kInputSet = 1U;
 
     /** @brief One vertex stream the pipeline declares. */
@@ -142,8 +143,10 @@ class ContentPipeline
      *   * a role block that declares MORE bytes than the L1 struct carries (the bytes past the struct are not
      *     the ABI's: the block is bound with a range that ends there);
      *   * an `OtherSampler` (the images this backend binds are float 2D and cube views);
-     *   * a sampler declared at any SET other than the layer's input set (content: set 1), and a sampler
-     *     binding the key's input count does not cover (checked in @ref acquire, where the count is known).
+     *   * a program that samples the frame's environment (`skyMap`): that image has not landed, so there is no
+     *     descriptor to declare for it;
+     *   * a sampler binding the key's input count does not cover (checked in @ref acquire, where the count is
+     *     known); a sampler in any OTHER set is the caller's to fill, and the caller's to get wrong.
      *
      * @param abi        The bindings and push ranges the program's text declares.
      * @param bindings   Vertex stream bindings the pipeline declares.

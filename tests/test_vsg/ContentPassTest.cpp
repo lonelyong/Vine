@@ -28,6 +28,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/Light.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -37,6 +38,7 @@
 #include <vine/vsg/api/BlockStorage.hpp>
 #include <vine/vsg/api/ContentDraw.hpp>
 #include <vine/vsg/api/ContentFacts.hpp>
+#include <vine/vsg/api/ContentImages.hpp>
 #include <vine/vsg/api/ContentPass.hpp>
 #include <vine/vsg/api/ContentPipeline.hpp>
 #include <vine/vsg/api/ContentSources.hpp>
@@ -71,6 +73,7 @@ using vine::vsg::ContentPass;
 using vine::vsg::ContentPipeline;
 using vine::vsg::FactMiss;
 using vine::vsg::GeometryFacts;
+using vine::vsg::InputImages;
 using vine::vsg::MaterialFacts;
 using vine::vsg::OffscreenTarget;
 using vine::vsg::PassContent;
@@ -1713,4 +1716,399 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     EXPECT_TRUE(near(corner.r, kClear[0]) && near(corner.g, kClear[1]) && near(corner.b, kClear[2]))
         << "the pass' clear must survive where the triangle is not, got (" << static_cast<int>(corner.r) << ", "
         << static_cast<int>(corner.g) << ", " << static_cast<int>(corner.b) << ")";
+}
+
+TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
+{
+    // THE ENGINE'S SHADOW ABI on the content path: the forward program declares `shadow_map` at set 0 /
+    // binding 3 (next to the material at 0 and the map at 1) and reads it under the shadow block's switch.
+    // Which image that binding carries is decided BY NAME (api/ContentImages): the map the pass' plan
+    // RESOLVED - the input whose target states whose shadow it is - and the white stand-in when the plan
+    // resolved none, because the engine only samples the map while the block's switch is on.
+    //
+    // This frame draws the same program three ways, and each picture rules out one of the silent failures:
+    //
+    //   * the map's own pass clears its DEPTH to 0.25 - a value no other pass in the frame writes;
+    //   * over [source, map] the shading must be material * 1.0 (white map) * 0.25 = (0.25, 0.125, 0.125):
+    //     (255, 128, 128) would mean the binding never got the map (a stand-in bound where a map was
+    //     resolved), and (0, 0, 0) the "first sampleable depth" pick - the source IS a sampleable depth
+    //     too, so a picker that walks for one instead of asking the plan takes the far plane;
+    //   * over [source] alone the plan resolves no map, and the same text must shine at (255, 128, 128).
+    //
+    // A program that declares the map NOWHERE, drawn by a pass that resolved one, takes the fourth: it
+    // draws (the shadow is not a reason to lose the drawable) and the map it cannot read is REPORTED - a
+    // picture the host cannot tell from "the light does not cast" is what that diagnostic exists for.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    // The map: DEPTH-ONLY and sampleable (the shadow-map shape), cleared to 0.25 by its own pass.
+    OffscreenTarget::TargetLayout map_layout;
+    map_layout.width            = kSize;
+    map_layout.height           = kSize;
+    map_layout.color_formats.clear();
+    map_layout.depth_format     = RenderTarget::DepthFormat::D32;
+    map_layout.depth_sampleable = true;
+    map_layout.clear.depth      = true;
+    std::unique_ptr<OffscreenTarget> map = OffscreenTarget::create(created.device, map_layout);
+    ASSERT_NE(map, nullptr);
+    ASSERT_TRUE(map->hasDepth());
+
+    // ... and a second, identical one the pass also samples: sampleable, but its target states NO light, so
+    // it is NOT the map (the trap above - two sampleable depths, one of them the map).
+    std::unique_ptr<OffscreenTarget> plain_depth = OffscreenTarget::create(created.device, map_layout);
+    ASSERT_NE(plain_depth, nullptr);
+
+    OffscreenTarget::Layout shading_layout;
+    shading_layout.width  = kSize;
+    shading_layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> lit   = OffscreenTarget::create(created.device, shading_layout);
+    std::unique_ptr<OffscreenTarget> flat  = OffscreenTarget::create(created.device, shading_layout);
+    std::unique_ptr<OffscreenTarget> plain = OffscreenTarget::create(created.device, shading_layout);
+    ASSERT_NE(lit, nullptr);
+    ASSERT_NE(flat, nullptr);
+    ASSERT_NE(plain, nullptr);
+
+    // The map's identity and its own statements: the target says whose shadow it is, and how a fragment maps
+    // into it (the producer's matrix - the consumer cannot invent it).
+    const vine::intrusive_ptr<RenderTarget> map_handle(new RenderTarget());
+    const vine::intrusive_ptr<RenderTarget> depth_handle(new RenderTarget());
+    const vine::intrusive_ptr<RenderTarget> lit_handle(new RenderTarget());
+    const vine::intrusive_ptr<RenderTarget> flat_handle(new RenderTarget());
+    const vine::intrusive_ptr<RenderTarget> plain_handle(new RenderTarget());
+    const vine::intrusive_ptr<vine::graphics::Light> sun =
+        vine::graphics::Light::createDirectional(vine::math::Vec3d(0.0, 0.0, 1.0));
+    vine::math::Mat4d light_view_projection;
+    light_view_projection(0, 0) = 0.5;
+    light_view_projection(1, 1) = 0.5;
+    light_view_projection(2, 3) = 0.5;
+    light_view_projection(3, 3) = 1.0;
+    map_handle->setShadowOf(sun);
+    map_handle->setProducerViewProjection(light_view_projection);
+    ASSERT_TRUE(map_handle->hasProducerViewProjection());
+
+    const auto make_program = [](const char8_t* fragment) {
+        auto program = vine::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
+            "void main() { gl_Position = pc.projection * pc.modelView * vec4(position, 1.0); }\n"));
+        ShaderStage fragment_stage;
+        fragment_stage.type   = ShaderStageType::Fragment;
+        fragment_stage.source = vine::String(fragment);
+        program->addStage(vertex);
+        program->addStage(fragment_stage);
+        return program;
+    };
+    // The engine's set 0: the material at 0 (the shading's colour), the map at 1, and - in the shadowed
+    // text - the map at 3. Both fragments multiply by whatever they sample, so a binding that did not arrive
+    // cannot hide: the sampled value IS part of the picture.
+    const vine::intrusive_ptr<ShaderProgram> shadow_program = make_program(
+        u8"layout(location = 0) out vec4 outColor;\n"
+        u8"layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+        u8"{\n"
+        u8"    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+        u8"} material;\n"
+        u8"layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+        u8"layout(set = 0, binding = 3) uniform sampler2D shadow_map;\n"
+        u8"void main() {\n"
+        u8"    vec3  albedo = texture(diffuseMap, vec2(0.5, 0.5)).rgb;\n"
+        u8"    float mapped = texture(shadow_map, vec2(0.5, 0.5)).r;\n"
+        u8"    outColor = vec4(albedo * material.diffuse.rgb * mapped, 1.0);\n"
+        u8"}\n");
+    const vine::intrusive_ptr<ShaderProgram> unshadowed_program = make_program(
+        u8"layout(location = 0) out vec4 outColor;\n"
+        u8"layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+        u8"{\n"
+        u8"    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+        u8"} material;\n"
+        u8"layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+        u8"void main() {\n"
+        u8"    vec3 albedo = texture(diffuseMap, vec2(0.5, 0.5)).rgb;\n"
+        u8"    outColor = vec4(albedo * material.diffuse.rgb, 1.0);\n"
+        u8"}\n");
+    ProgramFacts shadow_facts;
+    ProgramFacts unshadowed_facts;
+    ASSERT_EQ(buildProgramFacts(*shadow_program, shadow_facts), FactMiss::None);
+    ASSERT_EQ(buildProgramFacts(*unshadowed_program, unshadowed_facts), FactMiss::None);
+    EXPECT_TRUE(samplesShadowMap(shadow_facts.abi)) << "the text declares the map at set 0 / binding 3";
+    EXPECT_FALSE(samplesShadowMap(unshadowed_facts.abi));
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+    const std::shared_ptr<vine::vsg::WhiteImage> white = vine::vsg::WhiteImage::create();
+    ASSERT_NE(white, nullptr);
+
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        Triangle triangle;
+        geometry->setPositions(triangle.positions);
+        geometry->setIndices(triangle.indices);
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                        geometry_facts;
+    std::vector<vine::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vine::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
+    MaterialFacts          material_facts;
+    std::vector<std::byte> material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts  programs[]{ shadow_facts, unshadowed_facts };
+    const GeometryFacts geometries[]{ geometry_facts };
+    const MaterialFacts materials[]{ material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 128 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    const vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 1.5), vine::math::Vec3d(0.0, 0.0, 0.0),
+                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+
+    const auto targetFacts = [](OffscreenTarget& which, const void* handle) {
+        TargetFacts entry;
+        entry.target        = handle;
+        entry.wanted.width  = static_cast<int>(kSize);
+        entry.wanted.height = static_cast<int>(kSize);
+        entry.wanted.shape  = which.shape();
+        entry.current       = which.instance();
+        entry.depth.has_depth = which.hasDepth();
+        entry.depth.promotion = which.hasDepth();
+        return entry;
+    };
+    TargetFacts map_facts  = targetFacts(*map, map_handle.get());
+    map_facts.shadow.light                 = sun.get();
+    map_facts.shadow.has_view_projection   = map_handle->hasProducerViewProjection();
+    map_facts.shadow.view_projection       = map_handle->producerViewProjection();
+    const std::vector<TargetFacts> target_table{ targetFacts(*plain_depth, depth_handle.get()), map_facts,
+                                                 targetFacts(*lit, lit_handle.get()),
+                                                 targetFacts(*flat, flat_handle.get()),
+                                                 targetFacts(*plain, plain_handle.get()) };
+
+    // Pass 1 publishes the OTHER sampleable depth (cleared to the reverse-Z far plane, 0.0), pass 2 the map
+    // (0.25): both are real images in the layout a descriptor declares, and only one of them is the map.
+    ClearPolicy depth_clear;
+    depth_clear.depth       = true;
+    depth_clear.depth_value = 0.0F;
+    ClearPolicy map_clear;
+    map_clear.depth       = true;
+    map_clear.depth_value = 0.25F;
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+    clear.depth          = true;
+    clear.depth_value    = 0.0F;
+
+    RenderCommand shadow_command;
+    shadow_command.geometry = geometry;
+    shadow_command.material = material;
+    shadow_command.program  = shadow_program;
+    RenderCommand unshadowed_command;
+    unshadowed_command.geometry = geometry;
+    unshadowed_command.material = material;
+    unshadowed_command.program  = unshadowed_program;
+    const std::vector<RenderCommand> shadow_commands{ shadow_command };
+    const std::vector<RenderCommand> unshadowed_commands{ unshadowed_command };
+    const RenderTarget*              both_inputs[]{ depth_handle.get(), map_handle.get() };
+    const RenderTarget*              depth_only[]{ depth_handle.get() };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(depth_handle.get());
+    recorder.setClearPolicy(depth_clear);
+    recorder.endPass();
+    recorder.beginPass(2U);
+    recorder.setRenderTarget(map_handle.get());
+    recorder.setClearPolicy(map_clear);
+    recorder.endPass();
+    recorder.beginPass(3U);
+    recorder.setRenderTarget(lit_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.setPassInputs(std::span<const RenderTarget* const>(both_inputs, 2U));
+    recorder.render(shadow_commands, camera.get());
+    recorder.endPass();
+    recorder.beginPass(4U);
+    recorder.setRenderTarget(flat_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.setPassInputs(std::span<const RenderTarget* const>(depth_only, 1U));
+    recorder.render(shadow_commands, camera.get());
+    recorder.endPass();
+    recorder.beginPass(5U);
+    recorder.setRenderTarget(plain_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.setPassInputs(std::span<const RenderTarget* const>(both_inputs, 2U));
+    recorder.render(unshadowed_commands, camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 5U);
+    ASSERT_EQ(frame.passes[2].shadow.light, static_cast<const void*>(sun.get()))
+        << "the plan resolved the map from what the target stated";
+    EXPECT_EQ(frame.passes[3].shadow.light, nullptr) << "no map among this pass' inputs";
+    for (const auto& pass : frame.passes)
+    {
+        for (const auto& draw : pass.draws)
+        {
+            EXPECT_TRUE(draw.camera.present) << "every pass announced the camera its push comes from";
+        }
+    }
+
+    // The by-name pick: the resolve says which offered image the map is, and it is the SECOND sampleable
+    // depth this pass reads - not the first one.
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    const InputImages lit_inputs[]{ InputImages{ {}, plain_depth->depthView() },
+                                    InputImages{ {}, map->depthView() } };
+    const auto shadow_layer = pipelineFor(geometry_facts, shadow_facts.shaders, shadow_facts.abi);
+    ASSERT_NE(shadow_layer, nullptr);
+    vine::vsg::SamplerImage shadow_image;
+    ASSERT_TRUE(shadowImageOf(frame.passes[2], std::span<const InputImages>(lit_inputs, 2U),
+                              shadow_layer->depthSampler(), shadow_image));
+    EXPECT_EQ(shadow_image.view, map->depthView()) << "the map, not the other sampleable depth";
+    EXPECT_EQ(shadow_image.sampler, shadow_layer->depthSampler());
+
+    // The caller's sets, built per pass from what the policy picked: the map where the text names it, the
+    // white stand-in where the pass resolved none, and the material's own fallback for `diffuseMap`.
+    const vine::vsg::BlockDescriptors::SampledBinding with_map[] = {
+        { 1U, white->view(), white->sampler() }, { 3U, shadow_image.view, shadow_image.sampler }
+    };
+    const vine::vsg::BlockDescriptors::SampledBinding with_stand_in[] = {
+        { 1U, white->view(), white->sampler() }, { 3U, white->view(), white->sampler() }
+    };
+    const vine::vsg::BlockDescriptors::SampledBinding map_only[] = {
+        { 1U, white->view(), white->sampler() }
+    };
+    std::unique_ptr<BlockDescriptors> declares_map =
+        BlockDescriptors::forAbi(shadow_facts.abi, 0U, created.device, *storage, with_map);
+    std::unique_ptr<BlockDescriptors> declares_stand_in =
+        BlockDescriptors::forAbi(shadow_facts.abi, 0U, created.device, *storage, with_stand_in);
+    std::unique_ptr<BlockDescriptors> declares_none =
+        BlockDescriptors::forAbi(unshadowed_facts.abi, 0U, created.device, *storage, map_only);
+    ASSERT_NE(declares_map, nullptr);
+    ASSERT_NE(declares_stand_in, nullptr);
+    ASSERT_NE(declares_none, nullptr);
+    BlockDescriptors* map_sets[]{ declares_map.get() };
+    BlockDescriptors* stand_in_sets[]{ declares_stand_in.get() };
+    BlockDescriptors* none_sets[]{ declares_none.get() };
+
+    VariantPool   pool;
+    StreamUploads uploads;
+    const auto    entry_points =
+        vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    ContentDraw shadow_draws(*shadow_layer, pool, entry_points);
+    std::unique_ptr<ContentPipeline> unshadowed_layer =
+        pipelineFor(geometry_facts, unshadowed_facts.shaders, unshadowed_facts.abi);
+    ASSERT_NE(unshadowed_layer, nullptr);
+    ContentDraw unshadowed_draws(*unshadowed_layer, pool, entry_points);
+    const ContentPass::Scope::Entry shadow_halves[]{ ContentPass::Scope::Entry{
+        vine::vsg::core::DrawKind::Content, shadow_program.get(), shadow_facts.revision, geometry_facts.layout,
+        shadow_layer.get(), &shadow_draws } };
+    const ContentPass::Scope::Entry unshadowed_halves[]{ ContentPass::Scope::Entry{
+        vine::vsg::core::DrawKind::Content, unshadowed_program.get(), unshadowed_facts.revision,
+        geometry_facts.layout, unshadowed_layer.get(), &unshadowed_draws } };
+
+    storage->beginFrame();
+    // One scope per pass, and each carries the half ITS command names: the two programs declare different
+    // sets (the shadowed one names the map), so a scope that offered both to one pass would serve the wrong
+    // set's descriptors to whichever half the lookup did not pick.
+    const auto recordPass = [&](const vine::vsg::core::CompiledPass& pass,
+                                std::span<const ContentPass::Scope::Entry> halves,
+                                const vine::vsg::core::RenderPassCompatibility& compatibility,
+                                std::span<const InputImages> inputs, std::span<BlockDescriptors* const> sets,
+                                StateRegistry& registry) {
+        ContentPass::Scope scope;
+        scope.entries    = halves;
+        scope.registry   = &registry;
+        scope.storage    = storage.get();
+        scope.block_sets = sets;
+        scope.uploads    = &uploads;
+        ContentPass content(scope, diagnostics);
+        ::vsg::ref_ptr<::vsg::Node> node;
+        EXPECT_TRUE(content.record(pass, facts, compatibility, inputs, view_block, node))
+            << "the declared set is the one the text names";
+        return node;
+    };
+    StateRegistry lit_registry(pool);
+    StateRegistry flat_registry(pool);
+    StateRegistry plain_registry(pool);
+    ::vsg::ref_ptr<::vsg::Node> lit_node =
+        recordPass(frame.passes[2], shadow_halves, lit->shape().compatibility(),
+                   std::span<const InputImages>(lit_inputs, 2U), map_sets, lit_registry);
+    const InputImages flat_inputs[]{ InputImages{ {}, plain_depth->depthView() } };
+    ::vsg::ref_ptr<::vsg::Node> flat_node =
+        recordPass(frame.passes[3], shadow_halves, flat->shape().compatibility(),
+                   std::span<const InputImages>(flat_inputs, 1U), stand_in_sets, flat_registry);
+    EXPECT_TRUE(diagnostics.clean()) << "a pass without a resolved map binds the white stand-in, and says nothing";
+
+    // The program that cannot read the map: the draw is recorded, and the shadow it will not shade is said
+    // once (the picture below is the proof the draw survived).
+    const std::uint64_t before_report =
+        diagnostics.count(vine::graphics::DiagnosticCategory::UnsupportedRequest);
+    ::vsg::ref_ptr<::vsg::Node> plain_node =
+        recordPass(frame.passes[4], unshadowed_halves, plain->shape().compatibility(),
+                   std::span<const InputImages>(lit_inputs, 2U), none_sets, plain_registry);
+    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::UnsupportedRequest), before_report + 1U)
+        << "the map the pass resolved and the program cannot read is reported";
+    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 0U)
+        << "and the drawable is NOT lost over it";
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(depth_handle.get(), plain_depth.get());
+    executor.addTarget(map_handle.get(), map.get());
+    executor.addTarget(lit_handle.get(), lit.get());
+    executor.addTarget(flat_handle.get(), flat.get());
+    executor.addTarget(plain_handle.get(), plain.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    command_graph->addChild(white->fill());
+    const PassContent packets[]{ PassContent{ frame.passes[2].pass, lit_node },
+                                 PassContent{ frame.passes[3].pass, flat_node },
+                                 PassContent{ frame.passes[4].pass, plain_node } };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(packets, 3U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const auto near = [](std::uint8_t byte, double linear) {
+        return std::abs(static_cast<double>(byte) - 255.0 * linear) <= 4.0;
+    };
+    const Rgba8 over_the_map = lit->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(near(over_the_map.r, 0.25) && near(over_the_map.g, 0.125) && near(over_the_map.b, 0.125))
+        << "the map the pass resolved must be read where the text declares it, got ("
+        << static_cast<int>(over_the_map.r) << ", " << static_cast<int>(over_the_map.g) << ", "
+        << static_cast<int>(over_the_map.b) << ") - (255, 128, 128) means the stand-in was bound instead, "
+                                                      "(0, 0, 0) the OTHER sampleable depth";
+
+    const Rgba8 without_a_map = flat->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(near(without_a_map.r, 1.0) && near(without_a_map.g, 0.5) && near(without_a_map.b, 0.5))
+        << "a pass that resolved no map shades through the white stand-in, got ("
+        << static_cast<int>(without_a_map.r) << ", " << static_cast<int>(without_a_map.g) << ", "
+        << static_cast<int>(without_a_map.b) << ")";
+
+    const Rgba8 unshadowed = plain->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(near(unshadowed.r, 1.0) && near(unshadowed.g, 0.5) && near(unshadowed.b, 0.5))
+        << "a program that declares no map still draws, got (" << static_cast<int>(unshadowed.r) << ", "
+        << static_cast<int>(unshadowed.g) << ", " << static_cast<int>(unshadowed.b) << ")";
 }
