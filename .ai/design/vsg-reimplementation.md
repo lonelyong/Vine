@@ -3,12 +3,14 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M7 第四半：性能档的读数字半边（会话按环境开关装 `vsg::Profiler`，读回是「不等待」的倒着走查：
-> 结果没回来就报不可读，读一次绝不让设备停）**：`test_vsg` 565 用例 / 88 套件全绿；门禁一条命令
-> （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清、相位 9 行 / 2 次运行全收尾；
-> `core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 818 文件）。
-> M7 至此完整：身份半边（§11.16ac）与读数字半边（§11.16ad）都在，遗留口子只剩设计里已登记的
-> 那些（场景桥、提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回）。
+> **M8a：场景桥的第一半——程序文本的绑定声明成为事实（`api/ProgramAbi`；引擎自己的八个程序逐条钉住，
+> 条件按 defines 求值，taken 分支里的 `#error` 让变体 Malformed）**：`test_vsg` 576 用例 / 90 套件全绿；
+> 门禁一条命令（`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 821 文件）、
+> 相位 9 行 / 2 次运行全收尾；`core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验。
+> M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：ABI 债按 §11.16ae 的决定解掉了一半
+> ——**布局跟着程序文本的声明走**（`VineViewBlock` … 这些 L1 名就是角色），重写版自己的 set 0 布局只是
+> “另一种声明”。下一步是让布局真的跟着声明装配（M8b）与按角色取值（M8c）。
+> 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -1905,6 +1907,9 @@ M5b 登记的"灯光与 `VineShadowBlock` 还没接"拆成两片，这是**灯�
   binding 0**；而本重写版的 set 0 是 view 0 / draw 1 / material 2 / lights 3。两者都能工作，但**同一个
   管线的着色器文本与集合布局必须匹配**——场景桥把那批程序接进来时，要么按 SDK 的绑定建集合，要么
   在文本层做转换，不能两套 ABI 混配。
+  **已决（§11.16ae，M8a）**：按**程序文本自己的声明**服务——布局跟着声明走（M8b）、每个声明按角色取值
+  （M8c）。理由是这句债的反面：文本是宿主的，后端选不了它的绑定号；重写版自己的 set 0 布局因此只是
+  “另一种声明”（它的程序照 `VineViewBlock` 这类 L1 名声明即可）。M8a 已把这批文本的声明逐条读成事实。
 * 前一版（§11.16t）留下的"灯光槽索引/阴影块""采样集合深度前缀规则""借用者捕获布局"三条口子，
   除前两条外不变。
 
@@ -2532,6 +2537,9 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 `age_frames` / `frame_gpu_ms` / 按地址归属的 `passes`），读一次不等待、不让设备停（`deviceWaits()`
 前后相等钉住）；1 条会话用例 + 5 条变异反证（§11.16ad）。|
 | ~~M7b（执行者收口）~~ | **已完成（2026-09-22）**：目标自己说事实——`OffscreenTarget::instance()`（`built` = **能 LOAD** = `written`；15 处手拼 facts 统一到它，像素断言是判据）+ `invalidateAttachments()`（丢帧 ⇒ 计划 `Repair(Bootstrap)` ⇒ 下一帧首写者清屏；**只有 bootstrap 能修事实**，`resize` 换集合同时换事实）；+1 真设备用例把执行者循环（facts → 计划 → `pass.bootstrap` → 图 → 像素）跑通，含"只修一次"与 resize 两条判据；5 条变异反证（§11.16aa） |
+| **M8 场景桥** | **开工**：把引擎的场景内容（程序 / 几何 / 材质 / 目标）接到重写版的内容层。已决的接法 = **按程序文本自己的声明服务**（§11.16ae）：文本是宿主的，后端选不了它的绑定号。 |
+| ~~M8a（声明成为事实）~~ | **已完成（2026-09-22）**：`api/ProgramAbi`——`scanProgramAbi(vertex, fragment, defines, out)` 把文本的绑定声明读成事实（set/binding、种类、阶段、按**L1 类型名**认领的角色、std140 尺寸、push 范围），条件按变体求值（taken 分支的 `#error` ⇒ Malformed），引擎自己的八个程序逐条钉住（前向 5 绑定 + push 128B 顶点、带影延迟光照的 5/6、屏幕拷贝的 binding=N…）；11 条无设备用例 + 5 条变异反证（§11.16ae）。下一步 M8b：布局跟着声明装配。 |
+| **M8 下一步** | M8b（`ContentPipeline` 按 `ProgramAbi` 装配：块角色 → dynamic UBO、sampler → 静态绑定、push 照声明）→ M8c（角色取值：arena 偏移、draw 在 set 1、`pc` 的 proj/modelView、`diffuseMap` 的白色 fallback 与 `shadow_map` 的图）→ 变体的 define 进管线身份 → 贴图/材质纹理 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -2567,3 +2575,74 @@ M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `
 (a) `readable` 永不为真、(b) `age_frames` 取成 `frames.size()`、(c) 关着也报可读、(d) 读里加一次
 `noteDeviceWait()`、(e) 空键样本放行。门禁：565 用例 / 88 套件、0 VUID、0 SYNC-HAZARD、hygiene 全清、
 相位 9 行 / 2 次运行全收尾。
+
+### 11.16ae M8a（2026-09-22）：场景桥的第一半——程序文本的声明成为事实（`api/ProgramAbi`，无设备）
+
+§11.16u 把“引擎自带的前向程序文本与本后端的 set 0 布局不同”登记为场景桥的债。这一片不动管线，只把债
+**变成事实**。理由是那句债的反面：**一个后端选不了 shader 的块住在哪**——`layout(set = …, binding = …)`
+写在宿主给的文本里，而“文本与集合布局必须匹配”不是风格问题（不匹配时 shader 读的是没人写过的地方，
+而管线等的是一个 shader 从不点名的绑定）。所以场景桥的接法是**按程序文本自己的声明服务**：布局跟着
+声明装配（M8b），每个声明按**角色**取值（M8c）。重写版自己的 set 0 布局因此不是“两套 ABI”里的另一套，
+而是**另一种声明**——它的程序照 `VineViewBlock` 这类 L1 名声明，角色就认出来了；这正是
+`graphics-shader.md` §11.3 早就写下的“GLSL 块类型名与 L1 名逐字相同”。
+
+**事实与政策分开**。`scanProgramAbi(vertex, fragment, defines, out)` 只回答文本声明了什么：
+`(set, binding)`、种类（uniform 块 / `sampler2D` / `samplerCube` / 其它 sampler）、哪些阶段读它、
+它是不是五个 L1 块之一（**按类型名，不按位置**）、它的 std140 大小（按成员算出来的）、以及 push 范围
+（std430，认 `layout(offset = …)`）。它**不**决定哪段字节、哪张图去哪个绑定——那是服务层的政策，全屏
+路径与内容路径在同一份事实上做不同的决定。认不出的块类型是 `Foreign` 这一**事实**而不是拒绝：文本合法，
+是后端填不了它，拒绝属于绑定那一层。同理，一个没有绑定的 `uniform sampler2D` 不是事实（文本什么都没说，
+编译器自己分配）——不许替它编一个槽。
+
+**变体才是事实的主体**。引擎的程序用 `#ifdef` 门住声明（`VINE_DIFFUSE_MAP`、`VINE_TEXCOORD_CUBE`…），
+所以“这个程序的绑定”要等 defines 才知道：扫描**按变体回答**，条件只读地求值，文本自己的 `#define`
+算数（平面前向的 `VINE_FLAT` 就是这么来的），而 **taken 分支里的 `#error` 让变体 Malformed**——那是驱动
+要到很晚才说、而读文本的人现在就能说的事（SDK 的 texcoord 种类就是这么写的：采了槽却没说 kind ⇒ 编译
+不过）。扫描的语法是一个小而固定的子集（`#ifdef` / `#ifndef` / `#if defined(X)`（可带 `!`）、同形的
+`#elif`、`#else` / `#endif`、`#define` / `#undef`、`#error`、`#pragma import_defines(…)`），**读不出来
+的报，不猜**：一个绑定猜错的后果是着色器读没人写过的内存。`import_defines` 也进事实——编译器会把源里
+没要过的 define 静默丢掉，那是只有读过文本的人能说出的第二件事。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ProgramAbi.hpp` / `src/api/ProgramAbi.cpp`（新） | `AbiBinding` / `AbiPushRange` / `ProgramAbi` + `scanProgramAbi`（条件求值 → 声明扫描 → 跨阶段合并）+ `blockRoleOf`（五个 L1 名 → 角色）+ `abiBlockRoleName`；成员按 std140 规则定尺寸（标量/vec/ivec/uvec/bvec/mat，数组按 stride 补齐） |
+| `tests/test_vsg/ProgramAbiTest.cpp`（新） | 11 条无设备用例：**引擎自己的程序**逐条读出来并与既有后端服务的那一份对照；三张合成文本（本重写版的形状、坐在 diffuse 槽上的外来块、成员漂移的 material）；拒绝面（跨阶段矛盾、读不出的 binding 值、读不出的条件、未收尾的条件、taken 的 `#error`） |
+
+**引擎程序的实测 ABI**（扫描结果，逐条等于既有后端 `buildVineShaderSet` 声明的那一份）：
+
+| 程序 | 声明 |
+| --- | --- |
+| `builtin_forward` | material `(0,0)` 64B、diffuse `(0,1)` **只在 `VINE_DIFFUSE_MAP`**（种类跟 `VINE_TEXCOORD_CUBE`/`_UV` 走）、lights `(0,2)` 112B、`shadow_map` `(0,3)`、`VineShadowBlock` `(0,4)` 80B、draw `(1,0)` 80B、push 128B **顶点** |
+| `builtin_forward_flat` | 与前向逐条相同；`VINE_FLAT` 是**文本自己的 define**，不在 `import_defines` 里（那四个名字是 `VINE_DIFFUSE_MAP` / `VINE_TEXCOORD_CUBE` / `VINE_TEXCOORD_UV` / `VINE_VERTEX_COLOR`） |
+| `builtin_gbuffer` | material `(0,0)` + push 128B **顶点**（**没有**灯与阴影块），diffuse 同样按变体出现 |
+| `builtin_skybox` | 只有 `skyMap` `(0,1)`（cube / pair 两支都由 kind define 选），push 128B 顶点，**没有** material/lights |
+| `builtin_deferred_lighting[_shadowed]` | 四个 G-buffer 采样 `0..3` + push 128B **片元**；带影变体多 `shadow_map` `(0,5)` 与 `VineShadowBlock` `(0,6)` |
+| `builtin_screen_copy_<N>` / `builtin_fullscreen` | 一个 sampler 在 binding **N**（没有 set 限定词 ⇒ set 0）；全屏顶点阶段一个绑定都没有、一个 push 都没有 |
+
+| 规则 | 结论（变异反证全部实测） |
+| --- | --- |
+| **角色是块的类型名** | 变异 N2（角色按 binding 序号给：0=view、1=draw…）⇒ 4 条红。引擎的 material 在 0、lights 在 2，按位置读会读成 view/draw——这条正是“位置不是角色”的实测 |
+| **条件决定事实** | 变异 N1（不管 defines，所有分支都算 taken）⇒ 4 条红：同一个 `(0,1)` 上出现两种 sampler 种类 ⇒ Malformed |
+| **`#error` 是拒绝** | 变异 N5（taken 分支里的 `#error` 当作能编译）⇒ “只给 `VINE_DIFFUSE_MAP` 的变体”那条红 |
+| **尺寸要按 std140 算** | 变异 N3（成员字节相加，不做对齐/补齐）⇒ 4 条红（52 → 64 这类补齐没了；`sizeof` 对照是判据） |
+| **一个 `(set,binding)` 不能是两个东西** | 变异 N4（把同一 `(set,binding)` 的两个声明当成同一个绑定）⇒ 拒绝面那条红 |
+| **漂移可见** | material 块多一个 `vec4` ⇒ 事实里是 80，而 `sizeof(VineMaterialBlock)` 是 64：绑定那一层能看见不一致，而不是假设它不存在 |
+
+**这一片留下的口子（登记，不假装解决）**：
+
+* **布局还没跟着声明装配**（M8b）：`ContentPipeline` 现在仍收 `BlockDescriptors` 的固定 5 绑定块集；
+  下一步是让块角色 → dynamic UBO、sampler → 静态绑定、push 范围照声明来。
+* **“哪段数据去哪个角色”还没有政策**（M8c）：material / lights / shadow 块在 arena 里的偏移、draw 块在
+  set 1、`pc` 的 `projection` / `modelView`（`view` × `model`）、`diffuseMap` 的贴图（含白色 fallback）
+  与 `shadow_map` 的图，都是服务层要按声明里的绑定号填的活。
+* **变体从哪来仍没定**：`VINE_DIFFUSE_MAP` / kind 取决于几何的纹理坐标与材质有没有贴图，而管线身份现在
+  是 `(program, revision, layout)`；把“变体的 define 进身份”与几何/材质的纹理支持一起做是独立的一片。
+* **重写版自己的测试文本要改用 L1 块名**：`ProgramAbiTest` 里已按 `VineViewBlock` 等声明了本重写版的形状
+  （角色按名认领）；散在设备用例里的 `ViewBlock` 一类名字在 M8b 接上布局时一并改名。
+* **带影延迟光照的 5/6 仍是文本里写死的数**：它们随 G-buffer 的彩色数（4）而定；“按 pass 的形状算绑定号”
+  属于全屏路径的后续（§11.16v 登记过）。
+
+证据：`test_vsg` 全量 **576 用例 / 90 套件全绿**（+11 用例，`ProgramAbiTest` 一套）；门禁一条命令
+`scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、hygiene 0 / 821 文件、
+`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、相位 9 行 / 2 次运行全收尾。变异反证
+**5/5 红**（N1 条件不分、N2 角色按位置、N3 不按 std140 补齐、N4 矛盾相消、N5 `#error` 忽略）。

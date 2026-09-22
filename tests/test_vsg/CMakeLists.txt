@@ -15,6 +15,7 @@ set(SRC_FILE_LIST
 	DrawBlockTest.cpp
 	GeometryFactsTest.cpp
 	ContentSourcesTest.cpp
+	ProgramAbiTest.cpp
 	ContentPassTest.cpp
 	MrtTargetTest.cpp
 	SharedDepthTest.cpp
@@ -166,6 +167,7 @@ target_sources(${TEST_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ShadowBlock.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/GeometryFacts.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentSources.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ProgramAbi.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentPass.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/WindowTarget.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ViewBlock.cpp
