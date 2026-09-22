@@ -67,6 +67,19 @@ class FrameTimeline
      */
     void submitted(FrameToken token) noexcept;
 
+    /** @brief Marks the open frame as OVER without having been submitted.
+     *
+     * The frame is consumed exactly like a submitted one - it cannot be retried (its swapchain image was
+     * acquired and its graph was recorded), so begin() has to be able to open the next one - but nothing
+     * was handed to the queue, so the submitted watermark does NOT move. That keeps the watermark a count
+     * of SUBMISSIONS rather than a count of frames, and it is the honest dating for anything parked during
+     * such a frame: nothing in flight names it, so it is dated against the last frame that really was
+     * submitted.
+     *
+     * @param token Token returned by begin() (a stale one is ignored, like in submitted()).
+     */
+    void abandoned(FrameToken token) noexcept;
+
     /** @brief Advances the completion watermark (the slot that recorded @p frame was recycled).
      *
      * Monotonic: a lower value than the current watermark is ignored, because completion is a fact

@@ -380,6 +380,38 @@ TEST(CoreTimelineTest, AStaleTokenDoesNotAdvanceTheTimeline)
     EXPECT_EQ(timeline.submittedFrame(), 1u);
 }
 
+TEST(CoreTimelineTest, AnAbandonedFrameIsOverWithoutBecomingASubmission)
+{
+    FrameTimeline timeline;
+    const auto    token = timeline.begin();
+    timeline.abandoned(token);
+
+    // The frame is over - the next one can be opened - but the submitted watermark is a count of
+    // SUBMISSIONS, so it does not move: nothing was handed to the queue.
+    EXPECT_FALSE(timeline.hasOpenFrame());
+    EXPECT_EQ(timeline.submittedFrame(), 0u);
+
+    // The frame NUMBERS are that same clock (begin() hands out submitted + 1), so a frame that never
+    // reached the queue is not a frame for the timeline: the next one takes its number. That is also why
+    // a token is not a receipt - it names the frame that was open, and an abandoned one re-issues its
+    // number, so nothing may hold a token across a commit and expect it to stay stale.
+    const auto next = timeline.begin();
+    EXPECT_EQ(next.frame, token.frame);
+    timeline.abandoned(next);
+    EXPECT_EQ(timeline.submittedFrame(), 0u);
+
+    // A real submission moves it, and the next frame is the one after it.
+    const auto real = timeline.begin();
+    timeline.submitted(real);
+    EXPECT_EQ(timeline.submittedFrame(), 1u);
+
+    // The dating a park during an abandoned frame gets: the last frame that really was submitted - which
+    // is what makes the object releasable at all (nothing in flight names the abandoned frame's objects).
+    timeline.abandoned(timeline.begin());
+    EXPECT_EQ(timeline.submittedFrame(), 1u);
+    EXPECT_EQ(FrameTimeline::retirePoint(timeline.submittedFrame(), 3), 5u);
+}
+
 TEST(CoreTimelineTest, TheRetirePointIsOneMoreThanTheSlotCount)
 {
     // Derived, not magic: the slot that could still reference a parked object has been recycled (and so

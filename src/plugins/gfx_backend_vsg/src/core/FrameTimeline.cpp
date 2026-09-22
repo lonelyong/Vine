@@ -28,6 +28,17 @@ void FrameTimeline::submitted(FrameToken token) noexcept
     open_      = FrameToken{};
 }
 
+void FrameTimeline::abandoned(FrameToken token) noexcept
+{
+    if (!open_ || token.frame != open_.frame)
+    {
+        return;  // the same rule as submitted(): a stale token never closes a frame it does not name
+    }
+    // The token is spent (the frame cannot be retried), but nothing was handed to the queue: the frame is
+    // over and the SUBMITTED watermark deliberately does not move (see the declaration).
+    open_ = FrameToken{};
+}
+
 void FrameTimeline::completeUpTo(std::uint64_t frame) noexcept
 {
     if (frame > completed_)

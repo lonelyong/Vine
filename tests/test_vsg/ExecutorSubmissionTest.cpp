@@ -6,11 +6,8 @@
 #include <vector>
 
 #include <vsg/app/CommandGraph.h>
-#include <vsg/app/RecordTraversal.h>
 #include <vsg/app/Viewer.h>
-#include <vsg/core/Exception.h>
 #include <vsg/core/ref_ptr.h>
-#include <vsg/nodes/Group.h>
 
 #include <vine/graphics/RenderTarget.hpp>
 
@@ -19,6 +16,8 @@
 #include <vine/vsg/api/VsgExecutor.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
 #include <vine/vsg/core/FrameRecorder.hpp>
+
+#include "FailingStepNode.hpp"
 
 using vine::graphics::RenderTarget;
 using vine::vsg::core::ClearPolicy;
@@ -127,28 +126,6 @@ TEST(ExecutorSubmissionTest, ALostSubmissionIsRepairedByTheNextFrameExactlyOnce)
     // (The "exactly once" half of the flag is OffscreenTargetTest.ALostSubmissionIsRepairedByTheNextFrame
     // AndOnlyOnce's claim, and it holds: a second plan is an ordinary one.)
 }
-
-/// @brief A node that fails the record step of a submission on command.
-///
-/// WHY A NODE AND NOT A REAL DEVICE-LOST: the failure a submission can really meet here is an exception -
-/// vsg throws `vsg::Exception` when it cannot make the step (a command buffer that cannot be allocated) -
-/// and a device-lost cannot be summoned on demand on lavapipe. So this node throws exactly that exception
-/// type, at exactly that step, at a frame a case chooses: everything above it (the executor's submit, the
-/// mark, the report) is the production code.
-class FailingStepNode : public ::vsg::Group
-{
-  public:
-    bool armed{false};  ///< Whether the next record step throws (disarmed: an ordinary empty group).
-
-    void accept(::vsg::RecordTraversal& visitor) const override
-    {
-        if (armed)
-        {
-            throw ::vsg::Exception{ "the submission step failed (test)", VK_ERROR_DEVICE_LOST };
-        }
-        ::vsg::Group::traverse(visitor);
-    }
-};
 
 TEST(ExecutorSubmissionTest, TheSubmissionStepItselfMarksWhatAFailedFrameWrote)
 {

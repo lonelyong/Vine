@@ -73,10 +73,10 @@
 > M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）、
 > M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）、
 > M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）、M8l 形状变了就是真的重建（§11.16au）、
-> M8m 帧驱动应用计划的答案（§11.16av）。
+> M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）。
 > 下一步：
-> 会话/插件侧的帧驱动：窗口路径的提交接上（队列 `VkResult` 接进 `submit` 那道缝），窗口目标也走 `applyTargetPlans`；
-> 其余遗留口子：`record` 的 shape 核对看不见格式变化、`skyMap` 无生产者、集合与半片停靠窗口各自独立。
+> 把 M8m/M8n 连起来（窗口路径上"提交失败 ⇒ 标这一帧写过的目标"由帧驱动一次完成），`record` 的 shape 核对补上**格式**；
+> 其余遗留口子：丢帧后 swapchain 图像已取未呈（WSI 状态要宿主重建会话）、`skyMap` 无生产者、集合与半片停靠窗口各自独立。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2622,7 +2622,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8k（提交这一步自己说）~~ | **已完成（2026-09-22）**：`VsgExecutor::submit(frame, viewer)`（记录 → 提交 → **失败即标记**：`noteLostSubmission` + 报 `SubmissionFailed` + 答 false；vsg 的异常词表两种都接——`vsg::Exception` 不是 std::exception）＋ SDK 分类表按它自己写明的规则在 `Count` 前追加 `SubmissionFailed`；真设备用例（成功的提交 ⇒ 清屏色真的在像素里、无标记；失败 ⇒ **只有它写过的**目标被标 + 拒绝计数 +1；下帧计划 `bootstrap` ✓）；4/4 变异反证红 + 一次"只留 std::exception 分支"的变异也红（§11.16at）。 |
 | ~~M8l（形状变了就是真的重建）~~ | **已完成（2026-09-22）**：`OffscreenTarget::rebuild(wanted, timeline, retirement)`（渲染通道 + 全部 load-op 变体 + 附件一起重建，旧的**连 pass 一起停靠**（记录过的 `vkCmdBeginRenderPass` 直接点名它）；lease 两向拒；构建失败一个字段都不动）+ `core::planTarget` 次序改为**形状变化先于 load-op 修复**；设备相位（1 色 8×4 ⇒ 2 色 + D32F 16×12；附件 0 / 附件 1 / 深度三条读回；compatibility 真的变了；`pending()==1`、`deviceWaits()==0`）+ lease 两向拒绝用例 + 2 条次序用例；变异 5/5 红（次序复原 / 新形状不装 / 事实不重置 / 旧变体留着 / 直接销毁不停靠）+ 一次**用例抓不住、门禁 VUID 抓住**（18 条）；门禁 639 用例 / 98 套件、0 VUID（§11.16au）。 |
 | ~~M8m（帧驱动应用计划的答案）~~ | **已完成（2026-09-22）**：`VsgExecutor::applyTargetPlans(frame, facts, timeline, retirement)`（只走**计划点名的**目标；`ResizeInPlace` ⇒ `resize`、`Rebuild` ⇒ `rebuild`；新形状取自 facts 的 wanted，目标的 clear 策略与深度提升取自新访问器 `OffscreenTarget::layout()`；计分 `resized/rebuilt/refused/failed`）+ 设备相位（三帧：Repair 不应用、ResizeInPlace ⇒ 16×12 像素、Rebuild ⇒ 2 色 + 深度；旁观者目标不动；相位 11 行）+ 真设备用例（"计划与目标不符 ⇒ 拒录"那帧在应用之后**录得进去**）；变异 4/4 红（§11.16av）。 |
-| **M8 下一步** | 会话/插件侧的帧驱动（窗口路径的提交、队列 `VkResult` 接进 `submit`）；其余口子：`record` 的 shape 核对看不见格式变化、`skyMap` 无生产者、集合与半片停靠窗口各自独立。 |
+| ~~M8n（会话的提交也自己说）~~ | **已完成（2026-09-22）**：`Session::commitFrame()` 自己驱动 viewer 的任务（`Viewer::recordAndSubmit` 返回 void、**吞掉队列 `VkResult`**）：任何一个任务提交失败（VkResult 非成功，或 vsg 抛异常）⇒ 报 `SubmissionFailed`、答 false、`lostFrames+1`；**不呈现、不计已呈现、不声称完成**；帧本身照样结束（`FrameTimeline::abandoned(token)`：令牌被消费、**submitted 水位不动**——两个水位因此分别是"帧"与"提交"）；真设备用例（丢帧的提交答 false + 报告 + 计数 + 水位 + 无开帧；重建会话后正常提交呈现）+ 1 条无设备时间线用例；变异 6/6 红 + 一次"照样呈现"挂住并带 2 条 VUID（§11.16aw）。 |
+| **M8 下一步** | 把 M8m/M8n 连起来（窗口路径上一次调用完成"提交失败 ⇒ 标这一帧写过的目标"）；`record` 的 shape 核对补上格式；其余口子：丢帧后 swapchain 图像已取未呈（要宿主重建会话）、`skyMap` 无生产者、集合与半片停靠窗口各自独立。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3598,3 +3599,34 @@ M5e 的 `resize` 与 M8l 的 `rebuild` 在此之前**只有测试在调**：计�
 
 **这一片留下的口子**：①`record` 的 shape 核对看不见格式变化；②`Viewer::recordAndSubmit` 吞掉的队列 `VkResult`；
 ③`skyMap` 仍无生产者；④集合与半片的停靠窗口各自独立。
+
+### 11.16aw M8n（2026-09-22）：会话的提交也自己说它失败了
+
+M8k 让执行器的提交步自己说失败，但**窗口路径的提交在会话里**：`Session::commitFrame()` 调的是
+`Viewer::recordAndSubmit()`，而它返回 void、把每个任务的 `VkResult` **丢掉**——队列提交被驱动拒绝（设备丢失 / 内存不够）
+会和"这一帧发生了"长得一模一样，宿主连"要不要标这个帧写过的目标"都无从判断。这一片把这一半接上：
+
+* 会话**自己驱动** viewer 的任务（把它自己的两步照做一遍：reset 每个命令图，然后逐任务在调用线程上提交——会话从不
+  打开 viewer 的多线程），把第一个非成功的 `VkResult` 留下；vsg 抛的异常（`vsg::Exception`，命令缓冲建不出来）同样算
+  "提交没发生"。
+* 失败的后果是**两半**：报告 `SubmissionFailed` + `lostFrames()+1` + 答 false，**不呈现、不计已呈现、不声称完成**
+  （没有槽被回收，完成证据不存在）；而帧**照样结束**——`FrameTimeline::abandoned(token)`：令牌被消费（swapchain 图像
+  已取、图已录，重试不是一个可选项），但 **submitted 水位不动**（它是"提交数"不是"开帧数"）。这让两个水位各归各位，
+  也让丢帧期间停靠的对象有正确的日期（没有任何 in-flight 命令缓冲点名它们）。
+* **不修的**：丢帧时 acquire 到的那张 swapchain 图像再也不会被呈递，WSI 因此缺一张可用的图像——下一次 acquire 在
+  这个环境里就开始报错（写用例时实测：`vkAcquireNextImageKHR` 的 forward-progress 警告 + 呈现未渲染图像的错误）。
+  这一层不修 WSI：持续提交失败的会话就是设备没了，宿主要么重建会话（`initialize()`，与移动 surface 同一条路），
+  要么结束。用例走的是前者。
+
+证据：真设备用例（会自己开窗口）——会话的帧图里放一个"被武装就在记录步抛异常"的节点：`commitFrame()` 答 false、
+`SubmissionFailed` +1、`lostFrames()==1`、`framesPresented()` 不动、`submittedFrame()==0`、没有开着的帧；随后
+`initialize()` 把会话建回来，一帧正常提交并呈现（`framesPresented()==1`、`submittedFrame()==1`），**0 VUID**。
+另加一条无设备时间线用例（`abandoned`：帧结束、水位不动、帧号是提交时钟所以下一个帧接它的号、停靠日期）。
+变异：M1 不接 vsg 异常（异常穿出提交）、M2 不结束帧、M3 把丢掉的帧算成提交、M4 不计数、M5 不报告、M6 `abandoned` 也推水位
+——**6/6 红**（各 0 VUID；"帧没结束"那一条的后果就是断言红，不是挂住）；另一次"失败也照样呈现"的变异让**用例挂住**
+（呈现一张没渲染过的图像，阻塞在 WSI 上），并在阻塞前先吐出 2 条 VUID（`VkPresentInfoKHR-pImageIndices-01430` +
+`vkAcquireNextImageKHR-surface-07783`）——两种读法都抓得住它，也是"丢帧后 WSI 状态"那条口子的现场。
+门禁 642 用例 / 98 套件、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 849。
+
+**这一片留下的口子**：①把 M8m/M8n 连起来（窗口路径上"提交失败 ⇒ 标这一帧写过的目标"由帧驱动一次完成）；②`record` 的
+shape 核对看不见**格式**变化；③丢帧后的 WSI 状态（上面那条）；④`skyMap` 仍无生产者；⑤集合与半片的停靠窗口各自独立。

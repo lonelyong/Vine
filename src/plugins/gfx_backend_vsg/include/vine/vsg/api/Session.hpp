@@ -103,7 +103,17 @@ class Session
      * Feeds the completion evidence to the timeline and advances the retirement queue as the frame's last
      * step, so a park recorded during this frame is dated against this frame's submission.
      *
-     * @return true when the frame was committed; false when there was no open frame to commit.
+     * A SUBMISSION THAT DID NOT HAPPEN IS REPORTED, AND THE FRAME IS STILL OVER. The viewer's own
+     * recordAndSubmit() returns void and drops the queue's result, so the tasks are driven here and their
+     * results kept: a submission the driver refused (device lost) or that threw on the way there reports
+     * `SubmissionFailed` and answers false - nothing was presented, the presented-frame count does not
+     * move, and no completion is claimed (no slot was recycled). The frame's token is consumed either way
+     * (its swapchain image was acquired and its graph was recorded, so it cannot be retried), which is what
+     * lets the next beginFrame() open the next frame; the loss is counted (see @ref lostFrames) and the
+     * caller that holds the frame's plan can mark what it recorded (see VsgExecutor::noteLostSubmission).
+     *
+     * @return true when the frame was submitted and presented; false when there was no open frame to commit
+     *         (reported) or when the submission did not happen (reported, with the reason).
      */
     [[nodiscard]] bool commitFrame();
 
@@ -112,6 +122,9 @@ class Session
 
     /** @brief Gets how many frames have been presented. */
     [[nodiscard]] std::uint64_t framesPresented() const noexcept;
+
+    /** @brief Gets how many commits reported that their submission did not happen (see @ref commitFrame). */
+    [[nodiscard]] std::uint64_t lostFrames() const noexcept;
 
     /** @brief Gets the open frame's time stamp: seconds since this session came up.
      *

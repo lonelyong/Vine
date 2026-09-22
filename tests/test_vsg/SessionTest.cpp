@@ -22,8 +22,11 @@
 
 #include <vine/vsg/api/DeviceProbe.hpp>
 #include <vine/vsg/api/Session.hpp>
+#include <vine/vsg/api/SessionContent.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
 #include <vine/vsg/core/SlotProbe.hpp>
+
+#include "FailingStepNode.hpp"
 
 using vine::vsg::api::Session;
 using vine::vsg::api::SessionOptions;
@@ -124,6 +127,63 @@ TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEv
     EXPECT_FALSE(session.initialized());
     session.shutdown();  // idempotent, and safe after a live session
     EXPECT_EQ(session.slots(), 0U);
+}
+
+TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
+{
+    if (std::getenv("DISPLAY") == nullptr)
+    {
+        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
+    }
+    const auto probed_devices = probePhysicalDevices();
+    if (!probed_devices.ok || probed_devices.usableCount() == 0)
+    {
+        GTEST_SKIP() << "no device satisfies the requirements";
+    }
+
+    vine::vsg::core::Diagnostics diagnostics;
+    Session                        session;
+    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+
+    // The session's own frame graph, with a node that fails the submission's record step on command: a
+    // queue submit the driver refuses cannot be summoned on lavapipe, and vsg's own failure vocabulary for
+    // "this step cannot be made" is an exception (see FailingStepNode).
+    const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
+        vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    ASSERT_NE(graph, nullptr);
+    ::vsg::ref_ptr<FailingStepNode> failing(new FailingStepNode());
+    graph->addChild(failing);
+    ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+
+    ASSERT_TRUE(session.beginFrame());
+    failing->armed = true;
+
+    const std::uint64_t failures_before =
+        diagnostics.count(vine::graphics::DiagnosticCategory::SubmissionFailed);
+    EXPECT_FALSE(session.commitFrame()) << "the step did not happen, and the commit says so";
+    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::SubmissionFailed), failures_before + 1U)
+        << "reported through the one route, with the category a host can switch on";
+    EXPECT_EQ(session.lostFrames(), 1U);
+    EXPECT_EQ(session.framesPresented(), 0U) << "nothing was presented, so nothing may be counted as presented";
+    EXPECT_EQ(session.timeline().submittedFrame(), 0U)
+        << "the submitted watermark counts SUBMISSIONS: a frame that never reached the queue is not one";
+    EXPECT_FALSE(session.timeline().hasOpenFrame()) << "the frame is over either way: it cannot be retried";
+
+    // The frame numbers are the SUBMISSION clock, so the frame that never reached the queue is not a frame
+    // for the timeline - which is the whole reason the watermark is separate from "frames opened".
+    EXPECT_EQ(session.timeline().current().frame, 0U) << "and no frame is open after the commit";
+
+    // What a host does next is what a host does after any frame it cannot submit: the swapchain image the
+    // frame acquired was never presented, so this session is not driven again as it is - it is built again
+    // (the same path a moved surface takes), and the new session's frames present normally.
+    failing->armed = false;
+    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+    ASSERT_TRUE(session.beginFrame());
+    EXPECT_TRUE(session.commitFrame()) << "a session that came up again submits and presents";
+    EXPECT_EQ(session.framesPresented(), 1U);
+    EXPECT_EQ(session.timeline().submittedFrame(), 1U);
+
+    session.shutdown();
 }
 
 TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevice)
