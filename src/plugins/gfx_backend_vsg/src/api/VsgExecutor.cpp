@@ -47,6 +47,9 @@ void VsgExecutor::clearTargets() noexcept
 bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg::CommandGraph> command_graph,
                          std::span<const PassContent> content)
 {
+    // The wrapped passes of the PREVIOUS frame name its graphs; this frame's intervals must not be
+    // attributed to them (see profileEntries).
+    profile_entries_.clear();
     recorded_.clear();
     skipped_          = 0;
     window_recorded_  = false;
@@ -112,6 +115,57 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
     return skipped_ == 0;
 }
 
+void VsgExecutor::setProfiling(bool enabled) noexcept
+{
+    profiling_ = enabled;
+}
+
+bool VsgExecutor::profiling() const noexcept
+{
+    return profiling_;
+}
+
+std::span<const VsgExecutor::ProfileEntry> VsgExecutor::profileEntries() const noexcept
+{
+    return profile_entries_;
+}
+
+const VsgExecutor::ProfileEntry* VsgExecutor::profileOf(const ::vsg::RenderGraph& graph) const noexcept
+{
+    for (const ProfileEntry& entry : profile_entries_)
+    {
+        if (entry.graph == &graph)
+        {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+::vsg::ref_ptr<::vsg::Node> VsgExecutor::recordedChild(const ::vsg::ref_ptr<::vsg::RenderGraph>& graph,
+                                                       const core::CompiledPass&                  pass,
+                                                       bool                                       window)
+{
+    if (!profiling_ || graph == nullptr)
+    {
+        return graph;
+    }
+    // The name is for a human reading a capture; a READER matches the graph (see setProfiling).
+    ProfileEntry entry;
+    entry.graph    = graph.get();
+    entry.pass     = pass.pass;
+    entry.schedule = pass.schedule_index;
+    entry.window   = window;
+    entry.name     = (window ? std::string("window@")
+                             : std::string("target") + std::to_string(pass.target_index) + "@")
+                     + std::to_string(pass.schedule_index);
+
+    auto wrapper = ::vsg::InstrumentationNode::create(graph);
+    wrapper->setName(entry.name);
+    profile_entries_.push_back(std::move(entry));
+    return wrapper;
+}
+
 bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::CompiledTarget& compiled_target,
                                   const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
                                   std::span<const PassContent> content)
@@ -160,8 +214,9 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::Co
     }
 
     // One pass scope, one render pass instance: what the pass clears comes from the plan, and the order
-    // the graphs are added in IS the execution order (see the file note).
-    command_graph->addChild(graph);
+    // the graphs are added in IS the execution order (see the file note). A measuring session records the
+    // pass through its wrapper (see setProfiling); everything else is unchanged.
+    command_graph->addChild(recordedChild(graph, pass, /*window*/ false));
     return true;
 }
 
@@ -193,7 +248,10 @@ bool VsgExecutor::recordWindow(const core::CompiledPass& pass,
     if (!window_recorded_)
     {
         window_->prepare(pass.clear);
-        command_graph->addChild(window_->graph());
+        // The window graph is wrapped when it is added - the first window pass of the frame - and its
+        // interval covers the graph's whole record traversal, i.e. every window pass' content: the window
+        // sample is the PRESENT PATH as a whole, not one view of the swapchain (see WindowTarget).
+        command_graph->addChild(recordedChild(window_->graph(), pass, /*window*/ true));
         window_recorded_ = true;
     }
 

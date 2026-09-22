@@ -3,12 +3,11 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M7 第二半：设备侧相位运行器（设备能力只有一个写法——身体是函数，细节用例与相位行都调用它；每一行由计数器
-> 门住，而不是"它跑过了"）**：`test_vsg` 562 用例 / 88 套件全绿；门禁一条命令
-> （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清、**9 行相位 / 2 次运行全收尾**；
+> **M7 第三半：性能档的身份半边（每个 pass 都记成可归属的区间——开着时经带名字的 `InstrumentationNode` 记录、
+> 对象是图自己、按图归属；关着时命令图里一个包装节点都没有）**：`test_vsg` 564 用例 / 88 套件全绿；门禁一条命令
+> （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清、相位 9 行 / 2 次运行全收尾；
 > `core/` 的 include 边界由 `scripts/check_include_hygiene.py` 机器校验（全树 0 findings / 818 文件）。
-> M7 剩最后一样：**性能档（GPU profile）**，其语义（每 pass 一个采样、采样要有身份、读结果不阻塞、`age_frames`）
-> 已在 §11.16ab 的口子里写清。
+> M7 只剩会话侧的读数字半边（安装 `vsg::Profiler` + 不阻塞读 + `age_frames`），语义已在 §11.16ac 的口子里写全。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2423,6 +2422,66 @@ M7 的设计口径是"基线冻结、性能档、无 VUID 门禁、诊断字段�
   `age_frames`。这是独立一片（要动执行者与会话，且需要自己的像素/计数器判据）。
 * 之前的口子不变（调用 `invalidateAttachments()` 的提交失败缝、`Rebuild` 臂、租约"重建借用者"、float 颜色读回）。
 
+### 11.16ac M7 第三半（2026-09-22）：性能档的"身份"半边（每个 pass 都记成可归属的区间）
+
+M7 的最后一样是性能档（GPU profile）。它有两个半边：**采样有没有身份**（执行侧的包装）与**读数字**（会话侧的
+profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把第二半的确切语义写进下面的口子。
+
+1. **开关默认关，关就是"什么都没有"**（`VsgExecutor::setProfiling`）：关着时命令图里就是各 pass 的
+   `RenderGraph` 本身——没有包装节点、没有名字、没有条目。这是可被变异证明的断言（变异"永远包装"⇒
+   "关着不加东西"那条用例红）。
+2. **开着时每个 pass 经过一个带名字的 `vsg::InstrumentationNode` 记录，而归属靠 GRAPH 而不是名字**：
+   上游 `RenderGraph::record` 自己写的每图时间戳带的是**空对象**，捕获工具拿到的区间无法归属到任何 pass；
+   包装节点把**图自己**当作对象传给 instrumentation（`InstrumentationNode::traverse(RecordTraversal&)`
+   传的是 `child.get()`），于是执行器手里"图 → 是哪个 pass"的账本（`ProfileEntry` + `profileOf(graph)`）就是
+   读数字那一半需要的全部映射——不需要再建第二张目标表。名字（`"target<i>@<schedule>"`、窗口是
+   `"window@<schedule>"`）只给人看（捕获里、vsg 的报告里）；**读者按图匹配**，这正是旧实现文件里写下的同一条
+   约定。
+3. **窗口图只包装一次**（它被加进命令图的那一刻，即本帧第一个窗口 pass）：它的区间覆盖整张图的记录遍历，
+   也就是**本帧所有窗口 pass 的内容** ⇒ 窗口的采样是"呈现路径整体"，不是某一路视口——与旧实现的说明一致。
+4. **条目属于帧**：`record()` 开头清空，条目里记的是**这一帧**的图；留着上一帧的会把这一帧的区间归到上一帧的
+   pass 上（变异 P4 实测红）。名字里的序号用 `target_index`（计划给的）与 `schedule_index`——**索引式**，等
+   适配层能给 SDK 句柄起名时再换成人名；这不是损失，因为归属不靠名字。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/VsgExecutor.hpp` / `.cpp` | `setProfiling` / `profiling`；`recordedChild()`（包装 + 记条目）；`ProfileEntry{graph, pass, schedule, window, name}`；`profileEntries()` / `profileOf(graph)`；窗口图在加入处包装 |
+| `tests/test_vsg/ExecutorTest.cpp` | +2 真设备用例：**关**着时命令图里没有任何包装节点、条目为空（且帧照常渲染）；**开**着时每个 pass 都被包装（`wrapper->child == 图`）、名字合规则、`profileOf` 往返、像素不变、**第二帧替换条目**（不是两帧的并集） |
+
+| 规则 | 结论 |
+| --- | --- |
+| **关着不加东西** | 变异"永远包装"（守卫恒假）⇒ "关"用例红（找到 1 个包装节点） |
+| **开着必须包装并可归属** | 变异"从不包装"（守卫恒真）⇒ "开"用例红（没有包装、没有条目） |
+| **身份是图，不是名字** | 变异 P5（包装一个空 `Group` 而不是那张图）⇒ 归属断言红 + 像素红（pass 根本没记录） |
+| **名字带序号** | 变异 P3（名字用 pass 号代替 schedule）⇒ 名字断言红 |
+| **条目属于本帧** | 变异 P4（不清空条目）⇒ 第二帧的条目数断言红 |
+
+| 变异反证（全部实测） | 结果 |
+| --- | --- |
+| 守卫恒假（永远包装） | `ProfilingOffAdds…` 红（1 个包装节点） |
+| 守卫恒真（从不包装） | `ProfilingWraps…` 红 |
+| 名字丢序号 | `ProfilingWraps…` 红 |
+| 条目不清空 | `ProfilingWraps…` 红（第二帧 2 条） |
+| 包装空 Group（丢掉图） | `ProfilingWraps…` 红（归属 + 像素） |
+
+| 证据 | 结论 |
+| --- | --- |
+| 套件 | `test_vsg` 全量 **564 用例 / 88 套件全绿**（+2 用例） |
+| 门禁 | `scripts/vsg_rewrite_gate.sh` 全绿：0 VUID / 0 SYNC-HAZARD、hygiene 全清、相位 9 行 / 2 次运行全收尾 |
+
+**本片留下的口子（登记，不假装解决）——M7 的最后一块**：
+
+* **读数字那一半还没接**（会话侧，独立一片）：①按 `VINE_VSG_PROFILE`（沿用旧实现的环境变量名，另加
+  `VINE_VSG_PROFILE_CPU` / `_GPU` 设定 `vsg::Profiler::Settings` 的两个 level）在会话的 viewer 上安装
+  `vsg::Profiler`；②读取**不带 `VK_QUERY_RESULT_WAIT_BIT`**（vsg 自己就是这么读的：没就绪的查询下次再读），
+  因此读到的总是几帧前的数据 ⇒ 必须给出 `age_frames`（这一帧与数据所属帧的差），并保证**读取本身不抬高
+  `deviceWaits()`**（这是本后端"帧路径不停设备"的判据，profile 不许例外）；③归属用本片的
+  `profileOf(interval.object)`，**不需要**新的目标表；④数字只做"非负 + 相位有采样"这类断言，时间不是像素，
+  不假装能断言具体数值。
+* **名字仍是索引式**（`target<i>@<schedule>`）：等适配层持有 SDK 句柄时，把 `RenderTarget::name()`（或等价物）
+  接进 `CompiledTarget` 即可换成人名；读者不受影响（按图归属）。
+* 之前的口子不变（提交失败缝、`Rebuild` 臂、租约"重建借用者"、float 颜色读回等）。
+
 ### 11.17 下一步
 
 | 项 | 内容 |
@@ -2467,7 +2526,7 @@ M7 的设计口径是"基线冻结、性能档、无 VUID 门禁、诊断字段�
 | ~~M5d~~ | **已完成（2026-09-22）**：全屏路径的 128B push——`LightPushBlock`（128B，`projparms` 保留为零）+ `packLightPushBlock`（复用 `packLightBlock` 的遍历、只换布局）；`recordScreenDraw` 按每次调用推；`createScreen` 建 push-only 布局（"只读 push"的全屏 pass 不再被拒）；2 条用例（无设备 + 真设备三视口像素）+ 4 条变异反证（其中"push 全零"与"发错阶段"分别是内容缺失与静默失败的实证）（§11.16w） |
 | ~~M5e~~ | **已完成（2026-09-22）**：目标生命周期（计划驱动的换尺寸）——`OffscreenTarget::Attachments`（尺寸相关的一整批对象）+ `buildAttachments(width, height, out)`（纯构建、不写自身）；`create` 成功后才接手并计数借用者；`resize(w, h, timeline, retirement)` 按 `core::planTarget` 决定、**保留渲染通道与管线**、旧集经 `RetirementQueue` 停车（闸门关着时退回**计数过的** device idle）；租约两向拒绝；换后 `written=false` + `generation+1`；5 条真设备用例（含深度回读按新尺寸重建、引用计数证明"停着而不是扔了"）+ 6 条变异反证（§11.16x） |
 | ~~M6~~ | **已完成（2026-09-22）**：读回——`core/Readback`（`readbackOf` 单表 + 两类格式表 + `decodeDepth`），优先级"存在性 → 格式（永久）→ 捕获（可重试）"，不设走不到的 `Empty`（零尺寸归 `planTarget` / `create` 拒绝）；`OffscreenTarget` 的 `captured` / `depth_captured` 簿记（属于附件集，换尺寸天然复位）+ `readbackResult()`；float 颜色附件不再建回读缓冲（原来必撞 `VUID-vkCmdCopyImageToBuffer-pRegions-00183`）；借用方的深度回读 = 共享图像 + 自己的缓冲；4 条无设备 + 4 条真设备用例 + 8 条变异反证（§11.16y） |
-| ~~M7~~ | **已完成（2026-09-22，第一半：证据加固）**：重写版第一张**真**相位表（`PhaseTable` 的 `sample`/`expect` 第一次派上用场：稳态帧零分配 ×2 + `draws` +2 + 环跳过 `invalid_schedules` +1），`[selftest]` 行冻结成基线；`scripts/vsg_rewrite_gate.sh` 把整套仪式变成一条命令（跳过即失败、0 VUID / 0 SYNC-HAZARD 成为可失败断言、相位必须以 `[selftest] done` 收尾），门禁自己也被三条伪造输入证明能红；实测记录 plan 路径头两帧的有界增长（第二次 compile 32B，之后 0）（§11.16z）。| ~~M7c（设备侧相位运行器）~~ | **已完成（2026-09-22）**：`DevicePhases.hpp` 让四个设备能力**只有一个写法**（身体是函数：细节用例与相位行都调它）；`DevicePhaseTest` 用计数器门住每一行（目标 +1/+2、换尺寸 +1、帧 +3），行文本冻结；`Stack::build(device)` 改收调用方的设备（一次运行一个设备）；门禁的相位判据改成"无 FAILED 行 + 每次运行收尾"（两张表之后，"最后一行是 done"会被"前面红、后面干净"骗过，实测）；2 条变异 + 1 条伪造输入全红（§11.16ab）。**剩**：性能档（GPU profile） |
+| ~~M7~~ | **已完成（2026-09-22，第一半：证据加固）**：重写版第一张**真**相位表（`PhaseTable` 的 `sample`/`expect` 第一次派上用场：稳态帧零分配 ×2 + `draws` +2 + 环跳过 `invalid_schedules` +1），`[selftest]` 行冻结成基线；`scripts/vsg_rewrite_gate.sh` 把整套仪式变成一条命令（跳过即失败、0 VUID / 0 SYNC-HAZARD 成为可失败断言、相位必须以 `[selftest] done` 收尾），门禁自己也被三条伪造输入证明能红；实测记录 plan 路径头两帧的有界增长（第二次 compile 32B，之后 0）（§11.16z）。| ~~M7c（设备侧相位运行器）~~ | **已完成（2026-09-22）**：`DevicePhases.hpp` 让四个设备能力**只有一个写法**（身体是函数：细节用例与相位行都调它）；`DevicePhaseTest` 用计数器门住每一行（目标 +1/+2、换尺寸 +1、帧 +3），行文本冻结；`Stack::build(device)` 改收调用方的设备（一次运行一个设备）；门禁的相位判据改成"无 FAILED 行 + 每次运行收尾"（两张表之后，"最后一行是 done"会被"前面红、后面干净"骗过，实测）；2 条变异 + 1 条伪造输入全红（§11.16ab）。| ~~M7d（性能档的身份半边）~~ | **已完成（2026-09-22）**：`VsgExecutor::setProfiling`（默认关，**关着不加任何东西**）+ `recordedChild()` 把每个 pass 记成**可归属的区间**（带名字的 `InstrumentationNode`，对象是**图自己** ⇒ `ProfileEntry` + `profileOf(graph)` 就是读数字那一半要的全部映射）；窗口图只包一次（区间 = 呈现路径整体）；条目属于帧；2 条真设备用例 + 5 条变异反证（§11.16ac）。**剩**：会话侧安装 `vsg::Profiler` + 不阻塞读 + `age_frames`（语义已写全） |
 | ~~M7b（执行者收口）~~ | **已完成（2026-09-22）**：目标自己说事实——`OffscreenTarget::instance()`（`built` = **能 LOAD** = `written`；15 处手拼 facts 统一到它，像素断言是判据）+ `invalidateAttachments()`（丢帧 ⇒ 计划 `Repair(Bootstrap)` ⇒ 下一帧首写者清屏；**只有 bootstrap 能修事实**，`resize` 换集合同时换事实）；+1 真设备用例把执行者循环（facts → 计划 → `pass.bootstrap` → 图 → 像素）跑通，含"只修一次"与 resize 两条判据；5 条变异反证（§11.16aa） |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器

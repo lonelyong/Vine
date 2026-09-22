@@ -300,10 +300,13 @@ struct Fixture
     }
 
     /// @brief Records the compiled frame and renders it once.
+    ::vsg::ref_ptr<::vsg::CommandGraph> last_graph;  ///< The graph the last render() recorded into.
+
     bool render(const CompiledFrame& frame, std::span<const PassContent> content = {})
     {
         auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
         executor.record(frame, command_graph, content);
+        last_graph = command_graph;
 
         viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
         if (!viewer->compile())
@@ -516,4 +519,127 @@ TEST(ExecutorTest, APassIntoTheDefaultFramebufferIsReportedRatherThanDrawnSomewh
 
     // Reported, not silently redirected: the caller hears about it through the one route.
     EXPECT_EQ(fixture.diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 1U);
+}
+
+TEST(ExecutorTest, ProfilingOffAddsNothingToTheRecordedGraph)
+{
+    Fixture fixture;
+    if (!fixture.build())
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
+                     << fixture.created.error.as_std_str();
+    }
+
+    ASSERT_NE(fixture.first, nullptr);
+    fixture.recorder.beginFrame(FrameToken{ 1 });
+    fixture.clearPass(fixture.first.get(), 1U, 0, 1.0F, 0.0F, 0.0F);
+    fixture.recorder.endFrame();
+
+    const CompiledFrame& frame =
+        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
+    ASSERT_EQ(frame.passes.size(), 1U);
+
+    // The default: no measurement, so the command graph is the pass graphs themselves - a frame that
+    // silently carried wrappers would pay for a query pool nobody asked for, and a capture would show
+    // names nobody set.
+    ASSERT_TRUE(fixture.render(frame));
+    ASSERT_NE(fixture.last_graph, nullptr);
+    ASSERT_EQ(fixture.executor.profileEntries().size(), 0U);
+    ASSERT_FALSE(fixture.executor.profiling());
+
+    std::size_t wrappers = 0;
+    for (const ::vsg::ref_ptr<::vsg::Node>& child : fixture.last_graph->children)
+    {
+        if (dynamic_cast<const ::vsg::InstrumentationNode*>(child.get()) != nullptr)
+        {
+            ++wrappers;
+        }
+    }
+    EXPECT_EQ(wrappers, 0U) << "not measuring means not wrapping";
+}
+
+TEST(ExecutorTest, ProfilingWrapsEachPassAndNamesItForTheCapture)
+{
+    Fixture fixture;
+    if (!fixture.build())
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
+                     << fixture.created.error.as_std_str();
+    }
+
+    ASSERT_NE(fixture.first, nullptr);
+    fixture.executor.setProfiling(true);
+    EXPECT_TRUE(fixture.executor.profiling());
+
+    const auto record_one = [&](std::uint64_t token, float red) {
+        EXPECT_TRUE(fixture.recorder.beginFrame(FrameToken{ token }));
+        fixture.clearPass(fixture.first.get(), 1U, 0, red, 0.0F, 0.0F);
+        EXPECT_TRUE(fixture.recorder.endFrame());
+        // The contract's last call of a frame: without it the NEXT beginFrame() is refused, and the
+        // second frame of this case would silently compile the first one's collection (measured).
+        EXPECT_TRUE(fixture.recorder.swapBuffers());
+        return &fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
+    };
+
+    const CompiledFrame* frame = record_one(1U, 1.0F);
+    ASSERT_NE(frame, nullptr);
+    ASSERT_EQ(frame->passes.size(), 1U);
+    ASSERT_TRUE(fixture.render(*frame));
+    ASSERT_NE(fixture.last_graph, nullptr);
+
+    // Every pass is recorded through a wrapper whose child IS the pass' graph: the measurement interval
+    // then carries that graph as its object, which is the only thing that makes it attributable.
+    ASSERT_EQ(fixture.executor.profileEntries().size(), 1U);
+    const VsgExecutor::ProfileEntry& entry = fixture.executor.profileEntries()[0];
+    EXPECT_FALSE(entry.window);
+    EXPECT_EQ(entry.pass, frame->passes[0].pass);
+    EXPECT_EQ(entry.schedule, frame->passes[0].schedule_index);
+    EXPECT_EQ(entry.name, "target0@0") << "the name is for a capture: target<i>@<schedule>";
+
+    std::size_t wrappers = 0;
+    for (const ::vsg::ref_ptr<::vsg::Node>& child : fixture.last_graph->children)
+    {
+        const auto* wrapper = dynamic_cast<const ::vsg::InstrumentationNode*>(child.get());
+        if (wrapper != nullptr)
+        {
+            ++wrappers;
+            EXPECT_EQ(wrapper->child.get(), entry.graph) << "the wrapper wraps THE pass graph, not a copy";
+        }
+    }
+    EXPECT_EQ(wrappers, 1U);
+
+    // The reader's half: a measurement interval carries a graph, and this answers which pass that graph was
+    // - so attribution needs no second table (the name is only for a capture).
+    ASSERT_NE(entry.graph, nullptr);
+    const VsgExecutor::ProfileEntry* found = fixture.executor.profileOf(*entry.graph);
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->pass, entry.pass);
+    EXPECT_EQ(found->name, entry.name);
+
+    // The frame still RENDERS: the wrapper changes the bookkeeping, not the picture.
+    const Rgba8 corner = fixture.first->probe().pixel(1, 1);
+    EXPECT_NEAR(static_cast<int>(corner.r), 255, 2) << "the clear colour is unchanged by the wrapper";
+
+    // A second frame replaces the entries: an entry names a graph of ITS frame, and keeping the previous
+    // frame's would attribute this frame's intervals to the last one's passes.
+    const CompiledFrame* second = record_one(2U, 0.0F);
+    ASSERT_NE(second, nullptr);
+    ASSERT_TRUE(fixture.render(*second));
+    ASSERT_EQ(second->passes.size(), 1U);
+    ASSERT_EQ(fixture.executor.profileEntries().size(), 1U) << "one frame's entries, not two frames'";
+
+    // ... and it names THIS frame's graph: the graph inside the wrapper the second frame recorded. (The
+    // previous frame's ENTRY is dropped; its graph object may well have been freed and its address reused,
+    // so "the old pointer is gone" is not a claim about anything.)
+    ::vsg::RenderGraph* second_graph = nullptr;
+    for (const ::vsg::ref_ptr<::vsg::Node>& child : fixture.last_graph->children) {
+        if (const auto* wrapper = dynamic_cast<const ::vsg::InstrumentationNode*>(child.get())) {
+            second_graph = dynamic_cast<::vsg::RenderGraph*>(wrapper->child.get());
+        }
+    }
+    ASSERT_NE(second_graph, nullptr) << "the second frame records through a wrapper too";
+    const VsgExecutor::ProfileEntry& replaced = fixture.executor.profileEntries()[0];
+    EXPECT_EQ(replaced.pass, second->passes[0].pass);
+    EXPECT_EQ(replaced.graph, second_graph) << "the entry names the frame that was just recorded";
+    EXPECT_EQ(fixture.executor.profileOf(*second_graph), &replaced);
 }

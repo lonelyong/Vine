@@ -6,6 +6,7 @@
 
 #include <vsg/app/CommandGraph.h>
 #include <vsg/app/RenderGraph.h>
+#include <vsg/nodes/InstrumentationNode.h>
 
 #include <vine/vsg/api/OffscreenTarget.hpp>
 #include <vine/vsg/api/WindowTarget.hpp>
@@ -121,6 +122,56 @@ class V_VSG_API VsgExecutor
     /** @brief Gets the passes it recorded, in the order it recorded them. */
     [[nodiscard]] std::span<const core::PassId> recorded() const noexcept;
 
+    /** @brief Sets whether this frame's passes are recorded through measurement wrappers.
+     *
+     * WHAT THE WRAPPER IS FOR, and why the pass graph cannot be attributed without it: upstream's own
+     * per-graph timestamp is written with a NULL object, so a capture (or a profiler reading vsg's log)
+     * gets an interval it cannot attach to anything. Recording the pass THROUGH a `vsg::InstrumentationNode`
+     * makes the interval carry the GRAPH as its object - and the graph is what this executor already knows
+     * the pass of (see @ref profileOf), so attribution needs no second table.
+     *
+     * THE NAME IS FOR A HUMAN READING A CAPTURE, not for the reader: `"<target>@<schedule>"`, where the
+     * target is `"window"` or `"target<i>"` (the index the plan gave it). A reader that matched on the name
+     * would break the moment two passes shared one, which is why the legacy backend's own note says the
+     * same thing about its names.
+     *
+     * OFF BY DEFAULT, and off means nothing at all: no wrapper node, no name, no entry - a frame recorded
+     * without measurement is byte-for-byte the graph it was before this existed.
+     *
+     * @param enabled Whether the passes of the frames recorded from now on are wrapped.
+     */
+    void setProfiling(bool enabled) noexcept;
+
+    /** @brief Gets whether pass measurement is on (see @ref setProfiling). */
+    [[nodiscard]] bool profiling() const noexcept;
+
+    /** @brief One recorded pass, as the measurement wrapper's attribution key. */
+    struct ProfileEntry
+    {
+        const ::vsg::RenderGraph* graph{nullptr};  ///< The pass graph the measurement interval carries.
+        core::PassId              pass{0};         ///< The pass it belongs to.
+        std::uint32_t             schedule{0};     ///< Position in the frame's execution order.
+        bool                      window{false};   ///< True for the window graph (the present path).
+        std::string               name;            ///< The wrapper's name (for a capture, not a reader).
+    };
+
+    /** @brief Gets the passes of the last recorded frame, in the order they were wrapped.
+     *
+     * Empty when measurement is off. Rebuilt per frame: an entry names a graph of THIS frame, and keeping
+     * the previous frame's would attribute this frame's intervals to the last one's passes.
+     */
+    [[nodiscard]] std::span<const ProfileEntry> profileEntries() const noexcept;
+
+    /** @brief Gets the entry of @p graph, or null when it was not a wrapped pass of the last frame.
+     *
+     * This is the attribution a reader does: the measurement interval carries a graph, and this answers
+     * which pass that graph was.
+     *
+     * @param graph The graph an interval's object points at.
+     * @return The entry, or null.
+     */
+    [[nodiscard]] const ProfileEntry* profileOf(const ::vsg::RenderGraph& graph) const noexcept;
+
     /** @brief Gets how many passes this frame it could not record. */
     [[nodiscard]] std::uint64_t skipped() const noexcept;
 
@@ -152,6 +203,20 @@ class V_VSG_API VsgExecutor
     /** @brief Resolves one compiled target to a registered target, or nullptr. */
     [[nodiscard]] OffscreenTarget* resolve(const core::CompiledTarget& target) const noexcept;
 
+    /** @brief The node to append for @p graph: the graph itself, or a named wrapper when measuring.
+     *
+     * A wrapped pass also records its attribution entry (the graph and the pass it is), which is what a
+     * reader of the measurement has to match on.
+     *
+     * @param graph  The pass' render graph.
+     * @param pass   The compiled pass it belongs to.
+     * @param window Whether this is the window graph (the present path as a whole).
+     * @return What to append to the command graph.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> recordedChild(const ::vsg::ref_ptr<::vsg::RenderGraph>& graph,
+                                                            const core::CompiledPass&                  pass,
+                                                            bool window);
+
     /** @brief Reports a pass it could not record. */
     void reportSkipped(const core::CompiledTarget& target, const char* why);
 
@@ -163,6 +228,8 @@ class V_VSG_API VsgExecutor
     core::Diagnostics&        diagnostics_;  ///< The one diagnostic route.
     std::vector<Entry>        targets_;      ///< Registered targets, borrowed.
     WindowTarget*             window_{nullptr};       ///< The registered window (borrowed).
+    bool                      profiling_{false};  ///< Wrap each pass for measurement (see setProfiling).
+    std::vector<ProfileEntry> profile_entries_;  ///< The wrapped passes of the last recorded frame.
     bool                      window_recorded_{false};  ///< Whether this frame's window graph is in the graph.
     std::vector<core::PassId> recorded_;     ///< Passes recorded, in record order.
     std::uint64_t             skipped_{0};   ///< Passes not recorded this frame.
