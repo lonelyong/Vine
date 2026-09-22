@@ -25,6 +25,9 @@
 #include <vsg/app/Window.h>
 #include <vsg/app/WindowTraits.h>
 #include <vsg/state/DescriptorBuffer.h>
+#include <vsg/state/Image.h>
+#include <vsg/state/ImageView.h>
+#include <vsg/state/Sampler.h>
 #include <vsg/state/PipelineLayout.h>
 #include <vsg/vk/Device.h>
 
@@ -218,6 +221,62 @@ TEST(BlockDescriptorsTest, TheDeclaredShapeDecidesTheBindingsAndTheOffsets)
     EXPECT_EQ(bound->dynamicOffsets, (std::vector<std::uint32_t>{ 0, 64 }))
         << "one offset per DECLARED binding, in the declared order";
     EXPECT_EQ(descriptors->refusals(), 0U);
+}
+
+TEST(BlockDescriptorsTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
+{
+    // The engine's own set 0 is BOTH: the material's block at binding 0 and the diffuse map at binding 1. One
+    // declared set, one layout, one bind - which is what lets a program written against that arrangement be
+    // served without the backend inventing a second set for the image.
+    if (!Fixture::available()) {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+    Fixture fixture;
+    ASSERT_TRUE(fixture.build({}));
+
+    // An image and a view for the map: nothing samples it here (the set is never submitted), so it only has to
+    // be a real image object - the Context compiles it into a VkImage whenever a frame first needs it.
+    auto image = ::vsg::Image::create();
+    image->format = VK_FORMAT_R8G8B8A8_UNORM;
+    image->usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    auto view = ::vsg::ImageView::create(image, VK_IMAGE_VIEW_TYPE_2D);
+    ASSERT_NE(view, nullptr);
+    const auto sampler = ::vsg::Sampler::create();
+    ASSERT_NE(sampler, nullptr);
+
+    const BlockDescriptors::Binding declared[]{ { 0U, vine::vsg::AbiBlockRole::Material } };
+    const BlockDescriptors::SampledBinding maps[]{ { 1U, view, sampler } };
+    std::unique_ptr<BlockDescriptors> descriptors =
+        BlockDescriptors::create(fixture.device, *fixture.storage, declared, 0U, maps);
+    ASSERT_NE(descriptors, nullptr);
+
+    const auto layout = descriptors->layout();
+    ASSERT_NE(layout, nullptr);
+    ASSERT_EQ(layout->bindings.size(), 2U) << "the block AND the map, in one declared set";
+    EXPECT_EQ(layout->bindings[0].binding, 0U);
+    EXPECT_EQ(layout->bindings[0].descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
+    EXPECT_EQ(layout->bindings[1].binding, 1U);
+    EXPECT_EQ(layout->bindings[1].descriptorType, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+
+    ASSERT_EQ(descriptors->samplers().size(), 1U) << "the images the set carries are readable back";
+    EXPECT_EQ(descriptors->samplers()[0].binding, 1U);
+
+    // The SET carries the same two things the layout declares, each at its own binding: a descriptor at the
+    // wrong binding is a set the shader reads nothing from (the validation layer says so; the pixel may
+    // still look plausible), so the set itself is checked - one buffer at 0 and one image at 1.
+    const auto set = descriptors->set();
+    ASSERT_NE(set, nullptr);
+    ASSERT_EQ(set->descriptors.size(), 2U);
+    EXPECT_EQ(set->descriptors[0]->dstBinding, 0U);
+    EXPECT_EQ(set->descriptors[0]->descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
+    EXPECT_EQ(set->descriptors[1]->dstBinding, 1U);
+    EXPECT_EQ(set->descriptors[1]->descriptorType, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+
+    // The bind still hands over ONE dynamic offset per BLOCK binding: the image is not a dynamic offset.
+    const auto bound = descriptors->bind(pipelineLayoutFor(fixture.device, layout), BlockDescriptors::Offsets{});
+    ASSERT_NE(bound, nullptr);
+    EXPECT_EQ(bound->dynamicOffsets, (std::vector<std::uint32_t>{ 0U }))
+        << "one offset per declared block, and none for the map";
 }
 
 TEST(BlockDescriptorsTest, AMisalignedOffsetIsRefusedInsteadOfBound)

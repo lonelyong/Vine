@@ -77,6 +77,12 @@ V_VSG_NS_BEGIN
 class ContentPipeline
 {
   public:
+    /** @brief The set THIS backward's own arrangement puts a pass' sampled inputs in (the engine's programs
+     *         declare their maps in their own sets instead - see api/ProgramAbi). A sampler declared in this
+     *         set is served from the pass' inputs (one per binding, in declaration order); a sampler anywhere
+     *         else is a MAP the caller supplies (a material's texture, the white fallback). */
+    static constexpr std::uint32_t kInputSet = 1U;
+
     /** @brief One vertex stream the pipeline declares. */
     struct VertexBinding
     {
@@ -211,8 +217,22 @@ class ContentPipeline
      */
     [[nodiscard]] std::span<const BlockDescriptors::Binding> blockShape(std::uint32_t set) const noexcept;
 
-    /** @brief Gets the set indices the program declares blocks in, ascending. */
-    [[nodiscard]] std::span<const std::uint32_t> blockSets() const noexcept;
+    /** @brief Gets the sampled bindings the program declares in @p set, ascending (empty when it declares
+     *         none there).
+     *
+     * The other half of @ref blockShape: the ENGINE's own set 0 carries the material block AND the diffuse
+     * map, and a set the caller builds for such a program must carry an image at exactly these bindings -
+     * the layout this layer compiled its pipelines against declares them, so a set without them (or with
+     * images at bindings the text never names) is refused rather than bound.
+     *
+     * @param set Descriptor set index.
+     * @return The sampled bindings, ascending.
+     */
+    [[nodiscard]] std::span<const std::uint32_t> samplerBindings(std::uint32_t set) const noexcept;
+
+    /** @brief Gets the set indices the program declares ANYTHING in (blocks and/or sampled images),
+     *         ascending: the sets a caller has to build and a pass has to bind. */
+    [[nodiscard]] std::span<const std::uint32_t> declaredSets() const noexcept;
 
     /** @brief Gets (or builds) the pipeline for an identity.
      *

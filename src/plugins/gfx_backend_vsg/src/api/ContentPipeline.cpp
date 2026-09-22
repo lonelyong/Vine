@@ -59,7 +59,8 @@ std::uint32_t abiSizeOfRole(AbiBlockRole role) noexcept
  * @return true when every declaration can be described.
  */
 bool describeAbi(const ProgramAbi& abi, std::vector<::vsg::ref_ptr<::vsg::DescriptorSetLayout>>& sets,
-                 std::vector<std::vector<BlockDescriptors::Binding>>& shapes)
+                 std::vector<std::vector<BlockDescriptors::Binding>>& shapes,
+                 std::vector<std::vector<std::uint32_t>>& sampler_shapes)
 {
     std::uint32_t set_count = 0U;
     for (const AbiBinding& binding : abi.bindings)
@@ -75,12 +76,30 @@ bool describeAbi(const ProgramAbi& abi, std::vector<::vsg::ref_ptr<::vsg::Descri
             {
                 return false;
             }
-            set_count = std::max(set_count, binding.set + 1U);
         }
         else
         {
-            if (binding.kind == AbiDescriptorKind::OtherSampler || binding.count != 1U ||
-                binding.set != kContentInputSet)
+            // A sampler may sit in ANY set the text names: the engine's own set 0 carries the material block
+            // and the diffuse map side by side, and a set is a set whatever kind of binding it holds. What
+            // this layer refuses is a KIND it has no view for (a cube map arrives with the texture work) and
+            // an array of samplers (each binding carries one image here).
+            if (binding.kind == AbiDescriptorKind::OtherSampler || binding.kind == AbiDescriptorKind::SamplerCube ||
+                binding.count != 1U)
+            {
+                return false;
+            }
+        }
+        set_count = std::max(set_count, binding.set + 1U);
+    }
+
+    // One (set, binding) cannot be two things: a block and a sampler at the same binding would need one
+    // descriptor to be a buffer and an image at once.
+    for (const AbiBinding& left : abi.bindings)
+    {
+        for (const AbiBinding& right : abi.bindings)
+        {
+            if (&left != &right && left.set == right.set && left.binding == right.binding &&
+                left.kind != right.kind)
             {
                 return false;
             }
@@ -89,10 +108,18 @@ bool describeAbi(const ProgramAbi& abi, std::vector<::vsg::ref_ptr<::vsg::Descri
 
     sets.resize(set_count);
     shapes.resize(set_count);
+    sampler_shapes.resize(set_count);
     for (std::uint32_t index = 0U; index < set_count; ++index)
     {
         shapes[index] = blockShapeOf(abi, index);
-        sets[index]   = BlockDescriptors::layoutOfShape(shapes[index]);
+        for (const AbiBinding& binding : abi.bindings)
+        {
+            if (binding.set == index && binding.kind != AbiDescriptorKind::UniformBlock)
+            {
+                sampler_shapes[index].push_back(binding.binding);
+            }
+        }
+        sets[index] = BlockDescriptors::layoutOfShape(shapes[index], sampler_shapes[index]);
         if (sets[index] == nullptr)
         {
             return false;
@@ -202,8 +229,11 @@ struct ContentPipeline::Data
     std::vector<::vsg::ref_ptr<::vsg::DescriptorSetLayout>>     sets;
     /// @brief One shape per entry of @ref sets: which block role sits at which binding.
     std::vector<std::vector<BlockDescriptors::Binding>>         shapes;
+    /// @brief One sampled-binding list per entry of @ref sets: the images the set declares (the other half of
+    ///        a declared set - the engine's set 0 carries blocks AND the diffuse map).
+    std::vector<std::vector<std::uint32_t>>                     sampler_shapes;
     /// @brief The set indices that declare at least one block, ascending.
-    std::vector<std::uint32_t>                                  block_sets;
+    std::vector<std::uint32_t>                                  declared_sets;
     /// @brief The layout that fills a set index the declarations leave empty (the API wants a CONTIGUOUS
     ///        range of set layouts, and a gap is not a null entry - it is a set with no bindings).
     ::vsg::ref_ptr<::vsg::DescriptorSetLayout>                  empty_set;
@@ -255,15 +285,24 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
     auto layer = std::unique_ptr<ContentPipeline>(new ContentPipeline());
     layer->d->abi = abi;
     layer->d->empty_set = ::vsg::DescriptorSetLayout::create();
-    if (layer->d->empty_set == nullptr || !describeAbi(abi, layer->d->sets, layer->d->shapes)) {
+    if (layer->d->empty_set == nullptr ||
+        !describeAbi(abi, layer->d->sets, layer->d->shapes, layer->d->sampler_shapes)) {
         return nullptr;  // a declaration this backend cannot describe: reported, never compiled against a guess
     }
     // A pipeline layout's set layouts are a CONTIGUOUS range from 0 and a gap is a set with no bindings - not
     // a null entry, which is an invalid handle. describeAbi is where that range is built (one entry per set
     // index, empty layouts included), so nothing is left to patch up here.
+    //
+    // Which sets a CALLER builds (and a pass binds): every set that declares blocks, plus every set that
+    // declares sampled images OTHER than the input set - the input set's images are the pass' own (it binds
+    // what an earlier pass produced, in declaration order), so its set is built from the key's counts rather
+    // than by the caller (see Data::sampled). A set that declares both is refused above (the draw block and
+    // the pass' images would have to be one descriptor set).
     for (std::uint32_t set = 0U; set < layer->d->shapes.size(); ++set) {
-        if (!layer->d->shapes[set].empty()) {
-            layer->d->block_sets.push_back(set);
+        const bool has_blocks  = !layer->d->shapes[set].empty();
+        const bool has_samplers = !layer->d->sampler_shapes[set].empty();
+        if (has_blocks || (has_samplers && set != kContentInputSet)) {
+            layer->d->declared_sets.push_back(set);
         }
     }
 
@@ -423,9 +462,14 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
     }
 
     // The declarations have to cover the key, or the pipeline would be compiled against a layout the pass'
-    // bindings do not fit: a sampler at a binding the input count does not reach has no image to bind, and a
-    // block declared in the input set would have to share a set with those images (one set cannot be two
-    // objects - that arrangement arrives with the material/map sets, see the scene bridge's next slice).
+    // bindings do not fit. Two rules, and they are about different sets:
+    //
+    //   * a sampler in the INPUT set (this backend's own arrangement: a content pass that samples what an
+    //     earlier pass produced binds those images there) needs an input for every binding the key promises
+    //     - `sampled_color_count + sampled_depth_count` of them, in declaration order;
+    //   * a sampler OUTSIDE it (the engine's own set 0, where the material block and the diffuse map share a
+    //     set) is a MAP rather than a pass input: it is served from what the caller has (a material's
+    //     texture, the white fallback), so the input count has nothing to say about it.
     const std::uint32_t input_count = key.sampled_color_count + key.sampled_depth_count;
     for (const AbiBinding& binding : d->abi.bindings)
     {
@@ -437,7 +481,7 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
             }
             continue;
         }
-        if (binding.binding >= input_count) {
+        if (binding.set == kContentInputSet && binding.binding >= input_count) {
             ++d->failures;
             return { core::VariantPool::Action::Created, 0U, {} };
         }
@@ -554,9 +598,15 @@ std::span<const BlockDescriptors::Binding> ContentPipeline::blockShape(std::uint
                                   : std::span<const BlockDescriptors::Binding>{};
 }
 
-std::span<const std::uint32_t> ContentPipeline::blockSets() const noexcept
+std::span<const std::uint32_t> ContentPipeline::samplerBindings(std::uint32_t set) const noexcept
 {
-    return d->block_sets;
+    return set < d->sampler_shapes.size() ? std::span<const std::uint32_t>(d->sampler_shapes[set])
+                                          : std::span<const std::uint32_t>{};
+}
+
+std::span<const std::uint32_t> ContentPipeline::declaredSets() const noexcept
+{
+    return d->declared_sets;
 }
 
 ::vsg::ref_ptr<::vsg::Sampler> ContentPipeline::inputSampler()

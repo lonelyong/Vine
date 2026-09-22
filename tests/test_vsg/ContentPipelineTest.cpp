@@ -490,9 +490,9 @@ TEST(ContentPipelineTest, TheLayoutFollowsTheDeclarationsWhereverTheyPutTheBlock
     ASSERT_EQ(sets[1]->bindings.size(), 1U);
     EXPECT_EQ(sets[1]->bindings[0].binding, 0U);
 
-    ASSERT_EQ(layer->blockSets().size(), 2U) << "the sets a caller has to build block sets for";
-    EXPECT_EQ(layer->blockSets()[0], 0U);
-    EXPECT_EQ(layer->blockSets()[1], 1U);
+    ASSERT_EQ(layer->declaredSets().size(), 2U) << "the sets a caller has to build block sets for";
+    EXPECT_EQ(layer->declaredSets()[0], 0U);
+    EXPECT_EQ(layer->declaredSets()[1], 1U);
     const std::span<const vine::vsg::BlockDescriptors::Binding> shape = layer->blockShape(0U);
     ASSERT_EQ(shape.size(), 1U);
     EXPECT_EQ(shape[0].binding, 3U);
@@ -512,8 +512,8 @@ TEST(ContentPipelineTest, TheLayoutFollowsTheDeclarationsWhereverTheyPutTheBlock
                       "void main() { outColor = lights.light0; }\n";
     auto gapped_layer = makeLayerWith(gapped);
     ASSERT_NE(gapped_layer, nullptr);
-    ASSERT_EQ(gapped_layer->blockSets().size(), 1U);
-    EXPECT_EQ(gapped_layer->blockSets()[0], 2U);
+    ASSERT_EQ(gapped_layer->declaredSets().size(), 1U);
+    EXPECT_EQ(gapped_layer->declaredSets()[0], 2U);
     const auto gapped_result = gapped_layer->acquire(pool, contentKey(1));
     ASSERT_NE(gapped_result.pipeline, nullptr);
     ASSERT_NE(gapped_result.pipeline->layout, nullptr);
@@ -547,10 +547,17 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
     EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 0) uniform VineMaterialBlock\n"
                              "{ vec4 ambient; vec4 diffuse; vec4 specular; float shininess; } material;"),
               nullptr);
-    // A sampler in the block set: the pass' input images live in the input set, and a set cannot be both.
-    EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 1) uniform sampler2D picture;"), nullptr);
-    // A sampler kind this backend has no view for.
+    // A sampler in the block set is FINE now: the engine's own set 0 carries the material block AND the
+    // diffuse map, so the two kinds share a set (the caller supplies the image - see api/BlockDescriptors).
+    auto map_in_a_block_set = layerDeclaring("layout(set = 0, binding = 1) uniform sampler2D diffuseMap;");
+    ASSERT_NE(map_in_a_block_set, nullptr);
+    EXPECT_EQ(map_in_a_block_set->samplerBindings(0U).size(), 1U);
+    EXPECT_EQ(map_in_a_block_set->samplerBindings(0U)[0], 1U);
+    EXPECT_TRUE(map_in_a_block_set->samplerBindings(1U).empty());
+
+    // A sampler kind this backend has no view for (a cube map arrives with the texture work).
     EXPECT_EQ(layerDeclaring("layout(set = 1, binding = 0) uniform sampler3D volume_tex;"), nullptr);
+    EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 1) uniform samplerCube skyMap;"), nullptr);
 
     // A block that reads a PREFIX of the L1 struct is fine: the range it is bound with covers what it reads.
     auto prefix = layerDeclaring("layout(set = 0, binding = 0, std140) uniform VineLightsBlock { vec4 light0; } lights;");

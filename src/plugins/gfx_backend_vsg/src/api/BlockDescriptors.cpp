@@ -8,6 +8,8 @@
 
 #include <vsg/state/BufferInfo.h>
 #include <vsg/state/DescriptorBuffer.h>
+#include <vsg/state/DescriptorImage.h>
+#include <vsg/state/ImageInfo.h>
 
 V_VSG_NS_BEGIN
 
@@ -68,16 +70,22 @@ std::uint64_t offsetOf(const BlockDescriptors::Offsets& offsets, AbiBlockRole ro
 
 struct BlockDescriptors::Data
 {
-    Data(::vsg::ref_ptr<::vsg::Device> device_in, std::span<const Binding> shape_in, std::uint32_t set_index_in)
-      : device(std::move(device_in)), shape(shape_in.begin(), shape_in.end()), set_index(set_index_in),
-        alignment(uniformAlignment(device))
+    Data(::vsg::ref_ptr<::vsg::Device> device_in, std::span<const Binding> shape_in, std::uint32_t set_index_in,
+         std::span<const SampledBinding> samplers_in)
+      : device(std::move(device_in)), shape(shape_in.begin(), shape_in.end()), samplers(samplers_in.begin(), samplers_in.end()),
+        set_index(set_index_in), alignment(uniformAlignment(device))
     {
     }
 
-    /** @brief Builds the layout (once) with one dynamic uniform binding per entry of the shape. */
+    /** @brief Builds the layout (once): dynamic uniforms for the blocks and sampled images for the maps. */
     bool makeLayout()
     {
-        layout = layoutOfShape(shape);
+        std::vector<std::uint32_t> sampler_bindings;
+        sampler_bindings.reserve(samplers.size());
+        for (const SampledBinding& entry : samplers) {
+            sampler_bindings.push_back(entry.binding);
+        }
+        layout = layoutOfShape(shape, sampler_bindings);
         return layout != nullptr;
     }
 
@@ -96,11 +104,23 @@ struct BlockDescriptors::Data
         // the array-element slot declares three descriptors at binding 0, which a set layout with one element
         // per binding then resolves as an out-of-range element rather than as the error it is.
         ::vsg::Descriptors descriptors;
-        descriptors.reserve(shape.size());
+        descriptors.reserve(shape.size() + samplers.size());
         for (const Binding& entry : shape) {
             auto buffer_info = ::vsg::BufferInfo::create(buffer, 0, strideOf(entry.role, strides));
             descriptors.push_back(::vsg::DescriptorBuffer::create(
                 ::vsg::BufferInfoList{ buffer_info }, entry.binding, 0U, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC));
+        }
+        // The images the program declares in the SAME set (the engine's set 0 carries the material block and
+        // the diffuse map): bound at the binding the text names, with the sampler the caller supplies. The
+        // image is left in SHADER_READ_ONLY: a set a pass binds reads its inputs, never writes them.
+        for (const SampledBinding& entry : samplers) {
+            if (entry.view == nullptr || entry.sampler == nullptr) {
+                return {};
+            }
+            descriptors.push_back(::vsg::DescriptorImage::create(
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(entry.sampler, entry.view,
+                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                entry.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
         }
         return ::vsg::DescriptorSet::create(layout, descriptors);
     }
@@ -113,6 +133,7 @@ struct BlockDescriptors::Data
 
     ::vsg::ref_ptr<::vsg::Device>              device;
     std::vector<Binding>                       shape;
+    std::vector<SampledBinding>                samplers;
     ::vsg::ref_ptr<::vsg::DescriptorSetLayout> layout;
     ::vsg::ref_ptr<::vsg::DescriptorSet>       set;
     std::uint32_t                              set_index{0};
@@ -146,7 +167,8 @@ std::vector<BlockDescriptors::Binding> blockShapeOf(const ProgramAbi& abi, std::
     return shape;
 }
 
-::vsg::ref_ptr<::vsg::DescriptorSetLayout> BlockDescriptors::layoutOfShape(std::span<const Binding> shape)
+::vsg::ref_ptr<::vsg::DescriptorSetLayout> BlockDescriptors::layoutOfShape(
+    std::span<const Binding> shape, std::span<const std::uint32_t> sampler_bindings)
 {
     auto layout = ::vsg::DescriptorSetLayout::create();
     if (layout == nullptr) {
@@ -155,16 +177,20 @@ std::vector<BlockDescriptors::Binding> blockShapeOf(const ProgramAbi& abi, std::
     for (const Binding& entry : shape) {
         layout->addBinding(entry.binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, kBlockStages);
     }
+    for (const std::uint32_t binding : sampler_bindings) {
+        layout->addBinding(binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1U, kBlockStages);
+    }
     return layout;
 }
 
 BlockDescriptors::BlockDescriptors(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage,
-                                  std::span<const Binding> shape, std::uint32_t set_index)
+                                  std::span<const Binding> shape, std::uint32_t set_index,
+                                  std::span<const SampledBinding> samplers)
 {
     // The alignment is read BEFORE the device is moved into the data (argument evaluation order is not a
     // promise), the same care BlockStorage takes.
     const std::uint64_t alignment = uniformAlignment(device);
-    d                             = std::make_unique<Data>(std::move(device), shape, set_index);
+    d                             = std::make_unique<Data>(std::move(device), shape, set_index, samplers);
     d->alignment                  = alignment;
     (void)storage;
 }
@@ -177,20 +203,23 @@ std::unique_ptr<BlockDescriptors> BlockDescriptors::create(::vsg::ref_ptr<::vsg:
 
 std::unique_ptr<BlockDescriptors> BlockDescriptors::forAbi(const ProgramAbi& abi, std::uint32_t set,
                                                           ::vsg::ref_ptr<::vsg::Device> device,
-                                                          const BlockStorage& storage)
+                                                          const BlockStorage& storage,
+                                                          std::span<const SampledBinding> samplers)
 {
     const std::vector<Binding> shape = blockShapeOf(abi, set);
-    return create(std::move(device), storage, shape, set);
+    return create(std::move(device), storage, shape, set, samplers);
 }
 
 std::unique_ptr<BlockDescriptors> BlockDescriptors::create(::vsg::ref_ptr<::vsg::Device> device,
                                                            const BlockStorage& storage, std::span<const Binding> shape,
-                                                           std::uint32_t set_index)
+                                                           std::uint32_t set_index,
+                                                           std::span<const SampledBinding> samplers)
 {
     if (device == nullptr) {
         return nullptr;
     }
-    auto descriptors = std::unique_ptr<BlockDescriptors>(new BlockDescriptors(std::move(device), storage, shape, set_index));
+    auto descriptors = std::unique_ptr<BlockDescriptors>(new BlockDescriptors(std::move(device), storage, shape, set_index,
+                                                                               samplers));
     if (!descriptors->d->makeLayout()) {
         return nullptr;
     }
@@ -245,6 +274,11 @@ bool BlockDescriptors::repoint(const BlockStorage& storage)
 std::span<const BlockDescriptors::Binding> BlockDescriptors::shape() const noexcept
 {
     return d->shape;
+}
+
+std::span<const BlockDescriptors::SampledBinding> BlockDescriptors::samplers() const noexcept
+{
+    return d->samplers;
 }
 
 ::vsg::ref_ptr<::vsg::DescriptorSetLayout> BlockDescriptors::layout() const noexcept

@@ -9,7 +9,9 @@
 #include <vsg/state/BindDescriptorSet.h>
 #include <vsg/state/DescriptorSet.h>
 #include <vsg/state/DescriptorSetLayout.h>
+#include <vsg/state/ImageView.h>
 #include <vsg/state/PipelineLayout.h>
+#include <vsg/state/Sampler.h>
 #include <vsg/vk/Device.h>
 
 #include <vine/vsg/api/BlockStorage.hpp>
@@ -71,6 +73,15 @@ class BlockDescriptors
         AbiBlockRole  role{AbiBlockRole::NotABlock};  ///< The block role read at that binding.
     };
 
+    /** @brief One sampled image a declared set binds (the ENGINE's set 0 carries the material block AND the
+     *         diffuse map, so the two kinds share a set - `layoutOfShape` declares both). */
+    struct SampledBinding
+    {
+        std::uint32_t                    binding{0};  ///< The binding the program declares the sampler at.
+        ::vsg::ref_ptr<::vsg::ImageView> view;        ///< The image read there.
+        ::vsg::ref_ptr<::vsg::Sampler>   sampler;     ///< Its sampler (a content layer's input sampler).
+    };
+
     /** @brief Where this draw's blocks are (the dynamic offsets, named by role - NOT by binding index). */
     struct Offsets
     {
@@ -92,16 +103,20 @@ class BlockDescriptors
      */
     [[nodiscard]] static std::span<const Binding> canonicalShape() noexcept;
 
-    /** @brief Gets the set layout a shape declares: one dynamic uniform binding per entry, in binding order.
+    /** @brief Gets the set layout a shape declares: one dynamic uniform binding per block entry and one
+     *         combined image sampler per sampled entry, both in binding order.
      *
      * The ONE spelling of that layout: a pipeline is compiled against it and the set is built from it (see
      * the file note). Every binding is declared readable from the vertex and the fragment stage, because a
      * block's readers are the shader's business and the set a pass shares cannot be per-program.
      *
-     * @param shape The bindings to declare (one per block role the shape carries).
+     * @param shape            The block bindings to declare (one per block role the shape carries).
+     * @param sampler_bindings The sampled images' bindings (the ENGINE's set 0 carries the material block AND
+     *                         the diffuse map, so one layout declares both kinds).
      * @return The layout, or null when it could not be created.
      */
-    [[nodiscard]] static ::vsg::ref_ptr<::vsg::DescriptorSetLayout> layoutOfShape(std::span<const Binding> shape);
+    [[nodiscard]] static ::vsg::ref_ptr<::vsg::DescriptorSetLayout> layoutOfShape(
+        std::span<const Binding> shape, std::span<const std::uint32_t> sampler_bindings = {});
 
     /** @brief Creates the layout and its canonical set over a storage.
      *
@@ -119,11 +134,13 @@ class BlockDescriptors
      * @param storage   The storage whose buffer is bound (its strides become the bindings' ranges).
      * @param shape     The bindings the set declares (one per block role; see `layoutOfShape`).
      * @param set_index Index of the block set in the pipeline layouts that use it.
+     * @param samplers  The sampled images the program declares in the SAME set (empty for a blocks-only set).
      * @return The descriptors, or null when the layout or the set could not be created.
      */
     static std::unique_ptr<BlockDescriptors> create(::vsg::ref_ptr<::vsg::Device> device,
                                                     const BlockStorage& storage, std::span<const Binding> shape,
-                                                    std::uint32_t set_index);
+                                                    std::uint32_t set_index,
+                                                    std::span<const SampledBinding> samplers = {});
 
     /** @brief Creates the set @p abi's declared blocks are bound through, for one set index.
      *
@@ -140,7 +157,8 @@ class BlockDescriptors
      */
     static std::unique_ptr<BlockDescriptors> forAbi(const ProgramAbi& abi, std::uint32_t set,
                                                     ::vsg::ref_ptr<::vsg::Device> device,
-                                                    const BlockStorage& storage);
+                                                    const BlockStorage& storage,
+                                                    std::span<const SampledBinding> samplers = {});
 
     ~BlockDescriptors();
 
@@ -168,6 +186,9 @@ class BlockDescriptors
     /** @brief Gets the shape this set was built for (in binding order). */
     [[nodiscard]] std::span<const Binding> shape() const noexcept;
 
+    /** @brief Gets the sampled images this set binds (empty for a blocks-only set). */
+    [[nodiscard]] std::span<const SampledBinding> samplers() const noexcept;
+
     /** @brief Gets the set layout (shared by every pipeline that binds the block set). */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSetLayout> layout() const noexcept;
 
@@ -189,7 +210,8 @@ class BlockDescriptors
     std::unique_ptr<Data> d;
 
     BlockDescriptors(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage,
-                     std::span<const Binding> shape, std::uint32_t set_index);
+                     std::span<const Binding> shape, std::uint32_t set_index,
+                     std::span<const SampledBinding> samplers);
 };
 
 /** @brief Gets the block shape @p abi declares in @p set, in binding order.

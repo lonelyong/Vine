@@ -93,6 +93,24 @@ bool sameShape(std::span<const BlockDescriptors::Binding> left,
     return true;
 }
 
+/** @brief Whether two sampled-binding lists name the same bindings, in the same order. */
+bool sameSamplers(std::span<const BlockDescriptors::SampledBinding> left,
+                  std::span<const std::uint32_t> right) noexcept
+{
+    if (left.size() != right.size())
+    {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.size(); ++index)
+    {
+        if (left[index].binding != right[index])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 ContentPass::ContentPass(const Scope& scope, core::Diagnostics& diagnostics) noexcept
@@ -131,26 +149,38 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
     // declaration this backend cannot fill at all - that is decided where the layout is built
     // (ContentPipeline::create refuses an unfillable member), so nothing is left to check here.
 
-    // The declared bindings have to be exactly what the pass can put there: a sampler the pass' input set
-    // covers, and a block set the caller built for the program's OWN declared shape.
+    // The declared bindings have to be exactly what the pass can put there: the images the INPUT set's
+    // declarations name come from the pass' inputs (one per binding, in declaration order), and every other
+    // set the program declares is a set the CALLER built - its blocks and its sampled images both, because a
+    // set the layer compiled a layout for is only bindable when what it carries is what the text declared.
+    std::uint32_t input_samplers = 0U;
     for (const AbiBinding& binding : abi.bindings)
     {
-        if (binding.kind != AbiDescriptorKind::UniformBlock && binding.binding >= input_count)
+        if (binding.kind != AbiDescriptorKind::UniformBlock && binding.set == ContentPipeline::kInputSet)
         {
-            return refuse("its program samples an input texture this pass does not declare");
+            if (binding.binding >= input_count)
+            {
+                return refuse("its program samples an input texture this pass does not declare");
+            }
+            ++input_samplers;
         }
     }
-    for (const std::uint32_t set : entry.pipelines->blockSets())
+    if (input_samplers > input_count)
+    {
+        return refuse("its program samples more inputs than this pass binds");
+    }
+    for (const std::uint32_t set : entry.pipelines->declaredSets())
     {
         if (half_block_count_ == half_blocks_.size())
         {
-            return refuse("its program declares blocks in more sets than this pass can bind");
+            return refuse("its program declares more sets than this pass can bind");
         }
         BlockDescriptors* found = nullptr;
         for (BlockDescriptors* candidate : scope_.block_sets)
         {
             if (candidate != nullptr && candidate->setIndex() == set &&
-                sameShape(candidate->shape(), entry.pipelines->blockShape(set)))
+                sameShape(candidate->shape(), entry.pipelines->blockShape(set)) &&
+                sameSamplers(candidate->samplers(), entry.pipelines->samplerBindings(set)))
             {
                 found = candidate;
                 break;
@@ -158,7 +188,7 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
         }
         if (found == nullptr)
         {
-            return refuse("its program declares blocks in a set the caller built no matching block set for");
+            return refuse("its program declares a set the caller built no matching set for");
         }
         half_blocks_[half_block_count_++] = found;
     }

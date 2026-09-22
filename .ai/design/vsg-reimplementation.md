@@ -3,16 +3,14 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
-> **M8c-1：声明出来的 push 由 pass 自己填（事实带上 push 成员；`api/ContentPush` 按**名字**填
-> `pc.projection = VineViewBlock.proj`（已折到设备裁剪域）与 `pc.modelView = view * model`；每个可绘制对象一遍）**：
-> `test_vsg` 587 用例 / 91 套件全绿；门禁一条命令（`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、
-> hygiene 全清（0 / 825 文件）、相位 9 行 / 2 次运行全收尾；`core/` 的 include 边界由
-> `scripts/check_include_hygiene.py` 机器校验。
-> M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：ABI 债按 §11.16ae 的决定解掉了一半
-> ——**布局跟着程序文本的声明走**（`VineViewBlock` … 这些 L1 名就是角色），重写版自己的 set 0 布局只是
-> “另一种声明”，M8b 已让装配真的按声明落地（§11.16af），M8c-1 把声明出来的相机 push 填上（§11.16ag）。
-> 下一步是 M8c-2：一个集合同时装块与采样器（引擎的 set 0 就是这种排布）+ `diffuseMap` 的白色 fallback +
-> `shadow_map` 的图。
+> **M8c-2a：一个声明的集合可以同时装块与采样图（引擎的 set 0 就是这种排布）**：事实/布局允许采样器落在任何
+> 声明的 set（与块同集也行，只要不撞 binding），`layoutOfShape` 两种绑定一起声明、`BlockDescriptors` 同时装
+> 块与图（`SampledBinding`）、`declaredSets()` / `samplerBindings(set)` 是调用方建集的唯一拼写；输入集仍是
+> pass 自己的（它的图来自 pass 的输入）。`test_vsg` 589 用例 / 91 套件全绿；门禁
+> （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 825 文件）、相位 9 行 / 2 次运行。
+> M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：M8a 读事实（§11.16ae）、M8b 布局跟着
+> 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）。下一步 M8c-2b：白色 fallback
+> 图 + 按声明绑定 pass 的输入图（`diffuseMap` 与 `shadow_map` 的生产侧）。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2544,7 +2542,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8a（声明成为事实）~~ | **已完成（2026-09-22）**：`api/ProgramAbi`——`scanProgramAbi(vertex, fragment, defines, out)` 把文本的绑定声明读成事实（set/binding、种类、阶段、按**L1 类型名**认领的角色、std140 尺寸、push 范围），条件按变体求值（taken 分支的 `#error` ⇒ Malformed），引擎自己的八个程序逐条钉住（前向 5 绑定 + push 128B 顶点、带影延迟光照的 5/6、屏幕拷贝的 binding=N…）；11 条无设备用例 + 5 条变异反证（§11.16ae）。下一步 M8b：布局跟着声明装配。 |
 | ~~M8b（布局就是声明）~~ | **已完成（2026-09-22）**：`ContentPipeline::create` 收 `ProgramAbi`——`describeAbi` 把声明读成布局（每个被声明碰到的 set 一条布局、空隙填真布局、块 → dynamic UBO 在**它自己写的** binding 上、push 照声明），填不了的按名拒绝（外来块 / 非 std140 / 超尺寸 / `count != 1` / 无视图的采样器种类 / 内容路径 set≠1 的采样器 / 块与输入挤一个 set），`acquire` 另拒“采样器超出本 pass 输入数”；`BlockDescriptors` 形状驱动（`canonicalShape` / `layoutOfShape` / `forAbi` / `blockShapeOf`，`bind()` 一个声明绑定一个偏移）；`ContentPass::Scope::block_sets` 一组块集 + `serveHalf` 按“set 序号 + 形状逐位相同”认领、按名拒绝、push 未填即拒；`Draw::blocks` 变 span。4 条新用例（真设备像素 1、真设备描述符 1、无设备 2）+ 6 条变异反证全红；门禁还揪出三处仍无条件绑块的旧夹具（程序一个块都没声明 ⇒ 布局 0 个 set），修夹具而不是加容忍（§11.16af）。 |
 | ~~M8c-1（push 由 pass 自己填）~~ | **已完成（2026-09-22）**：`AbiPushRange` 带上成员表（名字/偏移/尺寸，扫描时就记）；新 `api/ContentPush`：`contentPushMemberOf` 认 `projection` / `modelView`，`packContentPush` 按**名字**填——`projection` = `foldToDeviceClip(camera.projection)`（与 `VineViewBlock.proj` 同一个值、同一处折叠），`modelView` = `view * model`（顺序就是契约：模型矩阵在右）；认不出的名字或尺寸不对（`vec4 projection`）在 `ContentPipeline::create` 就拒（前缀可以），无相机写零（同 `buildViewBlock`）；`ContentDraw::Draw` += `pushes`，每个可绘制对象一遍（`modelView` 带的是它自己的模型矩阵）。**实测的坑**：`vsg::PushConstants` 放进 `StateGroup` 的 stateCommands 会被 vsg 按 slot 记录、但**到不了 shader**（画出来是恒等矩阵）——必须放进 `Commands` 节点、按插入序紧贴绘制（全屏路径 M5d 一直就是这么做的）；变异 N1 把位置改回去 ⇒ 像素用例红。另：计划里有相机时，pass 的**深度清屏值要显式给**（reverse-Z 远 = 0.0），否则片元被拒（画面=清屏色、0 VUID、无拒绝）。5 条新用例（真设备像素 ×1、无设备 ×4）+ 5 条变异反证全红（§11.16ag）。 |
-| **M8 下一步** | M8c-2（一个集合同时装块与采样器——引擎的 set 0 就是这种排布；`diffuseMap` 的白色 fallback；`shadow_map` 的图）→ 变体的 define 进管线身份 → 贴图/材质纹理 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
+| **M8 下一步** | M8c-2b（`diffuseMap` 的白色 fallback 图（1×1 上传，材料还没有纹理）+ 按声明绑定 pass 的输入图（`shadow_map` / G-buffer 采样））→ 变体的 define 进管线身份 → 贴图/材质纹理 → 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -2780,3 +2778,56 @@ binding 号超出这个 pass 的输入数”（那张图不存在，绑上去是
 `check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、相位 9 行 / 2 次运行全收尾。变异反证
 **5/5 红**（N1 push 放回 stateCommands、N2 不按名字、N3 不折投影、N4 顺序写反、N5 不查尺寸）；N1 的失败
 形态最有价值：它在“命令发出去了”的情况下仍然红——判据是像素，不是“我发了命令”。
+
+### 11.16ah M8c-2a（2026-09-22）：一个声明的集合可以同时装块与采样图（引擎的 set 0）
+
+§11.16af 让布局跟着声明走，但那时“采样器”仍然只允许住在输入集（set 1）里——那是**重写版自己的**排布的
+习惯（一个 pass 采样上一个 pass 的产物），不是文本的规则。引擎的程序不是这样写的：`builtin_forward`
+把 material 块与 `diffuseMap` 都放在 **set 0**（binding 0 与 1），`builtin_gbuffer` 同理。这一片把那条
+“采样器只能在 set 1”的限制拆掉：**一个集合可以同时声明块（dynamic UBO）与采样图（combined image
+sampler）**，谁在哪一个 binding 由文本说了算；只要不把两样东西挤在同一个 binding 上（那是矛盾，事实层就
+拒），一个集合是什么就是什么。
+
+**调用方建集，建立的就是声明本身**。`BlockDescriptors` 从“一组块角色”扩成“一个声明的集合”：
+`SampledBinding{binding, view, sampler}` 是图的半边（块那半边照旧走 arena + 动态偏移），
+`layoutOfShape(shape, sampler_bindings)` 是**这一个集合布局的唯一拼写**，`samplers()` 把图读回来。
+层这一边：`declaredSets()`（调用方要建的集合）与 `samplerBindings(set)`（那个集合里必须有哪些图）——
+把 `blockSets()`（只有块）换成它们的理由很直接：引擎的 `skybox` 程序**一个块都没有**，只有一个 `skyMap`，
+它的 set 0 照样是“一个要建的集合”。**输入集仍是 pass 自己的**：`declaredSets()` 里排掉
+`kInputSet`（除非那个 set 声明了块），因为它的图不是一个调用方能有的东西——它们是 pass 的输入，按声明的
+顺序绑（`Data::sampled` 那套照旧）。
+
+**“集合对得上”现在有两半**：`serveHalf` 除了比块形状（逐位），还比**采样 binding 列表**——一个“缺了那张
+图的集合”会被拒并点名，而不是绑上去让 shader 读某个未写过的 binding。`acquire` 的输入数规则也收窄到
+**输入集**：set 0 的 `diffuseMap` 不需要 pass 的输入图（它是材料/fallback 的事），以前的规则会把它误拒。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/BlockDescriptors.hpp` / `src/api/BlockDescriptors.cpp` | `SampledBinding`（图 + 采样器）；`layoutOfShape(shape, sampler_bindings)`；`create` / `forAbi` 收一列图；`makeSet` 把图按**声明的 binding** 放进同一个 set；`samplers()` 访问器 |
+| `api/ContentPipeline.hpp` / `src/api/ContentPipeline.cpp` | `kInputSet` 常量（“输入集”这个概念现在有了名字）；`describeAbi` 允许采样器在任何 set（拒 `samplerCube` / `OtherSampler` / 数组）、禁 block+sampler 同 binding；每个 set 的布局带上图；`declaredSets()`（= 有块的 set + 非输入集的图 set）、`samplerBindings(set)`；`acquire` 的输入数规则只对输入集 |
+| `api/ContentPass.cpp` | `serveHalf` 多比一半年（`sameSamplers`），并把“输入集里的采样器数 ≤ 输入数”说清楚 |
+| `tests/test_vsg/BlockDescriptorsTest.cpp` | +1：一个 set = 块 @0 + 图 @1（布局两种绑定、`samplers()`、**set 的两个描述符各自的 binding**、bind 仍只给块一个动态偏移） |
+| `tests/test_vsg/ContentPipelineTest.cpp` | 采样器在块集里现在**合法**（并读回 `samplerBindings`）；`samplerCube` 仍拒 |
+| `tests/test_vsg/ContentPassTest.cpp` | +1 真设备像素：引擎形状的程序（material @(0,0) + `map_tex` @(0,1) + push），图来自**另一个目标**的清屏色——fragment 把两者**相乘**，所以“图没绑”或“材料没到”各自会给出另一个颜色；另含“缺图的集合被拒且上报” |
+
+| 规则 | 结论（变异反证） |
+| --- | --- |
+| **布局要声明两种绑定** | 变异 M1（`layoutOfShape` 忘掉采样 binding）⇒ 纯套件**绿**、验证层 **2 条 VUID**：布局类主张的判据是验证层（与 §11.16r 同一条经验） |
+| **描述符要落在声明的 binding** | 变异 M4（图放进 binding 0）⇒ 纯套件红（用例检查 set 的描述符 binding）+ 验证层 2 条 |
+| **“集合对得上”含图那半** | 变异 M3（只比块形状）⇒ 像素用例红：缺图的集合被绑上去 |
+| **混合是合法的** | 变异 M5（恢复“块集里不许有采样器”）⇒ 像素用例红（层直接把程序拒了） |
+
+**这一片留下的口子（登记，不假装解决）**：
+
+* **`diffuseMap` 的白色 fallback**（M8c-2b）：材料还没有纹理（`Material::texture()` 有了，GPU 那半边没
+  有），所以“没有图 ⇒ 采样白”还需要一张 1×1 的图（上传机制：数据背书的 `vsg::Image` 在本版 vsg 里
+  `requiresDataCopy` 无人消费，要自己做一次 staged 上传），这一片先用**真实存在的附件**当图证明机制。
+* **输入图仍只按 set 1 的规则绑**：引擎的 `shadow_map` 在 set 0（binding 3），G-buffer 采样在 set 0 的
+  0..3——按名字把它们指到 pass 的输入图是 M8c-2b 的活（policy：`diffuseMap` → 材料/白、`skyMap` → 环境、
+  其它名字 → pass 的输入，按声明顺序）。
+* **`samplerCube` 仍拒**：立方体视图（天空盒/立方体漫反射）随纹理那一并做。
+
+证据：`test_vsg` 全量 **589 用例 / 91 套件全绿**；门禁 `scripts/vsg_rewrite_gate.sh`：**0 VUID /
+0 SYNC-HAZARD**、hygiene 0 / 825 文件、`check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、
+相位 9 行 / 2 次运行全收尾。变异 **M3 / M5 纯套件红**，**M1 / M4 由验证层抓住**（各 2 条 VUID；干净树上
+这三条用例的 VUID 基线是 0，实测核对过）。
