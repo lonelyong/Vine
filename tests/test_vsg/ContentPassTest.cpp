@@ -1456,9 +1456,14 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
                                                                        created.instance->vk()));
 
     storage->beginFrame();
+    // The half declares the VARIANT it serves: this drawable's material carries a texture, so it is drawn
+    // with the textured variant of the program (see api/ProgramVariant - a pass only draws a command
+    // through a half whose variant is the one its material and geometry ask for).
+    vine::vsg::ProgramVariant textured_variant;
+    textured_variant.diffuse_map = true;
     const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
         vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
-        pipelines.get(), &draws } };
+        pipelines.get(), &draws, textured_variant } };
     ContentPass::Scope scope;
     scope.entries    = halves;
     scope.registry   = &registry;
@@ -1704,9 +1709,14 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
                                                                        created.instance->vk()));
 
     storage->beginFrame();
+    // The half declares the VARIANT it serves: this drawable's material carries a texture, so it is drawn
+    // with the textured variant of the program (see api/ProgramVariant - a pass only draws a command
+    // through a half whose variant is the one its material and geometry ask for).
+    vine::vsg::ProgramVariant textured_variant;
+    textured_variant.diffuse_map = true;
     const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
         vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
-        pipelines.get(), &draws } };
+        pipelines.get(), &draws, textured_variant } };
     ContentPass::Scope scope;
     scope.entries    = halves;
     scope.registry   = &registry;
@@ -1983,12 +1993,16 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
 
     ContentPass::Scope first_scope;
     ContentPass::Scope second_scope;
+    // Both halves serve the textured variant: the material carries a texture, and that is the variant
+    // (see api/ProgramVariant) this drawable is drawn with.
+    vine::vsg::ProgramVariant textured_variant;
+    textured_variant.diffuse_map = true;
     const ContentPass::Scope::Entry first_halves[]{ ContentPass::Scope::Entry{
         vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
-        pipelines.get(), &first_draws } };
+        pipelines.get(), &first_draws, textured_variant } };
     const ContentPass::Scope::Entry second_halves[]{ ContentPass::Scope::Entry{
         vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
-        pipelines.get(), &second_draws } };
+        pipelines.get(), &second_draws, textured_variant } };
     ::vsg::ref_ptr<::vsg::Node> first_node = recordPass(
         frame.passes[0], first_halves, first_target->shape().compatibility(),
         std::span<BlockDescriptors*>(first_sets, 1U), first_registry, first_scope);
@@ -2027,6 +2041,300 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
         << "the second pass draws the SECOND fill (green), got (" << static_cast<int>(second_pixel.r) << ", "
         << static_cast<int>(second_pixel.g) << ", " << static_cast<int>(second_pixel.b)
         << ") - red here means the revision was ignored";
+}
+
+TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
+{
+    // A program's text is SEVERAL programs: its stages gate declarations and code on `#pragma
+    // import_defines` names, so a material with a texture and one without are drawn by the same identity
+    // compiled two ways. This pass draws both in ONE pass, through two halves that differ in nothing but
+    // their VARIANT - the same program, the same revision, the same vertex layout - so a pass that picked
+    // a half by (program, revision, layout) alone would hand the untextured drawable the textured half and
+    // paint the texture's colour on both sides of the picture.
+    //
+    // The program is written the way the engine's own stages are (see builtin_forward.vert): the texcoord
+    // input and the sampler sit behind `VINE_DIFFUSE_MAP`, the slot's kind is `#error`-guarded, and the
+    // fragment shades the material's own colour when the map is not defined.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout target_layout;
+    target_layout.width  = kSize;
+    target_layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    ASSERT_NE(target, nullptr);
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+
+    // The texture the textured variant samples: one magenta texel, a colour no other node writes.
+    const vine::intrusive_ptr<vine::graphics::Texture2D> texture(
+        new vine::graphics::Texture2D(1, 1, vine::imaging::PixelFormat::Rgba8Unorm));
+    {
+        auto image = vine::intrusive_ptr<vine::imaging::Image>(
+            new vine::imaging::Image(1, 1, vine::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        pixels[0] = static_cast<std::byte>(255U);
+        pixels[1] = static_cast<std::byte>(0U);
+        pixels[2] = static_cast<std::byte>(255U);
+        pixels[3] = static_cast<std::byte>(255U);
+        texture->setImage(vine::intrusive_ptr<const vine::imaging::Image>(image));
+    }
+
+    const std::shared_ptr<vine::vsg::MaterialImages> images = vine::vsg::MaterialImages::create();
+    ASSERT_NE(images, nullptr);
+    vine::vsg::detail::TextureReject map_reason = vine::vsg::detail::TextureReject::Ok;
+    const vine::vsg::SamplerImage    map        = images->acquire(texture.get(), map_reason);
+    ASSERT_EQ(map_reason, vine::vsg::detail::TextureReject::Ok);
+
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
+            "layout(location = 0) in vec3 position;\n"
+            "#ifdef VINE_DIFFUSE_MAP\n"
+            "#if defined(VINE_TEXCOORD_CUBE)\n"
+            "layout(location = 8) in vec3 texcoord;\n"
+            "#elif defined(VINE_TEXCOORD_UV)\n"
+            "layout(location = 8) in vec2 texcoord;\n"
+            "#else\n"
+            "#error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE\n"
+            "#endif\n"
+            "#endif\n"
+            "layout(location = 0) out vec2 uv;\n"
+            "layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
+            "void main()\n"
+            "{\n"
+            "    gl_Position = pc.projection * pc.modelView * vec4(position, 1.0);\n"
+            "#ifdef VINE_DIFFUSE_MAP\n"
+            "    uv = texcoord;\n"
+            "#else\n"
+            "    uv = vec2(0.0);\n"
+            "#endif\n"
+            "}\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
+            "layout(location = 0) in vec2 uv;\n"
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "#ifdef VINE_DIFFUSE_MAP\n"
+            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+            "#endif\n"
+            "void main()\n"
+            "{\n"
+            "#ifdef VINE_DIFFUSE_MAP\n"
+            "    outColor = vec4(texture(diffuseMap, uv).rgb, 1.0);\n"
+            "#else\n"
+            "    outColor = vec4(material.diffuse.rgb, 1.0);\n"
+            "#endif\n"
+            "}\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    // The two variants' facts: ONE text, two ABIs - the textured one declares the sampler the plain one
+    // does not, and each compile asks for its own define list.
+    vine::vsg::ProgramVariant textured_variant;
+    textured_variant.diffuse_map = true;
+    const vine::vsg::ProgramVariant plain_variant;
+
+    ProgramFacts textured_facts;
+    ProgramFacts plain_facts;
+    ASSERT_EQ(buildProgramFacts(*program, textured_variant, textured_facts), FactMiss::None);
+    ASSERT_EQ(buildProgramFacts(*program, plain_variant, plain_facts), FactMiss::None);
+    ASSERT_EQ(textured_facts.abi.bindings.size(), plain_facts.abi.bindings.size() + 1U)
+        << "the map's declaration is what the define adds";
+
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F,
+                                            1.0F,  1.0F,  0.0F, -1.0F, 1.0F, 0.0F };
+        const std::vector<float> texcoords{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F };
+        geometry->setPositions(
+            vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(positions)));
+        geometry->setTexcoords2(
+            vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(texcoords)));
+        geometry->setIndices(vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
+            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                        geometry_facts;
+    std::vector<vine::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+
+    std::unique_ptr<ContentPipeline> textured_layer =
+        pipelineFor(geometry_facts, textured_facts.shaders, textured_facts.abi);
+    std::unique_ptr<ContentPipeline> plain_layer =
+        pipelineFor(geometry_facts, plain_facts.shaders, plain_facts.abi);
+    ASSERT_NE(textured_layer, nullptr);
+    ASSERT_NE(plain_layer, nullptr);
+
+    // Each variant's declared set: the material block, and - for the textured one - the map at (0,1).
+    const vine::vsg::BlockDescriptors::SampledBinding textured_maps[] = {
+        vine::vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
+    };
+    std::unique_ptr<BlockDescriptors> textured_declared =
+        BlockDescriptors::forAbi(textured_facts.abi, 0U, created.device, *storage, textured_maps);
+    std::unique_ptr<BlockDescriptors> plain_declared =
+        BlockDescriptors::forAbi(plain_facts.abi, 0U, created.device, *storage);
+    ASSERT_NE(textured_declared, nullptr);
+    ASSERT_NE(plain_declared, nullptr);
+
+    // The two materials: one samples the texture, the other shades its own diffuse.
+    const vine::intrusive_ptr<Material> textured_material(new Material());
+    textured_material->setTexture(texture);
+    const vine::intrusive_ptr<Material> plain_material(new Material());
+    plain_material->setDiffuse(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+
+    MaterialFacts          textured_material_facts;
+    MaterialFacts          plain_material_facts;
+    std::vector<std::byte> textured_material_storage;
+    std::vector<std::byte> plain_material_storage;
+    ASSERT_EQ(buildMaterialFacts(textured_material.get(), 1U, textured_material_facts, textured_material_storage),
+              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(plain_material.get(), 1U, plain_material_facts, plain_material_storage),
+              FactMiss::None);
+
+    const ProgramFacts  programs[]{ plain_facts, textured_facts };
+    const GeometryFacts geometries[]{ geometry_facts };
+    const MaterialFacts materials[]{ textured_material_facts, plain_material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    const vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 1.5), vine::math::Vec3d(0.0, 0.0, 0.0),
+                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+
+    TargetFacts target_facts;
+    target_facts.target        = target.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+    clear.depth          = true;
+    clear.depth_value    = 0.0F;
+
+    // ONE pass, two drawing calls side by side: the LEFT half is the textured material, the RIGHT half the
+    // untextured one.
+    RenderCommand textured_command;
+    textured_command.geometry = geometry;
+    textured_command.material = textured_material;
+    textured_command.program  = program;
+    RenderCommand plain_command;
+    plain_command.geometry = geometry;
+    plain_command.material = plain_material;
+    plain_command.program  = program;
+    const std::vector<RenderCommand> textured_commands{ textured_command };
+    const std::vector<RenderCommand> plain_commands{ plain_command };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target.get());
+    recorder.setClearPolicy(clear);
+    recorder.setViewport(0, 0, static_cast<int>(kSize) / 2, static_cast<int>(kSize));
+    recorder.render(textured_commands, camera.get());
+    recorder.setViewport(static_cast<int>(kSize) / 2, 0, static_cast<int>(kSize) / 2, static_cast<int>(kSize));
+    recorder.render(plain_commands, camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws.size(), 2U);
+
+    VariantPool   pool;
+    StateRegistry registry(pool);
+    StreamUploads uploads;
+    ContentDraw   textured_draws(*textured_layer, pool,
+                                 vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                                                created.instance->vk()));
+    ContentDraw   plain_draws(*plain_layer, pool,
+                              vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                                             created.instance->vk()));
+
+    // ONE scope holds BOTH halves - the same program, revision and layout, two variants. The textured half
+    // is registered FIRST so that a pass which ignored the variant would use it for both draws.
+    const ContentPass::Scope::Entry halves[]{
+        ContentPass::Scope::Entry{ vine::vsg::core::DrawKind::Content, program.get(), textured_facts.revision,
+                                   geometry_facts.layout, textured_layer.get(), &textured_draws,
+                                   textured_variant },
+        ContentPass::Scope::Entry{ vine::vsg::core::DrawKind::Content, program.get(), plain_facts.revision,
+                                   geometry_facts.layout, plain_layer.get(), &plain_draws, plain_variant }
+    };
+    BlockDescriptors* declared_sets[] = { textured_declared.get(), plain_declared.get() };
+
+    storage->beginFrame();
+    ContentPass::Scope scope;
+    scope.entries    = halves;
+    scope.registry   = &registry;
+    scope.storage    = storage.get();
+    scope.block_sets = declared_sets;
+    scope.uploads    = &uploads;
+    ContentPass content(scope, diagnostics);
+
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>  content_node;
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block,
+                               content_node));
+    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 0U)
+        << "both variants are served by the pass' own halves";
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(target.get(), target.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packet{ frame.passes[0].pass, content_node };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(&packet, 1U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const auto near = [](std::uint8_t byte, double expected) {
+        return std::abs(static_cast<double>(byte) - expected) <= 16.0;
+    };
+    const int middle_row  = static_cast<int>(kSize) / 2;
+    const Rgba8 left_half = target->probe().pixel(static_cast<int>(kSize) / 4, middle_row);
+    const Rgba8 right_half = target->probe().pixel(static_cast<int>(kSize) * 3 / 4, middle_row);
+    EXPECT_TRUE(near(left_half.r, 255.0) && near(left_half.g, 0.0) && near(left_half.b, 255.0))
+        << "the textured variant samples the map (magenta), got (" << static_cast<int>(left_half.r) << ", "
+        << static_cast<int>(left_half.g) << ", " << static_cast<int>(left_half.b) << ")";
+    EXPECT_TRUE(near(right_half.r, 64.0) && near(right_half.g, 128.0) && near(right_half.b, 191.0))
+        << "the untextured variant shades the material's diffuse (0.25, 0.5, 0.75), got ("
+        << static_cast<int>(right_half.r) << ", " << static_cast<int>(right_half.g) << ", "
+        << static_cast<int>(right_half.b)
+        << ") - the map's colour here means the drawable was drawn through the OTHER variant's half";
 }
 
 TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)

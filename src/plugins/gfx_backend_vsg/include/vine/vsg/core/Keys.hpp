@@ -211,6 +211,14 @@ struct PipelineKey
     /// ABI - so "how many depth samplers this pipeline's set has" is identity, like the colours.
     std::uint32_t sampled_depth_count{0};
 
+    /// Which VARIANT of that program this pipeline is compiled for. The core carries it as a NUMBER
+    /// because the defines it stands for are the engine's naming rather than the core's, and
+    /// `api/ProgramVariant` is the one spelling of what the number means (the `VINE_DIFFUSE_MAP`
+    /// family the engine's own stages gate their declarations on). Two variants of one program agree
+    /// on every other field here and must never share a pipeline: their texts differ, so the same
+    /// draws would come out as different pictures.
+    std::uint32_t variant{0};
+
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const PipelineKey& other) const noexcept;
 };

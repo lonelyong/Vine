@@ -14,6 +14,7 @@
 #include <vine/vsg/api/BlockStorage.hpp>
 #include <vine/vsg/api/ContentDraw.hpp>
 #include <vine/vsg/api/ContentFacts.hpp>
+#include <vine/vsg/api/ProgramVariant.hpp>
 #include <vine/vsg/api/ContentImages.hpp>
 #include <vine/vsg/api/ContentPipeline.hpp>
 #include <vine/vsg/api/StreamUploads.hpp>
@@ -86,7 +87,7 @@ class V_VSG_API ContentPass
     /** @brief The pieces this layer drives; the caller owns them and keeps them alive. */
     struct Scope
     {
-        /** @brief One compiled half: one program's stages against one vertex layout. */
+        /** @brief One compiled half: one program's stages against one vertex layout, for ONE variant. */
         struct Entry
         {
             core::DrawKind        kind{core::DrawKind::Content};  ///< Which drawing call this half serves.
@@ -95,9 +96,17 @@ class V_VSG_API ContentPass
             core::VertexLayoutKey layout{};            ///< The vertex layout its pipeline declares (content).
             ContentPipeline*      pipelines{nullptr};  ///< The pipeline layer over that stage text.
             ContentDraw*          draws{nullptr};      ///< The recorder over those pipelines.
+            /// The VARIANT this half was compiled for (see api/ProgramVariant). One program has several,
+            /// and they share everything above - the same identity, revision and layout - so without this
+            /// field a pass would hand every drawable of that program the FIRST half it finds and compile
+            /// one of the variants' meanings into all of them. A pass computes each command's variant from
+            /// its material and geometry (api/ProgramVariant's rule) and only a half that serves it draws.
+            /// It sits LAST so an entry written before this field existed is the variant the untagged
+            /// facts describe (the empty define list), not one with a pointer in its switches.
+            ProgramVariant        variant{};
         };
 
-        std::span<const Entry> entries;               ///< One per (program, revision, layout) this pass draws with.
+        std::span<const Entry> entries;               ///< One per (program, revision, layout, VARIANT) it draws with.
         core::StateRegistry*   registry{nullptr};     ///< This pass' state memory, shared by every half.
         BlockStorage*          storage{nullptr};      ///< The frame's block storage.
         /// The block sets this pass may bind: ONE PER SET INDEX A PROGRAM DECLARES BLOCKS IN, built from the
@@ -264,7 +273,8 @@ class V_VSG_API ContentPass
     /// One report-once per entry for the shadow the pass declared and the program cannot read (see
     /// `reportShadowNotSampled`): a second message about the same half must not be what silences the first.
     std::vector<core::ReportOnce> shadow_reported_;
-    /// The block sets `serveHalf` resolved for this pass' content half (in the declared set order).
+    /// The block sets `serveHalf` resolved for the half the command being recorded draws
+    /// through (in the declared set order).
     std::array<BlockDescriptors*, kMaxBlockSets> half_blocks_{};
     std::size_t                                  half_block_count_{0};
     /// The push commands one command's declared ranges recorded (reused per command: the record is consumed

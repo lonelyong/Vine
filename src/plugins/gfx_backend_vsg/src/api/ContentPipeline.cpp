@@ -213,14 +213,19 @@ struct ContentPipeline::Data
 
     /** @brief Compiles one GLSL stage, or returns an empty pointer when the compiler refuses it. */
     ::vsg::ref_ptr<::vsg::ShaderStage> compileStage(VkShaderStageFlagBits stage, const std::string& source,
-                                                    const std::string& entry)
+                                                    const std::string& entry,
+                                                    const std::vector<std::string>& defines)
     {
         if (!compiler.supported()) {
             return {};
         }
         auto shader_stage = ::vsg::ShaderStage::create(stage, entry, source);
-        if (shader_stage == nullptr || !compiler.compile(shader_stage) || shader_stage->module == nullptr ||
-            shader_stage->module->code.empty()) {
+        // The variant's defines reach the compiler HERE and nowhere else: vsg's preprocessor emits a
+        // `#define` only for a name the source lists in its `#pragma import_defines` line, so a variant is
+        // the same text compiled with a different list - which is why the list belongs to the layer the
+        // pipeline is built from, and why the ABI must have been scanned with it too.
+        if (shader_stage == nullptr || !compiler.compile(shader_stage, defines) ||
+            shader_stage->module == nullptr || shader_stage->module->code.empty()) {
             return {};
         }
         return shader_stage;
@@ -311,9 +316,11 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
     }
 
     ::vsg::ref_ptr<::vsg::ShaderStage> vertex =
-        layer->d->compileStage(VK_SHADER_STAGE_VERTEX_BIT, shaders.vertex, shaders.entry);
+        layer->d->compileStage(VK_SHADER_STAGE_VERTEX_BIT, shaders.vertex, shaders.entry,
+                               shaders.defines);
     ::vsg::ref_ptr<::vsg::ShaderStage> fragment =
-        layer->d->compileStage(VK_SHADER_STAGE_FRAGMENT_BIT, shaders.fragment, shaders.entry);
+        layer->d->compileStage(VK_SHADER_STAGE_FRAGMENT_BIT, shaders.fragment, shaders.entry,
+                               shaders.defines);
     if (vertex == nullptr || fragment == nullptr) {
         return nullptr;  // nothing to shade with: the caller reports it instead of drawing nothing
     }
@@ -428,9 +435,11 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi&
     // so the list of "sets the caller builds" stays empty (see declaredSets).
 
     ::vsg::ref_ptr<::vsg::ShaderStage> vertex =
-        layer->d->compileStage(VK_SHADER_STAGE_VERTEX_BIT, shaders.vertex, shaders.entry);
+        layer->d->compileStage(VK_SHADER_STAGE_VERTEX_BIT, shaders.vertex, shaders.entry,
+                               shaders.defines);
     ::vsg::ref_ptr<::vsg::ShaderStage> fragment =
-        layer->d->compileStage(VK_SHADER_STAGE_FRAGMENT_BIT, shaders.fragment, shaders.entry);
+        layer->d->compileStage(VK_SHADER_STAGE_FRAGMENT_BIT, shaders.fragment, shaders.entry,
+                               shaders.defines);
     if (vertex == nullptr || fragment == nullptr) {
         return nullptr;  // nothing to shade with: the caller reports it instead of drawing nothing
     }

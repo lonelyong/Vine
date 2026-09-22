@@ -101,12 +101,18 @@ class ContentPipeline
         std::uint32_t offset{0};     ///< Byte offset inside the element.
     };
 
-    /** @brief The GLSL text the pipeline's shader stages are compiled from. */
+    /** @brief The GLSL text the pipeline's shader stages are compiled from, and the variant's defines. */
     struct Shaders
     {
-        std::string vertex;     ///< Vertex stage source.
-        std::string fragment;   ///< Fragment stage source.
-        std::string entry{"main"};  ///< Entry point of both stages.
+        std::string              vertex;    ///< Vertex stage source.
+        std::string              fragment;  ///< Fragment stage source.
+        std::string              entry{"main"};  ///< Entry point of both stages.
+        /// The defines this compile asks for (see api/ProgramVariant). The texts are the SAME text for
+        /// every variant of a program - what changes is which of their `#pragma import_defines` names
+        /// are defined, and vsg delivers a name only when the source asks for it AND the caller lists
+        /// it. The ABI must be scanned with the same list (buildProgramFacts), or the layout and the
+        /// module disagree about what is in effect.
+        std::vector<std::string> defines;
     };
 
     /** @brief What the pipeline is built against, besides the identity. */

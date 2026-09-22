@@ -8,6 +8,7 @@
 #include <vsg/core/ref_ptr.h>
 
 #include <vine/graphics/ShaderAbi.hpp>
+#include <vine/raw_ptr.hpp>
 #include <vine/vsg/api/ContentPipeline.hpp>
 #include <vine/vsg/api/FactResult.hpp>
 #include <vine/vsg/api/ProgramAbi.hpp>
@@ -38,6 +39,11 @@
  * a plan that names it may still be recorded (the same rule as every other borrowed argument in this
  * backend, and the same reason StreamUploads keys its binds by revision).
  */
+namespace vine::graphics
+{
+class Texture;
+}
+
 V_VSG_NS_BEGIN
 
 /** @brief One vertex channel of a geometry: what the stream is shared by, and the bytes to upload. */
@@ -81,6 +87,12 @@ struct MaterialFacts
     const void*                material{nullptr};  ///< The identity (nullptr = the default material).
     std::uint64_t              revision{0};        ///< The revision its owner tracks its bytes at.
     std::span<const std::byte> block{};            ///< The block; its size must be the ABI's.
+
+    /// The texture the material samples, or null when it has none. The BLOCK does not carry it (a map is
+    /// an image, not a texel of material state), and it is a fact the content layer needs: it is what
+    /// decides whether a program's `VINE_DIFFUSE_MAP` variant applies to this drawable (see
+    /// api/ProgramVariant). The pointer is borrowed with the entry - the material owns it.
+    vine::raw_ptr<const vine::graphics::Texture> texture{};
 };
 
 /** @brief Every table a frame's content needs, borrowed for the recording. */

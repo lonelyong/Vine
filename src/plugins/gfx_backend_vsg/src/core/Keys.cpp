@@ -40,7 +40,8 @@ bool PipelineKey::operator==(const PipelineKey& other) const noexcept
     return kind == other.kind && program == other.program && revision == other.revision &&
            vertex_layout == other.vertex_layout && compatibility == other.compatibility &&
            depth_sampleable == other.depth_sampleable &&
-           sampled_color_count == other.sampled_color_count && sampled_depth_count == other.sampled_depth_count;
+           sampled_color_count == other.sampled_color_count && sampled_depth_count == other.sampled_depth_count &&
+           variant == other.variant;
 }
 
 bool DynamicState::operator==(const DynamicState& other) const noexcept
@@ -104,6 +105,7 @@ std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
     mix(key.depth_sampleable ? 1U : 0U);
     mix(key.sampled_color_count);
     mix(key.sampled_depth_count);
+    mix(key.variant);
     return hash;
 }
 
@@ -122,7 +124,8 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
           "pipeline identity: compatibility excludes them" },
         { "PipelineKey",
           "program + revision + draw kind (content or full-screen) + vertex layout + compatibility + depth "
-          "sampleability + sampled colour attachment count + sampled DEPTH count" },
+          "sampleability + sampled colour attachment count + sampled DEPTH count + the program VARIANT (the "
+          "defines that change what its text means - see api/ProgramVariant)" },
         { "DynamicState",
           "depth policy + cull + polygon + topology + blend - delivered per draw with set commands" },
         { "InstanceSlot", "model matrix + opacity + material identity + revision - per frame data" },

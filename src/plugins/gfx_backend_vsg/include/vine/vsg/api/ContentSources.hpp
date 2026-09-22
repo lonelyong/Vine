@@ -7,6 +7,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/api/ContentFacts.hpp>
+#include <vine/vsg/api/ProgramVariant.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -50,6 +51,24 @@ V_VSG_NS_BEGIN
  *         api/ProgramAbi).
  */
 [[nodiscard]] FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out);
+
+/**
+ * @brief Builds the program table entry for ONE variant of a content program.
+ *
+ * A program's text is several programs (see api/ProgramVariant): its stages gate declarations and code on
+ * `#pragma import_defines` names, so the ABI a pipeline is built against depends on which of those names
+ * the variant defines. This overload is the one spelling of that pairing - the scan and the compile read
+ * the SAME list (`out.shaders.defines`), so a layout and a module can never disagree about what is in
+ * effect, which is the failure a text with an `#error` in the wrong branch would otherwise report as a
+ * compile error at draw time (or not at all).
+ *
+ * @param program  The program whose stages are described.
+ * @param variant  The variant to describe it for.
+ * @param out      Receives the entry (its `shaders.defines` are the variant's).
+ * @return None when the entry was built; Unknown/Malformed exactly as the untagged overload says.
+ */
+[[nodiscard]] FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program,
+                                         const ProgramVariant&                  variant, ProgramFacts& out);
 
 /** @brief Builds the program table entry for a FULL-SCREEN program (see core::DrawKind::Screen).
  *

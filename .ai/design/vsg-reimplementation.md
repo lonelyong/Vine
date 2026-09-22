@@ -3,10 +3,19 @@
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
+> **M8d-2：程序的文本是好几份程序**——同一份文本按 `#pragma import_defines` 编译出不同的 ABI 与分支（引擎的
+> `forwardProgram` 没有 `VINE_DIFFUSE_MAP` 时 (0,1) 处**没有**采样器、texcoord 的种类由 define 决定），
+> 于是**变体的 define 进管线身份**：`api/ProgramVariant`（规则唯一拼写：恒有且只有一个 texcoord kind、
+> `VINE_DIFFUSE_MAP` iff 材质有贴图、`VINE_VERTEX_COLOR` iff 几何**自己写下**颜色通道）、`PipelineKey += variant`、
+> `Shaders.defines`（扫描与编译**同一份**清单，布局与模块不可能对不上）、pass 的 half 按 (program, revision,
+> layout, **variant**) 匹配；像素证据：**一趟、两画、同一程序的两个 half** ⇒ 左边采到贴图的洋红、右边是材质
+> 自己的 0.25/0.5/0.75（只按 (program, revision, layout) 挑 half 的实现会把贴图涂到两边）；顺手修**每趟只
+> serve 第一个 content half** 的老洞（多 half 的趟会把第一个 half 的集合绑到别的 half 的画上——真设备上是
+> VUID 00358+08600）。`test_vsg` 615 用例 / 95 套件全绿；门禁 **0 VUID / 0 SYNC-HAZARD**、skipped=0、
+> hygiene 全清（现 837 文件）。更早一片是
 > **M8d-1：材质贴图的 GPU 侧**——`api/MaterialImages`（一张 texture 的 image/view/sampler，按**地址 + 修订**缓存、
 > 条目持住键、白 fallback 按**种类**给 2D/cube、超限淘汰、放弃即释放）；像素证据：四色 2x2 贴图 → 画面四象限、
-> 六色 cube → 五个方向上的五个面（层序错是**静默**的，只有像素能抓）、重填后第二趟是新颜色；`test_vsg` 611 用例 /
-> 94 套件全绿；门禁 **0 VUID / 0 SYNC-HAZARD**、skipped=0、hygiene 全清（现 834 文件）。更早一片是
+> 六色 cube → 五个方向上的五个面（层序错是**静默**的，只有像素能抓）、重填后第二趟是新颜色。更早一片是
 > **M8c-4：全屏集合就是程序自己的声明**——引擎的 `shadowedDeferredLightProgram` 把 `shadow_map` 写在
 > binding 5、`VineShadowBlock` 写在 6（源的四张颜色占 0..3、源无可采样深度），全屏路径按**声明号**装集合；
 > 引擎带影/无影两个变体在引擎自己格式的 G-buffer 上端到端出像素；顺手修了**动态命令一直开着混合**（多附件
@@ -20,9 +29,10 @@
 > （`scripts/vsg_rewrite_gate.sh`）：**0 VUID / 0 SYNC-HAZARD**、hygiene 全清（0 / 831 文件）、相位 9 行 / 2 次运行。
 > M7 完整（身份半边 §11.16ac、读数字半边 §11.16ad）；**场景桥已开工**：M8a 读事实（§11.16ae）、M8b 布局跟着
 > 声明（§11.16af）、M8c-1 相机 push（§11.16ag）、M8c-2a 混合集合（§11.16ah）、M8c-2b 白色 fallback（§11.16ai）、
-> M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）。
+> M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）、
+> M8d-2 变体的 define 进管线身份（§11.16am）。
 > 下一步：
-> 变体的 define 进管线身份 → 三张表的生产侧。
+> 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。
 > 其余遗留口子：提交失败接缝、Rebuild 臂、租约的「重建借用方」、浮点颜色读回。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
@@ -2559,6 +2569,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8c-3（名字即来源）~~ | **已完成（2026-09-22）**：`api/ContentImages`（`ImageOrigin` + `imageOriginOf` + `samplesShadowMap` + `shadowImageOf`）；`shadow_map` 按名字到达程序声明在**自己集合里**的那个 binding；`skyMap` 在建层时按名字拒；"pass 解析出 map 而程序读不到"每半片上报一次；顺手修 `BlockStorage::writeMaterial` 的 HIT 返回 offset 0（§11.16aj）。 |
 | ~~M8c-4（全屏集合即声明）~~ | **已完成（2026-09-22）**：`createScreen` 收 `ProgramAbi` + set≠0 / 非阴影块两条拒绝；`sampledSetLayout` 的全屏分支（声明号就是绑定号、深度槽跳过已点名的号、块 = 静态 UBO）；`recordScreenDraw` 按身份找源、按计划找 map、按名拒绝、每调用一个阴影块；引擎带影/无影延迟光照七趟真设备像素；顺手修**动态命令一直开着混合**（多附件 = 不混合，单附件恒开）；5 条变异反证全红（§11.16ak）。 |
 | ~~M8d-1（材质贴图的 GPU 侧）~~ | **已完成（2026-09-22）**：`api/MaterialImages`（按地址 + 修订缓存；条目持住键；mip-major 交错 staging；元素 = 一个 texel、数组维数 = 层数；view type 写在 DATA 上；白 fallback 2D（复用 `WhiteImage`）+ cube；`releaseAbandoned`/`clear`/超限淘汰；`setMaxAnisotropy`）；`ContentPipeline` 放开 `samplerCube` 的拒绝（立方体视图落地了）；上传走 vsg 的 TransferTask（数据背书的 `vsg::Image`），像素证：四色 2x2 → 四象限、六色 cube → 五方向、重填 → 第二趟新颜色；5 条变异反证全红（§11.16al）。 |
+| ~~M8d-2（变体的 define 进管线身份）~~ | **已完成（2026-09-22）**：`api/ProgramVariant`（规则 + `bits()` + `defines()` + `describe()` + `variantOf(材质, 几何)`）；`PipelineKey += variant`（相等 + 散列 + 审计表行数不变）；`Shaders.defines` 一份清单喂**扫描与编译**两侧；`compileStage` 交给 vsg 的 `compiler.compile(stage, defines)`；`Scope::Entry += variant`（放在最后，旧聚合初始化照旧编）；`recordCommand` 由**事实**算变体并按四元组配 half、三种拒绝各自说清；顺手修**每趟只 serve 第一个 content half**（多 half 的趟绑错集合 = VUID 00358+08600）；5 条变异反证全红（§11.16am）。 |
 | **M8 下一步** | 变体的 define 进管线身份（`VINE_DIFFUSE_MAP` / texcoord kind 取决于几何与材质）→ 三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
@@ -3103,3 +3114,78 @@ staging 字节链（**mip-major 交错**：vsg 的拷贝区域按"一级里的�
 
 **这一片留下的口子**：变体的 define 进管线身份（`VINE_DIFFUSE_MAP` 与 texcoord kind 取决于几何与材质——
 管线身份现在是 `(program, revision, layout)`，还差 define）；三张表的生产侧（活的 SDK 对象 + 修订 + 退役）。
+
+### 11.16am M8d-2（2026-09-22）：程序的文本是好几份程序——变体的 define 进管线身份
+
+§11.16al 让"有贴图"到达设备；这一片处理它引出的**身份**问题：同一份程序文本，材质有贴图与没有贴图时
+被编译成**两种文本**——若管线身份还是 `(program, revision, layout)`，一趟里两种 drawable 就会共用一层，
+其中一种必然被画成另一种。
+
+**问题在引擎的文本里就写着**：`builtin_forward.vert` 把 texcoord 输入与采样器放在 `#ifdef VINE_DIFFUSE_MAP`
+里，槽的种类还用 `#error` 把"没有 kind"钉死，并在 `#pragma import_defines (VINE_VERTEX_COLOR,
+VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)` 里**点名**它可能收到的开关。vsg 的预处理器只对
+**源里列出**的名字发 `#define`——所以"这几种文本"不是调用方的自由选择，而是程序自己声明的：什么开关有效，
+由文本写死；开关取什么值，由 drawable 的**事实**决定。
+
+**规则只有一处拼写**（`api/ProgramVariant`，`variantOf(材质事实, 几何事实)`）：
+
+1. **恒有且只有一个 texcoord kind**：几何的 `TexCoord0` 通道 3 个分量 ⇒ `VINE_TEXCOORD_CUBE`，否则
+   `VINE_TEXCOORD_UV`——因为任何声明 texcoord 槽的文本都得能在"没有贴图"时编译通过（引擎的 `#error` 就是
+   为这件事写的），kind 不是"有贴图才有"的开关；
+2. `VINE_DIFFUSE_MAP` ⇔ 材质有贴图（`MaterialFacts::texture != nullptr`）；
+3. `VINE_VERTEX_COLOR` ⇔ 几何**自己写下**了颜色通道——派生的"白色载体"不算（那是后端的替身，不是作者的数据）。
+
+`bits()` 是它的身份号（进管线键），`describe()` 是它的诊断文字（拒绝时读它，而不是让读者去猜三个布尔）。
+
+**身份进三处**：
+
+* `core::PipelineKey += std::uint32_t variant`（相等、散列、审计表都带上；键**类型**数不变，仍是 8 行）；
+* `api/ContentPipeline::Shaders += std::vector<std::string> defines`——**一份清单喂两侧**：ABI 扫描用它决定
+  "文本这次真的声明了什么"，`compileStage` 把它交给 vsg 的 `compiler.compile(stage, defines)`。两者读同一份
+  `out.shaders.defines`，所以布局与模块不可能对不上（M5 变异证明扫描那一侧也吃 define：没有它，带贴图的
+  程序扫不出 (0,1) 的采样器）；
+* `api/ContentPass::Scope::Entry += ProgramVariant variant`（放在**最后**，旧聚合初始化照旧编译）。
+
+**pass 侧的判断**：`recordCommand` 先查材质（变体的输入之一），由**事实**算出
+`variantOf(材质, 几何)`，再按 (program, revision, layout, **variant**) 找 half——拒绝时分三种说清：
+程序不在/pass 未编译、布局不合、以及"这趟没有服务于该变体的 half"（三条路径的修法不同，合成一句会把读者
+引到错的半边）。命中后 `record.key.variant = variant.bits()`，状态组与池都按它分开。
+
+**顺手修掉的老洞**：`serveHalf` 原先**每趟只对第一个 content half 调一次**（"the pass' content half"），
+`recordCommand` 随后把它的集合绑给**每一条** draw——单 half 的趟看不出来，M8d-2 一上来就现形：贴图 half 的
+声明集合有 2 个描述符（块 + 图），无贴图 half 的布局只有 1 个，后者绑前者 ⇒ 真设备上
+**VUID 00358 + 08600**（画面却是对的——lavapipe 不管校验，门禁才管）。修法：**每条命令 serve 它自己穿过
+的那个 half**，集合只来自它；这也一并堵上"一趟里两个不同 (program, revision, layout) 的 half"的同一个洞。
+
+**再记一个静默的**：`MaterialFacts.texture` 原先写在 `out = MaterialFacts{}` 重置**之前**，被清零——
+`variantOf` 于是永远说"没贴图"，无设备用例全绿、只有真设备用例的打印看得见
+（`textured.diffuse_map=0`）。事实结构体在函数尾部整体赋值时，任何"提前赋值"都是死代码。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/ProgramVariant.hpp` / `src/api/ProgramVariant.cpp`（新） | `diffuse_map` / `vertex_color` / `cube_texcoord`、`bits()` / `defines()` / `describe()`、`==`/`!=`、`variantOf(材质, 几何)` |
+| `core/Keys.hpp` / `src/core/Keys.cpp` | `PipelineKey += variant`（相等 + 散列 `mix(key.variant)` + 审计行） |
+| `api/ContentSources.hpp` / `.cpp` | `MaterialFacts += texture`（`raw_ptr<const Texture>`）；`buildProgramFacts(program, variant, facts)` 重载（`out.shaders.defines = variant.defines()`，扫描按它进行）；顺带修 texture 赋值次序 |
+| `api/ContentPipeline.hpp` / `.cpp` | `Shaders += defines`；`compileStage` 把它交给 `compiler.compile` |
+| `api/ContentPass.hpp` / `.cpp` | `Scope::Entry += variant`（最后一位）；`recordCommand` 算变体、按四元组配 half、三种拒绝、`record.key.variant`；**每条命令 serve 自己的 half** |
+| `tests/test_vsg/ProgramVariantTest.cpp`（新，无设备，3 条） | define 名单 + 8 个 `bits()` 互异；规则（裸 / UV / cube / 自己写下的颜色 vs 派生）；**引擎自己的 `forwardProgram()` 逐变体**：无 define ⇒ (0,1) 处没有采样器、UV kind ⇒ `Sampler2D`、cube kind ⇒ `SamplerCube`，而**片元文本在两变体间逐字节相同** |
+| `tests/test_vsg/ContentPassTest.cpp`（+1 真设备） | 一趟、两画、同一程序的两个 half（只差 variant）⇒ 左半 = 贴图洋红、右半 = 材质自己的 0.25/0.5/0.75；M8d-1 的三条有贴图用例各自声明自己 half 服务的变体 |
+
+**变异反证（5/5 红）**：
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 `variantOf` 不看材质贴图（恒 false） | 规则用例红 + 真设备用例红 |
+| M2 配 half 时不比变体（恒 true） | 真设备用例红（无贴图半边被涂上贴图） |
+| M3 键不带变体（恒 0） | **段错误**（状态组/池被两变体共用，拿回错层的管线与集合） |
+| M4 define 不进编译（`compile(stage, {})`） | 真设备用例红（带贴图的半边编进了 `#else` 分支） |
+| M5 事实扫描丢 define（`shaders.defines.clear()`） | 引擎逐变体用例红 + 真设备用例红（ABI 里没有采样器） |
+
+证据：`test_vsg` 全量 **615 用例 / 95 套件全绿**；门禁 `scripts/vsg_rewrite_gate.sh`：**0 VUID /
+0 SYNC-HAZARD**、skipped=0、hygiene 0 / 837 文件、`check_diagnostic_formats.py` 0 / 39、
+`check_doc_symbols.py` 通过、相位 9 行 / 2 次运行全收尾。
+
+**这一片留下的口子**：pass 的**输入集合（set 1）仍按第一个 content half 的层构建**——设计上写在
+"同一种 kind 的 halves 用同一份 recipe 建采样布局，所以彼此兼容"（`makeInputSet` 的注释）；引擎今天的
+三个变体都不碰输入集合，但**用户程序**若按变体改输入声明，就需要按 half 建输入集合（或明确拒绝）；
+三张表的生产侧（活的 SDK 对象 + 修订 + 退役）仍是下一片。
