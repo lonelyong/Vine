@@ -29,6 +29,7 @@ struct DevicePhaseCounters
     std::uint64_t frames{0};            ///< Frames the phase submitted.
     std::uint64_t targets_built{0};     ///< Off-screen targets the phase created.
     std::uint64_t resizes_replaced{0};  ///< Resizes that replaced a target's attachments.
+    std::uint64_t rebuilds_replaced{0}; ///< Rebuilds that replaced a target's shape (render pass included).
     std::uint64_t parked{0};            ///< Objects the phase handed to the retirement queue.
     std::uint64_t device_waits{0};      ///< Counted device idles the phase took.
 };
@@ -53,6 +54,14 @@ void runSharedDepthPhase(const vine::vsg::DeviceResult& device, DevicePhaseCount
  * @param counters Receives what the phase drove.
  */
 void runTargetResizePhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+
+/** @brief The target-rebuild phase: the plan answers a shape change, the pass and the attachments are
+ *         rebuilt, and the new shape (two colours and a depth) renders.
+ *
+ * @param device  A device that satisfies the backend's floor.
+ * @param counters Receives what the phase drove.
+ */
+void runTargetRebuildPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The lost-submission phase: an invalidated target is re-bootstrapped once, then loads again.
  *

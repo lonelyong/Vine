@@ -248,6 +248,14 @@ TEST(CoreTargetPlanTest, TheActionTableIsDecidedByShapeSizeAndBuildState)
         {"never built", built_at_512, false, false, built_at_512, TargetAction::Repair, RepairReason::Bootstrap},
         {"attachments invalidated", built_at_512, true, true, built_at_512, TargetAction::Repair,
          RepairReason::Bootstrap},
+        // A shape change outranks the load-op repairs: "the first pass in clears" is an instruction about
+        // attachment CONTENTS, and a rebuild replaces the pass those attachments belong to - the caller
+        // has to hear about the compatibility change even when nobody has written into the target yet
+        // (the rebuilt target's fresh attachments answer Repair(Bootstrap) on the next plan).
+        {"never built, new shape", built_at_512, false, false, TargetDesc{512, 256, with_d},
+         TargetAction::Rebuild, RepairReason::None},
+        {"invalidated, new shape", built_at_512, true, true, TargetDesc{512, 256, with_d},
+         TargetAction::Rebuild, RepairReason::None},
         {"resized to nothing", built_at_512, true, false, TargetDesc{0, 256, single}, TargetAction::Repair,
          RepairReason::SizeUnknown},
         {"laid out at zero", built_at_512, true, false, TargetDesc{512, 0, single}, TargetAction::Repair,

@@ -91,9 +91,14 @@ struct RecordedFrame
 /// @param created The device the target belongs to.
 /// @param target  The target to record into (its current attachments and readback).
 /// @param policy  What the frame asks its pass to clear (the target's own values, as a caller would pass them).
+/// @param with_depth_capture Whether the frame records the depth copy too (a target that has no depth
+///        readback records nothing, so the flag is safe on any target).
+/// @param color_captures How many colour attachments the frame records copies of (a target with more than
+///        one colour attachment needs one per attachment a case reads back).
 /// @return The frame's viewer and graph, both alive.
 RecordedFrame recordOneFrame(const DeviceResult& created, OffscreenTarget& target,
-                             const vine::vsg::core::ClearPolicy& policy, bool with_depth_capture = false)
+                             const vine::vsg::core::ClearPolicy& policy, bool with_depth_capture = false,
+                             std::uint32_t color_captures = 1U)
 {
     const ::vsg::ref_ptr<::vsg::RenderGraph> pass =
         target.passGraph(policy, /*bootstrap*/ !target.written(), /*depth_preserved*/ false);
@@ -105,8 +110,10 @@ RecordedFrame recordOneFrame(const DeviceResult& created, OffscreenTarget& targe
     frame.graph->addChild(pass);
     // A readback the target refuses has no node at all (an unreadable format builds no buffer and no copy),
     // so the frame records what exists and nothing else.
-    if (const ::vsg::ref_ptr<::vsg::Node> capture = target.capture()) {
-        frame.graph->addChild(capture);
+    for (std::uint32_t attachment = 0U; attachment < color_captures; ++attachment) {
+        if (const ::vsg::ref_ptr<::vsg::Node> capture = target.capture(attachment)) {
+            frame.graph->addChild(capture);
+        }
     }
     if (with_depth_capture) {
         if (const ::vsg::ref_ptr<::vsg::Node> depth_capture = target.captureDepth()) {
@@ -272,6 +279,150 @@ void runTargetResizePhase(const vine::vsg::DeviceResult& device, DevicePhaseCoun
     EXPECT_EQ(queue.released(), 1U);
     EXPECT_EQ(queue.pending(), 0U);
     EXPECT_EQ(replaced_graph->referenceCount() + 1U, counts_before)
+        << "the queue held the replaced set and let go exactly once";
+    EXPECT_TRUE(target->probe().valid()) << "the release of the old set must not touch the live one";
+}
+
+void runTargetRebuildPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+{
+    const float kFirst[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
+    const float kSecond[4]{ 0.1F, 0.2F, 0.3F, 1.0F };
+
+    auto target = OffscreenTarget::create(device.device,
+                                          OffscreenTarget::Layout{ 8U, 4U,
+                                                                   { kFirst[0], kFirst[1], kFirst[2], 1.0F } });
+    ASSERT_NE(target, nullptr);
+    ++counters.targets_built;
+
+    // Frame 1 into the shape the target was created with: a rebuilt target is one that WORKED before, so
+    // "the new shape renders" is a change and not the first thing that ever ran.
+    const RecordedFrame first = recordOneFrame(device, *target, clearPolicy(kFirst));
+    ++counters.frames;
+    ASSERT_TRUE(target->written()) << "a pass has been recorded into the attachments";
+    EXPECT_EQ(target->colorAttachmentCount(), 1U);
+    EXPECT_FALSE(target->hasDepth());
+    {
+        const PixelProbe probe = target->probe();
+        ASSERT_TRUE(probe.valid());
+        EXPECT_EQ(probe.width(), 8);
+        EXPECT_EQ(probe.height(), 4);
+    }
+
+    // The shape that is about to be replaced: its compatibility half is what a pipeline key was built from,
+    // and the graph of its attachments is the observable that tells parking from dropping (this case holds
+    // one reference, the frame that recorded it holds another).
+    const vine::vsg::core::TargetShape        old_shape     = target->shape();
+    const ::vsg::ref_ptr<::vsg::RenderGraph>  replaced      = target->renderGraph();
+    const unsigned int                        counts_before = replaced->referenceCount();
+
+    // The new shape, in the terms the SDK asks for: TWO colour attachments and a depth, at a new extent -
+    // the whole point of the Rebuild arm (the count is even visible to the executor's plan-vs-target check,
+    // and the depth format is part of compatibility).
+    OffscreenTarget::TargetLayout wanted;
+    wanted.width         = 16U;
+    wanted.height        = 12U;
+    wanted.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA8 };
+    wanted.depth_format  = RenderTarget::DepthFormat::D32F;
+    wanted.clear         = clearPolicy(kSecond);
+
+    FrameTimeline timeline;
+    const auto    token = timeline.begin();
+    timeline.submitted(token);  // the frame that recorded the attachments being replaced
+    RetirementQueue queue(3U);
+
+    const OffscreenTarget::Rebuilt rebuilt = target->rebuild(wanted, timeline, queue);
+
+    EXPECT_EQ(static_cast<int>(rebuilt.decision.action), static_cast<int>(TargetAction::Rebuild))
+        << "the shape changed: compatibility is the plan's answer, not this call's guess";
+    EXPECT_FALSE(rebuilt.refused);
+    EXPECT_TRUE(rebuilt.replaced) << "the target serves the new shape after the call";
+    EXPECT_TRUE(rebuilt.parked) << "the old attachments AND the old render pass are parked, not freed";
+    EXPECT_EQ(rebuilt.generation, 1U);
+    EXPECT_EQ(queue.pending(), 1U);
+    EXPECT_EQ(queue.deviceWaits(), 0U) << "parking is what keeps this path from stopping the device";
+    EXPECT_EQ(target->generation(), 1U);
+    EXPECT_EQ(target->width(), 16U);
+    EXPECT_EQ(target->height(), 12U);
+    EXPECT_EQ(target->colorAttachmentCount(), 2U);
+    EXPECT_TRUE(target->hasDepth());
+    EXPECT_FALSE(target->written()) << "the new attachments have never been drawn into: the next pass in clears";
+    EXPECT_EQ(target->passVariantCount(), 1U)
+        << "the old shape's load-op variants went with the old render pass: their passes were built from the "
+           "old formats, and a pass of the new shape must not be handed one of them";
+    EXPECT_TRUE(target->shape().color_formats == wanted.color_formats)
+        << "the shape the target reports IS the new one: a pipeline key is built from it";
+    const vine::vsg::core::TargetShape new_shape = target->shape();
+    EXPECT_TRUE(new_shape.depth_format.has_value());
+    EXPECT_FALSE(new_shape.compatibility() == old_shape.compatibility())
+        << "the compatibility half really moved: every pipeline compiled for the old shape is invalid, and "
+           "that is what a caller re-compiles against";
+    EXPECT_TRUE(target->instance().desc.shape == new_shape)
+        << "the facts a frame is compiled with and the shape the target answers with are one fact";
+    EXPECT_NE(target->renderGraph(), replaced)
+        << "the graph built around the old framebuffer cannot serve the new shape";
+    EXPECT_EQ(replaced->referenceCount(), counts_before)
+        << "the replaced set is still alive right after the rebuild: the queue holds it, and a rebuild that "
+           "dropped it would free a pass a frame in flight may still name";
+
+    // Frame 2 through the graph the rebuild built: the new shape has to RENDER, not just exist. `written()`
+    // being false makes this pass the first writer, so the fresh images are cleared - and the three readbacks
+    // (attachment 0, attachment 1, the depth) are the evidence that the NEW pass and the NEW framebuffer
+    // really have two colours and a depth.
+    const RecordedFrame second =
+        recordOneFrame(device, *target, clearPolicy(kSecond, /*asked*/ false), /*with_depth_capture*/ true,
+                       /*color_captures*/ 2U);
+    ++counters.frames;
+    ++counters.rebuilds_replaced;
+    ++counters.parked;
+    {
+        const PixelProbe probe = target->probe();
+        ASSERT_TRUE(probe.valid());
+        EXPECT_EQ(probe.width(), 16);
+        EXPECT_EQ(probe.height(), 12) << "the probe follows the target's own extent, so a stale capture shows";
+        const Rgba8 expected{ quantise(kSecond[0]), quantise(kSecond[1]), quantise(kSecond[2]), 255U };
+        const Rgba8 sampled = probe.pixel(8, 6);
+        EXPECT_NEAR(sampled.r, expected.r, 1);
+        EXPECT_NEAR(sampled.g, expected.g, 1);
+        EXPECT_NEAR(sampled.b, expected.b, 1);
+        EXPECT_TRUE(probe.wholeImageMatches(sampled))
+            << "the whole new extent holds the clear: a rebuild that left part of the image (or the old "
+               "framebuffer's extent) behind would show here";
+    }
+    {
+        // The second colour attachment is a new object in every sense: it did not exist before the rebuild,
+        // and the pass clears it with the plan's extra-attachment value (transparent black).
+        EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color, 1U)),
+                  static_cast<int>(ReadbackRefusal::None))
+            << "the rebuilt target has a SECOND colour attachment, and it is readable";
+        const PixelProbe probe = target->probe(1U);
+        ASSERT_TRUE(probe.valid());
+        EXPECT_EQ(probe.width(), 16);
+        EXPECT_EQ(probe.height(), 12);
+        const Rgba8 sampled = probe.pixel(8, 6);
+        EXPECT_EQ(sampled.r, 0U) << "an extra colour attachment clears to transparent black";
+        EXPECT_EQ(sampled.g, 0U);
+        EXPECT_EQ(sampled.b, 0U);
+        EXPECT_EQ(sampled.a, 0U);
+        EXPECT_TRUE(probe.wholeImageMatches(sampled));
+    }
+    {
+        // The depth is the third new attachment, and it is a D32F image the bootstrap clears to the
+        // reverse-Z far plane - the same number the created target answered with, from a shape that did
+        // not exist until this call built it.
+        const vine::vsg::core::DepthProbe depth = target->depthProbe();
+        ASSERT_TRUE(depth.valid()) << "the depth copy was recorded too";
+        EXPECT_EQ(depth.width(), 16);
+        EXPECT_EQ(depth.height(), 12);
+        EXPECT_NEAR(depth.depthAt(8, 6), 0.0F, 0.0001F);
+    }
+
+    // The release the queue was waiting for: past the retire point, the parked set goes - and it is the
+    // queue's hold (and only it) that goes away.
+    timeline.completeUpTo(queue.retirePoint(timeline));
+    queue.advance(timeline);
+    EXPECT_EQ(queue.released(), 1U);
+    EXPECT_EQ(queue.pending(), 0U);
+    EXPECT_EQ(replaced->referenceCount() + 1U, counts_before)
         << "the queue held the replaced set and let go exactly once";
     EXPECT_TRUE(target->probe().valid()) << "the release of the old set must not touch the live one";
 }
@@ -789,6 +940,89 @@ TEST(OffscreenTargetTest, AResizeIsRefusedWhileADepthLeaseIsInForce)
         const Rgba8 sampled = probe.pixel(8, 6);
         EXPECT_NEAR(sampled.r, quantise(0.5F), 1);
         EXPECT_TRUE(probe.wholeImageMatches(sampled));
+    }
+}
+
+TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
+{
+    const auto created = createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
+    }
+
+    OffscreenTarget::TargetLayout layout;
+    layout.width                = 8U;
+    layout.height               = 6U;
+    layout.color_formats        = { vine::graphics::RenderTarget::ColorFormat::RGBA8 };
+    layout.depth_format         = vine::graphics::RenderTarget::DepthFormat::D32;
+    layout.clear.color          = true;
+    layout.clear.color_value[0] = 0.5F;
+
+    auto lender = OffscreenTarget::create(created.device, layout);
+    ASSERT_NE(lender, nullptr);
+    auto borrower = OffscreenTarget::create(created.device, layout, lender.get());
+    ASSERT_NE(borrower, nullptr) << "the borrower (its own colour, the lender's depth) must be creatable";
+
+    // A shape a rebuild would really serve (two colours and a depth): it has to differ from the current one,
+    // or the plan answers "nothing structural changed" before the lease is ever consulted.
+    OffscreenTarget::TargetLayout wanted  = layout;
+    wanted.color_formats                  = { vine::graphics::RenderTarget::ColorFormat::RGBA8,
+                                              vine::graphics::RenderTarget::ColorFormat::RGBA8 };
+
+    FrameTimeline   timeline;
+    RetirementQueue queue(3U);
+
+    // The lender half: every borrower's framebuffer names ITS image, and the lender does not know who its
+    // borrowers are - so the shape it serves is not the lender's to change while one exists. The plan wanted
+    // the rebuild; the lease is what stops it.
+    const OffscreenTarget::Rebuilt lent = lender->rebuild(wanted, timeline, queue);
+    EXPECT_EQ(static_cast<int>(lent.decision.action), static_cast<int>(TargetAction::Rebuild));
+    EXPECT_TRUE(lent.refused) << "a target another target loads the depth of does not rebuild";
+    EXPECT_FALSE(lent.replaced);
+    EXPECT_EQ(lent.generation, 0U);
+    EXPECT_EQ(lender->colorAttachmentCount(), 1U) << "the lender still serves the shape it had";
+    EXPECT_EQ(queue.pending(), 0U) << "nothing was replaced, so there is nothing to park";
+
+    // The borrower half refuses too: it holds another target's depth, and a new pass with new attachments
+    // would have to adopt an image whose extent and layout belong to a lender this call was not told about.
+    const OffscreenTarget::Rebuilt borrowed = borrower->rebuild(wanted, timeline, queue);
+    EXPECT_EQ(static_cast<int>(borrowed.decision.action), static_cast<int>(TargetAction::Rebuild));
+    EXPECT_TRUE(borrowed.refused) << "a shape is not the borrower's to change while it draws against another "
+                                     "target's depth";
+    EXPECT_FALSE(borrowed.replaced);
+    EXPECT_EQ(borrower->colorAttachmentCount(), 1U);
+    EXPECT_EQ(queue.pending(), 0U);
+
+    // The lease is the only thing that blocked it: once the borrower is gone, the same call rebuilds.
+    borrower.reset();
+    const OffscreenTarget::Rebuilt loan_repaid = lender->rebuild(wanted, timeline, queue);
+    EXPECT_FALSE(loan_repaid.refused) << "the refusal is the lease, not the target";
+    EXPECT_TRUE(loan_repaid.replaced);
+    EXPECT_TRUE(loan_repaid.parked);
+    EXPECT_EQ(lender->colorAttachmentCount(), 2U);
+    EXPECT_EQ(lender->generation(), 1U);
+
+    // And the rebuilt lender offers its NEW depth as a source: the half a bookkeeping-only assertion misses.
+    auto next_borrower =
+        OffscreenTarget::create(created.device, OffscreenTarget::TargetLayout{ 8U, 6U,
+                                                                               { vine::graphics::RenderTarget::ColorFormat::RGBA8 },
+                                                                               vine::graphics::RenderTarget::DepthFormat::D32 },
+                                lender.get());
+    EXPECT_NE(next_borrower, nullptr) << "a rebuilt lender offers its new depth like the old one";
+
+    // The pixels agree with the bookkeeping: the refusals changed nothing, and the rebuilt shape renders.
+    const RecordedFrame frame =
+        recordOneFrame(created, *lender, clearPolicy(layout.clear.color_value), /*with_depth_capture*/ false,
+                       /*color_captures*/ 2U);
+    {
+        const PixelProbe probe = lender->probe();
+        ASSERT_TRUE(probe.valid());
+        EXPECT_EQ(probe.width(), 8);
+        EXPECT_EQ(probe.height(), 6);
+        const Rgba8 sampled = probe.pixel(4, 3);
+        EXPECT_NEAR(sampled.r, quantise(0.5F), 1);
+        EXPECT_TRUE(probe.wholeImageMatches(sampled));
+        EXPECT_TRUE(lender->probe(1U).valid()) << "the shape the rebuild served has two colour attachments";
     }
 }
 

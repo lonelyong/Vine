@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <vsg/commands/CopyImageToBuffer.h>
+#include <vsg/core/Exception.h>
 #include <vsg/commands/Commands.h>
 #include <vsg/nodes/Group.h>
 #include <vsg/state/Buffer.h>
@@ -294,6 +295,26 @@ core::ImageLayout OffscreenTarget::depthSteadyLayout() const noexcept
     return render_pass;
 }
 
+core::TargetShape OffscreenTarget::shapeOf(const TargetLayout& layout)
+{
+    core::TargetShape shape;
+    shape.color_formats = layout.color_formats;
+    shape.depth_format  = layout.depth_format;
+    // The DEVICE formats the images and the render pass are actually built with: the engine's spelling is a
+    // projection (RGBA8 covers both a linear and an sRGB image), and a pipeline key cannot be built from a
+    // projection - an sRGB window surface and this linear target are not render-pass compatible (see
+    // RenderPassCompatibility).
+    for (const vine::graphics::RenderTarget::ColorFormat format : layout.color_formats)
+    {
+        shape.device_color_formats.push_back(static_cast<std::uint32_t>(toColorFormat(format)));
+    }
+    if (layout.depth_format.has_value())
+    {
+        shape.device_depth_format = static_cast<std::uint32_t>(toDepthFormat(layout.depth_format.value()));
+    }
+    return shape;
+}
+
 std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::Device> device,
                                                          const Layout&                layout)
 {
@@ -335,19 +356,7 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     // rather than passed on - loading an UNDEFINED image is not a policy choice, it is a bug. The one LOAD
     // that is not a bug is a BORROWED depth: it is the lender's image, in the lender's layout, holding what
     // the lender's pass wrote - so the depth is declared preserved and the plan refuses to clear it.
-    core::TargetShape shape;
-    shape.color_formats = layout.color_formats;
-    shape.depth_format  = layout.depth_format;
-    // The DEVICE formats the images and the render pass are actually built with: the engine's spelling is a
-    // projection (RGBA8 covers both a linear and an sRGB image), and a pipeline key cannot be built from a
-    // projection - an sRGB window surface and this linear target are not render-pass compatible (see
-    // RenderPassCompatibility).
-    for (const vine::graphics::RenderTarget::ColorFormat format : layout.color_formats) {
-        shape.device_color_formats.push_back(static_cast<std::uint32_t>(toColorFormat(format)));
-    }
-    if (layout.depth_format.has_value()) {
-        shape.device_depth_format = static_cast<std::uint32_t>(toDepthFormat(layout.depth_format.value()));
-    }
+    const core::TargetShape shape = shapeOf(layout);
     const bool                depth_borrowed = depth_source != nullptr;
     const core::PassClearPlan plan = core::planClearValues(shape, layout.clear, /*bootstrap*/ true,
                                                           /*depth_preserved*/ depth_borrowed);
@@ -1001,6 +1010,150 @@ OffscreenTarget::Resized OffscreenTarget::resize(std::uint32_t width, std::uint3
             vkDeviceWaitIdle(*d->device);
         }
         *custody = Attachments{};
+    }
+    return result;
+}
+
+OffscreenTarget::Rebuilt OffscreenTarget::rebuild(const TargetLayout& wanted, const core::FrameTimeline& timeline,
+                                                  core::RetirementQueue& retirement)
+{
+    Rebuilt result;
+    // Every path that decides "nothing is replaced" has to answer with the generation still in force, and
+    // there are five of them: one place to say it (a failure that forgot would look like a replacement).
+    const auto give_up = [&]() -> Rebuilt {
+        result.generation = d->generation;
+        return result;
+    };
+
+    // The PLAN decides, like it does for a resize. It is handed the shape this layout describes and the
+    // facts this target reports, so the arms that are not Rebuild are answered rather than assumed: a shape
+    // that matches (None, a resize, or the load-op repair of a target nobody has written yet) means this
+    // call has no structural work - and a shape change outranks those repairs (see core::planTarget).
+    const core::TargetShape shape = shapeOf(wanted);
+    result.decision               = core::planTarget(
+        instance(), core::TargetDesc{ static_cast<int>(wanted.width), static_cast<int>(wanted.height), shape });
+    if (result.decision.action != core::TargetAction::Rebuild)
+    {
+        return give_up();
+    }
+
+    // The lease refusal a resize makes applies here for the same reason: every borrower's framebuffer names
+    // the LENDER's image, and a target does not know who its borrowers are. A borrowed depth is refused as
+    // well - this target's new pass would have to adopt an image whose extent and layout belong to a
+    // lender this call was not told about.
+    if (d->borrowers > 0U || d->depth_source != nullptr)
+    {
+        result.refused = true;
+        return give_up();
+    }
+
+    // What the new pass does to its attachments, from the same function create starts a fresh target with:
+    // a rebuilt target's images are as fresh as a created target's, so every attachment must clear - and a
+    // description that says otherwise (a colour attachment that is loaded, an own depth that is loaded) is
+    // refused exactly where create refuses it.
+    const core::PassClearPlan plan = core::planClearValues(shape, wanted.clear, /*bootstrap*/ true,
+                                                           /*depth_preserved*/ false);
+    for (const core::AttachmentClear& attachment : plan.colors)
+    {
+        if (attachment.load != core::LoadOp::Clear)
+        {
+            return give_up();
+        }
+    }
+    if (plan.has_depth && plan.depth.load != core::LoadOp::Clear)
+    {
+        return give_up();
+    }
+
+    // The new pass, under the bootstrap variant's key. The steady depth layout comes from the WANTED shape
+    // (this target's own fields still describe the old one until the build below).
+    const core::ImageLayout           steady_depth = core::depthFinalLayout(shape, wanted.depth_sampleable);
+    const core::LoadOpVariantKey      key =
+        core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly, steady_depth, steady_depth);
+    ::vsg::ref_ptr<::vsg::RenderPass> pass =
+        makeOffscreenRenderPass(d->device, wanted.color_formats, wanted.depth_format, key);
+    if (pass == nullptr)
+    {
+        return give_up();
+    }
+
+    // Install the new shape BEFORE the build, because buildAttachments answers from the target's own fields
+    // (the shape, the depth format, the clear policy and the pass its framebuffer names) - and put every one
+    // of them back when the build fails: a rebuild that failed leaves the target serving the shape it had,
+    // exactly like a resize. `buildAttachments` writes only into `built`, so nothing else can have moved.
+    const core::TargetShape                 previous_shape      = std::move(d->shape);
+    const std::optional<vine::graphics::RenderTarget::DepthFormat> previous_depth = d->depth_format;
+    const bool                              previous_sampleable = d->depth_sampleable;
+    const core::ClearPolicy                 previous_clear      = d->clear_policy;
+    const ::vsg::ref_ptr<::vsg::RenderPass> previous_pass       = d->render_pass;
+    d->shape            = shape;
+    d->depth_format     = wanted.depth_format;
+    d->depth_sampleable = wanted.depth_sampleable;
+    d->clear_policy     = wanted.clear;
+    d->render_pass      = pass;
+
+    Attachments built;
+    bool        built_ok = false;
+    try
+    {
+        built_ok = buildAttachments(wanted.width, wanted.height, built);
+    }
+    catch (const ::vsg::Exception&)
+    {
+        // vsg THROWS from a framebuffer the driver refuses (Framebuffer::create), and the promise above -
+        // "a build that fails leaves the target as it was" - has to hold for that failure too.
+        built_ok = false;
+    }
+    if (!built_ok)
+    {
+        d->shape            = std::move(previous_shape);
+        d->depth_format     = previous_depth;
+        d->depth_sampleable = previous_sampleable;
+        d->clear_policy     = previous_clear;
+        d->render_pass      = previous_pass;
+        return give_up();
+    }
+
+    Attachments previous = std::move(d->attachments);
+    d->attachments       = std::move(built);
+    d->width             = wanted.width;
+    d->height            = wanted.height;
+    // Fresh images, so the facts move with them: nothing has been recorded yet (the next pass in clears,
+    // see written) and the invalidation belonged to the OLD attachments - "the plan said Rebuild" is
+    // already the fact that makes the next writer clear (see core::FrameCompiler's freshAttachments).
+    d->written                 = false;
+    d->attachments_invalidated = false;
+    ++d->generation;
+    result.replaced   = true;
+    result.generation = d->generation;
+
+    // The old shape's load-op variants go with the old attachments: their render passes were built from the
+    // OLD formats, and a pass of the new shape must not be handed one of them (the keys carry the load ops,
+    // not the formats - that is what makes them reusable within one shape and wrong across two). The key
+    // the new pass was built under is the only variant the target serves from here.
+    std::vector<Data::PassVariant> previous_variants = std::move(d->variants);
+    d->variants.clear();
+    d->variants.push_back(Data::PassVariant{ key, pass });
+
+    // What was replaced may still be named by a frame in flight, and for a rebuilt target that is TWO kinds
+    // of object: the attachments (images, the framebuffer, the graphs) - and the old RENDER PASSES, which a
+    // recorded render pass instance names directly. Parking them together is what keeps both alive for the
+    // window a submission may still need them (see the declaration; no window means a COUNTED device idle).
+    struct Replaced
+    {
+        Attachments                    attachments;
+        std::vector<Data::PassVariant> passes;
+    };
+    auto custody  = std::make_shared<Replaced>(Replaced{ std::move(previous), std::move(previous_variants) });
+    result.parked = retirement.retire(timeline, [custody]() { *custody = Replaced{}; });
+    if (!result.parked)
+    {
+        retirement.noteDeviceWait();
+        if (d->device != nullptr)
+        {
+            vkDeviceWaitIdle(*d->device);
+        }
+        *custody = Replaced{};
     }
     return result;
 }

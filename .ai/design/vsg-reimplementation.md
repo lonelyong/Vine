@@ -72,10 +72,10 @@
 > M8c-3 名字即来源（§11.16aj）、M8c-4 全屏集合即声明（§11.16ak）、M8d-1 材质贴图的 GPU 侧（§11.16al）、
 > M8d-2 变体的 define 进管线身份（§11.16am）、M8e 三张表的生产侧（§11.16an）、M8f 半片的生产侧（§11.16ao）、
 > M8g 一个 drawable 的图一个集合（§11.16ap）、M8h 声明集合的生产侧（§11.16aq）、M8i 一帧两次调用（§11.16ar）、
-> M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）。
+> M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）、M8l 形状变了就是真的重建（§11.16au）。
 > 下一步：
-> Rebuild 臂（形状变了 ⇒ 重建渲染通道 / 帧缓冲 / 按它编译的管线——今天只有 Repair 与 ResizeInPlace 是真实路径）。
-> 其余遗留口子：`Viewer::recordAndSubmit` 吞掉的队列 `VkResult`（真·设备丢失回来的那一层）、租约的「重建借用方」、浮点颜色读回。
+> 帧驱动把计划的答案（resize / rebuild）真的应用到目标上（今天由宿主 / 测试应用），并把队列提交的 `VkResult` 接进 `submit` 那道缝。
+> 其余遗留口子：executor 的 shape 核对只看得见颜色附件数与深度可采样性（**格式变化看不见**）、`skyMap` 无生产者、集合与半片停靠窗口各自独立。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2619,7 +2619,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8i（一帧收成两次调用）~~ | **已完成（2026-09-22）**：`api/ContentAssembly`（beginFrame = 块预算 + 表；record = 半片 + 集合 + 每 pass 注册表 + 输入集合 + 一次 `ContentPass::record`；构造自带动态状态入口点；`facts()/halves()/sets()`）；真设备用例 = 只用两次调用的整帧 + 第二帧计数全不动（`frames()` 证块预算按帧开）；4/4 变异反证红（§11.16ar）。 |
 | ~~M8j（丢掉的提交，下一帧修一次）~~ | **已完成（2026-09-22）**：`VsgExecutor::noteLostSubmission(frame)`（只标该帧 pass 真正点到的离屏目标；下一份计划答 `Repair(Bootstrap)`、第一个 bootstrap pass 清标志）；真设备用例（记录 → 标 1 个 → 下帧 `bootstrap` ✓ → 记录后清 ✓ → 别的目标不动 ✓）；变异反证红（§11.16as）。 |
 | ~~M8k（提交这一步自己说）~~ | **已完成（2026-09-22）**：`VsgExecutor::submit(frame, viewer)`（记录 → 提交 → **失败即标记**：`noteLostSubmission` + 报 `SubmissionFailed` + 答 false；vsg 的异常词表两种都接——`vsg::Exception` 不是 std::exception）＋ SDK 分类表按它自己写明的规则在 `Count` 前追加 `SubmissionFailed`；真设备用例（成功的提交 ⇒ 清屏色真的在像素里、无标记；失败 ⇒ **只有它写过的**目标被标 + 拒绝计数 +1；下帧计划 `bootstrap` ✓）；4/4 变异反证红 + 一次"只留 std::exception 分支"的变异也红（§11.16at）。 |
-| **M8 下一步** | **Rebuild 臂**：形状变了（附件数 / 格式 / 深度 / 样本）要重建渲染通道、帧缓冲与按它编译的管线——今天只有 Repair 与 ResizeInPlace 是真实路径；随后是会话/插件侧的帧驱动，把队列提交返回的 `VkResult` 接进 `submit` 那道缝。 |
+| ~~M8l（形状变了就是真的重建）~~ | **已完成（2026-09-22）**：`OffscreenTarget::rebuild(wanted, timeline, retirement)`（渲染通道 + 全部 load-op 变体 + 附件一起重建，旧的**连 pass 一起停靠**（记录过的 `vkCmdBeginRenderPass` 直接点名它）；lease 两向拒；构建失败一个字段都不动）+ `core::planTarget` 次序改为**形状变化先于 load-op 修复**；设备相位（1 色 8×4 ⇒ 2 色 + D32F 16×12；附件 0 / 附件 1 / 深度三条读回；compatibility 真的变了；`pending()==1`、`deviceWaits()==0`）+ lease 两向拒绝用例 + 2 条次序用例；变异 5/5 红（次序复原 / 新形状不装 / 事实不重置 / 旧变体留着 / 直接销毁不停靠）+ 一次**用例抓不住、门禁 VUID 抓住**（18 条）；门禁 639 用例 / 98 套件、0 VUID（§11.16au）。 |
+| **M8 下一步** | 帧驱动把计划的答案（resize / rebuild）真的应用（今天由宿主 / 测试应用），并把队列提交返回的 `VkResult` 接进 `submit` 那道缝。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3533,3 +3534,36 @@ vsg 自己的词表是异常（命令缓冲建不出来就抛 `vsg::Exception`�
 
 **这一片留下的口子**：①`Viewer::recordAndSubmit()` 吞掉的最后一层——队列提交返回的 `VkResult`（真·设备丢失正是这样回来的）宿主与会话都看不见；
 等自己的帧驱动（会话的 commit 或插件侧）落地时，这条结果要接到 `submit` 同一道缝上；②Rebuild 臂；③`skyMap` 仍无生产者；④集合与半片的停靠窗口各自独立。
+
+### 11.16au M8l（2026-09-22）：形状变了就是真的重建（Rebuild 臂）
+
+`planTarget` 的 `Rebuild` 一直是"计划说得出、没人做得到"的一臂：换尺寸有 `resize`（ResizeInPlace），而**形状**
+（附件数 / 格式 / 深度 / 样本 / 子通道）变了要重建渲染通道、帧缓冲**和按它编译的管线**——没有第二条路径。
+
+这一片补上它：
+
+* **`OffscreenTarget::rebuild(wanted, timeline, retirement)`**：被替换的是渲染通道**和它的每个 load-op 变体**
+  （那些 pass 是按旧格式建的、`vkCmdBeginRenderPass` 直接点名）、镜像 / 视图 / 回读缓冲 / 帧缓冲 / 图；被保留的是
+  lease（两向都拒，理由与 `resize` 相同：借用方的帧缓冲点名出借方的镜像）；被**停靠**的是旧附件**和旧渲染通道**
+  （这是 `resize` 不需要、重建必须做的一半）。新附件是刚建的 ⇒ `written=false`、`generation+1`、下一份计划答
+  `Repair(Bootstrap)`。构建失败（含驱动拒绝帧缓冲时 vsg 抛的 `vsg::Exception`）⇒ 一个字段都不动，目标继续服务旧形状。
+* **`core::planTarget` 的次序改了**：形状变化现在**先于** load-op 修复判定。Repair 的定义是"没有 GPU 对象要改，
+  第一趟进来清屏"——一旦渲染通道要重建，这句话就是假的；而重建后的新附件下一份计划照样答 Bootstrap，先答 Rebuild
+  不丢任何信息。经典情形：宿主在第一帧之前就把格式改了（`built=false` + 形状变化），旧次序会把兼容性变化吞进
+  "Bootstrap"。
+
+证据：新设备相位（真设备 + 验证层）——先按旧形状（1 色、8×4）真画一帧，再 `rebuild` 成 **2 色 + D32F、16×12**：
+计划答 `Rebuild`、`generation=1`、`written=false`、`passVariantCount()==1`（旧变体随旧 pass 一起走）、
+`shape()` / `instance()` 都变成新形状而且 **compatibility 真的不一样**（管线键的判据）、旧图被停靠
+（引用计数不变 + `pending()==1` + `deviceWaits()==0`）；第二帧只用新形状的图渲染：附件 0 = 新清屏色、
+**附件 1 = 透明黑**（plan 的额外附件规则）、深度回读 = reverse-Z 远平面——三条读回证明新 pass / 帧缓冲真的有两个颜色
+和一个深度；相位行按 `rebuilds_replaced` 计数门禁（门禁相位 9 → 10 行 / 2 次运行）。另加 lease 两向拒绝的真设备用例
+（borrower 消失后同一调用重建，且重建后的 lender 能再次出借）+ 次序表的 2 条无设备用例。
+变异 5/5 红（次序复原 / 新形状不装 / 事实不重置 / 旧变体留着 / 直接销毁不停靠）+ 一次"不装新 pass"的变异
+**用例抓不住、门禁抓住**：18 条 VUID（`VkFramebufferCreateInfo-attachmentCount-00876`、
+`VkRenderPassBeginInfo-renderPass-00904`），像素照过——"兼容性主张像素抓不住"的老教训在新臂上重演。
+门禁 639 用例 / 98 套件、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 848。
+
+**这一片留下的口子**：①**谁在每帧应用计划的答案**（`resize` / `rebuild` 今天仍由宿主或测试调用；帧驱动落地时接上，
+到时"编译用的是新形状、目标还是旧形状"要在录制前挡住——executor 现有的 shape 核对只看**颜色附件数与深度可采样性**，
+格式变化它看不见）；②`Viewer::recordAndSubmit` 吞掉的队列 `VkResult`；③`skyMap` 仍无生产者；④集合与半片的停靠窗口各自独立。

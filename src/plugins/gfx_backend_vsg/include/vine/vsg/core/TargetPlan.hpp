@@ -125,8 +125,10 @@ struct TargetDecision
 /** @brief Decides what has to happen to @p current so it can serve @p wanted.
  *
  * Precedence is deliberate: an unusable extent decides before a shape change (there is nothing to
- * rebuild for a 0x0 target), and a shape change decides before a resize (compatibility wins over
- * extent).
+ * rebuild for a 0x0 target), a shape change decides before a resize (compatibility wins over
+ * extent), and a shape change also decides before the load-op repairs - "the first pass in clears"
+ * is an instruction about attachments, and a rebuild replaces the pass those attachments belong
+ * to (its fresh attachments answer Bootstrap on the next plan).
  *
  * @param current What the backend has now.
  * @param wanted What this frame wants.

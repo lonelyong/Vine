@@ -407,6 +407,62 @@ class OffscreenTarget
     [[nodiscard]] Resized resize(std::uint32_t width, std::uint32_t height, const core::FrameTimeline& timeline,
                                  core::RetirementQueue& retirement);
 
+    /** @brief What a plan-driven shape change did (see @ref rebuild). */
+    struct Rebuilt
+    {
+        core::TargetDecision decision{};      ///< The plan's own answer (`planTarget`).
+        bool                 replaced{false}; ///< The shape really changed and is now served.
+        bool                 refused{false};  ///< A depth lease blocked it (see the declaration of rebuild).
+        bool                 parked{false};   ///< The replaced objects went to the retirement queue.
+        std::uint64_t        generation{0};   ///< The generation in force when the call returned.
+    };
+
+    /** @brief Makes the target serve a new SHAPE, the way the plan says (`core::planTarget`).
+     *
+     * WHAT A SHAPE IS, AND WHY THIS CANNOT BE A RESIZE. Extent, formats, depth format and attachment
+     * count divide the world twice: the images and the framebuffer exist at an extent, while the render
+     * pass and every pipeline compiled against it exist at a COMPATIBILITY - the formats, the depth and
+     * the subpass structure (`core::TargetShape`). A resize moves the first and must leave the second
+     * alone (a pipeline compiled for this target stays the pipeline for it). A shape change is the
+     * opposite: the render pass, its load-op variants and every pipeline keyed on its compatibility are
+     * no longer valid, so they are REBUILT here, and a caller that had compiled pipelines for the old
+     * shape has to compile them again - which it can tell from `shape()`, whose compatibility half just
+     * changed.
+     *
+     * THE PLAN DECIDES, and the arms are the same ones `resize` serves: the wanted description is the
+     * layout this call carries, the current one is @ref instance, and nothing is touched unless the
+     * answer is `Rebuild`. That includes the case a rebuild-only path would miss: a target that has
+     * never been written into (or whose attachments were invalidated) answers `Repair(Bootstrap)` for an
+     * unchanged shape and `Rebuild` when the shape differs - the classic "the host changed the formats
+     * before the first frame" - so the load-op repair cannot hide a compatibility change.
+     *
+     * WHAT IS REPLACED, WHAT IS KEPT, AND WHAT IS PARKED. Replaced: the render pass and every load-op
+     * variant of it, the images, their views, the copy-back buffers and nodes, the framebuffer and the
+     * graphs built around it. Kept: nothing that named the old shape - the depth lease is refused in
+     * both directions for the same reason a resize refuses it (the borrower's framebuffer names the
+     * lender's image, and this target does not know who its borrowers are). Parked: what was replaced,
+     * through @p retirement, because a submission still in flight may name the old attachments AND the
+     * old render pass (a recorded `vkCmdBeginRenderPass` names it) - freeing either here is exactly the
+     * destruction the queue exists to prevent. Without a parking window the release runs under a counted
+     * device wait, the same fallback `resize` takes.
+     *
+     * WHAT THE TARGET IS AFTERWARDS. It behaves like a freshly created one with the new shape: the next
+     * compiled plan answers `Repair(Bootstrap)` for it (see @ref written), the generation moved, and
+     * `instance()` / @ref shape report the new shape - which is what the frame's facts and a pipeline
+     * key are built from.
+     *
+     * @param wanted    The shape and extent the target has to serve (its clear policy is taken for the
+     *                  rebuilt attachments' clear values).
+     * @param timeline  The frame timeline the park is dated against (the caller's own clock).
+     * @param retirement Where the replaced objects go (the caller owns it, like its device waits).
+     * @return What happened: the plan's decision, whether the shape was replaced, whether a lease
+     *         refused it, whether the old objects were parked, and the generation in force afterwards.
+     *         An action of `Rebuild` without `replaced` says the build itself failed (a description the
+     *         driver refused): the target still serves the shape it had.
+     */
+    [[nodiscard]] Rebuilt rebuild(const TargetLayout& wanted, const core::FrameTimeline& timeline,
+                                  core::RetirementQueue& retirement);
+
   private:
     struct Data;
     // Lexically after Data so the out-of-line destructor is the only place that needs the complete type.
@@ -461,6 +517,17 @@ class OffscreenTarget
         ::vsg::ref_ptr<::vsg::Framebuffer>                   framebuffer;
         ::vsg::ref_ptr<::vsg::RenderGraph>                   render_graph;
     };
+
+    /** @brief Builds a layout's shape in both spellings (the engine's and the device's).
+     *
+     * One spelling for one fact: `create` and @ref rebuild both start from a layout, and a shape that
+     * carried the engine's formats but not the device's (or the other way round) would give the plan and
+     * a pipeline key two different answers about the same target.
+     *
+     * @param layout The layout to describe.
+     * @return The shape: attachment formats, depth format, samples and subpass.
+     */
+    [[nodiscard]] static core::TargetShape shapeOf(const TargetLayout& layout);
 
     /** @brief Builds everything whose description contains the extent (images, views, copy-back, framebuffer).
      *

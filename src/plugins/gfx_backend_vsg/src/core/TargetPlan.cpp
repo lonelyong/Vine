@@ -39,18 +39,22 @@ TargetDecision planTarget(const TargetInstance& current, const TargetDesc& wante
         return {TargetAction::Repair, RepairReason::SizeUnknown};
     }
 
-    // 2. Nothing usable yet (never built, or invalidated): the first pass in has to clear, because an
+    // 2. Compatibility changed: render pass, framebuffers and every pipeline compiled against them are
+    //    no longer valid. This OUTRANKS the load-op repairs below, because those repairs are instructions
+    //    about attachments: "no GPU object changes, the first pass in clears" is a lie once the pass
+    //    itself has to be rebuilt - and the rebuild's fresh attachments answer Repair(Bootstrap) on the
+    //    very next plan anyway, so nothing is lost by deciding it first. Rebuild also wins over a
+    //    simultaneous extent change.
+    if (!(current.desc.shape == wanted.shape))
+    {
+        return {TargetAction::Rebuild, RepairReason::None};
+    }
+
+    // 3. Nothing usable yet (never built, or invalidated): the first pass in has to clear, because an
     //    UNDEFINED colour image cannot be loaded.
     if (!current.built || current.attachments_invalidated)
     {
         return {TargetAction::Repair, RepairReason::Bootstrap};
-    }
-
-    // 3. Compatibility changed: render pass, framebuffers and every pipeline compiled against them are
-    //    no longer valid. Rebuild wins over a simultaneous extent change.
-    if (!(current.desc.shape == wanted.shape))
-    {
-        return {TargetAction::Rebuild, RepairReason::None};
     }
 
     // 4. Same shape, new extent: replace the images and views, re-point what names them, and keep the
