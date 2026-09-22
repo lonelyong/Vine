@@ -102,11 +102,8 @@ bool describeAbi(const ProgramAbi& abi, std::vector<::vsg::ref_ptr<::vsg::Descri
             // and the diffuse map side by side, and a set is a set whatever kind of binding it holds. What
             // this layer refuses is a KIND it has no view for - anything but `sampler2D` and `samplerCube`,
             // which are the two shapes a texture has (see api/MaterialImages) - and an array of samplers
-            // (each binding carries one image here) - plus ONE name: `skyMap` is the frame's environment,
-            // and the environment image has not landed, so a program that samples it is better refused than
-            // compiled against a stand-in that would show something nobody authored (see api/ContentImages).
-            if (binding.kind == AbiDescriptorKind::OtherSampler || binding.count != 1U ||
-                imageOriginOf(binding.name) == ImageOrigin::Environment)
+            // (each binding carries one image here).
+            if (binding.kind == AbiDescriptorKind::OtherSampler || binding.count != 1U)
             {
                 return false;
             }
@@ -465,6 +462,14 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi&
         }
         if (binding.kind == AbiDescriptorKind::UniformBlock && binding.role != AbiBlockRole::ShadowBlock)
         {
+            return nullptr;
+        }
+        if (binding.kind == AbiDescriptorKind::SamplerCube)
+        {
+            // The full-screen ABI binds the SOURCE's attachments and depth: 2D views, one per binding, so a
+            // text declaring a cube asks for an image this ABI has nowhere to take from (a cube map is a
+            // CONTENT drawable's own map - see api/ContentImages). Refused here rather than filled with a 2D
+            // view, which is an invalid descriptor at draw time.
             return nullptr;
         }
     }

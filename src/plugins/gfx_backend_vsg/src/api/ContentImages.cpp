@@ -6,17 +6,15 @@ V_VSG_NS_BEGIN
 
 ImageOrigin imageOriginOf(std::string_view name) noexcept
 {
-    // The three names the engine's ABI reserves (see vine::graphics::ShaderAbi): the drawable's own map, the
-    // frame's environment and the map a pass resolves. Every OTHER name is a texture the pass' inputs offer -
-    // the engine's screen programs (albedo_tex, normal_tex, spec_tex, pos_tex, screen_tex) are all of that
-    // kind, and so is any name a host invents for a picture it declared as an input.
-    if (name == std::string_view("diffuseMap"))
+    // The names the engine's programs spend: the DRAWABLE's own map - `diffuseMap` on the content programs
+    // and `skyMap` on the sky program, which samples the sky box's own cube map out of its MATERIAL (see
+    // builtin_skybox.frag: "the ABI's diffuseMap slot") - and the map a pass resolves (`shadow_map`). Every
+    // OTHER name is a texture the pass' inputs offer - the engine's screen programs (albedo_tex, normal_tex,
+    // spec_tex, pos_tex, screen_tex) are all of that kind, and so is any name a host invents for a picture it
+    // declared as an input.
+    if (name == std::string_view("diffuseMap") || name == std::string_view("skyMap"))
     {
         return ImageOrigin::Material;
-    }
-    if (name == std::string_view("skyMap"))
-    {
-        return ImageOrigin::Environment;
     }
     if (name == std::string_view("shadow_map"))
     {

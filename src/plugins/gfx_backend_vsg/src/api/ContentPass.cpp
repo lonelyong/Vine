@@ -229,15 +229,8 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
         }
         if (found == nullptr)
         {
-            for (const BlockDescriptors* candidate : scope_.block_sets)
-            {
-                if (fits(candidate))
-                {
-                    return refuse("its material samples a texture the caller's sets were not built from "
-                                  "(see BlockDescriptors::ImageSource)");
-                }
-            }
-            return refuse("its program declares a set the caller built no matching set for");
+            return refuse("its material samples a texture the caller's sets were not built from "
+                          "(see BlockDescriptors::ImageSource)");
         }
         half_blocks_[half_block_count_++] = found;
     }
@@ -700,7 +693,8 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
         }
         // A binding the layout declares (the text names it) that neither the source nor the map fills: the
         // text samples something this pass does not offer, said by NAME rather than left to read undefined
-        // data (a material's map and the environment are the two names this can be).
+        // data (a material's own map is the name this can be: a full-screen call has no drawable to take
+        // one from).
         reportRefused("a full-screen drawing call", "it samples a texture this pass does not offer at the "
                                                     "binding its text declares");
         return false;
@@ -854,7 +848,11 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // caller's sets are tagged with the same pair (see BlockDescriptors::ImageSource - MaterialImages
     // acquires images by exactly this key), so a pass serving two textured drawables of one variant picks
     // each one's own map instead of the first set whose shape fits.
-    BlockDescriptors::ImageSource demanded;
+    //
+    // VALUE-initialised on purpose: the pair is indeterminate when the material has no texture, and a set
+    // key built from a stale pointer would file this drawable under ANOTHER one's images (ImageSource has no
+    // default member initialisers - see its own note - so the `{}` is the initialisation).
+    BlockDescriptors::ImageSource demanded{};
     if (material.entry->texture != nullptr)
     {
         demanded.texture  = material.entry->texture;

@@ -50,9 +50,12 @@ AbiBinding sampler(const char* name, std::uint32_t set, std::uint32_t binding)
 
 TEST(ContentImagesTest, TheNameStatesWhereTheImageComesFrom)
 {
-    // The three names the engine's ABI reserves, and the catch-all the engine's screen programs live in.
+    // The names the engine's programs spend, and the catch-all the engine's screen programs live in. The
+    // drawable's own map is ONE row under two names: `diffuseMap` on the content programs and `skyMap` on
+    // the sky program, which samples the sky box's own cube map out of its material (see builtin_skybox.frag:
+    // "the ABI's diffuseMap slot").
     EXPECT_EQ(imageOriginOf("diffuseMap"), ImageOrigin::Material);
-    EXPECT_EQ(imageOriginOf("skyMap"), ImageOrigin::Environment);
+    EXPECT_EQ(imageOriginOf("skyMap"), ImageOrigin::Material);
     EXPECT_EQ(imageOriginOf("shadow_map"), ImageOrigin::Shadow);
     for (const char* name : { "albedo_tex", "normal_tex", "spec_tex", "pos_tex", "screen_tex", "map_tex", "" })
     {

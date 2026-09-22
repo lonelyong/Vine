@@ -42,8 +42,7 @@
  * program's DECLARED bindings (api/ProgramAbi) and builds every set from them - dynamic uniform bindings for
  * the L1 blocks, one sampler per declared sampled input - plus the push ranges the text declares. A program
  * that declares nothing this backend can fill (a foreign block, an oversized or non-std140 block, an
- * unsupported sampler, a `skyMap` whose environment image has not landed) is REFUSED rather than compiled
- * against a layout nobody can feed.
+ * unsupported sampler) is REFUSED rather than compiled against a layout nobody can feed.
  *
  * THE SAMPLED-INPUT SET. A key also says how many colour attachments the pass' declared inputs offer
  * (`sampled_color_count`), and those textures are bound in a set of their own - set 1, right after the block
@@ -153,8 +152,6 @@ class ContentPipeline
      *   * a role block that declares MORE bytes than the L1 struct carries (the bytes past the struct are not
      *     the ABI's: the block is bound with a range that ends there);
      *   * an `OtherSampler` (the images this backend binds are float 2D and cube views);
-     *   * a program that samples the frame's environment (`skyMap`): that image has not landed, so there is no
-     *     descriptor to declare for it;
      *   * a sampler binding the key's input count does not cover (checked in @ref acquire, where the count is
      *     known); a sampler in any OTHER set is the caller's to fill, and the caller's to get wrong.
      *
@@ -220,7 +217,9 @@ class ContentPipeline
      *     second set for this ABI to bind;
      *   * the only BLOCK it may declare is the shadow's (`VineShadowBlock`): a full-screen program's lights
      *     travel in its 128-byte push block, so any other L1 block names bytes nothing would write;
-     *   * a sampler is a `sampler2D` and never the environment (`skyMap` - see api/ContentImages).
+     *   * a sampler is a `sampler2D`: bindings 0..N-1 are the source's attachments and the depth follows -
+     *     2D views, so a text declaring a cube asks for an image this ABI has nowhere to take from (a cube
+     *     map is a CONTENT drawable's own map, see api/ContentImages and builtin_skybox.frag).
      *
      * WHERE THE IMAGES COME FROM is the pass', not a caller's: the source's colour attachments occupy
      * bindings 0..N-1 (the ABI's own convention: "binding i is attachment i"), the source's depth takes

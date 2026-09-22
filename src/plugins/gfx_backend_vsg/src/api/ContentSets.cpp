@@ -161,9 +161,19 @@ struct ContentSets::Data
             {
                 detail::TextureReject reason = detail::TextureReject::Ok;
                 map = images->acquire(static_cast<const vine::graphics::Texture*>(key.source.texture), reason);
-                if (reason != detail::TextureReject::Ok || key.source.empty())
+                // The DECLARED kind is the contract a descriptor write has to satisfy: a cube declaration
+                // cannot take a 2D view and a 2D declaration cannot take a view of a six-layer image (an
+                // invalid descriptor, not a wrong picture - see MaterialImages' fallback note). A map that is
+                // absent, unusable or of the OTHER kind is therefore answered with the DECLARED kind's white
+                // - "no usable map" is a VALUE here, the same way it is for an absent texture - and counted,
+                // so a host can see that its material did not fit the text it was drawn with.
+                const bool cube_declared = isCube(binding);
+                const bool cube_image    = map.view != nullptr && map.view->viewType == VK_IMAGE_VIEW_TYPE_CUBE;
+                if (key.source.empty() || reason != detail::TextureReject::Ok || map.view == nullptr ||
+                    cube_declared != cube_image)
                 {
                     ++fallbacks;
+                    map = cube_declared ? images->whiteCube() : images->white();
                 }
                 break;
             }
@@ -177,11 +187,9 @@ struct ContentSets::Data
                 break;
             }
             case ImageOrigin::Input:
-            case ImageOrigin::Environment:
             {
-                // An Environment declaration never reaches a layer (ContentPipeline refuses it); an
-                // Input-named sampler inside a DECLARED set is unusual but expressible - it takes the pass'
-                // images in the order the pass' own input set binds them.
+                // An Input-named sampler inside a DECLARED set is unusual but expressible - it takes the
+                // pass' images in the order the pass' own input set binds them.
                 map = walk.next(entry.pipelines->inputSampler());
                 break;
             }
@@ -260,8 +268,11 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
             }
 
             // The images this drawable asks for: its material's texture at the revision that texture is at
-            // (the pair api/MaterialImages keys by, and the tag the pass picks a set by).
-            BlockDescriptors::ImageSource source;
+            // (the pair api/MaterialImages keys by, and the tag the pass picks a set by). VALUE-initialised:
+            // a material with no texture states NO source, and an indeterminate pair here filed such a
+            // drawable under the previous one's texture (ImageSource has no default member initialisers -
+            // see its own note - so the `{}` is the initialisation).
+            BlockDescriptors::ImageSource source{};
             if (material.entry->texture != nullptr)
             {
                 source.texture  = material.entry->texture;

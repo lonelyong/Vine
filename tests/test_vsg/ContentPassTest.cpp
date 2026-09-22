@@ -19,8 +19,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <vsg/app/CommandGraph.h>
@@ -4551,4 +4553,253 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
         << "the RIGHT drawable samples ITS material's texel (green), got (" << static_cast<int>(right_half.r)
         << ", " << static_cast<int>(right_half.g) << ", " << static_cast<int>(right_half.b)
         << ") - one colour twice means one set served both drawables";
+}
+
+
+TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
+{
+    // The SDK's OWN sky program (`BuiltinShaders::skyboxProgram`) names its map `skyMap`, and the sky box
+    // carries that map in its MATERIAL (see builtin_skybox.frag: "the material's texture ... the ABI's
+    // diffuseMap slot"). This case pins what that name resolves to: the DRAWABLE's own map - one geometry
+    // channel of directions, one cube map, nothing assembled by hand - so the authored direction decides
+    // which face is read, a material with no map takes the DECLARED kind's white, and a map of the other
+    // kind (a 2D texture where the text declares `samplerCube`) is answered the same way instead of being
+    // written into the slot as an invalid descriptor. Until `skyMap` was read as the drawable's map the
+    // whole program was refused where its layer would be built.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout target_layout;
+    target_layout.width  = kSize;
+    target_layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    ASSERT_NE(target, nullptr);
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+
+    // The cube: six 4x4 faces in Vulkan's layer order, each a solid colour - the size is what keeps a face's
+    // colour pure (a face sampled at its centre is one texel of it; 1x1 faces bleed across the seams under
+    // the cache's LINEAR filter).
+    constexpr int kFaceSize = 4;
+    const vine::intrusive_ptr<vine::graphics::CubeMap> sky_cube(
+        new vine::graphics::CubeMap(kFaceSize, vine::imaging::PixelFormat::Rgba8Unorm));
+    const std::uint8_t face_colors[6][4]{ { 255U, 0U, 0U, 255U },      // PosX: red
+                                          { 0U, 255U, 0U, 255U },      // NegX: green
+                                          { 0U, 0U, 255U, 255U },      // PosY: blue
+                                          { 255U, 255U, 0U, 255U },    // NegY: yellow
+                                          { 255U, 0U, 255U, 255U },    // PosZ: magenta
+                                          { 0U, 255U, 255U, 255U } };  // NegZ: cyan
+    for (int face = 0; face < sky_cube->faceCount(); ++face) {
+        auto image = vine::intrusive_ptr<vine::imaging::Image>(
+            new vine::imaging::Image(kFaceSize, kFaceSize, vine::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        for (std::size_t texel = 0; texel < pixels.size() / 4U; ++texel) {
+            for (std::size_t byte = 0; byte < 4U; ++byte) {
+                pixels[texel * 4U + byte] = static_cast<std::byte>(face_colors[face][byte]);
+            }
+        }
+        sky_cube->setSource(face, vine::intrusive_ptr<const vine::imaging::Image>(image));
+    }
+
+    // A 2D texture for the mismatch row: it is complete and uploadable, and it still cannot fill a cube
+    // declaration - so the picture must be the declared kind's white (and the sets layer counts it).
+    const vine::intrusive_ptr<vine::graphics::Texture2D> flat_texture(
+        new vine::graphics::Texture2D(1, 1, vine::imaging::PixelFormat::Rgba8Unorm));
+    {
+        auto image = vine::intrusive_ptr<vine::imaging::Image>(
+            new vine::imaging::Image(1, 1, vine::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        pixels[0]                          = std::byte{ 0U };
+        pixels[1]                          = std::byte{ 255U };
+        pixels[2]                          = std::byte{ 0U };
+        pixels[3]                          = std::byte{ 255U };
+        flat_texture->setImage(vine::intrusive_ptr<const vine::imaging::Image>(image));
+    }
+
+    // Two direction quads: the same positions, and a texcoord channel that is a DIRECTION (three components
+    // per vertex - what selects the sky text's cube branch). All four corners carry the SAME direction, so
+    // the whole draw samples one face: the face the direction points at.
+    const auto make_direction_quad = [](float x, float y, float z) {
+        const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+        const std::vector<float>            positions{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F,
+                                                       1.0F,  1.0F,  0.0F, -1.0F, 1.0F,  0.0F };
+        std::vector<float>                  directions;
+        for (int corner = 0; corner < 4; ++corner) {
+            directions.push_back(x);
+            directions.push_back(y);
+            directions.push_back(z);
+        }
+        geometry->setPositions(
+            vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(positions)));
+        geometry->setTexcoords3(
+            vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(directions)));
+        geometry->setIndices(vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
+            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+        geometry->setRevision(1U);
+        return geometry;
+    };
+    const vine::intrusive_ptr<Geometry> to_posz = make_direction_quad(0.0F, 0.0F, 1.0F);
+    const vine::intrusive_ptr<Geometry> to_posx = make_direction_quad(1.0F, 0.0F, 0.0F);
+
+    const vine::intrusive_ptr<ShaderProgram> sky_program = vine::graphics::skyboxProgram();
+    ASSERT_NE(sky_program, nullptr);
+
+    const vine::intrusive_ptr<Material> sky_material(new Material());   // the sky box: the cube IS its map
+    sky_material->setTexture(sky_cube);
+    const vine::intrusive_ptr<Material> bare_material(new Material());  // no map at all
+    const vine::intrusive_ptr<Material> flat_material(new Material());  // a map of the other kind
+    flat_material->setTexture(flat_texture);
+
+    vine::vsg::ContentStore store;
+    store.track(to_posz);
+    store.track(to_posx);
+    store.track(sky_program);
+    store.track(sky_material);
+    store.track(bare_material);
+    store.track(flat_material);
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+        std::printf("[sky] diagnostic: severity=%d category=%d message=%s\n", static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
+                    std::string(reinterpret_cast<const char*>(diagnostic.message.data()), diagnostic.message.size()).c_str());
+    });
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    TargetFacts target_facts;
+    target_facts.target        = target.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+    clear.depth          = true;
+    clear.depth_value    = 0.0F;
+
+    // The camera the sky stage's push block is packed from: an ortho camera over the quads' own square, so
+    // the draw covers its whole strip.
+    const vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 1.5), vine::math::Vec3d(0.0, 0.0, 0.0),
+                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+
+    RenderCommand posz_command;
+    posz_command.geometry = to_posz;
+    posz_command.material = sky_material;
+    posz_command.program  = sky_program;
+    RenderCommand posx_command;
+    posx_command.geometry = to_posx;
+    posx_command.material = sky_material;
+    posx_command.program  = sky_program;
+    RenderCommand bare_command;
+    bare_command.geometry = to_posz;
+    bare_command.material = bare_material;
+    bare_command.program  = sky_program;
+    RenderCommand flat_command;
+    flat_command.geometry = to_posz;
+    flat_command.material = flat_material;
+    flat_command.program  = sky_program;
+
+    constexpr int kStrip = static_cast<int>(kSize) / 4;
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target.get());
+    recorder.setClearPolicy(clear);
+    recorder.setViewport(0 * kStrip, 0, kStrip, static_cast<int>(kSize));
+    recorder.render(std::vector<RenderCommand>{ posz_command }, camera.get());
+    recorder.setViewport(1 * kStrip, 0, kStrip, static_cast<int>(kSize));
+    recorder.render(std::vector<RenderCommand>{ posx_command }, camera.get());
+    recorder.setViewport(2 * kStrip, 0, kStrip, static_cast<int>(kSize));
+    recorder.render(std::vector<RenderCommand>{ bare_command }, camera.get());
+    recorder.setViewport(3 * kStrip, 0, kStrip, static_cast<int>(kSize));
+    recorder.render(std::vector<RenderCommand>{ flat_command }, camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws.size(), 4U);
+
+    const std::shared_ptr<vine::vsg::MaterialImages> images = vine::vsg::MaterialImages::create();
+    ASSERT_NE(images, nullptr);
+    VariantPool   pool;
+    vine::vsg::ContentAssembly assembly(store, created.device, pool, *storage, *images, diagnostics);
+    vine::vsg::core::FrameTimeline   timeline;
+    vine::vsg::core::RetirementQueue retirement(3U);
+
+    (void)assembly.beginFrame(frame, timeline, retirement);
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>  content_node;
+    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape().compatibility(), {}, view_block, content_node));
+    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 0U)
+        << "the SDK's own sky text is served, not refused";
+    // TWO halves, because a material without a map is a different VARIANT of the program (VINE_DIFFUSE_MAP);
+    // the text is the same either way, and the variant is what the tables key their entries by.
+    EXPECT_EQ(assembly.halves().halves(), 2U);
+    // THREE sets: the sky box's cube (one source for both directions), the bare material's empty source and
+    // the 2D map's own entry - each keyed by (program, revision, variant, set, map source).
+    ASSERT_EQ(assembly.sets().sets(), 3U);
+    EXPECT_EQ(assembly.sets().fallbacks(), 2U)
+        << "the absent map and the one of the wrong kind are both answered with the declared kind's white";
+
+    // A second frame of the same plan: every producer's counters stand still.
+    const std::uint64_t half_builds = assembly.halves().builds();
+    const std::uint64_t set_builds  = assembly.sets().builds();
+    (void)assembly.beginFrame(frame, timeline, retirement);
+    ::vsg::ref_ptr<::vsg::Node> steady_node;
+    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape().compatibility(), {}, view_block, steady_node));
+    EXPECT_EQ(assembly.halves().builds(), half_builds) << "a steady frame builds nothing";
+    EXPECT_EQ(assembly.sets().builds(), set_builds);
+    EXPECT_EQ(assembly.sets().sets(), 3U);
+    EXPECT_EQ(assembly.sets().fallbacks(), 2U) << "an answered fallback is not re-counted";
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(target.get(), target.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packet{ frame.passes[0].pass, content_node };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(&packet, 1U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const auto near = [](std::uint8_t byte, double expected) {
+        return std::abs(static_cast<double>(byte) - expected) <= 16.0;
+    };
+    const int row = static_cast<int>(kSize) / 2;
+    const Rgba8 posz = target->probe().pixel(0 * kStrip + kStrip / 2, row);
+    EXPECT_TRUE(near(posz.r, 255.0) && near(posz.g, 0.0) && near(posz.b, 255.0))
+        << "the direction (0, 0, 1) reads the cube's +Z face (magenta), got (" << static_cast<int>(posz.r) << ", "
+        << static_cast<int>(posz.g) << ", " << static_cast<int>(posz.b) << ")";
+    const Rgba8 posx = target->probe().pixel(1 * kStrip + kStrip / 2, row);
+    EXPECT_TRUE(near(posx.r, 255.0) && near(posx.g, 0.0) && near(posx.b, 0.0))
+        << "the direction (1, 0, 0) reads the +X face (red), got (" << static_cast<int>(posx.r) << ", "
+        << static_cast<int>(posx.g) << ", " << static_cast<int>(posx.b) << ")";
+    const Rgba8 bare = target->probe().pixel(2 * kStrip + kStrip / 2, row);
+    EXPECT_TRUE(near(bare.r, 255.0) && near(bare.g, 255.0) && near(bare.b, 255.0))
+        << "a material with no map is WHITE (the sky multiplies nothing), got (" << static_cast<int>(bare.r)
+        << ", " << static_cast<int>(bare.g) << ", " << static_cast<int>(bare.b) << ")";
+    const Rgba8 flat = target->probe().pixel(3 * kStrip + kStrip / 2, row);
+    EXPECT_TRUE(near(flat.r, 255.0) && near(flat.g, 255.0) && near(flat.b, 255.0))
+        << "a 2D map cannot fill a cube declaration: white of the DECLARED kind, not an invalid descriptor, got ("
+        << static_cast<int>(flat.r) << ", " << static_cast<int>(flat.g) << ", " << static_cast<int>(flat.b) << ")";
 }

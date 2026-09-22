@@ -75,10 +75,12 @@
 > M8j 丢掉的提交下一帧修一次（§11.16as）、M8k 提交这一步自己说它失败了（§11.16at）、M8l 形状变了就是真的重建（§11.16au）、
 > M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）、M8o 窗口路径一次调用（§11.16ax）、
 > M8p 每帧换图不再拆机器（§11.16ay）、M8q 丢帧的会话自己活下来（§11.16az）、
-> M8r 计划说的形状连格式一起核对（§11.16ba）、M8s 窗口的答案也有执行者（§11.16bb）。
+> M8r 计划说的形状连格式一起核对（§11.16ba）、M8s 窗口的答案也有执行者（§11.16bb）、
+> M8t `skyMap` 是 drawable 自己的图（§11.16bc）。
 > 下一步：
-> `skyMap` 生产者。
-> 其余遗留口子：集合与半片停靠窗口各自独立；窗口 `facts()` 的 live 采样与 `refresh()` 的成功臂今天没有可驱动的触发（登记）。
+> **门面**（`VsgBackend : RenderBackend`：SDK 的方法 → 帧驱动）的第一片；场景桥的登记项（`skyMap`）至此清空。
+> 其余遗留口子：集合与半片停靠窗口各自独立；窗口 `facts()` 的 live 采样与 `refresh()` 的成功臂今天没有可驱动的触发（登记）；
+> 设备半边在"某一侧没说"时跳过（登记）。
 >
 > v2 修订：按一份外部评审（20 条）重钉了 10 个 P0 定义（见 §2.5），改了架构图（§2.1 两个流 +
 > §2.2 六个对象 + §2.3 物理边界），并按评审重写了键的拆分（D3）、资源寿命（D4/D5）、
@@ -2630,7 +2632,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8q（丢帧的会话自己活下来）~~ | **已完成（2026-09-22）**：`Session::commitFrame()` 的失败分支重建 swapchain（`window->resize()`：vsg 的 `buildSwapchain()` 先 `vkDeviceWaitIdle` 再换链）+ **把这次 idle 计进 `deviceWaits()`**；真设备用例（同一会话丢帧后**下一帧就位**：`commit` 答 true、被标的目标在它的 bootstrap 趟里清掉、像素 = 清屏色、`framesPresented`+5、`lostFrames==1`、`deviceWaits==1`、报告恰好一条；两次运行各 0 VUID）+ 3/3 变异红（不重建 ⇒ 10 条 VUID；不计数 ⇒ 红；每帧都重建 ⇒ 红，还连带 8 个会话用例红）（§11.16az）。 |
 | ~~M8r（计划说的形状，连格式一起核对）~~ | **已完成（2026-09-22）**：`core::CompiledShape`（形状的兼容性半边，编译器用 `arena.copy` 抄进帧的 arena ⇒ 计划里没有指向宿主 facts 的 span、也不每帧分配）+ `CompiledTarget::shape` + `core::statedShapeAgrees`（引擎半边每份计划都说了 ⇒ 直接比；**设备半边只在两边都说了时比**）；`recordOffscreen` / `recordWindow` 都接上（窗口那趟现在拿到 `CompiledTarget`）；无设备用例（计划的副本是它自己的 + 判定表逐行）+ 两条真设备用例（离屏：数目相同的引擎格式漂移、引擎相同的设备格式漂移各拒一次、说真话即录；窗口：同样的事 + 说真话后**呈递**，`deviceWaits()==0`）；当场修掉两处旧夹具的谎话；变异 **5/5 红**（不抄形状 ⇒ 75 行红、无条件下比设备半边 ⇒ 51 行红）（§11.16ba）。 |
 | ~~M8s（窗口的答案也有执行者）~~ | **已完成（2026-09-22）**：`WindowTarget::facts()` 把 "想要" 与 "已有" 分开（wanted = swapchain 现在的 live 采样、current = 记录被建时的形状 ⇒ 平台换了格式就是 `Rebuild`，不再被静默记进旧兼容性的通道）+ `WindowTarget::refresh()`（重新采样，变了才替换；**唯一能写这份形状的是平台**）+ `applyTargetPlans` 的窗口臂（`Rebuild` ⇒ 问平台：变了 ⇒ `rebuilt`，没变 ⇒ `failed`；`ResizeInPlace` 无事可做）；真设备用例（稳定帧四计数全 0 且录得进去；说谎的帧 ⇒ `failed==1`、主张未被采纳、`record` 拒录；再说真话 ⇒ 录进去并呈递、`deviceWaits()==0`）+ 3/3 变异红（§11.16bb）。 |
-| **M8 下一步** | `skyMap` 生产者。 |
+| ~~M8t（`skyMap` 是 drawable 自己的图）~~ | **已完成（2026-09-23）**：名字表改正——`skyMap` 与 `diffuseMap` 同一行（`Material`，引擎自带天空程序的文本自己写着它是 material 的纹理、在同 ABI 的 diffuse 槽），`Environment` 行与那一整套拒绝删除；材质图的**种类必须对得上声明的采样器**（`ContentSets` 按声明的种类给 fallback、不一致 ⇒ 声明的白 + 计数；`createScreen` 拒 cube 声明）；顺手抓到并修掉**两处未初始化的 `ImageSource`**（没贴图的材质被按上一个 drawable 的纹理归档）；真设备用例 = 引擎自带 `skyboxProgram` 四个方向条带（+Z 洋红 / +X 红 / 无图白 / 2D 图配 cube 声明 ⇒ 白）+ 计数器；变异 **5/5 红**（其中两条带 6 / 2 条 VUID）（§11.16bc）。 |
+| **M8 下一步** | **门面**（`VsgBackend : RenderBackend`）的第一片。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3766,3 +3769,35 @@ M8m 的 `applyTargetPlans` 把默认帧缓冲整支跳过（"尺寸属于 surfac
 **本片留下的口子（登记）**：①窗口 `facts()` 的 live 采样与 `refresh()` 的**成功臂**今天没有可驱动的触发（宿主换格式被拒、宿主重建走整会话
 Rebuild）——它的可观测形态需要一条"平台真的换了形状"的宿主路径（或一个能重建 surface 的测试缝），那时两者会同时被观测；②`skyMap` 仍无
 生产者；③集合与半片停靠窗口各自独立；④设备半边在"某一侧没说"时跳过（M8r 的登记不变）。
+
+### 11.16bc M8t（2026-09-23）：`skyMap` 是 drawable 自己的图——引擎自带天空程序落地
+
+M8c-3 把 `skyMap` 读成"帧级环境"并在建层处拒掉，理由是"环境图没落地"。这一片纠正这个名字：**`skyMap` 就是 drawable 自己的图**，
+证据在引擎自己的文本里——`builtin_skybox.frag` 写着 "The material's texture, at the binding every content program samples
+it from (set 0 / binding 1, the ABI's `diffuseMap` slot)"，`AppShellDemo` 的天空盒也是把自己的 cube 放进 material 再挂
+`skyboxProgram()`。所以 `imageOriginOf("skyMap") == Material`（与 `diffuseMap` 同行），`ImageOrigin::Environment` 这一行、
+`describeAbi` 的拒绝、`ContentSets` 的那条分支一起删除：**引擎自带的天空程序从"建层即拒"变成能画**。
+
+**种类必须对得上声明的采样器**，这是这一片新立的规矩（demo 的注释里提到的那件事）：
+
+* `ContentSets` 的 Material 行按**声明的种类**给 fallback（cube 声明 ⇒ `whiteCube()`，2D 声明 ⇒ `white()`），并且当图是**另一种
+  种类**时同样给声明的白 + 计一次 fallback（"不可用的图"是值；把 2D 视图写进 cube 声明是**非法描述符**，不是"没有贴图"）。
+* `createScreen` 收紧：全屏 ABI 绑的是源的附件与深度（2D 视图），文字声明 `samplerCube` ⇒ 拒（cube 图是内容侧 drawable 自己的）。
+
+**顺手抓到一个真缺陷**（就是本片用例抓的）：`BlockDescriptors::ImageSource` 故意没有成员初始化器，而两处 `ImageSource x;`
+忘了 `{}`——`ContentSets` 里"这次 drawable 要哪张图"的局部量与 `ContentPass` 里的 `demanded`。结果：**没贴图的材质会被按上一个
+drawable 的纹理归档**（栈上的残留值）。实测形态：天空盒用例里"无图"那条的集合根本没建成（键撞上前一个 drawable 的图），pass 随后
+按"材质要的图不在调用方的集合里"拒绘。两处都改成 `{}` 并写明理由。
+
+证据（真设备，`ContentPassTest.TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap`）：四个方向条带、同一趟、只经过 `ContentAssembly`
+的两条直路（不手建任何集合）——
+
+* 方向 (0,0,1) ⇒ cube 的 +Z 面**洋红**；(1,0,0) ⇒ +X 面**红**（插值通道就是方向，全角同方向 ⇒ 整条只采一个面）；
+* 无图的材质 ⇒ **白**（声明的 cube 种类的白 cube，不是 2D 白）；2D 图配 cube 声明 ⇒ 也**白**，且 `sets().fallbacks() == 2`；
+* 计数器：`halves() == 2`（有图/无图两个变体）、`sets() == 3`（cube 一张、无图一张、2D 一张）、稳态帧全不动；两次运行各 **0 VUID**。
+无设备行同步更新：名字表（`skyMap` ⇒ Material）、cube/2D 的 `skyMap` 层建得起来、全屏 cube 声明被拒。变异 5/5 红：①名字表不认
+`skyMap`；②fallback 不看声明种类（**6 条 VUID**）；③不一致不检查（**2 条 VUID**）；④`ImageSource` 又未初始化（复现上面的缺陷）；
+⑤全屏 cube 声明放行。门禁 **650 用例 / 98 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 849、相位 11 行 / 2 次运行。
+
+**本片留下的口子（登记）**：①天空"跟随相机/当作无穷远"是宿主的事（demo 的盒子是静态的，内容 push ABI 里没有视图旋转）；②集合与
+半片停靠窗口各自独立、窗口 live 采样与 `refresh()` 成功臂不可驱动、设备半边"某一侧没说就跳过"（皆是旧口子）。

@@ -294,6 +294,16 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     ASSERT_NE(layer, nullptr) << "the full-screen pair must compile";
     EXPECT_EQ(layer->kind(), vine::vsg::core::DrawKind::Screen);
 
+    // A CUBE declaration is refused HERE, unlike a content layer's: the full-screen ABI binds the SOURCE's
+    // attachments and depth - 2D views, one per binding - so a text declaring a cube asks for an image this
+    // ABI has nowhere to take from (a cube map is a content drawable's own map, see api/ContentImages).
+    ContentPipeline::Shaders cube_screen = screenShaders();
+    cube_screen.fragment                = "#version 450\n"
+                                          "layout(location = 0) out vec4 out_color;\n"
+                                          "layout(set = 0, binding = 0) uniform samplerCube sky;\n"
+                                          "void main() { out_color = texture(sky, vec3(0.0, 0.0, 1.0)); }\n";
+    EXPECT_EQ(screenLayer(cube_screen), nullptr);
+
     // The text declares `layout(binding = 0) uniform sampler2D picture;` - so the SET IS THE TEXT'S: a pass
     // whose source offers no attachment still binds binding 0 (the picture could be the map, or something a
     // text of its own declares), and `layoutFor(0, 0)` is that set plus the push range.
@@ -661,13 +671,18 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
     EXPECT_EQ(map_in_a_block_set->samplerBindings(0U)[0], 1U);
     EXPECT_TRUE(map_in_a_block_set->samplerBindings(1U).empty());
 
-    // A sampler kind this backend has no view for (a cube map arrives with the texture work).
+    // A sampler kind this backend has no view for (neither 2D nor cube).
     EXPECT_EQ(layerDeclaring("layout(set = 1, binding = 0) uniform sampler3D volume_tex;"), nullptr);
-    EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 1) uniform samplerCube skyMap;"), nullptr);
-    // ... and the frame's environment: `skyMap` is the name that reserves it (api/ContentImages), and that
-    // image has not landed, so a 2D declaration of it is refused like the cube one - compiling it against a
-    // stand-in would show a picture nobody authored.
-    EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 1) uniform sampler2D skyMap;"), nullptr);
+    // A CUBE declaration is SERVED: the engine's sky program samples the sky box's own cube map out of its
+    // material, and the by-name policy hands the drawable's own texture to `skyMap` exactly as it does to
+    // `diffuseMap` (api/ContentImages) - the cube view itself comes from api/MaterialImages.
+    auto cube_map = layerDeclaring("layout(set = 0, binding = 1) uniform samplerCube skyMap;");
+    ASSERT_NE(cube_map, nullptr);
+    EXPECT_EQ(cube_map->samplerBindings(0U).size(), 1U);
+    EXPECT_EQ(cube_map->samplerBindings(0U)[0], 1U);
+    // ... and the 2D declaration of the same name is the pair branch the sky program also ships.
+    auto flat_sky = layerDeclaring("layout(set = 0, binding = 1) uniform sampler2D skyMap;");
+    ASSERT_NE(flat_sky, nullptr);
 
     // A block that reads a PREFIX of the L1 struct is fine: the range it is bound with covers what it reads.
     auto prefix = layerDeclaring("layout(set = 0, binding = 0, std140) uniform VineLightsBlock { vec4 light0; } lights;");

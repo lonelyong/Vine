@@ -18,23 +18,25 @@
  *
  * WHY A NAME TABLE AND NOT A SET INDEX. A program's text says where its samplers live (`layout(set = ...,
  * binding = ...)`) and what they are CALLED, and the layer serves the text as written (see api/ProgramAbi).
- * The engine's own programs spend the names this way: `diffuseMap` is the drawable's own texture,
- * `shadow_map` is the map its pass declared, `skyMap` is the frame's environment, and every other name
- * (`albedo_tex`, `normal_tex`, `spec_tex`, `pos_tex`, `screen_tex`, ...) is a texture an earlier pass
+ * The engine's own programs spend the names this way: `diffuseMap` is the drawable's own texture, `skyMap`
+ * is the drawable's own texture TOO (the sky box carries its map in its material and the sky program names
+ * that map `skyMap` - see builtin_skybox.frag), `shadow_map` is the map its pass declared, and every other
+ * name (`albedo_tex`, `normal_tex`, `spec_tex`, `pos_tex`, `screen_tex`, ...) is a texture an earlier pass
  * produced - one of the pass' declared INPUTS. The NAME is the contract: the same name in different sets is
  * the same thing, and a set index is only where a text happens to put it (the engine puts the material, the
  * diffuse map and the shadow map in one set, and a G-buffer's four pictures in another).
  *
- * WHAT THE LAYER ENFORCES TODAY, and what it hands the caller. Two rows have a producer inside this backend:
- *   * `Environment` (`skyMap`): the environment image has not landed, so a program that samples it is REFUSED
- *     where the pipeline would be built (ContentPipeline::create) rather than compiled against a stand-in
- *     that would show something the host did not author.
- *   * `Shadow` (`shadow_map`): the map is the one the pass' plan resolved (see api/ContentImages.hpp's
- *     `shadowImageOf`), and a pass whose plan resolved one reports a program that declares none - the map
- *     would never reach its drawables otherwise, silently.
+ * WHAT THE LAYER FILLS TODAY, and who owns each row. ONE row has its producer inside this backend:
+ *   * `Shadow` (`shadow_map`): the map is the one the pass' plan resolved (`shadowImageOf`), and a pass whose
+ *     plan resolved one reports a program that declares none - the map would never reach its drawables
+ *     otherwise, silently.
  * The other two rows are the CALLER's, because the caller is the one that owns the image:
- *   * `Material` (`diffuseMap`): the material's own texture, or the white fallback when it has none
- *     (api/WhiteImage - "no map" is WHITE, not an unwritten binding).
+ *   * `Material` (`diffuseMap` AND `skyMap`): the DRAWABLE's own texture. The engine's sky program names the
+ *     sky box's own cube map `skyMap` and samples it at the ABI's material slot, which is the same slot
+ *     `diffuseMap` names on every other content program. A material without a usable texture takes the
+ *     white fallback OF THE DECLARED KIND (api/WhiteImage, api/MaterialImages::whiteCube - "no map" is
+ *     WHITE, not an unwritten binding, and a 2D view where the text declares `samplerCube` is an invalid
+ *     descriptor rather than an untextured draw).
  *   * `Input`: the pass' declared inputs, in declaration order - input by input, each one's colour
  *     attachments in attachment order and then its depth, the same order the pass' own input set binds them.
  *   * ... and a `shadow_map` with no resolved map takes the SAME white stand-in: the engine's programs read
@@ -61,10 +63,9 @@ struct InputImages
 /** @brief Where a declared sampler binding takes its image from (the by-name policy of the file note). */
 enum class ImageOrigin
 {
-    Material,     ///< The drawable's own texture, or the white fallback (`diffuseMap`).
-    Environment,  ///< The frame's environment image (`skyMap`); not built yet, so refused where it is declared.
-    Shadow,       ///< The map the pass' plan resolved (`shadow_map`); a pass without one takes the white stand-in.
-    Input,        ///< Any other name: a texture the pass' declared inputs offer, in declaration order.
+    Material,  ///< The drawable's own texture, or the white fallback of the declared kind (`diffuseMap`, `skyMap`).
+    Shadow,    ///< The map the pass' plan resolved (`shadow_map`); a pass without one takes the white stand-in.
+    Input,     ///< Any other name: a texture the pass' declared inputs offer, in declaration order.
 };
 
 /** @brief Gets where a declared sampler's @p name takes its image from.
