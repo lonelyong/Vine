@@ -76,10 +76,11 @@
 > M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）、M8o 窗口路径一次调用（§11.16ax）、
 > M8p 每帧换图不再拆机器（§11.16ay）、M8q 丢帧的会话自己活下来（§11.16az）、
 > M8r 计划说的形状连格式一起核对（§11.16ba）、M8s 窗口的答案也有执行者（§11.16bb）、
-> M8t `skyMap` 是 drawable 自己的图（§11.16bc）、M9a 门面立起来（§11.16bd）。
+> M8t `skyMap` 是 drawable 自己的图（§11.16bc）、M9a 门面立起来（§11.16bd）、M9b pass 协议接到内容层（§11.16be）。
 > 下一步：
-> **门面第二片**：pass 协议（`beginPass`/`endPass`/`setViewport`/清屏/`render`）接到内容层，让宿主经 SDK 真的画出内容；
-> 再往下是离屏目标 / 读回与工厂切换；场景桥的登记项（`skyMap`）至此清空。
+> **门面第三片**：离屏目标（`supportsRenderTargets()` 转真、`setRenderTarget(target)` 建/换 GPU 附件、`setPassInputs` 绑定、
+> `drawScreenProgram` 与读回），或先把**工厂切到门面**（把 "vsg" 这个名字从旧实现换成 `VsgBackend`）。
+> 场景桥的登记项（`skyMap`）至此清空；其余遗留口子见下。
 > 其余遗留口子：集合与半片停靠窗口各自独立；窗口 `facts()` 的 live 采样与 `refresh()` 的成功臂今天没有可驱动的触发（登记）；
 > 设备半边在"某一侧没说"时跳过（登记）。
 >
@@ -2635,7 +2636,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8s（窗口的答案也有执行者）~~ | **已完成（2026-09-22）**：`WindowTarget::facts()` 把 "想要" 与 "已有" 分开（wanted = swapchain 现在的 live 采样、current = 记录被建时的形状 ⇒ 平台换了格式就是 `Rebuild`，不再被静默记进旧兼容性的通道）+ `WindowTarget::refresh()`（重新采样，变了才替换；**唯一能写这份形状的是平台**）+ `applyTargetPlans` 的窗口臂（`Rebuild` ⇒ 问平台：变了 ⇒ `rebuilt`，没变 ⇒ `failed`；`ResizeInPlace` 无事可做）；真设备用例（稳定帧四计数全 0 且录得进去；说谎的帧 ⇒ `failed==1`、主张未被采纳、`record` 拒录；再说真话 ⇒ 录进去并呈递、`deviceWaits()==0`）+ 3/3 变异红（§11.16bb）。 |
 | ~~M8t（`skyMap` 是 drawable 自己的图）~~ | **已完成（2026-09-23）**：名字表改正——`skyMap` 与 `diffuseMap` 同一行（`Material`，引擎自带天空程序的文本自己写着它是 material 的纹理、在同 ABI 的 diffuse 槽），`Environment` 行与那一整套拒绝删除；材质图的**种类必须对得上声明的采样器**（`ContentSets` 按声明的种类给 fallback、不一致 ⇒ 声明的白 + 计数；`createScreen` 拒 cube 声明）；顺手抓到并修掉**两处未初始化的 `ImageSource`**（没贴图的材质被按上一个 drawable 的纹理归档）；真设备用例 = 引擎自带 `skyboxProgram` 四个方向条带（+Z 洋红 / +X 红 / 无图白 / 2D 图配 cube 声明 ⇒ 白）+ 计数器；变异 **5/5 红**（其中两条带 6 / 2 条 VUID）（§11.16bc）。 |
 | ~~M9a（门面立起来：会话生命周期 + 空帧驱动）~~ | **已完成（2026-09-23）**：`api/VsgBackend`（`VsgBackend : vine::graphics::RenderBackend`，PImpl）——引擎与重写版之间的缝：`initialize()` 由公告（宿主句柄、尺寸、默认程序）建会话并交给执行器；`beginFrame/endFrame/swapBuffers` 走会话的帧协议（**空帧照样编译、录制、呈递**）；`setWindowHandle/nativeHandle`、`resize` 是公告（下次起会话时生效、活着时报一次）；诊断走核心的**一条**路（会话自己的报告由 SDK 的 sink 与 `diagnosticCount()` 看到，门面不重复报）；画的一半（pass/离屏/内容/全屏/读回）**每处报一次"还没服务"**（`core::ReportOnce`），`supportsRenderTargets() == false`（引擎在摆离屏工作**之前**就知道）。真设备用例两条：①无会话开帧 ⇒ 报一次；三次空帧 ⇒ `framesPresented()==3`、`deviceWaits()==0`、健康会话零报告；三趟 pass 回路 ⇒ **恰好 4 条**报告（`endPass` 与会话内的 `beginPass` 同一条情节）；活着的 `resize` 报一次；再 `initialize()` ⇒ 计数归零；双 `shutdown()` 后再起来照样呈递；②宿主面被采纳、**换另一个宿主面不重建会话**（帧号 2→3 连续），两次关闭后两个宿主窗口都还活着。**本片撞出的真问题**：空帧若提交**空命令图**，被 acquire 的图像停在 `UNDEFINED` ⇒ 呈递 **VUID 01430**（实测 16 行，gtest 全绿）——把图像搬出 `UNDEFINED` 的是**窗口那棵 render graph**（会话自己那张初始化期的图里就有它）；修法 = 计划为空时不换图、直接 `commit` 会话自己的图。变异 **4/4 红**（不呈递 ⇒ 5 行 + 6 VUID；又交空图 ⇒ 16 VUID；不报告 ⇒ 3 行；`supportsRenderTargets` 说谎 ⇒ 3 行）（§11.16bd）。 |
-| **M9 下一步** | **门面第二片**：pass 协议接到内容层（`beginPass/endPass/setViewport/setClearPolicy/render` → `api::FrameRecorder` + `ContentAssembly`），让宿主经 SDK 画出内容；再往下是离屏目标 / 读回与工厂切换。 |
+| ~~M9b（pass 协议接到内容层）~~ | **已完成（2026-09-23）**：`VsgBackend` 把 SDK 的 pass 协议翻进计划录制器——`beginPass` 经新的 `api/PassRegistry`（SDK 的 pass 对象 → `core::PassId`，**号永不复用**、`releasePass()` 只忘身份）交给 `core::FrameRecorder`，`endPass/setPassOrder/setRenderTarget(nullptr)/setViewport/setClearPolicy/setDepthMode/setLights/render` 全部照收；**帧外的调用**（引擎的 pre-frame warm-up：每个 enabled 非清屏 pass 在**任何帧之前**执行一次）按 SDK 契约**惰性**——只有 pass 身份留下；`render()` 顺带把命令点名的 geometry/material/program 追踪进 `ContentStore`（默认程序在 `initialize` 时追）；`swapBuffers` 现在**真的组装内容**（`ContentAssembly`：开块预算 + 表 → 每趟 pass 的半片/集合/输入/视图块 → `executor.record(frame, graph, packets)`），视图块按**该趟的相机 + 帧时钟 + 窗口尺寸**建，兼容性取窗口自己的形状。**本片撞出的真缺陷**：执行器的窗口臂把每帧内容**累加**进保留视图（`addContent`）——两帧之间移动相机就能看见"上一帧的画还在"且组无边增长；修法 = `WindowTarget::beginFrame()`（帧首清掉**本帧内容组**，宿主的会话根不动）+ `addFrameContent()`，执行器在**本帧第一趟窗口 pass** 调它（空帧不调：上一幅画照旧被呈递）。真设备用例（warm-up 惰性 + 身份跨帧、像素里读到相机 x / 窗口尺寸 / 清屏色、第二帧"稳态零构建"、第三帧换相机 ⇒ 左半旧画**消失**、右半新画就位、`deviceWaits()==0`、pass 释放即重发得新号）+ 无设备 `PassRegistryTest`；变异 **7/7 红**（不换帧内容/不组装内容/不开范围/丢清屏色/不追踪对象/不释放身份/warm-up 进录制器）。门禁 **655 用例 / 100 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 856、相位 11 行 / 2 次（§11.16be）。 |
+| **M9 下一步** | **门面第三片**：离屏目标 / 读回 / 全屏程序（`supportsRenderTargets()` 转真），或先把工厂切到门面。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3853,3 +3855,73 @@ PImpl）不自己决定任何事——它把 SDK 的调用翻成对已有件的�
 **本片留下的口子（登记）**：①门面今天的计划永远是空的（画的一半全部拒绝），所以"有 pass 的帧"那条驱动形状要等
 门面第二片才真被用过；②活着的 `resize` 只报不改（会话 swapchain 的形状只有平台能换采样）；③集合与半片停靠窗口
 各自独立、窗口 `facts()` 的 live 采样与 `refresh()` 成功臂不可驱动、设备半边"某一侧没说就跳过"（皆是旧口子）。
+
+### 11.16be M9b（2026-09-23）：pass 协议接到内容层——宿主经 SDK 真的画出内容
+
+M9a 立起来的是"骨架"：会话起来、空帧呈递、画的一半一律报"还没服务"。这一片把**画的那一半**接上：SDK 的
+pass 协议（`beginPass/endPass/setPassOrder/setViewport/setClearPolicy/setDepthMode/setLights/render`）翻进计划
+的**收集段**（`core::FrameRecorder`），`swapBuffers()` 再把编译好的计划交给**内容世界**（`ContentAssembly`）组装
+并录制。至此一条真实的宿主路径成立：`beginPass` → … → `render(commands, camera)` → `endFrame` → `swapBuffers`
+画出内容并被会话呈递。
+
+**pass 的身份：`api/PassRegistry`（新件）**。SDK 的 pass 身份是**对象**（它的 `beginPass()` 注释写着"retain 了
+per-pass GPU 状态的后端按这个对象作键"），计划的身份是**小整数**（`core::PassId`：计划、执行器内容包、录制日志
+都按它索引）。注册表就是这两者之间的那一层：同一个对象**终生同一个号**（warm-up 里第一次公告与第一帧里公告
+拿到的是同一个号）；**号永不复用**——死 pass 的号可能还留在某处（正在录制的计划、执行器的日志），发给新 pass
+会让那些记忆描述错的对象；`releasePass()` 只**忘身份**（今天没有按键保留的 GPU 状态，"释放"就是这一件事）。
+
+**帧外的调用 = 惰性，但身份留下**。引擎在 `initialize()` 之后、**任何帧之前**跑一次 warm-up：每个 enabled、
+非清屏的 pass 完整执行一遍（`beginPass` → per-pass 状态 → `render` → `endPass`），好让后端把保留状态准备好。
+这个语义下这些调用**不是协议错误**：本层只把 pass 身份注册下来（跨帧有效），收集段一律不碰；有帧在开时才对
+录。判罚留给 recorder 自己的协议（比如"帧里不带范围就画"⇒ 它拒并报 `PassProtocolViolation`，每帧一次）。
+
+**内容世界随会话生灭**。`initialize()` 在会话起来之后按它的设备建 `BlockStorage`/`MaterialImages`/
+`ContentStore`/`ContentAssembly`（以及跨帧复用的 `core::VariantPool`），`shutdown()` **先拆它们**再拆会话
+（GPU 对象属于那台设备）。`render()` 在收到调用时把命令点名的对象（geometry / material / program）**追踪**进
+store——对象对调用是借用的，而表要在计划录制时回答它们（store 自己持一份所有权，宿主随后释放自己的句柄也不
+悬空）；`setDefaultContentProgram()` 同时告诉 recorder（没有自己程序的命令按它画）和 store（表要回答它；SDK 给
+的是 `intrusive_ptr<const>`，store 要的是可变句柄——白名单式 `const_cast`，store 只读）。
+
+**清屏的翻译**：SDK 的策略是**字节 + 深度标志**，计划的是**浮点 + 深度值**（reverse-Z 远 = 0）。颜色按字节
+原样折算（不套传递函数——测试读出窗口时的约定），深度只带标志（SDK 没有深度值可给，给一个就是第二处会搞错
+裁剪约定的地方）。
+
+**每帧的内容驱动**（`swapBuffers()`，都在 `recordContent()` 一处）：计划里每个**画进窗口**（`target == nullptr`）
+且有绘制调用的 pass 产出一个内容包——按**声明的输入**数给等长的空 `InputImages`（内容录制器按声明逐项读，
+短一截会读过界；"没人提供"是它自己会报的事实），视图块按该趟第一个绘制调用的相机 + `Session::frameSeconds()`
++ 窗口的实时尺寸建，兼容性取窗口的形状；离屏 pass 不产包（执行器会报它，内容给了也没人录）。报告之后**内容
+替换**由 M9b 的缺陷修复负责（见下）。
+
+**本片撞出的真缺陷：窗口内容会在帧之间累加**。执行器的窗口臂把每趟 pass 的内容 `addContent` 进**保留**的视图
+（那是"稳定视图 id / 管线复用"要留的东西），但没有任何东西清它：第二帧会把第一帧的节点再画一遍、并且无限增长
+（既画错了画，又是内存漏）。以前的设备用例只驱动**一帧有内容的帧 + 若干无 pass 的帧**，所以看不见；M9b 的用例
+在两帧之间**移动相机**就一眼可见（左半的旧三角还在）。修法：`WindowTarget` 的视图下面添一个**本帧内容组**——
+`beginFrame()` 清它、`addFrameContent()` 往里加；执行器在每帧**第一趟窗口 pass**（就是它已经记着的那一处）调
+`beginFrame()`。**宿主的会话根不受影响**（`addContent()` 仍旧挂在视图上、活到会话结束），而**没有窗口 pass 的
+帧**（M9a 的空帧路径）不调它——所以空帧照旧把上一幅画**再呈递一次**（M8o 的用例依赖这个）。
+
+证据（真设备 `VsgBackendTest.TheSdkPassProtocolDrawsContentIntoTheWindow`，宿主窗口 128×96）：
+
+* **warm-up**：整段范围带 `render` 在帧外执行 ⇒ 零报告、零呈递，且注册表里已经有这个 pass（`live()==1`）；
+* **第一帧**：同一段范围在帧内执行 ⇒ 零报告；执行器 `recorded()` 里恰好一条、其号**就是** warm-up 那一个；
+  两帧 settle 后读像素：左半三角形（片元把 `cam_pos.x = 0.5`、窗口宽 128、高 96 编进三个色字节）＋右半清屏
+  （0, 0.25, 0）——视图块、清屏翻译、兼容性、追踪，一条链全被像素证明；
+* **第二帧**（同内容同相机）：`halves().builds()` 与 `sets().sets()` 都不动（稳态零构建）；
+* **第三帧**（相机移到 -0.5）：settle 后**左半变回清屏**（上一帧的画真的不在了）、右半出现新三角 —— 直指上面的
+  累积缺陷；`deviceWaits()==0`；
+* **身份生命周期**：`releasePass()` 后 `contains()==false`、`live()==0`；重新公告得到的是**新号**。
+* 无设备侧：`PassRegistryTest`（同对象同号、两对象不同号、释放只答一次、同一地址的新对象拿新号、null 不计）。
+
+`VsgBackendTest` 的第一个用例同步改写：pass 协议与内容不再报"未服务"（协议回路改由**帧内无范围**
+`render()` ⇒ recorder 报一次 `PassProtocolViolation` 来证），未服务清单缩到五种（离屏目标、pass 输入、全屏
+程序、两条读回、活着的 resize），每种重复调用**不再**重复报。
+
+变异 **7/7 红**：①帧首不换窗口内容（复现累积缺陷）；②不组装内容（只剩清屏）；③`beginPass` 不开范围（计划
+里没有 pass）；④清屏色不翻译；⑤命令对象不追踪（表回答不了 ⇒ 报告 + 拒录）；⑥`releasePass` 不留身份；⑦
+warm-up 的调用进了录制器（帧外调用变成一串拒判）。门禁 **655 用例 / 100 套件**、0 VUID / 0 SYNC-HAZARD、
+hygiene 0 / 856、相位 11 行 / 2 次运行。
+
+**本片留下的口子（登记）**：①离屏目标 / pass 输入 / 全屏程序 / 读回仍报"未服务"（下一片）；②门面仍不接
+`MaterialManager` 风格的材质编辑通知——`ContentStore::updateMaterial()` 存在但 SDK 的 `RenderBackend` 面里没有
+入口，等**工厂切换**时由宿主侧接线（登记）；③活着的 `resize` 只报不改；④集合与半片停靠窗口各自独立、窗口
+`facts()` 的 live 采样与 `refresh()` 成功臂不可驱动、设备半边"某一侧没说就跳过"（皆是旧口子）。

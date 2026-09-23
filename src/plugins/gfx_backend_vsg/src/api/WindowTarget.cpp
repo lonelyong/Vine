@@ -8,6 +8,7 @@
 #include <vsg/app/ViewMatrix.h>
 #include <vsg/app/Window.h>
 #include <vsg/maths/vec3.h>
+#include <vsg/nodes/Group.h>
 
 V_VSG_NS_BEGIN
 
@@ -60,7 +61,8 @@ struct WindowTarget::Data
 {
     ::vsg::ref_ptr<::vsg::Window>      window;
     ::vsg::ref_ptr<::vsg::RenderGraph> graph;
-    ::vsg::ref_ptr<::vsg::View>        content_view;  ///< The window's own view (see the file note).
+    ::vsg::ref_ptr<::vsg::View>        content_view;   ///< The window's own view (see the file note).
+    ::vsg::ref_ptr<::vsg::Group>       frame_content;  ///< THIS frame's recorded content (see beginFrame).
     core::TargetShape                  shape;
 };
 
@@ -111,6 +113,14 @@ std::unique_ptr<WindowTarget> WindowTarget::create(::vsg::ref_ptr<::vsg::Window>
     {
         return nullptr;
     }
+    // The frame's content goes into a group of its own, so a frame can REPLACE what the last one recorded
+    // without touching the session's root (see beginFrame / addContent).
+    target->d->frame_content = ::vsg::Group::create();
+    if (target->d->frame_content == nullptr)
+    {
+        return nullptr;
+    }
+    target->d->content_view->addChild(target->d->frame_content);
     graph->addChild(target->d->content_view);
 
     const VkExtent2D extent = window->extent2D();
@@ -145,6 +155,22 @@ void WindowTarget::prepare(const core::ClearPolicy& policy) noexcept
     else
     {
         d->graph->setClearValues(color);
+    }
+}
+
+void WindowTarget::beginFrame() noexcept
+{
+    if (d->frame_content != nullptr)
+    {
+        d->frame_content->children.clear();
+    }
+}
+
+void WindowTarget::addFrameContent(::vsg::ref_ptr<::vsg::Node> content) noexcept
+{
+    if (content != nullptr && d->frame_content != nullptr)
+    {
+        d->frame_content->addChild(content);
     }
 }
 

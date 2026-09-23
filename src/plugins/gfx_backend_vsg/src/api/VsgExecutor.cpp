@@ -258,6 +258,10 @@ bool VsgExecutor::recordWindow(const core::CompiledPass& pass, const core::Compi
     if (!window_recorded_)
     {
         window_->prepare(pass.clear);
+        // The window's content is THE FRAME'S: what the last recorded frame put in the retained view is
+        // dropped before this frame's lands (a second frame would otherwise draw its predecessor's
+        // picture again and never stop growing - see WindowTarget::beginFrame).
+        window_->beginFrame();
         // The window graph is wrapped when it is added - the first window pass of the frame - and its
         // interval covers the graph's whole record traversal, i.e. every window pass' content: the window
         // sample is the PRESENT PATH as a whole, not one view of the swapchain (see WindowTarget).
@@ -269,7 +273,7 @@ bool VsgExecutor::recordWindow(const core::CompiledPass& pass, const core::Compi
     {
         if (packet.pass == pass.pass && packet.content != nullptr)
         {
-            window_->addContent(packet.content);
+            window_->addFrameContent(packet.content);
         }
     }
     return true;

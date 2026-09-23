@@ -47,6 +47,7 @@ set(SRC_FILE_LIST
 	SessionTest.cpp
 	SessionMoveTest.cpp
 	VsgBackendTest.cpp
+	PassRegistryTest.cpp
 	GfxBackendVsgPluginTest.cpp
 	RenderStateMapperTest.cpp
 	CameraBridgeTest.cpp
@@ -161,6 +162,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/DeviceProbe.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/Session.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/VsgBackend.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/PassRegistry.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/StreamUploads.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/BlockStorage.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/BlockDescriptors.cpp

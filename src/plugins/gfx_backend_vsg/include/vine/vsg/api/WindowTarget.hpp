@@ -6,6 +6,7 @@
 #include <vsg/app/RenderGraph.h>
 #include <vsg/app/View.h>
 #include <vsg/core/ref_ptr.h>
+#include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>
 
 #include <vine/vsg/core/ClearPlan.hpp>
@@ -92,7 +93,24 @@ class V_VSG_API WindowTarget
      */
     void prepare(const core::ClearPolicy& policy) noexcept;
 
-    /** @brief Adds one pass' recorded content to the window's picture, in the order it is called. */
+    /** @brief Opens the window's content for one frame: the PREVIOUS frame's recorded content is dropped.
+     *
+     * The content a frame's passes record is THE FRAME'S, and this is where that becomes true: the retained
+     * view is what keeps the pipelines compiled and the view id stable (see the file note), so it must
+     * outlive the frame - but the nodes of a recorded picture must not. Without this the frames would stack:
+     * every recording would add to what the last one left, the window would keep drawing pictures nobody
+     * asks for any more, and the group would grow without bound.
+     *
+     * The session's own content root is NOT affected (it is attached with addContent when the session comes
+     * up and lives for the session), and a frame with no window pass at all does not call this - the last
+     * recorded picture stays on screen, which is what an empty frame presents (see api/Session).
+     */
+    void beginFrame() noexcept;
+
+    /** @brief Adds one pass' recorded content to THIS frame's picture, in the order it is called. */
+    void addFrameContent(::vsg::ref_ptr<::vsg::Node> content) noexcept;
+
+    /** @brief Adds content that stays for the session's life (the session's own root, see the file note). */
     void addContent(::vsg::ref_ptr<::vsg::Node> content) noexcept;
 
     /** @brief Gets the graph a window pass records into (the session's command graph holds it). */
