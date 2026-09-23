@@ -4472,3 +4472,35 @@ ThroughALiveResize` 在全量套件里偶发红（平台回旧几何；单独跑
 - 全量套件里"读窗口"的用例在**显示环境被占**时仍会红（单跑全绿、整套红一片；重跑一次也未必救得回来）。
   这是测试宿主的脆弱点，不是后端的画面问题；下一步要么让读窗口有可靠的同步点（会话自己的 presented 计数），
   要么把"整片窗口用例红"当成环境信号报告出来。
+
+### 11.16bq M10h（2026-09-24）：Release 构建进同一道门禁——并抓出"两个 device 同时活着"
+
+**做了什么（原计划第 2 条）**：`build-release/` 补齐 app + 插件并全量构建（`bin/Vine`、`plugins/vine/gfx_backend_vsg.so`），
+然后**用同一道门禁**判它：`bash scripts/vsg_rewrite_gate.sh build-release`。Release 与应用画面参数与 Debug **逐字相同**
+（`content 87.04% / 85.14%, preview 244`）。
+
+**Release 独有的两个红**（Debug 全绿、Release 全红，两次都一样）：
+`SessionTest.ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver`、
+`VsgBackendTest.TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItCannotServe`，
+都是 `Unknown C++ exception`（gtest 对非 `std::exception` 的说法）。用 gdb 抓住抛出点并手工解出 `vsg::Exception` 的
+`std::string`（Release 无调试信息）：**"Number of vsg:Device allocated exceeds number supported"**——
+即 **vsg 的 `VSG_MAX_DEVICES` 绊线响了**。
+
+**为什么 Debug 绿**：`build/CMakeCache.txt` 里 `VSG_MAX_DEVICES=4`（早前调试时手工设的，仓库里**没有任何地方**设它），
+而 `build-release` 用的是 vsg 的默认值 **1**。而这个 1 是**有意的**：插件 `CMakeLists.txt` 的注释写着"a path that did
+try to create one now throws instead of quietly working"——**它就是用来抓"同时存在两个 device"这类路径的**。
+⇒ Debug 的缓存把这个绊线**关掉了**，一路掩盖了缺陷。（方法教训：**"有意的"缓存项如果只在某个构建树里被手工改过，
+另一个树就是唯一的证人**；两棵树都要跑同一道门禁。）
+
+**缺陷与修法（两处，都是"旧 device 还没死就建新的"）**
+- `api/VsgBackend::initialize()` 先建新 session（= 新 device），**之后**才替换内容世界（`storage/images/assembly`），
+  而内容世界的 GPU 对象属于**旧 device** ⇒ 重叠。抽出 `releaseContentWorld()`，`initialize()` 与 `shutdown()` 共用，
+  `initialize()` **先拆后建**（宿主可能不调 `shutdown()` 直接再 `initialize()`）。
+- 用例自己握着上一轮的 `vsg::CommandGraph`（图 → window → device）跨过重新初始化 ⇒ 用例内先释放再 `initialize()`
+  （注释写明理由：宿主自己的引用是宿主的事）。
+
+**结果**：Release 全门禁绿（672×2 + hygiene + 阶段行 + 应用画面）；把 `build/` 缓存改回 `VSG_MAX_DEVICES=1` 重建后，
+**Debug 也全绿**——绊线在两个构建树里都武装上了（此后任何"两个 device"的路径都会当场抛异常，而不是在 Release 里偷偷失败）。
+
+**登记（仍未修）**：①`09600` / `03047` 两类（已按 VUID 具名进应用门禁的已知名单，修法方向分别见 §11.16bp）；
+②拖动时的重建策略（产品决策，待用户拍板）；③退役 `VsgRenderer`/`vsg_backend_selftest` 与旧脚本的两个阶段（第 4 条）。
