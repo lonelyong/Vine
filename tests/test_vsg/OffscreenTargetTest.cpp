@@ -101,7 +101,7 @@ RecordedFrame recordOneFrame(const DeviceResult& created, OffscreenTarget& targe
                              std::uint32_t color_captures = 1U)
 {
     const ::vsg::ref_ptr<::vsg::RenderGraph> pass =
-        target.passGraph(policy, /*bootstrap*/ !target.written(), /*depth_preserved*/ false);
+        target.passGraph(policy, /*bootstrap*/ !target.written());
     EXPECT_NE(pass, nullptr) << "the pass graph of a target with attachments is never empty";
 
     RecordedFrame frame;
@@ -469,8 +469,7 @@ void runLostSubmissionPhase(const vine::vsg::DeviceResult& device, DevicePhaseCo
         return &compiler.compile(recorder.description(), vine::vsg::core::FrameFacts{ table });
     };
     const auto submit = [&](const vine::vsg::core::CompiledPass& pass) {
-        const ::vsg::ref_ptr<::vsg::RenderGraph> graph =
-            target->passGraph(pass.clear, pass.bootstrap, pass.depth_preserved);
+        const ::vsg::ref_ptr<::vsg::RenderGraph> graph = target->passGraph(pass.clear, pass.bootstrap);
         EXPECT_NE(graph, nullptr);
         auto viewer        = ::vsg::Viewer::create();
         auto command_graph = ::vsg::CommandGraph::create(device.device, device.queue_family);
@@ -539,8 +538,7 @@ void runLostSubmissionPhase(const vine::vsg::DeviceResult& device, DevicePhaseCo
 
     // A caller that IGNORES the plan (a load on an invalidated target) does not repair anything: loading an
     // image whose contents are unknown cannot make them known, so the fact has to survive it.
-    const ::vsg::ref_ptr<::vsg::RenderGraph> ignored_plan =
-        target->passGraph(after_loss, /*bootstrap*/ false, /*depth_preserved*/ false);
+    const ::vsg::ref_ptr<::vsg::RenderGraph> ignored_plan = target->passGraph(after_loss, /*bootstrap*/ false);
     ASSERT_NE(ignored_plan, nullptr);
     EXPECT_TRUE(target->instance().attachments_invalidated)
         << "only a pass that CLEARS repairs a lost submission; a load must not be able to claim it did";
@@ -870,7 +868,7 @@ TEST(OffscreenTargetTest, AResizeRebuildsTheDepthReadbackForTheNewExtent)
            "change because the image was rebuilt";
 }
 
-TEST(OffscreenTargetTest, AResizeIsRefusedWhileADepthLeaseIsInForce)
+TEST(OffscreenTargetTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -893,44 +891,51 @@ TEST(OffscreenTargetTest, AResizeIsRefusedWhileADepthLeaseIsInForce)
     FrameTimeline   timeline;
     RetirementQueue queue(3U);
 
-    // The image a borrower's framebuffer names belongs to the LENDER: replacing it would leave the borrower
-    // pointing at a destroyed image, and this object does not know who its borrowers are. The plan wanted the
-    // resize; the lease is what stops it.
-    const OffscreenTarget::Resized lent = lender->resize(16U, 12U, timeline, queue);
-    EXPECT_EQ(static_cast<int>(lent.decision.action), static_cast<int>(vine::vsg::core::TargetAction::ResizeInPlace));
-    EXPECT_TRUE(lent.refused) << "a target another target loads the depth of does not resize";
-    EXPECT_FALSE(lent.replaced);
-    EXPECT_EQ(lent.generation, 0U);
-    EXPECT_EQ(lender->width(), 8U);
-    EXPECT_EQ(lender->height(), 6U);
+    // The image a borrower's framebuffer names belongs to the LENDER, so the borrower cannot move BEYOND it:
+    // a framebuffer attachment must be at least as large as the framebuffer it is attached to
+    // (VUID-VkFramebufferCreateInfo-pAttachments-00861). That - and only that - is what stops a borrower.
+    const OffscreenTarget::Resized too_big = borrower->resize(16U, 12U, timeline, queue);
+    EXPECT_EQ(static_cast<int>(too_big.decision.action), static_cast<int>(vine::vsg::core::TargetAction::ResizeInPlace));
+    EXPECT_TRUE(too_big.refused) << "the borrower may not grow past the image it draws against";
+    EXPECT_FALSE(too_big.replaced);
+    EXPECT_EQ(borrower->width(), 8U);
     EXPECT_EQ(queue.pending(), 0U) << "nothing was replaced, so there is nothing to park";
 
-    // The borrower side refuses too, for a different reason: its new framebuffer would name the lender's image
-    // at the LENDER's extent, and a framebuffer attachment must be at least as large as the framebuffer.
-    const OffscreenTarget::Resized borrowed = borrower->resize(16U, 12U, timeline, queue);
-    EXPECT_TRUE(borrowed.refused) << "an extent is not the borrower's to move while it draws against another "
-                                     "target's depth";
-    EXPECT_FALSE(borrowed.replaced);
-    EXPECT_EQ(borrower->width(), 8U);
-    EXPECT_EQ(queue.pending(), 0U);
-
-    // The lease is the only thing that blocked it: once the borrower is gone, the same call replaces the
-    // attachments.
-    borrower.reset();
-    const OffscreenTarget::Resized loan_repaid = lender->resize(16U, 12U, timeline, queue);
-    EXPECT_FALSE(loan_repaid.refused) << "the refusal is the lease, not the target";
-    EXPECT_TRUE(loan_repaid.replaced);
-    EXPECT_TRUE(loan_repaid.parked);
+    // The LENDER may resize, and this is the order the frame drive applies (see VsgExecutor::applyTargetPlans):
+    // the borrowers' framebuffers then still name the image that was just replaced. That is a STALE read the
+    // caller answers in the same frame - it used to refuse here instead, which left a leased pair at the
+    // extent it was built at for a whole session (the engine's own deferred pipeline, measured).
+    const OffscreenTarget::Resized lent = lender->resize(16U, 12U, timeline, queue);
+    EXPECT_FALSE(lent.refused) << "the lender's own attachments are its own to replace";
+    EXPECT_TRUE(lent.replaced);
+    EXPECT_TRUE(lent.parked);
     EXPECT_EQ(lender->width(), 16U);
     EXPECT_EQ(lender->height(), 12U);
     EXPECT_EQ(lender->generation(), 1U);
+
+    // A borrower that does NOT resize is re-pointed: only its framebuffer is replaced (its colour attachments
+    // keep their contents, so the load-ops already planned for the frame stay valid), and the call is a
+    // one-shot - the same image is not re-pointed again.
+    const std::size_t parked_before = queue.pending();
+    EXPECT_TRUE(borrower->repointBorrowedDepth(timeline, queue)) << "the borrower follows the lender's new image";
+    EXPECT_FALSE(borrower->repointBorrowedDepth(timeline, queue)) << "the same image is not re-pointed twice";
+    EXPECT_EQ(borrower->width(), 8U) << "re-pointing does not move the borrower's own extent";
+    EXPECT_EQ(queue.pending(), parked_before + 1U) << "exactly the replaced framebuffer is parked, not destroyed";
+
+    // And a borrower that DOES resize now goes through: its framebuffer is built against the image the lender
+    // serves now, which is what made the earlier refusal a permanent one.
+    const OffscreenTarget::Resized borrowed = borrower->resize(16U, 12U, timeline, queue);
+    EXPECT_FALSE(borrowed.refused) << "the lender's image covers the new extent";
+    EXPECT_TRUE(borrowed.replaced);
+    EXPECT_EQ(borrower->width(), 16U);
+    EXPECT_EQ(borrower->height(), 12U);
 
     // And the resized lender can lend again: the new depth image is a legal source, which is the half a
     // bookkeeping-only assertion would miss.
     auto next_borrower = OffscreenTarget::create(created.device, layout, lender.get());
     EXPECT_NE(next_borrower, nullptr) << "a resized lender offers its new depth like the old one";
 
-    // The pixels agree with the bookkeeping: nothing about the refusals changed what the lender serves.
+    // The pixels agree with the bookkeeping: the replaced attachments really are what the lender serves.
     const RecordedFrame frame = recordOneFrame(created, *lender, clearPolicy(layout.clear.color_value));
     {
         const PixelProbe probe = lender->probe();
@@ -1211,4 +1216,49 @@ TEST(OffscreenTargetTest, ALostSubmissionIsRepairedByTheNextFrameAndOnlyOnce)
     DevicePhaseCounters counters;
     runLostSubmissionPhase(created, counters);
     EXPECT_EQ(counters.frames, 3U) << "the phase drives three frames: fresh, repaired, steady";
+}
+
+TEST(OffscreenTargetTest, ARePointIsRefusedWhenTheLenderShrankBelowTheBorrower)
+{
+    const auto created = createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
+    }
+
+    OffscreenTarget::TargetLayout layout;
+    layout.width                = 8U;
+    layout.height               = 6U;
+    layout.color_formats        = { vine::graphics::RenderTarget::ColorFormat::RGBA8 };
+    layout.depth_format         = vine::graphics::RenderTarget::DepthFormat::D32;
+    layout.clear.color          = true;
+    layout.clear.color_value[0] = 0.5F;
+
+    auto lender = OffscreenTarget::create(created.device, layout);
+    ASSERT_NE(lender, nullptr);
+    auto borrower = OffscreenTarget::create(created.device, layout, lender.get());
+    ASSERT_NE(borrower, nullptr);
+
+    FrameTimeline   timeline;
+    RetirementQueue queue(3U);
+
+    // The lender grows: the borrower still names the image the lender used to serve, and following is what the
+    // executioner does in the same frame (see VsgExecutor::applyTargetPlans).
+    const OffscreenTarget::Resized grown = lender->resize(16U, 12U, timeline, queue);
+    ASSERT_TRUE(grown.replaced);
+    EXPECT_TRUE(borrower->repointBorrowedDepth(timeline, queue)) << "the borrower follows the new image";
+    EXPECT_EQ(borrower->depthView().get(), lender->depthView().get());
+    const ::vsg::ref_ptr<::vsg::ImageView> followed = borrower->depthView();
+
+    // The lender SHRINKS below the borrower. The object allows it (its own attachments are its own to
+    // replace, and it does not know who borrows from it), and the HOST-DRIVEN pair is refused before it gets
+    // here (see VsgExecutor::applyTargetPlans' coversBorrowers) - but a caller that got here anyway must not
+    // be handed a re-point that the API forbids: a framebuffer attachment has to be at least as large as the
+    // framebuffer it is attached to (VUID-VkFramebufferCreateInfo-pAttachments-00861).
+    const OffscreenTarget::Resized shrunk = lender->resize(4U, 3U, timeline, queue);
+    ASSERT_TRUE(shrunk.replaced) << "the lender's own attachments are its own to replace";
+    EXPECT_FALSE(borrower->repointBorrowedDepth(timeline, queue))
+        << "an image smaller than the framebuffer is not an answer: the refusal is the answer";
+    EXPECT_EQ(borrower->depthView().get(), followed.get())
+        << "and the borrower keeps the image it named (a stale read at worst, never an invalid framebuffer)";
+    EXPECT_NE(borrower->depthView().get(), lender->depthView().get());
 }

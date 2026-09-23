@@ -296,7 +296,13 @@ class V_VSG_API VsgExecutor
     {
         const void*      identity{nullptr};  ///< What CompiledTarget::target carries.
         OffscreenTarget* target{nullptr};    ///< The target, borrowed.
+        core::ReportOnce unapplied;          ///< The episode @ref reportUnapplied reports this entry through.
+        /** @brief Re-arms the episode: the target followed its description, so a later failure is new. */
+        void noteApplied() noexcept { unapplied.rearm(); }
     };
+
+    /** @brief The registered entry for @p identity (null for an identity this executor does not hold). */
+    [[nodiscard]] Entry* entryOf(const void* identity) noexcept;
 
     /** @brief Records one pass into an off-screen target; false when it could not be served. */
     [[nodiscard]] bool recordOffscreen(const core::CompiledPass& pass, const core::CompiledTarget& compiled_target,
@@ -318,6 +324,16 @@ class V_VSG_API VsgExecutor
     /** @brief Resolves one compiled target to a registered target, or nullptr. */
     [[nodiscard]] OffscreenTarget* resolve(const core::CompiledTarget& target) const noexcept;
 
+    /** @brief Resolves one target IDENTITY (as the facts carry it) to a registered target, or nullptr.
+     *
+     * The identity spelling is what a borrow's `depth.source` is: the caller that re-points a lender's
+     * borrowers knows them from the facts, not from the plan (see @ref applyTargetPlans).
+     *
+     * @param identity The target identity to look up.
+     * @return The target, or nullptr.
+     */
+    [[nodiscard]] OffscreenTarget* resolveIdentity(const void* identity) const noexcept;
+
     /** @brief The node to append for @p graph: the graph itself, or a named wrapper when measuring.
      *
      * A wrapped pass also records its attribution entry (the graph and the pass it is), which is what a
@@ -334,6 +350,19 @@ class V_VSG_API VsgExecutor
 
     /** @brief Reports a pass it could not record. */
     void reportSkipped(const core::CompiledTarget& target, const char* why);
+
+    /** @brief Reports a target whose plan answer could not be applied (once per episode).
+     *
+     * WHY IT IS REPORTED AT ALL: a refused or failed application used to be a counter nobody read, and a
+     * leased pair then sat at the extent it was built at for a whole session - the picture was a crop of its
+     * own top-left corner and not one line said why (measured on the engine's deferred pipeline). The answer
+     * is a property of the target's description rather than of a frame, so it is an episode: the report
+     * re-arms once the application succeeds.
+     *
+     * @param target The target whose application did not take effect.
+     * @param why    What could not be done, and what to check.
+     */
+    void reportUnapplied(const core::CompiledTarget& target, const char* why);
 
     /** @brief Reports a window pass it could not record (it has no compiled-target entry to name). */
     void reportWindowSkipped(const char* why);

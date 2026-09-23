@@ -2378,8 +2378,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
         policy.color_value[2] = 1.0F;
         policy.color_value[3] = 1.0F;
 
-        const ::vsg::ref_ptr<::vsg::RenderGraph> pass = source->passGraph(policy, /*bootstrap*/ true,
-                                                                          /*depth_preserved*/ false);
+        const ::vsg::ref_ptr<::vsg::RenderGraph> pass = source->passGraph(policy, /*bootstrap*/ true);
         ASSERT_NE(pass, nullptr);
         ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
         ASSERT_NE(viewer, nullptr);

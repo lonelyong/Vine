@@ -18,6 +18,9 @@ struct ContentAssembly::Data
     std::unique_ptr<ContentHalves> halves{};
     std::unique_ptr<ContentSets>   sets{};
     StreamUploads                  uploads{};  ///< Stream sharing spans passes and frames (keyed by revision).
+    /// The sampled-input sets the frames share (see api/ContentPass:InputSetCache): one per distinct set of
+    /// images, which is what keeps a steady frame from writing a descriptor a pending frame still reads.
+    InputSetCache                  input_sets{};
 
     const ContentFacts*  facts{nullptr};
     core::FrameTimeline* timeline{nullptr};
@@ -51,6 +54,31 @@ const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame
     d->retirement = &retirement;
     d->storage->beginFrame();
     d->facts = &d->store->tablesFor(frame, timeline, retirement);
+
+    // The sampled-input sets the previous frame did not ask for are no longer this session's to keep: the
+    // images they name were replaced (a resize builds new ones) or the pass that sampled them is gone. They
+    // are PARKED rather than dropped, because a command buffer in flight may still name their VkDescriptorSet
+    // (the same window every replaced object gets), and a frame that builds a set under a stale entry's key
+    // would otherwise be the second writer of a set a pending command buffer reads.
+    ++d->input_sets.frame;
+    for (auto it = d->input_sets.entries.begin(); it != d->input_sets.entries.end();)
+    {
+        if (it->frame + 1U >= d->input_sets.frame)
+        {
+            ++it;
+            continue;
+        }
+        if (it->set != nullptr)
+        {
+            const ::vsg::ref_ptr<::vsg::DescriptorSet> set = it->set;
+            if (!retirement.retire(timeline, [set]() { (void)set; }))
+            {
+                ++it;  // no window to park through yet: kept, which costs memory and never correctness
+                continue;
+            }
+        }
+        it = d->input_sets.entries.erase(it);
+    }
     return *d->facts;
 }
 
@@ -81,6 +109,7 @@ bool ContentAssembly::record(const core::CompiledPass& pass, const core::RenderP
     scope.storage    = d->storage;
     scope.block_sets = candidates;
     scope.uploads    = &d->uploads;
+    scope.input_sets = &d->input_sets;
 
     ContentPass recorder(scope, *d->diagnostics);
     return recorder.record(pass, *d->facts, compatibility, inputs, view_block, out);
@@ -100,6 +129,11 @@ ContentHalves& ContentAssembly::halves() noexcept
 ContentSets& ContentAssembly::sets() noexcept
 {
     return *d->sets;
+}
+
+std::uint64_t ContentAssembly::inputSetBuilds() const noexcept
+{
+    return d->input_sets.builds;
 }
 
 V_VSG_NS_END

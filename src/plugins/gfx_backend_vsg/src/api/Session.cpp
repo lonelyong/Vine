@@ -703,6 +703,13 @@ void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
     // order: surface > announcement > default). Everything hanging off the size is derived from the window
     // when the next frame records (the render area through WindowTarget::prepare / prepareWithoutClear, the
     // window target's shape, each pass' view block), so nothing else has to be brought up to date here.
+    //
+    // ONE READ, AND NO SECOND GUESS. The read is the PLATFORM's own geometry, so a platform that has not
+    // applied the host's resize yet answers the size it used to be - and asking again would be a second
+    // swapchain rebuild on the strength of a guess about the platform's timing (measured: an announced size
+    // the window had not been given yet is read as "no change" twice in a row, so asking again buys a stop
+    // and fixes nothing). Who CAN know is the host: it resized its surface, so it is the host that announces
+    // a size the surface already has - which is what the SDK's authority order says in the first place.
     session.impl->window->resize();
     // The rebuild STOPS THE DEVICE: vsg's buildSwapchain() waits it before destroying the old swapchain and
     // its images (the same cost the lost-frame repair in commitFrame pays). It is COUNTED for the same

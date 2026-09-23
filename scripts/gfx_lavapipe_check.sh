@@ -256,7 +256,15 @@ check_app_pixels() { # the caller's $app_pid and $log
 # PiP sampling (drawScreenTexture), deferred fullscreen programs
 # (drawScreenProgram), multi-pass sharing of camera/target/scene/viewport,
 # per-frame hot edits and resource-release teardown.
-echo "== 1/2 vsg_backend_selftest (offscreen/MRT/PiP/deferred/multi-pass) =="
+#
+# [legacy] THIS STAGE DRIVES CODE NOTHING CREATES ANY MORE. vsg_backend_selftest builds
+# vine::vsg::VsgRenderer directly, and the shipped backend is api/VsgBackend (the plugin's factory
+# returns it); the rewrite's own gate is scripts/vsg_rewrite_gate.sh, whose device cases run the
+# same plugin the application loads. What this stage still proves is that the OLD implementation
+# is not broken underneath the new one while it is still in the tree — which is the whole of its
+# value, and it goes away with the class. Read a green row here as "the legacy renderer still
+# works", never as "the shipped backend works".
+echo "== 1/2 [legacy] vsg_backend_selftest (offscreen/MRT/PiP/deferred/multi-pass) =="
 SELF="$BUILD/bin/vsg_backend_selftest"
 if [ ! -x "$SELF" ]; then
     echo "[FAIL] vsg_backend_selftest not built"
@@ -407,7 +415,15 @@ else
         require_evidence "Plugin 'app_shell' loaded" 1 "app_shell plugin load (without it no demo scene exists)"
         require_evidence "^\[demo\] cube map: six" 1 "cube map load from the shipped assets"
         require_evidence "sky box 'sky_box' samples it by direction" 1 "sky cube map load (the default demo's sky box)"
-        require_evidence "off-screen target 'shadow_map'" 1 "shadow pass target for the demo's casting light"
+        # THE SHADOW EVIDENCE THIS STAGE USED TO REQUIRE IS GONE WITH ITS RENDERER. It looked for
+        # "off-screen target 'shadow_map'", a line the RETIRED vsg::VsgRenderer printed when it created the
+        # demo's shadow target; the shipped backend (api/VsgBackend) creates the same target without a line of
+        # its own, so requiring it here failed every run of the rewrite while the application was drawing the
+        # picture correctly. What replaces it is not another log line but a PICTURE: the rewrite's gate reads
+        # the demo's WINDOW - the whole render area, and the G-buffer preview strip specifically, which is what
+        # says the off-screen chain drew at all - before and after a resize (scripts/vsg_rewrite_gate.sh,
+        # stage 7). The picture criterion here (check_app_pixels above) still applies: a run with no demo
+        # scene is a run with no pixels.
         # The host's half of the surface-follow work: with the recreation hatch on, the session must MOVE onto
         # the recreated window. A rebuild would show up as a SECOND "attached to the host window" line (and no
         # move at all) -- which is exactly what the host did before it stopped shutting the engine down for a

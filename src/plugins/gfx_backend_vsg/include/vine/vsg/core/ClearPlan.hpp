@@ -91,18 +91,22 @@ struct PassClearPlan
  *   1. a bootstrap pass clears EVERY attachment: colour 0 with the policy's value, the extras with transparent
  *      black, and depth with the policy's value (the reverse-Z far plane by default);
  *   2. a pass that is not a bootstrap keeps the attachments it does not ask to clear;
- *   3. a depth that a later pass depends on (`depth_preserved`) is NEVER cleared - preservation overrides both
- *      the pass' request and the bootstrap rule;
+ *   3. a BORROWED depth (`depth_borrowed`: the image belongs to the target this one shares it with) is NEVER
+ *      cleared - not by the pass' request and not by the bootstrap rule. Clearing it would erase the depth the
+ *      LENDER's pass wrote for every reader after it, and the lender is who decides what happens to that
+ *      image. A lender's OWN depth is cleared like any other attachment (a fresh one must be, and a pass that
+ *      asks for a clear gets it) - its borrowers read the depth the lender's pass writes in THIS frame, so a
+ *      clear at the start of that pass is exactly what makes their depth test meaningful;
  *   4. a clear request clears all colour attachments, and only attachment 0 receives the pass' colour.
  *
- * @param shape           The target's shape (how many colour attachments, whether there is depth).
- * @param policy          What the pass asked for.
- * @param bootstrap       Whether this is the first pass into a freshly built target.
- * @param depth_preserved Whether a later pass reads the depth this pass writes.
+ * @param shape          The target's shape (how many colour attachments, whether there is depth).
+ * @param policy         What the pass asked for.
+ * @param bootstrap      Whether this is the first pass into a freshly built target.
+ * @param depth_borrowed Whether the depth attachment is ANOTHER target's image (see rule 3).
  * @return The per-attachment plan.
  */
 [[nodiscard]] PassClearPlan planClearValues(const TargetShape& shape, const ClearPolicy& policy, bool bootstrap,
-                                            bool depth_preserved) noexcept;
+                                            bool depth_borrowed) noexcept;
 
 /** @brief Gets the layout a target leaves its depth attachment in.
  *

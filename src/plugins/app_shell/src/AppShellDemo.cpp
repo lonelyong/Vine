@@ -1,5 +1,6 @@
 #include "AppShellDemo.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -8,6 +9,7 @@
 #include <span>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include <QTimer>
 
@@ -1269,6 +1271,42 @@ void addGbufferDemo(gui::RenderControl* render_control)
 }
 
 /**
+ * @brief The rectangle a preview draws its source into: the slot's box, letterboxed to the source's aspect.
+ *
+ * WHY THIS EXISTS. A fullscreen program maps `vine_uv` over the DESTINATION rectangle (see
+ * BuiltinShaders::fullscreenVertexProgram), so copying a whole attachment into a rectangle of another
+ * aspect squeezes it. The G-buffer follows the window while a preview slot is a fixed box, so widening the
+ * window made the four previews look squashed and narrowing it stretched them - the copy is isotropic only
+ * while the two aspects agree. Fitting the SOURCE's aspect inside the box keeps the preview undistorted and
+ * keeps the slot's size and place, so the four previews stay a row whatever the window does.
+ *
+ * @param source_width  Source attachment width in pixels (the window's aspect is these two).
+ * @param source_height Source attachment height in pixels.
+ * @param slot_x        Left edge of the slot.
+ * @param slot_y        Top edge of the slot.
+ * @param slot_width    Width of the slot (the box the preview fits inside).
+ * @param slot_height   Height of the slot.
+ * @return The rectangle to draw into, centred in the slot, at least one pixel a side.
+ */
+vine::graphics::Viewport fitPreviewRect(int source_width, int source_height, int slot_x, int slot_y, int slot_width,
+                                        int slot_height)
+{
+    vine::graphics::Viewport rect{ slot_x, slot_y, slot_width, slot_height };
+    if (source_width <= 0 || source_height <= 0 || slot_width <= 0 || slot_height <= 0) {
+        return rect;
+    }
+    const double scale = std::min(static_cast<double>(slot_width) / static_cast<double>(source_width),
+                                  static_cast<double>(slot_height) / static_cast<double>(source_height));
+    const int    width = std::max(1, static_cast<int>(std::lround(static_cast<double>(source_width) * scale)));
+    const int    height = std::max(1, static_cast<int>(std::lround(static_cast<double>(source_height) * scale)));
+    rect.x              = slot_x + (slot_width - width) / 2;
+    rect.y              = slot_y + (slot_height - height) / 2;
+    rect.width          = width;
+    rect.height         = height;
+    return rect;
+}
+
+/**
  * @brief Renders the engine scene into a G-buffer and lights it in a
  * fullscreen deferred pass (env VINE_VSG_DEFERRED).
  *
@@ -1453,14 +1491,22 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
     // as "GBuffer". Draw each colour attachment as a small top-left preview so
     // the default demo shows the G-buffer alongside the lit window result
     // (0 = albedo, 1 = view normal + shininess, 2 = specular, 3 = view pos).
+    // The four previews and the one layout step below keep them in step with the
+    // window: a preview copies the WHOLE attachment, so its rectangle takes the
+    // source's aspect (see fitPreviewRect) instead of squeezing it into the slot.
+    std::vector<vine::intrusive_ptr<vine::graphics::ScreenPass>> previews;
+    vine::intrusive_ptr<vine::graphics::RenderTarget>            preview_source;
+    int                                                          pip_w = 0;
+    int                                                          pip_h = 0;
     if (path == ShadingPath::Deferred) {
-        const double dpr   = render_control->devicePixelRatio();
-        const int    pip_w = static_cast<int>(160.0 * dpr);
-        const int    pip_h = static_cast<int>(90.0 * dpr);
+        const double dpr = render_control->devicePixelRatio();
+        pip_w            = static_cast<int>(160.0 * dpr);
+        pip_h            = static_cast<int>(90.0 * dpr);
         // The G-buffer the builder created, reached through the pipeline handle: the previews declare
         // the one image they sample (target + attachment) instead of a name plus an index — the same
         // wire the builder's producer promised as a whole target.
         auto*        gbuffer = pipeline->offscreenTarget();
+        preview_source       = vine::intrusive_ptr<vine::graphics::RenderTarget>(gbuffer);
         for (int attachment = 0; attachment < 4; ++attachment) {
             auto preview = vine::make_intrusive<vine::graphics::ScreenPass>();
             preview->setName(u8"gbuffer_preview");
@@ -1475,7 +1521,8 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
                 preview->addInput(image);
             }
             const int x = 8 + attachment * (pip_w + 8);
-            preview->setViewport(x, 8, pip_w, pip_h);
+            preview->setViewport(x, 8, pip_w, pip_h);   // the layout step re-fits it to the source's aspect
+            previews.push_back(preview);
             engine->addPass(preview, 120 + attachment);
         }
     }
@@ -1487,8 +1534,19 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
     // off-screen targets (so the light pass samples them 1:1 with the swapchain,
     // instead of the 2x-upscaled soft image logical sizing produced) and the
     // logical size for the HUD overlays (which apply the ratio themselves).
-    view->addSurfaceLayout([pipeline, render_control](int width, int height) {
+    view->addSurfaceLayout([pipeline, render_control, previews = std::move(previews), preview_source, pip_w,
+                            pip_h](int width, int height) {
         pipeline->resize(width, height, render_control->devicePixelRatio());
+        if (preview_source == nullptr || previews.empty()) {
+            return;
+        }
+        const int source_width  = preview_source->width();
+        const int source_height = preview_source->height();
+        for (std::size_t index = 0; index < previews.size(); ++index) {
+            const int                    slot_x = 8 + static_cast<int>(index) * (pip_w + 8);
+            const vine::graphics::Viewport rect = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
+            previews[index]->setViewport(rect.x, rect.y, rect.width, rect.height);
+        }
     });
 }
 

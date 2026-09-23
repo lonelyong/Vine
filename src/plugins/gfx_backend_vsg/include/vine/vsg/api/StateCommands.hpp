@@ -70,11 +70,24 @@ struct ViewportRect
  * @param color_attachments Colour attachments of the pass (0 = a depth-only pass: no blend entries).
  * @param entry_points     The three extension entry points (see DynamicStateEntryPoints); a device-free
  *                         caller leaves them empty and record() skips those calls.
+ * @param draws_content    Whether this is the CONTENT path (see below); a full-screen draw passes false.
  * @return The command (never null).
+ *
+ * WHICH KIND OF DRAW DECIDES WHETHER THE PICTURE BLENDS, and the two kinds want opposite things:
+ *
+ *   * a CONTENT draw is a surface, and the engine's per-drawable opacity can drop below 1 without a
+ *     pipeline rebuild (`vine_draw.params.x`), so a single-colour-attachment picture keeps the standard
+ *     pair - the pipeline cannot know, the command has to say;
+ *   * a FULL-SCREEN draw is a WRITE: a copy or a post-process overwrites the rectangle it covers, and the
+ *     engine's screen ABI carries no opacity at all. The previous implementation's full-screen pipelines
+ *     stated exactly that (blending off), and blending one is not a subtle difference: a copy of an
+ *     attachment whose alpha is 0 - the G-buffer's extra attachments clear to transparent black - blends
+ *     the destination away and the pass shows NOTHING (measured: three of the demo's four G-buffer previews
+ *     were invisible while the clear colour of the pass stayed on screen).
  */
 [[nodiscard]] ::vsg::ref_ptr<detail::SetDynamicState> makeDynamicStateCommand(
     const core::DynamicState& state, std::uint32_t color_attachments,
-    const detail::DynamicStateEntryPoints& entry_points);
+    const detail::DynamicStateEntryPoints& entry_points, bool draws_content = true);
 
 /** @brief Builds the viewport command for @p rect.
  *

@@ -33,7 +33,7 @@ bool PassClearPlan::operator==(const PassClearPlan& other) const noexcept
 }
 
 PassClearPlan planClearValues(const TargetShape& shape, const ClearPolicy& policy, bool bootstrap,
-                              bool depth_preserved) noexcept
+                              bool depth_borrowed) noexcept
 {
     PassClearPlan plan;
     plan.bootstrap = bootstrap;
@@ -57,10 +57,14 @@ PassClearPlan planClearValues(const TargetShape& shape, const ClearPolicy& polic
     }
 
     if (plan.has_depth) {
-        // Rule 3: a preserved depth is what a later pass LOADS; clearing it would make that pass read the far
-        // plane and treat every fragment as visible. The rule outranks the bootstrap: a target whose depth was
-        // written by an earlier pass is exactly the case it exists for.
-        if (!depth_preserved && (bootstrap || policy.depth)) {
+        // Rule 3: a BORROWED image is the lender's, and only the lender's own passes may clear it. What a
+        // borrower does with the depth is a depth TEST: it reads what the lender's pass wrote in THIS frame, so
+        // the lender's own clear (its bootstrap, or its own policy) is not a problem to solve - it is the first
+        // half of the answer. Measured the other way round: suppressing the clear for a lender whose depth is
+        // borrowed left its depth holding what a frame the images no longer belonged to had written, so the
+        // geometry pass wrote nothing that passed its own depth test - the deferred demo came out sky-only
+        // after the first resize (2026-09-23), which is the bug this rule's earlier spelling caused.
+        if (!depth_borrowed && (bootstrap || policy.depth)) {
             plan.depth.load  = LoadOp::Clear;
             plan.depth.clear = policy.depth_value;
         }

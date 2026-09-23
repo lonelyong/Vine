@@ -8,7 +8,8 @@
  * facts rather than a flag the API layer keeps, and why this file has two halves:
  *
  *   * the FACTS half, on a real device but without pixels: a borrower reports `borrowed`, never `sampleable`
- *     and never `preserve`; lending revokes the lender's promotion (its depth is now LOADed by a pass) and the
+ *     and always `preserve` (its passes read the lender's depth); lending revokes the lender's promotion (its
+ *     depth is now LOADed by a pass) and the
  *     revocation disappears with the borrower; a source without a depth or with another format is refused;
  *   * the PIXELS half, which is the only thing that can prove the depth is actually SHARED: the lender draws a
  *     near triangle, the borrower draws two far triangles - one exactly where the lender's is (it must be
@@ -39,11 +40,13 @@
 #include <vine/vsg/api/ContentDraw.hpp>
 #include <vine/vsg/api/ContentPipeline.hpp>
 #include <vine/vsg/api/Device.hpp>
+#include <vine/vsg/api/HostTargets.hpp>
 #include <vine/vsg/api/OffscreenTarget.hpp>
 #include <vine/vsg/api/StreamUploads.hpp>
 #include <vine/vsg/core/DepthProbe.hpp>
 #include <vine/vsg/core/StateRegistry.hpp>
 #include <vine/vsg/core/Streams.hpp>
+#include <vine/vsg/core/TargetPlan.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
 #include "DevicePhases.hpp"
@@ -53,6 +56,7 @@ using vine::vsg::BlockDescriptors;
 using vine::vsg::BlockStorage;
 using vine::vsg::ContentDraw;
 using vine::vsg::ContentPipeline;
+using vine::vsg::HostTargets;
 using vine::vsg::OffscreenTarget;
 using vine::vsg::StreamUploads;
 using vine::vsg::ViewportRect;
@@ -495,7 +499,11 @@ TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromoti
     EXPECT_EQ(borrower->depthSource(), lender.get());
     EXPECT_TRUE(borrower->depth().borrowed);
     EXPECT_FALSE(borrower->depth().sampleable) << "the policy is the lender's, not the borrower's";
-    EXPECT_FALSE(borrower->depth().preserve) << "a borrower does not promise the lender's depth to a shader";
+    EXPECT_TRUE(borrower->depth().preserve)
+        << "the borrower's passes read the depth the lender's pass wrote, so they never clear it: a bootstrap\n"
+           "pass that cleared it (a fresh attachment set is exactly what makes a pass bootstrap) would erase\n"
+           "the lender's depth for every reader after it - measured on the deferred demo, whose overlay then\n"
+           "depth-tested against the far plane and covered the scene with the sky for that frame";
 
     // The borrower's pass LOADs the lender's depth, and that is exactly a depth-preserving pass: the lender's
     // promotion is revoked for as long as the loan lasts.
@@ -540,4 +548,62 @@ TEST(SharedDepthTest, TheBorrowerSeesTheDepthTheLenderWrote)
     runSharedDepthPhase(created, counters);
     EXPECT_EQ(counters.targets_built, 2U) << "the phase built the lender and the borrower";
     EXPECT_EQ(counters.frames, 1U);
+}
+
+TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
+{
+    const auto created = vine::vsg::createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
+    }
+
+    // The pair as a HOST announces it (HostTargets is where the plan's facts come from, see its note): a
+    // lender with a colour attachment and a depth, and a borrower that shares that depth.
+    HostTargets targets;
+    const vine::intrusive_ptr<RenderTarget> lender(new RenderTarget());
+    lender->attachColor(RenderTarget::ColorFormat::RGBA8);
+    lender->attachDepth(RenderTarget::DepthFormat::D24);
+    lender->setSize(32, 32);
+    const HostTargets::Ensured lender_ensured = targets.ensure(*lender, created.device);
+    ASSERT_EQ(lender_ensured.state, HostTargets::State::Ready) << "a colour + depth description builds";
+
+    const vine::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
+    borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
+    borrower->shareDepth(lender);
+    borrower->setSize(32, 32);
+    const HostTargets::Ensured borrower_ensured = targets.ensure(*borrower, created.device);
+    ASSERT_EQ(borrower_ensured.state, HostTargets::State::Ready);
+
+    vine::vsg::core::TargetFacts lender_row;
+    targets.facts(*targets.find(lender.get()), lender_row);
+    vine::vsg::core::TargetFacts borrower_row;
+    targets.facts(*targets.find(borrower.get()), borrower_row);
+
+    // The borrower: its passes read the lender's image, so they preserve it and never promise it to a shader.
+    EXPECT_TRUE(borrower_row.depth.borrowed);
+    EXPECT_TRUE(borrower_row.depth.any_pass_preserves_depth)
+        << "a borrower's passes read the depth the lender's pass wrote and must never clear it";
+    const vine::vsg::core::DepthPlan borrower_plan = vine::vsg::core::depthPlan(borrower_row.depth);
+    EXPECT_TRUE(borrower_plan.preserve);
+    EXPECT_FALSE(borrower_plan.sampleable);
+
+    // The LENDER: the same fact answers for it, because the borrower depth-LOADs what the lender's own pass
+    // writes - and that is what keeps the depth from being called sampleable while it is somebody's attachment.
+    // The host asked for promotion (the SDK's default), and the loan is what revokes it.
+    EXPECT_TRUE(lender_row.depth.promotion) << "the host's own word: promotion was never turned off";
+    EXPECT_TRUE(lender_row.depth.any_pass_preserves_depth)
+        << "the lender's depth is read by the borrower's passes: it is preserved while the loan lasts";
+    const vine::vsg::core::DepthPlan lender_plan = vine::vsg::core::depthPlan(lender_row.depth);
+    EXPECT_TRUE(lender_plan.preserve);
+    EXPECT_FALSE(lender_plan.sampleable)
+        << "one image cannot be a texture and an attachment at the same time (measured: the deferred demo's "
+           "depth ends in the attachment layout, so a sampler on it is a validation error, not a picture)";
+
+    // And the pair is released in the LENDER's order, which is the order a registry walks its entries in: the
+    // lender's objects may go before the borrower's, and the borrower's own destruction must not read them
+    // (see ~OffscreenTarget: the count it drops is the shared one - a count kept in the lender was a
+    // double free, which is what this case caught while it was written).
+    EXPECT_TRUE(targets.release(lender.get()));
+    EXPECT_TRUE(targets.release(borrower.get()));
+    EXPECT_EQ(targets.live(), 0U);
 }

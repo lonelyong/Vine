@@ -222,6 +222,15 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
     out.depth.promotion = !out.depth.borrowed &&
                           (entry.target != nullptr ? entry.target->layout().depth_sampleable
                                                    : entry.description.depth_promotion);
+    // ... AND whether this target's own passes preserve the depth they write: a borrower always does (its
+    // passes read the lender's image, so clearing it would erase the lender's depth) and a lender does while
+    // it has borrowers. That fact is the TARGET's (only it counts its borrowers), so it is asked for here
+    // rather than derived from the description: a lender planned as "nothing preserves it" would be called
+    // sampleable while a borrower reads the very same image as an attachment - a depth that must be in the
+    // attachment layout and in the sampled one at once. The engine's own deferred pipeline only escapes that
+    // by turning promotion off itself (RenderPipelineBuilder::buildDeferredPath); a host that does not gets
+    // it right from these facts.
+    out.depth.any_pass_preserves_depth = entry.target != nullptr && entry.target->depth().preserve;
 
     // The shadow statement, copied from the host's own words: a target is a map for as long as it says so,
     // and how to read it is the producer's matrix, never a consumer's guess (see ShadowFacts).

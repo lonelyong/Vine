@@ -1,9 +1,11 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 
 #if !defined(_WIN32)
 #    include <xcb/xcb.h>
@@ -57,28 +59,51 @@ class TestHostWindow
     }
 
     /** @brief The handle in the form the backend passes it around. */
+    /// @brief How long @ref resize waits for the server to report the requested size before giving up.
+    static constexpr std::chrono::milliseconds kResizeDeadline{ 500 };
+
     [[nodiscard]] void* handle() const noexcept
     {
         return reinterpret_cast<void*>(static_cast<std::uintptr_t>(window_));
     }
 
-    /** @brief Resizes the window the way a host widget would, and waits for the server to have applied it.
+    /** @brief Resizes the window the way a host widget would, and WAITS until the server reports the size.
+     *
+     * THE WAIT IS THE CONTRACT, not politeness: the backend FOLLOWS the surface by reading the platform's
+     * geometry once (see SessionContentAccess::followResizedSurface - one read, no second guess), so a host
+     * that announces a size its surface does not have yet hands it a window that answers the previous size,
+     * and the session goes on serving images of the old one (a stretched picture, and black once the frames
+     * in flight run out). The round trip below is what makes "the surface has it" true before the caller
+     * announces: `xcb_configure_window` is unchecked, so the request could fail unnoticed without it, and the
+     * geometry reply is the proof - which is why it is READ here instead of thrown away.
      *
      * @param width  New width in pixels.
      * @param height New height in pixels.
+     * @return true when the server reports the requested size before the deadline (see kResizeDeadline).
      */
-    void resize(int width, int height)
+    [[nodiscard]] bool resize(int width, int height)
     {
         const std::uint32_t values[] = { static_cast<std::uint32_t>(width),
                                          static_cast<std::uint32_t>(height) };
         xcb_configure_window(connection_, window_, XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values);
         xcb_flush(connection_);
-        // The configure is ordered on this connection, but the ROUND TRIP is what proves the server is done
-        // with it: a caller that re-reads the geometry right after (the backend does - see
-        // SessionContentAccess::followResizedSurface) must not be answered from before the resize.
-        if (auto* reply = xcb_get_geometry_reply(connection_, xcb_get_geometry(connection_, window_), nullptr))
+        const auto deadline = std::chrono::steady_clock::now() + kResizeDeadline;
+        for (;;)
         {
-            std::free(reply);
+            if (auto* reply = xcb_get_geometry_reply(connection_, xcb_get_geometry(connection_, window_), nullptr))
+            {
+                const bool applied = reply->width == width && reply->height == height;
+                std::free(reply);
+                if (applied)
+                {
+                    return true;
+                }
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 

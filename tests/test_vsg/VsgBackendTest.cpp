@@ -1017,7 +1017,9 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     backend->resize(0, 0);
     EXPECT_EQ(backend->deviceWaits(), waits_before) << "a size no surface can have is not followed";
 
-    host.resize(96, 64);
+    ASSERT_TRUE(host.resize(96, 64))
+        << "the platform must have the new size before it is announced: the backend follows the surface by "
+           "reading it once (see TestHostWindow::resize)";
     backend->resize(96, 64);
     EXPECT_EQ(backend->deviceWaits(), waits_before + 1U)
         << "following the surface rebuilds the swapchain, and that stops the device";

@@ -4274,3 +4274,201 @@ clear、记录的图里有 `vsg::Draw(vertexCount=1)` 而**没有** `BindIndexBu
 基线在这台机器上**无改动树也过不去**（`vsg_backend_selftest` 只编译老实现的源，本片不可能影响它）：parked 103 vs 105、
 一个像素 (229,38,13) vs (230,38,13)、darkened 2186 vs 2187、ring released 419 vs 478/481（**同一二进制两次跑都不同**
 ⇒ 这一项本身就不是逐字节可比的）。②③是门禁的口径要跟着新实现重钉的事，不是本片的回归。
+
+### 11.16bl M10c（2026-09-23）：默认演示的三处回归——租约死锁、全屏混合、输入集归属
+
+M9f 把工厂切到门面之后，用户跑默认演示报了三条：**地板都不显示**（"相机拉得太近"）、**用 cubemap 的立方体显示错误**、
+**gbuffer 的 4 个预览框只亮第一个**。逐条定位，三处都在重写版，且三处都是"记账/状态"而不是"数学"。
+
+**1. 离屏目标从没被 resize 过（一幅画为什么是"相机太近"）。** 演示的离屏链是 `gbuffer` 与 `deferred_lighting` 的
+`composite`，而 `composite` **借** `gbuffer` 的深度（SDK 契约：一张深度图两个目标）。重写版里 `OffscreenTarget::resize`
+对**任何**持有/借出深度租约的目标一律拒绝（怕借方的 framebuffer 指到刚被换掉的图上），而计划侧的 `ResizeInPlace`
+每帧都在问——于是两个目标互相卡死：日志每帧两行 `apply target=… wanted=378x247 current=160x160`，帧**一直是**建目标时的
+160×160，只有窗口那一角在画。修法是三件事同时到位：①`applyTargetPlans` 按**出借方先、借方后**的顺序应用（用事实表的
+`depth.borrowed`/`depth.source` 做选择排序，借方里"自己也有应用"的那些跳过）；②`resize` 的拒绝收窄成真正的 API 约束
+（借方的 framebuffer 附件不得**大于**出借方当前的图，VUID-VkFramebufferCreateInfo-pAttachments-00861——出借方自己可以
+换，借方换了之后必须由调用者在**同一帧**内跟随）；③新增 `OffscreenTarget::repointBorrowedDepth`：只换借方的 framebuffer
+（**颜色附件不动**，已经规划好的 load-op 因此仍然成立），旧 framebuffer 交退役队列托管，并是一次性的（同一张图不会重复
+跟随）。另外"计划没应用"以前是**静默**的——现在 `reportUnapplied` 按插话报一次（`TargetBuildFailed`，`skipped_` 计数），
+这就是这台机器上本该早点响的那一响。
+
+**2. 全屏拷贝不能混合。** 4 个 gbuffer 预览是 4 条全屏 pass，各自把一个颜色附件拷到屏幕。老实现的全屏管线
+blending 是**关**的；重写版给了它们所有 draw 同一份 SRC_ALPHA/ONE_MINUS_SRC_ALPHA 动态状态。附件 1..3 在延迟光照那帧
+是**清成透明黑**的（它们只在 gbuffer pass 里被写），叠一次就把目标乘没了 ⇒ 屏幕上只剩第 1 个预览（albedo 恰好不透明）。
+修法：`makeDynamicStateCommand(..., draws_content)`，`ContentDraw::recordScreen` 传 false ⇒ 全屏 draw 一律不混合
+（判据写进注释：`color_attachments > 1 || !draws_content`）。
+
+**3. 一个 pass 的输入集合属于**程序**，不属于 pass。** `VINE_PIPELINE=forward` 每条命令都不画：每帧 42 条
+"the command is not drawn: its pipeline identity has no compiled pipeline"。原因是那条 pass 声明了影子图当输入（SDK 的
+`PassInputs`），而引擎给它的程序把 `VineDrawBlock` 放在 **set 1**——管线的布局是按"程序自己声明了几个采样器集合"建的，
+录制侧却按"这个 pass 有几个输入"去要布局 ⇒ 身份对不上。修法：`programSamplesInputSet(program)`（程序 abi 里有没有
+`set == kInputSet` 的采样器）决定采样侧的两个计数与半片布局；`record.inputs` 只在程序真的采样输入时才挂。
+
+**证据**：①默认演示 978×421（X11 窗口抓帧，`scripts/xwin2ppm.py`）与**老实现同尺寸**逐像素比：**0 个像素不同**
+（此前只有第 3 条预览带与 FPS 数字不同——那是老实现抓帧的时机差异，等尺寸稳定态下不存在）；②`VINE_PIPELINE=forward`
+的 showcase：地板、方盒、贴图立方体、品红程序盒、线框、青色点云、星云全部在画，`shadow_map` 那条警告 42 → 0；
+③`OffscreenTargetTest.ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows`（真设备）钉住规则：借方超过出借方的图才被拒、
+出借方换了之后 `repointBorrowedDepth` 一次为真一次为假、借方的**范围不动**而它的 framebuffer 被托管、随后借方的 resize
+通过、换了图的出借方还能再接新的借方、像素仍然是新范围上的 clear 值；`OffscreenTargetTest` 13 用例全绿；`test_vsg`
+全量 670 用例只有这一条（旧名 `AResizeIsRefusedWhileADepthLeaseIsInForce`）需要跟着改。
+`scripts/check_include_hygiene.py` 0 / 866、`check_diagnostic_formats.py` 0 / 39。
+
+**顺带量到、本片不修（登记）**：①`ContentPass` 是每帧新建的，它的 `ReportOnce` 插话因此每帧重置——"pass 声明了影子图但
+程序没有 `shadow_map` 采样器"这条警告在延迟链上仍会每帧重复（24 行/帧）；②执行者层的**顺序**目前只有对象层用例 + 演示
+画面钉着（`applyTargetPlans` 的选择排序本身没有设备相位用例；相位表加一行要动门禁基线，留作下一步）。
+
+### 11.16bm M10d（2026-09-23）：resize 时"几何闪、天空不闪"——借来的深度被借方自己清掉
+
+用户第二条报告：**拖动窗口改大小的时候，天空盒不闪，box 与地板在闪**。这是重写版的回归，而且症状的形状（只有几何闪、天空稳）
+正好是"离屏链错一帧、窗口直画的那半没错"的形状。
+
+**根因。** 延时的离屏链是 `gbuffer`（出借方）与 `composite`（借它的深度）。计划里"往新附件写的第一趟要清"这条规则（bootstrap）
+在借方的目标上也成立——**但借方清的是出借方的深度图**：resize 那一帧两个目标的附件都是新的，`composite` 的 bootstrap 趟
+（延迟光照）先清自己的彩色附件（对），再按 bootstrap 规则清**深度**（错：那张深度刚要接 `gbuffer` 那趟写好的场景深度）。
+后果：覆盖层那趟（天空 + 星云 + 混合盒，深度 TestOnly）对着刚被清成远平面的深度测试，处处通过 ⇒ 天空把整幅场景盖住。
+gbuffer 自己的**预览**读的是彩色附件，那一帧仍然正确 ⇒ 用户看到的是"主画面里 box 与地板闪，天空不闪"。
+探针（临时 `VINE_PROBE_SIZES`，已撤）在 resize 帧上给出 `pass=1 target='composite' bootstrap=1 preserved=0 clear_depth=0`
+——`preserved=0` 就是这里错的那一位：`depthPlan()` 对借来的深度回答"不 preserve"。
+
+**修法。** `depthPlan()`：借来的深度**永远是 preserved**（借方的任何一趟都不许清它，清了就是抹掉出借方的深度；它不可采样这件事
+是另一个问题，两者不是一回事）。这条与创建路径早就写下的口径一致（`buildAttachments` 一直传 `depth_preserved = depth_borrowed`），
+所以修完两处口径相同。`planClearValues` 第 3 条规则（preservation 压过 bootstrap）保持不变，`ClearPlanTest.APreservedDepthIsNeverCleared`
+继续绿。
+
+**用户第一条报告（G-buffer 预览被挤压/拉伸）不是回归。** 全屏程序的 `vine_uv` 覆盖的是**目标矩形**（SDK 契约），把整张 attachment
+拷进固定 160×90 的槽里，宽高比不同就各向异性缩放：窗口变宽→挤压，变窄→拉伸。老实现同样如此——同尺寸抓帧对比里，老/新的
+**预览区 0 个像素差异**（差异只在 FPS 数字与星云边缘）。所以这是示例框的固有行为，用户这次按"错"报。仍按"对"修：`AppShellDemo`
+的延时预览改成**按源的比例在槽内 letterbox**（`fitPreviewRect`：取槽内最大等比矩形，居中，四槽位置与大小不变），并挂进既有的
+surface-layout 步随窗口重算（G-buffer 跟着窗口、框不跟，所以只有把两边的比例对齐才不拉伸）。默认尺寸下预览从 160×90 变成 138×90。
+
+**顺带修**：`VsgBackend::initialize()` 现在读 `VINE_VSG_DEBUG_LAYER`（老实现的开关）。用户正是带着它跑的，而门面此前完全忽略它
+——一次"带验证层"的运行其实没有层在看，比没有开关更糟。开关读在设备被请求的地方（`SessionOptions::validation`）。
+
+**证据。** ①重现/验证用同一台 resize 电池（4 档尺寸 × resize 后 16 连拍）：修前每档的**第 1 张与第 2 张**差 36–85% 的像素（第 1 张正是
+那一帧），修后每档**全 0 差异**；把同一电池灌给**老实现**（临时改工厂并当场还原重建）也是 0 差异 ⇒ 修复把重写版拉回老实现的不动点。
+②默认尺寸与"改预览之前"的差异**只落在 y∈[8,97]**（预览带），画面其余部分逐像素相同。③`test_vsg` **670/670 绿**（`BackendCoreTest`
+的深度计划用例与 `SharedDepthTest.ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromotion` 跟着新口径改，后者写明为什么借方的
+pass 必须 preserve）。④`VINE_PIPELINE=forward` 的 showcase 正常；hygiene 0/866、诊断格式 0/39、文档符号 0。
+
+**登记**：①resize 帧仍会报 `vkCmdDraw-None-09600`（"被采样的图仍是 UNDEFINED"）约 2 条/帧；稳态跑是 20×`03047` + 6×`09600` +
+6×`Viewport-01770`，与**修前日志逐项相同**（核对过），所以那一类是**先于本片**存在的，不是这次改动带出来的；②上一片登记的
+"执行者层顺序还没有设备相位用例"仍未补。
+
+### 11.16bn M10e（2026-09-23）：自查一遍——五个真缺陷（其中两个是上一片自己带出来的）、一条租约语义修正
+
+用户要求"继续检查还有没有缺陷，哪里不优雅/不健壮，全统计出来"。逐处复核上一片改过的路径（目标应用 / 租约 / 清屏计划 /
+全屏混合 / 输入集 / 生命周期），查出五个真缺陷，其中两个**是上一片的修复自己带出来的**，都已修并各自有证据。
+
+**1. `HostTargets::facts` 少了一个事实：lender 的"有人读它的深度"**。宿主目标的深度行是 HostTargets 自己拼的，
+`any_pass_preserves_depth` 从来没被填过（`OffscreenTarget::facts()` 里那句才对）。后果：一个**开着 promotion** 的 lender 一旦有
+borrower，计划仍说它的深度"可采样"——同一张图既当纹理又当附件（一个采样读取必须 SHADER_READ_ONLY，另一个必须是附件布局）。
+示例的延时链只是因为 `RenderPipelineBuilder` 自己把 promotion 关了才躲过去；宿主不关就会撞上。修法：这一行改从目标自己取
+（`entry.target->depth().preserve`，borrower 恒真、lender 在 borrower 数 > 0 时真）。新增真设备用例
+`SharedDepthTest.TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites`（lender 行 + borrower 行的两个 `depthPlan`）；
+**变异反证 4 条断言红**。
+
+**2. 上一片修 1 的写法又捅了一个洞（比 1 严重得多）：把"preserve"当成了清屏规则。** `planClearValues` 的第三条规则原先写作
+"preserved 的深度永不清"，而 `preserve` 现在是"有人读它"；于是 lender 自己的**每帧深度清屏**（引擎的 gbuffer pass 本来就要求清）
+被压掉，bootstrap 也不清——**resize 之后新深度图里留着的是"上一批图片"那一帧的数据**，几何 pass 自己的深度测试全不过 ⇒
+整个延时链什么都不写 ⇒ 画面只剩天空与覆盖层（持久性，不是一帧），而 gbuffer 的**预览**（彩色附件）正常。抓到它靠的是
+**A/B 同尺寸抓帧**：新实现 698×132 与老实现同尺寸差异 4.77%（平台整块变成"缺失"）而默认尺寸 0 差异；把老实现（参考）与新实现
+的同尺寸图逐像素比 + 差异掩码一看就定位。修法：把两个概念拆开——`core::planClearValues(shape, policy, bootstrap, depth_borrowed)`：
+**借来的图永不清**（清它等于抹掉 lender 这一帧写的深度），**自己的深度按规则清**（bootstrap 必清，pass 自己要求就清）；
+`OffscreenTarget::passGraph(policy, bootstrap)` 直接读目标自己的 `d->depth_borrowed`，不再从计划里接一个语义混杂的位。
+`ClearPlanTest` 拆成两个用例（借来的 → 永不清；新造的自己的深度 → 必清，后者就是这次的回归用例）。
+
+**3. `~OffscreenTarget` 读已释放的 lender（double free）。** 析构里 `--depth_source->d->borrowers` 需要 lender 还活着，
+而宿主释放顺序（注册表按插入序走，lender 先）会让 lender 先死 ⇒ 堆损坏/`double free`（本轮新写的宿主行用例**必然**触发，
+`test_vsg` 全量直接 abort）。这不是测试问题：宿主的发布/释放顺序可以让它发生（示例只是恰好没走到）。修法：借用计数搬进
+**lender 与所有 borrower 共享的存储**（`std::shared_ptr<std::uint32_t>`，borrower 从 lender 那里取一份），析构只碰这份共享计数，
+永不碰 lender 对象。用例把"按 lender 序释放"写成显式断言（它就是这个缺陷的回归用例）。
+
+**4. 重新指向可能造出非法 framebuffer。** `repointBorrowedDepth` 只看"图是不是同一张"，不看出借方的图是否**比借方的
+framebuffer 小**：lender 缩小到 borrower 之下时会把 borrower 指向小图 ⇒ VUID 00861 静默发生。修法：拒绝（返回 false，注释写清
+这是"合法答案"而不是"没事干"），并在执行者层补**对称**一条：lender 缩到某个 borrower 之下时**拒绝并上报**（`coversBorrowers`）。
+注意它比的是 borrower **这一帧之后**的尺寸（它自己有 ResizeInPlace/Rebuild 就会跟着缩）——第一版写成"当前尺寸"，
+示例 resize 一缩一长就误拒（实测两条警告 + 配对卡住），已修。
+
+**5. 报告与计数语义（优雅性/可诊断性）**：①`reportUnapplied` 曾把"计划没应用"计进 `skipped_`，而那个计数器回答的是
+"这一帧有几趟画不成"（声明如此，用例也这么用）——两回事；现在只进 `TargetApplications`（refused/failed）与诊断。②未应用
+的插话改成**每目标一份 `ReportOnce`**（原先整个执行者一份，第二个目标失败会被第一个的成功压掉）。③borrower 的重新指向从
+"按计划判断"（这个 borrower 计划里有动作）改成"**按结果**判断"（应用之后统一走一遍，幂等）——计划说它要重建 framebuffer，
+不等于它真重建了。
+
+**同轮附带**：门面现在读 `VINE_VSG_DEBUG_LAYER`（老实现的开关；重写版此前完全忽略 ⇒ 用户"带验证层"的那次运行其实没有层在看）。
+
+**证据汇总**：默认尺寸与老实现差异 **1.17%**，全部落在第 4 个预览槽的边框与 FPS 数字（预览 letterbox 是**有意**改动）；
+698×132 = **0.24%**（只 FPS）；278×363 = **1.14%**（只第 4 预览槽与 FPS）⇒ 修复后与参考实现一致。`test_vsg` **672/672 绿**
+（新增 2 个用例：宿主的 lender/borrower 深度行、重新指向的最小图拒绝；`ClearPlanTest` 重写为两个方向）。
+hygiene 0/866、诊断格式 0/39、文档符号 0。变异反证：①宿主机行那条（4 条断言红）②重新指向哨兵（3 条红）。
+
+**登记（未修，按严重度）**：①执行者层的**顺序**仍只有对象层用例 + 演示画面钉着（相位表加一行要动门禁基线）；
+②resize 帧仍有约 2 条 `vkCmdDraw-None-09600`，稳态 20×`03047` + 6×`09600` + 6×`Viewport-01770` 与修前逐项相同（先前存在）；
+③`ContentPass` 每帧新建 ⇒ `ReportOnce` 插话每帧重置（`shadow_map` 那条警告每帧重复）；④`VsgBackendTest.TheWindowFollowsItsHostsSurface
+ThroughALiveResize` 在全量套件里偶发红（平台回旧几何；单独跑绿）——测试/平台时序，不是渲染路径；⑤`rebuild()` 在租约存在时
+仍两向拒绝（有意的，但现在会**响亮**上报）；⑥borrower 的深度测试假定 lender 这一帧的画跑过（共享深度的固有前提，没有检测）；
+⑦`reportUnapplied` 的句子说不出**是哪个**目标（执行者的条目不带名字）；⑧`fitPreviewRect` 在示例的匿名命名空间里，
+没有单元用例（画面是它的证据）。
+
+### 11.16bo M10f（2026-09-24）：量一次帧预算，并把"resize 偶发红"钉成确定
+
+用户要求"继续，优化"。先量，再改——结论是**这一层已经没有可观的 CPU 可优化项**，真正的问题在别处（下面第 2 条）。
+
+**1. 帧预算（Debug + lavapipe，实测，`VINE_PROBE_TIMING` 临时探针 + `AllocationGate` 临时探针，均已撤）**：
+- 首帧 **151.5 ms** = `applyTargetPlans` 1.8 + **内容装配 85.0** + 记录/提交 64.7（11 趟）——一次性建表/建管线/建集合。
+- 稳态帧 **≈9 ms** = apply ~1.0 + **内容装配 0.7** + 记录/提交 ~7.5（11 趟）⇒ **本层每帧约 2 ms，其余是 vsg 的记录遍历与驱动**（Debug 构建 + 软件光栅）。
+- 空闲帧率 ≈1.3 帧/秒：应用是**按需渲染**的，唯一让画面持续更新的是 FPS 覆盖层要重画数字（1 Hz）⇒ **不是浪费**。
+- resize 的大头不在这条路径里：跟随表面会重建交换链，`buildSwapchain()` 要 `vkDeviceWaitIdle`（计数的 `deviceWaits`）⇒ 每次尺寸事件一次设备停顿，**设计如此**（M9e 的结论：不跟随的话 vsg 会在提交里补重建，那会带来 VUID 02852/02853 与段错误）。
+⇒ **结论**：想再快，只有换构建配置（Release）或改产品行为（比如拖动时不做实时重建），两者都不是这一层能顺手做的；本层的帧预算已经很小。
+
+**2. 顺手把一个真缺陷钉死：`VsgBackendTest.TheWindowFollowsItsHostsSurfaceThroughALiveResize` 全量套件里约五成红**。
+用表面能力探针（临时）量到失败现场是 `follow: vsg 128x96 -> 128x96`——**窗口已经 96×64，平台却答旧几何**：宿主在**平台还没应用**时就把新尺寸公告出来，而后端只**读一次**（这是它该做的：`RenderBackend::resize` 的权威顺序写着"表面拥有自己的尺寸"），于是会话继续按旧尺寸出图（画面被拉伸，帧在飞时甚至会全黑）。我试过"没变化就再问一次"的后端补救——实测**再问一次仍然答旧值**，只是白花一次设备停顿，于是**撤掉**（并把"一次读取、不做第二次猜测"的理由写进 `followResizedSurface` 的注释）。
+正确的修法在**宿主那一侧**：测试宿主 `TestHostWindow::resize` 现在**轮询到服务器确实报告了新尺寸**（上限 500 ms，超时返回 false 并由用例 `ASSERT_TRUE` 响亮失败），而不是"发完 configure 就假装已经应用"（`xcb_configure_window` 是 unchecked 请求，原来那记 round trip 的回复还被丢掉了）。**证据：全量套件 6/6 绿**（改前 5 次里 2–3 次红）。
+**顺带**：`followResizedSurface` 的注释补上这条契约（宿主公告必须是表面已经有的尺寸），以后再有"resize 后画面不对"的报障，先查这一条。
+
+**3. 没做的（登记，附理由）**：①resize 帧那约 2 条 `vkCmdDraw-None-09600`（稳态 20×`03047`+6×`09600`+6×`Viewport-01770`，与修前逐项相同）——先于本片存在，且画面正确；②Release 构建：`build-release/` 只配了 selftest/tests，没有 app+插件（要整棵重配重编，不在本轮预算内）；③执行者层的相位用例。
+
+### 11.16bp M10g（2026-09-24）：给重写版补一道应用级门禁（画面即证据）
+
+问题：两次回退（resize 后**只剩天空**、四个预览被**挤压**）都是"套件全绿、画面错"。旧门禁 `scripts/gfx_lavapipe_check.sh`
+的第 1/2 阶段驱动的是 `vsg_backend_selftest`（它自己 `new vine::vsg::VsgRenderer()`，即**已无人创建的旧实现**），
+应用阶段又要求 `off-screen target 'shadow_map'` 这行**只有旧渲染器**才打印的日志，因此在重写版上**必然红**。
+
+**做了什么（item 1）**
+- `scripts/vsg_rewrite_gate.sh` 新增**第 7 阶段：应用（默认演示）**：用 lavapipe + X 起 `build/bin/Vine`
+  （`VINE_VSG_DEBUG_LAYER=1`），从日志取**后端自己报告的那个窗口**（`attached to the host window 0x…`），
+  读两次像素：**稳定后**一次、`scripts/xwinresize.py` 把窗口**顶层父窗口**拖到 1120×420 后**再一次**。
+- 两条判据（两次采样都判）：①渲染区域非近黑 ≥30%；②**G-buffer 预览条**（第 2 个槽位按 `fitPreviewRect` 反算矩形）
+  最大通道 ≥64——②是"离屏链到底画没画"的判据，①答不了（只剩天空时窗口照样 84% 非黑）。另计：0 个未知 VUID、
+  警告 ≤5（"每帧一条警告"就是洪水）、进程必须在跑、窗口行必须出现（否则 FAIL）。
+- 新脚本 `scripts/xwinresize.py`（顶层父窗口 = 宿主容器，理由与用法写在头注释）、`scripts/ppmprobe.py`（读 PPM 某个矩形）。
+- 门禁自身：套件失败**重跑一次**并由重跑裁决（首次失败的用例名写进证据行，不隐藏）；失败时**保留日志**；
+  **启动应用用 `exec` + 退出时 `cleanup_app`**（见下）；`usage()` 改为打印到第一个非注释行（原来硬编码 `2,40p`，
+  新阶段的文档落在范围外，`--help` 悄悄不描述第 7 阶段）。
+- 旧脚本重钉：第 1 阶段标 `[legacy]` 并写明"它证明的是旧实现还在、不是发货后端还在"；删掉 `shadow_map`
+  那条证据并写明**替代品是画面**（新门禁第 7 阶段）。
+
+**变异反证（这道门禁为什么值得存在）**
+把深度清除整条抑制（`ClearPlan.cpp` 的 own-depth 分支加一个恒假的开关）：`test_vsg` **672 全绿**、hygiene 全绿，
+第 7 阶段两条判据**同时红**——`before 378x247: content 1.09%, preview 0; after 698x132: content 1.70%, preview 0`。
+即"天空-only"这类回退，只有画面能抓。
+
+**顺带修掉的真缺陷（都是"应用才跑到"的路径）**
+- `VUID-VkViewport-width-01770`（6×）：宿主还没布局时渲染区域 0×0，`ContentPass` 照录 `vkCmdSetViewport(width=0)`。
+  现在**空矩形不录**（计数 + 一条 Info 说明一次）；`scripts/gfx_lavapipe_check.sh` 阶段里也能看到这条 6×。
+- 反证记录：**VVL 的 `09600` 在 `vkQueueSubmit` 时按"提交前"的布局判定**——在帧内（哪怕帧首）录一条 barrier
+  **来不及**；把 barrier 做成**建目标时的一次性提交**确实能让它闭嘴，但那次提交**要等队列**（lavapipe 上一帧一秒），
+  会把窗口用例饿到读黑 ⇒ **已回退**。结论留给 09600 的真正修法：让"采样描述符声明的布局"在**第一次被命名之前**
+  就是真的（或在生产者没跑的那一帧不采样），不要用额外提交去补。
+- **散落的应用窗口会让窗口用例整片变红**：`XGetImage` 返回的是**可见**内容，一个遗留窗口盖住测试窗口 ⇒ 读到那个窗口
+  （实测 6 个遗留窗口时全套件 5~9 个用例红，杀干净后 3/3 全绿）。门禁之所以用 `exec` 起应用并 `cleanup_app`，
+  就是为了自己不留窗口；**任何别的跑法也必须做到**（`( … ) &` 里不加 `exec` 的话，杀的是子壳，应用活着）。
+
+**未修（登记，附方向）**
+- 稳态仍有 `03047`（屏幕路径每帧重建采样集，因为**影子块把每帧变化的偏移烤进了描述符**）+ `09600`（采样描述符
+  声明的布局在提交时还不是真的）。两者都进了门禁的**已知名单**（按 VUID**具名**计数并打进证据行），
+  名单外的任何 VUID 仍会让阶段红。方向分别是：屏幕路径改用**动态 uniform 偏移**（内容路径 `api/BlockDescriptors`
+  已经是这么做的，这正是"一个事实一种拼法"的漏网处）；以及上面 09600 的那条。
+- 全量套件里"读窗口"的用例在**显示环境被占**时仍会红（单跑全绿、整套红一片；重跑一次也未必救得回来）。
+  这是测试宿主的脆弱点，不是后端的画面问题；下一步要么让读窗口有可靠的同步点（会话自己的 presented 计数），
+  要么把"整片窗口用例红"当成环境信号报告出来。

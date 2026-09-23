@@ -83,7 +83,15 @@ DepthPlan depthPlan(const DepthFacts& facts) noexcept
         plan.borrowed   = true;
         plan.source     = facts.source;
         plan.sampleable = false;
-        plan.preserve   = false;
+        // PRESERVED, and that is not the same question as "can a shader sample it". The image holds the
+        // depth the LENDER's pass wrote this frame, and this target's own passes (a depth test against
+        // that scene depth) are the readers. A pass of this target that cleared the depth - a bootstrap
+        // clears, which is exactly what a fresh attachment set makes a pass do - would erase the lender's
+        // depth for everyone after it. Measured on the engine's own deferred pipeline: the composite
+        // bootstrapped on every resize frame, wiped the G-buffer's depth, and the overlay's depth test
+        // then passed everywhere, so the sky covered the scene for that frame (the whole picture flickered
+        // to background while the geometry was fine in the G-buffer's own previews).
+        plan.preserve = true;
         return plan;
     }
 

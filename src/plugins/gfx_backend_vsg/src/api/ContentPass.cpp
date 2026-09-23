@@ -65,6 +65,34 @@ std::uint32_t sampledColorCount(const core::CompiledPass& pass) noexcept
     return total;
 }
 
+/**
+ * @brief Whether a program reads any sampler from THIS layer's input set.
+ *
+ * WHY IT MATTERS, AND WHAT IT COST TO MISS IT: the pass' declared inputs are what this backend binds at set 1
+ * (see ContentPipeline::kInputSet) FOR THE PROGRAMS THAT READ THEM THERE, while the engine's own programs
+ * keep every map outside that set - the material block and the diffuse map at set 0, the per-drawable block
+ * at set 1 - and are served by name instead (see api/ContentImages: `diffuseMap` from the material,
+ * `shadow_map` from the pass' resolved images). Compiling such a program against an input set is a LAYOUT
+ * question rather than a size one: its per-drawable block lives in set 1, and a sampled set in that slot is
+ * exactly the mismatch ContentPipeline::acquire's guard refuses - measured: every command of the engine's
+ * forward path was refused ("its pipeline identity has no compiled pipeline"), 42 lines per frame, with the
+ * whole scene invisible while the passes, the plan and the pixels that were left all looked fine.
+ *
+ * @param abi The program's declarations.
+ * @return true when the text declares at least one sampler in the input set.
+ */
+bool programSamplesInputSet(const ProgramAbi& abi) noexcept
+{
+    for (const AbiBinding& binding : abi.bindings)
+    {
+        if (binding.kind != AbiDescriptorKind::UniformBlock && binding.set == ContentPipeline::kInputSet)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// @brief How many DEPTH textures the pass' inputs offer, as the plan states it (the key's count).
 std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
 {
@@ -354,6 +382,24 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     bool complete = true;
     for (const core::CompiledDraw& draw : pass.draws)
     {
+        // AN EMPTY RECTANGLE HAS NO PIXELS. Recording the call would issue a viewport with a zero width and a
+        // draw no pixel lands in - the VUID (VkViewport-width-01770) the application's first frames were
+        // measured to raise, while the window was already mapped and its render area was still 0x0. Nothing is
+        // recorded for it, the count says how many were skipped, and the reason is said once (the condition
+        // repeats every frame until the host lays the window out, and it is one fact).
+        if (draw.viewport.width <= 0.0F || draw.viewport.height <= 0.0F)
+        {
+            ++empty_rectangles_;
+            if (empty_rectangle_reported_.shouldReport())
+            {
+                diagnostics_.report(vine::graphics::DiagnosticSeverity::Info,
+                                    vine::graphics::DiagnosticCategory::ContentSkipped,
+                                    asString("a drawing call was not recorded: its rectangle is empty (a host "
+                                             "whose render area is not laid out yet reports one)"));
+            }
+            continue;
+        }
+
         if (draw.kind == core::DrawKind::Screen)
         {
             // The half is found by the program the PLAN names (identity plus revision): the stages are already
@@ -463,9 +509,12 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     // attachments in attachment order and then its depth. The image layouts are the ones the producers leave
     // behind (a colour attachment ends sampleable, and a depth a shader may sample ends sampleable too - see
     // OffscreenTarget), so the descriptors name the layouts the producers' passes really left.
-    ::vsg::Descriptors descriptors;
-    descriptors.reserve(texture_count + depth_count);
-    std::uint32_t binding = 0;
+    //
+    // THE VIEWS ARE ALSO THE KEY a session reuses a set by (see InputSetCache): a steady frame offers the very
+    // same views, so the set it needs already exists and the frame only BINDS it - no descriptor is written,
+    // which is what the pending-state rule needs (VUID-vkUpdateDescriptorSets-None-03047).
+    std::vector<const ::vsg::ImageView*> key;
+    key.reserve(texture_count + depth_count);
     for (const InputImages& input : inputs)
     {
         for (const ::vsg::ref_ptr<::vsg::ImageView>& view : input.colors)
@@ -475,35 +524,63 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
                 reportRefused("the pass' sampled inputs", "an entry offers no image view");
                 return {};
             }
-            descriptors.push_back(::vsg::DescriptorImage::create(
-                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view,
-                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
-                binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
-            ++binding;
+            key.push_back(view.get());
         }
         if (input.depth != nullptr)
         {
-            // A DEPTH texture gets the NEAREST sampler (see ContentPipeline::depthSampler): the shader compares
-            // exact depths, so an interpolated one would be a depth nobody rasterised.
-            const auto depth_sampler = layer.depthSampler();
-            if (depth_sampler == nullptr)
-            {
-                reportRefused("the pass' sampled inputs", "the depth sampler could not be created");
-                return {};
-            }
-            descriptors.push_back(::vsg::DescriptorImage::create(
-                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(depth_sampler, input.depth,
-                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
-                binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
-            ++binding;
+            key.push_back(input.depth.get());
         }
     }
 
-    auto set = ::vsg::DescriptorSet::create(set_layout, descriptors);
+    InputSetCache* const cache = scope_.input_sets;
+    ::vsg::ref_ptr<::vsg::DescriptorSet> set;
+    if (cache != nullptr)
+    {
+        set = cache->find(key);
+    }
     if (set == nullptr)
     {
-        reportRefused("the pass' sampled inputs", "the sampled-input set could not be created");
-        return {};
+        ::vsg::Descriptors descriptors;
+        descriptors.reserve(texture_count + depth_count);
+        std::uint32_t binding = 0;
+        for (const InputImages& input : inputs)
+        {
+            for (const ::vsg::ref_ptr<::vsg::ImageView>& view : input.colors)
+            {
+                descriptors.push_back(::vsg::DescriptorImage::create(
+                    ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view,
+                                                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                    binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+                ++binding;
+            }
+            if (input.depth != nullptr)
+            {
+                // A DEPTH texture gets the NEAREST sampler (see ContentPipeline::depthSampler): the shader
+                // compares exact depths, so an interpolated one would be a depth nobody rasterised.
+                const auto depth_sampler = layer.depthSampler();
+                if (depth_sampler == nullptr)
+                {
+                    reportRefused("the pass' sampled inputs", "the depth sampler could not be created");
+                    return {};
+                }
+                descriptors.push_back(::vsg::DescriptorImage::create(
+                    ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(depth_sampler, input.depth,
+                                                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                    binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+                ++binding;
+            }
+        }
+
+        set = ::vsg::DescriptorSet::create(set_layout, descriptors);
+        if (set == nullptr)
+        {
+            reportRefused("the pass' sampled inputs", "the sampled-input set could not be created");
+            return {};
+        }
+        if (cache != nullptr)
+        {
+            cache->store(key, set);
+        }
     }
     // The pipeline layout this command names is the one built for the same pair of counts, and the set index
     // is the content ABI's: 1, after the declared block sets (see ContentPipeline).
@@ -952,18 +1029,22 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     record.key.topology           = command.dynamic.topology;
     record.key.compatibility      = compatibility;
     record.key.depth_sampleable   = pass.depth_sampleable;
-    // How many colour textures this pass binds as samplers: a fact of the plan's input table, carried into the
-    // identity so the pipeline is compiled against the sampled shape its pass really binds.
-    record.key.sampled_color_count = sampled_color_count;
+    // How many textures the PIPELINE's input set has: the pass' declared inputs for a program that reads
+    // them there, and NONE for one that does not (see programSamplesInputSet) - the count is part of the
+    // identity because the pipeline is compiled against the set layout it names.
+    const bool          reads_inputs    = programSamplesInputSet(program.entry->abi);
+    const std::uint32_t pipeline_colors = reads_inputs ? sampled_color_count : 0U;
+    const std::uint32_t pipeline_depths = reads_inputs ? sampled_depth_count : 0U;
+    record.key.sampled_color_count = pipeline_colors;
     // ... and how many DEPTH textures: the same table's other half (see core::CompiledInput), identity for the
     // same reason - the pipeline's sampled set is compiled against how many of each the pass binds.
-    record.key.sampled_depth_count = sampled_depth_count;
+    record.key.sampled_depth_count = pipeline_depths;
     record.dynamic                = command.dynamic;
     // The blocks: one bind per set the PROGRAM declares (its own `layout(set = ..., binding = ...)` qualifiers,
     // see api/ProgramAbi). Which sets those are came from `serveHalf`, which also refused the half when the
     // caller built no set for one of them.
     const ::vsg::ref_ptr<::vsg::PipelineLayout> block_layout =
-        entry->pipelines->layoutFor(sampled_color_count, sampled_depth_count);
+        entry->pipelines->layoutFor(pipeline_colors, pipeline_depths);
     const BlockDescriptors::Offsets block_offsets{ view_offset, block.offset, material_write.offset, lights_offset,
                                                    shadow_offset };
     std::array<::vsg::ref_ptr<::vsg::BindDescriptorSet>, kMaxBlockSets> block_binds;
@@ -1014,7 +1095,10 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         ++push_count;
     }
     record.pushes       = std::span<const ::vsg::ref_ptr<::vsg::PushConstants>>(push_commands.data(), push_count);
-    record.inputs       = inputs;
+    // The pass' sampled images are bound only by a program that reads them (see programSamplesInputSet):
+    // binding a set the pipeline layout has no room for is an API violation, and the engine's own programs
+    // have their inputs served by name in their own sets.
+    record.inputs       = reads_inputs ? inputs : nullptr;
     record.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
     record.index        = index_bind;
     record.viewport     = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
@@ -1058,6 +1142,11 @@ void ContentPass::reportRefused(const char* what, const char* why)
     const std::string message = std::string(what) + " is not drawn: " + why;
     diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
                         vine::graphics::DiagnosticCategory::ContentSkipped, asString(message));
+}
+
+std::uint64_t ContentPass::emptyRectangles() const noexcept
+{
+    return empty_rectangles_;
 }
 
 void ContentPass::reportShadowNotSampled(const Scope::Entry& entry, const core::CompiledPass& pass)

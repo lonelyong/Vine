@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <span>
@@ -80,6 +81,74 @@
  */
 V_VSG_NS_BEGIN
 
+/** @brief The sampled-input sets a session may reuse, keyed by the images they name.
+ *
+ * WHY IT EXISTS. A sampled-input set is built from a pass' inputs, and a steady frame's inputs are the same
+ * images in the same layout as the frame before - so building the set per frame builds the same set again,
+ * and building it WRITES a VkDescriptorSet (vsg writes one when it compiles it). A set that a command buffer
+ * in the PENDING state still uses must not be written (VUID-vkUpdateDescriptorSets-None-03047, measured on
+ * every frame of the application's resume, where the framework's pools handed the very same VkDescriptorSet
+ * handle back to the next frame's build). Reuse removes the write, and with it the window in which a write
+ * can be a violation: one set per distinct set of images, built once and bound by every frame that samples
+ * those images.
+ *
+ * WHAT A KEY IS. `key` is the image views the set names, in binding order (the pass' inputs in declaration
+ * order, and inside one input its colour attachments in attachment order and then its depth). Nothing else
+ * about the set is a choice: its layout comes from the counts, the samplers from the pipeline layer, and the
+ * layout every binding declares is the one the producers leave behind. A replaced image (a resize) is a new
+ * key, and the entry it replaces is swept and parked through the retirement queue like every other replaced
+ * object - a frame in flight may still name its VkDescriptorSet.
+ *
+ * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
+ */
+struct InputSetCache
+{
+    /// @brief One built set and the images it names.
+    struct Entry
+    {
+        std::vector<const ::vsg::ImageView*> images;      ///< The key: the views, in binding order.
+        ::vsg::ref_ptr<::vsg::DescriptorSet> set;         ///< What was built for that key.
+        std::uint64_t                        frame{0};    ///< The frame last asked for it (see `frame`).
+    };
+
+    /** @brief Finds the set already built for @p key, marking it as used by the current frame.
+     *
+     * @param key The image views, in binding order.
+     * @return The set, or null when this key has not been built yet.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSet> find(std::span<const ::vsg::ImageView* const> key)
+    {
+        for (Entry& entry : entries)
+        {
+            if (entry.images.size() == key.size() && std::equal(key.begin(), key.end(), entry.images.begin()))
+            {
+                entry.frame = frame;
+                return entry.set;
+            }
+        }
+        return {};
+    }
+
+    /** @brief Remembers @p set as the one built for @p key (and counts the build).
+     *
+     * @param key The image views, in binding order.
+     * @param set The set built for them.
+     */
+    void store(std::span<const ::vsg::ImageView* const> key, const ::vsg::ref_ptr<::vsg::DescriptorSet>& set)
+    {
+        Entry entry;
+        entry.images.assign(key.begin(), key.end());
+        entry.set   = set;
+        entry.frame = frame;
+        entries.push_back(std::move(entry));
+        ++builds;
+    }
+
+    std::vector<Entry> entries;   ///< One per distinct set of images the session has sampled.
+    std::uint64_t      frame{0};  ///< The frame being recorded (the assembly bumps it in beginFrame).
+    std::uint64_t      builds{0}; ///< How many sets have been built in total (a steady frame adds none).
+};
+
 /** @brief The content recorder of one pass scope (see the file note for what it refuses and why). */
 class V_VSG_API ContentPass
 {
@@ -133,6 +202,9 @@ class V_VSG_API ContentPass
         /// than once per drawing call (see `record`). The episode's END is the caller's decision - a scope
         /// that lives for one frame reports once per frame, and one that lives for the session reports once.
         core::ReportOnce       lights_dropped;
+        /// The sampled-input sets this pass may REUSE (see InputSetCache). Null when the caller keeps none,
+        /// in which case every pass builds its own set - which is correct and writes a descriptor per pass.
+        InputSetCache*         input_sets{nullptr};
     };
 
   public:
@@ -256,6 +328,16 @@ class V_VSG_API ContentPass
     /** @brief Reports a refused command for a reason that is not a table miss. */
     void reportRefused(const char* what, const char* why);
 
+    /** @brief How many drawing calls this layer skipped because their rectangle was empty.
+     *
+     * A draw whose viewport covers zero area writes nothing, and recording it would issue a viewport with a
+     * zero width - the VUID the application's first frames were measured to raise while the host's render area
+     * is still 0x0. The count is what a frame's report reads to say the frame drew nothing ON PURPOSE.
+     *
+     * @return The number of skipped calls since this object was created.
+     */
+    [[nodiscard]] std::uint64_t emptyRectangles() const noexcept;
+
 
   private:
     /** @brief Resolves the block sets @p entry's program declares, in the order the declarations name them.
@@ -294,6 +376,11 @@ class V_VSG_API ContentPass
     /// One report-once per entry for the shadow the pass declared and the program cannot read (see
     /// `reportShadowNotSampled`): a second message about the same half must not be what silences the first.
     std::vector<core::ReportOnce> shadow_reported_;
+    /// One report-once for "the rectangle is empty": it is one fact about the session, and it repeats every
+    /// frame (the host has no render area until it lays the window out), so it must not repeat with it.
+    core::ReportOnce empty_rectangle_reported_;
+    /// How many calls were skipped for an empty rectangle (see `emptyRectangles`).
+    std::uint64_t empty_rectangles_{0};
     /// The block sets `serveHalf` resolved for the half the command being recorded draws
     /// through (in the declared set order).
     std::array<BlockDescriptors*, kMaxBlockSets> half_blocks_{};

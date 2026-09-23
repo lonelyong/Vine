@@ -96,12 +96,21 @@ class ContentAssembly
 
     /** @brief Gets the tables the last beginFrame() answered with (empty before one). */
     [[nodiscard]] const ContentFacts& facts() const noexcept;
-
     /** @brief Gets the halves the assembly produced for this frame (its counters are evidence). */
     [[nodiscard]] ContentHalves& halves() noexcept;
 
     /** @brief Gets the declared sets the assembly produced for this frame (its counters are evidence). */
     [[nodiscard]] ContentSets& sets() noexcept;
+
+    /** @brief Gets how many sampled-input sets this session has built.
+     *
+     * The counter is evidence of REUSE: a steady frame offers the same images as the frame before, so it finds
+     * its sets in the cache and builds none (see api/ContentPass:InputSetCache) - and a frame that builds one
+     * has new images to name, which is what a resize does.
+     *
+     * @return The number of sets built since the assembly was created.
+     */
+    [[nodiscard]] std::uint64_t inputSetBuilds() const noexcept;
 
     ~ContentAssembly();
 

@@ -38,8 +38,7 @@ VkFormat toColorFormat(vine::graphics::RenderTarget::ColorFormat format) noexcep
 }
 
 /// @brief The engine's depth format as the API's enum (the same mapping the pipeline factory uses).
-VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcept
-{
+VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcept{
     switch (format) {
     case vine::graphics::RenderTarget::DepthFormat::D16: return VK_FORMAT_D16_UNORM;
     case vine::graphics::RenderTarget::DepthFormat::D24: return VK_FORMAT_D24_UNORM_S8_UINT;
@@ -232,7 +231,7 @@ struct OffscreenTarget::Data
     Attachments                    attachments;
     std::optional<vine::graphics::RenderTarget::DepthFormat> depth_format;
     const OffscreenTarget*            depth_source{nullptr};  ///< The lender, when the depth is borrowed.
-    std::uint32_t                     borrowers{0};           ///< Targets loading this target's depth.
+    std::shared_ptr<std::uint32_t> lending{};  ///< The count of targets loading this depth: SHARED with them.
     bool                              depth_sampleable{false};  ///< The host asked for a sampleable depth.
     /// The clear policy `create` was given: the initial graph's clear values come from it, and a rebuilt graph
     /// has to use the same policy - values a caller never re-announces must not change under it.
@@ -367,11 +366,11 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     // says so explicitly (a fresh image cannot be loaded), and a plan that asks for a LOAD is refused below
     // rather than passed on - loading an UNDEFINED image is not a policy choice, it is a bug. The one LOAD
     // that is not a bug is a BORROWED depth: it is the lender's image, in the lender's layout, holding what
-    // the lender's pass wrote - so the depth is declared preserved and the plan refuses to clear it.
+    // the lender's pass wrote - so the depth is declared BORROWED and the plan refuses to clear it.
     const core::TargetShape shape = shapeOf(layout);
     const bool                depth_borrowed = depth_source != nullptr;
-    const core::PassClearPlan plan = core::planClearValues(shape, layout.clear, /*bootstrap*/ true,
-                                                          /*depth_preserved*/ depth_borrowed);
+    const core::PassClearPlan plan =
+        core::planClearValues(shape, layout.clear, /*bootstrap*/ true, /*depth_borrowed*/ depth_borrowed);
     for (const core::AttachmentClear& attachment : plan.colors) {
         if (attachment.load != core::LoadOp::Clear) {
             return nullptr;
@@ -390,8 +389,15 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     target->d->depth_format     = layout.depth_format;
     target->d->depth_sampleable = layout.depth_sampleable;
     target->d->clear_policy     = layout.clear;
+    // The borrower count lives in storage the LENDER and every borrower share, not in the lender's object: a
+    // borrower counts DOWN at destruction, and it may well outlive the lender (two registry entries released in
+    // the lender's order, a host that drops the lender and keeps drawing into the borrower for a frame) - a
+    // count kept in the lender would make that destruction a read of freed memory (measured: a double free in
+    // the test suite, and the same two lines could be reached by a host's release order).
+    target->d->lending = std::make_shared<std::uint32_t>(0U);
     if (depth_borrowed) {
         target->d->depth_source = depth_source;
+        target->d->lending      = depth_source->d->lending;
     }
 
     // The pass and its first variant are the SHAPE's, built once for the target's life: an extent is not part of
@@ -419,16 +425,16 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     }
     target->d->attachments = std::move(built);
     if (depth_borrowed) {
-        ++depth_source->d->borrowers;
+        ++*target->d->lending;
     }
     return target;
 }
 
 bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height,
-                                        Attachments& out) const
+                                        Attachments& out)
 {
-    const core::PassClearPlan plan = core::planClearValues(d->shape, d->clear_policy, /*bootstrap*/ true,
-                                                          /*depth_preserved*/ d->depth_borrowed);
+    const core::PassClearPlan plan =
+        core::planClearValues(d->shape, d->clear_policy, /*bootstrap*/ true, /*depth_borrowed*/ d->depth_borrowed);
     for (const vine::graphics::RenderTarget::ColorFormat format : d->shape.color_formats) {
         OffscreenTarget::Attachments::Color color;
         // The image is created with SAMPLED usage as well as colour-attachment: the pass leaves colour
@@ -689,15 +695,17 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, depth_buffer_barrier));
         }
     }
+    // A build that REACHED this point has handed out every image.
     return true;
 }
 
 OffscreenTarget::~OffscreenTarget()
 {
     // Lending is a fact of the lender's frame, so the fact goes away with the borrower: a promotion that a
-    // borrower revoked comes back once nothing loads this target's depth any more.
-    if (d->depth_source != nullptr && d->depth_source->d->borrowers > 0U) {
-        --d->depth_source->d->borrowers;
+    // borrower revoked comes back once nothing loads this target's depth any more. The count is the SHARED one
+    // (see create), so this does not touch the lender - which may already be gone, and must not be read then.
+    if (d->depth_source != nullptr && d->lending != nullptr && *d->lending > 0U) {
+        --*d->lending;
     }
 }
 
@@ -706,8 +714,7 @@ OffscreenTarget::~OffscreenTarget()
     return d->attachments.render_graph;
 }
 
-::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearPolicy& policy, bool bootstrap,
-                                                            bool depth_preserved)
+::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearPolicy& policy, bool bootstrap)
 {
     if (d->render_pass == nullptr || d->attachments.framebuffer == nullptr)
     {
@@ -717,7 +724,7 @@ OffscreenTarget::~OffscreenTarget()
     // What this pass does to the attachments, resolved from the plan's three inputs, and the variant that
     // spells it out: a first writer clears, a later writer loads what is there, and a preserved depth is never
     // cleared (see core::planClearValues).
-    const core::PassClearPlan plan = core::planClearValues(d->shape, policy, bootstrap, depth_preserved);
+    const core::PassClearPlan plan = core::planClearValues(d->shape, policy, bootstrap, d->depth_borrowed);
     const core::LoadOpVariantKey variant =
         core::loadOpVariantOf(plan, core::ImageLayout::ShaderReadOnly, depthSteadyLayout(), depthSteadyLayout());
     const ::vsg::ref_ptr<::vsg::RenderPass> render_pass = renderPassFor(variant);
@@ -770,6 +777,73 @@ core::TargetInstance OffscreenTarget::instance() const noexcept
     instance.built                   = d->written;
     instance.attachments_invalidated = d->attachments_invalidated;
     return instance;
+}
+
+bool OffscreenTarget::repointBorrowedDepth(const core::FrameTimeline& timeline,
+                                           core::RetirementQueue& retirement)
+{
+    if (d->depth_source == nullptr || d->attachments.render_graph == nullptr)
+    {
+        return false;  // no borrowed depth, or nothing built to re-point
+    }
+    const OffscreenTarget& lender = *d->depth_source;
+    if (lender.d->attachments.depth_view == nullptr ||
+        lender.d->attachments.depth_view == d->attachments.depth_view)
+    {
+        return false;  // the lender serves the same image this target already names
+    }
+    if (lender.d->width < d->width || lender.d->height < d->height)
+    {
+        // A framebuffer attachment must be at least as large as the framebuffer it is attached to
+        // (VUID-VkFramebufferCreateInfo-pAttachments-00861), so a lender that shrank BELOW this target cannot
+        // back it: re-pointing anyway would be a silent validation error instead of a refusal. False here is
+        // the same answer "nothing to do" gives, and the caller keeps what it had - the state is not made
+        // worse, and the resize that created it is the one to refuse (VsgExecutor::applyTargetPlans refuses a
+        // lender's shrink while a borrower is larger, so a host-driven pair never reaches this).
+        return false;
+    }
+
+    // ONLY the framebuffer is replaced, and that is the whole point of doing this instead of a resize: the
+    // COLOUR attachments are this target's own and keep their contents, so the passes already planned for
+    // this frame keep their load-ops (a pass that LOADs still reads what it wrote) while the depth test now
+    // reads the depth the lender's own pass writes this frame. Replacing the colour images would need a
+    // bootstrap clear, and the plan for this frame was compiled before this call.
+    ::vsg::ImageViews views;
+    views.reserve(d->attachments.colors.size() + 1U);
+    for (const Attachments::Color& color : d->attachments.colors)
+    {
+        views.push_back(color.view);
+    }
+    views.push_back(lender.d->attachments.depth_view);
+
+    const ::vsg::ref_ptr<::vsg::Framebuffer> replaced = d->attachments.framebuffer;
+    auto framebuffer = ::vsg::Framebuffer::create(d->render_pass, views, d->width, d->height, 1U);
+    if (framebuffer == nullptr)
+    {
+        return false;
+    }
+    d->attachments.framebuffer                    = framebuffer;
+    d->attachments.depth_image                    = lender.d->attachments.depth_image;
+    d->attachments.depth_view                     = lender.d->attachments.depth_view;
+    // The target's own graph is a marker as much as a graph (its framebuffer is what "built" is read from),
+    // and the per-pass graphs are built from the attachments each frame (see passGraph) - so they see the new
+    // framebuffer on their own.
+    d->attachments.render_graph->framebuffer      = framebuffer;
+    ++d->generation;
+
+    // The replaced framebuffer may still be named by a frame in flight (submissions overlap): the same
+    // custody a resize uses, so a refusal cannot free it while a command buffer still names it.
+    auto custody = std::make_shared<::vsg::ref_ptr<::vsg::Framebuffer>>(std::move(replaced));
+    if (!retirement.retire(timeline, [custody]() { *custody = {}; }))
+    {
+        retirement.noteDeviceWait();
+        if (d->device != nullptr)
+        {
+            vkDeviceWaitIdle(*d->device);
+        }
+        *custody = {};
+    }
+    return true;
 }
 
 void OffscreenTarget::invalidateAttachments() noexcept
@@ -889,7 +963,7 @@ core::DepthPlan OffscreenTarget::depth() const noexcept
     facts.promotion   = d->depth_sampleable;
     facts.borrowed    = d->depth_source != nullptr;
     facts.source      = d->depth_source;
-    facts.any_pass_preserves_depth = d->borrowers > 0U;
+    facts.any_pass_preserves_depth = d->lending != nullptr && *d->lending > 0U;
     return core::depthPlan(facts);
 }
 
@@ -967,19 +1041,31 @@ OffscreenTarget::Resized OffscreenTarget::resize(std::uint32_t width, std::uint3
         return result;
     }
 
-    // A lease refuses in both directions, for one reason: a leased depth image has exactly one owner, and the
-    // borrower's framebuffer names the LENDER's image.
-    //   * This target LENDS its depth (borrowers > 0): their framebuffers name the image this resize would
-    //     replace, and this target does not know who they are. The caller rebuilds the borrower first - the
+    // A LEASED pair used to refuse in BOTH directions, and that made it impossible to grow: the lender
+    // refused because its borrowers' framebuffers named the image the resize would replace, the borrower
+    // refused because its own framebuffer would name an image smaller than itself - so neither ever moved.
+    // Measured on the engine's own deferred pipeline: its G-buffer and the composite that borrows its depth
+    // were told "resize to the surface" every frame and both stayed at the size they were built at, which
+    // put a crop of the picture's top-left corner on screen (the G-buffer previews and the lit window were
+    // that crop, stretched).
+    //
+    // The rule is the caller's ORDER and its follow-up (see VsgExecutor::applyTargetPlans):
+    //   * a LENDER may resize. Its borrowers' framebuffers name the image that is being replaced - a
+    //     STALE read, never a dangling one (the replaced image is kept alive by the parking window) - and
+    //     the caller re-points them at the image the lender now serves, in the same frame. This is the
     //     rule the reference reads as "the borrow points at another image".
-    //   * This target BORROWS its depth (depth_source): the depth attachment of the new framebuffer would be
-    //     the lender's image at the LENDER's extent, and a framebuffer attachment must be at least as large as
-    //     the framebuffer it is attached to (VUID-VkFramebufferCreateInfo-pAttachments-00861). Moving the
-    //     extent here is not this target's to do: the caller resizes the lender and builds this target again.
-    if (d->borrowers > 0U || d->depth_source != nullptr)
+    //   * a BORROWER may resize while its lender's CURRENT image covers the new extent. That is what the
+    //     refusal was really about: a framebuffer attachment must be at least as large as the framebuffer
+    //     it is attached to (VUID-VkFramebufferCreateInfo-pAttachments-00861), and a lender applied first
+    //     makes it true in the same frame.
+    if (d->depth_source != nullptr)
     {
-        result.refused = true;
-        return result;
+        const OffscreenTarget& lender = *d->depth_source;
+        if (lender.d->attachments.depth_view == nullptr || width > lender.d->width || height > lender.d->height)
+        {
+            result.refused = true;
+            return result;
+        }
     }
 
     // The replacement exists BEFORE what it replaces is touched: a build that fails leaves the target serving
@@ -1053,7 +1139,7 @@ OffscreenTarget::Rebuilt OffscreenTarget::rebuild(const TargetLayout& wanted, co
     // the LENDER's image, and a target does not know who its borrowers are. A borrowed depth is refused as
     // well - this target's new pass would have to adopt an image whose extent and layout belong to a
     // lender this call was not told about.
-    if (d->borrowers > 0U || d->depth_source != nullptr)
+    if ((d->lending != nullptr && *d->lending > 0U) || d->depth_source != nullptr)
     {
         result.refused = true;
         return give_up();
@@ -1064,7 +1150,7 @@ OffscreenTarget::Rebuilt OffscreenTarget::rebuild(const TargetLayout& wanted, co
     // description that says otherwise (a colour attachment that is loaded, an own depth that is loaded) is
     // refused exactly where create refuses it.
     const core::PassClearPlan plan = core::planClearValues(shape, wanted.clear, /*bootstrap*/ true,
-                                                           /*depth_preserved*/ false);
+                                                           /*depth_borrowed*/ false);
     for (const core::AttachmentClear& attachment : plan.colors)
     {
         if (attachment.load != core::LoadOp::Clear)

@@ -145,19 +145,30 @@ TEST(CoreClearPlanTest, ADepthOnlyTargetHasNoColourEntries)
     EXPECT_FLOAT_EQ(plan.depth.clear, 0.0F);
 }
 
-TEST(CoreClearPlanTest, APreservedDepthIsNeverCleared)
+TEST(CoreClearPlanTest, ABorrowedDepthIsNeverClearedAndAnOwnDepthIsNotPreservedFromTheClear)
 {
     ClearPolicy policy;
     policy.color = true;
     policy.depth = true;
 
-    // The bootstrap row is the interesting one: preservation outranks it.
-    const auto plan = planClearValues(multiTarget(), policy, /*bootstrap*/ true, /*depth_preserved*/ true);
+    // A BORROWED depth: the image is the lender's, and clearing it would erase the depth the lender's pass
+    // wrote for every reader after it - so not even the bootstrap rule clears it.
+    {
+        const auto borrowed = planClearValues(multiTarget(), policy, /*bootstrap*/ true, /*depth_borrowed*/ true);
+        EXPECT_EQ(borrowed.colors[0].load, LoadOp::Clear) << "the colour is still cleared: only the depth is spared";
+        EXPECT_EQ(borrowed.depth.load, LoadOp::Load) << "the lender's image is not this target's to clear";
+        EXPECT_EQ(borrowed.depth.store, vine::vsg::core::StoreOp::Store);
+    }
 
-    EXPECT_EQ(plan.colors[0].load, LoadOp::Clear) << "the colour is still cleared: only the depth is preserved";
-    EXPECT_EQ(plan.depth.load, LoadOp::Load)
-        << "clearing it would make the dependent pass read the far plane and treat every fragment as visible";
-    EXPECT_EQ(plan.depth.store, vine::vsg::core::StoreOp::Store);
+    // An OWN depth whose image was just built is the opposite case, and it is the one that cost a picture: a
+    // fresh depth image holds nothing, so a bootstrap pass that loaded it left the geometry testing against
+    // values from a frame the images no longer belonged to - the deferred demo came out sky-only after its
+    // first resize (see core::planClearValues' rule 3).
+    {
+        const auto fresh =
+            planClearValues(multiTarget(), policy, /*bootstrap*/ true, /*depth_borrowed*/ false);
+        EXPECT_EQ(fresh.depth.load, LoadOp::Clear) << "a fresh own depth must be cleared: nothing may be loaded";
+    }
 }
 
 TEST(CoreClearPlanTest, TheDepthClearValueIsThePolicyValueWhenItAsksForOne)

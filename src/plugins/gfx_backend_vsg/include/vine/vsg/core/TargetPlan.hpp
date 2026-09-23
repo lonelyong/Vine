@@ -159,8 +159,9 @@ struct DepthPlan
 /** @brief Derives the depth plan from the facts that interact (see the file note).
  *
  * @param facts Depth facts of the target and of this frame's passes.
- * @return The plan: a borrowed depth is never sampleable and never preserved by the borrower; an own
- *         depth is sampleable only while promotion survives - any depth-preserving pass revokes it.
+ * @return The plan: a borrowed depth is never sampleable and is always preserved (its passes read the
+ *         lender's depth and must never clear it); an own depth is sampleable only while promotion
+ *         survives - any depth-preserving pass revokes it.
  */
 [[nodiscard]] DepthPlan depthPlan(const DepthFacts& facts) noexcept;
 

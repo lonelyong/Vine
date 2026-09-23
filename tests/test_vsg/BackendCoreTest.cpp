@@ -328,7 +328,9 @@ TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
         EXPECT_TRUE(plan.preserve);
     }
 
-    // A borrowed depth: the policy is the lender's, so the borrower neither samples nor preserves it.
+    // A borrowed depth: the policy is the lender's, so the borrower never samples it - and it PRESERVES it:
+    // the image holds the depth the lender's pass wrote, and a pass of the borrower that cleared it (a
+    // bootstrap clears) would erase the lender's depth for every reader after it (see depthPlan).
     {
         DepthFacts facts;
         facts.has_depth = true;
@@ -339,7 +341,7 @@ TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
         EXPECT_TRUE(plan.borrowed);
         EXPECT_EQ(plan.source, &lender);
         EXPECT_FALSE(plan.sampleable);
-        EXPECT_FALSE(plan.preserve);
+        EXPECT_TRUE(plan.preserve);
     }
 }
 

@@ -127,19 +127,18 @@ class OffscreenTarget
      * claim a PIXEL can check: the last pass recorded owns the final colour, and the earlier pass' picture is
      * still underneath it.
      *
-     * The three inputs are the plan's: what the pass asked to clear, whether it is the target's FIRST writer
-     * (a fresh image cannot be loaded - it must clear), and whether a later pass reads the depth this one
-     * writes (never cleared, not even by the bootstrap rule). A pass that is neither the first writer nor asks
-     * for a clear LOADS, which is a variant this target builds the first time a frame needs it.
+     * The inputs are the plan's (what the pass asked to clear, whether it is the target's FIRST writer: a fresh
+     * image cannot be loaded - it must clear) plus the TARGET's own fact about its depth: a BORROWED depth is
+     * the lender's image, so no pass of this target may clear it, whatever the plan asks (see
+     * core::planClearValues). A pass that is neither the first writer nor asks for a clear LOADS, which is a
+     * variant this target builds the first time a frame needs it.
      *
-     * @param policy          What this pass asks the target to clear (attachment 0's colour, and the depth).
-     * @param bootstrap       Whether this pass is the first writer of freshly built attachments.
-     * @param depth_preserved Whether a later pass reads the depth this one writes.
+     * @param policy    What this pass asks the target to clear (attachment 0's colour, and the depth).
+     * @param bootstrap Whether this pass is the first writer of freshly built attachments.
      * @return The graph this pass records into (its only child is the target's content view - see
      *         `addContent`), or null when the target has no attachments or the variant could not be built.
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> passGraph(const core::ClearPolicy& policy, bool bootstrap = true,
-                                                              bool depth_preserved = false);
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> passGraph(const core::ClearPolicy& policy, bool bootstrap = true);
 
     /** @brief Gets how many load-op variants of this target's render pass have been built.
      *
@@ -379,6 +378,25 @@ class OffscreenTarget
         std::uint64_t        generation{0};   ///< The generation in force when the call returned.
     };
 
+    /** @brief Re-points a BORROWER's framebuffer at the image its lender currently serves.
+     *
+     * When it is needed: a lender may resize while something borrows its depth (see @ref resize), and the
+     * borrower's framebuffer then names the image that was just replaced. The caller that applied the
+     * lender's change calls this for each borrower in the same frame, before anything is recorded.
+     *
+     * WHAT IS REPLACED, AND WHAT IS NOT. Only the framebuffer: the colour attachments are the borrower's own
+     * and keep their contents, so the passes already planned for this frame keep their load-ops - a pass that
+     * LOADs still reads what it wrote - while the depth test reads the depth the lender's own pass writes this
+     * frame (the plan orders a lender before its borrowers). The replaced framebuffer is parked through the
+     * caller's retirement queue, exactly as a resize parks the attachments it replaces.
+     *
+     * @param timeline   The session's frame clock, for the parking window.
+     * @param retirement Where the replaced framebuffer is parked.
+     * @return true when the framebuffer was replaced, false when there was nothing to do (no borrowed depth,
+     *         nothing built, the lender serves the same image, or the new framebuffer could not be created).
+     */
+    bool repointBorrowedDepth(const core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+
     /** @brief Makes the target serve a new extent, the way the plan says (`core::planTarget`).
      *
      * WHAT IS REPLACED, AND WHAT IS NOT. An extent is not part of a pipeline's identity and not part of
@@ -558,7 +576,7 @@ class OffscreenTarget
      *               with a previous set).
      * @return true when every object was created.
      */
-    [[nodiscard]] bool buildAttachments(std::uint32_t width, std::uint32_t height, Attachments& out) const;
+    [[nodiscard]] bool buildAttachments(std::uint32_t width, std::uint32_t height, Attachments& out);
 };
 
 V_VSG_NS_END

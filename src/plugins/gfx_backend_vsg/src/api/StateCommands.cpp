@@ -86,7 +86,8 @@ VkPrimitiveTopology mapTopology(vine::graphics::Topology topology) noexcept
 
 ::vsg::ref_ptr<detail::SetDynamicState> makeDynamicStateCommand(const core::DynamicState& state,
                                                                 std::uint32_t color_attachments,
-                                                                const detail::DynamicStateEntryPoints& entry_points)
+                                                                const detail::DynamicStateEntryPoints& entry_points,
+                                                                bool draws_content)
 {
     auto command = detail::SetDynamicState::create();
 
@@ -100,15 +101,18 @@ VkPrimitiveTopology mapTopology(vine::graphics::Topology topology) noexcept
     command->polygon_mode = mapPolygon(state.polygon_mode);
     command->topology     = mapTopology(state.topology);
 
-    // Blending is always on for a SINGLE colour attachment (the engine's per-vertex opacity can drop
-    // below 1 without a pipeline rebuild, so the one-attachment picture keeps the standard pair), and
-    // always OFF for a pass with several: those attachments carry DATA, and a G-buffer's normal rides
-    // with the material's shininess in its alpha, so blending would scale the stored normal by its own
-    // alpha (a shininess of 32 attenuates it to 12.5%). The L2's G-buffer hit exactly that and writes
-    // its attachments unblended (see applyOpaqueBlendForAttachments, VsgSceneRules.cpp); the rule is
-    // re-applied at THIS end because the enable and the factors are delivered by this command, so the
-    // pipeline's baked state no longer decides for either path.
-    const bool opaque = color_attachments > 1U;
+    // Blending is always on for a SINGLE colour attachment OF A CONTENT DRAW (the engine's per-vertex
+    // opacity can drop below 1 without a pipeline rebuild, so the one-attachment picture keeps the
+    // standard pair), and always OFF for a pass with several: those attachments carry DATA, and a
+    // G-buffer's normal rides with the material's shininess in its alpha, so blending would scale the
+    // stored normal by its own alpha (a shininess of 32 attenuates it to 12.5%). The L2's G-buffer hit
+    // exactly that and writes its attachments unblended (see applyOpaqueBlendForAttachments,
+    // VsgSceneRules.cpp); the rule is re-applied at THIS end because the enable and the factors are
+    // delivered by this command, so the pipeline's baked state no longer decides for either path.
+    //
+    // A FULL-SCREEN draw is a write rather than a surface, and it never blends whatever the attachment
+    // count says (see the declaration): blending one made a copy of a transparent attachment disappear.
+    const bool opaque = color_attachments > 1U || !draws_content;
     VkBlendFactor src = opaque ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_SRC_ALPHA;
     VkBlendFactor dst = opaque ? VK_BLEND_FACTOR_ZERO : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     if (!opaque && state.blend.enabled) {

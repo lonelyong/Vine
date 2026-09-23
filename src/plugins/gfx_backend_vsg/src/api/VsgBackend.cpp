@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <span>
 #include <string>
@@ -26,6 +27,7 @@
 #include <vine/vsg/api/VsgExecutor.hpp>
 #include <vine/vsg/api/ViewBlock.hpp>
 #include <vine/vsg/api/WindowTarget.hpp>
+#include <vine/vsg/core/AllocationGate.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
 #include <vine/vsg/core/FrameRecorder.hpp>
@@ -220,6 +222,7 @@ struct VsgBackend::Data
     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_views;
     std::vector<PassContent>                  packets;        ///< Reused per frame (see recordContent).
     const core::CompiledFrame*                frame{nullptr}; ///< This frame's plan, between end and swap.
+
 };
 
 VsgBackend::VsgBackend() : d(std::make_unique<Data>())
@@ -241,6 +244,11 @@ bool VsgBackend::initialize()
     api::SessionOptions options;
     options.width         = d->announced_width;
     options.height        = d->announced_height;
+    // The debug-layer switch is the one the implementation this replaces read (VINE_VSG_DEBUG_LAYER, see
+    // VsgRenderer): the gate scripts and the troubleshooting notes set it and expect the validation layer,
+    // and a switch that silently does nothing is worse than none - the run would CLAIM to be
+    // validation-clean with nothing looking. Read here, where the device is asked for.
+    options.validation    = std::getenv("VINE_VSG_DEBUG_LAYER") != nullptr;
     options.native_handle = d->host_handle;
 
     if (!d->session.initialize(options, d->diagnostics))
@@ -370,7 +378,6 @@ void VsgBackend::swapBuffers()
     // is recorded into this frame's graph, and the graph is the session's - which is the call that submits
     // and presents, and the one whose false answer means the writes never happened.
     (void)d->executor.applyTargetPlans(*d->frame, d->facts, d->session.timeline(), d->session.retirement());
-
     std::span<const PassContent> packets{};
     if (WindowTarget* window = detail::SessionContentAccess::windowTarget(d->session);
         d->assembly != nullptr && window != nullptr)
@@ -378,7 +385,6 @@ void VsgBackend::swapBuffers()
         packets = recordContent(*d->assembly, *window, d->targets, d->session, *d->frame, d->input_scratch,
                                 d->input_views, d->packets);
     }
-
     (void)d->executor.record(*d->frame, graph, packets);
     if (detail::SessionContentAccess::assignFrameGraphs(d->session, ::vsg::CommandGraphs{ graph }))
     {
@@ -419,6 +425,10 @@ void VsgBackend::resize(int width, int height)
         // itself is followed the same way; the announced numbers are what the NEXT initialize() creates that
         // window at, which is the only way this layer can apply them (it does not move a window of its own -
         // see the registered limit in the design notes).
+        //
+        // The announcement is what tells the follow whether an unchanged answer is a problem or the truth: a
+        // size the host announced as NEW and that the platform answers with the old extent is a read that
+        // arrived before the platform applied it (see followResizedSurface's second ask).
         detail::SessionContentAccess::followResizedSurface(d->session);
     }
 }

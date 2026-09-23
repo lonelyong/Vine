@@ -2,46 +2,16 @@
 
 #include <string>
 
+#include <vine/vsg/api/OneShot.hpp>
+
 #include <vsg/commands/Commands.h>
-#include <vsg/vk/CommandPool.h>
 #include <vsg/vk/Device.h>
-#include <vsg/vk/Fence.h>
-#include <vsg/vk/PhysicalDevice.h>
-#include <vsg/vk/SubmitCommands.h>
 
 V_VSG_NS_BEGIN
 
 namespace
 {
 
-/// @brief Submits @p commands once, on a fresh command buffer, and waits for them.
-///
-/// The wait is what makes the readback synchronous, so the timeout is generous on purpose: a timeout means
-/// the transfer never finished, not that it was slow (the legacy backend's reading, kept verbatim - the
-/// prologue, the queue choice and the fence live here once).
-bool submitOneShot(::vsg::Device& device, const ::vsg::ref_ptr<::vsg::Commands>& commands)
-{
-    constexpr std::uint64_t kReadbackTimeoutNs = 100'000'000'000ull;
-
-    ::vsg::PhysicalDevice* physical = device.getPhysicalDevice();
-    if (physical == nullptr)
-    {
-        return false;
-    }
-    const auto queue_family = physical->getQueueFamily(VK_QUEUE_GRAPHICS_BIT);
-    auto       command_pool = ::vsg::CommandPool::create(&device, queue_family);
-    auto       fence        = ::vsg::Fence::create(&device);
-    auto       queue        = device.getQueue(queue_family);
-    if (command_pool == nullptr || fence == nullptr || queue == nullptr)
-    {
-        return false;
-    }
-    ::vsg::submitCommandsToQueue(command_pool, fence, kReadbackTimeoutNs, queue,
-                                 [&commands](::vsg::CommandBuffer& command_buffer) { commands->record(command_buffer); });
-    // submitCommandsToQueue() waits on the fence unless the submission failed: a failed submit is the only
-    // way out of it with the copy unperformed, and the caller answers TransferFailed either way.
-    return true;
-}
 
 /// @brief Makes sure a copy of the requested attachment exists to read, and submits one when the frame did not.
 ///
@@ -83,7 +53,7 @@ HostReadbackRefusal ensureCopy(OffscreenTarget& target, core::ReadbackKind kind,
     {
         return HostReadbackRefusal::TransferFailed;  // no copy commands: nothing could ever be read
     }
-    if (!submitOneShot(*device, commands))
+    if (!submitCommandsOnce(*device, commands))
     {
         return HostReadbackRefusal::TransferFailed;
     }

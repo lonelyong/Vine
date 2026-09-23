@@ -109,7 +109,9 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
         ++pipeline_binds_;
     }
     if (resolution.dynamic_issued) {
-        group->add(makeDynamicStateCommand(draw.dynamic, draw.color_attachments, entry_points_));
+        // A full-screen draw does not blend (see makeDynamicStateCommand): it writes the rectangle.
+        group->add(makeDynamicStateCommand(draw.dynamic, draw.color_attachments, entry_points_,
+                                           /*draws_content*/ false));
         ++dynamic_commands_;
     }
     if (draw.samplers != nullptr && resolution.inputs_issued) {

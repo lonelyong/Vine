@@ -139,7 +139,7 @@ void WindowTarget::prepare(const core::ClearPolicy& policy) noexcept
     // "bootstrap" rule is the honest reading of it: attachment 0 takes the policy's colour, the depth the
     // policy's value (the reverse-Z far plane by default).
     const core::PassClearPlan plan = core::planClearValues(d->shape, policy, /*bootstrap*/ true,
-                                                          /*depth_preserved*/ false);
+                                                          /*depth_borrowed*/ false);
     VkClearColorValue         color = {};
     if (!plan.colors.empty())
     {
