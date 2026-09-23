@@ -46,16 +46,19 @@
  *     pass reads - and the images of those inputs are what the content recording binds - and
  *     `drawScreenProgram()` records the full-screen call whose source is one of them. `releaseRenderTarget()`
  *     drops everything held for a target the host is about to destroy;
+ *   * the READBACK: `readColorBuffer()`/`readDepthBuffer()` stop the device (a counted wait), submit the
+ *     target's own copy commands ONCE and fence them, so the pixels / depths the host gets are the ones the
+ *     last submitted frame left (api/HostReadback). A refusal answers the SDK's machine-readable result and
+ *     says its reason once per episode;
  *   * the surface facts - `setWindowHandle()`/`nativeHandle()` for a host surface, and `resize()`'s
  *     announcement, which is applied when the session comes up (the session's window is created at that
  *     size) and reported while the session is live (resizing a live surface is not served yet);
  *   * the diagnostics route - the core's one route feeds the SDK's `reportDiagnostic`, so a host's sink and
  *     `diagnosticCount()` see the session's own reports without this layer re-reporting anything.
  *
- * WHAT IS REPORTED AS NOT SERVED YET: the two readbacks (`readColorBuffer()` / `readDepthBuffer()` - the
- * off-screen attachments are drawn into but not copied back yet) and a resize of a live surface. Each call
- * that has nowhere to go says so once (core::ReportOnce): a facade that silently dropped them would look
- * like a working backend with a black screen.
+ * WHAT IS REPORTED AS NOT SERVED YET: a resize of a live surface. Each call that has nowhere to go says so
+ * once (core::ReportOnce): a facade that silently dropped it would look like a working backend with a
+ * black screen.
  *
  * ONE THREAD, LIKE EVERYTHING ELSE HERE: the engine drives a backend from one thread and never reentrantly
  * (see RenderBackend's class note), so this type keeps no synchronisation.
@@ -154,11 +157,11 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     /** @brief Drops everything held for a target the host is about to destroy. */
     void releaseRenderTarget(vine::graphics::RenderTarget* target) override;
 
-    /** @brief Reports that readback is not served yet, and answers `Unsupported` (the file note). */
+    /** @brief Reads a colour attachment back: the device is stopped (counted), the copy is fenced, bytes out. */
     bool readColorBuffer(const vine::graphics::RenderTarget* target, int attachment,
                          std::vector<std::uint8_t>& outPixels, vine::graphics::ReadbackResult* why = nullptr) override;
 
-    /** @brief Reports that readback is not served yet, and answers `Unsupported` (the file note). */
+    /** @brief Reads a depth attachment back as normalised values (a borrowed depth is the source's to read). */
     bool readDepthBuffer(const vine::graphics::RenderTarget* target, std::vector<float>& outDepths,
                          vine::graphics::ReadbackResult* why = nullptr) override;
 

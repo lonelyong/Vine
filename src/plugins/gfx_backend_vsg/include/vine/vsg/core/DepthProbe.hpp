@@ -69,6 +69,15 @@ class DepthProbe
      */
     [[nodiscard]] std::size_t countNear(float value, float tolerance) const noexcept;
 
+    /** @brief Gets the normalised values the probe wraps (row-major, one per texel).
+     *
+     * For the caller that hands the depths ON rather than probes them - the SDK's readback copies the
+     * values out of here.
+     *
+     * @return The values, exactly `width() * height()` of them when valid.
+     */
+    [[nodiscard]] const std::vector<float>& values() const noexcept;
+
   private:
     int                width_{0};
     int                height_{0};

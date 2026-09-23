@@ -57,4 +57,9 @@ std::size_t DepthProbe::countNear(float value, float tolerance) const noexcept
 
 }  // namespace core
 
+const std::vector<float>& core::DepthProbe::values() const noexcept
+{
+    return values_;
+}
+
 V_VSG_NS_END

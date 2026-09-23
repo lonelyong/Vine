@@ -78,6 +78,20 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
         recorded_.push_back(pass.pass);
     }
 
+    // A frame that drew ONLY off-screen still PRESENTS, and the acquired image must have had a render pass
+    // run over it before the present: the window's graph is the only place that happens, so it is added here
+    // when no window pass did it (measured: presenting an image nobody rendered into is
+    // VUID-VkPresentInfoKHR-pImageIndices-01430 - it stays in UNDEFINED). Its content view still holds the
+    // last window pass' content, which is the same picture an empty frame presents (see api/Session): a frame
+    // with no window pass does not blank the window, it just gives the fresh swapchain image a defined
+    // layout. There is no pass to attribute a measurement interval to, so this graph is added UNWRAPPED.
+    if (window_ != nullptr && !window_recorded_)
+    {
+        window_->prepareWithoutClear();
+        command_graph->addChild(window_->graph());
+        window_recorded_ = true;
+    }
+
     // Content for a pass the frame does not contain would silently disappear - and the pass it was meant for
     // is missing for a reason the caller has to hear (a cycle was skipped, a target could not be served).
     for (const PassContent& packet : content)

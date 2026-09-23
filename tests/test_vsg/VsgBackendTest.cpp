@@ -98,6 +98,62 @@ bool isRed(const std::array<std::uint8_t, 3>& pixel)
             (isColourByte(pixel[2], 1.0) && isColourByte(pixel[0], 0.0)));
 }
 
+/// @brief A red triangle under a view-block program: the content the off-screen cases draw.
+struct TriangleFixture
+{
+    vine::intrusive_ptr<ShaderProgram> program;
+    vine::intrusive_ptr<Geometry>      geometry;
+    vine::intrusive_ptr<Material>      material;
+    std::vector<RenderCommand>         commands;
+};
+
+/// @brief Builds the triangle fixture: a view-block vertex stage and a constant red fragment stage.
+TriangleFixture makeTriangle()
+{
+    TriangleFixture fixture;
+
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+    fixture.program = program;
+
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vine::intrusive_ptr<vine::Buffer<float>> positions = vine::intrusive_ptr<vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices =
+        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
+            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    geometry->setPositions(positions);
+    geometry->setIndices(indices);
+    geometry->setRevision(1U);
+    fixture.geometry = geometry;
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    fixture.material = material;
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    fixture.commands.push_back(command);
+    return fixture;
+}
+
 /// @brief A camera looking at (x, 0, 0) from (x, 0, 1.5), through an orthographic window of [-1, 1] squared.
 ///
 /// The world x in [-0.4, 0.4] then lands HALF A UNIT to one side of the camera's centre, which is how the
@@ -153,33 +209,45 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_EQ(backend->deviceWaits(), 0U) << "the frame path never stops the device";
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "a healthy session reports nothing";
 
-    // 3. What is still NOT served says so, once per entry point: a backend that dropped it in silence would
-    // be a working-looking black screen, which is the one answer the SDK forbids. (The pass protocol, the
-    // content drawing and the off-screen targets ARE served now - see the content cases below.)
+    // 3. The readbacks are served now, and their REFUSALS are classified rather than slammed shut: a target
+    // this backend has not been told about is NotReady (a later announcement can make it readable), a call
+    // with no target is Invalid, and each reason is said ONCE per episode - the request is synchronous, and a
+    // caller polling a target that is not ready yet must not be flooded.
     const vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
     std::vector<std::uint8_t>               pixels;
     std::vector<float>                      depths;
     const std::size_t                       before_unserved = backend->diagnosticCount();
     vine::graphics::ReadbackResult why = vine::graphics::ReadbackResult::Ok;
     EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::Unsupported);
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady) << "this backend was never told about it";
+    EXPECT_TRUE(pixels.empty()) << "a refused read leaves the destination untouched";
     EXPECT_FALSE(backend->readDepthBuffer(target.get(), depths, &why));
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U) << "the two readbacks report once each";
-    (void)backend->readColorBuffer(target.get(), 0, pixels);
-    (void)backend->readDepthBuffer(target.get(), depths);
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U) << "a repeated call is the same episode";
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady);
+    EXPECT_TRUE(depths.empty());
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U) << "one sentence per entry point, once";
+    (void)backend->readColorBuffer(target.get(), 0, pixels, &why);
+    (void)backend->readDepthBuffer(target.get(), depths, &why);
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U) << "a repeated refusal is the same episode";
     EXPECT_EQ(seen, backend->diagnosticCount());
+
+    EXPECT_FALSE(backend->readColorBuffer(nullptr, 0, pixels, &why));
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::Invalid) << "no target was given, so the request is wrong";
     EXPECT_TRUE(backend->supportsRenderTargets()) << "the off-screen half is served now";
 
     // An off-screen target is HELD from the moment it is announced - even before it can be built, because a
     // host configures a target before it draws into it - and the release announcement drops it, which is what
-    // lets the host destroy the object. Both are served silently (there is nothing to report about a
-    // description that is simply not complete yet).
+    // lets the host destroy the object. Holding and releasing report nothing; a readback of a held target
+    // with no attachments yet is NotReady, with the target's own episode.
     backend->setRenderTarget(target.get());
     EXPECT_EQ(BackendContentAccess::targets(*backend).live(), 1U);
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady) << "held, but its attachments are not built yet";
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U) << "the held target's own episode";
+    (void)backend->readColorBuffer(target.get(), 0, pixels, &why);
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U) << "and a repeat adds nothing";
     backend->releaseRenderTarget(target.get());
     EXPECT_EQ(BackendContentAccess::targets(*backend).live(), 0U);
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U) << "holding and releasing a target is served";
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U) << "holding and releasing a target is served";
 
     // 4. The protocol still judges: a DRAWING call with no scope open has nothing to belong to, so the
     // plan's recorder refuses it and says so - once per frame, because a host that lost its scopes hits this
@@ -189,14 +257,14 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     backend->render({}, nullptr);
     backend->endFrame();
     backend->swapBuffers();
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U + 1U)
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U + 1U)
         << "the first scope-less draw is refused out loud, the second is the same episode";
     EXPECT_EQ(backend->framesPresented(), 4U) << "a frame whose draws were all refused still presents";
 
     // 5. The announced size is the SURFACE's, and this backend owns the surface it created: the announcement
     // is applied by the next initialize() (the window comes up at it) and reported while the session is live.
     backend->resize(320, 180);
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U + 1U + 1U)
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U + 1U + 1U)
         << "a live surface keeps its size for now, and says so";
 
     ASSERT_TRUE(backend->initialize()) << "re-initializing tears the old session down first (the SDK's contract)";
@@ -502,42 +570,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     offscreen->setSize(64, 64);
 
     // The content of the off-screen pass: a red triangle under a view-block program.
-    const vine::intrusive_ptr<ShaderProgram> content_program(new ShaderProgram());
-    {
-        ShaderStage vertex;
-        vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
-        ShaderStage fragment;
-        fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
-        content_program->addStage(vertex);
-        content_program->addStage(fragment);
-    }
-
-    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vine::intrusive_ptr<vine::Buffer<float>> positions = vine::intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
-    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices =
-        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
-    geometry->setPositions(positions);
-    geometry->setIndices(indices);
-    geometry->setRevision(1U);
-
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
-
-    RenderCommand command;
-    command.geometry = geometry;
-    command.material = material;
-    command.program  = content_program;
-    const std::vector<RenderCommand> commands{ command };
+    const TriangleFixture triangle = makeTriangle();
 
     const vine::intrusive_ptr<vine::graphics::Camera> camera = cameraLookingAt(0.5);
 
@@ -562,7 +595,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
         backend->setRenderTarget(offscreen.get());
         backend->setClearPolicy(offscreen_clear);
         backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
-        backend->render(commands, camera.get());
+        backend->render(triangle.commands, camera.get());
         backend->endPass();
 
         backend->beginPass(window_pass.get());
@@ -663,6 +696,163 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "three announcements are one episode";
     backend->releaseRenderTarget(lenderless.get());
 
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
+TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+
+    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::size_t                     seen = 0;
+    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+        ++seen;
+        std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
+                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    as_bytes(diagnostic.message).c_str());
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    // The target the frame draws into: one RGBA8 colour attachment and a D32F depth - the format that has a
+    // plain depth copy (a combined depth/stencil image does not, and this backend says so instead of
+    // decoding it wrongly).
+    const vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32F);
+    target->setSize(64, 64);
+
+    const TriangleFixture             triangle = makeTriangle();
+    const vine::intrusive_ptr<vine::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vine::intrusive_ptr<RenderPass>             pass(new RenderPass());
+    const vine::graphics::ClearPolicy                 clear{ vine::Color(0, 64, 0, 255), true };
+
+    const auto drive = [&]() {
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(target.get());
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        backend->render(triangle.commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        backend->swapBuffers();
+    };
+
+    drive();
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "the frame recorded";
+
+    const std::size_t waits_before = backend->deviceWaits();
+
+    // 1. The colour attachment, as the SDK promises it: tightly packed RGBA8 rows, the picture the frame left.
+    std::vector<std::uint8_t>      pixels;
+    std::vector<float>             depths;
+    vine::graphics::ReadbackResult why = vine::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "the pixels are read back";
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::Ok);
+    ASSERT_EQ(pixels.size(), 64U * 64U * 4U) << "width * height * 4 bytes, tightly packed";
+    const auto pixel = [&pixels](int x, int y) {
+        const std::size_t at = (static_cast<std::size_t>(y) * 64U + static_cast<std::size_t>(x)) * 4U;
+        return std::array<std::uint8_t, 4>{ pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3] };
+    };
+    // The target's own image is RGBA8 - not the display server's BGRA surface - so the channels are the ones
+    // the format defines (which is exactly why the WINDOW probes read the outer two as a set).
+    const auto inside = pixel(16, 40);
+    EXPECT_TRUE(isColourByte(inside[0], 1.0) && isColourByte(inside[1], 0.0) && isColourByte(inside[2], 0.0))
+        << "the triangle is where the camera put it: got (" << static_cast<int>(inside[0]) << ", "
+        << static_cast<int>(inside[1]) << ", " << static_cast<int>(inside[2]) << ")";
+    EXPECT_EQ(inside[3], 255U) << "and it is opaque";
+    const auto outside = pixel(48, 8);
+    EXPECT_TRUE(isGreenClear({ outside[0], outside[1], outside[2] }))
+        << "outside the triangle is the pass' clear, read back in the image's own order";
+    EXPECT_EQ(backend->deviceWaits(), waits_before + 1U) << "the readback stopped the device exactly once";
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "a readback that works says nothing";
+
+    // 2. The depth attachment, as normalised values: the clear is the reverse-Z far plane (0) and the
+    // triangle's fragments wrote a depth between it and the near plane.
+    ASSERT_TRUE(backend->readDepthBuffer(target.get(), depths, &why));
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::Ok);
+    ASSERT_EQ(depths.size(), 64U * 64U) << "one value per texel";
+    EXPECT_GT(depths[40U * 64U + 16U], 0.05F) << "the triangle's depth is not the far plane";
+    EXPECT_LT(depths[40U * 64U + 16U], 0.95F);
+    EXPECT_FLOAT_EQ(depths[8U * 64U + 48U], 0.0F) << "the clear is the reverse-Z far plane";
+    for (const float value : depths)
+    {
+        EXPECT_GE(value, 0.0F);
+        EXPECT_LE(value, 1.0F);
+    }
+    EXPECT_EQ(backend->deviceWaits(), waits_before + 2U);
+
+    // 3. The refusals are classified, and none of them stops the device: a wrong attachment index is Invalid,
+    // a target this backend does not hold is NotReady, a format it cannot pack is Unsupported - and no
+    // submission is made for any of them.
+    std::vector<std::uint8_t> scratch;
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 5, scratch, &why));
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::Invalid);
+    EXPECT_TRUE(scratch.empty()) << "a refused read leaves the destination untouched";
+    const vine::intrusive_ptr<RenderTarget> unknown(new RenderTarget());
+    unknown->attachColor(RenderTarget::ColorFormat::RGBA8);
+    unknown->setSize(8, 8);
+    EXPECT_FALSE(backend->readColorBuffer(unknown.get(), 0, scratch, &why));
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady) << "never announced to this backend";
+    const vine::intrusive_ptr<RenderTarget> floats(new RenderTarget());
+    floats->attachColor(RenderTarget::ColorFormat::RGBA16F);
+    floats->setSize(8, 8);
+    backend->setRenderTarget(floats.get());  // held and built (no frame is needed to build one)
+    EXPECT_FALSE(backend->readColorBuffer(floats.get(), 0, scratch, &why));
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::Unsupported) << "this backend packs RGBA8 only";
+    EXPECT_EQ(backend->deviceWaits(), waits_before + 2U) << "a refused readback never stops the device";
+
+    // 4. A BORROWED depth is the lender's to read: the borrower says Unsupported without touching the device
+    // (the SDK's own rule - the image belongs to the source target).
+    const vine::intrusive_ptr<RenderTarget> lender(new RenderTarget());
+    lender->attachColor(RenderTarget::ColorFormat::RGBA8);
+    lender->attachDepth(RenderTarget::DepthFormat::D32F);
+    lender->setSize(16, 16);
+    backend->setRenderTarget(lender.get());
+    const vine::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
+    borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
+    borrower->shareDepth(lender);
+    borrower->setSize(16, 16);
+    backend->setRenderTarget(borrower.get());
+
+    HostTargets& targets = BackendContentAccess::targets(*backend);
+    ASSERT_NE(targets.find(borrower.get()), nullptr);
+    ASSERT_NE(targets.find(borrower.get())->target, nullptr) << "the borrower was built on the lender's depth";
+    EXPECT_FALSE(backend->readDepthBuffer(borrower.get(), depths, &why));
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::Unsupported) << "read it through the source target";
+
+    // The lender is held and BUILT, but no frame has ever drawn into it: there is nothing to read back yet
+    // (and reading it costs nothing - not even a wait).
+    EXPECT_FALSE(backend->readColorBuffer(lender.get(), 0, scratch, &why));
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady) << "nothing has been recorded into it";
+    EXPECT_EQ(backend->deviceWaits(), waits_before + 2U) << "and none of those refusals stops the device";
+
+    // 5. A target that was released is NotReady again - the SDK's own reading ("never rendered, or already
+    // released"), not Unsupported: a re-announced handle can make it readable.
+    backend->releaseRenderTarget(target.get());
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
+    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady);
+
+    backend->releaseRenderTarget(borrower.get());
+    backend->releaseRenderTarget(lender.get());
+    backend->releaseRenderTarget(floats.get());
     backend->shutdown();
     EXPECT_TRUE(host.alive());
 }

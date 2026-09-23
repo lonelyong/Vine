@@ -682,6 +682,16 @@ bool Session::moveTo(void* handle)
 namespace detail
 {
 
+void SessionContentAccess::waitDeviceIdle(api::Session& session) noexcept
+{
+    if (session.impl == nullptr || session.impl->viewer == nullptr)
+    {
+        return;  // nothing was ever submitted: there is nothing to wait for
+    }
+    session.impl->viewer->deviceWaitIdle();
+    session.impl->retirement.noteDeviceWait();  // the same counter Session::deviceWaits() answers with
+}
+
 ::vsg::ref_ptr<::vsg::Group> SessionContentAccess::root(const api::Session& session) noexcept
 {
     return session.impl != nullptr ? session.impl->content : ::vsg::ref_ptr<::vsg::Group>{};

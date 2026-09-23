@@ -76,6 +76,7 @@ class V_VSG_API HostTargets
         std::shared_ptr<OffscreenTarget> target{};          ///< The GPU objects, once built.
         std::shared_ptr<OffscreenTarget> depth_owner{};     ///< The lender's objects, while its depth is reused.
         core::ReportOnce                 report{};          ///< One episode per entry (the caller decides what to say).
+        core::ReportOnce                 readback_report{}; ///< A readback refusal's own episode (re-armed by success).
     };
 
     /** @brief What ensuring an entry did (the caller owns the diagnostic stream and the sentences). */

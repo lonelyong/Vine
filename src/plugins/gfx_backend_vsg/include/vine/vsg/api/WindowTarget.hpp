@@ -93,6 +93,16 @@ class V_VSG_API WindowTarget
      */
     void prepare(const core::ClearPolicy& policy) noexcept;
 
+    /** @brief Brings the graph up to date for a frame that has NO window pass (see the file note).
+     *
+     * A frame that drew only off-screen content still PRESENTS: an image was acquired, and the only place it
+     * gets a defined layout before the present is a render pass over it - the window's own graph. This is the
+     * preparation for exactly that: the render area follows the window's live extent, and the clear values
+     * stay what the last window pass left (a frame that draws only off-screen does not re-clear the window,
+     * it gives the swapchain image the layout the present requires - see VsgExecutor::record).
+     */
+    void prepareWithoutClear() noexcept;
+
     /** @brief Opens the window's content for one frame: the PREVIOUS frame's recorded content is dropped.
      *
      * The content a frame's passes record is THE FRAME'S, and this is where that becomes true: the retained

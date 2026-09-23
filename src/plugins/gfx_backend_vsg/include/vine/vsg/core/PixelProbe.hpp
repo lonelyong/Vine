@@ -109,6 +109,16 @@ class PixelProbe
      */
     [[nodiscard]] std::size_t countDifferingFrom(const Rgba8& color, const vine::graphics::Viewport& rect) const noexcept;
 
+    /** @brief Gets the packed RGBA8 rows the probe wraps.
+     *
+     * For the caller that hands the picture ON rather than probes it - the SDK's readback copies the
+     * bytes out of here - so the probe is not forced to answer pixel by pixel through a channel interface
+     * it does not promise.
+     *
+     * @return The bytes, exactly `width() * height() * 4` of them when valid.
+     */
+    [[nodiscard]] const std::vector<std::uint8_t>& pixels() const noexcept;
+
     /** @brief Gets whether every pixel equals @p color.
      *
      * @param color Colour the whole image must show.

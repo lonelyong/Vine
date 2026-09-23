@@ -62,6 +62,17 @@ class SessionContentAccess
      */
     [[nodiscard]] static ::vsg::ref_ptr<::vsg::Device> device(const api::Session& session) noexcept;
 
+    /** @brief Stops the device: every submission has finished, and the wait is COUNTED (see Session::deviceWaits).
+     *
+     * The one spelling of "wait for the device" for a caller that needs the last submission to have landed -
+     * a synchronous readback above all, whose copy must not race the frame that wrote the pixels. The count
+     * is the same one the session's own waits go into, so "this call stopped the device exactly once" stays
+     * checkable (the frame path itself never calls this).
+     *
+     * @param session Session whose device is stopped (a session with no viewer waits for nothing).
+     */
+    static void waitDeviceIdle(api::Session& session) noexcept;
+
     /** @brief Gets the session's window as the frame's default-framebuffer target.
      *
      * This is the target an executor is told about so that passes targeting the default framebuffer (a null

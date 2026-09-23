@@ -17,6 +17,7 @@
 #include <vine/vsg/api/BlockStorage.hpp>
 #include <vine/vsg/api/ContentAssembly.hpp>
 #include <vine/vsg/api/ContentStore.hpp>
+#include <vine/vsg/api/HostReadback.hpp>
 #include <vine/vsg/api/HostTargets.hpp>
 #include <vine/vsg/api/MaterialImages.hpp>
 #include <vine/vsg/api/PassRegistry.hpp>
@@ -46,8 +47,6 @@ vine::String asString(const std::string& text)
 enum Unserved : std::size_t
 {
     kUnservedResize = 0U,
-    kUnservedColourRead,
-    kUnservedDepthRead,
     kUnservedNoSession,
     kUnservedDraw,
     kUnservedCount,
@@ -55,8 +54,17 @@ enum Unserved : std::size_t
 
 /// @brief The names the unserved reports use, in the enum's order.
 const char* const kUnservedNames[kUnservedCount]{
-    "resize() (live session)", "readColorBuffer()", "readDepthBuffer()", "a frame without a session",
+    "resize() (live session)",
+    "a frame without a session",
     "render() (the content world is not up)",
+};
+
+/// @brief The readback episode slots, one per entry point (a held target keeps its own, see HostTargets::Entry).
+enum ReadbackReport : std::size_t
+{
+    kReadbackColour = 0U,
+    kReadbackDepth,
+    kReadbackReportCount,
 };
 
 /// @brief Tracks @p program into @p store, when both exist (see setDefaultContentProgram).
@@ -190,6 +198,7 @@ struct VsgBackend::Data
     vine::intrusive_ptr<const vine::graphics::ShaderProgram> default_program;  ///< See the header.
 
     std::array<core::ReportOnce, kUnservedCount> unserved_reports{};  ///< One episode per entry point.
+    std::array<core::ReportOnce, kReadbackReportCount> readback_reports{};  ///< The unresolved-target episodes.
     std::vector<core::TargetFacts>            facts;          ///< This frame's target table (borrowed rows).
     std::vector<const vine::graphics::Light*> light_scratch;  ///< Reused by setLights (no per-call allocation).
     std::vector<InputImages>                  input_scratch;  ///< Reused per content pass (see recordContent).
@@ -637,28 +646,139 @@ void VsgBackend::releaseRenderTarget(vine::graphics::RenderTarget* target)
 bool VsgBackend::readColorBuffer(const vine::graphics::RenderTarget* target, int attachment,
                                  std::vector<std::uint8_t>& outPixels, vine::graphics::ReadbackResult* why)
 {
-    (void)target;
-    (void)attachment;
-    (void)outPixels;
+    // A refusal says WHY on both channels: the machine answer in @p why and one sentence on the diagnostics
+    // route - once per episode, because this call is synchronous and a caller polling a target that is not
+    // ready yet must not be flooded. A target this backend holds keeps its own episode (its entry's); the
+    // ones it cannot even resolve share one per entry point.
+    const auto refuse = [&](HostReadbackRefusal refusal, core::ReportOnce& episode) {
+        if (why != nullptr)
+        {
+            *why = readbackResultOf(refusal);
+        }
+        if (episode.shouldReport())
+        {
+            reportDiagnostic(vine::graphics::DiagnosticSeverity::Warning,
+                             vine::graphics::DiagnosticCategory::ContentSkipped,
+                             readbackRefusalMessage(refusal, "readColorBuffer()"));
+        }
+        return false;
+    };
+
+    if (target == nullptr)
+    {
+        return refuse(HostReadbackRefusal::NoTarget, d->readback_reports[kReadbackColour]);
+    }
+    HostTargets::Entry* entry = d->targets.find(target);
+    if (entry == nullptr)
+    {
+        // Never announced, or released: the SDK's own answer is NotReady (a later frame or a re-announced
+        // handle can make it readable), not Unsupported - which is the answer to "this backend never will".
+        return refuse(HostReadbackRefusal::UnknownTarget, d->readback_reports[kReadbackColour]);
+    }
+    if (entry->target == nullptr)
+    {
+        return refuse(HostReadbackRefusal::NotBuilt, entry->readback_report);
+    }
+    if (attachment < 0)
+    {
+        return refuse(HostReadbackRefusal::UnknownAttachment, entry->readback_report);
+    }
+    const ::vsg::ref_ptr<::vsg::Device> device = detail::SessionContentAccess::device(d->session);
+    if (device == nullptr)
+    {
+        return refuse(HostReadbackRefusal::NoDevice, entry->readback_report);
+    }
+
+    // Everything that cannot be served is answered BEFORE the device is stopped (an attachment the target
+    // does not have, a format this backend does not pack, a target no frame has drawn into yet): a request
+    // that has no answer costs nothing - not even the wait below.
+    const HostReadbackRefusal pre =
+        classifyReadback(*entry->target, core::ReadbackKind::Color, static_cast<std::uint32_t>(attachment));
+    if (pre != HostReadbackRefusal::None)
+    {
+        return refuse(pre, entry->readback_report);
+    }
+
+    // The frame that wrote the pixels may still be in flight, so the device is stopped first - and the wait
+    // is COUNTED (the counter deviceWaits() answers with): a readback is the one path that may stop the
+    // device, and "it did so exactly once" stays checkable (see SessionContentAccess::waitDeviceIdle).
+    detail::SessionContentAccess::waitDeviceIdle(d->session);
+
+    const HostReadbackRefusal refusal = readColorAttachment(*entry->target, static_cast<std::uint32_t>(attachment),
+                                                            device.get(), outPixels);
+    if (refusal != HostReadbackRefusal::None)
+    {
+        return refuse(refusal, entry->readback_report);
+    }
+    entry->readback_report.rearm();  // a readback that works ends the episode
     if (why != nullptr)
     {
-        *why = vine::graphics::ReadbackResult::Unsupported;
+        *why = vine::graphics::ReadbackResult::Ok;
     }
-    reportUnserved(kUnservedColourRead);
-    return false;
+    return true;
 }
 
 bool VsgBackend::readDepthBuffer(const vine::graphics::RenderTarget* target, std::vector<float>& outDepths,
                                  vine::graphics::ReadbackResult* why)
 {
-    (void)target;
-    (void)outDepths;
+    const auto refuse = [&](HostReadbackRefusal refusal, core::ReportOnce& episode) {
+        if (why != nullptr)
+        {
+            *why = readbackResultOf(refusal);
+        }
+        if (episode.shouldReport())
+        {
+            reportDiagnostic(vine::graphics::DiagnosticSeverity::Warning,
+                             vine::graphics::DiagnosticCategory::ContentSkipped,
+                             readbackRefusalMessage(refusal, "readDepthBuffer()"));
+        }
+        return false;
+    };
+
+    if (target == nullptr)
+    {
+        return refuse(HostReadbackRefusal::NoTarget, d->readback_reports[kReadbackDepth]);
+    }
+    HostTargets::Entry* entry = d->targets.find(target);
+    if (entry == nullptr)
+    {
+        return refuse(HostReadbackRefusal::UnknownTarget, d->readback_reports[kReadbackDepth]);
+    }
+    if (entry->target == nullptr)
+    {
+        return refuse(HostReadbackRefusal::NotBuilt, entry->readback_report);
+    }
+    if (entry->description.depth_source != nullptr)
+    {
+        // The SDK's own rule: a borrowed depth is read through the SOURCE target, and the borrower answers
+        // Unsupported - the image belongs to the lender, and this target never promised it.
+        return refuse(HostReadbackRefusal::BorrowedDepth, entry->readback_report);
+    }
+    const ::vsg::ref_ptr<::vsg::Device> device = detail::SessionContentAccess::device(d->session);
+    if (device == nullptr)
+    {
+        return refuse(HostReadbackRefusal::NoDevice, entry->readback_report);
+    }
+
+    const HostReadbackRefusal pre = classifyReadback(*entry->target, core::ReadbackKind::Depth, 0U);
+    if (pre != HostReadbackRefusal::None)
+    {
+        return refuse(pre, entry->readback_report);
+    }
+
+    detail::SessionContentAccess::waitDeviceIdle(d->session);
+
+    const HostReadbackRefusal refusal = readDepthAttachment(*entry->target, device.get(), outDepths);
+    if (refusal != HostReadbackRefusal::None)
+    {
+        return refuse(refusal, entry->readback_report);
+    }
+    entry->readback_report.rearm();
     if (why != nullptr)
     {
-        *why = vine::graphics::ReadbackResult::Unsupported;
+        *why = vine::graphics::ReadbackResult::Ok;
     }
-    reportUnserved(kUnservedDepthRead);
-    return false;
+    return true;
 }
 
 bool VsgBackend::initialized() const noexcept

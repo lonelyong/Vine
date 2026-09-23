@@ -157,4 +157,9 @@ bool PixelProbe::clamped(const vine::graphics::Viewport& rect, int& x0, int& y0,
 
 }  // namespace core
 
+const std::vector<std::uint8_t>& core::PixelProbe::pixels() const noexcept
+{
+    return pixels_;
+}
+
 V_VSG_NS_END

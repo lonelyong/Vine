@@ -182,6 +182,15 @@ void WindowTarget::addContent(::vsg::ref_ptr<::vsg::Node> content) noexcept
     }
 }
 
+void WindowTarget::prepareWithoutClear() noexcept
+{
+    // Render area only: the clear values are the ones the graph already carries (the last window pass', or
+    // the graph's defaults when no window pass has ever run - either way a defined VkClearValue, which is
+    // all the present needs).
+    const VkExtent2D extent = d->window->extent2D();
+    d->graph->renderArea    = VkRect2D{ { 0, 0 }, extent };
+}
+
 ::vsg::ref_ptr<::vsg::RenderGraph> WindowTarget::graph() const noexcept
 {
     return d->graph;
