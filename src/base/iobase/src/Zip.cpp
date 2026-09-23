@@ -41,8 +41,9 @@ bool Zip::decompress(const void* data, std::size_t size, std::vector<unsigned ch
 
 bool Zip::compressDirectory(const std::filesystem::path& dir_path, const std::filesystem::path& zip_path)
 {
-    ZipArchive archive;
-    return archive.addDirectory(dir_path) && archive.save(zip_path);
+    ZipArchive    archive;
+    const IoError imported = archive.importDirectory(String{}, dir_path);
+    return imported == IoError::Ok && archive.saveAs(zip_path) == IoError::Ok;
 }
 
 bool Zip::decompressFile(const std::filesystem::path& zip_path, const std::filesystem::path& dir_path)

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -162,25 +163,27 @@ TEST(CryptoTest, Sha3_512KnownVector)
 
 TEST(CryptoTest, MemoryStreamOverloadMatchesByteRange)
 {
-    // A MemoryStream is an std::ostream wrapping the byte range; hashing it
+    // A MemoryStream is an std::ostream over the byte range; hashing it
     // must produce the same digest as the byte-range overloads (which wrap
     // the buffer into a MemoryStream and delegate to the stream version).
     // Reading a stream consumes it, so wrap a fresh stream per algorithm.
-    MemoryStream md5_stream("abc", 3);
+    const auto abc = std::as_bytes(std::span<const char>("abc", 3));
+
+    MemoryStream md5_stream(abc);
     EXPECT_EQ(toHex(Hash::md5(md5_stream)), "900150983cd24fb0d6963f7d28e17f72");
 
-    MemoryStream sha256_stream("abc", 3);
+    MemoryStream sha256_stream(abc);
     EXPECT_EQ(toHex(Hash::sha256(sha256_stream)), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 
-    MemoryStream sha3_512_stream("abc", 3);
+    MemoryStream sha3_512_stream(abc);
     EXPECT_EQ(toHex(Hash::sha3_512(sha3_512_stream)),
               "b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0");
 }
 
 TEST(CryptoTest, EmptyMemoryStream)
 {
-    // An empty (null) stream must be safe to hash.
-    MemoryStream stream(nullptr, 0);
+    // An empty (default) stream must be safe to hash.
+    MemoryStream stream;
     EXPECT_EQ(stream.size(), 0u);
     EXPECT_EQ(toHex(Hash::md5(stream)), "d41d8cd98f00b204e9800998ecf8427e");
 }
@@ -207,7 +210,7 @@ TEST(CryptoTest, HashCalculatorByName)
 
 TEST(CryptoTest, HashCalculatorFromMemoryStream)
 {
-    MemoryStream stream("abc", 3);
+    MemoryStream stream(std::as_bytes(std::span<const char>("abc", 3)));
     HashCalculator calc(u8"md5");
     calc << stream;
     EXPECT_EQ(toHex(calc.digest()), "900150983cd24fb0d6963f7d28e17f72");

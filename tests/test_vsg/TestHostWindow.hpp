@@ -5,7 +5,11 @@
 #include <cstdlib>
 #include <cstring>
 
-#include <xcb/xcb.h>
+#if !defined(_WIN32)
+#    include <xcb/xcb.h>
+#endif
+
+#if !defined(_WIN32)
 
 /**
  * @brief A window the TEST owns, so a session can adopt it as the host's and the test can read it back.
@@ -22,6 +26,9 @@
  *
  * The bytes of a TrueColor pixel come back in the SERVER's order, so a caller's assertions should be written
  * either against a single channel (a pure colour) or against the value's two encodings (see the callers).
+ *
+ * X11 only, like the cases that use it: this class IS an XCB window, so it does not exist where XCB does not.
+ * The callers guard their bodies the same way and SKIP instead of failing where there is no display.
  */
 class TestHostWindow
 {
@@ -114,3 +121,5 @@ class TestHostWindow
     xcb_connection_t* connection_;
     xcb_window_t      window_{ 0 };
 };
+
+#endif  // !_WIN32

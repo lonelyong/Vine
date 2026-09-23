@@ -66,6 +66,7 @@ if(MSVC)
     # Generate the linker program database (PDB) so DLLs/exes are debuggable in
     # Debug/RelWithDebInfo builds (applies to appfw, plugins, tests, ...).
     add_link_options($<$<CONFIG:Debug,RelWithDebInfo>:/DEBUG>)
+    add_compile_options(/MP)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     add_compile_options(-finput-charset=UTF-8 -fexec-charset=UTF-8)
 endif()

@@ -21,6 +21,12 @@
 
 #include <vine/Buffer.hpp>
 
+// TestHostWindow is an XCB window, so the case that uses it reaches for the connection itself; the guard
+// matches the one around that case.
+#if !defined(_WIN32)
+#    include <xcb/xcb.h>
+#endif
+
 #include "TestHostWindow.hpp"
 
 #include <algorithm>

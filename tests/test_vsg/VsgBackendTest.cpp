@@ -33,6 +33,12 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
+// TestHostWindow is an XCB window, so the cases that use it reach for the connection themselves; the guard
+// matches the one around those cases.
+#if !defined(_WIN32)
+#    include <xcb/xcb.h>
+#endif
+
 #include "TestHostWindow.hpp"
 
 using vine::graphics::Geometry;

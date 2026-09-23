@@ -4,9 +4,10 @@
 #include <filesystem>
 #include <memory>
 #include <ostream>
+#include <span>
 #include <vector>
 
-#include <vine/io/IMemoryVfs.hpp>
+#include <vine/io/Vfs.hpp>
 #include <vine/io/io_global.hpp>
 #include <vine/String.hpp>
 
@@ -15,12 +16,12 @@ V_IO_NS_BEGIN
 /**
  * @brief Real-directory backed VFS (debug backend).
  *
- * Maps the virtual tree directly onto a real directory: writeFile writes a
- * real file, readFile reads one, and save() is effectively a no-op because
- * writes are immediate. Useful for inspecting or debugging what would go
- * into a ZIP package.
+ * Maps the virtual tree straight onto a real directory: a write becomes a real
+ * file, a read reads one, and saveAs() only confirms the target because every
+ * write is already immediate. Useful for inspecting what would go into a ZIP
+ * package, and for loading from an unpacked tree.
  */
-class V_IOBASE_API DirectoryVfs : public IMemoryVfs
+class V_IOBASE_API DirectoryVfs : public Vfs
 {
   public:
     /**
@@ -43,133 +44,162 @@ class V_IOBASE_API DirectoryVfs : public IMemoryVfs
      */
     static std::unique_ptr<DirectoryVfs> openDirectory(const std::filesystem::path& dir);
 
-    // IMemoryVfs
+    // Vfs
     /**
-     * @brief Checks whether a virtual file or directory exists.
+     * @brief An on-disk directory accepts every write, so this is false.
      *
-     * @param path The virtual path to check.
-     * @return true when the mapped real path exists.
+     * @return false always.
      */
-    bool exists(const String& path) const override;
+    [[nodiscard]] bool isReadOnly() const noexcept override;
 
     /**
-     * @brief Checks whether a virtual path names a file (not a directory).
+     * @brief Reports type and size of a real path under the root.
      *
-     * @param path The virtual path to check.
-     * @return true when the mapped real path is a regular file.
+     * @param path The virtual path to query; empty denotes the root.
+     * @return The information, or IoError::NotFound when nothing is there,
+     *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    bool isFile(const String& path) const override;
+    [[nodiscard]] Result<FileInfo> stat(const String& path) const override;
 
     /**
-     * @brief Checks whether a virtual path names a directory.
-     *
-     * @param path The virtual path to check.
-     * @return true when the mapped real path is a directory.
-     */
-    bool isDirectory(const String& path) const override;
-
-    /**
-     * @brief Lists the direct children (files and directories) under a directory.
+     * @brief Lists the direct children of a real directory.
      *
      * @param dir The virtual directory to list; empty denotes the root.
-     * @return The direct child names.
+     * @return The children, or IoError::NotFound when dir does not exist,
+     *         IoError::NotADirectory when dir names a file,
+     *         IoError::InvalidPath when dir is not a valid virtual path.
      */
-    std::vector<String> list(const String& dir = {}) const override;
+    [[nodiscard]] Result<std::vector<FileInfo>> list(const String& dir) const override;
 
     /**
-     * @brief Removes a virtual file or the whole subtree under a directory.
-     *
-     * @param path The virtual file or directory to remove.
-     * @return true when anything was removed.
-     */
-    bool remove(const String& path) override;
-
-    /**
-     * @brief Writes a byte range as a real file under the root.
+     * @brief Reads a real file as a whole.
      *
      * @param path The virtual file path.
-     * @param data Pointer to the bytes to store, or null for an empty file.
-     * @param size Number of bytes.
-     * @return true on success.
+     * @return The file bytes, or IoError::NotFound when there is no such file,
+     *         IoError::IsADirectory when path names a directory,
+     *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    bool writeFile(const String& path, const void* data, std::size_t size) override;
+    [[nodiscard]] Result<std::vector<unsigned char>> read(const String& path) const override;
 
     /**
-     * @brief Writes an in-memory buffer as a real file under the root.
+     * @brief Writes a whole real file, creating missing parents.
      *
      * @param path The virtual file path.
-     * @param data Bytes to store.
-     * @return true on success.
+     * @param bytes The bytes to store; may be empty.
+     * @return IoError::Ok on success, IoError::IsADirectory when the name is
+     *         taken by a directory, IoError::InvalidPath when path is not a
+     *         valid virtual path, IoError::IoFailure when writing fails.
      */
-    bool writeFile(const String& path, const std::vector<unsigned char>& data) override;
+    [[nodiscard]] IoError write(const String& path, std::span<const unsigned char> bytes) override;
 
     /**
-     * @brief Writes UTF-8 text as a real file under the root.
+     * @brief Creates a real directory under the root.
      *
-     * @param path The virtual file path.
-     * @param text The UTF-8 text to store.
-     * @return true on success.
+     * @param path The directory to create; the root always exists.
+     * @return IoError::Ok on success, IoError::AlreadyExists when the name is
+     *         taken, IoError::NotFound when the parent is missing,
+     *         IoError::NotADirectory when a file blocks the way,
+     *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    bool writeFile(const String& path, const String& text) override;
+    [[nodiscard]] IoError createDirectory(const String& path) override;
+
+    /**
+     * @brief Creates a real directory together with every missing parent.
+     *
+     * @param path The directory to create; an existing directory is not an error.
+     * @return IoError::Ok on success, IoError::AlreadyExists when a file owns
+     *         the name, IoError::NotADirectory when a file blocks the way,
+     *         IoError::InvalidPath when path is not a valid virtual path.
+     */
+    [[nodiscard]] IoError createDirectories(const String& path) override;
+
+    /**
+     * @brief Renames or moves a real file or directory under the root.
+     *
+     * An existing target is never overwritten, and a directory cannot be moved
+     * into its own subtree.
+     *
+     * @param from The existing path to move; the root cannot be moved.
+     * @param to The target path; the root cannot be a target.
+     * @return IoError::Ok on success (also when from and to name the same path),
+     *         IoError::NotFound when from is missing or the target's parent is,
+     *         IoError::AlreadyExists when to is taken,
+     *         IoError::NotADirectory when a file blocks the target's parent,
+     *         IoError::InvalidPath when either path is invalid or to lies below from.
+     */
+    [[nodiscard]] IoError rename(const String& from, const String& to) override;
+
+    /**
+     * @brief Removes a real file or an empty real directory.
+     *
+     * @param path The file or empty directory to remove; the root cannot be removed.
+     * @return IoError::Ok on success, IoError::NotFound when nothing is there,
+     *         IoError::NotEmpty when the directory still holds entries,
+     *         IoError::InvalidPath when path is not a valid virtual path.
+     */
+    [[nodiscard]] IoError remove(const String& path) override;
+
+    /**
+     * @brief Removes a real file or a whole real subtree.
+     *
+     * @param path The file or directory to remove; the root cannot be removed.
+     * @return IoError::Ok on success, IoError::NotFound when nothing is there,
+     *         IoError::InvalidPath when path is not a valid virtual path.
+     */
+    [[nodiscard]] IoError removeAll(const String& path) override;
 
     /**
      * @brief Copies a real file into the tree.
      *
-     * Unlike the zip backend, the copy is immediate.
-     *
-     * @param vfs_path The virtual file path.
-     * @param real_path The physical file to copy.
-     * @return true on success.
-     */
-    bool mountFile(const String& vfs_path, const std::filesystem::path& real_path) override;
-
-    /**
-     * @brief Reads a virtual file's bytes.
+     * The copy is immediate and streamed, so the source may change or vanish
+     * afterwards.
      *
      * @param path The virtual file path.
-     * @param out Receives the file bytes.
-     * @return true when the file exists and was read.
+     * @param real_path The physical file to copy in.
+     * @return IoError::Ok on success, IoError::NotFound when real_path cannot be
+     *         reached, IoError::IsADirectory when the name is taken by a
+     *         directory, IoError::InvalidPath when path is not a valid virtual path.
      */
-    bool readFile(const String& path, std::vector<unsigned char>& out) const override;
+    [[nodiscard]] IoError importFile(const String& path, const std::filesystem::path& real_path) override;
 
     /**
-     * @brief Persists the tree.
+     * @brief Confirms the tree is persisted.
      *
-     * Writes are immediate; only a directory target is meaningful (a no-op).
+     * Writes are immediate, so an existing directory target means there is
+     * nothing left to do.
      *
      * @param path The directory to confirm as the target.
-     * @return true when path is an existing directory.
+     * @return IoError::Ok when path is a directory, IoError::Unsupported
+     *         otherwise - a directory backend produces no archive.
      */
-    bool save(const std::filesystem::path& path) override;
+    [[nodiscard]] IoError commit() override;
+    [[nodiscard]] IoError saveAs(const std::filesystem::path& path) const override;
 
     /**
-     * @brief Persists the tree as bytes.
-     *
-     * Not supported by a directory backend.
+     * @brief Not supported: a directory backend produces no archive.
      *
      * @param out Unused.
-     * @return false always.
+     * @return IoError::Unsupported always.
      */
-    bool save(std::vector<unsigned char>& out) override;
+    [[nodiscard]] IoError saveAs(std::ostream& out) const override;
 
     /**
-     * @brief Persists the tree into an output stream.
+     * @brief Not supported: a directory backend produces no archive.
      *
-     * Not supported by a directory backend.
-     *
-     * @param out Unused.
-     * @return false always.
+     * @return IoError::Unsupported always.
      */
-    bool save(std::ostream& out) override;
+    [[nodiscard]] Result<std::vector<unsigned char>> toBytes() const override;
 
   private:
     /**
-     * @brief Maps a virtual path to a real path under the root.
+     * @brief Validates a virtual path and maps it to a real path under the root.
      *
-     * @param vfs_path The virtual path.
-     * @return The mapped real path, or an empty path on invalid input.
+     * @param vfs_path The virtual path; empty denotes the root.
+     * @param normalized Receives the normalized virtual path; untouched on failure.
+     * @param out Receives the mapped real path; untouched on failure.
+     * @return IoError::Ok, or IoError::InvalidPath for an invalid virtual path.
      */
-    std::filesystem::path toReal(const String& vfs_path) const;
+    [[nodiscard]] IoError resolve(const String& vfs_path, String& normalized, std::filesystem::path& out) const;
 
     std::filesystem::path root_;
 };

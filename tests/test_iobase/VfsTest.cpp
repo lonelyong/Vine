@@ -1,7 +1,6 @@
-#include <gtest/gtest.h>
+﻿#include <gtest/gtest.h>
 
 #include <algorithm>
-#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -10,46 +9,21 @@
 
 #include <vine/String.hpp>
 #include <vine/io/DirectoryVfs.hpp>
-#include <vine/io/IMemoryVfs.hpp>
-#include <vine/io/ZipMemoryVfs.hpp>
+#include <vine/io/IoError.hpp>
+#include <vine/io/Vfs.hpp>
+#include <vine/io/ZipArchive.hpp>
+
+#include "VfsTestSupport.hpp"
 
 using vine::io::DirectoryVfs;
-using vine::io::ZipMemoryVfs;
+using vine::io::IoError;
+using vine::io::ZipArchive;
+using vfstest::bytesOf;
+using vfstest::sortedNames;
+using vfstest::TempDir;
 
 namespace
 {
-
-/**
- * @brief Creates a unique temporary directory that is removed on destruction.
- */
-class TempDir
-{
-  public:
-    TempDir()
-    {
-        static std::atomic<unsigned long long> counter{ 0 };
-        std::error_code                        ec;
-        path_ = std::filesystem::temp_directory_path(ec) /
-                ("vine_vfs_" + std::to_string(counter.fetch_add(1)));
-        std::filesystem::create_directories(path_, ec);
-    }
-
-    ~TempDir()
-    {
-        std::error_code ec;
-        std::filesystem::remove_all(path_, ec);
-    }
-
-    const std::filesystem::path& path() const { return path_; }
-
-  private:
-    std::filesystem::path path_;
-};
-
-std::vector<unsigned char> bytesOf(const std::string& text)
-{
-    return { text.begin(), text.end() };
-}
 
 bool contains(const std::vector<vine::String>& list, const vine::String& name)
 {
@@ -60,18 +34,18 @@ bool contains(const std::vector<vine::String>& list, const vine::String& name)
 
 TEST(VfsTest, ZipWriteReadRoundTrip)
 {
-    ZipMemoryVfs vfs;
-    ASSERT_TRUE(vfs.writeFile(u8"workcell.xml", u8"<workcell name=\"demo\"/>"));
+    ZipArchive vfs;
+    ASSERT_EQ(vfs.write(u8"workcell.xml", bytesOf("<workcell name=\"demo\"/>")), IoError::Ok);
     const std::string binary = "\x00\x01\x02hello";
-    ASSERT_TRUE(vfs.writeFile(u8"geoms/base.bin", bytesOf(binary)));
+    ASSERT_EQ(vfs.write(u8"geoms/base.bin", bytesOf(binary)), IoError::Ok);
 
-    std::vector<unsigned char> xml;
-    ASSERT_TRUE(vfs.readFile(u8"workcell.xml", xml));
-    EXPECT_EQ(xml, bytesOf("<workcell name=\"demo\"/>"));
+    const auto xml = vfs.read(u8"workcell.xml");
+    ASSERT_TRUE(xml.ok());
+    EXPECT_EQ(xml.value(), bytesOf("<workcell name=\"demo\"/>"));
 
-    std::vector<unsigned char> bin;
-    ASSERT_TRUE(vfs.readFile(u8"geoms/base.bin", bin));
-    EXPECT_EQ(bin, bytesOf(binary));
+    const auto bin = vfs.read(u8"geoms/base.bin");
+    ASSERT_TRUE(bin.ok());
+    EXPECT_EQ(bin.value(), bytesOf(binary));
 
     // Directory semantics.
     EXPECT_TRUE(vfs.exists(u8""));
@@ -81,32 +55,41 @@ TEST(VfsTest, ZipWriteReadRoundTrip)
     EXPECT_TRUE(vfs.isDirectory(u8"geoms"));
     EXPECT_FALSE(vfs.isFile(u8"geoms"));
     EXPECT_FALSE(vfs.exists(u8"nope"));
+
+    EXPECT_EQ(vfs.read(u8"geoms").error(), IoError::IsADirectory);
+    EXPECT_EQ(vfs.read(u8"nope").error(), IoError::NotFound);
 }
 
 TEST(VfsTest, ZipListAndRemove)
 {
-    ZipMemoryVfs vfs;
-    vfs.writeFile(u8"a.txt", u8"1");
-    vfs.writeFile(u8"b/c.txt", u8"2");
-    vfs.writeFile(u8"b/d.txt", u8"3");
-    vfs.writeFile(u8"e/f/g.txt", u8"4");
+    ZipArchive vfs;
+    ASSERT_EQ(vfs.write(u8"a.txt", bytesOf("1")), IoError::Ok);
+    ASSERT_EQ(vfs.write(u8"b/c.txt", bytesOf("2")), IoError::Ok);
+    ASSERT_EQ(vfs.write(u8"b/d.txt", bytesOf("3")), IoError::Ok);
+    ASSERT_EQ(vfs.write(u8"e/f/g.txt", bytesOf("4")), IoError::Ok);
 
     const auto top = vfs.list(u8"");
-    ASSERT_EQ(top.size(), 3u); // a.txt, b, e
-    EXPECT_TRUE(contains(top, vine::String(u8"a.txt")));
-    EXPECT_TRUE(contains(top, vine::String(u8"b")));
-    EXPECT_TRUE(contains(top, vine::String(u8"e")));
+    ASSERT_TRUE(top.ok());
+    ASSERT_EQ(top->size(), 3u); // a.txt, b, e
+    const auto top_names = sortedNames(top.value());
+    EXPECT_TRUE(contains(top_names, vine::String(u8"a.txt")));
+    EXPECT_TRUE(contains(top_names, vine::String(u8"b")));
+    EXPECT_TRUE(contains(top_names, vine::String(u8"e")));
 
-    EXPECT_EQ(vfs.list(u8"b").size(), 2u);
+    const auto in_b = vfs.list(u8"b");
+    ASSERT_TRUE(in_b.ok());
+    EXPECT_EQ(in_b->size(), 2u);
 
-    // Remove a directory subtree.
-    ASSERT_TRUE(vfs.remove(u8"b"));
+    // A directory with entries cannot be removed one level at a time.
+    EXPECT_EQ(vfs.remove(u8"b"), IoError::NotEmpty);
+    ASSERT_EQ(vfs.removeAll(u8"b"), IoError::Ok);
     EXPECT_FALSE(vfs.exists(u8"b"));
     EXPECT_TRUE(vfs.exists(u8"a.txt"));
 
-    // Remove a single file.
-    ASSERT_TRUE(vfs.remove(u8"a.txt"));
+    // A single file is removed by remove().
+    ASSERT_EQ(vfs.remove(u8"a.txt"), IoError::Ok);
     EXPECT_FALSE(vfs.exists(u8"a.txt"));
+    EXPECT_EQ(vfs.remove(u8"a.txt"), IoError::NotFound);
 }
 
 TEST(VfsTest, ZipSaveOpenFileRoundTrip)
@@ -115,17 +98,17 @@ TEST(VfsTest, ZipSaveOpenFileRoundTrip)
     const auto    pkg = temp.path() / "pkg.zip";
 
     {
-        ZipMemoryVfs vfs;
-        vfs.writeFile(u8"workcell.xml", u8"<workcell name=\"demo\"/>");
-        vfs.writeFile(u8"devices/robot.vdev", u8"<device name=\"robot\"/>");
-        ASSERT_TRUE(vfs.save(pkg));
+        ZipArchive vfs;
+        ASSERT_EQ(vfs.write(u8"workcell.xml", bytesOf("<workcell name=\"demo\"/>")), IoError::Ok);
+        ASSERT_EQ(vfs.write(u8"devices/robot.vdev", bytesOf("<device name=\"robot\"/>")), IoError::Ok);
+        ASSERT_EQ(vfs.saveAs(pkg), IoError::Ok);
     }
 
-    auto opened = ZipMemoryVfs::openZip(pkg);
-    ASSERT_NE(opened, nullptr);
-    std::vector<unsigned char> xml;
-    ASSERT_TRUE(opened->readFile(u8"workcell.xml", xml));
-    EXPECT_EQ(xml, bytesOf("<workcell name=\"demo\"/>"));
+    auto opened = ZipArchive::openForRead(pkg);
+    ASSERT_TRUE(opened.ok());
+    const auto xml = opened->read(u8"workcell.xml");
+    ASSERT_TRUE(xml.ok());
+    EXPECT_EQ(xml.value(), bytesOf("<workcell name=\"demo\"/>"));
     EXPECT_TRUE(opened->isDirectory(u8"devices"));
     EXPECT_TRUE(opened->exists(u8"devices/robot.vdev"));
 }
@@ -134,38 +117,40 @@ TEST(VfsTest, ZipSaveMemoryRoundTrip)
 {
     std::vector<unsigned char> pkg;
     {
-        ZipMemoryVfs vfs;
-        vfs.writeFile(u8"workcell.xml", u8"<workcell/>");
-        ASSERT_TRUE(vfs.save(pkg));
+        ZipArchive vfs;
+        ASSERT_EQ(vfs.write(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
+        const auto bytes = vfs.toBytes();
+        ASSERT_TRUE(bytes.ok());
+        pkg = bytes.value();
         EXPECT_FALSE(pkg.empty());
     }
 
-    auto opened = ZipMemoryVfs::openZip(pkg.data(), pkg.size());
-    ASSERT_NE(opened, nullptr);
-    std::vector<unsigned char> xml;
-    ASSERT_TRUE(opened->readFile(u8"workcell.xml", xml));
-    EXPECT_EQ(xml, bytesOf("<workcell/>"));
+    auto opened = ZipArchive::openForRead(std::move(pkg));
+    ASSERT_TRUE(opened.ok());
+    const auto xml = opened->read(u8"workcell.xml");
+    ASSERT_TRUE(xml.ok());
+    EXPECT_EQ(xml.value(), bytesOf("<workcell/>"));
 }
 
 TEST(VfsTest, ZipSaveStreamRoundTrip)
 {
     std::ostringstream stream;
     {
-        ZipMemoryVfs vfs;
-        vfs.writeFile(u8"a.txt", u8"hello");
-        ASSERT_TRUE(vfs.save(stream));
+        ZipArchive vfs;
+        ASSERT_EQ(vfs.write(u8"a.txt", bytesOf("hello")), IoError::Ok);
+        ASSERT_EQ(vfs.saveAs(stream), IoError::Ok);
     }
     const std::string data = stream.str();
     ASSERT_FALSE(data.empty());
 
-    auto opened = ZipMemoryVfs::openZip(data.data(), data.size());
-    ASSERT_NE(opened, nullptr);
-    std::vector<unsigned char> out;
-    ASSERT_TRUE(opened->readFile(u8"a.txt", out));
-    EXPECT_EQ(out, bytesOf("hello"));
+    auto opened = ZipArchive::openForRead(std::vector<unsigned char>(data.begin(), data.end()));
+    ASSERT_TRUE(opened.ok());
+    const auto out = opened->read(u8"a.txt");
+    ASSERT_TRUE(out.ok());
+    EXPECT_EQ(out.value(), bytesOf("hello"));
 }
 
-TEST(VfsTest, ZipMountFile)
+TEST(VfsTest, ZipImportFile)
 {
     const TempDir temp;
     const auto    src = temp.path() / "mesh.bin";
@@ -176,16 +161,19 @@ TEST(VfsTest, ZipMountFile)
 
     std::vector<unsigned char> pkg;
     {
-        ZipMemoryVfs vfs;
-        ASSERT_TRUE(vfs.mountFile(u8"geoms/mesh.bin", src));
-        ASSERT_TRUE(vfs.save(pkg));
+        ZipArchive vfs;
+        ASSERT_EQ(vfs.importFile(u8"geoms/mesh.bin", src), IoError::Ok);
+        EXPECT_EQ(vfs.stat(u8"geoms/mesh.bin")->size, 10u);
+        const auto bytes = vfs.toBytes();
+        ASSERT_TRUE(bytes.ok());
+        pkg = bytes.value();
     }
 
-    auto opened = ZipMemoryVfs::openZip(pkg.data(), pkg.size());
-    ASSERT_NE(opened, nullptr);
-    std::vector<unsigned char> mesh;
-    ASSERT_TRUE(opened->readFile(u8"geoms/mesh.bin", mesh));
-    EXPECT_EQ(mesh, bytesOf("mesh-bytes"));
+    auto opened = ZipArchive::openForRead(std::move(pkg));
+    ASSERT_TRUE(opened.ok());
+    const auto mesh = opened->read(u8"geoms/mesh.bin");
+    ASSERT_TRUE(mesh.ok());
+    EXPECT_EQ(mesh.value(), bytesOf("mesh-bytes"));
 }
 
 TEST(VfsTest, DirectoryVfsRoundTrip)
@@ -198,30 +186,38 @@ TEST(VfsTest, DirectoryVfsRoundTrip)
 
     auto dir = DirectoryVfs::openDirectory(root);
     ASSERT_NE(dir, nullptr);
-    ASSERT_TRUE(dir->writeFile(u8"workcell.xml", u8"<workcell/>"));
-    ASSERT_TRUE(dir->writeFile(u8"geoms/a.bin", bytesOf("abc")));
+    ASSERT_EQ(dir->write(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
+    ASSERT_EQ(dir->write(u8"geoms/a.bin", bytesOf("abc")), IoError::Ok);
 
-    std::vector<unsigned char> xml;
-    ASSERT_TRUE(dir->readFile(u8"workcell.xml", xml));
-    EXPECT_EQ(xml, bytesOf("<workcell/>"));
+    const auto xml = dir->read(u8"workcell.xml");
+    ASSERT_TRUE(xml.ok());
+    EXPECT_EQ(xml.value(), bytesOf("<workcell/>"));
     EXPECT_TRUE(dir->isDirectory(u8"geoms"));
     EXPECT_TRUE(dir->isFile(u8"geoms/a.bin"));
     EXPECT_TRUE(std::filesystem::is_regular_file(root / "workcell.xml", ec));
 
+    // A directory backend cannot produce an archive.
+    EXPECT_EQ(dir->toBytes().error(), IoError::Unsupported);
+    EXPECT_EQ(dir->saveAs(root / "pkg.zip"), IoError::Unsupported);
+    // A directory target means the tree is already persisted.
+    EXPECT_EQ(dir->commit(), IoError::Ok);
+
     // Consistency with the zip backend: the same tree yields the same entries.
     std::vector<unsigned char> pkg;
     {
-        ZipMemoryVfs vfs;
-        vfs.writeFile(u8"workcell.xml", u8"<workcell/>");
-        vfs.writeFile(u8"geoms/a.bin", bytesOf("abc"));
-        ASSERT_TRUE(vfs.save(pkg));
+        ZipArchive vfs;
+        ASSERT_EQ(vfs.write(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
+        ASSERT_EQ(vfs.write(u8"geoms/a.bin", bytesOf("abc")), IoError::Ok);
+        const auto bytes = vfs.toBytes();
+        ASSERT_TRUE(bytes.ok());
+        pkg = bytes.value();
     }
-    auto zip = ZipMemoryVfs::openZip(pkg.data(), pkg.size());
-    ASSERT_NE(zip, nullptr);
+    auto zip = ZipArchive::openForRead(std::move(pkg));
+    ASSERT_TRUE(zip.ok());
 
-    auto dir_list = dir->list(u8"");
-    auto zip_list = zip->list(u8"");
-    std::sort(dir_list.begin(), dir_list.end());
-    std::sort(zip_list.begin(), zip_list.end());
-    EXPECT_EQ(dir_list, zip_list);
+    const auto dir_children = dir->list(u8"");
+    const auto zip_children = zip->list(u8"");
+    ASSERT_TRUE(dir_children.ok());
+    ASSERT_TRUE(zip_children.ok());
+    EXPECT_EQ(sortedNames(dir_children.value()), sortedNames(zip_children.value()));
 }

@@ -16,7 +16,7 @@
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/Sphere.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
-#include <vine/io/IMemoryVfs.hpp>
+#include <vine/io/Vfs.hpp>
 
 #include "IoUtils.hpp"
 
@@ -108,7 +108,7 @@ void setAttr(tinyxml2::XMLElement* xe, const char* name, const String& value)
  * @param indices Optional triangle indices (empty for a non-indexed mesh).
  * @return The geoms path prefix ("geoms/meshN") used by the XML description.
  */
-String writeMeshBins(vine::io::IMemoryVfs& vfs, std::size_t& geom_seq,
+String writeMeshBins(vine::io::Vfs& vfs, std::size_t& geom_seq,
                      std::span<const vine::math::Vec3f> positions,
                      std::span<const vine::math::Vec3f> normals,
                      std::span<const vine::math::Vec2f> texcoords,
@@ -118,20 +118,27 @@ String writeMeshBins(vine::io::IMemoryVfs& vfs, std::size_t& geom_seq,
     const String      prefix  = String(u8"geoms/mesh")
                              + String(reinterpret_cast<const char8_t*>(seq_str.data()), seq_str.size());
 
+    const auto write_bin = [&vfs, &prefix](const char8_t* suffix, const std::vector<unsigned char>& bytes) {
+        if (vfs.write(prefix + String(suffix), bytes) != vine::io::IoError::Ok) {
+            throw std::runtime_error("XmlIOBase::writeMeshBins, failed to write mesh geometry into the package: "
+                                     + prefix.as_std_str());
+        }
+    };
+
     std::vector<unsigned char> bin;
     detail::vec3ArrayToBytes(positions, bin);
-    vfs.writeFile(prefix + String(u8".positions.bin"), bin);
+    write_bin(u8".positions.bin", bin);
     if (!normals.empty()) {
         detail::vec3ArrayToBytes(normals, bin);
-        vfs.writeFile(prefix + String(u8".normals.bin"), bin);
+        write_bin(u8".normals.bin", bin);
     }
     if (!texcoords.empty()) {
         detail::vec2ArrayToBytes(texcoords, bin);
-        vfs.writeFile(prefix + String(u8".texcoords.bin"), bin);
+        write_bin(u8".texcoords.bin", bin);
     }
     if (!indices.empty()) {
         detail::uint32ArrayToBytes(indices, bin);
-        vfs.writeFile(prefix + String(u8".indices.bin"), bin);
+        write_bin(u8".indices.bin", bin);
     }
     return prefix;
 }
@@ -281,23 +288,29 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
         if (pos_path.empty()) {
             return {};
         }
-        std::vector<unsigned char> bytes;
-        if (!ctx.vfs->readFile(pos_path, bytes)) {
+        const auto bytes = ctx.vfs->read(pos_path);
+        if (!bytes) {
             return {};
         }
         vine::geometry::Vec3fArray positions;
-        if (!detail::bytesToVec3Array(bytes, positions)) {
+        if (!detail::bytesToVec3Array(bytes.value(), positions)) {
             return {};
         }
         vine::geometry::Vec3fArray normals;
-        const String nrm_path = attr(child, "normals");
-        if (!nrm_path.empty() && (!ctx.vfs->readFile(nrm_path, bytes) || !detail::bytesToVec3Array(bytes, normals))) {
-            return {};
+        const String               nrm_path = attr(child, "normals");
+        if (!nrm_path.empty()) {
+            const auto nrm_bytes = ctx.vfs->read(nrm_path);
+            if (!nrm_bytes || !detail::bytesToVec3Array(nrm_bytes.value(), normals)) {
+                return {};
+            }
         }
         vine::geometry::Vec2fArray texcoords;
-        const String uv_path = attr(child, "texcoords");
-        if (!uv_path.empty() && (!ctx.vfs->readFile(uv_path, bytes) || !detail::bytesToVec2Array(bytes, texcoords))) {
-            return {};
+        const String               uv_path = attr(child, "texcoords");
+        if (!uv_path.empty()) {
+            const auto uv_bytes = ctx.vfs->read(uv_path);
+            if (!uv_bytes || !detail::bytesToVec2Array(uv_bytes.value(), texcoords)) {
+                return {};
+            }
         }
         if (tag == "triangle_mesh") {
             auto mesh = vine::make_intrusive<vine::geometry::TriangleMesh>();
@@ -311,11 +324,15 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
             return mesh;
         }
         const String idx_path = attr(child, "indices");
-        if (idx_path.empty() || !ctx.vfs->readFile(idx_path, bytes)) {
+        if (idx_path.empty()) {
+            return {};
+        }
+        const auto idx_bytes = ctx.vfs->read(idx_path);
+        if (!idx_bytes) {
             return {};
         }
         vine::geometry::UInt32Array indices;
-        if (!detail::bytesToUInt32Array(bytes, indices)) {
+        if (!detail::bytesToUInt32Array(idx_bytes.value(), indices)) {
             return {};
         }
         auto mesh = vine::intrusive_ptr<vine::geometry::IndexedTriangleMesh>(

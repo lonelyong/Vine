@@ -2,6 +2,7 @@
 #include <vine/MemoryStream.hpp>
 
 #include <array>
+#include <span>
 #include <vector>
 
 #include <wolfssl/wolfcrypt/md5.h>
@@ -98,11 +99,26 @@ std::vector<unsigned char> readAll(std::ostream& in)
     return data;
 }
 
+/**
+ * @brief Wraps a byte range as a readable memory stream.
+ *
+ * @param data Pointer to the first byte, or nullptr for an empty range.
+ * @param size Number of bytes; ignored when @p data is nullptr.
+ * @return A stream holding a copy of the range.
+ */
+MemoryStream wrapBytes(const void* data, std::size_t size)
+{
+    if (data == nullptr || size == 0) {
+        return MemoryStream();
+    }
+    return MemoryStream(std::span<const std::byte>(static_cast<const std::byte*>(data), size));
+}
+
 } // namespace
 
 std::array<std::uint8_t, 32> Hash::sha256(const void* data, std::size_t size)
 {
-    MemoryStream stream(data, size);
+    MemoryStream stream = wrapBytes(data, size);
     return sha256(stream);
 }
 
@@ -114,7 +130,7 @@ std::array<std::uint8_t, 32> Hash::sha256(std::ostream& in)
 
 std::array<std::uint8_t, 16> Hash::md5(const void* data, std::size_t size)
 {
-    MemoryStream stream(data, size);
+    MemoryStream stream = wrapBytes(data, size);
     return md5(stream);
 }
 
@@ -126,7 +142,7 @@ std::array<std::uint8_t, 16> Hash::md5(std::ostream& in)
 
 std::array<std::uint8_t, 20> Hash::sha1(const void* data, std::size_t size)
 {
-    MemoryStream stream(data, size);
+    MemoryStream stream = wrapBytes(data, size);
     return sha1(stream);
 }
 
@@ -138,7 +154,7 @@ std::array<std::uint8_t, 20> Hash::sha1(std::ostream& in)
 
 std::array<std::uint8_t, 28> Hash::sha224(const void* data, std::size_t size)
 {
-    MemoryStream stream(data, size);
+    MemoryStream stream = wrapBytes(data, size);
     return sha224(stream);
 }
 
@@ -150,7 +166,7 @@ std::array<std::uint8_t, 28> Hash::sha224(std::ostream& in)
 
 std::array<std::uint8_t, 48> Hash::sha384(const void* data, std::size_t size)
 {
-    MemoryStream stream(data, size);
+    MemoryStream stream = wrapBytes(data, size);
     return sha384(stream);
 }
 
@@ -162,7 +178,7 @@ std::array<std::uint8_t, 48> Hash::sha384(std::ostream& in)
 
 std::array<std::uint8_t, 64> Hash::sha512(const void* data, std::size_t size)
 {
-    MemoryStream stream(data, size);
+    MemoryStream stream = wrapBytes(data, size);
     return sha512(stream);
 }
 
@@ -174,7 +190,7 @@ std::array<std::uint8_t, 64> Hash::sha512(std::ostream& in)
 
 std::array<std::uint8_t, 28> Hash::sha3_224(const void* data, std::size_t size)
 {
-    MemoryStream stream(data, size);
+    MemoryStream stream = wrapBytes(data, size);
     return sha3_224(stream);
 }
 
@@ -186,7 +202,7 @@ std::array<std::uint8_t, 28> Hash::sha3_224(std::ostream& in)
 
 std::array<std::uint8_t, 32> Hash::sha3_256(const void* data, std::size_t size)
 {
-    MemoryStream stream(data, size);
+    MemoryStream stream = wrapBytes(data, size);
     return sha3_256(stream);
 }
 
@@ -198,7 +214,7 @@ std::array<std::uint8_t, 32> Hash::sha3_256(std::ostream& in)
 
 std::array<std::uint8_t, 48> Hash::sha3_384(const void* data, std::size_t size)
 {
-    MemoryStream stream(data, size);
+    MemoryStream stream = wrapBytes(data, size);
     return sha3_384(stream);
 }
 
@@ -210,7 +226,7 @@ std::array<std::uint8_t, 48> Hash::sha3_384(std::ostream& in)
 
 std::array<std::uint8_t, 64> Hash::sha3_512(const void* data, std::size_t size)
 {
-    MemoryStream stream(data, size);
+    MemoryStream stream = wrapBytes(data, size);
     return sha3_512(stream);
 }
 

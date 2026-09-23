@@ -27,7 +27,7 @@ class XMLElement;
 
 namespace vine::io
 {
-class IMemoryVfs;
+class Vfs;
 } // namespace vine::io
 
 V_ROBOTICS_IO_NS_BEGIN
@@ -64,7 +64,7 @@ class V_ROBOTICS_IO_API XmlIOBase
         /// Workcell being exported (read-only frame lookups); null otherwise.
         const workcell::Workcell* cell{ nullptr };
         /// Active VFS for package resources (mesh bins); null for bare XML export.
-        vine::io::IMemoryVfs* vfs{ nullptr };
+        vine::io::Vfs* vfs{ nullptr };
         /// Directory of the exported document inside the VFS ("" = root).
         String vfs_dir;
         /// Collected non-fatal warnings.
@@ -97,7 +97,7 @@ class V_ROBOTICS_IO_API XmlIOBase
         /// Workcell being filled; null outside a workcell parse.
         workcell::Workcell* cell{ nullptr };
         /// Active VFS for package resources (mesh bins); null for bare XML parse.
-        vine::io::IMemoryVfs* vfs{ nullptr };
+        vine::io::Vfs* vfs{ nullptr };
         /// Directory of the parsed document inside the VFS ("" = root).
         String vfs_dir;
         /// Collected non-fatal warnings.

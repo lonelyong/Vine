@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <memory>
 
-#include <vine/io/IMemoryVfs.hpp>
+#include <vine/io/Vfs.hpp>
 #include <vine/robotics/io/robot_io_global.hpp>
 #include <vine/robotics/io/XmlIOBase.hpp>
 #include <vine/robotics/workcell/Device.hpp>
@@ -85,7 +85,7 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @return The workcell, owned by the caller.
      * @throws std::runtime_error on failure.
      */
-    std::unique_ptr<workcell::Workcell> loadPkg(vine::io::IMemoryVfs& vfs);
+    std::unique_ptr<workcell::Workcell> loadPkg(vine::io::Vfs& vfs);
 
     /**
      * @brief Exports a workcell as a workcell package (.vwspkg).
@@ -113,17 +113,17 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @param options Save options.
      * @throws std::runtime_error on failure.
      */
-    void savePkg(const workcell::Workcell& cell, vine::io::IMemoryVfs& vfs, const SaveOptions& options = {});
+    void savePkg(const workcell::Workcell& cell, vine::io::Vfs& vfs, const SaveOptions& options = {});
 
   private:
     /**
      * @brief Shared load body: reads the .vcell and referenced entries from a VFS.
      *
-     * @param vfs The virtual file system (DirectoryVfs for folders, ZipMemoryVfs for packages).
+     * @param vfs The virtual file system (DirectoryVfs for folders, ZipArchive for packages).
      * @param vfs_path The virtual path of the .vcell file.
      * @return The workcell, owned by the caller.
      */
-    std::unique_ptr<workcell::Workcell> loadVfs(vine::io::IMemoryVfs& vfs, const String& vfs_path);
+    std::unique_ptr<workcell::Workcell> loadVfs(vine::io::Vfs& vfs, const String& vfs_path);
 
     /**
      * @brief Shared export body: writes the .vcell and device files into a VFS.
@@ -132,7 +132,7 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @param vfs The virtual file system.
      * @param vfs_path The virtual path of the .vcell file.
      */
-    void exportToVfs(const workcell::Workcell& cell, vine::io::IMemoryVfs& vfs, const String& vfs_path);
+    void exportToVfs(const workcell::Workcell& cell, vine::io::Vfs& vfs, const String& vfs_path);
 
     /**
      * @brief Exports one object (and its children) as an <obj> element.

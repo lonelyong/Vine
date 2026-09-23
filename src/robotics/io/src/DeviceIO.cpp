@@ -9,8 +9,8 @@
 
 #include <vine/geometry/ColorMaterial.hpp>
 #include <vine/io/DirectoryVfs.hpp>
-#include <vine/io/IMemoryVfs.hpp>
-#include <vine/io/ZipMemoryVfs.hpp>
+#include <vine/io/Vfs.hpp>
+#include <vine/io/ZipArchive.hpp>
 #include <vine/robotics/io/robot_io_global.hpp>
 #include <vine/robotics/workcell/MotionDevice.hpp>
 #include <vine/robotics/workcell/Scanner.hpp>
@@ -137,19 +137,18 @@ std::unique_ptr<workcell::Device> DeviceIO::loadXml(const std::filesystem::path&
     return dev;
 }
 
-std::unique_ptr<workcell::Device> DeviceIO::loadXmlFromVfs(vine::io::IMemoryVfs& vfs, const String& vfs_path,
+std::unique_ptr<workcell::Device> DeviceIO::loadXmlFromVfs(vine::io::Vfs& vfs, const String& vfs_path,
                                                            const LoadOptions& options)
 {
     (void)options;
     ParseOptions opts;
     ParseContext ctx(opts);
     ctx.vfs = &vfs;
-    std::vector<unsigned char> bytes;
-    if (!vfs.readFile(vfs_path, bytes)) {
+    const auto xml = detail::readText(vfs, vfs_path);
+    if (!xml) {
         throw std::runtime_error("DeviceIO::loadXml, failed to read vfs file: " + vfs_path.as_std_str());
     }
-    const String xml(reinterpret_cast<const char8_t*>(bytes.data()), bytes.size());
-    return parseDoc(xml, ctx);
+    return parseDoc(xml.value(), ctx);
 }
 
 std::unique_ptr<workcell::Device> DeviceIO::parseDoc(const String& xml_str, ParseContext& ctx)
@@ -326,8 +325,9 @@ std::unique_ptr<tinyxml2::XMLDocument> DeviceIO::buildDoc(const workcell::Device
 
 std::unique_ptr<workcell::Device> DeviceIO::loadPkg(const std::filesystem::path& pkg_path, const LoadOptions& options)
 {
-    auto pkg = vine::io::ZipMemoryVfs::openZip(pkg_path);
-    if (pkg == nullptr) {
+    // Only the archive index is read up front; entries decompress on demand.
+    auto pkg = vine::io::ZipArchive::openForRead(pkg_path);
+    if (!pkg) {
         throw std::runtime_error("DeviceIO::loadPkg, not a valid device package: " + pkg_path.string());
     }
     auto dev = loadPkg(*pkg, options);
@@ -335,21 +335,21 @@ std::unique_ptr<workcell::Device> DeviceIO::loadPkg(const std::filesystem::path&
     return dev;
 }
 
-std::unique_ptr<workcell::Device> DeviceIO::loadPkg(vine::io::IMemoryVfs& vfs, const LoadOptions& options)
+std::unique_ptr<workcell::Device> DeviceIO::loadPkg(vine::io::Vfs& vfs, const LoadOptions& options)
 {
     return loadXmlFromVfs(vfs, vine::String(u8"device.xml"), options);
 }
 
 void DeviceIO::savePkg(const workcell::Device& dev, const std::filesystem::path& pkg_path, const SaveOptions& options)
 {
-    vine::io::ZipMemoryVfs vfs;
+    vine::io::ZipArchive vfs;
     savePkg(dev, vfs, options);
-    if (!vfs.save(pkg_path)) {
+    if (vfs.saveAs(pkg_path) != vine::io::IoError::Ok) {
         throw std::runtime_error("DeviceIO::savePkg, failed to write package file: " + pkg_path.string());
     }
 }
 
-void DeviceIO::savePkg(const workcell::Device& dev, vine::io::IMemoryVfs& vfs, const SaveOptions& options)
+void DeviceIO::savePkg(const workcell::Device& dev, vine::io::Vfs& vfs, const SaveOptions& options)
 {
     (void)options;
     ExportOptions opts;
@@ -358,8 +358,8 @@ void DeviceIO::savePkg(const workcell::Device& dev, vine::io::IMemoryVfs& vfs, c
     const auto           doc = buildDoc(dev, ctx);
     tinyxml2::XMLPrinter printer;
     doc->Print(&printer);
-    if (!vfs.writeFile(vine::String(u8"device.xml"), reinterpret_cast<const char8_t*>(printer.CStr()),
-                       printer.CStrSize() - 1)) {
+    const String xml(reinterpret_cast<const char8_t*>(printer.CStr()), printer.CStrSize() - 1);
+    if (detail::writeText(vfs, vine::String(u8"device.xml"), xml) != vine::io::IoError::Ok) {
         throw std::runtime_error("DeviceIO::savePkg, failed to write device.xml into the vfs.");
     }
 }

@@ -8,7 +8,7 @@
 
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
-#include <vine/io/ZipMemoryVfs.hpp>
+#include <vine/io/ZipArchive.hpp>
 #include <vine/robotics/kinematics/DofInfo.hpp>
 #include <vine/robotics/kinematics/Frame.hpp>
 #include <vine/robotics/io/DeviceIO.hpp>
@@ -205,14 +205,14 @@ TEST(PkgIOTest, DevicePkgMemoryBytes)
     auto     robot = makeRobot();
     DeviceIO io;
 
-    vine::io::ZipMemoryVfs vfs;
+    vine::io::ZipArchive vfs;
     io.savePkg(*robot, vfs);
     ASSERT_TRUE(vfs.isFile(vine::String(u8"device.xml")));
 
-    std::vector<unsigned char> zip_bytes;
-    ASSERT_TRUE(vfs.save(zip_bytes));
-    auto opened = vine::io::ZipMemoryVfs::openZip(zip_bytes.data(), zip_bytes.size());
-    ASSERT_NE(opened, nullptr);
+    auto zip_bytes = vfs.toBytes();
+    ASSERT_TRUE(zip_bytes.ok());
+    auto opened = vine::io::ZipArchive::openForRead(zip_bytes.take());
+    ASSERT_TRUE(opened.ok());
 
     auto loaded = io.loadPkg(*opened);
     ASSERT_NE(loaded, nullptr);
@@ -281,7 +281,7 @@ TEST(PkgIOTest, WorkcellPkgInternalPathsAndMemory)
     cell->addSceneObject(std::move(robot));
     cell->addSceneObject(makeTableWithMesh());
 
-    vine::io::ZipMemoryVfs vfs;
+    vine::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
     ASSERT_TRUE(vfs.isFile(vine::String(u8"workcell.xml")));
@@ -291,10 +291,10 @@ TEST(PkgIOTest, WorkcellPkgInternalPathsAndMemory)
     ASSERT_TRUE(vfs.exists(vine::String(u8"geoms/mesh0.positions.bin")));
 
     // Persist to zip bytes and reopen: the whole package round-trips in memory.
-    std::vector<unsigned char> zip_bytes;
-    ASSERT_TRUE(vfs.save(zip_bytes));
-    auto opened = vine::io::ZipMemoryVfs::openZip(zip_bytes.data(), zip_bytes.size());
-    ASSERT_NE(opened, nullptr);
+    auto zip_bytes = vfs.toBytes();
+    ASSERT_TRUE(zip_bytes.ok());
+    auto opened = vine::io::ZipArchive::openForRead(zip_bytes.take());
+    ASSERT_TRUE(opened.ok());
 
     auto loaded = io.loadPkg(*opened);
     ASSERT_NE(loaded, nullptr);
@@ -313,7 +313,7 @@ TEST(PkgIOTest, NestedDevicePackage)
     cell->addSceneObject(makeTableWithMesh());
 
     // Devices are always stored as nested .vdevpkg zip entries inside a package.
-    vine::io::ZipMemoryVfs vfs;
+    vine::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
     ASSERT_TRUE(vfs.isFile(vine::String(u8"workcell.xml")));
@@ -321,9 +321,13 @@ TEST(PkgIOTest, NestedDevicePackage)
     EXPECT_FALSE(vfs.exists(vine::String(u8"devices/robot1.vdev")));
 
     std::vector<unsigned char> zip_bytes;
-    ASSERT_TRUE(vfs.save(zip_bytes));
-    auto opened = vine::io::ZipMemoryVfs::openZip(zip_bytes.data(), zip_bytes.size());
-    ASSERT_NE(opened, nullptr);
+    {
+        const auto bytes = vfs.toBytes();
+        ASSERT_TRUE(bytes.ok());
+        zip_bytes = bytes.value();
+    }
+    auto opened = vine::io::ZipArchive::openForRead(std::move(zip_bytes));
+    ASSERT_TRUE(opened.ok());
 
     // The loader dispatches by extension: .vdevpkg opens a nested VFS and the
     // device's geoms resolve relative to the nested package root.
@@ -353,11 +357,13 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
     auto cell = std::make_unique<Workcell>();
     cell->addSceneObject(std::move(table));
 
-    vine::io::ZipMemoryVfs vfs;
+    vine::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
     // Indexed mesh writes positions + indices bins.
-    ASSERT_EQ(vfs.list(vine::String(u8"geoms")).size(), 2u);
+    const auto geoms = vfs.list(vine::String(u8"geoms"));
+    ASSERT_TRUE(geoms.ok());
+    EXPECT_EQ(geoms->size(), 2u);
 
     auto loaded = io.loadPkg(vfs);
     ASSERT_NE(loaded, nullptr);
@@ -386,14 +392,15 @@ TEST(PkgIOTest, SharedMeshStoredOnce)
     auto cell = std::make_unique<Workcell>();
     cell->addSceneObject(std::move(table));
 
-    vine::io::ZipMemoryVfs vfs;
+    vine::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
 
     // The shared mesh is written once: only a single positions bin exists.
     const auto geoms = vfs.list(vine::String(u8"geoms"));
-    ASSERT_EQ(geoms.size(), 1u);
-    EXPECT_EQ(geoms[0], vine::String(u8"mesh0.positions.bin"));
+    ASSERT_TRUE(geoms.ok());
+    ASSERT_EQ(geoms->size(), 1u);
+    EXPECT_EQ(geoms->front().name(), vine::String(u8"mesh0.positions.bin"));
 
     // Both visuals round-trip with the mesh.
     auto loaded = io.loadPkg(vfs);

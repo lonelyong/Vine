@@ -73,6 +73,31 @@ std::uint8_t quantise(float value)
     return static_cast<std::uint8_t>(std::lround(value * 255.0F));
 }
 
+/** @brief Sets or clears the environment variable the profile switch is read from.
+ *
+ * The switch itself is read with std::getenv() by the code under test, so this has to write the environment
+ * the running process sees: setenv()/unsetenv() on POSIX, _putenv_s() on Windows (which updates what
+ * getenv() reads in the same CRT).
+ *
+ * @param name Variable name.
+ * @param on   true to set it to "1", false to clear it.
+ */
+void setEnvironmentFlag(const char* name, bool on)
+{
+#if defined(_WIN32)
+    (void)::_putenv_s(name, on ? "1" : "");
+#else
+    if (on)
+    {
+        setenv(name, "1", 1);
+    }
+    else
+    {
+        unsetenv(name);
+    }
+#endif
+}
+
 }  // namespace
 
 TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEvidence)
@@ -867,7 +892,7 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
 
     // ON: the switch is the environment's, read once when the session comes up (and restored here, so the
     // rest of the process - and the next session - sees what it saw before).
-    ::setenv("VINE_VSG_PROFILE", "1", 1);
+    setEnvironmentFlag("VINE_VSG_PROFILE", true);
     {
         Session session;
         ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
@@ -905,5 +930,5 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
             }
         }
     }
-    ::unsetenv("VINE_VSG_PROFILE");
+    setEnvironmentFlag("VINE_VSG_PROFILE", false);
 }

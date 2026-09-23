@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <vine/geometry/Array.hpp>
+#include <vine/io/Vfs.hpp>
 #include <vine/math/Vector3.hpp>
 #include <vine/robotics/kinematics/Q.hpp>
 #include <vine/robotics/io/robot_io_global.hpp>
@@ -21,6 +22,42 @@ V_ROBOTICS_IO_NS_BEGIN
 
 namespace detail
 {
+
+/**
+ * @brief Reads a whole virtual file as UTF-8 text.
+ *
+ * The file system itself deals in bytes; this is the text view the XML parsers need.
+ *
+ * @param vfs The file system to read from.
+ * @param path The virtual file path.
+ * @return The text, or the failure read() would report.
+ */
+inline vine::io::Result<vine::String> readText(const vine::io::Vfs& vfs, const vine::String& path)
+{
+    const auto bytes = vfs.read(path);
+    if (!bytes) {
+        return bytes.error();
+    }
+    const std::vector<unsigned char>& data = bytes.value();
+    if (data.empty()) {
+        return vine::String{};
+    }
+    return vine::String(reinterpret_cast<const char8_t*>(data.data()), data.size());
+}
+
+/**
+ * @brief Writes UTF-8 text as a virtual file.
+ *
+ * @param vfs The file system to write to.
+ * @param path The virtual file path.
+ * @param text The UTF-8 text to store.
+ * @return The failure write() would report.
+ */
+inline vine::io::IoError writeText(vine::io::Vfs& vfs, const vine::String& path, const vine::String& text)
+{
+    const auto* bytes = reinterpret_cast<const unsigned char*>(text.data());
+    return vfs.write(path, std::span<const unsigned char>(bytes, text.size()));
+}
 
 /**
  * @brief Appends a printf-formatted warning line to a diagnostics buffer.
