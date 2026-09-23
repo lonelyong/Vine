@@ -363,6 +363,45 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     EXPECT_EQ(store.materialEntries(), 1U);
 }
 
+TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
+{
+    ContentStore store;
+    const auto   geometry = quad();
+    const auto   program  = contentProgram();
+    const auto   material = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+
+    store.track(geometry);
+    store.track(program);
+    store.track(material);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
+                                  program.get());
+    (void)store.tablesFor(plan->frame, timeline, retirement);
+
+    // A TOUCH IS A COMPARE-AND-WRITE (see ContentStore::updateMaterial): the facade touches every material a
+    // frame commands, because the engine never announces an edit - so a touch that finds the values it
+    // already has must build nothing and park nothing, or every frame would rebuild every material row.
+    const std::uint64_t builds_before = store.builds();
+    store.updateMaterial(material.get());
+    const ContentFacts& again = store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_EQ(store.builds(), builds_before) << "the touch found nothing changed";
+    EXPECT_EQ(retirement.pending(), 0U) << "and nothing was parked";
+    EXPECT_EQ(store.materialEntries(), 1U);
+    EXPECT_FLOAT_EQ(blockOf(*findMaterial(again, material.get()).entry).diffuse[0], 0.25F);
+
+    // The same touch AFTER an edit moves the revision, and the next walk replaces the row (the SDK's own
+    // contract, now reached through the touch rather than through a separate announcement).
+    material->setDiffuse(vine::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
+    store.updateMaterial(material.get());
+    const ContentFacts& edited = store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_EQ(store.builds(), builds_before + 1U) << "the edit replaced the row";
+    EXPECT_FLOAT_EQ(blockOf(*findMaterial(edited, material.get()).entry).diffuse[0], 0.5F);
+    EXPECT_EQ(retirement.pending(), 1U) << "and the value it had was parked";
+}
+
 TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
 {
     ContentStore store;

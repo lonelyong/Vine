@@ -77,9 +77,11 @@
 > M8p 每帧换图不再拆机器（§11.16ay）、M8q 丢帧的会话自己活下来（§11.16az）、
 > M8r 计划说的形状连格式一起核对（§11.16ba）、M8s 窗口的答案也有执行者（§11.16bb）、
 > M8t `skyMap` 是 drawable 自己的图（§11.16bc）、M9a 门面立起来（§11.16bd）、M9b pass 协议接到内容层（§11.16be）、
-> M9c 离屏那一半（§11.16bf）、M9d 读回（§11.16bg）、M9e 活着的 resize（§11.16bh）。
+> M9c 离屏那一半（§11.16bf）、M9d 读回（§11.16bg）、M9e 活着的 resize（§11.16bh）、
+> M9f 工厂切到门面（§11.16bi）。
 > 下一步：
-> **门面第六片**：把**工厂切到门面**（把 "vsg" 这个名字从旧实现换成 `VsgBackend`）——门面已无未服务入口点。
+> **收尾**：旧实现退场（名字已换，`VsgRenderer` 一路的源与测试是树里的死代码，删它是独立一步），
+> 或挑一条 §11.17 登记的口子做。
 > 场景桥的登记项（`skyMap`）至此清空；其余遗留口子见下。
 > 其余遗留口子：集合与半片停靠窗口各自独立；窗口 `facts()` 的 live 采样与 `refresh()` 的成功臂今天没有可驱动的触发（登记）；
 > 设备半边在"某一侧没说"时跳过（登记）。
@@ -2640,7 +2642,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M9c（离屏那一半：目标、输入、全屏、重建）~~ | **已完成（2026-09-23）**：`supportsRenderTargets()` 转真；新 `api/HostTargets`——宿主 `RenderTarget` 的**描述是快照**（每次点名比字段更新，稳态零分配；绝不留宿主指针）、对象**懒建**（正值尺寸 + 至少一个彩色附件才建；建不成与"还缺描述"分开作答：`NotBuilt`/`DepthSourceMissing`/`BuildFailed`）、借来的深度持**lender 的 share**（`shared_ptr`，lender 被释放而 borrower 还在也不悬空）；`facts()` 是计划解析**目标与输入**的那张表（引擎半边永远是宿主的话；**设备半边只在引擎形状没变时**才说——M8r 的"不知道不是没有"；深度的事实：建成后按目标自己的 `layout()` 报 promotion、borrowed 时永不承诺；shadow 声明（谁的图 + 产出者的矩阵）原样搬）；门面：`setRenderTarget` 建/注册/交身份（只报 `DepthSourceMissing`/`BuildFailed` 一次、`Ready` 后重置情节；`NotBuilt` 静默——宿主先配后画）、`setPassInputs` 观察 + 转身份、`drawScreenProgram` 追踪片元程序 + 交身份、`releaseRenderTarget` 忘条目 + 注销执行器 + 让 recorder 丢掉挂起公告；内容驱动按**每趟自己的目标**取兼容性与尺寸（窗口或宿主目标），每个**声明输入**给一条 `InputImages`（该目标的彩色视图 + 计划说可采样时的深度视图，scratch 复用不每帧分配）。真设备用例：离屏目标画三角 → SDK 自带 `screenCopyProgram(0)` 复制到窗口（像素：红三角 + **目标自己的清屏绿**，不是窗口的清屏蓝）；建成目标的 facts（设备拼写非空、`built` 真）；`setSize` ⇒ 计划答 ResizeInPlace、**目标真的变 32×48**、画还在；`attachColor` 第二个附件 ⇒ 形状变 ⇒ 计划答 Rebuild、目标 2 附件、屏幕仍采附件 0；释放后 `live()==0`；借一个**不存在的 lender** ⇒ 报一次（三次公告一条情节）。无设备 `HostTargetsTest`（快照 vs 活对象、借来的深度不是 borrower 的承诺、shadow 声明原样、释放只答一次）。变异 **7/7 红**（不建/不进事实表/丢目标身份/离屏不录内容/输入不给图/释放不清/**形状变了还说旧的设备格式**——后三条各带 12 / 2 / 2 条 VUID）。门禁 **658 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 859、相位 11 行 / 2 次（§11.16bf）。 |
 | ~~M9d（宿主目标的读回）~~ | **已完成（2026-09-23）**：`readColorBuffer`/`readDepthBuffer` 转真；新 `api/HostReadback`——**两个来源一张图**：执行器每帧本来就在**全部 pass 之后**给每个目标接上自己的拷贝节点（彩色目标=附件 0，只有深度的目标=深度），所以读"帧已经拷过的"**不用再提交任何东西**（停一次设备 + 读映射缓冲）；帧**没拷过的**（彩色目标的深度、第二个彩色附件）在这一层用目标自己的拷贝命令**提交一次**（自己的 command buffer + fence，100 s 上限）——被画过的目标处在确定布局，拷贝合法；**没画过的目标答 `NotRecorded`**（拷贝 UNDEFINED 内存再把垃圾叫"图片"是不行的）。顺序即契约：①**先分类**（不需要设备：未知附件、读不了的格式、没录过的目标——不能服务的请求**一分钱不花**）；②**调用者停设备**（写缓冲的那一帧可能还在飞）——这次停**被计数**（`SessionContentAccess::waitDeviceIdle`，与 `deviceWaits()` 同一个计数器：读回是唯一允许停设备的路径，"恰好停一次"保持可查）；③只有帧没拷过才在这里拷（在停之后，两次提交不会重叠）；④探针读映射缓冲，把字节/浮点交给宿主（`PixelProbe::pixels()`/`DepthProbe::values()` 交出原缓冲）。门面：拒绝**两个频道一起说**（`why` 给机器答案、诊断路由给一句话，**每个情节一次**——目标自己的情节挂在条目上，目标解析不了就共用一个每入口点情节；成功即 rearm）；**还没停设备就先拒绝**；借来的深度走 `BorrowedDepth`（SDK 的规矩：源目标才是读的地方）；`readbackResultOf` 一张表（未知目标/没建好/没录过 ⇒ NotReady、空目标/未知附件 ⇒ Invalid、读不了的格式/借来的深度/没设备 ⇒ Unsupported、搬运失败 ⇒ Failed；**未映射的落到 Failed 永不落到 Ok**）；诊断类别沿用旧实现的 `ContentSkipped`。真设备用例（`VsgBackendTest.TheSdkReadsBackItsOwnTargetsPixelsAndDepths`，64×64 的 RGBA8+D32F 目标一帧）：彩色读回 `Ok`、`64*64*4` 字节、三角内 (16,40) 是 `(255,0,0,255)`、外面 (48,8) 是目标的清屏绿、alpha 255；深度 4096 个 float、三角形处 ∈ (0.05, 0.95)、清屏处 `==0.0`、全在 [0,1]；`deviceWaits` 每次读回 **+1**；拒绝面（**全部不加等待**）：附件 5 ⇒ Invalid、未知目标 ⇒ NotReady、RGBA16F ⇒ Unsupported（持有且建成、不需要帧）、borrower 读深度 ⇒ Unsupported、**lender 建成但没画过 ⇒ NotReady**、释放过的目标 ⇒ NotReady。**本片撞出的真问题**：只有离屏 pass 的帧**从没跑过窗口那棵图** ⇒ 被 acquire 的图像停在 `UNDEFINED` ⇒ 呈递 **VUID 01430**（M9a 的同一课，换了张脸）；修法 = `WindowTarget::prepareWithoutClear()`（只重开渲染区、清屏值原样）+ 执行器在**没有任何窗口 pass** 的帧尾把窗口图**不加壳**挂进命令图（没有 pass 可以归因，注释里写明）。变异 **6/6 红**：①没画过的目标读起来像能服务（3 行）；②只有离屏的帧不跑窗口图（**2 条 VUID**）；③**两道"没录过"的闸一起拆**（3 行；只拆一道是绿的——分类那一道先答，两道闸在**不同来源**上各管一半）；④借来的深度从 borrower 读（3 行）；⑤读回的停不计（3 行）；⑥帧不把自己的目标拷回来（**63 行**，执行器与相位一起红）。门禁 **659 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bg）。 |
 | ~~M9e（活着的 resize）~~ | **已完成（2026-09-23）**：`resize()` 转真；`SessionContentAccess::followResizedSurface`——**表面拥有尺寸**（SDK 授权顺序 surface > announcement > default），跟随 = `window->resize()`（重读表面几何 + 重建交换链），**停一次设备且被计数**（与 M8q 丢帧修复同一笔开销）；挂在尺寸上的东西下一帧现读（`WindowTarget::prepare(WithoutClear)` 的 renderArea、目标形状、每趟视图块），没有第二份尺寸要同步；非正值不跟随；公告仍是**下次 `initialize()`** 的建窗尺寸。`kUnservedResize` 槽删除 ⇒ **门面不再有未服务入口点**（剩下两个"没地方可去"的调用照旧各报一次：无会话的帧、内容世界未起来的 `render()`）；`BackendContentAccess::windowTarget()` 作为测试视图。**本片量到的机理**：表面变了却不公告/不跟随时，vsg 的 Viewer 会在 **acquire** 发现 `_extent2D` 与交换链不符（`Window::acquireNextImage` 直接答 `OUT_OF_DATE`），在**提交里**自己 `window->resize()`——而那一帧**已按旧矩形录完** ⇒ `VUID-VkRenderPassBeginInfo-pNext-02852/02853` + 段错误（M1 变异实测）。真设备用例：画面自身编码尺寸（`frame.y/160`、`frame.z/192`，两个尺寸下都在 [0,1]）——宿主窗口 128×96 → 改 96×64 + 公告 ⇒ 恰好 **1 次**被计数的停、`WindowTarget` 报 96×64、零报告、新尺寸下三角与清屏都在（`resize(0,0)` 一分钱不花）；第一个用例同步改写（活着 resize 不再报、`deviceWaits()==1`、重生日窗口 = 公告的 320×180）。变异 **5/5 红**（①不重读表面 ⇒ **4 条 VUID + 段错误**；②重建停不计数；③活得公告不记（回默认 640×360）；④ `0×0` 闸拆掉；⑤渲染区冻在第一个尺寸 ⇒ **4 条 VUID + 段错误**）。门禁 **660 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bh）。 |
-| **M9 下一步** | **门面第六片**：把工厂切到门面（"vsg" 从旧实现换成 `VsgBackend`）——门面已无未服务入口点。 |
+| ~~M9f（工厂切到门面）~~ | **已完成（2026-09-23）**：`VsgRenderBackendFactory::create()` 造 `VsgBackend` 而不是 `VsgRenderer`——**注册名 "vsg" 就是重写版**（插件 load → 注册表 → create 这条生产路径）；旧实现仍在树里、仍由自己的测试驱动，但没有任何名字创建它。**两条注册路径**（`load()` 里显式注册的 `s_factory` 与 `VsgRenderBackendFactory.cpp` 里的静态 `Registrar`）都在，所以变异 M3 要把**两处**一起关才红。**切换逼出的半片**：老实现每帧刷新它命令到的每个材质（`SceneBridge` → `VsgMaterialManager::updateMaterial`，而那方法自己就是 compare-and-write），重写版 `ContentStore` 只认 `updateMaterial()` 推的修订、**而没人调它**（§11.16be 的登记）⇒ 不补则切完工厂**材质编辑不再进画**。所以门面 `render()` 对每条命令的材质调一次 `ContentStore::updateMaterial()`，并把该方法从"盲增修订"改成 **compare-and-write**：读材质现在的字段、与表里那行的块**按 ABI 逐成员比较**（`materialBlockAgreesWith`——**不能比字节**，块的尾部填充故意不写；块映射收成一处 `blockOfMaterial`），只有不同才推修订 ⇒ 下一帧换行 + 停靠旧值照旧，稳态帧只比不建、不分配。证据：真设备①`VsgBackendPluginTest.TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraws`（**通过注册表**拿门面、采纳宿主窗口、走 SDK 协议画一帧、把宿主窗口像素读回）；②`VsgBackendTest.AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing`（材质 diffuse 着色：编辑帧 `builds()` 恰好 +1 且像素质变，稳态帧不涨、`deviceWaits()==0`）；无设备 `ContentStoreTest.ATouchWithNoEditChangesNothing`。`CreateBackendByName` 用 `dynamic_cast` 钉住"造出来的是门面"；`BackendContentAccess::store()` 是测试视图。**夹具教训**：块 canonical 绑定 **View=0 / Draw=1 / Material=2**——把材质块写在 binding 0 会被 ABI 扫描判成"两阶段同绑定不一致" ⇒ 内容层整趟拒绝（只剩清屏色）。变异 **6/6 红**（旧实现 / 答空 / **两处注册全关** / 名字不是 vsg / 触碰盲增 / 门面不触碰）。门禁 **663 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bi）。 |
+| **下一步** | 旧实现退场（删 `VsgRenderer` 一路的源与测试——名字已换，树里那份是死代码），或挑一条登记的口子做。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -4115,3 +4118,65 @@ acquire 发现 `_extent2D` 与交换链不符（`Window::acquireNextImage` 直�
 ②宿主**不公告**表面变化时不会被跟（vsg 会在提交里补，代价是那一帧错 + VUID/崩）——不能报尺寸的宿主要自己
 保证公告；③旧口子（借来的深度租约、活目标翻 `depthPromotion`、集合/半片独立、live 采样与 `refresh()` 成功
 臂、设备半边"某一侧没说就跳过"）不变。
+
+### 11.16bi M9f（2026-09-23）：工厂切到门面——"vsg" 就是重写版
+
+最后一步：`VsgRenderBackendFactory::create()` 不再造 `VsgRenderer`，而是造 `vine::vsg::VsgBackend`（门面）。
+从此**注册名 "vsg" 的含义就是重写版**——插件 load → 注册表 → `create()` 这条生产路径上跑的是这一路 M0–M9e
+建起来的东西；被替换的实现仍在树里、仍由自己的测试驱动，但**没有任何名字会创建它**（第二个名字就是"哪个是
+vsg"的第二个答案，而这正是重写要消灭的东西）。注册实际有**两条路**：`GfxBackendVsgPlugin::load()` 显式注册
+一个 `s_factory`，而 `VsgRenderBackendFactory.cpp` 里的静态 `Registrar` 在模块被载入时就自己注册了同一个名
+字（后注册的赢，两者造出的东西一样）——变异 M3 就是把**两处一起**关掉，只关一处处仍然绿。
+
+**切换逼出来的半片（必须一起交）**：老实现**每帧**刷新它命令到的每个材质（`SceneBridge` 对每个 distinct
+material 调 `VsgMaterialManager::updateMaterial`，而那个方法**自己就是 compare-and-write**——它的测试原话
+是 "refreshes in place, and only when something changed"）。重写版是**拉**模型：`ensureMaterial` 只在
+`described_revision == revision` 时跳过，而 `revision` 只有 `updateMaterial()` 会推——**而重写版里没有任何人
+调它**（§11.16be 登记的就是这一条：SDK 的 `RenderBackend` 面里没有"材质变了"的入口，引擎也不持有
+`MaterialManager`）。不补的话，切完工厂**宿主的材质编辑就不进画**（老实现的核心行为之一，静默丢）。所以本片
+把两半一起交：
+
+* 门面 `render()` 对**每条命令的材质**调一次 `ContentStore::updateMaterial()`——"在哪被点名，就在哪被注意
+  到"，与老实现同一处、同一频率；
+* `updateMaterial()` 从"盲增修订"改成 **compare-and-write**：读材质**现在**的字段，与表里那一行携带的块
+  **按 ABI 的逐成员比较**（`materialBlockAgreesWith`；**不能比字节**——块的尾部填充是故意不写的，比字节会把
+  "没变"报成"变了"，§11.16k 的老坑），只有**不同**才推修订，于是"下一帧 `tablesFor` 换掉那一行、把旧值停
+  靠"照旧；稳态帧只比不建、**不分配**，首帧之后的每帧开销就是几个浮点比较。块的字段映射收成一处
+  （`blockOfMaterial`），`buildMaterialFacts` 与比较共用同一份拼写。
+
+**证据**：
+
+* `VsgBackendPluginTest.CreateBackendByName` 用 `dynamic_cast<vine::vsg::VsgBackend*>` 把"造出来的是门面"
+  钉住（旧工厂会一模一样地通过 `!= nullptr`）；
+* `VsgBackendPluginTest.TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraws`：**通过注册表**拿对象（不是直接
+  `new`）、采纳宿主窗口、初始化、走 SDK 协议画一帧（pass + 一个三角）、呈递、把**宿主窗口的像素**读回来
+  （左半红三角、右半清屏绿）——生产路径端到端，切换只有它的终点能证；
+* `ContentStoreTest.ATouchWithNoEditChangesNothing`（无设备）：触碰没编辑 ⇒ 零构建、零停靠；编辑后再触碰
+  ⇒ 恰好一行、旧值被停靠；
+* `VsgBackendTest.AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing`：内容用**材质自己的
+diffuse** 着色（顶点阶段只把位置透传，三角形因此落在窗口中间）——帧 1 读到 (0.25, 0.5, 0.75)；宿主只改材质、
+  **什么都不通告** ⇒ 帧 2 的 `builds()` 恰好 +1 且像素质变成 (0.75, 0.25, 0.5)；再来一帧什么都不改 ⇒
+  `builds()` **不涨**、画面不变、`deviceWaits()==0`。
+
+`BackendContentAccess::store()` 作为测试视图（`builds()` 是"这一帧建了东西"的读数，与上一片的
+`windowTarget()` 同一个理由）。
+
+**夹具教训（当场抓到的）**：块的 canonical 绑定是 **View=0 / Draw=1 / Material=2**；把 `VineMaterialBlock`
+写在 binding 0（视图块的位置）会被 ABI 扫描判成"两阶段对同一绑定的说法不一致" ⇒ 内容层整趟拒绝（日志里
+"no compiled content half was built for this pass"，画面上只剩清屏色）——不是后端的缺陷，是夹具的拼写错。
+
+**变异 6/6 红**：①名字又造旧实现（`CreateBackendByName` 的 cast 先红）；②`create()` 答空；③**两条注册
+路径一起关**（`PluginRegistersVsgBackend` 红）；④注册的名字不是 "vsg"；⑤触碰改成盲增（
+`ATouchWithNoEditChangesNothing` 红：稳态帧每帧重建、还停靠）；⑥门面**不再触碰**材质（材质编辑用例红：
+像素停在旧颜色）。门禁 **663 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次运行。
+
+**变异夹具的一课**：插件**独有**的源（工厂、插件入口、旧实现）**不在 `test_vsg` 目标里**，所以
+`ninja -C build test_vsg` 不会重编它们——第一次跑这六个变异**全绿**，就是因为被测的仍是**旧的插件 .so**。
+电池必须 `ninja -C build test_vsg gfx_backend_vsg`（插件的 api/core 源同时编进测试目标，所以 M9e 的电池没
+踩到这一条）。已写进仓库记忆。
+
+**本片留下的口子（登记）**：①旧实现仍在树里（测试驱动）——删它是独立一步（要连它的源文件、公共头与测试
+一起处理）；②引擎侧真的跑起来（真窗口、真场景）没有在本片里做过：证据是"注册表 → 门面 → 宿主窗口一帧"这
+条路径，**宿主侧的接线**（怎么把场景/材质编辑接到这个后端）属于引擎那边；③旧口子（自开窗口不"应用"公告、
+宿主不公告表面变化不会被跟、借来的深度租约、活目标翻 `depthPromotion`、集合/半片独立、live 采样与
+`refresh()` 成功臂、设备半边"某一侧没说就跳过"）不变。

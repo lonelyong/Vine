@@ -220,7 +220,24 @@ void ContentStore::updateMaterial(vine::raw_ptr<vine::graphics::Material> materi
     {
         return;  // untracked: nothing draws with it, so nothing can be asked about it
     }
-    ++entry->second.revision;
+
+    // THE TOUCH IS A COMPARE-AND-WRITE (see the header note): the material's CURRENT values are compared with
+    // the row the table answers for it - member-wise, the ABI's way (see materialBlockAgreesWith: the block's
+    // tail padding is deliberately not part of the comparison) - and only a difference moves the revision,
+    // which is what makes the next tablesFor() rebuild that row and park the value it had. A blind bump would
+    // rebuild every commanded material's row every frame, which is exactly what this avoids; and it does not
+    // build anything to compare, so a steady frame allocates nothing.
+    Data::LiveMaterial& live = entry->second;
+    if (!live.described)
+    {
+        return;  // nothing is described yet: the first description is taken when a frame records
+    }
+    const MaterialFacts* row = d->liveMaterial(material);
+    if (row != nullptr && materialBlockAgreesWith(*material, row->block) && row->texture == material->texture())
+    {
+        return;  // touched and unchanged: nothing to build, nothing to park, nothing allocated
+    }
+    ++live.revision;
 }
 
 const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, core::FrameTimeline& timeline,

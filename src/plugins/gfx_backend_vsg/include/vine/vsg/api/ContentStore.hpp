@@ -95,17 +95,22 @@ class ContentStore
     void track(const vine::intrusive_ptr<vine::graphics::Material>& material);
 
     /**
-     * @brief Announces that @p material's attributes changed.
+     * @brief Touches @p material: refreshes its entry when the values it carries NOW differ from the row's.
      *
-     * THE SDK's OWN CONTRACT (`vine::graphics::MaterialManager::updateMaterial`), spelled as a member so the
-     * store needs no SDK object machinery: the materials have no revision accessor, so the layer that knows
-     * about edits is the only layer that can report one, and this is where its revision moves. The next
-     * frame that draws with it re-reads the block and REPLACES the entry (see the file note).
+     * WHY A TOUCH, AND WHY IT COMPARES. The SDK's `MaterialManager` is where an edit is announced, but an
+     * engine does not hand one to a backend (`RenderBackend` carries no such entry point), so the only place
+     * a live edit can be noticed is where the material is announced: every material a frame commands - which
+     * is exactly what the implementation this backend replaces did (`VsgMaterialManager::updateMaterial` was
+     * called once per distinct material per frame, and was itself the compare-and-write). What the material
+     * says NOW is built into a scratch block and compared with the row the table answers for it; only a
+     * difference moves the revision, so a steady frame compares and writes nothing while an edit lands on
+     * the very next frame that draws with it. The next frame that draws with it re-reads the block and
+     * REPLACES the entry (see the file note).
      *
      * An edit for a material the host never tracked is ignored: nothing draws with it, so nothing can be
      * asked about it.
      *
-     * @param material Material whose attributes changed.
+     * @param material Material to touch; null is ignored (the default entry describes itself).
      */
     void updateMaterial(vine::raw_ptr<vine::graphics::Material> material);
 

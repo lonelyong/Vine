@@ -3,6 +3,10 @@
 > 模块：`src/plugins/gfx_backend_vsg`
 > 版本依据：2026-09-04 工作区代码（`git` 后状态）+ 本机 vsg v1.1.16。
 >
+> **现状（2026-09-23）**：注册名 `vsg` 现在创建的是**重写版门面** `api/VsgBackend`（见
+> `.ai/design/vsg-reimplementation.md` §11.16bi）；本文档描述的 `VsgRenderer` 仍在树里、仍由自己的测试驱动，
+> 但**不再由任何名字创建**。重写版的逐片设计与证据都在那份设计文档里；宿主侧怎么接线也是那边的事。
+>
 > **运行期下限：Vulkan 1.4**（`detail::kRequiredVulkanVersion`，`VsgBackendUtility.hpp`）。低于它就**拒绝会话**
 > 并在诊断通道报出两个版本号（`VsgRenderer::initialize` 的 "checking the device's Vulkan version" 阶段）——
 > 后端有权依赖 1.4 的核心行为（扩展动态状态、dynamic rendering 的 local read），把低版本设备"跑子集"当成

@@ -1,5 +1,6 @@
 ﻿#include <vine/vsg/VsgRenderBackendFactory.hpp>
-#include <vine/vsg/VsgRenderer.hpp>
+
+#include <vine/vsg/api/VsgBackend.hpp>
 
 V_VSG_NS_BEGIN
 
@@ -38,7 +39,12 @@ vine::graphics::RenderBackendInfo VsgRenderBackendFactory::info() const
 
 vine::intrusive_ptr<vine::graphics::RenderBackend> VsgRenderBackendFactory::create()
 {
-    return vine::intrusive_ptr<vine::graphics::RenderBackend>(new VsgRenderer());
+    // THE NAME "vsg" MEANS THE REWRITE (see .ai/design/vsg-reimplementation.md §11.16bi): the facade is the
+    // SDK's seam the rewritten backend was built around - the session, the frame protocol, the content
+    // world, the off-screen half and the readbacks are the ones it drives. The implementation this replaces
+    // (`VsgRenderer`) is still in this module and still driven by its own tests, but nothing creates it by
+    // name any more; a second registered name would just be a second answer to "which backend is 'vsg'".
+    return vine::intrusive_ptr<vine::graphics::RenderBackend>(new VsgBackend());
 }
 
 V_VSG_NS_END

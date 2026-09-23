@@ -18,6 +18,7 @@
 #include <vine/vsg/api/ContentAssembly.hpp>
 #include <vine/vsg/api/ContentHalves.hpp>
 #include <vine/vsg/api/ContentSets.hpp>
+#include <vine/vsg/api/ContentStore.hpp>
 #include <vine/vsg/api/DeviceProbe.hpp>
 #include <vine/vsg/api/HostTargets.hpp>
 #include <vine/vsg/api/VsgBackend.hpp>
@@ -43,6 +44,7 @@ using vine::graphics::ShaderProgram;
 using vine::graphics::ShaderStage;
 using vine::graphics::ShaderStageType;
 using vine::vsg::ContentAssembly;
+using vine::vsg::ContentStore;
 using vine::vsg::core::TargetFacts;
 using vine::vsg::HostTargets;
 using vine::vsg::PassRegistry;
@@ -1014,6 +1016,153 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
         << "and the view block carries 96x64 now, not the size the window came up at: got ("
         << static_cast<int>(after_left[0]) << ", " << static_cast<int>(after_left[2]) << ")";
     EXPECT_TRUE(isGreenClear(after_right)) << "the right quarter is the clear colour at the new size too";
+    EXPECT_EQ(seen, backend->diagnosticCount());
+
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
+TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 128;
+    constexpr int kHeight = 96;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::size_t                     seen = 0;
+    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+        ++seen;
+        std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
+                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    as_bytes(diagnostic.message).c_str());
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+
+    // The content shades with the MATERIAL's own diffuse colour. The engine edits materials in place and
+    // expects the picture to follow - the implementation this backend replaces refreshed every commanded
+    // material every frame for exactly that reason - so the pixels are the evidence for both halves: the
+    // edit landing, and the steady frame that must not rebuild anything.
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "void main() { outColor = material.diffuse; }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vine::intrusive_ptr<vine::Buffer<float>> positions = vine::intrusive_ptr<vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices =
+        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
+            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    geometry->setPositions(positions);
+    geometry->setIndices(indices);
+    geometry->setRevision(1U);
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands{ command };
+
+    const vine::intrusive_ptr<vine::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vine::intrusive_ptr<RenderPass>             pass(new RenderPass());
+    const vine::graphics::ClearPolicy                 clear{ vine::Color(0, 64, 0, 255), true };
+
+    const auto drive = [&] {
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        backend->render(commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        backend->swapBuffers();
+    };
+    const auto settle = [&] {
+        for (int index = 0; index < 2; ++index)
+        {
+            backend->beginFrame();
+            backend->endFrame();
+            backend->swapBuffers();
+        }
+    };
+    // The two outer bytes are the red and blue of the material's diffuse, in the server's order.
+    const auto outer = [](const std::array<std::uint8_t, 3>& pixel, double red, double blue) {
+        return (isColourByte(pixel[0], red) && isColourByte(pixel[2], blue)) ||
+               (isColourByte(pixel[2], red) && isColourByte(pixel[0], blue));
+    };
+
+    ContentStore* store = BackendContentAccess::store(*backend);
+    ASSERT_NE(store, nullptr) << "a live session owns the content tables its frames are built from";
+
+    drive();
+    settle();
+    // The vertex stage passes the geometry's own coordinates through, so the triangle covers the middle of
+    // the window: probe inside it, and off to the left for the clear.
+    const auto first = host.pixel(kWidth / 2, kHeight / 2);
+    EXPECT_TRUE(isColourByte(first[1], 0.5)) << "the material's green byte reached the picture, got ("
+                                            << static_cast<int>(first[0]) << ", " << static_cast<int>(first[1])
+                                            << ", " << static_cast<int>(first[2]) << ")";
+    EXPECT_TRUE(outer(first, 0.25, 0.75)) << "and so did red and blue, in the server's order";
+
+    // The host edits the material and DOES NOTHING ELSE. There is no announcement to make: the SDK's
+    // RenderBackend has no "this material changed" entry point, so the touch the facade makes when the next
+    // frame commands the material is the whole mechanism (see ContentStore::updateMaterial).
+    material->setDiffuse(vine::Colorf(0.75F, 0.25F, 0.5F, 1.0F));
+    const std::uint64_t builds_before = store->builds();
+    drive();
+    EXPECT_EQ(store->builds(), builds_before + 1U) << "the edit replaced exactly that material's row";
+    settle();
+    const auto edited = host.pixel(kWidth / 2, kHeight / 2);
+    EXPECT_TRUE(isColourByte(edited[1], 0.25)) << "the edit lands on the very next frame, got ("
+                                               << static_cast<int>(edited[0]) << ", "
+                                               << static_cast<int>(edited[1]) << ", "
+                                               << static_cast<int>(edited[2]) << ")";
+    EXPECT_TRUE(outer(edited, 0.75, 0.5)) << "and the outer channels followed";
+
+    // A frame that changes nothing compares and writes nothing: the touch must not rebuild the row it just
+    // found unchanged (the steady-state property the old manager owned).
+    const std::uint64_t steady_before = store->builds();
+    drive();
+    settle();
+    EXPECT_EQ(store->builds(), steady_before) << "a steady frame builds no row";
+    EXPECT_TRUE(isColourByte(host.pixel(kWidth / 2, kHeight / 2)[1], 0.25)) << "and shows the same picture";
+    EXPECT_EQ(backend->deviceWaits(), 0U) << "none of this stops the device";
     EXPECT_EQ(seen, backend->diagnosticCount());
 
     backend->shutdown();

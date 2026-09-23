@@ -161,28 +161,40 @@ FactMiss buildScreenProgramFacts(const vine::graphics::ShaderProgram& program, P
     return FactMiss::None;
 }
 
+namespace
+{
+
+/// @brief Packs @p material's fields into the ABI's block, field for field.
+///
+/// The ONE spelling of the mapping: buildMaterialFacts writes it, materialBlockAgreesWith reads it back, and
+/// a member added to the engine's mapping cannot reach one without the other.
+[[nodiscard]] vine::graphics::VineMaterialBlock blockOfMaterial(const vine::graphics::Material& material) noexcept
+{
+    const vine::Colorf diffuse  = material.diffuse();
+    const vine::Colorf specular = material.specular();
+    const vine::Colorf ambient  = material.ambient();
+
+    vine::graphics::VineMaterialBlock block{};  // its member defaults are the default material
+    block.diffuse   = { diffuse.r, diffuse.g, diffuse.b, diffuse.a };
+    block.specular  = { specular.r, specular.g, specular.b, specular.a };
+    block.ambient   = { ambient.r, ambient.g, ambient.b, ambient.a };
+    block.shininess = material.shininess();
+    return block;
+}
+
+}  // namespace
+
 FactMiss buildMaterialFacts(const vine::graphics::Material* material, std::uint64_t revision,
                             MaterialFacts& out, std::vector<std::byte>& storage)
 {
     // The block's MEMBERS are the payload, and `{}` is aggregate initialisation: it initialises the members
     // from their defaults (this is the ABI's default material - grey, one non-zero shininess) and leaves the
     // struct's tail padding alone. That padding is not read by any shader and is deliberately left as it is:
-    // the ABI compares blocks with its own member-wise `operator==`, and a byte-level comparison of these
-    // bytes is not a meaningful operation (it would report "the material changed" for a material that did
-    // not).
-    vine::graphics::VineMaterialBlock block{};  // its member defaults ARE the default material
-    if (material != nullptr)
-    {
-        // The engine's mapping from the SDK's material fields, field for field (the existing implementation's
-        // material manager packs the same four).
-        const vine::Colorf diffuse  = material->diffuse();
-        const vine::Colorf specular = material->specular();
-        const vine::Colorf ambient  = material->ambient();
-        block.diffuse   = { diffuse.r, diffuse.g, diffuse.b, diffuse.a };
-        block.specular  = { specular.r, specular.g, specular.b, specular.a };
-        block.ambient   = { ambient.r, ambient.g, ambient.b, ambient.a };
-        block.shininess = material->shininess();
-    }
+    // the ABI compares blocks with its own member-wise `operator==` (see materialBlockAgreesWith), and a
+    // byte-level comparison of these bytes is not a meaningful operation (it would report "the material
+    // changed" for a material that did not).
+    const vine::graphics::VineMaterialBlock block =
+        material != nullptr ? blockOfMaterial(*material) : vine::graphics::VineMaterialBlock{};
 
     storage.assign(sizeof(block), std::byte{ 0 });
     std::memcpy(storage.data(), &block, sizeof(block));
@@ -195,6 +207,20 @@ FactMiss buildMaterialFacts(const vine::graphics::Material* material, std::uint6
     // decides whether the drawable takes the `VINE_DIFFUSE_MAP` variant of its program (api/ProgramVariant).
     out.texture = material != nullptr ? material->texture() : nullptr;
     return FactMiss::None;
+}
+
+bool materialBlockAgreesWith(const vine::graphics::Material& material, std::span<const std::byte> block) noexcept
+{
+    if (block.size() != sizeof(vine::graphics::VineMaterialBlock))
+    {
+        return false;  // not a block this ABI wrote: never "the same"
+    }
+    // The bytes are copied into a VALUE first: the struct is 16-byte aligned (std140) and the row's storage
+    // is a byte vector, so reading it in place would be an unaligned access; the comparison itself is the
+    // ABI's own member-wise one, which ignores the padding both sides leave alone.
+    vine::graphics::VineMaterialBlock carried{};
+    std::memcpy(&carried, block.data(), sizeof(carried));
+    return carried == blockOfMaterial(material);
 }
 
 V_VSG_NS_END

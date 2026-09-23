@@ -104,4 +104,18 @@ V_VSG_NS_BEGIN
 [[nodiscard]] FactMiss buildMaterialFacts(const vine::graphics::Material* material, std::uint64_t revision,
                                           MaterialFacts& out, std::vector<std::byte>& storage);
 
+/** @brief Whether @p material's current values are the ones @p block carries.
+ *
+ * THE COMPARISON IS THE ABI'S, member by member, and that is the point of having it here: the block's tail
+ * padding is deliberately not initialised (see buildMaterialFacts), so comparing the bytes would report "the
+ * material changed" for a material that did not change. A caller that wants to know whether an announcement
+ * or a touch found something new asks this; a block of the wrong size is never "the same".
+ *
+ * @param material Material to read (its fields, not a snapshot).
+ * @param block    A block built for that material (its bytes, the ABI's size).
+ * @return true when the values agree.
+ */
+[[nodiscard]] bool materialBlockAgreesWith(const vine::graphics::Material& material,
+                                           std::span<const std::byte> block) noexcept;
+
 V_VSG_NS_END

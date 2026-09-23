@@ -599,6 +599,12 @@ void VsgBackend::render(const std::vector<vine::graphics::RenderCommand>& comman
         d->store->track(command.geometry);
         d->store->track(command.material);
         d->store->track(command.program);
+        // THE MATERIAL IS TOUCHED HERE, because this is the only place a live edit can be noticed: the engine
+        // never announces one (the SDK's RenderBackend has no such entry point - see ContentStore::updateMaterial),
+        // and the implementation this backend replaces refreshed each commanded material every frame for the
+        // same reason. The touch compares and only a difference rebuilds the row, so a steady frame pays a
+        // comparison and nothing else.
+        d->store->updateMaterial(command.material.get());
     }
     (void)d->recorder.render(commands, camera);  // refusing (no scope, a released target) is the protocol's
 }
@@ -838,6 +844,11 @@ VsgExecutor& BackendContentAccess::executor(VsgBackend& backend) noexcept
 WindowTarget* BackendContentAccess::windowTarget(VsgBackend& backend) noexcept
 {
     return SessionContentAccess::windowTarget(backend.d->session);
+}
+
+ContentStore* BackendContentAccess::store(VsgBackend& backend) noexcept
+{
+    return backend.d->store.get();
 }
 
 }  // namespace detail

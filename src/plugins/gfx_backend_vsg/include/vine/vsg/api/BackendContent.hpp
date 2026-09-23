@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vine/vsg/api/ContentAssembly.hpp>
+#include <vine/vsg/api/ContentStore.hpp>
 #include <vine/vsg/api/HostTargets.hpp>
 #include <vine/vsg/api/PassRegistry.hpp>
 #include <vine/vsg/api/VsgBackend.hpp>
@@ -69,6 +70,17 @@ class BackendContentAccess
      * @return The window target, or null while the session is not up.
      */
     [[nodiscard]] static WindowTarget* windowTarget(VsgBackend& backend) noexcept;
+
+    /** @brief Gets the content tables the facade's frames are built from.
+     *
+     * The store is where a frame's facts come from and where its rebuild counters live: the tests read
+     * `builds()` around a frame to tell "this frame built something" from "this frame touched and found
+     * nothing to do" - the steady-state claim a compare-and-write touch has to keep.
+     *
+     * @param backend Backend to ask.
+     * @return The store, or null while the session is not up.
+     */
+    [[nodiscard]] static ContentStore* store(VsgBackend& backend) noexcept;
 };
 
 }  // namespace detail
