@@ -46,6 +46,7 @@ using vine::graphics::ShaderStageType;
 using vine::vsg::ContentAssembly;
 using vine::vsg::ContentStore;
 using vine::vsg::core::TargetFacts;
+using vine::vsg::core::depthPlan;
 using vine::vsg::HostTargets;
 using vine::vsg::PassRegistry;
 using vine::vsg::VsgBackend;
@@ -563,9 +564,11 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    std::size_t                     seen = 0;
-    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+    std::size_t                     seen     = 0;
+    std::vector<std::string>        messages;
+    backend->setDiagnosticSink([&seen, &messages](const vine::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
+        messages.push_back(as_bytes(diagnostic.message));
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
@@ -576,8 +579,10 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
 
     // The host's own target, described the way a pipeline builder describes one: one RGBA8 attachment, 64x64.
     // The objects behind it are the backend's (the SDK's own contract: "the RenderTarget stays a logical
-    // description"), built the first time a pass draws into it.
+    // description"), built the first time a pass draws into it. Named the way the builder names its targets:
+    // a refusal has to be a sentence a host can act on.
     const vine::intrusive_ptr<RenderTarget> offscreen(new RenderTarget());
+    offscreen->setName(u8"gbuffer");
     offscreen->attachColor(RenderTarget::ColorFormat::RGBA8);
     offscreen->setSize(64, 64);
 
@@ -694,18 +699,32 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "the release is served silently";
 
     // 5. A target that borrows a depth from one this backend does not hold cannot be built, and that is SAID
-    // (once): a pass staged into it is skipped by the executor, never redirected to the window (see the SDK's
-    // releaseRenderTarget note for the same rule).
+    // (once) - INSIDE a frame, where it blocks the picture. Outside one the announcement is CONFIGURATION:
+    // the host sets its pipeline up before it draws (the same rule NotBuilt follows), and a borrow whose
+    // lender is announced later in that setup is order rather than failure - the engine's own pipeline does
+    // exactly that (measured on the demo: the composite arrives before its G-buffer, and builds on the next
+    // in-frame announcement). A pass staged into an unbuilt target is reported by the executor either way.
     const vine::intrusive_ptr<RenderTarget> lenderless(new RenderTarget());
+    lenderless->setName(u8"composite");
     lenderless->attachColor(RenderTarget::ColorFormat::RGBA8);
     lenderless->shareDepth(offscreen);  // the lender was released a moment ago
     lenderless->setSize(32, 32);
     backend->setRenderTarget(lenderless.get());
-    EXPECT_EQ(backend->diagnosticCount(), 1U) << "the missing lender is reported, once";
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "outside a frame nothing is said: this is configuration";
     EXPECT_EQ(targets.find(lenderless.get())->target, nullptr) << "and nothing was built for it";
+    backend->beginFrame();
+    backend->setRenderTarget(lenderless.get());
+    EXPECT_EQ(backend->diagnosticCount(), 1U) << "inside a frame the missing lender is reported, once";
+    // ... and the sentence NAMES both targets (the SDK's own label): "a render target could not be built" is
+    // not something a host can act on, and the engine's builder names everything it creates.
+    ASSERT_FALSE(messages.empty());
+    EXPECT_NE(messages.back().find("'composite'"), std::string::npos) << messages.back();
+    EXPECT_NE(messages.back().find("'gbuffer'"), std::string::npos) << messages.back();
     backend->setRenderTarget(lenderless.get());
     backend->setRenderTarget(lenderless.get());
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "three announcements are one episode";
+    backend->endFrame();
+    backend->swapBuffers();
     backend->releaseRenderTarget(lenderless.get());
 
     backend->shutdown();
@@ -1017,6 +1036,81 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
         << static_cast<int>(after_left[0]) << ", " << static_cast<int>(after_left[2]) << ")";
     EXPECT_TRUE(isGreenClear(after_right)) << "the right quarter is the clear colour at the new size too";
     EXPECT_EQ(seen, backend->diagnosticCount());
+
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
+TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 128;
+    constexpr int kHeight = 96;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::size_t                     seen = 0;
+    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+        ++seen;
+        std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
+                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    as_bytes(diagnostic.message).c_str());
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    // THE ENGINE'S SHADOW MAP, as a target: attachDepth with NO colour attachment, and its depth promoted so
+    // the shading can sample it. A depth-only target is a target - refusing it ("at least one colour
+    // attachment") took the app's whole deferred pipeline down with it: the shadow pass had nowhere to draw,
+    // the lighting pass that samples the map lost an input, and it was refused with it (the app smoke found
+    // this: 'shadow_map' never built, 'input 1 offers no depth texture').
+    const vine::intrusive_ptr<RenderTarget> shadow(new RenderTarget());
+    shadow->setName(u8"shadow_map");
+    shadow->setSize(64, 64);
+    shadow->attachDepth(RenderTarget::DepthFormat::D24);
+    shadow->setDepthPromotion(true);
+
+    backend->setRenderTarget(shadow.get());
+    HostTargets& targets              = BackendContentAccess::targets(*backend);
+    HostTargets::Entry* shadow_entry  = targets.find(shadow.get());
+    ASSERT_NE(shadow_entry, nullptr);
+    ASSERT_NE(shadow_entry->target, nullptr) << "a depth-only target is built like any other";
+    EXPECT_EQ(shadow_entry->target->colorAttachmentCount(), 0U);
+    EXPECT_TRUE(shadow_entry->target->depthView() != nullptr) << "and its depth is a real image view";
+    EXPECT_TRUE(shadow_entry->target->layout().depth_format.has_value());
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "nothing about it needed saying";
+
+    // THE PLAN CAN PROMISE ITS DEPTH (what the compiler reads): the fact row states the promotion the target
+    // was built with, and core::depthPlan answers "sampleable" - so a pass that declares the map as an input
+    // is offered its depth (see the facade's offer loop). Before this slice the row could not exist at all:
+    // the description was refused before anything was built, and the app's lighting pass lost its input.
+    vine::vsg::core::TargetFacts row;
+    targets.facts(*shadow_entry, row);
+    EXPECT_TRUE(row.depth.has_depth);
+    EXPECT_FALSE(row.depth.borrowed);
+    EXPECT_TRUE(row.depth.promotion) << "the built target's own policy answers";
+    EXPECT_TRUE(vine::vsg::core::depthPlan(row.depth).sampleable) << "and the plan promises the depth to a shader";
+
+    // A frame that presents with it held is served silently - the target is part of the frame's world now,
+    // and nothing about it needs saying.
+    backend->beginFrame();
+    backend->endFrame();
+    backend->swapBuffers();
+    EXPECT_EQ(backend->framesPresented(), 1U);
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
 
     backend->shutdown();
     EXPECT_TRUE(host.alive());

@@ -78,10 +78,10 @@
 > M8r 计划说的形状连格式一起核对（§11.16ba）、M8s 窗口的答案也有执行者（§11.16bb）、
 > M8t `skyMap` 是 drawable 自己的图（§11.16bc）、M9a 门面立起来（§11.16bd）、M9b pass 协议接到内容层（§11.16be）、
 > M9c 离屏那一半（§11.16bf）、M9d 读回（§11.16bg）、M9e 活着的 resize（§11.16bh）、
-> M9f 工厂切到门面（§11.16bi）。
+> M9f 工厂切到门面（§11.16bi）、M10a 引擎侧冒烟（§11.16bj）。
 > 下一步：
-> **收尾**：旧实现退场（名字已换，`VsgRenderer` 一路的源与测试是树里的死代码，删它是独立一步），
-> 或挑一条 §11.17 登记的口子做。
+> **引擎侧继续**：非索引 / 点线拓扑的内容（演示的 `star_cloud`，老实现合成恒等索引画的）+ 首帧的
+> "no compiled content half" 自愈项；收尾另算：旧实现退场（名字已换，树里那份是死代码）。
 > 场景桥的登记项（`skyMap`）至此清空；其余遗留口子见下。
 > 其余遗留口子：集合与半片停靠窗口各自独立；窗口 `facts()` 的 live 采样与 `refresh()` 的成功臂今天没有可驱动的触发（登记）；
 > 设备半边在"某一侧没说"时跳过（登记）。
@@ -2643,7 +2643,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M9d（宿主目标的读回）~~ | **已完成（2026-09-23）**：`readColorBuffer`/`readDepthBuffer` 转真；新 `api/HostReadback`——**两个来源一张图**：执行器每帧本来就在**全部 pass 之后**给每个目标接上自己的拷贝节点（彩色目标=附件 0，只有深度的目标=深度），所以读"帧已经拷过的"**不用再提交任何东西**（停一次设备 + 读映射缓冲）；帧**没拷过的**（彩色目标的深度、第二个彩色附件）在这一层用目标自己的拷贝命令**提交一次**（自己的 command buffer + fence，100 s 上限）——被画过的目标处在确定布局，拷贝合法；**没画过的目标答 `NotRecorded`**（拷贝 UNDEFINED 内存再把垃圾叫"图片"是不行的）。顺序即契约：①**先分类**（不需要设备：未知附件、读不了的格式、没录过的目标——不能服务的请求**一分钱不花**）；②**调用者停设备**（写缓冲的那一帧可能还在飞）——这次停**被计数**（`SessionContentAccess::waitDeviceIdle`，与 `deviceWaits()` 同一个计数器：读回是唯一允许停设备的路径，"恰好停一次"保持可查）；③只有帧没拷过才在这里拷（在停之后，两次提交不会重叠）；④探针读映射缓冲，把字节/浮点交给宿主（`PixelProbe::pixels()`/`DepthProbe::values()` 交出原缓冲）。门面：拒绝**两个频道一起说**（`why` 给机器答案、诊断路由给一句话，**每个情节一次**——目标自己的情节挂在条目上，目标解析不了就共用一个每入口点情节；成功即 rearm）；**还没停设备就先拒绝**；借来的深度走 `BorrowedDepth`（SDK 的规矩：源目标才是读的地方）；`readbackResultOf` 一张表（未知目标/没建好/没录过 ⇒ NotReady、空目标/未知附件 ⇒ Invalid、读不了的格式/借来的深度/没设备 ⇒ Unsupported、搬运失败 ⇒ Failed；**未映射的落到 Failed 永不落到 Ok**）；诊断类别沿用旧实现的 `ContentSkipped`。真设备用例（`VsgBackendTest.TheSdkReadsBackItsOwnTargetsPixelsAndDepths`，64×64 的 RGBA8+D32F 目标一帧）：彩色读回 `Ok`、`64*64*4` 字节、三角内 (16,40) 是 `(255,0,0,255)`、外面 (48,8) 是目标的清屏绿、alpha 255；深度 4096 个 float、三角形处 ∈ (0.05, 0.95)、清屏处 `==0.0`、全在 [0,1]；`deviceWaits` 每次读回 **+1**；拒绝面（**全部不加等待**）：附件 5 ⇒ Invalid、未知目标 ⇒ NotReady、RGBA16F ⇒ Unsupported（持有且建成、不需要帧）、borrower 读深度 ⇒ Unsupported、**lender 建成但没画过 ⇒ NotReady**、释放过的目标 ⇒ NotReady。**本片撞出的真问题**：只有离屏 pass 的帧**从没跑过窗口那棵图** ⇒ 被 acquire 的图像停在 `UNDEFINED` ⇒ 呈递 **VUID 01430**（M9a 的同一课，换了张脸）；修法 = `WindowTarget::prepareWithoutClear()`（只重开渲染区、清屏值原样）+ 执行器在**没有任何窗口 pass** 的帧尾把窗口图**不加壳**挂进命令图（没有 pass 可以归因，注释里写明）。变异 **6/6 红**：①没画过的目标读起来像能服务（3 行）；②只有离屏的帧不跑窗口图（**2 条 VUID**）；③**两道"没录过"的闸一起拆**（3 行；只拆一道是绿的——分类那一道先答，两道闸在**不同来源**上各管一半）；④借来的深度从 borrower 读（3 行）；⑤读回的停不计（3 行）；⑥帧不把自己的目标拷回来（**63 行**，执行器与相位一起红）。门禁 **659 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bg）。 |
 | ~~M9e（活着的 resize）~~ | **已完成（2026-09-23）**：`resize()` 转真；`SessionContentAccess::followResizedSurface`——**表面拥有尺寸**（SDK 授权顺序 surface > announcement > default），跟随 = `window->resize()`（重读表面几何 + 重建交换链），**停一次设备且被计数**（与 M8q 丢帧修复同一笔开销）；挂在尺寸上的东西下一帧现读（`WindowTarget::prepare(WithoutClear)` 的 renderArea、目标形状、每趟视图块），没有第二份尺寸要同步；非正值不跟随；公告仍是**下次 `initialize()`** 的建窗尺寸。`kUnservedResize` 槽删除 ⇒ **门面不再有未服务入口点**（剩下两个"没地方可去"的调用照旧各报一次：无会话的帧、内容世界未起来的 `render()`）；`BackendContentAccess::windowTarget()` 作为测试视图。**本片量到的机理**：表面变了却不公告/不跟随时，vsg 的 Viewer 会在 **acquire** 发现 `_extent2D` 与交换链不符（`Window::acquireNextImage` 直接答 `OUT_OF_DATE`），在**提交里**自己 `window->resize()`——而那一帧**已按旧矩形录完** ⇒ `VUID-VkRenderPassBeginInfo-pNext-02852/02853` + 段错误（M1 变异实测）。真设备用例：画面自身编码尺寸（`frame.y/160`、`frame.z/192`，两个尺寸下都在 [0,1]）——宿主窗口 128×96 → 改 96×64 + 公告 ⇒ 恰好 **1 次**被计数的停、`WindowTarget` 报 96×64、零报告、新尺寸下三角与清屏都在（`resize(0,0)` 一分钱不花）；第一个用例同步改写（活着 resize 不再报、`deviceWaits()==1`、重生日窗口 = 公告的 320×180）。变异 **5/5 红**（①不重读表面 ⇒ **4 条 VUID + 段错误**；②重建停不计数；③活得公告不记（回默认 640×360）；④ `0×0` 闸拆掉；⑤渲染区冻在第一个尺寸 ⇒ **4 条 VUID + 段错误**）。门禁 **660 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bh）。 |
 | ~~M9f（工厂切到门面）~~ | **已完成（2026-09-23）**：`VsgRenderBackendFactory::create()` 造 `VsgBackend` 而不是 `VsgRenderer`——**注册名 "vsg" 就是重写版**（插件 load → 注册表 → create 这条生产路径）；旧实现仍在树里、仍由自己的测试驱动，但没有任何名字创建它。**两条注册路径**（`load()` 里显式注册的 `s_factory` 与 `VsgRenderBackendFactory.cpp` 里的静态 `Registrar`）都在，所以变异 M3 要把**两处**一起关才红。**切换逼出的半片**：老实现每帧刷新它命令到的每个材质（`SceneBridge` → `VsgMaterialManager::updateMaterial`，而那方法自己就是 compare-and-write），重写版 `ContentStore` 只认 `updateMaterial()` 推的修订、**而没人调它**（§11.16be 的登记）⇒ 不补则切完工厂**材质编辑不再进画**。所以门面 `render()` 对每条命令的材质调一次 `ContentStore::updateMaterial()`，并把该方法从"盲增修订"改成 **compare-and-write**：读材质现在的字段、与表里那行的块**按 ABI 逐成员比较**（`materialBlockAgreesWith`——**不能比字节**，块的尾部填充故意不写；块映射收成一处 `blockOfMaterial`），只有不同才推修订 ⇒ 下一帧换行 + 停靠旧值照旧，稳态帧只比不建、不分配。证据：真设备①`VsgBackendPluginTest.TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraws`（**通过注册表**拿门面、采纳宿主窗口、走 SDK 协议画一帧、把宿主窗口像素读回）；②`VsgBackendTest.AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing`（材质 diffuse 着色：编辑帧 `builds()` 恰好 +1 且像素质变，稳态帧不涨、`deviceWaits()==0`）；无设备 `ContentStoreTest.ATouchWithNoEditChangesNothing`。`CreateBackendByName` 用 `dynamic_cast` 钉住"造出来的是门面"；`BackendContentAccess::store()` 是测试视图。**夹具教训**：块 canonical 绑定 **View=0 / Draw=1 / Material=2**——把材质块写在 binding 0 会被 ABI 扫描判成"两阶段同绑定不一致" ⇒ 内容层整趟拒绝（只剩清屏色）。变异 **6/6 红**（旧实现 / 答空 / **两处注册全关** / 名字不是 vsg / 触碰盲增 / 门面不触碰）。门禁 **663 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bi）。 |
-| **下一步** | 旧实现退场（删 `VsgRenderer` 一路的源与测试——名字已换，树里那份是死代码），或挑一条登记的口子做。 |
+| ~~M10a（引擎侧冒烟）~~ | **已完成（2026-09-23）**：`build/bin/Vine`（默认 Deferred + 阴影的演示场景）在 lavapipe + X11 上真跑起来，像素读回 **378×247、100% 非近黑、均值 (118,121,127)**（天空底、红平台、紫盒、gizmo、G-buffer 预览、HUD）。**修 1：深度专属目标**——`HostTargets::build` 原先要求"至少一个彩色附件"⇒ 引擎的 `shadow_map`（`attachDepth(D24)`、没有彩色）永远建不出来 ⇒ 阴影 pass 无处画、光照 pass 丢掉输入整趟被拒（"input 1 offers no depth texture…"）——**整条 deferred 管线的连锁拒绝**；`OffscreenTarget` 本来就支持 depth-only，改成"有尺寸 + 至少有一样东西可挂（彩色**或**深度）"后三个警告全消。**修 2：缺 lender 的报告帧外沉默、帧内指名**（引擎在开帧前先公告 `composite`、其 lender `gbuffer` 后到，自愈的配置顺序被当失败报；现在帧外不报（与 `NotBuilt` 同一口径，真需要由执行器在录帧时报），帧内报一次且带 `'composite'`/`'gbuffer'`）。登记：**非索引/点线拓扑**（`star_cloud` 无索引 ⇒ `Malformed`；老实现合成恒等索引并尊重拓扑）与**首帧的 no-compiled-half 自愈项**。证据：冒烟截图 + 统计；真设备 `VsgBackendTest.ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput`（建成 / 0 彩色 / 深度视图非空 / `facts.promotion` 与 `core::depthPlan` 都答 sampleable）；旧用例改写（帧外沉默 + 帧内报文含两名）；变异 **3/3 红**。门禁 **664 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bj）。 |
+| **下一步** | **引擎侧继续**：非索引 / 点线拓扑的内容（点是 `vkCmdDraw` + POINT_LIST，两样一起才有意义）；首帧的 no-compiled-half；旧实现退场（删 `VsgRenderer` 一路）。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -4180,3 +4181,47 @@ diffuse** 着色（顶点阶段只把位置透传，三角形因此落在窗口�
 条路径，**宿主侧的接线**（怎么把场景/材质编辑接到这个后端）属于引擎那边；③旧口子（自开窗口不"应用"公告、
 宿主不公告表面变化不会被跟、借来的深度租约、活目标翻 `depthPromotion`、集合/半片独立、live 采样与
 `refresh()` 成功臂、设备半边"某一侧没说就跳过"）不变。
+
+### 11.16bj M10a（2026-09-23）：引擎侧冒烟——真应用跑起来，把剩下的口子钉成清单
+
+工厂切完之后没人验证过**真应用**。这一片就是那次冒烟：`build/bin/Vine`（默认 Deferred + 阴影的演示场景）在
+lavapipe + X11 上跑起来，用 `scripts/xwin2ppm.py` 读它自己的窗口——**画面是真的**：378×247、100% 非近黑、均值
+(118,121,127)，天空底、红色平台、紫盒、坐标轴 gizmo、G-buffer 预览、右侧红箱、HUD 都在。那一次运行同时把后端
+在**真实管线**上拒绝的东西摆上了台面：两条当场修掉，两条登记。
+
+**修 1：深度专属目标（引擎的阴影贴图）**。`HostTargets::build` 原先要求"至少一个彩色附件"⇒ 引擎的
+`shadow_map`（`attachDepth(D24)`，**没有彩色附件**，promotion 开）永远建不出来：阴影 pass 无处可画；而光照
+pass 把它当输入、它的深度被计划判为 sampleable ⇒ 整趟被拒（"input 1 offers no depth texture where the plan
+says its depth IS sampleable"）——**整条 deferred 管线的连锁拒绝**。`OffscreenTarget` 本来就支持 depth-only
+（`create` 的注释里就写着 shadow-map 形状），卡住的只是 `HostTargets` 那一句；改成"有尺寸 + 至少有一样东西可
+挂（彩色**或**深度）"。修完那三个连锁警告全部消失，画面从第一帧起就是上面那份。
+
+**修 2：缺 lender 的报告只属于帧内，而且要说是谁**。冒烟抓到一条**假警报**：引擎在开帧**之前**先公告窗口
+pass 的目标（`composite`），而它的 lender（`gbuffer`）稍后才到——按旧规则，这条**自愈**的配置顺序被报成
+"borrows its depth from a target this backend does not hold"。改成：**帧外不报**（帧外的公告是配置，与
+`NotBuilt` 同一条口径；真需要它的是执行器——它会在录帧时报"这个 pass 的目标没建"），**帧内报一次**并且**指名
+道姓**（`'composite' borrows its depth from 'gbuffer'`，用 `RenderTarget::setName` 的标签；"a render target
+could not be built" 是一句宿主没法行动的话，而引擎的 builder 给它建的东西都起了名字）。
+
+**登记（本片没修，已定位到根因）**：
+
+* **非索引 / 点线拓扑的内容画不出来**：演示的 `star_cloud` 是**没有索引**的点云，`buildGeometryFacts` 在
+  "draws are indexed" 处判 `Malformed` ⇒ 那条命令被拒（每次录到它报一次，日志里的 "the command's geometry is
+  not drawn: the content layer was never told about this identity"）。老实现是**合成恒等索引**（"one identity
+  index per vertex"）画掉的，并且尊重几何自己的拓扑（"an indexed Points / Lines draw must not lose indices
+  to triangle-oriented rules"）。⇒ 重写版要补的是**非索引 + 拓扑进管线**（点是 `vkCmdDraw` + POINT_LIST，
+  两样一起才有意义），下一片。
+* **第一帧的 "no compiled content half"**：只在首帧出现一次（`Presenting` 之前），第二帧起画面完整——与修 2
+  同一类的"首帧自愈"。登记：要么查明首帧哪一项目标还没就绪，要么像报告那样按情节处理。
+
+**证据**：①真应用冒烟（上面的截图与统计；重复办法：`DISPLAY=:0 VK_ICD_FILENAMES=… ./build/bin/Vine`，读
+`[VsgHostWindow] attached to the host window 0x…` 给出的窗口 id，`scripts/xwin2ppm.py <id>` 读像素、
+`ppm2png.py` 转图）；②`VsgBackendTest.ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput`（真设备：
+depth-only 目标建成、0 彩色附件、`depthView()` 非空，`HostTargets::facts` 行说 `promotion`、`core::depthPlan`
+答 sampleable）；③第一个与离屏两个用例的改写（缺 lender 帧外沉默、帧内报一次，且报文里含 `'composite'` 与
+`'gbuffer'`）。变异 **3/3 红**：①depth-only 又被拒（新用例红）；②缺 lender 在帧外也报（离屏用例红）；③报文不再
+指名（离屏用例红）。门禁 **664 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次运行。
+
+**方法记录（下一位读者）**：插桩是这次定位的全部手段——`setRenderTarget` 的顺序、`render()` 的每条命令、
+`buildGeometryFacts`/`ensureGeometry` 的每次 miss 各打一行 `[probe]`，跑一次应用就能指着**指针**与**名字**
+说话（探针随后全部撤掉）。应用自己的日志把宿主窗口 id 打进 stderr，像素读回与截图都从那一行开始。

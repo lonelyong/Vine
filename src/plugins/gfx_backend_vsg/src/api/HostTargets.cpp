@@ -35,10 +35,12 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
 {
     const Description& description = entry.description;
 
-    // A description that cannot make a target yet: no image of no size, and a target without a colour
-    // attachment has nothing that could be presented or sampled (see OffscreenTarget::create). The entry
-    // keeps the description and the next call retries - a host configures a target before it draws into it.
-    if (description.width <= 0 || description.height <= 0 || description.color_formats.empty())
+    // A description that cannot make a target yet: no image of no size, or NOTHING to attach. A target needs
+    // at least one image, and a DEPTH-ONLY one is a target like any other - the engine's shadow map is exactly
+    // that (attachDepth with no colour attachment, and the shading samples its depth). The entry keeps the
+    // description and the next call retries - a host configures a target before it draws into it.
+    if (description.width <= 0 || description.height <= 0 ||
+        (description.color_formats.empty() && !description.has_depth))
     {
         return State::NotBuilt;
     }

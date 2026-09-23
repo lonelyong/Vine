@@ -65,6 +65,21 @@ enum ReadbackReport : std::size_t
     kReadbackReportCount,
 };
 
+/// @brief Names @p target for a diagnostic sentence: its own name, or a stand-in when it has none.
+std::string nameOf(const vine::graphics::RenderTarget* target)
+{
+    if (target == nullptr)
+    {
+        return "an unnamed target";
+    }
+    const vine::String& name = target->name();
+    if (name.empty())
+    {
+        return "an unnamed target";
+    }
+    return "'" + std::string(reinterpret_cast<const char*>(name.data()), name.size()) + "'";
+}
+
 /// @brief Tracks @p program into @p store, when both exist (see setDefaultContentProgram).
 void trackProgram(ContentStore* store, const vine::intrusive_ptr<const vine::graphics::ShaderProgram>& program)
 {
@@ -448,20 +463,35 @@ void VsgBackend::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> tar
     {
         ensured.entry->report.rearm();  // the condition ended: the same breakage reports again
     }
-    else if (ensured.state != HostTargets::State::NotBuilt && ensured.entry->report.shouldReport())
+    else if (ensured.state != HostTargets::State::NotBuilt && d->recorder.inFrame() &&
+             ensured.entry->report.shouldReport())
     {
         // NOT "NotBuilt", which is not a failure: a host configures a target before it draws into it (and the
         // executor reports the passes that needed one that was never completed). What is reported is the
-        // description that cannot become objects at all - a missing lender, or a build that failed.
+        // description that cannot become objects at all - a missing lender, or a build that failed - and it is
+        // reported INSIDE a frame, where it blocks the picture. OUTSIDE one the announcement is configuration:
+        // the engine announces the window pass' target before the passes that write its lender (measured: the
+        // demo's composite arrives before its G-buffer), and a borrow whose lender comes later in the setup is
+        // order, not failure - a frame that then needs it is reported by the executor. The targets are NAMED
+        // (the SDK's own label, see RenderTarget::setName): "a target could not be built" is a sentence a
+        // host cannot act on, and the pipeline builder names everything it creates.
+        std::string message;
+        if (ensured.state == HostTargets::State::DepthSourceMissing)
+        {
+            // The lender is read from the target itself (shareDepth keeps it alive), so this works whether or
+            // not it was ever announced - which is exactly the case being reported.
+            message = nameOf(target) + " borrows its depth from " + nameOf(target->depthSource()) +
+                      ", which this backend does not hold: it is not built, and the passes that draw into it "
+                      "are skipped (the lender must be announced first)";
+        }
+        else
+        {
+            message = nameOf(target) +
+                      " could not be built (its images, render pass or readback buffer failed to create, or "
+                      "its description is not a target): the passes that draw into it are skipped";
+        }
         reportDiagnostic(vine::graphics::DiagnosticSeverity::Warning,
-                         vine::graphics::DiagnosticCategory::TargetBuildFailed,
-                         asString(ensured.state == HostTargets::State::DepthSourceMissing
-                                      ? "a render target borrows its depth from a target this backend does "
-                                        "not hold: it is not built, and the passes that draw into it are "
-                                        "skipped (the lender must be announced first)"
-                                      : "a render target could not be built (its images, render pass or "
-                                        "readback buffer failed to create, or its description is not a "
-                                        "target): the passes that draw into it are skipped"));
+                         vine::graphics::DiagnosticCategory::TargetBuildFailed, asString(message));
     }
 
     if (ensured.entry->target != nullptr)
