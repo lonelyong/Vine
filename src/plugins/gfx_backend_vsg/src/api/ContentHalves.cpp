@@ -19,6 +19,7 @@ struct ContentHalves::Data
         core::VertexLayoutKey layout{};
         ProgramVariant        variant{};
         std::uint32_t         color_attachments{1};
+        vine::graphics::Topology topology{vine::graphics::Topology::Triangles};
     };
 
     /** @brief One compiled half: a layer and its recorder, and the key that says when they are this one. */
@@ -43,7 +44,8 @@ struct ContentHalves::Data
         {
             if (half->key.kind == key.kind && half->key.program == key.program &&
                 half->key.revision == key.revision && half->key.layout == key.layout &&
-                half->key.variant == key.variant && half->key.color_attachments == key.color_attachments)
+                half->key.variant == key.variant && half->key.color_attachments == key.color_attachments &&
+                half->key.topology == key.topology)
             {
                 return half.get();
             }
@@ -63,7 +65,7 @@ struct ContentHalves::Data
         }
         entries.push_back(ContentPass::Scope::Entry{ half.key.kind, half.key.program, half.key.revision,
                                                      half.key.layout, half.layer.get(), half.draws.get(),
-                                                     half.key.variant });
+                                                     half.key.variant, half.key.topology });
     }
 
     /** @brief Whether the tables still answer the key of @p half (see the sweep in halvesFor). */
@@ -101,6 +103,10 @@ struct ContentHalves::Data
 
         ContentPipeline::Settings settings;
         settings.color_attachments = key.color_attachments;
+        // The topology the layer BAKES is the key's: the API restricts a dynamic set to the class the
+        // pipeline was created with (see core::PipelineKey::topology), so a layer built for one topology can
+        // only ever serve the draws that state it.
+        settings.topology          = key.topology;
         std::unique_ptr<ContentPipeline> layer =
             key.kind == core::DrawKind::Screen
                 ? ContentPipeline::createScreen(program.abi, program.shaders, settings)
@@ -158,6 +164,9 @@ std::span<const ContentPass::Scope::Entry> ContentHalves::halvesFor(const core::
             key.program           = draw.program.program;
             key.revision          = draw.program.revision;
             key.color_attachments = pass.color_attachments;
+            // A full-screen call's state is the PASS' (its plan field): the topology it draws its generated
+            // triangle with travels with it, so a pass drawn as lines gets a line-class pipeline.
+            key.topology          = draw.dynamic.topology;
             d->ensure(key, *program.entry, nullptr);
             continue;
         }
@@ -191,6 +200,9 @@ std::span<const ContentPass::Scope::Entry> ContentHalves::halvesFor(const core::
             key.layout            = geometry.entry->layout;
             key.variant           = variant;
             key.color_attachments = pass.color_attachments;
+            // ... and the topology the command is assembled with: a half is compiled for ONE class, because
+            // the API will not accept a dynamic set that leaves it (see core::PipelineKey::topology).
+            key.topology          = command.dynamic.topology;
             d->ensure(key, *program.entry, geometry.entry);
         }
     }

@@ -122,6 +122,17 @@ std::unique_ptr<ContentPipeline> makeLayerWith(const ContentPipeline::Shaders& s
                                    std::span<const ContentPipeline::VertexAttribute>(&attribute, 1), shaders);
 }
 
+/// @brief The layer under test built with explicit settings (what the identity says beyond the text).
+std::unique_ptr<ContentPipeline> makeLayerWithSettings(const ContentPipeline::Settings& settings)
+{
+    const ContentPipeline::Shaders         shaders   = contentShaders();
+    const ContentPipeline::VertexBinding   binding   = positionBinding();
+    const ContentPipeline::VertexAttribute attribute = positionAttribute();
+    return ContentPipeline::create(abiOf(shaders), std::span<const ContentPipeline::VertexBinding>(&binding, 1),
+                                   std::span<const ContentPipeline::VertexAttribute>(&attribute, 1), shaders,
+                                   settings);
+}
+
 /// @brief Finds the state of type @p T in a pipeline's list.
 template <typename T>
 const T* stateOf(const ::vsg::GraphicsPipeline& pipeline)
@@ -214,6 +225,35 @@ TEST(ContentPipelineTest, AnIdentityChangeIsANewPipeline)
     EXPECT_EQ(layer->compiles(), 2U);
     EXPECT_EQ(layer->pipelines(), 2U);
     EXPECT_TRUE(layer->agreesWithPool(pool));
+}
+
+TEST(ContentPipelineTest, TheTopologyTheSettingsNameIsWhatThePipelineBakes)
+{
+    // The API restricts a dynamically set topology to the CLASS its pipeline was created with
+    // (VUID-vkCmdSetPrimitiveTopology-... unless the implementation reports
+    // dynamicPrimitiveTopologyUnrestricted), so a point cloud drawn through a triangle-baked pipeline is
+    // undefined behaviour rather than a picture. The class is therefore identity, and the create-info has to
+    // state the one the key names - a default layer keeps the engine's own default.
+    ContentPipeline::Settings points;
+    points.topology = vine::graphics::Topology::Points;
+    auto point_layer = makeLayerWithSettings(points);
+    ASSERT_NE(point_layer, nullptr);
+
+    VariantPool pool;
+    const auto  point_result = point_layer->acquire(pool, contentKey(1));
+    ASSERT_NE(point_result.pipeline, nullptr);
+    const auto* point_assembly = stateOf<::vsg::InputAssemblyState>(*point_result.pipeline);
+    ASSERT_NE(point_assembly, nullptr);
+    EXPECT_EQ(point_assembly->topology, VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
+
+    auto default_layer = makeLayer();
+    ASSERT_NE(default_layer, nullptr);
+    const auto default_result = default_layer->acquire(pool, contentKey(2));
+    ASSERT_NE(default_result.pipeline, nullptr);
+    const auto* default_assembly = stateOf<::vsg::InputAssemblyState>(*default_result.pipeline);
+    ASSERT_NE(default_assembly, nullptr);
+    EXPECT_EQ(default_assembly->topology, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        << "an unstated topology is the engine's own default, not whatever the last layer baked";
 }
 
 TEST(ContentPipelineTest, TheEditableHalfIsDeclaredDynamic)

@@ -22,6 +22,14 @@
  * arena share a single upload. Normalizing it the other way (a key per segment) would upload the same bytes
  * once per geometry.
  *
+ * A GEOMETRY WITHOUT INDICES IS DESCRIBED, NOT REFUSED. The SDK's model of a drawable is "vertex streams plus
+ * OPTIONAL indices", and the demo's point cloud is exactly that; an entry for one therefore carries NO index
+ * stream and the vertex count the draw assembles from instead (the position stream's own count - see the
+ * vertex_count field). The two modes end in different API calls (`vkCmdDraw` versus `vkCmdDrawIndexed`), so
+ * the entry states which one it is rather than normalising one into the other (which is what the previous
+ * implementation did by synthesising an identity index array per vertex, at the price of a buffer that does
+ * not exist in the model).
+ *
  * A SLICED CHANNEL KEEPS ITS OWN SCALARS. A channel may read a segment of a shared vertex buffer; what is
  * uploaded for it is the segment, and the draw's indices are relative to the geometry's own vertices (the SDK
  * says so), so no vertex offset is needed - the segment IS the stream.

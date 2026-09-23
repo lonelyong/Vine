@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 #include <vsg/core/Data.h>
@@ -54,17 +55,27 @@ struct ChannelFacts
     ::vsg::ref_ptr<::vsg::Data> data;    ///< The source array; borrowed for as long as the entry is.
 };
 
-/** @brief What a geometry identity answers with: its layout, its vertex channels and its index stream. */
+/** @brief What a geometry identity answers with: its layout, its vertex channels, and how it is assembled. */
 struct GeometryFacts
 {
     const void*    geometry{nullptr};   ///< The identity the plan names.
     std::uint64_t  revision{0};         ///< The revision the plan names.
     core::VertexLayoutKey layout{};     ///< Which channels this geometry feeds (the pipeline key's half).
     std::span<const ChannelFacts> channels{};  ///< One per fed channel, in binding order.
-    ChannelFacts   indices{};           ///< The index stream (draws are indexed).
-    std::uint32_t  index_count{0};      ///< Indices of this geometry.
-    std::uint32_t  first_index{0};      ///< First index of the span the geometry states.
-    std::uint32_t  vertex_offset{0};    ///< Added to every index before fetching.
+
+    /// The index stream, when the geometry draws INDEXED. Its absence is a fact, not a default: an
+    /// unindexed draw assembles its primitives from the vertex streams themselves and is a different
+    /// COMMAND (`vkCmdDraw`) than an indexed one (`vkCmdDrawIndexed`) - the same way
+    /// `core::GeometryStreams` treats an absent index stream, and the reason the two modes cannot be
+    /// told apart by the vertex layout alone.
+    std::optional<ChannelFacts> indices{};
+    std::uint32_t  index_count{0};      ///< Indices of this geometry (indexed only).
+    std::uint32_t  first_index{0};      ///< First index of the span the geometry states (indexed only).
+    /// Vertices a NON-indexed draw reads: the position stream's own vertex count (the SDK's definition of
+    /// `Geometry::vertexCount()`), because positions are the one required attribute and the only stream the
+    /// count can be derived from.
+    std::uint32_t  vertex_count{0};
+    std::uint32_t  vertex_offset{0};    ///< Added to every index before fetching (indexed only).
 };
 
 /** @brief What a program identity answers with: the two stages a content pipeline compiles, and the
@@ -105,7 +116,7 @@ struct ContentFacts
     std::span<const MaterialFacts> materials{};   ///< Material identities → their block bytes.
 };
 
-/** @brief Gets whether a geometry's channels are exactly what its layout declares.
+/** @brief Gets whether a geometry's channels are exactly what its layout declares, and how it is drawn.
  *
  * The two must agree or the picture is wrong in a way no counter sees: a layout that declares an attribute
  * nothing feeds is a pipeline the driver refuses (or, worse, one that reads unbound memory), and a channel
@@ -113,8 +124,12 @@ struct ContentFacts
  * custom locations - against the streams, so a geometry whose channels are merely reordered is fine (binding
  * order is the channel order) while one that is short a channel is not.
  *
+ * It also checks the STREAMS THE DRAW IS ASSEMBLED FROM: an indexed geometry needs its index stream, and a
+ * non-indexed one needs vertices to assemble (its count comes from the position stream). A geometry that
+ * offers neither is described but not drawable, which is a distinction the report has to keep.
+ *
  * @param facts Geometry entry to check.
- * @return true when the entry's channel count is what its layout declares.
+ * @return true when the entry's channel count is what its layout declares and its streams can be drawn.
  */
 [[nodiscard]] bool channelsMatchLayout(const GeometryFacts& facts) noexcept;
 

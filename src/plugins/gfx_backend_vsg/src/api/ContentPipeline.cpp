@@ -21,6 +21,7 @@
 #include <vine/vsg/api/ContentPush.hpp>
 #include <vine/vsg/api/GeometryFacts.hpp>
 #include <vine/vsg/api/LightBlock.hpp>
+#include <vine/vsg/api/StateCommands.hpp>
 #include <vine/vsg/api/StreamUploads.hpp>
 
 V_VSG_NS_BEGIN
@@ -156,7 +157,6 @@ bool describeAbi(const ProgramAbi& abi, std::vector<::vsg::ref_ptr<::vsg::Descri
 /// declaring counter-clockwise made every cull mode act on the wrong faces, silently).
 constexpr VkCullModeFlags kBakedCullMode         = VK_CULL_MODE_BACK_BIT;
 constexpr VkFrontFace     kBakedFrontFace        = VK_FRONT_FACE_CLOCKWISE;
-constexpr VkPrimitiveTopology kBakedTopology     = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 constexpr VkBool32        kBakedDepthTestEnable  = VK_TRUE;
 constexpr VkBool32        kBakedDepthWriteEnable = VK_TRUE;
 constexpr VkCompareOp     kBakedCompareOp        = VK_COMPARE_OP_GREATER;
@@ -395,7 +395,7 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
     depth_state->depthWriteEnable = kBakedDepthWriteEnable;
     depth_state->depthCompareOp   = kBakedCompareOp;
     auto input_assembly     = ::vsg::InputAssemblyState::create();
-    input_assembly->topology = kBakedTopology;
+    input_assembly->topology = mapTopology(settings.topology);
 
     layer->d->states = ::vsg::GraphicsPipelineStates{
         ::vsg::VertexInputState::create(declared_bindings, declared_attributes),
@@ -522,7 +522,7 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi&
     depth_state->depthWriteEnable = VK_FALSE;
     depth_state->depthCompareOp   = kBakedCompareOp;
     auto input_assembly           = ::vsg::InputAssemblyState::create();
-    input_assembly->topology      = kBakedTopology;
+    input_assembly->topology      = mapTopology(settings.topology);
 
     layer->d->states = ::vsg::GraphicsPipelineStates{
         ::vsg::VertexInputState::create(::vsg::VertexInputState::Bindings{}, ::vsg::VertexInputState::Attributes{}),

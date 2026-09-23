@@ -41,7 +41,7 @@ bool PipelineKey::operator==(const PipelineKey& other) const noexcept
            vertex_layout == other.vertex_layout && compatibility == other.compatibility &&
            depth_sampleable == other.depth_sampleable &&
            sampled_color_count == other.sampled_color_count && sampled_depth_count == other.sampled_depth_count &&
-           variant == other.variant;
+           variant == other.variant && topology == other.topology;
 }
 
 bool DynamicState::operator==(const DynamicState& other) const noexcept
@@ -106,6 +106,7 @@ std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
     mix(key.sampled_color_count);
     mix(key.sampled_depth_count);
     mix(key.variant);
+    mix(static_cast<std::uint64_t>(key.topology));
     return hash;
 }
 
@@ -125,9 +126,11 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
         { "PipelineKey",
           "program + revision + draw kind (content or full-screen) + vertex layout + compatibility + depth "
           "sampleability + sampled colour attachment count + sampled DEPTH count + the program VARIANT (the "
-          "defines that change what its text means - see api/ProgramVariant)" },
+          "defines that change what its text means - see api/ProgramVariant) + the topology CLASS (a static "
+          "topology may only be changed dynamically within its own class, so it is compiled in)" },
         { "DynamicState",
-          "depth policy + cull + polygon + topology + blend - delivered per draw with set commands" },
+          "depth policy + cull + polygon + topology + blend - delivered per draw with set commands (the "
+          "topology within the class its pipeline was compiled for, see PipelineKey)" },
         { "InstanceSlot", "model matrix + opacity + material identity + revision - per frame data" },
         { "TargetDesc.shape",
           "attachment formats (the engine's spelling AND the device's) + depth format + samples + subpass - "

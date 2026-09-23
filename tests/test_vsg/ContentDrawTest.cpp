@@ -25,6 +25,7 @@
 
 #include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/BindVertexBuffers.h>
+#include <vsg/commands/Draw.h>
 #include <vsg/commands/DrawIndexed.h>
 #include <vsg/commands/SetScissor.h>
 #include <vsg/commands/SetViewport.h>
@@ -172,6 +173,64 @@ TEST(ContentDrawTest, TheFirstDrawRecordsThePipelineTheStateAndTheGeometry)
     EXPECT_EQ(fixture.recorder->draws(), 1U);
     EXPECT_EQ(fixture.recorder->pipeline_binds(), 1U);
     EXPECT_EQ(fixture.recorder->dynamic_commands(), 1U);
+}
+
+TEST(ContentDrawTest, ANonIndexedDrawRecordsTheVertexStreamsItIsAssembledFrom)
+{
+    Fixture      fixture;
+    StateRegistry registry(fixture.pool);
+
+    // A point cloud: no index stream exists in the model at all, so the draw names the vertices instead - and
+    // the two modes are different API calls, not one call with a zero.
+    ContentDraw::Draw draw = fixture.draw();
+    draw.index             = nullptr;
+    draw.index_count       = 0U;
+    draw.vertex_count      = 12U;
+    draw.key.topology      = vine::graphics::Topology::Points;
+
+    const auto group = fixture.recorder->record(registry, draw);
+    ASSERT_NE(group, nullptr);
+
+    ASSERT_EQ(group->children.size(), 1U);
+    const auto* commands = dynamic_cast<const ::vsg::Commands*>(group->children[0].get());
+    ASSERT_NE(commands, nullptr);
+    ASSERT_EQ(commands->children.size(), 4U) << "viewport, scissor, vertex bind, draw - and NO index bind";
+    EXPECT_NE(dynamic_cast<const ::vsg::SetViewport*>(commands->children[0].get()), nullptr);
+    EXPECT_NE(dynamic_cast<const ::vsg::SetScissor*>(commands->children[1].get()), nullptr);
+    EXPECT_EQ(commands->children[2].get(), fixture.vertex_bind.get());
+    const auto* plain = dynamic_cast<const ::vsg::Draw*>(commands->children[3].get());
+    ASSERT_NE(plain, nullptr) << "an unindexed draw is vkCmdDraw, never a DrawIndexed with zero indices";
+    EXPECT_EQ(plain->vertexCount, 12U);
+    EXPECT_EQ(plain->instanceCount, 1U);
+    EXPECT_EQ(plain->firstVertex, 0U);
+    EXPECT_EQ(plain->firstInstance, 0U);
+
+    EXPECT_EQ(fixture.recorder->draws(), 1U);
+    EXPECT_EQ(fixture.recorder->refusals(), 0U);
+}
+
+TEST(ContentDrawTest, ADrawThatNamesNoGeometryIsRefusedBeforeAnythingIsMemoised)
+{
+    Fixture      fixture;
+    StateRegistry registry(fixture.pool);
+
+    ContentDraw::Draw empty = fixture.draw();
+    empty.index             = nullptr;
+    empty.index_count       = 0U;
+    empty.vertex_count      = 0U;
+
+    EXPECT_EQ(fixture.recorder->record(registry, empty), nullptr);
+    EXPECT_EQ(fixture.recorder->refusals(), 1U);
+    EXPECT_EQ(fixture.recorder->draws(), 0U);
+    EXPECT_EQ(fixture.pool.created(), 0U) << "a refused draw compiles nothing";
+
+    // ...and the registry was not told the variant is bound: the next real draw still binds its pipeline, or it
+    // would run with whatever the last pass left bound (the failure this recorder's memoisation can cause).
+    const auto group = fixture.recorder->record(registry, fixture.draw());
+    ASSERT_NE(group, nullptr);
+    ASSERT_GE(group->stateCommands.size(), 1U);
+    EXPECT_NE(dynamic_cast<const ::vsg::BindGraphicsPipeline*>(group->stateCommands[0].get()), nullptr);
+    EXPECT_EQ(fixture.recorder->pipeline_binds(), 1U);
 }
 
 TEST(ContentDrawTest, ASecondDrawOfTheSameVariantAndStateRecordsOnlyTheGeometry)

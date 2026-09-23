@@ -29,8 +29,9 @@
  * block (only when a value differs from what this pass already issued), the block descriptor set with this
  * draw's three dynamic offsets, and the SAMPLED-INPUT set (only when the pass has not already bound that
  * one - its inputs are a property of the pass, so one bind serves every draw of it). The child command list
- * holds the per-draw calls: the viewport and scissor rectangles, the vertex and index binds, and the indexed
- * draw itself.
+ * holds the per-draw calls: the viewport and scissor rectangles, the vertex and index binds, and the draw
+ * itself - `DrawIndexed` when the geometry names an index stream, `Draw` when it is assembled from the vertex
+ * streams (see api/GeometryFacts).
  *
  * WHY THE TWO "ONLY WHEN" CLAUSES ARE IN THE RECORDING. `core::StateRegistry` owns them: it is the per-pass
  * memory of what is bound and what was issued, so a scene that draws two hundred drawables of one variant
@@ -40,7 +41,10 @@
  *
  * WHAT IT REFUSES. A draw whose identity has no pipeline (the shader pair never compiled, the pool evicted
  * while building) records NOTHING and is counted: a state group without a pipeline bind would draw with
- * whatever was bound last, which is a picture nobody asked for.
+ * whatever was bound last, which is a picture nobody asked for. A draw that names neither an index stream nor
+ * a vertex count is refused too, and it is refused BEFORE the registry and the pool are touched - marking a
+ * variant bound for a draw that produces no command would make the next draw of that variant skip its own
+ * bind.
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
@@ -66,11 +70,17 @@ class ContentDraw
         std::span<const ::vsg::ref_ptr<::vsg::PushConstants>> pushes;
         ::vsg::ref_ptr<::vsg::BindDescriptorSet> inputs;  ///< The pass' sampled inputs, or null when it has none.
         std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>> vertex_binds;  ///< One per channel.
-        ::vsg::ref_ptr<::vsg::BindIndexBuffer>    index;   ///< The index stream (required: draws are indexed).
+        /// The index stream, or null for a NON-indexed draw. The two modes are different API calls (see
+        /// api/GeometryFacts): with a stream bound, `index_count` / `first_index` / `vertex_offset` state the
+        /// span the draw reads; without one, `vertex_count` is what is drawn.
+        ::vsg::ref_ptr<::vsg::BindIndexBuffer>    index;
         ViewportRect        viewport;            ///< The rectangle the draw covers.
-        std::uint32_t       index_count{0};      ///< Indices to draw.
-        std::uint32_t       first_index{0};      ///< First index of the span the geometry states.
-        std::uint32_t       vertex_offset{0};    ///< Added to every index before fetching.
+        std::uint32_t       index_count{0};      ///< Indices to draw (indexed draws only).
+        std::uint32_t       first_index{0};      ///< First index of the span the geometry states (indexed only).
+        /// Vertices to draw (unindexed draws only): the draw's whole geometry, assembled from the vertex
+        /// streams by the pipeline's topology.
+        std::uint32_t       vertex_count{0};
+        std::uint32_t       vertex_offset{0};    ///< Added to every index before fetching (indexed draws only).
         std::uint32_t       instances{1};        ///< Instance count.
         std::uint32_t       color_attachments{1};///< Colour attachments of the pass (for the blend state).
     };
@@ -149,7 +159,7 @@ class ContentDraw
     [[nodiscard]] std::uint64_t input_binds() const noexcept;
 
     /** @brief Gets the number of push ranges recorded (one per DECLARED range, per draw: a declared push is
-     *         re-filled for every drawable, because its `modelView` carries that drawable's model matrix). */
+     *         re-filled for every drawable, be: no compiled pipeline for their identity, or no geometry namedable's model matrix). */
     [[nodiscard]] std::uint64_t push_commands() const noexcept;
 
     /** @brief Gets the number of draws refused because their identity had no pipeline. */

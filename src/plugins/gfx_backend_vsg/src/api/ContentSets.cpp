@@ -254,9 +254,12 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
             const ContentPass::Scope::Entry* entry = nullptr;
             for (const ContentPass::Scope::Entry& candidate : halves)
             {
+                // The same tuple the recorder matches entries by (see api/ContentPass::recordCommand), the
+                // topology included: a half is compiled for one class of primitives, and the sets are built
+                // against the half the draw will actually go through.
                 if (candidate.kind == core::DrawKind::Content && candidate.program == command.program.program &&
                     candidate.revision == command.program.revision && candidate.layout == geometry.entry->layout &&
-                    candidate.variant == variant)
+                    candidate.variant == variant && candidate.topology == command.dynamic.topology)
                 {
                     entry = &candidate;
                     break;

@@ -219,6 +219,15 @@ struct PipelineKey
     /// draws would come out as different pictures.
     std::uint32_t variant{0};
 
+    /// The primitive assembly the pipeline's STATIC topology states. It is IDENTITY rather than dynamic
+    /// state, and the API is why: with `VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY` declared, the value a draw
+    /// sets may only be of the SAME TOPOLOGY CLASS as the pipeline's create-info value (unless the
+    /// implementation reports `dynamicPrimitiveTopologyUnrestricted`), so a point cloud drawn through a
+    /// triangle-baked pipeline is undefined behaviour rather than a picture - and the previous
+    /// implementation shipped exactly that. One pipeline per class is therefore the only sound shape,
+    /// and the engine's enumeration has one value per class, so the value itself is the honest key.
+    vine::graphics::Topology topology{vine::graphics::Topology::Triangles};
+
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const PipelineKey& other) const noexcept;
 };

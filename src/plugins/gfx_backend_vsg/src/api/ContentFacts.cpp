@@ -27,7 +27,19 @@ bool channelsMatchLayout(const GeometryFacts& facts) noexcept
 {
     const std::uint32_t declared = popcount(facts.layout.canonical_mask) +
                                    static_cast<std::uint32_t>(facts.layout.custom_locations.size());
-    return declared == facts.channels.size() && facts.indices.key.kind == core::StreamKind::Index;
+    if (declared != facts.channels.size())
+    {
+        return false;
+    }
+    // The stream the draw is assembled from: an indexed geometry must be drawn THROUGH its index stream (its
+    // KIND is the mode), an unindexed one needs vertices to assemble (see GeometryFacts) - a geometry that
+    // offers neither draws nothing, and "described but not drawable" must stay a miss rather than become an
+    // empty picture. Whether the stream's PAYLOAD is there is the upload layer's business, not this check's.
+    if (facts.indices.has_value())
+    {
+        return facts.indices->key.kind == core::StreamKind::Index;
+    }
+    return facts.vertex_count > 0U;
 }
 
 bool blockFitsAbi(const MaterialFacts& facts) noexcept

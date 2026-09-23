@@ -124,6 +124,11 @@ class ContentPipeline
         std::uint32_t color_attachments{1};  ///< Colour attachments the blend state declares.
         std::uint32_t push_bytes{128};       ///< The FULL-SCREEN path's push budget: a content program's push
                                              ///< ranges are its own declarations (see `create`).
+        /// The primitive assembly the pipeline's STATIC topology states. It is part of the identity rather
+        /// than runtime state because of the API's rule: a topology set dynamically may only be of the same
+        /// CLASS as this baked value, so a layer built for another class cannot serve the draw at all (see
+        /// core::PipelineKey::topology).
+        vine::graphics::Topology topology{vine::graphics::Topology::Triangles};
     };
 
     /** @brief What an acquire did. */

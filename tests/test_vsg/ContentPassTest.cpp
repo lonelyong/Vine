@@ -27,6 +27,10 @@
 
 #include <vsg/app/CommandGraph.h>
 #include <vsg/app/Viewer.h>
+#include <vsg/commands/BindIndexBuffer.h>
+#include <vsg/commands/Commands.h>
+#include <vsg/commands/Draw.h>
+#include <vsg/nodes/Group.h>
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
@@ -4802,4 +4806,241 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     EXPECT_TRUE(near(flat.r, 255.0) && near(flat.g, 255.0) && near(flat.b, 255.0))
         << "a 2D map cannot fill a cube declaration: white of the DECLARED kind, not an invalid descriptor, got ("
         << static_cast<int>(flat.r) << ", " << static_cast<int>(flat.g) << ", " << static_cast<int>(flat.b) << ")";
+}
+
+namespace
+{
+
+/** @brief Finds the first node of type @p T under a recorded subtree (the recorder's shapes are nested). */
+template <typename T>
+const T* findFirst(const ::vsg::Node* node)
+{
+    if (node == nullptr) {
+        return nullptr;
+    }
+    if (const auto* hit = node->cast<T>()) {
+        return hit;
+    }
+    if (const auto* group = node->cast<::vsg::Group>()) {
+        for (const auto& child : group->children) {
+            if (const auto* hit = findFirst<T>(child.get())) {
+                return hit;
+            }
+        }
+    }
+    // A `vsg::Commands` is a Command with children of its own, not a Group: without this arm the walk stops
+    // right above the draw it is looking for.
+    if (const auto* commands = node->cast<::vsg::Commands>()) {
+        for (const auto& child : commands->children) {
+            if (const auto* hit = findFirst<T>(child.get())) {
+                return hit;
+            }
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
+{
+    // The demo's own shape (see AppShellDemo's star_cloud): vertex streams and NO index arena, drawn as
+    // POINT_LIST. Two things have to hold at once for that picture to exist, which is why they are pinned
+    // together:
+    //
+    //   * the draw is `vkCmdDraw` over the vertex streams with the entry's own vertex count - not a
+    //     synthesised identity index array, and not a zero-count DrawIndexed;
+    //   * the pipeline BAKES the topology the command states, because the API only lets a dynamically set
+    //     topology move within its pipeline's own class - a triangle-baked pipeline drawing points is
+    //     undefined behaviour rather than a picture (the previous implementation shipped that).
+    //
+    // The pixel is the evidence neither counter can replace: an 8-texel point at the target's centre, drawn
+    // through a POINT_LIST pipeline, has to come out as that point's colour.
+    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout layout;
+    layout.width  = kSize;
+    layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    ASSERT_NE(target, nullptr);
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+
+    // The point cloud's program: one position in, and gl_PointSize written (a point whose size nobody states
+    // has no size, which is why the demo's own point program writes it too).
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(
+            reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                             "void main() { gl_Position = vec4(position.xy, 0.5, 1.0);\n"
+                                             "              gl_PointSize = 8.0; }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\nvoid main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    geometry->setPositions(vine::intrusive_ptr<const vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 0.0F })));
+    geometry->setRevision(1U);
+    ASSERT_FALSE(geometry->hasIndices()) << "the fixture is the shape under test: no index arena exists";
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+
+    vine::vsg::ContentStore store;
+    store.track(geometry);
+    store.track(program);
+    store.track(material);
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    std::vector<vine::String> messages;
+    diagnostics.setSink([&messages](const vine::graphics::RenderDiagnostic& diagnostic) {
+        messages.push_back(diagnostic.message);
+    });
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    TargetFacts target_facts;
+    target_facts.target        = target.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+
+    RenderCommand command;
+    command.geometry             = geometry;
+    command.material             = material;
+    command.program              = program;
+    command.renderState.topology = vine::graphics::Topology::Points;
+    const std::vector<RenderCommand> commands{ command };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(commands, nullptr);
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1U);
+    EXPECT_EQ(frame.passes[0].draws[0].commands[0].dynamic.topology, vine::graphics::Topology::Points)
+        << "the plan carries the topology the state asked for";
+
+    const std::shared_ptr<vine::vsg::MaterialImages> images = vine::vsg::MaterialImages::create();
+    ASSERT_NE(images, nullptr);
+    VariantPool                     pool;
+    vine::vsg::ContentAssembly      assembly(store, created.device, pool, *storage, *images, diagnostics);
+    vine::vsg::core::FrameTimeline  timeline;
+    vine::vsg::core::RetirementQueue retirement(3U);
+
+    (void)assembly.beginFrame(frame, timeline, retirement);
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>  content_node;
+    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(messages.empty()) << "nothing may be refused: one half, one unindexed points draw";
+    EXPECT_EQ(assembly.halves().halves(), 1U);
+
+    // The recorded graph: a plain Draw with the geometry's vertex count, and NO index bind at all - the index
+    // path is not "an empty DrawIndexed", it is a different command.
+    const auto* drawn = findFirst<::vsg::Draw>(content_node.get());
+    ASSERT_NE(drawn, nullptr) << "an unindexed geometry is drawn with vkCmdDraw";
+    EXPECT_EQ(drawn->vertexCount, 1U) << "the entry's vertex_count is the position stream's own count";
+    EXPECT_EQ(drawn->instanceCount, 1U);
+    EXPECT_EQ(findFirst<::vsg::BindIndexBuffer>(content_node.get()), nullptr)
+        << "there is no index stream to bind, so none may be recorded";
+
+    // ...and the pixels: the point covers the centre of the target, nothing else does.
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(target.get(), target.get());
+
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packet{ frame.passes[0].pass, content_node };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(&packet, 1U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const Rgba8 centre = target->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(centre.r > 200 && centre.g < 40 && centre.b < 40)
+        << "the point must be on screen, got (" << static_cast<int>(centre.r) << ", "
+        << static_cast<int>(centre.g) << ", " << static_cast<int>(centre.b) << ")";
+    const Rgba8 corner = target->probe().pixel(2, 2);
+    EXPECT_FALSE(corner.r > 200 && corner.g < 40 && corner.b < 40)
+        << "and nothing else is drawn: the corner is the plan's clear";
+
+    // The other side of the class rule: a half compiled for TRIANGLES cannot serve this command, and the
+    // refusal NAMES the topology, because the fix is "compile that class" rather than "compile that layout"
+    // or "build that program". Without this check the points draw would go through the triangle-baked
+    // pipeline - exactly the shape the previous implementation shipped, where only the API's own
+    // same-topology-class rule stood between the picture and undefined behaviour.
+    const vine::vsg::FactResult<GeometryFacts> live_geometry =
+        vine::vsg::findGeometry(assembly.facts(), geometry.get(), geometry->revision());
+    ASSERT_TRUE(live_geometry.found());
+    ASSERT_EQ(assembly.facts().programs.size(), 1U) << "one program was compiled for this frame";
+    const ProgramFacts& live_program = assembly.facts().programs.front();
+
+    ContentPipeline::Settings triangles;  // the default: Triangles, i.e. the other class
+    std::unique_ptr<ContentPipeline> flat =
+        ContentPipeline::create(live_program.abi, *live_geometry.entry, live_program.shaders, triangles);
+    ASSERT_NE(flat, nullptr);
+    VariantPool                 flat_pool;
+    StateRegistry               flat_registry(flat_pool);
+    ContentDraw                 flat_draws(*flat, flat_pool);
+    StreamUploads               flat_uploads;
+    Diagnostics                 flat_diagnostics;
+    std::vector<vine::String>   flat_messages;
+    flat_diagnostics.setSink([&flat_messages](const vine::graphics::RenderDiagnostic& diagnostic) {
+        flat_messages.push_back(diagnostic.message);
+    });
+    // The entry names NO topology: the default (Triangles) is what an entry written before the field existed
+    // means, and it is the class this layer was built for.
+    const ContentPass::Scope::Entry flat_halves[]{ ContentPass::Scope::Entry{
+        vine::vsg::core::DrawKind::Content, program.get(), live_program.revision, live_geometry.entry->layout,
+        flat.get(), &flat_draws } };
+    ContentPass::Scope flat_scope;
+    flat_scope.entries  = flat_halves;
+    flat_scope.registry = &flat_registry;
+    flat_scope.storage  = storage.get();
+    flat_scope.uploads  = &flat_uploads;
+    ContentPass flat_content(flat_scope, flat_diagnostics);
+
+    storage->beginFrame();
+    ::vsg::ref_ptr<::vsg::Node> refused;
+    EXPECT_FALSE(flat_content.record(frame.passes[0], assembly.facts(), target->shape().compatibility(), {},
+                                     view_block, refused))
+        << "a triangle-baked half must not draw a POINT_LIST command";
+    ASSERT_EQ(flat_messages.size(), 1U);
+    const std::string refusal = flat_messages[0].as_std_str();
+    EXPECT_NE(refusal.find("topology"), std::string::npos)
+        << "the report has to name what did not match, got: " << refusal;
+    EXPECT_EQ(flat_pool.created(), 0U) << "a refused half compiles nothing";
 }

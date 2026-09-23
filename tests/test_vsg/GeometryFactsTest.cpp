@@ -11,6 +11,9 @@
  *     first, in ABI order, then the custom locations ascending) rather than "whatever the map iterated";
  *   * the INDEX stream is normalized to its whole buffer, which is what lets two geometries over one index
  *     arena share ONE upload - the alternative (a key per segment) uploads the same bytes once per geometry;
+ *   * a geometry WITHOUT indices is described, not refused: it is the SDK's own shape ("vertex streams plus
+ *     optional indices", the shape of the demo's point cloud), and the entry says which of the two assembly
+ *     modes the draw is - an indexed slice of a stream, or a vertex count over the streams themselves;
  *   * a SLICED channel uploads its own segment, and the indices stay relative to the geometry's own vertices;
  *   * a geometry that cannot be drawn as authored is reported as such instead of becoming a table entry that
  *     silently draws something else.
@@ -80,9 +83,10 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     EXPECT_EQ(facts.index_count, 3U);
     EXPECT_EQ(facts.first_index, 0U);
     EXPECT_EQ(facts.vertex_offset, 0U);
-    EXPECT_EQ(facts.indices.key.kind, StreamKind::Index);
-    EXPECT_NE(facts.indices.data, nullptr);
-    EXPECT_EQ(facts.indices.key.count, 0U) << "the index stream aliases the whole buffer";
+    ASSERT_TRUE(facts.indices.has_value()) << "the geometry draws indexed: it has an index stream";
+    EXPECT_EQ(facts.indices->key.kind, StreamKind::Index);
+    EXPECT_NE(facts.indices->data, nullptr);
+    EXPECT_EQ(facts.indices->key.count, 0U) << "the index stream aliases the whole buffer";
 }
 
 TEST(GeometryFactsTest, TheChannelOrderIsCanonicalFirstAndCustomsAscending)
@@ -115,7 +119,7 @@ TEST(GeometryFactsTest, TheChannelOrderIsCanonicalFirstAndCustomsAscending)
     EXPECT_TRUE(channelsMatchLayout(facts));
 }
 
-TEST(GeometryFactsTest, AGeometryWithoutPositionsOrWithoutIndicesCannotBeDescribed)
+TEST(GeometryFactsTest, AGeometryWithoutPositionsCannotBeDescribed)
 {
     Content  content;
     Geometry without_positions;
@@ -126,15 +130,56 @@ TEST(GeometryFactsTest, AGeometryWithoutPositionsOrWithoutIndicesCannotBeDescrib
     std::vector<ChannelFacts> storage;
     EXPECT_EQ(buildGeometryFacts(without_positions, facts, storage), FactMiss::Malformed);
 
-    Geometry without_indices;
-    without_indices.setPositions(content.positions);
-    EXPECT_EQ(buildGeometryFacts(without_indices, facts, storage), FactMiss::Malformed);
-
     Geometry empty;
     EXPECT_EQ(buildGeometryFacts(empty, facts, storage), FactMiss::Unknown);
 
     // ...and an entry that was NOT built leaves no half-filled table behind for a later frame to find.
     EXPECT_TRUE(storage.empty());
+}
+
+TEST(GeometryFactsTest, AGeometryWithoutIndicesIsDrawnFromItsVertexStreams)
+{
+    // The SDK's point cloud shape: positions and nothing else - no index arena exists, so the draw is
+    // `vkCmdDraw` over the streams themselves rather than a synthesised identity index array per vertex (which
+    // is what the previous implementation built and what made this shape look unsupported).
+    Content content;
+
+    Geometry geometry;
+    geometry.setPositions(content.positions);
+    geometry.setNormals(content.normals);
+    geometry.setRevision(2U);
+
+    GeometryFacts             facts;
+    std::vector<ChannelFacts> storage;
+    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage), FactMiss::None);
+
+    EXPECT_FALSE(facts.indices.has_value()) << "there is no index stream, and that is a fact about the draw";
+    EXPECT_EQ(facts.index_count, 0U);
+    EXPECT_EQ(facts.first_index, 0U);
+    // The count the draw carries is the position stream's own vertex count (three scalars per vertex here).
+    EXPECT_EQ(facts.vertex_count, 3U);
+    EXPECT_TRUE(channelsMatchLayout(facts)) << "an unindexed geometry is as drawable as an indexed one";
+}
+
+TEST(GeometryFactsTest, ANonIndexedSliceCountsItsOwnVertices)
+{
+    // Six vertices in the buffer, the geometry reading the last three: the draw must assemble three vertices,
+    // not six - the slice IS the stream (see the file note).
+    vine::intrusive_ptr<const vine::Buffer<float>> shared(new vine::Buffer<float>(
+        std::vector<float>{ 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F,
+                            0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
+
+    Geometry geometry;
+    geometry.setPositions(shared, /*first_vertex*/ 3U, /*vertex_count*/ 3U);
+
+    GeometryFacts             facts;
+    std::vector<ChannelFacts> storage;
+    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage), FactMiss::None);
+
+    ASSERT_EQ(facts.channels.size(), 1U);
+    EXPECT_EQ(facts.channels[0].key.offset, 9U) << "the channel reads the slice";
+    EXPECT_EQ(facts.vertex_count, 3U) << "and the draw reads the slice's own vertices";
+    EXPECT_TRUE(channelsMatchLayout(facts));
 }
 
 TEST(GeometryFactsTest, ASlicedChannelUploadsItsOwnSegment)
@@ -188,9 +233,11 @@ TEST(GeometryFactsTest, TwoGeometriesOverOneIndexArenaShareOneStreamIdentity)
     ASSERT_EQ(buildGeometryFacts(second, second_facts, storage_b), FactMiss::None);
 
     // The stream identity is the BUFFER, so the upload is shared; the segment travels with the draw.
-    EXPECT_EQ(first_facts.indices.key.buffer, second_facts.indices.key.buffer);
-    EXPECT_EQ(first_facts.indices.key.count, 0U);
-    EXPECT_EQ(second_facts.indices.key.count, 0U);
+    ASSERT_TRUE(first_facts.indices.has_value());
+    ASSERT_TRUE(second_facts.indices.has_value());
+    EXPECT_EQ(first_facts.indices->key.buffer, second_facts.indices->key.buffer);
+    EXPECT_EQ(first_facts.indices->key.count, 0U);
+    EXPECT_EQ(second_facts.indices->key.count, 0U);
     EXPECT_EQ(first_facts.first_index, 0U);
     EXPECT_EQ(second_facts.index_count, 3U);
 }

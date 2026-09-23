@@ -67,9 +67,10 @@ FactMiss buildGeometryFacts(const vine::graphics::Geometry& geometry, GeometryFa
         return FactMiss::Unknown;  // nothing to describe
     }
 
-    bool        positioned = false;
-    std::size_t vertex_base = 0;
-    bool        base_known  = false;
+    bool        positioned        = false;
+    std::size_t position_vertices = 0;
+    std::size_t vertex_base       = 0;
+    bool        base_known        = false;
 
     for (const std::uint32_t location : orderedLocations(locations))
     {
@@ -121,7 +122,11 @@ FactMiss buildGeometryFacts(const vine::graphics::Geometry& geometry, GeometryFa
             out.layout.canonical_mask |= 1U << static_cast<std::uint32_t>(role);
             if (role == vine::graphics::VertexAttribute::Position)
             {
-                positioned = true;
+                positioned        = true;
+                // The vertices a NON-indexed draw assembles from: the position stream's own count, which is
+                // also what the SDK's `Geometry::vertexCount()` reports (positions are the one required
+                // attribute, so they are the stream the count can be derived from).
+                position_vertices = channel->vertexCount();
             }
         }
         else
@@ -143,26 +148,42 @@ FactMiss buildGeometryFacts(const vine::graphics::Geometry& geometry, GeometryFa
     // roles first, then the custom locations), which is the vertex-binding order.
     out.channels = storage;
 
+    if (!geometry.hasIndices())
+    {
+        // NON-INDEXED: there is no index stream to describe, and the draw assembles its primitives from the
+        // vertex streams themselves - so the count it carries is the position stream's own vertex count. This
+        // is a different draw COMMAND rather than a degenerate indexed one (see GeometryFacts), and the
+        // topology that turns those vertices into points, lines or triangles is the state's business.
+        out.vertex_count = static_cast<std::uint32_t>(position_vertices);
+        if (out.vertex_count == 0U)
+        {
+            return FactMiss::Malformed;  // positions too short to form a single vertex: nothing to assemble
+        }
+        return FactMiss::None;
+    }
+
     // The index stream, normalized to the whole buffer (see the file note): the buffer is the identity, the
     // segment travels with the draw.
     const vine::intrusive_ptr<const vine::Buffer<std::uint32_t>> index_buffer = geometry.indicesBuffer();
     if (index_buffer == nullptr || geometry.indexCount() == 0U)
     {
-        return FactMiss::Malformed;  // draws are indexed: a geometry without indices draws nothing
+        return FactMiss::Malformed;  // hasIndices() promised a range: an empty one draws nothing
     }
 
-    out.indices.key.kind       = core::StreamKind::Index;
-    out.indices.key.location   = 0U;
-    out.indices.key.components = 1U;
-    out.indices.key.buffer     = index_buffer.get();
-    out.indices.key.revision   = geometry.revision();
-    out.indices.key.offset     = 0U;
-    out.indices.key.count      = 0U;  // the whole buffer: two geometries over one arena share one upload
+    ChannelFacts index_facts;
+    index_facts.key.kind       = core::StreamKind::Index;
+    index_facts.key.location   = 0U;
+    index_facts.key.components = 1U;
+    index_facts.key.buffer     = index_buffer.get();
+    index_facts.key.revision   = geometry.revision();
+    index_facts.key.offset     = 0U;
+    index_facts.key.count      = 0U;  // the whole buffer: two geometries over one arena share one upload
 
     const std::span<const std::uint32_t> index_scalars = index_buffer->view();
     ::vsg::ref_ptr<::vsg::uintArray>     index_array   = ::vsg::uintArray::create(index_scalars.size());
     std::copy(index_scalars.begin(), index_scalars.end(), index_array->begin());
-    out.indices.data = index_array;
+    index_facts.data = index_array;
+    out.indices      = index_facts;
 
     out.index_count   = static_cast<std::uint32_t>(geometry.indexCount());
     out.first_index   = static_cast<std::uint32_t>(geometry.firstIndex());

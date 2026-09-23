@@ -54,17 +54,6 @@ VkPolygonMode mapPolygon(vine::graphics::PolygonMode mode) noexcept
     return VK_POLYGON_MODE_FILL;
 }
 
-/** @brief Maps a topology onto the API's enum. */
-VkPrimitiveTopology mapTopology(vine::graphics::Topology topology) noexcept
-{
-    switch (topology) {
-    case vine::graphics::Topology::Triangles: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    case vine::graphics::Topology::Points: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-    case vine::graphics::Topology::Lines: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-    }
-    return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-}
-
 /** @brief Maps a blend factor onto the API's enum. */
 VkBlendFactor mapBlendFactor(vine::graphics::BlendFactor factor) noexcept
 {
@@ -84,6 +73,16 @@ VkBlendFactor mapBlendFactor(vine::graphics::BlendFactor factor) noexcept
 }
 
 }  // namespace
+
+VkPrimitiveTopology mapTopology(vine::graphics::Topology topology) noexcept
+{
+    switch (topology) {
+    case vine::graphics::Topology::Triangles: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    case vine::graphics::Topology::Points: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    case vine::graphics::Topology::Lines: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    }
+    return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+}
 
 ::vsg::ref_ptr<detail::SetDynamicState> makeDynamicStateCommand(const core::DynamicState& state,
                                                                 std::uint32_t color_attachments,

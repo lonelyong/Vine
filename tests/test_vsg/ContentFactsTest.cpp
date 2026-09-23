@@ -47,7 +47,7 @@ ChannelFacts channel(std::uint32_t location)
     return facts;
 }
 
-/// @brief The index stream (draws are indexed, so every usable geometry has one).
+/// @brief The index stream an INDEXED geometry draws through (see GeometryFacts::indices).
 ChannelFacts indexStream()
 {
     ChannelFacts facts;
@@ -72,7 +72,7 @@ struct GeometryHolder
         facts.revision              = revision;
         facts.layout.canonical_mask = canonical_mask;
         facts.channels              = channels;
-        facts.indices               = indexStream();
+        facts.indices.emplace(indexStream());
         facts.index_count           = 3U;
         for (std::uint32_t extra = 0; extra < custom_locations; ++extra)
         {
@@ -177,10 +177,19 @@ TEST(ContentFactsTest, AGeometryWhoseChannelsDoNotMatchItsLayoutCannotBeDrawn)
     const GeometryHolder custom(nullptr, 1U, /*canonical_mask*/ 0x1U, /*channels*/ 2U, /*custom*/ 1U);
     EXPECT_TRUE(channelsMatchLayout(custom.facts));
 
-    // A geometry whose "indices" are a vertex stream is not drawable this way (draws are indexed).
+    // A geometry whose "indices" are a vertex stream is not drawable this way: the mode is the stream's KIND,
+    // so a stream that is not an index stream states nothing about how the draw is assembled.
     GeometryHolder not_indexed(nullptr, 1U, /*canonical_mask*/ 0x1U, /*channels*/ 1U);
-    not_indexed.facts.indices.key.kind = StreamKind::Vertex;
+    not_indexed.facts.indices->key.kind = StreamKind::Vertex;
     EXPECT_FALSE(channelsMatchLayout(not_indexed.facts));
+
+    // ...while a geometry that names NO index stream is the unindexed mode and is drawable from its vertices.
+    GeometryHolder unindexed(nullptr, 1U, /*canonical_mask*/ 0x1U, /*channels*/ 1U);
+    unindexed.facts.indices.reset();
+    unindexed.facts.index_count = 0U;
+    EXPECT_FALSE(channelsMatchLayout(unindexed.facts)) << "no index stream and no vertex count: nothing to draw";
+    unindexed.facts.vertex_count = 3U;
+    EXPECT_TRUE(channelsMatchLayout(unindexed.facts));
 
     // ...and a short geometry is reported as Malformed rather than "found but useless".
     static int       identity = 0;

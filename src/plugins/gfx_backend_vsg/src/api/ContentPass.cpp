@@ -795,13 +795,15 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     }
 
     // The compiled half the tuple names: one program's stages against one vertex layout FOR ONE VARIANT
-    // (see the file note). A half carries its own program, revision and variant, so a command that names
-    // another program - or the same one at a revision the half was not compiled from, or a drawable whose
-    // material and geometry ask for another variant - is refused: borrowing a half's stages would draw a
-    // picture nobody authored, and the pool would file it under the key the plan named.
-    const Scope::Entry* entry         = nullptr;
-    bool                program_known = false;
-    bool                layout_known  = false;
+    // (see the file note). A half carries its own program, revision, variant and TOPOLOGY, so a command that
+    // names another program - or the same one at a revision the half was not compiled from, or a drawable
+    // whose material and geometry ask for another variant, or one assembled with another class of primitives
+    // - is refused: borrowing a half's stages would draw a picture nobody authored, and the pool would file it
+    // under the key the plan named.
+    const Scope::Entry* entry          = nullptr;
+    bool                program_known  = false;
+    bool                layout_known   = false;
+    bool                topology_known = false;
     for (const Scope::Entry& candidate : scope_.entries)
     {
         if (candidate.program != command.program.program || candidate.revision != command.program.revision)
@@ -814,6 +816,14 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
             continue;
         }
         layout_known = true;
+        // The half's pipeline BAKES this topology, and the API only accepts a dynamically set topology within
+        // the CLASS a pipeline was created with (see core::PipelineKey::topology): a half of another class
+        // cannot draw this command, whatever state is set for it.
+        if (candidate.topology != command.dynamic.topology)
+        {
+            continue;
+        }
+        topology_known = true;
         if (candidate.variant == variant)
         {
             entry = &candidate;
@@ -822,9 +832,9 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     }
     if (entry == nullptr)
     {
-        // Which of the three did not match matters: the fixes are different ones (compile the program, the
-        // layout, or the missing variant), and "not built for" alone would send the reader to the wrong
-        // half of the pipeline key.
+        // Which of the four did not match matters: the fixes are different ones (compile the program, the
+        // layout, the topology's class, or the missing variant), and "not built for" alone would send the
+        // reader to the wrong half of the pipeline key.
         if (!program_known)
         {
             reportRefused("the command", "its program is not one this pass was built for (or not at that revision)");
@@ -832,6 +842,13 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         else if (!layout_known)
         {
             reportRefused("the command's geometry", "its vertex layout is not one this pass was built for");
+        }
+        else if (!topology_known)
+        {
+            reportRefused("the command's topology",
+                          "the pass has no half that bakes it (points, lines and triangles are compiled for "
+                          "separately: a dynamic set may only move within the class its pipeline was built "
+                          "with)");
         }
         else
         {
@@ -859,8 +876,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         demanded.revision = material.entry->texture->revision();
     }
 
-    // THE HALF IS SERVED HERE, per command: a pass holds one half per (program, revision, layout,
-    // variant), and each half's block sets are ITS OWN - the textured variant's declared set carries the
+    // THE HALF IS SERVED HERE, per command: a pass holds one half per (program, revision, layout, variant,
+    // topology), and each half's block sets are ITS OWN - the textured variant's declared set carries the
     // map the untextured one has no binding for - so the sets a command binds must come from the half
     // that command is drawn through, not from whichever half the pass happened to see first. Serving
     // also refuses (once per half - see half_reported_) a half whose sets the caller built no match for.
@@ -906,12 +923,20 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         ++bound;
     }
 
-    const StreamUploads::IndexResult indices =
-        scope_.uploads->acquireIndex(geometry.entry->indices.key, geometry.entry->indices.data);
-    if (indices.bind == nullptr)
+    // The stream the draw is ASSEMBLED from, and the two modes are different commands: with an index stream
+    // the span travels with the draw (the bind aliases the whole buffer, so an index arena is uploaded once),
+    // and without one the vertex streams themselves are the geometry (see api/GeometryFacts).
+    ::vsg::ref_ptr<::vsg::BindIndexBuffer> index_bind;
+    if (geometry.entry->indices.has_value())
     {
-        reportRefused("the command's geometry", "its index stream could not be uploaded");
-        return false;
+        const StreamUploads::IndexResult acquired =
+            scope_.uploads->acquireIndex(geometry.entry->indices->key, geometry.entry->indices->data);
+        if (acquired.bind == nullptr)
+        {
+            reportRefused("the command's geometry", "its index stream could not be uploaded");
+            return false;
+        }
+        index_bind = acquired.bind;
     }
 
     ContentDraw::Draw record;
@@ -921,6 +946,10 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // The variant is identity like the layout is: two variants of one program share the key's other
     // fields and must never share a pipeline or a state group (see core::PipelineKey::variant).
     record.key.variant            = variant.bits();
+    // ... and so is the topology, because the half was compiled for this one class of primitives (see
+    // core::PipelineKey::topology): the key must name it or the pool would hand this draw the pipeline some
+    // other topology was baked into.
+    record.key.topology           = command.dynamic.topology;
     record.key.compatibility      = compatibility;
     record.key.depth_sampleable   = pass.depth_sampleable;
     // How many colour textures this pass binds as samplers: a fact of the plan's input table, carried into the
@@ -987,13 +1016,22 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     record.pushes       = std::span<const ::vsg::ref_ptr<::vsg::PushConstants>>(push_commands.data(), push_count);
     record.inputs       = inputs;
     record.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
-    record.index        = indices.bind;
+    record.index        = index_bind;
     record.viewport     = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
                                         static_cast<float>(draw.viewport.width),
                                         static_cast<float>(draw.viewport.height) };
-    record.index_count       = geometry.entry->index_count;
-    record.first_index       = geometry.entry->first_index;
-    record.vertex_offset     = geometry.entry->vertex_offset;
+    // Which of the entry's two spans the draw reads: an indexed entry states the slice of its index stream, an
+    // unindexed one the vertex count - never both, because the command they lead to is a different one.
+    if (geometry.entry->indices.has_value())
+    {
+        record.index_count   = geometry.entry->index_count;
+        record.first_index   = geometry.entry->first_index;
+        record.vertex_offset = geometry.entry->vertex_offset;
+    }
+    else
+    {
+        record.vertex_count = geometry.entry->vertex_count;
+    }
     record.color_attachments = pass.color_attachments;
 
     ::vsg::ref_ptr<::vsg::Node> node = entry->draws->record(*scope_.registry, record);

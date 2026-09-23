@@ -26,10 +26,12 @@
  * binding numbers, the pass' attachment count - so it lives here, once.
  *
  * WHAT A HALF IS KEYED BY. Everything the compiled object depends on: the drawing KIND, the program, its
- * revision, the vertex layout, the variant, and the pass' COLOUR ATTACHMENT COUNT (the layer's blend state
- * declares it). Two passes that agree on all of it share the half; one that differs anywhere gets its own.
- * That last field is not a detail: a layer created for one attachment compiles blend states for one, and a
- * pass with four would draw into three of them, silently.
+ * revision, the vertex layout, the variant, the pass' COLOUR ATTACHMENT COUNT (the layer's blend state
+ * declares it) and the TOPOLOGY the pipeline bakes (the API restricts a dynamically set topology to the
+ * class its pipeline was created with - see core::PipelineKey::topology). Two passes that agree on all of it
+ * share the half; one that differs anywhere gets its own. The attachment count is not a detail: a layer
+ * created for one attachment compiles blend states for one, and a pass with four would draw into three of
+ * them, silently.
  *
  * WHERE THE FACTS COME FROM. The CALLER's tables (api/ContentStore produces them from the live objects).
  * The producer makes no lookup of its own beyond the ones the RECORDER will make: the geometry the plan

@@ -101,9 +101,20 @@ class V_VSG_API ContentPass
             /// field a pass would hand every drawable of that program the FIRST half it finds and compile
             /// one of the variants' meanings into all of them. A pass computes each command's variant from
             /// its material and geometry (api/ProgramVariant's rule) and only a half that serves it draws.
-            /// It sits LAST so an entry written before this field existed is the variant the untagged
-            /// facts describe (the empty define list), not one with a pointer in its switches.
+            /// It is written after the fields that existed before it, so an entry that names no variant is
+            /// the variant the untagged facts describe (the empty define list), not one with a pointer in
+            /// its switches.
             ProgramVariant        variant{};
+
+            /// The topology this half's pipeline BAKES (see core::PipelineKey::topology). The API restricts
+            /// a dynamically set topology to the CLASS its pipeline was created with, so a half compiled for
+            /// another class cannot serve the command at all - which makes the topology part of the tuple a
+            /// pass asks for rather than a value it only delivers.
+            ///
+            /// APPENDED after @ref variant, for the same reason variant was: an entry that names none is
+            /// the engine's own default (triangles), which is what every entry written before this field
+            /// meant.
+            vine::graphics::Topology topology{vine::graphics::Topology::Triangles};
         };
 
         std::span<const Entry> entries;               ///< One per (program, revision, layout, VARIANT) it draws with.

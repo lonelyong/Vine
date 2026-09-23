@@ -53,6 +53,17 @@ struct ViewportRect
     float height{0.0F};     ///< Height in pixels.
 };
 
+/** @brief Maps the engine's primitive topology onto the API's enum.
+ *
+ * The ONE spelling of the mapping: the pipeline bakes it into its create-info (the value a dynamic
+ * `vkCmdSetPrimitiveTopology` may only move within the CLASS of - see core::PipelineKey) and the dynamic
+ * command delivers it per draw, so the two cannot disagree about what "Triangles" means.
+ *
+ * @param topology Engine topology.
+ * @return The corresponding `VkPrimitiveTopology` (triangle list for an unrecognised value).
+ */
+[[nodiscard]] VkPrimitiveTopology mapTopology(vine::graphics::Topology topology) noexcept;
+
 /** @brief Maps the engine's dynamic state onto the set command that delivers it.
  *
  * @param state            The state the next draws use.

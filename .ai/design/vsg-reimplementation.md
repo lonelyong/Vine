@@ -78,10 +78,11 @@
 > M8r 计划说的形状连格式一起核对（§11.16ba）、M8s 窗口的答案也有执行者（§11.16bb）、
 > M8t `skyMap` 是 drawable 自己的图（§11.16bc）、M9a 门面立起来（§11.16bd）、M9b pass 协议接到内容层（§11.16be）、
 > M9c 离屏那一半（§11.16bf）、M9d 读回（§11.16bg）、M9e 活着的 resize（§11.16bh）、
-> M9f 工厂切到门面（§11.16bi）、M10a 引擎侧冒烟（§11.16bj）。
+> M9f 工厂切到门面（§11.16bi）、M10a 引擎侧冒烟（§11.16bj）、M10b 非索引 + 拓扑进管线（§11.16bk）。
 > 下一步：
-> **引擎侧继续**：非索引 / 点线拓扑的内容（演示的 `star_cloud`，老实现合成恒等索引画的）+ 首帧的
-> "no compiled content half" 自愈项；收尾另算：旧实现退场（名字已换，树里那份是死代码）。
+> **引擎侧继续**：首帧的 "no compiled content half" 自愈项 + 点云进画面后剩下的观感项；两条老门禁口径要跟着新实现
+> 重钉（app 阶段的 `off-screen target 'shadow_map'` 行来自老实现；逐字节 `[selftest]` 基线在这台机器上本就不稳——
+> 见 §11.16bk 的登记）；收尾另算：旧实现退场（名字已换，树里那份是死代码）。
 > 场景桥的登记项（`skyMap`）至此清空；其余遗留口子见下。
 > 其余遗留口子：集合与半片停靠窗口各自独立；窗口 `facts()` 的 live 采样与 `refresh()` 的成功臂今天没有可驱动的触发（登记）；
 > 设备半边在"某一侧没说"时跳过（登记）。
@@ -4225,3 +4226,51 @@ depth-only 目标建成、0 彩色附件、`depthView()` 非空，`HostTargets::
 **方法记录（下一位读者）**：插桩是这次定位的全部手段——`setRenderTarget` 的顺序、`render()` 的每条命令、
 `buildGeometryFacts`/`ensureGeometry` 的每次 miss 各打一行 `[probe]`，跑一次应用就能指着**指针**与**名字**
 说话（探针随后全部撤掉）。应用自己的日志把宿主窗口 id 打进 stderr，像素读回与截图都从那一行开始。
+
+### 11.16bk M10b（2026-09-23）：非索引 + 拓扑进管线——`star_cloud` 画出来了
+
+M10a 登记的第一条：演示的点云没有索引，而重写版把"有索引"当成可绘制的前提 ⇒ 那条命令从不进图（每次录到它报一次
+"the command's geometry is not drawn: the content layer was never told about this identity"）。这一片把它补上。
+两件事必须同时成立才有那张画，所以它们被钉在同一个用例里。
+
+**1. 非索引是一个模式，不是退化。** `GeometryFacts::indices` 变成 `std::optional<ChannelFacts>`（缺席 = 无索引流），
+新增 `GeometryFacts::vertex_count` 承载"非索引时画几个顶点"（位置流自己的顶点数——SDK 的 `Geometry::vertexCount()`
+口径）；`buildGeometryFacts` 对无索引的几何**描述**而不是拒绝；`channelsMatchLayout` 检查的是**从哪条流组装**：
+有索引 ⇒ 必须是 Index 流（kind 就是模式），无索引 ⇒ 顶点数大于 0（载荷在不在是上传层的事，不是这条检查的事）。
+录制侧：`ContentDraw::Draw::index` 允许为空、`vertex_count` 决定 `vsg::Draw`（`vkCmdDraw`）还是 `vsg::DrawIndexed`；
+**两条流都没有的 draw 在动注册表之前被拒**（注册表被"这一变体已绑"骗过会让下一条 draw 跳过自己的管线绑定——那个洞
+只有像素看不见的记账受伤）；`ContentPass` 无索引时**不 acquire 索引流**（uploads 计数少一条：一条顶点流、零条索引）。
+
+**2. 拓扑属于管线身份。** 验证层原文："If the bound graphics pipeline state was created with the
+VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY dynamic state enabled and the dynamicPrimitiveTopologyUnrestricted is VK_FALSE,
+then the primitiveTopology parameter of vkCmdSetPrimitiveTopology must be of the same topology class as the pipeline
+VkPipelineInputAssemblyStateCreateInfo::topology state"，而 `dynamicPrimitiveTopologyUnrestricted` 是
+`VkPhysicalDeviceExtendedDynamicState3PropertiesEXT` 上的**属性**（实现可以答否）——所以"拓扑永远只动态、管线恒烤
+TRIANGLE_LIST"这条路在 API 上就不成立（老实现正是这条路）。⇒ 管线把拓扑烤进 create-info：`PipelineKey::topology`
+（引擎枚举一类一个值，所以枚举本身就是诚实的键）、`ContentPipeline::Settings::topology`、`ContentHalves` 的 half 键
+加拓扑（屏幕一半用 pass 的 `draw.dynamic.topology`）、`Scope::Entry::topology`（**附加在 variant 之后**，缺省
+Triangles——"这个字段出现之前写的条目"就是这个意思），`recordCommand` 的半片匹配与 `ContentSets` 的匹配都带上它，
+且报文说得出**哪一个**没匹配（新增第四个分支：拓扑的类）。`mapTopology` 从 `StateCommands.cpp` 的匿名命名空间提升为
+api 的**唯一拼写**：烤进管线的那份与动态命令发的那份不可能对不上。
+
+**证据**：①真应用（lavapipe + X11，`scripts/xwin2ppm.py` 读它自己的窗口）：用户报的那条警告 **47 → 0**；画面
+378×247，均值 (118,121,127) → **(121,128,139)**，**14.18% 的像素变了**，其中 **7245 个"从无彩变强彩"**（色度 > 90）
+的像素全部落在 x∈[234,377]、y∈[124,246]——星云的彩虹 sprite（40 texel 点精灵，`gl_PointSize` 由程序写）；
+②`ContentPassTest.AnUnindexedPointCloudDrawsThroughThePointsPipeline`（真设备）：8 texel 的点画在目标中心、角落是
+clear、记录的图里有 `vsg::Draw(vertexCount=1)` 而**没有** `BindIndexBuffer`，同一用例的后半段再要求"三角形烤的半片
+**拒绝**这条 POINTS 命令、报文含 topology、pool 一个变体都没建"；③device-free：`GeometryFactsTest` 两个新用例
+（无索引条目 / 切片自己的顶点数）、`ContentFactsTest`（"indices 是顶点流"与"无索引且无顶点数"都不可绘制）、
+`ContentDrawTest` 两个新用例（非索引记 `vsg::Draw`；两条流都没有的 draw 被拒之后下一条真 draw 仍然绑管线）、
+`ContentPipelineTest.TheTopologyTheSettingsNameIsWhatThePipelineBakes`（Points ⇒ POINT_LIST，缺省 ⇒ TRIANGLE_LIST）。
+**变异 4/4 红**：①管线恒烤 TRIANGLE_LIST ⇒ 拓扑烤制用例红；②`buildGeometryFacts` 再拒非索引 ⇒ 两个事实用例 +
+点云用例红；③非索引也记成 `DrawIndexed` ⇒ 两个用例红（"是 `vsg::Draw`"与"没有索引绑定"两条断言）；④半片匹配丢掉
+拓扑比较 ⇒ 点云用例的拒绝阶段红（三角形半片把 POINTS 命令画了）。`test_vsg` **670 用例 / 101 套件**全绿（+6），
+`scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、skipped=0、hygiene 0 / 861、相位 11 行 / 2 次运行。
+
+**顺带量到、本片不修（登记）**：①应用带验证层跑仍有**先前就存在**的三类 VUID（20 条 `vkUpdateDescriptorSets-None-03047`、
+6 条 `vkCmdDraw-None-09600`、6 条 `VkViewport-width-01770`；无改动树上是 20/20/6——星云进画面后 09600 那类从 20 掉到
+6）；②`gfx_lavapipe_check.sh` 的 app 阶段要求 `off-screen target 'shadow_map'` 这一行，而它是**老实现**的日志
+（`VsgTargetBookkeeping`），门面跑起来后不再打印——A/B 两棵树都是 0 行；③`scripts/vsg_selftest_evidence.sh` 的逐字节
+基线在这台机器上**无改动树也过不去**（`vsg_backend_selftest` 只编译老实现的源，本片不可能影响它）：parked 103 vs 105、
+一个像素 (229,38,13) vs (230,38,13)、darkened 2186 vs 2187、ring released 419 vs 478/481（**同一二进制两次跑都不同**
+⇒ 这一项本身就不是逐字节可比的）。②③是门禁的口径要跟着新实现重钉的事，不是本片的回归。

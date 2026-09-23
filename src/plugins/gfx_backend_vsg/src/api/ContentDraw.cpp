@@ -10,6 +10,15 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
 
 ::vsg::ref_ptr<::vsg::StateGroup> ContentDraw::record(core::StateRegistry& registry, const Draw& draw)
 {
+    // A draw that names NEITHER an index stream nor a vertex count is refused before anything else happens: a
+    // registry that had already been told "this variant is bound" for a draw that produces no commands would
+    // make the NEXT draw of that variant skip its own pipeline bind (see the file note) - and the pool would
+    // hold a variant for a draw that was never recorded.
+    if (draw.index == nullptr && draw.vertex_count == 0U) {
+        ++refusals_;
+        return {};
+    }
+
     // The three "only when" answers come from the pass' registry: the variant bind only after a SWITCH, the
     // dynamic block only when a value differs from what this pass already issued, and the sampled-input set
     // only when this pass has not already bound that very set.
@@ -62,11 +71,19 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
             commands->addChild(bind);
         }
     }
+    // The two ways a draw names its geometry, and they are different commands rather than one command with a
+    // zero: WITH an index stream the span it reads travels with the draw (`firstIndex` / `indexCount`, and the
+    // bind aliases the whole buffer so several geometries share it), WITHOUT one the vertex streams themselves
+    // are the geometry and the topology turns them into primitives (see the refusal at the top of this
+    // function for the draw that says neither).
     if (draw.index != nullptr) {
         commands->addChild(draw.index);
+        commands->addChild(::vsg::DrawIndexed::create(draw.index_count, draw.instances, draw.first_index,
+                                                      draw.vertex_offset, 0U));
     }
-    commands->addChild(::vsg::DrawIndexed::create(draw.index_count, draw.instances, draw.first_index,
-                                                  draw.vertex_offset, 0U));
+    else {
+        commands->addChild(::vsg::Draw::create(draw.vertex_count, draw.instances, 0U, 0U));
+    }
     group->addChild(commands);
 
     ++draws_;
