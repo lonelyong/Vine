@@ -76,9 +76,10 @@
 > M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）、M8o 窗口路径一次调用（§11.16ax）、
 > M8p 每帧换图不再拆机器（§11.16ay）、M8q 丢帧的会话自己活下来（§11.16az）、
 > M8r 计划说的形状连格式一起核对（§11.16ba）、M8s 窗口的答案也有执行者（§11.16bb）、
-> M8t `skyMap` 是 drawable 自己的图（§11.16bc）。
+> M8t `skyMap` 是 drawable 自己的图（§11.16bc）、M9a 门面立起来（§11.16bd）。
 > 下一步：
-> **门面**（`VsgBackend : RenderBackend`：SDK 的方法 → 帧驱动）的第一片；场景桥的登记项（`skyMap`）至此清空。
+> **门面第二片**：pass 协议（`beginPass`/`endPass`/`setViewport`/清屏/`render`）接到内容层，让宿主经 SDK 真的画出内容；
+> 再往下是离屏目标 / 读回与工厂切换；场景桥的登记项（`skyMap`）至此清空。
 > 其余遗留口子：集合与半片停靠窗口各自独立；窗口 `facts()` 的 live 采样与 `refresh()` 的成功臂今天没有可驱动的触发（登记）；
 > 设备半边在"某一侧没说"时跳过（登记）。
 >
@@ -2633,7 +2634,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8r（计划说的形状，连格式一起核对）~~ | **已完成（2026-09-22）**：`core::CompiledShape`（形状的兼容性半边，编译器用 `arena.copy` 抄进帧的 arena ⇒ 计划里没有指向宿主 facts 的 span、也不每帧分配）+ `CompiledTarget::shape` + `core::statedShapeAgrees`（引擎半边每份计划都说了 ⇒ 直接比；**设备半边只在两边都说了时比**）；`recordOffscreen` / `recordWindow` 都接上（窗口那趟现在拿到 `CompiledTarget`）；无设备用例（计划的副本是它自己的 + 判定表逐行）+ 两条真设备用例（离屏：数目相同的引擎格式漂移、引擎相同的设备格式漂移各拒一次、说真话即录；窗口：同样的事 + 说真话后**呈递**，`deviceWaits()==0`）；当场修掉两处旧夹具的谎话；变异 **5/5 红**（不抄形状 ⇒ 75 行红、无条件下比设备半边 ⇒ 51 行红）（§11.16ba）。 |
 | ~~M8s（窗口的答案也有执行者）~~ | **已完成（2026-09-22）**：`WindowTarget::facts()` 把 "想要" 与 "已有" 分开（wanted = swapchain 现在的 live 采样、current = 记录被建时的形状 ⇒ 平台换了格式就是 `Rebuild`，不再被静默记进旧兼容性的通道）+ `WindowTarget::refresh()`（重新采样，变了才替换；**唯一能写这份形状的是平台**）+ `applyTargetPlans` 的窗口臂（`Rebuild` ⇒ 问平台：变了 ⇒ `rebuilt`，没变 ⇒ `failed`；`ResizeInPlace` 无事可做）；真设备用例（稳定帧四计数全 0 且录得进去；说谎的帧 ⇒ `failed==1`、主张未被采纳、`record` 拒录；再说真话 ⇒ 录进去并呈递、`deviceWaits()==0`）+ 3/3 变异红（§11.16bb）。 |
 | ~~M8t（`skyMap` 是 drawable 自己的图）~~ | **已完成（2026-09-23）**：名字表改正——`skyMap` 与 `diffuseMap` 同一行（`Material`，引擎自带天空程序的文本自己写着它是 material 的纹理、在同 ABI 的 diffuse 槽），`Environment` 行与那一整套拒绝删除；材质图的**种类必须对得上声明的采样器**（`ContentSets` 按声明的种类给 fallback、不一致 ⇒ 声明的白 + 计数；`createScreen` 拒 cube 声明）；顺手抓到并修掉**两处未初始化的 `ImageSource`**（没贴图的材质被按上一个 drawable 的纹理归档）；真设备用例 = 引擎自带 `skyboxProgram` 四个方向条带（+Z 洋红 / +X 红 / 无图白 / 2D 图配 cube 声明 ⇒ 白）+ 计数器；变异 **5/5 红**（其中两条带 6 / 2 条 VUID）（§11.16bc）。 |
-| **M8 下一步** | **门面**（`VsgBackend : RenderBackend`）的第一片。 |
+| ~~M9a（门面立起来：会话生命周期 + 空帧驱动）~~ | **已完成（2026-09-23）**：`api/VsgBackend`（`VsgBackend : vine::graphics::RenderBackend`，PImpl）——引擎与重写版之间的缝：`initialize()` 由公告（宿主句柄、尺寸、默认程序）建会话并交给执行器；`beginFrame/endFrame/swapBuffers` 走会话的帧协议（**空帧照样编译、录制、呈递**）；`setWindowHandle/nativeHandle`、`resize` 是公告（下次起会话时生效、活着时报一次）；诊断走核心的**一条**路（会话自己的报告由 SDK 的 sink 与 `diagnosticCount()` 看到，门面不重复报）；画的一半（pass/离屏/内容/全屏/读回）**每处报一次"还没服务"**（`core::ReportOnce`），`supportsRenderTargets() == false`（引擎在摆离屏工作**之前**就知道）。真设备用例两条：①无会话开帧 ⇒ 报一次；三次空帧 ⇒ `framesPresented()==3`、`deviceWaits()==0`、健康会话零报告；三趟 pass 回路 ⇒ **恰好 4 条**报告（`endPass` 与会话内的 `beginPass` 同一条情节）；活着的 `resize` 报一次；再 `initialize()` ⇒ 计数归零；双 `shutdown()` 后再起来照样呈递；②宿主面被采纳、**换另一个宿主面不重建会话**（帧号 2→3 连续），两次关闭后两个宿主窗口都还活着。**本片撞出的真问题**：空帧若提交**空命令图**，被 acquire 的图像停在 `UNDEFINED` ⇒ 呈递 **VUID 01430**（实测 16 行，gtest 全绿）——把图像搬出 `UNDEFINED` 的是**窗口那棵 render graph**（会话自己那张初始化期的图里就有它）；修法 = 计划为空时不换图、直接 `commit` 会话自己的图。变异 **4/4 红**（不呈递 ⇒ 5 行 + 6 VUID；又交空图 ⇒ 16 VUID；不报告 ⇒ 3 行；`supportsRenderTargets` 说谎 ⇒ 3 行）（§11.16bd）。 |
+| **M9 下一步** | **门面第二片**：pass 协议接到内容层（`beginPass/endPass/setViewport/setClearPolicy/render` → `api::FrameRecorder` + `ContentAssembly`），让宿主经 SDK 画出内容；再往下是离屏目标 / 读回与工厂切换。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3801,3 +3803,53 @@ drawable 的纹理归档**（栈上的残留值）。实测形态：天空盒用
 
 **本片留下的口子（登记）**：①天空"跟随相机/当作无穷远"是宿主的事（demo 的盒子是静态的，内容 push ABI 里没有视图旋转）；②集合与
 半片停靠窗口各自独立、窗口 live 采样与 `refresh()` 成功臂不可驱动、设备半边"某一侧没说就跳过"（皆是旧口子）。
+
+### 11.16bd M9a（2026-09-23）：门面立起来——SDK 的方法落到会话与帧驱动上
+
+前面每一片的证据都是测试**直接**调用 `api::` 的那些件（会话、执行器、内容层、编译器）。这一片第一次把
+`vine::graphics::RenderBackend` 这条**引擎看得到的缝**接上：`api/VsgBackend`（`VsgBackend : RenderBackend`，
+PImpl）不自己决定任何事——它把 SDK 的调用翻成对已有件的驱动，翻不过去的**报出来**。
+
+**它今天服务的东西**（就是 SDK 契约里"后端该有的骨架"）：
+
+* **生命周期**：`initialize()` 由公告（宿主句柄、最后一次 `resize` 的尺寸、默认内容程序）建会话、把窗口目标注册给执行
+  器；`shutdown()` 幂等、可以在任何 `initialize()` 之前调、之后还能再起来——宿主重建表面的路径就是"下来、上去"。
+* **帧协议**：`beginFrame()` 开帧（快照 + 会话开帧）、`endFrame()` 收帧（计划冻结、按这一帧画进哪里编译）、
+  `swapBuffers()` 把计划交给执行器（应用目标计划、录制、提交、呈递）。**空帧也走全套**——SDK 自己的规则：开帧
+  可能 acquire 了图，把它还回去的唯一调用是呈递。
+* **表面事实**：`setWindowHandle()` 在 `initialize()` 前公告，采纳后 `nativeHandle()` 答的是宿主那个；`resize()` 是
+  **公告**——下次起会话时用它建窗口，会话活着时报一次（活着改尺寸是后面的片）。
+* **诊断**：这一层**一条都不自己报**——核心的 `Diagnostics` 转发进 SDK 的 `reportDiagnostic`，所以宿主装的 sink 与
+  `diagnosticCount()` 看到的就是会话/执行器自己的那些报告；门面只补"这一步我还没有"。
+* **画的那一半一律报"还没服务"**：`beginPass/endPass/setPassOrder/setViewport/setLights/setPassInputs/setDepthMode/
+  setClearPolicy/render/drawScreenProgram/setRenderTarget/readColorBuffer/readDepthBuffer` 每处用 `core::ReportOnce`
+  报**一次**（`UnsupportedRequest`；读回另答 false + `ReadbackResult::Unsupported`），`supportsRenderTargets()` 答
+  **false**：引擎在**摆**离屏工作之前就会问一次，"拒绝"是一个被告知的状态，而不是一个黑屏。
+
+证据（真设备，`VsgBackendTest`，两条用例）：
+
+* `TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItCannotServe`：没有会话时开帧 ⇒ 报一次、不开帧；起来
+  之后三帧空帧 ⇒ `framesPresented() == 3`、`deviceWaits() == 0`、**健康会话零报告**；三趟 pass 回路
+  （`beginPass/setViewport/setClearPolicy/render/endPass`）**恰好 4 条**报告（`endPass` 与会话内部的 `beginPass` 是
+  同一条情节，它没有自己的槽）；`supportsRenderTargets() == false`；活着的 `resize` 报一次；再 `initialize()` ⇒
+  `framesPresented()` 归零；双 `shutdown()` 之后再起来照样呈递。sink 与 `diagnosticCount()` 逐条对齐。
+* `AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession`：采纳 `TestHostWindow`、走两帧，再公告**另一个**宿主面
+  ⇒ 移动**保住会话**（`framesPresented() == 3`：帧号接着数，而不是从头——重建会话才会从头）；两次关闭之后两个宿主
+  窗口都还活着（窗口是宿主的）。
+
+**本片撞出的真问题（它自己的用例抓的）**：门面第一版的 `swapBuffers()` 给空帧交了 `makeFrameGraph()` 的**空命令
+图**——gtest 全绿，验证层却给每条呈递一条 **VUID 01430**（presented image is in `VK_IMAGE_LAYOUT_UNDEFINED`，实测
+16 行）。原因不在 acquire：临时打进 `Session::beginFrame/commitFrame` 的打印证明 imageIndex 在 0/1/2 之间轮转、
+尺寸公告（640x360 → 320x180）真的生效。**把图像搬出 `UNDEFINED` 的是窗口那棵 render graph**——会话自己那张初始
+化期的图里就有它（所以会话自己的空帧路径从来干净），空命令图里什么都没有。修法：**计划为空时不换图**——直接
+`commit` 会话自己的那张（`Session::commitFrame`）；有 pass 的帧再照 M8q/M8o 的驱动形状自建图（窗口那趟由
+`recordWindow` 把窗口图放进新图里）。这不是"测试口味"，是一条不变量：**acquire 过的图必须有一趟 render pass 走
+过它，才轮得到呈递**。
+
+变异 4/4 红：①空帧不呈递（不 commit）⇒ 5 行红 + 6 VUID；②又交空图（复现上面的问题）⇒ **16 VUID**（gtest 0 行）；
+③"未服务"的报一声不响 ⇒ 3 行红；④`supportsRenderTargets()` 说谎（答 true）⇒ 3 行红。门禁 **652 用例 / 99 套件**、
+0 VUID / 0 SYNC-HAZARD、hygiene 0 / 852、相位 11 行 / 2 次运行。
+
+**本片留下的口子（登记）**：①门面今天的计划永远是空的（画的一半全部拒绝），所以"有 pass 的帧"那条驱动形状要等
+门面第二片才真被用过；②活着的 `resize` 只报不改（会话 swapchain 的形状只有平台能换采样）；③集合与半片停靠窗口
+各自独立、窗口 `facts()` 的 live 采样与 `refresh()` 成功臂不可驱动、设备半边"某一侧没说就跳过"（皆是旧口子）。
