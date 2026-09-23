@@ -19,11 +19,14 @@
 #include <vine/vsg/api/ContentHalves.hpp>
 #include <vine/vsg/api/ContentSets.hpp>
 #include <vine/vsg/api/DeviceProbe.hpp>
+#include <vine/vsg/api/HostTargets.hpp>
 #include <vine/vsg/api/VsgBackend.hpp>
+#include <vine/vsg/core/FrameCompiler.hpp>
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -39,6 +42,8 @@ using vine::graphics::ShaderProgram;
 using vine::graphics::ShaderStage;
 using vine::graphics::ShaderStageType;
 using vine::vsg::ContentAssembly;
+using vine::vsg::core::TargetFacts;
+using vine::vsg::HostTargets;
 using vine::vsg::PassRegistry;
 using vine::vsg::VsgBackend;
 using vine::vsg::api::probePhysicalDevices;
@@ -80,6 +85,17 @@ bool isColourByte(std::uint8_t byte, double value)
 bool isGreenClear(const std::array<std::uint8_t, 3>& pixel)
 {
     return isColourByte(pixel[1], 0.25) && isColourByte(pixel[0], 0.0) && isColourByte(pixel[2], 0.0);
+}
+
+/// @brief Whether a pixel is saturated red: linear (1, 0, 0), in either colour space and either byte order.
+///
+/// The byte order is the display server's (a B8G8R8A8 surface delivers red in the LAST byte), so the two
+/// outer channels are read as a set - the same convention SessionContentTest's window probes use.
+bool isRed(const std::array<std::uint8_t, 3>& pixel)
+{
+    return isColourByte(pixel[1], 0.0) &&
+           ((isColourByte(pixel[0], 1.0) && isColourByte(pixel[2], 0.0)) ||
+            (isColourByte(pixel[2], 1.0) && isColourByte(pixel[0], 0.0)));
 }
 
 /// @brief A camera looking at (x, 0, 0) from (x, 0, 1.5), through an orthographic window of [-1, 1] squared.
@@ -138,30 +154,32 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "a healthy session reports nothing";
 
     // 3. What is still NOT served says so, once per entry point: a backend that dropped it in silence would
-    // be a working-looking black screen, which is the one answer the SDK forbids. (The pass protocol and
-    // the content drawing ARE served now - see the content case below.)
+    // be a working-looking black screen, which is the one answer the SDK forbids. (The pass protocol, the
+    // content drawing and the off-screen targets ARE served now - see the content cases below.)
     const vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
     std::vector<std::uint8_t>               pixels;
     std::vector<float>                      depths;
     const std::size_t                       before_unserved = backend->diagnosticCount();
-    backend->setRenderTarget(target.get());    // an off-screen target (and its attachments) is not served
-    backend->setPassInputs({ target.get() });  // nor are the pass inputs that read one
-    backend->drawScreenProgram(target.get(), nullptr, nullptr);
     vine::graphics::ReadbackResult why = vine::graphics::ReadbackResult::Ok;
     EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
     EXPECT_EQ(why, vine::graphics::ReadbackResult::Unsupported);
     EXPECT_FALSE(backend->readDepthBuffer(target.get(), depths, &why));
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 5U)
-        << "an off-screen target, its declared inputs, a screen draw and the two readbacks report once each";
-    backend->setRenderTarget(target.get());
-    backend->setPassInputs({ target.get() });
-    backend->drawScreenProgram(target.get(), nullptr, nullptr);
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U) << "the two readbacks report once each";
     (void)backend->readColorBuffer(target.get(), 0, pixels);
     (void)backend->readDepthBuffer(target.get(), depths);
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 5U) << "a repeated call is the same episode";
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U) << "a repeated call is the same episode";
     EXPECT_EQ(seen, backend->diagnosticCount());
-    EXPECT_FALSE(backend->supportsRenderTargets())
-        << "declining is how the engine knows before it stages off-screen work";
+    EXPECT_TRUE(backend->supportsRenderTargets()) << "the off-screen half is served now";
+
+    // An off-screen target is HELD from the moment it is announced - even before it can be built, because a
+    // host configures a target before it draws into it - and the release announcement drops it, which is what
+    // lets the host destroy the object. Both are served silently (there is nothing to report about a
+    // description that is simply not complete yet).
+    backend->setRenderTarget(target.get());
+    EXPECT_EQ(BackendContentAccess::targets(*backend).live(), 1U);
+    backend->releaseRenderTarget(target.get());
+    EXPECT_EQ(BackendContentAccess::targets(*backend).live(), 0U);
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U) << "holding and releasing a target is served";
 
     // 4. The protocol still judges: a DRAWING call with no scope open has nothing to belong to, so the
     // plan's recorder refuses it and says so - once per frame, because a host that lost its scopes hits this
@@ -171,14 +189,14 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     backend->render({}, nullptr);
     backend->endFrame();
     backend->swapBuffers();
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 5U + 1U)
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U + 1U)
         << "the first scope-less draw is refused out loud, the second is the same episode";
     EXPECT_EQ(backend->framesPresented(), 4U) << "a frame whose draws were all refused still presents";
 
     // 5. The announced size is the SURFACE's, and this backend owns the surface it created: the announcement
     // is applied by the next initialize() (the window comes up at it) and reported while the session is live.
     backend->resize(320, 180);
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 5U + 1U + 1U)
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U + 1U + 1U)
         << "a live surface keeps its size for now, and says so";
 
     ASSERT_TRUE(backend->initialize()) << "re-initializing tears the old session down first (the SDK's contract)";
@@ -439,6 +457,211 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     EXPECT_EQ(registry.live(), 0U);
     backend->beginPass(pass.get());
     EXPECT_NE(registry.adopt(pass.get()), first_id) << "a re-announced pass gets a new identity";
+
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
+TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 128;
+    constexpr int kHeight = 96;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::size_t                     seen = 0;
+    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+        ++seen;
+        std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
+                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    as_bytes(diagnostic.message).c_str());
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->supportsRenderTargets()) << "the off-screen half is served";
+
+    // The host's own target, described the way a pipeline builder describes one: one RGBA8 attachment, 64x64.
+    // The objects behind it are the backend's (the SDK's own contract: "the RenderTarget stays a logical
+    // description"), built the first time a pass draws into it.
+    const vine::intrusive_ptr<RenderTarget> offscreen(new RenderTarget());
+    offscreen->attachColor(RenderTarget::ColorFormat::RGBA8);
+    offscreen->setSize(64, 64);
+
+    // The content of the off-screen pass: a red triangle under a view-block program.
+    const vine::intrusive_ptr<ShaderProgram> content_program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
+        content_program->addStage(vertex);
+        content_program->addStage(fragment);
+    }
+
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vine::intrusive_ptr<vine::Buffer<float>> positions = vine::intrusive_ptr<vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices =
+        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
+            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    geometry->setPositions(positions);
+    geometry->setIndices(indices);
+    geometry->setRevision(1U);
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = content_program;
+    const std::vector<RenderCommand> commands{ command };
+
+    const vine::intrusive_ptr<vine::graphics::Camera> camera = cameraLookingAt(0.5);
+
+    // The full-screen program is the SDK's OWN copy program - the engine's vocabulary, not a text written for
+    // this test: it declares its sampler as `layout(binding = 0)` and reads attachment 0 of its source.
+    const vine::intrusive_ptr<ShaderProgram> copy_program = vine::graphics::screenCopyProgram(0);
+    ASSERT_NE(copy_program, nullptr) << "the SDK ships the copy program the screen path draws with";
+
+    const vine::intrusive_ptr<RenderPass> offscreen_pass(new RenderPass());
+    const vine::intrusive_ptr<RenderPass> window_pass(new RenderPass());
+
+    // The SCREEN's clear is blue and the TARGET's is green, so a window pixel says which one a frame ended
+    // with: the screen draw covers the window, so a pixel the screen draw touched is the TARGET's picture -
+    // the triangle, or the target's clear.
+    const vine::graphics::ClearPolicy offscreen_clear{ vine::Color(0, 64, 0, 255), true };
+    const vine::graphics::ClearPolicy window_clear{ vine::Color(0, 0, 64, 255), true };
+
+    const auto drive = [&]() {
+        backend->beginFrame();
+        backend->beginPass(offscreen_pass.get());
+        backend->setPassOrder(-1);
+        backend->setRenderTarget(offscreen.get());
+        backend->setClearPolicy(offscreen_clear);
+        backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        backend->render(commands, camera.get());
+        backend->endPass();
+
+        backend->beginPass(window_pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setPassInputs({ offscreen.get() });
+        backend->setClearPolicy(window_clear);
+        backend->setDepthMode(vine::graphics::DepthMode::Disabled);
+        backend->drawScreenProgram(offscreen.get(), copy_program.get(), camera.get());
+        backend->endPass();
+
+        backend->endFrame();
+        backend->swapBuffers();
+    };
+    const auto settle = [&] {
+        for (int index = 0; index < 2; ++index)
+        {
+            backend->beginFrame();
+            backend->endFrame();
+            backend->swapBuffers();
+        }
+    };
+
+    // 1. One frame, two passes: the content draws into the TARGET (its own clear and camera), and a full-screen
+    // copy takes what it wrote to the WINDOW - through the declared input, which is the only thing a screen
+    // draw reads.
+    drive();
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "two passes, one reading the other's colour attachment";
+    const auto& recorded = BackendContentAccess::executor(*backend).recorded();
+    ASSERT_EQ(recorded.size(), 2U) << "both passes are recorded, in the plan's execution order";
+    EXPECT_EQ(recorded[0], BackendContentAccess::passes(*backend).adopt(offscreen_pass.get()));
+    EXPECT_EQ(recorded[1], BackendContentAccess::passes(*backend).adopt(window_pass.get()));
+
+    // The facts of a BUILT target, which are what the plan was compiled from.
+    HostTargets&       targets = BackendContentAccess::targets(*backend);
+    HostTargets::Entry* entry  = targets.find(offscreen.get());
+    ASSERT_NE(entry, nullptr);
+    ASSERT_NE(entry->target, nullptr) << "the target was built when its first pass was announced";
+    TargetFacts row;
+    targets.facts(*entry, row);
+    EXPECT_EQ(row.wanted.width, 64);
+    EXPECT_EQ(row.wanted.height, 64);
+    EXPECT_FALSE(row.wanted.shape.device_color_formats.empty())
+        << "a built target states the device's own spelling of its shape";
+    EXPECT_TRUE(row.current.built) << "its first pass has been recorded (see OffscreenTarget::written)";
+    EXPECT_EQ(row.depth.has_depth, false) << "the host attached no depth";
+
+    settle();
+    const auto left   = host.pixel(kWidth / 4, kHeight / 2);
+    const auto right  = host.pixel(3 * kWidth / 4, kHeight / 2);
+    const auto corner = host.pixel(2, 2);
+    EXPECT_TRUE(isRed(left)) << "the triangle drawn into the TARGET reached the window through the screen draw: got ("
+                             << static_cast<int>(left[0]) << ", " << static_cast<int>(left[1]) << ", "
+                             << static_cast<int>(left[2]) << ")";
+    EXPECT_TRUE(isGreenClear(right)) << "the rest of the window is the TARGET's clear, not the window's own";
+    EXPECT_TRUE(isGreenClear(corner));
+
+    // 2. The host RESIZES its target: the facts say the extent moved, the plan answers for it, and the executor
+    // applies the answer before the frame records - so the pass draws into images of the new size.
+    offscreen->setSize(32, 48);
+    drive();
+    EXPECT_EQ(entry->target->width(), 32U) << "the plan's answer was applied to the target";
+    EXPECT_EQ(entry->target->height(), 48U);
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+    settle();
+    EXPECT_TRUE(isRed(host.pixel(kWidth / 4, kHeight / 2))) << "the picture survives the resize";
+
+    // 3. The host attaches a SECOND colour attachment: the target's SHAPE changed, which the plan answers with
+    // a rebuild - and the frame that follows draws into the rebuilt target (a plan that said Rebuild is not
+    // recorded against the old shape's pipelines, see VsgExecutor).
+    offscreen->attachColor(RenderTarget::ColorFormat::RGBA8);
+    drive();
+    EXPECT_EQ(entry->target->colorAttachmentCount(), 2U) << "the rebuild gave the target the shape the host asked for";
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+    settle();
+    EXPECT_TRUE(isRed(host.pixel(kWidth / 4, kHeight / 2)))
+        << "the screen still samples attachment 0 of the rebuilt target";
+
+    // 4. The release announcement: everything this backend held for the target goes, and the host may destroy
+    // the object (nothing may be dereferenced after this call - see the SDK's note).
+    backend->releaseRenderTarget(offscreen.get());
+    EXPECT_EQ(targets.live(), 0U);
+    EXPECT_EQ(targets.find(offscreen.get()), nullptr);
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "the release is served silently";
+
+    // 5. A target that borrows a depth from one this backend does not hold cannot be built, and that is SAID
+    // (once): a pass staged into it is skipped by the executor, never redirected to the window (see the SDK's
+    // releaseRenderTarget note for the same rule).
+    const vine::intrusive_ptr<RenderTarget> lenderless(new RenderTarget());
+    lenderless->attachColor(RenderTarget::ColorFormat::RGBA8);
+    lenderless->shareDepth(offscreen);  // the lender was released a moment ago
+    lenderless->setSize(32, 32);
+    backend->setRenderTarget(lenderless.get());
+    EXPECT_EQ(backend->diagnosticCount(), 1U) << "the missing lender is reported, once";
+    EXPECT_EQ(targets.find(lenderless.get())->target, nullptr) << "and nothing was built for it";
+    backend->setRenderTarget(lenderless.get());
+    backend->setRenderTarget(lenderless.get());
+    EXPECT_EQ(backend->diagnosticCount(), 1U) << "three announcements are one episode";
+    backend->releaseRenderTarget(lenderless.get());
 
     backend->shutdown();
     EXPECT_TRUE(host.alive());

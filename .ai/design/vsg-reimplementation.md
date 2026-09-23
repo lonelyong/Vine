@@ -76,10 +76,11 @@
 > M8m 帧驱动应用计划的答案（§11.16av）、M8n 会话的提交也自己说（§11.16aw）、M8o 窗口路径一次调用（§11.16ax）、
 > M8p 每帧换图不再拆机器（§11.16ay）、M8q 丢帧的会话自己活下来（§11.16az）、
 > M8r 计划说的形状连格式一起核对（§11.16ba）、M8s 窗口的答案也有执行者（§11.16bb）、
-> M8t `skyMap` 是 drawable 自己的图（§11.16bc）、M9a 门面立起来（§11.16bd）、M9b pass 协议接到内容层（§11.16be）。
+> M8t `skyMap` 是 drawable 自己的图（§11.16bc）、M9a 门面立起来（§11.16bd）、M9b pass 协议接到内容层（§11.16be）、
+> M9c 离屏那一半（§11.16bf）。
 > 下一步：
-> **门面第三片**：离屏目标（`supportsRenderTargets()` 转真、`setRenderTarget(target)` 建/换 GPU 附件、`setPassInputs` 绑定、
-> `drawScreenProgram` 与读回），或先把**工厂切到门面**（把 "vsg" 这个名字从旧实现换成 `VsgBackend`）。
+> **门面第四片**：读回（`readColorBuffer`/`readDepthBuffer`：capture 的录制策略 + 设备等待 + 字节/浮点拷出），
+> 或先把**工厂切到门面**（把 "vsg" 这个名字从旧实现换成 `VsgBackend`）。
 > 场景桥的登记项（`skyMap`）至此清空；其余遗留口子见下。
 > 其余遗留口子：集合与半片停靠窗口各自独立；窗口 `facts()` 的 live 采样与 `refresh()` 的成功臂今天没有可驱动的触发（登记）；
 > 设备半边在"某一侧没说"时跳过（登记）。
@@ -2637,7 +2638,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8t（`skyMap` 是 drawable 自己的图）~~ | **已完成（2026-09-23）**：名字表改正——`skyMap` 与 `diffuseMap` 同一行（`Material`，引擎自带天空程序的文本自己写着它是 material 的纹理、在同 ABI 的 diffuse 槽），`Environment` 行与那一整套拒绝删除；材质图的**种类必须对得上声明的采样器**（`ContentSets` 按声明的种类给 fallback、不一致 ⇒ 声明的白 + 计数；`createScreen` 拒 cube 声明）；顺手抓到并修掉**两处未初始化的 `ImageSource`**（没贴图的材质被按上一个 drawable 的纹理归档）；真设备用例 = 引擎自带 `skyboxProgram` 四个方向条带（+Z 洋红 / +X 红 / 无图白 / 2D 图配 cube 声明 ⇒ 白）+ 计数器；变异 **5/5 红**（其中两条带 6 / 2 条 VUID）（§11.16bc）。 |
 | ~~M9a（门面立起来：会话生命周期 + 空帧驱动）~~ | **已完成（2026-09-23）**：`api/VsgBackend`（`VsgBackend : vine::graphics::RenderBackend`，PImpl）——引擎与重写版之间的缝：`initialize()` 由公告（宿主句柄、尺寸、默认程序）建会话并交给执行器；`beginFrame/endFrame/swapBuffers` 走会话的帧协议（**空帧照样编译、录制、呈递**）；`setWindowHandle/nativeHandle`、`resize` 是公告（下次起会话时生效、活着时报一次）；诊断走核心的**一条**路（会话自己的报告由 SDK 的 sink 与 `diagnosticCount()` 看到，门面不重复报）；画的一半（pass/离屏/内容/全屏/读回）**每处报一次"还没服务"**（`core::ReportOnce`），`supportsRenderTargets() == false`（引擎在摆离屏工作**之前**就知道）。真设备用例两条：①无会话开帧 ⇒ 报一次；三次空帧 ⇒ `framesPresented()==3`、`deviceWaits()==0`、健康会话零报告；三趟 pass 回路 ⇒ **恰好 4 条**报告（`endPass` 与会话内的 `beginPass` 同一条情节）；活着的 `resize` 报一次；再 `initialize()` ⇒ 计数归零；双 `shutdown()` 后再起来照样呈递；②宿主面被采纳、**换另一个宿主面不重建会话**（帧号 2→3 连续），两次关闭后两个宿主窗口都还活着。**本片撞出的真问题**：空帧若提交**空命令图**，被 acquire 的图像停在 `UNDEFINED` ⇒ 呈递 **VUID 01430**（实测 16 行，gtest 全绿）——把图像搬出 `UNDEFINED` 的是**窗口那棵 render graph**（会话自己那张初始化期的图里就有它）；修法 = 计划为空时不换图、直接 `commit` 会话自己的图。变异 **4/4 红**（不呈递 ⇒ 5 行 + 6 VUID；又交空图 ⇒ 16 VUID；不报告 ⇒ 3 行；`supportsRenderTargets` 说谎 ⇒ 3 行）（§11.16bd）。 |
 | ~~M9b（pass 协议接到内容层）~~ | **已完成（2026-09-23）**：`VsgBackend` 把 SDK 的 pass 协议翻进计划录制器——`beginPass` 经新的 `api/PassRegistry`（SDK 的 pass 对象 → `core::PassId`，**号永不复用**、`releasePass()` 只忘身份）交给 `core::FrameRecorder`，`endPass/setPassOrder/setRenderTarget(nullptr)/setViewport/setClearPolicy/setDepthMode/setLights/render` 全部照收；**帧外的调用**（引擎的 pre-frame warm-up：每个 enabled 非清屏 pass 在**任何帧之前**执行一次）按 SDK 契约**惰性**——只有 pass 身份留下；`render()` 顺带把命令点名的 geometry/material/program 追踪进 `ContentStore`（默认程序在 `initialize` 时追）；`swapBuffers` 现在**真的组装内容**（`ContentAssembly`：开块预算 + 表 → 每趟 pass 的半片/集合/输入/视图块 → `executor.record(frame, graph, packets)`），视图块按**该趟的相机 + 帧时钟 + 窗口尺寸**建，兼容性取窗口自己的形状。**本片撞出的真缺陷**：执行器的窗口臂把每帧内容**累加**进保留视图（`addContent`）——两帧之间移动相机就能看见"上一帧的画还在"且组无边增长；修法 = `WindowTarget::beginFrame()`（帧首清掉**本帧内容组**，宿主的会话根不动）+ `addFrameContent()`，执行器在**本帧第一趟窗口 pass** 调它（空帧不调：上一幅画照旧被呈递）。真设备用例（warm-up 惰性 + 身份跨帧、像素里读到相机 x / 窗口尺寸 / 清屏色、第二帧"稳态零构建"、第三帧换相机 ⇒ 左半旧画**消失**、右半新画就位、`deviceWaits()==0`、pass 释放即重发得新号）+ 无设备 `PassRegistryTest`；变异 **7/7 红**（不换帧内容/不组装内容/不开范围/丢清屏色/不追踪对象/不释放身份/warm-up 进录制器）。门禁 **655 用例 / 100 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 856、相位 11 行 / 2 次（§11.16be）。 |
-| **M9 下一步** | **门面第三片**：离屏目标 / 读回 / 全屏程序（`supportsRenderTargets()` 转真），或先把工厂切到门面。 |
+| ~~M9c（离屏那一半：目标、输入、全屏、重建）~~ | **已完成（2026-09-23）**：`supportsRenderTargets()` 转真；新 `api/HostTargets`——宿主 `RenderTarget` 的**描述是快照**（每次点名比字段更新，稳态零分配；绝不留宿主指针）、对象**懒建**（正值尺寸 + 至少一个彩色附件才建；建不成与"还缺描述"分开作答：`NotBuilt`/`DepthSourceMissing`/`BuildFailed`）、借来的深度持**lender 的 share**（`shared_ptr`，lender 被释放而 borrower 还在也不悬空）；`facts()` 是计划解析**目标与输入**的那张表（引擎半边永远是宿主的话；**设备半边只在引擎形状没变时**才说——M8r 的"不知道不是没有"；深度的事实：建成后按目标自己的 `layout()` 报 promotion、borrowed 时永不承诺；shadow 声明（谁的图 + 产出者的矩阵）原样搬）；门面：`setRenderTarget` 建/注册/交身份（只报 `DepthSourceMissing`/`BuildFailed` 一次、`Ready` 后重置情节；`NotBuilt` 静默——宿主先配后画）、`setPassInputs` 观察 + 转身份、`drawScreenProgram` 追踪片元程序 + 交身份、`releaseRenderTarget` 忘条目 + 注销执行器 + 让 recorder 丢掉挂起公告；内容驱动按**每趟自己的目标**取兼容性与尺寸（窗口或宿主目标），每个**声明输入**给一条 `InputImages`（该目标的彩色视图 + 计划说可采样时的深度视图，scratch 复用不每帧分配）。真设备用例：离屏目标画三角 → SDK 自带 `screenCopyProgram(0)` 复制到窗口（像素：红三角 + **目标自己的清屏绿**，不是窗口的清屏蓝）；建成目标的 facts（设备拼写非空、`built` 真）；`setSize` ⇒ 计划答 ResizeInPlace、**目标真的变 32×48**、画还在；`attachColor` 第二个附件 ⇒ 形状变 ⇒ 计划答 Rebuild、目标 2 附件、屏幕仍采附件 0；释放后 `live()==0`；借一个**不存在的 lender** ⇒ 报一次（三次公告一条情节）。无设备 `HostTargetsTest`（快照 vs 活对象、借来的深度不是 borrower 的承诺、shadow 声明原样、释放只答一次）。变异 **7/7 红**（不建/不进事实表/丢目标身份/离屏不录内容/输入不给图/释放不清/**形状变了还说旧的设备格式**——后三条各带 12 / 2 / 2 条 VUID）。门禁 **658 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 859、相位 11 行 / 2 次（§11.16bf）。 |
+| **M9 下一步** | **门面第四片**：读回（`readColorBuffer`/`readDepthBuffer`），或先把工厂切到门面。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -3925,3 +3927,71 @@ hygiene 0 / 856、相位 11 行 / 2 次运行。
 `MaterialManager` 风格的材质编辑通知——`ContentStore::updateMaterial()` 存在但 SDK 的 `RenderBackend` 面里没有
 入口，等**工厂切换**时由宿主侧接线（登记）；③活着的 `resize` 只报不改；④集合与半片停靠窗口各自独立、窗口
 `facts()` 的 live 采样与 `refresh()` 成功臂不可驱动、设备半边"某一侧没说就跳过"（皆是旧口子）。
+
+### 11.16bf M9c（2026-09-23）：离屏那一半——目标、输入、全屏、重建
+
+M9b 让宿主经 SDK 画出**窗口**的内容；这一片把**离屏**那一半接上：`supportsRenderTargets()` 转真，宿主的
+`RenderTarget` 被持有、被画、被当输入采样，并且**形状变化真的触发重建**。至此门面的 SDK 面只剩读回与"活着的
+resize"。
+
+**`api/HostTargets`（新件）：宿主目标的描述快照、对象与事实**。三件事只有这一层能同时拿住：
+
+* **描述是快照，不是宿主指针**。SDK 的契约是"指针只在调用期间有效，宿主在 `releaseRenderTarget()` 之后就可
+  以销毁对象"，所以这里存的是**拷下来的描述**（每次点名按字段比对更新——同目标每帧公告是零分配），之后不再
+  解引用任何宿主对象。`RenderTarget stays a logical description` 是 SDK 自己的话。
+* **对象懒建**。描述够了才建（正值尺寸 + 至少一个彩色附件）；建不成与"还缺描述"**分开作答**：
+  `NotBuilt`（配置未完成的正常状态——宿主先配后画）、`DepthSourceMissing`（借的深度来自本后端没持有的
+  lender）、`BuildFailed`（完整却建不出来）。建成后的尺寸/形状变化是**计划的答案**（`planTarget`），由执行器
+  应用——这一层从不自己重建。
+* **`facts()` 是计划解析目标与输入的那张表**。引擎半边永远是宿主的原话；**设备半边只在附件正是为这套引擎形状
+  建的时候**才说（形状变了就没有"设备的拼写"可说——"不知道"不能读成"没有"，M8r 的规矩）；深度的事实：建成后
+  promotion 按**目标自己的 `layout()`** 报（重建保留的是它自己那份），借来的深度 `borrowed` + `source`，且
+  **永不是 borrower 的承诺**；shadow 声明（`shadowOf()` 的灯 + `hasProducerViewProjection` + 矩阵）原样搬进
+  `ShadowFacts`，从不推导。
+
+**借来的深度**（`shareDepth`）：borrower 的条目持**lender 的 `shared_ptr<OffscreenTarget>`**——SDK 那边
+`shareDepth` 自己保活源对象，这边是配套的另一半：lender 被 `releaseRenderTarget()` 释放时，注册表丢掉它的条目，
+但 borrower 还把它撑着，图像不会在飞行中被销毁。lender 必须**先被公告**（SDK 的调用序契约就是"源在同一帧更早
+渲染"），所以 lender 的解析发生在**公告的那一刻**，不是事后去找。
+
+**门面侧**：`setRenderTarget()` 建/注册（`executor.addTarget(identity, target)`）/把**身份**交给 recorder；
+只报 `DepthSourceMissing`/`BuildFailed` 一次（`Ready` 后 `rearm()`——同一个毛病再犯还报），`NotBuilt` **静默**
+（宿主先配后画；真需要的 pass 由执行器报"没告诉过我这个目标"）。`endFrame()` 的事实表在窗口之后**逐条目补
+行**（建没建都算——计划要能说"这个还没有对象"，而且编译器解析 **pass 的输入**用的就是同一张表）。`setPassInputs()`
+把每个非空输入 `observe()`（刷新描述——对象是它被画进去时建的，要新的是**事实**）后整表转交。`drawScreenProgram()`
+追踪它的**片元程序**（表要回答它的两份文本）后转交；源是**身份**，哪张图在 `setPassInputs` 那一步说过。
+`releaseRenderTarget()` 忘条目 + 注销执行器（那是借来的指针，绝不能悬）+ 让 recorder 丢掉挂起的公告。
+
+**内容驱动**按**每趟自己的目标**取兼容性与尺寸：窗口那趟用窗口的形状，宿主目标那趟用**该目标**的形状——所以
+离屏 pass 的管线与它自己的 render pass 对齐；每个**声明输入**给一条 `InputImages`：该目标的彩色视图（逐附件）
+＋ 计划说可采样时的深度视图（三个 scratch 容器复用，稳态不分配；每趟按声明数给等长条目，短一截会让录制器读过
+界）。
+
+**证据**（真设备 `VsgBackendTest.TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt`，宿主窗口 128×96，
+宿主目标 64×64）：
+
+* 一帧两趟：内容画进目标，SDK **自带的 `screenCopyProgram(0)`** 把它复制到窗口——窗口像素是**红三角 ＋ 目标
+  自己的清屏绿**（不是窗口的清屏蓝），左/右/角落三处都对（外围两字节按**集合**读：这个服务器发的是 BGRA 序，
+  红在最后一个字节——测试自己的坑，不是后端的）；
+* 建成目标的 facts：`wanted` 的引擎半边=宿主的话、**设备拼写非空**、`current.built == true`（第一趟录过就算）；
+* `setSize(32, 48)`：计划答 ResizeInPlace ⇒ 执行器应用 ⇒ **目标真的是 32×48**，画还在；
+* `attachColor` 加第二个附件：形状变 ⇒ 计划答 Rebuild ⇒ 目标 2 个附件、屏幕仍采附件 0；
+* 借一个刚被释放的 lender：报一次（三次公告一条情节）、条目的 `target == nullptr`。
+
+无设备侧 `HostTargetsTest`：描述是快照（对象改了、事实不动，直到再次公告）、`NotBuilt`、借来的深度不是
+borrower 的承诺、shadow 声明原样旅行、释放只答一次。
+
+第一个用例的"未服务"清单缩到**两条读回 + 活着的 resize + 无会话 + 内容世界不在**；`supportsRenderTargets()`
+翻身，所以**引擎现在会把离屏 pass 真的交给这个后端**。
+
+变异 **7/7 红**：①宿主目标永不建；②离屏目标不进事实表（编译器解析不了输入）；③`setRenderTarget` 丢身份
+（**12 条 VUID**——同一帧两次把窗口当目标）；④离屏趟不录内容（**2 条 VUID**：屏上复制一张没写过的图）；
+⑤输入不给图；⑥释放不清（用例数一下 `live()`）；⑦形状变了还说旧的设备格式（**2 条 VUID**：管线与 render pass
+不再相容）。门禁 **658 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 859、相位 11 行 / 2 次运行。
+
+**本片留下的口子（登记）**：①**读回**仍是"未服务"（下一片：capture 的录制策略 + 一次被计数的设备等待 + 字节
+取出）；②**借了深度的目标**（以及有 borrower 的 lender）会被 `OffscreenTarget::rebuild`/`resize` 的租约拒绝——
+宿主的 `shareDepth` 组合要保持同尺寸，形状变了得先释放再重建（写在这里，免得当成"重建坏了"）；③活着的目标上
+翻转 `depthPromotion` 不会被应用（目标的 `layout()` 说了算，事实跟着目标走——要变就得释放重建）；④活着的
+`resize` 只报不改；⑤集合与半片停靠窗口各自独立、窗口 live 采样与 `refresh()` 成功臂不可驱动、设备半边"某一侧
+没说就跳过"（皆是旧口子）。

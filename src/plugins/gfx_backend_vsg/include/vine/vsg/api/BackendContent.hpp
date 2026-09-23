@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vine/vsg/api/ContentAssembly.hpp>
+#include <vine/vsg/api/HostTargets.hpp>
 #include <vine/vsg/api/PassRegistry.hpp>
 #include <vine/vsg/api/VsgBackend.hpp>
 #include <vine/vsg/api/VsgExecutor.hpp>
@@ -42,6 +43,13 @@ class BackendContentAccess
      * @return The assembly, or null while the session is not up (it needs the session's device).
      */
     [[nodiscard]] static ContentAssembly* assembly(VsgBackend& backend) noexcept;
+
+    /** @brief Gets the host targets the facade holds (their entries are the plan's off-screen world).
+     *
+     * @param backend Backend to ask.
+     * @return The registry, valid for the backend's lifetime.
+     */
+    [[nodiscard]] static HostTargets& targets(VsgBackend& backend) noexcept;
 
     /** @brief Gets the executor the frame drive records through (its log is this frame's evidence).
      *

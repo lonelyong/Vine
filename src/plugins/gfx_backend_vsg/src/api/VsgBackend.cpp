@@ -9,12 +9,15 @@
 #include <vector>
 
 #include <vsg/app/CommandGraph.h>
+#include <vsg/state/ImageView.h>
+#include <vsg/vk/Device.h>
 
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/vsg/api/BackendContent.hpp>
 #include <vine/vsg/api/BlockStorage.hpp>
 #include <vine/vsg/api/ContentAssembly.hpp>
 #include <vine/vsg/api/ContentStore.hpp>
+#include <vine/vsg/api/HostTargets.hpp>
 #include <vine/vsg/api/MaterialImages.hpp>
 #include <vine/vsg/api/PassRegistry.hpp>
 #include <vine/vsg/api/Session.hpp>
@@ -42,11 +45,7 @@ vine::String asString(const std::string& text)
 /// @brief The entry points this facade cannot serve yet, one slot per call (see the class note).
 enum Unserved : std::size_t
 {
-    kUnservedTarget = 0U,
-    kUnservedInputs,
-    kUnservedScreenDraw,
-    kUnservedReleaseTarget,
-    kUnservedResize,
+    kUnservedResize = 0U,
     kUnservedColourRead,
     kUnservedDepthRead,
     kUnservedNoSession,
@@ -56,9 +55,8 @@ enum Unserved : std::size_t
 
 /// @brief The names the unserved reports use, in the enum's order.
 const char* const kUnservedNames[kUnservedCount]{
-    "setRenderTarget() (off-screen)", "setPassInputs() (declared inputs)", "drawScreenProgram()",
-    "releaseRenderTarget()", "resize() (live session)", "readColorBuffer()", "readDepthBuffer()",
-    "a frame without a session", "render() (the content world is not up)",
+    "resize() (live session)", "readColorBuffer()", "readDepthBuffer()", "a frame without a session",
+    "render() (the content world is not up)",
 };
 
 /// @brief Tracks @p program into @p store, when both exist (see setDefaultContentProgram).
@@ -76,16 +74,20 @@ void trackProgram(ContentStore* store, const vine::intrusive_ptr<const vine::gra
         const_cast<vine::graphics::ShaderProgram*>(program.get())));
 }
 
-/// @brief The content of every pass this slice can serve, one packet per pass that has any (see swapBuffers).
+/// @brief The content of every pass the frame's targets can be served for, one packet per pass that has any
+/// (see swapBuffers).
 ///
-/// The WINDOW is the only target served today: a pass whose target is an off-screen one produces no packet -
-/// the executor reports the pass instead of drawing it somewhere else, and content built for it would be
-/// content nothing records. A pass with no draws produces no packet either: its clear is the plan's own and
-/// records without help.
-std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarget& window, api::Session& session,
-                                           const core::CompiledFrame& frame,
-                                           std::vector<InputImages>&  input_scratch,
-                                           std::vector<PassContent>&  packets)
+/// WHICH TARGET decides the shape and the extent: a pass drawing into the window is compatible with the
+/// window's own shape and reconstructs from the window's extent, and a pass drawing into one of the host's
+/// targets is compatible with THAT target's shape - the shape its own render pass and attachments are - and
+/// uses its extent. A pass whose target this backend does not hold produces no packet: the executor reports
+/// the pass instead of drawing it somewhere else, and content built for it would be content nothing records.
+/// A pass with no draws produces no packet either: its clear is the plan's own and records without help.
+std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarget& window, HostTargets& targets,
+                                           api::Session& session, const core::CompiledFrame& frame,
+                                           std::vector<InputImages>& input_scratch,
+                                           std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
+                                           std::vector<PassContent>& packets)
 {
     packets.clear();
     (void)assembly.beginFrame(frame, session.timeline(), session.retirement());
@@ -95,20 +97,63 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
         {
             continue;
         }
-        if (frame.targets[pass.target_index].target != nullptr)
+
+        core::RenderPassCompatibility compatibility;
+        std::uint32_t                width  = 0;
+        std::uint32_t                height = 0;
+        if (const core::CompiledTarget& compiled_target = frame.targets[pass.target_index];
+            compiled_target.target == nullptr)
         {
-            continue;
+            compatibility = window.shape().compatibility();
+            width         = window.width();
+            height        = window.height();
         }
-        // One entry per DECLARED input, empty when nothing can offer one: the content recorder reads one
-        // entry per declaration, so a shorter span would read past its end - and "nothing offered" is the
-        // fact it reports, which a missing entry would not be.
+        else
+        {
+            const HostTargets::Entry* entry = targets.find(compiled_target.target);
+            if (entry == nullptr || entry->target == nullptr)
+            {
+                continue;
+            }
+            compatibility = entry->target->shape().compatibility();
+            width         = entry->target->width();
+            height        = entry->target->height();
+        }
+
+        // One entry per DECLARED input, in declaration order: what the input target offers a shader - each of
+        // its colour attachments, plus its depth while the plan says that one is sampleable. An input this
+        // backend does not hold offers nothing: the content recorder reads one entry per declaration, so a
+        // shorter span would read past its end - and "nothing offered" is the fact it reports, which a missing
+        // entry would not be.
         input_scratch.assign(pass.inputs.size(), InputImages{});
+        input_views.assign(pass.inputs.size(), {});
+        for (std::size_t index = 0; index < pass.inputs.size(); ++index)
+        {
+            const HostTargets::Entry* entry = targets.find(pass.inputs[index].target);
+            if (entry == nullptr || entry->target == nullptr)
+            {
+                continue;
+            }
+            std::vector<::vsg::ref_ptr<::vsg::ImageView>>& views = input_views[index];
+            views.clear();
+            const std::uint32_t attachments = entry->target->colorAttachmentCount();
+            for (std::uint32_t attachment = 0; attachment < attachments; ++attachment)
+            {
+                views.push_back(entry->target->colorView(attachment));
+            }
+            input_scratch[index].colors = views;
+            if (pass.inputs[index].depth_sampleable)
+            {
+                input_scratch[index].depth = entry->target->depthView();
+            }
+        }
+
         // The view block is the PASS' (the content layer's contract), built from the first drawing call's
         // camera - the engine's passes draw through one camera per scope, so the first is the pass'.
         const vine::graphics::VineViewBlock view_block =
-            buildViewBlock(pass.draws[0].camera, session.frameSeconds(), window.width(), window.height());
+            buildViewBlock(pass.draws[0].camera, session.frameSeconds(), width, height);
         ::vsg::ref_ptr<::vsg::Node> content;
-        (void)assembly.record(pass, window.shape().compatibility(), input_scratch,
+        (void)assembly.record(pass, compatibility, input_scratch,
                               std::as_bytes(std::span<const vine::graphics::VineViewBlock>(&view_block, 1U)),
                               content);
         packets.push_back(PassContent{ pass.pass, std::move(content) });
@@ -127,7 +172,8 @@ struct VsgBackend::Data
     core::FrameCompiler compiler{ arena, diagnostics, observe };
     api::Session        session;
     VsgExecutor         executor{ diagnostics };
-    PassRegistry        passes;  ///< The SDK's pass objects, as the numbers the plan carries (see the header).
+    PassRegistry        passes;   ///< The SDK's pass objects, as the numbers the plan carries (see the header).
+    HostTargets         targets;  ///< The host's off-screen targets (see the header and api/HostTargets).
 
     // The content world: built with the session because its pieces belong to the session's device (see
     // initialize), torn down before the session because the device goes with it. The store is device-free,
@@ -147,6 +193,9 @@ struct VsgBackend::Data
     std::vector<core::TargetFacts>            facts;          ///< This frame's target table (borrowed rows).
     std::vector<const vine::graphics::Light*> light_scratch;  ///< Reused by setLights (no per-call allocation).
     std::vector<InputImages>                  input_scratch;  ///< Reused per content pass (see recordContent).
+    /// One colour-view list per declared input, reused per pass: the InputImages spans point into these, so
+    /// they must outlive the record call and must not be reallocated while it runs (see recordContent).
+    std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_views;
     std::vector<PassContent>                  packets;        ///< Reused per frame (see recordContent).
     const core::CompiledFrame*                frame{nullptr}; ///< This frame's plan, between end and swap.
 };
@@ -220,6 +269,9 @@ void VsgBackend::shutdown()
     d->store.reset();
     d->images.reset();
     d->storage.reset();
+    // And the host's targets: their objects belong to the same device (a borrower's share of a lender's image
+    // goes with its own entry - see api/HostTargets).
+    d->targets.clear();
     d->session.shutdown();
 }
 
@@ -246,11 +298,19 @@ void VsgBackend::endFrame()
     (void)d->recorder.swapBuffers();  // closes the frame's books: endFrame() alone only leaves the pass scope
 
     // The facts the plan is compiled against: the window as the default framebuffer, answered by the target
-    // itself (see WindowTarget::facts) - off-screen targets join this table in the slice that serves them.
+    // itself (see WindowTarget::facts), plus one row per host target this backend holds - built or not,
+    // because the plan has to be able to say "this one has no objects yet", and because the compiler resolves
+    // a pass' declared INPUTS from this same table (see HostTargets::facts).
     d->facts.clear();
     if (WindowTarget* window = detail::SessionContentAccess::windowTarget(d->session))
     {
         d->facts.push_back(window->facts());
+    }
+    for (const std::unique_ptr<HostTargets::Entry>& entry : d->targets.entries())
+    {
+        core::TargetFacts row;
+        d->targets.facts(*entry, row);
+        d->facts.push_back(row);
     }
     d->frame = &d->compiler.compile(d->recorder.description(), core::FrameFacts{ d->facts });
 }
@@ -293,7 +353,8 @@ void VsgBackend::swapBuffers()
     if (WindowTarget* window = detail::SessionContentAccess::windowTarget(d->session);
         d->assembly != nullptr && window != nullptr)
     {
-        packets = recordContent(*d->assembly, *window, d->session, *d->frame, d->input_scratch, d->packets);
+        packets = recordContent(*d->assembly, *window, d->targets, d->session, *d->frame, d->input_scratch,
+                                d->input_views, d->packets);
     }
 
     (void)d->executor.record(*d->frame, graph, packets);
@@ -347,26 +408,57 @@ void VsgBackend::setDefaultContentProgram(vine::intrusive_ptr<const vine::graphi
 
 bool VsgBackend::supportsRenderTargets()
 {
-    // The off-screen half is a later slice, and declining HERE is how the engine knows before it stages
-    // off-screen work (see the SDK's note): accepting targets and drawing them nowhere would be a wrong
-    // picture instead of a slow one.
-    return false;
+    // The off-screen half is served now: a non-null target is held (api/HostTargets), drawn into by the
+    // passes that announce it, and read back through the readback entry points (which are still reported as
+    // not served - see the header).
+    return true;
 }
 
 void VsgBackend::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> target)
 {
-    if (target != nullptr)
+    if (target == nullptr)
     {
-        // Declining is the state the SDK's supportsRenderTargets() note describes - the engine is told the
-        // backend cannot do off-screen targets - and the announcement is DROPPED here: the plan must not
-        // name a target nothing can record, or the pass would draw into the window while the host believes
-        // it draws elsewhere.
-        reportUnserved(kUnservedTarget);
+        if (d->recorder.inPass())
+        {
+            (void)d->recorder.setRenderTarget(nullptr);  // the default framebuffer, spelled as the plan does
+        }
         return;
+    }
+
+    // The host's own target: its description is copied and its objects are built the first time the description
+    // can make them (see HostTargets - the resize / rebuild after that is the plan's answer, applied by the
+    // executor). A target this backend cannot build is REPORTED once rather than silently redirected to the
+    // window: a picture drawn where the host never asked for it is worse than one that did not arrive (the
+    // same rule the SDK's releaseRenderTarget note states for a target that went away mid-scope).
+    const HostTargets::Ensured ensured =
+        d->targets.ensure(*target, detail::SessionContentAccess::device(d->session));
+    if (ensured.state == HostTargets::State::Ready)
+    {
+        ensured.entry->report.rearm();  // the condition ended: the same breakage reports again
+    }
+    else if (ensured.state != HostTargets::State::NotBuilt && ensured.entry->report.shouldReport())
+    {
+        // NOT "NotBuilt", which is not a failure: a host configures a target before it draws into it (and the
+        // executor reports the passes that needed one that was never completed). What is reported is the
+        // description that cannot become objects at all - a missing lender, or a build that failed.
+        reportDiagnostic(vine::graphics::DiagnosticSeverity::Warning,
+                         vine::graphics::DiagnosticCategory::TargetBuildFailed,
+                         asString(ensured.state == HostTargets::State::DepthSourceMissing
+                                      ? "a render target borrows its depth from a target this backend does "
+                                        "not hold: it is not built, and the passes that draw into it are "
+                                        "skipped (the lender must be announced first)"
+                                      : "a render target could not be built (its images, render pass or "
+                                        "readback buffer failed to create, or its description is not a "
+                                        "target): the passes that draw into it are skipped"));
+    }
+
+    if (ensured.entry->target != nullptr)
+    {
+        d->executor.addTarget(target, ensured.entry->target.get());
     }
     if (d->recorder.inPass())
     {
-        (void)d->recorder.setRenderTarget(nullptr);  // the default framebuffer, spelled as the plan does
+        (void)d->recorder.setRenderTarget(target);  // the plan's identity for it: the host's own object
     }
 }
 
@@ -426,18 +518,23 @@ void VsgBackend::setLights(const std::vector<vine::raw_ptr<const vine::graphics:
 
 void VsgBackend::setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::RenderTarget>>& inputs)
 {
+    if (!d->recorder.inPass())
+    {
+        return;
+    }
     for (const vine::raw_ptr<vine::graphics::RenderTarget>& input : inputs)
     {
         if (input != nullptr)
         {
-            // A declared input that produced something is an off-screen target, and those are not served
-            // yet. Announcing it would make the plan promise what the recording cannot deliver.
-            reportUnserved(kUnservedInputs);
-            return;
+            // The description of every input is kept current here too: its objects were built when a pass
+            // drew into it, and what has to be fresh is the facts row the plan resolves the input's shape
+            // (its colour count, its depth's sampleability) from (see HostTargets::observe).
+            (void)d->targets.observe(*input);
         }
     }
-    // An all-null list says nothing produced anything this frame: announcing it would add "resolved to
-    // nothing" entries where the plan's own default (no inputs) is already the same fact.
+    // The identities, in the pass' declaration order, nulls included: "nothing produced it this frame" is
+    // a fact the plan carries (see InputRef), and the recording reads one entry per declaration.
+    (void)d->recorder.setPassInputs(inputs);
 }
 
 void VsgBackend::setDepthMode(vine::graphics::DepthMode mode)
@@ -498,10 +595,19 @@ void VsgBackend::drawScreenProgram(vine::graphics::RenderTarget*                
                                    vine::raw_ptr<const vine::graphics::ShaderProgram> program,
                                    vine::raw_ptr<const vine::graphics::Camera>        camera)
 {
-    (void)source;
-    (void)program;
-    (void)camera;
-    reportUnserved(kUnservedScreenDraw);
+    if (!d->recorder.inFrame())
+    {
+        return;  // the engine's warm-up executes pass scopes outside any frame: nothing to collect
+    }
+    if (d->store != nullptr)
+    {
+        // The fragment stage is content like any other: the tables must answer its two texts and their
+        // declarations when the plan records (the store's own walk covers full-screen calls' programs).
+        trackProgram(d->store.get(), vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program));
+    }
+    // The source is an IDENTITY here, exactly like a content draw's program: which images it offers was
+    // announced with the pass' inputs (setPassInputs), and the content layer resolves it among them.
+    (void)d->recorder.drawScreenProgram(source, program, camera);
 }
 
 void VsgBackend::releasePass(vine::raw_ptr<const vine::graphics::RenderPass> pass)
@@ -514,8 +620,18 @@ void VsgBackend::releasePass(vine::raw_ptr<const vine::graphics::RenderPass> pas
 
 void VsgBackend::releaseRenderTarget(vine::graphics::RenderTarget* target)
 {
-    (void)target;
-    reportUnserved(kUnservedReleaseTarget);
+    if (target == nullptr)
+    {
+        return;
+    }
+    // The SDK announces that the caller may destroy it now, so everything held for it goes: the registry
+    // entry (its objects die with it, unless a borrower keeps a share of a borrowed image), the executor's
+    // registration (a borrowed pointer - letting it dangle would name somebody else's memory) and a pending
+    // scope announcement (the recorder drops it: a pass that would have drawn into it is SKIPPED and
+    // reported, never redirected to the window - see the SDK's own note).
+    (void)d->targets.release(target);
+    d->executor.addTarget(target, nullptr);
+    (void)d->recorder.releaseRenderTarget(target);
 }
 
 bool VsgBackend::readColorBuffer(const vine::graphics::RenderTarget* target, int attachment,
@@ -569,9 +685,9 @@ void VsgBackend::reportUnserved(std::size_t slot) noexcept
     reportDiagnostic(vine::graphics::DiagnosticSeverity::Warning,
                      vine::graphics::DiagnosticCategory::UnsupportedRequest,
                      asString(std::string(kUnservedNames[slot]) +
-                              " is not served by this backend yet: this slice draws the window's content, "
-                              "and what needs an off-screen target, a readback or a live surface resize "
-                              "lands in the next slices (see .ai/design/vsg-reimplementation.md)"));
+                              " is not served by this backend yet: the window's and the host's targets' "
+                              "content is drawn, and what is left over needs a copy back to the host or a "
+                              "live surface (see .ai/design/vsg-reimplementation.md)"));
 }
 
 namespace detail
@@ -585,6 +701,11 @@ PassRegistry& BackendContentAccess::passes(VsgBackend& backend) noexcept
 ContentAssembly* BackendContentAccess::assembly(VsgBackend& backend) noexcept
 {
     return backend.d->assembly.get();
+}
+
+HostTargets& BackendContentAccess::targets(VsgBackend& backend) noexcept
+{
+    return backend.d->targets;
 }
 
 VsgExecutor& BackendContentAccess::executor(VsgBackend& backend) noexcept

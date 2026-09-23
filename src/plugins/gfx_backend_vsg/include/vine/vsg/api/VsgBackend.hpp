@@ -40,18 +40,22 @@
  *     into the plan; `swapBuffers()` assembles the frame's content (api/ContentAssembly) and records it
  *     into the passes the plan asked for, with the view block built from the pass' own camera and the
  *     frame's clock - the host's picture, drawn by the pieces that already existed;
+ *   * the OFF-SCREEN HALF: `supportsRenderTargets()` answers true, `setRenderTarget()` holds the host's
+ *     targets in api/HostTargets (the description is COPIED, the objects are built lazily, and the resize /
+ *     rebuild after that is the plan's answer applied by the executor), `setPassInputs()` announces what a
+ *     pass reads - and the images of those inputs are what the content recording binds - and
+ *     `drawScreenProgram()` records the full-screen call whose source is one of them. `releaseRenderTarget()`
+ *     drops everything held for a target the host is about to destroy;
  *   * the surface facts - `setWindowHandle()`/`nativeHandle()` for a host surface, and `resize()`'s
  *     announcement, which is applied when the session comes up (the session's window is created at that
  *     size) and reported while the session is live (resizing a live surface is not served yet);
  *   * the diagnostics route - the core's one route feeds the SDK's `reportDiagnostic`, so a host's sink and
  *     `diagnosticCount()` see the session's own reports without this layer re-reporting anything.
  *
- * WHAT IS REPORTED AS NOT SERVED YET: off-screen render targets (`supportsRenderTargets()` answers false,
- * which is how the engine knows BEFORE it stages off-screen work - the SDK asks once per frame, and
- * declining is a state the host is told about), the pass inputs that read them, full-screen programs
- * (`drawScreenProgram()`, whose source is such a target), readback, and a resize of a live surface. Each
- * call that has nowhere to go says so once (core::ReportOnce): a facade that silently dropped them would
- * look like a working backend with a black screen.
+ * WHAT IS REPORTED AS NOT SERVED YET: the two readbacks (`readColorBuffer()` / `readDepthBuffer()` - the
+ * off-screen attachments are drawn into but not copied back yet) and a resize of a live surface. Each call
+ * that has nowhere to go says so once (core::ReportOnce): a facade that silently dropped them would look
+ * like a working backend with a black screen.
  *
  * ONE THREAD, LIKE EVERYTHING ELSE HERE: the engine drives a backend from one thread and never reentrantly
  * (see RenderBackend's class note), so this type keeps no synchronisation.
@@ -105,10 +109,10 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     /** @brief Remembers the default content program, tells the plan, and tracks it (see the file note). */
     void setDefaultContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program) override;
 
-    /** @brief Answers false: off-screen targets are a later slice, and the engine is told so here. */
+    /** @brief Answers true: off-screen targets are held, drawn into and sampled (see setRenderTarget). */
     bool supportsRenderTargets() override;
 
-    /** @brief Accepts the default framebuffer; an off-screen target is reported as not served yet. */
+    /** @brief Holds the host's target under its own identity; nullptr selects the default framebuffer. */
     void setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> target) override;
 
     /** @brief Opens the pass scope, under the pass' own number (see the file note). */
@@ -126,7 +130,7 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     /** @brief Announces the lights for the next drawing call of this scope. */
     void setLights(const std::vector<vine::raw_ptr<const vine::graphics::Light>>& lights) override;
 
-    /** @brief Reports pass inputs as not served yet (their targets are off-screen; the file note). */
+    /** @brief Announces the pass' resolved inputs, in declaration order. */
     void setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::RenderTarget>>& inputs) override;
 
     /** @brief Announces how this pass' content handles the target's current depth. */
@@ -139,7 +143,7 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     void render(const std::vector<vine::graphics::RenderCommand>& commands,
                 const vine::graphics::Camera*                      camera) override;
 
-    /** @brief Reports that full-screen programs are not served yet (see the file note). */
+    /** @brief Records a full-screen call whose source is one of the pass' declared inputs. */
     void drawScreenProgram(vine::graphics::RenderTarget*                     source,
                            vine::raw_ptr<const vine::graphics::ShaderProgram> program,
                            vine::raw_ptr<const vine::graphics::Camera>        camera) override;
@@ -147,7 +151,7 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     /** @brief Forgets the pass' identity: the SDK's announcement that the pass is going away. */
     void releasePass(vine::raw_ptr<const vine::graphics::RenderPass> pass) override;
 
-    /** @brief Reports that off-screen target retirement is not served yet (see the file note). */
+    /** @brief Drops everything held for a target the host is about to destroy. */
     void releaseRenderTarget(vine::graphics::RenderTarget* target) override;
 
     /** @brief Reports that readback is not served yet, and answers `Unsupported` (the file note). */
