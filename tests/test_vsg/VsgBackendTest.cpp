@@ -21,6 +21,7 @@
 #include <vine/vsg/api/DeviceProbe.hpp>
 #include <vine/vsg/api/HostTargets.hpp>
 #include <vine/vsg/api/VsgBackend.hpp>
+#include <vine/vsg/api/WindowTarget.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
 
 #include <vine/Buffer.hpp>
@@ -46,6 +47,7 @@ using vine::vsg::core::TargetFacts;
 using vine::vsg::HostTargets;
 using vine::vsg::PassRegistry;
 using vine::vsg::VsgBackend;
+using vine::vsg::WindowTarget;
 using vine::vsg::api::probePhysicalDevices;
 using vine::vsg::detail::BackendContentAccess;
 
@@ -261,14 +263,22 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
         << "the first scope-less draw is refused out loud, the second is the same episode";
     EXPECT_EQ(backend->framesPresented(), 4U) << "a frame whose draws were all refused still presents";
 
-    // 5. The announced size is the SURFACE's, and this backend owns the surface it created: the announcement
-    // is applied by the next initialize() (the window comes up at it) and reported while the session is live.
+    // 5. The announced size is the SURFACE's, and this backend FOLLOWS the surface it is on (the SDK's
+    // authority order: surface > announcement > default). Following re-reads the window and rebuilds its
+    // swapchain, which stops the device once - the counter says so - and nothing is reported, because a live
+    // size event is served now. The announcement is what the NEXT initialize() creates a window at, which is
+    // the only way this layer can apply it to a window of its own (see the registered limit in the design
+    // notes).
     backend->resize(320, 180);
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U + 1U + 1U)
-        << "a live surface keeps its size for now, and says so";
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U + 1U) << "a live resize is served now";
+    EXPECT_EQ(backend->deviceWaits(), 1U) << "following the surface rebuilds the swapchain, and that stops it";
 
     ASSERT_TRUE(backend->initialize()) << "re-initializing tears the old session down first (the SDK's contract)";
     EXPECT_EQ(backend->framesPresented(), 0U) << "a fresh session has presented nothing";
+    WindowTarget* window = BackendContentAccess::windowTarget(*backend);
+    ASSERT_NE(window, nullptr);
+    EXPECT_EQ(window->width(), 320U) << "the announcement is what the new session's window came up at";
+    EXPECT_EQ(window->height(), 180U);
     backend->beginFrame();
     backend->endFrame();
     backend->swapBuffers();
@@ -853,6 +863,159 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     backend->releaseRenderTarget(borrower.get());
     backend->releaseRenderTarget(lender.get());
     backend->releaseRenderTarget(floats.get());
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
+TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 128;
+    constexpr int kHeight = 96;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::size_t                     seen = 0;
+    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+        ++seen;
+        std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
+                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    as_bytes(diagnostic.message).c_str());
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+
+    // The content says what the plan carried: the surface's extent in the two outer bytes (a resize therefore
+    // shows up in the PICTURE, not only in the shape the target reports) and the camera's x in the green byte.
+    // The divisors keep every value in [0, 1] for both sizes (128x96 before, 96x64 after).
+    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { outColor = vec4(vb.frame.y / 160.0, abs(vb.cam_pos.x), vb.frame.z / 192.0, 1.0); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vine::intrusive_ptr<vine::Buffer<float>> positions = vine::intrusive_ptr<vine::Buffer<float>>(
+        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices =
+        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
+            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    geometry->setPositions(positions);
+    geometry->setIndices(indices);
+    geometry->setRevision(1U);
+
+    const vine::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands{ command };
+
+    const vine::intrusive_ptr<vine::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vine::intrusive_ptr<RenderPass>             pass(new RenderPass());
+    const vine::graphics::ClearPolicy                 clear{ vine::Color(0, 64, 0, 255), true };
+
+    const auto drive = [&] {
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        backend->render(commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        backend->swapBuffers();
+    };
+    const auto settle = [&] {
+        for (int index = 0; index < 2; ++index)
+        {
+            backend->beginFrame();
+            backend->endFrame();
+            backend->swapBuffers();
+        }
+    };
+
+    drive();
+    settle();
+
+    // 1. The picture at the size the host's surface has: the triangle left of centre (the camera looks half a
+    // unit to its right) with the extent encoded in it.
+    const auto before_left  = host.pixel(kWidth / 4, kHeight / 2);
+    const auto before_right = host.pixel(3 * kWidth / 4, kHeight / 2);
+    EXPECT_TRUE(isColourByte(before_left[1], 0.5))
+        << "the camera's x is in the picture, got (" << static_cast<int>(before_left[0]) << ", "
+        << static_cast<int>(before_left[1]) << ", " << static_cast<int>(before_left[2]) << ")";
+    EXPECT_TRUE((isColourByte(before_left[0], 0.8) && isColourByte(before_left[2], 0.5)) ||
+                (isColourByte(before_left[2], 0.8) && isColourByte(before_left[0], 0.5)))
+        << "and the surface's 128x96 came with it (the outer bytes are read as a set: the server picks the order)";
+    EXPECT_TRUE(isGreenClear(before_right)) << "the right quarter is the clear colour";
+
+    // 2. The host resizes its surface and announces it. THE SURFACE OWNS ITS SIZE (RenderBackend::resize's
+    // authority order), so the backend FOLLOWS it: the window's geometry is re-read and its swapchain is
+    // rebuilt - which stops the device exactly once, the price the counter makes visible - and nothing is
+    // reported, because this is served. A 0x0 announcement is not a size a surface can have: it costs
+    // nothing, not even that stop.
+    const std::size_t waits_before = backend->deviceWaits();
+    backend->resize(0, 0);
+    EXPECT_EQ(backend->deviceWaits(), waits_before) << "a size no surface can have is not followed";
+
+    host.resize(96, 64);
+    backend->resize(96, 64);
+    EXPECT_EQ(backend->deviceWaits(), waits_before + 1U)
+        << "following the surface rebuilds the swapchain, and that stops the device";
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "a live size event is served now";
+    WindowTarget* window = BackendContentAccess::windowTarget(*backend);
+    ASSERT_NE(window, nullptr);
+    EXPECT_EQ(window->width(), 96U) << "the window is on the surface's new size";
+    EXPECT_EQ(window->height(), 64U);
+
+    // 3. The next frame is recorded at the NEW size: the render area, the view block every pass is given and
+    // the swapchain it presents all follow the surface - nobody re-tells them.
+    drive();
+    settle();
+    const auto after_left  = host.pixel(96 / 4, 64 / 2);
+    const auto after_right = host.pixel(3 * 96 / 4, 64 / 2);
+    EXPECT_TRUE(isColourByte(after_left[1], 0.5))
+        << "the picture is still there, got (" << static_cast<int>(after_left[0]) << ", "
+        << static_cast<int>(after_left[1]) << ", " << static_cast<int>(after_left[2]) << ")";
+    EXPECT_TRUE((isColourByte(after_left[0], 0.6) && isColourByte(after_left[2], 1.0 / 3.0)) ||
+                (isColourByte(after_left[2], 0.6) && isColourByte(after_left[0], 1.0 / 3.0)))
+        << "and the view block carries 96x64 now, not the size the window came up at: got ("
+        << static_cast<int>(after_left[0]) << ", " << static_cast<int>(after_left[2]) << ")";
+    EXPECT_TRUE(isGreenClear(after_right)) << "the right quarter is the clear colour at the new size too";
+    EXPECT_EQ(seen, backend->diagnosticCount());
+
     backend->shutdown();
     EXPECT_TRUE(host.alive());
 }

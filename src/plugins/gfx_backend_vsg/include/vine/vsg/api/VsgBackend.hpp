@@ -18,7 +18,7 @@
  * `swapBuffers()` over the pieces that exist, and every call it cannot serve yet is REPORTED (the SDK's own
  * rule: report what could not be done instead of answering with nothing).
  *
- * WHAT IS SERVED TODAY (the facade's first two slices):
+ * WHAT IS SERVED TODAY (the facade's slices, §11.16bd-§11.16bh):
  *   * the session lifecycle - up, down, up again, `shutdown()` idempotent and safe before any
  *     `initialize()`, exactly what the SDK's contract demands of a backend whose surface is recreated;
  *   * the frame protocol - an EMPTY frame is compiled, recorded and presented (the session's own rule:
@@ -50,15 +50,16 @@
  *     target's own copy commands ONCE and fence them, so the pixels / depths the host gets are the ones the
  *     last submitted frame left (api/HostReadback). A refusal answers the SDK's machine-readable result and
  *     says its reason once per episode;
- *   * the surface facts - `setWindowHandle()`/`nativeHandle()` for a host surface, and `resize()`'s
- *     announcement, which is applied when the session comes up (the session's window is created at that
- *     size) and reported while the session is live (resizing a live surface is not served yet);
+ *   * the surface facts - `setWindowHandle()`/`nativeHandle()` for a host surface, and `resize()`: the
+ *     surface OWNS its size (the SDK's authority order), so a live announcement makes the session FOLLOW the
+ *     surface it is on (re-read it, rebuild the swapchain when it changed - one COUNTED device stop), while
+ *     the announced numbers are what the next `initialize()` creates a window at;
  *   * the diagnostics route - the core's one route feeds the SDK's `reportDiagnostic`, so a host's sink and
  *     `diagnosticCount()` see the session's own reports without this layer re-reporting anything.
  *
- * WHAT IS REPORTED AS NOT SERVED YET: a resize of a live surface. Each call that has nowhere to go says so
- * once (core::ReportOnce): a facade that silently dropped it would look like a working backend with a
- * black screen.
+ * WHAT IS REPORTED AS NOT SERVED YET: two calls that have nowhere to go - a frame asked for with no session,
+ * and a draw before the content world is up. Each says so once per episode (core::ReportOnce); a facade that
+ * silently dropped them would look like a working backend with a black screen.
  *
  * ONE THREAD, LIKE EVERYTHING ELSE HERE: the engine drives a backend from one thread and never reentrantly
  * (see RenderBackend's class note), so this type keeps no synchronisation.
@@ -106,7 +107,7 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     /** @brief Gets the handle the session adopted, or null while it owns its window (see the file note). */
     [[nodiscard]] void* nativeHandle() const override;
 
-    /** @brief Announces a surface size: applied by the next @ref initialize, reported while live. */
+    /** @brief Announces a surface size: applied by the next @ref initialize, followed live (see the file note). */
     void resize(int width, int height) override;
 
     /** @brief Remembers the default content program, tells the plan, and tracks it (see the file note). */

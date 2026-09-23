@@ -692,6 +692,25 @@ void SessionContentAccess::waitDeviceIdle(api::Session& session) noexcept
     session.impl->retirement.noteDeviceWait();  // the same counter Session::deviceWaits() answers with
 }
 
+void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
+{
+    if (session.impl == nullptr || session.impl->window == nullptr)
+    {
+        return;  // nothing is on a surface: there is nothing to follow
+    }
+    // The window's own resize() re-reads the geometry of the surface it is on and rebuilds the swapchain
+    // against it - that IS the service, because the surface owns its size (RenderBackend::resize's authority
+    // order: surface > announcement > default). Everything hanging off the size is derived from the window
+    // when the next frame records (the render area through WindowTarget::prepare / prepareWithoutClear, the
+    // window target's shape, each pass' view block), so nothing else has to be brought up to date here.
+    session.impl->window->resize();
+    // The rebuild STOPS THE DEVICE: vsg's buildSwapchain() waits it before destroying the old swapchain and
+    // its images (the same cost the lost-frame repair in commitFrame pays). It is COUNTED for the same
+    // reason - a live resize is the host's exception, and the counter is how often it happens stays visible
+    // instead of becoming a habit.
+    session.impl->retirement.noteDeviceWait();
+}
+
 ::vsg::ref_ptr<::vsg::Group> SessionContentAccess::root(const api::Session& session) noexcept
 {
     return session.impl != nullptr ? session.impl->content : ::vsg::ref_ptr<::vsg::Group>{};

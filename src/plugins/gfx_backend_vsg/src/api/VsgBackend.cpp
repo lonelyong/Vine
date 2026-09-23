@@ -43,18 +43,16 @@ vine::String asString(const std::string& text)
     return vine::String(reinterpret_cast<const char8_t*>(text.c_str()));
 }
 
-/// @brief The entry points this facade cannot serve yet, one slot per call (see the class note).
+/// @brief The calls that have nowhere to go, one slot per call (see the class note).
 enum Unserved : std::size_t
 {
-    kUnservedResize = 0U,
-    kUnservedNoSession,
+    kUnservedNoSession = 0U,
     kUnservedDraw,
     kUnservedCount,
 };
 
-/// @brief The names the unserved reports use, in the enum's order.
+/// @brief The names those reports use, in the enum's order.
 const char* const kUnservedNames[kUnservedCount]{
-    "resize() (live session)",
     "a frame without a session",
     "render() (the content world is not up)",
 };
@@ -392,16 +390,21 @@ void VsgBackend::resize(int width, int height)
 {
     if (width <= 0 || height <= 0)
     {
-        return;  // not a size a surface can have: nothing to announce, and nothing to apply
+        return;  // not a size a surface can have: nothing to announce, and nothing to follow
     }
     d->announced_width  = width;
     d->announced_height = height;
     if (d->session.initialized())
     {
-        // This backend OWNS its window (when it created one), so applying the announcement to a LIVE surface
-        // is this layer's job - and it is not served yet. Saying so once beats an announcement that looks
-        // applied while the surface keeps its old size (the next initialize() creates the window at it).
-        reportUnserved(kUnservedResize);
+        // THE SURFACE OWNS ITS SIZE (RenderBackend::resize's authority order: surface > announcement >
+        // default), so a live announcement is served by FOLLOWING the surface: the session re-reads the one
+        // it is on and rebuilds its swapchain when that surface changed, and what hangs off the size (the
+        // render area, the window target's shape, each pass' view block) is derived from the window when the
+        // next frame records - no second copy of the size to keep in step. A window this backend created for
+        // itself is followed the same way; the announced numbers are what the NEXT initialize() creates that
+        // window at, which is the only way this layer can apply them (it does not move a window of its own -
+        // see the registered limit in the design notes).
+        detail::SessionContentAccess::followResizedSurface(d->session);
     }
 }
 
@@ -805,9 +808,8 @@ void VsgBackend::reportUnserved(std::size_t slot) noexcept
     reportDiagnostic(vine::graphics::DiagnosticSeverity::Warning,
                      vine::graphics::DiagnosticCategory::UnsupportedRequest,
                      asString(std::string(kUnservedNames[slot]) +
-                              " is not served by this backend yet: the window's and the host's targets' "
-                              "content is drawn, and what is left over needs a copy back to the host or a "
-                              "live surface (see .ai/design/vsg-reimplementation.md)"));
+                              " has nowhere to go: every part of the frame protocol needs a session that is "
+                              "up (see .ai/design/vsg-reimplementation.md)"));
 }
 
 namespace detail
@@ -831,6 +833,11 @@ HostTargets& BackendContentAccess::targets(VsgBackend& backend) noexcept
 VsgExecutor& BackendContentAccess::executor(VsgBackend& backend) noexcept
 {
     return backend.d->executor;
+}
+
+WindowTarget* BackendContentAccess::windowTarget(VsgBackend& backend) noexcept
+{
+    return SessionContentAccess::windowTarget(backend.d->session);
 }
 
 }  // namespace detail

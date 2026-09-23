@@ -77,9 +77,9 @@
 > M8p 每帧换图不再拆机器（§11.16ay）、M8q 丢帧的会话自己活下来（§11.16az）、
 > M8r 计划说的形状连格式一起核对（§11.16ba）、M8s 窗口的答案也有执行者（§11.16bb）、
 > M8t `skyMap` 是 drawable 自己的图（§11.16bc）、M9a 门面立起来（§11.16bd）、M9b pass 协议接到内容层（§11.16be）、
-> M9c 离屏那一半（§11.16bf）、M9d 读回（§11.16bg）。
+> M9c 离屏那一半（§11.16bf）、M9d 读回（§11.16bg）、M9e 活着的 resize（§11.16bh）。
 > 下一步：
-> **门面第五片**：把**工厂切到门面**（把 "vsg" 这个名字从旧实现换成 `VsgBackend`），或先补活着的 `resize`。
+> **门面第六片**：把**工厂切到门面**（把 "vsg" 这个名字从旧实现换成 `VsgBackend`）——门面已无未服务入口点。
 > 场景桥的登记项（`skyMap`）至此清空；其余遗留口子见下。
 > 其余遗留口子：集合与半片停靠窗口各自独立；窗口 `facts()` 的 live 采样与 `refresh()` 的成功臂今天没有可驱动的触发（登记）；
 > 设备半边在"某一侧没说"时跳过（登记）。
@@ -2639,7 +2639,8 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M9b（pass 协议接到内容层）~~ | **已完成（2026-09-23）**：`VsgBackend` 把 SDK 的 pass 协议翻进计划录制器——`beginPass` 经新的 `api/PassRegistry`（SDK 的 pass 对象 → `core::PassId`，**号永不复用**、`releasePass()` 只忘身份）交给 `core::FrameRecorder`，`endPass/setPassOrder/setRenderTarget(nullptr)/setViewport/setClearPolicy/setDepthMode/setLights/render` 全部照收；**帧外的调用**（引擎的 pre-frame warm-up：每个 enabled 非清屏 pass 在**任何帧之前**执行一次）按 SDK 契约**惰性**——只有 pass 身份留下；`render()` 顺带把命令点名的 geometry/material/program 追踪进 `ContentStore`（默认程序在 `initialize` 时追）；`swapBuffers` 现在**真的组装内容**（`ContentAssembly`：开块预算 + 表 → 每趟 pass 的半片/集合/输入/视图块 → `executor.record(frame, graph, packets)`），视图块按**该趟的相机 + 帧时钟 + 窗口尺寸**建，兼容性取窗口自己的形状。**本片撞出的真缺陷**：执行器的窗口臂把每帧内容**累加**进保留视图（`addContent`）——两帧之间移动相机就能看见"上一帧的画还在"且组无边增长；修法 = `WindowTarget::beginFrame()`（帧首清掉**本帧内容组**，宿主的会话根不动）+ `addFrameContent()`，执行器在**本帧第一趟窗口 pass** 调它（空帧不调：上一幅画照旧被呈递）。真设备用例（warm-up 惰性 + 身份跨帧、像素里读到相机 x / 窗口尺寸 / 清屏色、第二帧"稳态零构建"、第三帧换相机 ⇒ 左半旧画**消失**、右半新画就位、`deviceWaits()==0`、pass 释放即重发得新号）+ 无设备 `PassRegistryTest`；变异 **7/7 红**（不换帧内容/不组装内容/不开范围/丢清屏色/不追踪对象/不释放身份/warm-up 进录制器）。门禁 **655 用例 / 100 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 856、相位 11 行 / 2 次（§11.16be）。 |
 | ~~M9c（离屏那一半：目标、输入、全屏、重建）~~ | **已完成（2026-09-23）**：`supportsRenderTargets()` 转真；新 `api/HostTargets`——宿主 `RenderTarget` 的**描述是快照**（每次点名比字段更新，稳态零分配；绝不留宿主指针）、对象**懒建**（正值尺寸 + 至少一个彩色附件才建；建不成与"还缺描述"分开作答：`NotBuilt`/`DepthSourceMissing`/`BuildFailed`）、借来的深度持**lender 的 share**（`shared_ptr`，lender 被释放而 borrower 还在也不悬空）；`facts()` 是计划解析**目标与输入**的那张表（引擎半边永远是宿主的话；**设备半边只在引擎形状没变时**才说——M8r 的"不知道不是没有"；深度的事实：建成后按目标自己的 `layout()` 报 promotion、borrowed 时永不承诺；shadow 声明（谁的图 + 产出者的矩阵）原样搬）；门面：`setRenderTarget` 建/注册/交身份（只报 `DepthSourceMissing`/`BuildFailed` 一次、`Ready` 后重置情节；`NotBuilt` 静默——宿主先配后画）、`setPassInputs` 观察 + 转身份、`drawScreenProgram` 追踪片元程序 + 交身份、`releaseRenderTarget` 忘条目 + 注销执行器 + 让 recorder 丢掉挂起公告；内容驱动按**每趟自己的目标**取兼容性与尺寸（窗口或宿主目标），每个**声明输入**给一条 `InputImages`（该目标的彩色视图 + 计划说可采样时的深度视图，scratch 复用不每帧分配）。真设备用例：离屏目标画三角 → SDK 自带 `screenCopyProgram(0)` 复制到窗口（像素：红三角 + **目标自己的清屏绿**，不是窗口的清屏蓝）；建成目标的 facts（设备拼写非空、`built` 真）；`setSize` ⇒ 计划答 ResizeInPlace、**目标真的变 32×48**、画还在；`attachColor` 第二个附件 ⇒ 形状变 ⇒ 计划答 Rebuild、目标 2 附件、屏幕仍采附件 0；释放后 `live()==0`；借一个**不存在的 lender** ⇒ 报一次（三次公告一条情节）。无设备 `HostTargetsTest`（快照 vs 活对象、借来的深度不是 borrower 的承诺、shadow 声明原样、释放只答一次）。变异 **7/7 红**（不建/不进事实表/丢目标身份/离屏不录内容/输入不给图/释放不清/**形状变了还说旧的设备格式**——后三条各带 12 / 2 / 2 条 VUID）。门禁 **658 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 859、相位 11 行 / 2 次（§11.16bf）。 |
 | ~~M9d（宿主目标的读回）~~ | **已完成（2026-09-23）**：`readColorBuffer`/`readDepthBuffer` 转真；新 `api/HostReadback`——**两个来源一张图**：执行器每帧本来就在**全部 pass 之后**给每个目标接上自己的拷贝节点（彩色目标=附件 0，只有深度的目标=深度），所以读"帧已经拷过的"**不用再提交任何东西**（停一次设备 + 读映射缓冲）；帧**没拷过的**（彩色目标的深度、第二个彩色附件）在这一层用目标自己的拷贝命令**提交一次**（自己的 command buffer + fence，100 s 上限）——被画过的目标处在确定布局，拷贝合法；**没画过的目标答 `NotRecorded`**（拷贝 UNDEFINED 内存再把垃圾叫"图片"是不行的）。顺序即契约：①**先分类**（不需要设备：未知附件、读不了的格式、没录过的目标——不能服务的请求**一分钱不花**）；②**调用者停设备**（写缓冲的那一帧可能还在飞）——这次停**被计数**（`SessionContentAccess::waitDeviceIdle`，与 `deviceWaits()` 同一个计数器：读回是唯一允许停设备的路径，"恰好停一次"保持可查）；③只有帧没拷过才在这里拷（在停之后，两次提交不会重叠）；④探针读映射缓冲，把字节/浮点交给宿主（`PixelProbe::pixels()`/`DepthProbe::values()` 交出原缓冲）。门面：拒绝**两个频道一起说**（`why` 给机器答案、诊断路由给一句话，**每个情节一次**——目标自己的情节挂在条目上，目标解析不了就共用一个每入口点情节；成功即 rearm）；**还没停设备就先拒绝**；借来的深度走 `BorrowedDepth`（SDK 的规矩：源目标才是读的地方）；`readbackResultOf` 一张表（未知目标/没建好/没录过 ⇒ NotReady、空目标/未知附件 ⇒ Invalid、读不了的格式/借来的深度/没设备 ⇒ Unsupported、搬运失败 ⇒ Failed；**未映射的落到 Failed 永不落到 Ok**）；诊断类别沿用旧实现的 `ContentSkipped`。真设备用例（`VsgBackendTest.TheSdkReadsBackItsOwnTargetsPixelsAndDepths`，64×64 的 RGBA8+D32F 目标一帧）：彩色读回 `Ok`、`64*64*4` 字节、三角内 (16,40) 是 `(255,0,0,255)`、外面 (48,8) 是目标的清屏绿、alpha 255；深度 4096 个 float、三角形处 ∈ (0.05, 0.95)、清屏处 `==0.0`、全在 [0,1]；`deviceWaits` 每次读回 **+1**；拒绝面（**全部不加等待**）：附件 5 ⇒ Invalid、未知目标 ⇒ NotReady、RGBA16F ⇒ Unsupported（持有且建成、不需要帧）、borrower 读深度 ⇒ Unsupported、**lender 建成但没画过 ⇒ NotReady**、释放过的目标 ⇒ NotReady。**本片撞出的真问题**：只有离屏 pass 的帧**从没跑过窗口那棵图** ⇒ 被 acquire 的图像停在 `UNDEFINED` ⇒ 呈递 **VUID 01430**（M9a 的同一课，换了张脸）；修法 = `WindowTarget::prepareWithoutClear()`（只重开渲染区、清屏值原样）+ 执行器在**没有任何窗口 pass** 的帧尾把窗口图**不加壳**挂进命令图（没有 pass 可以归因，注释里写明）。变异 **6/6 红**：①没画过的目标读起来像能服务（3 行）；②只有离屏的帧不跑窗口图（**2 条 VUID**）；③**两道"没录过"的闸一起拆**（3 行；只拆一道是绿的——分类那一道先答，两道闸在**不同来源**上各管一半）；④借来的深度从 borrower 读（3 行）；⑤读回的停不计（3 行）；⑥帧不把自己的目标拷回来（**63 行**，执行器与相位一起红）。门禁 **659 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bg）。 |
-| **M9 下一步** | **门面第五片**：把工厂切到门面（"vsg" 从旧实现换成 `VsgBackend`），或先补活着的 `resize`。 |
+| ~~M9e（活着的 resize）~~ | **已完成（2026-09-23）**：`resize()` 转真；`SessionContentAccess::followResizedSurface`——**表面拥有尺寸**（SDK 授权顺序 surface > announcement > default），跟随 = `window->resize()`（重读表面几何 + 重建交换链），**停一次设备且被计数**（与 M8q 丢帧修复同一笔开销）；挂在尺寸上的东西下一帧现读（`WindowTarget::prepare(WithoutClear)` 的 renderArea、目标形状、每趟视图块），没有第二份尺寸要同步；非正值不跟随；公告仍是**下次 `initialize()`** 的建窗尺寸。`kUnservedResize` 槽删除 ⇒ **门面不再有未服务入口点**（剩下两个"没地方可去"的调用照旧各报一次：无会话的帧、内容世界未起来的 `render()`）；`BackendContentAccess::windowTarget()` 作为测试视图。**本片量到的机理**：表面变了却不公告/不跟随时，vsg 的 Viewer 会在 **acquire** 发现 `_extent2D` 与交换链不符（`Window::acquireNextImage` 直接答 `OUT_OF_DATE`），在**提交里**自己 `window->resize()`——而那一帧**已按旧矩形录完** ⇒ `VUID-VkRenderPassBeginInfo-pNext-02852/02853` + 段错误（M1 变异实测）。真设备用例：画面自身编码尺寸（`frame.y/160`、`frame.z/192`，两个尺寸下都在 [0,1]）——宿主窗口 128×96 → 改 96×64 + 公告 ⇒ 恰好 **1 次**被计数的停、`WindowTarget` 报 96×64、零报告、新尺寸下三角与清屏都在（`resize(0,0)` 一分钱不花）；第一个用例同步改写（活着 resize 不再报、`deviceWaits()==1`、重生日窗口 = 公告的 320×180）。变异 **5/5 红**（①不重读表面 ⇒ **4 条 VUID + 段错误**；②重建停不计数；③活得公告不记（回默认 640×360）；④ `0×0` 闸拆掉；⑤渲染区冻在第一个尺寸 ⇒ **4 条 VUID + 段错误**）。门禁 **660 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bh）。 |
+| **M9 下一步** | **门面第六片**：把工厂切到门面（"vsg" 从旧实现换成 `VsgBackend`）——门面已无未服务入口点。 |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -4060,3 +4061,57 @@ borrower 读（3 行）；⑤读回的停不计（3 行）；⑥帧不把自己�
 的 lender 会被 `OffscreenTarget::rebuild`/`resize` 的租约拒绝（M9c 的登记，不变）；③一个**帧没拷过**的
 附件上的读回会走一次提交路径——真要"零额外提交"的宿主自己保证先画过（这正是 `NotRecorded` 的意义）；
 ④旧口子（集合/半片独立、live 采样与 `refresh()` 成功臂不可驱动、设备半边"某一侧没说就跳过"）不变。
+
+### 11.16bh M9e（2026-09-23）：活着的 resize——跟随表面
+
+门面的 SDK 面到 M9d 只剩"活着的 `resize`"一条"未服务"。这一片把它接上，**门面不再有任何未服务的入口
+点**：那两个仍会报一次的调用（无会话的帧、内容世界未起来的 `render()`）不是"这个后端不会"，而是"没地方
+可去"——句子也跟着改了（"先要有一个会话"）。
+
+**语义来自 SDK 的授权顺序**：`RenderBackend::resize` 写着 surface > announcement > default——**表面自己拥有
+尺寸**，所以活着的一条尺寸公告不是命令，而是"跟随"：`SessionContentAccess::followResizedSurface` 让窗口
+做它自己的那件事（`window->resize()`：重读所在表面的几何 + 重建交换链），挂在尺寸上的东西**下一帧从窗口
+现读**（`WindowTarget::prepare` / `prepareWithoutClear` 每帧写 `renderArea`、目标形状、每趟 pass 的视图
+块），所以没有第二份尺寸要同步。重建**停一次设备**（vsg 的 `buildSwapchain()` 先 `vkDeviceWaitIdle` 再销毁
+旧交换链——与 M8q 丢帧修复同一笔开销），这次停**被计数**：活着 resize 是宿主的例外，计数器让它保持可见。
+公告的数字仍是**下次 `initialize()` 建窗的尺寸**；自开窗口那一半"应用公告"没做（它没有窗口系统事件、也
+没有别人能改它——旧实现同一口径；登记）。
+
+**本片量到的真机理（M1 变异顺带抓到）**：表面变了却不公告（或后端不跟随）时，vsg 的 **Viewer 自己**会在
+acquire 发现 `_extent2D` 与交换链不符（`Window::acquireNextImage` 直接答 `OUT_OF_DATE`），于是在**提交里**
+调 `window->resize()` 重建——可那一帧**已经按旧矩形录完了**：`VUID-VkRenderPassBeginInfo-pNext-02852/02853`
+（render area 128 > framebuffer 96，实测 4 行）+ 段错误。跟随发生在**录制之前**，这正是这一片存在的理由。
+
+**门面侧**：`resize()` 非正值直接返回（不是表面能有的尺寸）；活着 ⇒ 跟随（零报告）；未起来 ⇒ 只记公告。
+`kUnservedResize` 槽整条删除；`BackendContentAccess::windowTarget()` 作为测试视图（"表面被跟上了"与
+"旧尺寸还在"可由它区分——`WindowTarget::width()/height()` 是**现读**）。
+
+**真设备用例**（`VsgBackendTest.TheWindowFollowsItsHostsSurfaceThroughALiveResize`，宿主窗口 128×96）：
+片元把**表面尺寸写进画面**（`frame.y/160`、`frame.z/192`，两个尺寸下都落在 [0,1]）——"跟没跟上"于是由
+**像素**说，不只是形状说：
+
+* 前：三角在左（相机看它右边半个单位），外围两字节 = 128 与 96 的编码，右四分之一是清屏绿；
+* `backend->resize(0, 0)` ⇒ **一分钱不花**（不跟随、不计数）；
+* `host.resize(96, 64)` + `backend->resize(96, 64)` ⇒ 恰好 **1 次**被计数的停；`WindowTarget` 报 96×64；
+  零报告；
+* 后：同一段内容在新尺寸下重画，外围两字节 = 96 与 64 的编码、清屏与三角都在**新**位置；宿主窗口活着。
+
+第一个用例（`TheSdkFacingBackend...`）的相应步骤改写：活着 resize **不再报**（诊断数不变）、
+`deviceWaits()==1`（跟随的代价）；重生日后窗口确实是公告的 320×180。
+
+变异 **5/5 红**：①**不重读表面**（不重建交换链）⇒ **4 条 VUID（02852/02853）+ 段错误**（上面那条机理）；
+②重建发生了但**停不计数**（3 行红）；③**活得公告不记**（下次 `initialize()` 回到默认 640×360，3 行红）；
+④ `0×0` 闸拆掉（3 行红）；⑤**渲染区冻在第一个尺寸**（4 条 VUID + 段错误，红）。门禁 **660 用例 / 101 套件**、
+0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次运行。
+
+**观察（不是本片引入，登记以免误判）**：本片验证期间全量套件**偶发**在 `SessionTest` 的两个用例上红：
+`vkCreateSwapchainKHR` 收到**未初始化的表面能力**（`preTransform` 垃圾位、`imageExtent` 宽 1891005984、
+`VkSwapchainCreateInfoKHR-*` 共 10 条 VUID）随后抛异常——那是 `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`
+失败的症状；**同一棵树**再跑即绿（`SessionTest` 单独跑 5/5、去掉本片用例全量跑 4/4 绿），而且 `SessionTest`
+在二进制里**跑在本片用例之前**，与本片无因果。登记为环境级偶发（X/lavapipe），下一次见到先重跑再查。
+
+**本片留下的口子（登记）**：①**自开窗口不"应用"公告**（没有窗口系统事件能改它，也没有它的主人：公告仍
+在下次 `initialize()` 生效——SDK 那句 "owns its surface ⇒ applies the announcement" 在这一半未实现）；
+②宿主**不公告**表面变化时不会被跟（vsg 会在提交里补，代价是那一帧错 + VUID/崩）——不能报尺寸的宿主要自己
+保证公告；③旧口子（借来的深度租约、活目标翻 `depthPromotion`、集合/半片独立、live 采样与 `refresh()` 成功
+臂、设备半边"某一侧没说就跳过"）不变。

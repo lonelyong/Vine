@@ -73,6 +73,22 @@ class SessionContentAccess
      */
     static void waitDeviceIdle(api::Session& session) noexcept;
 
+    /** @brief Re-reads the surface the session is on and rebuilds its swapchain: how a live size event is served.
+     *
+     * The SDK's authority order is surface > announcement > default (RenderBackend::resize): the surface owns
+     * its size, so a live announcement is answered by FOLLOWING the surface. The window's own resize()
+     * re-reads the geometry of the surface it is on and rebuilds the swapchain against it, and everything
+     * hung off the size is derived from the window when the next frame records (the render area in
+     * WindowTarget::prepare, the window target's shape, each pass' view block), so nothing else is told here.
+     *
+     * The rebuild STOPS THE DEVICE - vsg's buildSwapchain() waits it before destroying the old swapchain and
+     * its images, the same cost the lost-frame repair pays - and the wait is COUNTED for the same reason: a
+     * live resize is the host's exception, and the counter is how often it happens stays visible.
+     *
+     * @param session Session whose surface is re-read (a session that is not up does nothing).
+     */
+    static void followResizedSurface(api::Session& session) noexcept;
+
     /** @brief Gets the session's window as the frame's default-framebuffer target.
      *
      * This is the target an executor is told about so that passes targeting the default framebuffer (a null

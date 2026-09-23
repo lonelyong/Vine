@@ -5,6 +5,7 @@
 #include <vine/vsg/api/PassRegistry.hpp>
 #include <vine/vsg/api/VsgBackend.hpp>
 #include <vine/vsg/api/VsgExecutor.hpp>
+#include <vine/vsg/api/WindowTarget.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -57,6 +58,17 @@ class BackendContentAccess
      * @return The executor, valid for the backend's lifetime.
      */
     [[nodiscard]] static VsgExecutor& executor(VsgBackend& backend) noexcept;
+
+    /** @brief Gets the session's window as the frame's default-framebuffer target.
+     *
+     * The window's own answers are what a size event has to have moved: its extent (a live read), its shape
+     * facts, and the render area prepare() writes from it. The tests read it to tell "the surface was
+     * followed" from "the old size was kept".
+     *
+     * @param backend Backend to ask.
+     * @return The window target, or null while the session is not up.
+     */
+    [[nodiscard]] static WindowTarget* windowTarget(VsgBackend& backend) noexcept;
 };
 
 }  // namespace detail

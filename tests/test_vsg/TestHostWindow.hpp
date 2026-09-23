@@ -55,6 +55,26 @@ class TestHostWindow
         return reinterpret_cast<void*>(static_cast<std::uintptr_t>(window_));
     }
 
+    /** @brief Resizes the window the way a host widget would, and waits for the server to have applied it.
+     *
+     * @param width  New width in pixels.
+     * @param height New height in pixels.
+     */
+    void resize(int width, int height)
+    {
+        const std::uint32_t values[] = { static_cast<std::uint32_t>(width),
+                                         static_cast<std::uint32_t>(height) };
+        xcb_configure_window(connection_, window_, XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values);
+        xcb_flush(connection_);
+        // The configure is ordered on this connection, but the ROUND TRIP is what proves the server is done
+        // with it: a caller that re-reads the geometry right after (the backend does - see
+        // SessionContentAccess::followResizedSurface) must not be answered from before the resize.
+        if (auto* reply = xcb_get_geometry_reply(connection_, xcb_get_geometry(connection_, window_), nullptr))
+        {
+            std::free(reply);
+        }
+    }
+
     /** @brief Whether the window still exists (the session must not have destroyed the host's own window). */
     [[nodiscard]] bool alive() const
     {
