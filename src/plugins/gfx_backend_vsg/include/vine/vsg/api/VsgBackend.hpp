@@ -180,6 +180,16 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     /** @brief Reports one unserved entry point, once per episode (see the file note). */
     void reportUnserved(std::size_t slot) noexcept;
 
+    /** @brief Releases everything that belongs to the SESSION'S DEVICE (the content world and the targets).
+     *
+     * ONE SPELLING FOR ONE ORDER, and it has to run BEFORE a new session is built: the pieces this drops own
+     * GPU objects of the device the session is about to replace, so keeping them alive across a re-initialize
+     * means two `vsg::Device`s at once - which vsg refuses by design (VSG_MAX_DEVICES, deliberately 1 in this
+     * plugin's CMakeLists: a path that does this must throw instead of quietly working). `shutdown()` and
+     * @ref initialize both need it, for the same reason and in the same order.
+     */
+    void releaseContentWorld() noexcept;
+
   private:
     friend class detail::BackendContentAccess;
 

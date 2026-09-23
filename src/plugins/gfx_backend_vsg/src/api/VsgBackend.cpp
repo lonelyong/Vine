@@ -251,6 +251,13 @@ bool VsgBackend::initialize()
     options.validation    = std::getenv("VINE_VSG_DEBUG_LAYER") != nullptr;
     options.native_handle = d->host_handle;
 
+    // WHAT THE PREVIOUS SESSION OWNS GOES FIRST (see releaseContentWorld): that session's device is about to be
+    // replaced, and the content world holds GPU objects of it - a re-initialize that built the new device
+    // while they were still alive would need two devices at once, which vsg refuses by design. A host may call
+    // initialize() again without a shutdown() in between (a moved surface, a failed session, a test that
+    // exercises both), so the teardown cannot live in shutdown() alone.
+    releaseContentWorld();
+
     if (!d->session.initialize(options, d->diagnostics))
     {
         // The session reported why (InitFailed), and the sink forwarded it: false plus a reason is the
@@ -286,7 +293,7 @@ bool VsgBackend::initialize()
     return true;
 }
 
-void VsgBackend::shutdown()
+void VsgBackend::releaseContentWorld() noexcept
 {
     d->frame = nullptr;
     d->facts.clear();
@@ -302,6 +309,11 @@ void VsgBackend::shutdown()
     // And the host's targets: their objects belong to the same device (a borrower's share of a lender's image
     // goes with its own entry - see api/HostTargets).
     d->targets.clear();
+}
+
+void VsgBackend::shutdown()
+{
+    releaseContentWorld();
     d->session.shutdown();
 }
 

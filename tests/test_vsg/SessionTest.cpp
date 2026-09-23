@@ -812,7 +812,7 @@ TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
     // The session's own frame graph, with a node that fails the submission's record step on command: a
     // queue submit the driver refuses cannot be summoned on lavapipe, and vsg's own failure vocabulary for
     // "this step cannot be made" is an exception (see FailingStepNode).
-    const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
+    ::vsg::ref_ptr<::vsg::CommandGraph> graph =
         vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(graph, nullptr);
     ::vsg::ref_ptr<FailingStepNode> failing(new FailingStepNode());
@@ -840,7 +840,18 @@ TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
     // What a host does next is what a host does after any frame it cannot submit: the swapchain image the
     // frame acquired was never presented, so this session is not driven again as it is - it is built again
     // (the same path a moved surface takes), and the new session's frames present normally.
+    //
+    // THE HOST'S OWN REFERENCES GO FIRST, and that is not tidiness: a command graph names the window it draws
+    // into, the window owns the device, and the session this test is about to replace built THAT device - so
+    // holding the graph across the re-initialize keeps the old device alive while the new session creates its
+    // own. vsg refuses exactly that by design (VSG_MAX_DEVICES is 1 - see the plugin's CMakeLists), and the
+    // refusal is the point of the cap: a re-initialize that quietly worked here would hide the same mistake in
+    // the backend. Measured: with the cap raised to 4 (as this build tree had it), the case passed while
+    // Release - which keeps the cap at 1 - failed it with "Number of vsg:Device allocated exceeds number
+    // supported".
     failing->armed = false;
+    failing = {};
+    graph.reset();
     ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
     ASSERT_TRUE(session.beginFrame());
     EXPECT_TRUE(session.commitFrame()) << "a session that came up again submits and presents";
