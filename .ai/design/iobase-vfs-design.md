@@ -14,13 +14,47 @@
 > `ZipArchive::entryNames`（被 `entries()` 取代）；`ZipArchive` 只做字节级编解码（§9.1）。
 > **S3b 已落地（§9）**：`ZipMemoryVfs` **删除** —— 它的实现并入 `ZipArchive` 的 empty 状态 + 薄层 `ZipVfs`；
 > `IMemoryVfs` → **`Vfs`**（无 `I` 前缀，用户明确要求）；唯一的 zip 后端 `ZipVfs` = 只读源句柄长持（读流可活过 VFS）
-> + 改动 overlay + `commit`/`saveAs`/`toBytes`，三个开口 `openForRead` / `open` / 默认构造；
+> + 改动 overlay + `commit`/`saveAs`/`toBytes`，三个开口 `open(…, ReadOnly)` / `open(…, ReadWrite)` / 默认构造；
 > `ZipArchive` 成为存储层：opened 状态 + `openRead`（流式）+ 回调/片段来源 + 流式 `saveAs`/`commit` + CRC 校验。
 > 过渡拼写已清（S3b 收尾）：`ZipVfs::openZip`、`Vfs::save` / `serialize`、`ZipArchive::save` 包装全部删除，
-> 调用点已迁到 `openForRead` / `saveAs` / `toBytes`；同一个动作只剩一个名字。
+> 调用点已迁到 `open(…, ReadOnly)` / `saveAs` / `toBytes`；同一个动作只剩一个名字。
 > 流词汇头文件也从 `VfsStream.hpp` 改名 **`Stream.hpp`**（同目录，内容不变）：它是 IOBase 级词汇，
 > 存储层与 VFS 层共用，旧名错误地把它归给了 VFS（论证见 §8）。
-> `test_iobase` 39/39，`test_robotics_io` / `test_core` / `test_crypto` / `test_runtime` / `test_system` 全绿。
+> **条目记录统一（S3b 收口）**：`ZipEntryInfo` **删除** —— 条目信息只有一套词汇，即 `Vfs.hpp` 的 `VfsEntryInfo`
+> （完整虚拟路径 + `is_directory` + 大小，目录不带尾部 `/`；原名 `FileInfo`，同日改名让词汇带上 `Vfs` 前缀）；
+> `entries()` / `children()` / `index()` 一律报它。
+> ZIP 私有的存储名拼写与 CRC 降为 `ZipArchive.cpp` 的 `StoredEntry` 内部记录，`adoptHandle` 的 CRC 校验链不变。
+> **路径语义收紧（同日）**：前导 `/` 不再折叠成相对路径，改为 `InvalidPath` —— 虚路径无工作目录，
+> 绝对拼写命不中任何条目；空段 / 重复分隔符 / `.` / 尾部 `/` 仍折叠。§4 的表与实现要点、§14 门禁表已同步。
+> 本轮实测：`test_iobase` 45/45（`DirectoryVfsNeverEscapesItsRoot` 转绿），`test_robotics_io` 全绿。
+> **命名收紧（同日）**：`importFile` → **`addFile(path, real_path)`**、`importDirectory` → **`addDirectory`** —— 与
+> `addFile` 一族同族，名字直接说明"往树里加一个文件 / 一整棵目录"；§6 / §8 / §9 / §13 已同步。
+> **词汇提升（同日）**：`ZipArchive::EntryKind` 删除，提为 `Vfs.hpp` 的 `VfsEntryKind` + 非虚 `Vfs::kindOf(path)`
+> （由 `stat()` 派生；非法路径与不存在都报 `Missing`）；ZIP 内部条目表查询改名 `entryKindOf()`；`test_iobase` 46/46。
+> **层次收敛（同日）**：一次性 ZIP 操作（`entries` / `readEntry` / `decompressFile`）从 `ZipArchive` 移入基础层
+> `Zip.hpp` —— `ZipArchive` 只剩“打开态的 Vfs 后端”；两边共用的目录读取/存储名拼写下沉为 `src/ZipInternal.hpp`
+> （与 `VfsInternal.hpp` 同款做法）。> **Zip 层口径统一（同日）**：`Zip` 全部走 `Result` / `IoError`（零 out-parameter，字节入参统一 `std::span<const unsigned char>`）：
+> `compress` / `decompress` 返回字节，`readEntry` 返回 `Result<std::vector<unsigned char>>`，`compressDirectory` / `decompressFile` 返回 `IoError`。
+> 错误映射：坏 zlib 流 / 非归档 → `InvalidData`，解压超上限 → `CapacityExceeded`，缺文件 → `NotFound`，
+> 目录条目（尾 '/'）→ `IsADirectory`，空 name → `InvalidPath`，解包时越界条目名 → `InvalidPath`。
+> **写入口统一（同日）**：加文件的一族名字全部收进 **`addFile`**（`write` / `addLocalFile` / `importFile` 一律并入，
+> 目录侧 `addLocalDirectory` → **`addDirectory`**）—— `addFile(path, span<const unsigned char>)` /
+> `addFile(path, const std::filesystem::path&)` / `addFile(path, std::span<const Fragment>)` /
+> `addFile(path, std::shared_ptr<DataSource>)` **同名同通道**（都返回 `IoError`）；守卫补齐：只读先拒 → 路径先规范化 →
+> 目录拒绝（`IsADirectory`）→ 空 source / 无数据片段报 `InvalidData`；空片段列表写空文件（与空 span 一致）。
+> **写入口挂上基类（同日）**：四个 `addFile` 重载全部落在 **`Vfs`** 上 —— 片段与拉取来源两个此前只在 `ZipArchive`，
+> 而调用方（`robotics::io` 全线持 `Vfs&`）够不着。它们是虚函数 + **默认实现**（只读先拒 → 片段拼成一个缓冲 / 来源按
+> `size()` 拉满 → 委托 `addFile(path, span)`）；`ZipArchive` 改为 `override` 保住借用与惰性，`DirectoryVfs` 继承默认，
+> 用 `using Vfs::addFile` 让基类重载在具体类型上也可达。新用例走 `Vfs&` 分别钉住两条路径；`test_iobase` 50/50。
+> **打开模式显式化（同日）**：`openForRead(path | bytes)` 删除，改为 **`open(path | bytes, OpenMode)`** ——
+> `OpenMode::ReadOnly` 全拒、`ReadWrite` 可改，**没有默认值**："能不能写"回到一个名字 + 一个模式（§9.1 的
+> fstream 类比），`openRead` / `openForRead` 的词序撞脸随之消失；robotics 与两套测试调用点已同步，`test_iobase` 50/50。
+> **内存字节两个入口（同日）**：`open(vector, …)` 拆成 **`vector&&`**（接管：右值引用挡掉"左值静默整包拷贝"）与
+> **`span<const unsigned char>`**（借用：不持有、零拷贝，契约写死"活到 archive **及其所有读者**结束"，读者会带着 handle
+> 活过 archive）；handle 里改成 `owned + span` 一种表示；新用例 `ZipArchiveTest.OpensBorrowedBytes` 钉住借用与"流活过 archive"。
+> **条目记录带上校验和（同日）**：`VfsEntryInfo` 增加 `crc`（后端记录的内容校验和，未记录为 0）；`Zip::entries`
+> 与 `ZipArchive::stat` / `list` / `index` 都填它（源归档条目有值，缓冲 / 文件 / 生成条目在写出前为 0），`DirectoryVfs` 恒为 0；
+> `ZipArchive::Entry` 不再自带 `size` / `crc` / `is_directory`，改为内嵌 `VfsEntryInfo info`（path 仍由表键承担）。> `test_iobase` 39/39（S3b 时点记录；HEAD 重构后为 45 例），`test_robotics_io` / `test_core` / `test_crypto` / `test_runtime` / `test_system` 全绿。
 > 下一步：`Vfs` 的流式读写面（§8）与 `ZipVfs` 的流式写开口（§15.7）。
 >
 > 关联：外部《VFS 需求设计文档 v2.0》（下称"需求文档"）；第一个消费者
@@ -70,7 +104,7 @@ enum class IoError : std::uint8_t
     PermissionDenied,  // 权限不足
     NotADirectory,     // 期望目录但实际是文件
     IsADirectory,      // 期望文件但实际是目录
-    InvalidPath,       // 路径非法（空、相对、含 '\'、越界 '..'、嵌入 '\0'、绝对段）
+    InvalidPath,       // 路径非法（前导 '/'、含 '\'、越界 '..'、嵌入 '\0'、盘符段）
     ReadOnly,          // 只读后端 / 只读挂载
     IoFailure,         // 底层 I/O 错误
     Unsupported,       // 该后端不支持此操作
@@ -148,7 +182,7 @@ IoError normalizeVfsPath(const String& path, String& out);
 | 空路径 | "" 合法，表示根 |
 | 空段 / 重复分隔符 / 尾部 `/` | **折叠**（`a//b` == `a/b` == `a/b/`），不报错 |
 | `.` 段 | **折叠**为当前目录（`./a` == `a`） |
-| 相对/绝对 | 内部路径**无工作目录**；`/a/b` 与 `a/b` 等价 |
+| 前导 `/` | **拒绝** → `InvalidPath`：内部路径**无工作目录**，绝对拼写命不中任何条目（2026-09-23 前是折叠成相对路径） |
 | `\` | 拒绝 → `InvalidPath`（防后端混淆） |
 | 嵌入 `\0` | 拒绝 |
 | `..` | **按段判断**：抵消上一段；抵消到根之外 → `InvalidPath`。（旧的子串判断会误杀 `a..b` 这类合法名，S1 已修正） |
@@ -162,35 +196,52 @@ IoError normalizeVfsPath(const String& path, String& out);
 2. **`NotFound` 不能靠 `error_code` 判断**（S1 实测的跨平台坑）：MSVC 在路径不存在时**也会置位** `ec`，
    而标准只要求 `status()` 返回 `file_type::not_found`。因此 `stat` / `list` 一律**先看 `file_type`**
    （`not_found` → `NotFound`），再看 `ec`（→ `IoFailure`）。只看 `ec` 会把"不存在"误报成 I/O 错误。
+3. **前导 `/` 拒绝（2026-09-23 收紧）**：原先 `"/a/b"` 折叠成 `"a/b"`，等于把调用方眼中的另一个位置
+   静默解释成本后端根下的同名条目；虚路径没有工作目录，绝对拼写没有任何条目可指，因此直接 `InvalidPath`。
+   重复分隔符 / `.` / 尾部 `/` 的折叠不变，后端落地的 `is_absolute()` 复验仍作双保险（`DirectoryVfs::resolve`）。
 
-## 5. 文件信息：`FileInfo` + `stat` + `list`
+## 5. 文件信息：`VfsEntryInfo` + `stat` + `list`
 
 ```cpp
 /// @brief 虚拟文件/目录的最小信息（需求文档 §6.6）。
-struct V_IOBASE_API FileInfo
+struct V_IOBASE_API VfsEntryInfo
 {
     String        path;                  // 完整规范化路径（根为 ""）
     bool          is_directory{ false };
     std::uint64_t size{ 0 };             // 目录恒为 0
+    std::uint32_t crc{ 0 };              // 后端记录的内容校验和（ZIP = CRC-32）；没有记录或尚未写出为 0
 
     /// @brief 最后一个路径段，即条目自己的名字；根为空串。
     [[nodiscard]] String name() const;
 };
 
+/// @brief 路径指向什么（`kindOf` 的返回值）。
+enum class VfsEntryKind : std::uint8_t
+{
+    Missing,   // 不存在，或不是合法虚拟路径
+    File,      // 文件
+    Directory, // 目录（显式，或由更长的路径隐含）
+};
+
 // IMemoryVfs（纯虚）
-virtual Result<FileInfo>                  stat(const String& path) const = 0;
-virtual Result<std::vector<FileInfo>>     list(const String& dir) const = 0;
+virtual Result<VfsEntryInfo>              stat(const String& path) const = 0;
+virtual Result<std::vector<VfsEntryInfo>> list(const String& dir) const = 0;
 ```
 
 - **没有 out-parameter**：查询返回 `Result<T>`，调用点写成 `if (const auto info = vfs.stat(p)) { ... }`。
-- **只有一个 `list`**：不再有"名字版"重载。`FileInfo::path` 是完整路径，需要名字时用 `name()`；
+- **只有一个 `list`**：不再有"名字版"重载。`VfsEntryInfo::path` 是完整路径，需要名字时用 `name()`；
   这也去掉了"同名文件与目录"的歧义（之前两个 `list` 重载会触发派生类的名字隐藏）。
 - **目录的 `size` 恒为 0**：zip / 内存后端没有"目录大小"概念，模拟 OS 值只会误导。
-- 时间/权限/属性**先不放进 `FileInfo`**：将来加字段是加法（有默认值），不会破坏调用方。
+- **`crc` 是唯一的"后端记账"字段**：后端记录的内容校验和（ZIP = 中央目录里的 CRC-32）；没有记录、或条目还没写出去时为 0
+  （它自己不可当强保证 —— `0` 也是合法 CRC，拿它做完整性判断要配合 `stat` 的结果看）；时间/权限等仍**不放进**
+  `VfsEntryInfo`，将来加字段是加法（有默认值），不会破坏调用方。
 - `stat` 失败：路径不存在 → `NotFound`；非法 → `InvalidPath`。`IsADirectory` / `NotADirectory`
   只在调用方用错了具体操作时出现，`stat` 本身两类都成功返回。
 - `DirectoryVfs::stat` 对"存在但不是文件也不是目录"（设备、管道）返回 `NotFound`，与 `exists()` 口径一致。
 - `list` 给出的是**完整路径**，可直接回喂 `stat` / `read`。
+- **一次问出 kind**：非虚 `Vfs::kindOf(path)` 返回 `VfsEntryKind`，由 `stat()` 派生 —— 根恒为 `Directory`，
+  非法路径与不存在都报 `Missing`（要区分就用 `stat()`）；后端不为此新增虚函数。
+  `ZipArchive` 内部的条目表查询因此改名 `entryKindOf()`，不遮蔽基类这条便利。
 
 ## 6. 只读声明：`isReadOnly`
 
@@ -207,7 +258,7 @@ virtual Result<std::vector<FileInfo>>     list(const String& dir) const = 0;
 | `ZipVfs`（新，惰性） | `true` | 只能读 zip 内容；要改就重写整个 zip，属于另一件事 |
 | `MountVfs`（新） | 全部挂载只读时为 `true` | 单个挂载点的只读由挂载项声明 |
 
-"动手之前"的落地：`write` / `writeText` / `importFile` / `createDirectory` / `createDirectories` /
+"动手之前"的落地：`addFile` 一族 / `writeText` / `createDirectory` / `createDirectories` /
 `rename` / `remove` / `removeAll` / `open(Write|Append|ReadWrite)` 的第一行都先查 `isReadOnly()`
 或挂载项的只读位，命中即返回 `ReadOnly`，**不触碰后端**（`ReadOnlyBackendRefusesEveryChange` 用例覆盖）。
 
@@ -285,14 +336,14 @@ virtual IoError removeAll(const String& path) = 0;          // 文件或整棵�
 
 - 目录 = 显式标记（`createDirectory` 产生，或从 ZIP 的 `name/` 条目读入）**或**隐式父目录；
   私有判定收敛在一个 `isDirectoryPath(normalized)` 里，`stat` / `isDirectory` / 写操作守卫都调它。
-- `write` / `importFile` 碰到已有目录（含隐式）一律**拒绝**（`IsADirectory`），
+- `addFile` 一族碰到已有目录（含隐式）一律**拒绝**（`IsADirectory`），
   否则树里会同时冒出"同名文件"和"同名目录"；反之，`createDirectory` / `createDirectories`
   碰到已有文件返回 `AlreadyExists`，祖先里有文件返回 `NotADirectory`。
-- `saveAs` 时显式目录写入 ZIP 目录条目 → 空目录能过 `saveAs` / `openForRead` 往返；
-  `openForRead` 侧也不再丢弃 `name/` 条目，而是还原成目录标记。
-- 依赖也是懒的：`importFile` 只记下真实路径并先确认它可读，真正读盘发生在 `saveAs` / `toBytes`。
-- 为此给 `ZipArchive` 加了 `addDirectoryEntry(name)`：
-  已有的 `addDirectory(dir_path)` 是"**递归导入真实目录**"，与"插入一个目录条目"不是同一件事。
+- `saveAs` 时显式目录写入 ZIP 目录条目 → 空目录能过 `saveAs` / `open(…, ReadOnly)` 往返；
+  `open(…, ReadOnly)` 侧也不再丢弃 `name/` 条目，而是还原成目录标记。
+- 依赖也是懒的：`addFile(path, real_path)` 只记下真实路径并先确认它可读，真正读盘发生在 `saveAs` / `toBytes`。
+- 为此给把两种目录写开：单个目录条目（空目录落盘）由私有的 `insertDirectory(name)` 插入，
+  对外的 `addDirectory(prefix, dir)` 是"**递归导入真实目录**"，两者不是同一件事。
 
 ## 8. 打开与流：读流 / 写回调
 
@@ -345,11 +396,14 @@ class V_IOBASE_API DataSource
 
 | API | 数据在哪 | 拷贝 | 适用 |
 |---|---|---|---|
-| `write(path, std::span<const unsigned char>)` | 调用方缓冲 → 条目表 | **1 次** | 小数据（XML、几百 KB 的 bin） |
-| `write(path, std::span<const Fragment>)` | 多个不连续的块，**无需拼接** | 0 | 数据本来就分散（positions / normals / indices 三段） |
-| `write(path, std::shared_ptr<DataSource>)` | 调用方对象，**save 时才被拉取** | 0 | 生成式大块（边算边写） |
-| `importFile(path, real_path)` | 磁盘文件，**save 时才读** | 0（内存） | 已有文件资源（大 mesh） |
-| （备选）`write(path, std::vector<unsigned char>&&)` | 移动进条目表 | 0 | 已有就绪缓冲且要零拷贝 |
+| `addFile(path, std::span<const unsigned char>)` | 调用方缓冲 → 条目表 | **1 次** | 小数据（XML、几百 KB 的 bin） |
+| `addFile(path, std::span<const Fragment>)` | 多个不连续的块，**无需拼接** | 0 | 数据本来就分散（positions / normals / indices 三段） |
+| `addFile(path, std::shared_ptr<DataSource>)` | 调用方对象，**save 时才被拉取** | 0 | 生成式大块（边算边写） |
+| `addFile(path, real_path)` | 磁盘文件，**save 时才读** | 0（内存） | 已有文件资源（大 mesh） |
+| （备选）`addFile(path, std::vector<unsigned char>&&)` | 移动进条目表 | 0 | 已有就绪缓冲且要零拷贝 |
+
+四个重载都挂在 `Vfs` 上：前两个纯虚，片段 / 来源两个虚 + 默认实现（拼装 / 拉取后委托给 `addFile(path, span)`），
+`ZipArchive` 覆写它们保住借用与惰性 —— 调用方只持 `Vfs&` 也能用全家族。
 
 - **“1 GB 数据必须先拼成一个连续缓冲”这个前提不成立**：libzip 原生支持**分散来源** ——
   `zip_source_buffer_fragment_create(fragments, n, freep, &err)`（`zip_buffer_fragment_t{ data, size }`，纯借用，
@@ -368,11 +422,11 @@ class V_IOBASE_API DataSource
 | 场景 | 整条 API | 流式 / 回调 API |
 |---|---|---|
 | 读一条 1 GB mesh，只为算哈希 | `read()` ⇒ 1 GB 驻留 | `read(path, sink)` ⇒ 只一个块缓冲 |
-| 生成一条 1 GB mesh 写进包 | `write(span)` ⇒ VFS 副本 + 调用方那份 = **2×** | `write(path, source)` ⇒ 0 驻留 |
+| 生成一条 1 GB mesh 写进包 | `addFile(span)` ⇒ VFS 副本 + 调用方那份 = **2×** | `addFile(path, source)` ⇒ 0 驻留 |
 | 把整包交给别人 | `toBytes()` ⇒ **2× 整包**（§9.7） | `saveAs(path)` ⇒ 单条目 |
 
-结论：**大块数据一律走 `openRead` / `read(sink)` / `DataSource` / `importFile`**；
-`read()` / `write(span)` / `toBytes()` 只用于中小数据（它们的存在价值是“简单”，不是“省内存”）。
+结论：**大块数据一律走 `openRead` / `read(sink)` / `addFile(path, source)` / `addFile(path, real_path)`**；
+`read()` / `addFile(path, span)` / `toBytes()` 只用于中小数据（它们的存在价值是“简单”，不是“省内存”）。
 
 ### 8.4 生命周期与已知取舍
 
@@ -401,7 +455,7 @@ class V_IOBASE_API DataSource
 | `vectorSource(vector&&)` | 移动接管 | 0 |
 | `vectorSink(vector&)` / `ostreamSink(ostream&)` | 整条读的实现 / 流到外部目标 | — |
 
-于是 `write(path, span)` / `write(path, fragments)` / `importFile(path, real)` 都只是“包一个 source 交给同一条 emit 路径”，
+于是 `addFile(path, span)` / `addFile(path, fragments)` / `addFile(path, real)` 都只是“包一个 source 交给同一条 emit 路径”，
 不出现第二套写出逻辑。
 
 **实现者必须遵守的契约**：
@@ -434,20 +488,23 @@ Vfs（抽象接口，原 IMemoryVfs）      // 路径/树/权限/错误模型；
  ├── ZipVfs         介质 = ZIP：惰性索引 + 改动 overlay + commit/saveAs 回 zip
  └── MountVfs       待做：多后端一棵树（§10）
 
-ZipArchive          字节级 codec（不是 Vfs）：entries / readEntry / addFile / save / decompressFile
+Zip                 一次性操作层：compress / decompress / compressDirectory / decompressFile / entries / readEntry
+ZipArchive          打开态的 ZIP 树（Vfs 后端）：open（ReadOnly | ReadWrite）+ read / openRead / addFile×4 / saveAs / commit / toBytes
 ```
 
 ### 9.1 一个 `ZipVfs` 的三个开口
 
 | 入口 | 绑定 | `isReadOnly()` | 语义 |
 |---|---|---|---|
-| `openForRead(path \| bytes)` | 只读源归档 | `true` | 只读视图；写操作立即 `ReadOnly`（需求文档 §6.5） |
-| `open(path \| bytes)` | 只读源 + 可写 overlay；文件目标 = 同一路径（供 `commit()`） | `false` | 读 + 改；`commit()` 原子替换回原路径（`bytes` 版无文件目标 → `Unsupported`） |
+| `open(path \| bytes, OpenMode::ReadOnly)` | 只读源归档 | `true` | 只读视图；写操作立即 `ReadOnly`（需求文档 §6.5） |
+| `open(path \| bytes, OpenMode::ReadWrite)` | 只读源 + 可写 overlay；文件目标 = 同一路径（供 `commit()`） | `false` | 读 + 改；`commit()` 原子替换回原路径（`bytes` 版无文件目标 → `Unsupported`） |
 | `ZipVfs()` | 无源、无目标 | `false` | 纯内存树；`commit()` → `Unsupported`，落地走 `saveAs` / `toBytes` |
 
 三个开口是**同一个类型**的三种状态，不是三个类型：VFS 的操作集合是同一套，“能不能写”是**状态**而不是**接口**。
 正确的类比是 `std::fstream` + `ios::in|out`（一个类 + 模式），不是 `istream`/`ostream`/`iostream`
 （后者出于运算符方向 + 虚继承的历史包袱）。`isReadOnly()` 本来就是为这件事准备的（§6）。
+模式是显式实参（`OpenMode`，**无默认值**）：加载方要只读就在调用点写出来，不会因为少写一个实参而悄悄拿到可写视图。
+内存字节同样两个入口：`open(vector&&, …)` 接管（move 进来）、`open(span, …)` 借用（不持有；span 必须活到 archive 及其所有读者结束）。
 
 ### 9.2 一个 `ZipVfs` 的两个句柄（生命周期不同）
 
@@ -491,30 +548,30 @@ ZipArchive          字节级 codec（不是 Vfs）：entries / readEntry / addF
   libzip 的 `BEGIN_WRITE_CLONING` 优化（保留原文件前缀、跳过“已隐式拷贝”的条目）只在**写回同一文件源**时生效 —— 见 §15.6（已评估，暂不采纳）。
 - 失败路径用 `zip_discard`（`zip_close` 失败后句柄仍存活）。透传是否保留 mtime / external attributes **需实测**，
   必要时用 `zip_file_set_mtime` / `zip_file_set_external_attributes` 补。
-- `openForRead` 下的 `commit()` 与所有写操作一样返回 `ReadOnly`。
+- `open(…, ReadOnly)` 下的 `commit()` 与所有写操作一样返回 `ReadOnly`。
 
 ### 9.4 惰性与透传
 
 - 打开只读目录，不解压任何条目。证明方式（替换旧的“删源文件后读失败”用例）：
-  破坏条目数据区、保留文件末尾的中央目录 → `openForRead` / `list` / `stat` 成功，`read` 失败。
-- 保存时：未改动条目由 `zip_source_zip_file(...)` 逐条目搬运 **内存 O(单条目)**；`importFile` 的条目 `zip_source_file_create`（save 时才读盘）；
+  破坏条目数据区、保留文件末尾的中央目录 → `open(…, ReadOnly)` / `list` / `stat` 成功，`read` 失败。
+- 保存时：未改动条目由 `zip_source_zip_file(...)` 逐条目搬运 **内存 O(单条目)**；`addFile(path, real_path)` 的条目 `zip_source_file_create`（save 时才读盘）；
   overlay 字节走 `zip_source_buffer`。峰值内存 = 单条目。
 - **实测修正（S3b）**：“搬运 = 不解压不重压缩”**不成立**：libzip 在把条目写进新归档时会读它并校验内容 ——
   把源包某条目的数据区破坏后，`saveAs` 会在 `zip_close` 报 `CRC error`（而不是静默产出坏包）。
   所以代价是 **CPU 要过一遍**（不驻留内存），真正“零解压零重压缩”的只有**就地更新（cloning）**那条路（§15.6）。
   副产品：损坏条目会**挡住**保存 —— 语义上比产出坏包好。
 - **CRC 校验（两条读路径都已修）**：libzip 的**读路径不校验 CRC**（实测：损坏条目的 `read()` 会成功并给出错误字节）。
-  现在 `readEntries` 一并取 `ZIP_STAT_CRC`；`ZipArchive::read()` 读完自己算 `crc32()` 对照目录记录的值，不符 → `IoFailure`；
+  现在 `readEntries` 一并取 `ZIP_STAT_CRC`（S3b 收口后它是 `.cpp` 内部的 `StoredEntry`）；`ZipArchive::read()` 读完自己算 `crc32()` 对照目录记录的值，不符 → `IoFailure`；
   `VfsReadStream` 同样在流内累计 crc，**读到末尾时**对照并把结果放进 `error()`（`seek(0)` 重置校验，其它 seek 关闭校验，
   因为增量校验只对顺序读成立）。两条路径都由 `IoBaseTest.ZipArchiveOpensWithoutReadingContent` 钉住。
-- **收益已兑现在 `robotics::io`**：`loadPkg(path)` 与嵌套 `.vdevpkg` 用 `openForRead`，只解压真正要用到的条目。
+- **收益已兑现在 `robotics::io`**：`loadPkg(path)` 与嵌套 `.vdevpkg` 用 `open(…, OpenMode::ReadOnly)`，只解压真正要用到的条目。
 
 ### 9.5 命名与一次断代
 
 - `IMemoryVfs` → **`IVfs`**：`DirectoryVfs` / `ZipVfs` 都不是“memory”，旧名误导；`I` 前缀与 `INamed` / `IHierarchyNode` 一致。
 - `save(path)` / `save(ostream&)` / `serialize()` → `saveAs(path)` / `saveAs(ostream&)` / `toBytes()`；新增 `commit()`。
 - `ZipMemoryVfs`（头文件与实现）删除；`ZipVfs` 由“只读惰性”变为“惰性源 + overlay”的唯一 zip 后端。
-- 迁移面：`robotics::io`（`loadPkg` → `openForRead`，`savePkg(obj, path)` → 无源树 + `saveAs`）、
+- 迁移面：`robotics::io`（`loadPkg` → `open(…, ReadOnly)`，`savePkg(obj, path)` → 无源树 + `saveAs`）、
   `tests/test_iobase`（`ZipMemoryVfs` → `ZipVfs`）、`tests/test_robotics_io`。
 
 ### 9.6 数据所有权与生命周期
@@ -525,16 +582,18 @@ libzip 的 `zip_source_buffer(za, ptr, len, 0)` 是**借用**（`freep=0` 不拷
 
 | 条目来源 | 谁持有 | 活到什么时候 | 拷贝 |
 |---|---|---|---|
-| `write(path, span)` | VFS 条目表的 `data` | 到 `saveAs` / `commit` 结束 | **一次**（接口语义：当场取走一份，调用方可立刻释放自己的缓冲） |
+| `addFile(path, span)` | VFS 条目表的 `data` | 到 `saveAs` / `commit` 结束 | **一次**（接口语义：当场取走一份，调用方可立刻释放自己的缓冲） |
+| `addFile(path, fragments)` | 不持有，只借用（`ZipArchive`；基类默认实现当场拷一份） | 到 `saveAs` / `commit` 结束 | 0 或 1 次 |
+| `addFile(path, source)` | VFS 条目表持 `shared_ptr` | 到 `saveAs` / `commit` 结束 | 0（save 时才拉取） |
 | 源归档条目 | `ZipArchive` 的源句柄 | VFS 全程 | 不拷（`zip_source_zip_file` 透传压缩数据） |
-| `importFile(path, real)` | 不持有，只记路径 | —（`saveAs`/`commit` 时才读盘） | 不拷；**save 那一刻文件的内容**才是结果，文档要写明 |
+| `addFile(path, real)` | 不持有，只记路径 | —（`saveAs`/`commit` 时才读盘） | 不拷；**save 那一刻文件的内容**才是结果，文档要写明 |
 | `emit()` 期间 | 不需要任何临时缓冲 | — | 三种来源分别是成员数据 / `zip_source_file_create`（libzip 自己读）/ 源句柄透传 |
 
 - 因此 `buildZip` 那种“把文件读进内存再喂 buffer、并保证它活到 close”的 fragile 模式在新设计里消失。
-- 想省掉 `write` 的那次拷贝，只有两条路：①加虚函数重载 `write(path, std::vector<unsigned char>&&)`
-  （零拷贝，但纯虚函数 15 → 16，每个后端两条写路径）；②让 `ZipArchive` 用 `zip_source_function_create`
+- 想省掉 `addFile(path, span)` 的那次拷贝，只有两条路：①加虚函数重载 `addFile(path, std::vector<unsigned char>&&)`
+  （零拷贝，但虚函数再多一条，每个后端两条写路径）；②让 `ZipArchive` 用 `zip_source_function_create`
   + 回调持有 `shared_ptr`（正式的所有权移交，但**不减少驻留**，只适合内部自用）。
-  ①**等出现真实的大块内存写入场景再加**（现状大 mesh 走 `importFile`，本来就不驻留）。
+  ①**等出现真实的大块内存写入场景再加**（现状大 mesh 走 `addFile(path, real_path)`，本来就不驻留）。
 
 ### 9.7 规模评估：2 GB 包
 
@@ -542,9 +601,9 @@ libzip 的 `zip_source_buffer(za, ptr, len, 0)` 是**借用**（`freep=0` 不拷
 
 | 操作 | 峰值内存 | I/O | 结论 |
 |---|---|---|---|
-| `openForRead(path)` | 目录索引 ~1 MB | 只读中央目录 | ✅ 与包大小无关（惰性的目的） |
+| `open(path, ReadOnly)` | 目录索引 ~1 MB | 只读中央目录 | ✅ 与包大小无关（惰性的目的） |
 | `read(一条)` | 该条目解压后大小 | 读该条目 | ✅ 峰值 = 单条目；⚠️ 单条 >100 MB 的 mesh 仍整条进内存，要等 §8 的流式读 |
-| `write` / `rename` / `remove` | O(改动) | 0 | ✅ 只改内存 |
+| `addFile` / `rename` / `remove` | O(改动) | 0 | ✅ 只改内存 |
 | `commit()` / `saveAs(path)` | O(单条目) | **≈ 2 GB 读 + 2 GB 写** | 未改动条目压缩数据直拷 ⇒ CPU 几乎为 0、纯 I/O；本地 SSD 约 1.5–8 s |
 | `saveAs(ostream&)` | **≈ 4 GB** | 2 GB 写 | ❌ 该规模不可用 |
 | `toBytes()` | **≈ 4 GB** | — | ❌ 该规模不可用 |
@@ -627,19 +686,19 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | 旧 (`bool`) | 新 |
 |---|---|
 | `readFile(path, out)` | `Result<std::vector<unsigned char>> read(path) const` |
-| `writeFile(path, data/size)` `(path, vector)` `(path, text)` | `IoError write(path, span<const unsigned char>)` / `writeText(path, String)` |
-| `mountFile(path, real)` | `IoError importFile(path, real)`（"mount" 一词留给 `MountVfs`，避免语义撞车） |
+| `writeFile(path, data/size)` `(path, vector)` `(path, text)` | `IoError addFile(path, span<const unsigned char>)` / `writeText(path, String)` |
+| `mountFile(path, real)` | `IoError addFile(path, real_path)`（"mount" 一词留给 `MountVfs`，避免语义撞车） |
 | `remove(path)`（删子树） | `remove(path)`（文件/空目录） + `removeAll(path)`（子树） |
 | `save(vector<unsigned char>&)` | `Result<std::vector<unsigned char>> serialize() const` |
 | `save(path)` / `save(ostream&)` | 同名，改为返回 `IoError` 且 **`const`**（序列化不改树） |
 | `exists` / `isFile` / `isDirectory`（纯虚） | 同名，改为**非虚**派生实现 |
-| `list(dir)`（名字） + `list(dir, out)` | 单个 `Result<std::vector<FileInfo>> list(dir) const` |
+| `list(dir)`（名字） + `list(dir, out)` | 单个 `Result<std::vector<VfsEntryInfo>> list(dir) const` |
 | `createDirectory(path, recursive)` | `createDirectory` / `createDirectories` |
 | `removeEmpty(path)` | 并入 `remove`（std 语义） |
-| `stat(path, out)` | `Result<FileInfo> stat(path) const` |
+| `stat(path, out)` | `Result<VfsEntryInfo> stat(path) const` |
 | — | `writeText` / `readText`（文本便利，UTF-8） |
 
-虚函数从 20 个（含 7 个纯虚 `bool`）变成 **15 个**，全部走同一个错误通道。
+虚函数从 20 个（含 7 个纯虚 `bool`）变成 **15 个纯虚** + `addFile` 的片段 / 拉取来源两个带默认实现的虚函数，全部走同一个错误通道。
 
 **阶段划分**（每阶段结束都必须全绿）：
 
@@ -659,6 +718,8 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | 需求文档验收项 | 落点 |
 |---|---|
 | 空路径 / 相对路径 / 越界 `..` → 路径非法 | **已过**：`VfsCoreTest.InvalidPathsAreRejected` |
+| 一次问出 kind（文件 / 目录 / 缺失） | **已过**：`VfsCoreTest.KindOfAnswersFileDirectoryAndMissing`（两个后端；非法路径 → `Missing`） |
+| 前导 `/`（绝对拼写）→ 路径非法 | **已过**：`VfsCoreTest.InvalidPathsAreRejected` / `DirectoryVfsNeverEscapesItsRoot` |
 | 重复分隔符 / 折叠 → 规范化正确 | **已过**：同上（`a/../a.txt`、`./a.txt`、`a..b`） |
 | 根路径操作 → 正确 | **已过**：`stat("")` 为目录（两个后端） |
 | 不存在的文件 / 目录 → 未找到 | **已过**：`stat`/`list` 的 `NotFound` |
@@ -680,6 +741,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | VFS 析构后 Stream 仍可读 → 生命周期正确 | S3（弱化版：`intrusive_ptr<Buffer>` 存活） |
 | 超出容量上限 → 超出容量 | S5 |
 | seek 越界 → 越界 | S5 |
+| 内容来源（片段 / 拉取）经 `Vfs&` 可达（默认实现 / override 两条路径） | **已过**：`IoBaseTest.DirectoryVfsAssemblesSourcesThroughTheBaseInterface` / `ZipArchiveKeepsSourcesLazyThroughTheBaseInterface` |
 
 ## 15. 待裁决
 

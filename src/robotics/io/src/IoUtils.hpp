@@ -51,12 +51,12 @@ inline vine::io::Result<vine::String> readText(const vine::io::Vfs& vfs, const v
  * @param vfs The file system to write to.
  * @param path The virtual file path.
  * @param text The UTF-8 text to store.
- * @return The failure write() would report.
+ * @return The failure addFile() would report.
  */
 inline vine::io::IoError writeText(vine::io::Vfs& vfs, const vine::String& path, const vine::String& text)
 {
     const auto* bytes = reinterpret_cast<const unsigned char*>(text.data());
-    return vfs.write(path, std::span<const unsigned char>(bytes, text.size()));
+    return vfs.addFile(path, std::span<const unsigned char>(bytes, text.size()));
 }
 
 /**

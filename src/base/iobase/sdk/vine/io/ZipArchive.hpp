@@ -1,7 +1,6 @@
 ﻿#pragma once
 #include "io_global.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -18,22 +17,13 @@
 V_IO_NS_BEGIN
 
 /**
- * @brief One entry of an archive, as reported by ZipArchive::entries().
- */
-struct ZipEntryInfo
-{
-    String        name;                  ///< Entry name, using '/' separators; a directory ends with '/'.
-    std::uint64_t size{ 0 };             ///< Uncompressed size in bytes; always 0 for a directory.
-    std::uint32_t crc{ 0 };              ///< Checksum of the content, as recorded by the archive.
-    bool          is_directory{ false }; ///< true when the entry marks a directory.
-};
-
-/**
- * @brief Creates and extracts ZIP archives.
+ * @brief A ZIP archive as a virtual file tree.
  *
  * A ZIP is a file system in its own right: one file holding a flat list of entry
- * names that spell out a tree. This class is therefore both the ZIP codec and the
- * Vfs implementation over it - there is no second type to keep in step.
+ * names that spell out a tree, which is why this class is the Vfs implementation
+ * over it - there is no second type to keep in step. One-shot work on files and
+ * byte ranges (pack, extract, list, read one entry) lives in Zip; this class is
+ * the archive that stays open.
  *
  * Entries are addressed with '/' separators, so a directory tree becomes
  * entries such as "subdir/file.txt". Entries added for writing are buffered
@@ -41,24 +31,26 @@ struct ZipEntryInfo
  *
  * It comes up in one of three ways:
  *   * ZipArchive() starts an empty, writable archive with nothing behind it;
- *   * openForRead() attaches an existing archive as a read-only view;
- *   * open() attaches one that may also be changed, and commit() writes the
- *     result back over it.
+ *   * open(path, OpenMode::ReadOnly) attaches an existing archive as a view
+ *     that refuses every change;
+ *   * open(path, OpenMode::ReadWrite) attaches one that may also be changed,
+ *     and commit() writes the result back over it.
  *
  * Opening reads the archive directory only, so a large package costs its entry
  * list and nothing more; entry contents are decompressed when they are read.
+ * In-memory bytes are either taken over (a moved vector) or borrowed (a span the
+ * caller keeps alive).
  */
 class V_IOBASE_API ZipArchive : public Vfs
 {
   public:
     /**
-     * @brief What an entry name refers to.
+     * @brief How an existing archive is attached.
      */
-    enum class EntryKind : std::uint8_t
+    enum class OpenMode : std::uint8_t
     {
-        Missing,   ///< Nothing is there.
-        File,      ///< A file: read() and openRead() work.
-        Directory, ///< A directory, explicit or implied by longer names.
+        ReadOnly,  ///< Every change is refused with IoError::ReadOnly.
+        ReadWrite, ///< The source plus an overlay; commit() may write back.
     };
 
     ZipArchive();
@@ -76,64 +68,6 @@ class V_IOBASE_API ZipArchive : public Vfs
     ZipArchive& operator=(ZipArchive&& other) noexcept;
 
     /**
-     * @brief Lists the entries of a ZIP file with their names, sizes and kinds.
-     *
-     * Only the archive directory is read, so the entries themselves are not
-     * decompressed - this is what lets a backend stay lazy.
-     *
-     * @param path Input .zip file path.
-     * @return The entries, IoError::NotFound when the file does not exist, or IoError::InvalidData when it is not an archive.
-     */
-    [[nodiscard]] static Result<std::vector<ZipEntryInfo>> entries(const std::filesystem::path& path);
-
-    /**
-     * @brief Lists the entries of an in-memory ZIP.
-     *
-     * @param data ZIP bytes, which must stay readable for the call.
-     * @param size Number of bytes.
-     * @return The entries, or IoError::InvalidData when the bytes are not an archive.
-     */
-    [[nodiscard]] static Result<std::vector<ZipEntryInfo>> entries(const void* data, std::size_t size);
-
-    /**
-     * @brief Decompresses all entries of a ZIP file into a directory.
-     *
-     * Entry names that could escape the destination directory are rejected.
-     *
-     * @param path Input .zip file path.
-     * @param dir_path Destination directory, created if missing.
-     * @return true on success.
-     */
-    static bool decompressFile(const std::filesystem::path& path, const std::filesystem::path& dir_path);
-
-    /**
-     * @brief Reads one entry of a ZIP file into a buffer.
-     *
-     * @param path Input .zip file path.
-     * @param name Entry name to read.
-     * @param out Receives the entry bytes.
-     * @return true on success.
-     */
-    static bool readEntry(const std::filesystem::path& path, const String& name, std::vector<unsigned char>& out);
-
-    /**
-     * @brief Reads one entry of an in-memory ZIP into a buffer.
-     *
-     * @param data ZIP bytes.
-     * @param size Number of bytes.
-     * @param name Entry name to read.
-     * @param out Receives the entry bytes.
-     * @return true on success.
-     */
-    static bool readEntry(const void* data, std::size_t size, const String& name,
-                          std::vector<unsigned char>& out);
-
-    // The surface below is the target shape: an archive that is either empty (being built) or
-    // opened (a source plus the changes made to it), chunk-wise reads, and a persistence step that
-    // copies untouched entries without decompressing them. The entries() / readEntry() group above
-    // is folded into it as the callers migrate.
-
-    /**
      * @brief Opens an existing ZIP file, reading only its directory.
      *
      * The handle is kept open, so the file has to stay readable (and must not be
@@ -141,38 +75,38 @@ class V_IOBASE_API ZipArchive : public Vfs
      * a time, when they are read.
      *
      * @param path The .zip file path.
+     * @param mode Whether changes are allowed; OpenMode::ReadOnly refuses them all
+     *             with IoError::ReadOnly, so a package that is only meant to be
+     *             read cannot be modified by accident.
      * @return The archive, IoError::NotFound when the file does not exist,
      *         IoError::InvalidData when it is not an archive.
      */
-    [[nodiscard]] static Result<ZipArchive> open(const std::filesystem::path& path);
+    [[nodiscard]] static Result<ZipArchive> open(const std::filesystem::path& path, OpenMode mode);
 
     /**
      * @brief Opens an in-memory ZIP, reading only its directory.
      *
-     * @param bytes The ZIP bytes; the archive takes them over, so the caller may let go.
+     * @param bytes The ZIP bytes; the archive takes them over, so pass a buffer
+     *              that can be given up: a fresh one, or std::move of a held one.
+     *              Use the span overload to keep owning the bytes instead.
+     * @param mode Whether changes are allowed; see the path overload.
      * @return The archive, or IoError::InvalidData when the bytes are not an archive.
      */
-    [[nodiscard]] static Result<ZipArchive> open(std::vector<unsigned char> bytes);
+    [[nodiscard]] static Result<ZipArchive> open(std::vector<unsigned char>&& bytes, OpenMode mode);
 
     /**
-     * @brief Opens an existing ZIP file as a read-only view.
+     * @brief Opens an in-memory ZIP whose bytes the caller keeps owning.
      *
-     * Same as open(), but every change is refused with IoError::ReadOnly, so a
-     * package that is only meant to be read cannot be modified by accident.
+     * The bytes are borrowed, not copied, so a package that already lives in a
+     * buffer (a cache, a mapped file, a fixture) is opened at no cost. They have
+     * to stay alive and unchanged as long as this archive - and every reader it
+     * handed out, which keeps the archive's handle alive - is used.
      *
-     * @param path The .zip file path; it has to stay readable while the view is used.
-     * @return The archive, IoError::NotFound when the file does not exist,
-     *         IoError::InvalidData when it is not an archive.
-     */
-    [[nodiscard]] static Result<ZipArchive> openForRead(const std::filesystem::path& path);
-
-    /**
-     * @brief Opens in-memory ZIP bytes as a read-only view.
-     *
-     * @param bytes The ZIP bytes; the archive takes them over.
+     * @param bytes The ZIP bytes; an empty span is not an archive.
+     * @param mode Whether changes are allowed; see the path overload.
      * @return The archive, or IoError::InvalidData when the bytes are not an archive.
      */
-    [[nodiscard]] static Result<ZipArchive> openForRead(std::vector<unsigned char> bytes);
+    [[nodiscard]] static Result<ZipArchive> open(std::span<const unsigned char> bytes, OpenMode mode);
 
     /**
      * @brief Reports whether this archive was opened from an existing one.
@@ -185,7 +119,7 @@ class V_IOBASE_API ZipArchive : public Vfs
     /**
      * @brief Reports whether this archive refuses changes.
      *
-     * @return true for an archive attached by openForRead(), false otherwise.
+     * @return true when the archive was opened with OpenMode::ReadOnly, false otherwise.
      */
     [[nodiscard]] bool isReadOnly() const noexcept override;
 
@@ -196,7 +130,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @return The information, or IoError::NotFound when nothing is there,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] Result<FileInfo> stat(const String& path) const override;
+    [[nodiscard]] Result<VfsEntryInfo> stat(const String& path) const override;
 
     /**
      * @brief Lists the direct children of a virtual directory.
@@ -206,10 +140,10 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         IoError::NotADirectory when dir names a file,
      *         IoError::InvalidPath when dir is not a valid virtual path.
      */
-    [[nodiscard]] Result<std::vector<FileInfo>> list(const String& dir) const override;
+    [[nodiscard]] Result<std::vector<VfsEntryInfo>> list(const String& dir) const override;
 
     /**
-     * @brief Writes a whole virtual file.
+     * @brief Adds a whole virtual file whose content is buffered here.
      *
      * @param path The virtual file path.
      * @param bytes The bytes to store; may be empty.
@@ -217,7 +151,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         IoError::IsADirectory when the name is taken by a directory,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] IoError write(const String& path, std::span<const unsigned char> bytes) override;
+    [[nodiscard]] IoError addFile(const String& path, std::span<const unsigned char> bytes) override;
 
     /**
      * @brief Creates a virtual directory.
@@ -276,7 +210,7 @@ class V_IOBASE_API ZipArchive : public Vfs
     [[nodiscard]] IoError removeAll(const String& path) override;
 
     /**
-     * @brief Brings a real file into the archive.
+     * @brief Adds a whole virtual file whose content comes from the local file system.
      *
      * The real file is read when the archive is persisted, so it has to stay
      * readable until then; nothing is buffered up front.
@@ -288,7 +222,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         IoError::IsADirectory when the name is taken by a directory,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] IoError importFile(const String& path, const std::filesystem::path& real_path) override;
+    [[nodiscard]] IoError addFile(const String& path, const std::filesystem::path& real_path) override;
 
     /**
      * @brief Reads a whole virtual file, decompressing it on demand.
@@ -314,30 +248,36 @@ class V_IOBASE_API ZipArchive : public Vfs
     [[nodiscard]] Result<std::unique_ptr<VfsReadStream>> openRead(const String& name) const;
 
     /**
-     * @brief Adds or replaces an entry whose content comes from a pull source.
+     * @brief Adds a whole virtual file whose content comes from a pull source.
      *
      * The source is only read when the archive is persisted, so content that is
      * generated on the fly never has to be materialized first. The archive keeps
      * the source alive; size() has to match what the source produces.
      *
-     * @param name Entry name, using '/' separators.
-     * @param source The source to pull from.
-     * @return true on success.
+     * @param path The virtual file path.
+     * @param source The source to pull from; must not be null.
+     * @return IoError::Ok on success, IoError::ReadOnly on a read-only archive,
+     *         IoError::InvalidData when source is null, IoError::IsADirectory when
+     *         the name is taken by a directory, IoError::InvalidPath when path is
+     *         not a valid virtual path.
      */
-    bool addFile(const String& name, std::shared_ptr<DataSource> source);
+    [[nodiscard]] IoError addFile(const String& path, std::shared_ptr<DataSource> source) override;
 
     /**
-     * @brief Adds or replaces an entry stored as several separate byte ranges.
+     * @brief Adds a whole virtual file stored as several separate byte ranges.
      *
      * The pieces are borrowed, not copied, so publisher data that already lives
      * in more than one buffer does not have to be concatenated. They have to stay
      * alive until the archive is persisted.
      *
-     * @param name Entry name, using '/' separators.
-     * @param fragments The pieces, in order.
-     * @return true on success.
+     * @param path The virtual file path.
+     * @param fragments The pieces, in order; an empty list writes an empty file.
+     * @return IoError::Ok on success, IoError::ReadOnly on a read-only archive,
+     *         IoError::InvalidData when a non-empty piece points at no bytes,
+     *         IoError::IsADirectory when the name is taken by a directory,
+     *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    bool addFile(const String& name, std::span<const Fragment> fragments);
+    [[nodiscard]] IoError addFile(const String& path, std::span<const Fragment> fragments) override;
 
     /**
      * @brief Writes the whole archive to a ZIP file, streaming entry by entry.
@@ -449,12 +389,14 @@ class V_IOBASE_API ZipArchive : public Vfs
     /**
      * @brief Reports what a stored entry name refers to.
      *
-     * A directory that exists only as the middle of longer names counts as one.
+     * The lookup is the entry table itself, not stat(): a directory that exists
+     * only as the middle of longer names counts as one, and the root is answered
+     * by the caller rather than here.
      *
      * @param name A stored entry name; empty denotes the root.
      * @return The kind of the name.
      */
-    [[nodiscard]] EntryKind kindOf(const String& name) const;
+    [[nodiscard]] VfsEntryKind entryKindOf(const String& name) const;
 
     /**
      * @brief Reports the uncompressed size of one stored entry.
@@ -465,19 +407,30 @@ class V_IOBASE_API ZipArchive : public Vfs
     [[nodiscard]] std::uint64_t sizeOf(const String& name) const;
 
     /**
-     * @brief Lists the direct children of one stored directory.
+     * @brief Reports the content checksum of one stored entry.
      *
-     * @param dir A stored directory name; empty denotes the archive root.
-     * @return The children, one segment deep and deduplicated.
+     * Only an entry opened from an archive has one: a buffered, file-backed or
+     * generated entry is checksummed while it is written, not before.
+     *
+     * @param name A stored entry name.
+     * @return The checksum, or 0 when there is no such entry or none is recorded.
      */
-    [[nodiscard]] std::vector<ZipEntryInfo> children(const String& dir) const;
+    [[nodiscard]] std::uint32_t crcOf(const String& name) const;
 
     /**
-     * @brief Lists every entry this archive holds, as stored.
+     * @brief Lists the direct children of one directory.
      *
-     * @return The entry list: names, kinds and sizes.
+     * @param dir A directory path; empty denotes the archive root.
+     * @return The children, one segment deep and deduplicated, with full paths.
      */
-    [[nodiscard]] std::vector<ZipEntryInfo> index() const;
+    [[nodiscard]] std::vector<VfsEntryInfo> children(const String& dir) const;
+
+    /**
+     * @brief Lists every entry this archive holds.
+     *
+     * @return The entry list: paths, kinds and sizes.
+     */
+    [[nodiscard]] std::vector<VfsEntryInfo> index() const;
 
     /**
      * @brief Removes one stored entry.
@@ -509,15 +462,16 @@ class V_IOBASE_API ZipArchive : public Vfs
      */
     struct Entry
     {
+        /// What the entry is: kind, and the size/checksum the source archive
+        /// recorded (0 when only entrySize() knows). The path is the table key.
+        VfsEntryInfo info;
+
         std::vector<unsigned char>  data;                  ///< Buffered content.
         std::filesystem::path       src;                   ///< Content file when from_file is true.
         std::shared_ptr<DataSource> generator;             ///< Pull source, read while the archive is written.
-        std::uint64_t               size{ 0 };              ///< Size recorded by the source archive.
-        std::uint32_t               crc{ 0 };               ///< Checksum recorded by the source archive.
         std::uint64_t               source_index{ 0 };     ///< Index in the source archive when from_source is true.
         bool                        from_file{ false };
         bool                        from_source{ false }; ///< Content still lives in the opened archive.
-        bool                        is_directory{ false }; ///< Directory marker (empty directories need one).
     };
 
     /**
@@ -530,8 +484,9 @@ class V_IOBASE_API ZipArchive : public Vfs
         ArchiveHandle(const ArchiveHandle&) = delete;
         ArchiveHandle& operator=(const ArchiveHandle&) = delete;
 
-        std::vector<unsigned char> bytes;              ///< Bytes the handle borrows, when memory-backed.
-        void*                      archive{ nullptr }; ///< libzip's zip_t.
+        std::vector<unsigned char>     owned;              ///< Bytes the handle owns, when they were handed over.
+        std::span<const unsigned char> bytes;              ///< The ZIP bytes: the owned block, or the caller's borrow.
+        void*                          archive{ nullptr }; ///< libzip's zip_t.
     };
 
     /**
@@ -582,7 +537,28 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param bytes The ZIP bytes; the archive takes them over.
      * @return IoError::Ok on success.
      */
-    [[nodiscard]] IoError adoptBytes(std::vector<unsigned char> bytes);
+    [[nodiscard]] IoError adoptBytes(std::vector<unsigned char>&& bytes);
+
+    /**
+     * @brief Opens ZIP bytes the caller keeps owning and fills the entry table.
+     *
+     * @param bytes The ZIP bytes; they are borrowed, so the caller has to keep them
+     *        alive as long as any reader of this archive, which holds its handle.
+     * @return IoError::Ok on success.
+     */
+    [[nodiscard]] IoError adoptBytes(std::span<const unsigned char> bytes);
+
+    /**
+     * @brief Opens the handle's bytes as a read-only source archive.
+     *
+     * libzip borrows the block, so whoever owns it has to keep it alive: the
+     * handle itself when it took the bytes over, the caller when they are lent.
+     *
+     * @param handle The handle whose bytes to open; its archive member is set.
+     * @return IoError::Ok on success, IoError::InvalidData when the bytes are not
+     *         an archive.
+     */
+    [[nodiscard]] IoError attachBytes(ArchiveHandle& handle);
 
     /**
      * @brief Reads the directory of an open source archive into the entry table.
@@ -605,7 +581,7 @@ class V_IOBASE_API ZipArchive : public Vfs
     std::map<String, Entry>        entries_;      ///< Entry name to where its content comes from.
     std::shared_ptr<ArchiveHandle> handle_;       ///< The source archive, when this one was opened.
     std::filesystem::path          source_path_;  ///< File the handle came from, when it is file-backed.
-    bool                           read_only_{ false }; ///< Set by openForRead().
+    bool                           read_only_{ false }; ///< Set by open() with OpenMode::ReadOnly.
 };
 
 V_IO_NS_END

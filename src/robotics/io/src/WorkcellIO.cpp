@@ -137,7 +137,7 @@ void WorkcellIO::savePkg(const workcell::Workcell& cell, vine::io::Vfs& vfs, con
 std::unique_ptr<workcell::Workcell> WorkcellIO::loadPkg(const std::filesystem::path& pkg_path)
 {
     // Only the archive index is read up front; entries decompress on demand.
-    auto pkg = vine::io::ZipArchive::openForRead(pkg_path);
+    auto pkg = vine::io::ZipArchive::open(pkg_path, vine::io::ZipArchive::OpenMode::ReadOnly);
     if (!pkg) {
         throw std::runtime_error("WorkcellIO::loadPkg, not a valid workcell package: " + pkg_path.string());
     }
@@ -207,7 +207,7 @@ void WorkcellIO::exportDevice(ExportContext& ctx, const workcell::Device& dev, t
         throw std::runtime_error("WorkcellIO::exportDevice, failed to build device package: "
                                  + dev.name().as_std_str());
     }
-    if (ctx.vfs->write(dev_path, zip_bytes.value()) != vine::io::IoError::Ok) {
+    if (ctx.vfs->addFile(dev_path, zip_bytes.value()) != vine::io::IoError::Ok) {
         throw std::runtime_error("WorkcellIO::exportDevice, failed to write device package: "
                                  + dev_path.as_std_str());
     }
@@ -316,7 +316,7 @@ std::unique_ptr<workcell::SceneObject> WorkcellIO::parseDevice(ParseContext& ctx
         }
         // The nested package is already in memory, so it is indexed rather than
         // expanded: only the entries the device actually needs get decompressed.
-        auto pkg = vine::io::ZipArchive::openForRead(bytes.take());
+        auto pkg = vine::io::ZipArchive::open(bytes.take(), vine::io::ZipArchive::OpenMode::ReadOnly);
         if (!pkg) {
             throw std::runtime_error("WorkcellIO::parseDevice, invalid device package: " + dev_path.as_std_str());
         }

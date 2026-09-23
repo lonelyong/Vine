@@ -15,7 +15,8 @@
 
 using vine::String;
 using vine::io::DirectoryVfs;
-using vine::io::FileInfo;
+using vine::io::VfsEntryInfo;
+using vine::io::VfsEntryKind;
 using vine::io::IoError;
 using vine::io::ZipArchive;
 using vfstest::bytesOf;
@@ -50,7 +51,7 @@ TEST(VfsCoreTest, ResultCarriesValueOrError)
     vine::io::Result<int> taken{ 9 };
     EXPECT_EQ(taken.take(), 9);
 
-    vine::io::Result<FileInfo> info{ FileInfo{ String(u8"a/b.txt"), false, 3 } };
+    vine::io::Result<VfsEntryInfo> info{ VfsEntryInfo{ String(u8"a/b.txt"), false, 3 } };
     EXPECT_EQ(info->path, String(u8"a/b.txt"));
     EXPECT_EQ(info->size, 3u);
 
@@ -71,8 +72,8 @@ TEST(VfsCoreTest, ErrorNamesAreReadable)
 TEST(VfsCoreTest, ZipStatReportsKindAndSize)
 {
     ZipArchive vfs;
-    ASSERT_EQ(vfs.write(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
-    ASSERT_EQ(vfs.write(u8"geoms/base.bin", bytesOf("abcd")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"geoms/base.bin", bytesOf("abcd")), IoError::Ok);
 
     const auto root = vfs.stat(u8"");
     ASSERT_TRUE(root.ok());
@@ -93,8 +94,42 @@ TEST(VfsCoreTest, ZipStatReportsKindAndSize)
     EXPECT_EQ(leaf->path, String(u8"geoms/base.bin"));
     EXPECT_EQ(leaf->name(), String(u8"base.bin"));
     EXPECT_EQ(leaf->size, 4u);
+    EXPECT_EQ(leaf->crc, 0u); // nothing is recorded until the entry is written out
 
     EXPECT_EQ(vfs.stat(u8"geoms/nope.bin").error(), IoError::NotFound);
+}
+
+TEST(VfsCoreTest, KindOfAnswersFileDirectoryAndMissing)
+{
+    ZipArchive vfs;
+    ASSERT_EQ(vfs.addFile(u8"geoms/base.bin", bytesOf("abcd")), IoError::Ok);
+    ASSERT_EQ(vfs.createDirectory(u8"empty"), IoError::Ok);
+
+    EXPECT_EQ(vfs.kindOf(u8""), VfsEntryKind::Directory);      // the root always exists
+    EXPECT_EQ(vfs.kindOf(u8"geoms"), VfsEntryKind::Directory); // implied by its children
+    EXPECT_EQ(vfs.kindOf(u8"empty"), VfsEntryKind::Directory);
+    EXPECT_EQ(vfs.kindOf(u8"geoms/base.bin"), VfsEntryKind::File);
+    EXPECT_EQ(vfs.kindOf(u8"geoms/nope.bin"), VfsEntryKind::Missing);
+    EXPECT_EQ(vfs.kindOf(u8"/x"), VfsEntryKind::Missing); // invalid is absent, not a third answer
+    EXPECT_EQ(vfs.kindOf(u8"geoms/../empty"), VfsEntryKind::Directory);
+
+    // The directory backend answers the same way.
+    const TempDir temp;
+    const auto    root = temp.path() / "kind";
+    std::error_code ec;
+    std::filesystem::create_directories(root / "sub", ec);
+    ASSERT_FALSE(ec);
+    {
+        std::ofstream out(root / "sub" / "file.txt");
+        out << "x";
+    }
+
+    const auto dir = DirectoryVfs::openDirectory(root);
+    ASSERT_NE(dir, nullptr);
+    EXPECT_EQ(dir->kindOf(u8""), VfsEntryKind::Directory);
+    EXPECT_EQ(dir->kindOf(u8"sub"), VfsEntryKind::Directory);
+    EXPECT_EQ(dir->kindOf(u8"sub/file.txt"), VfsEntryKind::File);
+    EXPECT_EQ(dir->kindOf(u8"nope"), VfsEntryKind::Missing);
 }
 
 TEST(VfsCoreTest, ZipStatSizesImportedFiles)
@@ -107,7 +142,7 @@ TEST(VfsCoreTest, ZipStatSizesImportedFiles)
     }
 
     ZipArchive vfs;
-    ASSERT_EQ(vfs.importFile(u8"geoms/mesh.bin", src), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"geoms/mesh.bin", src), IoError::Ok);
 
     const auto info = vfs.stat(u8"geoms/mesh.bin");
     ASSERT_TRUE(info.ok());
@@ -115,15 +150,15 @@ TEST(VfsCoreTest, ZipStatSizesImportedFiles)
     EXPECT_EQ(info->size, 10u);
 
     // An import of something that is not there fails right away.
-    EXPECT_EQ(vfs.importFile(u8"geoms/nope.bin", temp.path() / "nope.bin"), IoError::NotFound);
+    EXPECT_EQ(vfs.addFile(u8"geoms/nope.bin", temp.path() / "nope.bin"), IoError::NotFound);
 }
 
 TEST(VfsCoreTest, ZipListReportsChildren)
 {
     ZipArchive vfs;
-    ASSERT_EQ(vfs.write(u8"a.txt", bytesOf("1")), IoError::Ok);
-    ASSERT_EQ(vfs.write(u8"b/c.txt", bytesOf("22")), IoError::Ok);
-    ASSERT_EQ(vfs.write(u8"b/d.txt", bytesOf("333")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"a.txt", bytesOf("1")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"b/c.txt", bytesOf("22")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"b/d.txt", bytesOf("333")), IoError::Ok);
 
     const auto top = vfs.list(u8"");
     ASSERT_TRUE(top.ok());
@@ -148,19 +183,23 @@ TEST(VfsCoreTest, ZipListReportsChildren)
 TEST(VfsCoreTest, InvalidPathsAreRejected)
 {
     ZipArchive vfs;
-    ASSERT_EQ(vfs.write(u8"a.txt", bytesOf("1")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"a.txt", bytesOf("1")), IoError::Ok);
 
+    // A leading '/' is refused too: a virtual path has no working directory, so
+    // there is nothing an absolute spelling could name.
     const std::vector<String> invalid{ String(u8".."),
                                        String(u8"a/../.."),
                                        String(u8"../../x"),
                                        String(u8"C:/escape.txt"),
-                                       String(u8"a\\b") };
+                                       String(u8"a\\b"),
+                                       String(u8"/a.txt"),
+                                       String(u8"/") };
     for (std::size_t i = 0; i < invalid.size(); ++i) {
         const String& path = invalid[i];
         EXPECT_EQ(vfs.stat(path).error(), IoError::InvalidPath) << "bad path #" << i;
         EXPECT_EQ(vfs.list(path).error(), IoError::InvalidPath) << "bad path #" << i;
         EXPECT_EQ(vfs.read(path).error(), IoError::InvalidPath) << "bad path #" << i;
-        EXPECT_EQ(vfs.write(path, bytesOf("x")), IoError::InvalidPath) << "bad path #" << i;
+        EXPECT_EQ(vfs.addFile(path, bytesOf("x")), IoError::InvalidPath) << "bad path #" << i;
         EXPECT_FALSE(vfs.exists(path)) << "bad path #" << i;
         EXPECT_FALSE(vfs.isDirectory(path)) << "bad path #" << i;
     }
@@ -169,7 +208,7 @@ TEST(VfsCoreTest, InvalidPathsAreRejected)
     EXPECT_FALSE(vfs.exists(String(u8"C:/escape.txt")));
 
     // ".." inside a segment is an ordinary name, not a traversal.
-    ASSERT_EQ(vfs.write(u8"dir/a..b", bytesOf("x")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"dir/a..b", bytesOf("x")), IoError::Ok);
     EXPECT_EQ(vfs.stat(u8"dir/a..b")->path, String(u8"dir/a..b"));
 
     // "." and repeated separators are folded rather than rejected.
@@ -188,8 +227,8 @@ TEST(VfsCoreTest, DirectoryStatAndList)
 
     auto dir = DirectoryVfs::openDirectory(root);
     ASSERT_NE(dir, nullptr);
-    ASSERT_EQ(dir->write(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
-    ASSERT_EQ(dir->write(u8"geoms/a.bin", bytesOf("abc")), IoError::Ok);
+    ASSERT_EQ(dir->addFile(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
+    ASSERT_EQ(dir->addFile(u8"geoms/a.bin", bytesOf("abc")), IoError::Ok);
 
     const auto xml = dir->stat(u8"workcell.xml");
     ASSERT_TRUE(xml.ok());
@@ -205,11 +244,11 @@ TEST(VfsCoreTest, DirectoryStatAndList)
     const auto children = dir->list(u8"");
     ASSERT_TRUE(children.ok());
     ASSERT_EQ(children->size(), 2u);
-    const FileInfo* geoms = findInfo(children.value(), String(u8"geoms"));
+    const VfsEntryInfo* geoms = findInfo(children.value(), String(u8"geoms"));
     ASSERT_NE(geoms, nullptr);
     EXPECT_TRUE(geoms->is_directory);
     EXPECT_EQ(geoms->size, 0u);
-    const FileInfo* leaf = findInfo(children.value(), String(u8"workcell.xml"));
+    const VfsEntryInfo* leaf = findInfo(children.value(), String(u8"workcell.xml"));
     ASSERT_NE(leaf, nullptr);
     EXPECT_FALSE(leaf->is_directory);
     EXPECT_EQ(leaf->size, 11u);
@@ -235,13 +274,13 @@ TEST(VfsCoreTest, DirectoryVfsNeverEscapesItsRoot)
     // Joining an absolute path with std::filesystem *replaces* the root, so it
     // has to be rejected before the path reaches the filesystem.
     const String escape{ (outside.path() / "escaped.txt").u8string() };
-    EXPECT_EQ(dir->write(escape, bytesOf("x")), IoError::InvalidPath);
-    EXPECT_EQ(dir->write(escape, bytesOf("x")), IoError::InvalidPath);
+    EXPECT_EQ(dir->addFile(escape, bytesOf("x")), IoError::InvalidPath);
+    EXPECT_EQ(dir->addFile(escape, bytesOf("x")), IoError::InvalidPath);
     EXPECT_EQ(dir->stat(escape).error(), IoError::InvalidPath);
-    EXPECT_EQ(dir->importFile(escape, outside.path() / "escaped.txt"), IoError::InvalidPath);
+    EXPECT_EQ(dir->addFile(escape, outside.path() / "escaped.txt"), IoError::InvalidPath);
 
     // Plain traversal is rejected too.
-    EXPECT_EQ(dir->write(u8"../escaped.txt", bytesOf("x")), IoError::InvalidPath);
+    EXPECT_EQ(dir->addFile(u8"../escaped.txt", bytesOf("x")), IoError::InvalidPath);
     EXPECT_FALSE(std::filesystem::exists(outside.path() / "escaped.txt"));
 }
 
@@ -267,12 +306,12 @@ TEST(VfsCoreTest, ZipBackendRoundTripsArchives)
 {
     ZipArchive vfs;
     EXPECT_FALSE(vfs.isReadOnly());
-    ASSERT_EQ(vfs.write(u8"a.txt", bytesOf("hello")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"a.txt", bytesOf("hello")), IoError::Ok);
 
     auto bytes = vfs.toBytes();
     ASSERT_TRUE(bytes.ok());
 
-    auto opened = ZipArchive::openForRead(bytes.take());
+    auto opened = ZipArchive::open(bytes.take(), ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
     const auto text = opened->read(u8"a.txt");
     ASSERT_TRUE(text.ok());
@@ -285,7 +324,7 @@ TEST(VfsCoreTest, ReadOnlyBackendRefusesEveryChange)
     ReadOnlyProbe probe(temp.path());
     ASSERT_TRUE(probe.isReadOnly());
 
-    EXPECT_EQ(probe.write(u8"new/deep.txt", bytesOf("x")), IoError::ReadOnly);
+    EXPECT_EQ(probe.addFile(u8"new/deep.txt", bytesOf("x")), IoError::ReadOnly);
     EXPECT_EQ(probe.createDirectory(u8"new"), IoError::ReadOnly);
     EXPECT_EQ(probe.createDirectories(u8"new/deep"), IoError::ReadOnly);
     EXPECT_EQ(probe.rename(u8"a", u8"b"), IoError::ReadOnly);
@@ -309,7 +348,7 @@ TEST(VfsCoreTest, ZipCreateDirectoryIsStrict)
     EXPECT_EQ(vfs.createDirectory(u8"two/three"), IoError::NotFound);
 
     // A file blocks the name, and an ancestor file is a different story.
-    ASSERT_EQ(vfs.write(u8"file.txt", bytesOf("x")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"file.txt", bytesOf("x")), IoError::Ok);
     EXPECT_EQ(vfs.createDirectory(u8"file.txt"), IoError::AlreadyExists);
     EXPECT_EQ(vfs.createDirectory(u8"file.txt/deep"), IoError::NotADirectory);
 }
@@ -329,7 +368,7 @@ TEST(VfsCoreTest, ZipCreateDirectoriesMakesTheWholeChain)
     ASSERT_EQ(top->size(), 1u);
     EXPECT_EQ((*top)[0].path, String(u8"two"));
 
-    ASSERT_EQ(vfs.write(u8"file.txt", bytesOf("x")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"file.txt", bytesOf("x")), IoError::Ok);
     EXPECT_EQ(vfs.createDirectories(u8"file.txt"), IoError::AlreadyExists);
     EXPECT_EQ(vfs.createDirectories(u8"file.txt/deep"), IoError::NotADirectory);
 }
@@ -338,23 +377,23 @@ TEST(VfsCoreTest, ZipWriteOverDirectoryIsRefused)
 {
     ZipArchive vfs;
     ASSERT_EQ(vfs.createDirectory(u8"empty"), IoError::Ok);
-    EXPECT_EQ(vfs.write(u8"empty", bytesOf("x")), IoError::IsADirectory);
-    EXPECT_EQ(vfs.write(u8"empty/a.txt", bytesOf("x")), IoError::Ok); // inside one is fine
+    EXPECT_EQ(vfs.addFile(u8"empty", bytesOf("x")), IoError::IsADirectory);
+    EXPECT_EQ(vfs.addFile(u8"empty/a.txt", bytesOf("x")), IoError::Ok); // inside one is fine
 
-    ASSERT_EQ(vfs.write(u8"dir/leaf.txt", bytesOf("1")), IoError::Ok);
-    EXPECT_EQ(vfs.write(u8"dir", bytesOf("x")), IoError::IsADirectory); // "dir" exists implicitly
+    ASSERT_EQ(vfs.addFile(u8"dir/leaf.txt", bytesOf("1")), IoError::Ok);
+    EXPECT_EQ(vfs.addFile(u8"dir", bytesOf("x")), IoError::IsADirectory); // "dir" exists implicitly
     EXPECT_TRUE(vfs.isFile(u8"dir/leaf.txt"));
 
     // The root is a directory as well.
-    EXPECT_EQ(vfs.write(u8"", bytesOf("x")), IoError::IsADirectory);
+    EXPECT_EQ(vfs.addFile(u8"", bytesOf("x")), IoError::IsADirectory);
 }
 
 TEST(VfsCoreTest, ZipRemoveAndRemoveAll)
 {
     ZipArchive vfs;
-    ASSERT_EQ(vfs.write(u8"dir/leaf.txt", bytesOf("1")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"dir/leaf.txt", bytesOf("1")), IoError::Ok);
     ASSERT_EQ(vfs.createDirectory(u8"empty"), IoError::Ok);
-    ASSERT_EQ(vfs.write(u8"plain.txt", bytesOf("1")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"plain.txt", bytesOf("1")), IoError::Ok);
 
     EXPECT_EQ(vfs.remove(u8""), IoError::InvalidPath); // the root cannot be removed
     EXPECT_EQ(vfs.remove(u8"missing"), IoError::NotFound);
@@ -376,8 +415,8 @@ TEST(VfsCoreTest, ZipRemoveAndRemoveAll)
 TEST(VfsCoreTest, ZipRenameMovesAWholeSubtree)
 {
     ZipArchive vfs;
-    ASSERT_EQ(vfs.write(u8"b/c.txt", bytesOf("22")), IoError::Ok);
-    ASSERT_EQ(vfs.write(u8"b/d.txt", bytesOf("333")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"b/c.txt", bytesOf("22")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"b/d.txt", bytesOf("333")), IoError::Ok);
     ASSERT_EQ(vfs.createDirectory(u8"b/sub"), IoError::Ok);
 
     ASSERT_EQ(vfs.rename(u8"b", u8"renamed"), IoError::Ok);
@@ -398,9 +437,9 @@ TEST(VfsCoreTest, ZipRenameMovesAWholeSubtree)
 TEST(VfsCoreTest, ZipRenameRejectsBadTargets)
 {
     ZipArchive vfs;
-    ASSERT_EQ(vfs.write(u8"a.txt", bytesOf("1")), IoError::Ok);
-    ASSERT_EQ(vfs.write(u8"b.txt", bytesOf("2")), IoError::Ok);
-    ASSERT_EQ(vfs.write(u8"dir/leaf.txt", bytesOf("3")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"a.txt", bytesOf("1")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"b.txt", bytesOf("2")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"dir/leaf.txt", bytesOf("3")), IoError::Ok);
 
     EXPECT_EQ(vfs.rename(u8"missing.txt", u8"x.txt"), IoError::NotFound);
     EXPECT_EQ(vfs.rename(u8"a.txt", u8"b.txt"), IoError::AlreadyExists);
@@ -422,13 +461,13 @@ TEST(VfsCoreTest, ZipDirectoryEntriesSurviveSaveAndOpen)
     const auto    pkg = temp.path() / "dirs.zip";
     {
         ZipArchive vfs;
-        ASSERT_EQ(vfs.write(u8"a.txt", bytesOf("1")), IoError::Ok);
+        ASSERT_EQ(vfs.addFile(u8"a.txt", bytesOf("1")), IoError::Ok);
         ASSERT_EQ(vfs.createDirectory(u8"empty"), IoError::Ok);
         ASSERT_EQ(vfs.createDirectories(u8"nested/deep"), IoError::Ok);
         ASSERT_EQ(vfs.saveAs(pkg), IoError::Ok);
     }
 
-    auto opened = ZipArchive::openForRead(pkg);
+    auto opened = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
 
     const auto empty = opened->stat(u8"empty");
@@ -473,7 +512,7 @@ TEST(VfsCoreTest, DirectoryCreateRenameRemove)
     ASSERT_TRUE(moved_three.ok());
     EXPECT_TRUE(moved_three->is_directory);
 
-    ASSERT_EQ(dir->write(u8"moved/leaf.txt", bytesOf("abc")), IoError::Ok);
+    ASSERT_EQ(dir->addFile(u8"moved/leaf.txt", bytesOf("abc")), IoError::Ok);
     ASSERT_EQ(dir->rename(u8"moved/leaf.txt", u8"moved/renamed.txt"), IoError::Ok);
     EXPECT_FALSE(dir->exists(u8"moved/leaf.txt"));
     EXPECT_TRUE(dir->isFile(u8"moved/renamed.txt"));
@@ -484,7 +523,7 @@ TEST(VfsCoreTest, DirectoryCreateRenameRemove)
     EXPECT_EQ(dir->rename(u8"one", u8"nope/x"), IoError::NotFound);
 
     // A file blocks the way.
-    ASSERT_EQ(dir->write(u8"blocker", bytesOf("1")), IoError::Ok);
+    ASSERT_EQ(dir->addFile(u8"blocker", bytesOf("1")), IoError::Ok);
     EXPECT_EQ(dir->createDirectory(u8"blocker"), IoError::AlreadyExists);
     EXPECT_EQ(dir->createDirectories(u8"blocker/deep"), IoError::NotADirectory);
 

@@ -211,7 +211,7 @@ TEST(PkgIOTest, DevicePkgMemoryBytes)
 
     auto zip_bytes = vfs.toBytes();
     ASSERT_TRUE(zip_bytes.ok());
-    auto opened = vine::io::ZipArchive::openForRead(zip_bytes.take());
+    auto opened = vine::io::ZipArchive::open(zip_bytes.take(), vine::io::ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
 
     auto loaded = io.loadPkg(*opened);
@@ -293,7 +293,7 @@ TEST(PkgIOTest, WorkcellPkgInternalPathsAndMemory)
     // Persist to zip bytes and reopen: the whole package round-trips in memory.
     auto zip_bytes = vfs.toBytes();
     ASSERT_TRUE(zip_bytes.ok());
-    auto opened = vine::io::ZipArchive::openForRead(zip_bytes.take());
+    auto opened = vine::io::ZipArchive::open(zip_bytes.take(), vine::io::ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
 
     auto loaded = io.loadPkg(*opened);
@@ -326,7 +326,7 @@ TEST(PkgIOTest, NestedDevicePackage)
         ASSERT_TRUE(bytes.ok());
         zip_bytes = bytes.value();
     }
-    auto opened = vine::io::ZipArchive::openForRead(std::move(zip_bytes));
+    auto opened = vine::io::ZipArchive::open(std::move(zip_bytes), vine::io::ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
 
     // The loader dispatches by extension: .vdevpkg opens a nested VFS and the

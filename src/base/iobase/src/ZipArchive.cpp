@@ -1,7 +1,6 @@
 ﻿#include <vine/io/ZipArchive.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstring>
 #include <fstream>
@@ -18,6 +17,7 @@
 #include <zlib.h>
 
 #include "VfsInternal.hpp"
+#include "ZipInternal.hpp"
 
 V_IO_NS_BEGIN
 
@@ -25,81 +25,11 @@ namespace
 {
 
 /**
- * @brief Returns true when an entry name cannot escape the extraction root.
- */
-bool isSafeEntry(const std::string& name)
-{
-    return !name.empty() && name.front() != '/' && name.find("..") == std::string::npos;
-}
-
-/**
- * @brief Reads the entry index of an open archive.
- *
- * A ZIP marks a directory by a trailing '/'; such an entry carries no data, so
- * its size is reported as 0.
- */
-Result<std::vector<ZipEntryInfo>> readEntries(zip_t* archive)
-{
-    const zip_int64_t count = zip_get_num_entries(archive, 0);
-    if (count < 0) {
-        return IoError::InvalidData;
-    }
-
-    std::vector<ZipEntryInfo> entries;
-    entries.reserve(static_cast<std::size_t>(count));
-    for (zip_int64_t i = 0; i < count; ++i) {
-        struct zip_stat st;
-        zip_stat_init(&st);
-        if (zip_stat_index(archive, i, ZIP_STAT_NAME | ZIP_STAT_SIZE | ZIP_STAT_CRC, &st) != 0 || st.name == nullptr) {
-            return IoError::InvalidData;
-        }
-
-        ZipEntryInfo entry;
-        entry.name         = detail::fromUtf8(st.name, std::strlen(st.name));
-        entry.is_directory = !entry.name.empty() && entry.name.as_std_u8str().back() == u8'/';
-        if (!entry.is_directory && (st.valid & ZIP_STAT_SIZE) != 0) {
-            entry.size = static_cast<std::uint64_t>(st.size);
-        }
-        if (!entry.is_directory && (st.valid & ZIP_STAT_CRC) != 0) {
-            entry.crc = static_cast<std::uint32_t>(st.crc);
-        }
-        entries.push_back(std::move(entry));
-    }
-    return entries;
-}
-
-/**
  * @brief Reads a whole stream into a byte buffer.
  */
 std::vector<unsigned char> readStream(std::istream& in)
 {
     return { std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
-}
-
-/**
- * @brief The name a ZIP stores for an entry; directories end with '/'.
- */
-std::string toStoredName(const String& name, bool is_directory)
-{
-    std::string stored(reinterpret_cast<const char*>(name.data()), static_cast<std::size_t>(name.size()));
-    if (is_directory && !stored.empty() && stored.back() != '/') {
-        stored.push_back('/');
-    }
-    return stored;
-}
-
-/**
- * @brief Removes the trailing '/' a ZIP stores for a directory.
- */
-String fromStoredName(const String& name, bool& is_directory)
-{
-    is_directory = !name.empty() && name.as_std_u8str().back() == u8'/';
-    if (!is_directory) {
-        return name;
-    }
-    std::u8string trimmed = name.as_std_u8str();
-    trimmed.pop_back();
-    return String(std::move(trimmed));
 }
 
 /**
@@ -386,23 +316,38 @@ bool ZipArchive::insertFileBacked(const String& path, const std::filesystem::pat
     return true;
 }
 
-bool ZipArchive::addFile(const String& name, std::shared_ptr<DataSource> source)
+IoError ZipArchive::addFile(const String& path, std::shared_ptr<DataSource> source)
 {
-    if (name.empty() || source == nullptr) {
-        return false;
+    if (const IoError blocked = guard(); blocked != IoError::Ok) {
+        return blocked;
     }
+    if (source == nullptr) {
+        return IoError::InvalidData;
+    }
+    String        norm;
+    const IoError error = detail::normalizeVfsPath(path, norm);
+    if (error != IoError::Ok) {
+        return error;
+    }
+    if (isDirectoryPath(norm)) {
+        return IoError::IsADirectory; // the root, or a directory, is never replaced by a file
+    }
+
     Entry entry;
     entry.generator = std::move(source);
-    entries_.insert_or_assign(name, std::move(entry));
-    return true;
+    entries_.insert_or_assign(norm, std::move(entry));
+    return IoError::Ok;
 }
 
-bool ZipArchive::addFile(const String& name, std::span<const Fragment> fragments)
+IoError ZipArchive::addFile(const String& path, std::span<const Fragment> fragments)
 {
-    if (name.empty() || fragments.empty()) {
-        return false;
+    if (const IoError blocked = guard(); blocked != IoError::Ok) {
+        return blocked;
     }
-    return addFile(name, std::make_shared<FragmentSource>(fragments));
+    if (detail::hasDatalessFragment(fragments)) {
+        return IoError::InvalidData;
+    }
+    return addFile(path, std::make_shared<FragmentSource>(fragments));
 }
 
 bool ZipArchive::insertDirectory(const String& path)
@@ -412,7 +357,7 @@ bool ZipArchive::insertDirectory(const String& path)
     }
 
     Entry entry;
-    entry.is_directory = true;
+    entry.info.is_directory = true;
     entries_.insert_or_assign(path, std::move(entry));
     return true;
 }
@@ -439,35 +384,36 @@ bool ZipArchive::isOpen() const noexcept
     return handle_ != nullptr;
 }
 
-std::vector<ZipEntryInfo> ZipArchive::index() const
+std::vector<VfsEntryInfo> ZipArchive::index() const
 {
-    std::vector<ZipEntryInfo> listed;
+    std::vector<VfsEntryInfo> listed;
     listed.reserve(entries_.size());
     for (const auto& [name, entry] : entries_) {
-        ZipEntryInfo info;
-        info.name         = name;
-        info.is_directory = entry.is_directory;
+        VfsEntryInfo info;
+        info.path         = name;
+        info.is_directory = entry.info.is_directory;
         if (!info.is_directory) {
             info.size = entrySize(entry);
+            info.crc  = entry.info.crc;
         }
         listed.push_back(std::move(info));
     }
     return listed;
 }
 
-ZipArchive::EntryKind ZipArchive::kindOf(const String& name) const
+VfsEntryKind ZipArchive::entryKindOf(const String& name) const
 {
     const auto it = entries_.find(name);
     if (it != entries_.end()) {
-        return it->second.is_directory ? EntryKind::Directory : EntryKind::File;
+        return it->second.info.is_directory ? VfsEntryKind::Directory : VfsEntryKind::File;
     }
     for (const auto& [key, entry] : entries_) {
         (void)entry;
         if (detail::isPathBelow(name, key)) {
-            return EntryKind::Directory; // a directory that exists through its children
+            return VfsEntryKind::Directory; // a directory that exists through its children
         }
     }
-    return EntryKind::Missing;
+    return VfsEntryKind::Missing;
 }
 
 std::uint64_t ZipArchive::sizeOf(const String& name) const
@@ -476,9 +422,15 @@ std::uint64_t ZipArchive::sizeOf(const String& name) const
     return it == entries_.end() ? 0 : entrySize(it->second);
 }
 
-std::vector<ZipEntryInfo> ZipArchive::children(const String& dir) const
+std::uint32_t ZipArchive::crcOf(const String& name) const
 {
-    std::vector<ZipEntryInfo> children;
+    const auto it = entries_.find(name);
+    return it == entries_.end() ? 0 : it->second.info.crc;
+}
+
+std::vector<VfsEntryInfo> ZipArchive::children(const String& dir) const
+{
+    std::vector<VfsEntryInfo> children;
     const std::u8string       prefix = dir.empty() ? std::u8string() : dir.as_std_u8str() + u8"/";
     std::set<std::u8string>   seen;
     for (const auto& [key, entry] : entries_) {
@@ -494,11 +446,12 @@ std::vector<ZipEntryInfo> ZipArchive::children(const String& dir) const
             continue;
         }
 
-        ZipEntryInfo child;
-        child.name         = dir.empty() ? String(segment) : String(dir.as_std_u8str() + u8"/" + segment);
-        child.is_directory = !is_leaf || entry.is_directory;
+        VfsEntryInfo child;
+        child.path         = dir.empty() ? String(segment) : String(dir.as_std_u8str() + u8"/" + segment);
+        child.is_directory = !is_leaf || entry.info.is_directory;
         if (!child.is_directory) {
             child.size = entrySize(entry);
+            child.crc  = entry.info.crc;
         }
         children.push_back(std::move(child));
     }
@@ -508,7 +461,7 @@ std::vector<ZipEntryInfo> ZipArchive::children(const String& dir) const
 std::uint64_t ZipArchive::entrySize(const Entry& entry) const
 {
     if (entry.from_source) {
-        return entry.size;
+        return entry.info.size;
     }
     if (entry.from_file) {
         std::error_code      ec;
@@ -565,11 +518,11 @@ Result<std::vector<unsigned char>> ZipArchive::read(const String& path) const
 
 Result<std::vector<unsigned char>> ZipArchive::readStored(const String& name) const
 {
-    const EntryKind kind = kindOf(name);
-    if (kind == EntryKind::Missing) {
+    const VfsEntryKind kind = entryKindOf(name);
+    if (kind == VfsEntryKind::Missing) {
         return IoError::NotFound;
     }
-    if (kind == EntryKind::Directory) {
+    if (kind == VfsEntryKind::Directory) {
         return IoError::IsADirectory;
     }
 
@@ -587,7 +540,7 @@ Result<std::vector<unsigned char>> ZipArchive::readStored(const String& name) co
         return IoError::IoFailure;
     }
 
-    std::vector<unsigned char> bytes(static_cast<std::size_t>(entry.size));
+    std::vector<unsigned char> bytes(static_cast<std::size_t>(entry.info.size));
     std::size_t                done = 0;
     bool                       ok   = true;
     while (done < bytes.size()) {
@@ -616,7 +569,8 @@ Result<std::vector<unsigned char>> ZipArchive::readStored(const String& name) co
     }
     // libzip's read path does not check the checksum, so the content is verified here
     // against what the archive directory recorded for the entry.
-    if (entry.crc != 0 && static_cast<std::uint32_t>(::crc32(0, bytes.data(), static_cast<uInt>(bytes.size()))) != entry.crc) {
+    if (entry.info.crc != 0 &&
+        static_cast<std::uint32_t>(::crc32(0, bytes.data(), static_cast<uInt>(bytes.size()))) != entry.info.crc) {
         return IoError::IoFailure;
     }
     return bytes;
@@ -624,11 +578,11 @@ Result<std::vector<unsigned char>> ZipArchive::readStored(const String& name) co
 
 Result<std::unique_ptr<VfsReadStream>> ZipArchive::openRead(const String& name) const
 {
-    const EntryKind kind = kindOf(name);
-    if (kind == EntryKind::Missing) {
+    const VfsEntryKind kind = entryKindOf(name);
+    if (kind == VfsEntryKind::Missing) {
         return IoError::NotFound;
     }
-    if (kind == EntryKind::Directory) {
+    if (kind == VfsEntryKind::Directory) {
         return IoError::IsADirectory;
     }
 
@@ -643,7 +597,7 @@ Result<std::unique_ptr<VfsReadStream>> ZipArchive::openRead(const String& name) 
             return IoError::IoFailure;
         }
         // The handle is held by the reader, so the stream outlives this archive.
-        return std::unique_ptr<VfsReadStream>(new EntryReadStream(handle_, file, entry.size, entry.crc));
+        return std::unique_ptr<VfsReadStream>(new EntryReadStream(handle_, file, entry.info.size, entry.info.crc));
     }
 
     auto bytes = contentOf(entry);
@@ -653,23 +607,36 @@ Result<std::unique_ptr<VfsReadStream>> ZipArchive::openRead(const String& name) 
     return std::unique_ptr<VfsReadStream>(new EntryReadStream(bytes.take()));
 }
 
-Result<ZipArchive> ZipArchive::open(const std::filesystem::path& path)
+Result<ZipArchive> ZipArchive::open(const std::filesystem::path& path, OpenMode mode)
 {
     ZipArchive    archive;
     const IoError error = archive.adoptFile(path);
     if (error != IoError::Ok) {
         return error;
     }
+    archive.read_only_ = mode == OpenMode::ReadOnly;
     return archive;
 }
 
-Result<ZipArchive> ZipArchive::open(std::vector<unsigned char> bytes)
+Result<ZipArchive> ZipArchive::open(std::vector<unsigned char>&& bytes, OpenMode mode)
 {
     ZipArchive    archive;
     const IoError error = archive.adoptBytes(std::move(bytes));
     if (error != IoError::Ok) {
         return error;
     }
+    archive.read_only_ = mode == OpenMode::ReadOnly;
+    return archive;
+}
+
+Result<ZipArchive> ZipArchive::open(std::span<const unsigned char> bytes, OpenMode mode)
+{
+    ZipArchive    archive;
+    const IoError error = archive.adoptBytes(bytes);
+    if (error != IoError::Ok) {
+        return error;
+    }
+    archive.read_only_ = mode == OpenMode::ReadOnly;
     return archive;
 }
 
@@ -698,18 +665,44 @@ IoError ZipArchive::adoptFile(const std::filesystem::path& path)
     return adoptHandle(std::move(handle), path);
 }
 
-IoError ZipArchive::adoptBytes(std::vector<unsigned char> bytes)
+IoError ZipArchive::adoptBytes(std::vector<unsigned char>&& bytes)
 {
     if (bytes.empty()) {
         return IoError::InvalidData;
     }
 
     auto handle   = std::make_shared<ArchiveHandle>();
-    handle->bytes = std::move(bytes);
+    handle->owned = std::move(bytes); // taken over, not copied
+    handle->bytes = std::span<const unsigned char>(handle->owned);
 
+    const IoError opened = attachBytes(*handle);
+    if (opened != IoError::Ok) {
+        return opened; // the handle closes itself on the way out
+    }
+    return adoptHandle(std::move(handle), std::filesystem::path{});
+}
+
+IoError ZipArchive::adoptBytes(std::span<const unsigned char> bytes)
+{
+    if (bytes.empty()) {
+        return IoError::InvalidData;
+    }
+
+    auto handle   = std::make_shared<ArchiveHandle>();
+    handle->bytes = bytes; // borrowed: the caller keeps the block alive
+
+    const IoError opened = attachBytes(*handle);
+    if (opened != IoError::Ok) {
+        return opened; // the handle closes itself on the way out
+    }
+    return adoptHandle(std::move(handle), std::filesystem::path{});
+}
+
+IoError ZipArchive::attachBytes(ArchiveHandle& handle)
+{
     zip_error_t error;
     zip_error_init(&error);
-    zip_source_t* const source = zip_source_buffer_create(handle->bytes.data(), handle->bytes.size(), 0, &error);
+    zip_source_t* const source = zip_source_buffer_create(handle.bytes.data(), handle.bytes.size(), 0, &error);
     if (source == nullptr) {
         zip_error_fini(&error);
         return IoError::InvalidData;
@@ -722,32 +715,32 @@ IoError ZipArchive::adoptBytes(std::vector<unsigned char> bytes)
     }
     zip_error_fini(&error);
 
-    handle->archive = archive;
-    return adoptHandle(std::move(handle), std::filesystem::path{});
+    handle.archive = archive;
+    return IoError::Ok;
 }
 
 IoError ZipArchive::adoptHandle(std::shared_ptr<ArchiveHandle> handle, const std::filesystem::path& path)
 {
-    const auto listed = readEntries(static_cast<zip_t*>(handle->archive));
+    const auto listed = detail::readEntries(static_cast<zip_t*>(handle->archive));
     if (!listed) {
         return listed.error(); // the handle closes itself on the way out
     }
 
     std::map<String, Entry> entries;
     for (std::size_t i = 0; i < listed->size(); ++i) {
-        const ZipEntryInfo& info = (*listed)[i];
-        bool                is_directory = false;
-        String              name         = fromStoredName(info.name, is_directory);
+        const detail::StoredEntry& info = (*listed)[i];
+        bool                       is_directory = false;
+        String                     name         = detail::fromStoredName(info.name, is_directory);
         if (name.empty()) {
             continue; // the root, which always exists
         }
 
         Entry entry;
-        entry.from_source  = !is_directory; // a directory entry has no content to copy through
-        entry.source_index = i;
-        entry.is_directory = is_directory;
-        entry.size         = info.size;
-        entry.crc          = info.crc;
+        entry.from_source       = !is_directory; // a directory entry has no content to copy through
+        entry.source_index      = i;
+        entry.info.is_directory = is_directory;
+        entry.info.size         = info.size;
+        entry.info.crc          = info.crc;
         entries.insert_or_assign(std::move(name), std::move(entry));
     }
 
@@ -762,10 +755,10 @@ bool ZipArchive::emit(void* target) const
     auto* const archive = static_cast<zip_t*>(target);
 
     for (const auto& [name, entry] : entries_) {
-        const std::string stored = toStoredName(name, entry.is_directory);
+        const std::string stored = detail::toStoredName(name, entry.info.is_directory);
         zip_source_t*     source = nullptr;
 
-        if (entry.is_directory) {
+        if (entry.info.is_directory) {
             source = zip_source_buffer(archive, nullptr, 0, 0);
         }
         else if (entry.from_source) {
@@ -937,24 +930,24 @@ IoError ZipArchive::guard() const
 
 bool ZipArchive::isDirectoryPath(const String& normalized) const
 {
-    return normalized.empty() || kindOf(normalized) == EntryKind::Directory;
+    return normalized.empty() || entryKindOf(normalized) == VfsEntryKind::Directory;
 }
 
 IoError ZipArchive::ancestorBlockerOf(const String& normalized) const
 {
     for (String ancestor = detail::parentOf(normalized); !ancestor.empty(); ancestor = detail::parentOf(ancestor)) {
-        const EntryKind kind = kindOf(ancestor);
-        if (kind == EntryKind::File) {
+        const VfsEntryKind kind = entryKindOf(ancestor);
+        if (kind == VfsEntryKind::File) {
             return IoError::NotADirectory;
         }
-        if (kind == EntryKind::Directory) {
+        if (kind == VfsEntryKind::Directory) {
             return IoError::Ok;
         }
     }
     return IoError::Ok;
 }
 
-Result<FileInfo> ZipArchive::stat(const String& path) const
+Result<VfsEntryInfo> ZipArchive::stat(const String& path) const
 {
     String        norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
@@ -962,42 +955,38 @@ Result<FileInfo> ZipArchive::stat(const String& path) const
         return error;
     }
     if (norm.empty()) {
-        return FileInfo{ String{}, true, 0 };
+        return VfsEntryInfo{ String{}, true, 0 };
     }
 
-    switch (kindOf(norm)) {
-    case EntryKind::File:
-        return FileInfo{ norm, false, sizeOf(norm) };
-    case EntryKind::Directory:
-        return FileInfo{ norm, true, 0 };
-    case EntryKind::Missing:
+    switch (entryKindOf(norm)) {
+    case VfsEntryKind::File:
+        return VfsEntryInfo{ norm, false, sizeOf(norm), crcOf(norm) };
+    case VfsEntryKind::Directory:
+        return VfsEntryInfo{ norm, true, 0 };
+    case VfsEntryKind::Missing:
         break;
     }
     return IoError::NotFound;
 }
 
-Result<std::vector<FileInfo>> ZipArchive::list(const String& dir) const
+Result<std::vector<VfsEntryInfo>> ZipArchive::list(const String& dir) const
 {
     String        norm;
     const IoError error = detail::normalizeVfsPath(dir, norm);
     if (error != IoError::Ok) {
         return error;
     }
-    if (!norm.empty() && kindOf(norm) == EntryKind::Missing) {
+    if (!norm.empty() && entryKindOf(norm) == VfsEntryKind::Missing) {
         return IoError::NotFound;
     }
-    if (!norm.empty() && kindOf(norm) == EntryKind::File) {
+    if (!norm.empty() && entryKindOf(norm) == VfsEntryKind::File) {
         return IoError::NotADirectory;
     }
 
-    std::vector<FileInfo> listed;
-    for (const ZipEntryInfo& entry : children(norm)) {
-        listed.push_back(FileInfo{ entry.name, entry.is_directory, entry.size });
-    }
-    return listed;
+    return children(norm);
 }
 
-IoError ZipArchive::write(const String& path, std::span<const unsigned char> bytes)
+IoError ZipArchive::addFile(const String& path, std::span<const unsigned char> bytes)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
@@ -1026,7 +1015,7 @@ IoError ZipArchive::createDirectory(const String& path)
     if (norm.empty()) {
         return IoError::AlreadyExists; // the root always exists
     }
-    if (kindOf(norm) != EntryKind::Missing) {
+    if (entryKindOf(norm) != VfsEntryKind::Missing) {
         return IoError::AlreadyExists; // a file or a directory owns the name
     }
     if (const IoError blocker = ancestorBlockerOf(norm); blocker != IoError::Ok) {
@@ -1053,7 +1042,7 @@ IoError ZipArchive::createDirectories(const String& path)
     if (isDirectoryPath(norm)) {
         return IoError::Ok; // already there - the root included
     }
-    if (kindOf(norm) == EntryKind::File) {
+    if (entryKindOf(norm) == VfsEntryKind::File) {
         return IoError::AlreadyExists; // a file owns the name
     }
     if (const IoError blocker = ancestorBlockerOf(norm); blocker != IoError::Ok) {
@@ -1089,10 +1078,10 @@ IoError ZipArchive::rename(const String& from, const String& to)
     if (detail::isPathBelow(source, target)) {
         return IoError::InvalidPath; // a tree cannot move into itself
     }
-    if (kindOf(source) == EntryKind::Missing) {
+    if (entryKindOf(source) == VfsEntryKind::Missing) {
         return IoError::NotFound;
     }
-    if (kindOf(target) != EntryKind::Missing) {
+    if (entryKindOf(target) != VfsEntryKind::Missing) {
         return IoError::AlreadyExists; // never overwrite
     }
     if (const IoError blocker = ancestorBlockerOf(target); blocker != IoError::Ok) {
@@ -1106,12 +1095,12 @@ IoError ZipArchive::rename(const String& from, const String& to)
 
     // A whole subtree moves with its directory, so every entry below it follows.
     std::vector<std::pair<String, String>> moved;
-    for (const ZipEntryInfo& entry : index()) {
-        if (entry.name == source || detail::isPathBelow(source, entry.name)) {
-            const String suffix = entry.name.size() == source.size()
+    for (const VfsEntryInfo& entry : index()) {
+        if (entry.path == source || detail::isPathBelow(source, entry.path)) {
+            const String suffix = entry.path.size() == source.size()
                                       ? String{}
-                                      : String(entry.name.as_std_u8str().substr(source.size()));
-            moved.emplace_back(entry.name, String(target.as_std_u8str() + suffix.as_std_u8str()));
+                                      : String(entry.path.as_std_u8str().substr(source.size()));
+            moved.emplace_back(entry.path, String(target.as_std_u8str() + suffix.as_std_u8str()));
         }
     }
     for (const auto& [old_name, new_name] : moved) {
@@ -1154,14 +1143,14 @@ IoError ZipArchive::removeAll(const String& path)
     if (norm.empty()) {
         return IoError::InvalidPath; // the root cannot be removed
     }
-    if (kindOf(norm) == EntryKind::Missing) {
+    if (entryKindOf(norm) == VfsEntryKind::Missing) {
         return IoError::NotFound;
     }
 
     std::vector<String> doomed;
-    for (const ZipEntryInfo& entry : index()) {
-        if (entry.name == norm || detail::isPathBelow(norm, entry.name)) {
-            doomed.push_back(entry.name);
+    for (const VfsEntryInfo& entry : index()) {
+        if (entry.path == norm || detail::isPathBelow(norm, entry.path)) {
+            doomed.push_back(entry.path);
         }
     }
     for (const String& name : doomed) {
@@ -1170,7 +1159,7 @@ IoError ZipArchive::removeAll(const String& path)
     return IoError::Ok;
 }
 
-IoError ZipArchive::importFile(const String& path, const std::filesystem::path& real_path)
+IoError ZipArchive::addFile(const String& path, const std::filesystem::path& real_path)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
@@ -1198,257 +1187,6 @@ IoError ZipArchive::importFile(const String& path, const std::filesystem::path& 
 
     // Nothing is buffered now; the file is read when the archive is persisted.
     return insertFileBacked(norm, real_path) ? IoError::Ok : IoError::IoFailure;
-}
-
-Result<ZipArchive> ZipArchive::openForRead(const std::filesystem::path& path)
-{
-    auto opened = open(path);
-    if (!opened) {
-        return opened.error();
-    }
-    ZipArchive archive = opened.take();
-    archive.read_only_  = true;
-    return archive;
-}
-
-Result<ZipArchive> ZipArchive::openForRead(std::vector<unsigned char> bytes)
-{
-    auto opened = open(std::move(bytes));
-    if (!opened) {
-        return opened.error();
-    }
-    ZipArchive archive = opened.take();
-    archive.read_only_  = true;
-    return archive;
-}
-
-Result<std::vector<ZipEntryInfo>> ZipArchive::entries(const std::filesystem::path& path)
-{
-    std::error_code ec;
-    const auto      status = std::filesystem::status(path, ec);
-    if (status.type() == std::filesystem::file_type::not_found) {
-        return IoError::NotFound;
-    }
-    if (ec) {
-        return IoError::IoFailure;
-    }
-
-    const std::string path_utf8 = detail::toUtf8(path);
-    int               error     = 0;
-    zip_t* const      archive   = zip_open(path_utf8.c_str(), ZIP_RDONLY, &error);
-    if (archive == nullptr) {
-        return IoError::InvalidData;
-    }
-    Result<std::vector<ZipEntryInfo>> result = readEntries(archive);
-    zip_close(archive);
-    return result;
-}
-
-Result<std::vector<ZipEntryInfo>> ZipArchive::entries(const void* data, std::size_t size)
-{
-    if (data == nullptr) {
-        return IoError::InvalidData;
-    }
-    zip_error_t error;
-    zip_error_init(&error);
-    zip_source_t* const source = zip_source_buffer_create(data, size, 0, &error);
-    if (source == nullptr) {
-        zip_error_fini(&error);
-        return IoError::InvalidData;
-    }
-    zip_t* const archive = zip_open_from_source(source, ZIP_RDONLY, &error);
-    if (archive == nullptr) {
-        zip_source_free(source);
-        zip_error_fini(&error);
-        return IoError::InvalidData;
-    }
-    Result<std::vector<ZipEntryInfo>> result = readEntries(archive);
-    zip_close(archive);
-    zip_error_fini(&error);
-    return result;
-}
-
-bool ZipArchive::decompressFile(const std::filesystem::path& path, const std::filesystem::path& dir_path)
-{
-    const std::string path_utf8 = detail::toUtf8(path);
-    int               error     = 0;
-    zip_t* const      archive   = zip_open(path_utf8.c_str(), ZIP_RDONLY, &error);
-    if (archive == nullptr) {
-        return false;
-    }
-    std::error_code ec;
-    if (!std::filesystem::create_directories(dir_path, ec) && ec) {
-        zip_close(archive);
-        return false;
-    }
-
-    bool              ok    = true;
-    const zip_int64_t count = zip_get_num_entries(archive, 0);
-    for (zip_int64_t i = 0; i < count && ok; ++i) {
-        struct zip_stat st;
-        zip_stat_init(&st);
-        if (zip_stat_index(archive, i, 0, &st) != 0 || st.name == nullptr) {
-            ok = false;
-            break;
-        }
-        const std::string name = st.name;
-        if (!isSafeEntry(name)) {
-            ok = false;
-            break;
-        }
-
-        const std::filesystem::path target =
-            dir_path / std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(st.name)));
-        if (name.back() == '/') {
-            if (!std::filesystem::create_directories(target, ec) && ec) {
-                ok = false;
-                break;
-            }
-            continue;
-        }
-
-        zip_file_t* const file = zip_fopen_index(archive, i, 0);
-        if (file == nullptr) {
-            ok = false;
-            break;
-        }
-        std::ofstream out(target, std::ios::binary);
-        if (!out) {
-            zip_fclose(file);
-            ok = false;
-            break;
-        }
-
-        std::array<char, 16 * 1024> chunk{};
-        while (ok) {
-            const zip_int64_t got = zip_fread(file, chunk.data(), chunk.size());
-            if (got < 0) {
-                ok = false;
-                break;
-            }
-            if (got == 0) {
-                break;
-            }
-            out.write(chunk.data(), static_cast<std::streamsize>(got));
-            if (!out) {
-                ok = false;
-                break;
-            }
-        }
-        zip_fclose(file);
-        if (!ok) {
-            break;
-        }
-    }
-    zip_close(archive);
-    return ok;
-}
-
-bool ZipArchive::readEntry(const std::filesystem::path& path, const String& name, std::vector<unsigned char>& out)
-{
-    const std::string path_utf8 = detail::toUtf8(path);
-    const auto*       name_utf8 = reinterpret_cast<const char*>(name.data());
-    int               error     = 0;
-    zip_t* const      archive   = zip_open(path_utf8.c_str(), ZIP_RDONLY, &error);
-    if (archive == nullptr) {
-        return false;
-    }
-    const zip_int64_t index = zip_name_locate(archive, name_utf8, ZIP_FL_ENC_UTF_8);
-    if (index < 0) {
-        zip_close(archive);
-        return false;
-    }
-
-    struct zip_stat st;
-    zip_stat_init(&st);
-    if (zip_stat_index(archive, index, 0, &st) != 0) {
-        zip_close(archive);
-        return false;
-    }
-    zip_file_t* const file = zip_fopen_index(archive, index, 0);
-    if (file == nullptr) {
-        zip_close(archive);
-        return false;
-    }
-
-    out.clear();
-    out.resize(static_cast<std::size_t>(st.size));
-    zip_uint64_t total = 0;
-    while (total < st.size) {
-        const zip_int64_t got = zip_fread(file, out.data() + total, st.size - total);
-        if (got <= 0) {
-            break;
-        }
-        total += static_cast<zip_uint64_t>(got);
-    }
-    zip_fclose(file);
-    zip_close(archive);
-    if (total != st.size) {
-        out.clear();
-        return false;
-    }
-    return true;
-}
-
-bool ZipArchive::readEntry(const void* data, std::size_t size, const String& name, std::vector<unsigned char>& out)
-{
-    if (data == nullptr || name.empty()) {
-        return false;
-    }
-    zip_error_t error;
-    zip_error_init(&error);
-    zip_source_t* const source = zip_source_buffer_create(data, size, 0, &error);
-    if (source == nullptr) {
-        zip_error_fini(&error);
-        return false;
-    }
-    zip_t* const archive = zip_open_from_source(source, ZIP_RDONLY, &error);
-    if (archive == nullptr) {
-        zip_source_free(source);
-        zip_error_fini(&error);
-        return false;
-    }
-
-    const auto*       name_utf8 = reinterpret_cast<const char*>(name.data());
-    const zip_int64_t index     = zip_name_locate(archive, name_utf8, ZIP_FL_ENC_UTF_8);
-    if (index < 0) {
-        zip_close(archive);
-        zip_error_fini(&error);
-        return false;
-    }
-
-    struct zip_stat st;
-    zip_stat_init(&st);
-    if (zip_stat_index(archive, index, 0, &st) != 0) {
-        zip_close(archive);
-        zip_error_fini(&error);
-        return false;
-    }
-    zip_file_t* const file = zip_fopen_index(archive, index, 0);
-    if (file == nullptr) {
-        zip_close(archive);
-        zip_error_fini(&error);
-        return false;
-    }
-
-    out.clear();
-    out.resize(static_cast<std::size_t>(st.size));
-    zip_uint64_t total = 0;
-    while (total < st.size) {
-        const zip_int64_t got = zip_fread(file, out.data() + total, st.size - total);
-        if (got <= 0) {
-            break;
-        }
-        total += static_cast<zip_uint64_t>(got);
-    }
-    zip_fclose(file);
-    zip_close(archive);
-    zip_error_fini(&error);
-    if (total != st.size) {
-        out.clear();
-        return false;
-    }
-    return true;
 }
 
 V_IO_NS_END

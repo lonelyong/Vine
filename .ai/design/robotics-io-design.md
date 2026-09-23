@@ -25,8 +25,8 @@
 > `save(vector&)`）**已删除**。因此**第 6 / 8 节的接口清单是历史设计稿**，实际签名以
 > `Vfs.hpp`（原 `IMemoryVfs.hpp`）与 `sdk/vine/io/ZipVfs.hpp` 为准。
 > **命名提醒**：本文（尤其第 6 节与第 2/3 节的类型草图）出现的 `IMemoryVfs` / `ZipMemoryVfs` 是**历史名**，
-> 现名分别为 `Vfs` / `ZipVfs`；`save` / `serialize` / `openZip` 同理是历史拼写，现名 `saveAs` / `toBytes` / `openForRead`。
-> **ZIP 职责分层（S3b）**：`ZipVfs::openForRead()` 是打开已有包的**唯一入口**（惰性只读），
+> 现名分别为 `Vfs` / `ZipVfs`；`save` / `serialize` / `openZip` 同理是历史拼写，现名 `saveAs` / `toBytes` / `open(…, OpenMode::ReadOnly)`。
+> **ZIP 职责分层（S3b）**：`ZipVfs::open(…, OpenMode::ReadOnly)` 是打开已有包的**唯一入口**（惰性只读），
 > `ZipVfs` 建树后由 `saveAs` / `toBytes` 出包、`commit` 写回；`ZipArchive` 是存储层
 > （`open` / `index` / `read` / `openRead` / `saveAs` / `commit`）。`ZipMemoryVfs`、
 > `ZipVfs::openZip`、`IMemoryVfs` 与 `ZipArchive::entryNames` 均已删除。
@@ -518,14 +518,14 @@ class V_ROBOTICS_IO_API ZipMemoryVfs : public IMemoryVfs {
     // 全部纯虚实现，内部用 vine::io::ZipArchive 落地（见 6.5 后端补齐）
 
     // 建树后的持久化：save(path) / save(ostream&) / serialize()
-    // 不再提供 openZip —— 打开已有包请用 ZipVfs::openForRead（惰性只读，见 .ai/design/iobase-vfs-design.md §9.1）
+    // 不再提供 openZip —— 打开已有包请用 ZipVfs::open(…, OpenMode::ReadOnly)（惰性只读，见 .ai/design/iobase-vfs-design.md §9.1）
 };
 ```
 
 > 调试后端 `DirectoryVfs`：把虚拟树直接映射到真实目录（`writeFile` -> 落盘文件，
 > `openDirectory(dir)` 反向导入），与 zip 后端共用同一接口，便于断点 / 检查导出结果。
 
-> 读取保证（现由 `ZipVfs` 承担）：`ZipVfs::openForRead` 打开后**按需惰性读取单个条目**（libzip `zip_fopen` / `zip_fread`），
+> 读取保证（现由 `ZipVfs` 承担）：`ZipVfs::open(…, OpenMode::ReadOnly)` 打开后**按需惰性读取单个条目**（libzip `zip_fopen` / `zip_fread`），
 > 绝不把条目解压到磁盘；只有归档目录（名字/大小/类型）常驻内存，被读的条目才载入。
 > 与 VMR `loadPkg`（`ZipDecompress` 解压到临时目录再读）相反。
 
@@ -542,15 +542,12 @@ class V_ROBOTICS_IO_API ZipMemoryVfs : public IMemoryVfs {
 给 `ZipArchive` 增加以下能力（文件路径版保持不变）：
 
 ```cpp
-// 条目来自物理文件，save() 时再读入（优化：libzip 可用 zip_source_file 懒读）
-bool addFile(const String& name, const std::filesystem::path& src_path);
-// 输出后端：内存字节 / std::ostream（zip_open_from_source + 可增长 buffer 源）
-bool save(std::vector<unsigned char>& out);
-bool save(std::ostream& out);
-// 读取后端：从内存 zip 读条目 / 列条目（zip_open_from_source + ZIP_RDONLY）
-static bool readEntry(const void* data, std::size_t size, const String& name,
-                      std::vector<unsigned char>& out);
-static Result<std::vector<ZipEntryInfo>> entries(const void* data, std::size_t size);
+// 条目来自物理文件，saveAs() 时再读入（zip_source_file_create 懒读）
+[[nodiscard]] IoError addFile(const String& path, const std::filesystem::path& real_path);
+// 输出后端：内存字节 / std::ostream
+[[nodiscard]] Result<std::vector<unsigned char>> toBytes() const;
+[[nodiscard]] IoError saveAs(std::ostream& out) const;
+// 条目读取与列目录：Zip::readEntry / Zip::entries（一次性操作；2026-09-23 从 ZipArchive 移到基础层 Zip）
 ```
 
 要点：
@@ -570,11 +567,11 @@ static Result<std::vector<ZipEntryInfo>> entries(const void* data, std::size_t s
 4. `doc.save(pkg_path)` 一次成型（或 `save(std::vector<unsigned char>&)` 拿到内存包）。
 
 **加载流程（无解压、绝不落盘）**：
-1. `ZipVfs::openForRead(pkg_path)`（或 `openForRead(std::vector<unsigned char>)`，后者接管字节）就地打开 zip，**不抽取任何条目**；
+1. `ZipVfs::open(pkg_path, OpenMode::ReadOnly)`（或接管字节的 `open(std::move(bytes), OpenMode::ReadOnly)`）就地打开 zip，**不抽取任何条目**；
 2. `read("workcell.xml")` → 内存字节 → `tinyxml2::XMLDocument::Parse` 直接解析；
 3. 设备对象按 `file` 属性取条目，**按扩展名分发**：
    - `.vdev`：`read` 取 XML 字节 → `DeviceIO::loadXml(String)` 直接解析；
-   - `.vdevpkg`：`read` 取设备包字节 → `ZipVfs::openForRead(bytes)` 打开**嵌套 VFS**，
+   - `.vdevpkg`：`read` 取设备包字节 → `ZipVfs::open(bytes, OpenMode::ReadOnly)` 打开**嵌套 VFS**，
      读其中的 `device.xml` 解析，设备内部资源（geoms/...）相对嵌套根解析；
 4. mesh 从包内 `geoms/xxx.bin` 读取并还原为 `TriangleMesh`/`IndexedTriangleMesh`（见 6.8）；
    包自包含；
@@ -582,7 +579,7 @@ static Result<std::vector<ZipEntryInfo>> entries(const void* data, std::size_t s
    无临时目录、无清理、无失败残留。
 
 **包中包（嵌套 VFS）**：场景包内嵌设备包时，设备包自身就是 zip 字节条目；
-`read` 取出后 `ZipVfs::openForRead(bytes)` 即得到一个独立的嵌套 VFS，与场景包互不干扰。资源引用按
+`read` 取出后 `ZipVfs::open(bytes, OpenMode::ReadOnly)` 即得到一个独立的嵌套 VFS，与场景包互不干扰。资源引用按
 "当前 VFS 根"解析：
 - 场景包内 `workcell.xml` 引用 `devices/robot.vdevpkg` → 相对**场景包根**；
 - 设备包内 `device.xml` 引用 `geoms/link1.bin` → 相对**设备包根**（嵌套 VFS）。
@@ -729,7 +726,7 @@ XML 描述（在 `<geometry>` 内，引用包内二进制条目）：
   1. `VfsTest`：
      `writeFile`/`readFile`/`mountFile` 往返；`exists`/`isFile`/`isDirectory`/`list`/`remove`
      语义正确；`ZipMemoryVfs` 与 `DirectoryVfs` 对同一虚拟树 `save`/`open` 结果一致；
-     `openForRead(std::vector<unsigned char>)` 内存包与文件版一致。
+     `open(std::move(bytes), OpenMode::ReadOnly)` 内存包与文件版一致。
 
 **阶段二（场景序列化）**——`tests/test_robotics_io/`（链接 `vi::RoboticsIO`）：
   2. `DeviceIOTest`：
@@ -746,7 +743,7 @@ XML 描述（在 `<geometry>` 内，引用包内二进制条目）：
   4. `PkgIOTest`（基于 VFS，不落盘）：`savePkg` → `loadPkg` 等价于 `saveXml` → `loadXml`；
      包内路径正确（workcell.xml / devices / geoms）；`mountFile` 绑定的资源在 save 时读入；
      `save(std::vector<unsigned char>&)` 内存包与文件版结果一致；
-     **嵌套设备包**：场景包内嵌 `.vdevpkg`，加载按扩展名分发、`ZipVfs::openForRead` 打开嵌套 VFS，
+     **嵌套设备包**：场景包内嵌 `.vdevpkg`，加载按扩展名分发、`ZipVfs::open(…, OpenMode::ReadOnly)` 打开嵌套 VFS，
      设备资源相对设备包根解析，与场景包根互不干扰；
      **复用去重**：两个设备实例指向同一 `file` → 设备定义只写一次；共享 mesh 只存一次，
      多处 `<geometry>` 引用同一 `geoms/xxx.bin`。

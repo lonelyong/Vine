@@ -119,7 +119,7 @@ String writeMeshBins(vine::io::Vfs& vfs, std::size_t& geom_seq,
                              + String(reinterpret_cast<const char8_t*>(seq_str.data()), seq_str.size());
 
     const auto write_bin = [&vfs, &prefix](const char8_t* suffix, const std::vector<unsigned char>& bytes) {
-        if (vfs.write(prefix + String(suffix), bytes) != vine::io::IoError::Ok) {
+        if (vfs.addFile(prefix + String(suffix), bytes) != vine::io::IoError::Ok) {
             throw std::runtime_error("XmlIOBase::writeMeshBins, failed to write mesh geometry into the package: "
                                      + prefix.as_std_str());
         }

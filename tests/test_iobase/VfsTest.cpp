@@ -35,9 +35,9 @@ bool contains(const std::vector<vine::String>& list, const vine::String& name)
 TEST(VfsTest, ZipWriteReadRoundTrip)
 {
     ZipArchive vfs;
-    ASSERT_EQ(vfs.write(u8"workcell.xml", bytesOf("<workcell name=\"demo\"/>")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"workcell.xml", bytesOf("<workcell name=\"demo\"/>")), IoError::Ok);
     const std::string binary = "\x00\x01\x02hello";
-    ASSERT_EQ(vfs.write(u8"geoms/base.bin", bytesOf(binary)), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"geoms/base.bin", bytesOf(binary)), IoError::Ok);
 
     const auto xml = vfs.read(u8"workcell.xml");
     ASSERT_TRUE(xml.ok());
@@ -63,10 +63,10 @@ TEST(VfsTest, ZipWriteReadRoundTrip)
 TEST(VfsTest, ZipListAndRemove)
 {
     ZipArchive vfs;
-    ASSERT_EQ(vfs.write(u8"a.txt", bytesOf("1")), IoError::Ok);
-    ASSERT_EQ(vfs.write(u8"b/c.txt", bytesOf("2")), IoError::Ok);
-    ASSERT_EQ(vfs.write(u8"b/d.txt", bytesOf("3")), IoError::Ok);
-    ASSERT_EQ(vfs.write(u8"e/f/g.txt", bytesOf("4")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"a.txt", bytesOf("1")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"b/c.txt", bytesOf("2")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"b/d.txt", bytesOf("3")), IoError::Ok);
+    ASSERT_EQ(vfs.addFile(u8"e/f/g.txt", bytesOf("4")), IoError::Ok);
 
     const auto top = vfs.list(u8"");
     ASSERT_TRUE(top.ok());
@@ -99,12 +99,12 @@ TEST(VfsTest, ZipSaveOpenFileRoundTrip)
 
     {
         ZipArchive vfs;
-        ASSERT_EQ(vfs.write(u8"workcell.xml", bytesOf("<workcell name=\"demo\"/>")), IoError::Ok);
-        ASSERT_EQ(vfs.write(u8"devices/robot.vdev", bytesOf("<device name=\"robot\"/>")), IoError::Ok);
+        ASSERT_EQ(vfs.addFile(u8"workcell.xml", bytesOf("<workcell name=\"demo\"/>")), IoError::Ok);
+        ASSERT_EQ(vfs.addFile(u8"devices/robot.vdev", bytesOf("<device name=\"robot\"/>")), IoError::Ok);
         ASSERT_EQ(vfs.saveAs(pkg), IoError::Ok);
     }
 
-    auto opened = ZipArchive::openForRead(pkg);
+    auto opened = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
     const auto xml = opened->read(u8"workcell.xml");
     ASSERT_TRUE(xml.ok());
@@ -118,14 +118,14 @@ TEST(VfsTest, ZipSaveMemoryRoundTrip)
     std::vector<unsigned char> pkg;
     {
         ZipArchive vfs;
-        ASSERT_EQ(vfs.write(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
+        ASSERT_EQ(vfs.addFile(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
         const auto bytes = vfs.toBytes();
         ASSERT_TRUE(bytes.ok());
         pkg = bytes.value();
         EXPECT_FALSE(pkg.empty());
     }
 
-    auto opened = ZipArchive::openForRead(std::move(pkg));
+    auto opened = ZipArchive::open(std::move(pkg), ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
     const auto xml = opened->read(u8"workcell.xml");
     ASSERT_TRUE(xml.ok());
@@ -137,20 +137,20 @@ TEST(VfsTest, ZipSaveStreamRoundTrip)
     std::ostringstream stream;
     {
         ZipArchive vfs;
-        ASSERT_EQ(vfs.write(u8"a.txt", bytesOf("hello")), IoError::Ok);
+        ASSERT_EQ(vfs.addFile(u8"a.txt", bytesOf("hello")), IoError::Ok);
         ASSERT_EQ(vfs.saveAs(stream), IoError::Ok);
     }
     const std::string data = stream.str();
     ASSERT_FALSE(data.empty());
 
-    auto opened = ZipArchive::openForRead(std::vector<unsigned char>(data.begin(), data.end()));
+    auto opened = ZipArchive::open(std::vector<unsigned char>(data.begin(), data.end()), ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
     const auto out = opened->read(u8"a.txt");
     ASSERT_TRUE(out.ok());
     EXPECT_EQ(out.value(), bytesOf("hello"));
 }
 
-TEST(VfsTest, ZipImportFile)
+TEST(VfsTest, ZipAddFileFromDisk)
 {
     const TempDir temp;
     const auto    src = temp.path() / "mesh.bin";
@@ -162,14 +162,14 @@ TEST(VfsTest, ZipImportFile)
     std::vector<unsigned char> pkg;
     {
         ZipArchive vfs;
-        ASSERT_EQ(vfs.importFile(u8"geoms/mesh.bin", src), IoError::Ok);
+        ASSERT_EQ(vfs.addFile(u8"geoms/mesh.bin", src), IoError::Ok);
         EXPECT_EQ(vfs.stat(u8"geoms/mesh.bin")->size, 10u);
         const auto bytes = vfs.toBytes();
         ASSERT_TRUE(bytes.ok());
         pkg = bytes.value();
     }
 
-    auto opened = ZipArchive::openForRead(std::move(pkg));
+    auto opened = ZipArchive::open(std::move(pkg), ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
     const auto mesh = opened->read(u8"geoms/mesh.bin");
     ASSERT_TRUE(mesh.ok());
@@ -186,8 +186,8 @@ TEST(VfsTest, DirectoryVfsRoundTrip)
 
     auto dir = DirectoryVfs::openDirectory(root);
     ASSERT_NE(dir, nullptr);
-    ASSERT_EQ(dir->write(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
-    ASSERT_EQ(dir->write(u8"geoms/a.bin", bytesOf("abc")), IoError::Ok);
+    ASSERT_EQ(dir->addFile(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
+    ASSERT_EQ(dir->addFile(u8"geoms/a.bin", bytesOf("abc")), IoError::Ok);
 
     const auto xml = dir->read(u8"workcell.xml");
     ASSERT_TRUE(xml.ok());
@@ -206,13 +206,13 @@ TEST(VfsTest, DirectoryVfsRoundTrip)
     std::vector<unsigned char> pkg;
     {
         ZipArchive vfs;
-        ASSERT_EQ(vfs.write(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
-        ASSERT_EQ(vfs.write(u8"geoms/a.bin", bytesOf("abc")), IoError::Ok);
+        ASSERT_EQ(vfs.addFile(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
+        ASSERT_EQ(vfs.addFile(u8"geoms/a.bin", bytesOf("abc")), IoError::Ok);
         const auto bytes = vfs.toBytes();
         ASSERT_TRUE(bytes.ok());
         pkg = bytes.value();
     }
-    auto zip = ZipArchive::openForRead(std::move(pkg));
+    auto zip = ZipArchive::open(std::move(pkg), ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(zip.ok());
 
     const auto dir_children = dir->list(u8"");

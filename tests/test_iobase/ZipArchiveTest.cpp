@@ -1,25 +1,28 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <vine/io/IoError.hpp>
 #include <vine/io/Vfs.hpp>
+#include <vine/io/Zip.hpp>
 #include <vine/io/ZipArchive.hpp>
 #include <vine/String.hpp>
 
 #include "VfsTestSupport.hpp"
 
 using vine::String;
-using vine::io::FileInfo;
+using vine::io::VfsEntryInfo;
 using vine::io::IoError;
+using vine::io::Zip;
 using vine::io::ZipArchive;
-using vine::io::ZipEntryInfo;
 using vfstest::bytesOf;
 using vfstest::findInfo;
 using vfstest::sortedNames;
@@ -33,9 +36,9 @@ namespace
  */
 void fillPackageTree(ZipArchive& vfs)
 {
-    EXPECT_EQ(vfs.write(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
-    EXPECT_EQ(vfs.write(u8"geoms/base.bin", bytesOf("abcd")), IoError::Ok);
-    EXPECT_EQ(vfs.write(u8"devices/robot.vdev", bytesOf("xyz")), IoError::Ok);
+    EXPECT_EQ(vfs.addFile(u8"workcell.xml", bytesOf("<workcell/>")), IoError::Ok);
+    EXPECT_EQ(vfs.addFile(u8"geoms/base.bin", bytesOf("abcd")), IoError::Ok);
+    EXPECT_EQ(vfs.addFile(u8"devices/robot.vdev", bytesOf("xyz")), IoError::Ok);
     EXPECT_EQ(vfs.createDirectory(u8"empty"), IoError::Ok);
     EXPECT_EQ(vfs.createDirectories(u8"nested/deep"), IoError::Ok);
 }
@@ -56,9 +59,9 @@ std::vector<unsigned char> buildPackage()
 /**
  * @brief Reports whether a child is present with the expected kind and size.
  */
-bool matches(const std::vector<FileInfo>& children, const String& path, bool is_directory, std::uint64_t size)
+bool matches(const std::vector<VfsEntryInfo>& children, const String& path, bool is_directory, std::uint64_t size)
 {
-    const FileInfo* info = findInfo(children, path);
+    const VfsEntryInfo* info = findInfo(children, path);
     return info != nullptr && info->is_directory == is_directory && info->size == size;
 }
 
@@ -74,38 +77,49 @@ TEST(ZipArchiveTest, ArchiveIndexReportsNamesSizesAndKinds)
         out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
 
-    const auto entries = ZipArchive::entries(pkg);
+    const auto entries = Zip::entries(pkg);
     ASSERT_TRUE(entries.ok());
 
-    const auto found = [&entries](const String& name) -> const ZipEntryInfo* {
-        for (const ZipEntryInfo& entry : entries.value()) {
-            if (entry.name == name) {
+    const auto found = [&entries](const String& path) -> const VfsEntryInfo* {
+        for (const VfsEntryInfo& entry : entries.value()) {
+            if (entry.path == path) {
                 return &entry;
             }
         }
         return nullptr;
     };
 
-    const ZipEntryInfo* xml = found(String(u8"workcell.xml"));
+    const VfsEntryInfo* xml = found(String(u8"workcell.xml"));
     ASSERT_NE(xml, nullptr);
     EXPECT_FALSE(xml->is_directory);
     EXPECT_EQ(xml->size, 11u);
 
-    const ZipEntryInfo* empty = found(String(u8"empty/"));
+    const VfsEntryInfo* empty = found(String(u8"empty"));
     ASSERT_NE(empty, nullptr);
     EXPECT_TRUE(empty->is_directory);
     EXPECT_EQ(empty->size, 0u);
 
+    EXPECT_NE(xml->crc, 0u); // the archive records a checksum for every file
+    EXPECT_EQ(empty->crc, 0u);
+
+    // An opened archive answers with the same checksum as the one-shot listing.
+    const auto opened = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
+    ASSERT_TRUE(opened.ok());
+    const auto xml_stat = opened->stat(u8"workcell.xml");
+    ASSERT_TRUE(xml_stat.ok());
+    EXPECT_EQ(xml_stat->size, xml->size);
+    EXPECT_EQ(xml_stat->crc, xml->crc);
+
     // The in-memory form reports the same index.
     const std::vector<unsigned char> bytes = buildPackage();
-    const auto                       from_memory = ZipArchive::entries(bytes.data(), bytes.size());
+    const auto                       from_memory = Zip::entries(bytes);
     ASSERT_TRUE(from_memory.ok());
     EXPECT_EQ(from_memory->size(), entries->size());
 
     // Nothing that is not a zip can be indexed.
     const std::vector<unsigned char> garbage{ 'n', 'o', 't', 'a', 'z', 'i', 'p' };
-    EXPECT_EQ(ZipArchive::entries(garbage.data(), garbage.size()).error(), IoError::InvalidData);
-    EXPECT_EQ(ZipArchive::entries(temp.path() / "missing.zip").error(), IoError::NotFound);
+    EXPECT_EQ(Zip::entries(garbage).error(), IoError::InvalidData);
+    EXPECT_EQ(Zip::entries(temp.path() / "missing.zip").error(), IoError::NotFound);
 }
 
 TEST(ZipArchiveTest, MatchesTheMemoryBackendForTheSameContent)
@@ -119,7 +133,7 @@ TEST(ZipArchiveTest, MatchesTheMemoryBackendForTheSameContent)
     fillPackageTree(built);
     ASSERT_EQ(built.saveAs(pkg), IoError::Ok);
 
-    auto lazy = ZipArchive::openForRead(pkg);
+    auto lazy = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(lazy.ok());
 
     for (const String& dir :
@@ -167,7 +181,7 @@ TEST(ZipArchiveTest, ReadsEntriesOnDemand)
         out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
 
-    auto zip = ZipArchive::openForRead(pkg);
+    auto zip = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(zip.ok());
     EXPECT_TRUE(zip->read(u8"workcell.xml").ok());
 
@@ -185,7 +199,7 @@ TEST(ZipArchiveTest, ReadsEntriesOnDemand)
 TEST(ZipArchiveTest, OpensAnInMemoryArchive)
 {
     std::vector<unsigned char> bytes = buildPackage();
-    auto                       zip   = ZipArchive::openForRead(std::move(bytes));
+    auto                       zip   = ZipArchive::open(std::move(bytes), ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(zip.ok());
 
     const auto text = zip->read(u8"workcell.xml");
@@ -195,9 +209,43 @@ TEST(ZipArchiveTest, OpensAnInMemoryArchive)
     EXPECT_TRUE(zip->isDirectory(u8"nested/deep"));
 
     // Bytes can only be taken from a valid archive.
-    EXPECT_FALSE(ZipArchive::openForRead(std::vector<unsigned char>{}).ok());
-    EXPECT_FALSE(ZipArchive::openForRead(std::vector<unsigned char>{ 'n', 'o', 'p', 'e' }).ok());
-    EXPECT_FALSE(ZipArchive::openForRead(std::filesystem::path("does-not-exist.zip")).ok());
+    EXPECT_FALSE(ZipArchive::open(std::vector<unsigned char>{}, ZipArchive::OpenMode::ReadOnly).ok());
+    EXPECT_FALSE(ZipArchive::open(std::vector<unsigned char>{ 'n', 'o', 'p', 'e' }, ZipArchive::OpenMode::ReadOnly).ok());
+    EXPECT_FALSE(ZipArchive::open(std::filesystem::path("does-not-exist.zip"), ZipArchive::OpenMode::ReadOnly).ok());
+}
+
+TEST(ZipArchiveTest, OpensBorrowedBytes)
+{
+    const TempDir              temp;
+    std::vector<unsigned char> bytes = buildPackage(); // the caller keeps owning these
+
+    std::unique_ptr<vine::io::VfsReadStream> reader;
+    {
+        // An lvalue is borrowed, not copied: the archive reads the caller's block.
+        auto zip = ZipArchive::open(bytes, ZipArchive::OpenMode::ReadOnly);
+        ASSERT_TRUE(zip.ok());
+        EXPECT_TRUE(zip->isReadOnly());
+
+        const auto text = zip->read(u8"workcell.xml");
+        ASSERT_TRUE(text.ok());
+        EXPECT_EQ(text.value(), bytesOf("<workcell/>"));
+
+        auto stream = zip->openRead(u8"workcell.xml");
+        ASSERT_TRUE(stream.ok());
+        reader = stream.take();
+
+        EXPECT_EQ(zip->saveAs(temp.path() / "borrowed.zip"), IoError::Ok);
+    }
+
+    // A reader keeps the archive's handle alive, so it outlives the archive as
+    // long as the borrowed bytes are still around.
+    std::array<std::byte, 16> buffer{};
+    ASSERT_EQ(reader->read(buffer), 11u);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(buffer.data()), 11), "<workcell/>");
+
+    // An empty span is not an archive.
+    EXPECT_EQ(ZipArchive::open(std::span<const unsigned char>{}, ZipArchive::OpenMode::ReadOnly).error(),
+              IoError::InvalidData);
 }
 
 TEST(ZipArchiveTest, ReportsErrorsAndRefusesEveryChange)
@@ -210,7 +258,7 @@ TEST(ZipArchiveTest, ReportsErrorsAndRefusesEveryChange)
         out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
 
-    auto zip = ZipArchive::openForRead(pkg);
+    auto zip = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(zip.ok());
     ASSERT_TRUE(zip->isReadOnly());
 
@@ -221,13 +269,15 @@ TEST(ZipArchiveTest, ReportsErrorsAndRefusesEveryChange)
     EXPECT_EQ(zip->read(u8"empty").error(), IoError::IsADirectory);
     EXPECT_EQ(zip->read(u8"nope").error(), IoError::NotFound);
 
-    EXPECT_EQ(zip->write(u8"new.txt", bytesOf("x")), IoError::ReadOnly);
+    EXPECT_EQ(zip->addFile(u8"new.txt", bytesOf("x")), IoError::ReadOnly);
     EXPECT_EQ(zip->createDirectory(u8"new"), IoError::ReadOnly);
     EXPECT_EQ(zip->createDirectories(u8"new/deep"), IoError::ReadOnly);
     EXPECT_EQ(zip->rename(u8"a", u8"b"), IoError::ReadOnly);
     EXPECT_EQ(zip->remove(u8"workcell.xml"), IoError::ReadOnly);
     EXPECT_EQ(zip->removeAll(u8"geoms"), IoError::ReadOnly);
-    EXPECT_EQ(zip->importFile(u8"a", pkg), IoError::ReadOnly);
+    EXPECT_EQ(zip->addFile(u8"a", pkg), IoError::ReadOnly);
+    EXPECT_EQ(zip->addFile(u8"a", std::shared_ptr<vine::io::DataSource>{}), IoError::ReadOnly);
+    EXPECT_EQ(zip->addFile(u8"a", std::span<const vine::io::Fragment>{}), IoError::ReadOnly);
 
     // A read-only view still exports: writing a copy elsewhere does not change it,
     // while committing back to the file it came from is refused.
@@ -249,7 +299,7 @@ TEST(ZipArchiveTest, ListReportsEveryChildShape)
         out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
 
-    auto zip = ZipArchive::openForRead(pkg);
+    auto zip = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(zip.ok());
 
     const auto top = zip->list(u8"");

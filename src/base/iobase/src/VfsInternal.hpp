@@ -2,10 +2,12 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <span>
 #include <string>
 
 #include <vine/io/IoError.hpp>
 #include <vine/io/io_global.hpp>
+#include <vine/io/Stream.hpp>
 #include <vine/String.hpp>
 
 V_IO_NS_BEGIN
@@ -41,8 +43,10 @@ inline String fromUtf8(const char* bytes, std::size_t length)
  * @brief Normalizes a VFS path and validates it.
  *
  * A virtual path is a '/'-separated sequence of segments relative to the
- * virtual root. Empty segments and "." are folded away, ".." cancels the
- * previous segment, and a path that would climb above the root is invalid.
+ * virtual root, which knows no working directory: a leading '/' would name no
+ * entry, so it is refused instead of being folded away. Empty segments and "."
+ * are folded away, ".." cancels the previous segment, and a path that would
+ * climb above the root is invalid.
  * A backslash, an embedded NUL and a ':' are rejected because different
  * backends would read them differently - a drive letter in particular turns a
  * path into an absolute one, and joining it would replace a backend's root.
@@ -59,6 +63,9 @@ inline IoError normalizeVfsPath(const String& path, String& out)
 
     if (raw.find(u8'\\') != std::u8string::npos || raw.find(u8'\0') != std::u8string::npos) {
         return IoError::InvalidPath;
+    }
+    if (!raw.empty() && raw.front() == u8'/') {
+        return IoError::InvalidPath; // no working directory: an absolute spelling names no entry
     }
 
     std::u8string normalized;
@@ -92,6 +99,26 @@ inline IoError normalizeVfsPath(const String& path, String& out)
 
     out = String(std::move(normalized));
     return IoError::Ok;
+}
+
+/**
+ * @brief Reports whether a fragment list holds a piece that points at no bytes.
+ *
+ * An empty piece is fine, but a non-empty one has to carry real bytes: the
+ * pieces are borrowed rather than copied, so a null pointer would be
+ * dereferenced once the content is stored.
+ *
+ * @param fragments The pieces to inspect.
+ * @return true when a non-empty piece has a null data pointer.
+ */
+inline bool hasDatalessFragment(std::span<const Fragment> fragments)
+{
+    for (const Fragment& piece : fragments) {
+        if (piece.size != 0 && piece.data == nullptr) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**

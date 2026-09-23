@@ -326,7 +326,7 @@ std::unique_ptr<tinyxml2::XMLDocument> DeviceIO::buildDoc(const workcell::Device
 std::unique_ptr<workcell::Device> DeviceIO::loadPkg(const std::filesystem::path& pkg_path, const LoadOptions& options)
 {
     // Only the archive index is read up front; entries decompress on demand.
-    auto pkg = vine::io::ZipArchive::openForRead(pkg_path);
+    auto pkg = vine::io::ZipArchive::open(pkg_path, vine::io::ZipArchive::OpenMode::ReadOnly);
     if (!pkg) {
         throw std::runtime_error("DeviceIO::loadPkg, not a valid device package: " + pkg_path.string());
     }

@@ -45,6 +45,8 @@ class V_IOBASE_API DirectoryVfs : public Vfs
     static std::unique_ptr<DirectoryVfs> openDirectory(const std::filesystem::path& dir);
 
     // Vfs
+    using Vfs::addFile; // the overrides below would otherwise hide the base's content-source overloads
+
     /**
      * @brief An on-disk directory accepts every write, so this is false.
      *
@@ -59,7 +61,7 @@ class V_IOBASE_API DirectoryVfs : public Vfs
      * @return The information, or IoError::NotFound when nothing is there,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] Result<FileInfo> stat(const String& path) const override;
+    [[nodiscard]] Result<VfsEntryInfo> stat(const String& path) const override;
 
     /**
      * @brief Lists the direct children of a real directory.
@@ -69,7 +71,7 @@ class V_IOBASE_API DirectoryVfs : public Vfs
      *         IoError::NotADirectory when dir names a file,
      *         IoError::InvalidPath when dir is not a valid virtual path.
      */
-    [[nodiscard]] Result<std::vector<FileInfo>> list(const String& dir) const override;
+    [[nodiscard]] Result<std::vector<VfsEntryInfo>> list(const String& dir) const override;
 
     /**
      * @brief Reads a real file as a whole.
@@ -82,7 +84,7 @@ class V_IOBASE_API DirectoryVfs : public Vfs
     [[nodiscard]] Result<std::vector<unsigned char>> read(const String& path) const override;
 
     /**
-     * @brief Writes a whole real file, creating missing parents.
+     * @brief Adds a whole real file, creating missing parents.
      *
      * @param path The virtual file path.
      * @param bytes The bytes to store; may be empty.
@@ -90,7 +92,7 @@ class V_IOBASE_API DirectoryVfs : public Vfs
      *         taken by a directory, IoError::InvalidPath when path is not a
      *         valid virtual path, IoError::IoFailure when writing fails.
      */
-    [[nodiscard]] IoError write(const String& path, std::span<const unsigned char> bytes) override;
+    [[nodiscard]] IoError addFile(const String& path, std::span<const unsigned char> bytes) override;
 
     /**
      * @brief Creates a real directory under the root.
@@ -149,7 +151,7 @@ class V_IOBASE_API DirectoryVfs : public Vfs
     [[nodiscard]] IoError removeAll(const String& path) override;
 
     /**
-     * @brief Copies a real file into the tree.
+     * @brief Adds a real file to the tree by copying it.
      *
      * The copy is immediate and streamed, so the source may change or vanish
      * afterwards.
@@ -160,7 +162,7 @@ class V_IOBASE_API DirectoryVfs : public Vfs
      *         reached, IoError::IsADirectory when the name is taken by a
      *         directory, IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] IoError importFile(const String& path, const std::filesystem::path& real_path) override;
+    [[nodiscard]] IoError addFile(const String& path, const std::filesystem::path& real_path) override;
 
     /**
      * @brief Confirms the tree is persisted.

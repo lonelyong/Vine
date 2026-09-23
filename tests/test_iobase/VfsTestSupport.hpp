@@ -55,9 +55,9 @@ inline std::vector<unsigned char> bytesOf(const std::string& text)
 /**
  * @brief Finds the child with a given full path, or null.
  */
-inline const vine::io::FileInfo* findInfo(const std::vector<vine::io::FileInfo>& infos, const vine::String& path)
+inline const vine::io::VfsEntryInfo* findInfo(const std::vector<vine::io::VfsEntryInfo>& infos, const vine::String& path)
 {
-    for (const vine::io::FileInfo& info : infos) {
+    for (const vine::io::VfsEntryInfo& info : infos) {
         if (info.path == path) {
             return &info;
         }
@@ -68,11 +68,11 @@ inline const vine::io::FileInfo* findInfo(const std::vector<vine::io::FileInfo>&
 /**
  * @brief The own names of some children, sorted, so two backends can be compared.
  */
-inline std::vector<vine::String> sortedNames(const std::vector<vine::io::FileInfo>& children)
+inline std::vector<vine::String> sortedNames(const std::vector<vine::io::VfsEntryInfo>& children)
 {
     std::vector<vine::String> names;
     names.reserve(children.size());
-    for (const vine::io::FileInfo& child : children) {
+    for (const vine::io::VfsEntryInfo& child : children) {
         names.push_back(child.name());
     }
     std::sort(names.begin(), names.end());

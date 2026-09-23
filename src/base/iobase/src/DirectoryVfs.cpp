@@ -51,7 +51,7 @@ bool DirectoryVfs::isReadOnly() const noexcept
     return false;
 }
 
-Result<FileInfo> DirectoryVfs::stat(const String& path) const
+Result<VfsEntryInfo> DirectoryVfs::stat(const String& path) const
 {
     String                norm;
     std::filesystem::path real;
@@ -71,7 +71,7 @@ Result<FileInfo> DirectoryVfs::stat(const String& path) const
         return IoError::IoFailure;
     }
     if (type == std::filesystem::file_type::directory) {
-        return FileInfo{ std::move(norm), true, 0 };
+        return VfsEntryInfo{ std::move(norm), true, 0 };
     }
     if (type != std::filesystem::file_type::regular) {
         return IoError::NotFound; // a device, socket, pipe or similar
@@ -81,10 +81,10 @@ Result<FileInfo> DirectoryVfs::stat(const String& path) const
     if (ec) {
         return IoError::IoFailure;
     }
-    return FileInfo{ std::move(norm), false, static_cast<std::uint64_t>(bytes) };
+    return VfsEntryInfo{ std::move(norm), false, static_cast<std::uint64_t>(bytes) };
 }
 
-Result<std::vector<FileInfo>> DirectoryVfs::list(const String& dir) const
+Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const String& dir) const
 {
     String                base;
     std::filesystem::path real;
@@ -107,7 +107,7 @@ Result<std::vector<FileInfo>> DirectoryVfs::list(const String& dir) const
         return IoError::NotADirectory;
     }
 
-    std::vector<FileInfo> children;
+    std::vector<VfsEntryInfo> children;
     for (std::filesystem::directory_iterator it(real, ec), end; !ec && it != end; it.increment(ec)) {
         const std::filesystem::directory_entry& entry = *it;
 
@@ -119,7 +119,7 @@ Result<std::vector<FileInfo>> DirectoryVfs::list(const String& dir) const
         const bool is_dir = entry_type == std::filesystem::file_type::directory;
 
         const String name(entry.path().filename().u8string());
-        FileInfo     info;
+        VfsEntryInfo info;
         info.path         = base.empty() ? name : String(base.as_std_u8str() + u8"/" + name.as_std_u8str());
         info.is_directory = is_dir;
         if (!is_dir) {
@@ -274,7 +274,7 @@ IoError DirectoryVfs::createDirectories(const String& path)
     return IoError::Ok;
 }
 
-IoError DirectoryVfs::importFile(const String& path, const std::filesystem::path& real_path)
+IoError DirectoryVfs::addFile(const String& path, const std::filesystem::path& real_path)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
@@ -403,7 +403,7 @@ Result<std::vector<unsigned char>> DirectoryVfs::read(const String& path) const
     return bytes;
 }
 
-IoError DirectoryVfs::write(const String& path, std::span<const unsigned char> bytes)
+IoError DirectoryVfs::addFile(const String& path, std::span<const unsigned char> bytes)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
