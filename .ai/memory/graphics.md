@@ -2237,3 +2237,7 @@ program 不自己套 gamma），宿主视角写在 `docs/usage.md` **§3.9**。*
 对"非 sRGB 的颜色贴图"报 Info）**不做**：引擎分不出颜色/数据（同 `PixelFormat`、同字节，区别在宿主意图），
 按格式猜意图会在**正确的**数据图上刷警告。注册：demo 的 `boxFilterRgba` 在**编码域**平均字节（比线性域平均
 略偏暗，低频天空不可见）。详见 `.ai/design/vsg-reimplementation.md` §11.16cp。
+
+（同一片踩到的构建坑，记进"身份铁律"那一条的同类：**demo 宿主是插件** `plugins/vine/app_shelld.so` ——
+`ninja -C build Vine` **不会**重建它，改完 `AppShellDemo.cpp` 必须 `ninja -C build app_shell`；门禁跑的是
+全量 `ninja`，所以这个坑只在手工改 demo 时踩得到。）
