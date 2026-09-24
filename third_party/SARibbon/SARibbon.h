@@ -162,14 +162,14 @@
  * @def ribbon的数字版本 MAJ.MIN.{PAT}
  */
 #ifndef SA_RIBBON_BAR_VERSION_PAT
-#define SA_RIBBON_BAR_VERSION_PAT 3
+#define SA_RIBBON_BAR_VERSION_PAT 5
 #endif
 
 /**
  * @def 版本号（字符串）
  */
 #ifndef SARIBBON_VERSION
-#define SARIBBON_VERSION "2.9.3"
+#define SARIBBON_VERSION "2.9.5"
 #endif
 
 #endif // SARIBBONVERSIONINFO_H
@@ -1363,6 +1363,12 @@ int SA_RIBBON_EXPORT saMirrorX(int x, int containerWidth, int elementWidth);
 // Check if the operating system uses dark mode (cross-platform)
 bool SA_RIBBON_EXPORT isOperatingSystemInDarkMode();
 
+// Enable or disable automatic switching from the default theme to RibbonThemeDark when the operating system is in dark mode (enabled by default)
+void SA_RIBBON_EXPORT setEnableSystemDarkModeAutoSwitch(bool on);
+
+// Query whether automatic theme switching by operating system dark mode is enabled
+bool SA_RIBBON_EXPORT isEnableSystemDarkModeAutoSwitch();
+
 // Forward declaration
 class SARibbonThemePalette;
 
@@ -1748,6 +1754,25 @@ public:
 		 * @default 1.4
 		 */
 		qreal buttonMaximumAspectRatio { 1.4 };
+
+		/**
+		 * @brief Minimum width ratio (relative to height) for large buttons / 大按钮最小宽度比例（相对于高度）
+		 *
+		 * The minimum width of a large button is determined by its height multiplied by this coefficient.
+		 * For example, if the button height is `h`, then the minimum width is `minw = h * largeButtonMinimumWidthRatio`.
+		 * When the text is short (e.g., two characters), the text width may be smaller than this minimum,
+		 * causing the button to look wider than necessary. Lowering this coefficient makes short-text buttons
+		 * more compact; setting it to 0 (or a negative value) removes the height-based minimum width constraint,
+		 * and only the icon width (plus margins) is kept as the lower bound.
+		 *
+		 * 大按钮的最小宽度为按钮高度*此系数，例如按钮高度为h，那么按钮最小宽度minw=h*largeButtonMinimumWidthRatio。
+		 * 当文字较短（如两个汉字）时，文字宽度可能小于此最小值，导致按钮显得过宽。调小此系数可以让短文字按钮更紧凑；
+		 * 设为0（或负值）则取消按高度计算的最小宽度约束，仅保留icon宽度（加边距）作为下限。
+		 *
+		 * @note Only effective for large buttons; small buttons are not affected. / 仅对大按钮生效，小按钮不受影响
+		 * @default 0.75
+		 */
+		qreal largeButtonMinimumWidthRatio { 0.75 };
 	};
 
 public:
@@ -1794,6 +1819,11 @@ public:
 	void setButtonMaximumAspectRatio(qreal v = 1.4);
 	// Gets the button's maximum aspect ratio (width/height) / 获取按钮的最大宽高比
 	qreal buttonMaximumAspectRatio() const;
+
+	// Sets the minimum width ratio (relative to height) for large buttons / 设置大按钮的最小宽度比例（相对于高度）
+	void setLargeButtonMinimumWidthRatio(qreal v = 0.75);
+	// Gets the minimum width ratio (relative to height) for large buttons / 获取大按钮的最小宽度比例
+	qreal largeButtonMinimumWidthRatio() const;
 
 	// Invalidates the cached size hint / 使缓存的size hint失效
 	void invalidateSizeHint();
@@ -2930,6 +2960,8 @@ public:
 	bool isEnableWordWrap() const;
 	// Maximum aspect ratio of buttons, this coefficient determines the maximum width of buttons
 	qreal buttonMaximumAspectRatio() const;
+	// Minimum width ratio of large buttons (relative to button height), this coefficient determines the minimum width of large buttons
+	qreal largeButtonMinimumWidthRatio() const;
 
 public:
 	// Adds an item to the layout (SARibbonPanelLayout not supported)
@@ -2975,6 +3007,8 @@ protected:
 	void setEnableWordWrap(bool on);
 	// Set maximum aspect ratio of buttons, this coefficient determines the maximum width of buttons
 	void setButtonMaximumAspectRatio(qreal fac = 1.4);
+	// Set minimum width ratio of large buttons (relative to button height), this coefficient determines the minimum width of large buttons
+	void setLargeButtonMinimumWidthRatio(qreal fac = 0.75);
 
 private:
 	// Calculate window width and maximum width based on column count
@@ -2988,6 +3022,7 @@ private:
 	int mColumnCount { 0 };                       ///< 记录有多少列
 	QSize mSizeHint;                              ///< sizeHint返回的尺寸
 	QHash<QWidget*, QSize> mButtonSizeHintCache;  ///< 缓存按钮的sizeHint，避免重复计算
+	int mButtonSizeHintCacheLargeHeight { -1 };   ///< 缓存sizeHint时依据的大按钮高度，高度变化则缓存失效
 	QSize mSmallToolButtonIconSize { 22, 22 };    ///< 记录小按钮图标尺寸
 	QSize mLargeToolButtonIconSize { 32, 32 };    ///< 记录大按钮图标尺寸
 	bool mDirty { true };                         ///< 用于标记是否需要刷新元素，参考QToolBarLayout源码
@@ -3001,6 +3036,8 @@ private:
 	QRect mOptionActionBtnGeometry;               ///< optionAction的位置
 	bool mEnableWordWrap { true };                ///< 是否允许文字换行
 	qreal mButtonMaximumAspectRatio { 1.4 };      ///< 按钮的宽高比
+	qreal mLargeButtonMinWidthRatio { 0.75 };     ///< 大按钮最小宽度比例（相对于高度）
+	bool mInDoLayout { false };                   ///< doLayout执行期间为true；子控件show()会让Qt同步activate本布局造成重入，用此标志跳过
 };
 
 #endif  // SARIBBONPANELLAYOUT_H
@@ -3335,6 +3372,9 @@ public:
 	// Maximum aspect ratio of buttons, this coefficient determines the maximum width of buttons
 	qreal buttonMaximumAspectRatio() const;
 
+	// Minimum width ratio of large buttons (relative to button height), this coefficient determines the minimum width of large buttons
+	qreal largeButtonMinimumWidthRatio() const;
+
 	// This function will iterate through all RibbonToolButton under SARibbonPanel, execute function pointer
 	// (bool(SARibbonRibbonToolButton*)), function pointer returns false to stop iteration
 	bool iterateButton(FpRibbonToolButtonIterate fp) const;
@@ -3416,6 +3456,9 @@ protected:
 
 	// Set the maximum aspect ratio of buttons, this coefficient determines the maximum width of buttons
 	void setButtonMaximumAspectRatio(qreal fac = 1.4);
+
+	// Set the minimum width ratio of large buttons (relative to button height), this coefficient determines the minimum width of large buttons
+	void setLargeButtonMinimumWidthRatio(qreal fac = 0.75);
 };
 
 #endif  // SARIBBONPANEL_H
@@ -3603,6 +3646,9 @@ public:
 	// Get button maximum aspect ratio
 	qreal buttonMaximumAspectRatio() const;
 
+	// Get minimum width ratio of large buttons (relative to button height)
+	qreal largeButtonMinimumWidthRatio() const;
+
 	// Iterate through all panels
 	bool iteratePanel(FpPanelIterate fp) const;
 
@@ -3655,6 +3701,9 @@ protected:
 
 	// Set button maximum aspect ratio
 	void setButtonMaximumAspectRatio(qreal fac = 1.4);
+
+	// Set minimum width ratio of large buttons (relative to button height), this coefficient determines the minimum width of large buttons
+	void setLargeButtonMinimumWidthRatio(qreal fac = 0.75);
 };
 
 /**
@@ -4387,6 +4436,7 @@ class SA_RIBBON_EXPORT SARibbonGallery : public QFrame
 {
 	Q_OBJECT
 	SA_RIBBON_DECLARE_PRIVATE(SARibbonGallery)
+	Q_PROPERTY(int stretchFactor READ stretchFactor WRITE setStretchFactor NOTIFY stretchFactorChanged)
 public:
 	// Constructor for SARibbonGallery
 	explicit SARibbonGallery(QWidget* parent = nullptr);
@@ -4412,7 +4462,23 @@ public:
 	void setSingleRowMode(bool on);
 	// Check if gallery is in single-row mode
 	bool isSingleRowMode() const;
+	// Get the horizontal stretch factor of the gallery inside its panel (default 0, 0 means equal share as before)
+	int stretchFactor() const;
+	// Set the horizontal stretch factor (0 keeps the legacy equal-share behavior; >0 joins weighted distribution)
+	void setStretchFactor(int factor);
 Q_SIGNALS:
+	/**
+	 * \if ENGLISH
+	 * @brief Emitted when the stretch factor changes
+	 * @param factor New stretch factor
+	 * \endif
+	 *
+	 * \if CHINESE
+	 * @brief 拉伸系数变化时发射
+	 * @param factor 新的拉伸系数
+	 * \endif
+	 */
+	void stretchFactorChanged(int factor);
 	/**
 	 * \if ENGLISH
 	 * @brief Forwards SARibbonGalleryGroup::triggered signal
@@ -4474,7 +4540,7 @@ protected:
  * @brief SARibbonGallery的Viewport类
  * \endif
  */
-class SARibbonGalleryViewport : public QScrollArea
+class SA_RIBBON_EXPORT SARibbonGalleryViewport : public QScrollArea
 {
 	Q_OBJECT
 public:
@@ -4991,6 +5057,11 @@ public:
 	void setButtonMaximumAspectRatio(qreal fac = 1.4);
 	// Get button maximum aspect ratio
 	qreal buttonMaximumAspectRatio() const;
+
+	// Set minimum width ratio of large buttons (relative to button height), this coefficient determines the minimum width of large buttons
+	void setLargeButtonMinimumWidthRatio(qreal fac = 0.75);
+	// Get minimum width ratio of large buttons (relative to button height)
+	qreal largeButtonMinimumWidthRatio() const;
 
 	// Set panel title height
 	void setPanelTitleHeight(int h);
@@ -5588,7 +5659,10 @@ public:
 		ChangeActionOrderActionType,    ///< 改变action顺序的操作(9)
 		RenameCategoryActionType,       ///< 对category更名操作(10)
 		RenamePanelActionType,          ///< 对Panel更名操作(11)
-		VisibleCategoryActionType       ///< 对category执行隐藏/显示操作(12)
+		VisibleCategoryActionType,      ///< 对category执行隐藏/显示操作(12)
+		AddQuickActionActionType,       ///< 添加action到快速访问栏操作(13)
+		RemoveQuickActionActionType,    ///< 从快速访问栏移除action操作(14)
+		ChangeQuickActionOrderActionType  ///< 改变快速访问栏action顺序的操作(15)
 	};
 	// Default constructor
 	SARibbonCustomizeData();
@@ -5661,6 +5735,17 @@ public:
 
 	// Create VisibleCategoryActionType SARibbonCustomizeData
 	static SARibbonCustomizeData makeVisibleCategoryCustomizeData(const QString& categoryobjName, bool isShow);
+
+	// Create AddQuickActionActionType SARibbonCustomizeData (add action to quick access bar)
+	static SARibbonCustomizeData makeAddQuickActionCustomizeData(const QString& key, SARibbonActionsManager* mgr);
+
+	// Create RemoveQuickActionActionType SARibbonCustomizeData (remove action from quick access bar)
+	static SARibbonCustomizeData makeRemoveQuickActionCustomizeData(const QString& key, SARibbonActionsManager* mgr);
+
+	// Create ChangeQuickActionOrderActionType SARibbonCustomizeData (change action order in quick access bar)
+	static SARibbonCustomizeData makeChangeQuickActionOrderCustomizeData(const QString& key,
+																		SARibbonActionsManager* mgr,
+																		int moveindex);
 
 	// Check if customization is allowed for the object
 	static bool isCanCustomize(QObject* obj);
@@ -5800,8 +5885,9 @@ public:
 	 */
 	enum RibbonTreeShowType
 	{
-		ShowAllCategory,  ///< Show all categories including context categories
-		ShowMainCategory  ///< Show main categories only, excluding context categories
+		ShowAllCategory,     ///< Show all categories including context categories
+		ShowMainCategory,    ///< Show main categories only, excluding context categories
+		ShowQuickAccessBar   ///< Show the quick access bar as the tree root (issue #67)
 	};
 
 	/**
@@ -5815,7 +5901,7 @@ public:
 	 */
 	enum ItemRole
 	{
-		LevelRole        = Qt::UserRole + 1,  ///< Level: 0=category, 1=panel, 2=item
+		LevelRole        = Qt::UserRole + 1,  ///< Level: 0=category, 1=panel, 2=item, 3=quick access bar root, 4=quick access bar action
 		PointerRole      = Qt::UserRole + 2,  ///< Pointer storage, cast based on LevelRole
 		CanCustomizeRole = Qt::UserRole + 3,  ///< Whether this item can be customized (bool)
 		CustomizeRole = Qt::UserRole + 4,  ///< Whether this is a custom item (bool), mainly for self-added tabs and panels
@@ -6102,6 +6188,9 @@ private:
 #define SARIBBONMAINWINDOW_H
 
 #include <QMainWindow>
+#include <QList>
+#include <QPoint>
+#include <QRect>
 
 #if !SARIBBON_USE_3RDPARTY_FRAMELESSHELPER
 class SAFramelessHelper;
@@ -6110,6 +6199,24 @@ class QAction;
 class SARibbonBar;
 class SARibbonSystemButtonBar;
 class QScreen;
+class QColor;
+
+namespace SA {
+// Title-bar hit test for the Windows non-QWK frameless path (issue #31): returns true when the
+// given point (in the window's local logical coordinates) falls into the draggable title bar area.
+// Pure function, exported for unit testing. Parameters:
+//   - localPos: pointer position in the main window's local logical coordinates
+//   - windowRect: the main window's geometry (logical)
+//   - titleHeight: title bar height in logical pixels
+//   - excludedRects: global-exclusion candidate widget rects, mapped into the window's local
+//     logical coordinates (system buttons, quick access bar, tab bar, application button, ...)
+//   - maximizedOrFullscreen: no HTCAPTION when the window is maximized or fullscreen
+bool SA_RIBBON_EXPORT isTitleBarDragArea(const QPoint& localPos,
+										 const QRect& windowRect,
+										 int titleHeight,
+										 const QList<QRect>& excludedRects,
+										 bool maximizedOrFullscreen);
+}
 /**
  * \if ENGLISH
  * @brief Must use this class instead of QMainWindow to use SARibbonBar
@@ -6188,6 +6295,9 @@ class SA_RIBBON_EXPORT SARibbonMainWindow : public QMainWindow
 	SA_RIBBON_DECLARE_PRIVATE(SARibbonMainWindow)
 	friend class SARibbonBar;
 	Q_PROPERTY(SARibbonTheme ribbonTheme READ ribbonTheme WRITE setRibbonTheme NOTIFY ribbonThemeChanged)
+	Q_PROPERTY(bool frameBorderEnabled READ isFrameBorderEnabled WRITE setFrameBorderEnabled NOTIFY frameBorderEnabledChanged)
+	Q_PROPERTY(QColor frameBorderColor READ frameBorderColor WRITE setFrameBorderColor NOTIFY frameBorderColorChanged)
+	Q_PROPERTY(bool frameShadowEnabled READ isFrameShadowEnabled WRITE setFrameShadowEnabled NOTIFY frameShadowEnabledChanged)
 
 public:
 	// Constructor for SARibbonMainWindow
@@ -6226,6 +6336,18 @@ public:
 	SARibbonSystemButtonBar* windowButtonBar() const;
 	// Get the current mainwindow style
 	SARibbonMainWindowStyles ribbonMainwindowStyle() const;
+	// Check whether the 1px window frame border is drawn (default off, keeping current appearance)
+	bool isFrameBorderEnabled() const;
+	// Enable/disable drawing of the 1px window frame border
+	void setFrameBorderEnabled(bool on);
+	// Get the custom frame border color; an invalid color means "follow current theme"
+	QColor frameBorderColor() const;
+	// Set a custom frame border color; pass an invalid QColor to follow the current theme
+	void setFrameBorderColor(const QColor& color);
+	// Check whether the system window shadow is enabled on the frameless window (default off; Windows only, non-QWK path)
+	bool isFrameShadowEnabled() const;
+	// Enable the DWM system shadow for the frameless window (Windows only, non-QWK path; no-op elsewhere)
+	void setFrameShadowEnabled(bool on);
 
 	// Pass ribbonbar events to frameless
 	virtual bool eventFilter(QObject* obj, QEvent* e) Q_DECL_OVERRIDE;
@@ -6233,6 +6355,20 @@ public:
 protected:
 	// Factory function to create ribbonbar
 	SARibbonBar* createRibbonBar();
+	// Draw the optional 1px frame border when frameBorderEnabled is on
+	virtual void paintEvent(QPaintEvent* e) Q_DECL_OVERRIDE;
+#if defined(Q_OS_WIN) && !SARIBBON_USE_3RDPARTY_FRAMELESSHELPER
+	// Windows non-QWK path: return HTCAPTION for the title bar draggable area so that the
+	// system takes over title bar dragging and provides Aero Snap (half-screen/maximize)
+	// Qt6 changed the result pointer type from long* to qintptr* (different types on MSVC x64)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+	virtual bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) Q_DECL_OVERRIDE;
+#else
+	virtual bool nativeEvent(const QByteArray& eventType, void* message, long* result) Q_DECL_OVERRIDE;
+#endif
+	// Apply the pending DWM shadow state after the native window is created
+	virtual void showEvent(QShowEvent* e) Q_DECL_OVERRIDE;
+#endif
 private Q_SLOTS:
 	// Handle primary screen changed event
 	void onPrimaryScreenChanged(QScreen* screen);
@@ -6249,6 +6385,42 @@ Q_SIGNALS:
 	 * \endif
 	 */
 	void ribbonThemeChanged(SARibbonTheme theme);
+	/**
+	 * \if ENGLISH
+	 * @brief Emitted when the frame border toggle changes
+	 * @param on New toggle state
+	 * \endif
+	 *
+	 * \if CHINESE
+	 * @brief 边框绘制开关变化时触发的信号
+	 * @param on 新的开关状态
+	 * \endif
+	 */
+	void frameBorderEnabledChanged(bool on);
+	/**
+	 * \if ENGLISH
+	 * @brief Emitted when the frame border color changes
+	 * @param color New border color
+	 * \endif
+	 *
+	 * \if CHINESE
+	 * @brief 边框颜色变化时触发的信号
+	 * @param color 新的边框颜色
+	 * \endif
+	 */
+	void frameBorderColorChanged(const QColor& color);
+	/**
+	 * \if ENGLISH
+	 * @brief Emitted when the frame shadow toggle changes
+	 * @param on New toggle state
+	 * \endif
+	 *
+	 * \if CHINESE
+	 * @brief 窗口阴影开关变化时触发的信号
+	 * @param on 新的开关状态
+	 * \endif
+	 */
+	void frameShadowEnabledChanged(bool on);
 };
 
 /**
