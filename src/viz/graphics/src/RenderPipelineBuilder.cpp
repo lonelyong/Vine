@@ -84,7 +84,17 @@ intrusive_ptr<RenderTarget> RenderPipelineBuilder::defaultGbufferTarget(int widt
     }
     auto gbuffer = make_intrusive<RenderTarget>();
     gbuffer->setSize(width, height);
-    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA8);   // att 0: albedo
+    // att 0: albedo - HALF FLOAT, not 8 bit (D5, wired 2026-09-25). What the extra bits buy was measured END
+    // TO END, because the display is 8 bit too: with a DIM light (x0.5, the demo's regime) the output is
+    // identical either way - the output's own quantisation is the limit (both: 1 LSB of error, 9 levels over a
+    // 0..0.06 ramp) - while with a BRIGHT one (x4) the 8-bit albedo's step reaches the eye multiplied: 2 LSB of
+    // error and 16 levels against 1 LSB and 62 levels for the half-float store (see ContentPassTest's
+    // `MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd`). So this is future-proofing for hosts that light with an
+    // intensity above 1, at +8.3 MB per 1080p G-buffer and one recompile of the offscreen pipelines (the shape
+    // is part of their key). Trade-off worth stating: the colour read-back packs RGBA8 only, so this attachment
+    // can no longer be read back as a target attachment - the previews copy it through a program, which is how
+    // the demo shows it.
+    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F);
     gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F); // att 1: view normal (+ shininess)
     gbuffer->attachColor(RenderTarget::ColorFormat::RGBA8);   // att 2: specular
     gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F); // att 3: view position

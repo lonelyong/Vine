@@ -33,6 +33,12 @@ VN_GRAPHICS_NS_BEGIN
  * (`builtin_forward_flat`, `builtin_deferred_lighting_shadowed`). A diagnostic
  * that names a program therefore names the GLSL to go and read, and the name
  * rule is the same one the files follow (see cmake/VineShaders.cmake).
+ *
+ * EVERY PROGRAM COMPUTES IN LINEAR LIGHT (the colour-space contract, D3 in the
+ * graphics design log): lights, materials and the values read from a
+ * `*Srgb` texture are all linear, and no program applies a gamma of its own.
+ * The encode for display happens in the window's surface format, in hardware,
+ * on write — so a program that "looks dark" is never fixed by a `pow()` here.
  */
 
 /**

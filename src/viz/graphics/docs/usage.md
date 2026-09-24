@@ -571,6 +571,46 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 > 这些 shader 是**真文件**（不是 C++ 字符串）：改了 `.glsl` 直接重编，`bash scripts/vine_shader_check.sh`
 > 会先把每个 shader（含各 define 变体）过一遍 glslangValidator，再核对嵌入副本与文件是否逐字节一致。
 
+### 3.9 颜色空间：内部一律线性，编码只发生在两头
+
+引擎**整条管线都在线性光里**：`vn::core::Colorf` 的通道是线性值，材质、灯光和 shader 里每一次乘加都发生在
+线性值上，G-buffer 与离屏 target 存的也是线性值（`RGBA16F`/`RGBA32F`，或者 `*_UNORM` 的 8 位）。
+**没有任何一个内建 program 自己套 gamma**（`builtin_*` 里没有"输出前 pow(1/2.2)"这种代码）——
+编码和解码只发生在管线的**两头**，而且两头都在硬件里：
+
+| 编码发生在哪 | 谁做 | 宿主怎么参与 |
+| --- | --- | --- |
+| 纹理读入（sRGB → 线性） | 采样器（硬件） | 把颜色贴图的 `vn::imaging::PixelFormat` 声明成 `*Srgb` 拼写 |
+| 窗口写出（线性 → sRGB） | 输出的 surface 格式（硬件） | 不用做事：窗口 target 的格式由后端按 surface 的实际格式决定（本机是 `B8G8R8A8_SRGB`） |
+| 离屏 target | ——（不编码） | `RenderTarget::ColorFormat` 取线性拼写：`RGBA8` 在后端投影成 `R8G8B8A8_UNORM`；浮点格式没有 sRGB 拼写 |
+
+于是宿主只有一个问题要回答：**这条路里的字节是"颜色"还是"数据"**。
+
+* 是颜色（albedo、emissive、天空盒、环境贴图 —— PNG/JPG 的字节本来就是 sRGB 编码的）⇒ 声明成 `*Srgb`。
+* 是数据（法线、粗糙度、金属度、遮罩 —— 它们不是"给人看的亮度"，不能被解码）⇒ 声明成 `*Unorm`。
+
+说错的两个方向都是**静默**的，症状都是"整体差一个 gamma"：
+
+| 说错的方向 | 症状 | 为什么 |
+| --- | --- | --- |
+| sRGB 颜色图声明成 `*Unorm` | 画面**偏亮、发灰** | 编码过的字节被当成线性值（线性 0.2 ≈ 编码 0.48） |
+| 线性数据图声明成 `*Srgb` | 画面**偏暗** | 采样器把数据当颜色解码了一遍 |
+
+**这个声明不是注释，是真起作用的**：后端把 `Rgba8Srgb` 映射成 `VK_FORMAT_R8G8B8A8_SRGB` 上传
+（`vkFormatFor` 在 `tests/test_vsg/SceneRulesTest.cpp` 里有 pin），采样器因此会解码。引擎**没有**运行时兜底 ——
+它看不到文件名，只能看你给的格式。
+
+| 契约 | 写在哪 |
+| --- | --- |
+| 浮点颜色是线性值 | `vn::core::Colorf` 的类注释 |
+| 颜色图 `*Srgb`、数据图 `*Unorm` | `vn::imaging::PixelFormat` 的文件注释 |
+| target 格式是"投影"，离屏取线性拼写 | `vn::graphics::RenderTarget::ColorFormat` 的枚举注释 |
+| 内建 program 不自己套 gamma | `vn::graphics::forwardProgram` 等工厂所在的 `sdk/vine/graphics/BuiltinShaders.hpp` 文件注释 |
+
+仓库里**第一个按契约改过来的读者是 demo 自己**：`test_data/images` 的六张 JPG 天空面是颜色图，声明从
+`Rgba8Unorm` 改成 `Rgba8Srgb` 后天空回到正确亮度（视口带 mean 122.7 → 80.8，门禁判据一行未动）——
+读数与变异证明见 [`.ai/design/vsg-reimplementation.md`](../../../../.ai/design/vsg-reimplementation.md) §11.16cp。
+
 ## 4. 现成例子：怎么构建、怎么跑
 
 ### 4.1 构建

@@ -12,6 +12,15 @@ VN_IMAGING_NS_BEGIN
  *
  * The format carries the BYTE layout and nothing else: it says which bytes are which channel, not what the
  * image is for.
+ *
+ * THE `Srgb` SPELLINGS ARE FOR COLOUR IMAGES, the `Unorm` ones for DATA (the graphics module's colour-space
+ * contract, D3 in its design log, says the rest of it). The engine works in LINEAR light throughout, and an
+ * sRGB PNG's bytes ARE sRGB-encoded, so a colour image must be declared `*Srgb`: the sampler then decodes it
+ * to linear on every read, and no shader applies a gamma of its own. Declaring an sRGB image `*Unorm` treats
+ * its encoded values as linear, which makes the surface read a gamma too BRIGHT; declaring a data map (a
+ * normal, roughness or mask map, whose bytes were authored as linear) `*Srgb` makes it read a gamma too DARK.
+ * The two mistakes are the two directions, and both are silent - the picture simply does not match the
+ * reference.
  * The same pixels can be uploaded as a sampled texture, copied into a render target, or read back out of
  * one, and none of those uses changes the layout.
  *

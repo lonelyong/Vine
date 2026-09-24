@@ -2224,3 +2224,16 @@ python3 scripts/ppm2png.py /tmp/area.ppm /tmp/area.png
 文档如实标注 **forward_shadowed / deferred_shadowed 目前是占位（等同无阴影预设）**：阴影切片（order<0 深度 pass + 阴影光照）未实现，只有 `Light::castShadow()/shadow()`、`ShadowSettings`、`ShadowFilter` 已就位，计划见 `.ai/design/graphics-shadow.md`。
 **2026-09-13**：占位不再默不作声——`RenderPipelineBuilder::build` 会报一条 `DiagnosticCategory::UnsupportedRequest`；`ShaderPreset`（含 `ShadowedPhong` 那个“保留项”）已删除，内容着色只能显式命名 program（见本文件顶端条目）。
 
+
+**2026-09-25（D3 色彩空间契约）**：契约写进四处 SDK 注释 —— `Colorf`（浮点颜色**是线性值**，编码只在两头：
+采样器解码 `*Srgb` 纹理、硬件编码 sRGB 窗口 surface）、`imaging/PixelFormat`（颜色图用 `*Srgb`、数据图用
+`*Unorm`，两个错法方向：颜色图 `*Unorm` ⇒ 偏亮发灰，数据图 `*Srgb` ⇒ 偏暗）、`graphics/RenderTarget::ColorFormat`
+（`RGBA8` 是**投影**：离屏取线性拼写 `R8G8B8A8_UNORM`，窗口取 surface 的）、`graphics/BuiltinShaders`（内建
+program 不自己套 gamma），宿主视角写在 `docs/usage.md` **§3.9**。**仓库里第一个"错法的实例"就是 demo 自己**：
+`AppShellDemo.cpp` 的六张 JPG 天空面（颜色图）原本 `Rgba8Unorm` ⇒ 天空亮一个 gamma；改成 `Rgba8Srgb` 后
+视口带 mean **122.7 → 80.8**（门禁三条判据一行未动：content 87.04%、preview 244、background 0.02%；画面
+逐字节确定，两次基线 `cmp` 相同）。变异证明：`vkFormatFor(Rgba8Srgb)` 改回 UNORM ⇒ `SceneRulesTest.cpp:753`
+红 **且** 窗口读数逐字节回到旧画面 ⇒ 解码就是那一个映射交到采样器手里。形状③（`MaterialImages::acquire`
+对"非 sRGB 的颜色贴图"报 Info）**不做**：引擎分不出颜色/数据（同 `PixelFormat`、同字节，区别在宿主意图），
+按格式猜意图会在**正确的**数据图上刷警告。注册：demo 的 `boxFilterRgba` 在**编码域**平均字节（比线性域平均
+略偏暗，低频天空不可见）。详见 `.ai/design/vsg-reimplementation.md` §11.16cp。

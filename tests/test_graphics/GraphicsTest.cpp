@@ -3757,6 +3757,14 @@ TEST(RenderPipelineBuilderTest, DefaultGbufferTargetIsCanonicalLayout)
     EXPECT_EQ(gbuffer->height(), 180);
     EXPECT_EQ(gbuffer->colorCount(), 4);  // albedo / normal+shininess / spec / pos
     EXPECT_TRUE(gbuffer->hasDepth());
+    // THE FORMATS ARE PART OF THE LAYOUT, and the albedo's is a measured choice (D5, 2026-09-25): the 8-bit
+    // store's step reaches the eye multiplied by the light, so it is invisible under the demo's dim lighting
+    // and clearly visible under a bright one (2 LSB of error / 16 levels against 1 LSB / 62 levels for the
+    // half-float store - see ContentPassTest's `MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd`).
+    EXPECT_EQ(gbuffer->colorFormat(0), RenderTarget::ColorFormat::RGBA16F);  // albedo
+    EXPECT_EQ(gbuffer->colorFormat(1), RenderTarget::ColorFormat::RGBA16F);  // view normal + shininess
+    EXPECT_EQ(gbuffer->colorFormat(2), RenderTarget::ColorFormat::RGBA8);    // specular colour
+    EXPECT_EQ(gbuffer->colorFormat(3), RenderTarget::ColorFormat::RGBA16F);  // view position
 
     // Non-positive sizes fall back to the default resolution.
     auto fallback = RenderPipelineBuilder::defaultGbufferTarget(0, 0);

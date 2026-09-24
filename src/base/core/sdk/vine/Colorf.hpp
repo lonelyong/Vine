@@ -8,6 +8,14 @@ class Color;
 
 /**
  * @brief An RGBA color with floating-point channels, typically in the 0..1 range.
+ *
+ * THE VALUES ARE LINEAR (the colour-space contract D3 in the graphics module's design log): lights, materials
+ * and every colour a shader multiplies are linear-light values, never sRGB-encoded ones. The two places where
+ * an encoding enters are the edge of the pipeline, and both are hardware: a WINDOW whose surface format is
+ * sRGB is encoded on write by the GPU, and a `*Srgb` TEXTURE is decoded by the sampler on read (see
+ * `vn::imaging::PixelFormat`). So a host that has an sRGB PNG declares it `*Srgb` and otherwise hands every
+ * colour in linear - and a colour that looks "a gamma too bright" is almost always an sRGB image declared as
+ * a `*Unorm` format.
  */
 class VN_CORE_API Colorf
 {

@@ -98,7 +98,9 @@ std::filesystem::path demoAssetDirectory()
  * the gate runs on). An integer box filter keeps it honest - the texels are averages of the source,
  * not skipped samples - and it is what makes the cube usable at all on a 0.45-unit box.
  *
- * @param source Source image (must be Rgba8Unorm; what loadImage() was asked for).
+ * @param source Source image (must be Rgba8Srgb; what loadImage() was asked for). The faces are COLOUR
+ *               images, so the sRGB spelling is the one the colour-space contract calls for (see
+ *               `vn::imaging::PixelFormat`) - the sampler decodes each texel it reads.
  * @param side   Edge length of the result, in texels.
  * @return The filtered image (the source itself when it is already that size or smaller).
  */
@@ -107,7 +109,7 @@ vn::intrusive_ptr<vn::imaging::Image> boxFilterRgba(const vn::imaging::Image& so
     if (source.width() <= side || source.height() <= side) {
         return vn::intrusive_ptr<vn::imaging::Image>(const_cast<vn::imaging::Image*>(&source));
     }
-    auto       filtered   = vn::make_intrusive<vn::imaging::Image>(side, side, vn::imaging::PixelFormat::Rgba8Unorm, 1);
+    auto       filtered   = vn::make_intrusive<vn::imaging::Image>(side, side, vn::imaging::PixelFormat::Rgba8Srgb, 1);
     const auto source_px  = source.mipData(0);
     const auto filtered_px = filtered->mipData(0);
     const int  step_x     = source.width() / side;
@@ -182,6 +184,11 @@ constexpr DemoCubeFace kSkyCubeFaces[] = {
  * look like a shading bug, and the demo is the only place this asset is read, so saying which file
  * failed is what makes it fixable.
  *
+ * THE FACES ARE COLOUR IMAGES, so the map and every face are declared `Rgba8Srgb` (the colour-space
+ * contract, see `vn::imaging::PixelFormat`): the JPG bytes ARE sRGB-encoded, the sampler decodes them,
+ * and the shading stays in linear light. Declared `Rgba8Unorm` - which this used to do - the sky reads
+ * a gamma too BRIGHT, because the encoded values are then used as if they were linear ones.
+ *
  * @param side  Edge length, in texels, to box-filter the faces down to.
  * @param faces The six faces and the files they come from (see DemoCubeFace).
  * @param what  What samples the map, for the one-line success report.
@@ -199,12 +206,12 @@ vn::intrusive_ptr<vn::graphics::CubeMap> loadDemoCubeMap(int side, std::span<con
         return nullptr;
     }
 
-    auto cube = vn::make_intrusive<vn::graphics::CubeMap>(side, vn::imaging::PixelFormat::Rgba8Unorm, 1);
+    auto cube = vn::make_intrusive<vn::graphics::CubeMap>(side, vn::imaging::PixelFormat::Rgba8Srgb, 1);
     for (const auto& entry : faces) {
         const std::filesystem::path file = images / entry.file;
         try {
             cube->setFaceImage(entry.face,
-                               boxFilterRgba(*vn::imageio::loadImage(file, vn::imaging::PixelFormat::Rgba8Unorm), side));
+                               boxFilterRgba(*vn::imageio::loadImage(file, vn::imaging::PixelFormat::Rgba8Srgb), side));
         }
         catch (const std::exception& error) {
             std::fprintf(stderr, "[demo] cube map: '%s' could not be read (%s) - the cube map is skipped\n",

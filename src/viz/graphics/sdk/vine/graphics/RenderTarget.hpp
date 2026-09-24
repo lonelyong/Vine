@@ -27,9 +27,11 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
 
   public:
     enum class ColorFormat {
-        RGBA8,    ///< 8-bit unsigned normalized RGBA.
-        RGBA16F,  ///< 16-bit float RGBA.
-        RGBA32F,  ///< 32-bit float RGBA.
+        RGBA8,    ///< 8-bit unsigned normalized RGBA. A PROJECTION: it covers the linear (`*_UNORM`) and the
+                  ///< sRGB (`*_SRGB`) spelling of that depth, and which one a target really uses is the
+                  ///< BACKEND's pick (see the note on the surface below).
+        RGBA16F,  ///< 16-bit float RGBA (linear; there is no sRGB spelling of a float format).
+        RGBA32F,  ///< 32-bit float RGBA (linear).
     };
 
     enum class DepthFormat {

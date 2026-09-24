@@ -4392,6 +4392,732 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
         << "the counter follows the messages: the two are one fact (see Diagnostics)";
 }
 
+TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
+{
+    // A RECIPE, not a gate, for the D5 row in the backend's design log (§11.16bw): the G-buffer's albedo
+    // attachment is RGBA8 while it holds a LINEAR albedo ("8 位线性量化的代价是暗部条带"), and the question
+    // this measurement answers is HOW MUCH - which the row could not say. One full-screen program writes a
+    // dark ramp (0 .. 0.06, the shade a very dark material has) across the target, and the probe counts how
+    // many DISTINCT levels the attachment actually holds: the 8-bit store quantises the ramp to 1/255 steps,
+    // while a half-float store's step at that magnitude is ~6e-6 (2^-17) - every pixel its own level. The
+    // printed numbers are what the design log records; the assertion is the format fact alone (a step of
+    // exactly one 8-bit unit), which is machine-independent.
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout layout;
+    layout.width  = kSize;
+    layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    ASSERT_NE(target, nullptr);
+    const vn::intrusive_ptr<RenderTarget> target_handle(new RenderTarget());
+
+    const vn::intrusive_ptr<ShaderProgram> ramp_program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position.xy, 0.5, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        // A linear ramp from 0 to `kDark`, one step per COLUMN: the attachment's own width is the sample
+        // count, so what comes back is the store's resolution and nothing else.
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 out_color;\n"
+            "void main() { out_color = vec4(vec3(gl_FragCoord.x / 64.0 * 0.06), 1.0); }\n"));
+        ramp_program->addStage(vertex);
+        ramp_program->addStage(fragment);
+    }
+    ProgramFacts ramp_facts;
+    ASSERT_EQ(buildProgramFacts(*ramp_program, ramp_facts), FactMiss::None);
+    const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
+    const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
+    std::unique_ptr<ContentPipeline> ramp_layer =
+        ContentPipeline::create(ramp_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                ramp_facts.shaders);
+    ASSERT_NE(ramp_layer, nullptr);
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 3.0F, -1.0F, 0.0F, -1.0F, 3.0F, 0.0F };
+        geometry->setPositions(
+            vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
+        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                      geometry_facts;
+    std::vector<vn::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    const vn::intrusive_ptr<Material> material(new Material());
+    MaterialFacts                     material_facts;
+    std::vector<std::byte>            material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts  programs[]{ ramp_facts };
+    const GeometryFacts geometries[]{ geometry_facts };
+    const MaterialFacts materials[]{ material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    TargetFacts target_facts;
+    target_facts.target        = target_handle.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[3] = 1.0F;
+    RenderCommand ramp_command;
+    ramp_command.geometry = geometry;
+    ramp_command.material = material;
+    ramp_command.program  = ramp_program;
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(std::vector<RenderCommand>{ ramp_command }, nullptr);
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+
+    VariantPool   pool;
+    StreamUploads uploads;
+    const auto    entry_points =
+        vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    ContentDraw                    ramp_draws(*ramp_layer, pool, entry_points);
+    const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
+        vn::vsg::core::DrawKind::Content, ramp_program.get(), ramp_facts.revision, geometry_facts.layout,
+        ramp_layer.get(), &ramp_draws } };
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    storage->beginFrame();
+    StateRegistry     registry(pool);
+    ContentPass::Scope scope;
+    scope.entries  = halves;
+    scope.registry = &registry;
+    scope.storage  = storage.get();
+    scope.uploads  = &uploads;
+    ContentPass content(scope, diagnostics);
+    ::vsg::ref_ptr<::vsg::Node> node;
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, node));
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(target_handle.get(), target.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packet{ frame.passes[0].pass, node };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(&packet, 1U)));
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    // Count the levels the attachment ACTUALLY holds, and the biggest step between neighbouring columns.
+    std::uint8_t levels[kSize]{};
+    int          distinct = 0;
+    int          biggest  = 0;
+    for (int column = 0; column < static_cast<int>(kSize); ++column) {
+        const Rgba8 pixel = target->probe().pixel(column, static_cast<int>(kSize) / 2);
+        levels[column]    = pixel.r;
+        bool seen         = false;
+        for (int earlier = 0; earlier < column; ++earlier) {
+            seen = seen || levels[earlier] == pixel.r;
+        }
+        if (!seen) {
+            ++distinct;
+        }
+        if (column > 0) {
+            biggest = std::max(biggest, std::abs(static_cast<int>(pixel.r) - static_cast<int>(levels[column - 1])));
+        }
+    }
+    const double ramp_top = 0.06;
+    std::printf("[measure] a %.3f ramp over %u columns in an RGBA8 attachment: %d distinct level(s), biggest "
+                "step %d/255 (the ramp's top is %.1f/255, so its relative step at the dark end is %.1f%%)\n",
+                ramp_top, kSize, distinct, biggest, ramp_top * 255.0, 100.0 * (1.0 / 255.0) / ramp_top);
+    std::fflush(stdout);
+    EXPECT_GE(distinct, 2) << "the ramp really is spread over the attachment";
+    EXPECT_EQ(biggest, 1) << "the store's own step is exactly one 8-bit unit (a half-float one is ~6e-6 here)";
+}
+
+TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
+{
+    // M11m moved three sentences to owners that outlive one ContentPass - the frame path builds one per pass per
+    // frame - and only the two HALF reports got a guard in that slice. These are the other two, each one fact
+    // about something bigger than a frame:
+    //
+    //   * "a drawing call was not recorded: its rectangle is empty" - one fact about the SESSION (a host whose
+    //     render area is not laid out yet repeats it in every frame AND every pass);
+    //   * the light-drop sentence - one fact about the PASS (the lights the host announced do not fit the
+    //     block), whose episode ends when a call's lights fit again.
+    //
+    // Both are handed in by api/ContentAssembly, and both are pinned here the same way: one caller-owned
+    // ReportOnce carried across two frames, then the re-arm that says a fixed-then-broken pass reports again.
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout layout;
+    layout.width  = kSize;
+    layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    ASSERT_NE(target, nullptr);
+    const vn::intrusive_ptr<RenderTarget> target_handle(new RenderTarget());
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+    VariantPool   pool;
+    StreamUploads uploads;
+
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 3.0F, -1.0F, 0.0F, -1.0F, 3.0F, 0.0F };
+        geometry->setPositions(
+            vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
+        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                      geometry_facts;
+    std::vector<vn::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    const vn::intrusive_ptr<Material> material(new Material());
+    MaterialFacts                     material_facts;
+    std::vector<std::byte>            material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position.xy, 0.5, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\nvoid main() { outColor = vec4(0.1, 0.2, 0.3, 1.0); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, program_facts), FactMiss::None);
+    const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
+    const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
+    std::unique_ptr<ContentPipeline> layer =
+        ContentPipeline::create(program_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                program_facts.shaders);
+    ASSERT_NE(layer, nullptr);
+
+    const ProgramFacts  programs[]{ program_facts };
+    const GeometryFacts geometries[]{ geometry_facts };
+    const MaterialFacts materials[]{ material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    std::vector<vn::String>  messages;
+    diagnostics.setSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
+        messages.push_back(diagnostic.message);
+    });
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    TargetFacts target_facts;
+    target_facts.target        = target_handle.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[3] = 1.0F;
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands{ command };
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+
+    // Five directional lights for a block with three slots: the drop is the packer's arithmetic, not a guess.
+    std::vector<vn::intrusive_ptr<vn::graphics::Light>> many_lights;
+    std::vector<const vn::graphics::Light*>             many_refs;
+    for (int index = 0; index < 5; ++index) {
+        vn::intrusive_ptr<vn::graphics::Light> light =
+            vn::graphics::Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+        light->setColor(vn::Colorf(0.1F, 0.1F, 0.1F, 1.0F));
+        light->setIntensity(1.0F);
+        many_lights.push_back(std::move(light));
+        many_refs.push_back(many_lights.back().get());
+    }
+    std::vector<const vn::graphics::Light*> few_refs{ many_refs.begin(), many_refs.begin() + 3 };
+
+    const auto recordOneFrame = [&](unsigned frame_index, bool empty_rectangle, bool too_many_lights) {
+        recorder.beginFrame(FrameToken{ frame_index });
+        recorder.beginPass(1U);
+        recorder.setRenderTarget(target_handle.get());
+        recorder.setClearPolicy(clear);
+        if (empty_rectangle) {
+            recorder.setViewport(0, 0, 0, 0);   // a host that has not laid its render area out yet
+        }
+        recorder.setLights(std::span<const vn::graphics::Light* const>(
+            too_many_lights ? many_refs : few_refs));
+        recorder.render(commands, camera.get());
+        recorder.endPass();
+        recorder.endFrame();
+        // Closing the frame IS swapBuffers() (see the recorder's protocol note): without it the next
+        // beginFrame() is refused with a diagnostic of its own and the description stays the OLD frame's - the
+        // measurement trap this case avoids by calling it here.
+        recorder.swapBuffers();
+        return compiler.compile(recorder.description(), FrameFacts{ target_table });
+    };
+    const auto emptyRectReports = [&messages] {
+        std::size_t count = 0;
+        for (const vn::String& message : messages) {
+            count += message.as_std_str().find("rectangle is empty") != std::string::npos ? 1U : 0U;
+        }
+        return count;
+    };
+
+    const auto entry_points =
+        vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    ContentDraw                    draws(*layer, pool, entry_points);
+    const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
+        vn::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        layer.get(), &draws } };
+
+    // PHASE 1 - the empty rectangle. The episode is the CALLER's (see Scope::empty_rectangle_episode), which is
+    // what a host that keeps it across frames hands in - and what api/ContentAssembly hands in.
+    ReportOnce empty_episode;
+    const auto recordPassWith = [&](const CompiledFrame& frame, ReportOnce* empty, ReportOnce* lights) {
+        storage->beginFrame();
+        StateRegistry     registry(pool);
+        ContentPass::Scope scope;
+        scope.entries                  = halves;
+        scope.registry                 = &registry;
+        scope.storage                  = storage.get();
+        scope.uploads                  = &uploads;
+        scope.empty_rectangle_episode  = empty;
+        scope.lights_dropped_episode   = lights;
+        ContentPass content(scope, diagnostics);
+        const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+        ::vsg::ref_ptr<::vsg::Node>  node;
+        (void)content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, node);
+    };
+
+    std::size_t before = emptyRectReports();
+    recordPassWith(recordOneFrame(1U, true, false), &empty_episode, nullptr);
+    const std::size_t after_first = emptyRectReports();
+    EXPECT_EQ(after_first, before + 1U) << "the empty rectangle is said once: " << messages.back().as_std_str();
+    recordPassWith(recordOneFrame(2U, true, false), &empty_episode, nullptr);
+    EXPECT_EQ(emptyRectReports(), after_first)
+        << "and NOT again in the next frame - it is one fact about the session";
+    empty_episode.rearm();   // the host laid its render area out, then lost it again
+    recordPassWith(recordOneFrame(3U, true, false), &empty_episode, nullptr);
+    EXPECT_EQ(emptyRectReports(), after_first + 1U) << "a re-armed episode is reported again";
+
+    // PHASE 2 - the light drop. A call whose lights all fit RE-ARMS the episode (the recorder's own rule), so
+    // the sequence is: too many lights (said once) -> too many again (silent) -> three lights (re-armed) ->
+    // too many (said again).
+    ReportOnce  lights_episode;
+    const auto& channel = vn::graphics::DiagnosticCategory::ChannelIgnored;
+    const std::uint64_t ignored_before = diagnostics.count(channel);
+    recordPassWith(recordOneFrame(5U, false, true), nullptr, &lights_episode);
+    EXPECT_EQ(diagnostics.count(channel), ignored_before + 1U)
+        << "five lights into a three-slot block: " << messages.back().as_std_str();
+    recordPassWith(recordOneFrame(6U, false, true), nullptr, &lights_episode);
+    EXPECT_EQ(diagnostics.count(channel), ignored_before + 1U)
+        << "the SAME pass in the next frame stays silent (the episode is the caller's)";
+    recordPassWith(recordOneFrame(7U, false, false), nullptr, &lights_episode);
+    EXPECT_EQ(diagnostics.count(channel), ignored_before + 1U) << "a call whose lights FIT says nothing";
+    recordPassWith(recordOneFrame(8U, false, true), nullptr, &lights_episode);
+    EXPECT_EQ(diagnostics.count(channel), ignored_before + 2U)
+        << "and the next overflowing call reports again: the fitting call ENDED the episode";
+}
+
+TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
+{
+    // D5's question, asked END TO END rather than at the attachment (see §11.16cm for the first half of the
+    // measurement): the G-buffer's albedo attachment is RGBA8, and the DISPLAY is 8 bit too - so does storing
+    // the albedo in more bits buy anything the eye can see, or is the output's own quantisation the limit?
+    //
+    // One dark ramp (0 .. 0.06, the shade a very dark material has), written into TWO G-buffers whose ONLY
+    // difference is the albedo attachment's format, shaded by the ENGINE's lighting program into an 8-bit
+    // target - the chain the demo runs. The two light regimes matter: the albedo's 8-bit step reaches the eye
+    // MULTIPLIED by the light, so a dim light hides it (0.5 x 1/255) while a bright one amplifies it
+    // (4 x 1/255, four output levels). The recipe prints the biggest deviation from the ideal ramp and the
+    // number of distinct output levels; the assertions are the machine-independent halves of the recipe.
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::TargetLayout eight_bit_layout;
+    eight_bit_layout.width         = kSize;
+    eight_bit_layout.height        = kSize;
+    eight_bit_layout.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F,
+                                       RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F };
+    OffscreenTarget::TargetLayout half_float_layout = eight_bit_layout;
+    half_float_layout.color_formats[0]              = RenderTarget::ColorFormat::RGBA16F;
+    std::unique_ptr<OffscreenTarget> eight_bit_gbuffer =
+        OffscreenTarget::create(created.device, eight_bit_layout);
+    std::unique_ptr<OffscreenTarget> half_float_gbuffer =
+        OffscreenTarget::create(created.device, half_float_layout);
+    ASSERT_NE(eight_bit_gbuffer, nullptr);
+    ASSERT_NE(half_float_gbuffer, nullptr);
+
+    OffscreenTarget::Layout out_layout;
+    out_layout.width  = kSize;
+    out_layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> dim_eight_bit    = OffscreenTarget::create(created.device, out_layout);
+    std::unique_ptr<OffscreenTarget> dim_half_float   = OffscreenTarget::create(created.device, out_layout);
+    std::unique_ptr<OffscreenTarget> bright_eight_bit = OffscreenTarget::create(created.device, out_layout);
+    std::unique_ptr<OffscreenTarget> bright_half_float = OffscreenTarget::create(created.device, out_layout);
+    ASSERT_NE(dim_eight_bit, nullptr);
+    ASSERT_NE(dim_half_float, nullptr);
+    ASSERT_NE(bright_eight_bit, nullptr);
+    ASSERT_NE(bright_half_float, nullptr);
+
+    const vn::intrusive_ptr<RenderTarget> eight_bit_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> half_float_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> dim_eight_bit_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> dim_half_float_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> bright_eight_bit_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> bright_half_float_handle(new RenderTarget());
+
+    // The writer: the SAME text into both G-buffers, so the only difference between the two chains is the
+    // attachment's format. Its albedo is the ramp; its position is written (w = 1) so the lighting shades it.
+    const vn::intrusive_ptr<ShaderProgram> writer(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position.xy, 0.5, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 albedo_out;\n"
+            "layout(location = 1) out vec4 normal_out;\n"
+            "layout(location = 2) out vec4 specular_out;\n"
+            "layout(location = 3) out vec4 position_out;\n"
+            "void main() {\n"
+            "    albedo_out   = vec4(vec3(gl_FragCoord.x / 64.0 * 0.06), 1.0);\n"
+            "    normal_out   = vec4(0.0, 0.0, 1.0, 0.0);\n"
+            "    specular_out = vec4(0.0, 0.0, 0.0, 1.0);\n"
+            "    position_out = vec4(0.0, 0.0, -5.0, 1.0);\n"
+            "}\n"));
+        writer->addStage(vertex);
+        writer->addStage(fragment);
+    }
+    ProgramFacts writer_facts;
+    ASSERT_EQ(buildProgramFacts(*writer, writer_facts), FactMiss::None);
+    const vn::intrusive_ptr<ShaderProgram> lighting = vn::graphics::deferredLightProgram();
+    ASSERT_NE(lighting, nullptr);
+    ProgramFacts lighting_facts;
+    ASSERT_EQ(buildScreenProgramFacts(*lighting, lighting_facts), FactMiss::None);
+
+    const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
+    const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
+    ContentPipeline::Settings              writer_settings;
+    writer_settings.color_attachments = 4U;
+    std::unique_ptr<ContentPipeline> writer_layer =
+        ContentPipeline::create(writer_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                writer_facts.shaders, writer_settings);
+    ASSERT_NE(writer_layer, nullptr);
+    std::unique_ptr<ContentPipeline> lighting_layer =
+        ContentPipeline::createScreen(lighting_facts.abi, lighting_facts.shaders);
+    ASSERT_NE(lighting_layer, nullptr);
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 3.0F, -1.0F, 0.0F, -1.0F, 3.0F, 0.0F };
+        geometry->setPositions(
+            vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
+        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                      geometry_facts;
+    std::vector<vn::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    const vn::intrusive_ptr<Material> material(new Material());
+    MaterialFacts                     material_facts;
+    std::vector<std::byte>            material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts  programs[]{ writer_facts, lighting_facts };
+    const GeometryFacts geometries[]{ geometry_facts };
+    const MaterialFacts materials[]{ material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    // The light: ambient only, so the output is exactly `albedo x intensity` - and the intensity's two values
+    // are the two regimes (0.5 hides the albedo's step, 4 amplifies it into four output levels).
+    const auto ambient_with = [](float intensity) {
+        const vn::intrusive_ptr<vn::graphics::Light> light = vn::graphics::Light::createAmbient();
+        light->setColor(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
+        light->setIntensity(intensity);
+        return light;
+    };
+    const vn::intrusive_ptr<vn::graphics::Light> dim_light  = ambient_with(1.0F);   // x 0.5
+    const vn::intrusive_ptr<vn::graphics::Light> bright_light = ambient_with(8.0F);  // x 4.0
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    const auto targetFacts = [](OffscreenTarget& which, const void* handle) {
+        TargetFacts entry;
+        entry.target          = handle;
+        entry.wanted.width    = static_cast<int>(kSize);
+        entry.wanted.height   = static_cast<int>(kSize);
+        entry.wanted.shape    = which.shape();
+        entry.current         = which.instance();
+        entry.depth.has_depth = which.hasDepth();
+        entry.depth.promotion = which.hasDepth();
+        return entry;
+    };
+    const std::vector<TargetFacts> target_table{
+        targetFacts(*eight_bit_gbuffer, eight_bit_handle.get()),
+        targetFacts(*half_float_gbuffer, half_float_handle.get()),
+        targetFacts(*dim_eight_bit, dim_eight_bit_handle.get()),
+        targetFacts(*dim_half_float, dim_half_float_handle.get()),
+        targetFacts(*bright_eight_bit, bright_eight_bit_handle.get()),
+        targetFacts(*bright_half_float, bright_half_float_handle.get())
+    };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[3] = 1.0F;
+    RenderCommand write_command;
+    write_command.geometry = geometry;
+    write_command.material = material;
+    write_command.program  = writer;
+    const std::vector<RenderCommand>     write_commands{ write_command };
+    const vn::graphics::Light* const     dim_lights[]{ dim_light.get() };
+    const vn::graphics::Light* const     bright_lights[]{ bright_light.get() };
+    const RenderTarget*                  input_eight_bit[]{ eight_bit_handle.get() };
+    const RenderTarget*                  input_half_float[]{ half_float_handle.get() };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(eight_bit_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(write_commands, camera.get());
+    recorder.endPass();
+    recorder.beginPass(2U);
+    recorder.setRenderTarget(dim_eight_bit_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.setPassInputs(std::span<const RenderTarget* const>(input_eight_bit, 1U));
+    recorder.setLights(std::span<const vn::graphics::Light* const>(dim_lights, 1U));
+    recorder.drawScreenProgram(eight_bit_handle.get(), lighting.get(), camera.get());
+    recorder.endPass();
+    recorder.beginPass(3U);
+    recorder.setRenderTarget(half_float_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(write_commands, camera.get());
+    recorder.endPass();
+    recorder.beginPass(4U);
+    recorder.setRenderTarget(dim_half_float_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.setPassInputs(std::span<const RenderTarget* const>(input_half_float, 1U));
+    recorder.setLights(std::span<const vn::graphics::Light* const>(dim_lights, 1U));
+    recorder.drawScreenProgram(half_float_handle.get(), lighting.get(), camera.get());
+    recorder.endPass();
+    // The BRIGHT regime: the same two chains with a light four times stronger.
+    recorder.beginPass(5U);
+    recorder.setRenderTarget(bright_eight_bit_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.setPassInputs(std::span<const RenderTarget* const>(input_eight_bit, 1U));
+    recorder.setLights(std::span<const vn::graphics::Light* const>(bright_lights, 1U));
+    recorder.drawScreenProgram(eight_bit_handle.get(), lighting.get(), camera.get());
+    recorder.endPass();
+    recorder.beginPass(6U);
+    recorder.setRenderTarget(bright_half_float_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.setPassInputs(std::span<const RenderTarget* const>(input_half_float, 1U));
+    recorder.setLights(std::span<const vn::graphics::Light* const>(bright_lights, 1U));
+    recorder.drawScreenProgram(half_float_handle.get(), lighting.get(), camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 6U);
+
+    VariantPool   pool;
+    StreamUploads uploads;
+    const auto    entry_points =
+        vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    ContentDraw writer_draws(*writer_layer, pool, entry_points);
+    ContentDraw lighting_draws(*lighting_layer, pool, entry_points);
+    const ContentPass::Scope::Entry writer_halves[]{ ContentPass::Scope::Entry{
+        vn::vsg::core::DrawKind::Content, writer.get(), writer_facts.revision, geometry_facts.layout,
+        writer_layer.get(), &writer_draws } };
+    const ContentPass::Scope::Entry lighting_halves[]{ ContentPass::Scope::Entry{
+        vn::vsg::core::DrawKind::Screen, lighting.get(), lighting_facts.revision, {},
+        lighting_layer.get(), &lighting_draws } };
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    storage->beginFrame();
+
+    std::vector<::vsg::ref_ptr<::vsg::ImageView>> eight_bit_views;
+    std::vector<::vsg::ref_ptr<::vsg::ImageView>> half_float_views;
+    for (std::uint32_t index = 0; index < 4U; ++index) {
+        eight_bit_views.push_back(eight_bit_gbuffer->colorView(index));
+        half_float_views.push_back(half_float_gbuffer->colorView(index));
+    }
+    const InputImages eight_bit_inputs[]{ InputImages{ eight_bit_views, {} } };
+    const InputImages half_float_inputs[]{ InputImages{ half_float_views, {} } };
+
+    std::vector<std::unique_ptr<StateRegistry>> registries;
+    for (std::size_t index = 0; index < frame.passes.size(); ++index) {
+        registries.push_back(std::make_unique<StateRegistry>(pool));
+    }
+    const auto recordPass = [&](const vn::vsg::core::CompiledPass& pass,
+                                std::span<const ContentPass::Scope::Entry> halves,
+                                const vn::vsg::core::RenderPassCompatibility& compatibility,
+                                std::span<const InputImages> inputs, OffscreenTarget& target,
+                                StateRegistry& registry) {
+        ContentPass::Scope scope;
+        scope.entries  = halves;
+        scope.registry = &registry;
+        scope.storage  = storage.get();
+        scope.uploads  = &uploads;
+        ContentPass content(scope, diagnostics);
+        ::vsg::ref_ptr<::vsg::Node> node;
+        EXPECT_TRUE(content.record(pass, facts, compatibility, inputs, view_block, node));
+        return node;
+    };
+    ::vsg::ref_ptr<::vsg::Node> eight_bit_node =
+        recordPass(frame.passes[0], writer_halves, eight_bit_gbuffer->shape().compatibility(), {},
+                   *eight_bit_gbuffer, *registries[0]);
+    ::vsg::ref_ptr<::vsg::Node> dim_eight_bit_node =
+        recordPass(frame.passes[1], lighting_halves, dim_eight_bit->shape().compatibility(), eight_bit_inputs,
+                   *dim_eight_bit, *registries[1]);
+    ::vsg::ref_ptr<::vsg::Node> half_float_node =
+        recordPass(frame.passes[2], writer_halves, half_float_gbuffer->shape().compatibility(), {},
+                   *half_float_gbuffer, *registries[2]);
+    ::vsg::ref_ptr<::vsg::Node> dim_half_float_node =
+        recordPass(frame.passes[3], lighting_halves, dim_half_float->shape().compatibility(), half_float_inputs,
+                   *dim_half_float, *registries[3]);
+    ::vsg::ref_ptr<::vsg::Node> bright_eight_bit_node =
+        recordPass(frame.passes[4], lighting_halves, bright_eight_bit->shape().compatibility(), eight_bit_inputs,
+                   *bright_eight_bit, *registries[4]);
+    ::vsg::ref_ptr<::vsg::Node> bright_half_float_node =
+        recordPass(frame.passes[5], lighting_halves, bright_half_float->shape().compatibility(),
+                   half_float_inputs, *bright_half_float, *registries[5]);
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(eight_bit_handle.get(), eight_bit_gbuffer.get());
+    executor.addTarget(half_float_handle.get(), half_float_gbuffer.get());
+    executor.addTarget(dim_eight_bit_handle.get(), dim_eight_bit.get());
+    executor.addTarget(dim_half_float_handle.get(), dim_half_float.get());
+    executor.addTarget(bright_eight_bit_handle.get(), bright_eight_bit.get());
+    executor.addTarget(bright_half_float_handle.get(), bright_half_float.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packets[]{ PassContent{ frame.passes[0].pass, eight_bit_node },
+                                 PassContent{ frame.passes[1].pass, dim_eight_bit_node },
+                                 PassContent{ frame.passes[2].pass, half_float_node },
+                                 PassContent{ frame.passes[3].pass, dim_half_float_node },
+                                 PassContent{ frame.passes[4].pass, bright_eight_bit_node },
+                                 PassContent{ frame.passes[5].pass, bright_half_float_node } };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(packets, 6U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    // What each chain put in the 8-bit output: the biggest deviation from the ideal ramp, and how many
+    // distinct levels it used.
+    struct Output { int max_error_lsb; int levels; };
+    const auto measure = [](OffscreenTarget& target, double light) {
+        Output output{ 0, 0 };
+        int    previous = -1;
+        for (int column = 0; column < static_cast<int>(kSize); ++column) {
+            const Rgba8 pixel = target.probe().pixel(column, static_cast<int>(kSize) / 2);
+            if (pixel.r != previous) {
+                ++output.levels;
+                previous = pixel.r;
+            }
+            const double ideal = (static_cast<double>(column) / 64.0 * 0.06) * light * 255.0;
+            output.max_error_lsb =
+                std::max(output.max_error_lsb, static_cast<int>(std::lround(std::abs(pixel.r - ideal))));
+        }
+        return output;
+    };
+    const Output dim_eight_bit_output    = measure(*dim_eight_bit, 0.5);
+    const Output dim_half_float_output   = measure(*dim_half_float, 0.5);
+    const Output bright_eight_bit_output = measure(*bright_eight_bit, 4.0);
+    const Output bright_half_float_output = measure(*bright_half_float, 4.0);
+    std::printf("[measure] dim light (x0.5):  albedo RGBA8 -> max error %d LSB, %d level(s) | albedo RGBA16F "
+                "-> max error %d LSB, %d level(s)\n",
+                dim_eight_bit_output.max_error_lsb, dim_eight_bit_output.levels,
+                dim_half_float_output.max_error_lsb, dim_half_float_output.levels);
+    std::printf("[measure] bright light (x4): albedo RGBA8 -> max error %d LSB, %d level(s) | albedo RGBA16F "
+                "-> max error %d LSB, %d level(s)\n",
+                bright_eight_bit_output.max_error_lsb, bright_eight_bit_output.levels,
+                bright_half_float_output.max_error_lsb, bright_half_float_output.levels);
+    std::fflush(stdout);
+    EXPECT_GT(dim_eight_bit_output.levels, 2) << "the dim ramp really reaches the output";
+    EXPECT_GT(bright_eight_bit_output.levels, dim_eight_bit_output.levels)
+        << "and the bright one has more to quantise";
+    EXPECT_LE(dim_half_float_output.max_error_lsb, dim_eight_bit_output.max_error_lsb)
+        << "a half-float albedo is never WORSE in the output";
+    EXPECT_LE(bright_half_float_output.max_error_lsb, bright_eight_bit_output.max_error_lsb);
+}
+
 TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
 {
     // The tables a recording reads are PRODUCED (see api/ContentStore): the host tracks its live objects,

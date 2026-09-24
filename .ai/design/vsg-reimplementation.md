@@ -4744,9 +4744,9 @@ preview 244; vuid=0`）；include hygiene 0/`784` 文件、诊断格式 0/7、do
 | **B4**（**已测：§11.16cl**，0.53 µs/drawable·次，触发点仅 ~6% 帧预算 ⇒ 不改）`Scene::collectRenderCommandsShared` 每次收集分配 3 个 vector（`Scene.cpp:468/497/512`）并把整表搬 2~3 遍，`commands` 无 `reserve` | **缺陷（登记）** | 相机每动一帧就整份重来，是**引擎侧**（不在本轮前端改动范围内），而它的可见代价取决于命令数与 `sizeof(RenderCommand)`（≈200 B，含 3 个 `intrusive_ptr` 的原子增减）。当前 demo 的收集是 memo 命中或 ~42 条命令，量不出来 | 形状：`keyed` 改成 `vector<pair<double, uint32_t>>`（行号）并就地应用置换；`commands` 按上一帧规模 `reserve`。**触发器**：相机常动的负载 + drawable 数越过 ~2 000，或 B1 之后收集成为下一热点 |
 | **B5**（**前半已收：§11.16ck**；预算不改，理由见该节）拒绝路径逐命令上报（`ContentPass.cpp:882-1116`）+ 每帧重置的 `ReportOnce`；块预算是硬上限（`draws/lights/shadows` 1024/帧、`views` 256/帧，`BlockStorage.hpp:50-56`） | **登记（前者已在 M10c/M10e 登记过）** | 洪水只在"场景里有坏内容"时出现，而那时宿主**需要**知道是哪一条；把逐命令上报压成"每插话一次"会让"这一帧有 300 条画不出来"变成一句话（丢信息）。块预算超限是**拒画**（有报告）而不是错图，且 1024 条/帧远超 demo 量级 | 形状：①按"每 pass 每原因一次"上报（保留第一条的完整身份，后续只计数）；②预算按需增长（插入点 `BlockStorage::beginFrame`）并在诊断里报"本帧预算不够"。**触发器**：大场景宿主报"日志被刷满"或撞到 1024 |
 | **D2**（**已修：§11.16cj**）`Material::specular()` 的 alpha 文档写"A 是强度"，但**没有任何着色器读它**（`builtin_forward.frag:145`、`builtin_gbuffer.frag:59` 都只读 `.rgb`） | **缺陷（登记：要么接线，要么改文档，二选一）** | 接线会**改画面**（默认 `specular.a = 0.5` ⇒ 高光减半），而"逐像素材质"的通道已经排满（G-buffer 的 spec 附件 alpha 空着，前向可用 `material.specular.a`），于是它是"能接、但要重新调 demo 并重钉像素基线"的一类 | 形状：前向 `spec *= material.specular.a`、G-buffer 把 alpha 写进 spec 附件、延迟侧读出并相乘；两条基线（证据行）随之更新。**触发器**：有人要求"按材质调高光强度"（当前唯一能做到的是改 shininess） |
-| **D3** 色彩空间没有契约：窗口交换链是 `*SRGB`（`WindowTarget.cpp:24-28`），离屏目标是线性，着色器直接对 0..1 的材质/灯值相乘，纹理按 `PixelFormat` 一对一映射 | **设计问题（登记，倾向"写契约"而不是"改管线"）** | 现在**能自洽**：写入 SRGB 交换链的值被硬件当作线性、离屏 16F 也是线性、`*Srgb` 贴图格式存在且映射正确 ⇒ 只要"贴图用 `*Srgb`、颜色值按线性给"，管线就是对的线性管线。真正缺的是**把这条写成契约**并对最常见的错法报警 | 形状：①`Texture`/`PixelFormat`/`RenderTarget::ColorFormat` 的文档写明"引擎内部一律线性，颜色贴图请用 `*Srgb`（PNG 通常是 sRGB）"；②`Colorf` 文档写明"线性值"；③（可选）在 `MaterialImages::acquire` 对"非 sRGB 格式的颜色贴图"给一次 Info。**触发器**：有人报"画面比参考图亮/暗一个 gamma" |
+| **D3**（**契约已写：§11.16cp**；第一个实例已改：demo 的六张 JPG 天空面 `Rgba8Unorm` → `Rgba8Srgb`，视口带 mean 122.7 → 80.8，判据行不动）色彩空间没有契约：窗口交换链是 `*SRGB`（`WindowTarget.cpp:24-28`），离屏目标是线性，着色器直接对 0..1 的材质/灯值相乘，纹理按 `PixelFormat` 一对一映射 | **设计问题（登记，倾向"写契约"而不是"改管线"）** | 现在**能自洽**：写入 SRGB 交换链的值被硬件当作线性、离屏 16F 也是线性、`*Srgb` 贴图格式存在且映射正确 ⇒ 只要"贴图用 `*Srgb`、颜色值按线性给"，管线就是对的线性管线。真正缺的是**把这条写成契约**并对最常见的错法报警 | 形状：①`Texture`/`PixelFormat`/`RenderTarget::ColorFormat` 的文档写明"引擎内部一律线性，颜色贴图请用 `*Srgb`（PNG 通常是 sRGB）"；②`Colorf` 文档写明"线性值"；③（可选）在 `MaterialImages::acquire` 对"非 sRGB 格式的颜色贴图"给一次 Info。**触发器**：有人报"画面比参考图亮/暗一个 gamma" |
 | **D4**（**已修：§11.16cg**）延迟光照的背景判据是 `dot(pos,pos) < 1e-6`（`builtin_deferred_lighting.frag:34`）⇒ 相机贴住几何时出现固定的 0.06 色洞 | **缺陷（登记：判据该换成"这条通道写没写过"）** | 修法明确（G-buffer 的 position 附件 `w = 1` 表示写过，清成透明黑 ⇒ `w == 0` 就是没写过），但它是**着色器契约**的改动：要同时改两个 shader 的注释/ABI 说明、重跑 `vine_shader_check.sh`，并造一个"相机在几何内部"的设备像素用例才有证据 —— 本机窗口用例跳过，这条链路里最贵的一环（真机画面）恰好是缺的 | 形状：`if (pos_tex.a < 0.5) { 背景 }`，并把"w = 1 表示写过"写进 G-buffer 的 ABI 说明；用例：把相机放进球内部，断言中心像素不是 0.06。**触发器**：有人报"贴脸看模型时出现一块纯色" |
-| **D5** G-buffer 的 albedo 附件是 `RGBA8`（`RenderPipelineBuilder.cpp:87`）而存的是**线性** albedo | **登记（低）** | 8 位线性量化的代价是暗部条带；改成 sRGB 存储或 16F 会**改内存与前缀**（目标形状进管线键，全部离屏管线要重编一次），收益只在极暗材质上可见 | 形状：`attachColor(RGBA16F)`（或让 albedo 走 sRGB 附件）。**触发器**：暗部条带被报（或做 HDR 管线时一并改） |
+| **D5**（**已修：§11.16co** —— 端到端两区制：暗光下两种格式**一样**（1 LSB/9 级），亮光下 8 位 **2 LSB/16 级** vs 16F **1 LSB/62 级**；代价 +8.3 MB/张 + 一次重编；代价是那附件不能再回读）G-buffer 的 albedo 附件是 `RGBA8`（`RenderPipelineBuilder.cpp:87`）而存的是**线性** albedo | **登记（低）** | 8 位线性量化的代价是暗部条带；改成 sRGB 存储或 16F 会**改内存与前缀**（目标形状进管线键，全部离屏管线要重编一次），收益只在极暗材质上可见 | 形状：`attachColor(RGBA16F)`（或让 albedo 走 sRGB 附件）。**触发器**：暗部条带被报（或做 HDR 管线时一并改） |
 | **D6** `LightType::Point/Spot` 落到 `LightBlock.cpp:133` 的 `default: break;` 静默丢弃 | **不是缺陷（维持）** | SDK 自己的文档写着这两种是 **reserved / planned later**（`Light.hpp:22-23,55-56`），而且**丢了几盏**会经 `reportLightsDropped` 报一次（`ContentPass.cpp:1209`），报文已含"a kind the light block does not carry" | 不改。**触发器**：SDK 真的支持点/聚光（那时块布局与 falloff 一起设计） |
 | **C1 残留** 历史段落里仍有大量旧单元名 | **已按既有规矩处理** | `backend.md` 的 §5.3.x 被补上 `历史登记` 标记（修 4 报出的那条），其余历史段落本来就带标记；门禁的豁免规则（冻结段落 / `<!-- drift-ok -->`）保持不变 —— 这是"旧记录保留可读"与"新句子不许漂移"之间的既定折中 | — |
 
@@ -5371,6 +5371,7 @@ empty_rectangle_episode`：**空 = 保持旧行为**（记录器自己的、一�
 **4. 没做到的（登记）**：`lights_dropped_episode` / `empty_rectangle_episode` 的**管线**只有代码审查，
 没有自己的用例（两条句子的触发都要真设备 + 一次"灯装不下"/"矩形为空"的计划；本轮预算给了半分片那两条）。
 **触发器**：任何一次"同一条灯/矩形警告每帧重复"的宿主报告，或下次给 `ContentAssembly` 加用例时。
+**（已由 §11.16cn 收掉：两条句子各有跨帧 + 重臂的用例，变异 2/2 红。）**
 
 | 文件 | 是什么 |
 | --- | --- |
@@ -5502,3 +5503,189 @@ N 个三角形（网格铺开、全部在视锥内、距离各不同 ⇒ 排序�
 
 **下一步**：任务列表 1–4 全部收到（A §11.16ci、B §11.16cj、C §11.16ck、D 本节）；仍未做的按 §11.16bw 与
 各片"登记"（D3/D5、A4/A6、首帧 gizmo 空白、会话侧"画面已落地"的事实、`lights_dropped`/空矩形两条句子的用例）。
+
+### 11.16cm M11q（2026-09-25）：**收益分析**——剩下的登记各值多少（能测的都测了）
+
+**为什么要写这一节**：任务列表 1–4 收完之后，剩下的登记（D3/D5、A4/A6、B5 后半、B4 的修、首帧 gizmo、会话侧
+"画面已落地"、两条句子的用例）都带"触发器"，但触发器不等于**收益**。本节把能测的测了，给出每个候选项的
+"收益 / 代价"，作为下一片的依据。数字分两类：**本机实测**与**由已有实测推的上界**（标明出处）。
+
+**1. 已提交那片（M11g–M11p）的收益（全部来自已记录的数字）。**
+
+| 改动 | 收益（数字） |
+| --- | --- |
+| M11g 分配器 + churn 守卫 | **设备电池复活**：M11b–M11f 六片的证据行其实是"24 skipped"（不带设备），现在门禁强制 `skipped==0` |
+| M11h 空调用 | 应用日志 warning **1 → 0**（第二条画面判据也从此不再被误判） |
+| M11j + M11l 窗口读 | 单用例 **4/12 红 → 0/12**、三套件组 **2/3 → 3/3**、全量 **4 跑里 3 跑红 → 4 跑全绿**；门禁新增第三条判据能看见"整片背景灰"（变异下 `background 25.64%`，旧判据全过） |
+| M11k D4 / M11n D2 | 两条"文档说了、实现没做"的契约变成真的且**有像素守卫**（相机贴脸的 0.06 色洞；`specular.a` 强度） |
+| M11m 插话 | `shadow_map` 那种句子从**每帧一报**变成**每会话一报**（每半片） |
+| M11o 拒绝账本 | 同一原因 N 条命令：**N 条消息 → 2 条**（实测 3 条 ⇒ 2 条） |
+| M11p B4 测量 | "要不要修"从猜变成数：**0.53 µs/drawable·次**，demo 量级 ≈0.1% 帧预算 |
+
+**2. 剩下的候选：收益 / 代价（★ = 本轮新测）。**
+
+| 候选 | 收益（量化） | 代价 | 建议 |
+| --- | --- | --- | --- |
+| **D5** albedo 附件 RGBA8 → RGBA16F | ★ **实测**：0.06 的暗色阶在 RGBA8 里只有 **16 级 / 64 步**、相邻步长正好 **1/255** ⇒ 暗端**相对跳变 6.5%**（人眼看得见的条带）；RGBA16F 在同量级的步长 ≈2^-17 ≈ **0.013%**（不可见） | 每张 G-buffer 颜色附件 **+8.3 MB**（1080p：8.29 → 16.6 MB）+ 目标形状进管线键 ⇒ 全部离屏管线**重编一次**（一次性） | **值得做**（唯一的"看得见画质"的项；代价小且一次性） |
+| **B5 后半**（块预算按需增长） | 1024 draw/帧的上限在**B4 的触发规模（2000 drawable）上会拒掉约一半绘制**（拒画有报告、有计数） | 新 buffer + retirement（照 `MaterialArena` 的轮转形状）；已写明"跨帧换 buffer 会动到已提交命令缓冲命名的字节" | 中：第一个大场景宿主出现时做 |
+| **A4** `Material` revision | 每帧的上界：demo 规模 11 趟 × 42 命令 ≈ **460 次 64 B 比较 ≈ 10 µs/帧 ≈ 0.06%**（由 M10f 实测的 2 ms/帧内容层推） | 新公开 API + 文档 | **不值得**：数字比噪声还小 |
+| **B4 的修**（reserve + 就地置换） | 省掉倍增重分配与 ~400 KB 搬运 ≈ **1.05 ms 里的 5–8%**（M11p 实测） | 引擎侧改动 + 顺序用例 | 不在本轮（触发点只到 6% 帧预算） |
+| **A6** LRU / 容量上界 | 只在"同屏活纹理逼近 256"时才有面（demo 不成立） | 淘汰键改造 | 保持登记 |
+| **首帧 gizmo 空白** | 一帧没有工具叠层 | 引擎侧行为改动 | 低 |
+| **会话侧"画面已落地"** | 把窗口读那条链**从"测试碰运气"变成"宿主可查的事实"**（测试侧已 4/12 → 0/12，剩下的价值在宿主 API） | WSI present fence（中等） | 中的：下一个真宿主接窗口时做 |
+| **slice A 两条句子**（灯掉落 / 空矩形）（**已做：§11.16cn**） | 补上**本轮刚改的代码**的守卫缺口（当时只有代码审查） | 各一个用例 | **已做**：两条句子的守卫用例（灯掉落 / 空矩形）已入库 |
+| **D3** 色彩空间契约（**已做：§11.16cp**，M11t） | demo 的天空从亮一个 gamma 回到正确亮度（视口带 mean 122.7 → 80.8），门禁判据一行不动 | 文档 + demo 三处声明；起作用的映射早有用例 pin | **已做**：契约写进四处 SDK 注释 + `usage.md` §3.9；③（`acquire` 的 Info）以"引擎分不出颜色/数据"为由不做 |
+
+**3. §11.16cm 的结论（给下一片排序）**：①**D5**（唯一看得见的画质收益，代价 +8.3 MB/张 + 一次重编）；
+②**两条句子的用例**（最便宜的守卫补齐）；③**D3 写契约**（便宜），其余按各自触发器。
+
+**4. 本节的证据面**：D5 的测量用例 `ContentPassTest.MeasureWhatAnEightBitAlbedoDoesToDarkShades`（打印两级数 +
+断言"步长恰是一个 8 位单位"这条格式事实）；门禁（Debug）`cases=439 failed=0 vuid=0 hazard=0 skipped=0`。
+
+### 11.16cn M11r（2026-09-25）：两条会话句子的守卫（补 §11.16ci 的缺口）
+
+**登记来自哪里**：§11.16ci 第 4 条自己写着：`lights_dropped_episode` / `empty_rectangle_episode` 两条管线
+"只有代码审查，没有自己的用例"。本片把它们钉住。
+
+**1. 用例。** `ContentPassTest.TheTwoSessionSentencesOutliveTheFrameAsWell`（真设备）——每帧一个新
+`ContentPass`（帧路径就是这样），但**句柄是调用方持有的**（`Scope::empty_rectangle_episode` /
+`lights_dropped_episode`，与 `api/ContentAssembly` 交进去的方式一致）：
+- **空矩形**：四帧，其中三帧的绘制调用带 0×0 视口（"宿主还没排好渲染区"）⇒ 第一帧说一次、第二帧**静默**、
+  `rearm()` 之后再说一次（"修好再坏会重报"）；数消息时按句子文本过滤，免得被别的诊断（正是下一段那个）骗。
+- **灯掉落**：五盏方向光进三槽的块 ⇒ 说一次；下一帧同样五盏 ⇒ **静默**（插话是调用方的）；**三盏**（装得下）
+  ⇒ 这一帧结束 episode；再来五盏 ⇒ 再说一次。
+
+**2. 变异 2/2 红（各带恢复复验）。** M1 空矩形忽略调用方句柄（退回每 `ContentPass` 一份）⇒ 第二帧又说一遍；
+M2 灯掉落忽略调用方句柄（`lightsEpisode()` 直接返回 `scope_.lights_dropped`）⇒ 第二帧又说一遍。恢复即绿。
+
+**3. 写这个用例踩到的两个坑（都记进仓库记忆）。**
+- **忘了 `recorder.swapBuffers()`**：下一帧 `beginFrame()` 被拒并**自带一条协议诊断**（"frame 1: beginFrame()
+  arrives while a frame is already open…"），而且 `description()` 还是**旧帧**的描述 ⇒ 后面所有"帧"其实在重复
+  录第一帧的计划。症状极具误导性：我以为"空矩形插话失效"，真相是"五盏灯那几帧根本没走到计划里"。
+- **签名改变要同步**：`recordPassWith` 少传一个参数时，我先把多出来的实参删干净再跑，避免"看得见的行为"与
+  "我以为的行为"错位。
+
+**4. 证据。** 两棵树门禁 `cases=440 failed=0 vuid=0 hazard=0 skipped=0`（另一条新用例是本节的测量/守卫）；
+Debug 与 Release 的 gate 阶段行逐字相同。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `tests/test_vsg/ContentPassTest.cpp` | 新用例（两条句子 × 跨帧 + 重臂） |
+| `.ai/design/vsg-reimplementation.md` | 本节 + §11.16ci 第 4 条标注"已由本节收掉" |
+
+**下一步**：按 §11.16cm 的收益排序 —— ①**D5**（唯一看得见的画质收益：暗端相对跳变 6.5% → 0.013%，代价
++8.3 MB/张 + 一次重编）②**D3** 写契约（便宜）③其余按各自触发器。
+
+### 11.16co M11s（2026-09-25）：D5 落地——albedo 附件换半浮点（**先量端到端，再改**）
+
+**登记来自哪里**：§11.16bw 的 **D5** 行："albedo 附件是 `RGBA8` 而存的是**线性** albedo……收益只在极暗材质上
+可见"，形状写着 `attachColor(RGBA16F)`。§11.16cm 的第一半测量（附件内部）给出"0.06 的暗色阶只有 16 级、
+暗端相对跳变 6.5%"，但那**不是**用户看得见的量——显示器也是 8 位。
+
+**1. 端到端测量（本片的判据，两个光强区制）。** `ContentPassTest.MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd`：
+同一条 0…0.06 暗色阶写进**两个只有 albedo 附件格式不同**的 G-buffer，经**引擎自己的光照程序**写进 8 位输出，
+比"与理想色阶的最大偏差（LSB）"与"输出里实际出现多少级"：
+
+| 光强 | albedo RGBA8 | albedo RGBA16F |
+| --- | --- | --- |
+| ×0.5（demo 的常态） | **1 LSB 误差，9 级** | **1 LSB 误差，9 级**（完全一样） |
+| ×4（宿主把 intensity 调高） | **2 LSB 误差，16 级** | **1 LSB 误差，62 级** |
+
+⇒ 机制一句话：**8 位 albedo 的步长是"乘上光强之后"才到眼睛的**——暗光把它压到输出自己的量化之下（改不改
+一样），亮光把它放大成看得见的台阶。所以 D5 的收益是**有条件的**：给 `intensity > 1` 的宿主用。
+
+**2. 改动与守卫。** `RenderPipelineBuilder::defaultGbufferTarget` 的 att 0 由 `RGBA8` 改 `RGBA16F`
+（代价：1080p 每张 G-buffer **+8.3 MB**；目标形状进管线键 ⇒ 全部离屏管线**重编一次**，一次性）。
+引擎自己的用例 `RenderPipelineBuilderTest.DefaultGbufferTargetIsCanonicalLayout` 现在把**四个附件的格式**
+当布局的一部分断言下来（附理由与出处）。**变异 1/1 红**：把 att 0 改回 `RGBA8` ⇒ `colorFormat(0)` 断言红。
+**明确的取舍（写进注释）**：颜色回读只打包 RGBA8（§11.16x 的回读表），所以这个附件**不能再被当目标附件读回**；
+demo 的预览是**用程序拷贝**（`screenCopy`）到预览槽的，不受影响。
+
+**3. 证据。** 两棵树门禁 `cases=441 failed=0 vuid=0 hazard=0 skipped=0`；**应用画面参数逐字不变**
+（`content 87.04% / 85.14%, preview 244, background 0%`）——正是端到端测量预测的"demo 的暗光区看不见差别"；
+引擎 `test_graphics` 两棵树各 276 用例绿；`vine_shader_check.sh` 不涉及（没有 shader 改动）。
+
+**4. 顺带记录（第二次出现的那条偶发）。** `BlockStorageTest.TheRegionsAreLaidOutOnceAndDoNotOverlap` 在
+M11l 的 Debug 门禁与本次 Release 门禁各首跑红一次、重跑即绿（门禁照规矩把首跑失败具名写进证据行）。
+本次量了：**单独跑 12/12 绿** ⇒ 按 §11.16cf 的判法属**环境/顺序类**。判据不足（门禁只留用例名，不留断言
+文本）⇒ 复现时先打印"失败的那条断言 + 设备的 `minUniformBufferOffsetAlignment`"。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `src/viz/graphics/src/RenderPipelineBuilder.cpp` | albedo 附件 RGBA8 → RGBA16F + 两区制测量与取舍的注释 |
+| `tests/test_graphics/GraphicsTest.cpp` | 格式契约断言（四个附件） |
+| `tests/test_vsg/ContentPassTest.cpp` | 端到端测量用例（两区制，打印；断言"半浮点不更差"等机器无关半） |
+| `.ai/design/vsg-reimplementation.md` | 本节 + D5 行标注"已修" |
+
+**下一步**：按 §11.16cm 排序，①D3 写色彩空间契约（便宜）②B5 后半（第一个大场景宿主出现时）③其余按触发器；
+另有本条第 4 点的偶发待第三次出现时再收。
+
+### §11.16cp D3：色彩空间契约写下来了，仓库里第一个"错法的实例"就是 demo 自己（M11t，2026-09-25）
+
+**登记来自哪里**：§11.16bw 的 **D3** 行："真正缺的是**把这条写成契约**"。形状①文档、②`Colorf`、
+③（可选）`MaterialImages::acquire` 的 Info。
+
+**1. 契约一句话。** 引擎**内部一律线性**：`Colorf`、材质、灯光、G-buffer、离屏目标；编码只在**两头**发生，而且
+都在硬件里 —— 读纹理时由**采样器**解码（`*Srgb` 拼写），写窗口时由**surface 格式**编码（宿主不参与，后端按
+surface 的实际格式给窗口 target）。于是宿主只有一个问题要回答：**这段字节是颜色还是数据** —— 颜色（PNG/JPG
+的字节本来就是 sRGB 编码的）用 `*Srgb`，数据（法线/粗糙度/遮罩/查找表）用 `*Unorm`。两个错法就是两个方向、
+都**静默**：sRGB 图声明成 `*Unorm` ⇒ 画面**偏亮、发灰**；数据图声明成 `*Srgb` ⇒ 画面**偏暗**。
+
+**2. 声明不是注释，后端真的按它上传** —— 这条早已有用例 pin：
+`VsgSceneRulesTest.MapsEveryPixelLayoutToItsVulkanFormat` 断言 `vkFormatFor(Rgba8Srgb) == VK_FORMAT_R8G8B8A8_SRGB`
+（`tests/test_vsg/SceneRulesTest.cpp:753`），上传路径（`MaterialImages`）用的就是 `vkFormatFor(texture->format())`。
+
+**3. 第一个"错法实例"是 demo 自己，已按契约改。** `AppShellDemo.cpp` 的立方体贴图六张 JPG 面是**颜色图**，
+原本声明 `Rgba8Unorm` ⇒ 天空亮一个 gamma。三处（`boxFilterRgba` 的输出、`CubeMap`、`loadImage`）改成
+`Rgba8Srgb`。**测量**用门禁自己的读窗配方（画面**逐字节确定**：两次基线 `cmp` 完全相同）：
+
+| 采样（378x247，改前 / 改后） | `Rgba8Unorm`（旧） | `Rgba8Srgb`（契约） |
+| --- | --- | --- |
+| content（门禁判 ≥30%） | 87.04% | 87.04% |
+| 预览槽 max（判 ≥64） | 244 | 244 |
+| 视口带的背景色占比（判 ≤5%） | 0.00% / 0.00% | 0.01% / 0.02% |
+| 视口带 mean（天空为主） | 122.7 | **80.8** |
+| 全窗 mean | 111.5 | **78.7** |
+
+数值和传递函数对得上：编码值 0.5 被当成线性 ⇒ 显示 188（`E(0.5)=0.74`），解码后应为 128 ⇒ 暗约 32%，
+实测视口带 −34%。
+
+**4. 变异证明"解码就是这个映射干的"（1/1 红）。** 把 `vkFormatFor` 的 `Rgba8Srgb` 唯一锚点改成
+`VK_FORMAT_R8G8B8A8_UNORM`：
+
+* 单元：`SceneRulesTest.cpp:753` **红**（pin 是承重的）；
+* 端到端：窗口读数**逐字节等于旧的 `Rgba8Unorm` 画面**（视口带 mean 122.7、全窗 mean 111.5）⇒ 122.7→80.8
+  的全部差异都来自**那一个映射**交到采样器手里；
+* 恢复（`cp` 备份回填 + 重编）：`grep -c MUTANT` = 0、单元绿、重测画面与变异前**逐字节相同**。
+
+**5. 契约写在哪。** `sdk/vine/Colorf.hpp`（浮点颜色是线性值 + 两头在哪）；`sdk/vine/imaging/PixelFormat.hpp`
+（颜色 `*Srgb`、数据 `*Unorm` + 两个错法的方向）；`sdk/vine/graphics/RenderTarget.hpp`（`ColorFormat` 是
+**投影**：离屏取线性拼写 = `R8G8B8A8_UNORM`，窗口取 surface 的）；`sdk/vine/graphics/BuiltinShaders.hpp`
+（内建 program 不自己套 gamma —— 全仓库的 GLSL 里除了高光指数没有别的 `pow`，已核对）；
+`src/viz/graphics/docs/usage.md` **§3.9**（宿主视角：编码在哪两头、两个错法、契约写在哪张表）。
+
+**6. ③（`MaterialImages::acquire` 的 Info）不做，理由写下。** 引擎**分不出**颜色图和数据图：同一个
+`PixelFormat`、同一份字节，区别只在宿主的意图里，不在 API 参数里。按"格式猜意图"的 Info 会在**正确的**数据图上
+刷警告（数据图本来就该 `*Unorm`），等于制造噪音把真信号埋掉。诚实的形状就是**文档 + 声明**（本条）；真要机器兜底
+需要宿主**显式声明意图**（新 API），等第一个"gamma 不对"的报告再开。
+
+**7. 顺带记录（注册，不修）。** demo 的 `boxFilterRgba` 在**编码域**取平均（直接平均字节）⇒ 结果比"先解到线性再
+平均"略微**偏暗**（黑白各半的极端：存 0.5，而正确的存储是 `encode(0.5) = 0.74`）。天空面是低频图、128 px/面，
+差别肉眼不可见 ⇒ 注册为"质量细化"，与色彩空间解耦（改它会让画面变，需要自己的读数片）。
+
+**8. 证据面。** 两棵树门禁**全绿、8 个 stage 全 ok**：`cases=441 failed=0 vuid=0 hazard=0 skipped=0`
+（Debug 与 Release 各 441）、`doc symbols OK — 3 living document(s) and 145 unit(s) agree`、应用行两棵树**逐字
+相同**：`before 378x247: content 87.04%, preview 244, background 0.02%; after 698x132: content 85.14%, preview 244,
+background 0%; vuid=0 warnings=0`；引擎 `test_graphics` 两棵树各 **276 绿**（本片只动注释）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `src/base/core/sdk/vine/Colorf.hpp` | 类注释：值是线性的 + 编码的两头 |
+| `src/base/imaging/sdk/vine/imaging/PixelFormat.hpp` | 文件注释：颜色 `*Srgb` / 数据 `*Unorm` + 两个方向 |
+| `src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp` | `ColorFormat` 是投影；离屏取线性拼写 |
+| `src/viz/graphics/sdk/vine/graphics/BuiltinShaders.hpp` | 文件注释：内建 program 不自己套 gamma |
+| `src/viz/graphics/docs/usage.md` | §3.9 色彩空间契约（宿主视角） |
+| `src/plugins/app_shell/src/AppShellDemo.cpp` | 天空面三处 `Rgba8Unorm` → `Rgba8Srgb` + 理由注释 |
+
+**下一步**：D3 收口 ⇒ §11.16cm 的排序里只剩 **B5 后半**（等第一个大场景宿主）与各自触发器的项；
+`BlockStorageTest` 那条偶发仍等第三次出现（复用 §11.16co 的判据）。
